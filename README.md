@@ -62,7 +62,7 @@ xattr -dr com.apple.quarantine "Codex Mixin.app"
 如果还没把 app 拖进 `/Applications`，也可以先对下载的 DMG 执行：
 
 ```bash
-xattr -dr com.apple.quarantine codex-mixin-0.2.0-aarch64-apple-darwin.dmg
+xattr -dr com.apple.quarantine codex-mixin-0.2.1-aarch64-apple-darwin.dmg
 ```
 
 ## 供应商预设

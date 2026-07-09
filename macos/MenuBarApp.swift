@@ -41,6 +41,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.configureLogin()
             }
         }
+        if CommandLine.arguments.contains("--check-updates") {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
+                self?.checkForUpdatesFromMenu()
+            }
+        }
     }
 
     private func installApplicationMenu() {
@@ -1176,6 +1181,12 @@ private func appendOptionalArg(_ args: inout [String], _ name: String, _ rawValu
 }
 
 private func showAlert(title: String, message: String) {
+    if !Thread.isMainThread {
+        DispatchQueue.main.sync {
+            showAlert(title: title, message: message)
+        }
+        return
+    }
     let alert = NSAlert()
     alert.messageText = title
     alert.informativeText = message
@@ -1186,6 +1197,11 @@ private func showAlert(title: String, message: String) {
 }
 
 private func confirm(title: String, message: String) -> Bool {
+    if !Thread.isMainThread {
+        return DispatchQueue.main.sync {
+            confirm(title: title, message: message)
+        }
+    }
     let alert = NSAlert()
     alert.messageText = title
     alert.informativeText = message
