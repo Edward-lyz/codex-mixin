@@ -1,0 +1,307 @@
+use serde_json::{Value, json};
+
+use crate::anthropic::ModelInfo;
+use crate::model_metadata::ModelMetadataResolver;
+
+const FALLBACK_BASE_INSTRUCTIONS: &str = "You are Codex, a coding agent. Work in the user's workspace, use tools carefully, and keep responses concise.";
+
+pub fn codex_catalog_from_models(
+    models: &[ModelInfo],
+    default_context_window: u64,
+    template_catalog: Option<&Value>,
+) -> Value {
+    codex_catalog_from_models_with_options(
+        models,
+        default_context_window,
+        template_catalog,
+        false,
+        None,
+    )
+}
+
+pub fn codex_oauth_proxy_catalog_from_models(
+    models: &[ModelInfo],
+    default_context_window: u64,
+    template_catalog: Option<&Value>,
+) -> Value {
+    codex_catalog_from_models_with_options(
+        models,
+        default_context_window,
+        template_catalog,
+        true,
+        None,
+    )
+}
+
+pub fn codex_catalog_from_models_with_metadata(
+    models: &[ModelInfo],
+    default_context_window: u64,
+    template_catalog: Option<&Value>,
+    metadata: &ModelMetadataResolver,
+) -> Value {
+    codex_catalog_from_models_with_options(
+        models,
+        default_context_window,
+        template_catalog,
+        false,
+        Some(metadata),
+    )
+}
+
+pub fn codex_oauth_proxy_catalog_from_models_with_metadata(
+    models: &[ModelInfo],
+    default_context_window: u64,
+    template_catalog: Option<&Value>,
+    metadata: &ModelMetadataResolver,
+) -> Value {
+    codex_catalog_from_models_with_options(
+        models,
+        default_context_window,
+        template_catalog,
+        true,
+        Some(metadata),
+    )
+}
+
+fn codex_catalog_from_models_with_options(
+    models: &[ModelInfo],
+    default_context_window: u64,
+    template_catalog: Option<&Value>,
+    include_template_models: bool,
+    metadata: Option<&ModelMetadataResolver>,
+) -> Value {
+    let template = template_catalog
+        .and_then(|catalog| catalog.get("models"))
+        .and_then(Value::as_array)
+        .and_then(|models| {
+            models
+                .iter()
+                .find(|model| model.get("slug").and_then(Value::as_str) == Some("gpt-5.4-mini"))
+                .or_else(|| models.first())
+        });
+    let mut generated = template_catalog
+        .and_then(|catalog| catalog.get("models"))
+        .and_then(Value::as_array)
+        .filter(|_| include_template_models)
+        .cloned()
+        .unwrap_or_default();
+    let mut custom_models = models
+        .iter()
+        .enumerate()
+        .map(|(index, model)| {
+            let mut item = template
+                .cloned()
+                .unwrap_or_else(|| fallback_template(default_context_window));
+            let is_gpt = is_gpt_model(&model.id);
+            let slug = if include_template_models && is_gpt {
+                format!("{}-custom", model.id)
+            } else {
+                model.id.clone()
+            };
+            let display_name = if include_template_models && is_gpt {
+                format!("{} (Custom)", model.id)
+            } else {
+                model.id.clone()
+            };
+            item["slug"] = json!(slug);
+            item["display_name"] = json!(display_name);
+            item["description"] = json!("Custom upstream model exposed through codex-mixin");
+            if item.get("base_instructions").is_none() {
+                item["base_instructions"] = json!(FALLBACK_BASE_INSTRUCTIONS);
+            }
+            let metadata = metadata
+                .map(|resolver| resolver.resolve(&model.id, default_context_window))
+                .unwrap_or_else(|| {
+                    ModelMetadataResolver::empty().resolve(&model.id, default_context_window)
+                });
+            item["context_window"] = json!(metadata.context_window);
+            item["max_context_window"] = json!(metadata.context_window);
+            item["input_modalities"] = json!(metadata.input_modalities);
+            item["priority"] = json!(100 + index as u64);
+            item["visibility"] = json!("list");
+            item["supported_in_api"] = json!(true);
+            let supports_search_tool = supports_anthropic_web_search(&model.id);
+            item["supports_search_tool"] = json!(supports_search_tool);
+            if supports_search_tool {
+                item["web_search_tool_type"] = json!("text");
+            }
+            item
+        })
+        .collect::<Vec<_>>();
+    generated.append(&mut custom_models);
+    for model in &mut generated {
+        ensure_instruction_fields(model);
+    }
+    json!({ "models": generated })
+}
+
+fn ensure_instruction_fields(model: &mut Value) {
+    if model.get("base_instructions").is_none() {
+        model["base_instructions"] = json!(FALLBACK_BASE_INSTRUCTIONS);
+    }
+    if model
+        .pointer("/model_messages/instructions_template")
+        .is_none()
+    {
+        model["model_messages"] = json!({
+            "instructions_template": FALLBACK_BASE_INSTRUCTIONS
+        });
+    }
+}
+
+fn is_gpt_model(model: &str) -> bool {
+    model.to_ascii_lowercase().starts_with("gpt-")
+}
+
+fn supports_anthropic_web_search(model: &str) -> bool {
+    let model = model.to_ascii_lowercase();
+    ["claude", "sonnet", "opus", "haiku", "fable", "mythos"]
+        .iter()
+        .any(|needle| model.contains(needle))
+}
+
+pub fn load_template_catalog(path: Option<&std::path::Path>) -> anyhow::Result<Option<Value>> {
+    let path = match path {
+        Some(path) => path.to_path_buf(),
+        None => {
+            let codex_home = std::env::var("CODEX_HOME").ok().map_or_else(
+                || {
+                    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_owned());
+                    std::path::PathBuf::from(home).join(".codex")
+                },
+                std::path::PathBuf::from,
+            );
+            codex_home.join("models_cache.json")
+        }
+    };
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = std::fs::read_to_string(&path)?;
+    let parsed = serde_json::from_str(&raw)?;
+    Ok(Some(parsed))
+}
+
+fn fallback_template(default_context_window: u64) -> Value {
+    json!({
+        "slug": "placeholder",
+        "display_name": "placeholder",
+        "description": "",
+        "base_instructions": FALLBACK_BASE_INSTRUCTIONS,
+        "experimental_supported_tools": [],
+        "priority": 100,
+        "shell_type": "shell_command",
+        "support_verbosity": false,
+        "supported_in_api": true,
+        "supported_reasoning_levels": [
+            {"effort":"low","description":"Fast responses with lighter reasoning"},
+            {"effort":"medium","description":"Balanced reasoning"},
+            {"effort":"high","description":"Greater reasoning depth"},
+            {"effort":"xhigh","description":"Extra high reasoning depth"}
+        ],
+        "supports_parallel_tool_calls": true,
+        "supports_reasoning_summaries": false,
+        "truncation_policy": {"mode":"tokens","limit":10000},
+        "visibility": "list",
+        "context_window": default_context_window,
+        "max_context_window": default_context_window,
+        "input_modalities": ["text", "image"],
+        "apply_patch_tool_type": "freeform",
+        "model_messages": {
+            "instructions_template": FALLBACK_BASE_INSTRUCTIONS
+        }
+    })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn builds_codex_catalog_from_live_model_shape() {
+        let models = vec![ModelInfo {
+            id: "DeepSeek-V4-Flash".to_owned(),
+            object: Some("model".to_owned()),
+            created: Some(1),
+            owned_by: Some("custom".to_owned()),
+        }];
+        let catalog = codex_catalog_from_models(&models, 1_000_000, None);
+        assert_eq!(catalog["models"][0]["slug"], "DeepSeek-V4-Flash");
+        assert_eq!(
+            catalog["models"][0]["base_instructions"],
+            FALLBACK_BASE_INSTRUCTIONS
+        );
+        assert_eq!(
+            catalog["models"][0]["model_messages"]["instructions_template"],
+            FALLBACK_BASE_INSTRUCTIONS
+        );
+        assert_eq!(catalog["models"][0]["context_window"], 1_000_000);
+        assert_eq!(catalog["models"][0]["supports_search_tool"], false);
+    }
+
+    #[test]
+    fn applies_model_metadata_to_context_window_and_modalities() {
+        let metadata = ModelMetadataResolver::from_json(&json!({
+            "fireworks_ai/minimax-m3": {
+                "mode": "chat",
+                "max_input_tokens": 512000,
+                "max_output_tokens": 512000,
+                "supports_vision": true
+            }
+        }))
+        .unwrap();
+        let models = vec![ModelInfo {
+            id: "MiniMax-M3".to_owned(),
+            object: Some("model".to_owned()),
+            created: Some(1),
+            owned_by: Some("custom".to_owned()),
+        }];
+        let catalog = codex_catalog_from_models_with_metadata(&models, 1_000_000, None, &metadata);
+        assert_eq!(catalog["models"][0]["context_window"], 512_000);
+        assert_eq!(catalog["models"][0]["max_context_window"], 512_000);
+        assert_eq!(
+            catalog["models"][0]["input_modalities"],
+            json!(["text", "image"])
+        );
+    }
+
+    #[test]
+    fn marks_claude_family_models_as_search_capable() {
+        let models = vec![ModelInfo {
+            id: "Claude Sonnet 5".to_owned(),
+            object: Some("model".to_owned()),
+            created: Some(1),
+            owned_by: Some("custom".to_owned()),
+        }];
+        let catalog = codex_catalog_from_models(&models, 1_000_000, None);
+        assert_eq!(catalog["models"][0]["supports_search_tool"], true);
+        assert_eq!(catalog["models"][0]["web_search_tool_type"], "text");
+    }
+
+    #[test]
+    fn oauth_proxy_catalog_keeps_official_gpt_and_aliases_custom_gpt() {
+        let template = json!({
+            "models": [
+                {"slug":"gpt-5.5","display_name":"GPT-5.5","context_window":272000}
+            ]
+        });
+        let models = vec![ModelInfo {
+            id: "gpt-5.5".to_owned(),
+            object: Some("model".to_owned()),
+            created: Some(1),
+            owned_by: Some("custom".to_owned()),
+        }];
+        let catalog = codex_oauth_proxy_catalog_from_models(&models, 1_000_000, Some(&template));
+        assert_eq!(catalog["models"][0]["slug"], "gpt-5.5");
+        assert_eq!(catalog["models"][1]["slug"], "gpt-5.5-custom");
+        assert_eq!(catalog["models"][1]["display_name"], "gpt-5.5 (Custom)");
+        assert_eq!(
+            catalog["models"][1]["base_instructions"],
+            FALLBACK_BASE_INSTRUCTIONS
+        );
+        assert_eq!(
+            catalog["models"][1]["model_messages"]["instructions_template"],
+            FALLBACK_BASE_INSTRUCTIONS
+        );
+    }
+}

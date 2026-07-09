@@ -1,0 +1,111 @@
+name: Release
+
+on:
+  push:
+    tags:
+      - "v*"
+  workflow_dispatch:
+    inputs:
+      tag:
+        description: "Release tag, for example v0.1.0"
+        required: true
+        default: "v0.1.0"
+
+permissions:
+  contents: write
+
+jobs:
+  build:
+    name: Build ${{ matrix.name }}
+    runs-on: ${{ matrix.runner }}
+    strategy:
+      fail-fast: false
+      matrix:
+        include:
+          - name: linux-x86_64
+            os: linux
+            runner: ubuntu-latest
+            target: x86_64-unknown-linux-gnu
+            deb_arch: amd64
+          - name: linux-aarch64
+            os: linux
+            runner: ubuntu-24.04-arm
+            target: aarch64-unknown-linux-gnu
+            deb_arch: arm64
+          - name: macos-x86_64
+            os: macos
+            runner: macos-15-intel
+            target: x86_64-apple-darwin
+          - name: macos-aarch64
+            os: macos
+            runner: macos-15
+            target: aarch64-apple-darwin
+
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          targets: ${{ matrix.target }}
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: ${{ matrix.target }}
+      - name: Resolve version
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+          echo "version=${tag#v}" >>"$GITHUB_OUTPUT"
+      - name: Build CLI
+        run: cargo build --locked --release --target "${{ matrix.target }}"
+      - name: Build macOS app
+        if: matrix.os == 'macos'
+        env:
+          CARGO_BUILD_TARGET: ${{ matrix.target }}
+        run: ./macos/build_app.sh
+      - name: Package CLI archive
+        run: ./scripts/package-cli.sh "${{ matrix.target }}" "${{ steps.version.outputs.version }}" dist/release
+      - name: Package Linux installer
+        if: matrix.os == 'linux'
+        run: ./scripts/package-linux-deb.sh "${{ matrix.target }}" "${{ matrix.deb_arch }}" "${{ steps.version.outputs.version }}" dist/release
+      - name: Package macOS installer
+        if: matrix.os == 'macos'
+        run: ./scripts/package-macos-dmg.sh "${{ matrix.target }}" "${{ steps.version.outputs.version }}" dist/release
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v4
+        with:
+          name: codex-mixin-${{ matrix.name }}
+          path: dist/release/*
+          if-no-files-found: error
+
+  publish:
+    name: Publish release
+    needs: build
+    runs-on: ubuntu-latest
+    steps:
+      - name: Resolve release tag
+        id: version
+        shell: bash
+        run: |
+          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
+            tag="${{ inputs.tag }}"
+          else
+            tag="${GITHUB_REF_NAME}"
+          fi
+          echo "tag=$tag" >>"$GITHUB_OUTPUT"
+      - name: Download artifacts
+        uses: actions/download-artifact@v4
+        with:
+          path: dist/release
+          merge-multiple: true
+      - name: Publish GitHub release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ steps.version.outputs.tag }}
+          name: Codex Mixin ${{ steps.version.outputs.tag }}
+          files: dist/release/*
