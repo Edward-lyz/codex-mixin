@@ -31,6 +31,8 @@ mkdir -p "$STAGING_DIR/bin" "$STAGING_DIR/.background" "$OUT_DIR"
 cp -R "$APP_PATH" "$STAGING_DIR/Codex Mixin.app"
 cp "$BIN_PATH" "$STAGING_DIR/bin/codex-mixin"
 cp "$ROOT_DIR/README.md" "$STAGING_DIR/README.md"
+cp "$ROOT_DIR/LICENSE" "$STAGING_DIR/LICENSE"
+cp "$ROOT_DIR/NOTICE" "$STAGING_DIR/NOTICE"
 ln -s /Applications "$STAGING_DIR/Applications"
 
 swift "$ROOT_DIR/macos/make_dmg_background.swift" "$STAGING_DIR/.background/background.png"
@@ -62,7 +64,7 @@ tell application "Finder"
   set current view of container window of dmgFolder to icon view
   set toolbar visible of container window of dmgFolder to false
   set statusbar visible of container window of dmgFolder to false
-  set bounds of container window of dmgFolder to {120, 120, 780, 540}
+  set bounds of container window of dmgFolder to {120, 120, 780, 640}
   set viewOptions to icon view options of container window of dmgFolder
   set arrangement of viewOptions to not arranged
   set icon size of viewOptions to 88
@@ -71,6 +73,8 @@ tell application "Finder"
   set position of item "Applications" of dmgFolder to {490, 205}
   set position of item "bin" of dmgFolder to {170, 335}
   set position of item "README.md" of dmgFolder to {490, 335}
+  set position of item "LICENSE" of dmgFolder to {170, 430}
+  set position of item "NOTICE" of dmgFolder to {490, 430}
   close container window of dmgFolder
   update dmgFolder without registering applications
 end tell

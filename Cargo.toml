@@ -2,6 +2,7 @@
 name = "codex-mixin"
 version = "0.2.1"
 edition = "2024"
+license-file = "LICENSE"
 
 [dependencies]
 anyhow = "1.0"

@@ -20,9 +20,11 @@ if [[ ! -x "$BIN_PATH" ]]; then
 fi
 
 rm -rf "$PACKAGE_ROOT"
-mkdir -p "$PACKAGE_ROOT/DEBIAN" "$PACKAGE_ROOT/usr/local/bin"
+mkdir -p "$PACKAGE_ROOT/DEBIAN" "$PACKAGE_ROOT/usr/local/bin" "$PACKAGE_ROOT/usr/share/doc/codex-mixin"
 cp "$BIN_PATH" "$PACKAGE_ROOT/usr/local/bin/codex-mixin"
 chmod 0755 "$PACKAGE_ROOT/usr/local/bin/codex-mixin"
+cp "$ROOT_DIR/LICENSE" "$PACKAGE_ROOT/usr/share/doc/codex-mixin/LICENSE"
+cp "$ROOT_DIR/NOTICE" "$PACKAGE_ROOT/usr/share/doc/codex-mixin/NOTICE"
 
 cat >"$PACKAGE_ROOT/DEBIAN/control" <<CONTROL
 Package: codex-mixin

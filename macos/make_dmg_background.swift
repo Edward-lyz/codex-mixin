@@ -6,7 +6,7 @@ guard CommandLine.arguments.count == 2 else {
 }
 
 let outputURL = URL(fileURLWithPath: CommandLine.arguments[1])
-let size = NSSize(width: 660, height: 420)
+let size = NSSize(width: 660, height: 520)
 let image = NSImage(size: size)
 
 image.lockFocus()
@@ -47,8 +47,8 @@ let subtitleAttributes: [NSAttributedString.Key: Any] = [
     .font: NSFont.systemFont(ofSize: 14),
     .foregroundColor: NSColor(calibratedWhite: 0.42, alpha: 1),
 ]
-title.draw(at: NSPoint(x: 44, y: 354), withAttributes: titleAttributes)
-subtitle.draw(at: NSPoint(x: 45, y: 329), withAttributes: subtitleAttributes)
+title.draw(at: NSPoint(x: 44, y: 454), withAttributes: titleAttributes)
+subtitle.draw(at: NSPoint(x: 45, y: 429), withAttributes: subtitleAttributes)
 
 let arrow = NSBezierPath()
 arrow.lineWidth = 5
