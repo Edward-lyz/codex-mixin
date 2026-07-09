@@ -78,8 +78,6 @@ Codex Mixin 的解法是：Codex 连到本机 `http://127.0.0.1:8787/v1`，本�
 
 ### 快速安装
 
-#### macOS App
-
 从 [GitHub Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 下载当前 Mac 架构对应的 DMG：
 
 | Mac 架构 | 下载文件 |
@@ -89,60 +87,24 @@ Codex Mixin 的解法是：Codex 连到本机 `http://127.0.0.1:8787/v1`，本�
 
 打开 DMG，把 `Codex Mixin.app` 拖到 `Applications`，然后启动菜单栏 App。
 
-当前发布包尚未签名和 notarize。如果 macOS 拦截，可以对 DMG 或 App 移除 quarantine：
+当前发布包尚未签名和 notarize。如果 macOS 拦截，执行下面命令后再打开：
 
 ```bash
 xattr -dr com.apple.quarantine codex-mixin-0.2.1-aarch64-apple-darwin.dmg
 xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 ```
 
-#### macOS CLI
+打开后按菜单栏提示完成配置。远端开发机或 Linux 用户可以从 Release 页面下载 CLI 包自行使用。
 
-```bash
-curl -L -o codex-mixin-cli.tar.gz \
-  https://github.com/Edward-lyz/codex-mixin/releases/download/v0.2.1/codex-mixin-cli-0.2.1-aarch64-apple-darwin.tar.gz
-tar -xzf codex-mixin-cli.tar.gz
-sudo install -m 0755 codex-mixin-cli-0.2.1-aarch64-apple-darwin/codex-mixin /usr/local/bin/codex-mixin
-```
+<details>
+<summary>CLI 下载文件名</summary>
 
-Intel Mac 把文件名里的 `aarch64-apple-darwin` 换成 `x86_64-apple-darwin`。
+- macOS Apple Silicon: `codex-mixin-cli-0.2.1-aarch64-apple-darwin.tar.gz`
+- macOS Intel: `codex-mixin-cli-0.2.1-x86_64-apple-darwin.tar.gz`
+- Linux x86_64: `codex-mixin-cli-0.2.1-x86_64-unknown-linux-gnu.tar.gz` 或 `codex-mixin-0.2.1-x86_64-unknown-linux-gnu.deb`
+- Linux ARM64: `codex-mixin-cli-0.2.1-aarch64-unknown-linux-gnu.tar.gz` 或 `codex-mixin-0.2.1-aarch64-unknown-linux-gnu.deb`
 
-#### Linux CLI
-
-Debian / Ubuntu:
-
-```bash
-curl -L -o codex-mixin.deb \
-  https://github.com/Edward-lyz/codex-mixin/releases/download/v0.2.1/codex-mixin-0.2.1-x86_64-unknown-linux-gnu.deb
-sudo dpkg -i codex-mixin.deb
-```
-
-Archive:
-
-```bash
-curl -L -o codex-mixin-cli.tar.gz \
-  https://github.com/Edward-lyz/codex-mixin/releases/download/v0.2.1/codex-mixin-cli-0.2.1-x86_64-unknown-linux-gnu.tar.gz
-tar -xzf codex-mixin-cli.tar.gz
-sudo install -m 0755 codex-mixin-cli-0.2.1-x86_64-unknown-linux-gnu/codex-mixin /usr/local/bin/codex-mixin
-```
-
-Linux ARM64 把文件名里的 `x86_64-unknown-linux-gnu` 换成 `aarch64-unknown-linux-gnu`。
-
-#### 从源码构建
-
-```bash
-git clone https://github.com/Edward-lyz/codex-mixin.git
-cd codex-mixin
-cargo build --release
-./target/release/codex-mixin --help
-```
-
-构建 macOS 菜单栏 App：
-
-```bash
-./macos/build_app.sh
-open "dist/Codex Mixin.app"
-```
+</details>
 
 ### 快速使用
 
@@ -434,8 +396,6 @@ Codex Mixin exposes a local Responses-compatible endpoint at `http://127.0.0.1:8
 
 ### Install
 
-#### macOS App
-
 Download the DMG for your Mac from [GitHub Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest):
 
 | Mac | File |
@@ -445,39 +405,24 @@ Download the DMG for your Mac from [GitHub Releases](https://github.com/Edward-l
 
 Open the DMG, drag `Codex Mixin.app` to `Applications`, then launch it.
 
-The current builds are not signed or notarized. If macOS blocks the app, remove quarantine:
+The current builds are not signed or notarized. If macOS blocks the app, run:
 
 ```bash
 xattr -dr com.apple.quarantine codex-mixin-0.2.1-aarch64-apple-darwin.dmg
 xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 ```
 
-#### CLI
+After launch, follow the menu bar actions to configure a provider and install it into Codex. Remote Linux or Codex CLI users can download the CLI archives from the same Release page.
 
-macOS Apple Silicon:
+<details>
+<summary>CLI asset names</summary>
 
-```bash
-curl -L -o codex-mixin-cli.tar.gz \
-  https://github.com/Edward-lyz/codex-mixin/releases/download/v0.2.1/codex-mixin-cli-0.2.1-aarch64-apple-darwin.tar.gz
-tar -xzf codex-mixin-cli.tar.gz
-sudo install -m 0755 codex-mixin-cli-0.2.1-aarch64-apple-darwin/codex-mixin /usr/local/bin/codex-mixin
-```
+- macOS Apple Silicon: `codex-mixin-cli-0.2.1-aarch64-apple-darwin.tar.gz`
+- macOS Intel: `codex-mixin-cli-0.2.1-x86_64-apple-darwin.tar.gz`
+- Linux x86_64: `codex-mixin-cli-0.2.1-x86_64-unknown-linux-gnu.tar.gz` or `codex-mixin-0.2.1-x86_64-unknown-linux-gnu.deb`
+- Linux ARM64: `codex-mixin-cli-0.2.1-aarch64-unknown-linux-gnu.tar.gz` or `codex-mixin-0.2.1-aarch64-unknown-linux-gnu.deb`
 
-Linux x86_64:
-
-```bash
-curl -L -o codex-mixin.deb \
-  https://github.com/Edward-lyz/codex-mixin/releases/download/v0.2.1/codex-mixin-0.2.1-x86_64-unknown-linux-gnu.deb
-sudo dpkg -i codex-mixin.deb
-```
-
-Build from source:
-
-```bash
-git clone https://github.com/Edward-lyz/codex-mixin.git
-cd codex-mixin
-cargo build --release
-```
+</details>
 
 ### Usage
 
@@ -592,6 +537,8 @@ CODEX_HOME=/tmp/codex-mixin-home codex-mixin install-codex --codex-oauth-proxy
 ### Development
 
 ```bash
+git clone https://github.com/Edward-lyz/codex-mixin.git
+cd codex-mixin
 cargo fmt --all -- --check
 cargo test --locked
 ./macos/build_app.sh
