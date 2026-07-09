@@ -2,12 +2,16 @@ import Cocoa
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let serviceLabel = "local.codex-mixin.service"
+    private let autoUpdateCheckKey = "autoCheckUpdates"
+    private let lastUpdateCheckKey = "lastUpdateCheckAt"
     private var statusItem: NSStatusItem?
     private var serviceStatusItem: NSMenuItem?
     private var quotaStatusItem: NSMenuItem?
     private var startMenuItem: NSMenuItem?
     private var stopMenuItem: NSMenuItem?
     private var restartMenuItem: NSMenuItem?
+    private var launchAtLoginMenuItem: NSMenuItem?
+    private var autoUpdateMenuItem: NSMenuItem?
     private var timer: Timer?
     private var isRunning = false
     private var serviceBusy = false {
@@ -25,6 +29,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshStatus()
+            }
+        }
+        if autoUpdateChecksEnabled() {
+            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
+                self?.checkForUpdatesFromAutoCheck()
             }
         }
         if CommandLine.arguments.contains("--show-settings") {
@@ -83,11 +92,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(startMenuItem!)
         menu.addItem(stopMenuItem!)
         menu.addItem(restartMenuItem!)
+        launchAtLoginMenuItem = actionItem("登录时启动并开启服务", #selector(toggleLaunchAtLogin), "poweron")
+        menu.addItem(launchAtLoginMenuItem!)
         menu.addItem(actionItem("刷新状态与额度", #selector(refreshStatus), "arrow.clockwise"))
         menu.addItem(.separator())
         menu.addItem(actionItem("设置供应商与密钥...", #selector(configureLogin), "gearshape"))
         menu.addItem(actionItem("安装到 Codex...", #selector(installCodexConfig), "square.and.arrow.down"))
         menu.addItem(actionItem("从 Codex 恢复...", #selector(uninstallCodexConfig), "arrow.uturn.backward.circle"))
+        menu.addItem(.separator())
+        menu.addItem(actionItem("检查更新...", #selector(checkForUpdatesFromMenu), "arrow.down.circle"))
+        autoUpdateMenuItem = actionItem("自动检查更新", #selector(toggleAutoUpdateChecks), "clock.arrow.circlepath")
+        menu.addItem(autoUpdateMenuItem!)
         menu.addItem(.separator())
         menu.addItem(actionItem("复制本地接口地址", #selector(copyLocalEndpoint), "link"))
         menu.addItem(actionItem("打开运行日志", #selector(openLogs), "doc.text"))
@@ -114,6 +129,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startMenuItem?.isEnabled = !serviceBusy && !isRunning
         stopMenuItem?.isEnabled = !serviceBusy && isRunning
         restartMenuItem?.isEnabled = !serviceBusy
+        launchAtLoginMenuItem?.state = FileManager.default.fileExists(atPath: launchAgentPath().path) ? .on : .off
+        autoUpdateMenuItem?.state = autoUpdateChecksEnabled() ? .on : .off
     }
 
     @objc private func startService() {
@@ -162,6 +179,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 serviceStatus = "服务：重启失败"
                 showAlert(title: "重启服务失败", message: String(describing: error))
+            }
+        }
+    }
+
+    @objc private func toggleLaunchAtLogin() {
+        serviceBusy = true
+        Task { @MainActor in
+            defer { serviceBusy = false }
+            do {
+                if FileManager.default.fileExists(atPath: launchAgentPath().path) {
+                    try await bootoutIfLoaded()
+                    _ = try? await runGateway(["stop"])
+                    try FileManager.default.removeItem(at: launchAgentPath())
+                } else {
+                    try installLaunchAgent()
+                    try await bootoutIfLoaded()
+                    _ = try await runProcess("/bin/launchctl", ["bootstrap", launchDomain(), launchAgentPath().path])
+                }
+                refreshStatus()
+            } catch {
+                showAlert(title: "更新登录自启失败", message: String(describing: error))
             }
         }
     }
@@ -281,6 +319,112 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc private func copyLocalEndpoint() {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString("http://127.0.0.1:8787/v1", forType: .string)
+    }
+
+    @objc private func checkForUpdatesFromMenu() {
+        Task { @MainActor in
+            await checkForUpdates(interactive: true)
+        }
+    }
+
+    private func checkForUpdatesFromAutoCheck() {
+        let now = Date()
+        let lastCheck = UserDefaults.standard.object(forKey: lastUpdateCheckKey) as? Date
+        if let lastCheck, now.timeIntervalSince(lastCheck) < 24 * 60 * 60 {
+            return
+        }
+        UserDefaults.standard.set(now, forKey: lastUpdateCheckKey)
+        Task { @MainActor in
+            await checkForUpdates(interactive: false)
+        }
+    }
+
+    @objc private func toggleAutoUpdateChecks() {
+        let next = !autoUpdateChecksEnabled()
+        UserDefaults.standard.set(next, forKey: autoUpdateCheckKey)
+        updateActionStates()
+        if next {
+            checkForUpdatesFromAutoCheck()
+        }
+    }
+
+    private func autoUpdateChecksEnabled() -> Bool {
+        if UserDefaults.standard.object(forKey: autoUpdateCheckKey) == nil {
+            return true
+        }
+        return UserDefaults.standard.bool(forKey: autoUpdateCheckKey)
+    }
+
+    private func checkForUpdates(interactive: Bool) async {
+        do {
+            let release = try await fetchLatestRelease()
+            let currentVersion = appVersion()
+            guard compareVersions(release.version, currentVersion) == .orderedDescending else {
+                if interactive {
+                    showAlert(title: "已经是最新版本", message: "当前版本 \(currentVersion)，最新版本 \(release.version)。")
+                }
+                return
+            }
+            guard let asset = release.assets.first(where: { $0.name == expectedDMGAssetName(version: release.version) }) else {
+                showAlert(title: "发现新版本 \(release.version)", message: "没有找到适合当前架构的 DMG。请打开 Release 页面手动下载。")
+                NSWorkspace.shared.open(release.htmlURL)
+                return
+            }
+            if confirm(title: "发现新版本 \(release.version)", message: "当前版本 \(currentVersion)。是否下载并打开适合当前 Mac 的 DMG？") {
+                let dmgURL = try await downloadUpdate(asset: asset, version: release.version)
+                NSWorkspace.shared.open(dmgURL)
+            }
+        } catch {
+            if interactive {
+                showAlert(title: "检查更新失败", message: String(describing: error))
+            }
+        }
+    }
+
+    private func fetchLatestRelease() async throws -> GitHubRelease {
+        var request = URLRequest(url: URL(string: "https://api.github.com/repos/Edward-lyz/codex-mixin/releases/latest")!)
+        request.setValue("Codex Mixin", forHTTPHeaderField: "User-Agent")
+        request.setValue("application/vnd.github+json", forHTTPHeaderField: "Accept")
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw GatewayError.command("GitHub release API returned a non-200 response")
+        }
+        return try JSONDecoder().decode(GitHubRelease.self, from: data)
+    }
+
+    private func downloadUpdate(asset: GitHubRelease.Asset, version: String) async throws -> URL {
+        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first ?? FileManager.default.homeDirectoryForCurrentUser
+        let destination = downloads.appendingPathComponent(asset.name)
+        if FileManager.default.fileExists(atPath: destination.path) {
+            try FileManager.default.removeItem(at: destination)
+        }
+        var request = URLRequest(url: asset.browserDownloadURL)
+        request.setValue("Codex Mixin", forHTTPHeaderField: "User-Agent")
+        let (temporaryURL, response) = try await URLSession.shared.download(for: request)
+        guard let httpResponse = response as? HTTPURLResponse, httpResponse.statusCode == 200 else {
+            throw GatewayError.command("download failed for \(asset.name)")
+        }
+        try FileManager.default.moveItem(at: temporaryURL, to: destination)
+        return destination
+    }
+
+    private func appVersion() -> String {
+        Bundle.main.object(forInfoDictionaryKey: "CFBundleShortVersionString") as? String ?? "0.0.0"
+    }
+
+    private func expectedDMGAssetName(version: String) -> String {
+        "codex-mixin-\(version)-\(macTargetTriple()).dmg"
+    }
+
+    private func macTargetTriple() -> String {
+        var systemInfo = utsname()
+        uname(&systemInfo)
+        let machine = withUnsafePointer(to: &systemInfo.machine) {
+            $0.withMemoryRebound(to: CChar.self, capacity: 1) {
+                String(cString: $0)
+            }
+        }
+        return machine == "arm64" ? "aarch64-apple-darwin" : "x86_64-apple-darwin"
     }
 
     @objc private func openLogs() {
@@ -407,6 +551,32 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func launchDomainAndLabel() -> String {
         "\(launchDomain())/\(serviceLabel)"
+    }
+}
+
+private struct GitHubRelease: Decodable {
+    let tagName: String
+    let htmlURL: URL
+    let assets: [Asset]
+
+    var version: String {
+        tagName.hasPrefix("v") ? String(tagName.dropFirst()) : tagName
+    }
+
+    enum CodingKeys: String, CodingKey {
+        case tagName = "tag_name"
+        case htmlURL = "html_url"
+        case assets
+    }
+
+    struct Asset: Decodable {
+        let name: String
+        let browserDownloadURL: URL
+
+        enum CodingKeys: String, CodingKey {
+            case name
+            case browserDownloadURL = "browser_download_url"
+        }
     }
 }
 
@@ -845,6 +1015,23 @@ private func defaultCredentialURL(for provider: String, baseURL: String) -> Stri
     default:
         return baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
     }
+}
+
+private func compareVersions(_ lhs: String, _ rhs: String) -> ComparisonResult {
+    let leftParts = lhs.split(separator: ".").map { Int($0) ?? 0 }
+    let rightParts = rhs.split(separator: ".").map { Int($0) ?? 0 }
+    let count = max(leftParts.count, rightParts.count)
+    for index in 0..<count {
+        let left = index < leftParts.count ? leftParts[index] : 0
+        let right = index < rightParts.count ? rightParts[index] : 0
+        if left < right {
+            return .orderedAscending
+        }
+        if left > right {
+            return .orderedDescending
+        }
+    }
+    return .orderedSame
 }
 
 private func formatQuotaAmount(_ value: Double) -> String {
