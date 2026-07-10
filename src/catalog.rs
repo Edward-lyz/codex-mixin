@@ -106,6 +106,7 @@ fn codex_catalog_from_models_with_options(
             item["slug"] = json!(slug);
             item["display_name"] = json!(display_name);
             item["description"] = json!("Custom upstream model exposed through codex-mixin");
+            item["multi_agent_version"] = json!("v2");
             if item.get("base_instructions").is_none() {
                 item["base_instructions"] = json!(FALLBACK_BASE_INSTRUCTIONS);
             }
@@ -133,6 +134,41 @@ fn codex_catalog_from_models_with_options(
         ensure_instruction_fields(model);
     }
     json!({ "models": generated })
+}
+
+pub fn refresh_managed_oauth_catalog(
+    official_catalog: &Value,
+    managed_catalog: &Value,
+) -> anyhow::Result<Value> {
+    let mut models = official_catalog
+        .get("models")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("official Codex catalog has no models array"))?
+        .clone();
+    let managed_models = managed_catalog
+        .get("models")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("managed Codex catalog has no models array"))?;
+
+    for model in managed_models.iter().filter(|model| {
+        model
+            .get("description")
+            .and_then(Value::as_str)
+            .is_some_and(|description| {
+                description.starts_with("Custom upstream model exposed through codex-")
+            })
+            || model
+                .get("slug")
+                .and_then(Value::as_str)
+                .is_some_and(|slug| slug.ends_with("-custom"))
+    }) {
+        let mut model = model.clone();
+        model["multi_agent_version"] = json!("v2");
+        ensure_instruction_fields(&mut model);
+        models.push(model);
+    }
+
+    Ok(json!({ "models": models }))
 }
 
 fn ensure_instruction_fields(model: &mut Value) {
@@ -303,5 +339,51 @@ mod tests {
             catalog["models"][1]["model_messages"]["instructions_template"],
             FALLBACK_BASE_INSTRUCTIONS
         );
+        assert_eq!(catalog["models"][1]["multi_agent_version"], "v2");
+    }
+
+    #[test]
+    fn refreshes_official_models_without_dropping_custom_models() {
+        let current_official = json!({
+            "models": [
+                {"slug":"gpt-5.6-sol","display_name":"GPT-5.6-Sol"},
+                {"slug":"gpt-5.5","display_name":"GPT-5.5"}
+            ]
+        });
+        let managed = json!({
+            "models": [
+                {"slug":"gpt-5.5","display_name":"GPT-5.5"},
+                {
+                    "slug":"DeepSeek-V4-Flash",
+                    "display_name":"DeepSeek-V4-Flash",
+                    "description":"Custom upstream model exposed through codex-mixin"
+                },
+                {
+                    "slug":"gpt-5.5-custom",
+                    "display_name":"gpt-5.5 (Custom)",
+                    "description":"Custom upstream model exposed through codex-mixin"
+                }
+            ]
+        });
+
+        let refreshed = refresh_managed_oauth_catalog(&current_official, &managed).unwrap();
+        let slugs = refreshed["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|model| model["slug"].as_str().unwrap())
+            .collect::<Vec<_>>();
+
+        assert_eq!(
+            slugs,
+            vec![
+                "gpt-5.6-sol",
+                "gpt-5.5",
+                "DeepSeek-V4-Flash",
+                "gpt-5.5-custom"
+            ]
+        );
+        assert_eq!(refreshed["models"][2]["multi_agent_version"], "v2");
+        assert_eq!(refreshed["models"][3]["multi_agent_version"], "v2");
     }
 }

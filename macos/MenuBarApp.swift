@@ -26,6 +26,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installApplicationMenu()
         installStatusItem()
         refreshStatus()
+        Task { @MainActor in
+            do {
+                _ = try await runGateway(["refresh-codex-catalog"])
+            } catch {
+                showAlert(title: "刷新 Codex 模型失败", message: String(describing: error))
+            }
+        }
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshStatus()

@@ -238,17 +238,8 @@ async fn route_responses_ws(
         )
         .await
     } else {
-        if is_noop_responses_ws_request(&body) {
-            tracing::debug!(
-                model,
-                route = "custom_ws_noop",
-                "closing noop responses websocket"
-            );
-            client_sender.send(AxumWsMessage::Close(None)).await?;
-            return Ok(());
-        }
         tracing::debug!(model, route = "custom_ws", "routing responses websocket");
-        proxy_custom_responses_ws(&state, client_sender, body).await
+        route_custom_responses_ws(&state, &mut client_sender, &mut client_receiver, body).await
     }
 }
 
@@ -330,7 +321,7 @@ async fn tunnel_official_responses_ws(
 
 async fn proxy_custom_responses_ws(
     state: &AppState,
-    mut client_sender: SplitSink<WebSocket, AxumWsMessage>,
+    client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
     mut body: Value,
 ) -> anyhow::Result<()> {
     normalize_custom_model_alias(&mut body);
@@ -383,8 +374,42 @@ async fn proxy_custom_responses_ws(
                 .await?;
         }
     }
-    client_sender.send(AxumWsMessage::Close(None)).await?;
     Ok(())
+}
+
+async fn route_custom_responses_ws(
+    state: &AppState,
+    client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
+    client_receiver: &mut SplitStream<WebSocket>,
+    mut body: Value,
+) -> anyhow::Result<()> {
+    loop {
+        if is_noop_responses_ws_request(&body) {
+            tracing::debug!(route = "custom_ws_noop", "ignoring noop responses request");
+        } else {
+            if should_forward_to_official(&body) {
+                anyhow::bail!("cannot switch a custom Responses websocket to an official model");
+            }
+            proxy_custom_responses_ws(state, client_sender, body).await?;
+        }
+
+        body = loop {
+            match client_receiver.next().await {
+                Some(Ok(message @ (AxumWsMessage::Text(_) | AxumWsMessage::Binary(_)))) => {
+                    break responses_ws_body(&message)?;
+                }
+                Some(Ok(AxumWsMessage::Ping(bytes))) => {
+                    client_sender.send(AxumWsMessage::Pong(bytes)).await?;
+                }
+                Some(Ok(AxumWsMessage::Pong(_))) => {}
+                Some(Ok(AxumWsMessage::Close(_))) | None => return Ok(()),
+                Some(Err(err)) => return Err(err.into()),
+            }
+        };
+        if body.get("stream").is_none() {
+            body["stream"] = Value::Bool(true);
+        }
+    }
 }
 
 fn responses_ws_body(message: &AxumWsMessage) -> anyhow::Result<Value> {

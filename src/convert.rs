@@ -211,6 +211,12 @@ fn append_input_item(
                 }],
             });
         }
+        "agent_message" => messages.push(Message {
+            role: "user".to_owned(),
+            content: vec![ContentBlock::Text {
+                text: agent_message_text(item)?,
+            }],
+        }),
         other => {
             return Err(GatewayError::BadRequest(format!(
                 "unsupported input item type: {other}"
@@ -218,6 +224,69 @@ fn append_input_item(
         }
     }
     Ok(())
+}
+
+pub(crate) fn agent_message_text(item: &Value) -> Result<String, GatewayError> {
+    let author = item
+        .get("author")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GatewayError::BadRequest("agent_message missing author".to_owned()))?;
+    let recipient = item
+        .get("recipient")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GatewayError::BadRequest("agent_message missing recipient".to_owned()))?;
+    let content = item
+        .get("content")
+        .and_then(Value::as_array)
+        .ok_or_else(|| GatewayError::BadRequest("agent_message missing content".to_owned()))?;
+    let mut text_parts = Vec::with_capacity(content.len());
+    for part in content {
+        match part.get("type").and_then(Value::as_str) {
+            Some("input_text") => {
+                text_parts.push(
+                    part.get("text")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| {
+                            GatewayError::BadRequest(
+                                "agent_message input_text missing text".to_owned(),
+                            )
+                        })?
+                        .to_owned(),
+                );
+            }
+            // Codex v2 stores the local collaboration tool's message argument in this field.
+            // Third-party upstreams do not understand the Responses envelope, so materialize it.
+            Some("encrypted_content") => text_parts.push(
+                part.get("encrypted_content")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        GatewayError::BadRequest(
+                            "agent_message encrypted_content missing payload".to_owned(),
+                        )
+                    })?
+                    .to_owned(),
+            ),
+            Some(other) => {
+                return Err(GatewayError::BadRequest(format!(
+                    "unsupported agent_message content type: {other}"
+                )));
+            }
+            None => {
+                return Err(GatewayError::BadRequest(
+                    "agent_message content missing type".to_owned(),
+                ));
+            }
+        }
+    }
+    if text_parts.is_empty() {
+        return Err(GatewayError::BadRequest(
+            "agent_message has no plaintext content".to_owned(),
+        ));
+    }
+    Ok(format!(
+        "[Agent message from {author} to {recipient}]\n{}",
+        text_parts.join("\n")
+    ))
 }
 
 fn convert_content(content: Option<&Value>, role: &str) -> Result<Vec<ContentBlock>, GatewayError> {
@@ -646,6 +715,52 @@ mod tests {
         assert_eq!(converted.request.system.as_ref().unwrap().len(), 2);
         assert_eq!(converted.request.messages.len(), 3);
         assert_eq!(converted.request.tools[0]["name"], "exec_command");
+    }
+
+    #[test]
+    fn converts_plaintext_agent_message_for_subagents() {
+        let body = json!({
+            "model": "DeepSeek-V4-Flash",
+            "stream": true,
+            "input": [{
+                "type": "agent_message",
+                "author": "/root",
+                "recipient": "/root/run_uname",
+                "content": [{"type":"input_text","text":"Run uname -a"}]
+            }]
+        });
+        let converted = responses_to_anthropic(&body, &config()).unwrap();
+        assert_eq!(converted.request.messages[0].role, "user");
+        assert_eq!(
+            converted.request.messages[0].content[0],
+            ContentBlock::Text {
+                text: "[Agent message from /root to /root/run_uname]\nRun uname -a".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn materializes_v2_agent_message_payload_for_custom_upstream() {
+        let body = json!({
+            "model": "DeepSeek-V4-Flash",
+            "stream": true,
+            "input": [{
+                "type": "agent_message",
+                "author": "/root",
+                "recipient": "/root/worker",
+                "content": [
+                    {"type":"input_text","text":"Message Type: NEW_TASK\nPayload:\n"},
+                    {"type":"encrypted_content","encrypted_content":"Inspect the workspace"}
+                ]
+            }]
+        });
+        let converted = responses_to_anthropic(&body, &config()).unwrap();
+        assert_eq!(
+            converted.request.messages[0].content[0],
+            ContentBlock::Text {
+                text: "[Agent message from /root to /root/worker]\nMessage Type: NEW_TASK\nPayload:\n\nInspect the workspace".to_owned()
+            }
+        );
     }
 
     #[test]

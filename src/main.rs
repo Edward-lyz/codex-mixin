@@ -2,7 +2,7 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
 use std::net::SocketAddr;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
@@ -16,7 +16,7 @@ use std::os::unix::process::CommandExt;
 
 use codex_mixin::catalog::{
     codex_catalog_from_models_with_metadata, codex_oauth_proxy_catalog_from_models_with_metadata,
-    load_template_catalog,
+    load_template_catalog, refresh_managed_oauth_catalog,
 };
 use codex_mixin::config::{
     GatewayConfig, ProviderPreset, StoredGatewayConfig, delete_stored_config, load_stored_config,
@@ -145,6 +145,8 @@ enum Command {
         #[arg(long)]
         catalog: Option<PathBuf>,
     },
+    #[command(name = "refresh-codex-catalog")]
+    RefreshCodexCatalog,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -246,6 +248,7 @@ async fn main() -> anyhow::Result<()> {
             .await
         }
         Command::UninstallCodex { config, catalog } => uninstall_codex(config, catalog),
+        Command::RefreshCodexCatalog => refresh_default_managed_codex_catalog(),
     }
 }
 
@@ -822,7 +825,7 @@ async fn install_codex(
             &metadata,
         )
     };
-    fs::write(&catalog_path, serde_json::to_vec_pretty(&catalog)?)?;
+    write_atomic_if_changed(&catalog_path, &serde_json::to_vec_pretty(&catalog)?)?;
 
     let mut doc = if raw_config.trim().is_empty() {
         DocumentMut::new()
@@ -950,6 +953,60 @@ fn uninstall_codex(
     }
     println!("reload required: restart Codex app; for Codex CLI, start a new session");
     Ok(())
+}
+
+fn refresh_default_managed_codex_catalog() -> anyhow::Result<()> {
+    let config_path = default_codex_config_path();
+    let official_catalog_path = codex_home_path().join("models_cache.json");
+    if refresh_managed_codex_catalog(&config_path, &official_catalog_path)? {
+        println!("Codex model catalog refreshed");
+    } else {
+        println!("Codex model catalog already current or not managed by codex-mixin");
+    }
+    Ok(())
+}
+
+fn refresh_managed_codex_catalog(
+    config_path: &Path,
+    official_catalog_path: &Path,
+) -> anyhow::Result<bool> {
+    if !config_path.exists() {
+        return Ok(false);
+    }
+    let raw_config = fs::read_to_string(config_path)?;
+    if !is_managed_config(&raw_config) {
+        return Ok(false);
+    }
+    let doc = raw_config.parse::<DocumentMut>()?;
+    let catalog_path = doc
+        .get("model_catalog_json")
+        .and_then(Item::as_str)
+        .map(PathBuf::from)
+        .ok_or_else(|| anyhow::anyhow!("managed Codex config has no model_catalog_json"))?;
+    let official_catalog = serde_json::from_slice(&fs::read(official_catalog_path)?)?;
+    let managed_catalog = serde_json::from_slice(&fs::read(&catalog_path)?)?;
+    let refreshed = refresh_managed_oauth_catalog(&official_catalog, &managed_catalog)?;
+    write_atomic_if_changed(&catalog_path, &serde_json::to_vec_pretty(&refreshed)?)
+}
+
+fn write_atomic_if_changed(path: &Path, contents: &[u8]) -> anyhow::Result<bool> {
+    if path.exists() && fs::read(path)? == contents {
+        return Ok(false);
+    }
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .unwrap_or("model-catalog.json");
+    let temporary_path = path.with_file_name(format!("{file_name}.tmp.{}", std::process::id()));
+    fs::write(&temporary_path, contents)?;
+    if let Err(err) = fs::rename(&temporary_path, path) {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(err.into());
+    }
+    Ok(true)
 }
 
 fn prepare_managed_config_install(config_path: &std::path::Path) -> anyhow::Result<String> {
@@ -1219,6 +1276,7 @@ async fn start(
     if daemon {
         return start_daemon(config.bind, log_file);
     }
+    refresh_default_managed_codex_catalog()?;
     serve(config).await
 }
 
@@ -1561,6 +1619,41 @@ wire_api = "responses"
             doc["model_providers"]["openai"]["base_url"].as_str(),
             Some("http://127.0.0.1:8787/v1")
         );
+    }
+
+    #[test]
+    fn refreshes_managed_catalog_from_latest_official_catalog() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        let official_path = dir.path().join("models_cache.json");
+        let catalog_path = dir.path().join("model-catalogs").join("mixin-models.json");
+        fs::create_dir_all(catalog_path.parent().unwrap()).unwrap();
+        fs::write(
+            &config_path,
+            format!(
+                "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n",
+                catalog_path.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &official_path,
+            r#"{"models":[{"slug":"gpt-5.6-sol","display_name":"GPT-5.6-Sol"}]}"#,
+        )
+        .unwrap();
+        fs::write(
+            &catalog_path,
+            r#"{"models":[{"slug":"gpt-5.5","display_name":"GPT-5.5"},{"slug":"DeepSeek-V4-Flash","description":"Custom upstream model exposed through codex-mixin"}]}"#,
+        )
+        .unwrap();
+
+        assert!(refresh_managed_codex_catalog(&config_path, &official_path).unwrap());
+        let refreshed: serde_json::Value =
+            serde_json::from_slice(&fs::read(&catalog_path).unwrap()).unwrap();
+        assert_eq!(refreshed["models"][0]["slug"], "gpt-5.6-sol");
+        assert_eq!(refreshed["models"][1]["slug"], "DeepSeek-V4-Flash");
+        assert_eq!(refreshed["models"][1]["multi_agent_version"], "v2");
+        assert!(!refresh_managed_codex_catalog(&config_path, &official_path).unwrap());
     }
 
     #[test]

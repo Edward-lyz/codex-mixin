@@ -1,6 +1,6 @@
 use serde_json::{Value, json};
 
-use crate::convert::{ToolNameMap, sanitize_tool_name};
+use crate::convert::{ToolNameMap, agent_message_text, sanitize_tool_name};
 use crate::error::GatewayError;
 
 #[derive(Clone, Debug)]
@@ -131,6 +131,9 @@ fn append_input_item(item: &Value, messages: &mut Vec<Value>) -> Result<(), Gate
             let output = item.get("output").and_then(Value::as_str).unwrap_or("");
             messages.push(json!({"role":"tool","tool_call_id":call_id,"content":output}));
         }
+        "agent_message" => {
+            messages.push(json!({"role":"user","content":agent_message_text(item)?}));
+        }
         other => {
             return Err(GatewayError::BadRequest(format!(
                 "unsupported input item type: {other}"
@@ -260,4 +263,30 @@ fn convert_function_tool(
         }),
         openai_name,
     ))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn converts_plaintext_agent_message_for_subagents() {
+        let converted = responses_to_openai_chat(&json!({
+            "model": "deepseek-chat",
+            "stream": true,
+            "input": [{
+                "type": "agent_message",
+                "author": "/root",
+                "recipient": "/root/worker",
+                "content": [{"type":"input_text","text":"Inspect the repository"}]
+            }]
+        }))
+        .unwrap();
+
+        assert_eq!(converted.request["messages"][0]["role"], "user");
+        assert_eq!(
+            converted.request["messages"][0]["content"],
+            "[Agent message from /root to /root/worker]\nInspect the repository"
+        );
+    }
 }

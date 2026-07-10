@@ -494,6 +494,63 @@ async fn maps_custom_websocket_to_responses_frames() {
         .await
         .unwrap();
 
+    let mut frames = websocket_response_frames(&mut socket).await;
+    socket
+        .send(WsMessage::Text(body.to_string().into()))
+        .await
+        .unwrap();
+    frames.extend(websocket_response_frames(&mut socket).await);
+    let joined = frames.join("\n");
+    assert!(joined.contains("\"type\":\"response.output_text.delta\""));
+    assert!(joined.contains("\"delta\":\"hello\""));
+    assert!(joined.contains("\"type\":\"response.completed\""));
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["model"], "DeepSeek-V4-Flash");
+}
+
+#[tokio::test]
+async fn keeps_custom_websocket_open_after_noop_request() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    socket
+        .send(WsMessage::Text(
+            json!({
+                "type": "response.create",
+                "model": "DeepSeek-V4-Flash",
+                "generate": false,
+                "input": []
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let mut body = responses_request();
+    body["type"] = json!("response.create");
+    socket
+        .send(WsMessage::Text(body.to_string().into()))
+        .await
+        .unwrap();
+
+    let joined = websocket_response_frames(&mut socket).await.join("\n");
+    assert!(joined.contains("\"type\":\"response.completed\""));
+    assert_eq!(requests.lock().unwrap().len(), 1);
+}
+
+async fn websocket_response_frames<S>(socket: &mut S) -> Vec<String>
+where
+    S: futures_util::Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
+        + Unpin,
+{
     let mut frames = Vec::new();
     while let Some(message) = socket.next().await {
         match message.unwrap() {
@@ -509,11 +566,7 @@ async fn maps_custom_websocket_to_responses_frames() {
             _ => {}
         }
     }
-    let joined = frames.join("\n");
-    assert!(joined.contains("\"type\":\"response.output_text.delta\""));
-    assert!(joined.contains("\"delta\":\"hello\""));
-    assert!(joined.contains("\"type\":\"response.completed\""));
-    assert_eq!(requests.lock().unwrap()[0]["model"], "DeepSeek-V4-Flash");
+    frames
 }
 
 #[tokio::test]
