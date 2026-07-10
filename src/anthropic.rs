@@ -17,6 +17,8 @@ pub struct MessageRequest {
     pub thinking: Option<Value>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub output_config: Option<Value>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub metadata: Option<Value>,
 }
 
 #[derive(Clone, Debug, Serialize, Deserialize, PartialEq)]
@@ -49,7 +51,7 @@ pub struct ModelsResponse {
     pub data: Vec<ModelInfo>,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ModelInfo {
     pub id: String,
     #[serde(default)]
@@ -58,4 +60,40 @@ pub struct ModelInfo {
     pub created: Option<u64>,
     #[serde(default)]
     pub owned_by: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub description: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ratio: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub price_type: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_image: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_thinking: Option<bool>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BaiduAvailableModelsResponse {
+    pub data: Vec<BaiduAvailableModel>,
+    pub success: bool,
+    #[serde(default)]
+    pub message: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BaiduAvailableModel {
+    pub model: String,
+    pub capability: BaiduModelCapability,
+    pub price_type: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct BaiduModelCapability {
+    pub supports_image: bool,
+    pub supports_thinking: bool,
+    pub context_window: u64,
+    pub ratio: String,
+    pub model_description: String,
 }

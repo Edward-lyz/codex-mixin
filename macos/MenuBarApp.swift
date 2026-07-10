@@ -15,24 +15,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var timer: Timer?
     private var isRunning = false
     private var serviceBusy = false {
-        didSet { updateActionStates() }
+        didSet {
+            updateActionStates()
+            updateServiceStatusView()
+        }
     }
-    private var serviceStatus = "服务：检查中..." {
-        didSet { serviceStatusItem?.title = serviceStatus }
+    private var serviceStatus = "本地网关检查中..." {
+        didSet { updateServiceStatusView() }
+    }
+    private var serviceEndpoint: String? {
+        didSet { updateServiceStatusView() }
     }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
         installApplicationMenu()
         installStatusItem()
-        refreshStatus()
-        Task { @MainActor in
-            do {
-                _ = try await runGateway(["refresh-codex-catalog"])
-            } catch {
-                showAlert(title: "刷新 Codex 模型失败", message: String(describing: error))
-            }
-        }
+        startGatewayAtLaunch()
         timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshStatus()
@@ -88,13 +87,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         let serviceItem = NSMenuItem(title: serviceStatus, action: nil, keyEquivalent: "")
         serviceItem.isEnabled = false
-        serviceItem.image = menuItemImage("bolt.horizontal.circle")
         let quotaItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         quotaItem.isEnabled = false
         quotaItem.image = menuItemImage("chart.bar")
         serviceStatusItem = serviceItem
         quotaStatusItem = quotaItem
         menu.addItem(serviceItem)
+        updateServiceStatusView()
         menu.addItem(quotaItem)
         updateQuotaStatus(title: "额度：检查中...", detail: nil, progress: nil)
         menu.addItem(.separator())
@@ -135,6 +134,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private func updateStatusTitle() {
         statusItem?.button?.image = codexStatusImage(isRunning: isRunning)
         statusItem?.button?.toolTip = isRunning ? "Codex Mixin：运行中" : "Codex Mixin：已停止"
+        updateServiceStatusView()
+    }
+
+    private func updateServiceStatusView() {
+        serviceStatusItem?.view = serviceMenuView(
+            title: serviceStatus,
+            endpoint: serviceEndpoint,
+            isRunning: isRunning,
+            isBusy: serviceBusy
+        )
     }
 
     private func updateActionStates() {
@@ -146,50 +155,60 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func startService() {
-        serviceStatus = "服务：启动中..."
+        serviceStatus = "本地网关启动中..."
+        serviceEndpoint = nil
         serviceBusy = true
         Task { @MainActor in
             defer { serviceBusy = false }
             do {
-                try installLaunchAgent()
-                try await bootoutIfLoaded()
-                _ = try await runProcess("/bin/launchctl", ["bootstrap", launchDomain(), launchAgentPath().path])
-                refreshStatus()
+                let status = try await ensureGatewayReady()
+                applyGatewayStatus(status)
+                await refreshStatusNow()
             } catch {
-                serviceStatus = "服务：启动失败"
+                isRunning = false
+                serviceStatus = "本地网关启动失败"
+                serviceEndpoint = nil
+                updateStatusTitle()
                 showAlert(title: "启动服务失败", message: String(describing: error))
             }
         }
     }
 
     @objc private func stopService() {
-        serviceStatus = "服务：停止中..."
+        serviceStatus = "本地网关停止中..."
+        serviceEndpoint = nil
         serviceBusy = true
         Task { @MainActor in
             defer { serviceBusy = false }
             do {
                 try await bootoutIfLoaded()
-                _ = try? await runGateway(["stop"])
-                refreshStatus()
+                if (try? await runGateway(["status"]))?.contains("gateway: running") == true {
+                    _ = try await runGateway(["stop"])
+                }
+                await refreshStatusNow()
             } catch {
-                serviceStatus = "服务：停止失败"
+                serviceStatus = "本地网关停止失败"
                 showAlert(title: "暂停服务失败", message: String(describing: error))
             }
         }
     }
 
     @objc private func restartService() {
-        serviceStatus = "服务：重启中..."
+        serviceStatus = "本地网关重启中..."
+        serviceEndpoint = nil
         serviceBusy = true
         Task { @MainActor in
             defer { serviceBusy = false }
             do {
-                try await bootoutIfLoaded()
-                try installLaunchAgent()
-                _ = try await runProcess("/bin/launchctl", ["bootstrap", launchDomain(), launchAgentPath().path])
-                refreshStatus()
+                try await restartGatewayProcess()
+                let status = try await waitForGatewayStatus()
+                applyGatewayStatus(status)
+                await refreshStatusNow()
             } catch {
-                serviceStatus = "服务：重启失败"
+                isRunning = false
+                serviceStatus = "本地网关重启失败"
+                serviceEndpoint = nil
+                updateStatusTitle()
                 showAlert(title: "重启服务失败", message: String(describing: error))
             }
         }
@@ -202,14 +221,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 if FileManager.default.fileExists(atPath: launchAgentPath().path) {
                     try await bootoutIfLoaded()
-                    _ = try? await runGateway(["stop"])
+                    if (try? await runGateway(["status"]))?.contains("gateway: running") == true {
+                        _ = try await runGateway(["stop"])
+                    }
                     try FileManager.default.removeItem(at: launchAgentPath())
                 } else {
                     try installLaunchAgent()
                     try await bootoutIfLoaded()
                     _ = try await runProcess("/bin/launchctl", ["bootstrap", launchDomain(), launchAgentPath().path])
                 }
-                refreshStatus()
+                await refreshStatusNow()
             } catch {
                 showAlert(title: "更新登录自启失败", message: String(describing: error))
             }
@@ -218,43 +239,132 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     @objc private func refreshStatus() {
         Task { @MainActor in
-            let launchdLoaded = (try? await runProcess("/bin/launchctl", ["print", launchDomainAndLabel()])) != nil
-            let cliStatus = try? await runGateway(["status"])
-            let cliRunning = cliStatus?.contains("gateway: running") == true
-            isRunning = launchdLoaded || cliRunning
+            await refreshStatusNow()
+        }
+    }
+
+    private func startGatewayAtLaunch() {
+        serviceStatus = "本地网关启动中..."
+        serviceEndpoint = nil
+        serviceBusy = true
+        Task { @MainActor in
+            defer { serviceBusy = false }
+            do {
+                let status = try await ensureGatewayReady()
+                applyGatewayStatus(status)
+                do {
+                    _ = try await runGateway(["refresh-codex-catalog"])
+                } catch {
+                    showAlert(title: "刷新 Codex 模型失败", message: String(describing: error))
+                }
+                await refreshStatusNow()
+            } catch {
+                isRunning = false
+                serviceStatus = "本地网关启动失败"
+                serviceEndpoint = nil
+                updateStatusTitle()
+                if !CommandLine.arguments.contains("--show-settings") {
+                    showAlert(title: "自动启动网关失败", message: String(describing: error))
+                }
+            }
+        }
+    }
+
+    private func ensureGatewayReady() async throws -> String {
+        if let status = try? await runGateway(["status"]), status.contains("gateway: running") {
+            return status
+        }
+        _ = try await runGateway(["config", "--json", "--scope", "effective"])
+        if FileManager.default.fileExists(atPath: launchAgentPath().path) {
+            try installLaunchAgent()
+            if (try? await runProcess("/bin/launchctl", ["print", launchDomainAndLabel()])) != nil {
+                _ = try await runProcess("/bin/launchctl", ["kickstart", "-k", launchDomainAndLabel()])
+            } else {
+                _ = try await runProcess("/bin/launchctl", ["bootstrap", launchDomain(), launchAgentPath().path])
+            }
+        } else {
+            _ = try await runGateway(["start", "--daemon"])
+        }
+        return try await waitForGatewayStatus()
+    }
+
+    private func restartGatewayProcess() async throws {
+        if FileManager.default.fileExists(atPath: launchAgentPath().path) {
+            try await bootoutIfLoaded()
+            try installLaunchAgent()
+            _ = try await runProcess("/bin/launchctl", ["bootstrap", launchDomain(), launchAgentPath().path])
+            return
+        }
+        if (try? await runGateway(["status"]))?.contains("gateway: running") == true {
+            _ = try await runGateway(["stop"])
+        }
+        _ = try await runGateway(["start", "--daemon"])
+    }
+
+    private func waitForGatewayStatus() async throws -> String {
+        var lastError = "网关尚未报告健康状态"
+        for _ in 0..<20 {
+            do {
+                let status = try await runGateway(["status"])
+                if status.contains("gateway: running") {
+                    return status
+                }
+                lastError = status
+            } catch {
+                lastError = String(describing: error)
+            }
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        throw GatewayError.command("网关启动后 5 秒内未就绪：\(lastError)")
+    }
+
+    private func applyGatewayStatus(_ status: String?) {
+        isRunning = status?.contains("gateway: running") == true
+        serviceEndpoint = status?
+            .split(separator: "\n")
+            .first(where: { $0.hasPrefix("endpoint: ") })
+            .map { String($0.dropFirst("endpoint: ".count)) }
+        serviceStatus = isRunning ? "本地网关运行中" : "本地网关已停止"
+        updateStatusTitle()
+        updateActionStates()
+    }
+
+    private func refreshStatusNow() async {
+        do {
+            applyGatewayStatus(try await runGateway(["status"]))
+        } catch {
+            isRunning = false
+            serviceEndpoint = nil
+            serviceStatus = String(describing: error).contains("gateway not running")
+                ? "本地网关已停止"
+                : "网关状态检查失败"
             updateStatusTitle()
             updateActionStates()
-            serviceStatus = isRunning ? "服务：运行中" : "服务：已停止"
-
-            do {
-                let quota = try await runGateway(["quota", "--json"])
-                let usage = try parseQuotaUsage(quota)
-                let title: String
-                let detail: String?
-                let progress: Double?
-                if let limit = usage.limit {
-                    title = "额度：已用 \(formatQuotaAmount(usage.used)) / \(formatQuotaAmount(limit))"
-                    detail = usage.remaining.map { "剩余 \(formatQuotaAmount($0))" }
-                    progress = limit > 0 ? usage.used / limit : nil
-                } else {
-                    title = "额度：已用 \(formatQuotaAmount(usage.used))"
-                    detail = nil
-                    progress = nil
-                }
-                updateQuotaStatus(
-                    title: title,
-                    detail: detail,
-                    progress: progress
-                )
-            } catch {
-                let message = String(describing: error)
-                if message.contains("quota URL") {
-                    updateQuotaStatus(title: "额度：未配置接口", detail: nil, progress: nil)
-                } else if message.contains("auth key") {
-                    updateQuotaStatus(title: "额度：未配置密钥", detail: nil, progress: nil)
-                } else {
-                    updateQuotaStatus(title: "额度：不可用", detail: nil, progress: nil)
-                }
+        }
+        do {
+            let quota = try await runGateway(["quota", "--json"])
+            let usage = try parseQuotaUsage(quota)
+            let title: String
+            let detail: String?
+            let progress: Double?
+            if let limit = usage.limit {
+                title = "额度：已用 \(formatQuotaAmount(usage.used)) / \(formatQuotaAmount(limit))"
+                detail = usage.remaining.map { "剩余 \(formatQuotaAmount($0))" }
+                progress = limit > 0 ? usage.used / limit : nil
+            } else {
+                title = "额度：已用 \(formatQuotaAmount(usage.used))"
+                detail = nil
+                progress = nil
+            }
+            updateQuotaStatus(title: title, detail: detail, progress: progress)
+        } catch {
+            let message = String(describing: error)
+            if message.contains("quota URL") {
+                updateQuotaStatus(title: "额度：未配置接口", detail: nil, progress: nil)
+            } else if message.contains("auth key") {
+                updateQuotaStatus(title: "额度：未配置密钥", detail: nil, progress: nil)
+            } else {
+                updateQuotaStatus(title: "额度：不可用", detail: nil, progress: nil)
             }
         }
     }
@@ -289,11 +399,20 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appendOptionalArg(&args, "--quota-url", values.quotaUrl)
         appendOptionalArg(&args, "--quota-username", values.quotaUsername)
         Task { @MainActor in
+            serviceBusy = true
+            serviceStatus = "正在应用新配置..."
+            serviceEndpoint = nil
+            defer { serviceBusy = false }
             do {
                 let output = try await runGateway(args)
+                try await restartGatewayProcess()
+                let status = try await waitForGatewayStatus()
+                applyGatewayStatus(status)
+                _ = try await runGateway(["refresh-codex-catalog"])
                 showAlert(title: "设置已保存", message: output.isEmpty ? "完成" : output)
-                refreshStatus()
+                await refreshStatusNow()
             } catch {
+                serviceStatus = "应用配置失败"
                 showAlert(title: "保存设置失败", message: String(describing: error))
             }
         }
@@ -303,12 +422,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard runInstallCodexPanel() else { return }
         let args = ["install-codex", "--codex-oauth-proxy"]
         Task { @MainActor in
+            serviceBusy = true
+            serviceStatus = "正在准备 Codex 配置..."
+            defer { serviceBusy = false }
             do {
+                let status = try await ensureGatewayReady()
+                applyGatewayStatus(status)
                 let output = try await runGateway(args)
                 let message = output.isEmpty ? "已写入托管模型配置。请重启 Codex App；CLI 需要开新会话。" : "\(output)\n\n请重启 Codex App；CLI 需要开新会话。"
                 showAlert(title: "Codex 配置已更新", message: message)
-                refreshStatus()
+                await refreshStatusNow()
             } catch {
+                serviceStatus = "安装 Codex 配置失败"
                 showAlert(title: "安装到 Codex 失败", message: String(describing: error))
             }
         }
@@ -329,8 +454,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func copyLocalEndpoint() {
-        NSPasteboard.general.clearContents()
-        NSPasteboard.general.setString("http://127.0.0.1:8787/v1", forType: .string)
+        Task { @MainActor in
+            do {
+                let output = try await runGateway(["config", "--json", "--scope", "effective"])
+                let data = Data(output.utf8)
+                guard
+                    let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                    let bind = object["bind"] as? String
+                else {
+                    throw GatewayError.command("无法从有效配置中读取本地网关端口")
+                }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString("http://\(bind)/v1", forType: .string)
+            } catch {
+                showAlert(title: "复制本地接口失败", message: String(describing: error))
+            }
+        }
     }
 
     @objc private func checkForUpdatesFromMenu() {
@@ -790,6 +929,79 @@ private func runLoginSettingsPanel(stored: [String: Any]) -> LoginFormValues? {
     return response == .OK ? values : nil
 }
 
+private func serviceMenuView(
+    title: String,
+    endpoint: String?,
+    isRunning: Bool,
+    isBusy: Bool
+) -> NSView {
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 56))
+    let statusColor: NSColor
+    if title.contains("失败") {
+        statusColor = .systemRed
+    } else if isBusy {
+        statusColor = .systemOrange
+    } else if isRunning {
+        statusColor = .systemGreen
+    } else {
+        statusColor = .systemGray
+    }
+
+    let statusDot = NSView()
+    statusDot.wantsLayer = true
+    statusDot.layer?.cornerRadius = 9
+    statusDot.layer?.backgroundColor = statusColor.cgColor
+    statusDot.layer?.borderWidth = 3
+    statusDot.layer?.borderColor = statusColor.withAlphaComponent(0.28).cgColor
+    statusDot.layer?.shadowColor = statusColor.cgColor
+    statusDot.layer?.shadowOpacity = isRunning ? 0.45 : 0
+    statusDot.layer?.shadowRadius = 3
+    statusDot.translatesAutoresizingMaskIntoConstraints = false
+
+    let titleLabel = NSTextField(labelWithString: title)
+    titleLabel.font = .boldSystemFont(ofSize: 13)
+    titleLabel.textColor = .labelColor
+    titleLabel.lineBreakMode = .byTruncatingTail
+
+    let detail: String
+    if let endpoint {
+        detail = endpoint
+    } else if title.contains("失败") {
+        detail = "请查看运行日志"
+    } else if isBusy {
+        detail = "正在分配本地端口"
+    } else if isRunning {
+        detail = "正在读取本地接口地址"
+    } else {
+        detail = "网关当前未运行"
+    }
+    let detailLabel = NSTextField(labelWithString: detail)
+    detailLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+    detailLabel.textColor = .secondaryLabelColor
+    detailLabel.lineBreakMode = .byTruncatingMiddle
+
+    let textStack = NSStackView(views: [titleLabel, detailLabel])
+    textStack.orientation = .vertical
+    textStack.alignment = .leading
+    textStack.spacing = 3
+    textStack.translatesAutoresizingMaskIntoConstraints = false
+
+    view.addSubview(statusDot)
+    view.addSubview(textStack)
+    NSLayoutConstraint.activate([
+        statusDot.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+        statusDot.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        statusDot.widthAnchor.constraint(equalToConstant: 18),
+        statusDot.heightAnchor.constraint(equalToConstant: 18),
+        textStack.leadingAnchor.constraint(equalTo: statusDot.trailingAnchor, constant: 11),
+        textStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+        textStack.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        titleLabel.widthAnchor.constraint(equalTo: textStack.widthAnchor),
+        detailLabel.widthAnchor.constraint(equalTo: textStack.widthAnchor),
+    ])
+    return view
+}
+
 private func quotaMenuView(title: String, detail: String?, progress: Double?) -> NSView {
     let view = NSView(frame: NSRect(x: 0, y: 0, width: 300, height: detail == nil ? 34 : 48))
     let icon = NSImageView(image: menuItemImage("chart.bar") ?? NSImage())
@@ -1105,7 +1317,11 @@ private func codexStatusImage(isRunning: Bool) -> NSImage {
     cursor.line(to: NSPoint(x: 15.8, y: 8.2))
     cursor.stroke()
 
-    let statusDot = NSBezierPath(ovalIn: NSRect(x: 15.7, y: 3.2, width: 4.2, height: 4.2))
+    let statusRing = NSBezierPath(ovalIn: NSRect(x: 14.3, y: 2.0, width: 7.2, height: 7.2))
+    NSColor.white.withAlphaComponent(0.88).setFill()
+    statusRing.fill()
+
+    let statusDot = NSBezierPath(ovalIn: NSRect(x: 15.1, y: 2.8, width: 5.6, height: 5.6))
     (isRunning ? NSColor.systemGreen : NSColor.systemOrange).setFill()
     statusDot.fill()
 

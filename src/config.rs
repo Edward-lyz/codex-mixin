@@ -45,6 +45,14 @@ impl ProviderPreset {
         }
     }
 
+    pub fn normalize_upstream_base_url(self, base_url: String) -> String {
+        let base_url = trim_trailing_slash(base_url);
+        if self == Self::BaiduOneApi {
+            return base_url.strip_suffix("/v1").unwrap_or(&base_url).to_owned();
+        }
+        base_url
+    }
+
     pub fn default_quota_url(self, upstream_base_url: &str) -> Option<String> {
         match self {
             Self::BaiduOneApi => Some(format!(
@@ -186,7 +194,14 @@ impl GatewayConfig {
             .transpose()?
             .unwrap_or(ProviderPreset::Custom);
         let bind = env::var("CODEX_GATEWAY_BIND")
-            .unwrap_or_else(|_| "127.0.0.1:8787".to_owned())
+            .ok()
+            .filter(|value| !value.is_empty())
+            .or_else(|| {
+                stored_config
+                    .as_ref()
+                    .and_then(|config| config.gateway_bind.clone())
+            })
+            .unwrap_or_else(|| "127.0.0.1:8787".to_owned())
             .parse()
             .context("invalid CODEX_GATEWAY_BIND")?;
         let upstream_base_url =
@@ -238,7 +253,7 @@ impl GatewayConfig {
             bind,
             provider_preset,
             upstream_kind,
-            upstream_base_url: trim_trailing_slash(upstream_base_url),
+            upstream_base_url: provider_preset.normalize_upstream_base_url(upstream_base_url),
             upstream_messages_path: first_env_value(&[
                 "CODEX_GATEWAY_MESSAGES_PATH",
                 "ANTHROPIC_MESSAGES_PATH",
@@ -340,6 +355,8 @@ fn codex_home_path() -> PathBuf {
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct StoredGatewayConfig {
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub gateway_bind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub provider_preset: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -507,6 +524,7 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
         let config = StoredGatewayConfig {
+            gateway_bind: Some("127.0.0.1:18787".to_owned()),
             provider_preset: Some("custom".to_owned()),
             upstream_kind: Some("anthropic_messages".to_owned()),
             upstream_base_url: Some("https://example.test".to_owned()),
@@ -519,6 +537,7 @@ mod tests {
         };
         save_stored_config_to_path(&path, &config).unwrap();
         let loaded = load_stored_config_from_path(&path).unwrap().unwrap();
+        assert_eq!(loaded.gateway_bind.as_deref(), Some("127.0.0.1:18787"));
         assert_eq!(
             loaded.upstream_base_url.as_deref(),
             Some("https://example.test")
@@ -537,5 +556,24 @@ mod tests {
             Some("https://example.test/quota")
         );
         assert_eq!(loaded.quota_username.as_deref(), Some("quota-user"));
+    }
+
+    #[test]
+    fn baidu_oneapi_normalizes_optional_v1_suffix() {
+        assert_eq!(
+            ProviderPreset::BaiduOneApi
+                .normalize_upstream_base_url("https://oneapi.example/v1/".to_owned()),
+            "https://oneapi.example"
+        );
+        assert_eq!(
+            ProviderPreset::BaiduOneApi
+                .normalize_upstream_base_url("https://oneapi.example".to_owned()),
+            "https://oneapi.example"
+        );
+        assert_eq!(
+            ProviderPreset::Custom
+                .normalize_upstream_base_url("https://example.test/v1/".to_owned()),
+            "https://example.test/v1"
+        );
     }
 }

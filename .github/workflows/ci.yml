@@ -26,8 +26,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
-      - name: Run tests
-        run: cargo test --locked
+      - name: Run unit and integration tests
+        run: cargo test --locked --all-targets
       - name: Build macOS app
         if: runner.os == 'macOS'
         run: ./macos/build_app.sh

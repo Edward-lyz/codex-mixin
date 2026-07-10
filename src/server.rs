@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::sync::Arc;
 
 use axum::body::Body;
@@ -17,9 +18,9 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use tower_http::decompression::RequestDecompressionLayer;
 use uuid::Uuid;
 
-use crate::anthropic::ModelsResponse;
+use crate::anthropic::{BaiduAvailableModelsResponse, ModelsResponse};
 use crate::catalog::{codex_catalog_from_models_with_metadata, load_template_catalog};
-use crate::config::{GatewayConfig, UpstreamAuthHeader, UpstreamKind};
+use crate::config::{GatewayConfig, ProviderPreset, UpstreamAuthHeader, UpstreamKind};
 use crate::convert::responses_to_anthropic;
 use crate::error::GatewayError;
 use crate::model_metadata::ModelMetadataResolver;
@@ -67,7 +68,58 @@ impl AppState {
             )));
         }
         let parsed: ModelsResponse = serde_json::from_str(&body)?;
-        Ok(parsed.data)
+        let mut models = parsed.data;
+        if self.config.provider_preset == ProviderPreset::BaiduOneApi {
+            let response = self
+                .apply_upstream_auth(self.client.post(format!(
+                    "{}/openapi/v2/available_models",
+                    self.config.upstream_base_url
+                )))
+                .json(&json!({}))
+                .send()
+                .await?;
+            let status = response.status();
+            let body = response.text().await?;
+            if !status.is_success() {
+                return Err(GatewayError::Upstream(format!(
+                    "available models endpoint returned {status}: {body}"
+                )));
+            }
+            let available: BaiduAvailableModelsResponse =
+                serde_json::from_str(&body).map_err(|err| {
+                    GatewayError::Upstream(format!(
+                        "available models endpoint returned invalid JSON: {err}"
+                    ))
+                })?;
+            if !available.success {
+                return Err(GatewayError::Upstream(format!(
+                    "available models endpoint failed: {}",
+                    available.message
+                )));
+            }
+            let mut available_by_model = HashMap::with_capacity(available.data.len());
+            for model in available.data {
+                if let Some(canonical) = model.model.strip_suffix("-内部") {
+                    available_by_model
+                        .entry(canonical.to_owned())
+                        .or_insert(model);
+                } else {
+                    available_by_model.insert(model.model.clone(), model);
+                }
+            }
+            for model in &mut models {
+                let Some(available) = available_by_model.get(&model.id) else {
+                    continue;
+                };
+                model.description = Some(available.capability.model_description.clone());
+                model.ratio = Some(available.capability.ratio.clone());
+                model.price_type = Some(available.price_type.clone());
+                model.context_window = Some(available.capability.context_window);
+                model.supports_image = Some(available.capability.supports_image);
+                model.supports_thinking = Some(available.capability.supports_thinking);
+            }
+        }
+        Ok(models)
     }
 
     fn apply_upstream_auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -100,8 +152,16 @@ pub fn router(state: AppState) -> Router {
 
 pub async fn serve(config: GatewayConfig) -> anyhow::Result<()> {
     let bind = config.bind;
-    let state = AppState::new(config)?;
     let listener = tokio::net::TcpListener::bind(bind).await?;
+    serve_on_listener(config, listener).await
+}
+
+pub async fn serve_on_listener(
+    config: GatewayConfig,
+    listener: tokio::net::TcpListener,
+) -> anyhow::Result<()> {
+    let bind = listener.local_addr()?;
+    let state = AppState::new(config)?;
     tracing::info!(%bind, "codex-mixin listening");
     axum::serve(listener, router(state))
         .with_graceful_shutdown(async {
@@ -153,7 +213,11 @@ async fn responses(
     normalize_custom_model_alias(&mut body);
     let stream = match state.config.upstream_kind {
         UpstreamKind::AnthropicMessages => {
-            let converted = responses_to_anthropic(&body, &state.config)?;
+            let mut converted = responses_to_anthropic(&body, &state.config)?;
+            if state.config.provider_preset == ProviderPreset::BaiduOneApi {
+                converted.request.metadata = stable_session_id(&headers)?
+                    .map(|session_id| json!({"session_id": session_id}));
+            }
             let upstream = state
                 .apply_upstream_auth(state.client.post(state.config.upstream_messages_url()))
                 .header(header::ACCEPT, "text/event-stream")
@@ -282,7 +346,7 @@ async fn route_responses_ws(
                     .await
                     .map(Some)
             }
-            Ok(()) => proxy_custom_responses_ws(&state, &mut client_sender, body).await,
+            Ok(()) => proxy_custom_responses_ws(&state, &headers, &mut client_sender, body).await,
             Err(err) => Err(err),
         };
         match next_state {
@@ -407,6 +471,7 @@ async fn proxy_official_responses_ws(
 
 async fn proxy_custom_responses_ws(
     state: &AppState,
+    headers: &HeaderMap,
     client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
     mut body: Value,
 ) -> anyhow::Result<Option<CustomWebSocketState>> {
@@ -426,7 +491,11 @@ async fn proxy_custom_responses_ws(
         Result<bytes::Bytes, std::convert::Infallible>,
     > = match state.config.upstream_kind {
         UpstreamKind::AnthropicMessages => {
-            let converted = responses_to_anthropic(&body, &state.config)?;
+            let mut converted = responses_to_anthropic(&body, &state.config)?;
+            if state.config.provider_preset == ProviderPreset::BaiduOneApi {
+                converted.request.metadata =
+                    stable_session_id(headers)?.map(|session_id| json!({"session_id": session_id}));
+            }
             let upstream = state
                 .apply_upstream_auth(state.client.post(state.config.upstream_messages_url()))
                 .header(header::ACCEPT, "text/event-stream")
@@ -769,4 +838,12 @@ fn check_gateway_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Gatew
     } else {
         Err(GatewayError::Unauthorized)
     }
+}
+
+fn stable_session_id(headers: &HeaderMap) -> Result<Option<&str>, GatewayError> {
+    headers
+        .get("session-id")
+        .map(|value| value.to_str())
+        .transpose()
+        .map_err(|err| GatewayError::BadRequest(format!("invalid session-id header: {err}")))
 }

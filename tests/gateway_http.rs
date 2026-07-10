@@ -104,6 +104,35 @@ async fn spawn_mock_openai_chat() -> (String, Arc<Mutex<Vec<Value>>>) {
     (spawn_router(app).await, requests)
 }
 
+async fn spawn_baidu_metadata_upstream() -> String {
+    let app = Router::new().route("/v1/models", get(mock_models)).route(
+        "/openapi/v2/available_models",
+        post(mock_baidu_available_models),
+    );
+    spawn_router(app).await
+}
+
+async fn spawn_session_required_upstream() -> String {
+    let app = Router::new().route(
+        "/v1/messages",
+        post(|Json(body): Json<Value>| async move {
+            if body["metadata"]["session_id"] != "stable-session" {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({"error":{"code":"SESSION_REQUIRED"}})),
+                )
+                    .into_response();
+            }
+            Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/event-stream")
+                .body(Body::from(text_sse()))
+                .unwrap()
+        }),
+    );
+    spawn_router(app).await
+}
+
 async fn spawn_mock_official() -> (
     String,
     Arc<Mutex<Vec<Value>>>,
@@ -144,8 +173,45 @@ async fn mock_models(headers: HeaderMap) -> impl IntoResponse {
         "object": "list",
         "data": [
             {"id": "DeepSeek-V4-Flash", "object": "model", "created": 1, "owned_by": "custom"},
-            {"id": "Claude Sonnet 5", "object": "model", "created": 1, "owned_by": "custom"}
+            {"id": "Claude Sonnet 5", "object": "model", "created": 1, "owned_by": "custom"},
+            {"id": "Kimi-K2.7-Code", "object": "model", "created": 1, "owned_by": "custom"}
         ]
+    }))
+}
+
+async fn mock_baidu_available_models(
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    let auth = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok());
+    assert_eq!(auth, Some("Bearer upstream-key"));
+    assert_eq!(body, json!({}));
+    Json(json!({
+        "success": true,
+        "message": "",
+        "data": [{
+            "model": "DeepSeek-V4-Flash",
+            "capability": {
+                "supports_image": false,
+                "supports_thinking": true,
+                "context_window": 1024000,
+                "ratio": "0.2x",
+                "model_description": "Fast coding model"
+            },
+            "price_type": "Value model"
+        }, {
+            "model": "Kimi-K2.7-Code-内部",
+            "capability": {
+                "supports_image": true,
+                "supports_thinking": true,
+                "context_window": 256000,
+                "ratio": "1.0x",
+                "model_description": "Long-context coding model"
+            },
+            "price_type": "Value model"
+        }]
     }))
 }
 
@@ -420,13 +486,59 @@ async fn proxies_models_and_generates_catalog() {
 }
 
 #[tokio::test]
-async fn maps_text_stream_to_responses_sse() {
+async fn enriches_baidu_models_and_catalog_from_available_models() {
+    let upstream_url = spawn_baidu_metadata_upstream().await;
+    let mut config = test_config(upstream_url);
+    config.provider_preset = ProviderPreset::BaiduOneApi;
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+
+    let models: Value = client
+        .get(format!("{gateway_url}/v1/models"))
+        .bearer_auth("gateway-key")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(models["data"][0]["ratio"], "0.2x");
+    assert_eq!(models["data"][0]["description"], "Fast coding model");
+    assert_eq!(models["data"][0]["context_window"], 1_024_000);
+    assert_eq!(models["data"][2]["ratio"], "1.0x");
+
+    let catalog: Value = client
+        .get(format!("{gateway_url}/v1/codex-model-catalog"))
+        .bearer_auth("gateway-key")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let model = catalog["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|model| model["slug"] == "DeepSeek-V4-Flash")
+        .unwrap();
+    assert_eq!(
+        model["description"],
+        "Fast coding model | 0.2x | Value model"
+    );
+    assert_eq!(model["context_window"], 1_024_000);
+    assert_eq!(model["input_modalities"], json!(["text"]));
+}
+
+#[tokio::test]
+async fn model_request_smoke_succeeds_end_to_end() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let gateway_url = spawn_gateway(upstream_url).await;
     let client = reqwest::Client::new();
     let response = client
         .post(format!("{gateway_url}/v1/responses"))
         .bearer_auth("gateway-key")
+        .header("session-id", "generic-provider-session")
         .json(&responses_request())
         .send()
         .await
@@ -441,12 +553,31 @@ async fn maps_text_stream_to_responses_sse() {
     assert_eq!(upstream_request["model"], "DeepSeek-V4-Flash");
     assert_eq!(upstream_request["messages"][0]["role"], "user");
     assert_eq!(upstream_request["tools"].as_array().unwrap().len(), 1);
+    assert!(upstream_request.get("metadata").is_none());
     assert!(
         upstream_request["system"][0]["text"]
             .as_str()
             .unwrap()
             .contains("You are Codex")
     );
+}
+
+#[tokio::test]
+async fn maps_stable_session_to_anthropic_metadata() {
+    let upstream_url = spawn_session_required_upstream().await;
+    let mut config = test_config(upstream_url);
+    config.provider_preset = ProviderPreset::BaiduOneApi;
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("session-id", "stable-session")
+        .json(&responses_request())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
 }
 
 #[tokio::test]
@@ -643,7 +774,9 @@ async fn maps_deferred_tool_search_back_to_codex_call() {
 #[tokio::test]
 async fn maps_custom_websocket_to_responses_frames() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
-    let gateway_url = spawn_gateway(upstream_url).await;
+    let mut config = test_config(upstream_url);
+    config.provider_preset = ProviderPreset::BaiduOneApi;
+    let gateway_url = spawn_gateway_with_config(config).await;
     let websocket_url = gateway_url.replacen("http://", "ws://", 1);
     let mut request = format!("{websocket_url}/v1/responses")
         .into_client_request()
@@ -651,6 +784,9 @@ async fn maps_custom_websocket_to_responses_frames() {
     request
         .headers_mut()
         .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    request
+        .headers_mut()
+        .insert("session-id", "websocket-session".parse().unwrap());
     let (mut socket, _) = connect_async(request).await.unwrap();
     let mut body = responses_request();
     body.as_object_mut().unwrap().remove("stream");
@@ -673,6 +809,7 @@ async fn maps_custom_websocket_to_responses_frames() {
     let requests = requests.lock().unwrap();
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0]["model"], "DeepSeek-V4-Flash");
+    assert_eq!(requests[0]["metadata"]["session_id"], "websocket-session");
 }
 
 #[tokio::test]

@@ -221,6 +221,7 @@ pub fn responses_to_anthropic(
             tool_choice,
             thinking: thinking.thinking,
             output_config: thinking.output_config,
+            metadata: None,
         },
         tool_names,
     })

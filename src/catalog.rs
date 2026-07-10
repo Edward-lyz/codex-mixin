@@ -107,7 +107,19 @@ fn codex_catalog_from_models_with_options(
             };
             item["slug"] = json!(slug);
             item["display_name"] = json!(display_name);
-            item["description"] = json!("Custom upstream model exposed through codex-mixin");
+            let mut description = model
+                .description
+                .clone()
+                .unwrap_or_else(|| "Custom upstream model exposed through codex-mixin".to_owned());
+            for detail in [&model.ratio, &model.price_type]
+                .into_iter()
+                .filter_map(Option::as_deref)
+                .filter(|value| !value.is_empty())
+            {
+                description.push_str(" | ");
+                description.push_str(detail);
+            }
+            item["description"] = json!(description);
             item["multi_agent_version"] = json!("v2");
             if item.get("base_instructions").is_none() {
                 item["base_instructions"] = json!(FALLBACK_BASE_INSTRUCTIONS);
@@ -117,9 +129,15 @@ fn codex_catalog_from_models_with_options(
                 .unwrap_or_else(|| {
                     ModelMetadataResolver::empty().resolve(&model.id, default_context_window)
                 });
-            item["context_window"] = json!(metadata.context_window);
-            item["max_context_window"] = json!(metadata.context_window);
-            item["input_modalities"] = json!(metadata.input_modalities);
+            let context_window = model.context_window.unwrap_or(metadata.context_window);
+            let input_modalities = match model.supports_image {
+                Some(true) => vec!["text".to_owned(), "image".to_owned()],
+                Some(false) => vec!["text".to_owned()],
+                None => metadata.input_modalities,
+            };
+            item["context_window"] = json!(context_window);
+            item["max_context_window"] = json!(context_window);
+            item["input_modalities"] = json!(input_modalities);
             item["priority"] = json!(100 + index as u64);
             item["visibility"] = json!("list");
             item["supported_in_api"] = json!(true);
@@ -202,6 +220,9 @@ pub fn refresh_managed_oauth_catalog(
         }
         ensure_instruction_fields(&mut model);
         models.push(model);
+    }
+    for model in &mut models {
+        ensure_instruction_fields(model);
     }
 
     refreshed.insert("models".to_owned(), Value::Array(models));
@@ -297,6 +318,7 @@ mod tests {
             object: Some("model".to_owned()),
             created: Some(1),
             owned_by: Some("custom".to_owned()),
+            ..ModelInfo::default()
         }];
         let catalog = codex_catalog_from_models(&models, 1_000_000, None);
         assert_eq!(catalog["models"][0]["slug"], "DeepSeek-V4-Flash");
@@ -328,6 +350,7 @@ mod tests {
             object: Some("model".to_owned()),
             created: Some(1),
             owned_by: Some("custom".to_owned()),
+            ..ModelInfo::default()
         }];
         let catalog = codex_catalog_from_models_with_metadata(&models, 1_000_000, None, &metadata);
         assert_eq!(catalog["models"][0]["context_window"], 512_000);
@@ -339,12 +362,36 @@ mod tests {
     }
 
     #[test]
+    fn provider_metadata_overrides_catalog_description_and_capabilities() {
+        let models = vec![ModelInfo {
+            id: "DeepSeek-V4-Flash".to_owned(),
+            description: Some("Fast coding model".to_owned()),
+            ratio: Some("0.2x".to_owned()),
+            price_type: Some("Value".to_owned()),
+            context_window: Some(1_024_000),
+            supports_image: Some(false),
+            supports_thinking: Some(true),
+            ..ModelInfo::default()
+        }];
+
+        let catalog = codex_catalog_from_models(&models, 1_000_000, None);
+
+        assert_eq!(
+            catalog["models"][0]["description"],
+            "Fast coding model | 0.2x | Value"
+        );
+        assert_eq!(catalog["models"][0]["context_window"], 1_024_000);
+        assert_eq!(catalog["models"][0]["input_modalities"], json!(["text"]));
+    }
+
+    #[test]
     fn marks_claude_family_models_as_search_capable() {
         let models = vec![ModelInfo {
             id: "Claude Sonnet 5".to_owned(),
             object: Some("model".to_owned()),
             created: Some(1),
             owned_by: Some("custom".to_owned()),
+            ..ModelInfo::default()
         }];
         let catalog = codex_catalog_from_models(&models, 1_000_000, None);
         assert_eq!(catalog["models"][0]["supports_search_tool"], true);
@@ -366,6 +413,7 @@ mod tests {
             object: Some("model".to_owned()),
             created: Some(1),
             owned_by: Some("custom".to_owned()),
+            ..ModelInfo::default()
         }];
 
         let catalog = codex_catalog_from_models(&models, 1_000_000, Some(&template));
@@ -386,6 +434,7 @@ mod tests {
             object: Some("model".to_owned()),
             created: Some(1),
             owned_by: Some("custom".to_owned()),
+            ..ModelInfo::default()
         }];
         let catalog = codex_oauth_proxy_catalog_from_models(&models, 1_000_000, Some(&template));
         assert_eq!(catalog["models"][0]["slug"], "gpt-5.5");
@@ -450,6 +499,13 @@ mod tests {
         assert_eq!(refreshed["models"][2]["multi_agent_version"], "v2");
         assert_eq!(refreshed["models"][3]["multi_agent_version"], "v2");
         assert!(refreshed["models"][2].get("web_search_tool_type").is_none());
+        for model in refreshed["models"].as_array().unwrap() {
+            assert_eq!(model["base_instructions"], FALLBACK_BASE_INSTRUCTIONS);
+            assert_eq!(
+                model["model_messages"]["instructions_template"],
+                FALLBACK_BASE_INSTRUCTIONS
+            );
+        }
         assert_eq!(refreshed["client_version"], "1.2.3");
         assert_eq!(refreshed["etag"], "catalog-etag");
     }

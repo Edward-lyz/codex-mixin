@@ -29,7 +29,7 @@ use codex_mixin::history::{
     migrate_history_from_mixin_provider, migrate_history_to_mixin_provider,
 };
 use codex_mixin::model_metadata::{ModelMetadataResolver, default_cache_path};
-use codex_mixin::server::{AppState, serve};
+use codex_mixin::server::{AppState, serve_on_listener};
 
 const MANAGED_CONFIG_MARKER: &str = "codex-mixin managed config";
 const MANAGED_CONFIG_HEADER: &str = "# codex-mixin managed config. Run `codex-mixin uninstall-codex` to restore the previous config.";
@@ -216,6 +216,29 @@ struct DaemonMetadata {
     started_at: u64,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct RuntimeMetadata {
+    pid: u32,
+    bind: SocketAddr,
+    started_at: u64,
+}
+
+struct RuntimeMetadataGuard {
+    pid: u32,
+}
+
+impl Drop for RuntimeMetadataGuard {
+    fn drop(&mut self) {
+        if load_runtime_metadata()
+            .ok()
+            .flatten()
+            .is_some_and(|metadata| metadata.pid == self.pid)
+        {
+            let _ = delete_runtime_metadata();
+        }
+    }
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     tracing_subscriber::fmt()
@@ -326,7 +349,7 @@ fn login(
             .map(Ok)
             .unwrap_or_else(|| prompt_required("upstream API key"))?,
     };
-    let upstream_base_url = normalize_base_url(
+    let upstream_base_url = provider_preset.normalize_upstream_base_url(normalize_base_url(
         base_url
             .or(existing.upstream_base_url)
             .or_else(|| first_env_value(&["CODEX_GATEWAY_UPSTREAM_BASE_URL", "ANTHROPIC_BASE_URL"]))
@@ -337,9 +360,10 @@ fn login(
             })
             .map(Ok)
             .unwrap_or_else(|| prompt_required("upstream base URL"))?,
-    )?;
+    )?);
     let upstream_kind = provider_preset.default_upstream_kind();
     let config = StoredGatewayConfig {
+        gateway_bind: existing.gateway_bind,
         provider_preset: Some(provider_preset.as_str().to_owned()),
         upstream_kind: Some(upstream_kind.as_str().to_owned()),
         upstream_base_url: Some(upstream_base_url.clone()),
@@ -446,6 +470,7 @@ async fn doctor() -> anyhow::Result<()> {
 async fn status() -> anyhow::Result<()> {
     let config = GatewayConfig::from_env()?;
     let metadata = load_daemon_metadata()?;
+    let runtime = load_runtime_metadata()?;
     if let Some(metadata) = &metadata {
         println!(
             "daemon: {}",
@@ -460,9 +485,12 @@ async fn status() -> anyhow::Result<()> {
     } else {
         println!("daemon: not started");
     }
-    let bind = metadata
-        .as_ref()
-        .map_or(config.bind, |metadata| metadata.bind);
+    let bind = match runtime {
+        Some(runtime) if pid_is_running(runtime.pid)? => runtime.bind,
+        _ => metadata
+            .as_ref()
+            .map_or(config.bind, |metadata| metadata.bind),
+    };
     let url = format!("http://{bind}/healthz");
     let response = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
@@ -474,6 +502,7 @@ async fn status() -> anyhow::Result<()> {
         Ok(response) if response.status().is_success() => {
             println!("gateway: running");
             println!("healthz: {url}");
+            println!("endpoint: http://{bind}/v1");
             Ok(())
         }
         Ok(response) => anyhow::bail!("gateway unhealthy: {} returned {}", url, response.status()),
@@ -689,6 +718,7 @@ fn show_config(json_output: bool, scope: ConfigScope) -> anyhow::Result<()> {
             let stored = load_stored_config()?.unwrap_or_default();
             let value = serde_json::json!({
                 "path": path,
+                "gateway_bind": stored.gateway_bind,
                 "provider_preset": stored.provider_preset,
                 "upstream_kind": stored.upstream_kind,
                 "upstream_base_url": stored.upstream_base_url,
@@ -703,9 +733,13 @@ fn show_config(json_output: bool, scope: ConfigScope) -> anyhow::Result<()> {
         }
         ConfigScope::Effective => {
             let config = GatewayConfig::from_env()?;
+            let bind = match load_runtime_metadata()? {
+                Some(runtime) if pid_is_running(runtime.pid)? => runtime.bind,
+                _ => config.bind,
+            };
             let value = serde_json::json!({
                 "path": path,
-                "bind": config.bind.to_string(),
+                "bind": bind.to_string(),
                 "provider_preset": config.provider_preset.as_str(),
                 "upstream_kind": config.upstream_kind.as_str(),
                 "upstream_base_url": config.upstream_base_url,
@@ -870,9 +904,12 @@ async fn install_codex(
         )
     };
     let serialized_catalog = serde_json::to_vec_pretty(&catalog)?;
-    let gateway_base_url = normalize_base_url(
-        base_url.unwrap_or_else(|| format!("http://{}/v1", gateway_config.bind)),
-    )?;
+    let gateway_bind = match load_runtime_metadata()? {
+        Some(runtime) if pid_is_running(runtime.pid)? => runtime.bind,
+        _ => gateway_config.bind,
+    };
+    let gateway_base_url =
+        normalize_base_url(base_url.unwrap_or_else(|| format!("http://{gateway_bind}/v1")))?;
     let env_key = if codex_oauth_proxy || no_env_key {
         None
     } else {
@@ -1414,19 +1451,88 @@ fn upsert_codex_config(
     Ok(())
 }
 
+fn persist_gateway_bind(bind: SocketAddr) -> anyhow::Result<bool> {
+    let Some(mut stored) = load_stored_config()? else {
+        return Ok(false);
+    };
+    let bind = bind.to_string();
+    if stored.gateway_bind.as_deref() == Some(&bind) {
+        return Ok(false);
+    }
+    stored.gateway_bind = Some(bind);
+    save_stored_config(&stored)?;
+    Ok(true)
+}
+
+fn sync_managed_codex_gateway_base_url(
+    config_path: &Path,
+    bind: SocketAddr,
+) -> anyhow::Result<bool> {
+    let config_path = absolute_path(config_path.to_path_buf())?;
+    if !config_path.exists() {
+        return Ok(false);
+    }
+    let _config_lock = ManagedConfigLock::acquire(&config_path)?;
+    let raw_config = fs::read_to_string(&config_path)?;
+    if !is_managed_config(&raw_config) {
+        return Ok(false);
+    }
+    let mut doc = raw_config.parse::<DocumentMut>()?;
+    let provider = doc
+        .get_mut("model_providers")
+        .and_then(Item::as_table_mut)
+        .and_then(|providers| providers.get_mut(CODEX_MIXIN_PROVIDER))
+        .and_then(Item::as_table_mut)
+        .ok_or_else(|| anyhow::anyhow!("managed Codex config has no codex-mixin provider"))?;
+    let base_url = format!("http://{bind}/v1");
+    if provider.get("base_url").and_then(Item::as_str) == Some(base_url.as_str()) {
+        return Ok(false);
+    }
+    provider["base_url"] = value(base_url);
+    write_atomic_if_changed(&config_path, doc.to_string().as_bytes())
+}
+
+async fn bind_gateway_listener(
+    bind: SocketAddr,
+    automatic_bind: bool,
+) -> anyhow::Result<tokio::net::TcpListener> {
+    match tokio::net::TcpListener::bind(bind).await {
+        Ok(listener) => Ok(listener),
+        Err(err)
+            if automatic_bind
+                && bind.ip().is_loopback()
+                && err.kind() == io::ErrorKind::AddrInUse =>
+        {
+            Ok(tokio::net::TcpListener::bind(SocketAddr::new(bind.ip(), 0)).await?)
+        }
+        Err(err) => Err(err.into()),
+    }
+}
+
 async fn start(
     bind: Option<SocketAddr>,
     daemon: bool,
     log_file: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let mut config = GatewayConfig::from_env()?;
+    let automatic_bind = bind.is_none()
+        && std::env::var("CODEX_GATEWAY_BIND")
+            .ok()
+            .is_none_or(|value| value.is_empty());
     if let Some(bind) = bind {
         config.bind = bind;
     }
     if daemon {
-        return start_daemon(config.bind, log_file);
+        return start_daemon(bind, log_file);
+    }
+    let listener = bind_gateway_listener(config.bind, automatic_bind).await?;
+    let actual_bind = listener.local_addr()?;
+    config.bind = actual_bind;
+    if automatic_bind {
+        persist_gateway_bind(actual_bind)?;
     }
     let config_path = resolve_codex_config_path(None)?;
+    sync_managed_codex_gateway_base_url(&config_path, actual_bind)?;
     match refresh_managed_codex_catalog(&config_path) {
         Ok(true) => tracing::info!("Codex model catalog refreshed"),
         Ok(false) => {}
@@ -1444,12 +1550,19 @@ async fn start(
             }
         }
     });
-    let result = serve(config).await;
+    let pid = std::process::id();
+    save_runtime_metadata(&RuntimeMetadata {
+        pid,
+        bind: actual_bind,
+        started_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+    })?;
+    let _runtime_guard = RuntimeMetadataGuard { pid };
+    let result = serve_on_listener(config, listener).await;
     refresh_task.abort();
     result
 }
 
-fn start_daemon(bind: SocketAddr, log_file: Option<PathBuf>) -> anyhow::Result<()> {
+fn start_daemon(bind: Option<SocketAddr>, log_file: Option<PathBuf>) -> anyhow::Result<()> {
     if let Some(metadata) = load_daemon_metadata()?
         && pid_is_running(metadata.pid)?
     {
@@ -1459,6 +1572,16 @@ fn start_daemon(bind: SocketAddr, log_file: Option<PathBuf>) -> anyhow::Result<(
             metadata.bind
         );
     }
+    if let Some(runtime) = load_runtime_metadata()?
+        && pid_is_running(runtime.pid)?
+    {
+        anyhow::bail!(
+            "gateway already running: pid {}, bind {}",
+            runtime.pid,
+            runtime.bind
+        );
+    }
+    delete_runtime_metadata()?;
     let log_file = log_file.unwrap_or_else(default_log_file_path);
     if let Some(parent) = log_file.parent() {
         fs::create_dir_all(parent)?;
@@ -1469,10 +1592,11 @@ fn start_daemon(bind: SocketAddr, log_file: Option<PathBuf>) -> anyhow::Result<(
         .open(&log_file)?;
     let stderr = stdout.try_clone()?;
     let mut command = ProcessCommand::new(std::env::current_exe()?);
+    command.arg("start");
+    if let Some(bind) = bind {
+        command.arg("--bind").arg(bind.to_string());
+    }
     command
-        .arg("start")
-        .arg("--bind")
-        .arg(bind.to_string())
         .stdin(Stdio::null())
         .stdout(Stdio::from(stdout))
         .stderr(Stdio::from(stderr));
@@ -1487,13 +1611,28 @@ fn start_daemon(bind: SocketAddr, log_file: Option<PathBuf>) -> anyhow::Result<(
     }
     let child = command.spawn()?;
     let pid = child.id();
-    thread::sleep(Duration::from_millis(300));
-    if !pid_is_running(pid)? {
-        anyhow::bail!(
-            "gateway daemon exited immediately; inspect log: {}",
-            log_file.display()
-        );
+    let mut actual_bind = None;
+    for _ in 0..50 {
+        if !pid_is_running(pid)? {
+            anyhow::bail!(
+                "gateway daemon exited immediately; inspect log: {}",
+                log_file.display()
+            );
+        }
+        if let Some(runtime) = load_runtime_metadata()?
+            && runtime.pid == pid
+        {
+            actual_bind = Some(runtime.bind);
+            break;
+        }
+        thread::sleep(Duration::from_millis(100));
     }
+    let bind = actual_bind.ok_or_else(|| {
+        anyhow::anyhow!(
+            "gateway daemon did not publish its endpoint within 5s; inspect log: {}",
+            log_file.display()
+        )
+    })?;
     save_daemon_metadata(&DaemonMetadata {
         pid,
         bind,
@@ -1514,6 +1653,7 @@ fn stop(force: bool) -> anyhow::Result<()> {
     };
     if !pid_is_running(metadata.pid)? {
         delete_daemon_metadata()?;
+        delete_runtime_metadata()?;
         println!("removed stale daemon metadata for pid {}", metadata.pid);
         return Ok(());
     }
@@ -1521,6 +1661,7 @@ fn stop(force: bool) -> anyhow::Result<()> {
     for _ in 0..50 {
         if !pid_is_running(metadata.pid)? {
             delete_daemon_metadata()?;
+            delete_runtime_metadata()?;
             println!("gateway daemon stopped: pid {}", metadata.pid);
             return Ok(());
         }
@@ -1529,6 +1670,7 @@ fn stop(force: bool) -> anyhow::Result<()> {
     if force {
         send_signal(metadata.pid, "KILL")?;
         delete_daemon_metadata()?;
+        delete_runtime_metadata()?;
         println!("gateway daemon killed: pid {}", metadata.pid);
         return Ok(());
     }
@@ -1585,6 +1727,14 @@ fn daemon_metadata_path() -> PathBuf {
         .unwrap_or_else(|| state_dir().join("daemon.json"))
 }
 
+fn runtime_metadata_path() -> PathBuf {
+    std::env::var("CODEX_GATEWAY_RUNTIME_FILE")
+        .ok()
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state_dir().join("runtime.json"))
+}
+
 fn default_log_file_path() -> PathBuf {
     std::env::var("CODEX_GATEWAY_LOG_FILE")
         .ok()
@@ -1602,6 +1752,15 @@ fn load_daemon_metadata() -> anyhow::Result<Option<DaemonMetadata>> {
     Ok(Some(serde_json::from_str(&raw)?))
 }
 
+fn load_runtime_metadata() -> anyhow::Result<Option<RuntimeMetadata>> {
+    let path = runtime_metadata_path();
+    if !path.exists() {
+        return Ok(None);
+    }
+    let raw = fs::read_to_string(&path)?;
+    Ok(Some(serde_json::from_str(&raw)?))
+}
+
 fn save_daemon_metadata(metadata: &DaemonMetadata) -> anyhow::Result<()> {
     let path = daemon_metadata_path();
     if let Some(parent) = path.parent() {
@@ -1611,8 +1770,22 @@ fn save_daemon_metadata(metadata: &DaemonMetadata) -> anyhow::Result<()> {
     Ok(())
 }
 
+fn save_runtime_metadata(metadata: &RuntimeMetadata) -> anyhow::Result<()> {
+    let path = runtime_metadata_path();
+    write_atomic_if_changed(&path, &serde_json::to_vec_pretty(metadata)?)?;
+    Ok(())
+}
+
 fn delete_daemon_metadata() -> anyhow::Result<()> {
     let path = daemon_metadata_path();
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+fn delete_runtime_metadata() -> anyhow::Result<()> {
+    let path = runtime_metadata_path();
     if path.exists() {
         fs::remove_file(path)?;
     }
@@ -1953,6 +2126,10 @@ wire_api = "responses"
         assert_eq!(refreshed["models"][2]["slug"], "gpt-5.6-luna");
         assert_eq!(refreshed["models"][3]["slug"], "DeepSeek-V4-Flash");
         assert_eq!(refreshed["models"][3]["multi_agent_version"], "v2");
+        for model in refreshed["models"].as_array().unwrap() {
+            assert!(model["base_instructions"].is_string());
+            assert!(model["model_messages"]["instructions_template"].is_string());
+        }
         assert!(!refresh_managed_codex_catalog(&config_path).unwrap());
     }
 
@@ -2050,6 +2227,53 @@ wire_api = "responses"
             ..StoredGatewayConfig::default()
         };
         assert!(resolve_quota_url(&deepseek).is_err());
+    }
+
+    #[tokio::test]
+    async fn automatic_bind_uses_an_available_loopback_port() {
+        let occupied = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let occupied_bind = occupied.local_addr().unwrap();
+
+        let automatic = bind_gateway_listener(occupied_bind, true).await.unwrap();
+        assert_ne!(automatic.local_addr().unwrap(), occupied_bind);
+
+        let explicit = bind_gateway_listener(occupied_bind, false)
+            .await
+            .unwrap_err();
+        assert_eq!(
+            explicit.downcast_ref::<io::Error>().unwrap().kind(),
+            io::ErrorKind::AddrInUse
+        );
+    }
+
+    #[test]
+    fn syncs_dynamic_gateway_port_to_managed_codex_provider() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        fs::write(
+            &config_path,
+            format!(
+                "{MANAGED_CONFIG_HEADER}\n\n[model_providers.codex-mixin]\nbase_url = \"http://127.0.0.1:8787/v1\"\nwire_api = \"responses\"\n\n[model_providers.other]\nbase_url = \"https://example.test/v1\"\n"
+            ),
+        )
+        .unwrap();
+
+        assert!(
+            sync_managed_codex_gateway_base_url(&config_path, "127.0.0.1:18787".parse().unwrap())
+                .unwrap()
+        );
+        let doc = fs::read_to_string(&config_path)
+            .unwrap()
+            .parse::<DocumentMut>()
+            .unwrap();
+        assert_eq!(
+            doc["model_providers"]["codex-mixin"]["base_url"].as_str(),
+            Some("http://127.0.0.1:18787/v1")
+        );
+        assert_eq!(
+            doc["model_providers"]["other"]["base_url"].as_str(),
+            Some("https://example.test/v1")
+        );
     }
 
     #[cfg(unix)]
