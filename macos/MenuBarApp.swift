@@ -250,6 +250,25 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             defer { serviceBusy = false }
             do {
+                do {
+                    _ = try await runGateway(["config", "--json", "--scope", "effective"])
+                } catch {
+                    guard isMissingGatewayConfiguration(error) else { throw error }
+                    isRunning = false
+                    serviceStatus = "等待配置上游 API"
+                    serviceEndpoint = nil
+                    updateQuotaStatus(title: "额度：等待配置", detail: nil, progress: nil)
+                    updateStatusTitle()
+                    updateActionStates()
+                    if !CommandLine.arguments.contains("--show-settings")
+                        && !CommandLine.arguments.contains("--check-updates")
+                    {
+                        DispatchQueue.main.async { [weak self] in
+                            self?.configureLogin()
+                        }
+                    }
+                    return
+                }
                 let status = try await ensureGatewayReady()
                 applyGatewayStatus(status)
                 do {
@@ -286,6 +305,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             _ = try await runGateway(["start", "--daemon"])
         }
         return try await waitForGatewayStatus()
+    }
+
+    private func isMissingGatewayConfiguration(_ error: Error) -> Bool {
+        let message = String(describing: error)
+        return message.contains("run login --key")
+            || message.contains("run login --base-url")
     }
 
     private func restartGatewayProcess() async throws {
@@ -333,13 +358,23 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         do {
             applyGatewayStatus(try await runGateway(["status"]))
         } catch {
+            let message = String(describing: error)
+            let missingConfiguration = isMissingGatewayConfiguration(error)
             isRunning = false
             serviceEndpoint = nil
-            serviceStatus = String(describing: error).contains("gateway not running")
-                ? "本地网关已停止"
-                : "网关状态检查失败"
+            if missingConfiguration {
+                serviceStatus = "等待配置上游 API"
+            } else if message.contains("gateway not running") {
+                serviceStatus = "本地网关已停止"
+            } else {
+                serviceStatus = "网关状态检查失败"
+            }
             updateStatusTitle()
             updateActionStates()
+            if missingConfiguration {
+                updateQuotaStatus(title: "额度：等待配置", detail: nil, progress: nil)
+                return
+            }
         }
         do {
             let quota = try await runGateway(["quota", "--json"])
@@ -939,6 +974,8 @@ private func serviceMenuView(
     let statusColor: NSColor
     if title.contains("失败") {
         statusColor = .systemRed
+    } else if title.contains("等待配置") {
+        statusColor = .systemOrange
     } else if isBusy {
         statusColor = .systemOrange
     } else if isRunning {
@@ -968,6 +1005,8 @@ private func serviceMenuView(
         detail = endpoint
     } else if title.contains("失败") {
         detail = "请查看运行日志"
+    } else if title.contains("等待配置") {
+        detail = "请先设置供应商与 API Key"
     } else if isBusy {
         detail = "正在分配本地端口"
     } else if isRunning {
