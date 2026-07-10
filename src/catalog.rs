@@ -127,6 +127,8 @@ fn codex_catalog_from_models_with_options(
             item["supports_search_tool"] = json!(supports_search_tool);
             if supports_search_tool {
                 item["web_search_tool_type"] = json!("text");
+            } else if let Some(item) = item.as_object_mut() {
+                item.remove("web_search_tool_type");
             }
             item
         })
@@ -182,11 +184,22 @@ pub fn refresh_managed_oauth_catalog(
         let slug = model
             .get("slug")
             .and_then(Value::as_str)
-            .ok_or_else(|| anyhow::anyhow!("custom model is missing slug"))?;
-        if !slugs.insert(slug.to_owned()) {
+            .ok_or_else(|| anyhow::anyhow!("custom model is missing slug"))?
+            .to_owned();
+        if !slugs.insert(slug.clone()) {
             anyhow::bail!("custom model slug collides with existing catalog: {slug}");
         }
         model["multi_agent_version"] = json!("v2");
+        let supports_search_tool = model
+            .get("supports_search_tool")
+            .and_then(Value::as_bool)
+            .unwrap_or_else(|| supports_anthropic_web_search(&slug));
+        model["supports_search_tool"] = json!(supports_search_tool);
+        if supports_search_tool {
+            model["web_search_tool_type"] = json!("text");
+        } else if let Some(model) = model.as_object_mut() {
+            model.remove("web_search_tool_type");
+        }
         ensure_instruction_fields(&mut model);
         models.push(model);
     }
@@ -339,6 +352,29 @@ mod tests {
     }
 
     #[test]
+    fn removes_inherited_search_type_from_unsupported_models() {
+        let template = json!({
+            "models": [{
+                "slug": "gpt-template",
+                "display_name": "Template",
+                "base_instructions": "test",
+                "web_search_tool_type": "text_and_image"
+            }]
+        });
+        let models = vec![ModelInfo {
+            id: "DeepSeek-V4-Flash".to_owned(),
+            object: Some("model".to_owned()),
+            created: Some(1),
+            owned_by: Some("custom".to_owned()),
+        }];
+
+        let catalog = codex_catalog_from_models(&models, 1_000_000, Some(&template));
+
+        assert_eq!(catalog["models"][0]["supports_search_tool"], false);
+        assert!(catalog["models"][0].get("web_search_tool_type").is_none());
+    }
+
+    #[test]
     fn oauth_proxy_catalog_keeps_official_gpt_and_aliases_custom_gpt() {
         let template = json!({
             "models": [
@@ -382,7 +418,9 @@ mod tests {
                 {
                     "slug":"DeepSeek-V4-Flash",
                     "display_name":"DeepSeek-V4-Flash",
-                    "description":"Custom upstream model exposed through codex-mixin"
+                    "description":"Custom upstream model exposed through codex-mixin",
+                    "supports_search_tool":false,
+                    "web_search_tool_type":"text_and_image"
                 },
                 {
                     "slug":"gpt-5.5-custom",
@@ -411,6 +449,7 @@ mod tests {
         );
         assert_eq!(refreshed["models"][2]["multi_agent_version"], "v2");
         assert_eq!(refreshed["models"][3]["multi_agent_version"], "v2");
+        assert!(refreshed["models"][2].get("web_search_tool_type").is_none());
         assert_eq!(refreshed["client_version"], "1.2.3");
         assert_eq!(refreshed["etag"], "catalog-etag");
     }

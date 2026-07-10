@@ -655,6 +655,92 @@ async fn keeps_custom_websocket_open_after_noop_request() {
     assert_eq!(requests.lock().unwrap().len(), 1);
 }
 
+#[tokio::test]
+async fn ignores_unavailable_web_search_without_resetting_custom_websocket() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    let mut search_body = responses_request();
+    search_body["type"] = json!("response.create");
+    search_body["tools"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"type":"web_search","external_web_access":true}));
+    socket
+        .send(WsMessage::Text(search_body.to_string().into()))
+        .await
+        .unwrap();
+
+    let search_frames = tokio::time::timeout(
+        Duration::from_secs(1),
+        websocket_response_frames(&mut socket),
+    )
+    .await
+    .expect("search compatibility response timed out")
+    .join("\n");
+    assert!(search_frames.contains("\"type\":\"response.completed\""));
+    assert!(!search_frames.contains("\"type\":\"response.failed\""));
+    assert_eq!(
+        requests.lock().unwrap()[0]["tools"]
+            .as_array()
+            .unwrap()
+            .len(),
+        1
+    );
+
+    let mut valid_body = responses_request();
+    valid_body["type"] = json!("response.create");
+    socket
+        .send(WsMessage::Text(valid_body.to_string().into()))
+        .await
+        .unwrap();
+    let completed_frames = websocket_response_frames(&mut socket).await.join("\n");
+    assert!(completed_frames.contains("\"type\":\"response.completed\""));
+    assert_eq!(requests.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn returns_request_error_without_resetting_custom_websocket() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    let mut invalid_body = responses_request();
+    invalid_body["type"] = json!("response.create");
+    invalid_body["tools"] = json!([{"type":"computer_use_preview"}]);
+    socket
+        .send(WsMessage::Text(invalid_body.to_string().into()))
+        .await
+        .unwrap();
+
+    let error_frames = websocket_response_frames(&mut socket).await.join("\n");
+    assert!(error_frames.contains("\"type\":\"response.failed\""));
+    assert!(error_frames.contains("unsupported tool type: computer_use_preview"));
+
+    let mut valid_body = responses_request();
+    valid_body["type"] = json!("response.create");
+    socket
+        .send(WsMessage::Text(valid_body.to_string().into()))
+        .await
+        .unwrap();
+    let completed_frames = websocket_response_frames(&mut socket).await.join("\n");
+    assert!(completed_frames.contains("\"type\":\"response.completed\""));
+    assert_eq!(requests.lock().unwrap().len(), 1);
+}
+
 async fn websocket_response_frames<S>(socket: &mut S) -> Vec<String>
 where
     S: futures_util::Stream<Item = Result<WsMessage, tokio_tungstenite::tungstenite::Error>>
@@ -665,7 +751,8 @@ where
         match message.unwrap() {
             WsMessage::Text(text) => {
                 let text = text.to_string();
-                let completed = text.contains("\"type\":\"response.completed\"");
+                let completed = text.contains("\"type\":\"response.completed\"")
+                    || text.contains("\"type\":\"response.failed\"");
                 frames.push(text);
                 if completed {
                     break;

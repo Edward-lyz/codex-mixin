@@ -1710,6 +1710,7 @@ trust_level = "trusted"
         .unwrap();
 
         assert_eq!(doc["model_provider"].as_str(), Some("codex-mixin"));
+        assert!(doc.get("web_search").is_none());
         assert_eq!(
             doc["model_providers"]["codex-mixin"]["base_url"].as_str(),
             Some("http://127.0.0.1:8787/v1")

@@ -603,9 +603,7 @@ fn convert_tools(
             Some("function")
                 if is_codex_web_search_function(tool) && config.enable_web_search_tool => {}
             Some("function") if is_codex_web_search_function(tool) => {
-                return Err(GatewayError::BadRequest(
-                    "web_search tool is disabled for this upstream".to_owned(),
-                ));
+                tracing::debug!("omitting unavailable hosted web_search tool");
             }
             Some("function") if suppress_client_tools => {}
             Some("function") => {
@@ -682,9 +680,7 @@ fn convert_tools(
             }
             Some("web_search" | "web_search_preview") if config.enable_web_search_tool => {}
             Some("web_search" | "web_search_preview") => {
-                return Err(GatewayError::BadRequest(
-                    "web_search tool is disabled for this upstream".to_owned(),
-                ));
+                tracing::debug!("omitting unavailable hosted web_search tool");
             }
             Some("image_generation") => {
                 tracing::debug!("omitting legacy OpenAI-hosted image_generation tool");

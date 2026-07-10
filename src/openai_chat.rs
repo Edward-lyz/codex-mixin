@@ -434,10 +434,7 @@ fn convert_tools(tools: Option<&Value>) -> Result<(Vec<Value>, ToolNameMap), Gat
                 result.push(converted);
             }
             Some("web_search" | "web_search_preview") => {
-                return Err(GatewayError::BadRequest(
-                    "unsupported tool type for OpenAI Chat Completions upstream: web_search"
-                        .to_owned(),
-                ));
+                tracing::debug!("omitting unavailable hosted web_search tool");
             }
             Some("image_generation") => {
                 tracing::debug!("omitting legacy OpenAI-hosted image_generation tool");
@@ -730,19 +727,27 @@ mod tests {
 
     #[test]
     fn rejects_tools_chat_completions_cannot_execute() {
-        for tool in [
-            json!({"type":"web_search"}),
-            json!({"type":"computer_use_preview"}),
-        ] {
-            let error = responses_to_openai_chat(&json!({
-                "model": "deepseek-chat",
-                "stream": true,
-                "input": "hi",
-                "tools": [tool]
-            }))
-            .unwrap_err();
-            assert!(error.to_string().contains("unsupported tool type"));
-        }
+        let error = responses_to_openai_chat(&json!({
+            "model": "deepseek-chat",
+            "stream": true,
+            "input": "hi",
+            "tools": [{"type":"computer_use_preview"}]
+        }))
+        .unwrap_err();
+        assert!(error.to_string().contains("unsupported tool type"));
+    }
+
+    #[test]
+    fn omits_unavailable_hosted_web_search_tool() {
+        let converted = responses_to_openai_chat(&json!({
+            "model": "deepseek-chat",
+            "stream": true,
+            "input": "hi",
+            "tools": [{"type":"web_search","external_web_access":true}]
+        }))
+        .unwrap();
+
+        assert!(converted.request.get("tools").is_none());
     }
 
     #[test]

@@ -424,7 +424,28 @@ async fn route_custom_responses_ws(
             if should_forward_to_official(&body) {
                 anyhow::bail!("cannot switch a custom Responses websocket to an official model");
             }
-            proxy_custom_responses_ws(state, client_sender, body).await?;
+            if let Err(err) = proxy_custom_responses_ws(state, client_sender, body).await {
+                let message = err.to_string();
+                let error = json!({"message": message, "type": "invalid_request_error"});
+                client_sender
+                    .send(AxumWsMessage::Text(
+                        json!({
+                            "type": "response.failed",
+                            "response": {
+                                "id": format!("resp_{}", Uuid::new_v4().simple()),
+                                "object": "response",
+                                "status": "failed",
+                                "error": error,
+                                "output": []
+                            },
+                            "error": error
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .await?;
+                tracing::warn!(error = %err, "custom responses websocket request failed");
+            }
         }
 
         body = loop {
