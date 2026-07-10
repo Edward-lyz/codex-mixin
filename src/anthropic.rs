@@ -39,10 +39,7 @@ pub enum ContentBlock {
         input: Value,
     },
     #[serde(rename = "tool_result")]
-    ToolResult {
-        tool_use_id: String,
-        content: String,
-    },
+    ToolResult { tool_use_id: String, content: Value },
 }
 
 pub type Tool = Value;

@@ -1,3 +1,5 @@
+use std::collections::HashSet;
+
 use serde_json::{Value, json};
 
 use crate::anthropic::ModelInfo;
@@ -140,6 +142,10 @@ pub fn refresh_managed_oauth_catalog(
     official_catalog: &Value,
     managed_catalog: &Value,
 ) -> anyhow::Result<Value> {
+    let mut refreshed = official_catalog
+        .as_object()
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("official Codex catalog must be an object"))?;
     let mut models = official_catalog
         .get("models")
         .and_then(Value::as_array)
@@ -149,6 +155,16 @@ pub fn refresh_managed_oauth_catalog(
         .get("models")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow::anyhow!("managed Codex catalog has no models array"))?;
+    let mut slugs = HashSet::with_capacity(models.len() + managed_models.len());
+    for model in &models {
+        let slug = model
+            .get("slug")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("official Codex model is missing slug"))?;
+        if !slugs.insert(slug.to_owned()) {
+            anyhow::bail!("duplicate model slug in official Codex catalog: {slug}");
+        }
+    }
 
     for model in managed_models.iter().filter(|model| {
         model
@@ -163,12 +179,20 @@ pub fn refresh_managed_oauth_catalog(
                 .is_some_and(|slug| slug.ends_with("-custom"))
     }) {
         let mut model = model.clone();
+        let slug = model
+            .get("slug")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("custom model is missing slug"))?;
+        if !slugs.insert(slug.to_owned()) {
+            anyhow::bail!("custom model slug collides with existing catalog: {slug}");
+        }
         model["multi_agent_version"] = json!("v2");
         ensure_instruction_fields(&mut model);
         models.push(model);
     }
 
-    Ok(json!({ "models": models }))
+    refreshed.insert("models".to_owned(), Value::Array(models));
+    Ok(Value::Object(refreshed))
 }
 
 fn ensure_instruction_fields(model: &mut Value) {
@@ -345,6 +369,8 @@ mod tests {
     #[test]
     fn refreshes_official_models_without_dropping_custom_models() {
         let current_official = json!({
+            "client_version": "1.2.3",
+            "etag": "catalog-etag",
             "models": [
                 {"slug":"gpt-5.6-sol","display_name":"GPT-5.6-Sol"},
                 {"slug":"gpt-5.5","display_name":"GPT-5.5"}
@@ -385,5 +411,18 @@ mod tests {
         );
         assert_eq!(refreshed["models"][2]["multi_agent_version"], "v2");
         assert_eq!(refreshed["models"][3]["multi_agent_version"], "v2");
+        assert_eq!(refreshed["client_version"], "1.2.3");
+        assert_eq!(refreshed["etag"], "catalog-etag");
+    }
+
+    #[test]
+    fn rejects_custom_slug_collisions_during_refresh() {
+        let official = json!({"models":[{"slug":"gpt-5.6-sol"}]});
+        let managed = json!({"models":[{
+            "slug":"gpt-5.6-sol",
+            "description":"Custom upstream model exposed through codex-mixin"
+        }]});
+        let error = refresh_managed_oauth_catalog(&official, &managed).unwrap_err();
+        assert!(error.to_string().contains("collides"));
     }
 }

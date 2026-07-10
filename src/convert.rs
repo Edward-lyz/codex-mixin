@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, HashSet};
 
 use serde_json::{Value, json};
 
@@ -10,19 +10,104 @@ const WEB_SEARCH_QUERY_INSTRUCTION: &str = "When using web_search, form the sear
 
 #[derive(Clone, Debug, Default)]
 pub struct ToolNameMap {
-    anthropic_to_openai: HashMap<String, String>,
+    upstream_to_codex: HashMap<String, CodexToolName>,
+    custom_tools: HashSet<String>,
+    tool_search_execution: HashMap<String, String>,
+}
+
+#[derive(Clone, Debug, PartialEq, Eq)]
+struct CodexToolName {
+    name: String,
+    namespace: Option<String>,
 }
 
 impl ToolNameMap {
-    pub fn insert(&mut self, anthropic_name: String, openai_name: String) {
-        self.anthropic_to_openai.insert(anthropic_name, openai_name);
+    pub fn insert(
+        &mut self,
+        upstream_name: String,
+        codex_name: String,
+    ) -> Result<(), GatewayError> {
+        self.insert_mapping(
+            upstream_name,
+            CodexToolName {
+                name: codex_name,
+                namespace: None,
+            },
+        )
     }
 
-    pub fn to_openai_name<'a>(&'a self, anthropic_name: &'a str) -> &'a str {
-        self.anthropic_to_openai
-            .get(anthropic_name)
+    pub fn insert_namespaced(
+        &mut self,
+        upstream_name: String,
+        namespace: String,
+        codex_name: String,
+    ) -> Result<(), GatewayError> {
+        self.insert_mapping(
+            upstream_name,
+            CodexToolName {
+                name: codex_name,
+                namespace: Some(namespace),
+            },
+        )
+    }
+
+    fn insert_mapping(
+        &mut self,
+        upstream_name: String,
+        codex_name: CodexToolName,
+    ) -> Result<(), GatewayError> {
+        if self.upstream_to_codex.contains_key(&upstream_name) {
+            return Err(GatewayError::BadRequest(format!(
+                "tool names collide after upstream sanitization: {upstream_name}"
+            )));
+        }
+        self.upstream_to_codex.insert(upstream_name, codex_name);
+        Ok(())
+    }
+
+    pub fn to_codex_name<'a>(&'a self, upstream_name: &'a str) -> &'a str {
+        self.upstream_to_codex
+            .get(upstream_name)
+            .map(|name| name.name.as_str())
+            .unwrap_or(upstream_name)
+    }
+
+    pub fn to_codex_namespace(&self, upstream_name: &str) -> Option<&str> {
+        self.upstream_to_codex
+            .get(upstream_name)
+            .and_then(|name| name.namespace.as_deref())
+    }
+
+    pub fn insert_custom(
+        &mut self,
+        upstream_name: String,
+        codex_name: String,
+    ) -> Result<(), GatewayError> {
+        self.insert(upstream_name.clone(), codex_name)?;
+        self.custom_tools.insert(upstream_name.clone());
+        Ok(())
+    }
+
+    pub fn is_custom(&self, upstream_name: &str) -> bool {
+        self.custom_tools.contains(upstream_name)
+    }
+
+    pub fn insert_tool_search(
+        &mut self,
+        upstream_name: String,
+        codex_name: String,
+        execution: String,
+    ) -> Result<(), GatewayError> {
+        self.insert(upstream_name.clone(), codex_name)?;
+        self.tool_search_execution
+            .insert(upstream_name.clone(), execution);
+        Ok(())
+    }
+
+    pub fn tool_search_execution(&self, upstream_name: &str) -> Option<&str> {
+        self.tool_search_execution
+            .get(upstream_name)
             .map(String::as_str)
-            .unwrap_or(anthropic_name)
     }
 }
 
@@ -102,7 +187,8 @@ pub fn responses_to_anthropic(
     }
     merge_consecutive_messages(&mut messages);
 
-    let (tools, tool_names) = convert_tools(body.get("tools"), config)?;
+    let active_tools = collect_active_tools(body)?;
+    let (tools, tool_names) = convert_tools(Some(&active_tools), config)?;
     if tools.iter().any(is_anthropic_web_search_tool) {
         if config.web_search_omit_system_instructions {
             system.clear();
@@ -112,6 +198,14 @@ pub fn responses_to_anthropic(
         });
     }
     let thinking = convert_thinking(&model, max_tokens, body.get("reasoning"), config)?;
+    let tool_choice = if tools.is_empty() {
+        None
+    } else {
+        convert_tool_choice(
+            body.get("tool_choice"),
+            body.get("parallel_tool_calls").and_then(Value::as_bool),
+        )
+    };
     Ok(ConvertedRequest {
         request: MessageRequest {
             model,
@@ -124,7 +218,7 @@ pub fn responses_to_anthropic(
                 Some(system)
             },
             tools,
-            tool_choice: convert_tool_choice(body.get("tool_choice")),
+            tool_choice,
             thinking: thinking.thinking,
             output_config: thinking.output_config,
         },
@@ -140,7 +234,7 @@ fn append_input_item(
     let item_type = item
         .get("type")
         .and_then(Value::as_str)
-        .unwrap_or("message");
+        .ok_or_else(|| GatewayError::BadRequest("input item missing type".to_owned()))?;
     match item_type {
         "message" => {
             let role = item
@@ -169,6 +263,10 @@ fn append_input_item(
                 .get("name")
                 .and_then(Value::as_str)
                 .ok_or_else(|| GatewayError::BadRequest("function_call missing name".to_owned()))?;
+            let upstream_name = item.get("namespace").and_then(Value::as_str).map_or_else(
+                || name.to_owned(),
+                |namespace| format!("{namespace}__{name}"),
+            );
             let input = match item.get("arguments") {
                 Some(Value::String(arguments)) => {
                     serde_json::from_str(arguments).map_err(|err| {
@@ -178,7 +276,11 @@ fn append_input_item(
                     })?
                 }
                 Some(Value::Object(_)) => item["arguments"].clone(),
-                Some(Value::Null) | None => json!({}),
+                Some(Value::Null) | None => {
+                    return Err(GatewayError::BadRequest(
+                        "function_call missing arguments".to_owned(),
+                    ));
+                }
                 Some(other) => {
                     return Err(GatewayError::BadRequest(format!(
                         "function_call arguments must be a JSON string or object, got {other}"
@@ -189,20 +291,16 @@ fn append_input_item(
                 role: "assistant".to_owned(),
                 content: vec![ContentBlock::ToolUse {
                     id: call_id.to_owned(),
-                    name: sanitize_tool_name(name),
+                    name: sanitize_tool_name(&upstream_name),
                     input,
                 }],
             });
         }
-        "function_call_output" => {
+        "function_call_output" | "custom_tool_call_output" => {
             let call_id = item.get("call_id").and_then(Value::as_str).ok_or_else(|| {
                 GatewayError::BadRequest("function_call_output missing call_id".to_owned())
             })?;
-            let output = item
-                .get("output")
-                .and_then(Value::as_str)
-                .unwrap_or("")
-                .to_owned();
+            let output = tool_output_for_anthropic(item.get("output"))?;
             messages.push(Message {
                 role: "user".to_owned(),
                 content: vec![ContentBlock::ToolResult {
@@ -211,6 +309,90 @@ fn append_input_item(
                 }],
             });
         }
+        "custom_tool_call" => {
+            let call_id = item.get("call_id").and_then(Value::as_str).ok_or_else(|| {
+                GatewayError::BadRequest("custom_tool_call missing call_id".to_owned())
+            })?;
+            let name = item.get("name").and_then(Value::as_str).ok_or_else(|| {
+                GatewayError::BadRequest("custom_tool_call missing name".to_owned())
+            })?;
+            let input = item.get("input").and_then(Value::as_str).ok_or_else(|| {
+                GatewayError::BadRequest("custom_tool_call missing input".to_owned())
+            })?;
+            messages.push(Message {
+                role: "assistant".to_owned(),
+                content: vec![ContentBlock::ToolUse {
+                    id: call_id.to_owned(),
+                    name: sanitize_tool_name(name),
+                    input: json!({"input": input}),
+                }],
+            });
+        }
+        "tool_search_call" => {
+            let execution = item
+                .get("execution")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    GatewayError::BadRequest("tool_search_call missing execution".to_owned())
+                })?;
+            if execution == "server" {
+                return Ok(());
+            }
+            if execution != "client" {
+                return Err(GatewayError::BadRequest(format!(
+                    "unsupported tool_search_call execution: {execution}"
+                )));
+            }
+            let call_id = item.get("call_id").and_then(Value::as_str).ok_or_else(|| {
+                GatewayError::BadRequest("tool_search_call missing call_id".to_owned())
+            })?;
+            let arguments = item
+                .get("arguments")
+                .filter(|arguments| arguments.is_object())
+                .ok_or_else(|| {
+                    GatewayError::BadRequest(
+                        "tool_search_call arguments must be an object".to_owned(),
+                    )
+                })?;
+            messages.push(Message {
+                role: "assistant".to_owned(),
+                content: vec![ContentBlock::ToolUse {
+                    id: call_id.to_owned(),
+                    name: "tool_search".to_owned(),
+                    input: arguments.clone(),
+                }],
+            });
+        }
+        "tool_search_output" => {
+            let execution = item
+                .get("execution")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    GatewayError::BadRequest("tool_search_output missing execution".to_owned())
+                })?;
+            if execution == "server" {
+                return Ok(());
+            }
+            if execution != "client" {
+                return Err(GatewayError::BadRequest(format!(
+                    "unsupported tool_search_output execution: {execution}"
+                )));
+            }
+            let call_id = item.get("call_id").and_then(Value::as_str).ok_or_else(|| {
+                GatewayError::BadRequest("tool_search_output missing call_id".to_owned())
+            })?;
+            let tools = item.get("tools").and_then(Value::as_array).ok_or_else(|| {
+                GatewayError::BadRequest("tool_search_output missing tools".to_owned())
+            })?;
+            messages.push(Message {
+                role: "user".to_owned(),
+                content: vec![ContentBlock::ToolResult {
+                    tool_use_id: call_id.to_owned(),
+                    content: Value::String(serde_json::to_string(tools)?),
+                }],
+            });
+        }
+        "reasoning" | "web_search_call" | "image_generation_call" | "additional_tools" => {}
         "agent_message" => messages.push(Message {
             role: "user".to_owned(),
             content: vec![ContentBlock::Text {
@@ -295,7 +477,9 @@ fn convert_content(content: Option<&Value>, role: &str) -> Result<Vec<ContentBlo
         Some(Value::Array(parts)) => {
             let mut blocks = Vec::new();
             for part in parts {
-                let part_type = part.get("type").and_then(Value::as_str).unwrap_or("text");
+                let part_type = part.get("type").and_then(Value::as_str).ok_or_else(|| {
+                    GatewayError::BadRequest("message content part missing type".to_owned())
+                })?;
                 match part_type {
                     "input_text" | "output_text" | "text" => {
                         let text = part.get("text").and_then(Value::as_str).ok_or_else(|| {
@@ -358,6 +542,41 @@ fn merge_consecutive_messages(messages: &mut Vec<Message>) {
     *messages = merged;
 }
 
+pub(crate) fn collect_active_tools(body: &Value) -> Result<Value, GatewayError> {
+    let mut active_tools = match body.get("tools") {
+        Some(Value::Array(tools)) => tools.clone(),
+        Some(_) => {
+            return Err(GatewayError::BadRequest(
+                "tools must be an array".to_owned(),
+            ));
+        }
+        None => Vec::new(),
+    };
+    let Some(Value::Array(input)) = body.get("input") else {
+        return Ok(Value::Array(active_tools));
+    };
+    for item in input {
+        let item_type = item.get("type").and_then(Value::as_str);
+        let discovered_tools = match item_type {
+            Some("tool_search_output")
+                if item.get("execution").and_then(Value::as_str) == Some("client") =>
+            {
+                item.get("tools").and_then(Value::as_array).ok_or_else(|| {
+                    GatewayError::BadRequest("tool_search_output missing tools".to_owned())
+                })?
+            }
+            Some("additional_tools") => {
+                item.get("tools").and_then(Value::as_array).ok_or_else(|| {
+                    GatewayError::BadRequest("additional_tools missing tools".to_owned())
+                })?
+            }
+            _ => continue,
+        };
+        active_tools.extend(discovered_tools.iter().cloned());
+    }
+    Ok(Value::Array(active_tools))
+}
+
 fn convert_tools(
     tools: Option<&Value>,
     config: &GatewayConfig,
@@ -378,19 +597,25 @@ fn convert_tools(
                     && config.enable_web_search_tool
                     && !web_search_added =>
             {
-                result.push(web_search_server_tool(config));
+                result.push(web_search_server_tool(config, tool)?);
                 web_search_added = true;
             }
-            Some("function") if is_codex_web_search_function(tool) => {}
+            Some("function")
+                if is_codex_web_search_function(tool) && config.enable_web_search_tool => {}
+            Some("function") if is_codex_web_search_function(tool) => {
+                return Err(GatewayError::BadRequest(
+                    "web_search tool is disabled for this upstream".to_owned(),
+                ));
+            }
             Some("function") if suppress_client_tools => {}
             Some("function") => {
-                let (converted, openai_name) = convert_function_tool(tool, None)?;
+                let (converted, codex_name) = convert_function_tool(tool, None)?;
                 let anthropic_name = converted
                     .get("name")
                     .and_then(Value::as_str)
                     .expect("converted function tool missing name")
                     .to_owned();
-                names.insert(anthropic_name, openai_name);
+                names.insert(anthropic_name, codex_name)?;
                 result.push(converted);
             }
             Some("namespace") if suppress_client_tools => {}
@@ -403,25 +628,77 @@ fn convert_tools(
                         GatewayError::BadRequest("namespace tool missing tools".to_owned())
                     })?;
                 for nested in nested_tools {
-                    let (converted, openai_name) = convert_function_tool(nested, Some(namespace))?;
+                    let (converted, codex_name) = convert_function_tool(nested, Some(namespace))?;
                     let anthropic_name = converted
                         .get("name")
                         .and_then(Value::as_str)
                         .expect("converted namespace tool missing name")
                         .to_owned();
-                    names.insert(anthropic_name, openai_name);
+                    names.insert_namespaced(anthropic_name, namespace.to_owned(), codex_name)?;
                     result.push(converted);
                 }
+            }
+            Some("custom") if suppress_client_tools => {}
+            Some("custom") => {
+                let (converted, codex_name) = convert_custom_tool(tool)?;
+                let upstream_name = converted
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .expect("converted custom tool missing name")
+                    .to_owned();
+                names.insert_custom(upstream_name, codex_name)?;
+                result.push(converted);
+            }
+            Some("tool_search") if suppress_client_tools => {}
+            Some("tool_search") => {
+                let execution = tool
+                    .get("execution")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        GatewayError::BadRequest("tool_search missing execution".to_owned())
+                    })?
+                    .to_owned();
+                if execution != "client" {
+                    return Err(GatewayError::BadRequest(format!(
+                        "unsupported tool_search execution: {execution}"
+                    )));
+                }
+                let mut function_tool = tool.clone();
+                function_tool["name"] = json!("tool_search");
+                let (converted, codex_name) = convert_function_tool(&function_tool, None)?;
+                let upstream_name = converted
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .expect("converted tool_search missing name")
+                    .to_owned();
+                names.insert_tool_search(upstream_name, codex_name, execution)?;
+                result.push(converted);
             }
             Some("web_search" | "web_search_preview")
                 if config.enable_web_search_tool && !web_search_added =>
             {
-                result.push(web_search_server_tool(config));
+                result.push(web_search_server_tool(config, tool)?);
                 web_search_added = true;
             }
-            Some("web_search" | "web_search_preview") => {}
-            Some(other) => tracing::debug!(tool_type = other, "skipping unsupported tool type"),
-            None => {}
+            Some("web_search" | "web_search_preview") if config.enable_web_search_tool => {}
+            Some("web_search" | "web_search_preview") => {
+                return Err(GatewayError::BadRequest(
+                    "web_search tool is disabled for this upstream".to_owned(),
+                ));
+            }
+            Some("image_generation") => {
+                tracing::debug!("omitting legacy OpenAI-hosted image_generation tool");
+            }
+            Some(other) => {
+                return Err(GatewayError::BadRequest(format!(
+                    "unsupported tool type: {other}"
+                )));
+            }
+            None => {
+                return Err(GatewayError::BadRequest(
+                    "tool definition missing type".to_owned(),
+                ));
+            }
         }
     }
     Ok((result, names))
@@ -456,12 +733,79 @@ fn is_codex_web_search_function(tool: &Value) -> bool {
     )
 }
 
-fn web_search_server_tool(config: &GatewayConfig) -> Tool {
+fn web_search_server_tool(
+    config: &GatewayConfig,
+    codex_tool: &Value,
+) -> Result<Tool, GatewayError> {
+    if codex_tool
+        .get("external_web_access")
+        .and_then(Value::as_bool)
+        == Some(false)
+    {
+        return Err(GatewayError::BadRequest(
+            "Anthropic web_search cannot preserve Codex cached-search semantics".to_owned(),
+        ));
+    }
+    if codex_tool
+        .get("indexed_web_access")
+        .and_then(Value::as_bool)
+        == Some(true)
+    {
+        return Err(GatewayError::BadRequest(
+            "Anthropic web_search cannot preserve Codex indexed-search semantics".to_owned(),
+        ));
+    }
+    if codex_tool.get("search_context_size").is_some() {
+        return Err(GatewayError::BadRequest(
+            "Anthropic web_search has no equivalent for Codex search_context_size".to_owned(),
+        ));
+    }
+    if let Some(content_types) = codex_tool.get("search_content_types") {
+        let content_types = content_types.as_array().ok_or_else(|| {
+            GatewayError::BadRequest("web_search search_content_types must be an array".to_owned())
+        })?;
+        if content_types
+            .iter()
+            .any(|content_type| content_type.as_str() != Some("text"))
+        {
+            return Err(GatewayError::BadRequest(
+                "Anthropic web_search cannot preserve non-text Codex search content types"
+                    .to_owned(),
+            ));
+        }
+    }
+
     let mut web_search_tool = json!({"type": &config.web_search_tool_type, "name": "web_search"});
     if let Some(max_uses) = config.web_search_max_uses {
         web_search_tool["max_uses"] = json!(max_uses);
     }
-    web_search_tool
+    if let Some(filters) = codex_tool.get("filters") {
+        let filters = filters.as_object().ok_or_else(|| {
+            GatewayError::BadRequest("web_search filters must be an object".to_owned())
+        })?;
+        if let Some(allowed_domains) = filters.get("allowed_domains") {
+            let allowed_domains = allowed_domains.as_array().ok_or_else(|| {
+                GatewayError::BadRequest(
+                    "web_search filters.allowed_domains must be an array".to_owned(),
+                )
+            })?;
+            if allowed_domains.iter().any(|domain| !domain.is_string()) {
+                return Err(GatewayError::BadRequest(
+                    "web_search filters.allowed_domains must contain only strings".to_owned(),
+                ));
+            }
+            web_search_tool["allowed_domains"] = Value::Array(allowed_domains.clone());
+        }
+    }
+    if let Some(user_location) = codex_tool.get("user_location") {
+        if !user_location.is_object() {
+            return Err(GatewayError::BadRequest(
+                "web_search user_location must be an object".to_owned(),
+            ));
+        }
+        web_search_tool["user_location"] = user_location.clone();
+    }
+    Ok(web_search_tool)
 }
 
 fn convert_function_tool(
@@ -472,10 +816,7 @@ fn convert_function_tool(
         .get("name")
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("function tool missing name".to_owned()))?;
-    let openai_name = namespace.map_or_else(
-        || name.to_owned(),
-        |namespace| format!("{namespace}.{name}"),
-    );
+    let codex_name = name.to_owned();
     let anthropic_name = namespace.map_or_else(
         || sanitize_tool_name(name),
         |namespace| sanitize_tool_name(&format!("{namespace}__{name}")),
@@ -489,7 +830,7 @@ fn convert_function_tool(
         .get("parameters")
         .cloned()
         .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
-    let converted = match description {
+    let mut converted = match description {
         Some(description) => json!({
             "name": anthropic_name,
             "description": description,
@@ -500,7 +841,112 @@ fn convert_function_tool(
             "input_schema": input_schema
         }),
     };
-    Ok((converted, openai_name))
+    if let Some(strict) = tool.get("strict").and_then(Value::as_bool) {
+        converted["strict"] = json!(strict);
+    }
+    Ok((converted, codex_name))
+}
+
+fn convert_custom_tool(tool: &Value) -> Result<(Tool, String), GatewayError> {
+    let name = tool
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GatewayError::BadRequest("custom tool missing name".to_owned()))?;
+    let upstream_name = sanitize_tool_name(name);
+    let description = custom_tool_description(tool)?;
+    Ok((
+        json!({
+            "name": upstream_name,
+            "description": description,
+            "strict": true,
+            "input_schema": {
+                "type": "object",
+                "properties": {"input": {"type": "string"}},
+                "required": ["input"],
+                "additionalProperties": false
+            }
+        }),
+        name.to_owned(),
+    ))
+}
+
+pub(crate) fn custom_tool_description(tool: &Value) -> Result<String, GatewayError> {
+    let mut description = tool
+        .get("description")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GatewayError::BadRequest("custom tool missing description".to_owned()))?
+        .to_owned();
+    description.push_str(
+        "\n\nFor this gateway function call, put the complete freeform payload unchanged in the input string field.",
+    );
+    if let Some(format) = tool.get("format") {
+        let format_type = format.get("type").and_then(Value::as_str).ok_or_else(|| {
+            GatewayError::BadRequest("custom tool format missing type".to_owned())
+        })?;
+        let syntax = format
+            .get("syntax")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                GatewayError::BadRequest("custom tool format missing syntax".to_owned())
+            })?;
+        let definition = format
+            .get("definition")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                GatewayError::BadRequest("custom tool format missing definition".to_owned())
+            })?;
+        description.push_str(&format!(
+            "\nThe input must satisfy the {format_type} {syntax} grammar:\n{definition}"
+        ));
+    }
+    Ok(description)
+}
+
+pub(crate) fn tool_output_for_anthropic(output: Option<&Value>) -> Result<Value, GatewayError> {
+    match output {
+        Some(Value::String(output)) => Ok(Value::String(output.clone())),
+        Some(Value::Array(items)) => {
+            let mut content = Vec::with_capacity(items.len());
+            for item in items {
+                match item.get("type").and_then(Value::as_str) {
+                    Some("input_text") => {
+                        let text = item.get("text").and_then(Value::as_str).ok_or_else(|| {
+                            GatewayError::BadRequest(
+                                "tool output input_text missing text".to_owned(),
+                            )
+                        })?;
+                        content.push(json!({"type":"text","text":text}));
+                    }
+                    Some("input_image") => {
+                        content.push(serde_json::to_value(convert_image_part(item)?)?);
+                    }
+                    Some("encrypted_content") => {
+                        return Err(GatewayError::BadRequest(
+                            "encrypted tool output cannot be forwarded to a custom upstream"
+                                .to_owned(),
+                        ));
+                    }
+                    Some(other) => {
+                        return Err(GatewayError::BadRequest(format!(
+                            "unsupported tool output content type: {other}"
+                        )));
+                    }
+                    None => {
+                        return Err(GatewayError::BadRequest(
+                            "tool output content item missing type".to_owned(),
+                        ));
+                    }
+                }
+            }
+            Ok(Value::Array(content))
+        }
+        Some(Value::Null) | None => Err(GatewayError::BadRequest(
+            "tool call output is missing".to_owned(),
+        )),
+        Some(_) => Err(GatewayError::BadRequest(
+            "tool call output must be a string or content array".to_owned(),
+        )),
+    }
 }
 
 pub fn sanitize_tool_name(name: &str) -> String {
@@ -513,21 +959,43 @@ pub fn sanitize_tool_name(name: &str) -> String {
         }
     }
     if sanitized.is_empty() {
-        "tool".to_owned()
-    } else {
-        sanitized
+        sanitized.push_str("tool");
     }
+    if sanitized.len() <= 64 {
+        return sanitized;
+    }
+    let hash = name
+        .as_bytes()
+        .iter()
+        .fold(0xcbf29ce484222325u64, |hash, byte| {
+            (hash ^ u64::from(*byte)).wrapping_mul(0x100000001b3)
+        });
+    sanitized.truncate(47);
+    format!("{sanitized}_{hash:016x}")
 }
 
-fn convert_tool_choice(value: Option<&Value>) -> Option<Value> {
-    match value {
+fn convert_tool_choice(value: Option<&Value>, parallel_tool_calls: Option<bool>) -> Option<Value> {
+    let mut choice = match value {
         Some(Value::String(choice)) if choice == "auto" => Some(json!({"type": "auto"})),
         Some(Value::String(choice)) if choice == "required" || choice == "any" => {
             Some(json!({"type": "any"}))
         }
         Some(Value::String(choice)) if choice == "none" => Some(json!({"type": "none"})),
         _ => None,
+    };
+    if parallel_tool_calls == Some(false)
+        && !matches!(
+            choice
+                .as_ref()
+                .and_then(|value| value.get("type"))
+                .and_then(Value::as_str),
+            Some("none")
+        )
+    {
+        let choice = choice.get_or_insert_with(|| json!({"type":"auto"}));
+        choice["disable_parallel_tool_use"] = json!(true);
     }
+    choice
 }
 
 #[derive(Clone, Debug, Default)]
@@ -713,6 +1181,21 @@ mod tests {
         assert_eq!(converted.request.model, "DeepSeek-V4-Flash");
         assert_eq!(converted.request.system.as_ref().unwrap().len(), 2);
         assert_eq!(converted.request.messages.len(), 3);
+        assert_eq!(
+            converted.request.messages[1].content[0],
+            ContentBlock::ToolUse {
+                id: "call_1".to_owned(),
+                name: "exec_command".to_owned(),
+                input: json!({"cmd":"pwd"})
+            }
+        );
+        assert_eq!(
+            converted.request.messages[2].content[0],
+            ContentBlock::ToolResult {
+                tool_use_id: "call_1".to_owned(),
+                content: json!("/tmp")
+            }
+        );
         assert_eq!(converted.request.tools[0]["name"], "exec_command");
     }
 
@@ -768,14 +1251,240 @@ mod tests {
             "model": "m",
             "stream": true,
             "input": "hi",
-            "tools": [{"type":"namespace","name":"mcp__node_repl","tools":[{"type":"function","name":"js","parameters":{"type":"object"}}]}]
+            "tools": [{"type":"namespace","name":"mcp__node_repl","tools":[{"type":"function","name":"js","strict":true,"parameters":{"type":"object"}}]}]
         });
         let converted = responses_to_anthropic(&body, &config()).unwrap();
         assert_eq!(converted.request.tools[0]["name"], "mcp__node_repl__js");
+        assert_eq!(converted.request.tools[0]["strict"], true);
         assert_eq!(
-            converted.tool_names.to_openai_name("mcp__node_repl__js"),
-            "mcp__node_repl.js"
+            converted.tool_names.to_codex_name("mcp__node_repl__js"),
+            "js"
         );
+        assert_eq!(
+            converted
+                .tool_names
+                .to_codex_namespace("mcp__node_repl__js"),
+            Some("mcp__node_repl")
+        );
+    }
+
+    #[test]
+    fn flattens_namespaced_function_call_history_for_upstream() {
+        let body = json!({
+            "model": "m",
+            "stream": true,
+            "input": [{
+                "type":"function_call",
+                "call_id":"call_1",
+                "namespace":"collaboration",
+                "name":"spawn_agent",
+                "arguments":"{\"task_name\":\"test\"}"
+            }]
+        });
+        let converted = responses_to_anthropic(&body, &config()).unwrap();
+        assert_eq!(
+            converted.request.messages[0].content[0],
+            ContentBlock::ToolUse {
+                id: "call_1".to_owned(),
+                name: "collaboration__spawn_agent".to_owned(),
+                input: json!({"task_name":"test"})
+            }
+        );
+    }
+
+    #[test]
+    fn converts_custom_and_tool_search_tools_for_anthropic() {
+        let body = json!({
+            "model": "m",
+            "stream": true,
+            "input": "hi",
+            "tools": [
+                {
+                    "type":"custom",
+                    "name":"apply_patch",
+                    "description":"Apply patch without JSON wrapping",
+                    "format":{"type":"grammar","syntax":"lark","definition":"start: PATCH"}
+                },
+                {
+                    "type":"tool_search",
+                    "execution":"client",
+                    "description":"Search deferred tools",
+                    "parameters":{"type":"object","properties":{"query":{"type":"string"}}}
+                }
+            ]
+        });
+        let converted = responses_to_anthropic(&body, &config()).unwrap();
+        assert_eq!(converted.request.tools[0]["name"], "apply_patch");
+        assert_eq!(
+            converted.request.tools[0]["input_schema"]["required"],
+            json!(["input"])
+        );
+        assert_eq!(converted.request.tools[0]["strict"], true);
+        assert!(
+            converted.request.tools[0]["description"]
+                .as_str()
+                .unwrap()
+                .contains("start: PATCH")
+        );
+        assert!(converted.tool_names.is_custom("apply_patch"));
+        assert_eq!(converted.request.tools[1]["name"], "tool_search");
+        assert_eq!(
+            converted.tool_names.tool_search_execution("tool_search"),
+            Some("client")
+        );
+    }
+
+    #[test]
+    fn converts_custom_and_tool_search_outputs_for_anthropic() {
+        let body = json!({
+            "model": "m",
+            "stream": true,
+            "input": [
+                {"type":"custom_tool_call","call_id":"custom_1","name":"apply_patch","input":"*** Begin Patch"},
+                {"type":"custom_tool_call_output","call_id":"custom_1","output":[{"type":"input_text","text":"Done"}]},
+                {"type":"tool_search_call","call_id":"search_1","execution":"client","arguments":{"query":"calendar"}},
+                {"type":"tool_search_output","call_id":"search_1","status":"completed","execution":"client","tools":[{"type":"function","name":"create_event"}]}
+            ]
+        });
+        let converted = responses_to_anthropic(&body, &config()).unwrap();
+        assert_eq!(converted.request.messages.len(), 4);
+        assert_eq!(
+            converted.request.messages[0].content[0],
+            ContentBlock::ToolUse {
+                id: "custom_1".to_owned(),
+                name: "apply_patch".to_owned(),
+                input: json!({"input":"*** Begin Patch"})
+            }
+        );
+        assert_eq!(
+            converted.request.messages[1].content[0],
+            ContentBlock::ToolResult {
+                tool_use_id: "custom_1".to_owned(),
+                content: json!([{"type":"text","text":"Done"}])
+            }
+        );
+        assert_eq!(
+            converted.request.messages[2].content[0],
+            ContentBlock::ToolUse {
+                id: "search_1".to_owned(),
+                name: "tool_search".to_owned(),
+                input: json!({"query":"calendar"})
+            }
+        );
+    }
+
+    #[test]
+    fn exposes_deferred_and_additional_tools_to_anthropic() {
+        let body = json!({
+            "model": "m",
+            "stream": true,
+            "tools": [{
+                "type":"tool_search",
+                "execution":"client",
+                "description":"Search tools",
+                "parameters":{"type":"object","properties":{"query":{"type":"string"}}}
+            }],
+            "input": [
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"create event"}]},
+                {"type":"tool_search_call","call_id":"search_1","execution":"client","arguments":{"query":"calendar"}},
+                {"type":"tool_search_output","call_id":"search_1","status":"completed","execution":"client","tools":[
+                    {"type":"function","name":"calendar_create","description":"Create event","parameters":{"type":"object"}},
+                    {"type":"namespace","name":"mcp__calendar","tools":[{"type":"function","name":"delete_event","parameters":{"type":"object"}}]}
+                ]},
+                {"type":"additional_tools","role":"developer","tools":[
+                    {"type":"function","name":"calendar_list","description":"List events","parameters":{"type":"object"}}
+                ]}
+            ]
+        });
+        let converted = responses_to_anthropic(&body, &config()).unwrap();
+        let tool_names = converted
+            .request
+            .tools
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tool_names,
+            vec![
+                "tool_search",
+                "calendar_create",
+                "mcp__calendar__delete_event",
+                "calendar_list"
+            ]
+        );
+        assert_eq!(
+            converted
+                .tool_names
+                .to_codex_namespace("mcp__calendar__delete_event"),
+            Some("mcp__calendar")
+        );
+    }
+
+    #[test]
+    fn ignores_provider_native_history_when_switching_to_custom_model() {
+        let body = json!({
+            "model": "m",
+            "stream": true,
+            "input": [
+                {"type":"reasoning","encrypted_content":"opaque","summary":[]},
+                {"type":"web_search_call","id":"ws_1","status":"completed"},
+                {"type":"image_generation_call","id":"ig_1","status":"completed","result":"base64"},
+                {"type":"tool_search_call","execution":"server","call_id":null,"arguments":{"paths":["crm"]}},
+                {"type":"tool_search_output","execution":"server","call_id":null,"status":"completed","tools":[]},
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
+            ]
+        });
+        let converted = responses_to_anthropic(&body, &config()).unwrap();
+        assert_eq!(converted.request.messages.len(), 1);
+        assert_eq!(
+            converted.request.messages[0].content[0],
+            ContentBlock::Text {
+                text: "continue".to_owned()
+            }
+        );
+    }
+
+    #[test]
+    fn preserves_multimodal_tool_outputs_for_anthropic() {
+        let body = json!({
+            "model": "m",
+            "stream": true,
+            "input": [
+                {"type":"function_call","call_id":"call_1","name":"view_image","arguments":"{\"path\":\"/tmp/a.png\"}"},
+                {"type":"function_call_output","call_id":"call_1","output":[
+                    {"type":"input_text","text":"image loaded"},
+                    {"type":"input_image","image_url":"data:image/png;base64,AAAA","detail":"original"}
+                ]}
+            ]
+        });
+        let converted = responses_to_anthropic(&body, &config()).unwrap();
+        assert_eq!(
+            converted.request.messages[1].content[0],
+            ContentBlock::ToolResult {
+                tool_use_id: "call_1".to_owned(),
+                content: json!([
+                    {"type":"text","text":"image loaded"},
+                    {"type":"image","source":{"type":"base64","media_type":"image/png","data":"AAAA"}}
+                ])
+            }
+        );
+    }
+
+    #[test]
+    fn rejects_incomplete_client_tool_history() {
+        for item in [
+            json!({"type":"function_call","call_id":"call_1","name":"exec_command"}),
+            json!({"type":"function_call_output","call_id":"call_1"}),
+            json!({"type":"tool_search_call","execution":"client","call_id":"search_1"}),
+            json!({"type":"tool_search_output","execution":"client","call_id":"search_1","status":"completed"}),
+        ] {
+            let error = responses_to_anthropic(
+                &json!({"model":"m","stream":true,"input":[item]}),
+                &config(),
+            )
+            .unwrap_err();
+            assert!(error.to_string().contains("missing") || error.to_string().contains("must be"));
+        }
     }
 
     #[test]
@@ -892,13 +1601,60 @@ mod tests {
             "model": "Claude Sonnet 5",
             "stream": true,
             "input": "hi",
-            "tools": [{"type": "web_search", "external_web_access": true}]
+            "tools": [{
+                "type": "web_search",
+                "external_web_access": true,
+                "filters": {"allowed_domains": ["openai.com", "docs.rs"]},
+                "user_location": {
+                    "type": "approximate",
+                    "city": "Taipei",
+                    "country": "TW",
+                    "timezone": "Asia/Taipei"
+                }
+            }]
         });
         let converted = responses_to_anthropic(&body, &config).unwrap();
         assert_eq!(converted.request.tools[0]["type"], "web_search_20250305");
         assert_eq!(converted.request.tools[0]["name"], "web_search");
         assert_eq!(converted.request.tools[0]["max_uses"], 1);
+        assert_eq!(
+            converted.request.tools[0]["allowed_domains"],
+            json!(["openai.com", "docs.rs"])
+        );
+        assert_eq!(
+            converted.request.tools[0]["user_location"]["timezone"],
+            "Asia/Taipei"
+        );
         assert!(converted.request.tools[0].get("input_schema").is_none());
+    }
+
+    #[test]
+    fn rejects_codex_web_search_modes_without_anthropic_equivalents() {
+        let mut config = config();
+        config.enable_web_search_tool = true;
+        for unsupported in [
+            json!({"external_web_access": false}),
+            json!({"external_web_access": true, "indexed_web_access": true}),
+            json!({"external_web_access": true, "search_context_size": "high"}),
+            json!({"external_web_access": true, "search_content_types": ["text", "image"]}),
+        ] {
+            let mut tool = unsupported;
+            tool["type"] = json!("web_search");
+            let error = responses_to_anthropic(
+                &json!({
+                    "model": "Claude Sonnet 5",
+                    "stream": true,
+                    "input": "hi",
+                    "tools": [tool]
+                }),
+                &config,
+            )
+            .unwrap_err();
+            assert!(
+                error.to_string().contains("cannot preserve")
+                    || error.to_string().contains("no equivalent")
+            );
+        }
     }
 
     #[test]
@@ -912,12 +1668,78 @@ mod tests {
             "input": "hi",
             "tools": [
                 {"type":"function","name":"exec_command","parameters":{"type":"object"}},
+                {"type":"namespace","name":"mcp","tools":[{"type":"function","name":"read","parameters":{"type":"object"}}]},
+                {"type":"custom","name":"apply_patch"},
+                {"type":"tool_search","execution":"client","parameters":{"type":"object"}},
                 {"type":"web_search","external_web_access":true}
             ]
         });
         let converted = responses_to_anthropic(&body, &config).unwrap();
         assert_eq!(converted.request.tools.len(), 1);
         assert_eq!(converted.request.tools[0]["type"], "web_search_20250305");
+    }
+
+    #[test]
+    fn rejects_unknown_tool_type() {
+        let body = json!({
+            "model": "m",
+            "stream": true,
+            "input": "hi",
+            "tools": [{"type":"computer_use_preview"}]
+        });
+        let error = responses_to_anthropic(&body, &config()).unwrap_err();
+        assert!(error.to_string().contains("unsupported tool type"));
+    }
+
+    #[test]
+    fn omits_legacy_openai_hosted_image_generation_tool() {
+        let body = json!({
+            "model": "m",
+            "stream": true,
+            "parallel_tool_calls": true,
+            "tool_choice": "auto",
+            "input": "hi",
+            "tools": [{"type":"image_generation","output_format":"png"}]
+        });
+        let converted = responses_to_anthropic(&body, &config()).unwrap();
+        assert!(converted.request.tools.is_empty());
+        assert!(converted.request.tool_choice.is_none());
+    }
+
+    #[test]
+    fn rejects_tool_names_that_collide_after_flattening() {
+        let body = json!({
+            "model": "m",
+            "stream": true,
+            "input": "hi",
+            "tools": [
+                {"type":"function","name":"mcp__read","parameters":{"type":"object"}},
+                {"type":"namespace","name":"mcp","tools":[{"type":"function","name":"read","parameters":{"type":"object"}}]}
+            ]
+        });
+        let error = responses_to_anthropic(&body, &config()).unwrap_err();
+        assert!(error.to_string().contains("tool names collide"));
+    }
+
+    #[test]
+    fn disables_parallel_anthropic_tool_use_when_codex_requests_serial_calls() {
+        let body = json!({
+            "model": "m",
+            "stream": true,
+            "parallel_tool_calls": false,
+            "tool_choice": "auto",
+            "input": "hi",
+            "tools": [{"type":"function","name":"exec_command","parameters":{"type":"object"}}]
+        });
+        let converted = responses_to_anthropic(&body, &config()).unwrap();
+        assert_eq!(
+            converted.request.tool_choice.as_ref().unwrap()["type"],
+            "auto"
+        );
+        assert_eq!(
+            converted.request.tool_choice.as_ref().unwrap()["disable_parallel_tool_use"],
+            true
+        );
     }
 
     #[test]
@@ -988,7 +1810,7 @@ mod tests {
         assert_eq!(converted.request.tools[0]["name"], "web_search");
         assert!(converted.request.tools[0].get("input_schema").is_none());
         assert_eq!(
-            converted.tool_names.to_openai_name("web_search"),
+            converted.tool_names.to_codex_name("web_search"),
             "web_search"
         );
     }

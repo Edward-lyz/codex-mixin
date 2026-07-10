@@ -12,6 +12,8 @@ use serde::{Deserialize, Serialize};
 use toml_edit::{DocumentMut, Item, Table, value};
 
 #[cfg(unix)]
+use std::os::fd::AsRawFd;
+#[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
 use codex_mixin::CODEX_MIXIN_PROVIDER;
@@ -33,6 +35,56 @@ const MANAGED_CONFIG_MARKER: &str = "codex-mixin managed config";
 const MANAGED_CONFIG_HEADER: &str = "# codex-mixin managed config. Run `codex-mixin uninstall-codex` to restore the previous config.";
 const LITELLM_MODEL_METADATA_URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+const CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+
+#[derive(Debug, Eq, PartialEq)]
+struct CodexInstallPaths {
+    config: PathBuf,
+    catalog: PathBuf,
+    models_cache: PathBuf,
+}
+
+struct ManagedConfigLock {
+    #[cfg(unix)]
+    _file: fs::File,
+}
+
+impl ManagedConfigLock {
+    fn acquire(config_path: &Path) -> anyhow::Result<Self> {
+        #[cfg(not(unix))]
+        {
+            let _ = config_path;
+            anyhow::bail!("managed Codex config locking requires Unix flock support");
+        }
+
+        #[cfg(unix)]
+        {
+            if let Some(parent) = config_path.parent() {
+                fs::create_dir_all(parent)?;
+            }
+            // A sibling file keeps the lock inode stable while config writes use atomic rename.
+            let lock_path = sibling_path_with_extra_extension(config_path, "codex-mixin.lock");
+            let file = OpenOptions::new()
+                .create(true)
+                .read(true)
+                .write(true)
+                .open(&lock_path)?;
+            loop {
+                if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
+                    break;
+                }
+                let error = io::Error::last_os_error();
+                if error.kind() != io::ErrorKind::Interrupted {
+                    return Err(anyhow::anyhow!(
+                        "failed to lock managed Codex config {}: {error}",
+                        config_path.display()
+                    ));
+                }
+            }
+            Ok(Self { _file: file })
+        }
+    }
+}
 
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
@@ -793,19 +845,14 @@ async fn install_codex(
     env_key: Option<String>,
     no_env_key: bool,
 ) -> anyhow::Result<()> {
+    let paths = resolve_codex_install_paths(config_path, catalog_path)?;
+    let template = load_codex_install_template(&paths, codex_oauth_proxy)?;
     let gateway_config = GatewayConfig::from_env()?;
     let state = AppState::new(gateway_config.clone())?;
     let models = state.fetch_models().await?;
     if models.is_empty() {
         anyhow::bail!("upstream /v1/models returned no models");
     }
-    let config_path = config_path.unwrap_or_else(default_codex_config_path);
-    let catalog_path = catalog_path.unwrap_or_else(default_codex_catalog_path);
-    if let Some(parent) = catalog_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let raw_config = prepare_managed_config_install(&config_path)?;
-    let template = load_template_catalog(None)?;
     let metadata = load_model_metadata_resolver().await?;
     let catalog = if codex_oauth_proxy {
         codex_oauth_proxy_catalog_from_models_with_metadata(
@@ -822,8 +869,23 @@ async fn install_codex(
             &metadata,
         )
     };
-    write_atomic_if_changed(&catalog_path, &serde_json::to_vec_pretty(&catalog)?)?;
+    let serialized_catalog = serde_json::to_vec_pretty(&catalog)?;
+    let gateway_base_url = normalize_base_url(
+        base_url.unwrap_or_else(|| format!("http://{}/v1", gateway_config.bind)),
+    )?;
+    let env_key = if codex_oauth_proxy || no_env_key {
+        None
+    } else {
+        env_key.or_else(|| {
+            gateway_config
+                .gateway_api_key
+                .as_ref()
+                .map(|_| "CODEX_GATEWAY_KEY".to_owned())
+        })
+    };
 
+    let _config_lock = ManagedConfigLock::acquire(&paths.config)?;
+    let raw_config = read_managed_config_for_install(&paths.config)?;
     let mut doc = if raw_config.trim().is_empty() {
         DocumentMut::new()
     } else {
@@ -846,44 +908,33 @@ async fn install_codex(
     } else {
         None
     };
-    let gateway_base_url = normalize_base_url(
-        base_url.unwrap_or_else(|| format!("http://{}/v1", gateway_config.bind)),
-    )?;
-    let env_key = if codex_oauth_proxy || no_env_key {
-        None
-    } else {
-        env_key.or_else(|| {
-            gateway_config
-                .gateway_api_key
-                .as_ref()
-                .map(|_| "CODEX_GATEWAY_KEY".to_owned())
-        })
-    };
     upsert_codex_config(
         &mut doc,
         selected_model.as_deref(),
-        &catalog_path,
+        &paths.catalog,
         &gateway_base_url,
         &web_search,
         env_key.as_deref(),
         codex_oauth_proxy,
     )?;
-    if let Some(parent) = config_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    fs::write(&config_path, format!("{MANAGED_CONFIG_HEADER}\n{}", doc))?;
-    let codex_home = config_path
+    let serialized_config = format!("{MANAGED_CONFIG_HEADER}\n{doc}");
+    serialized_config.parse::<DocumentMut>()?;
+
+    create_managed_config_restore_point(&paths.config, &raw_config)?;
+    write_atomic_if_changed(&paths.catalog, &serialized_catalog)?;
+    write_atomic_if_changed(&paths.config, serialized_config.as_bytes())?;
+
+    let codex_home = paths
+        .config
         .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .map(Path::to_path_buf)
-        .unwrap_or_else(codex_home_path);
-    let history = migrate_history_to_mixin_provider(&codex_home)?;
-    println!("codex config updated: {}", config_path.display());
+        .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?;
+    let history = migrate_history_to_mixin_provider(codex_home)?;
+    println!("codex config updated: {}", paths.config.display());
     println!(
         "codex config backup: {}",
-        managed_backup_path(&config_path).display()
+        managed_backup_path(&paths.config).display()
     );
-    println!("model catalog written: {}", catalog_path.display());
+    println!("model catalog written: {}", paths.catalog.display());
     println!("models installed: {}", models.len());
     println!("metadata entries loaded: {}", metadata.len());
     println!("provider: {CODEX_MIXIN_PROVIDER}");
@@ -916,8 +967,8 @@ fn uninstall_codex(
     config_path: Option<PathBuf>,
     catalog_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let config_path = config_path.unwrap_or_else(default_codex_config_path);
-    let catalog_path = catalog_path.unwrap_or_else(default_codex_catalog_path);
+    let config_path = resolve_codex_config_path(config_path)?;
+    let _config_lock = ManagedConfigLock::acquire(&config_path)?;
     let raw_config = if config_path.exists() {
         fs::read_to_string(&config_path)?
     } else {
@@ -928,6 +979,18 @@ fn uninstall_codex(
             "Codex config is not managed by codex-mixin: {}",
             config_path.display()
         );
+    }
+    let managed_doc = raw_config.parse::<DocumentMut>()?;
+    let managed_catalog_path = managed_catalog_path(&managed_doc, &config_path)?;
+    if let Some(explicit_catalog_path) = catalog_path {
+        let explicit_catalog_path = absolute_path(explicit_catalog_path)?;
+        if explicit_catalog_path != managed_catalog_path {
+            anyhow::bail!(
+                "explicit catalog {} does not match managed config catalog {}",
+                explicit_catalog_path.display(),
+                managed_catalog_path.display()
+            );
+        }
     }
     let backup_path = managed_backup_path(&config_path);
     let absent_marker_path = managed_absent_marker_path(&config_path);
@@ -960,10 +1023,8 @@ fn uninstall_codex(
     }
     let codex_home = config_path
         .parent()
-        .filter(|path| !path.as_os_str().is_empty())
-        .map(Path::to_path_buf)
-        .unwrap_or_else(codex_home_path);
-    let history = migrate_history_from_mixin_provider(&codex_home, &restored_provider)?;
+        .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?;
+    let history = migrate_history_from_mixin_provider(codex_home, &restored_provider)?;
     println!("history provider restored: {restored_provider}");
     println!(
         "history restored: {} JSONL files, {} SQLite rows",
@@ -972,18 +1033,17 @@ fn uninstall_codex(
     if let Some(backup_root) = history.backup_root {
         println!("history backup: {}", backup_root.display());
     }
-    if catalog_path.exists() {
-        fs::remove_file(&catalog_path)?;
-        println!("model catalog removed: {}", catalog_path.display());
+    if managed_catalog_path.exists() {
+        fs::remove_file(&managed_catalog_path)?;
+        println!("model catalog removed: {}", managed_catalog_path.display());
     }
     println!("reload required: restart Codex app; for Codex CLI, start a new session");
     Ok(())
 }
 
 fn refresh_default_managed_codex_catalog() -> anyhow::Result<()> {
-    let config_path = default_codex_config_path();
-    let official_catalog_path = codex_home_path().join("models_cache.json");
-    if refresh_managed_codex_catalog(&config_path, &official_catalog_path)? {
+    let config_path = resolve_codex_config_path(None)?;
+    if refresh_managed_codex_catalog(&config_path)? {
         println!("Codex model catalog refreshed");
     } else {
         println!("Codex model catalog already current or not managed by codex-mixin");
@@ -991,24 +1051,41 @@ fn refresh_default_managed_codex_catalog() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn refresh_managed_codex_catalog(
-    config_path: &Path,
-    official_catalog_path: &Path,
-) -> anyhow::Result<bool> {
+fn refresh_managed_codex_catalog(config_path: &Path) -> anyhow::Result<bool> {
+    let config_path = absolute_path(config_path.to_path_buf())?;
     if !config_path.exists() {
         return Ok(false);
     }
-    let raw_config = fs::read_to_string(config_path)?;
+    let _config_lock = ManagedConfigLock::acquire(&config_path)?;
+    if !config_path.exists() {
+        return Ok(false);
+    }
+    let raw_config = fs::read_to_string(&config_path)?;
     if !is_managed_config(&raw_config) {
         return Ok(false);
     }
     let doc = raw_config.parse::<DocumentMut>()?;
-    let catalog_path = doc
-        .get("model_catalog_json")
-        .and_then(Item::as_str)
-        .map(PathBuf::from)
-        .ok_or_else(|| anyhow::anyhow!("managed Codex config has no model_catalog_json"))?;
-    let official_catalog = serde_json::from_slice(&fs::read(official_catalog_path)?)?;
+    let provider = doc
+        .get("model_providers")
+        .and_then(Item::as_table)
+        .and_then(|providers| providers.get(CODEX_MIXIN_PROVIDER))
+        .and_then(Item::as_table)
+        .ok_or_else(|| anyhow::anyhow!("managed Codex config has no codex-mixin provider"))?;
+    let requires_openai_auth = match provider.get("requires_openai_auth") {
+        Some(item) => item
+            .as_bool()
+            .ok_or_else(|| anyhow::anyhow!("codex-mixin requires_openai_auth must be a boolean"))?,
+        None => false,
+    };
+    if !requires_openai_auth {
+        return Ok(false);
+    }
+    let catalog_path = managed_catalog_path(&doc, &config_path)?;
+    let official_catalog_path = config_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?
+        .join("models_cache.json");
+    let official_catalog = serde_json::from_slice(&fs::read(&official_catalog_path)?)?;
     let managed_catalog = serde_json::from_slice(&fs::read(&catalog_path)?)?;
     let refreshed = refresh_managed_oauth_catalog(&official_catalog, &managed_catalog)?;
     write_atomic_if_changed(&catalog_path, &serde_json::to_vec_pretty(&refreshed)?)
@@ -1018,6 +1095,11 @@ fn write_atomic_if_changed(path: &Path, contents: &[u8]) -> anyhow::Result<bool>
     if path.exists() && fs::read(path)? == contents {
         return Ok(false);
     }
+    let existing_permissions = if path.exists() {
+        Some(fs::metadata(path)?.permissions())
+    } else {
+        None
+    };
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -1027,6 +1109,9 @@ fn write_atomic_if_changed(path: &Path, contents: &[u8]) -> anyhow::Result<bool>
         .unwrap_or("model-catalog.json");
     let temporary_path = path.with_file_name(format!("{file_name}.tmp.{}", std::process::id()));
     fs::write(&temporary_path, contents)?;
+    if let Some(permissions) = existing_permissions {
+        fs::set_permissions(&temporary_path, permissions)?;
+    }
     if let Err(err) = fs::rename(&temporary_path, path) {
         let _ = fs::remove_file(&temporary_path);
         return Err(err.into());
@@ -1034,7 +1119,67 @@ fn write_atomic_if_changed(path: &Path, contents: &[u8]) -> anyhow::Result<bool>
     Ok(true)
 }
 
-fn prepare_managed_config_install(config_path: &std::path::Path) -> anyhow::Result<String> {
+fn resolve_codex_install_paths(
+    config_path: Option<PathBuf>,
+    catalog_path: Option<PathBuf>,
+) -> anyhow::Result<CodexInstallPaths> {
+    let config = resolve_codex_config_path(config_path)?;
+    let codex_home = config
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?
+        .to_path_buf();
+    let catalog = match catalog_path {
+        Some(path) => absolute_path(path)?,
+        None => codex_home.join("model-catalogs").join("mixin-models.json"),
+    };
+    Ok(CodexInstallPaths {
+        config,
+        catalog,
+        models_cache: codex_home.join("models_cache.json"),
+    })
+}
+
+fn resolve_codex_config_path(config_path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+    absolute_path(config_path.unwrap_or_else(default_codex_config_path))
+}
+
+fn absolute_path(path: PathBuf) -> anyhow::Result<PathBuf> {
+    Ok(std::path::absolute(path)?)
+}
+
+fn load_codex_install_template(
+    paths: &CodexInstallPaths,
+    codex_oauth_proxy: bool,
+) -> anyhow::Result<Option<serde_json::Value>> {
+    let template = load_template_catalog(Some(&paths.models_cache))?;
+    if codex_oauth_proxy && template.is_none() {
+        anyhow::bail!(
+            "official Codex model cache is missing: {}. Open Codex once before installing Codex Mixin",
+            paths.models_cache.display()
+        );
+    }
+    Ok(template)
+}
+
+fn managed_catalog_path(doc: &DocumentMut, config_path: &Path) -> anyhow::Result<PathBuf> {
+    let catalog_path = PathBuf::from(
+        doc.get("model_catalog_json")
+            .and_then(Item::as_str)
+            .ok_or_else(|| anyhow::anyhow!("managed Codex config has no model_catalog_json"))?,
+    );
+    if catalog_path.is_absolute() {
+        absolute_path(catalog_path)
+    } else {
+        absolute_path(
+            config_path
+                .parent()
+                .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?
+                .join(catalog_path),
+        )
+    }
+}
+
+fn read_managed_config_for_install(config_path: &Path) -> anyhow::Result<String> {
     let raw_config = if config_path.exists() {
         fs::read_to_string(config_path)?
     } else {
@@ -1047,10 +1192,20 @@ fn prepare_managed_config_install(config_path: &std::path::Path) -> anyhow::Resu
     let absent_marker_path = managed_absent_marker_path(config_path);
     if backup_path.exists() || absent_marker_path.exists() {
         anyhow::bail!(
-            "existing codex-mixin backup found but current config is not managed. Restore or remove {} first",
-            backup_path.display()
+            "existing codex-mixin restore point found but current config is not managed: {} or {}",
+            backup_path.display(),
+            absent_marker_path.display()
         );
     }
+    Ok(raw_config)
+}
+
+fn create_managed_config_restore_point(config_path: &Path, raw_config: &str) -> anyhow::Result<()> {
+    if is_managed_config(raw_config) {
+        return Ok(());
+    }
+    let backup_path = managed_backup_path(config_path);
+    let absent_marker_path = managed_absent_marker_path(config_path);
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)?;
     }
@@ -1059,7 +1214,7 @@ fn prepare_managed_config_install(config_path: &std::path::Path) -> anyhow::Resu
     } else {
         fs::write(&absent_marker_path, b"")?;
     }
-    Ok(raw_config)
+    Ok(())
 }
 
 fn is_managed_config(raw_config: &str) -> bool {
@@ -1084,12 +1239,6 @@ fn sibling_path_with_extra_extension(config_path: &std::path::Path, suffix: &str
 
 fn default_codex_config_path() -> PathBuf {
     codex_home_path().join("config.toml")
-}
-
-fn default_codex_catalog_path() -> PathBuf {
-    codex_home_path()
-        .join("model-catalogs")
-        .join("mixin-models.json")
 }
 
 fn codex_home_path() -> PathBuf {
@@ -1277,8 +1426,27 @@ async fn start(
     if daemon {
         return start_daemon(config.bind, log_file);
     }
-    refresh_default_managed_codex_catalog()?;
-    serve(config).await
+    let config_path = resolve_codex_config_path(None)?;
+    match refresh_managed_codex_catalog(&config_path) {
+        Ok(true) => tracing::info!("Codex model catalog refreshed"),
+        Ok(false) => {}
+        Err(err) => tracing::warn!(error = %err, "failed to refresh Codex model catalog"),
+    }
+    let refresh_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(CODEX_CATALOG_REFRESH_INTERVAL);
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            match refresh_managed_codex_catalog(&config_path) {
+                Ok(true) => tracing::info!("Codex model catalog refreshed"),
+                Ok(false) => {}
+                Err(err) => tracing::warn!(error = %err, "failed to refresh Codex model catalog"),
+            }
+        }
+    });
+    let result = serve(config).await;
+    refresh_task.abort();
+    result
 }
 
 fn start_daemon(bind: SocketAddr, log_file: Option<PathBuf>) -> anyhow::Result<()> {
@@ -1553,6 +1721,60 @@ trust_level = "trusted"
     }
 
     #[test]
+    fn custom_config_controls_default_catalog_and_models_cache_paths() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("managed-codex").join("config.toml");
+
+        let paths = resolve_codex_install_paths(Some(config_path.clone()), None).unwrap();
+
+        assert_eq!(paths.config, config_path);
+        assert_eq!(
+            paths.catalog,
+            dir.path()
+                .join("managed-codex")
+                .join("model-catalogs")
+                .join("mixin-models.json")
+        );
+        assert_eq!(
+            paths.models_cache,
+            dir.path().join("managed-codex").join("models_cache.json")
+        );
+    }
+
+    #[test]
+    fn explicit_relative_config_and_catalog_paths_become_absolute() {
+        let relative_config = PathBuf::from("target/codex-mixin-test/config.toml");
+        let relative_catalog = PathBuf::from("target/codex-mixin-test/catalog.json");
+
+        let paths = resolve_codex_install_paths(
+            Some(relative_config.clone()),
+            Some(relative_catalog.clone()),
+        )
+        .unwrap();
+
+        assert_eq!(paths.config, std::path::absolute(relative_config).unwrap());
+        assert_eq!(
+            paths.catalog,
+            std::path::absolute(relative_catalog).unwrap()
+        );
+        assert!(paths.models_cache.is_absolute());
+    }
+
+    #[test]
+    fn oauth_install_missing_cache_creates_no_restore_marker_or_directory() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("managed-codex").join("config.toml");
+        let paths = resolve_codex_install_paths(Some(config_path.clone()), None).unwrap();
+
+        let error = load_codex_install_template(&paths, true).unwrap_err();
+
+        assert!(error.to_string().contains("model cache is missing"));
+        assert!(!config_path.parent().unwrap().exists());
+        assert!(!managed_backup_path(&config_path).exists());
+        assert!(!managed_absent_marker_path(&config_path).exists());
+    }
+
+    #[test]
     fn managed_install_backup_and_uninstall_restore_existing_config() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("config.toml");
@@ -1569,16 +1791,20 @@ trust_level = "trusted"
         )
         .unwrap();
 
-        let original = prepare_managed_config_install(&config_path).unwrap();
+        let original = read_managed_config_for_install(&config_path).unwrap();
         assert_eq!(original, original_config);
+        create_managed_config_restore_point(&config_path, &original).unwrap();
         assert!(managed_backup_path(&config_path).exists());
         fs::write(
             &config_path,
-            format!("{MANAGED_CONFIG_HEADER}\nmodel = \"Claude Sonnet 5\"\n"),
+            format!(
+                "{MANAGED_CONFIG_HEADER}\nmodel = \"Claude Sonnet 5\"\nmodel_catalog_json = {:?}\n",
+                catalog_path.to_string_lossy()
+            ),
         )
         .unwrap();
 
-        uninstall_codex(Some(config_path.clone()), Some(catalog_path.clone())).unwrap();
+        uninstall_codex(Some(config_path.clone()), None).unwrap();
         assert_eq!(fs::read_to_string(&config_path).unwrap(), original_config);
         assert!(
             fs::read_to_string(&session_path)
@@ -1595,10 +1821,18 @@ trust_level = "trusted"
         let config_path = dir.path().join("config.toml");
         let catalog_path = dir.path().join("model-catalogs").join("mixin-models.json");
 
-        let original = prepare_managed_config_install(&config_path).unwrap();
+        let original = read_managed_config_for_install(&config_path).unwrap();
         assert!(original.is_empty());
+        create_managed_config_restore_point(&config_path, &original).unwrap();
         assert!(managed_absent_marker_path(&config_path).exists());
-        fs::write(&config_path, format!("{MANAGED_CONFIG_HEADER}\n")).unwrap();
+        fs::write(
+            &config_path,
+            format!(
+                "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n",
+                catalog_path.to_string_lossy()
+            ),
+        )
+        .unwrap();
         let session_path = dir.path().join("sessions/first-run.jsonl");
         fs::create_dir_all(session_path.parent().unwrap()).unwrap();
         fs::write(
@@ -1694,14 +1928,14 @@ wire_api = "responses"
         fs::write(
             &config_path,
             format!(
-                "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n",
+                "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\n",
                 catalog_path.to_string_lossy()
             ),
         )
         .unwrap();
         fs::write(
             &official_path,
-            r#"{"models":[{"slug":"gpt-5.6-sol","display_name":"GPT-5.6-Sol"}]}"#,
+            r#"{"models":[{"slug":"gpt-5.6-sol","display_name":"GPT-5.6-Sol"},{"slug":"gpt-5.6-terra","display_name":"GPT-5.6-Terra"},{"slug":"gpt-5.6-luna","display_name":"GPT-5.6-Luna"}]}"#,
         )
         .unwrap();
         fs::write(
@@ -1710,13 +1944,65 @@ wire_api = "responses"
         )
         .unwrap();
 
-        assert!(refresh_managed_codex_catalog(&config_path, &official_path).unwrap());
+        assert!(refresh_managed_codex_catalog(&config_path).unwrap());
         let refreshed: serde_json::Value =
             serde_json::from_slice(&fs::read(&catalog_path).unwrap()).unwrap();
         assert_eq!(refreshed["models"][0]["slug"], "gpt-5.6-sol");
-        assert_eq!(refreshed["models"][1]["slug"], "DeepSeek-V4-Flash");
-        assert_eq!(refreshed["models"][1]["multi_agent_version"], "v2");
-        assert!(!refresh_managed_codex_catalog(&config_path, &official_path).unwrap());
+        assert_eq!(refreshed["models"][1]["slug"], "gpt-5.6-terra");
+        assert_eq!(refreshed["models"][2]["slug"], "gpt-5.6-luna");
+        assert_eq!(refreshed["models"][3]["slug"], "DeepSeek-V4-Flash");
+        assert_eq!(refreshed["models"][3]["multi_agent_version"], "v2");
+        assert!(!refresh_managed_codex_catalog(&config_path).unwrap());
+    }
+
+    #[test]
+    fn non_oauth_managed_config_skips_oauth_catalog_refresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        fs::write(
+            &config_path,
+            format!(
+                "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nwire_api = \"responses\"\n",
+                dir.path().join("mixin-models.json").to_string_lossy()
+            ),
+        )
+        .unwrap();
+
+        assert!(!refresh_managed_codex_catalog(&config_path).unwrap());
+    }
+
+    #[test]
+    fn uninstall_rejects_catalog_that_differs_from_managed_config() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        let managed_catalog_path = dir.path().join("managed-models.json");
+        let explicit_catalog_path = dir.path().join("other-models.json");
+        fs::write(
+            &config_path,
+            format!(
+                "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n",
+                managed_catalog_path.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            managed_backup_path(&config_path),
+            "model_provider = \"openai\"\n",
+        )
+        .unwrap();
+        fs::write(&managed_catalog_path, "{}").unwrap();
+        fs::write(&explicit_catalog_path, "{}").unwrap();
+
+        let error = uninstall_codex(
+            Some(config_path.clone()),
+            Some(explicit_catalog_path.clone()),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("does not match"));
+        assert!(is_managed_config(&fs::read_to_string(config_path).unwrap()));
+        assert!(managed_catalog_path.exists());
+        assert!(explicit_catalog_path.exists());
     }
 
     #[test]
@@ -1763,5 +2049,24 @@ wire_api = "responses"
             ..StoredGatewayConfig::default()
         };
         assert!(resolve_quota_url(&deepseek).is_err());
+    }
+
+    #[cfg(unix)]
+    #[test]
+    fn atomic_rewrite_preserves_existing_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.toml");
+        fs::write(&path, "old").unwrap();
+        fs::set_permissions(&path, fs::Permissions::from_mode(0o600)).unwrap();
+
+        assert!(write_atomic_if_changed(&path, b"new").unwrap());
+
+        assert_eq!(fs::read_to_string(&path).unwrap(), "new");
+        assert_eq!(
+            fs::metadata(path).unwrap().permissions().mode() & 0o777,
+            0o600
+        );
     }
 }

@@ -22,6 +22,10 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 enum MockMode {
     Text,
     Tool,
+    NamespacedTool,
+    CustomTool,
+    ToolSearch,
+    WebSearch,
 }
 
 #[derive(Clone)]
@@ -147,7 +151,19 @@ async fn mock_messages(
     state.requests.lock().unwrap().push(body);
     let payload = match state.mode {
         MockMode::Text => text_sse(),
-        MockMode::Tool => tool_sse(),
+        MockMode::Tool => tool_sse("exec_command", json!({"cmd":"pwd"})),
+        MockMode::NamespacedTool => tool_sse(
+            "collaboration__spawn_agent",
+            json!({"task_name":"test","message":"run"}),
+        ),
+        MockMode::CustomTool => tool_sse(
+            "apply_patch",
+            json!({"input":"*** Begin Patch\n*** End Patch"}),
+        ),
+        MockMode::ToolSearch => {
+            tool_sse("tool_search", json!({"query":"calendar create","limit":1}))
+        }
+        MockMode::WebSearch => web_search_sse(),
     };
     Response::builder()
         .status(StatusCode::OK)
@@ -253,34 +269,33 @@ fn openai_chat_sse() -> String {
     .join("")
 }
 
-fn tool_sse() -> String {
+fn tool_sse(name: &str, arguments: Value) -> String {
     [
-        r#"event: message_start
-data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"DeepSeek-V4-Flash","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}
-
-"#,
-        r#"event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":"exec_command","input":{}}}
-
-"#,
-        r#"event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":"{\"cmd\":\"pwd\"}"}}
-
-"#,
-        r#"event: content_block_stop
-data: {"type":"content_block_stop","index":0}
-
-"#,
-        r#"event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}
-
-"#,
-        r#"event: message_stop
-data: {"type":"message_stop"}
-
-"#,
+        json!({"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"DeepSeek-V4-Flash","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"tool_use","id":"toolu_1","name":name,"input":{}}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"input_json_delta","partial_json":arguments.to_string()}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}),
+        json!({"type":"message_stop"}),
     ]
-    .join("")
+    .into_iter()
+    .map(|event| format!("event: {}\ndata: {event}\n\n", event["type"].as_str().unwrap()))
+    .collect()
+}
+
+fn web_search_sse() -> String {
+    [
+        json!({"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"Claude Sonnet 5","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}),
+        json!({"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_123","name":"web_search","input":{}}}),
+        json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"OpenAI Codex\"}"}}),
+        json!({"type":"content_block_stop","index":1}),
+        json!({"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_123","content":[{"type":"web_search_result","title":"Codex","url":"https://openai.com/codex"}]}}),
+        json!({"type":"content_block_stop","index":2}),
+        json!({"type":"message_stop"}),
+    ]
+    .into_iter()
+    .map(|event| format!("event: {}\ndata: {event}\n\n", event["type"].as_str().unwrap()))
+    .collect()
 }
 
 async fn spawn_gateway(upstream_base_url: String) -> String {
@@ -303,8 +318,7 @@ fn responses_request() -> Value {
             {"type":"message","role":"user","content":[{"type":"input_text","text":"say hi"}]}
         ],
         "tools": [
-            {"type":"function","name":"exec_command","description":"run shell","parameters":{"type":"object","properties":{"cmd":{"type":"string"}}}},
-            {"type":"web_search","external_web_access":true}
+            {"type":"function","name":"exec_command","description":"run shell","parameters":{"type":"object","properties":{"cmd":{"type":"string"}}}}
         ]
     })
 }
@@ -460,6 +474,106 @@ async fn maps_tool_use_to_responses_function_call() {
 }
 
 #[tokio::test]
+async fn preserves_namespaced_tool_call_for_codex_executor() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::NamespacedTool).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let client = reqwest::Client::new();
+    let mut request = responses_request();
+    request["tools"] = json!([{
+        "type": "namespace",
+        "name": "collaboration",
+        "tools": [{
+            "type": "function",
+            "name": "spawn_agent",
+            "parameters": {"type": "object"}
+        }]
+    }]);
+
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("\"namespace\":\"collaboration\""));
+    assert!(body.contains("\"name\":\"spawn_agent\""));
+    assert!(!body.contains("\"name\":\"collaboration__spawn_agent\""));
+    assert!(!body.contains("collaboration.spawn_agent"));
+    assert_eq!(
+        requests.lock().unwrap()[0]["tools"][0]["name"],
+        "collaboration__spawn_agent"
+    );
+}
+
+#[tokio::test]
+async fn maps_freeform_tool_back_to_custom_tool_call() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::CustomTool).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let client = reqwest::Client::new();
+    let mut request = responses_request();
+    request["tools"] = json!([{
+        "type": "custom",
+        "name": "apply_patch",
+        "description": "Apply a patch",
+        "format": {"type": "grammar", "syntax": "lark", "definition": "start: /.+/"}
+    }]);
+
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("\"type\":\"custom_tool_call\""));
+    assert!(body.contains("\"name\":\"apply_patch\""));
+    assert!(body.contains("*** Begin Patch"));
+    assert_eq!(
+        requests.lock().unwrap()[0]["tools"][0]["name"],
+        "apply_patch"
+    );
+    assert_eq!(
+        requests.lock().unwrap()[0]["tools"][0]["input_schema"]["required"],
+        json!(["input"])
+    );
+}
+
+#[tokio::test]
+async fn maps_deferred_tool_search_back_to_codex_call() {
+    let (upstream_url, _) = spawn_mock_upstream(MockMode::ToolSearch).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let client = reqwest::Client::new();
+    let mut request = responses_request();
+    request["tools"] = json!([{
+        "type": "tool_search",
+        "execution": "client",
+        "description": "Search deferred tools",
+        "parameters": {
+            "type": "object",
+            "properties": {"query": {"type": "string"}}
+        }
+    }]);
+
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("\"type\":\"tool_search_call\""));
+    assert!(body.contains("\"execution\":\"client\""));
+    assert!(body.contains("\"query\":\"calendar create\""));
+}
+
+#[tokio::test]
 async fn maps_custom_websocket_to_responses_frames() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let gateway_url = spawn_gateway(upstream_url).await;
@@ -566,7 +680,7 @@ where
 
 #[tokio::test]
 async fn forwards_thinking_and_anthropic_server_web_search() {
-    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::WebSearch).await;
     let mut config = test_config(upstream_url);
     config.thinking_mode = ThinkingMode::Auto;
     config.enable_web_search_tool = true;
@@ -576,6 +690,10 @@ async fn forwards_thinking_and_anthropic_server_web_search() {
     let mut request = responses_request();
     request["model"] = json!("Claude Sonnet 5");
     request["reasoning"] = json!({"effort": "xhigh"});
+    request["tools"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"type":"web_search","external_web_access":true}));
 
     let response = client
         .post(format!("{gateway_url}/v1/responses"))
@@ -587,6 +705,8 @@ async fn forwards_thinking_and_anthropic_server_web_search() {
     assert_eq!(response.status(), StatusCode::OK);
     let body = response.text().await.unwrap();
     assert!(body.contains("response.completed"));
+    assert!(body.contains("\"type\":\"web_search_call\""));
+    assert!(body.contains("\"query\":\"OpenAI Codex\""));
 
     let upstream_request = requests.lock().unwrap()[0].clone();
     assert_eq!(upstream_request["thinking"]["type"], "adaptive");
