@@ -1,6 +1,5 @@
 pub mod anthropic;
 pub mod catalog;
-pub mod codex_auth;
 pub mod config;
 pub mod convert;
 pub mod error;

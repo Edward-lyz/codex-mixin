@@ -1,6 +1,6 @@
 [package]
 name = "codex-mixin"
-version = "0.2.2"
+version = "0.2.3"
 edition = "2024"
 license-file = "LICENSE"
 
@@ -21,6 +21,7 @@ tokio = { version = "1.48", features = ["macros", "net", "rt-multi-thread", "sig
 tokio-tungstenite = { version = "0.29", default-features = false, features = ["connect", "rustls-tls-webpki-roots"] }
 toml_edit = "0.22"
 tower = "0.5"
+tower-http = { version = "0.6", features = ["decompression-zstd"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1.18", features = ["v4"] }

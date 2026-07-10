@@ -47,7 +47,6 @@ fn test_config(upstream_base_url: String) -> GatewayConfig {
         upstream_models_path: "/v1/models".to_owned(),
         upstream_api_key: "upstream-key".to_owned(),
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
-        official_oauth_token_url: "https://auth.openai.com/oauth/token".to_owned(),
         codex_auth_path: std::path::PathBuf::from("/tmp/codex-auth.json"),
         upstream_auth_header: UpstreamAuthHeader::AuthorizationBearer,
         anthropic_version: "2023-06-01".to_owned(),
@@ -109,7 +108,6 @@ async fn spawn_mock_official() -> (
     let account_headers = Arc::new(Mutex::new(Vec::new()));
     let app = Router::new()
         .route("/v1/responses", post(mock_official_responses))
-        .route("/oauth/token", post(mock_oauth_token))
         .with_state(OfficialState {
             requests: requests.clone(),
             auth_headers: auth_headers.clone(),
@@ -121,19 +119,6 @@ async fn spawn_mock_official() -> (
         auth_headers,
         account_headers,
     )
-}
-
-async fn mock_oauth_token(body: String) -> Response {
-    assert!(body.contains("grant_type=refresh_token"));
-    assert!(body.contains("refresh_token=refresh-token"));
-    assert!(body.contains("client_id=app_EMoamEEZ73f0CkXaXp7hrann"));
-    Response::builder()
-        .status(StatusCode::OK)
-        .header(header::CONTENT_TYPE, "application/json")
-        .body(Body::from(
-            r#"{"access_token":"official-access-token","refresh_token":"refresh-token-2"}"#,
-        ))
-        .unwrap()
 }
 
 async fn mock_models(headers: HeaderMap) -> impl IntoResponse {
@@ -534,6 +519,16 @@ async fn keeps_custom_websocket_open_after_noop_request() {
         ))
         .await
         .unwrap();
+    let warmup_frames = tokio::time::timeout(
+        Duration::from_secs(1),
+        websocket_response_frames(&mut socket),
+    )
+    .await
+    .expect("noop response timed out");
+    let warmup = warmup_frames.join("\n");
+    assert!(warmup.contains("\"type\":\"response.created\""));
+    assert!(warmup.contains("\"type\":\"response.completed\""));
+
     let mut body = responses_request();
     body["type"] = json!("response.create");
     socket
@@ -610,14 +605,11 @@ async fn routes_official_gpt_and_custom_gpt_aliases_separately() {
         spawn_mock_official().await;
     let mut config = test_config(upstream_url);
     config.official_responses_url = format!("{official_url}/v1/responses");
-    config.official_oauth_token_url = format!("{official_url}/oauth/token");
     let codex_home = tempfile::tempdir().unwrap();
     config.codex_auth_path = codex_home.path().join("auth.json");
-    std::fs::write(
-        &config.codex_auth_path,
-        r#"{"tokens":{"refresh_token":"refresh-token","account_id":"account-1"}}"#,
-    )
-    .unwrap();
+    let original_auth =
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#;
+    std::fs::write(&config.codex_auth_path, original_auth).unwrap();
     let gateway_url = spawn_gateway_with_config(config).await;
     let client = reqwest::Client::new();
 
@@ -625,8 +617,7 @@ async fn routes_official_gpt_and_custom_gpt_aliases_separately() {
     official_request["model"] = json!("gpt-5.5");
     let response = client
         .post(format!("{gateway_url}/v1/responses"))
-        .bearer_auth("codex-oauth-token")
-        .header("chatgpt-account-id", "account-1")
+        .bearer_auth("gateway-key")
         .json(&official_request)
         .send()
         .await
@@ -635,7 +626,7 @@ async fn routes_official_gpt_and_custom_gpt_aliases_separately() {
     assert_eq!(official_requests.lock().unwrap()[0]["model"], "gpt-5.5");
     assert_eq!(
         official_auth_headers.lock().unwrap()[0].as_deref(),
-        Some("Bearer official-access-token")
+        Some("Bearer codex-oauth-token")
     );
     assert_eq!(
         official_account_headers.lock().unwrap()[0].as_deref(),
@@ -655,8 +646,10 @@ async fn routes_official_gpt_and_custom_gpt_aliases_separately() {
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(official_requests.lock().unwrap().len(), 1);
     assert_eq!(upstream_requests.lock().unwrap()[0]["model"], "gpt-5.5");
-    let updated_auth = std::fs::read_to_string(codex_home.path().join("auth.json")).unwrap();
-    assert!(updated_auth.contains("refresh-token-2"));
+    assert_eq!(
+        std::fs::read_to_string(codex_home.path().join("auth.json")).unwrap(),
+        original_auth
+    );
 }
 
 #[tokio::test(flavor = "multi_thread", worker_threads = 4)]

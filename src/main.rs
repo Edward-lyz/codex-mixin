@@ -123,7 +123,7 @@ enum Command {
         set_default: bool,
         #[arg(long)]
         codex_oauth_proxy: bool,
-        #[arg(long, default_value = "custom_models")]
+        #[arg(long, default_value = "custom")]
         provider: String,
         #[arg(long)]
         config: Option<PathBuf>,
@@ -661,7 +661,6 @@ fn show_config(json_output: bool, scope: ConfigScope) -> anyhow::Result<()> {
                 "upstream_messages_path": config.upstream_messages_path,
                 "upstream_models_path": config.upstream_models_path,
                 "official_responses_url": config.official_responses_url,
-                "official_oauth_token_url": config.official_oauth_token_url,
                 "codex_auth_path": config.codex_auth_path,
                 "upstream_api_key": "<redacted>",
                 "gateway_api_key": config.gateway_api_key.as_ref().map(|_| "<redacted>"),
@@ -832,11 +831,7 @@ async fn install_codex(
     } else {
         raw_config.parse::<DocumentMut>()?
     };
-    let provider = if codex_oauth_proxy {
-        codex_oauth_proxy_provider(&doc).to_owned()
-    } else {
-        requested_provider
-    };
+    let provider = requested_provider;
     validate_provider_name(&provider)?;
 
     let should_set_default = set_default || requested_model.is_some();
@@ -878,7 +873,6 @@ async fn install_codex(
         &web_search,
         env_key.as_deref(),
         codex_oauth_proxy,
-        !codex_oauth_proxy,
     )?;
     if let Some(parent) = config_path.parent() {
         fs::create_dir_all(parent)?;
@@ -1081,6 +1075,9 @@ fn validate_provider_name(provider: &str) -> anyhow::Result<()> {
     if provider.is_empty() {
         anyhow::bail!("provider cannot be empty");
     }
+    if provider == "openai" {
+        anyhow::bail!("provider 'openai' is reserved by Codex; use 'custom'");
+    }
     if provider
         .chars()
         .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
@@ -1166,12 +1163,6 @@ fn select_codex_oauth_proxy_model(
     }
 }
 
-fn codex_oauth_proxy_provider(doc: &DocumentMut) -> &str {
-    doc.get("model_provider")
-        .and_then(Item::as_str)
-        .unwrap_or("openai")
-}
-
 fn model_exists_in_oauth_proxy_catalog(
     model: &str,
     models: &[codex_mixin::anthropic::ModelInfo],
@@ -1214,13 +1205,10 @@ fn upsert_codex_config(
     web_search: &str,
     env_key: Option<&str>,
     codex_oauth_proxy: bool,
-    set_model_provider: bool,
 ) -> anyhow::Result<()> {
     doc["model_catalog_json"] = value(catalog_path.to_string_lossy().to_string());
+    doc["model_provider"] = value(provider);
     if let Some(model) = default_model {
-        if set_model_provider {
-            doc["model_provider"] = value(provider);
-        }
         doc["model"] = value(model);
         doc["web_search"] = value(web_search);
     }
@@ -1554,7 +1542,7 @@ mod tests {
     }
 
     #[test]
-    fn oauth_proxy_install_preserves_existing_default_provider() {
+    fn oauth_proxy_install_registers_custom_provider() {
         let mut doc = r#"
 model_provider = "openai"
 model = "gpt-5.5"
@@ -1567,7 +1555,7 @@ wire_api = "responses"
         .parse::<DocumentMut>()
         .unwrap();
         let catalog_path = PathBuf::from("/tmp/mixin-models.json");
-        let provider = codex_oauth_proxy_provider(&doc).to_owned();
+        let provider = "custom";
 
         upsert_codex_config(
             &mut doc,
@@ -1578,27 +1566,26 @@ wire_api = "responses"
             "disabled",
             None,
             true,
-            false,
         )
         .unwrap();
 
-        assert_eq!(doc["model_provider"].as_str(), Some("openai"));
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
         assert_eq!(doc["model"].as_str(), Some("gpt-5.5"));
         assert_eq!(
-            doc["model_providers"]["openai"]["base_url"].as_str(),
+            doc["model_providers"]["custom"]["base_url"].as_str(),
             Some("http://127.0.0.1:8787/v1")
         );
         assert_eq!(
-            doc["model_providers"]["openai"]["requires_openai_auth"].as_bool(),
+            doc["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
             Some(true)
         );
     }
 
     #[test]
-    fn oauth_proxy_install_uses_implicit_openai_provider_without_writing_top_level_provider() {
+    fn oauth_proxy_install_writes_custom_provider_without_default_model() {
         let mut doc = "model = \"gpt-5.5\"\n".parse::<DocumentMut>().unwrap();
         let catalog_path = PathBuf::from("/tmp/mixin-models.json");
-        let provider = codex_oauth_proxy_provider(&doc).to_owned();
+        let provider = "custom";
 
         upsert_codex_config(
             &mut doc,
@@ -1609,14 +1596,13 @@ wire_api = "responses"
             "disabled",
             None,
             true,
-            false,
         )
         .unwrap();
 
-        assert!(doc.get("model_provider").is_none());
+        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
         assert_eq!(doc["model"].as_str(), Some("gpt-5.5"));
         assert_eq!(
-            doc["model_providers"]["openai"]["base_url"].as_str(),
+            doc["model_providers"]["custom"]["base_url"].as_str(),
             Some("http://127.0.0.1:8787/v1")
         );
     }

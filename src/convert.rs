@@ -676,7 +676,6 @@ mod tests {
             upstream_models_path: "/v1/models".to_owned(),
             upstream_api_key: "test".to_owned(),
             official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
-            official_oauth_token_url: "https://auth.openai.com/oauth/token".to_owned(),
             codex_auth_path: std::path::PathBuf::from("/tmp/codex-auth.json"),
             upstream_auth_header: UpstreamAuthHeader::AuthorizationBearer,
             anthropic_version: "2023-06-01".to_owned(),

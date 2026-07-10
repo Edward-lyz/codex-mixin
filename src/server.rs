@@ -14,10 +14,11 @@ use serde_json::{Value, json};
 use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tower_http::decompression::RequestDecompressionLayer;
+use uuid::Uuid;
 
 use crate::anthropic::ModelsResponse;
 use crate::catalog::{codex_catalog_from_models_with_metadata, load_template_catalog};
-use crate::codex_auth::refresh_codex_official_auth;
 use crate::config::{GatewayConfig, UpstreamAuthHeader, UpstreamKind};
 use crate::convert::responses_to_anthropic;
 use crate::error::GatewayError;
@@ -84,6 +85,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/models", get(models))
         .route("/v1/codex-model-catalog", get(codex_model_catalog))
         .route("/v1/responses", get(responses_ws).post(responses))
+        .layer(RequestDecompressionLayer::new())
         .with_state(state)
 }
 
@@ -259,26 +261,27 @@ async fn tunnel_official_responses_ws(
     mut client_receiver: SplitStream<WebSocket>,
     first_message: AxumWsMessage,
 ) -> anyhow::Result<()> {
-    let official_auth = refresh_codex_official_auth(
-        &state.client,
-        &state.config.codex_auth_path,
-        &state.config.official_oauth_token_url,
-    )
-    .await?;
     let websocket_url = websocket_url_from_http_url(&state.config.official_responses_url)?;
     let mut request = websocket_url.into_client_request()?;
     {
         let request_headers = request.headers_mut();
-        request_headers.insert(
-            header::AUTHORIZATION,
-            format!("Bearer {}", official_auth.access_token).parse()?,
-        );
-        request_headers.insert("chatgpt-account-id", official_auth.account_id.parse()?);
+        let (authorization, account_id) = read_codex_official_auth(&state.config.codex_auth_path)?;
+        request_headers.insert(header::AUTHORIZATION, authorization);
+        request_headers.insert("chatgpt-account-id", account_id);
         for name in [
+            "openai-beta",
             "x-codex-installation-id",
+            "x-codex-beta-features",
+            "x-codex-originator",
+            "x-codex-turn-state",
+            "x-codex-turn-metadata",
+            "x-codex-parent-thread-id",
+            "x-oai-attestation",
+            "x-responsesapi-include-timing-metrics",
             "accept-language",
             "user-agent",
-            "session_id",
+            "session-id",
+            "thread-id",
             "x-client-request-id",
             "x-codex-window-id",
         ] {
@@ -385,7 +388,38 @@ async fn route_custom_responses_ws(
 ) -> anyhow::Result<()> {
     loop {
         if is_noop_responses_ws_request(&body) {
-            tracing::debug!(route = "custom_ws_noop", "ignoring noop responses request");
+            let response_id = format!("resp_{}", Uuid::new_v4().simple());
+            client_sender
+                .send(AxumWsMessage::Text(
+                    json!({
+                        "type": "response.created",
+                        "response": {
+                            "id": response_id,
+                            "object": "response",
+                            "status": "in_progress",
+                            "output": []
+                        }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await?;
+            client_sender
+                .send(AxumWsMessage::Text(
+                    json!({
+                        "type": "response.completed",
+                        "response": {
+                            "id": response_id,
+                            "object": "response",
+                            "status": "completed",
+                            "output": []
+                        }
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await?;
+            tracing::debug!(route = "custom_ws_noop", "completed noop responses request");
         } else {
             if should_forward_to_official(&body) {
                 anyhow::bail!("cannot switch a custom Responses websocket to an official model");
@@ -458,19 +492,14 @@ async fn forward_official_responses(
     headers: &HeaderMap,
     body: Value,
 ) -> Result<Response, GatewayError> {
-    let official_auth = refresh_codex_official_auth(
-        &state.client,
-        &state.config.codex_auth_path,
-        &state.config.official_oauth_token_url,
-    )
-    .await
-    .map_err(|err| GatewayError::Upstream(format!("Codex OAuth refresh failed: {err}")))?;
+    let (authorization, account_id) =
+        read_codex_official_auth(&state.config.codex_auth_path).map_err(GatewayError::Other)?;
     let upstream = forward_official_headers(
         state
             .client
             .post(&state.config.official_responses_url)
-            .bearer_auth(&official_auth.access_token)
-            .header("chatgpt-account-id", &official_auth.account_id)
+            .header(header::AUTHORIZATION, authorization)
+            .header("chatgpt-account-id", account_id)
             .header(header::ACCEPT, "text/event-stream"),
         headers,
     )
@@ -498,16 +527,55 @@ async fn forward_official_responses(
         .map_err(|err| GatewayError::Other(err.into()))
 }
 
+fn read_codex_official_auth(
+    auth_path: &std::path::Path,
+) -> anyhow::Result<(axum::http::HeaderValue, axum::http::HeaderValue)> {
+    let raw = std::fs::read_to_string(auth_path)
+        .map_err(|err| anyhow::anyhow!("read Codex auth file {}: {err}", auth_path.display()))?;
+    let auth: Value = serde_json::from_str(&raw)
+        .map_err(|err| anyhow::anyhow!("parse Codex auth file {}: {err}", auth_path.display()))?;
+    let tokens = auth
+        .get("tokens")
+        .ok_or_else(|| anyhow::anyhow!("Codex auth file does not contain tokens"))?;
+    let access_token = tokens
+        .get("access_token")
+        .and_then(Value::as_str)
+        .filter(|token| !token.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("Codex auth file does not contain access_token"))?;
+    let account_id = tokens
+        .get("account_id")
+        .and_then(Value::as_str)
+        .filter(|account_id| !account_id.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("Codex auth file does not contain account_id"))?;
+    Ok((
+        format!("Bearer {access_token}").parse()?,
+        account_id.parse()?,
+    ))
+}
+
 fn forward_official_headers(
     mut request: reqwest::RequestBuilder,
     headers: &HeaderMap,
 ) -> reqwest::RequestBuilder {
     for name in [
+        "openai-beta",
         "x-codex-installation-id",
+        "x-codex-beta-features",
+        "x-codex-originator",
+        "x-codex-turn-state",
+        "x-codex-turn-metadata",
+        "x-codex-parent-thread-id",
+        "x-oai-attestation",
+        "x-responsesapi-include-timing-metrics",
+        "x-openai-internal-codex-responses-lite",
         "openai-organization",
         "openai-project",
         "user-agent",
         "accept-language",
+        "session-id",
+        "thread-id",
+        "x-client-request-id",
+        "x-codex-window-id",
     ] {
         if let Some(value) = headers.get(name) {
             request = request.header(name, value);

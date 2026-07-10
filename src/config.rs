@@ -155,7 +155,6 @@ pub struct GatewayConfig {
     pub upstream_models_path: String,
     pub upstream_api_key: String,
     pub official_responses_url: String,
-    pub official_oauth_token_url: String,
     pub codex_auth_path: PathBuf,
     pub upstream_auth_header: UpstreamAuthHeader,
     pub anthropic_version: String,
@@ -263,13 +262,7 @@ impl GatewayConfig {
             upstream_api_key,
             official_responses_url: env::var("CODEX_GATEWAY_OFFICIAL_RESPONSES_URL")
                 .unwrap_or_else(|_| "https://chatgpt.com/backend-api/codex/responses".to_owned()),
-            official_oauth_token_url: env::var("CODEX_GATEWAY_OFFICIAL_OAUTH_TOKEN_URL")
-                .unwrap_or_else(|_| "https://auth.openai.com/oauth/token".to_owned()),
-            codex_auth_path: env::var("CODEX_AUTH_FILE")
-                .ok()
-                .filter(|value| !value.is_empty())
-                .map(PathBuf::from)
-                .unwrap_or_else(default_codex_auth_path),
+            codex_auth_path: default_codex_auth_path(),
             upstream_auth_header,
             anthropic_version: first_env_value(&[
                 "CODEX_GATEWAY_ANTHROPIC_VERSION",
@@ -332,12 +325,16 @@ impl GatewayConfig {
 }
 
 fn default_codex_auth_path() -> PathBuf {
+    codex_home_path().join("auth.json")
+}
+
+fn codex_home_path() -> PathBuf {
     std::env::var("CODEX_HOME").ok().map_or_else(
         || {
             let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_owned());
-            PathBuf::from(home).join(".codex").join("auth.json")
+            PathBuf::from(home).join(".codex")
         },
-        |codex_home| PathBuf::from(codex_home).join("auth.json"),
+        PathBuf::from,
     )
 }
 
