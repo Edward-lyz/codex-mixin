@@ -11,9 +11,9 @@ use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde_json::{Value, json};
-use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use tower_http::decompression::RequestDecompressionLayer;
 use uuid::Uuid;
 
@@ -26,6 +26,15 @@ use crate::model_metadata::ModelMetadataResolver;
 use crate::openai_chat::responses_to_openai_chat;
 use crate::openai_events::{map_anthropic_sse, map_openai_chat_sse};
 use crate::sse::drain_events;
+
+type OfficialWebSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+
+#[derive(Debug)]
+struct CustomWebSocketState {
+    response_id: String,
+    model: String,
+    history: Vec<Value>,
+}
 
 #[derive(Clone)]
 pub struct AppState {
@@ -217,31 +226,91 @@ async fn route_responses_ws(
     client_socket: WebSocket,
 ) -> anyhow::Result<()> {
     let (mut client_sender, mut client_receiver) = client_socket.split();
-    let first_message = match client_receiver.next().await {
-        Some(message) => message?,
-        None => return Ok(()),
-    };
-    let mut body = responses_ws_body(&first_message)?;
-    if body.get("stream").is_none() {
-        body["stream"] = Value::Bool(true);
-    }
-    let model = body
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or("<missing>");
-    if should_forward_to_official(&body) {
-        tracing::debug!(model, route = "official_ws", "routing responses websocket");
-        tunnel_official_responses_ws(
-            state,
-            headers,
-            client_sender,
-            client_receiver,
-            first_message,
-        )
-        .await
-    } else {
-        tracing::debug!(model, route = "custom_ws", "routing responses websocket");
-        route_custom_responses_ws(&state, &mut client_sender, &mut client_receiver, body).await
+    let mut official_socket = None;
+    let mut custom_state = None;
+
+    loop {
+        let Some(mut body) =
+            next_responses_ws_body(&mut client_sender, &mut client_receiver).await?
+        else {
+            return Ok(());
+        };
+        if body.get("stream").is_none() {
+            body["stream"] = Value::Bool(true);
+        }
+        let model = body
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or("<missing>")
+            .to_owned();
+
+        if should_forward_to_official(&body) {
+            custom_state = None;
+            tracing::debug!(
+                model,
+                route = "official_ws",
+                "routing responses websocket request"
+            );
+            if official_socket.is_none() {
+                official_socket = Some(connect_official_responses_ws(&state, &headers).await?);
+            }
+            proxy_official_responses_ws(
+                official_socket
+                    .as_mut()
+                    .expect("official websocket connected"),
+                &mut client_sender,
+                &body,
+            )
+            .await?;
+            continue;
+        }
+
+        if official_socket.take().is_some() {
+            tracing::debug!(
+                model,
+                "closing official websocket before custom model request"
+            );
+        }
+        tracing::debug!(
+            model,
+            route = "custom_ws",
+            "routing responses websocket request"
+        );
+        let next_state = match expand_custom_websocket_history(&mut body, custom_state.as_ref()) {
+            Ok(()) if is_noop_responses_ws_request(&body) => {
+                complete_custom_noop(&mut client_sender, &body)
+                    .await
+                    .map(Some)
+            }
+            Ok(()) => proxy_custom_responses_ws(&state, &mut client_sender, body).await,
+            Err(err) => Err(err),
+        };
+        match next_state {
+            Ok(next_state) => custom_state = next_state,
+            Err(err) => {
+                custom_state = None;
+                let message = err.to_string();
+                let error = json!({"message": message, "type": "invalid_request_error"});
+                client_sender
+                    .send(AxumWsMessage::Text(
+                        json!({
+                            "type": "response.failed",
+                            "response": {
+                                "id": format!("resp_{}", Uuid::new_v4().simple()),
+                                "object": "response",
+                                "status": "failed",
+                                "error": error,
+                                "output": []
+                            },
+                            "error": error
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .await?;
+                tracing::warn!(error = %err, "custom responses websocket request failed");
+            }
+        }
     }
 }
 
@@ -254,13 +323,10 @@ fn is_noop_responses_ws_request(body: &Value) -> bool {
         .is_some_and(Vec::is_empty)
 }
 
-async fn tunnel_official_responses_ws(
-    state: AppState,
-    headers: HeaderMap,
-    mut client_sender: SplitSink<WebSocket, AxumWsMessage>,
-    mut client_receiver: SplitStream<WebSocket>,
-    first_message: AxumWsMessage,
-) -> anyhow::Result<()> {
+async fn connect_official_responses_ws(
+    state: &AppState,
+    headers: &HeaderMap,
+) -> anyhow::Result<OfficialWebSocket> {
     let websocket_url = websocket_url_from_http_url(&state.config.official_responses_url)?;
     let mut request = websocket_url.into_client_request()?;
     {
@@ -291,43 +357,70 @@ async fn tunnel_official_responses_ws(
         }
     }
     let (official_socket, _) = connect_async(request).await?;
-    let (mut official_sender, mut official_receiver) = official_socket.split();
-    if let Some(message) = axum_to_tungstenite_message(first_message) {
-        official_sender.send(message).await?;
-    }
+    Ok(official_socket)
+}
 
-    let client_to_official = async {
-        while let Some(message) = client_receiver.next().await {
-            let message = message?;
-            let Some(message) = axum_to_tungstenite_message(message) else {
-                break;
-            };
-            official_sender.send(message).await?;
+async fn proxy_official_responses_ws(
+    official_socket: &mut OfficialWebSocket,
+    client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
+    body: &Value,
+) -> anyhow::Result<()> {
+    official_socket
+        .send(TungsteniteMessage::Text(body.to_string().into()))
+        .await?;
+    while let Some(message) = official_socket.next().await {
+        let message = message?;
+        let terminal = match &message {
+            TungsteniteMessage::Text(text) => serde_json::from_str::<Value>(text).ok(),
+            TungsteniteMessage::Binary(bytes) => serde_json::from_slice::<Value>(bytes).ok(),
+            _ => None,
         }
-        anyhow::Ok(())
-    };
-    let official_to_client = async {
-        while let Some(message) = official_receiver.next().await {
-            let message = message?;
-            let Some(message) = tungstenite_to_axum_message(message) else {
-                break;
-            };
-            client_sender.send(message).await?;
+        .and_then(|event| event.get("type").and_then(Value::as_str).map(str::to_owned))
+        .is_some_and(|event_type| {
+            matches!(
+                event_type.as_str(),
+                "response.completed" | "response.failed" | "response.incomplete"
+            )
+        });
+        match message {
+            TungsteniteMessage::Ping(bytes) => {
+                official_socket
+                    .send(TungsteniteMessage::Pong(bytes))
+                    .await?;
+            }
+            TungsteniteMessage::Pong(_) | TungsteniteMessage::Frame(_) => {}
+            TungsteniteMessage::Close(_) => {
+                anyhow::bail!("official responses websocket closed before a terminal response")
+            }
+            message => {
+                if let Some(message) = tungstenite_to_axum_message(message) {
+                    client_sender.send(message).await?;
+                }
+            }
         }
-        anyhow::Ok(())
-    };
-    tokio::select! {
-        result = client_to_official => result,
-        result = official_to_client => result,
+        if terminal {
+            return Ok(());
+        }
     }
+    anyhow::bail!("official responses websocket ended before a terminal response")
 }
 
 async fn proxy_custom_responses_ws(
     state: &AppState,
     client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
     mut body: Value,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<CustomWebSocketState>> {
     normalize_custom_model_alias(&mut body);
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("custom request is missing model"))?
+        .to_owned();
+    let mut history = body
+        .get("input")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("custom request input must be an array"))?
+        .clone();
     let stream: futures_util::stream::BoxStream<
         'static,
         Result<bytes::Bytes, std::convert::Infallible>,
@@ -365,6 +458,8 @@ async fn proxy_custom_responses_ws(
     };
     tokio::pin!(stream);
     let mut buffer = Vec::new();
+    let mut completed_response = None;
+    let mut failed = false;
     while let Some(chunk) = stream.next().await {
         let bytes = match chunk {
             Ok(bytes) => bytes,
@@ -372,97 +467,134 @@ async fn proxy_custom_responses_ws(
         };
         buffer.extend_from_slice(&bytes);
         for event in drain_events(&mut buffer) {
+            let payload: Value = serde_json::from_str(&event.data)?;
+            match payload.get("type").and_then(Value::as_str) {
+                Some("response.completed") => {
+                    completed_response = payload.get("response").cloned();
+                }
+                Some("response.failed" | "response.incomplete") => failed = true,
+                _ => {}
+            }
             client_sender
                 .send(AxumWsMessage::Text(event.data.into()))
                 .await?;
         }
     }
+    if failed {
+        return Ok(None);
+    }
+    let response = completed_response
+        .ok_or_else(|| anyhow::anyhow!("custom upstream ended without a terminal response"))?;
+    let response_id = response
+        .get("id")
+        .and_then(Value::as_str)
+        .filter(|response_id| !response_id.is_empty())
+        .ok_or_else(|| anyhow::anyhow!("custom completed response is missing id"))?
+        .to_owned();
+    let output = response
+        .get("output")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("custom completed response output must be an array"))?;
+    history.extend(output.iter().cloned());
+    Ok(Some(CustomWebSocketState {
+        response_id,
+        model,
+        history,
+    }))
+}
+
+fn expand_custom_websocket_history(
+    body: &mut Value,
+    state: Option<&CustomWebSocketState>,
+) -> anyhow::Result<()> {
+    let Some(previous_response_id) = body
+        .get("previous_response_id")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+    else {
+        return Ok(());
+    };
+    let state = state.ok_or_else(|| {
+        anyhow::anyhow!("unknown custom previous_response_id: {previous_response_id}")
+    })?;
+    if previous_response_id != state.response_id {
+        anyhow::bail!("unknown custom previous_response_id: {previous_response_id}");
+    }
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("custom request is missing model"))?;
+    if model.strip_suffix("-custom").unwrap_or(model) != state.model {
+        anyhow::bail!(
+            "custom previous_response_id belongs to model {}",
+            state.model
+        );
+    }
+    let incremental_input = body
+        .get("input")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("custom incremental input must be an array"))?;
+    let mut full_input = state.history.clone();
+    full_input.extend(incremental_input.iter().cloned());
+    body["input"] = Value::Array(full_input);
     Ok(())
 }
 
-async fn route_custom_responses_ws(
-    state: &AppState,
+async fn complete_custom_noop(
+    client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
+    body: &Value,
+) -> anyhow::Result<CustomWebSocketState> {
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("custom noop request is missing model"))?;
+    let model = model.strip_suffix("-custom").unwrap_or(model).to_owned();
+    let history = body
+        .get("input")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("custom noop input must be an array"))?
+        .clone();
+    let response_id = format!("resp_{}", Uuid::new_v4().simple());
+    for status in ["in_progress", "completed"] {
+        client_sender
+            .send(AxumWsMessage::Text(
+                json!({
+                    "type": if status == "completed" { "response.completed" } else { "response.created" },
+                    "response": {
+                        "id": response_id,
+                        "object": "response",
+                        "status": status,
+                        "output": []
+                    }
+                })
+                .to_string()
+                .into(),
+            ))
+            .await?;
+    }
+    tracing::debug!(route = "custom_ws_noop", "completed noop responses request");
+    Ok(CustomWebSocketState {
+        response_id,
+        model,
+        history,
+    })
+}
+
+async fn next_responses_ws_body(
     client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
     client_receiver: &mut SplitStream<WebSocket>,
-    mut body: Value,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Option<Value>> {
     loop {
-        if is_noop_responses_ws_request(&body) {
-            let response_id = format!("resp_{}", Uuid::new_v4().simple());
-            client_sender
-                .send(AxumWsMessage::Text(
-                    json!({
-                        "type": "response.created",
-                        "response": {
-                            "id": response_id,
-                            "object": "response",
-                            "status": "in_progress",
-                            "output": []
-                        }
-                    })
-                    .to_string()
-                    .into(),
-                ))
-                .await?;
-            client_sender
-                .send(AxumWsMessage::Text(
-                    json!({
-                        "type": "response.completed",
-                        "response": {
-                            "id": response_id,
-                            "object": "response",
-                            "status": "completed",
-                            "output": []
-                        }
-                    })
-                    .to_string()
-                    .into(),
-                ))
-                .await?;
-            tracing::debug!(route = "custom_ws_noop", "completed noop responses request");
-        } else {
-            if should_forward_to_official(&body) {
-                anyhow::bail!("cannot switch a custom Responses websocket to an official model");
+        match client_receiver.next().await {
+            Some(Ok(message @ (AxumWsMessage::Text(_) | AxumWsMessage::Binary(_)))) => {
+                return Ok(Some(responses_ws_body(&message)?));
             }
-            if let Err(err) = proxy_custom_responses_ws(state, client_sender, body).await {
-                let message = err.to_string();
-                let error = json!({"message": message, "type": "invalid_request_error"});
-                client_sender
-                    .send(AxumWsMessage::Text(
-                        json!({
-                            "type": "response.failed",
-                            "response": {
-                                "id": format!("resp_{}", Uuid::new_v4().simple()),
-                                "object": "response",
-                                "status": "failed",
-                                "error": error,
-                                "output": []
-                            },
-                            "error": error
-                        })
-                        .to_string()
-                        .into(),
-                    ))
-                    .await?;
-                tracing::warn!(error = %err, "custom responses websocket request failed");
+            Some(Ok(AxumWsMessage::Ping(bytes))) => {
+                client_sender.send(AxumWsMessage::Pong(bytes)).await?;
             }
-        }
-
-        body = loop {
-            match client_receiver.next().await {
-                Some(Ok(message @ (AxumWsMessage::Text(_) | AxumWsMessage::Binary(_)))) => {
-                    break responses_ws_body(&message)?;
-                }
-                Some(Ok(AxumWsMessage::Ping(bytes))) => {
-                    client_sender.send(AxumWsMessage::Pong(bytes)).await?;
-                }
-                Some(Ok(AxumWsMessage::Pong(_))) => {}
-                Some(Ok(AxumWsMessage::Close(_))) | None => return Ok(()),
-                Some(Err(err)) => return Err(err.into()),
-            }
-        };
-        if body.get("stream").is_none() {
-            body["stream"] = Value::Bool(true);
+            Some(Ok(AxumWsMessage::Pong(_))) => {}
+            Some(Ok(AxumWsMessage::Close(_))) | None => return Ok(None),
+            Some(Err(err)) => return Err(err.into()),
         }
     }
 }
@@ -471,9 +603,9 @@ fn responses_ws_body(message: &AxumWsMessage) -> anyhow::Result<Value> {
     match message {
         AxumWsMessage::Text(text) => Ok(serde_json::from_str(text)?),
         AxumWsMessage::Binary(bytes) => Ok(serde_json::from_slice(bytes)?),
-        other => anyhow::bail!(
-            "first responses websocket frame must be JSON text or binary, got {other:?}"
-        ),
+        other => {
+            anyhow::bail!("responses websocket frame must be JSON text or binary, got {other:?}")
+        }
     }
 }
 
@@ -485,16 +617,6 @@ fn websocket_url_from_http_url(url: &str) -> anyhow::Result<String> {
         return Ok(format!("ws://{rest}"));
     }
     anyhow::bail!("official responses URL must start with http:// or https://")
-}
-
-fn axum_to_tungstenite_message(message: AxumWsMessage) -> Option<TungsteniteMessage> {
-    match message {
-        AxumWsMessage::Text(text) => Some(TungsteniteMessage::Text(text.to_string().into())),
-        AxumWsMessage::Binary(bytes) => Some(TungsteniteMessage::Binary(bytes)),
-        AxumWsMessage::Ping(bytes) => Some(TungsteniteMessage::Ping(bytes)),
-        AxumWsMessage::Pong(bytes) => Some(TungsteniteMessage::Pong(bytes)),
-        AxumWsMessage::Close(_) => Some(TungsteniteMessage::Close(None)),
-    }
 }
 
 fn tungstenite_to_axum_message(message: TungsteniteMessage) -> Option<AxumWsMessage> {
