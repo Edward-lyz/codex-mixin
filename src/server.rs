@@ -162,9 +162,17 @@ pub async fn serve_on_listener(
 ) -> anyhow::Result<()> {
     let bind = listener.local_addr()?;
     let state = AppState::new(config)?;
+    #[cfg(unix)]
+    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     tracing::info!(%bind, "codex-mixin listening");
     axum::serve(listener, router(state))
-        .with_graceful_shutdown(async {
+        .with_graceful_shutdown(async move {
+            #[cfg(unix)]
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                _ = terminate.recv() => {}
+            }
+            #[cfg(not(unix))]
             let _ = tokio::signal::ctrl_c().await;
         })
         .await?;

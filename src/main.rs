@@ -4,6 +4,7 @@ use std::io::{self, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
+use std::sync::Mutex;
 use std::thread;
 use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
 
@@ -13,6 +14,8 @@ use toml_edit::{DocumentMut, Item, Table, value};
 
 #[cfg(unix)]
 use std::os::fd::AsRawFd;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
@@ -36,6 +39,7 @@ const MANAGED_CONFIG_HEADER: &str = "# codex-mixin managed config. Run `codex-mi
 const LITELLM_MODEL_METADATA_URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
 const CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+const GATEWAY_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
 
 #[derive(Debug, Eq, PartialEq)]
 struct CodexInstallPaths {
@@ -240,11 +244,38 @@ impl Drop for RuntimeMetadataGuard {
 }
 
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    tracing_subscriber::fmt()
-        .with_env_filter(tracing_subscriber::EnvFilter::from_default_env())
-        .init();
+async fn main() {
     let cli = Cli::parse();
+    let foreground_log_file = match &cli.command {
+        Some(Command::Start {
+            daemon: false,
+            log_file: Some(path),
+            ..
+        }) => Some(path.clone()),
+        _ => None,
+    };
+    if let Err(error) = init_tracing(foreground_log_file.as_deref()) {
+        eprintln!("Error: failed to initialize logging: {error:#}");
+        std::process::exit(1);
+    }
+    if foreground_log_file.is_some() {
+        tracing::info!(
+            version = env!("CARGO_PKG_VERSION"),
+            pid = std::process::id(),
+            "gateway process starting"
+        );
+    }
+    if let Err(error) = run(cli).await {
+        if foreground_log_file.is_some() {
+            tracing::error!(error = %format!("{error:#}"), "command failed");
+        } else {
+            eprintln!("Error: {error:#}");
+        }
+        std::process::exit(1);
+    }
+}
+
+async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command.unwrap_or(Command::Start {
         bind: None,
         daemon: false,
@@ -324,6 +355,52 @@ async fn main() -> anyhow::Result<()> {
         Command::UninstallCodex { config, catalog } => uninstall_codex(config, catalog),
         Command::RefreshCodexCatalog => refresh_default_managed_codex_catalog(),
     }
+}
+
+fn init_tracing(log_file: Option<&Path>) -> anyhow::Result<()> {
+    let filter = tracing_subscriber::EnvFilter::builder()
+        .with_default_directive(tracing::Level::INFO.into())
+        .from_env_lossy();
+    if let Some(log_file) = log_file {
+        rotate_gateway_log_if_needed(log_file, GATEWAY_LOG_MAX_BYTES)?;
+        if let Some(parent) = log_file.parent() {
+            fs::create_dir_all(parent)?;
+        }
+        let file = OpenOptions::new()
+            .create(true)
+            .append(true)
+            .open(log_file)?;
+        #[cfg(unix)]
+        fs::set_permissions(log_file, fs::Permissions::from_mode(0o600))?;
+        tracing_subscriber::fmt()
+            .with_ansi(false)
+            .with_env_filter(filter)
+            .with_writer(Mutex::new(file))
+            .try_init()
+            .map_err(|error| anyhow::anyhow!("failed to install tracing subscriber: {error}"))?;
+    } else {
+        tracing_subscriber::fmt()
+            .with_env_filter(filter)
+            .try_init()
+            .map_err(|error| anyhow::anyhow!("failed to install tracing subscriber: {error}"))?;
+    }
+    Ok(())
+}
+
+fn rotate_gateway_log_if_needed(path: &Path, max_bytes: u64) -> anyhow::Result<()> {
+    if !path.exists() || fs::metadata(path)?.len() < max_bytes {
+        return Ok(());
+    }
+    #[cfg(unix)]
+    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    let mut backup_name = path.as_os_str().to_os_string();
+    backup_name.push(".1");
+    let backup = PathBuf::from(backup_name);
+    if backup.exists() {
+        fs::remove_file(&backup)?;
+    }
+    fs::rename(path, backup)?;
+    Ok(())
 }
 
 fn login(
@@ -1525,6 +1602,17 @@ async fn start(
     if daemon {
         return start_daemon(bind, log_file);
     }
+    if let Some(runtime) = load_runtime_metadata()? {
+        if pid_is_running(runtime.pid)? {
+            anyhow::bail!(
+                "gateway already running: pid {}, bind {}",
+                runtime.pid,
+                runtime.bind
+            );
+        }
+        tracing::warn!(pid = runtime.pid, "removing stale gateway runtime metadata");
+        delete_runtime_metadata()?;
+    }
     let listener = bind_gateway_listener(config.bind, automatic_bind).await?;
     let actual_bind = listener.local_addr()?;
     config.bind = actual_bind;
@@ -1559,6 +1647,10 @@ async fn start(
     let _runtime_guard = RuntimeMetadataGuard { pid };
     let result = serve_on_listener(config, listener).await;
     refresh_task.abort();
+    match &result {
+        Ok(()) => tracing::info!(pid, "gateway stopped"),
+        Err(error) => tracing::error!(pid, error = %error, "gateway stopped with error"),
+    }
     result
 }
 
@@ -1586,20 +1678,19 @@ fn start_daemon(bind: Option<SocketAddr>, log_file: Option<PathBuf>) -> anyhow::
     if let Some(parent) = log_file.parent() {
         fs::create_dir_all(parent)?;
     }
-    let stdout = OpenOptions::new()
+    OpenOptions::new()
         .create(true)
         .append(true)
         .open(&log_file)?;
-    let stderr = stdout.try_clone()?;
     let mut command = ProcessCommand::new(std::env::current_exe()?);
-    command.arg("start");
+    command.arg("start").arg("--log-file").arg(&log_file);
     if let Some(bind) = bind {
         command.arg("--bind").arg(bind.to_string());
     }
     command
         .stdin(Stdio::null())
-        .stdout(Stdio::from(stdout))
-        .stderr(Stdio::from(stderr));
+        .stdout(Stdio::null())
+        .stderr(Stdio::null());
     #[cfg(unix)]
     unsafe {
         command.pre_exec(|| {
@@ -1851,6 +1942,42 @@ fn normalize_base_url(value: String) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rotates_gateway_log_at_size_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("gateway.log");
+        fs::write(&log, b"12345").unwrap();
+
+        rotate_gateway_log_if_needed(&log, 5).unwrap();
+
+        assert!(!log.exists());
+        assert_eq!(
+            fs::read(dir.path().join("gateway.log.1")).unwrap(),
+            b"12345"
+        );
+        #[cfg(unix)]
+        assert_eq!(
+            fs::metadata(dir.path().join("gateway.log.1"))
+                .unwrap()
+                .permissions()
+                .mode()
+                & 0o777,
+            0o600
+        );
+    }
+
+    #[test]
+    fn keeps_gateway_log_below_size_limit() {
+        let dir = tempfile::tempdir().unwrap();
+        let log = dir.path().join("gateway.log");
+        fs::write(&log, b"1234").unwrap();
+
+        rotate_gateway_log_if_needed(&log, 5).unwrap();
+
+        assert_eq!(fs::read(log).unwrap(), b"1234");
+        assert!(!dir.path().join("gateway.log.1").exists());
+    }
 
     #[test]
     fn install_command_rejects_provider_override() {

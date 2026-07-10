@@ -6,6 +6,7 @@ use crate::anthropic::ModelInfo;
 use crate::model_metadata::ModelMetadataResolver;
 
 const FALLBACK_BASE_INSTRUCTIONS: &str = "You are Codex, a coding agent. Work in the user's workspace, use tools carefully, and keep responses concise.";
+const CUSTOM_MODEL_MARKER: &str = "codex_mixin_managed";
 
 pub fn codex_catalog_from_models(
     models: &[ModelInfo],
@@ -120,6 +121,7 @@ fn codex_catalog_from_models_with_options(
                 description.push_str(detail);
             }
             item["description"] = json!(description);
+            item[CUSTOM_MODEL_MARKER] = json!(true);
             item["multi_agent_version"] = json!("v2");
             if item.get("base_instructions").is_none() {
                 item["base_instructions"] = json!(FALLBACK_BASE_INSTRUCTIONS);
@@ -187,12 +189,13 @@ pub fn refresh_managed_oauth_catalog(
     }
 
     for model in managed_models.iter().filter(|model| {
-        model
-            .get("description")
-            .and_then(Value::as_str)
-            .is_some_and(|description| {
-                description.starts_with("Custom upstream model exposed through codex-")
-            })
+        model.get(CUSTOM_MODEL_MARKER).and_then(Value::as_bool) == Some(true)
+            || model
+                .get("description")
+                .and_then(Value::as_str)
+                .is_some_and(|description| {
+                    description.starts_with("Custom upstream model exposed through codex-")
+                })
             || model
                 .get("slug")
                 .and_then(Value::as_str)
@@ -382,6 +385,7 @@ mod tests {
         );
         assert_eq!(catalog["models"][0]["context_window"], 1_024_000);
         assert_eq!(catalog["models"][0]["input_modalities"], json!(["text"]));
+        assert_eq!(catalog["models"][0][CUSTOM_MODEL_MARKER], true);
     }
 
     #[test]
@@ -467,7 +471,8 @@ mod tests {
                 {
                     "slug":"DeepSeek-V4-Flash",
                     "display_name":"DeepSeek-V4-Flash",
-                    "description":"Custom upstream model exposed through codex-mixin",
+                    "description":"DeepSeek latest fast coding model | 0.2x | Value model",
+                    "codex_mixin_managed":true,
                     "supports_search_tool":false,
                     "web_search_tool_type":"text_and_image"
                 },

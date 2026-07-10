@@ -1,7 +1,9 @@
 import Cocoa
+import Darwin
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let serviceLabel = "local.codex-mixin.service"
+    private let menuLaunchLabel = "local.codex-mixin.menu-launch"
     private let autoUpdateCheckKey = "autoCheckUpdates"
     private let lastUpdateCheckKey = "lastUpdateCheckAt"
     private var statusItem: NSStatusItem?
@@ -181,10 +183,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         Task { @MainActor in
             defer { serviceBusy = false }
             do {
-                try await bootoutIfLoaded()
-                if (try? await runGateway(["status"]))?.contains("gateway: running") == true {
-                    _ = try await runGateway(["stop"])
-                }
+                try await bootoutIfLoaded(launchDomainAndLabel())
+                _ = try await runGateway(["stop"])
                 await refreshStatusNow()
             } catch {
                 serviceStatus = "本地网关停止失败"
@@ -220,15 +220,27 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             defer { serviceBusy = false }
             do {
                 if FileManager.default.fileExists(atPath: launchAgentPath().path) {
-                    try await bootoutIfLoaded()
-                    if (try? await runGateway(["status"]))?.contains("gateway: running") == true {
-                        _ = try await runGateway(["stop"])
-                    }
+                    let statusBefore = try? await runGateway(["status"])
+                    let wasRunning = statusBefore?.contains("gateway: running") == true
+                    try await bootoutIfLoaded(launchDomainAndLabel())
+                    try await bootoutIfLoaded(menuLaunchDomainAndLabel())
                     try FileManager.default.removeItem(at: launchAgentPath())
+                    if FileManager.default.fileExists(atPath: menuLaunchAgentPath().path) {
+                        try FileManager.default.removeItem(at: menuLaunchAgentPath())
+                    }
+                    if wasRunning && statusBefore?.contains("daemon: running") != true {
+                        try await waitForGatewayStopped()
+                        _ = try await runGateway(["start", "--daemon"])
+                        _ = try await waitForGatewayStatus()
+                    }
                 } else {
+                    _ = try await runGateway(["config", "--json", "--scope", "effective"])
+                    try await bootoutIfLoaded(launchDomainAndLabel())
+                    _ = try await runGateway(["stop"])
+                    try await waitForGatewayStopped()
                     try installLaunchAgent()
-                    try await bootoutIfLoaded()
                     _ = try await runProcess("/bin/launchctl", ["bootstrap", launchDomain(), launchAgentPath().path])
+                    _ = try await waitForGatewayStatus()
                 }
                 await refreshStatusNow()
             } catch {
@@ -269,6 +281,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     }
                     return
                 }
+                if FileManager.default.fileExists(atPath: launchAgentPath().path) {
+                    try installMenuLaunchAgent()
+                }
                 let status = try await ensureGatewayReady()
                 applyGatewayStatus(status)
                 do {
@@ -291,16 +306,29 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func ensureGatewayReady() async throws -> String {
         if let status = try? await runGateway(["status"]), status.contains("gateway: running") {
+            let launchAgentInstalled = FileManager.default.fileExists(atPath: launchAgentPath().path)
+            var launchAgentNeedsMigration = false
+            if launchAgentInstalled {
+                launchAgentNeedsMigration = try launchAgentNeedsUpdate()
+            }
+            if launchAgentInstalled
+                && (status.contains("daemon: running") || launchAgentNeedsMigration) {
+                try await restartGatewayProcess()
+                return try await waitForGatewayStatus()
+            }
             return status
         }
         _ = try await runGateway(["config", "--json", "--scope", "effective"])
         if FileManager.default.fileExists(atPath: launchAgentPath().path) {
-            try installLaunchAgent()
-            if (try? await runProcess("/bin/launchctl", ["print", launchDomainAndLabel()])) != nil {
-                _ = try await runProcess("/bin/launchctl", ["kickstart", "-k", launchDomainAndLabel()])
-            } else {
-                _ = try await runProcess("/bin/launchctl", ["bootstrap", launchDomain(), launchAgentPath().path])
+            if (try? await runProcess("/bin/launchctl", ["print", launchDomainAndLabel()])) != nil,
+                let status = try? await waitForGatewayStatus()
+            {
+                return status
             }
+            try await bootoutIfLoaded(launchDomainAndLabel())
+            try await waitForGatewayStopped()
+            try installLaunchAgent()
+            _ = try await runProcess("/bin/launchctl", ["bootstrap", launchDomain(), launchAgentPath().path])
         } else {
             _ = try await runGateway(["start", "--daemon"])
         }
@@ -315,14 +343,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func restartGatewayProcess() async throws {
         if FileManager.default.fileExists(atPath: launchAgentPath().path) {
-            try await bootoutIfLoaded()
+            try await bootoutIfLoaded(launchDomainAndLabel())
+            _ = try await runGateway(["stop"])
+            try await waitForGatewayStopped()
             try installLaunchAgent()
             _ = try await runProcess("/bin/launchctl", ["bootstrap", launchDomain(), launchAgentPath().path])
             return
         }
-        if (try? await runGateway(["status"]))?.contains("gateway: running") == true {
-            _ = try await runGateway(["stop"])
-        }
+        _ = try await runGateway(["stop"])
+        try await waitForGatewayStopped()
         _ = try await runGateway(["start", "--daemon"])
     }
 
@@ -341,6 +370,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             try await Task.sleep(for: .milliseconds(250))
         }
         throw GatewayError.command("网关启动后 5 秒内未就绪：\(lastError)")
+    }
+
+    private func waitForGatewayStopped() async throws {
+        let runtimeURL = stateDir().appendingPathComponent("runtime.json")
+        for _ in 0..<20 {
+            guard FileManager.default.fileExists(atPath: runtimeURL.path) else {
+                return
+            }
+            let data = try Data(contentsOf: runtimeURL)
+            guard
+                let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                let pid = object["pid"] as? NSNumber
+            else {
+                throw GatewayError.command("无法读取网关 runtime PID：\(runtimeURL.path)")
+            }
+            if kill(pid.int32Value, 0) != 0 {
+                let errorCode = errno
+                if errorCode == ESRCH {
+                    return
+                }
+                if errorCode != EPERM {
+                    throw GatewayError.command("检查网关进程 \(pid) 失败：errno \(errorCode)")
+                }
+            }
+            try await Task.sleep(for: .milliseconds(250))
+        }
+        throw GatewayError.command("网关在 5 秒内未停止，可能存在不受 Codex Mixin 管理的进程。")
     }
 
     private func applyGatewayStatus(_ status: String?) {
@@ -653,28 +709,91 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
           <array>
             <string>\(xmlEscape(executable.path))</string>
             <string>start</string>
+            <string>--log-file</string>
+            <string>\(xmlEscape(logFile))</string>
           </array>
           <key>RunAtLoad</key>
           <true/>
+          <key>KeepAlive</key>
+          <dict>
+            <key>SuccessfulExit</key>
+            <false/>
+          </dict>
+          <key>ThrottleInterval</key>
+          <integer>10</integer>
+          <key>ProcessType</key>
+          <string>Background</string>
           <key>StandardOutPath</key>
-          <string>\(xmlEscape(logFile))</string>
+          <string>/dev/null</string>
           <key>StandardErrorPath</key>
-          <string>\(xmlEscape(logFile))</string>
+          <string>/dev/null</string>
           <key>WorkingDirectory</key>
           <string>\(xmlEscape(FileManager.default.homeDirectoryForCurrentUser.path))</string>
         </dict>
         </plist>
         """
         try plist.write(to: launchAgentPath(), atomically: true, encoding: .utf8)
+        try installMenuLaunchAgent()
+    }
+
+    private func installMenuLaunchAgent() throws {
+        try FileManager.default.createDirectory(at: menuLaunchAgentPath().deletingLastPathComponent(), withIntermediateDirectories: true)
+        let plist = """
+        <?xml version="1.0" encoding="UTF-8"?>
+        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+        <plist version="1.0">
+        <dict>
+          <key>Label</key>
+          <string>\(menuLaunchLabel)</string>
+          <key>ProgramArguments</key>
+          <array>
+            <string>/usr/bin/open</string>
+            <string>-g</string>
+            <string>\(xmlEscape(Bundle.main.bundleURL.path))</string>
+          </array>
+          <key>RunAtLoad</key>
+          <true/>
+          <key>ProcessType</key>
+          <string>Interactive</string>
+          <key>StandardOutPath</key>
+          <string>/dev/null</string>
+          <key>StandardErrorPath</key>
+          <string>/dev/null</string>
+        </dict>
+        </plist>
+        """
+        try plist.write(to: menuLaunchAgentPath(), atomically: true, encoding: .utf8)
+    }
+
+    private func launchAgentNeedsUpdate() throws -> Bool {
+        let data = try Data(contentsOf: launchAgentPath())
+        guard
+            let plist = try PropertyListSerialization.propertyList(from: data, format: nil) as? [String: Any],
+            let arguments = plist["ProgramArguments"] as? [String],
+            let keepAlive = plist["KeepAlive"] as? [String: Any]
+        else {
+            return true
+        }
+        let expectedArguments = [
+            try gatewayExecutableURL().path,
+            "start",
+            "--log-file",
+            stateDir().appendingPathComponent("gateway.log").path,
+        ]
+        return arguments != expectedArguments
+            || plist["RunAtLoad"] as? Bool != true
+            || keepAlive["SuccessfulExit"] as? Bool != false
+            || plist["ThrottleInterval"] as? Int != 10
+            || plist["ProcessType"] as? String != "Background"
     }
 
     private func runGateway(_ arguments: [String]) async throws -> String {
         try await runProcess(try gatewayExecutableURL().path, arguments)
     }
 
-    private func bootoutIfLoaded() async throws {
+    private func bootoutIfLoaded(_ domainAndLabel: String) async throws {
         do {
-            _ = try await runProcess("/bin/launchctl", ["bootout", launchDomainAndLabel()])
+            _ = try await runProcess("/bin/launchctl", ["bootout", domainAndLabel])
         } catch {
             let message = String(describing: error)
             if !message.contains("No such process") && !message.contains("Could not find service") {
@@ -731,12 +850,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             .appendingPathComponent("\(serviceLabel).plist")
     }
 
+    private func menuLaunchAgentPath() -> URL {
+        FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent("Library/LaunchAgents")
+            .appendingPathComponent("\(menuLaunchLabel).plist")
+    }
+
     private func launchDomain() -> String {
         "gui/\(getuid())"
     }
 
     private func launchDomainAndLabel() -> String {
         "\(launchDomain())/\(serviceLabel)"
+    }
+
+    private func menuLaunchDomainAndLabel() -> String {
+        "\(launchDomain())/\(menuLaunchLabel)"
     }
 }
 
