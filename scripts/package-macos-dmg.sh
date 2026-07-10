@@ -44,23 +44,40 @@ hdiutil create \
   -srcfolder "$STAGING_DIR" \
   -ov \
   -format UDRW \
-  "$TEMP_DMG" >/dev/null
+  "$TEMP_DMG"
 
 mkdir -p "$MOUNT_DIR"
 cleanup() {
   status=$?
-  hdiutil detach "$MOUNT_DIR" -quiet >/dev/null 2>&1 || true
+  hdiutil detach "$MOUNT_DIR" -force >/dev/null 2>&1 || true
   rm -rf "$MOUNT_DIR"
   exit "$status"
 }
 trap cleanup EXIT
 
-hdiutil attach "$TEMP_DMG" -readwrite -noverify -nobrowse -mountpoint "$MOUNT_DIR" >/dev/null
+hdiutil attach "$TEMP_DMG" -readwrite -noverify -nobrowse -mountpoint "$MOUNT_DIR"
 
 osascript <<APPLESCRIPT
 set dmgFolder to POSIX file "$MOUNT_DIR" as alias
 tell application "Finder"
   open dmgFolder
+  set itemsReady to false
+  repeat with attempt from 1 to 20
+    try
+      set appItem to item "Codex Mixin.app" of dmgFolder
+      set applicationsItem to item "Applications" of dmgFolder
+      set binItem to item "bin" of dmgFolder
+      set readmeItem to item "README.md" of dmgFolder
+      set licenseItem to item "LICENSE" of dmgFolder
+      set noticeItem to item "NOTICE" of dmgFolder
+      set itemsReady to true
+      exit repeat
+    on error
+      update dmgFolder
+      delay 0.5
+    end try
+  end repeat
+  if itemsReady is false then error "DMG staging items did not become visible in Finder"
   set current view of container window of dmgFolder to icon view
   set toolbar visible of container window of dmgFolder to false
   set statusbar visible of container window of dmgFolder to false
@@ -69,25 +86,33 @@ tell application "Finder"
   set arrangement of viewOptions to not arranged
   set icon size of viewOptions to 88
   set background picture of viewOptions to POSIX file "$MOUNT_DIR/.background/background.png"
-  set position of item "Codex Mixin.app" of dmgFolder to {170, 205}
-  set position of item "Applications" of dmgFolder to {490, 205}
-  set position of item "bin" of dmgFolder to {170, 335}
-  set position of item "README.md" of dmgFolder to {490, 335}
-  set position of item "LICENSE" of dmgFolder to {170, 430}
-  set position of item "NOTICE" of dmgFolder to {490, 430}
+  set position of appItem to {170, 205}
+  set position of applicationsItem to {490, 205}
+  set position of binItem to {170, 335}
+  set position of readmeItem to {490, 335}
+  set position of licenseItem to {170, 430}
+  set position of noticeItem to {490, 430}
   close container window of dmgFolder
   update dmgFolder without registering applications
 end tell
 APPLESCRIPT
 
 sync
-sleep 2
-hdiutil detach "$MOUNT_DIR" -quiet
+for attempt in 1 2 3 4 5; do
+  if hdiutil detach "$MOUNT_DIR"; then
+    break
+  fi
+  if [[ "$attempt" -eq 5 ]]; then
+    hdiutil detach "$MOUNT_DIR" -force
+    break
+  fi
+  sleep "$attempt"
+done
 trap - EXIT
 rm -rf "$MOUNT_DIR"
 
 hdiutil convert "$TEMP_DMG" \
   -format UDZO \
-  -o "$DMG_PATH" >/dev/null
+  -o "$DMG_PATH"
 rm -f "$TEMP_DMG"
 echo "$DMG_PATH"
