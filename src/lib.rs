@@ -9,3 +9,5 @@ pub mod openai_chat;
 pub mod openai_events;
 pub mod server;
 pub mod sse;
+
+pub const CODEX_MIXIN_PROVIDER: &str = "codex-mixin";

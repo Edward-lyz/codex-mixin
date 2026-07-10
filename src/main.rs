@@ -14,6 +14,7 @@ use toml_edit::{DocumentMut, Item, Table, value};
 #[cfg(unix)]
 use std::os::unix::process::CommandExt;
 
+use codex_mixin::CODEX_MIXIN_PROVIDER;
 use codex_mixin::catalog::{
     codex_catalog_from_models_with_metadata, codex_oauth_proxy_catalog_from_models_with_metadata,
     load_template_catalog, refresh_managed_oauth_catalog,
@@ -22,7 +23,9 @@ use codex_mixin::config::{
     GatewayConfig, ProviderPreset, StoredGatewayConfig, delete_stored_config, load_stored_config,
     save_stored_config, stored_config_path,
 };
-use codex_mixin::history::migrate_history_to_custom_provider;
+use codex_mixin::history::{
+    migrate_history_from_mixin_provider, migrate_history_to_mixin_provider,
+};
 use codex_mixin::model_metadata::{ModelMetadataResolver, default_cache_path};
 use codex_mixin::server::{AppState, serve};
 
@@ -123,8 +126,6 @@ enum Command {
         set_default: bool,
         #[arg(long)]
         codex_oauth_proxy: bool,
-        #[arg(long, default_value = "custom")]
-        provider: String,
         #[arg(long)]
         config: Option<PathBuf>,
         #[arg(long)]
@@ -225,7 +226,6 @@ async fn main() -> anyhow::Result<()> {
             model,
             set_default,
             codex_oauth_proxy,
-            provider,
             config,
             catalog,
             base_url,
@@ -237,7 +237,6 @@ async fn main() -> anyhow::Result<()> {
                 model,
                 set_default,
                 codex_oauth_proxy,
-                provider,
                 config,
                 catalog,
                 base_url,
@@ -702,7 +701,7 @@ fn printable_json_value(value: &serde_json::Value) -> String {
 
 fn migrate_history(codex_home: Option<PathBuf>) -> anyhow::Result<()> {
     let codex_home = codex_home.unwrap_or_else(codex_home_path);
-    let outcome = migrate_history_to_custom_provider(&codex_home)?;
+    let outcome = migrate_history_to_mixin_provider(&codex_home)?;
     println!(
         "history jsonl files changed: {}",
         outcome.jsonl_files_changed
@@ -787,7 +786,6 @@ async fn install_codex(
     requested_model: Option<String>,
     set_default: bool,
     codex_oauth_proxy: bool,
-    requested_provider: String,
     config_path: Option<PathBuf>,
     catalog_path: Option<PathBuf>,
     base_url: Option<String>,
@@ -831,9 +829,6 @@ async fn install_codex(
     } else {
         raw_config.parse::<DocumentMut>()?
     };
-    let provider = requested_provider;
-    validate_provider_name(&provider)?;
-
     let should_set_default = set_default || requested_model.is_some();
     let selected_model = if codex_oauth_proxy {
         if should_set_default {
@@ -866,7 +861,6 @@ async fn install_codex(
     };
     upsert_codex_config(
         &mut doc,
-        &provider,
         selected_model.as_deref(),
         &catalog_path,
         &gateway_base_url,
@@ -878,6 +872,12 @@ async fn install_codex(
         fs::create_dir_all(parent)?;
     }
     fs::write(&config_path, format!("{MANAGED_CONFIG_HEADER}\n{}", doc))?;
+    let codex_home = config_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(codex_home_path);
+    let history = migrate_history_to_mixin_provider(&codex_home)?;
     println!("codex config updated: {}", config_path.display());
     println!(
         "codex config backup: {}",
@@ -886,14 +886,21 @@ async fn install_codex(
     println!("model catalog written: {}", catalog_path.display());
     println!("models installed: {}", models.len());
     println!("metadata entries loaded: {}", metadata.len());
-    println!("provider: {provider}");
+    println!("provider: {CODEX_MIXIN_PROVIDER}");
+    println!(
+        "history migrated: {} JSONL files, {} SQLite rows",
+        history.jsonl_files_changed, history.sqlite_rows_changed
+    );
+    if let Some(backup_root) = history.backup_root {
+        println!("history backup: {}", backup_root.display());
+    }
     if codex_oauth_proxy {
         println!("codex oauth proxy: enabled");
     }
     if let Some(selected_model) = selected_model {
         println!("default model: {selected_model}");
     } else {
-        println!("default model/provider: unchanged");
+        println!("default model: unchanged");
     }
     println!("base_url: {gateway_base_url}");
     if let Some(env_key) = env_key
@@ -924,6 +931,22 @@ fn uninstall_codex(
     }
     let backup_path = managed_backup_path(&config_path);
     let absent_marker_path = managed_absent_marker_path(&config_path);
+    let restored_provider = if backup_path.exists() {
+        let backup = fs::read_to_string(&backup_path)?;
+        let doc = backup.parse::<DocumentMut>()?;
+        doc.get("model_provider")
+            .and_then(Item::as_str)
+            .unwrap_or("openai")
+            .to_owned()
+    } else if absent_marker_path.exists() {
+        "openai".to_owned()
+    } else {
+        anyhow::bail!(
+            "missing managed backup for {}; expected {}",
+            config_path.display(),
+            backup_path.display()
+        );
+    };
     if backup_path.exists() {
         fs::copy(&backup_path, &config_path)?;
         fs::remove_file(&backup_path)?;
@@ -934,12 +957,20 @@ fn uninstall_codex(
         }
         fs::remove_file(&absent_marker_path)?;
         println!("codex config removed; no previous config existed");
-    } else {
-        anyhow::bail!(
-            "missing managed backup for {}; expected {}",
-            config_path.display(),
-            backup_path.display()
-        );
+    }
+    let codex_home = config_path
+        .parent()
+        .filter(|path| !path.as_os_str().is_empty())
+        .map(Path::to_path_buf)
+        .unwrap_or_else(codex_home_path);
+    let history = migrate_history_from_mixin_provider(&codex_home, &restored_provider)?;
+    println!("history provider restored: {restored_provider}");
+    println!(
+        "history restored: {} JSONL files, {} SQLite rows",
+        history.jsonl_files_changed, history.sqlite_rows_changed
+    );
+    if let Some(backup_root) = history.backup_root {
+        println!("history backup: {}", backup_root.display());
     }
     if catalog_path.exists() {
         fs::remove_file(&catalog_path)?;
@@ -1071,22 +1102,6 @@ fn codex_home_path() -> PathBuf {
     )
 }
 
-fn validate_provider_name(provider: &str) -> anyhow::Result<()> {
-    if provider.is_empty() {
-        anyhow::bail!("provider cannot be empty");
-    }
-    if provider == "openai" {
-        anyhow::bail!("provider 'openai' is reserved by Codex; use 'custom'");
-    }
-    if provider
-        .chars()
-        .all(|ch| ch.is_ascii_alphanumeric() || ch == '_' || ch == '-')
-    {
-        return Ok(());
-    }
-    anyhow::bail!("provider may only contain ASCII letters, digits, underscore, or hyphen")
-}
-
 fn select_codex_model(
     requested_model: Option<String>,
     models: &[codex_mixin::anthropic::ModelInfo],
@@ -1198,7 +1213,6 @@ fn is_gpt_model(model: &str) -> bool {
 
 fn upsert_codex_config(
     doc: &mut DocumentMut,
-    provider: &str,
     default_model: Option<&str>,
     catalog_path: &std::path::Path,
     base_url: &str,
@@ -1207,7 +1221,7 @@ fn upsert_codex_config(
     codex_oauth_proxy: bool,
 ) -> anyhow::Result<()> {
     doc["model_catalog_json"] = value(catalog_path.to_string_lossy().to_string());
-    doc["model_provider"] = value(provider);
+    doc["model_provider"] = value(CODEX_MIXIN_PROVIDER);
     if let Some(model) = default_model {
         doc["model"] = value(model);
         doc["web_search"] = value(web_search);
@@ -1222,18 +1236,17 @@ fn upsert_codex_config(
     let providers = doc["model_providers"]
         .as_table_mut()
         .ok_or_else(|| anyhow::anyhow!("model_providers must be a TOML table"))?;
-    if !providers.get(provider).is_some_and(|item| item.is_table()) {
-        providers.insert(provider, Item::Table(Table::new()));
+    if !providers
+        .get(CODEX_MIXIN_PROVIDER)
+        .is_some_and(|item| item.is_table())
+    {
+        providers.insert(CODEX_MIXIN_PROVIDER, Item::Table(Table::new()));
     }
     let provider_table = providers
-        .get_mut(provider)
+        .get_mut(CODEX_MIXIN_PROVIDER)
         .and_then(Item::as_table_mut)
         .ok_or_else(|| anyhow::anyhow!("model provider entry must be a TOML table"))?;
-    provider_table["name"] = value(if codex_oauth_proxy {
-        "OpenAI"
-    } else {
-        "Custom models through local Responses gateway"
-    });
+    provider_table["name"] = value("Codex Mixin");
     provider_table["base_url"] = value(base_url);
     provider_table["wire_api"] = value("responses");
     if codex_oauth_proxy {
@@ -1499,16 +1512,65 @@ mod tests {
     use super::*;
 
     #[test]
+    fn install_command_rejects_provider_override() {
+        assert!(
+            Cli::try_parse_from(["codex-mixin", "install-codex", "--provider", "custom"]).is_err()
+        );
+    }
+
+    #[test]
+    fn oauth_proxy_install_supports_first_run_config_without_provider() {
+        let mut doc = r#"
+[projects."/Users/example/work"]
+trust_level = "trusted"
+
+[hooks.state]
+"#
+        .parse::<DocumentMut>()
+        .unwrap();
+        let catalog_path = PathBuf::from("/tmp/mixin-models.json");
+
+        upsert_codex_config(
+            &mut doc,
+            None,
+            &catalog_path,
+            "http://127.0.0.1:8787/v1",
+            "disabled",
+            None,
+            true,
+        )
+        .unwrap();
+
+        assert_eq!(doc["model_provider"].as_str(), Some("codex-mixin"));
+        assert_eq!(
+            doc["model_providers"]["codex-mixin"]["base_url"].as_str(),
+            Some("http://127.0.0.1:8787/v1")
+        );
+        assert_eq!(
+            doc["projects"]["/Users/example/work"]["trust_level"].as_str(),
+            Some("trusted")
+        );
+    }
+
+    #[test]
     fn managed_install_backup_and_uninstall_restore_existing_config() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("config.toml");
         let catalog_path = dir.path().join("model-catalogs").join("mixin-models.json");
         fs::create_dir_all(catalog_path.parent().unwrap()).unwrap();
-        fs::write(&config_path, "model = \"gpt-5.5\"\n").unwrap();
+        let original_config = "model_provider = \"custom\"\nmodel = \"gpt-5.5\"\n";
+        fs::write(&config_path, original_config).unwrap();
         fs::write(&catalog_path, "{}").unwrap();
+        let session_path = dir.path().join("sessions/legacy.jsonl");
+        fs::create_dir_all(session_path.parent().unwrap()).unwrap();
+        fs::write(
+            &session_path,
+            r#"{"type":"session_meta","payload":{"model_provider":"codex-mixin"}}"#,
+        )
+        .unwrap();
 
         let original = prepare_managed_config_install(&config_path).unwrap();
-        assert_eq!(original, "model = \"gpt-5.5\"\n");
+        assert_eq!(original, original_config);
         assert!(managed_backup_path(&config_path).exists());
         fs::write(
             &config_path,
@@ -1517,9 +1579,11 @@ mod tests {
         .unwrap();
 
         uninstall_codex(Some(config_path.clone()), Some(catalog_path.clone())).unwrap();
-        assert_eq!(
-            fs::read_to_string(&config_path).unwrap(),
-            "model = \"gpt-5.5\"\n"
+        assert_eq!(fs::read_to_string(&config_path).unwrap(), original_config);
+        assert!(
+            fs::read_to_string(&session_path)
+                .unwrap()
+                .contains(r#""model_provider":"custom""#)
         );
         assert!(!managed_backup_path(&config_path).exists());
         assert!(!catalog_path.exists());
@@ -1535,31 +1599,42 @@ mod tests {
         assert!(original.is_empty());
         assert!(managed_absent_marker_path(&config_path).exists());
         fs::write(&config_path, format!("{MANAGED_CONFIG_HEADER}\n")).unwrap();
+        let session_path = dir.path().join("sessions/first-run.jsonl");
+        fs::create_dir_all(session_path.parent().unwrap()).unwrap();
+        fs::write(
+            &session_path,
+            r#"{"type":"session_meta","payload":{"model_provider":"codex-mixin"}}"#,
+        )
+        .unwrap();
 
         uninstall_codex(Some(config_path.clone()), Some(catalog_path)).unwrap();
         assert!(!config_path.exists());
         assert!(!managed_absent_marker_path(&config_path).exists());
+        assert!(
+            fs::read_to_string(session_path)
+                .unwrap()
+                .contains(r#""model_provider":"openai""#)
+        );
     }
 
     #[test]
-    fn oauth_proxy_install_registers_custom_provider() {
+    fn oauth_proxy_install_replaces_legacy_custom_provider() {
         let mut doc = r#"
-model_provider = "openai"
+model_provider = "custom"
 model = "gpt-5.5"
 
-[model_providers.openai]
+[model_providers.custom]
 name = "OpenAI"
-base_url = "https://chatgpt.com/backend-api/codex"
+requires_openai_auth = true
+supports_websockets = true
 wire_api = "responses"
 "#
         .parse::<DocumentMut>()
         .unwrap();
         let catalog_path = PathBuf::from("/tmp/mixin-models.json");
-        let provider = "custom";
 
         upsert_codex_config(
             &mut doc,
-            &provider,
             None,
             &catalog_path,
             "http://127.0.0.1:8787/v1",
@@ -1569,27 +1644,29 @@ wire_api = "responses"
         )
         .unwrap();
 
-        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert_eq!(doc["model_provider"].as_str(), Some("codex-mixin"));
         assert_eq!(doc["model"].as_str(), Some("gpt-5.5"));
         assert_eq!(
-            doc["model_providers"]["custom"]["base_url"].as_str(),
+            doc["model_providers"]["codex-mixin"]["base_url"].as_str(),
             Some("http://127.0.0.1:8787/v1")
         );
         assert_eq!(
-            doc["model_providers"]["custom"]["requires_openai_auth"].as_bool(),
+            doc["model_providers"]["codex-mixin"]["requires_openai_auth"].as_bool(),
             Some(true)
+        );
+        assert_eq!(
+            doc["model_providers"]["custom"]["wire_api"].as_str(),
+            Some("responses")
         );
     }
 
     #[test]
-    fn oauth_proxy_install_writes_custom_provider_without_default_model() {
+    fn oauth_proxy_install_writes_codex_mixin_provider_without_default_model() {
         let mut doc = "model = \"gpt-5.5\"\n".parse::<DocumentMut>().unwrap();
         let catalog_path = PathBuf::from("/tmp/mixin-models.json");
-        let provider = "custom";
 
         upsert_codex_config(
             &mut doc,
-            &provider,
             None,
             &catalog_path,
             "http://127.0.0.1:8787/v1",
@@ -1599,10 +1676,10 @@ wire_api = "responses"
         )
         .unwrap();
 
-        assert_eq!(doc["model_provider"].as_str(), Some("custom"));
+        assert_eq!(doc["model_provider"].as_str(), Some("codex-mixin"));
         assert_eq!(doc["model"].as_str(), Some("gpt-5.5"));
         assert_eq!(
-            doc["model_providers"]["custom"]["base_url"].as_str(),
+            doc["model_providers"]["codex-mixin"]["base_url"].as_str(),
             Some("http://127.0.0.1:8787/v1")
         );
     }

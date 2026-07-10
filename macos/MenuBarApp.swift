@@ -315,7 +315,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func uninstallCodexConfig() {
-        guard confirm(title: "从 Codex 恢复官方配置", message: "会恢复安装前备份的 ~/.codex/config.toml，并删除 Codex Mixin 托管的模型目录。完成后需要重启 Codex App；CLI 需要开新会话。") else { return }
+        guard confirm(title: "从 Codex 恢复官方配置", message: "会恢复安装前备份的 ~/.codex/config.toml，将历史会话迁回原 provider，并删除 Codex Mixin 托管的模型目录。完成后需要重启 Codex App；CLI 需要开新会话。") else { return }
         Task { @MainActor in
             do {
                 let output = try await runGateway(["uninstall-codex"])
@@ -857,7 +857,7 @@ private func runInstallCodexPanel() -> Bool {
     titleLabel.font = .boldSystemFont(ofSize: 18)
     titleLabel.textColor = .labelColor
 
-    let detailLabel = NSTextField(wrappingLabelWithString: "会先备份当前 ~/.codex/config.toml，再写入独立模型目录，并把当前默认 provider 的 base_url 指向本地网关。官方 GPT 保留原名并走 Codex 官方路径，自定义 GPT 使用 -custom 后缀。完成后需要重启 Codex App；CLI 需要开新会话。")
+    let detailLabel = NSTextField(wrappingLabelWithString: "会先备份当前 ~/.codex/config.toml，再注册独立的 codex-mixin provider，并把现有历史会话统一迁移到该 provider。官方 GPT 保留原名并走 Codex 官方路径，自定义 GPT 使用 -custom 后缀。完成后需要重启 Codex App；CLI 需要开新会话。")
     detailLabel.textColor = .secondaryLabelColor
     detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     detailLabel.translatesAutoresizingMaskIntoConstraints = false
@@ -866,7 +866,7 @@ private func runInstallCodexPanel() -> Bool {
     let pathStack = NSStackView(views: [
         labeledView("Codex 配置", copyableTextField("~/.codex/config.toml")),
         labeledView("模型目录", copyableTextField("~/.codex/model-catalogs/mixin-models.json")),
-        labeledView("Provider", copyableTextField("保留当前 provider / requires_openai_auth")),
+        labeledView("Provider", copyableTextField("codex-mixin / requires_openai_auth")),
     ])
     pathStack.orientation = .vertical
     pathStack.spacing = 10

@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command;
@@ -6,19 +5,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use serde_json::Value;
 
-const TARGET_PROVIDER: &str = "custom";
-const SOURCE_PROVIDERS: &[&str] = &[
-    "openai",
-    "custom_models",
-    "ccswitch",
-    "aihubmix",
-    "rightcode",
-    "openrouter",
-    "deepseek",
-    "kimi",
-    "minimax",
-    "zhipu_glm",
-];
+use crate::CODEX_MIXIN_PROVIDER;
 
 #[derive(Clone, Debug, Default)]
 pub struct HistoryMigrationOutcome {
@@ -28,13 +15,36 @@ pub struct HistoryMigrationOutcome {
     pub sqlite_rows_changed: usize,
 }
 
-pub fn migrate_history_to_custom_provider(
+pub fn migrate_history_to_mixin_provider(
     codex_home: &Path,
 ) -> anyhow::Result<HistoryMigrationOutcome> {
-    let source_providers = SOURCE_PROVIDERS.iter().copied().collect::<HashSet<_>>();
+    migrate_history_provider(codex_home, None, CODEX_MIXIN_PROVIDER, "unify-codex-mixin")
+}
+
+pub fn migrate_history_from_mixin_provider(
+    codex_home: &Path,
+    target_provider: &str,
+) -> anyhow::Result<HistoryMigrationOutcome> {
+    migrate_history_provider(
+        codex_home,
+        Some(CODEX_MIXIN_PROVIDER),
+        target_provider,
+        "restore-from-codex-mixin",
+    )
+}
+
+fn migrate_history_provider(
+    codex_home: &Path,
+    source_provider: Option<&str>,
+    target_provider: &str,
+    backup_label: &str,
+) -> anyhow::Result<HistoryMigrationOutcome> {
+    if target_provider.is_empty() || source_provider == Some("") {
+        anyhow::bail!("model provider cannot be empty");
+    }
     let backup_root = codex_home
         .join("backups")
-        .join(format!("provider-unify-openai-{}", unix_timestamp()));
+        .join(format!("provider-{backup_label}-{}", unix_timestamp()));
     let mut outcome = HistoryMigrationOutcome {
         backup_root: Some(backup_root.clone()),
         ..Default::default()
@@ -44,8 +54,13 @@ pub fn migrate_history_to_custom_provider(
     collect_jsonl_files(&codex_home.join("sessions"), &mut session_files)?;
     collect_jsonl_files(&codex_home.join("archived_sessions"), &mut session_files)?;
     for path in session_files {
-        let changed_lines =
-            rewrite_jsonl_session_meta(&path, codex_home, &backup_root, &source_providers)?;
+        let changed_lines = rewrite_jsonl_session_meta(
+            &path,
+            codex_home,
+            &backup_root,
+            source_provider,
+            target_provider,
+        )?;
         if changed_lines > 0 {
             outcome.jsonl_files_changed += 1;
             outcome.jsonl_lines_changed += changed_lines;
@@ -57,12 +72,16 @@ pub fn migrate_history_to_custom_provider(
         &backup_root,
         &codex_home.join("state_5.sqlite"),
         "threads",
+        source_provider,
+        target_provider,
     )?;
     outcome.sqlite_rows_changed += migrate_sqlite_table(
         codex_home,
         &backup_root,
         &codex_home.join("sqlite").join("codex-dev.db"),
         "local_thread_catalog",
+        source_provider,
+        target_provider,
     )?;
 
     if outcome.jsonl_files_changed == 0 && outcome.sqlite_rows_changed == 0 {
@@ -100,7 +119,8 @@ fn rewrite_jsonl_session_meta(
     path: &Path,
     codex_home: &Path,
     backup_root: &Path,
-    source_providers: &HashSet<&str>,
+    source_provider: Option<&str>,
+    target_provider: &str,
 ) -> anyhow::Result<usize> {
     let content = fs::read_to_string(path)?;
     let mut changed = 0;
@@ -110,7 +130,7 @@ fn rewrite_jsonl_session_meta(
             .strip_suffix('\n')
             .map(|line| (line, "\n"))
             .unwrap_or((segment, ""));
-        if let Some(next_line) = rewrite_session_meta_line(line, source_providers) {
+        if let Some(next_line) = rewrite_session_meta_line(line, source_provider, target_provider) {
             rewritten.push_str(&next_line);
             changed += 1;
         } else {
@@ -126,7 +146,11 @@ fn rewrite_jsonl_session_meta(
     Ok(changed)
 }
 
-fn rewrite_session_meta_line(line: &str, source_providers: &HashSet<&str>) -> Option<String> {
+fn rewrite_session_meta_line(
+    line: &str,
+    source_provider: Option<&str>,
+    target_provider: &str,
+) -> Option<String> {
     if !line.contains("\"session_meta\"") || !line.contains("\"model_provider\"") {
         return None;
     }
@@ -136,12 +160,14 @@ fn rewrite_session_meta_line(line: &str, source_providers: &HashSet<&str>) -> Op
     }
     let payload = value.get_mut("payload")?.as_object_mut()?;
     let provider = payload.get("model_provider")?.as_str()?;
-    if !source_providers.contains(provider) {
+    if provider == target_provider
+        || source_provider.is_some_and(|source_provider| provider != source_provider)
+    {
         return None;
     }
     payload.insert(
         "model_provider".to_owned(),
-        Value::String(TARGET_PROVIDER.to_owned()),
+        Value::String(target_provider.to_owned()),
     );
     serde_json::to_string(&value).ok()
 }
@@ -151,25 +177,25 @@ fn migrate_sqlite_table(
     backup_root: &Path,
     db_path: &Path,
     table: &str,
+    source_provider: Option<&str>,
+    target_provider: &str,
 ) -> anyhow::Result<usize> {
     if !db_path.exists() || !sqlite_table_exists(db_path, table)? {
         return Ok(0);
     }
-    let source_list = SOURCE_PROVIDERS
-        .iter()
-        .map(|provider| format!("'{provider}'"))
-        .collect::<Vec<_>>()
-        .join(",");
-    let count_sql =
-        format!("SELECT COUNT(*) FROM {table} WHERE model_provider IN ({source_list});");
+    let escaped_target = target_provider.replace('\'', "''");
+    let predicate = source_provider.map_or_else(
+        || format!("model_provider IS NOT NULL AND model_provider <> '{escaped_target}'"),
+        |source_provider| format!("model_provider = '{}'", source_provider.replace('\'', "''")),
+    );
+    let count_sql = format!("SELECT COUNT(*) FROM {table} WHERE {predicate};");
     let count = sqlite_scalar_usize(db_path, &count_sql)?;
     if count == 0 {
         return Ok(0);
     }
     backup_file(db_path, codex_home, backup_root)?;
-    let update_sql = format!(
-        "UPDATE {table} SET model_provider = '{TARGET_PROVIDER}' WHERE model_provider IN ({source_list});"
-    );
+    let update_sql =
+        format!("UPDATE {table} SET model_provider = '{escaped_target}' WHERE {predicate};");
     run_sqlite(db_path, &update_sql)?;
     Ok(count)
 }
@@ -180,7 +206,11 @@ fn sqlite_table_exists(db_path: &Path, table: &str) -> anyhow::Result<bool> {
 }
 
 fn sqlite_scalar_usize(db_path: &Path, sql: &str) -> anyhow::Result<usize> {
-    let output = Command::new("sqlite3").arg(db_path).arg(sql).output()?;
+    let output = Command::new("sqlite3")
+        .args(["-cmd", ".timeout 5000"])
+        .arg(db_path)
+        .arg(sql)
+        .output()?;
     if !output.status.success() {
         anyhow::bail!(
             "sqlite3 failed for {}: {}",
@@ -193,7 +223,11 @@ fn sqlite_scalar_usize(db_path: &Path, sql: &str) -> anyhow::Result<usize> {
 }
 
 fn run_sqlite(db_path: &Path, sql: &str) -> anyhow::Result<()> {
-    let output = Command::new("sqlite3").arg(db_path).arg(sql).output()?;
+    let output = Command::new("sqlite3")
+        .args(["-cmd", ".timeout 5000"])
+        .arg(db_path)
+        .arg(sql)
+        .output()?;
     if output.status.success() {
         Ok(())
     } else {
@@ -228,9 +262,42 @@ mod tests {
 
     #[test]
     fn rewrites_session_meta_provider() {
-        let providers = SOURCE_PROVIDERS.iter().copied().collect::<HashSet<_>>();
-        let line = r#"{"type":"session_meta","payload":{"id":"s1","model_provider":"openai"}}"#;
-        let rewritten = rewrite_session_meta_line(line, &providers).unwrap();
-        assert!(rewritten.contains(r#""model_provider":"custom""#));
+        let line =
+            r#"{"type":"session_meta","payload":{"id":"s1","model_provider":"unknown-provider"}}"#;
+        let rewritten = rewrite_session_meta_line(line, None, CODEX_MIXIN_PROVIDER).unwrap();
+        assert!(rewritten.contains(r#""model_provider":"codex-mixin""#));
+        assert!(rewrite_session_meta_line(&rewritten, None, CODEX_MIXIN_PROVIDER).is_none());
+        let restored =
+            rewrite_session_meta_line(&rewritten, Some(CODEX_MIXIN_PROVIDER), "custom").unwrap();
+        assert!(restored.contains(r#""model_provider":"custom""#));
+    }
+
+    #[test]
+    fn migrates_legacy_jsonl_and_keeps_backup() {
+        let codex_home = tempfile::tempdir().unwrap();
+        let session_path = codex_home.path().join("sessions/2026/07/session.jsonl");
+        fs::create_dir_all(session_path.parent().unwrap()).unwrap();
+        let original = concat!(
+            r#"{"type":"session_meta","payload":{"id":"s1","model_provider":"custom"}}"#,
+            "\n",
+            r#"{"type":"event_msg","payload":{"type":"task_started"}}"#,
+            "\n"
+        );
+        fs::write(&session_path, original).unwrap();
+
+        let outcome = migrate_history_to_mixin_provider(codex_home.path()).unwrap();
+
+        assert_eq!(outcome.jsonl_files_changed, 1);
+        assert_eq!(outcome.jsonl_lines_changed, 1);
+        assert!(
+            fs::read_to_string(&session_path)
+                .unwrap()
+                .contains(r#""model_provider":"codex-mixin""#)
+        );
+        let backup = outcome
+            .backup_root
+            .unwrap()
+            .join("sessions/2026/07/session.jsonl");
+        assert_eq!(fs::read_to_string(backup).unwrap(), original);
     }
 }
