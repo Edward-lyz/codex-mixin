@@ -13,6 +13,7 @@ use codex_mixin::config::{
     GatewayConfig, ProviderPreset, ThinkingMode, UpstreamAuthHeader, UpstreamKind,
 };
 use codex_mixin::server::{AppState, router};
+use codex_mixin::sse::drain_events;
 use futures_util::future::join_all;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -28,6 +29,8 @@ enum MockMode {
     CustomTool,
     ToolSearch,
     WebSearch,
+    ImageTool,
+    ImageToolFailure,
 }
 
 #[derive(Clone)]
@@ -52,6 +55,7 @@ fn test_config(upstream_base_url: String) -> GatewayConfig {
         upstream_base_url,
         upstream_messages_path: "/v1/messages".to_owned(),
         upstream_models_path: "/v1/models".to_owned(),
+        upstream_image_generation_path: None,
         upstream_api_key: "upstream-key".to_owned(),
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
         codex_auth_path: std::path::PathBuf::from("/tmp/codex-auth.json"),
@@ -91,6 +95,7 @@ async fn spawn_mock_upstream(mode: MockMode) -> (String, Arc<Mutex<Vec<Value>>>)
     let app = Router::new()
         .route("/v1/models", get(mock_models))
         .route("/v1/messages", post(mock_messages))
+        .route("/v1/images/generations", post(mock_image_generations))
         .with_state(state);
     (spawn_router(app).await, requests)
 }
@@ -101,6 +106,22 @@ async fn spawn_mock_openai_chat() -> (String, Arc<Mutex<Vec<Value>>>) {
         .route("/models", get(mock_models))
         .route("/chat/completions", post(mock_openai_chat_completions))
         .with_state(requests.clone());
+    (spawn_router(app).await, requests)
+}
+
+async fn spawn_mock_openai_image_chat() -> (String, Arc<Mutex<Vec<Value>>>) {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let state = MockState {
+        mode: MockMode::ImageTool,
+        requests: requests.clone(),
+    };
+    let app = Router::new()
+        .route(
+            "/chat/completions",
+            post(mock_openai_image_chat_completions),
+        )
+        .route("/images/generations", post(mock_image_generations))
+        .with_state(state);
     (spawn_router(app).await, requests)
 }
 
@@ -149,6 +170,8 @@ async fn spawn_mock_official() -> (
             "/v1/responses",
             get(mock_official_responses_ws).post(mock_official_responses),
         )
+        .route("/v1/images/generations", post(mock_official_images))
+        .route("/v1/images/edits", post(mock_official_images))
         .with_state(OfficialState {
             requests: requests.clone(),
             auth_headers: auth_headers.clone(),
@@ -240,12 +263,47 @@ async fn mock_messages(
             tool_sse("tool_search", json!({"query":"calendar create","limit":1}))
         }
         MockMode::WebSearch => web_search_sse(),
+        MockMode::ImageTool | MockMode::ImageToolFailure => tool_sse(
+            "image_gen__imagegen",
+            json!({
+                "prompt":"draw a blue square",
+                "referenced_image_paths": [],
+                "num_last_images_to_include": 0
+            }),
+        ),
     };
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")
         .body(Body::from(payload))
         .unwrap()
+}
+
+async fn mock_image_generations(
+    State(state): State<MockState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let auth = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok());
+    assert_eq!(auth, Some("Bearer upstream-key"));
+    state.requests.lock().unwrap().push(body);
+    if matches!(state.mode, MockMode::ImageToolFailure) {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({"error":{"message":"image model unavailable"}})),
+        )
+            .into_response();
+    }
+    Json(json!({
+        "created": 1,
+        "data": [{
+            "b64_json": "aW1hZ2UtYnl0ZXM=",
+            "revised_prompt": "a blue square"
+        }]
+    }))
+    .into_response()
 }
 
 async fn mock_openai_chat_completions(
@@ -262,6 +320,23 @@ async fn mock_openai_chat_completions(
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")
         .body(Body::from(openai_chat_sse()))
+        .unwrap()
+}
+
+async fn mock_openai_image_chat_completions(
+    State(state): State<MockState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    let auth = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok());
+    assert_eq!(auth, Some("Bearer upstream-key"));
+    state.requests.lock().unwrap().push(body);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .body(Body::from(openai_image_tool_sse()))
         .unwrap()
 }
 
@@ -290,6 +365,30 @@ async fn mock_official_responses(
             "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_1\"}}\n\n",
         ))
         .unwrap()
+}
+
+async fn mock_official_images(
+    State(state): State<OfficialState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> impl IntoResponse {
+    state.requests.lock().unwrap().push(body);
+    state.auth_headers.lock().unwrap().push(
+        headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
+    );
+    state.account_headers.lock().unwrap().push(
+        headers
+            .get("chatgpt-account-id")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
+    );
+    Json(json!({
+        "created": 1,
+        "data": [{"b64_json":"b2ZmaWNpYWwtaW1hZ2U="}]
+    }))
 }
 
 async fn mock_official_responses_ws(
@@ -402,6 +501,26 @@ fn openai_chat_sse() -> String {
     .join("")
 }
 
+fn openai_image_tool_sse() -> String {
+    let chunk = json!({
+        "id": "chatcmpl_image",
+        "object": "chat.completion.chunk",
+        "choices": [{
+            "index": 0,
+            "delta": {"tool_calls": [{
+                "index": 0,
+                "id": "call_image",
+                "function": {
+                    "name": "image_gen__imagegen",
+                    "arguments": "{\"prompt\":\"draw a blue square\"}"
+                }
+            }]},
+            "finish_reason": "tool_calls"
+        }]
+    });
+    format!("data: {chunk}\n\ndata: [DONE]\n\n")
+}
+
 fn tool_sse(name: &str, arguments: Value) -> String {
     [
         json!({"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"DeepSeek-V4-Flash","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}),
@@ -454,6 +573,42 @@ fn responses_request() -> Value {
             {"type":"function","name":"exec_command","description":"run shell","parameters":{"type":"object","properties":{"cmd":{"type":"string"}}}}
         ]
     })
+}
+
+fn image_tool_request() -> Value {
+    let mut request = responses_request();
+    request["tools"] = json!([{
+        "type": "namespace",
+        "name": "image_gen",
+        "tools": [{
+            "type": "function",
+            "name": "imagegen",
+            "description": "Generate an image",
+            "parameters": {
+                "type": "object",
+                "properties": {"prompt": {"type": "string"}},
+                "required": ["prompt"]
+            }
+        }]
+    }]);
+    request
+}
+
+fn image_tool_arguments(response_body: &str) -> Value {
+    let mut encoded = response_body.as_bytes().to_vec();
+    let event = drain_events(&mut encoded)
+        .into_iter()
+        .find(|event| {
+            let Ok(payload) = serde_json::from_str::<Value>(&event.data) else {
+                return false;
+            };
+            payload["type"] == "response.output_item.done"
+                && payload["item"]["namespace"] == "image_gen"
+                && payload["item"]["name"] == "imagegen"
+        })
+        .expect("response did not contain a completed image_gen.imagegen call");
+    let payload: Value = serde_json::from_str(&event.data).unwrap();
+    serde_json::from_str(payload["item"]["arguments"].as_str().unwrap()).unwrap()
 }
 
 #[tokio::test]
@@ -704,6 +859,223 @@ async fn preserves_namespaced_tool_call_for_codex_executor() {
         requests.lock().unwrap()[0]["tools"][0]["name"],
         "collaboration__spawn_agent"
     );
+}
+
+#[tokio::test]
+async fn custom_image_tool_calls_configured_upstream_generation_endpoint() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::ImageTool).await;
+    let mut config = test_config(upstream_url);
+    config.upstream_image_generation_path = Some("/v1/images/generations".to_owned());
+    let gateway_url = spawn_gateway_with_config(config).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&image_tool_request())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("\"type\":\"function_call\""), "{body}");
+    assert!(body.contains("event: response.completed"));
+    assert!(!body.contains("\"type\":\"image_generation_call\""));
+    let arguments = image_tool_arguments(&body);
+    let routed_prompt = arguments["prompt"].as_str().unwrap();
+    assert!(routed_prompt.starts_with("draw a blue square"));
+    assert!(routed_prompt.contains("codex-mixin-image-route:"));
+
+    let image_response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/images/generations"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "prompt": routed_prompt,
+            "model": "gpt-image-2",
+            "background": "auto",
+            "quality": "auto",
+            "size": "auto"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(image_response.status(), StatusCode::OK);
+    let image: Value = image_response.json().await.unwrap();
+    assert_eq!(image["data"][0]["b64_json"], "aW1hZ2UtYnl0ZXM=");
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["tools"][0]["name"], "image_gen__imagegen");
+    assert_eq!(requests[1]["model"], "gpt-image-2");
+    assert_eq!(requests[1]["prompt"], "draw a blue square");
+}
+
+#[tokio::test]
+async fn openai_chat_image_tool_calls_configured_upstream_generation_endpoint() {
+    let (upstream_url, requests) = spawn_mock_openai_image_chat().await;
+    let mut config = test_config(upstream_url);
+    config.provider_preset = ProviderPreset::DeepSeek;
+    config.upstream_kind = UpstreamKind::OpenAiChat;
+    config.upstream_messages_path = "/chat/completions".to_owned();
+    config.upstream_image_generation_path = Some("/images/generations".to_owned());
+    let gateway_url = spawn_gateway_with_config(config).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&image_tool_request())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("\"type\":\"function_call\""), "{body}");
+    assert!(body.contains("event: response.completed"));
+    assert!(!body.contains("\"type\":\"image_generation_call\""));
+    let routed_prompt = image_tool_arguments(&body)["prompt"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let image_response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/images/generations"))
+        .bearer_auth("gateway-key")
+        .json(&json!({"prompt":routed_prompt,"model":"gpt-image-2"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(image_response.status(), StatusCode::OK);
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(
+        requests[0]["tools"][0]["function"]["name"],
+        "image_gen__imagegen"
+    );
+    assert_eq!(requests[1]["model"], "gpt-image-2");
+}
+
+#[tokio::test]
+async fn custom_image_tool_uses_official_backend_without_upstream_image_endpoint() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::ImageTool).await;
+    let (official_url, official_requests, auth_headers, account_headers, _) =
+        spawn_mock_official().await;
+    let mut config = test_config(upstream_url);
+    config.official_responses_url = format!("{official_url}/v1/responses");
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&image_tool_request())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("\"type\":\"function_call\""), "{body}");
+    assert!(body.contains("\"namespace\":\"image_gen\""));
+    assert!(body.contains("\"name\":\"imagegen\""));
+    assert!(!body.contains("\"type\":\"image_generation_call\""));
+    let prompt = image_tool_arguments(&body)["prompt"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    assert!(!prompt.contains("codex-mixin-image-route:"));
+
+    let image_request = json!({"prompt":prompt,"model":"gpt-image-2"});
+    let image_response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/images/generations"))
+        .bearer_auth("gateway-key")
+        .json(&image_request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(image_response.status(), StatusCode::OK);
+    assert_eq!(requests.lock().unwrap().len(), 1);
+    assert_eq!(
+        official_requests.lock().unwrap().as_slice(),
+        &[image_request]
+    );
+    assert_eq!(
+        auth_headers.lock().unwrap().as_slice(),
+        &[Some("Bearer codex-oauth-token".to_owned())]
+    );
+    assert_eq!(
+        account_headers.lock().unwrap().as_slice(),
+        &[Some("account-1".to_owned())]
+    );
+}
+
+#[tokio::test]
+async fn custom_image_generation_endpoint_failure_is_explicit() {
+    let (upstream_url, _) = spawn_mock_upstream(MockMode::ImageToolFailure).await;
+    let mut config = test_config(upstream_url);
+    config.upstream_image_generation_path = Some("/v1/images/generations".to_owned());
+    let gateway_url = spawn_gateway_with_config(config).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&image_tool_request())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    let routed_prompt = image_tool_arguments(&body)["prompt"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+
+    let image_response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/images/generations"))
+        .bearer_auth("gateway-key")
+        .json(&json!({"prompt":routed_prompt,"model":"gpt-image-2"}))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(image_response.status(), StatusCode::BAD_GATEWAY);
+    let error: Value = image_response.json().await.unwrap();
+    assert!(
+        error["error"]["message"]
+            .as_str()
+            .unwrap()
+            .contains("image model unavailable")
+    );
+}
+
+#[tokio::test]
+async fn rejects_unknown_custom_image_route_marker_without_official_fallback() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::ImageTool).await;
+    let mut config = test_config(upstream_url);
+    config.upstream_image_generation_path = Some("/v1/images/generations".to_owned());
+    let gateway_url = spawn_gateway_with_config(config).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/images/generations"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "prompt": "draw\n\n<!-- codex-mixin-image-route:00000000000000000000000000000000 -->",
+            "model": "gpt-image-2"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(requests.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -1191,6 +1563,98 @@ async fn forwards_thinking_and_anthropic_server_web_search() {
     assert_eq!(upstream_request["tools"][0]["name"], "web_search");
     assert_eq!(upstream_request["tools"][0]["max_uses"], 1);
     assert!(upstream_request["tools"][0].get("input_schema").is_none());
+}
+
+#[tokio::test]
+async fn proxies_codex_image_generation_to_official_backend() {
+    let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let (official_url, official_requests, auth_headers, account_headers, _) =
+        spawn_mock_official().await;
+    let mut config = test_config(upstream_url);
+    config.upstream_image_generation_path = Some("/v1/images/generations".to_owned());
+    config.official_responses_url = format!("{official_url}/v1/responses");
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let request = json!({
+        "prompt": "draw the Codex logo",
+        "model": "gpt-image-2",
+        "background": "auto",
+        "quality": "auto",
+        "size": "auto"
+    });
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/images/generations"))
+        .bearer_auth("gateway-key")
+        .header("x-codex-originator", "codex_cli_rs")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["data"][0]["b64_json"], "b2ZmaWNpYWwtaW1hZ2U=");
+    assert!(upstream_requests.lock().unwrap().is_empty());
+    assert_eq!(official_requests.lock().unwrap().as_slice(), &[request]);
+    assert_eq!(
+        auth_headers.lock().unwrap().as_slice(),
+        &[Some("Bearer codex-oauth-token".to_owned())]
+    );
+    assert_eq!(
+        account_headers.lock().unwrap().as_slice(),
+        &[Some("account-1".to_owned())]
+    );
+}
+
+#[tokio::test]
+async fn proxies_codex_image_edits_to_official_backend() {
+    let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
+    let (official_url, official_requests, auth_headers, account_headers, _) =
+        spawn_mock_official().await;
+    let mut config = test_config(upstream_url);
+    config.official_responses_url = format!("{official_url}/v1/responses");
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let request = json!({
+        "images": [{"image_url":"data:image/png;base64,aW1hZ2U="}],
+        "prompt": "add a blue border",
+        "model": "gpt-image-2",
+        "background": "auto",
+        "quality": "auto",
+        "size": "auto"
+    });
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/images/edits"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(official_requests.lock().unwrap().as_slice(), &[request]);
+    assert_eq!(
+        auth_headers.lock().unwrap().as_slice(),
+        &[Some("Bearer codex-oauth-token".to_owned())]
+    );
+    assert_eq!(
+        account_headers.lock().unwrap().as_slice(),
+        &[Some("account-1".to_owned())]
+    );
 }
 
 #[tokio::test]

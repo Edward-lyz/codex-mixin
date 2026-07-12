@@ -6,7 +6,7 @@ use axum::extract::State;
 use axum::extract::ws::{Message as AxumWsMessage, WebSocket, WebSocketUpgrade};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
-use axum::routing::get;
+use axum::routing::{get, post};
 use axum::{Json, Router};
 use futures_util::stream::{SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
@@ -23,9 +23,12 @@ use crate::catalog::{codex_catalog_from_models_with_metadata, load_template_cata
 use crate::config::{GatewayConfig, ProviderPreset, UpstreamAuthHeader, UpstreamKind};
 use crate::convert::responses_to_anthropic;
 use crate::error::GatewayError;
+use crate::image_generation::ImageRouteRegistry;
 use crate::model_metadata::ModelMetadataResolver;
 use crate::openai_chat::responses_to_openai_chat;
-use crate::openai_events::{map_anthropic_sse, map_openai_chat_sse};
+use crate::openai_events::{
+    map_anthropic_sse_with_image_routes, map_openai_chat_sse_with_image_routes,
+};
 use crate::sse::drain_events;
 
 type OfficialWebSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
@@ -41,6 +44,7 @@ struct CustomWebSocketState {
 pub struct AppState {
     config: Arc<GatewayConfig>,
     client: Client,
+    image_routes: ImageRouteRegistry,
 }
 
 impl AppState {
@@ -52,7 +56,15 @@ impl AppState {
         Ok(Self {
             config: Arc::new(config),
             client,
+            image_routes: ImageRouteRegistry::default(),
         })
+    }
+
+    fn custom_image_routes(&self) -> Option<ImageRouteRegistry> {
+        self.config
+            .upstream_image_generation_path
+            .is_some()
+            .then(|| self.image_routes.clone())
     }
 
     pub async fn fetch_models(&self) -> Result<Vec<crate::anthropic::ModelInfo>, GatewayError> {
@@ -146,6 +158,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/models", get(models))
         .route("/v1/codex-model-catalog", get(codex_model_catalog))
         .route("/v1/responses", get(responses_ws).post(responses))
+        .route("/v1/images/generations", post(image_generations))
+        .route("/v1/images/edits", post(image_edits))
         .layer(RequestDecompressionLayer::new())
         .with_state(state)
 }
@@ -239,10 +253,11 @@ async fn responses(
                     "messages endpoint returned {status}: {body}"
                 )));
             }
-            Body::from_stream(map_anthropic_sse(
+            Body::from_stream(map_anthropic_sse_with_image_routes(
                 upstream.bytes_stream(),
                 body,
                 converted.tool_names,
+                state.custom_image_routes(),
             ))
         }
         UpstreamKind::OpenAiChat => {
@@ -260,10 +275,11 @@ async fn responses(
                     "chat completions endpoint returned {status}: {body}"
                 )));
             }
-            Body::from_stream(map_openai_chat_sse(
+            Body::from_stream(map_openai_chat_sse_with_image_routes(
                 upstream.bytes_stream(),
                 body,
                 converted.tool_names,
+                state.custom_image_routes(),
             ))
         }
     };
@@ -515,7 +531,13 @@ async fn proxy_custom_responses_ws(
                 let body = upstream.text().await?;
                 anyhow::bail!("messages endpoint returned {status}: {body}");
             }
-            map_anthropic_sse(upstream.bytes_stream(), body, converted.tool_names).boxed()
+            map_anthropic_sse_with_image_routes(
+                upstream.bytes_stream(),
+                body,
+                converted.tool_names,
+                state.custom_image_routes(),
+            )
+            .boxed()
         }
         UpstreamKind::OpenAiChat => {
             let converted = responses_to_openai_chat(&body)?;
@@ -530,7 +552,13 @@ async fn proxy_custom_responses_ws(
                 let body = upstream.text().await?;
                 anyhow::bail!("chat completions endpoint returned {status}: {body}");
             }
-            map_openai_chat_sse(upstream.bytes_stream(), body, converted.tool_names).boxed()
+            map_openai_chat_sse_with_image_routes(
+                upstream.bytes_stream(),
+                body,
+                converted.tool_names,
+                state.custom_image_routes(),
+            )
+            .boxed()
         }
     };
     tokio::pin!(stream);
@@ -743,6 +771,122 @@ async fn forward_official_responses(
         .status(status)
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, "no-cache")
+        .body(Body::from_stream(upstream.bytes_stream()))
+        .map_err(|err| GatewayError::Other(err.into()))
+}
+
+async fn image_generations(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(mut body): Json<Value>,
+) -> Result<Response, GatewayError> {
+    check_gateway_auth(&state, &headers)?;
+    let routed_prompt = body
+        .get("prompt")
+        .and_then(Value::as_str)
+        .map(|prompt| state.image_routes.resolve_prompt(prompt))
+        .transpose()
+        .map_err(GatewayError::BadRequest)?
+        .flatten();
+    if let Some(prompt) = routed_prompt {
+        body["prompt"] = Value::String(prompt);
+        let url = state
+            .config
+            .upstream_image_generation_url()
+            .ok_or_else(|| {
+                GatewayError::Other(anyhow::anyhow!(
+                    "routed image request has no configured upstream image generation endpoint"
+                ))
+            })?;
+        let request = state
+            .client
+            .post(url)
+            .header(header::ACCEPT, "application/json");
+        let request = match state.config.upstream_auth_header {
+            UpstreamAuthHeader::AuthorizationBearer => {
+                request.bearer_auth(&state.config.upstream_api_key)
+            }
+            UpstreamAuthHeader::XApiKey => {
+                request.header("x-api-key", &state.config.upstream_api_key)
+            }
+        };
+        let upstream = request.json(&body).send().await?;
+        return proxy_image_response(upstream, "upstream").await;
+    }
+    let url = state
+        .config
+        .official_image_generation_url()
+        .map_err(GatewayError::Other)?;
+    forward_official_image_request(&state, &headers, &body, url).await
+}
+
+async fn image_edits(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Result<Response, GatewayError> {
+    check_gateway_auth(&state, &headers)?;
+    if body
+        .get("prompt")
+        .and_then(Value::as_str)
+        .map(|prompt| state.image_routes.resolve_prompt(prompt))
+        .transpose()
+        .map_err(GatewayError::BadRequest)?
+        .flatten()
+        .is_some()
+    {
+        return Err(GatewayError::BadRequest(
+            "custom upstream image editing is not supported".to_owned(),
+        ));
+    }
+    let url = state
+        .config
+        .official_image_edit_url()
+        .map_err(GatewayError::Other)?;
+    forward_official_image_request(&state, &headers, &body, url).await
+}
+
+async fn forward_official_image_request(
+    state: &AppState,
+    headers: &HeaderMap,
+    body: &Value,
+    url: String,
+) -> Result<Response, GatewayError> {
+    let (authorization, account_id) =
+        read_codex_official_auth(&state.config.codex_auth_path).map_err(GatewayError::Other)?;
+    let request = forward_official_headers(
+        state
+            .client
+            .post(url)
+            .header(header::AUTHORIZATION, authorization)
+            .header("chatgpt-account-id", account_id)
+            .header(header::ACCEPT, "application/json"),
+        headers,
+    );
+    let upstream = request.json(body).send().await?;
+    proxy_image_response(upstream, "official").await
+}
+
+async fn proxy_image_response(
+    upstream: reqwest::Response,
+    endpoint: &str,
+) -> Result<Response, GatewayError> {
+    let status = upstream.status();
+    let content_type = upstream
+        .headers()
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("application/json")
+        .to_owned();
+    if !status.is_success() {
+        let body = upstream.text().await?;
+        return Err(GatewayError::Upstream(format!(
+            "{endpoint} image endpoint returned {status}: {body}"
+        )));
+    }
+    Response::builder()
+        .status(status)
+        .header(header::CONTENT_TYPE, content_type)
         .body(Body::from_stream(upstream.bytes_stream()))
         .map_err(|err| GatewayError::Other(err.into()))
 }

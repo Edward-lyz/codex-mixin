@@ -88,6 +88,13 @@ impl ProviderPreset {
             Self::Custom | Self::BaiduOneApi | Self::OpenRouter => "/v1/models",
         }
     }
+
+    pub fn default_image_generation_path(self) -> Option<&'static str> {
+        match self {
+            Self::BaiduOneApi => Some("/v1/images/generations"),
+            Self::Custom | Self::OpenRouter | Self::DeepSeek => None,
+        }
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -161,6 +168,7 @@ pub struct GatewayConfig {
     pub upstream_base_url: String,
     pub upstream_messages_path: String,
     pub upstream_models_path: String,
+    pub upstream_image_generation_path: Option<String>,
     pub upstream_api_key: String,
     pub official_responses_url: String,
     pub codex_auth_path: PathBuf,
@@ -249,6 +257,14 @@ impl GatewayConfig {
                 .unwrap_or_else(|| "authorization".to_owned()),
         )?;
         let request_timeout_ms = read_u64_env("CODEX_GATEWAY_REQUEST_TIMEOUT_MS", 600_000)?;
+        let upstream_image_generation_path = resolve_image_generation_path_setting(
+            first_env_value(&["CODEX_GATEWAY_IMAGE_GENERATION_PATH"]).or_else(|| {
+                stored_config
+                    .as_ref()
+                    .and_then(|config| config.upstream_image_generation_path.clone())
+            }),
+            provider_preset.default_image_generation_path(),
+        );
         Ok(Self {
             bind,
             provider_preset,
@@ -274,6 +290,7 @@ impl GatewayConfig {
                     .and_then(|config| config.upstream_models_path.clone())
             })
             .unwrap_or_else(|| provider_preset.default_models_path().to_owned()),
+            upstream_image_generation_path,
             upstream_api_key,
             official_responses_url: env::var("CODEX_GATEWAY_OFFICIAL_RESPONSES_URL")
                 .unwrap_or_else(|_| "https://chatgpt.com/backend-api/codex/responses".to_owned()),
@@ -337,6 +354,44 @@ impl GatewayConfig {
             ensure_leading_slash(&self.upstream_models_path)
         )
     }
+
+    pub fn upstream_image_generation_url(&self) -> Option<String> {
+        self.upstream_image_generation_path
+            .as_ref()
+            .map(|path| format!("{}{}", self.upstream_base_url, ensure_leading_slash(path)))
+    }
+
+    pub fn official_image_generation_url(&self) -> anyhow::Result<String> {
+        self.official_codex_url("images/generations")
+    }
+
+    pub fn official_image_edit_url(&self) -> anyhow::Result<String> {
+        self.official_codex_url("images/edits")
+    }
+
+    fn official_codex_url(&self, path: &str) -> anyhow::Result<String> {
+        let base = self
+            .official_responses_url
+            .strip_suffix("/responses")
+            .ok_or_else(|| {
+                anyhow!(
+                    "official responses URL must end with /responses: {}",
+                    self.official_responses_url
+                )
+            })?;
+        Ok(format!("{base}/{path}"))
+    }
+}
+
+fn resolve_image_generation_path_setting(
+    configured: Option<String>,
+    provider_default: Option<&str>,
+) -> Option<String> {
+    match configured {
+        Some(path) if path.trim().is_empty() => None,
+        Some(path) => Some(path.trim().to_owned()),
+        None => provider_default.map(str::to_owned),
+    }
 }
 
 fn default_codex_auth_path() -> PathBuf {
@@ -367,6 +422,8 @@ pub struct StoredGatewayConfig {
     pub upstream_messages_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_models_path: Option<String>,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub upstream_image_generation_path: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub upstream_api_key: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -530,6 +587,7 @@ mod tests {
             upstream_base_url: Some("https://example.test".to_owned()),
             upstream_messages_path: Some("/v1/messages".to_owned()),
             upstream_models_path: Some("/v1/models".to_owned()),
+            upstream_image_generation_path: Some("/v1/images/generations".to_owned()),
             upstream_api_key: Some("secret-key".to_owned()),
             gateway_api_key: Some("local-key".to_owned()),
             quota_url: Some("https://example.test/quota".to_owned()),
@@ -549,6 +607,10 @@ mod tests {
             Some("/v1/messages")
         );
         assert_eq!(loaded.upstream_models_path.as_deref(), Some("/v1/models"));
+        assert_eq!(
+            loaded.upstream_image_generation_path.as_deref(),
+            Some("/v1/images/generations")
+        );
         assert_eq!(loaded.upstream_api_key.as_deref(), Some("secret-key"));
         assert_eq!(loaded.gateway_api_key.as_deref(), Some("local-key"));
         assert_eq!(
@@ -574,6 +636,65 @@ mod tests {
             ProviderPreset::Custom
                 .normalize_upstream_base_url("https://example.test/v1/".to_owned()),
             "https://example.test/v1"
+        );
+    }
+
+    #[test]
+    fn resolves_official_and_upstream_image_generation_urls() {
+        let config = GatewayConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            provider_preset: ProviderPreset::BaiduOneApi,
+            upstream_kind: UpstreamKind::AnthropicMessages,
+            upstream_base_url: "https://oneapi.example".to_owned(),
+            upstream_messages_path: "/v1/messages".to_owned(),
+            upstream_models_path: "/v1/models".to_owned(),
+            upstream_image_generation_path: Some("/v1/images/generations".to_owned()),
+            upstream_api_key: "key".to_owned(),
+            official_responses_url: "https://chatgpt.example/backend-api/codex/responses"
+                .to_owned(),
+            codex_auth_path: PathBuf::from("/tmp/auth.json"),
+            upstream_auth_header: UpstreamAuthHeader::AuthorizationBearer,
+            anthropic_version: "2023-06-01".to_owned(),
+            anthropic_beta: None,
+            gateway_api_key: None,
+            accept_codex_oauth: true,
+            default_max_tokens: 8192,
+            default_context_window: 1_000_000,
+            request_timeout: Duration::from_secs(30),
+            thinking_mode: ThinkingMode::Off,
+            enable_web_search_tool: false,
+            web_search_tool_type: "web_search_20250305".to_owned(),
+            web_search_max_uses: Some(3),
+            web_search_exclusive: true,
+            web_search_omit_system_instructions: true,
+            web_search_latest_user_only: true,
+        };
+        assert_eq!(
+            config.upstream_image_generation_url().as_deref(),
+            Some("https://oneapi.example/v1/images/generations")
+        );
+        assert_eq!(
+            config.official_image_generation_url().unwrap(),
+            "https://chatgpt.example/backend-api/codex/images/generations"
+        );
+        assert_eq!(
+            config.official_image_edit_url().unwrap(),
+            "https://chatgpt.example/backend-api/codex/images/edits"
+        );
+    }
+
+    #[test]
+    fn explicit_empty_image_path_disables_provider_default() {
+        assert_eq!(
+            resolve_image_generation_path_setting(
+                Some(String::new()),
+                Some("/v1/images/generations")
+            ),
+            None
+        );
+        assert_eq!(
+            resolve_image_generation_path_setting(None, Some("/v1/images/generations")),
+            Some("/v1/images/generations".to_owned())
         );
     }
 }

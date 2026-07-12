@@ -1,3 +1,5 @@
+#![forbid(unsafe_code)]
+
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
@@ -12,8 +14,6 @@ use clap::{Parser, Subcommand, ValueEnum};
 use serde::{Deserialize, Serialize};
 use toml_edit::{DocumentMut, Item, Table, value};
 
-#[cfg(unix)]
-use std::os::fd::AsRawFd;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 #[cfg(unix)]
@@ -73,18 +73,12 @@ impl ManagedConfigLock {
                 .read(true)
                 .write(true)
                 .open(&lock_path)?;
-            loop {
-                if unsafe { libc::flock(file.as_raw_fd(), libc::LOCK_EX) } == 0 {
-                    break;
-                }
-                let error = io::Error::last_os_error();
-                if error.kind() != io::ErrorKind::Interrupted {
-                    return Err(anyhow::anyhow!(
-                        "failed to lock managed Codex config {}: {error}",
-                        config_path.display()
-                    ));
-                }
-            }
+            file.lock().map_err(|error| {
+                anyhow::anyhow!(
+                    "failed to lock managed Codex config {}: {error}",
+                    config_path.display()
+                )
+            })?;
             Ok(Self { _file: file })
         }
     }
@@ -107,6 +101,8 @@ enum Command {
         key: Option<String>,
         #[arg(long)]
         base_url: Option<String>,
+        #[arg(long)]
+        image_generation_path: Option<String>,
         #[arg(long)]
         gateway_key: Option<String>,
         #[arg(long)]
@@ -285,6 +281,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             provider,
             key,
             base_url,
+            image_generation_path,
             gateway_key,
             quota_url,
             quota_username,
@@ -292,6 +289,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             provider,
             key,
             base_url,
+            image_generation_path,
             gateway_key,
             quota_url,
             quota_username,
@@ -407,6 +405,7 @@ fn login(
     provider: Option<String>,
     key: Option<String>,
     base_url: Option<String>,
+    image_generation_path: Option<String>,
     gateway_key: Option<String>,
     quota_url: Option<String>,
     quota_username: Option<String>,
@@ -418,6 +417,7 @@ fn login(
         .map(|value| ProviderPreset::parse(&value))
         .transpose()?
         .unwrap_or(ProviderPreset::Custom);
+    let provider_changed = existing.provider_preset.as_deref() != Some(provider_preset.as_str());
     let upstream_api_key = match key {
         Some(key) => trim_required("key", key)?,
         None => existing
@@ -446,6 +446,12 @@ fn login(
         upstream_base_url: Some(upstream_base_url.clone()),
         upstream_messages_path: Some(provider_preset.default_messages_path().to_owned()),
         upstream_models_path: Some(provider_preset.default_models_path().to_owned()),
+        upstream_image_generation_path: resolve_image_generation_path(
+            image_generation_path,
+            provider_changed,
+            existing.upstream_image_generation_path,
+            provider_preset.default_image_generation_path(),
+        ),
         upstream_api_key: Some(upstream_api_key),
         gateway_api_key: gateway_key
             .map(|key| trim_required("gateway key", key))
@@ -466,6 +472,14 @@ fn login(
     println!("provider: {}", provider_preset.as_str());
     println!("upstream kind: {}", upstream_kind.as_str());
     println!("upstream: {upstream_base_url}");
+    println!(
+        "upstream image generation: {}",
+        config
+            .upstream_image_generation_path
+            .as_deref()
+            .filter(|path| !path.is_empty())
+            .unwrap_or("not configured")
+    );
     if config.gateway_api_key.is_some() {
         println!("gateway auth: configured");
     } else {
@@ -481,6 +495,21 @@ fn login(
         config.quota_username.as_deref().unwrap_or("not configured")
     );
     Ok(())
+}
+
+fn resolve_image_generation_path(
+    explicit: Option<String>,
+    provider_changed: bool,
+    existing: Option<String>,
+    provider_default: Option<&str>,
+) -> Option<String> {
+    match explicit {
+        // Persist an empty string as an explicit opt-out so preset defaults stay disabled.
+        Some(path) if path.trim().is_empty() => Some(String::new()),
+        Some(path) => Some(path.trim().to_owned()),
+        None if !provider_changed => existing,
+        None => provider_default.map(str::to_owned),
+    }
 }
 
 fn logout() -> anyhow::Result<()> {
@@ -801,6 +830,7 @@ fn show_config(json_output: bool, scope: ConfigScope) -> anyhow::Result<()> {
                 "upstream_base_url": stored.upstream_base_url,
                 "upstream_messages_path": stored.upstream_messages_path,
                 "upstream_models_path": stored.upstream_models_path,
+                "upstream_image_generation_path": stored.upstream_image_generation_path,
                 "upstream_api_key": stored.upstream_api_key.as_ref().map(|_| "<redacted>"),
                 "gateway_api_key": stored.gateway_api_key.as_ref().map(|_| "<redacted>"),
                 "quota_url": stored.quota_url,
@@ -822,6 +852,9 @@ fn show_config(json_output: bool, scope: ConfigScope) -> anyhow::Result<()> {
                 "upstream_base_url": config.upstream_base_url,
                 "upstream_messages_path": config.upstream_messages_path,
                 "upstream_models_path": config.upstream_models_path,
+                "upstream_image_generation_path": config.upstream_image_generation_path,
+                "official_image_generation_url": config.official_image_generation_url()?,
+                "official_image_edit_url": config.official_image_edit_url()?,
                 "official_responses_url": config.official_responses_url,
                 "codex_auth_path": config.codex_auth_path,
                 "upstream_api_key": "<redacted>",
@@ -1692,14 +1725,7 @@ fn start_daemon(bind: Option<SocketAddr>, log_file: Option<PathBuf>) -> anyhow::
         .stdout(Stdio::null())
         .stderr(Stdio::null());
     #[cfg(unix)]
-    unsafe {
-        command.pre_exec(|| {
-            if libc::setsid() == -1 {
-                return Err(std::io::Error::last_os_error());
-            }
-            Ok(())
-        });
-    }
+    command.process_group(0);
     let child = command.spawn()?;
     let pid = child.id();
     let mut actual_bind = None;
@@ -1942,6 +1968,41 @@ fn normalize_base_url(value: String) -> anyhow::Result<String> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn resolves_explicit_preserved_and_default_image_generation_paths() {
+        assert_eq!(
+            resolve_image_generation_path(
+                Some(" /custom/images ".to_owned()),
+                false,
+                Some("/old/images".to_owned()),
+                Some("/default/images"),
+            ),
+            Some("/custom/images".to_owned())
+        );
+        assert_eq!(
+            resolve_image_generation_path(
+                None,
+                false,
+                Some("/old/images".to_owned()),
+                Some("/default/images"),
+            ),
+            Some("/old/images".to_owned())
+        );
+        assert_eq!(
+            resolve_image_generation_path(None, true, None, Some("/default/images")),
+            Some("/default/images".to_owned())
+        );
+        assert_eq!(
+            resolve_image_generation_path(
+                Some("  ".to_owned()),
+                false,
+                Some("/old/images".to_owned()),
+                Some("/default/images"),
+            ),
+            Some(String::new())
+        );
+    }
 
     #[test]
     fn rotates_gateway_log_at_size_limit() {

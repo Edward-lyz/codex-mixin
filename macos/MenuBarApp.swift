@@ -4,8 +4,6 @@ import Darwin
 final class AppDelegate: NSObject, NSApplicationDelegate {
     private let serviceLabel = "local.codex-mixin.service"
     private let menuLaunchLabel = "local.codex-mixin.menu-launch"
-    private let autoUpdateCheckKey = "autoCheckUpdates"
-    private let lastUpdateCheckKey = "lastUpdateCheckAt"
     private var statusItem: NSStatusItem?
     private var serviceStatusItem: NSMenuItem?
     private var quotaStatusItem: NSMenuItem?
@@ -13,7 +11,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var stopMenuItem: NSMenuItem?
     private var restartMenuItem: NSMenuItem?
     private var launchAtLoginMenuItem: NSMenuItem?
-    private var autoUpdateMenuItem: NSMenuItem?
     private var timer: Timer?
     private var isRunning = false
     private var serviceBusy = false {
@@ -39,9 +36,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.refreshStatus()
             }
         }
-        if autoUpdateChecksEnabled() {
+        if !CommandLine.arguments.contains("--check-updates") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-                self?.checkForUpdatesFromAutoCheck()
+                Task { @MainActor in
+                    await self?.checkForUpdates(interactive: false)
+                }
             }
         }
         if CommandLine.arguments.contains("--show-settings") {
@@ -114,8 +113,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(actionItem("从 Codex 恢复...", #selector(uninstallCodexConfig), "arrow.uturn.backward.circle"))
         menu.addItem(.separator())
         menu.addItem(actionItem("检查更新...", #selector(checkForUpdatesFromMenu), "arrow.down.circle"))
-        autoUpdateMenuItem = actionItem("自动检查更新", #selector(toggleAutoUpdateChecks), "clock.arrow.circlepath")
-        menu.addItem(autoUpdateMenuItem!)
         menu.addItem(.separator())
         menu.addItem(actionItem("复制本地接口地址", #selector(copyLocalEndpoint), "link"))
         menu.addItem(actionItem("打开运行日志", #selector(openLogs), "doc.text"))
@@ -153,7 +150,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         stopMenuItem?.isEnabled = !serviceBusy && isRunning
         restartMenuItem?.isEnabled = !serviceBusy
         launchAtLoginMenuItem?.state = FileManager.default.fileExists(atPath: launchAgentPath().path) ? .on : .off
-        autoUpdateMenuItem?.state = autoUpdateChecksEnabled() ? .on : .off
     }
 
     @objc private func startService() {
@@ -486,6 +482,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         appendOptionalArg(&args, "--provider", values.provider)
         appendOptionalArg(&args, "--key", apiKey)
         appendOptionalArg(&args, "--base-url", values.baseUrl)
+        args.append("--image-generation-path")
+        args.append(values.imageGenerationPath.trimmingCharacters(in: .whitespacesAndNewlines))
         appendOptionalArg(&args, "--gateway-key", values.gatewayKey)
         appendOptionalArg(&args, "--quota-url", values.quotaUrl)
         appendOptionalArg(&args, "--quota-username", values.quotaUsername)
@@ -569,34 +567,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
 
-    private func checkForUpdatesFromAutoCheck() {
-        let now = Date()
-        let lastCheck = UserDefaults.standard.object(forKey: lastUpdateCheckKey) as? Date
-        if let lastCheck, now.timeIntervalSince(lastCheck) < 24 * 60 * 60 {
-            return
-        }
-        UserDefaults.standard.set(now, forKey: lastUpdateCheckKey)
-        Task { @MainActor in
-            await checkForUpdates(interactive: false)
-        }
-    }
-
-    @objc private func toggleAutoUpdateChecks() {
-        let next = !autoUpdateChecksEnabled()
-        UserDefaults.standard.set(next, forKey: autoUpdateCheckKey)
-        updateActionStates()
-        if next {
-            checkForUpdatesFromAutoCheck()
-        }
-    }
-
-    private func autoUpdateChecksEnabled() -> Bool {
-        if UserDefaults.standard.object(forKey: autoUpdateCheckKey) == nil {
-            return true
-        }
-        return UserDefaults.standard.bool(forKey: autoUpdateCheckKey)
-    }
-
     private func checkForUpdates(interactive: Bool) async {
         do {
             let release = try await fetchLatestRelease()
@@ -608,8 +578,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 return
             }
             guard let asset = release.assets.first(where: { $0.name == expectedDMGAssetName(version: release.version) }) else {
-                showAlert(title: "发现新版本 \(release.version)", message: "没有找到适合当前架构的 DMG。请打开 Release 页面手动下载。")
-                NSWorkspace.shared.open(release.htmlURL)
+                if confirm(title: "发现新版本 \(release.version)", message: "暂未找到适合当前架构的 DMG。是否打开 Release 页面查看？") {
+                    NSWorkspace.shared.open(release.htmlURL)
+                }
                 return
             }
             if confirm(title: "发现新版本 \(release.version)", message: "当前版本 \(currentVersion)。是否下载并打开适合当前 Mac 的 DMG？") {
@@ -899,6 +870,7 @@ private struct LoginFormValues {
     let provider: String
     let apiKey: String
     let baseUrl: String
+    let imageGenerationPath: String
     let gatewayKey: String
     let quotaUrl: String
     let quotaUsername: String
@@ -946,6 +918,9 @@ private func runLoginSettingsPanel(stored: [String: Any]) -> LoginFormValues? {
     let baseUrlField = formTextField()
     baseUrlField.placeholderString = "只填根地址，如 https://host；不要填 /v1/messages、/v1/chat/completions 或 /anthropic"
     baseUrlField.stringValue = stored["upstream_base_url"] as? String ?? defaultBaseURL(for: storedProvider)
+    let imageGenerationPathField = formTextField()
+    imageGenerationPathField.placeholderString = "可选：如 /v1/images/generations；留空时自定义模型也走官方生图"
+    imageGenerationPathField.stringValue = stored["upstream_image_generation_path"] as? String ?? defaultImageGenerationPath(for: storedProvider)
     let gatewayKeyField = formTextField()
     gatewayKeyField.placeholderString = stored["gateway_api_key"] == nil ? "可选：保护本地 127.0.0.1 网关的访问密钥" : "留空保留已保存密钥"
     let quotaUrlField = formTextField()
@@ -961,6 +936,12 @@ private func runLoginSettingsPanel(stored: [String: Any]) -> LoginFormValues? {
         if !presetBaseURL.isEmpty {
             baseUrlField.stringValue = presetBaseURL
         }
+        let presetImagePath = defaultImageGenerationPath(for: provider)
+        if !presetImagePath.isEmpty {
+            imageGenerationPathField.stringValue = presetImagePath
+        } else if provider != storedProvider {
+            imageGenerationPathField.stringValue = ""
+        }
         let presetQuotaURL = defaultQuotaURL(for: provider, baseURL: baseUrlField.stringValue)
         if !presetQuotaURL.isEmpty {
             quotaUrlField.stringValue = presetQuotaURL
@@ -971,7 +952,7 @@ private func runLoginSettingsPanel(stored: [String: Any]) -> LoginFormValues? {
     providerPopup.target = providerTarget
     providerPopup.action = #selector(ModalActionTarget.run(_:))
 
-    let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 760, height: 440))
+    let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 760, height: 480))
     let panel = NSPanel(
         contentRect: contentView.frame,
         styleMask: [.titled, .closable],
@@ -1016,6 +997,7 @@ private func runLoginSettingsPanel(stored: [String: Any]) -> LoginFormValues? {
         labeledView("供应商", providerPopup),
         labeledView("API 密钥", apiKeyField),
         labeledView("上游地址", baseUrlField),
+        labeledView("上游生图路径", imageGenerationPathField),
         labeledView("本地密钥", gatewayKeyField),
         labeledView("额度接口", quotaUrlField),
         labeledView("额度用户", quotaUsernameField),
@@ -1067,6 +1049,7 @@ private func runLoginSettingsPanel(stored: [String: Any]) -> LoginFormValues? {
             provider: selectedProviderID(providerPopup),
             apiKey: apiKeyField.stringValue,
             baseUrl: baseUrlField.stringValue,
+            imageGenerationPath: imageGenerationPathField.stringValue,
             gatewayKey: gatewayKeyField.stringValue,
             quotaUrl: quotaUrlField.stringValue,
             quotaUsername: quotaUsernameField.stringValue
@@ -1394,6 +1377,10 @@ private func defaultQuotaURL(for provider: String, baseURL: String) -> String {
     default:
         return ""
     }
+}
+
+private func defaultImageGenerationPath(for provider: String) -> String {
+    provider == "baidu-oneapi" ? "/v1/images/generations" : ""
 }
 
 private func defaultCredentialURL(for provider: String, baseURL: String) -> String {

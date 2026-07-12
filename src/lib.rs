@@ -1,9 +1,12 @@
+#![forbid(unsafe_code)]
+
 pub mod anthropic;
 pub mod catalog;
 pub mod config;
 pub mod convert;
 pub mod error;
 pub mod history;
+mod image_generation;
 pub mod model_metadata;
 pub mod openai_chat;
 pub mod openai_events;

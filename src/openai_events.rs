@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::convert::ToolNameMap;
+use crate::image_generation::ImageRouteRegistry;
 use crate::sse::{drain_events, encode_event, encode_raw_event};
 
 #[derive(Debug)]
@@ -202,7 +203,11 @@ impl MapperState {
         ]
     }
 
-    fn finish_tool(&mut self, index: u64) -> Result<Vec<Bytes>, String> {
+    fn finish_tool(
+        &mut self,
+        index: u64,
+        image_routes: Option<&ImageRouteRegistry>,
+    ) -> Result<Vec<Bytes>, String> {
         let block = self
             .tools
             .remove(&index)
@@ -219,13 +224,13 @@ impl MapperState {
             .filter(|name| !name.trim().is_empty())
             .ok_or_else(|| format!("tool call at index {index} missing name"))?
             .to_owned();
-        let arguments = if block.delta_input_json.trim().is_empty() {
-            block.start_input_json.trim()
+        let mut arguments = if block.delta_input_json.trim().is_empty() {
+            block.start_input_json.trim().to_owned()
         } else {
-            block.delta_input_json.trim()
+            block.delta_input_json.trim().to_owned()
         };
         if let ToolBlockKind::WebSearch { output_index } = block.kind {
-            let arguments = serde_json::from_str::<Value>(arguments).map_err(|err| {
+            let arguments = serde_json::from_str::<Value>(&arguments).map_err(|err| {
                 format!("web_search call {id} arguments are not valid JSON: {err}")
             })?;
             let query = arguments
@@ -251,11 +256,21 @@ impl MapperState {
             }
             return Ok(Vec::new());
         }
+        if arguments.is_empty() {
+            arguments = "{}".to_owned();
+        }
+        let codex_name = self.tool_names.to_codex_name(&name).to_owned();
+        let codex_namespace = self.tool_names.to_codex_namespace(&name).map(str::to_owned);
+        if let Some(image_routes) = image_routes
+            && codex_namespace.as_deref() == Some("image_gen")
+            && codex_name == "imagegen"
+        {
+            arguments = image_routes.mark_arguments(&arguments)?;
+        }
         let output_index = self.output.len();
         let item_id = format!("fc_{}", Uuid::new_v4().simple());
-        let codex_name = self.tool_names.to_codex_name(&name);
         let item = if self.tool_names.is_custom(&name) {
-            let parsed_arguments = serde_json::from_str::<Value>(arguments).map_err(|err| {
+            let parsed_arguments = serde_json::from_str::<Value>(&arguments).map_err(|err| {
                 format!("custom tool call {id} arguments are not valid JSON: {err}")
             })?;
             let input = parsed_arguments
@@ -273,7 +288,7 @@ impl MapperState {
                 "status": "completed"
             })
         } else if let Some(execution) = self.tool_names.tool_search_execution(&name) {
-            let arguments = serde_json::from_str::<Value>(arguments).map_err(|err| {
+            let arguments = serde_json::from_str::<Value>(&arguments).map_err(|err| {
                 format!("tool_search call {id} arguments are not valid JSON: {err}")
             })?;
             json!({
@@ -290,10 +305,10 @@ impl MapperState {
                 "id": item_id,
                 "call_id": id,
                 "name": codex_name,
-                "arguments": if arguments.is_empty() { "{}" } else { arguments },
+                "arguments": arguments,
                 "status": "completed"
             });
-            if let Some(namespace) = self.tool_names.to_codex_namespace(&name) {
+            if let Some(namespace) = codex_namespace {
                 item["namespace"] = json!(namespace);
             }
             item
@@ -313,12 +328,15 @@ impl MapperState {
         ])
     }
 
-    fn finish_tools(&mut self) -> Result<Vec<Bytes>, String> {
+    fn finish_tools(
+        &mut self,
+        image_routes: Option<&ImageRouteRegistry>,
+    ) -> Result<Vec<Bytes>, String> {
         let mut indexes = self.tools.keys().copied().collect::<Vec<_>>();
         indexes.sort_unstable();
         let mut events = Vec::new();
         for index in indexes {
-            events.extend(self.finish_tool(index)?);
+            events.extend(self.finish_tool(index, image_routes)?);
         }
         Ok(events)
     }
@@ -440,6 +458,18 @@ pub fn map_anthropic_sse<S>(
 where
     S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
 {
+    map_anthropic_sse_with_image_routes(upstream, original_request, tool_names, None)
+}
+
+pub(crate) fn map_anthropic_sse_with_image_routes<S>(
+    upstream: S,
+    original_request: Value,
+    tool_names: ToolNameMap,
+    image_routes: Option<ImageRouteRegistry>,
+) -> impl Stream<Item = Result<Bytes, Infallible>>
+where
+    S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+{
     stream! {
         let mut state = MapperState::new(original_request, tool_names);
         let created = state.response_base("in_progress");
@@ -482,7 +512,7 @@ where
                     for mapped in state.finish_text() {
                         yield Ok(mapped);
                     }
-                    match state.finish_tools() {
+                    match state.finish_tools(image_routes.as_ref()) {
                         Ok(events) => {
                             for mapped in events {
                                 yield Ok(mapped);
@@ -505,7 +535,7 @@ where
         for mapped in state.finish_text() {
             yield Ok(mapped);
         }
-        match state.finish_tools() {
+        match state.finish_tools(image_routes.as_ref()) {
             Ok(events) => {
                 for mapped in events {
                     yield Ok(mapped);
@@ -532,6 +562,18 @@ pub fn map_openai_chat_sse<S>(
 where
     S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
 {
+    map_openai_chat_sse_with_image_routes(upstream, original_request, tool_names, None)
+}
+
+pub(crate) fn map_openai_chat_sse_with_image_routes<S>(
+    upstream: S,
+    original_request: Value,
+    tool_names: ToolNameMap,
+    image_routes: Option<ImageRouteRegistry>,
+) -> impl Stream<Item = Result<Bytes, Infallible>>
+where
+    S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+{
     stream! {
         let mut state = MapperState::new(original_request, tool_names);
         let created = state.response_base("in_progress");
@@ -553,7 +595,7 @@ where
                     for bytes in state.finish_text() {
                         yield Ok(bytes);
                     }
-                    match state.finish_tools() {
+                    match state.finish_tools(image_routes.as_ref()) {
                         Ok(events) => {
                             for bytes in events {
                                 yield Ok(bytes);
@@ -618,7 +660,7 @@ where
                         for bytes in state.finish_text() {
                             yield Ok(bytes);
                         }
-                        match state.finish_tools() {
+                        match state.finish_tools(image_routes.as_ref()) {
                             Ok(events) => {
                                 for bytes in events {
                                     yield Ok(bytes);
@@ -642,7 +684,7 @@ where
         for bytes in state.finish_text() {
             yield Ok(bytes);
         }
-        match state.finish_tools() {
+        match state.finish_tools(image_routes.as_ref()) {
             Ok(events) => {
                 for bytes in events {
                     yield Ok(bytes);
@@ -771,9 +813,15 @@ fn handle_anthropic_event(state: &mut MapperState, data: &Value) -> Result<Vec<B
                 .get("index")
                 .and_then(Value::as_u64)
                 .ok_or_else(|| "content_block_stop missing index".to_owned())?;
-            if state.tools.contains_key(&index) {
-                state.finish_tool(index)
-            } else if state.web_search_result_indexes.remove(&index) {
+            if state
+                .tools
+                .get(&index)
+                .is_some_and(|tool| matches!(&tool.kind, ToolBlockKind::WebSearch { .. }))
+            {
+                state.finish_tool(index, None)
+            } else if state.tools.contains_key(&index)
+                || state.web_search_result_indexes.remove(&index)
+            {
                 Ok(Vec::new())
             } else {
                 Ok(state.finish_text())

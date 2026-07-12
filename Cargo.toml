@@ -1,8 +1,11 @@
 [package]
 name = "codex-mixin"
-version = "0.2.10"
+version = "0.2.11"
 edition = "2024"
 license-file = "LICENSE"
+
+[lints.rust]
+unsafe_code = "forbid"
 
 [dependencies]
 anyhow = "1.0"
@@ -11,7 +14,6 @@ axum = { version = "0.8", features = ["ws"] }
 bytes = "1.10"
 clap = { version = "4.5", features = ["derive"] }
 futures-util = "0.3"
-libc = "0.2"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 regex = "1.12"
 serde = { version = "1.0", features = ["derive"] }
