@@ -15,6 +15,7 @@ BIN_PATH="$ROOT_DIR/target/$TARGET/release/codex-mixin"
 STAGING_DIR="$ROOT_DIR/target/package/codex-mixin-dmg-$TARGET"
 TEMP_DMG="$ROOT_DIR/target/package/codex-mixin-$VERSION-$TARGET.rw.dmg"
 MOUNT_DIR="$ROOT_DIR/target/package/codex-mixin-dmg-mount-$TARGET"
+ATTACH_PLIST="$ROOT_DIR/target/package/codex-mixin-$VERSION-$TARGET.attach.plist"
 DMG_PATH="$OUT_DIR/codex-mixin-$VERSION-$TARGET.dmg"
 
 if [[ ! -d "$APP_PATH" ]]; then
@@ -37,7 +38,7 @@ ln -s /Applications "$STAGING_DIR/Applications"
 
 swift "$ROOT_DIR/macos/make_dmg_background.swift" "$STAGING_DIR/.background/background.png"
 
-rm -f "$TEMP_DMG" "$DMG_PATH"
+rm -f "$TEMP_DMG" "$ATTACH_PLIST" "$DMG_PATH"
 rm -rf "$MOUNT_DIR"
 hdiutil create \
   -volname "Codex Mixin" \
@@ -47,15 +48,24 @@ hdiutil create \
   "$TEMP_DMG"
 
 mkdir -p "$MOUNT_DIR"
+IMAGE_DEVICE=""
 cleanup() {
   status=$?
-  hdiutil detach "$MOUNT_DIR" -force >/dev/null 2>&1 || true
+  if [[ -n "$IMAGE_DEVICE" ]]; then
+    hdiutil detach "$IMAGE_DEVICE" -force >/dev/null 2>&1 || true
+  fi
   rm -rf "$MOUNT_DIR"
+  rm -f "$ATTACH_PLIST"
   exit "$status"
 }
 trap cleanup EXIT
 
-hdiutil attach "$TEMP_DMG" -readwrite -noverify -nobrowse -mountpoint "$MOUNT_DIR"
+hdiutil attach "$TEMP_DMG" -readwrite -noverify -nobrowse -mountpoint "$MOUNT_DIR" -plist >"$ATTACH_PLIST"
+IMAGE_DEVICE="$(/usr/libexec/PlistBuddy -c 'Print :system-entities:0:dev-entry' "$ATTACH_PLIST")"
+if [[ -z "$IMAGE_DEVICE" ]]; then
+  echo "failed to resolve attached image device" >&2
+  exit 1
+fi
 
 osascript <<APPLESCRIPT
 set dmgFolder to POSIX file "$MOUNT_DIR" as alias
@@ -98,18 +108,24 @@ end tell
 APPLESCRIPT
 
 sync
+detached=false
 for attempt in 1 2 3 4 5; do
-  if hdiutil detach "$MOUNT_DIR"; then
+  if hdiutil detach "$IMAGE_DEVICE"; then
+    detached=true
     break
   fi
-  if [[ "$attempt" -eq 5 ]]; then
-    hdiutil detach "$MOUNT_DIR" -force
+  if ! diskutil info "$IMAGE_DEVICE" >/dev/null 2>&1; then
+    detached=true
     break
   fi
   sleep "$attempt"
 done
+if [[ "$detached" != true ]]; then
+  hdiutil detach "$IMAGE_DEVICE" -force
+fi
 trap - EXIT
 rm -rf "$MOUNT_DIR"
+rm -f "$ATTACH_PLIST"
 
 hdiutil convert "$TEMP_DMG" \
   -format UDZO \
