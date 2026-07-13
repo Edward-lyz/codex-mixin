@@ -121,7 +121,9 @@ impl MapperState {
     }
 
     fn failed_event(&self, message: impl Into<String>) -> Bytes {
-        let error = json!({"message":message.into()});
+        let message = message.into();
+        tracing::warn!(error = %message, "upstream response stream failed");
+        let error = json!({"message":message});
         let mut response = self.response_base("failed");
         response["error"] = error.clone();
         encode_event(
@@ -705,6 +707,7 @@ fn handle_anthropic_event(state: &mut MapperState, data: &Value) -> Result<Vec<B
         Some("message_start") => {
             if let Some(usage) = data.pointer("/message/usage") {
                 state.usage.input_tokens = usage.get("input_tokens").and_then(Value::as_u64);
+                state.usage.output_tokens = usage.get("output_tokens").and_then(Value::as_u64);
             }
             Ok(Vec::new())
         }
@@ -1078,6 +1081,35 @@ mod tests {
             );
             assert!(!body.contains("\"name\":\"\""), "missing {missing}: {body}");
         }
+    }
+
+    #[tokio::test]
+    async fn preserves_usage_from_anthropic_message_start() {
+        let events = [
+            json!({"type":"message_start","message":{"usage":{"input_tokens":7,"output_tokens":3}}}),
+            json!({"type":"message_stop"}),
+        ];
+        let stream = events
+            .into_iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect::<String>();
+        let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(stream))]);
+        let body = collect_events(map_anthropic_sse(
+            upstream,
+            json!({}),
+            ToolNameMap::default(),
+        ))
+        .await;
+        let mut encoded = body.into_bytes();
+        let completed = drain_events(&mut encoded)
+            .into_iter()
+            .find(|event| event.event.as_deref() == Some("response.completed"))
+            .unwrap();
+        let completed: Value = serde_json::from_str(&completed.data).unwrap();
+
+        assert_eq!(completed["response"]["usage"]["input_tokens"], 7);
+        assert_eq!(completed["response"]["usage"]["output_tokens"], 3);
+        assert_eq!(completed["response"]["usage"]["total_tokens"], 10);
     }
 
     #[tokio::test]

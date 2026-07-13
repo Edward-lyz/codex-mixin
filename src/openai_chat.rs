@@ -299,7 +299,9 @@ fn convert_content(content: Option<&Value>) -> Result<Value, GatewayError> {
         Some(_) => Err(GatewayError::BadRequest(
             "message content must be a string or array".to_owned(),
         )),
-        None => Ok(json!("")),
+        None => Err(GatewayError::BadRequest(
+            "message missing content".to_owned(),
+        )),
     }
 }
 
@@ -786,6 +788,18 @@ mod tests {
             converted.request["messages"][0]["content"][0]["text"],
             "continue"
         );
+    }
+
+    #[test]
+    fn rejects_messages_without_content() {
+        let error = responses_to_openai_chat(&json!({
+            "model": "deepseek-chat",
+            "stream": true,
+            "input": [{"type":"message","role":"user"}]
+        }))
+        .unwrap_err();
+
+        assert!(error.to_string().contains("message missing content"));
     }
 
     #[test]

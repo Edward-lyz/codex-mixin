@@ -970,7 +970,11 @@ async fn load_model_metadata_resolver() -> anyhow::Result<ModelMetadataResolver>
 async fn fetch_litellm_metadata() -> anyhow::Result<String> {
     let url = std::env::var("CODEX_GATEWAY_MODEL_METADATA_URL")
         .unwrap_or_else(|_| LITELLM_MODEL_METADATA_URL.to_owned());
-    let response = reqwest::Client::new().get(&url).send().await?;
+    let response = reqwest::Client::new()
+        .get(&url)
+        .timeout(Duration::from_secs(30))
+        .send()
+        .await?;
     let status = response.status();
     let body = response.text().await?;
     if !status.is_success() {
@@ -1712,6 +1716,9 @@ fn upsert_codex_config(
     env_key: Option<&str>,
     codex_oauth_proxy: bool,
 ) -> anyhow::Result<()> {
+    if default_model.is_none() && web_search != "disabled" {
+        anyhow::bail!("web_search can only be changed when a default model is selected");
+    }
     doc["model_catalog_json"] = value(catalog_path.to_string_lossy().to_string());
     doc["model_provider"] = value(CODEX_MIXIN_PROVIDER);
     if let Some(model) = default_model {
@@ -1952,36 +1959,69 @@ fn start_daemon(bind: Option<SocketAddr>, log_file: Option<PathBuf>) -> anyhow::
 }
 
 fn stop(force: bool) -> anyhow::Result<()> {
-    let Some(metadata) = load_daemon_metadata()? else {
-        println!("gateway daemon is not recorded");
-        return Ok(());
-    };
-    if !pid_is_running(metadata.pid)? {
+    let daemon = load_daemon_metadata()?;
+    let runtime = load_runtime_metadata()?;
+    let daemon_running = daemon
+        .as_ref()
+        .map(|metadata| pid_is_running(metadata.pid))
+        .transpose()?
+        .unwrap_or(false);
+    let runtime_running = runtime
+        .as_ref()
+        .map(|metadata| pid_is_running(metadata.pid))
+        .transpose()?
+        .unwrap_or(false);
+    if daemon_running
+        && runtime_running
+        && daemon.as_ref().map(|metadata| metadata.pid)
+            != runtime.as_ref().map(|metadata| metadata.pid)
+    {
+        anyhow::bail!(
+            "conflicting live gateway metadata: daemon pid {}, runtime pid {}",
+            daemon.as_ref().expect("live daemon metadata").pid,
+            runtime.as_ref().expect("live runtime metadata").pid
+        );
+    }
+    let (pid, process_kind) = if daemon_running {
+        (daemon.as_ref().expect("live daemon metadata").pid, "daemon")
+    } else if runtime_running {
+        (
+            runtime.as_ref().expect("live runtime metadata").pid,
+            "foreground",
+        )
+    } else {
+        let stale_pid = daemon
+            .as_ref()
+            .map(|metadata| metadata.pid)
+            .or_else(|| runtime.as_ref().map(|metadata| metadata.pid));
         delete_daemon_metadata()?;
         delete_runtime_metadata()?;
-        println!("removed stale daemon metadata for pid {}", metadata.pid);
+        if let Some(pid) = stale_pid {
+            println!("removed stale gateway metadata for pid {pid}");
+        } else {
+            println!("gateway is not recorded");
+        }
         return Ok(());
-    }
-    send_signal(metadata.pid, "TERM")?;
+    };
+    send_signal(pid, "TERM")?;
     for _ in 0..50 {
-        if !pid_is_running(metadata.pid)? {
+        if !pid_is_running(pid)? {
             delete_daemon_metadata()?;
             delete_runtime_metadata()?;
-            println!("gateway daemon stopped: pid {}", metadata.pid);
+            println!("gateway {process_kind} stopped: pid {pid}");
             return Ok(());
         }
         thread::sleep(Duration::from_millis(100));
     }
     if force {
-        send_signal(metadata.pid, "KILL")?;
+        send_signal(pid, "KILL")?;
         delete_daemon_metadata()?;
         delete_runtime_metadata()?;
-        println!("gateway daemon killed: pid {}", metadata.pid);
+        println!("gateway {process_kind} killed: pid {pid}");
         return Ok(());
     }
     anyhow::bail!(
-        "gateway daemon did not stop within 5s: pid {}. Use --force to send SIGKILL",
-        metadata.pid
+        "gateway {process_kind} did not stop within 5s: pid {pid}. Use --force to send SIGKILL"
     )
 }
 
@@ -2268,6 +2308,23 @@ trust_level = "trusted"
             doc["projects"]["/Users/example/work"]["trust_level"].as_str(),
             Some("trusted")
         );
+    }
+
+    #[test]
+    fn rejects_web_search_change_without_default_model() {
+        let mut doc = DocumentMut::new();
+        let error = upsert_codex_config(
+            &mut doc,
+            None,
+            Path::new("/tmp/mixin-models.json"),
+            "http://127.0.0.1:8787/v1",
+            "live",
+            None,
+            true,
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("default model"));
     }
 
     #[test]

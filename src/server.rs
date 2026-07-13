@@ -385,6 +385,7 @@ async fn route_responses_ws(
             Ok(next_state) => custom_state = next_state,
             Err(err) => {
                 custom_state = None;
+                tracing::warn!(error = %err, "custom responses websocket request failed");
                 let message = err.to_string();
                 let error = json!({"message": message, "type": "invalid_request_error"});
                 client_sender
@@ -404,7 +405,6 @@ async fn route_responses_ws(
                         .into(),
                     ))
                     .await?;
-                tracing::warn!(error = %err, "custom responses websocket request failed");
             }
         }
     }
@@ -984,16 +984,17 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
 }
 
 fn check_gateway_auth(state: &AppState, headers: &HeaderMap) -> Result<(), GatewayError> {
+    use subtle::ConstantTimeEq;
+
     let Some(expected) = &state.config.gateway_api_key else {
         return Ok(());
     };
     let actual = bearer_token(headers);
-    if actual == Some(expected.as_str()) {
-        Ok(())
-    } else if state.config.accept_codex_oauth
-        && state.config.bind.ip().is_loopback()
-        && actual.is_some()
-    {
+    let accepts_codex_oauth =
+        state.config.accept_codex_oauth && state.config.bind.ip().is_loopback() && actual.is_some();
+    let gateway_key_matches =
+        actual.is_some_and(|actual| actual.as_bytes().ct_eq(expected.as_bytes()).into());
+    if accepts_codex_oauth || gateway_key_matches {
         Ok(())
     } else {
         Err(GatewayError::Unauthorized)

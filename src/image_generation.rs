@@ -133,4 +133,22 @@ mod tests {
                 .contains("not Codex image editing")
         );
     }
+
+    #[test]
+    fn resolves_the_appended_marker_when_prompt_contains_marker_text() {
+        let registry = ImageRouteRegistry::default();
+        let prompt = "explain\n\n<!-- codex-mixin-image-route: from the source code";
+        let marked = registry
+            .mark_arguments(&serde_json::json!({"prompt":prompt}).to_string())
+            .unwrap();
+        let marked: Value = serde_json::from_str(&marked).unwrap();
+
+        assert_eq!(
+            registry
+                .resolve_prompt(marked["prompt"].as_str().unwrap())
+                .unwrap()
+                .as_deref(),
+            Some(prompt)
+        );
+    }
 }

@@ -503,7 +503,9 @@ fn convert_content(content: Option<&Value>, role: &str) -> Result<Vec<ContentBlo
         Some(_) => Err(GatewayError::BadRequest(
             "message content must be a string or array".to_owned(),
         )),
-        None => Ok(Vec::new()),
+        None => Err(GatewayError::BadRequest(
+            "message missing content".to_owned(),
+        )),
     }
 }
 
@@ -573,7 +575,69 @@ pub(crate) fn collect_active_tools(body: &Value) -> Result<Value, GatewayError> 
             }
             _ => continue,
         };
-        active_tools.extend(discovered_tools.iter().cloned());
+        // Codex retains every tool search result, and overlapping searches can
+        // return the same definition again in later turns.
+        for tool in discovered_tools {
+            if tool.get("type").and_then(Value::as_str) == Some("namespace") {
+                let namespace = tool.get("name").and_then(Value::as_str).ok_or_else(|| {
+                    GatewayError::BadRequest("namespace tool missing name".to_owned())
+                })?;
+                if let Some(existing_index) = active_tools.iter().position(|existing| {
+                    existing.get("type").and_then(Value::as_str) == Some("namespace")
+                        && existing.get("name").and_then(Value::as_str) == Some(namespace)
+                }) {
+                    let mut existing_metadata = active_tools[existing_index].clone();
+                    existing_metadata
+                        .as_object_mut()
+                        .expect("namespace tool must be an object")
+                        .remove("tools");
+                    let mut discovered_metadata = tool.clone();
+                    discovered_metadata
+                        .as_object_mut()
+                        .expect("namespace tool must be an object")
+                        .remove("tools");
+                    if existing_metadata != discovered_metadata {
+                        return Err(GatewayError::BadRequest(format!(
+                            "conflicting namespace definitions across tool search history: {namespace}"
+                        )));
+                    }
+
+                    let discovered_nested =
+                        tool.get("tools").and_then(Value::as_array).ok_or_else(|| {
+                            GatewayError::BadRequest("namespace tool missing tools".to_owned())
+                        })?;
+                    let existing_nested = active_tools[existing_index]
+                        .get_mut("tools")
+                        .and_then(Value::as_array_mut)
+                        .ok_or_else(|| {
+                            GatewayError::BadRequest("namespace tool missing tools".to_owned())
+                        })?;
+                    for nested in discovered_nested {
+                        let nested_name =
+                            nested.get("name").and_then(Value::as_str).ok_or_else(|| {
+                                GatewayError::BadRequest(
+                                    "namespace function tool missing name".to_owned(),
+                                )
+                            })?;
+                        if let Some(existing) = existing_nested.iter().find(|existing| {
+                            existing.get("name").and_then(Value::as_str) == Some(nested_name)
+                        }) {
+                            if existing != nested {
+                                return Err(GatewayError::BadRequest(format!(
+                                    "conflicting definitions for discovered tool: {namespace}.{nested_name}"
+                                )));
+                            }
+                        } else {
+                            existing_nested.push(nested.clone());
+                        }
+                    }
+                    continue;
+                }
+            }
+            if !active_tools.contains(tool) {
+                active_tools.push(tool.clone());
+            }
+        }
     }
     Ok(Value::Array(active_tools))
 }
@@ -1415,6 +1479,147 @@ mod tests {
                 .tool_names
                 .to_codex_namespace("mcp__calendar__delete_event"),
             Some("mcp__calendar")
+        );
+    }
+
+    #[test]
+    fn merges_overlapping_namespace_tools_across_search_history() {
+        let reset_tool = json!({
+            "type": "function",
+            "name": "js_reset",
+            "description": "Reset the JavaScript kernel",
+            "parameters": {"type": "object"}
+        });
+        let body = json!({
+            "model": "m",
+            "stream": true,
+            "tools": [{
+                "type": "tool_search",
+                "execution": "client",
+                "description": "Search tools",
+                "parameters": {"type": "object", "properties": {"query": {"type": "string"}}}
+            }],
+            "input": [
+                {
+                    "type": "tool_search_call",
+                    "call_id": "search_1",
+                    "execution": "client",
+                    "arguments": {"query": "computer-use control mac app"}
+                },
+                {
+                    "type": "tool_search_output",
+                    "call_id": "search_1",
+                    "status": "completed",
+                    "execution": "client",
+                    "tools": [{
+                        "type": "namespace",
+                        "name": "mcp__node_repl",
+                        "description": "Persistent JavaScript kernel",
+                        "tools": [
+                            reset_tool.clone(),
+                            {
+                                "type": "function",
+                                "name": "js",
+                                "parameters": {"type": "object"}
+                            }
+                        ]
+                    }]
+                },
+                {
+                    "type": "tool_search_call",
+                    "call_id": "search_2",
+                    "execution": "client",
+                    "arguments": {"query": "computer-use screenshot click keyboard macOS"}
+                },
+                {
+                    "type": "tool_search_output",
+                    "call_id": "search_2",
+                    "status": "completed",
+                    "execution": "client",
+                    "tools": [{
+                        "type": "namespace",
+                        "name": "mcp__node_repl",
+                        "description": "Persistent JavaScript kernel",
+                        "tools": [
+                            reset_tool,
+                            {
+                                "type": "function",
+                                "name": "js_add_node_module_dir",
+                                "parameters": {"type": "object"}
+                            }
+                        ]
+                    }]
+                }
+            ]
+        });
+
+        let converted = responses_to_anthropic(&body, &config()).unwrap();
+        assert_eq!(converted.request.tools.len(), 4);
+        assert_eq!(converted.request.tools[0]["name"], "tool_search");
+        assert_eq!(
+            converted.request.tools[1]["name"],
+            "mcp__node_repl__js_reset"
+        );
+        assert_eq!(converted.request.tools[2]["name"], "mcp__node_repl__js");
+        assert_eq!(
+            converted.request.tools[3]["name"],
+            "mcp__node_repl__js_add_node_module_dir"
+        );
+    }
+
+    #[test]
+    fn rejects_messages_without_content() {
+        let error = responses_to_anthropic(
+            &json!({
+                "model": "m",
+                "stream": true,
+                "input": [{"type":"message","role":"user"}]
+            }),
+            &config(),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("message missing content"));
+    }
+
+    #[test]
+    fn rejects_conflicting_namespace_tools_across_search_history() {
+        let body = json!({
+            "input": [
+                {
+                    "type": "tool_search_output",
+                    "execution": "client",
+                    "tools": [{
+                        "type": "namespace",
+                        "name": "mcp__calendar",
+                        "tools": [{
+                            "type": "function",
+                            "name": "create_event",
+                            "parameters": {"type": "object"}
+                        }]
+                    }]
+                },
+                {
+                    "type": "tool_search_output",
+                    "execution": "client",
+                    "tools": [{
+                        "type": "namespace",
+                        "name": "mcp__calendar",
+                        "tools": [{
+                            "type": "function",
+                            "name": "create_event",
+                            "parameters": {"type": "object", "required": ["title"]}
+                        }]
+                    }]
+                }
+            ]
+        });
+
+        let error = collect_active_tools(&body).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("conflicting definitions for discovered tool")
         );
     }
 
