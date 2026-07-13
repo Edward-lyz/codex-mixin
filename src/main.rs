@@ -1,5 +1,6 @@
 #![forbid(unsafe_code)]
 
+use std::collections::HashSet;
 use std::fs;
 use std::fs::OpenOptions;
 use std::io::{self, Write};
@@ -1066,15 +1067,32 @@ async fn install_codex(
     )?;
     let serialized_config = format!("{MANAGED_CONFIG_HEADER}\n{doc}");
     serialized_config.parse::<DocumentMut>()?;
-
-    create_managed_config_restore_point(&paths.config, &raw_config)?;
-    write_atomic_if_changed(&paths.catalog, &serialized_catalog)?;
-    write_atomic_if_changed(&paths.config, serialized_config.as_bytes())?;
+    let expected_model_slugs = catalog
+        .get("models")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("generated Codex catalog has no models array"))?
+        .iter()
+        .map(|model| {
+            model
+                .get("slug")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+                .ok_or_else(|| anyhow::anyhow!("generated Codex model is missing slug"))
+        })
+        .collect::<anyhow::Result<Vec<_>>>()?;
 
     let codex_home = paths
         .config
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?;
+    write_managed_codex_files(
+        &paths,
+        &raw_config,
+        &serialized_catalog,
+        serialized_config.as_bytes(),
+        || validate_codex_install(codex_home, &expected_model_slugs),
+    )?;
+
     let history = migrate_history_to_mixin_provider(codex_home)?;
     println!("codex config updated: {}", paths.config.display());
     println!(
@@ -1308,6 +1326,184 @@ fn load_codex_install_template(
     Ok(template)
 }
 
+fn write_managed_codex_files(
+    paths: &CodexInstallPaths,
+    raw_config: &str,
+    serialized_catalog: &[u8],
+    serialized_config: &[u8],
+    validate: impl FnOnce() -> anyhow::Result<()>,
+) -> anyhow::Result<()> {
+    let config_existed = paths.config.exists();
+    let previous_catalog = if paths.catalog.exists() {
+        Some(fs::read(&paths.catalog)?)
+    } else {
+        None
+    };
+    let created_restore_point = !is_managed_config(raw_config);
+    create_managed_config_restore_point(&paths.config, raw_config)?;
+    let install_result = (|| -> anyhow::Result<()> {
+        write_atomic_if_changed(&paths.catalog, serialized_catalog)?;
+        write_atomic_if_changed(&paths.config, serialized_config)?;
+        validate()
+    })();
+    let Err(install_error) = install_result else {
+        return Ok(());
+    };
+
+    let mut rollback_errors = Vec::new();
+    let config_rollback = if config_existed {
+        write_atomic_if_changed(&paths.config, raw_config.as_bytes()).map(|_| ())
+    } else if paths.config.exists() {
+        fs::remove_file(&paths.config).map_err(Into::into)
+    } else {
+        Ok(())
+    };
+    if let Err(error) = config_rollback {
+        rollback_errors.push(format!("restore config: {error}"));
+    }
+    let catalog_rollback = match previous_catalog {
+        Some(previous_catalog) => {
+            write_atomic_if_changed(&paths.catalog, &previous_catalog).map(|_| ())
+        }
+        None if paths.catalog.exists() => fs::remove_file(&paths.catalog).map_err(Into::into),
+        None => Ok(()),
+    };
+    if let Err(error) = catalog_rollback {
+        rollback_errors.push(format!("restore catalog: {error}"));
+    }
+    if created_restore_point {
+        for restore_path in [
+            managed_backup_path(&paths.config),
+            managed_absent_marker_path(&paths.config),
+        ] {
+            if restore_path.exists()
+                && let Err(error) = fs::remove_file(&restore_path)
+            {
+                rollback_errors.push(format!(
+                    "remove restore point {}: {error}",
+                    restore_path.display()
+                ));
+            }
+        }
+    }
+    if rollback_errors.is_empty() {
+        anyhow::bail!(
+            "Codex rejected the managed configuration; installation rolled back: {install_error}"
+        );
+    }
+    anyhow::bail!(
+        "Codex rejected the managed configuration: {install_error}; rollback also failed: {}",
+        rollback_errors.join("; ")
+    )
+}
+
+fn validate_codex_install(
+    codex_home: &Path,
+    expected_model_slugs: &[String],
+) -> anyhow::Result<()> {
+    let codex_cli = resolve_codex_cli()?;
+    let doctor = ProcessCommand::new(&codex_cli)
+        .args(["doctor", "--json"])
+        .env("CODEX_HOME", codex_home)
+        .output()?;
+    let doctor_report: serde_json::Value =
+        serde_json::from_slice(&doctor.stdout).map_err(|error| {
+            anyhow::anyhow!(
+                "Codex doctor returned invalid JSON: {error}; stderr: {}",
+                String::from_utf8_lossy(&doctor.stderr)
+                    .chars()
+                    .take(1000)
+                    .collect::<String>()
+            )
+        })?;
+    let config_check = doctor_report
+        .pointer("/checks/config.load")
+        .ok_or_else(|| anyhow::anyhow!("Codex doctor report has no config.load check"))?;
+    if config_check
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        != Some("ok")
+    {
+        anyhow::bail!("Codex config.load check failed: {config_check}");
+    }
+    let effective_provider = config_check
+        .pointer("/details/model provider")
+        .and_then(serde_json::Value::as_str);
+    if effective_provider != Some(CODEX_MIXIN_PROVIDER) {
+        anyhow::bail!(
+            "Codex loaded model provider {:?}, expected {CODEX_MIXIN_PROVIDER}",
+            effective_provider
+        );
+    }
+
+    let models = ProcessCommand::new(&codex_cli)
+        .args(["debug", "models"])
+        .env("CODEX_HOME", codex_home)
+        .output()?;
+    if !models.status.success() {
+        anyhow::bail!(
+            "Codex failed to load the managed model catalog: {}",
+            String::from_utf8_lossy(&models.stderr)
+                .chars()
+                .take(1000)
+                .collect::<String>()
+        );
+    }
+    let loaded_catalog: serde_json::Value = serde_json::from_slice(&models.stdout)
+        .map_err(|error| anyhow::anyhow!("Codex model catalog output is invalid JSON: {error}"))?;
+    let loaded_slugs = loaded_catalog
+        .get("models")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("Codex model catalog output has no models array"))?
+        .iter()
+        .filter_map(|model| model.get("slug").and_then(serde_json::Value::as_str))
+        .collect::<HashSet<_>>();
+    let missing_slugs = expected_model_slugs
+        .iter()
+        .filter(|slug| !loaded_slugs.contains(slug.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
+    if !missing_slugs.is_empty() {
+        anyhow::bail!(
+            "Codex did not load {} managed models: {}",
+            missing_slugs.len(),
+            missing_slugs.join(", ")
+        );
+    }
+    Ok(())
+}
+
+fn resolve_codex_cli() -> anyhow::Result<PathBuf> {
+    if let Some(path) = std::env::var_os("CODEX_CLI_PATH").map(PathBuf::from) {
+        if path.is_file() {
+            return Ok(path);
+        }
+        anyhow::bail!(
+            "CODEX_CLI_PATH does not point to a file: {}",
+            path.display()
+        );
+    }
+    for path in [
+        PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex"),
+        PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"),
+    ] {
+        if path.is_file() {
+            return Ok(path);
+        }
+    }
+    if let Some(path) = std::env::var_os("PATH") {
+        for directory in std::env::split_paths(&path) {
+            let candidate = directory.join("codex");
+            if candidate.is_file() {
+                return Ok(candidate);
+            }
+        }
+    }
+    anyhow::bail!(
+        "Codex CLI was not found; set CODEX_CLI_PATH or install Codex before installing Codex Mixin"
+    )
+}
+
 fn managed_catalog_path(doc: &DocumentMut, config_path: &Path) -> anyhow::Result<PathBuf> {
     let catalog_path = PathBuf::from(
         doc.get("model_catalog_json")
@@ -1532,16 +1728,7 @@ fn upsert_codex_config(
     let providers = doc["model_providers"]
         .as_table_mut()
         .ok_or_else(|| anyhow::anyhow!("model_providers must be a TOML table"))?;
-    if !providers
-        .get(CODEX_MIXIN_PROVIDER)
-        .is_some_and(|item| item.is_table())
-    {
-        providers.insert(CODEX_MIXIN_PROVIDER, Item::Table(Table::new()));
-    }
-    let provider_table = providers
-        .get_mut(CODEX_MIXIN_PROVIDER)
-        .and_then(Item::as_table_mut)
-        .ok_or_else(|| anyhow::anyhow!("model provider entry must be a TOML table"))?;
+    let mut provider_table = Table::new();
     provider_table["name"] = value("Codex Mixin");
     provider_table["base_url"] = value(base_url);
     provider_table["wire_api"] = value("responses");
@@ -1558,6 +1745,7 @@ fn upsert_codex_config(
             provider_table.remove("env_key");
         }
     }
+    providers.insert(CODEX_MIXIN_PROVIDER, Item::Table(provider_table));
     Ok(())
 }
 
@@ -2178,6 +2366,37 @@ trust_level = "trusted"
     }
 
     #[test]
+    fn failed_codex_validation_rolls_back_config_catalog_and_restore_point() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        let catalog_path = dir.path().join("mixin-models.json");
+        let original_config = b"model_provider = \"openai\"\n";
+        let original_catalog = b"{\"models\":[{\"slug\":\"original\"}]}";
+        fs::write(&config_path, original_config).unwrap();
+        fs::write(&catalog_path, original_catalog).unwrap();
+        let paths = CodexInstallPaths {
+            config: config_path.clone(),
+            catalog: catalog_path.clone(),
+            models_cache: dir.path().join("models_cache.json"),
+        };
+
+        let error = write_managed_codex_files(
+            &paths,
+            std::str::from_utf8(original_config).unwrap(),
+            b"{\"models\":[{\"slug\":\"custom\"}]}",
+            format!("{MANAGED_CONFIG_HEADER}\nmodel_provider = \"codex-mixin\"\n").as_bytes(),
+            || anyhow::bail!("validator rejected candidate"),
+        )
+        .unwrap_err();
+
+        assert!(error.to_string().contains("installation rolled back"));
+        assert_eq!(fs::read(&config_path).unwrap(), original_config);
+        assert_eq!(fs::read(&catalog_path).unwrap(), original_catalog);
+        assert!(!managed_backup_path(&config_path).exists());
+        assert!(!managed_absent_marker_path(&config_path).exists());
+    }
+
+    #[test]
     fn managed_uninstall_removes_config_when_none_existed_before() {
         let dir = tempfile::tempdir().unwrap();
         let config_path = dir.path().join("config.toml");
@@ -2254,6 +2473,43 @@ wire_api = "responses"
             doc["model_providers"]["custom"]["wire_api"].as_str(),
             Some("responses")
         );
+    }
+
+    #[test]
+    fn oauth_proxy_install_replaces_conflicting_mixin_provider_table() {
+        let mut doc = r#"
+[model_providers.codex-mixin]
+name = "stale"
+base_url = "https://stale.example/v1"
+env_key = "STALE_KEY"
+experimental_bearer_token = "stale-token"
+custom_field = "stale"
+"#
+        .parse::<DocumentMut>()
+        .unwrap();
+        let catalog_path = PathBuf::from("/tmp/mixin-models.json");
+
+        upsert_codex_config(
+            &mut doc,
+            None,
+            &catalog_path,
+            "http://127.0.0.1:8787/v1",
+            "disabled",
+            None,
+            true,
+        )
+        .unwrap();
+
+        let provider = doc["model_providers"]["codex-mixin"].as_table().unwrap();
+        assert_eq!(provider["name"].as_str(), Some("Codex Mixin"));
+        assert_eq!(
+            provider["base_url"].as_str(),
+            Some("http://127.0.0.1:8787/v1")
+        );
+        assert_eq!(provider["requires_openai_auth"].as_bool(), Some(true));
+        assert!(provider.get("env_key").is_none());
+        assert!(provider.get("experimental_bearer_token").is_none());
+        assert!(provider.get("custom_field").is_none());
     }
 
     #[test]

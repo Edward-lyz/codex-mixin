@@ -225,6 +225,10 @@ async fn mock_baidu_available_models(
             },
             "price_type": "Value model"
         }, {
+            "model": "Claude Sonnet 5",
+            "capability": null,
+            "price_type": "Expensive model"
+        }, {
             "model": "Kimi-K2.7-Code-内部",
             "capability": {
                 "supports_image": true,
@@ -660,7 +664,9 @@ async fn enriches_baidu_models_and_catalog_from_available_models() {
     assert_eq!(models["data"][0]["ratio"], "0.2x");
     assert_eq!(models["data"][0]["description"], "Fast coding model");
     assert_eq!(models["data"][0]["context_window"], 1_024_000);
-    assert_eq!(models["data"][2]["ratio"], "1.0x");
+    assert_eq!(models["data"].as_array().unwrap().len(), 2);
+    assert_eq!(models["data"][1]["id"], "Kimi-K2.7-Code");
+    assert_eq!(models["data"][1]["ratio"], "1.0x");
 
     let catalog: Value = client
         .get(format!("{gateway_url}/v1/codex-model-catalog"))

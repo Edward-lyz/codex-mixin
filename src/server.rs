@@ -119,17 +119,25 @@ impl AppState {
                     available_by_model.insert(model.model.clone(), model);
                 }
             }
-            for model in &mut models {
+            models.retain_mut(|model| {
                 let Some(available) = available_by_model.get(&model.id) else {
-                    continue;
+                    return true;
                 };
-                model.description = Some(available.capability.model_description.clone());
-                model.ratio = Some(available.capability.ratio.clone());
+                let Some(capability) = &available.capability else {
+                    tracing::warn!(
+                        model = %available.model,
+                        "excluding available models entry without capability metadata"
+                    );
+                    return false;
+                };
                 model.price_type = Some(available.price_type.clone());
-                model.context_window = Some(available.capability.context_window);
-                model.supports_image = Some(available.capability.supports_image);
-                model.supports_thinking = Some(available.capability.supports_thinking);
-            }
+                model.description = Some(capability.model_description.clone());
+                model.ratio = Some(capability.ratio.clone());
+                model.context_window = Some(capability.context_window);
+                model.supports_image = Some(capability.supports_image);
+                model.supports_thinking = Some(capability.supports_thinking);
+                true
+            });
         }
         Ok(models)
     }

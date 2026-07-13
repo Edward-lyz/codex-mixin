@@ -85,7 +85,7 @@ pub struct BaiduAvailableModelsResponse {
 #[derive(Debug, Deserialize)]
 pub struct BaiduAvailableModel {
     pub model: String,
-    pub capability: BaiduModelCapability,
+    pub capability: Option<BaiduModelCapability>,
     pub price_type: String,
 }
 
