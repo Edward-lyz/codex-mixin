@@ -170,6 +170,8 @@ pub struct GatewayConfig {
     pub upstream_models_path: String,
     pub upstream_image_generation_path: Option<String>,
     pub upstream_api_key: String,
+    pub quota_url: Option<String>,
+    pub quota_username: Option<String>,
     pub official_responses_url: String,
     pub codex_auth_path: PathBuf,
     pub upstream_auth_header: UpstreamAuthHeader,
@@ -229,6 +231,7 @@ impl GatewayConfig {
                     "set CODEX_GATEWAY_UPSTREAM_BASE_URL, ANTHROPIC_BASE_URL, choose a provider preset, or run login --base-url <url>"
                 )
             })?;
+        let upstream_base_url = provider_preset.normalize_upstream_base_url(upstream_base_url);
         let upstream_kind = first_env_value(&["CODEX_GATEWAY_UPSTREAM_KIND"])
             .or_else(|| {
                 stored_config
@@ -269,7 +272,19 @@ impl GatewayConfig {
             bind,
             provider_preset,
             upstream_kind,
-            upstream_base_url: provider_preset.normalize_upstream_base_url(upstream_base_url),
+            quota_url: first_env_value(&["CODEX_GATEWAY_QUOTA_URL"])
+                .or_else(|| {
+                    stored_config
+                        .as_ref()
+                        .and_then(|config| config.quota_url.clone())
+                })
+                .or_else(|| provider_preset.default_quota_url(&upstream_base_url)),
+            quota_username: first_env_value(&["CODEX_GATEWAY_QUOTA_USERNAME"]).or_else(|| {
+                stored_config
+                    .as_ref()
+                    .and_then(|config| config.quota_username.clone())
+            }),
+            upstream_base_url,
             upstream_messages_path: first_env_value(&[
                 "CODEX_GATEWAY_MESSAGES_PATH",
                 "ANTHROPIC_MESSAGES_PATH",
@@ -650,6 +665,8 @@ mod tests {
             upstream_models_path: "/v1/models".to_owned(),
             upstream_image_generation_path: Some("/v1/images/generations".to_owned()),
             upstream_api_key: "key".to_owned(),
+            quota_url: None,
+            quota_username: None,
             official_responses_url: "https://chatgpt.example/backend-api/codex/responses"
                 .to_owned(),
             codex_auth_path: PathBuf::from("/tmp/auth.json"),

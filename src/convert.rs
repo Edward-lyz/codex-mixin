@@ -1205,6 +1205,8 @@ mod tests {
             upstream_models_path: "/v1/models".to_owned(),
             upstream_image_generation_path: None,
             upstream_api_key: "test".to_owned(),
+            quota_url: None,
+            quota_username: None,
             official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
             codex_auth_path: std::path::PathBuf::from("/tmp/codex-auth.json"),
             upstream_auth_header: UpstreamAuthHeader::AuthorizationBearer,

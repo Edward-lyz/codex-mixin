@@ -11,6 +11,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var stopMenuItem: NSMenuItem?
     private var restartMenuItem: NSMenuItem?
     private var launchAtLoginMenuItem: NSMenuItem?
+    private var modelBenchmarkWindowController: ModelBenchmarkWindowController?
     private var timer: Timer?
     private var isRunning = false
     private var serviceBusy = false {
@@ -109,6 +110,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(actionItem("刷新状态与额度", #selector(refreshStatus), "arrow.clockwise"))
         menu.addItem(.separator())
         menu.addItem(actionItem("设置供应商与密钥...", #selector(configureLogin), "gearshape"))
+        menu.addItem(actionItem("模型测速...", #selector(showModelBenchmark), "speedometer"))
         menu.addItem(actionItem("安装到 Codex...", #selector(installCodexConfig), "square.and.arrow.down"))
         menu.addItem(actionItem("从 Codex 恢复...", #selector(uninstallCodexConfig), "arrow.uturn.backward.circle"))
         menu.addItem(.separator())
@@ -505,6 +507,75 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 showAlert(title: "保存设置失败", message: String(describing: error))
             }
         }
+    }
+
+    @objc private func showModelBenchmark() {
+        if modelBenchmarkWindowController == nil {
+            modelBenchmarkWindowController = ModelBenchmarkWindowController(
+                snapshotURL: stateDir().appendingPathComponent("model-benchmarks.json"),
+                startHandler: { [weak self] timeoutSeconds in
+                    guard let self else {
+                        throw GatewayError.command("Codex Mixin 已退出")
+                    }
+                    let status = try await self.ensureGatewayReady()
+                    self.applyGatewayStatus(status)
+                    guard let snapshot = try await self.modelBenchmarkRequest(
+                        method: "POST",
+                        timeoutSeconds: timeoutSeconds
+                    ) else {
+                        throw GatewayError.command("网关未返回测速任务")
+                    }
+                    return snapshot
+                },
+                fetchHandler: { [weak self] in
+                    guard let self else {
+                        throw GatewayError.command("Codex Mixin 已退出")
+                    }
+                    if self.serviceEndpoint == nil,
+                       let status = try? await self.runGateway(["status"])
+                    {
+                        self.applyGatewayStatus(status)
+                    }
+                    return try await self.modelBenchmarkRequest(method: "GET", timeoutSeconds: nil)
+                }
+            )
+        }
+        modelBenchmarkWindowController?.present()
+    }
+
+    private func modelBenchmarkRequest(method: String, timeoutSeconds: Int?) async throws -> ModelBenchmarkSnapshot? {
+        guard
+            let endpoint = serviceEndpoint,
+            let url = URL(string: "\(endpoint)/model-benchmarks")
+        else {
+            throw GatewayError.command("本地网关尚未就绪")
+        }
+        var request = URLRequest(url: url)
+        request.httpMethod = method
+        request.timeoutInterval = TimeInterval((timeoutSeconds ?? 0) + 5)
+        request.setValue("application/json", forHTTPHeaderField: "Accept")
+        let stored = try loadStoredConfig()
+        let bearer = stored["gateway_api_key"] as? String ?? "codex-mixin-menu"
+        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
+        if let timeoutSeconds {
+            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
+            request.httpBody = try JSONSerialization.data(withJSONObject: [
+                "timeout_seconds": timeoutSeconds,
+            ])
+        }
+        let (data, response) = try await URLSession.shared.data(for: request)
+        guard let httpResponse = response as? HTTPURLResponse else {
+            throw GatewayError.command("测速接口没有返回 HTTP 状态")
+        }
+        guard (200..<300).contains(httpResponse.statusCode) else {
+            let message = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])
+                .flatMap { $0["error"] as? [String: Any] }?
+                .flatMap { $0["message"] as? String }
+                ?? String(data: data, encoding: .utf8)
+                ?? "HTTP \(httpResponse.statusCode)"
+            throw GatewayError.command(message)
+        }
+        return try JSONDecoder().decode(ModelBenchmarkSnapshotEnvelope.self, from: data).snapshot
     }
 
     @objc private func installCodexConfig() {
@@ -1599,7 +1670,13 @@ private func xmlEscape(_ value: String) -> String {
         .replacingOccurrences(of: ">", with: "&gt;")
 }
 
-let app = NSApplication.shared
-let delegate = AppDelegate()
-app.delegate = delegate
-app.run()
+@main
+private struct CodexMixinApplication {
+    private static let delegate = AppDelegate()
+
+    static func main() {
+        let app = NSApplication.shared
+        app.delegate = delegate
+        app.run()
+    }
+}

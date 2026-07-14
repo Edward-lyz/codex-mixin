@@ -1,6 +1,6 @@
 [package]
 name = "codex-mixin"
-version = "0.2.13"
+version = "0.2.14"
 edition = "2024"
 license-file = "LICENSE"
 

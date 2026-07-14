@@ -32,6 +32,7 @@ cp "$TARGET_DIR/codex-mixin" "$RESOURCES_DIR/codex-mixin"
 chmod +x "$RESOURCES_DIR/codex-mixin"
 
 swiftc "$ROOT_DIR/macos/MenuBarApp.swift" \
+  "$ROOT_DIR/macos/ModelBenchmarkWindow.swift" \
   -framework Cocoa \
   -o "$MACOS_DIR/CodexMixinMenu"
 chmod +x "$MACOS_DIR/CodexMixinMenu"

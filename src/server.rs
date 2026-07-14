@@ -19,6 +19,7 @@ use tower_http::decompression::RequestDecompressionLayer;
 use uuid::Uuid;
 
 use crate::anthropic::{BaiduAvailableModelsResponse, ModelsResponse};
+use crate::benchmark::{BenchmarkSnapshotResponse, ModelBenchmarkManager, StartBenchmarkRequest};
 use crate::catalog::{codex_catalog_from_models_with_metadata, load_template_catalog};
 use crate::config::{GatewayConfig, ProviderPreset, UpstreamAuthHeader, UpstreamKind};
 use crate::convert::responses_to_anthropic;
@@ -45,6 +46,7 @@ pub struct AppState {
     config: Arc<GatewayConfig>,
     client: Client,
     image_routes: ImageRouteRegistry,
+    benchmarks: ModelBenchmarkManager,
 }
 
 impl AppState {
@@ -57,6 +59,7 @@ impl AppState {
             config: Arc::new(config),
             client,
             image_routes: ImageRouteRegistry::default(),
+            benchmarks: ModelBenchmarkManager::from_default_path(),
         })
     }
 
@@ -165,6 +168,10 @@ pub fn router(state: AppState) -> Router {
         .route("/healthz", get(healthz))
         .route("/v1/models", get(models))
         .route("/v1/codex-model-catalog", get(codex_model_catalog))
+        .route(
+            "/v1/model-benchmarks",
+            get(model_benchmarks).post(start_model_benchmarks),
+        )
         .route("/v1/responses", get(responses_ws).post(responses))
         .route("/v1/images/generations", post(image_generations))
         .route("/v1/images/edits", post(image_edits))
@@ -179,10 +186,11 @@ pub async fn serve(config: GatewayConfig) -> anyhow::Result<()> {
 }
 
 pub async fn serve_on_listener(
-    config: GatewayConfig,
+    mut config: GatewayConfig,
     listener: tokio::net::TcpListener,
 ) -> anyhow::Result<()> {
     let bind = listener.local_addr()?;
+    config.bind = bind;
     let state = AppState::new(config)?;
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
@@ -229,6 +237,43 @@ async fn codex_model_catalog(
         &metadata,
     );
     Ok(Json(catalog).into_response())
+}
+
+async fn model_benchmarks(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, GatewayError> {
+    check_gateway_auth(&state, &headers)?;
+    let snapshot = state.benchmarks.snapshot().map_err(GatewayError::Other)?;
+    Ok(Json(BenchmarkSnapshotResponse { snapshot }).into_response())
+}
+
+async fn start_model_benchmarks(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Json(request): Json<StartBenchmarkRequest>,
+) -> Result<Response, GatewayError> {
+    check_gateway_auth(&state, &headers)?;
+    let timeout = std::time::Duration::from_secs(request.timeout_seconds);
+    if timeout.is_zero() || timeout > std::time::Duration::from_secs(300) {
+        return Err(GatewayError::BadRequest(
+            "model benchmark timeout must be between 1 and 300 seconds".to_owned(),
+        ));
+    }
+    let models = tokio::time::timeout(timeout, state.fetch_models())
+        .await
+        .map_err(|_| GatewayError::Upstream("models endpoint timed out".to_owned()))??;
+    let snapshot = state
+        .benchmarks
+        .start(models, (*state.config).clone(), timeout)
+        .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
+    Ok((
+        StatusCode::ACCEPTED,
+        Json(BenchmarkSnapshotResponse {
+            snapshot: Some(snapshot),
+        }),
+    )
+        .into_response())
 }
 
 async fn responses(
@@ -1007,4 +1052,154 @@ fn stable_session_id(headers: &HeaderMap) -> Result<Option<&str>, GatewayError> 
         .map(|value| value.to_str())
         .transpose()
         .map_err(|err| GatewayError::BadRequest(format!("invalid session-id header: {err}")))
+}
+
+#[cfg(test)]
+mod tests {
+    use std::convert::Infallible;
+    use std::sync::{Arc, Mutex};
+    use std::time::Duration;
+
+    use bytes::Bytes;
+
+    use super::*;
+    use crate::benchmark::ModelBenchmarkManager;
+    use crate::config::{ThinkingMode, UpstreamAuthHeader};
+
+    #[tokio::test]
+    async fn benchmark_api_runs_after_the_start_request_returns_and_persists_results() {
+        let requests = Arc::new(Mutex::new(Vec::new()));
+        let captured_requests = Arc::clone(&requests);
+        let upstream = Router::new()
+            .route(
+                "/v1/models",
+                get(|| async {
+                    Json(json!({
+                        "object":"list",
+                        "data":[{"id":"benchmark-model","object":"model"}]
+                    }))
+                }),
+            )
+            .route(
+                "/v1/messages",
+                post(move |Json(body): Json<Value>| {
+                    let captured_requests = Arc::clone(&captured_requests);
+                    async move {
+                        captured_requests.lock().unwrap().push(body);
+                        let stream = async_stream::stream! {
+                            yield Ok::<_, Infallible>(Bytes::from(concat!(
+                                "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":5,\"output_tokens\":1}}}\n\n",
+                                "data: {\"type\":\"content_block_start\",\"index\":0,\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n"
+                            )));
+                            tokio::time::sleep(Duration::from_millis(15)).await;
+                            yield Ok::<_, Infallible>(Bytes::from(
+                                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"x\"}}\n\n"
+                            ));
+                            tokio::time::sleep(Duration::from_millis(15)).await;
+                            yield Ok::<_, Infallible>(Bytes::from(
+                                "data: {\"type\":\"content_block_delta\",\"index\":0,\"delta\":{\"type\":\"text_delta\",\"text\":\"y\"}}\n\n"
+                            ));
+                            tokio::time::sleep(Duration::from_millis(15)).await;
+                            yield Ok::<_, Infallible>(Bytes::from(concat!(
+                                "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
+                                "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"max_tokens\"},\"usage\":{\"output_tokens\":100}}\n\n",
+                                "data: {\"type\":\"message_stop\"}\n\n"
+                            )));
+                        };
+                        Response::builder()
+                            .status(StatusCode::OK)
+                            .header(header::CONTENT_TYPE, "text/event-stream")
+                            .body(Body::from_stream(stream))
+                            .unwrap()
+                    }
+                }),
+            );
+        let upstream_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let upstream_address = upstream_listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(upstream_listener, upstream).await.unwrap();
+        });
+
+        let gateway_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let gateway_address = gateway_listener.local_addr().unwrap();
+        let results_directory = tempfile::tempdir().unwrap();
+        let results_path = results_directory.path().join("model-benchmarks.json");
+        let mut state = AppState::new(GatewayConfig {
+            bind: gateway_address,
+            provider_preset: ProviderPreset::Custom,
+            upstream_kind: UpstreamKind::AnthropicMessages,
+            upstream_base_url: format!("http://{upstream_address}"),
+            upstream_messages_path: "/v1/messages".to_owned(),
+            upstream_models_path: "/v1/models".to_owned(),
+            upstream_image_generation_path: None,
+            upstream_api_key: "upstream-key".to_owned(),
+            quota_url: None,
+            quota_username: None,
+            official_responses_url: "https://example.invalid/responses".to_owned(),
+            codex_auth_path: results_directory.path().join("auth.json"),
+            upstream_auth_header: UpstreamAuthHeader::AuthorizationBearer,
+            anthropic_version: "2023-06-01".to_owned(),
+            anthropic_beta: None,
+            gateway_api_key: Some("gateway-key".to_owned()),
+            accept_codex_oauth: false,
+            default_max_tokens: 8192,
+            default_context_window: 1_000_000,
+            request_timeout: Duration::from_secs(2),
+            thinking_mode: ThinkingMode::Off,
+            enable_web_search_tool: false,
+            web_search_tool_type: "web_search_20250305".to_owned(),
+            web_search_max_uses: Some(3),
+            web_search_exclusive: true,
+            web_search_omit_system_instructions: true,
+            web_search_latest_user_only: true,
+        })
+        .unwrap();
+        state.benchmarks = ModelBenchmarkManager::new(results_path.clone());
+        tokio::spawn(async move {
+            axum::serve(gateway_listener, router(state)).await.unwrap();
+        });
+
+        let client = Client::new();
+        let started: Value = client
+            .post(format!("http://{gateway_address}/v1/model-benchmarks"))
+            .bearer_auth("gateway-key")
+            .json(&json!({"timeout_seconds":1}))
+            .send()
+            .await
+            .unwrap()
+            .error_for_status()
+            .unwrap()
+            .json()
+            .await
+            .unwrap();
+        assert_eq!(started["snapshot"]["status"], "running");
+
+        for _ in 0..100 {
+            let response: Value = client
+                .get(format!("http://{gateway_address}/v1/model-benchmarks"))
+                .bearer_auth("gateway-key")
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap()
+                .json()
+                .await
+                .unwrap();
+            if response["snapshot"]["status"] == "completed" {
+                assert_eq!(response["snapshot"]["results"][0]["output_tokens"], 100);
+                assert!(response["snapshot"]["results"][0]["tps"].is_number());
+                assert!(results_path.exists());
+                let request = &requests.lock().unwrap()[0];
+                assert_eq!(request["max_tokens"], 100);
+                assert_eq!(
+                    request["messages"][0]["content"][0]["text"],
+                    crate::benchmark::BENCHMARK_PROMPT
+                );
+                return;
+            }
+            tokio::time::sleep(Duration::from_millis(10)).await;
+        }
+        panic!("benchmark API did not finish");
+    }
 }
