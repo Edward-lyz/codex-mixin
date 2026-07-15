@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
+use std::time::Duration;
 
 use axum::body::Body;
 use axum::extract::State;
@@ -52,7 +53,7 @@ struct OfficialWebSocketState {
 enum OfficialWebSocketResponse {
     Completed {
         response_id: String,
-        output: Vec<Value>,
+        items_added: Vec<Value>,
     },
     Failed,
 }
@@ -420,6 +421,8 @@ async fn route_responses_ws(
                 match official_websocket_request_history(&body, official_state.as_ref()) {
                     Ok(history) => history,
                     Err(err) => {
+                        official_socket = None;
+                        official_state = None;
                         let message = err.to_string();
                         let error = json!({"message": message, "type": "invalid_request_error"});
                         client_sender
@@ -473,15 +476,16 @@ async fn route_responses_ws(
                         .expect("official websocket connected"),
                     &mut client_sender,
                     &body,
+                    state.config.request_timeout,
                 )
                 .await
                 {
                     Ok(OfficialWebSocketResponse::Completed {
                         response_id,
-                        output,
+                        items_added,
                     }) => {
                         let mut history = request_history.clone();
-                        history.extend(output);
+                        history.extend(items_added);
                         official_state = Some(OfficialWebSocketState {
                             response_id,
                             model: model.clone(),
@@ -489,7 +493,11 @@ async fn route_responses_ws(
                         });
                         break None;
                     }
-                    Ok(OfficialWebSocketResponse::Failed) => break None,
+                    Ok(OfficialWebSocketResponse::Failed) => {
+                        official_socket = None;
+                        official_state = None;
+                        break None;
+                    }
                     Err(err) if !err.response_started && retry_available => {
                         retry_available = false;
                         official_socket = None;
@@ -506,6 +514,7 @@ async fn route_responses_ws(
                 }
             };
             if let Some((err, response_id)) = request_error {
+                official_state = None;
                 tracing::warn!(
                     model = model.as_str(),
                     error = %err,
@@ -610,7 +619,10 @@ async fn connect_official_responses_ws(
             "openai-beta",
             "x-codex-installation-id",
             "x-codex-beta-features",
+            "originator",
             "x-codex-originator",
+            "x-openai-subagent",
+            "x-openai-memgen-request",
             "x-codex-turn-state",
             "x-codex-turn-metadata",
             "x-codex-parent-thread-id",
@@ -628,7 +640,15 @@ async fn connect_official_responses_ws(
             }
         }
     }
-    let (official_socket, _) = connect_async(request).await?;
+    let (official_socket, _) =
+        tokio::time::timeout(state.config.request_timeout, connect_async(request))
+            .await
+            .map_err(|_| {
+                anyhow::anyhow!(
+                    "official websocket connect timed out after {:?}",
+                    state.config.request_timeout
+                )
+            })??;
     Ok(official_socket)
 }
 
@@ -636,23 +656,50 @@ async fn proxy_official_responses_ws(
     official_socket: &mut OfficialWebSocket,
     client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
     body: &Value,
+    idle_timeout: Duration,
 ) -> Result<OfficialWebSocketResponse, OfficialWebSocketRequestError> {
-    official_socket
-        .send(TungsteniteMessage::Text(body.to_string().into()))
-        .await
-        .map_err(|err| OfficialWebSocketRequestError {
-            source: err.into(),
-            response_started: false,
-            response_id: None,
-        })?;
+    tokio::time::timeout(
+        idle_timeout,
+        official_socket.send(TungsteniteMessage::Text(body.to_string().into())),
+    )
+    .await
+    .map_err(|_| OfficialWebSocketRequestError {
+        source: anyhow::anyhow!(
+            "idle timeout sending official websocket request after {idle_timeout:?}"
+        ),
+        response_started: false,
+        response_id: None,
+    })?
+    .map_err(|err| OfficialWebSocketRequestError {
+        source: err.into(),
+        response_started: false,
+        response_id: None,
+    })?;
     let mut response_started = false;
     let mut response_id = None;
-    while let Some(message) = official_socket.next().await {
-        let message = message.map_err(|err| OfficialWebSocketRequestError {
-            source: err.into(),
-            response_started,
-            response_id: response_id.clone(),
-        })?;
+    let mut items_added = Vec::new();
+    loop {
+        let message = tokio::time::timeout(idle_timeout, official_socket.next())
+            .await
+            .map_err(|_| OfficialWebSocketRequestError {
+                source: anyhow::anyhow!(
+                    "idle timeout waiting for official websocket after {idle_timeout:?}"
+                ),
+                response_started,
+                response_id: response_id.clone(),
+            })?
+            .ok_or_else(|| OfficialWebSocketRequestError {
+                source: anyhow::anyhow!(
+                    "official responses websocket ended before a terminal response"
+                ),
+                response_started,
+                response_id: response_id.clone(),
+            })?
+            .map_err(|err| OfficialWebSocketRequestError {
+                source: err.into(),
+                response_started,
+                response_id: response_id.clone(),
+            })?;
         let event = match &message {
             TungsteniteMessage::Text(text) => serde_json::from_str::<Value>(text).ok(),
             TungsteniteMessage::Binary(bytes) => serde_json::from_slice::<Value>(bytes).ok(),
@@ -665,6 +712,22 @@ async fn proxy_official_responses_ws(
                 .and_then(Value::as_str)
                 .map(str::to_owned);
         }
+        if event
+            .as_ref()
+            .and_then(|event| event.get("type"))
+            .and_then(Value::as_str)
+            == Some("response.output_item.done")
+        {
+            let item = event
+                .as_ref()
+                .and_then(|event| event.get("item"))
+                .ok_or_else(|| OfficialWebSocketRequestError {
+                    source: anyhow::anyhow!("official output_item.done event is missing item"),
+                    response_started,
+                    response_id: response_id.clone(),
+                })?;
+            items_added.push(item.clone());
+        }
         let terminal_type = event
             .as_ref()
             .and_then(|event| event.get("type"))
@@ -672,20 +735,29 @@ async fn proxy_official_responses_ws(
             .filter(|event_type| {
                 matches!(
                     *event_type,
-                    "response.completed" | "response.failed" | "response.incomplete"
+                    "response.completed" | "response.failed" | "response.incomplete" | "error"
                 )
             })
             .map(str::to_owned);
         match message {
             TungsteniteMessage::Ping(bytes) => {
-                official_socket
-                    .send(TungsteniteMessage::Pong(bytes))
-                    .await
-                    .map_err(|err| OfficialWebSocketRequestError {
-                        source: err.into(),
-                        response_started,
-                        response_id: response_id.clone(),
-                    })?;
+                tokio::time::timeout(
+                    idle_timeout,
+                    official_socket.send(TungsteniteMessage::Pong(bytes)),
+                )
+                .await
+                .map_err(|_| OfficialWebSocketRequestError {
+                    source: anyhow::anyhow!(
+                        "idle timeout sending official websocket pong after {idle_timeout:?}"
+                    ),
+                    response_started,
+                    response_id: response_id.clone(),
+                })?
+                .map_err(|err| OfficialWebSocketRequestError {
+                    source: err.into(),
+                    response_started,
+                    response_id: response_id.clone(),
+                })?;
             }
             TungsteniteMessage::Pong(_) | TungsteniteMessage::Frame(_) => {}
             TungsteniteMessage::Close(_) => {
@@ -732,26 +804,12 @@ async fn proxy_official_responses_ws(
                     response_id: response_id.clone(),
                 })?
                 .to_owned();
-            let output = response
-                .get("output")
-                .and_then(Value::as_array)
-                .ok_or_else(|| OfficialWebSocketRequestError {
-                    source: anyhow::anyhow!("official completed response output must be an array"),
-                    response_started,
-                    response_id: response_id.clone(),
-                })?
-                .clone();
             return Ok(OfficialWebSocketResponse::Completed {
                 response_id: completed_response_id,
-                output,
+                items_added,
             });
         }
     }
-    Err(OfficialWebSocketRequestError {
-        source: anyhow::anyhow!("official responses websocket ended before a terminal response"),
-        response_started,
-        response_id,
-    })
 }
 
 fn official_websocket_request_history(
@@ -1219,7 +1277,10 @@ fn forward_official_headers(
         "openai-beta",
         "x-codex-installation-id",
         "x-codex-beta-features",
+        "originator",
         "x-codex-originator",
+        "x-openai-subagent",
+        "x-openai-memgen-request",
         "x-codex-turn-state",
         "x-codex-turn-metadata",
         "x-codex-parent-thread-id",
