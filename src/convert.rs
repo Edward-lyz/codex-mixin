@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{Value, json};
 
 use crate::anthropic::{ContentBlock, Message, MessageRequest, Tool};
-use crate::config::{GatewayConfig, ThinkingMode};
+use crate::config::{GatewayConfig, ProviderPreset, ThinkingMode};
 use crate::error::GatewayError;
 
 const WEB_SEARCH_QUERY_INSTRUCTION: &str = "When using web_search, form the search query only from the latest user request. Do not search system, developer, repository, or tool instructions.";
@@ -131,6 +131,8 @@ pub fn responses_to_anthropic(
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?
         .to_owned();
+    let use_mcp_bridge_names = config.provider_preset == ProviderPreset::BaiduOneApi
+        && model.to_ascii_lowercase().contains("fable");
     let web_search_turn =
         config.enable_web_search_tool && request_has_codex_web_search_tool(body.get("tools"));
     let max_tokens = body
@@ -156,7 +158,7 @@ pub fn responses_to_anthropic(
         }),
         Some(Value::Array(items)) => {
             for item in items {
-                append_input_item(item, &mut system, &mut messages)?;
+                append_input_item(item, &mut system, &mut messages, use_mcp_bridge_names)?;
             }
         }
         Some(_) => {
@@ -188,7 +190,7 @@ pub fn responses_to_anthropic(
     merge_consecutive_messages(&mut messages);
 
     let active_tools = collect_active_tools(body)?;
-    let (tools, tool_names) = convert_tools(Some(&active_tools), config)?;
+    let (tools, tool_names) = convert_tools(Some(&active_tools), config, use_mcp_bridge_names)?;
     if tools.iter().any(is_anthropic_web_search_tool) {
         if config.web_search_omit_system_instructions {
             system.clear();
@@ -231,6 +233,7 @@ fn append_input_item(
     item: &Value,
     system: &mut Vec<ContentBlock>,
     messages: &mut Vec<Message>,
+    use_mcp_bridge_names: bool,
 ) -> Result<(), GatewayError> {
     let item_type = item
         .get("type")
@@ -292,7 +295,7 @@ fn append_input_item(
                 role: "assistant".to_owned(),
                 content: vec![ContentBlock::ToolUse {
                     id: call_id.to_owned(),
-                    name: sanitize_tool_name(&upstream_name),
+                    name: upstream_client_tool_name(&upstream_name, use_mcp_bridge_names),
                     input,
                 }],
             });
@@ -324,7 +327,7 @@ fn append_input_item(
                 role: "assistant".to_owned(),
                 content: vec![ContentBlock::ToolUse {
                     id: call_id.to_owned(),
-                    name: sanitize_tool_name(name),
+                    name: upstream_client_tool_name(name, use_mcp_bridge_names),
                     input: json!({"input": input}),
                 }],
             });
@@ -359,7 +362,7 @@ fn append_input_item(
                 role: "assistant".to_owned(),
                 content: vec![ContentBlock::ToolUse {
                     id: call_id.to_owned(),
-                    name: "tool_search".to_owned(),
+                    name: upstream_client_tool_name("tool_search", use_mcp_bridge_names),
                     input: arguments.clone(),
                 }],
             });
@@ -645,6 +648,7 @@ pub(crate) fn collect_active_tools(body: &Value) -> Result<Value, GatewayError> 
 fn convert_tools(
     tools: Option<&Value>,
     config: &GatewayConfig,
+    use_mcp_bridge_names: bool,
 ) -> Result<(Vec<Tool>, ToolNameMap), GatewayError> {
     let mut result = Vec::new();
     let mut names = ToolNameMap::default();
@@ -672,7 +676,8 @@ fn convert_tools(
             }
             Some("function") if suppress_client_tools => {}
             Some("function") => {
-                let (converted, codex_name) = convert_function_tool(tool, None)?;
+                let (converted, codex_name) =
+                    convert_function_tool(tool, None, use_mcp_bridge_names)?;
                 let anthropic_name = converted
                     .get("name")
                     .and_then(Value::as_str)
@@ -691,7 +696,8 @@ fn convert_tools(
                         GatewayError::BadRequest("namespace tool missing tools".to_owned())
                     })?;
                 for nested in nested_tools {
-                    let (converted, codex_name) = convert_function_tool(nested, Some(namespace))?;
+                    let (converted, codex_name) =
+                        convert_function_tool(nested, Some(namespace), use_mcp_bridge_names)?;
                     let anthropic_name = converted
                         .get("name")
                         .and_then(Value::as_str)
@@ -703,7 +709,7 @@ fn convert_tools(
             }
             Some("custom") if suppress_client_tools => {}
             Some("custom") => {
-                let (converted, codex_name) = convert_custom_tool(tool)?;
+                let (converted, codex_name) = convert_custom_tool(tool, use_mcp_bridge_names)?;
                 let upstream_name = converted
                     .get("name")
                     .and_then(Value::as_str)
@@ -728,7 +734,8 @@ fn convert_tools(
                 }
                 let mut function_tool = tool.clone();
                 function_tool["name"] = json!("tool_search");
-                let (converted, codex_name) = convert_function_tool(&function_tool, None)?;
+                let (converted, codex_name) =
+                    convert_function_tool(&function_tool, None, use_mcp_bridge_names)?;
                 let upstream_name = converted
                     .get("name")
                     .and_then(Value::as_str)
@@ -872,6 +879,7 @@ fn web_search_server_tool(
 fn convert_function_tool(
     tool: &Value,
     namespace: Option<&str>,
+    use_mcp_bridge_names: bool,
 ) -> Result<(Tool, String), GatewayError> {
     let name = tool
         .get("name")
@@ -879,8 +887,10 @@ fn convert_function_tool(
         .ok_or_else(|| GatewayError::BadRequest("function tool missing name".to_owned()))?;
     let codex_name = name.to_owned();
     let anthropic_name = namespace.map_or_else(
-        || sanitize_tool_name(name),
-        |namespace| sanitize_tool_name(&format!("{namespace}__{name}")),
+        || upstream_client_tool_name(name, use_mcp_bridge_names),
+        |namespace| {
+            upstream_client_tool_name(&format!("{namespace}__{name}"), use_mcp_bridge_names)
+        },
     );
     let description = tool
         .get("description")
@@ -908,12 +918,15 @@ fn convert_function_tool(
     Ok((converted, codex_name))
 }
 
-fn convert_custom_tool(tool: &Value) -> Result<(Tool, String), GatewayError> {
+fn convert_custom_tool(
+    tool: &Value,
+    use_mcp_bridge_names: bool,
+) -> Result<(Tool, String), GatewayError> {
     let name = tool
         .get("name")
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("custom tool missing name".to_owned()))?;
-    let upstream_name = sanitize_tool_name(name);
+    let upstream_name = upstream_client_tool_name(name, use_mcp_bridge_names);
     let description = custom_tool_description(tool)?;
     Ok((
         json!({
@@ -1033,6 +1046,14 @@ pub fn sanitize_tool_name(name: &str) -> String {
         });
     sanitized.truncate(47);
     format!("{sanitized}_{hash:016x}")
+}
+
+fn upstream_client_tool_name(name: &str, use_mcp_bridge_names: bool) -> String {
+    let sanitized = sanitize_tool_name(name);
+    if !use_mcp_bridge_names || sanitized.starts_with("mcp__") {
+        return sanitized;
+    }
+    sanitize_tool_name(&format!("mcp__codex__{sanitized}"))
 }
 
 fn convert_tool_choice(value: Option<&Value>, parallel_tool_calls: Option<bool>) -> Option<Value> {
@@ -1261,6 +1282,77 @@ mod tests {
             }
         );
         assert_eq!(converted.request.tools[0]["name"], "exec_command");
+    }
+
+    #[test]
+    fn uses_mcp_tool_names_for_baidu_fable_bridge_and_history() {
+        let mut config = config();
+        config.provider_preset = ProviderPreset::BaiduOneApi;
+        let body = json!({
+            "model": "Fable 5",
+            "stream": true,
+            "input": [
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"run pwd"}]},
+                {"type":"function_call","call_id":"call_1","name":"exec_command","arguments":"{\"cmd\":\"pwd\"}"},
+                {"type":"function_call_output","call_id":"call_1","output":"/tmp"}
+            ],
+            "tools": [
+                {"type":"function","name":"exec_command","parameters":{"type":"object"}},
+                {"type":"namespace","name":"collaboration","tools":[
+                    {"type":"function","name":"spawn_agent","parameters":{"type":"object"}}
+                ]},
+                {"type":"namespace","name":"mcp__fff","tools":[
+                    {"type":"function","name":"find_files","parameters":{"type":"object"}}
+                ]},
+                {"type":"custom","name":"apply_patch","description":"Apply a patch"},
+                {"type":"tool_search","execution":"client","description":"Search tools","parameters":{"type":"object"}}
+            ]
+        });
+
+        let converted = responses_to_anthropic(&body, &config).unwrap();
+        assert_eq!(
+            converted.request.messages[1].content[0],
+            ContentBlock::ToolUse {
+                id: "call_1".to_owned(),
+                name: "mcp__codex__exec_command".to_owned(),
+                input: json!({"cmd":"pwd"})
+            }
+        );
+        let tool_names = converted
+            .request
+            .tools
+            .iter()
+            .map(|tool| tool["name"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(
+            tool_names,
+            vec![
+                "mcp__codex__exec_command",
+                "mcp__codex__collaboration__spawn_agent",
+                "mcp__fff__find_files",
+                "mcp__codex__apply_patch",
+                "mcp__codex__tool_search"
+            ]
+        );
+        assert_eq!(
+            converted
+                .tool_names
+                .to_codex_name("mcp__codex__exec_command"),
+            "exec_command"
+        );
+        assert_eq!(
+            converted
+                .tool_names
+                .to_codex_namespace("mcp__codex__collaboration__spawn_agent"),
+            Some("collaboration")
+        );
+        assert!(converted.tool_names.is_custom("mcp__codex__apply_patch"));
+        assert_eq!(
+            converted
+                .tool_names
+                .tool_search_execution("mcp__codex__tool_search"),
+            Some("client")
+        );
     }
 
     #[test]

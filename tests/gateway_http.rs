@@ -25,6 +25,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 enum MockMode {
     Text,
     Tool,
+    FableMcpTool,
     NamespacedTool,
     CustomTool,
     ToolSearch,
@@ -257,6 +258,7 @@ async fn mock_messages(
     let payload = match state.mode {
         MockMode::Text => text_sse(),
         MockMode::Tool => tool_sse("exec_command", json!({"cmd":"pwd"})),
+        MockMode::FableMcpTool => tool_sse("mcp__codex__exec_command", json!({"cmd":"pwd"})),
         MockMode::NamespacedTool => tool_sse(
             "collaboration__spawn_agent",
             json!({"task_name":"test","message":"run"}),
@@ -832,6 +834,38 @@ async fn maps_tool_use_to_responses_function_call() {
 
     let upstream_request = requests.lock().unwrap()[0].clone();
     assert_eq!(upstream_request["tools"][0]["name"], "exec_command");
+}
+
+#[tokio::test]
+async fn maps_baidu_fable_mcp_tool_name_back_to_codex() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::FableMcpTool).await;
+    let mut config = test_config(upstream_url);
+    config.provider_preset = ProviderPreset::BaiduOneApi;
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+    let mut request = responses_request();
+    request["model"] = json!("Fable 5");
+
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("session-id", "fable-tool-session")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("\"type\":\"function_call\""));
+    assert!(body.contains("\"name\":\"exec_command\""));
+    assert!(!body.contains("\"name\":\"mcp__codex__exec_command\""));
+
+    let upstream_request = requests.lock().unwrap()[0].clone();
+    assert_eq!(upstream_request["model"], "Fable 5");
+    assert_eq!(
+        upstream_request["tools"][0]["name"],
+        "mcp__codex__exec_command"
+    );
 }
 
 #[tokio::test]

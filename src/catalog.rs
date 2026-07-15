@@ -143,9 +143,8 @@ fn codex_catalog_from_models_with_options(
             item["priority"] = json!(100 + index as u64);
             item["visibility"] = json!("list");
             item["supported_in_api"] = json!(true);
-            let supports_search_tool = supports_anthropic_web_search(&model.id);
-            item["supports_search_tool"] = json!(supports_search_tool);
-            if supports_search_tool {
+            item["supports_search_tool"] = json!(true);
+            if supports_anthropic_web_search(&model.id) {
                 item["web_search_tool_type"] = json!("text");
             } else if let Some(item) = item.as_object_mut() {
                 item.remove("web_search_tool_type");
@@ -334,7 +333,7 @@ mod tests {
             FALLBACK_BASE_INSTRUCTIONS
         );
         assert_eq!(catalog["models"][0]["context_window"], 1_000_000);
-        assert_eq!(catalog["models"][0]["supports_search_tool"], false);
+        assert_eq!(catalog["models"][0]["supports_search_tool"], true);
     }
 
     #[test]
@@ -389,7 +388,7 @@ mod tests {
     }
 
     #[test]
-    fn marks_claude_family_models_as_search_capable() {
+    fn keeps_hosted_web_search_capability_separate_from_tool_search() {
         let models = vec![ModelInfo {
             id: "Claude Sonnet 5".to_owned(),
             object: Some("model".to_owned()),
@@ -422,7 +421,7 @@ mod tests {
 
         let catalog = codex_catalog_from_models(&models, 1_000_000, Some(&template));
 
-        assert_eq!(catalog["models"][0]["supports_search_tool"], false);
+        assert_eq!(catalog["models"][0]["supports_search_tool"], true);
         assert!(catalog["models"][0].get("web_search_tool_type").is_none());
     }
 
