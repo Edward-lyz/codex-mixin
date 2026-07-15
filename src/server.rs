@@ -35,6 +35,13 @@ use crate::sse::drain_events;
 type OfficialWebSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
 #[derive(Debug)]
+struct OfficialWebSocketRequestError {
+    source: anyhow::Error,
+    response_started: bool,
+    response_id: Option<String>,
+}
+
+#[derive(Debug)]
 struct CustomWebSocketState {
     response_id: String,
     model: String,
@@ -388,21 +395,80 @@ async fn route_responses_ws(
         if should_forward_to_official(&body) {
             custom_state = None;
             tracing::debug!(
-                model,
+                model = model.as_str(),
                 route = "official_ws",
                 "routing responses websocket request"
             );
-            if official_socket.is_none() {
-                official_socket = Some(connect_official_responses_ws(&state, &headers).await?);
+            let mut retry_available = true;
+            let request_error = loop {
+                if official_socket.is_none() {
+                    match connect_official_responses_ws(&state, &headers).await {
+                        Ok(socket) => official_socket = Some(socket),
+                        Err(err) if retry_available => {
+                            retry_available = false;
+                            tracing::warn!(
+                                model = model.as_str(),
+                                error = %err,
+                                "retrying official responses websocket connection"
+                            );
+                            continue;
+                        }
+                        Err(err) => break Some((err, None)),
+                    }
+                }
+                match proxy_official_responses_ws(
+                    official_socket
+                        .as_mut()
+                        .expect("official websocket connected"),
+                    &mut client_sender,
+                    &body,
+                )
+                .await
+                {
+                    Ok(()) => break None,
+                    Err(err) if !err.response_started && retry_available => {
+                        retry_available = false;
+                        official_socket = None;
+                        tracing::warn!(
+                            model = model.as_str(),
+                            error = %err.source,
+                            "reconnecting stale official responses websocket"
+                        );
+                    }
+                    Err(err) => {
+                        official_socket = None;
+                        break Some((err.source, err.response_id));
+                    }
+                }
+            };
+            if let Some((err, response_id)) = request_error {
+                tracing::warn!(
+                    model = model.as_str(),
+                    error = %err,
+                    "official responses websocket request failed"
+                );
+                let message = err.to_string();
+                let error = json!({"message": message, "type": "server_error"});
+                let response_id =
+                    response_id.unwrap_or_else(|| format!("resp_{}", Uuid::new_v4().simple()));
+                client_sender
+                    .send(AxumWsMessage::Text(
+                        json!({
+                            "type": "response.failed",
+                            "response": {
+                                "id": response_id,
+                                "object": "response",
+                                "status": "failed",
+                                "error": error,
+                                "output": []
+                            },
+                            "error": error
+                        })
+                        .to_string()
+                        .into(),
+                    ))
+                    .await?;
             }
-            proxy_official_responses_ws(
-                official_socket
-                    .as_mut()
-                    .expect("official websocket connected"),
-                &mut client_sender,
-                &body,
-            )
-            .await?;
             continue;
         }
 
@@ -505,37 +571,76 @@ async fn proxy_official_responses_ws(
     official_socket: &mut OfficialWebSocket,
     client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
     body: &Value,
-) -> anyhow::Result<()> {
+) -> Result<(), OfficialWebSocketRequestError> {
     official_socket
         .send(TungsteniteMessage::Text(body.to_string().into()))
-        .await?;
+        .await
+        .map_err(|err| OfficialWebSocketRequestError {
+            source: err.into(),
+            response_started: false,
+            response_id: None,
+        })?;
+    let mut response_started = false;
+    let mut response_id = None;
     while let Some(message) = official_socket.next().await {
-        let message = message?;
-        let terminal = match &message {
+        let message = message.map_err(|err| OfficialWebSocketRequestError {
+            source: err.into(),
+            response_started,
+            response_id: response_id.clone(),
+        })?;
+        let event = match &message {
             TungsteniteMessage::Text(text) => serde_json::from_str::<Value>(text).ok(),
             TungsteniteMessage::Binary(bytes) => serde_json::from_slice::<Value>(bytes).ok(),
             _ => None,
+        };
+        if response_id.is_none() {
+            response_id = event
+                .as_ref()
+                .and_then(|event| event.pointer("/response/id"))
+                .and_then(Value::as_str)
+                .map(str::to_owned);
         }
-        .and_then(|event| event.get("type").and_then(Value::as_str).map(str::to_owned))
-        .is_some_and(|event_type| {
-            matches!(
-                event_type.as_str(),
-                "response.completed" | "response.failed" | "response.incomplete"
-            )
-        });
+        let terminal = event
+            .as_ref()
+            .and_then(|event| event.get("type"))
+            .and_then(Value::as_str)
+            .is_some_and(|event_type| {
+                matches!(
+                    event_type,
+                    "response.completed" | "response.failed" | "response.incomplete"
+                )
+            });
         match message {
             TungsteniteMessage::Ping(bytes) => {
                 official_socket
                     .send(TungsteniteMessage::Pong(bytes))
-                    .await?;
+                    .await
+                    .map_err(|err| OfficialWebSocketRequestError {
+                        source: err.into(),
+                        response_started,
+                        response_id: response_id.clone(),
+                    })?;
             }
             TungsteniteMessage::Pong(_) | TungsteniteMessage::Frame(_) => {}
             TungsteniteMessage::Close(_) => {
-                anyhow::bail!("official responses websocket closed before a terminal response")
+                return Err(OfficialWebSocketRequestError {
+                    source: anyhow::anyhow!(
+                        "official responses websocket closed before a terminal response"
+                    ),
+                    response_started,
+                    response_id,
+                });
             }
             message => {
                 if let Some(message) = tungstenite_to_axum_message(message) {
-                    client_sender.send(message).await?;
+                    response_started = true;
+                    client_sender.send(message).await.map_err(|err| {
+                        OfficialWebSocketRequestError {
+                            source: err.into(),
+                            response_started,
+                            response_id: response_id.clone(),
+                        }
+                    })?;
                 }
             }
         }
@@ -543,7 +648,11 @@ async fn proxy_official_responses_ws(
             return Ok(());
         }
     }
-    anyhow::bail!("official responses websocket ended before a terminal response")
+    Err(OfficialWebSocketRequestError {
+        source: anyhow::anyhow!("official responses websocket ended before a terminal response"),
+        response_started,
+        response_id,
+    })
 }
 
 async fn proxy_custom_responses_ws(

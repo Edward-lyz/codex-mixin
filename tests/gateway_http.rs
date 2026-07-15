@@ -46,6 +46,14 @@ struct OfficialState {
     auth_headers: Arc<Mutex<Vec<Option<String>>>>,
     account_headers: Arc<Mutex<Vec<Option<String>>>>,
     websocket_connections: Arc<AtomicUsize>,
+    websocket_behavior: OfficialWebSocketBehavior,
+}
+
+#[derive(Clone, Copy)]
+enum OfficialWebSocketBehavior {
+    Persistent,
+    CloseAfterCreated,
+    CloseAfterCompleted,
 }
 
 fn test_config(upstream_base_url: String) -> GatewayConfig {
@@ -157,7 +165,9 @@ async fn spawn_session_required_upstream() -> String {
     spawn_router(app).await
 }
 
-async fn spawn_mock_official() -> (
+async fn spawn_mock_official(
+    websocket_behavior: OfficialWebSocketBehavior,
+) -> (
     String,
     Arc<Mutex<Vec<Value>>>,
     Arc<Mutex<Vec<Option<String>>>>,
@@ -180,6 +190,7 @@ async fn spawn_mock_official() -> (
             auth_headers: auth_headers.clone(),
             account_headers: account_headers.clone(),
             websocket_connections: websocket_connections.clone(),
+            websocket_behavior,
         });
     (
         spawn_router(app).await,
@@ -452,6 +463,13 @@ async fn serve_mock_official_websocket(mut socket: WebSocket, state: OfficialSta
                 ))
                 .await
                 .unwrap();
+            if matches!(
+                (state.websocket_behavior, status),
+                (OfficialWebSocketBehavior::CloseAfterCreated, "in_progress")
+                    | (OfficialWebSocketBehavior::CloseAfterCompleted, "completed")
+            ) {
+                return;
+            }
         }
     }
 }
@@ -1002,7 +1020,7 @@ async fn openai_chat_image_tool_calls_configured_upstream_generation_endpoint() 
 async fn custom_image_tool_uses_official_backend_without_upstream_image_endpoint() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::ImageTool).await;
     let (official_url, official_requests, auth_headers, account_headers, _) =
-        spawn_mock_official().await;
+        spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
     let mut config = test_config(upstream_url);
     config.official_responses_url = format!("{official_url}/v1/responses");
     let codex_home = tempfile::tempdir().unwrap();
@@ -1293,7 +1311,7 @@ async fn switches_between_official_and_custom_models_on_one_websocket() {
         official_auth_headers,
         official_account_headers,
         official_websocket_connections,
-    ) = spawn_mock_official().await;
+    ) = spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
     let mut config = test_config(upstream_url);
     config.official_responses_url = format!("{official_url}/v1/responses");
     let codex_home = tempfile::tempdir().unwrap();
@@ -1402,6 +1420,139 @@ async fn switches_between_official_and_custom_models_on_one_websocket() {
             .iter()
             .all(|header| header.as_deref() == Some("account-1"))
     );
+}
+
+#[tokio::test]
+async fn reconnects_official_upstream_without_resetting_client_websocket() {
+    let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
+    let (official_url, official_requests, _, _, official_websocket_connections) =
+        spawn_mock_official(OfficialWebSocketBehavior::CloseAfterCompleted).await;
+    let mut config = test_config(upstream_url);
+    config.official_responses_url = format!("{official_url}/v1/responses");
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+
+    let mut official = responses_request();
+    official.as_object_mut().unwrap().remove("stream");
+    official["type"] = json!("response.create");
+    official["model"] = json!("gpt-5.5");
+    socket
+        .send(WsMessage::Text(official.to_string().into()))
+        .await
+        .unwrap();
+    assert!(
+        websocket_response_frames(&mut socket)
+            .await
+            .join("\n")
+            .contains("\"type\":\"response.completed\"")
+    );
+
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    socket
+        .send(WsMessage::Text(official.to_string().into()))
+        .await
+        .unwrap();
+    let second_frames = tokio::time::timeout(
+        Duration::from_secs(1),
+        websocket_response_frames(&mut socket),
+    )
+    .await
+    .expect("gateway did not finish the second official response");
+    assert!(
+        second_frames
+            .join("\n")
+            .contains("\"type\":\"response.completed\"")
+    );
+    assert_eq!(official_requests.lock().unwrap().len(), 2);
+    assert_eq!(official_websocket_connections.load(Ordering::SeqCst), 2);
+}
+
+#[tokio::test]
+async fn keeps_client_websocket_open_after_partial_official_response_disconnect() {
+    let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let (official_url, official_requests, _, _, official_websocket_connections) =
+        spawn_mock_official(OfficialWebSocketBehavior::CloseAfterCreated).await;
+    let mut config = test_config(upstream_url);
+    config.official_responses_url = format!("{official_url}/v1/responses");
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+
+    let mut official = responses_request();
+    official.as_object_mut().unwrap().remove("stream");
+    official["type"] = json!("response.create");
+    official["model"] = json!("gpt-5.5");
+    socket
+        .send(WsMessage::Text(official.to_string().into()))
+        .await
+        .unwrap();
+    let failed_frames = tokio::time::timeout(
+        Duration::from_secs(1),
+        websocket_response_frames(&mut socket),
+    )
+    .await
+    .expect("gateway did not report the interrupted official response");
+    let failed_events = failed_frames
+        .iter()
+        .map(|frame| serde_json::from_str::<Value>(frame).unwrap())
+        .collect::<Vec<_>>();
+    let created_id = failed_events
+        .iter()
+        .find(|event| event["type"] == "response.created")
+        .and_then(|event| event.pointer("/response/id"))
+        .and_then(Value::as_str)
+        .unwrap();
+    let failed_id = failed_events
+        .iter()
+        .find(|event| event["type"] == "response.failed")
+        .and_then(|event| event.pointer("/response/id"))
+        .and_then(Value::as_str)
+        .unwrap();
+    assert_eq!(failed_id, created_id);
+
+    let mut custom = responses_request();
+    custom.as_object_mut().unwrap().remove("stream");
+    custom["type"] = json!("response.create");
+    socket
+        .send(WsMessage::Text(custom.to_string().into()))
+        .await
+        .unwrap();
+    assert!(
+        websocket_response_frames(&mut socket)
+            .await
+            .join("\n")
+            .contains("\"type\":\"response.completed\"")
+    );
+    assert_eq!(official_requests.lock().unwrap().len(), 1);
+    assert_eq!(upstream_requests.lock().unwrap().len(), 1);
+    assert_eq!(official_websocket_connections.load(Ordering::SeqCst), 1);
 }
 
 #[tokio::test]
@@ -1611,7 +1762,7 @@ async fn forwards_thinking_and_anthropic_server_web_search() {
 async fn proxies_codex_image_generation_to_official_backend() {
     let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
     let (official_url, official_requests, auth_headers, account_headers, _) =
-        spawn_mock_official().await;
+        spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
     let mut config = test_config(upstream_url);
     config.upstream_image_generation_path = Some("/v1/images/generations".to_owned());
     config.official_responses_url = format!("{official_url}/v1/responses");
@@ -1659,7 +1810,7 @@ async fn proxies_codex_image_generation_to_official_backend() {
 async fn proxies_codex_image_edits_to_official_backend() {
     let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
     let (official_url, official_requests, auth_headers, account_headers, _) =
-        spawn_mock_official().await;
+        spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
     let mut config = test_config(upstream_url);
     config.official_responses_url = format!("{official_url}/v1/responses");
     let codex_home = tempfile::tempdir().unwrap();
@@ -1703,7 +1854,7 @@ async fn proxies_codex_image_edits_to_official_backend() {
 async fn routes_official_gpt_and_custom_gpt_aliases_separately() {
     let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
     let (official_url, official_requests, official_auth_headers, official_account_headers, _) =
-        spawn_mock_official().await;
+        spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
     let mut config = test_config(upstream_url);
     config.official_responses_url = format!("{official_url}/v1/responses");
     let codex_home = tempfile::tempdir().unwrap();
