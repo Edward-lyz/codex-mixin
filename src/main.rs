@@ -222,6 +222,8 @@ struct RuntimeMetadata {
     pid: u32,
     bind: SocketAddr,
     started_at: u64,
+    #[serde(default)]
+    version: Option<String>,
 }
 
 struct RuntimeMetadataGuard {
@@ -592,11 +594,28 @@ async fn status() -> anyhow::Result<()> {
     } else {
         println!("daemon: not started");
     }
-    let bind = match runtime {
-        Some(runtime) if pid_is_running(runtime.pid)? => runtime.bind,
-        _ => metadata
+    let runtime_running = runtime
+        .as_ref()
+        .map(|metadata| pid_is_running(metadata.pid))
+        .transpose()?
+        .unwrap_or(false);
+    println!(
+        "gateway-version: {}",
+        if runtime_running {
+            runtime
+                .as_ref()
+                .and_then(|metadata| metadata.version.as_deref())
+                .unwrap_or("unknown")
+        } else {
+            "unknown"
+        }
+    );
+    let bind = if runtime_running {
+        runtime.as_ref().expect("live runtime metadata").bind
+    } else {
+        metadata
             .as_ref()
-            .map_or(config.bind, |metadata| metadata.bind),
+            .map_or(config.bind, |metadata| metadata.bind)
     };
     let url = format!("http://{bind}/healthz");
     let response = reqwest::Client::builder()
@@ -1871,6 +1890,7 @@ async fn start(
         pid,
         bind: actual_bind,
         started_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+        version: Some(env!("CARGO_PKG_VERSION").to_owned()),
     })?;
     let _runtime_guard = RuntimeMetadataGuard { pid };
     let result = serve_on_listener(config, listener).await;
@@ -1882,25 +1902,71 @@ async fn start(
     result
 }
 
-fn start_daemon(bind: Option<SocketAddr>, log_file: Option<PathBuf>) -> anyhow::Result<()> {
-    if let Some(metadata) = load_daemon_metadata()?
-        && pid_is_running(metadata.pid)?
+fn start_daemon(mut bind: Option<SocketAddr>, log_file: Option<PathBuf>) -> anyhow::Result<()> {
+    let daemon = load_daemon_metadata()?;
+    let runtime = load_runtime_metadata()?;
+    let daemon_running = daemon
+        .as_ref()
+        .map(|metadata| pid_is_running(metadata.pid))
+        .transpose()?
+        .unwrap_or(false);
+    let runtime_running = runtime
+        .as_ref()
+        .map(|metadata| pid_is_running(metadata.pid))
+        .transpose()?
+        .unwrap_or(false);
+    if daemon_running
+        && runtime_running
+        && daemon.as_ref().map(|metadata| metadata.pid)
+            != runtime.as_ref().map(|metadata| metadata.pid)
     {
         anyhow::bail!(
-            "gateway daemon already running: pid {}, bind {}",
-            metadata.pid,
-            metadata.bind
+            "conflicting live gateway metadata: daemon pid {}, runtime pid {}",
+            daemon.as_ref().expect("live daemon metadata").pid,
+            runtime.as_ref().expect("live runtime metadata").pid
         );
     }
-    if let Some(runtime) = load_runtime_metadata()?
-        && pid_is_running(runtime.pid)?
-    {
-        anyhow::bail!(
-            "gateway already running: pid {}, bind {}",
-            runtime.pid,
-            runtime.bind
+    if runtime_running {
+        let runtime = runtime.as_ref().expect("live runtime metadata");
+        if let Some(existing_bind) =
+            replacement_bind_for_outdated_runtime(runtime, env!("CARGO_PKG_VERSION"))
+        {
+            println!(
+                "replacing gateway version {} with {} on {}",
+                runtime.version.as_deref().unwrap_or("unknown"),
+                env!("CARGO_PKG_VERSION"),
+                existing_bind
+            );
+            stop(false)?;
+            if bind.is_none() {
+                bind = Some(existing_bind);
+            }
+        } else if daemon_running {
+            anyhow::bail!(
+                "gateway daemon already running: pid {}, bind {}",
+                runtime.pid,
+                runtime.bind
+            );
+        } else {
+            anyhow::bail!(
+                "gateway already running: pid {}, bind {}",
+                runtime.pid,
+                runtime.bind
+            );
+        }
+    } else if daemon_running {
+        let daemon = daemon.as_ref().expect("live daemon metadata");
+        println!(
+            "replacing gateway with missing runtime metadata on {}",
+            daemon.bind
         );
+        let existing_bind = daemon.bind;
+        stop(false)?;
+        if bind.is_none() {
+            bind = Some(existing_bind);
+        }
     }
+    delete_daemon_metadata()?;
     delete_runtime_metadata()?;
     let log_file = log_file.unwrap_or_else(default_log_file_path);
     if let Some(parent) = log_file.parent() {
@@ -2104,6 +2170,13 @@ fn load_runtime_metadata() -> anyhow::Result<Option<RuntimeMetadata>> {
     }
     let raw = fs::read_to_string(&path)?;
     Ok(Some(serde_json::from_str(&raw)?))
+}
+
+fn replacement_bind_for_outdated_runtime(
+    runtime: &RuntimeMetadata,
+    current_version: &str,
+) -> Option<SocketAddr> {
+    (runtime.version.as_deref() != Some(current_version)).then_some(runtime.bind)
 }
 
 fn save_daemon_metadata(metadata: &DaemonMetadata) -> anyhow::Result<()> {
@@ -2744,6 +2817,37 @@ custom_field = "stale"
         assert_eq!(
             explicit.downcast_ref::<io::Error>().unwrap().kind(),
             io::ErrorKind::AddrInUse
+        );
+    }
+
+    #[test]
+    fn outdated_gateway_runtime_is_replaced_on_its_existing_bind() {
+        let legacy_runtime: RuntimeMetadata =
+            serde_json::from_str(r#"{"pid":42,"bind":"127.0.0.1:18787","started_at":1}"#).unwrap();
+        let older_runtime: RuntimeMetadata = serde_json::from_str(
+            r#"{"pid":42,"bind":"127.0.0.1:18787","started_at":1,"version":"0.2.15"}"#,
+        )
+        .unwrap();
+        let current_runtime: RuntimeMetadata = serde_json::from_value(serde_json::json!({
+            "pid": 42,
+            "bind": "127.0.0.1:18787",
+            "started_at": 1,
+            "version": env!("CARGO_PKG_VERSION"),
+        }))
+        .unwrap();
+        let existing_bind = "127.0.0.1:18787".parse().unwrap();
+
+        assert_eq!(
+            replacement_bind_for_outdated_runtime(&legacy_runtime, env!("CARGO_PKG_VERSION")),
+            Some(existing_bind)
+        );
+        assert_eq!(
+            replacement_bind_for_outdated_runtime(&older_runtime, env!("CARGO_PKG_VERSION")),
+            Some(existing_bind)
+        );
+        assert_eq!(
+            replacement_bind_for_outdated_runtime(&current_runtime, env!("CARGO_PKG_VERSION")),
+            None
         );
     }
 

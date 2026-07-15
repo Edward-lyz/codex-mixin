@@ -55,7 +55,7 @@ async fn all_registered_models_can_say_hi() {
             .unwrap_or_else(|err| panic!("read catalog {}: {err}", catalog_path.display())),
     )
     .unwrap_or_else(|err| panic!("parse catalog {}: {err}", catalog_path.display()));
-    let models = catalog["models"]
+    let mut models = catalog["models"]
         .as_array()
         .expect("catalog models must be an array")
         .iter()
@@ -76,6 +76,14 @@ async fn all_registered_models_can_say_hi() {
         custom_models.len(),
         "not every custom upstream model is registered in the catalog"
     );
+    if let Ok(model) = std::env::var("CODEX_MIXIN_REAL_MODEL") {
+        models.retain(|candidate| candidate == &model);
+        assert_eq!(
+            models.len(),
+            1,
+            "CODEX_MIXIN_REAL_MODEL is not registered: {model}"
+        );
+    }
 
     let websocket_url = gateway_url.replacen("http://", "ws://", 1);
     let mut failures = Vec::new();
@@ -142,10 +150,11 @@ async fn all_registered_models_can_say_hi() {
             {
                 println!("PASS {model} ({} ms)", started.elapsed().as_millis());
             }
-            Ok(response) | Err(response) => failures.push(format!(
-                "{model}: {}",
-                response.chars().take(500).collect::<String>()
-            )),
+            Ok(response) | Err(response) => {
+                let reversed_excerpt = response.chars().rev().take(1000).collect::<String>();
+                let excerpt = reversed_excerpt.chars().rev().collect::<String>();
+                failures.push(format!("{model}: {excerpt}"));
+            }
         }
     }
 

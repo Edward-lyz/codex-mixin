@@ -8,11 +8,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     private var serviceStatusItem: NSMenuItem?
     private var quotaStatusItem: NSMenuItem?
     private var startMenuItem: NSMenuItem?
-    private var stopMenuItem: NSMenuItem?
     private var restartMenuItem: NSMenuItem?
     private var launchAtLoginMenuItem: NSMenuItem?
     private var modelBenchmarkWindowController: ModelBenchmarkWindowController?
     private var timer: Timer?
+    private var terminationInProgress = false
     private var isRunning = false
     private var serviceBusy = false {
         didSet {
@@ -100,10 +100,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateQuotaStatus(title: "额度：检查中...", detail: nil, progress: nil)
         menu.addItem(.separator())
         startMenuItem = actionItem("启动本地网关", #selector(startService), "play.circle")
-        stopMenuItem = actionItem("暂停本地网关", #selector(stopService), "pause.circle")
         restartMenuItem = actionItem("重启本地网关", #selector(restartService), "arrow.clockwise.circle")
         menu.addItem(startMenuItem!)
-        menu.addItem(stopMenuItem!)
         menu.addItem(restartMenuItem!)
         launchAtLoginMenuItem = actionItem("登录时启动并开启服务", #selector(toggleLaunchAtLogin), "poweron")
         menu.addItem(launchAtLoginMenuItem!)
@@ -149,7 +147,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     private func updateActionStates() {
         startMenuItem?.isEnabled = !serviceBusy && !isRunning
-        stopMenuItem?.isEnabled = !serviceBusy && isRunning
         restartMenuItem?.isEnabled = !serviceBusy
         launchAtLoginMenuItem?.state = FileManager.default.fileExists(atPath: launchAgentPath().path) ? .on : .off
     }
@@ -170,23 +167,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 serviceEndpoint = nil
                 updateStatusTitle()
                 showAlert(title: "启动服务失败", message: String(describing: error))
-            }
-        }
-    }
-
-    @objc private func stopService() {
-        serviceStatus = "本地网关停止中..."
-        serviceEndpoint = nil
-        serviceBusy = true
-        Task { @MainActor in
-            defer { serviceBusy = false }
-            do {
-                try await bootoutIfLoaded(launchDomainAndLabel())
-                _ = try await runGateway(["stop"])
-                await refreshStatusNow()
-            } catch {
-                serviceStatus = "本地网关停止失败"
-                showAlert(title: "暂停服务失败", message: String(describing: error))
             }
         }
     }
@@ -309,8 +289,13 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             if launchAgentInstalled {
                 launchAgentNeedsMigration = try launchAgentNeedsUpdate()
             }
-            if launchAgentInstalled
-                && (status.contains("daemon: running") || launchAgentNeedsMigration) {
+            let gatewayVersion = status
+                .split(separator: "\n")
+                .first(where: { $0.hasPrefix("gateway-version: ") })
+                .map { String($0.dropFirst("gateway-version: ".count)) }
+            if gatewayVersion != appVersion()
+                || (launchAgentInstalled
+                    && (status.contains("daemon: running") || launchAgentNeedsMigration)) {
                 try await restartGatewayProcess()
                 return try await waitForGatewayStatus()
             }
@@ -730,8 +715,33 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     @objc private func quit() {
-        timer?.invalidate()
         NSApp.terminate(nil)
+    }
+
+    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if terminationInProgress {
+            return .terminateLater
+        }
+        terminationInProgress = true
+        serviceBusy = true
+        serviceStatus = "正在停止本地网关..."
+        serviceEndpoint = nil
+        Task { @MainActor in
+            do {
+                try await bootoutIfLoaded(launchDomainAndLabel())
+                _ = try await runGateway(["stop"])
+                try await waitForGatewayStopped()
+                timer?.invalidate()
+                sender.reply(toApplicationShouldTerminate: true)
+            } catch {
+                terminationInProgress = false
+                serviceBusy = false
+                await refreshStatusNow()
+                showAlert(title: "退出 Codex Mixin 失败", message: "本地网关未能停止：\(error)")
+                sender.reply(toApplicationShouldTerminate: false)
+            }
+        }
+        return .terminateLater
     }
 
     private func installLaunchAgent() throws {

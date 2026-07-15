@@ -42,6 +42,22 @@ struct OfficialWebSocketRequestError {
 }
 
 #[derive(Debug)]
+struct OfficialWebSocketState {
+    response_id: String,
+    model: String,
+    history: Vec<Value>,
+}
+
+#[derive(Debug)]
+enum OfficialWebSocketResponse {
+    Completed {
+        response_id: String,
+        output: Vec<Value>,
+    },
+    Failed,
+}
+
+#[derive(Debug)]
 struct CustomWebSocketState {
     response_id: String,
     model: String,
@@ -375,6 +391,7 @@ async fn route_responses_ws(
 ) -> anyhow::Result<()> {
     let (mut client_sender, mut client_receiver) = client_socket.split();
     let mut official_socket = None;
+    let mut official_state = None;
     let mut custom_state = None;
 
     loop {
@@ -399,11 +416,45 @@ async fn route_responses_ws(
                 route = "official_ws",
                 "routing responses websocket request"
             );
+            let request_history =
+                match official_websocket_request_history(&body, official_state.as_ref()) {
+                    Ok(history) => history,
+                    Err(err) => {
+                        let message = err.to_string();
+                        let error = json!({"message": message, "type": "invalid_request_error"});
+                        client_sender
+                            .send(AxumWsMessage::Text(
+                                json!({
+                                    "type": "response.failed",
+                                    "response": {
+                                        "id": format!("resp_{}", Uuid::new_v4().simple()),
+                                        "object": "response",
+                                        "status": "failed",
+                                        "error": error,
+                                        "output": []
+                                    },
+                                    "error": error
+                                })
+                                .to_string()
+                                .into(),
+                            ))
+                            .await?;
+                        continue;
+                    }
+                };
             let mut retry_available = true;
             let request_error = loop {
                 if official_socket.is_none() {
                     match connect_official_responses_ws(&state, &headers).await {
-                        Ok(socket) => official_socket = Some(socket),
+                        Ok(socket) => {
+                            official_socket = Some(socket);
+                            if body.get("previous_response_id").is_some() {
+                                body["input"] = Value::Array(request_history.clone());
+                                body.as_object_mut()
+                                    .expect("responses request is an object")
+                                    .remove("previous_response_id");
+                            }
+                        }
                         Err(err) if retry_available => {
                             retry_available = false;
                             tracing::warn!(
@@ -425,7 +476,20 @@ async fn route_responses_ws(
                 )
                 .await
                 {
-                    Ok(()) => break None,
+                    Ok(OfficialWebSocketResponse::Completed {
+                        response_id,
+                        output,
+                    }) => {
+                        let mut history = request_history.clone();
+                        history.extend(output);
+                        official_state = Some(OfficialWebSocketState {
+                            response_id,
+                            model: model.clone(),
+                            history,
+                        });
+                        break None;
+                    }
+                    Ok(OfficialWebSocketResponse::Failed) => break None,
                     Err(err) if !err.response_started && retry_available => {
                         retry_available = false;
                         official_socket = None;
@@ -478,6 +542,7 @@ async fn route_responses_ws(
                 "closing official websocket before custom model request"
             );
         }
+        official_state = None;
         tracing::debug!(
             model,
             route = "custom_ws",
@@ -571,7 +636,7 @@ async fn proxy_official_responses_ws(
     official_socket: &mut OfficialWebSocket,
     client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
     body: &Value,
-) -> Result<(), OfficialWebSocketRequestError> {
+) -> Result<OfficialWebSocketResponse, OfficialWebSocketRequestError> {
     official_socket
         .send(TungsteniteMessage::Text(body.to_string().into()))
         .await
@@ -600,16 +665,17 @@ async fn proxy_official_responses_ws(
                 .and_then(Value::as_str)
                 .map(str::to_owned);
         }
-        let terminal = event
+        let terminal_type = event
             .as_ref()
             .and_then(|event| event.get("type"))
             .and_then(Value::as_str)
-            .is_some_and(|event_type| {
+            .filter(|event_type| {
                 matches!(
-                    event_type,
+                    *event_type,
                     "response.completed" | "response.failed" | "response.incomplete"
                 )
-            });
+            })
+            .map(str::to_owned);
         match message {
             TungsteniteMessage::Ping(bytes) => {
                 official_socket
@@ -644,8 +710,41 @@ async fn proxy_official_responses_ws(
                 }
             }
         }
-        if terminal {
-            return Ok(());
+        if let Some(terminal_type) = terminal_type {
+            if terminal_type != "response.completed" {
+                return Ok(OfficialWebSocketResponse::Failed);
+            }
+            let response = event
+                .as_ref()
+                .and_then(|event| event.get("response"))
+                .ok_or_else(|| OfficialWebSocketRequestError {
+                    source: anyhow::anyhow!("official completed response is missing response"),
+                    response_started,
+                    response_id: response_id.clone(),
+                })?;
+            let completed_response_id = response
+                .get("id")
+                .and_then(Value::as_str)
+                .filter(|response_id| !response_id.is_empty())
+                .ok_or_else(|| OfficialWebSocketRequestError {
+                    source: anyhow::anyhow!("official completed response is missing id"),
+                    response_started,
+                    response_id: response_id.clone(),
+                })?
+                .to_owned();
+            let output = response
+                .get("output")
+                .and_then(Value::as_array)
+                .ok_or_else(|| OfficialWebSocketRequestError {
+                    source: anyhow::anyhow!("official completed response output must be an array"),
+                    response_started,
+                    response_id: response_id.clone(),
+                })?
+                .clone();
+            return Ok(OfficialWebSocketResponse::Completed {
+                response_id: completed_response_id,
+                output,
+            });
         }
     }
     Err(OfficialWebSocketRequestError {
@@ -653,6 +752,39 @@ async fn proxy_official_responses_ws(
         response_started,
         response_id,
     })
+}
+
+fn official_websocket_request_history(
+    body: &Value,
+    state: Option<&OfficialWebSocketState>,
+) -> anyhow::Result<Vec<Value>> {
+    let incremental_input = body
+        .get("input")
+        .and_then(Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("official request input must be an array"))?;
+    let Some(previous_response_id) = body.get("previous_response_id").and_then(Value::as_str)
+    else {
+        return Ok(incremental_input.clone());
+    };
+    let state = state.ok_or_else(|| {
+        anyhow::anyhow!("unknown official previous_response_id: {previous_response_id}")
+    })?;
+    if previous_response_id != state.response_id {
+        anyhow::bail!("unknown official previous_response_id: {previous_response_id}");
+    }
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("official request is missing model"))?;
+    if model != state.model {
+        anyhow::bail!(
+            "official previous_response_id belongs to model {}",
+            state.model
+        );
+    }
+    let mut history = state.history.clone();
+    history.extend(incremental_input.iter().cloned());
+    Ok(history)
 }
 
 async fn proxy_custom_responses_ws(

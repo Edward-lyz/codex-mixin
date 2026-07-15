@@ -427,12 +427,17 @@ async fn mock_official_responses_ws(
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned),
     );
-    state.websocket_connections.fetch_add(1, Ordering::SeqCst);
-    ws.on_upgrade(move |socket| serve_mock_official_websocket(socket, state))
+    let connection_id = state.websocket_connections.fetch_add(1, Ordering::SeqCst) + 1;
+    ws.on_upgrade(move |socket| serve_mock_official_websocket(socket, state, connection_id))
         .into_response()
 }
 
-async fn serve_mock_official_websocket(mut socket: WebSocket, state: OfficialState) {
+async fn serve_mock_official_websocket(
+    mut socket: WebSocket,
+    state: OfficialState,
+    connection_id: usize,
+) {
+    let mut last_response_id = None;
     while let Some(Ok(message)) = socket.next().await {
         let body = match message {
             AxumWsMessage::Text(text) => serde_json::from_str::<Value>(&text).unwrap(),
@@ -444,8 +449,51 @@ async fn serve_mock_official_websocket(mut socket: WebSocket, state: OfficialSta
             AxumWsMessage::Pong(_) => continue,
             AxumWsMessage::Close(_) => break,
         };
-        state.requests.lock().unwrap().push(body);
-        let response_id = format!("official_{}", state.requests.lock().unwrap().len());
+        let previous_response_id = body
+            .get("previous_response_id")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let request_number = {
+            let mut requests = state.requests.lock().unwrap();
+            requests.push(body);
+            requests.len()
+        };
+        if previous_response_id.is_some() && previous_response_id != last_response_id {
+            let error = json!({
+                "message": format!(
+                    "Previous response with id '{}' not found.",
+                    previous_response_id.as_deref().unwrap()
+                ),
+                "type": "invalid_request_error"
+            });
+            socket
+                .send(AxumWsMessage::Text(
+                    json!({
+                        "type": "response.failed",
+                        "response": {
+                            "id": format!("failed_{connection_id}_{request_number}"),
+                            "object": "response",
+                            "status": "failed",
+                            "error": error,
+                            "output": []
+                        },
+                        "error": error
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .unwrap();
+            continue;
+        }
+        let response_id = format!("official_{connection_id}_{request_number}");
+        let output = json!([{
+            "type": "message",
+            "id": format!("message_{connection_id}_{request_number}"),
+            "role": "assistant",
+            "status": "completed",
+            "content": [{"type":"output_text","text":"official reply","annotations":[]}]
+        }]);
         for status in ["in_progress", "completed"] {
             socket
                 .send(AxumWsMessage::Text(
@@ -455,7 +503,7 @@ async fn serve_mock_official_websocket(mut socket: WebSocket, state: OfficialSta
                             "id": response_id,
                             "object": "response",
                             "status": status,
-                            "output": []
+                            "output": output
                         }
                     })
                     .to_string()
@@ -463,6 +511,9 @@ async fn serve_mock_official_websocket(mut socket: WebSocket, state: OfficialSta
                 ))
                 .await
                 .unwrap();
+            if status == "completed" {
+                last_response_id = Some(response_id.clone());
+            }
             if matches!(
                 (state.websocket_behavior, status),
                 (OfficialWebSocketBehavior::CloseAfterCreated, "in_progress")
@@ -1454,16 +1505,32 @@ async fn reconnects_official_upstream_without_resetting_client_websocket() {
         .send(WsMessage::Text(official.to_string().into()))
         .await
         .unwrap();
-    assert!(
-        websocket_response_frames(&mut socket)
-            .await
-            .join("\n")
-            .contains("\"type\":\"response.completed\"")
-    );
+    let first_frames = websocket_response_frames(&mut socket).await;
+    let first_completed = first_frames
+        .iter()
+        .filter_map(|frame| serde_json::from_str::<Value>(frame).ok())
+        .find(|event| event["type"] == "response.completed")
+        .unwrap();
+    let first_response_id = first_completed["response"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let first_output = first_completed["response"]["output"]
+        .as_array()
+        .unwrap()
+        .clone();
 
     tokio::time::sleep(Duration::from_millis(25)).await;
+    let incremental_input = json!({
+        "type": "message",
+        "role": "user",
+        "content": [{"type":"input_text","text":"follow up after reconnect"}]
+    });
+    let mut follow_up = official.clone();
+    follow_up["previous_response_id"] = json!(first_response_id);
+    follow_up["input"] = json!([incremental_input.clone()]);
     socket
-        .send(WsMessage::Text(official.to_string().into()))
+        .send(WsMessage::Text(follow_up.to_string().into()))
         .await
         .unwrap();
     let second_frames = tokio::time::timeout(
@@ -1477,8 +1544,56 @@ async fn reconnects_official_upstream_without_resetting_client_websocket() {
             .join("\n")
             .contains("\"type\":\"response.completed\"")
     );
-    assert_eq!(official_requests.lock().unwrap().len(), 2);
-    assert_eq!(official_websocket_connections.load(Ordering::SeqCst), 2);
+    let second_completed = second_frames
+        .iter()
+        .filter_map(|frame| serde_json::from_str::<Value>(frame).ok())
+        .find(|event| event["type"] == "response.completed")
+        .unwrap();
+    let second_response_id = second_completed["response"]["id"]
+        .as_str()
+        .unwrap()
+        .to_owned();
+    let second_output = second_completed["response"]["output"]
+        .as_array()
+        .unwrap()
+        .clone();
+
+    tokio::time::sleep(Duration::from_millis(25)).await;
+    let compaction_trigger = json!({"type":"compaction_trigger"});
+    let mut compaction = official.clone();
+    compaction["previous_response_id"] = json!(second_response_id);
+    compaction["input"] = json!([compaction_trigger.clone()]);
+    socket
+        .send(WsMessage::Text(compaction.to_string().into()))
+        .await
+        .unwrap();
+    let compaction_frames = tokio::time::timeout(
+        Duration::from_secs(1),
+        websocket_response_frames(&mut socket),
+    )
+    .await
+    .expect("gateway did not finish compaction after reconnect");
+    assert!(
+        compaction_frames
+            .join("\n")
+            .contains("\"type\":\"response.completed\"")
+    );
+
+    let official_requests = official_requests.lock().unwrap();
+    assert_eq!(official_requests.len(), 3);
+    assert!(official_requests[1].get("previous_response_id").is_none());
+    let mut expected_input = official["input"].as_array().unwrap().clone();
+    expected_input.extend(first_output);
+    expected_input.push(incremental_input);
+    assert_eq!(
+        official_requests[1]["input"],
+        Value::Array(expected_input.clone())
+    );
+    assert!(official_requests[2].get("previous_response_id").is_none());
+    expected_input.extend(second_output);
+    expected_input.push(compaction_trigger);
+    assert_eq!(official_requests[2]["input"], Value::Array(expected_input));
+    assert_eq!(official_websocket_connections.load(Ordering::SeqCst), 3);
 }
 
 #[tokio::test]
