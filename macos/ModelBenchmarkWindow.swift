@@ -365,7 +365,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
                 if snapshot?.status != "running" {
                     return
                 }
-                try? await Task.sleep(for: .seconds(1))
+                try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
         }
     }

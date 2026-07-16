@@ -67,6 +67,7 @@ jobs:
         if: matrix.os == 'macos'
         env:
           CARGO_BUILD_TARGET: ${{ matrix.target }}
+          MACOSX_DEPLOYMENT_TARGET: "12.0"
         run: ./macos/build_app.sh
       - name: Package CLI archive
         run: ./scripts/package-cli.sh "${{ matrix.target }}" "${{ steps.version.outputs.version }}" dist/release

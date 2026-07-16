@@ -30,4 +30,6 @@ jobs:
         run: cargo test --locked --all-targets
       - name: Build macOS app
         if: runner.os == 'macOS'
+        env:
+          MACOSX_DEPLOYMENT_TARGET: "12.0"
         run: ./macos/build_app.sh

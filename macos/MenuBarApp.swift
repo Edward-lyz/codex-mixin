@@ -350,7 +350,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             } catch {
                 lastError = String(describing: error)
             }
-            try await Task.sleep(for: .milliseconds(250))
+            try await Task.sleep(nanoseconds: 250_000_000)
         }
         throw GatewayError.command("网关启动后 5 秒内未就绪：\(lastError)")
     }
@@ -377,7 +377,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     throw GatewayError.command("检查网关进程 \(pid) 失败：errno \(errorCode)")
                 }
             }
-            try await Task.sleep(for: .milliseconds(250))
+            try await Task.sleep(nanoseconds: 250_000_000)
         }
         throw GatewayError.command("网关在 5 秒内未停止，可能存在不受 Codex Mixin 管理的进程。")
     }

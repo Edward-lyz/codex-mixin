@@ -26,10 +26,12 @@ if [[ ! -x "$BIN_PATH" ]]; then
   echo "missing binary: $BIN_PATH" >&2
   exit 1
 fi
+codesign --verify --deep --strict --verbose=2 "$APP_PATH"
 
 rm -rf "$STAGING_DIR"
 mkdir -p "$STAGING_DIR/bin" "$STAGING_DIR/.background" "$OUT_DIR"
 cp -R "$APP_PATH" "$STAGING_DIR/Codex Mixin.app"
+codesign --verify --deep --strict --verbose=2 "$STAGING_DIR/Codex Mixin.app"
 cp "$BIN_PATH" "$STAGING_DIR/bin/codex-mixin"
 cp "$ROOT_DIR/README.md" "$STAGING_DIR/README.md"
 cp "$ROOT_DIR/LICENSE" "$STAGING_DIR/LICENSE"
