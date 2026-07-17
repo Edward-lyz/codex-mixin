@@ -1,5 +1,6 @@
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
+use std::sync::LazyLock;
 
 use regex::Regex;
 use serde::Deserialize;
@@ -130,6 +131,10 @@ impl ModelMetadataResolver {
         self.entries.len()
     }
 
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
+    }
+
     fn from_pi_json(value: Value) -> anyhow::Result<Self> {
         let parsed: PiModelsJson = serde_json::from_value(value)?;
         let mut entries = Vec::new();
@@ -219,11 +224,63 @@ fn input_modalities(input_modalities: Option<Vec<String>>, supports_vision: bool
     }
 }
 
+static DECIMAL_MODEL_VERSION: LazyLock<Regex> =
+    LazyLock::new(|| Regex::new(r"(\d+)\.(\d+)").expect("valid decimal model version regex"));
+
+const BUILTIN_MODEL_RULE_SPECS: &[(&str, u64, Option<u64>, bool)] = &[
+    (r"(?i)\b(kimi[- ]?k2|kimi)\b", 262_144, Some(262_144), true),
+    (r"(?i)\bminimax[- ]?m3\b", 512_000, Some(512_000), true),
+    (r"(?i)\bdeepseek[- ]?v4\b", 1_000_000, Some(384_000), false),
+    (r"(?i)\bglm[- ]?5[.-]?2\b", 1_048_576, Some(131_072), false),
+    (r"(?i)\bglm[- ]?5\b", 200_000, Some(128_000), false),
+    (r"(?i)\bglm[- ]?4[.-]?7\b", 200_000, Some(128_000), false),
+    (
+        r"(?i)\bclaude.*(sonnet[- ]?5|fable[- ]?5|opus[- ]?4[.-]?[678]|mythos)\b",
+        1_000_000,
+        Some(128_000),
+        true,
+    ),
+    (
+        r"(?i)\bclaude.*haiku[- ]?4[.-]?5\b",
+        200_000,
+        Some(64_000),
+        true,
+    ),
+    (
+        r"(?i)\bgpt[- ]?5[.-]?[45]\b",
+        1_050_000,
+        Some(128_000),
+        true,
+    ),
+];
+
+struct BuiltinModelRule {
+    regex: Regex,
+    pattern: &'static str,
+    context_window: u64,
+    max_output_tokens: Option<u64>,
+    vision: bool,
+}
+
+static BUILTIN_MODEL_RULES: LazyLock<Vec<BuiltinModelRule>> = LazyLock::new(|| {
+    BUILTIN_MODEL_RULE_SPECS
+        .iter()
+        .map(
+            |&(pattern, context_window, max_output_tokens, vision)| BuiltinModelRule {
+                regex: Regex::new(pattern).expect("valid builtin model regex"),
+                pattern,
+                context_window,
+                max_output_tokens,
+                vision,
+            },
+        )
+        .collect()
+});
+
 fn token_variants(value: &str) -> Vec<Vec<String>> {
     let normalized = value.to_ascii_lowercase();
     let mut variants = vec![tokens(&normalized)];
-    let decimal_as_p = Regex::new(r"(\d+)\.(\d+)").unwrap();
-    let p_variant = decimal_as_p.replace_all(&normalized, "${1}p${2}");
+    let p_variant = DECIMAL_MODEL_VERSION.replace_all(&normalized, "${1}p${2}");
     let p_tokens = tokens(&p_variant);
     if p_tokens != variants[0] {
         variants.push(p_tokens);
@@ -235,10 +292,10 @@ fn token_variants(value: &str) -> Vec<Vec<String>> {
 }
 
 fn tokens(value: &str) -> Vec<String> {
-    Regex::new(r"[a-z0-9]+")
-        .unwrap()
-        .find_iter(value)
-        .map(|match_| match_.as_str().to_owned())
+    value
+        .split(|character: char| !character.is_ascii_alphanumeric())
+        .filter(|token| !token.is_empty())
+        .map(str::to_owned)
         .collect()
 }
 
@@ -268,42 +325,17 @@ fn provider_priority(key: &str) -> u8 {
 
 fn builtin_metadata(model: &str, default_context_window: u64) -> ModelMetadata {
     let lower = model.to_ascii_lowercase();
-    for (pattern, context_window, max_output_tokens, vision) in [
-        (r"(?i)\b(kimi[- ]?k2|kimi)\b", 262_144, Some(262_144), true),
-        (r"(?i)\bminimax[- ]?m3\b", 512_000, Some(512_000), true),
-        (r"(?i)\bdeepseek[- ]?v4\b", 1_000_000, Some(384_000), false),
-        (r"(?i)\bglm[- ]?5[.-]?2\b", 1_048_576, Some(131_072), false),
-        (r"(?i)\bglm[- ]?5\b", 200_000, Some(128_000), false),
-        (r"(?i)\bglm[- ]?4[.-]?7\b", 200_000, Some(128_000), false),
-        (
-            r"(?i)\bclaude.*(sonnet[- ]?5|fable[- ]?5|opus[- ]?4[.-]?[678]|mythos)\b",
-            1_000_000,
-            Some(128_000),
-            true,
-        ),
-        (
-            r"(?i)\bclaude.*haiku[- ]?4[.-]?5\b",
-            200_000,
-            Some(64_000),
-            true,
-        ),
-        (
-            r"(?i)\bgpt[- ]?5[.-]?[45]\b",
-            1_050_000,
-            Some(128_000),
-            true,
-        ),
-    ] {
-        if Regex::new(pattern).unwrap().is_match(&lower) {
+    for rule in BUILTIN_MODEL_RULES.iter() {
+        if rule.regex.is_match(&lower) {
             return ModelMetadata {
-                context_window,
-                max_output_tokens,
-                input_modalities: if vision {
+                context_window: rule.context_window,
+                max_output_tokens: rule.max_output_tokens,
+                input_modalities: if rule.vision {
                     vec!["text".to_owned(), "image".to_owned()]
                 } else {
                     vec!["text".to_owned()]
                 },
-                source: format!("builtin:{pattern}"),
+                source: format!("builtin:{}", rule.pattern),
             };
         }
     }

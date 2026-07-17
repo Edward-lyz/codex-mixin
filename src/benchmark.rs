@@ -2,8 +2,8 @@ use std::fs;
 use std::fs::OpenOptions;
 use std::io::Write;
 use std::path::{Path, PathBuf};
-use std::sync::Arc;
 use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, RwLock};
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
@@ -18,7 +18,7 @@ use crate::anthropic::ModelInfo;
 use crate::config::{
     GatewayConfig, ProviderPreset, UpstreamAuthHeader, UpstreamKind, stored_config_path,
 };
-use crate::sse::drain_events;
+use crate::sse::SseDecoder;
 
 pub const BENCHMARK_TARGET_OUTPUT_TOKENS: u64 = 100;
 const BENCHMARK_FILE_VERSION: u64 = 1;
@@ -90,6 +90,7 @@ pub struct BenchmarkSnapshotResponse {
 pub struct ModelBenchmarkManager {
     snapshot_path: Arc<PathBuf>,
     running: Arc<AtomicBool>,
+    snapshot_cache: Arc<RwLock<Option<ModelBenchmarkSnapshot>>>,
 }
 
 struct RunningReset(Arc<AtomicBool>);
@@ -105,6 +106,7 @@ impl ModelBenchmarkManager {
         Self {
             snapshot_path: Arc::new(snapshot_path),
             running: Arc::new(AtomicBool::new(false)),
+            snapshot_cache: Arc::new(RwLock::new(None)),
         }
     }
 
@@ -113,8 +115,19 @@ impl ModelBenchmarkManager {
     }
 
     pub fn snapshot(&self) -> anyhow::Result<Option<ModelBenchmarkSnapshot>> {
-        let Some(mut snapshot) = load_snapshot(&self.snapshot_path)? else {
-            return Ok(None);
+        let cached = self
+            .snapshot_cache
+            .read()
+            .map_err(|_| anyhow::anyhow!("model benchmark snapshot cache is poisoned"))?
+            .clone();
+        let (mut snapshot, loaded_from_disk) = match cached {
+            Some(snapshot) => (snapshot, false),
+            None => {
+                let Some(snapshot) = load_snapshot(&self.snapshot_path)? else {
+                    return Ok(None);
+                };
+                (snapshot, true)
+            }
         };
         if snapshot.status == BenchmarkRunStatus::Running && !self.running.load(Ordering::Acquire) {
             let now = unix_millis()?;
@@ -127,7 +140,13 @@ impl ModelBenchmarkManager {
                 snapshot.cost_error =
                     Some("benchmark stopped before cost could be calculated".to_owned());
             }
-            save_snapshot(&self.snapshot_path, &snapshot)?;
+            self.persist_snapshot(&snapshot)?;
+        } else if loaded_from_disk {
+            *self
+                .snapshot_cache
+                .write()
+                .map_err(|_| anyhow::anyhow!("model benchmark snapshot cache is poisoned"))? =
+                Some(snapshot.clone());
         }
         Ok(Some(snapshot))
     }
@@ -170,7 +189,7 @@ impl ModelBenchmarkManager {
             },
             cost_error: None,
         };
-        if let Err(error) = save_snapshot(&self.snapshot_path, &snapshot) {
+        if let Err(error) = self.persist_snapshot(&snapshot) {
             self.running.store(false, Ordering::Release);
             return Err(error);
         }
@@ -220,17 +239,17 @@ impl ModelBenchmarkManager {
             None
         };
         snapshot.updated_at = unix_millis()?;
-        save_snapshot(&self.snapshot_path, &snapshot)?;
+        self.persist_snapshot(&snapshot)?;
 
         for model in models {
             snapshot.current_model = Some(model.id.clone());
             snapshot.updated_at = unix_millis()?;
-            save_snapshot(&self.snapshot_path, &snapshot)?;
+            self.persist_snapshot(&snapshot)?;
 
             let result = benchmark_model(&client, &config, &model.id, timeout).await?;
             snapshot.results.push(result);
             snapshot.updated_at = unix_millis()?;
-            save_snapshot(&self.snapshot_path, &snapshot)?;
+            self.persist_snapshot(&snapshot)?;
         }
 
         if let Some(quota_before) = quota_before {
@@ -258,11 +277,11 @@ impl ModelBenchmarkManager {
         snapshot.updated_at = now;
         snapshot.finished_at = Some(now);
         snapshot.current_model = None;
-        save_snapshot(&self.snapshot_path, &snapshot)
+        self.persist_snapshot(&snapshot)
     }
 
     fn persist_failed_run(&self, message: String) -> anyhow::Result<()> {
-        let Some(mut snapshot) = load_snapshot(&self.snapshot_path)? else {
+        let Some(mut snapshot) = self.snapshot()? else {
             anyhow::bail!("model benchmark snapshot disappeared while the run was active");
         };
         let now = unix_millis()?;
@@ -275,7 +294,17 @@ impl ModelBenchmarkManager {
             snapshot.cost_error =
                 Some("benchmark failed before cost could be calculated".to_owned());
         }
-        save_snapshot(&self.snapshot_path, &snapshot)
+        self.persist_snapshot(&snapshot)
+    }
+
+    fn persist_snapshot(&self, snapshot: &ModelBenchmarkSnapshot) -> anyhow::Result<()> {
+        save_snapshot(&self.snapshot_path, snapshot)?;
+        *self
+            .snapshot_cache
+            .write()
+            .map_err(|_| anyhow::anyhow!("model benchmark snapshot cache is poisoned"))? =
+            Some(snapshot.clone());
+        Ok(())
     }
 }
 
@@ -474,7 +503,7 @@ async fn benchmark_request(
     let mut last_token_at = None;
     let mut output_tokens = None;
     let mut openai_finished = false;
-    let mut buffer = Vec::new();
+    let mut decoder = SseDecoder::default();
     let mut stream = response.bytes_stream();
     loop {
         let chunk = match timeout_at(deadline, stream.next()).await {
@@ -508,8 +537,7 @@ async fn benchmark_request(
             }
         };
         let chunk_received_at = Instant::now();
-        buffer.extend_from_slice(&chunk);
-        for event in drain_events(&mut buffer) {
+        for event in decoder.push(&chunk) {
             if config.upstream_kind == UpstreamKind::OpenAiChat && event.data == "[DONE]" {
                 return finish_metrics(started, first_token_at, last_token_at, output_tokens);
             }
@@ -988,6 +1016,8 @@ mod tests {
                 assert_eq!(snapshot.cost_currency.as_deref(), Some("CNY"));
                 assert!(snapshot.cost_error.is_none());
                 assert_eq!(fs::read_dir(directory.path()).unwrap().count(), 1);
+                fs::remove_file(&path).unwrap();
+                assert_eq!(manager.snapshot().unwrap().unwrap().run_id, snapshot.run_id);
                 return;
             }
             tokio::time::sleep(Duration::from_millis(10)).await;

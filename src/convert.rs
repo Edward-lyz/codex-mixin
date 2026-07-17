@@ -119,6 +119,14 @@ pub fn responses_to_anthropic(
     body: &Value,
     config: &GatewayConfig,
 ) -> Result<ConvertedRequest, GatewayError> {
+    responses_to_anthropic_with_web_search(body, config, config.enable_web_search_tool)
+}
+
+pub(crate) fn responses_to_anthropic_with_web_search(
+    body: &Value,
+    config: &GatewayConfig,
+    web_search_enabled: bool,
+) -> Result<ConvertedRequest, GatewayError> {
     if body.get("stream").and_then(Value::as_bool) != Some(true) {
         return Err(GatewayError::BadRequest(
             "Codex gateway currently requires stream=true".to_owned(),
@@ -172,7 +180,12 @@ pub fn responses_to_anthropic(
     merge_consecutive_messages(&mut messages);
 
     let active_tools = collect_active_tools(body)?;
-    let (tools, tool_names) = convert_tools(Some(&active_tools), config, use_mcp_bridge_names)?;
+    let (tools, tool_names) = convert_tools(
+        Some(&active_tools),
+        config,
+        use_mcp_bridge_names,
+        web_search_enabled,
+    )?;
     let thinking = convert_thinking(&model, max_tokens, body.get("reasoning"), config)?;
     let tool_choice = if tools.is_empty() {
         None
@@ -623,6 +636,7 @@ fn convert_tools(
     tools: Option<&Value>,
     config: &GatewayConfig,
     use_mcp_bridge_names: bool,
+    web_search_enabled: bool,
 ) -> Result<(Vec<Tool>, ToolNameMap), GatewayError> {
     let mut result = Vec::new();
     let mut names = ToolNameMap::default();
@@ -634,14 +648,13 @@ fn convert_tools(
         match tool.get("type").and_then(Value::as_str) {
             Some("function")
                 if is_codex_web_search_function(tool)
-                    && config.enable_web_search_tool
+                    && web_search_enabled
                     && !web_search_added =>
             {
                 result.push(web_search_server_tool(config, tool)?);
                 web_search_added = true;
             }
-            Some("function")
-                if is_codex_web_search_function(tool) && config.enable_web_search_tool => {}
+            Some("function") if is_codex_web_search_function(tool) && web_search_enabled => {}
             Some("function") if is_codex_web_search_function(tool) => {
                 tracing::debug!("omitting unavailable hosted web_search tool");
             }
@@ -712,12 +725,12 @@ fn convert_tools(
                 result.push(converted);
             }
             Some("web_search" | "web_search_preview")
-                if config.enable_web_search_tool && !web_search_added =>
+                if web_search_enabled && !web_search_added =>
             {
                 result.push(web_search_server_tool(config, tool)?);
                 web_search_added = true;
             }
-            Some("web_search" | "web_search_preview") if config.enable_web_search_tool => {}
+            Some("web_search" | "web_search_preview") if web_search_enabled => {}
             Some("web_search" | "web_search_preview") => {
                 tracing::debug!("omitting unavailable hosted web_search tool");
             }

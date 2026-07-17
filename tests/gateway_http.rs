@@ -151,8 +151,12 @@ async fn spawn_baidu_metadata_upstream() -> String {
 async fn spawn_session_required_upstream() -> String {
     let app = Router::new().route(
         "/v1/messages",
-        post(|Json(body): Json<Value>| async move {
-            if body["metadata"]["session_id"] != "stable-session" {
+        post(|headers: HeaderMap, Json(body): Json<Value>| async move {
+            let valid_hash_key = headers
+                .get("x-hash-key")
+                .and_then(|value| value.to_str().ok())
+                .is_some_and(|value| uuid::Uuid::parse_str(value).is_ok());
+            if body["metadata"]["session_id"] != "stable-session" || !valid_hash_key {
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(json!({"error":{"code":"SESSION_REQUIRED"}})),
@@ -267,7 +271,7 @@ async fn mock_baidu_available_models(
 async fn mock_messages(
     State(state): State<MockState>,
     headers: HeaderMap,
-    Json(body): Json<Value>,
+    Json(mut body): Json<Value>,
 ) -> Response {
     let auth = headers
         .get(header::AUTHORIZATION)
@@ -298,6 +302,10 @@ async fn mock_messages(
             })
         });
     let request_index = state.requests.lock().unwrap().len();
+    body["__x_hash_key"] = headers
+        .get("x-hash-key")
+        .and_then(|value| value.to_str().ok())
+        .map_or(Value::Null, |value| json!(value));
     state.requests.lock().unwrap().push(body);
     let payload = match state.mode {
         MockMode::Text => text_sse(),
@@ -368,12 +376,16 @@ async fn mock_image_generations(
 async fn mock_openai_chat_completions(
     State(requests): State<Arc<Mutex<Vec<Value>>>>,
     headers: HeaderMap,
-    Json(body): Json<Value>,
+    Json(mut body): Json<Value>,
 ) -> Response {
     let auth = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok());
     assert_eq!(auth, Some("Bearer upstream-key"));
+    body["__x_hash_key"] = headers
+        .get("x-hash-key")
+        .and_then(|value| value.to_str().ok())
+        .map_or(Value::Null, |value| json!(value));
     requests.lock().unwrap().push(body);
     Response::builder()
         .status(StatusCode::OK)
@@ -1123,6 +1135,31 @@ async fn maps_openai_chat_stream_to_responses_sse() {
 }
 
 #[tokio::test]
+async fn maps_oneapi_affinity_for_openai_chat() {
+    let (upstream_url, requests) = spawn_mock_openai_chat().await;
+    let mut config = test_config(upstream_url);
+    config.provider_preset = ProviderPreset::BaiduOneApi;
+    config.upstream_kind = UpstreamKind::OpenAiChat;
+    config.upstream_messages_path = "/chat/completions".to_owned();
+    config.upstream_models_path = "/models".to_owned();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("thread-id", "openai-chat-thread")
+        .json(&responses_request())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let _ = response.text().await.unwrap();
+
+    let upstream_request = requests.lock().unwrap()[0].clone();
+    let hash_key = upstream_request["__x_hash_key"].as_str().unwrap();
+    assert!(uuid::Uuid::parse_str(hash_key).is_ok());
+}
+
+#[tokio::test]
 async fn maps_tool_use_to_responses_function_call() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Tool).await;
     let gateway_url = spawn_gateway(upstream_url).await;
@@ -1600,6 +1637,13 @@ async fn retries_demoted_web_search_on_custom_websocket() {
             .starts_with("web-search-session-web-search-retry-")
     );
     assert_eq!(upstream_requests[2]["tool_choice"]["name"], "web_search");
+    let hash_key = upstream_requests[0]["__x_hash_key"].as_str().unwrap();
+    assert!(uuid::Uuid::parse_str(hash_key).is_ok());
+    assert!(
+        upstream_requests
+            .iter()
+            .all(|request| request["__x_hash_key"].as_str() == Some(hash_key))
+    );
 }
 
 #[tokio::test]

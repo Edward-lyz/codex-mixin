@@ -1,6 +1,6 @@
 use std::collections::HashMap;
 use std::sync::Arc;
-use std::time::Duration;
+use std::time::{Duration, Instant, SystemTime};
 
 use axum::body::Body;
 use axum::extract::State;
@@ -20,11 +20,11 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use tower_http::decompression::RequestDecompressionLayer;
 use uuid::Uuid;
 
-use crate::anthropic::{BaiduAvailableModelsResponse, MessageRequest, ModelsResponse};
+use crate::anthropic::{BaiduAvailableModelsResponse, MessageRequest, ModelInfo, ModelsResponse};
 use crate::benchmark::{BenchmarkSnapshotResponse, ModelBenchmarkManager, StartBenchmarkRequest};
 use crate::catalog::{codex_catalog_from_models_with_metadata, load_template_catalog};
 use crate::config::{GatewayConfig, ProviderPreset, UpstreamAuthHeader, UpstreamKind};
-use crate::convert::responses_to_anthropic;
+use crate::convert::responses_to_anthropic_with_web_search;
 use crate::error::GatewayError;
 use crate::image_generation::ImageRouteRegistry;
 use crate::model_metadata::ModelMetadataResolver;
@@ -32,12 +32,15 @@ use crate::openai_chat::responses_to_openai_chat;
 use crate::openai_events::{
     map_anthropic_sse_with_image_routes, map_openai_chat_sse_with_image_routes,
 };
-use crate::sse::drain_events;
+use crate::sse::SseDecoder;
 use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};
 
 type OfficialWebSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 type AnthropicByteStream = BoxStream<'static, Result<Bytes, reqwest::Error>>;
 const HOSTED_WEB_SEARCH_RETRY_ATTEMPTS: usize = 3;
+const MODEL_CACHE_TTL: Duration = Duration::from_secs(30);
+const CATALOG_SOURCE_CACHE_TTL: Duration = Duration::from_secs(60);
+const CATALOG_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(30);
 
 enum AnthropicStreamDisposition {
     Ready(AnthropicByteStream),
@@ -74,6 +77,39 @@ struct CustomWebSocketState {
     history: Vec<Value>,
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct OneApiRouting {
+    session_id: String,
+    hash_key: String,
+}
+
+struct CachedModels {
+    fetched_at: Instant,
+    models: Vec<ModelInfo>,
+}
+
+struct CatalogSources {
+    template: Option<Value>,
+    metadata: ModelMetadataResolver,
+}
+
+struct CachedCatalogSources {
+    loaded_at: Instant,
+    sources: Arc<CatalogSources>,
+}
+
+struct CachedCatalogResponse {
+    generated_at: Instant,
+    body: Bytes,
+}
+
+struct CachedOfficialAuth {
+    modified_at: SystemTime,
+    file_len: u64,
+    authorization: axum::http::HeaderValue,
+    account_id: axum::http::HeaderValue,
+}
+
 #[derive(Clone)]
 pub struct AppState {
     config: Arc<GatewayConfig>,
@@ -81,6 +117,10 @@ pub struct AppState {
     image_routes: ImageRouteRegistry,
     benchmarks: ModelBenchmarkManager,
     web_search_capabilities: WebSearchCapabilities,
+    models_cache: Arc<tokio::sync::Mutex<Option<CachedModels>>>,
+    catalog_sources_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogSources>>>,
+    catalog_response_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogResponse>>>,
+    official_auth_cache: Arc<tokio::sync::Mutex<Option<CachedOfficialAuth>>>,
 }
 
 impl AppState {
@@ -103,6 +143,10 @@ impl AppState {
             image_routes: ImageRouteRegistry::default(),
             benchmarks: ModelBenchmarkManager::from_default_path(),
             web_search_capabilities,
+            models_cache: Arc::new(tokio::sync::Mutex::new(None)),
+            catalog_sources_cache: Arc::new(tokio::sync::Mutex::new(None)),
+            catalog_response_cache: Arc::new(tokio::sync::Mutex::new(None)),
+            official_auth_cache: Arc::new(tokio::sync::Mutex::new(None)),
         })
     }
 
@@ -113,7 +157,29 @@ impl AppState {
             .then(|| self.image_routes.clone())
     }
 
-    pub async fn fetch_models(&self) -> Result<Vec<crate::anthropic::ModelInfo>, GatewayError> {
+    pub async fn fetch_models(&self) -> Result<Vec<ModelInfo>, GatewayError> {
+        let mut cache = self.models_cache.lock().await;
+        if let Some(cached) = cache
+            .as_ref()
+            .filter(|cached| cached.fetched_at.elapsed() < MODEL_CACHE_TTL)
+        {
+            let mut models = cached.models.clone();
+            drop(cache);
+            self.web_search_capabilities.annotate_models(&mut models);
+            return Ok(models);
+        }
+
+        let mut models = self.fetch_models_uncached().await?;
+        *cache = Some(CachedModels {
+            fetched_at: Instant::now(),
+            models: models.clone(),
+        });
+        drop(cache);
+        self.web_search_capabilities.annotate_models(&mut models);
+        Ok(models)
+    }
+
+    async fn fetch_models_uncached(&self) -> Result<Vec<ModelInfo>, GatewayError> {
         let response = self
             .apply_upstream_auth(self.client.get(self.config.upstream_models_url()))
             .send()
@@ -185,8 +251,67 @@ impl AppState {
                 true
             });
         }
-        self.web_search_capabilities.annotate_models(&mut models);
         Ok(models)
+    }
+
+    async fn catalog_sources(&self) -> Result<Arc<CatalogSources>, GatewayError> {
+        let mut cache = self.catalog_sources_cache.lock().await;
+        if let Some(cached) = cache
+            .as_ref()
+            .filter(|cached| cached.loaded_at.elapsed() < CATALOG_SOURCE_CACHE_TTL)
+        {
+            return Ok(Arc::clone(&cached.sources));
+        }
+        let sources = tokio::task::spawn_blocking(|| -> anyhow::Result<CatalogSources> {
+            Ok(CatalogSources {
+                template: load_template_catalog(None)?,
+                metadata: ModelMetadataResolver::from_default_files()?,
+            })
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("catalog source loader failed: {error}"))??;
+        let sources = Arc::new(sources);
+        *cache = Some(CachedCatalogSources {
+            loaded_at: Instant::now(),
+            sources: Arc::clone(&sources),
+        });
+        Ok(sources)
+    }
+
+    async fn catalog_response(&self) -> Result<Bytes, GatewayError> {
+        let mut cache = self.catalog_response_cache.lock().await;
+        if let Some(cached) = cache
+            .as_ref()
+            .filter(|cached| cached.generated_at.elapsed() < CATALOG_RESPONSE_CACHE_TTL)
+        {
+            return Ok(cached.body.clone());
+        }
+
+        let models = self.fetch_models().await?;
+        let sources = self.catalog_sources().await?;
+        let default_context_window = self.config.default_context_window;
+        let body = tokio::task::spawn_blocking(move || {
+            let catalog = codex_catalog_from_models_with_metadata(
+                &models,
+                default_context_window,
+                sources.template.as_ref(),
+                &sources.metadata,
+            );
+            serde_json::to_vec(&catalog).map(Bytes::from)
+        })
+        .await
+        .map_err(|error| anyhow::anyhow!("catalog response generator failed: {error}"))??;
+        *cache = Some(CachedCatalogResponse {
+            generated_at: Instant::now(),
+            body: body.clone(),
+        });
+        Ok(body)
+    }
+
+    async fn official_auth(
+        &self,
+    ) -> anyhow::Result<(axum::http::HeaderValue, axum::http::HeaderValue)> {
+        read_codex_official_auth(&self.config.codex_auth_path, &self.official_auth_cache).await
     }
 
     pub async fn probe_web_search_capabilities(
@@ -199,15 +324,12 @@ impl AppState {
             .await
     }
 
-    fn config_for_custom_request(&self, body: &Value) -> GatewayConfig {
-        let mut config = (*self.config).clone();
+    fn web_search_enabled_for_custom_request(&self, body: &Value) -> bool {
         let model = body
             .get("model")
             .and_then(Value::as_str)
             .unwrap_or_default();
-        config.enable_web_search_tool =
-            config.enable_web_search_tool && self.web_search_capabilities.supports_model(model);
-        config
+        self.config.enable_web_search_tool && self.web_search_capabilities.supports_model(model)
     }
 
     fn apply_upstream_auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -227,12 +349,27 @@ impl AppState {
         }
     }
 
+    fn apply_oneapi_affinity(
+        &self,
+        request: reqwest::RequestBuilder,
+        hash_key: Option<&str>,
+    ) -> reqwest::RequestBuilder {
+        if let Some(hash_key) = hash_key {
+            request.header("x-hash-key", hash_key)
+        } else {
+            request
+        }
+    }
+
     async fn send_anthropic_request(
         &self,
         request: &MessageRequest,
+        hash_key: Option<&str>,
     ) -> Result<AnthropicByteStream, GatewayError> {
+        let upstream_request =
+            self.apply_upstream_auth(self.client.post(self.config.upstream_messages_url()));
         let response = self
-            .apply_upstream_auth(self.client.post(self.config.upstream_messages_url()))
+            .apply_oneapi_affinity(upstream_request, hash_key)
             .header(header::ACCEPT, "text/event-stream")
             .json(request)
             .send()
@@ -250,6 +387,7 @@ impl AppState {
     async fn anthropic_stream_with_web_search_retry(
         &self,
         mut request: MessageRequest,
+        hash_key: Option<&str>,
     ) -> Result<AnthropicByteStream, GatewayError> {
         let has_hosted_web_search = request.tools.iter().any(|tool| {
             tool.get("name").and_then(Value::as_str) == Some("web_search")
@@ -258,7 +396,7 @@ impl AppState {
                     .and_then(Value::as_str)
                     .is_some_and(|tool_type| tool_type.starts_with("web_search_"))
         });
-        let upstream = self.send_anthropic_request(&request).await?;
+        let upstream = self.send_anthropic_request(&request, hash_key).await?;
         if !has_hosted_web_search {
             return Ok(upstream);
         }
@@ -289,7 +427,7 @@ impl AppState {
                             )),
                         );
                     }
-                    let retry = self.send_anthropic_request(&request).await?;
+                    let retry = self.send_anthropic_request(&request, hash_key).await?;
                     match inspect_anthropic_stream(retry).await? {
                         AnthropicStreamDisposition::Ready(retry) => return Ok(retry),
                         AnthropicStreamDisposition::RetryHostedWebSearch => tracing::warn!(
@@ -312,13 +450,13 @@ async fn inspect_anthropic_stream(
     mut upstream: AnthropicByteStream,
 ) -> Result<AnthropicStreamDisposition, GatewayError> {
     let mut buffered_chunks = Vec::new();
-    let mut event_buffer = Vec::new();
+    let mut decoder = SseDecoder::default();
     while let Some(chunk) = upstream.next().await {
         let chunk = chunk?;
-        event_buffer.extend_from_slice(&chunk);
+        let events = decoder.push(&chunk);
         buffered_chunks.push(chunk);
         let mut retry_hosted_web_search = None;
-        for event in drain_events(&mut event_buffer) {
+        for event in events {
             if event.data == "[DONE]" {
                 retry_hosted_web_search = Some(false);
                 break;
@@ -458,16 +596,11 @@ async fn codex_model_catalog(
     headers: HeaderMap,
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers)?;
-    let models = state.fetch_models().await?;
-    let template = load_template_catalog(None)?;
-    let metadata = ModelMetadataResolver::from_default_files()?;
-    let catalog = codex_catalog_from_models_with_metadata(
-        &models,
-        state.config.default_context_window,
-        template.as_ref(),
-        &metadata,
-    );
-    Ok(Json(catalog).into_response())
+    let body = state.catalog_response().await?;
+    Response::builder()
+        .header(header::CONTENT_TYPE, "application/json")
+        .body(Body::from(body))
+        .map_err(|error| GatewayError::Other(error.into()))
 }
 
 async fn model_benchmarks(
@@ -517,16 +650,28 @@ async fn responses(
         return forward_official_responses(&state, &headers, body).await;
     }
     normalize_custom_model_alias(&mut body);
+    let oneapi_routing = if state.config.provider_preset == ProviderPreset::BaiduOneApi {
+        stable_oneapi_routing(&headers, &body)?
+    } else {
+        None
+    };
     let stream = match state.config.upstream_kind {
         UpstreamKind::AnthropicMessages => {
-            let request_config = state.config_for_custom_request(&body);
-            let mut converted = responses_to_anthropic(&body, &request_config)?;
-            if state.config.provider_preset == ProviderPreset::BaiduOneApi {
-                converted.request.metadata = stable_session_id(&headers)?
-                    .map(|session_id| json!({"session_id": session_id}));
+            let mut converted = responses_to_anthropic_with_web_search(
+                &body,
+                &state.config,
+                state.web_search_enabled_for_custom_request(&body),
+            )?;
+            if let Some(routing) = &oneapi_routing {
+                converted.request.metadata = Some(json!({"session_id": routing.session_id}));
             }
             let upstream = state
-                .anthropic_stream_with_web_search_retry(converted.request)
+                .anthropic_stream_with_web_search_retry(
+                    converted.request,
+                    oneapi_routing
+                        .as_ref()
+                        .map(|routing| routing.hash_key.as_str()),
+                )
                 .await?;
             Body::from_stream(map_anthropic_sse_with_image_routes(
                 upstream,
@@ -537,8 +682,15 @@ async fn responses(
         }
         UpstreamKind::OpenAiChat => {
             let converted = responses_to_openai_chat(&body)?;
+            let upstream_request =
+                state.apply_upstream_auth(state.client.post(state.config.upstream_messages_url()));
             let upstream = state
-                .apply_upstream_auth(state.client.post(state.config.upstream_messages_url()))
+                .apply_oneapi_affinity(
+                    upstream_request,
+                    oneapi_routing
+                        .as_ref()
+                        .map(|routing| routing.hash_key.as_str()),
+                )
                 .header(header::ACCEPT, "text/event-stream")
                 .json(&converted.request)
                 .send()
@@ -616,7 +768,7 @@ async fn route_responses_ws(
                 "routing responses websocket request"
             );
             let request_history =
-                match official_websocket_request_history(&body, official_state.as_ref()) {
+                match official_websocket_request_history(&body, official_state.take()) {
                     Ok(history) => history,
                     Err(err) => {
                         official_socket = None;
@@ -682,7 +834,7 @@ async fn route_responses_ws(
                         response_id,
                         items_added,
                     }) => {
-                        let mut history = request_history.clone();
+                        let mut history = request_history;
                         history.extend(items_added);
                         official_state = Some(OfficialWebSocketState {
                             response_id,
@@ -755,9 +907,9 @@ async fn route_responses_ws(
             route = "custom_ws",
             "routing responses websocket request"
         );
-        let next_state = match expand_custom_websocket_history(&mut body, custom_state.as_ref()) {
+        let next_state = match expand_custom_websocket_history(&mut body, custom_state.take()) {
             Ok(()) if is_noop_responses_ws_request(&body) => {
-                complete_custom_noop(&mut client_sender, &body)
+                complete_custom_noop(&mut client_sender, body)
                     .await
                     .map(Some)
             }
@@ -810,7 +962,7 @@ async fn connect_official_responses_ws(
     let mut request = websocket_url.into_client_request()?;
     {
         let request_headers = request.headers_mut();
-        let (authorization, account_id) = read_codex_official_auth(&state.config.codex_auth_path)?;
+        let (authorization, account_id) = state.official_auth().await?;
         request_headers.insert(header::AUTHORIZATION, authorization);
         request_headers.insert("chatgpt-account-id", account_id);
         for name in [
@@ -1012,7 +1164,7 @@ async fn proxy_official_responses_ws(
 
 fn official_websocket_request_history(
     body: &Value,
-    state: Option<&OfficialWebSocketState>,
+    state: Option<OfficialWebSocketState>,
 ) -> anyhow::Result<Vec<Value>> {
     let incremental_input = body
         .get("input")
@@ -1038,7 +1190,7 @@ fn official_websocket_request_history(
             state.model
         );
     }
-    let mut history = state.history.clone();
+    let mut history = state.history;
     history.extend(incremental_input.iter().cloned());
     Ok(history)
 }
@@ -1055,37 +1207,58 @@ async fn proxy_custom_responses_ws(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("custom request is missing model"))?
         .to_owned();
-    let mut history = body
-        .get("input")
-        .and_then(Value::as_array)
-        .ok_or_else(|| anyhow::anyhow!("custom request input must be an array"))?
-        .clone();
-    let stream: futures_util::stream::BoxStream<
-        'static,
-        Result<bytes::Bytes, std::convert::Infallible>,
-    > = match state.config.upstream_kind {
+    if !body.get("input").is_some_and(Value::is_array) {
+        anyhow::bail!("custom request input must be an array");
+    }
+    let oneapi_routing = if state.config.provider_preset == ProviderPreset::BaiduOneApi {
+        stable_oneapi_routing(headers, &body)?
+    } else {
+        None
+    };
+    let (stream, mut history): (
+        futures_util::stream::BoxStream<'static, Result<bytes::Bytes, std::convert::Infallible>>,
+        Vec<Value>,
+    ) = match state.config.upstream_kind {
         UpstreamKind::AnthropicMessages => {
-            let request_config = state.config_for_custom_request(&body);
-            let mut converted = responses_to_anthropic(&body, &request_config)?;
-            if state.config.provider_preset == ProviderPreset::BaiduOneApi {
-                converted.request.metadata =
-                    stable_session_id(headers)?.map(|session_id| json!({"session_id": session_id}));
+            let mut converted = responses_to_anthropic_with_web_search(
+                &body,
+                &state.config,
+                state.web_search_enabled_for_custom_request(&body),
+            )?;
+            if let Some(routing) = &oneapi_routing {
+                converted.request.metadata = Some(json!({"session_id": routing.session_id}));
             }
             let upstream = state
-                .anthropic_stream_with_web_search_retry(converted.request)
+                .anthropic_stream_with_web_search_retry(
+                    converted.request,
+                    oneapi_routing
+                        .as_ref()
+                        .map(|routing| routing.hash_key.as_str()),
+                )
                 .await?;
-            map_anthropic_sse_with_image_routes(
-                upstream,
-                body,
-                converted.tool_names,
-                state.custom_image_routes(),
+            let history = take_custom_request_input(&mut body)?;
+            (
+                map_anthropic_sse_with_image_routes(
+                    upstream,
+                    body,
+                    converted.tool_names,
+                    state.custom_image_routes(),
+                )
+                .boxed(),
+                history,
             )
-            .boxed()
         }
         UpstreamKind::OpenAiChat => {
             let converted = responses_to_openai_chat(&body)?;
+            let upstream_request =
+                state.apply_upstream_auth(state.client.post(state.config.upstream_messages_url()));
             let upstream = state
-                .apply_upstream_auth(state.client.post(state.config.upstream_messages_url()))
+                .apply_oneapi_affinity(
+                    upstream_request,
+                    oneapi_routing
+                        .as_ref()
+                        .map(|routing| routing.hash_key.as_str()),
+                )
                 .header(header::ACCEPT, "text/event-stream")
                 .json(&converted.request)
                 .send()
@@ -1095,17 +1268,21 @@ async fn proxy_custom_responses_ws(
                 let body = upstream.text().await?;
                 anyhow::bail!("chat completions endpoint returned {status}: {body}");
             }
-            map_openai_chat_sse_with_image_routes(
-                upstream.bytes_stream(),
-                body,
-                converted.tool_names,
-                state.custom_image_routes(),
+            let history = take_custom_request_input(&mut body)?;
+            (
+                map_openai_chat_sse_with_image_routes(
+                    upstream.bytes_stream(),
+                    body,
+                    converted.tool_names,
+                    state.custom_image_routes(),
+                )
+                .boxed(),
+                history,
             )
-            .boxed()
         }
     };
     tokio::pin!(stream);
-    let mut buffer = Vec::new();
+    let mut decoder = SseDecoder::default();
     let mut completed_response = None;
     let mut failed = false;
     while let Some(chunk) = stream.next().await {
@@ -1113,12 +1290,11 @@ async fn proxy_custom_responses_ws(
             Ok(bytes) => bytes,
             Err(never) => match never {},
         };
-        buffer.extend_from_slice(&bytes);
-        for event in drain_events(&mut buffer) {
-            let payload: Value = serde_json::from_str(&event.data)?;
-            match payload.get("type").and_then(Value::as_str) {
+        for event in decoder.push(&bytes) {
+            match event.event.as_deref() {
                 Some("response.completed") => {
-                    completed_response = payload.get("response").cloned();
+                    let mut payload: Value = serde_json::from_str(&event.data)?;
+                    completed_response = payload.get_mut("response").map(Value::take);
                 }
                 Some("response.failed" | "response.incomplete") => failed = true,
                 _ => {}
@@ -1131,7 +1307,7 @@ async fn proxy_custom_responses_ws(
     if failed {
         return Ok(None);
     }
-    let response = completed_response
+    let mut response = completed_response
         .ok_or_else(|| anyhow::anyhow!("custom upstream ended without a terminal response"))?;
     let response_id = response
         .get("id")
@@ -1140,10 +1316,10 @@ async fn proxy_custom_responses_ws(
         .ok_or_else(|| anyhow::anyhow!("custom completed response is missing id"))?
         .to_owned();
     let output = response
-        .get("output")
-        .and_then(Value::as_array)
+        .get_mut("output")
+        .and_then(Value::as_array_mut)
         .ok_or_else(|| anyhow::anyhow!("custom completed response output must be an array"))?;
-    history.extend(output.iter().cloned());
+    history.append(output);
     Ok(Some(CustomWebSocketState {
         response_id,
         model,
@@ -1151,9 +1327,19 @@ async fn proxy_custom_responses_ws(
     }))
 }
 
+fn take_custom_request_input(body: &mut Value) -> anyhow::Result<Vec<Value>> {
+    match body
+        .as_object_mut()
+        .and_then(|request| request.remove("input"))
+    {
+        Some(Value::Array(input)) => Ok(input),
+        _ => anyhow::bail!("custom request input must be an array"),
+    }
+}
+
 fn expand_custom_websocket_history(
     body: &mut Value,
-    state: Option<&CustomWebSocketState>,
+    state: Option<CustomWebSocketState>,
 ) -> anyhow::Result<()> {
     let Some(previous_response_id) = body
         .get("previous_response_id")
@@ -1182,7 +1368,7 @@ fn expand_custom_websocket_history(
         .get("input")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow::anyhow!("custom incremental input must be an array"))?;
-    let mut full_input = state.history.clone();
+    let mut full_input = state.history;
     full_input.extend(incremental_input.iter().cloned());
     body["input"] = Value::Array(full_input);
     Ok(())
@@ -1190,18 +1376,14 @@ fn expand_custom_websocket_history(
 
 async fn complete_custom_noop(
     client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
-    body: &Value,
+    mut body: Value,
 ) -> anyhow::Result<CustomWebSocketState> {
     let model = body
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("custom noop request is missing model"))?;
     let model = model.strip_suffix("-custom").unwrap_or(model).to_owned();
-    let history = body
-        .get("input")
-        .and_then(Value::as_array)
-        .ok_or_else(|| anyhow::anyhow!("custom noop input must be an array"))?
-        .clone();
+    let history = take_custom_request_input(&mut body)?;
     let response_id = format!("resp_{}", Uuid::new_v4().simple());
     for status in ["in_progress", "completed"] {
         client_sender
@@ -1283,8 +1465,7 @@ async fn forward_official_responses(
     headers: &HeaderMap,
     body: Value,
 ) -> Result<Response, GatewayError> {
-    let (authorization, account_id) =
-        read_codex_official_auth(&state.config.codex_auth_path).map_err(GatewayError::Other)?;
+    let (authorization, account_id) = state.official_auth().await.map_err(GatewayError::Other)?;
     let upstream = forward_official_headers(
         state
             .client
@@ -1395,8 +1576,7 @@ async fn forward_official_image_request(
     body: &Value,
     url: String,
 ) -> Result<Response, GatewayError> {
-    let (authorization, account_id) =
-        read_codex_official_auth(&state.config.codex_auth_path).map_err(GatewayError::Other)?;
+    let (authorization, account_id) = state.official_auth().await.map_err(GatewayError::Other)?;
     let request = forward_official_headers(
         state
             .client
@@ -1434,10 +1614,29 @@ async fn proxy_image_response(
         .map_err(|err| GatewayError::Other(err.into()))
 }
 
-fn read_codex_official_auth(
+async fn read_codex_official_auth(
     auth_path: &std::path::Path,
+    cache: &tokio::sync::Mutex<Option<CachedOfficialAuth>>,
 ) -> anyhow::Result<(axum::http::HeaderValue, axum::http::HeaderValue)> {
-    let raw = std::fs::read_to_string(auth_path)
+    let metadata = tokio::fs::metadata(auth_path).await.map_err(|err| {
+        anyhow::anyhow!("read Codex auth metadata {}: {err}", auth_path.display())
+    })?;
+    let modified_at = metadata.modified().map_err(|err| {
+        anyhow::anyhow!(
+            "read Codex auth modification time {}: {err}",
+            auth_path.display()
+        )
+    })?;
+    let mut cache = cache.lock().await;
+    if let Some(cached) = cache
+        .as_ref()
+        .filter(|cached| cached.modified_at == modified_at && cached.file_len == metadata.len())
+    {
+        return Ok((cached.authorization.clone(), cached.account_id.clone()));
+    }
+
+    let raw = tokio::fs::read_to_string(auth_path)
+        .await
         .map_err(|err| anyhow::anyhow!("read Codex auth file {}: {err}", auth_path.display()))?;
     let auth: Value = serde_json::from_str(&raw)
         .map_err(|err| anyhow::anyhow!("parse Codex auth file {}: {err}", auth_path.display()))?;
@@ -1454,10 +1653,15 @@ fn read_codex_official_auth(
         .and_then(Value::as_str)
         .filter(|account_id| !account_id.is_empty())
         .ok_or_else(|| anyhow::anyhow!("Codex auth file does not contain account_id"))?;
-    Ok((
-        format!("Bearer {access_token}").parse()?,
-        account_id.parse()?,
-    ))
+    let authorization: axum::http::HeaderValue = format!("Bearer {access_token}").parse()?;
+    let account_id: axum::http::HeaderValue = account_id.parse()?;
+    *cache = Some(CachedOfficialAuth {
+        modified_at,
+        file_len: metadata.len(),
+        authorization: authorization.clone(),
+        account_id: account_id.clone(),
+    });
+    Ok((authorization, account_id))
 }
 
 fn forward_official_headers(
@@ -1511,7 +1715,9 @@ fn normalize_custom_model_alias(body: &mut Value) {
 }
 
 fn is_gpt_model(model: &str) -> bool {
-    model.to_ascii_lowercase().starts_with("gpt-")
+    model
+        .get(..4)
+        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("gpt-"))
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
@@ -1539,17 +1745,46 @@ fn check_gateway_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Gatew
     }
 }
 
-fn stable_session_id(headers: &HeaderMap) -> Result<Option<&str>, GatewayError> {
-    headers
-        .get("session-id")
-        .map(|value| value.to_str())
-        .transpose()
-        .map_err(|err| GatewayError::BadRequest(format!("invalid session-id header: {err}")))
+fn stable_oneapi_routing(
+    headers: &HeaderMap,
+    body: &Value,
+) -> Result<Option<OneApiRouting>, GatewayError> {
+    let mut route_key = None;
+    for header_name in ["session-id", "thread-id", "x-client-request-id"] {
+        if let Some(value) = headers.get(header_name) {
+            let value = value.to_str().map_err(|error| {
+                GatewayError::BadRequest(format!("invalid {header_name} header: {error}"))
+            })?;
+            if !value.is_empty() {
+                route_key = Some(value);
+                break;
+            }
+        }
+    }
+    if route_key.is_none() {
+        match body.get("prompt_cache_key") {
+            None | Some(Value::Null) => {}
+            Some(Value::String(prompt_cache_key)) if !prompt_cache_key.is_empty() => {
+                route_key = Some(prompt_cache_key);
+            }
+            Some(Value::String(_)) => {}
+            Some(_) => {
+                return Err(GatewayError::BadRequest(
+                    "prompt_cache_key must be a string".to_owned(),
+                ));
+            }
+        }
+    }
+    Ok(route_key.map(|session_id| OneApiRouting {
+        session_id: session_id.to_owned(),
+        hash_key: Uuid::new_v5(&Uuid::NAMESPACE_URL, session_id.as_bytes()).to_string(),
+    }))
 }
 
 #[cfg(test)]
 mod tests {
     use std::convert::Infallible;
+    use std::sync::atomic::{AtomicUsize, Ordering};
     use std::sync::{Arc, Mutex};
     use std::time::Duration;
 
@@ -1559,18 +1794,108 @@ mod tests {
     use crate::benchmark::ModelBenchmarkManager;
     use crate::config::{ThinkingMode, UpstreamAuthHeader};
 
+    #[test]
+    fn oneapi_routing_uses_stable_identifier_priority() {
+        let mut headers = HeaderMap::new();
+        headers.insert("session-id", "session-value".parse().unwrap());
+        headers.insert("thread-id", "thread-value".parse().unwrap());
+        headers.insert("x-client-request-id", "request-value".parse().unwrap());
+        let body = json!({"prompt_cache_key":"cache-value"});
+
+        let routing = stable_oneapi_routing(&headers, &body).unwrap().unwrap();
+        assert_eq!(routing.session_id, "session-value");
+        assert_eq!(
+            routing.hash_key,
+            Uuid::new_v5(&Uuid::NAMESPACE_URL, b"session-value").to_string()
+        );
+
+        headers.remove("session-id");
+        assert_eq!(
+            stable_oneapi_routing(&headers, &body)
+                .unwrap()
+                .unwrap()
+                .session_id,
+            "thread-value"
+        );
+        headers.remove("thread-id");
+        assert_eq!(
+            stable_oneapi_routing(&headers, &body)
+                .unwrap()
+                .unwrap()
+                .session_id,
+            "request-value"
+        );
+        headers.clear();
+        assert_eq!(
+            stable_oneapi_routing(&headers, &body)
+                .unwrap()
+                .unwrap()
+                .session_id,
+            "cache-value"
+        );
+        assert!(
+            stable_oneapi_routing(&headers, &json!({}))
+                .unwrap()
+                .is_none()
+        );
+        assert!(
+            stable_oneapi_routing(&headers, &json!({"prompt_cache_key":null}))
+                .unwrap()
+                .is_none()
+        );
+        assert!(stable_oneapi_routing(&headers, &json!({"prompt_cache_key":1})).is_err());
+    }
+
+    #[tokio::test]
+    async fn official_auth_cache_refreshes_and_does_not_hide_invalid_files() {
+        let directory = tempfile::tempdir().unwrap();
+        let auth_path = directory.path().join("auth.json");
+        let cache = tokio::sync::Mutex::new(None);
+        tokio::fs::write(
+            &auth_path,
+            r#"{"tokens":{"access_token":"first","account_id":"account-one"}}"#,
+        )
+        .await
+        .unwrap();
+
+        let (authorization, account_id) =
+            read_codex_official_auth(&auth_path, &cache).await.unwrap();
+        assert_eq!(authorization, "Bearer first");
+        assert_eq!(account_id, "account-one");
+
+        tokio::fs::write(
+            &auth_path,
+            r#"{"tokens":{"access_token":"second-longer","account_id":"account-two"}}"#,
+        )
+        .await
+        .unwrap();
+        let (authorization, account_id) =
+            read_codex_official_auth(&auth_path, &cache).await.unwrap();
+        assert_eq!(authorization, "Bearer second-longer");
+        assert_eq!(account_id, "account-two");
+
+        tokio::fs::write(&auth_path, b"{").await.unwrap();
+        assert!(read_codex_official_auth(&auth_path, &cache).await.is_err());
+    }
+
     #[tokio::test]
     async fn benchmark_api_runs_after_the_start_request_returns_and_persists_results() {
         let requests = Arc::new(Mutex::new(Vec::new()));
         let captured_requests = Arc::clone(&requests);
+        let model_requests = Arc::new(AtomicUsize::new(0));
+        let captured_model_requests = Arc::clone(&model_requests);
         let upstream = Router::new()
             .route(
                 "/v1/models",
-                get(|| async {
-                    Json(json!({
-                        "object":"list",
-                        "data":[{"id":"benchmark-model","object":"model"}]
-                    }))
+                get(move || {
+                    let captured_model_requests = Arc::clone(&captured_model_requests);
+                    async move {
+                        captured_model_requests.fetch_add(1, Ordering::Relaxed);
+                        Json(json!({
+                            "object":"list",
+                            "data":[{"id":"benchmark-model","object":"model"}]
+                        }))
+                    }
                 }),
             )
             .route(
@@ -1650,6 +1975,17 @@ mod tests {
         });
 
         let client = Client::new();
+        for _ in 0..2 {
+            client
+                .get(format!("http://{gateway_address}/v1/models"))
+                .bearer_auth("gateway-key")
+                .send()
+                .await
+                .unwrap()
+                .error_for_status()
+                .unwrap();
+        }
+        assert_eq!(model_requests.load(Ordering::Relaxed), 1);
         let started: Value = client
             .post(format!("http://{gateway_address}/v1/model-benchmarks"))
             .bearer_auth("gateway-key")

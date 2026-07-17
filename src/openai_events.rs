@@ -9,7 +9,7 @@ use uuid::Uuid;
 
 use crate::convert::ToolNameMap;
 use crate::image_generation::ImageRouteRegistry;
-use crate::sse::{drain_events, encode_event, encode_raw_event};
+use crate::sse::{SseDecoder, encode_event, encode_raw_event};
 
 #[derive(Debug)]
 struct TextBlock {
@@ -110,7 +110,6 @@ impl MapperState {
         let input_tokens = self.usage.input_tokens.unwrap_or(0);
         let output_tokens = self.usage.output_tokens.unwrap_or(0);
         let mut response = self.response_base("completed");
-        response["output"] = Value::Array(self.output.clone());
         response["usage"] = json!({
             "input_tokens": input_tokens,
             "output_tokens": output_tokens,
@@ -497,17 +496,17 @@ where
         yield Ok(encode_event("response.created", &json!({"type":"response.created","response":created})).unwrap());
         yield Ok(encode_event("response.in_progress", &json!({"type":"response.in_progress","response":state.response_base("in_progress")})).unwrap());
 
-        let mut buffer = Vec::new();
+        let mut decoder = SseDecoder::default();
         tokio::pin!(upstream);
         while let Some(chunk) = upstream.next().await {
-            match chunk {
-                Ok(bytes) => buffer.extend_from_slice(&bytes),
+            let bytes = match chunk {
+                Ok(bytes) => bytes,
                 Err(err) => {
                     yield Ok(state.failed_event(err.to_string()));
                     return;
                 }
-            }
-            for event in drain_events(&mut buffer) {
+            };
+            for event in decoder.push(&bytes) {
                 if event.data == "[DONE]" {
                     continue;
                 }
@@ -601,17 +600,17 @@ where
         yield Ok(encode_event("response.created", &json!({"type":"response.created","response":created})).unwrap());
         yield Ok(encode_event("response.in_progress", &json!({"type":"response.in_progress","response":state.response_base("in_progress")})).unwrap());
 
-        let mut buffer = Vec::new();
+        let mut decoder = SseDecoder::default();
         tokio::pin!(upstream);
         while let Some(chunk) = upstream.next().await {
-            match chunk {
-                Ok(bytes) => buffer.extend_from_slice(&bytes),
+            let bytes = match chunk {
+                Ok(bytes) => bytes,
                 Err(err) => {
                     yield Ok(state.failed_event(err.to_string()));
                     return;
                 }
-            }
-            for event in drain_events(&mut buffer) {
+            };
+            for event in decoder.push(&bytes) {
                 if event.data == "[DONE]" {
                     for bytes in state.finish_text() {
                         yield Ok(bytes);
@@ -877,6 +876,7 @@ fn handle_anthropic_event(state: &mut MapperState, data: &Value) -> Result<Vec<B
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::sse::drain_events;
 
     async fn collect_events<S>(events: S) -> String
     where

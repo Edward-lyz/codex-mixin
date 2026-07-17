@@ -17,7 +17,7 @@ use crate::anthropic::ModelInfo;
 use crate::config::{
     GatewayConfig, ProviderPreset, UpstreamAuthHeader, UpstreamKind, stored_config_path,
 };
-use crate::sse::drain_events;
+use crate::sse::SseDecoder;
 
 const CAPABILITY_FILE_VERSION: u64 = 2;
 const CAPABILITY_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
@@ -516,11 +516,10 @@ async fn probe_model_once(
     }
 
     let mut observation = ProbeObservation::default();
-    let mut buffer = Vec::new();
+    let mut decoder = SseDecoder::default();
     let mut response_stream = response.bytes_stream();
     while let Some(chunk) = response_stream.next().await {
-        buffer.extend_from_slice(&chunk?);
-        for event in drain_events(&mut buffer) {
+        for event in decoder.push(&chunk?) {
             let payload: Value = serde_json::from_str(&event.data)
                 .context("web search probe returned invalid SSE JSON")?;
             observation.observe(&payload);
@@ -535,8 +534,8 @@ async fn probe_model_once(
             }
         }
     }
-    if !buffer.is_empty() {
-        let payload: Value = serde_json::from_slice(&buffer)
+    if !decoder.remaining().is_empty() {
+        let payload: Value = serde_json::from_slice(decoder.remaining())
             .context("web search probe returned neither valid SSE nor JSON")?;
         observation.observe(&payload);
     }
