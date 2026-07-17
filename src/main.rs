@@ -22,8 +22,9 @@ use std::os::unix::process::CommandExt;
 
 use codex_mixin::CODEX_MIXIN_PROVIDER;
 use codex_mixin::catalog::{
-    codex_catalog_from_models_with_metadata, codex_oauth_proxy_catalog_from_models_with_metadata,
-    load_template_catalog, refresh_managed_oauth_catalog,
+    apply_web_search_capabilities, codex_catalog_from_models_with_metadata,
+    codex_oauth_proxy_catalog_from_models_with_metadata, load_template_catalog,
+    refresh_managed_oauth_catalog,
 };
 use codex_mixin::config::{
     GatewayConfig, ProviderPreset, StoredGatewayConfig, delete_stored_config, load_stored_config,
@@ -34,6 +35,7 @@ use codex_mixin::history::{
 };
 use codex_mixin::model_metadata::{ModelMetadataResolver, default_cache_path};
 use codex_mixin::server::{AppState, serve_on_listener};
+use codex_mixin::web_search::WebSearchCapabilities;
 
 const MANAGED_CONFIG_MARKER: &str = "codex-mixin managed config";
 const MANAGED_CONFIG_HEADER: &str = "# codex-mixin managed config. Run `codex-mixin uninstall-codex` to restore the previous config.";
@@ -185,7 +187,7 @@ enum Command {
         catalog: Option<PathBuf>,
         #[arg(long)]
         base_url: Option<String>,
-        #[arg(long, default_value = "disabled")]
+        #[arg(long, default_value = "live")]
         web_search: String,
         #[arg(long)]
         env_key: Option<String>,
@@ -201,6 +203,13 @@ enum Command {
     },
     #[command(name = "refresh-codex-catalog")]
     RefreshCodexCatalog,
+    #[command(name = "probe-web-search")]
+    ProbeWebSearch {
+        #[arg(long)]
+        force: bool,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
@@ -315,7 +324,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Catalog { template_catalog } => {
             let config = GatewayConfig::from_env()?;
             let state = AppState::new(config.clone())?;
-            let models = state.fetch_models().await?;
+            let mut models = state.fetch_models().await?;
+            state
+                .probe_web_search_capabilities(&mut models, false)
+                .await?;
             let template = load_template_catalog(template_catalog.as_deref())?;
             let metadata = load_model_metadata_resolver().await?;
             let catalog = codex_catalog_from_models_with_metadata(
@@ -355,6 +367,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         }
         Command::UninstallCodex { config, catalog } => uninstall_codex(config, catalog),
         Command::RefreshCodexCatalog => refresh_default_managed_codex_catalog(),
+        Command::ProbeWebSearch { force, json } => probe_web_search(force, json).await,
     }
 }
 
@@ -381,6 +394,7 @@ fn init_tracing(log_file: Option<&Path>) -> anyhow::Result<()> {
             .map_err(|error| anyhow::anyhow!("failed to install tracing subscriber: {error}"))?;
     } else {
         tracing_subscriber::fmt()
+            .with_writer(io::stderr)
             .with_env_filter(filter)
             .try_init()
             .map_err(|error| anyhow::anyhow!("failed to install tracing subscriber: {error}"))?;
@@ -413,6 +427,7 @@ fn login(
     quota_url: Option<String>,
     quota_username: Option<String>,
 ) -> anyhow::Result<()> {
+    let explicit_key = key.is_some();
     let existing = load_stored_config()?.unwrap_or_default();
     let provider_preset = provider
         .or(existing.provider_preset.clone())
@@ -471,6 +486,9 @@ fn login(
             .or(existing.quota_username),
     };
     let path = save_stored_config(&config)?;
+    if provider_changed || explicit_key {
+        WebSearchCapabilities::clear_default_cache()?;
+    }
     println!("login saved: {}", path.display());
     println!("provider: {}", provider_preset.as_str());
     println!("upstream kind: {}", upstream_kind.as_str());
@@ -645,6 +663,35 @@ async fn models(json_output: bool) -> anyhow::Result<()> {
     } else {
         for model in models {
             println!("{}", model.id);
+        }
+    }
+    Ok(())
+}
+
+async fn probe_web_search(force: bool, json_output: bool) -> anyhow::Result<()> {
+    let config = GatewayConfig::from_env()?;
+    let state = AppState::new(config)?;
+    let mut models = state.fetch_models().await?;
+    let summary = state
+        .probe_web_search_capabilities(&mut models, force)
+        .await?;
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&summary)?);
+    } else {
+        println!("models attempted: {}", summary.attempted);
+        println!("models cached: {}", summary.cached);
+        println!("web search supported: {}", summary.supported);
+        println!("web search unsupported: {}", summary.unsupported);
+        println!("probes failed: {}", summary.failed);
+        for capability in summary.results {
+            let status = if capability.error.is_some() {
+                "probe-failed"
+            } else if capability.supported {
+                "supported"
+            } else {
+                "unsupported"
+            };
+            println!("{}: {} ({})", capability.model, status, capability.evidence);
         }
     }
     Ok(())
@@ -1017,10 +1064,13 @@ async fn install_codex(
     let template = load_codex_install_template(&paths, codex_oauth_proxy)?;
     let gateway_config = GatewayConfig::from_env()?;
     let state = AppState::new(gateway_config.clone())?;
-    let models = state.fetch_models().await?;
+    let mut models = state.fetch_models().await?;
     if models.is_empty() {
         anyhow::bail!("upstream /v1/models returned no models");
     }
+    let web_search_probe = state
+        .probe_web_search_capabilities(&mut models, false)
+        .await?;
     let metadata = load_model_metadata_resolver().await?;
     let catalog = if codex_oauth_proxy {
         codex_oauth_proxy_catalog_from_models_with_metadata(
@@ -1125,6 +1175,10 @@ async fn install_codex(
     println!("model catalog written: {}", paths.catalog.display());
     println!("models installed: {}", models.len());
     println!("metadata entries loaded: {}", metadata.len());
+    println!(
+        "web search capabilities: {} supported, {} unsupported, {} failed",
+        web_search_probe.supported, web_search_probe.unsupported, web_search_probe.failed
+    );
     println!("provider: {CODEX_MIXIN_PROVIDER}");
     println!(
         "history migrated: {} JSONL files, {} SQLite rows",
@@ -1231,7 +1285,10 @@ fn uninstall_codex(
 
 fn refresh_default_managed_codex_catalog() -> anyhow::Result<()> {
     let config_path = resolve_codex_config_path(None)?;
-    if refresh_managed_codex_catalog(&config_path)? {
+    let gateway_config = GatewayConfig::from_env()?;
+    let supported_models =
+        WebSearchCapabilities::from_default_path(&gateway_config)?.supported_model_ids();
+    if refresh_managed_codex_catalog_with_capabilities(&config_path, Some(&supported_models))? {
         println!("Codex model catalog refreshed");
     } else {
         println!("Codex model catalog already current or not managed by codex-mixin");
@@ -1239,7 +1296,15 @@ fn refresh_default_managed_codex_catalog() -> anyhow::Result<()> {
     Ok(())
 }
 
+#[cfg(test)]
 fn refresh_managed_codex_catalog(config_path: &Path) -> anyhow::Result<bool> {
+    refresh_managed_codex_catalog_with_capabilities(config_path, None)
+}
+
+fn refresh_managed_codex_catalog_with_capabilities(
+    config_path: &Path,
+    supported_web_search_models: Option<&HashSet<String>>,
+) -> anyhow::Result<bool> {
     let config_path = absolute_path(config_path.to_path_buf())?;
     if !config_path.exists() {
         return Ok(false);
@@ -1265,17 +1330,24 @@ fn refresh_managed_codex_catalog(config_path: &Path) -> anyhow::Result<bool> {
             .ok_or_else(|| anyhow::anyhow!("codex-mixin requires_openai_auth must be a boolean"))?,
         None => false,
     };
-    if !requires_openai_auth {
+    if !requires_openai_auth && supported_web_search_models.is_none() {
         return Ok(false);
     }
     let catalog_path = managed_catalog_path(&doc, &config_path)?;
-    let official_catalog_path = config_path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?
-        .join("models_cache.json");
-    let official_catalog = serde_json::from_slice(&fs::read(&official_catalog_path)?)?;
     let managed_catalog = serde_json::from_slice(&fs::read(&catalog_path)?)?;
-    let refreshed = refresh_managed_oauth_catalog(&official_catalog, &managed_catalog)?;
+    let mut refreshed = if requires_openai_auth {
+        let official_catalog_path = config_path
+            .parent()
+            .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?
+            .join("models_cache.json");
+        let official_catalog = serde_json::from_slice(&fs::read(&official_catalog_path)?)?;
+        refresh_managed_oauth_catalog(&official_catalog, &managed_catalog)?
+    } else {
+        managed_catalog
+    };
+    if let Some(supported_web_search_models) = supported_web_search_models {
+        apply_web_search_capabilities(&mut refreshed, supported_web_search_models)?;
+    }
     write_atomic_if_changed(&catalog_path, &serde_json::to_vec_pretty(&refreshed)?)
 }
 
@@ -1735,14 +1807,11 @@ fn upsert_codex_config(
     env_key: Option<&str>,
     codex_oauth_proxy: bool,
 ) -> anyhow::Result<()> {
-    if default_model.is_none() && web_search != "disabled" {
-        anyhow::bail!("web_search can only be changed when a default model is selected");
-    }
     doc["model_catalog_json"] = value(catalog_path.to_string_lossy().to_string());
     doc["model_provider"] = value(CODEX_MIXIN_PROVIDER);
+    doc["web_search"] = value(web_search);
     if let Some(model) = default_model {
         doc["model"] = value(model);
-        doc["web_search"] = value(web_search);
     }
 
     if !doc
@@ -1868,17 +1937,27 @@ async fn start(
     }
     let config_path = resolve_codex_config_path(None)?;
     sync_managed_codex_gateway_base_url(&config_path, actual_bind)?;
-    match refresh_managed_codex_catalog(&config_path) {
+    let supported_models = WebSearchCapabilities::from_default_path(&config)?.supported_model_ids();
+    match refresh_managed_codex_catalog_with_capabilities(&config_path, Some(&supported_models)) {
         Ok(true) => tracing::info!("Codex model catalog refreshed"),
         Ok(false) => {}
         Err(err) => tracing::warn!(error = %err, "failed to refresh Codex model catalog"),
     }
+    let refresh_config = config.clone();
     let refresh_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(CODEX_CATALOG_REFRESH_INTERVAL);
         interval.tick().await;
         loop {
             interval.tick().await;
-            match refresh_managed_codex_catalog(&config_path) {
+            let refresh_result = WebSearchCapabilities::from_default_path(&refresh_config)
+                .map(|capabilities| capabilities.supported_model_ids())
+                .and_then(|supported_models| {
+                    refresh_managed_codex_catalog_with_capabilities(
+                        &config_path,
+                        Some(&supported_models),
+                    )
+                });
+            match refresh_result {
                 Ok(true) => tracing::info!("Codex model catalog refreshed"),
                 Ok(false) => {}
                 Err(err) => tracing::warn!(error = %err, "failed to refresh Codex model catalog"),
@@ -2372,7 +2451,7 @@ trust_level = "trusted"
         .unwrap();
 
         assert_eq!(doc["model_provider"].as_str(), Some("codex-mixin"));
-        assert!(doc.get("web_search").is_none());
+        assert_eq!(doc["web_search"].as_str(), Some("disabled"));
         assert_eq!(
             doc["model_providers"]["codex-mixin"]["base_url"].as_str(),
             Some("http://127.0.0.1:8787/v1")
@@ -2384,9 +2463,9 @@ trust_level = "trusted"
     }
 
     #[test]
-    fn rejects_web_search_change_without_default_model() {
+    fn configures_web_search_without_changing_default_model() {
         let mut doc = DocumentMut::new();
-        let error = upsert_codex_config(
+        upsert_codex_config(
             &mut doc,
             None,
             Path::new("/tmp/mixin-models.json"),
@@ -2395,9 +2474,10 @@ trust_level = "trusted"
             None,
             true,
         )
-        .unwrap_err();
+        .unwrap();
 
-        assert!(error.to_string().contains("default model"));
+        assert_eq!(doc["web_search"].as_str(), Some("live"));
+        assert!(doc.get("model").is_none());
     }
 
     #[test]
@@ -2721,6 +2801,36 @@ custom_field = "stale"
         .unwrap();
 
         assert!(!refresh_managed_codex_catalog(&config_path).unwrap());
+    }
+
+    #[test]
+    fn refreshes_per_model_web_search_for_non_oauth_catalog() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        let catalog_path = dir.path().join("mixin-models.json");
+        fs::write(
+            &config_path,
+            format!(
+                "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nwire_api = \"responses\"\n",
+                catalog_path.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &catalog_path,
+            r#"{"models":[{"slug":"Claude Haiku 4.5","codex_mixin_managed":true},{"slug":"DeepSeek-V4-Flash","codex_mixin_managed":true,"web_search_tool_type":"text"}]}"#,
+        )
+        .unwrap();
+
+        let supported_models = HashSet::from(["Claude Haiku 4.5".to_owned()]);
+        assert!(
+            refresh_managed_codex_catalog_with_capabilities(&config_path, Some(&supported_models))
+                .unwrap()
+        );
+        let refreshed: serde_json::Value =
+            serde_json::from_slice(&fs::read(catalog_path).unwrap()).unwrap();
+        assert_eq!(refreshed["models"][0]["web_search_tool_type"], "text");
+        assert!(refreshed["models"][1].get("web_search_tool_type").is_none());
     }
 
     #[test]

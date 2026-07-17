@@ -9,11 +9,13 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
+use codex_mixin::anthropic::ModelInfo;
 use codex_mixin::config::{
     GatewayConfig, ProviderPreset, ThinkingMode, UpstreamAuthHeader, UpstreamKind,
 };
 use codex_mixin::server::{AppState, router};
 use codex_mixin::sse::drain_events;
+use codex_mixin::web_search::WebSearchCapabilities;
 use futures_util::future::join_all;
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -2388,7 +2390,23 @@ async fn forwards_thinking_and_anthropic_server_web_search() {
     config.thinking_mode = ThinkingMode::Auto;
     config.enable_web_search_tool = true;
     config.web_search_max_uses = Some(1);
-    let gateway_url = spawn_gateway_with_config(config).await;
+    let capability_dir = tempfile::tempdir().unwrap();
+    let capabilities = WebSearchCapabilities::load(
+        capability_dir.path().join("web-search-capabilities.json"),
+        &config,
+    )
+    .unwrap();
+    let mut models = vec![ModelInfo {
+        id: "Claude Sonnet 5".to_owned(),
+        ..ModelInfo::default()
+    }];
+    capabilities
+        .probe_models(&mut models, &config, true)
+        .await
+        .unwrap();
+    requests.lock().unwrap().clear();
+    let state = AppState::with_web_search_capabilities(config, capabilities).unwrap();
+    let gateway_url = spawn_router(router(state)).await;
     let client = reqwest::Client::new();
     let mut request = responses_request();
     request["model"] = json!("Claude Sonnet 5");
@@ -2419,6 +2437,26 @@ async fn forwards_thinking_and_anthropic_server_web_search() {
     assert_eq!(upstream_request["tools"][0]["name"], "web_search");
     assert_eq!(upstream_request["tools"][0]["max_uses"], 1);
     assert!(upstream_request["tools"][0].get("input_schema").is_none());
+
+    let mut unsupported_request = responses_request();
+    unsupported_request["model"] = json!("DeepSeek-V4-Flash");
+    unsupported_request["tools"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"type":"web_search","external_web_access":true}));
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&unsupported_request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let _ = response.text().await.unwrap();
+
+    let upstream_request = requests.lock().unwrap()[1].clone();
+    assert_eq!(upstream_request["tools"].as_array().unwrap().len(), 1);
+    assert_ne!(upstream_request["tools"][0]["name"], "web_search");
 }
 
 #[tokio::test]

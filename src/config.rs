@@ -335,7 +335,7 @@ impl GatewayConfig {
             thinking_mode: ThinkingMode::from_env_value(
                 &env::var("CODEX_GATEWAY_THINKING_MODE").unwrap_or_else(|_| "auto".to_owned()),
             )?,
-            enable_web_search_tool: read_bool_env("CODEX_GATEWAY_ENABLE_WEB_SEARCH_TOOL", false)?,
+            enable_web_search_tool: read_bool_env("CODEX_GATEWAY_ENABLE_WEB_SEARCH_TOOL", true)?,
             web_search_tool_type: env::var("CODEX_GATEWAY_WEB_SEARCH_TOOL_TYPE")
                 .unwrap_or_else(|_| "web_search_20250305".to_owned()),
             web_search_max_uses: read_optional_positive_u64_env(

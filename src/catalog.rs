@@ -144,7 +144,8 @@ fn codex_catalog_from_models_with_options(
             item["visibility"] = json!("list");
             item["supported_in_api"] = json!(true);
             item["supports_search_tool"] = json!(true);
-            if supports_anthropic_web_search(&model.id) {
+            item["use_responses_lite"] = json!(false);
+            if model.supports_web_search == Some(true) {
                 item["web_search_tool_type"] = json!("text");
             } else if let Some(item) = item.as_object_mut() {
                 item.remove("web_search_tool_type");
@@ -187,19 +188,10 @@ pub fn refresh_managed_oauth_catalog(
         }
     }
 
-    for model in managed_models.iter().filter(|model| {
-        model.get(CUSTOM_MODEL_MARKER).and_then(Value::as_bool) == Some(true)
-            || model
-                .get("description")
-                .and_then(Value::as_str)
-                .is_some_and(|description| {
-                    description.starts_with("Custom upstream model exposed through codex-")
-                })
-            || model
-                .get("slug")
-                .and_then(Value::as_str)
-                .is_some_and(|slug| slug.ends_with("-custom"))
-    }) {
+    for model in managed_models
+        .iter()
+        .filter(|model| is_managed_custom_model(model))
+    {
         let mut model = model.clone();
         let slug = model
             .get("slug")
@@ -213,13 +205,8 @@ pub fn refresh_managed_oauth_catalog(
         let supports_search_tool = model
             .get("supports_search_tool")
             .and_then(Value::as_bool)
-            .unwrap_or_else(|| supports_anthropic_web_search(&slug));
+            .unwrap_or(true);
         model["supports_search_tool"] = json!(supports_search_tool);
-        if supports_search_tool {
-            model["web_search_tool_type"] = json!("text");
-        } else if let Some(model) = model.as_object_mut() {
-            model.remove("web_search_tool_type");
-        }
         ensure_instruction_fields(&mut model);
         models.push(model);
     }
@@ -249,11 +236,59 @@ fn is_gpt_model(model: &str) -> bool {
     model.to_ascii_lowercase().starts_with("gpt-")
 }
 
-fn supports_anthropic_web_search(model: &str) -> bool {
-    let model = model.to_ascii_lowercase();
-    ["claude", "sonnet", "opus", "haiku", "fable", "mythos"]
+fn is_managed_custom_model(model: &Value) -> bool {
+    model.get(CUSTOM_MODEL_MARKER).and_then(Value::as_bool) == Some(true)
+        || model
+            .get("description")
+            .and_then(Value::as_str)
+            .is_some_and(|description| {
+                description.starts_with("Custom upstream model exposed through codex-")
+            })
+        || model
+            .get("slug")
+            .and_then(Value::as_str)
+            .is_some_and(|slug| slug.ends_with("-custom"))
+}
+
+pub fn apply_web_search_capabilities(
+    catalog: &mut Value,
+    supported_models: &HashSet<String>,
+) -> anyhow::Result<bool> {
+    let supported_models = supported_models
         .iter()
-        .any(|needle| model.contains(needle))
+        .map(|model| model.to_ascii_lowercase())
+        .collect::<HashSet<_>>();
+    let models = catalog
+        .get_mut("models")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| anyhow::anyhow!("Codex model catalog has no models array"))?;
+    let mut changed = false;
+    for model in models
+        .iter_mut()
+        .filter(|model| is_managed_custom_model(model))
+    {
+        let slug = model
+            .get("slug")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("custom model is missing slug"))?;
+        let upstream_model = slug.strip_suffix("-custom").unwrap_or(slug);
+        let supported = supported_models.contains(&upstream_model.to_ascii_lowercase());
+        if supported && model.get("web_search_tool_type").and_then(Value::as_str) != Some("text") {
+            model["web_search_tool_type"] = json!("text");
+            changed = true;
+        } else if !supported && model.get("web_search_tool_type").is_some() {
+            let model = model
+                .as_object_mut()
+                .expect("Codex catalog model must be an object");
+            model.remove("web_search_tool_type");
+            changed = true;
+        }
+        if model.get("use_responses_lite").and_then(Value::as_bool) != Some(false) {
+            model["use_responses_lite"] = json!(false);
+            changed = true;
+        }
+    }
+    Ok(changed)
 }
 
 pub fn load_template_catalog(path: Option<&std::path::Path>) -> anyhow::Result<Option<Value>> {
@@ -334,6 +369,7 @@ mod tests {
         );
         assert_eq!(catalog["models"][0]["context_window"], 1_000_000);
         assert_eq!(catalog["models"][0]["supports_search_tool"], true);
+        assert!(catalog["models"][0].get("web_search_tool_type").is_none());
     }
 
     #[test]
@@ -394,6 +430,7 @@ mod tests {
             object: Some("model".to_owned()),
             created: Some(1),
             owned_by: Some("custom".to_owned()),
+            supports_web_search: Some(true),
             ..ModelInfo::default()
         }];
         let catalog = codex_catalog_from_models(&models, 1_000_000, None);
@@ -423,6 +460,24 @@ mod tests {
 
         assert_eq!(catalog["models"][0]["supports_search_tool"], true);
         assert!(catalog["models"][0].get("web_search_tool_type").is_none());
+    }
+
+    #[test]
+    fn applies_probed_web_search_capabilities_only_to_custom_models() {
+        let mut catalog = json!({
+            "models": [
+                {"slug":"gpt-5.5","web_search_tool_type":"text"},
+                {"slug":"gpt-5.6-sol-custom","codex_mixin_managed":true,"web_search_tool_type":"text_and_image","use_responses_lite":true},
+                {"slug":"DeepSeek-V4-Flash","codex_mixin_managed":true,"web_search_tool_type":"text"}
+            ]
+        });
+        let supported = HashSet::from(["gpt-5.6-sol".to_owned()]);
+
+        assert!(apply_web_search_capabilities(&mut catalog, &supported).unwrap());
+        assert_eq!(catalog["models"][0]["web_search_tool_type"], "text");
+        assert_eq!(catalog["models"][1]["web_search_tool_type"], "text");
+        assert_eq!(catalog["models"][1]["use_responses_lite"], false);
+        assert!(catalog["models"][2].get("web_search_tool_type").is_none());
     }
 
     #[test]
@@ -483,7 +538,8 @@ mod tests {
             ]
         });
 
-        let refreshed = refresh_managed_oauth_catalog(&current_official, &managed).unwrap();
+        let mut refreshed = refresh_managed_oauth_catalog(&current_official, &managed).unwrap();
+        apply_web_search_capabilities(&mut refreshed, &HashSet::new()).unwrap();
         let slugs = refreshed["models"]
             .as_array()
             .unwrap()

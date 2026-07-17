@@ -32,6 +32,7 @@ use crate::openai_events::{
     map_anthropic_sse_with_image_routes, map_openai_chat_sse_with_image_routes,
 };
 use crate::sse::drain_events;
+use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};
 
 type OfficialWebSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -71,10 +72,19 @@ pub struct AppState {
     client: Client,
     image_routes: ImageRouteRegistry,
     benchmarks: ModelBenchmarkManager,
+    web_search_capabilities: WebSearchCapabilities,
 }
 
 impl AppState {
     pub fn new(config: GatewayConfig) -> anyhow::Result<Self> {
+        let web_search_capabilities = WebSearchCapabilities::from_default_path(&config)?;
+        Self::with_web_search_capabilities(config, web_search_capabilities)
+    }
+
+    pub fn with_web_search_capabilities(
+        config: GatewayConfig,
+        web_search_capabilities: WebSearchCapabilities,
+    ) -> anyhow::Result<Self> {
         let client = Client::builder()
             .timeout(config.request_timeout)
             .pool_max_idle_per_host(64)
@@ -84,6 +94,7 @@ impl AppState {
             client,
             image_routes: ImageRouteRegistry::default(),
             benchmarks: ModelBenchmarkManager::from_default_path(),
+            web_search_capabilities,
         })
     }
 
@@ -166,7 +177,29 @@ impl AppState {
                 true
             });
         }
+        self.web_search_capabilities.annotate_models(&mut models);
         Ok(models)
+    }
+
+    pub async fn probe_web_search_capabilities(
+        &self,
+        models: &mut [crate::anthropic::ModelInfo],
+        force: bool,
+    ) -> anyhow::Result<WebSearchProbeSummary> {
+        self.web_search_capabilities
+            .probe_models(models, &self.config, force)
+            .await
+    }
+
+    fn config_for_custom_request(&self, body: &Value) -> GatewayConfig {
+        let mut config = (*self.config).clone();
+        let model = body
+            .get("model")
+            .and_then(Value::as_str)
+            .unwrap_or_default();
+        config.enable_web_search_tool =
+            config.enable_web_search_tool && self.web_search_capabilities.supports_model(model);
+        config
     }
 
     fn apply_upstream_auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
@@ -216,10 +249,28 @@ pub async fn serve_on_listener(
     let bind = listener.local_addr()?;
     config.bind = bind;
     let state = AppState::new(config)?;
+    let probe_state = state.clone();
+    let probe_task = state.config.enable_web_search_tool.then(|| {
+        tokio::spawn(async move {
+            match probe_state.fetch_models().await {
+                Ok(mut models) => {
+                    if let Err(error) = probe_state
+                        .probe_web_search_capabilities(&mut models, false)
+                        .await
+                    {
+                        tracing::warn!(error = %error, "web search capability discovery failed");
+                    }
+                }
+                Err(error) => {
+                    tracing::warn!(error = %error, "failed to load models for web search discovery");
+                }
+            }
+        })
+    });
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
     tracing::info!(%bind, "codex-mixin listening");
-    axum::serve(listener, router(state))
+    let result = axum::serve(listener, router(state))
         .with_graceful_shutdown(async move {
             #[cfg(unix)]
             tokio::select! {
@@ -229,7 +280,11 @@ pub async fn serve_on_listener(
             #[cfg(not(unix))]
             let _ = tokio::signal::ctrl_c().await;
         })
-        .await?;
+        .await;
+    if let Some(probe_task) = probe_task {
+        probe_task.abort();
+    }
+    result?;
     Ok(())
 }
 
@@ -312,7 +367,8 @@ async fn responses(
     normalize_custom_model_alias(&mut body);
     let stream = match state.config.upstream_kind {
         UpstreamKind::AnthropicMessages => {
-            let mut converted = responses_to_anthropic(&body, &state.config)?;
+            let request_config = state.config_for_custom_request(&body);
+            let mut converted = responses_to_anthropic(&body, &request_config)?;
             if state.config.provider_preset == ProviderPreset::BaiduOneApi {
                 converted.request.metadata = stable_session_id(&headers)?
                     .map(|session_id| json!({"session_id": session_id}));
@@ -867,7 +923,8 @@ async fn proxy_custom_responses_ws(
         Result<bytes::Bytes, std::convert::Infallible>,
     > = match state.config.upstream_kind {
         UpstreamKind::AnthropicMessages => {
-            let mut converted = responses_to_anthropic(&body, &state.config)?;
+            let request_config = state.config_for_custom_request(&body);
+            let mut converted = responses_to_anthropic(&body, &request_config)?;
             if state.config.provider_preset == ProviderPreset::BaiduOneApi {
                 converted.request.metadata =
                     stable_session_id(headers)?.map(|session_id| json!({"session_id": session_id}));

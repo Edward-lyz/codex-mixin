@@ -397,13 +397,32 @@ impl MapperState {
         if !self.web_search_result_indexes.insert(index) {
             return Err(format!("duplicate web_search result index: {index}"));
         }
-        let tool_use_id = content_block
-            .get("tool_use_id")
-            .and_then(Value::as_str)
-            .ok_or_else(|| format!("web_search result at index {index} missing tool_use_id"))?;
+        let tool_use_id = match content_block.get("tool_use_id").and_then(Value::as_str) {
+            Some(tool_use_id) => tool_use_id.to_owned(),
+            None if self.pending_web_searches.len() == 1 => {
+                let tool_use_id = self
+                    .pending_web_searches
+                    .keys()
+                    .next()
+                    .expect("one pending web search")
+                    .clone();
+                tracing::warn!(
+                    index,
+                    tool_use_id,
+                    "inferring omitted web_search tool_use_id from the only pending search"
+                );
+                tool_use_id
+            }
+            None => {
+                return Err(format!(
+                    "web_search result at index {index} missing tool_use_id with {} pending searches",
+                    self.pending_web_searches.len()
+                ));
+            }
+        };
         let pending = self
             .pending_web_searches
-            .remove(tool_use_id)
+            .remove(&tool_use_id)
             .ok_or_else(|| {
                 format!("web_search result references unknown tool_use_id: {tool_use_id}")
             })?;
@@ -1167,6 +1186,60 @@ mod tests {
         )
         .unwrap();
         assert_eq!(completed["response"]["output"][0], done["item"]);
+    }
+
+    #[tokio::test]
+    async fn infers_omitted_web_search_tool_use_id_when_unambiguous() {
+        let events = [
+            json!({"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_123","name":"web_search","input":{}}}),
+            json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"Codex release\"}"}}),
+            json!({"type":"content_block_stop","index":1}),
+            json!({"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","content":[{"type":"web_search_result","title":"Codex","url":"https://example.com"}]}}),
+            json!({"type":"content_block_stop","index":2}),
+            json!({"type":"message_stop"}),
+        ];
+        let stream = events
+            .into_iter()
+            .map(|event| format!("data: {event}\n\n"))
+            .collect::<String>();
+        let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(stream))]);
+        let body = collect_events(map_anthropic_sse(
+            upstream,
+            json!({"model":"Claude Haiku 4.5"}),
+            ToolNameMap::default(),
+        ))
+        .await;
+
+        assert!(body.contains("event: response.completed"), "{body}");
+        assert!(body.contains("\"id\":\"srvtoolu_123\""), "{body}");
+    }
+
+    #[test]
+    fn rejects_omitted_web_search_tool_use_id_when_ambiguous() {
+        let mut state = MapperState::new(json!({}), ToolNameMap::default());
+        state
+            .start_web_search(
+                1,
+                Some("srvtoolu_1".to_owned()),
+                Some("web_search".to_owned()),
+                "{\"query\":\"one\"}".to_owned(),
+            )
+            .unwrap();
+        state.finish_tool(1, None).unwrap();
+        state
+            .start_web_search(
+                2,
+                Some("srvtoolu_2".to_owned()),
+                Some("web_search".to_owned()),
+                "{\"query\":\"two\"}".to_owned(),
+            )
+            .unwrap();
+        state.finish_tool(2, None).unwrap();
+
+        let error = state
+            .finish_web_search_result(3, &json!({"type":"web_search_tool_result","content":[]}))
+            .unwrap_err();
+        assert!(error.contains("2 pending searches"));
     }
 
     #[tokio::test]
