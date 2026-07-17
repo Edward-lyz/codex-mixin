@@ -186,9 +186,6 @@ pub struct GatewayConfig {
     pub enable_web_search_tool: bool,
     pub web_search_tool_type: String,
     pub web_search_max_uses: Option<u64>,
-    pub web_search_exclusive: bool,
-    pub web_search_omit_system_instructions: bool,
-    pub web_search_latest_user_only: bool,
 }
 
 impl GatewayConfig {
@@ -341,15 +338,6 @@ impl GatewayConfig {
             web_search_max_uses: read_optional_positive_u64_env(
                 "CODEX_GATEWAY_WEB_SEARCH_MAX_USES",
                 Some(3),
-            )?,
-            web_search_exclusive: read_bool_env("CODEX_GATEWAY_WEB_SEARCH_EXCLUSIVE", true)?,
-            web_search_omit_system_instructions: read_bool_env(
-                "CODEX_GATEWAY_WEB_SEARCH_OMIT_SYSTEM",
-                true,
-            )?,
-            web_search_latest_user_only: read_bool_env(
-                "CODEX_GATEWAY_WEB_SEARCH_LATEST_USER_ONLY",
-                true,
             )?,
         })
     }
@@ -682,9 +670,6 @@ mod tests {
             enable_web_search_tool: false,
             web_search_tool_type: "web_search_20250305".to_owned(),
             web_search_max_uses: Some(3),
-            web_search_exclusive: true,
-            web_search_omit_system_instructions: true,
-            web_search_latest_user_only: true,
         };
         assert_eq!(
             config.upstream_image_generation_url().as_deref(),

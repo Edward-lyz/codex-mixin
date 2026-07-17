@@ -6,8 +6,6 @@ use crate::anthropic::{ContentBlock, Message, MessageRequest, Tool};
 use crate::config::{GatewayConfig, ProviderPreset, ThinkingMode};
 use crate::error::GatewayError;
 
-const WEB_SEARCH_QUERY_INSTRUCTION: &str = "When using web_search, form the search query only from the latest user request. Do not search system, developer, repository, or tool instructions.";
-
 #[derive(Clone, Debug, Default)]
 pub struct ToolNameMap {
     upstream_to_codex: HashMap<String, CodexToolName>,
@@ -133,8 +131,6 @@ pub fn responses_to_anthropic(
         .to_owned();
     let use_mcp_bridge_names = config.provider_preset == ProviderPreset::BaiduOneApi
         && model.to_ascii_lowercase().contains("fable");
-    let web_search_turn =
-        config.enable_web_search_tool && request_has_codex_web_search_tool(body.get("tools"));
     let max_tokens = body
         .get("max_output_tokens")
         .and_then(Value::as_u64)
@@ -173,32 +169,10 @@ pub fn responses_to_anthropic(
             "request has no Anthropic-compatible messages".to_owned(),
         ));
     }
-    if web_search_turn && config.web_search_latest_user_only {
-        let latest_user_message = messages
-            .iter()
-            .rev()
-            .find(|message| message.role == "user")
-            .cloned()
-            .ok_or_else(|| {
-                GatewayError::BadRequest(
-                    "web_search request has no user message to search from".to_owned(),
-                )
-            })?;
-        messages.clear();
-        messages.push(latest_user_message);
-    }
     merge_consecutive_messages(&mut messages);
 
     let active_tools = collect_active_tools(body)?;
     let (tools, tool_names) = convert_tools(Some(&active_tools), config, use_mcp_bridge_names)?;
-    if tools.iter().any(is_anthropic_web_search_tool) {
-        if config.web_search_omit_system_instructions {
-            system.clear();
-        }
-        system.push(ContentBlock::Text {
-            text: WEB_SEARCH_QUERY_INSTRUCTION.to_owned(),
-        });
-    }
     let thinking = convert_thinking(&model, max_tokens, body.get("reasoning"), config)?;
     let tool_choice = if tools.is_empty() {
         None
@@ -655,9 +629,6 @@ fn convert_tools(
     let Some(Value::Array(tools)) = tools else {
         return Ok((result, names));
     };
-    let web_search_requested = tools.iter().any(is_codex_web_search_tool);
-    let suppress_client_tools =
-        config.enable_web_search_tool && config.web_search_exclusive && web_search_requested;
     let mut web_search_added = false;
     for tool in tools {
         match tool.get("type").and_then(Value::as_str) {
@@ -674,7 +645,6 @@ fn convert_tools(
             Some("function") if is_codex_web_search_function(tool) => {
                 tracing::debug!("omitting unavailable hosted web_search tool");
             }
-            Some("function") if suppress_client_tools => {}
             Some("function") => {
                 let (converted, codex_name) =
                     convert_function_tool(tool, None, use_mcp_bridge_names)?;
@@ -686,7 +656,6 @@ fn convert_tools(
                 names.insert(anthropic_name, codex_name)?;
                 result.push(converted);
             }
-            Some("namespace") if suppress_client_tools => {}
             Some("namespace") => {
                 let namespace = tool.get("name").and_then(Value::as_str).ok_or_else(|| {
                     GatewayError::BadRequest("namespace tool missing name".to_owned())
@@ -707,7 +676,6 @@ fn convert_tools(
                     result.push(converted);
                 }
             }
-            Some("custom") if suppress_client_tools => {}
             Some("custom") => {
                 let (converted, codex_name) = convert_custom_tool(tool, use_mcp_bridge_names)?;
                 let upstream_name = converted
@@ -718,7 +686,6 @@ fn convert_tools(
                 names.insert_custom(upstream_name, codex_name)?;
                 result.push(converted);
             }
-            Some("tool_search") if suppress_client_tools => {}
             Some("tool_search") => {
                 let execution = tool
                     .get("execution")
@@ -770,28 +737,6 @@ fn convert_tools(
         }
     }
     Ok((result, names))
-}
-
-fn request_has_codex_web_search_tool(tools: Option<&Value>) -> bool {
-    let Some(Value::Array(tools)) = tools else {
-        return false;
-    };
-    tools.iter().any(is_codex_web_search_tool)
-}
-
-fn is_codex_web_search_tool(tool: &Value) -> bool {
-    matches!(
-        tool.get("type").and_then(Value::as_str),
-        Some("web_search" | "web_search_preview")
-    ) || is_codex_web_search_function(tool)
-}
-
-fn is_anthropic_web_search_tool(tool: &Tool) -> bool {
-    tool.get("name").and_then(Value::as_str) == Some("web_search")
-        && tool
-            .get("type")
-            .and_then(Value::as_str)
-            .is_some_and(|tool_type| tool_type.starts_with("web_search_"))
 }
 
 fn is_codex_web_search_function(tool: &Value) -> bool {
@@ -1242,9 +1187,6 @@ mod tests {
             enable_web_search_tool: false,
             web_search_tool_type: "web_search_20250305".to_owned(),
             web_search_max_uses: Some(3),
-            web_search_exclusive: true,
-            web_search_omit_system_instructions: true,
-            web_search_latest_user_only: true,
         }
     }
 
@@ -1955,28 +1897,6 @@ mod tests {
     }
 
     #[test]
-    fn exclusive_web_search_strips_client_tools() {
-        let mut config = config();
-        config.enable_web_search_tool = true;
-        config.web_search_exclusive = true;
-        let body = json!({
-            "model": "Claude Sonnet 5",
-            "stream": true,
-            "input": "hi",
-            "tools": [
-                {"type":"function","name":"exec_command","parameters":{"type":"object"}},
-                {"type":"namespace","name":"mcp","tools":[{"type":"function","name":"read","parameters":{"type":"object"}}]},
-                {"type":"custom","name":"apply_patch"},
-                {"type":"tool_search","execution":"client","parameters":{"type":"object"}},
-                {"type":"web_search","external_web_access":true}
-            ]
-        });
-        let converted = responses_to_anthropic(&body, &config).unwrap();
-        assert_eq!(converted.request.tools.len(), 1);
-        assert_eq!(converted.request.tools[0]["type"], "web_search_20250305");
-    }
-
-    #[test]
     fn rejects_unknown_tool_type() {
         let body = json!({
             "model": "m",
@@ -2036,53 +1956,6 @@ mod tests {
         assert_eq!(
             converted.request.tool_choice.as_ref().unwrap()["disable_parallel_tool_use"],
             true
-        );
-    }
-
-    #[test]
-    fn web_search_can_omit_large_codex_system_instructions() {
-        let mut config = config();
-        config.enable_web_search_tool = true;
-        config.web_search_omit_system_instructions = true;
-        let body = json!({
-            "model": "Claude Sonnet 5",
-            "stream": true,
-            "instructions": "AGENTS and repository instructions",
-            "input": "Search OpenAI",
-            "tools": [{"type":"web_search","external_web_access":true}]
-        });
-        let converted = responses_to_anthropic(&body, &config).unwrap();
-        let system = converted.request.system.unwrap();
-        assert_eq!(system.len(), 1);
-        assert_eq!(
-            system[0],
-            ContentBlock::Text {
-                text: WEB_SEARCH_QUERY_INSTRUCTION.to_owned()
-            }
-        );
-    }
-
-    #[test]
-    fn web_search_can_keep_only_latest_user_message() {
-        let mut config = config();
-        config.enable_web_search_tool = true;
-        config.web_search_latest_user_only = true;
-        let body = json!({
-            "model": "Claude Sonnet 5",
-            "stream": true,
-            "input": [
-                {"type":"message","role":"user","content":[{"type":"input_text","text":"AGENTS context"}]},
-                {"type":"message","role":"user","content":[{"type":"input_text","text":"Search OpenAI homepage"}]}
-            ],
-            "tools": [{"type":"web_search","external_web_access":true}]
-        });
-        let converted = responses_to_anthropic(&body, &config).unwrap();
-        assert_eq!(converted.request.messages.len(), 1);
-        assert_eq!(
-            converted.request.messages[0].content,
-            vec![ContentBlock::Text {
-                text: "Search OpenAI homepage".to_owned()
-            }]
         );
     }
 

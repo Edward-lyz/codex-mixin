@@ -573,9 +573,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             do {
                 let status = try await ensureGatewayReady()
                 applyGatewayStatus(status)
-                let output = try await runGateway(args)
-                let message = output.isEmpty ? "已写入托管模型配置。请重启 Codex App；CLI 需要开新会话。" : "\(output)\n\n请重启 Codex App；CLI 需要开新会话。"
-                showAlert(title: "Codex 配置已更新", message: message)
+                _ = try await runGateway(args)
+                showAlert(
+                    title: "Codex 配置已更新",
+                    message: "模型目录和 Web Search 能力探测已完成。请重启 Codex App；CLI 需要开新会话。"
+                )
                 await refreshStatusNow()
             } catch {
                 serviceStatus = "安装 Codex 配置失败"

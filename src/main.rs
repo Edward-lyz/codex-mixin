@@ -930,10 +930,7 @@ fn show_config(json_output: bool, scope: ConfigScope) -> anyhow::Result<()> {
                 "thinking_mode": format!("{:?}", config.thinking_mode),
                 "enable_web_search_tool": config.enable_web_search_tool,
                 "web_search_tool_type": config.web_search_tool_type,
-                "web_search_max_uses": config.web_search_max_uses,
-                "web_search_exclusive": config.web_search_exclusive,
-                "web_search_omit_system_instructions": config.web_search_omit_system_instructions,
-                "web_search_latest_user_only": config.web_search_latest_user_only
+                "web_search_max_uses": config.web_search_max_uses
             });
             print_config_value(json_output, &value)
         }

@@ -9,7 +9,8 @@ use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
-use futures_util::stream::{SplitSink, SplitStream};
+use bytes::Bytes;
+use futures_util::stream::{self, BoxStream, SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde_json::{Value, json};
@@ -19,7 +20,7 @@ use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
 use tower_http::decompression::RequestDecompressionLayer;
 use uuid::Uuid;
 
-use crate::anthropic::{BaiduAvailableModelsResponse, ModelsResponse};
+use crate::anthropic::{BaiduAvailableModelsResponse, MessageRequest, ModelsResponse};
 use crate::benchmark::{BenchmarkSnapshotResponse, ModelBenchmarkManager, StartBenchmarkRequest};
 use crate::catalog::{codex_catalog_from_models_with_metadata, load_template_catalog};
 use crate::config::{GatewayConfig, ProviderPreset, UpstreamAuthHeader, UpstreamKind};
@@ -35,6 +36,13 @@ use crate::sse::drain_events;
 use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};
 
 type OfficialWebSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+type AnthropicByteStream = BoxStream<'static, Result<Bytes, reqwest::Error>>;
+const HOSTED_WEB_SEARCH_RETRY_ATTEMPTS: usize = 3;
+
+enum AnthropicStreamDisposition {
+    Ready(AnthropicByteStream),
+    RetryHostedWebSearch,
+}
 
 #[derive(Debug)]
 struct OfficialWebSocketRequestError {
@@ -218,6 +226,150 @@ impl AppState {
             request
         }
     }
+
+    async fn send_anthropic_request(
+        &self,
+        request: &MessageRequest,
+    ) -> Result<AnthropicByteStream, GatewayError> {
+        let response = self
+            .apply_upstream_auth(self.client.post(self.config.upstream_messages_url()))
+            .header(header::ACCEPT, "text/event-stream")
+            .json(request)
+            .send()
+            .await?;
+        let status = response.status();
+        if !status.is_success() {
+            let body = response.text().await?;
+            return Err(GatewayError::Upstream(format!(
+                "messages endpoint returned {status}: {body}"
+            )));
+        }
+        Ok(response.bytes_stream().boxed())
+    }
+
+    async fn anthropic_stream_with_web_search_retry(
+        &self,
+        mut request: MessageRequest,
+    ) -> Result<AnthropicByteStream, GatewayError> {
+        let has_hosted_web_search = request.tools.iter().any(|tool| {
+            tool.get("name").and_then(Value::as_str) == Some("web_search")
+                && tool
+                    .get("type")
+                    .and_then(Value::as_str)
+                    .is_some_and(|tool_type| tool_type.starts_with("web_search_"))
+        });
+        let upstream = self.send_anthropic_request(&request).await?;
+        if !has_hosted_web_search {
+            return Ok(upstream);
+        }
+        match inspect_anthropic_stream(upstream).await? {
+            AnthropicStreamDisposition::Ready(upstream) => Ok(upstream),
+            AnthropicStreamDisposition::RetryHostedWebSearch => {
+                tracing::warn!(
+                    model = %request.model,
+                    "retrying client-style web_search call as an Anthropic server tool"
+                );
+                request.tool_choice = Some(json!({"type":"tool","name":"web_search"}));
+                let original_session_id = request
+                    .metadata
+                    .as_ref()
+                    .and_then(Value::as_object)
+                    .and_then(|metadata| metadata.get("session_id"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                for attempt in 1..=HOSTED_WEB_SEARCH_RETRY_ATTEMPTS {
+                    if let Some(metadata) = request.metadata.as_mut().and_then(Value::as_object_mut)
+                    {
+                        metadata.insert(
+                            "session_id".to_owned(),
+                            json!(format!(
+                                "{}-web-search-retry-{}",
+                                original_session_id.as_deref().unwrap_or("codex-mixin"),
+                                Uuid::new_v4().simple()
+                            )),
+                        );
+                    }
+                    let retry = self.send_anthropic_request(&request).await?;
+                    match inspect_anthropic_stream(retry).await? {
+                        AnthropicStreamDisposition::Ready(retry) => return Ok(retry),
+                        AnthropicStreamDisposition::RetryHostedWebSearch => tracing::warn!(
+                            model = %request.model,
+                            attempt,
+                            "forced hosted web_search was still returned as a client tool"
+                        ),
+                    }
+                }
+                Err(GatewayError::Upstream(format!(
+                    "model {} returned a client-style web_search call after {} hosted-tool retries",
+                    request.model, HOSTED_WEB_SEARCH_RETRY_ATTEMPTS
+                )))
+            }
+        }
+    }
+}
+
+async fn inspect_anthropic_stream(
+    mut upstream: AnthropicByteStream,
+) -> Result<AnthropicStreamDisposition, GatewayError> {
+    let mut buffered_chunks = Vec::new();
+    let mut event_buffer = Vec::new();
+    while let Some(chunk) = upstream.next().await {
+        let chunk = chunk?;
+        event_buffer.extend_from_slice(&chunk);
+        buffered_chunks.push(chunk);
+        let mut retry_hosted_web_search = None;
+        for event in drain_events(&mut event_buffer) {
+            if event.data == "[DONE]" {
+                retry_hosted_web_search = Some(false);
+                break;
+            }
+            let Ok(payload) = serde_json::from_str::<Value>(&event.data) else {
+                continue;
+            };
+            match payload.get("type").and_then(Value::as_str) {
+                Some("content_block_start") => {
+                    let block = payload.get("content_block").unwrap_or(&Value::Null);
+                    match block.get("type").and_then(Value::as_str) {
+                        Some("tool_use") => {
+                            retry_hosted_web_search = Some(
+                                block.get("name").and_then(Value::as_str) == Some("web_search"),
+                            );
+                        }
+                        Some("server_tool_use") => retry_hosted_web_search = Some(false),
+                        _ => {}
+                    }
+                }
+                Some("content_block_delta") => {
+                    let delta = payload.get("delta").unwrap_or(&Value::Null);
+                    if delta.get("type").and_then(Value::as_str) == Some("text_delta")
+                        && delta
+                            .get("text")
+                            .and_then(Value::as_str)
+                            .is_some_and(|text| !text.is_empty())
+                    {
+                        retry_hosted_web_search = Some(false);
+                    }
+                }
+                Some("message_stop" | "error") => retry_hosted_web_search = Some(false),
+                _ => {}
+            }
+            if retry_hosted_web_search.is_some() {
+                break;
+            }
+        }
+        if let Some(retry_hosted_web_search) = retry_hosted_web_search {
+            if retry_hosted_web_search {
+                return Ok(AnthropicStreamDisposition::RetryHostedWebSearch);
+            }
+            let prefix = stream::iter(buffered_chunks.into_iter().map(Ok));
+            return Ok(AnthropicStreamDisposition::Ready(
+                prefix.chain(upstream).boxed(),
+            ));
+        }
+    }
+    Ok(AnthropicStreamDisposition::Ready(
+        stream::iter(buffered_chunks.into_iter().map(Ok)).boxed(),
+    ))
 }
 
 pub fn router(state: AppState) -> Router {
@@ -374,20 +526,10 @@ async fn responses(
                     .map(|session_id| json!({"session_id": session_id}));
             }
             let upstream = state
-                .apply_upstream_auth(state.client.post(state.config.upstream_messages_url()))
-                .header(header::ACCEPT, "text/event-stream")
-                .json(&converted.request)
-                .send()
+                .anthropic_stream_with_web_search_retry(converted.request)
                 .await?;
-            let status = upstream.status();
-            if !status.is_success() {
-                let body = upstream.text().await.unwrap_or_default();
-                return Err(GatewayError::Upstream(format!(
-                    "messages endpoint returned {status}: {body}"
-                )));
-            }
             Body::from_stream(map_anthropic_sse_with_image_routes(
-                upstream.bytes_stream(),
+                upstream,
                 body,
                 converted.tool_names,
                 state.custom_image_routes(),
@@ -930,18 +1072,10 @@ async fn proxy_custom_responses_ws(
                     stable_session_id(headers)?.map(|session_id| json!({"session_id": session_id}));
             }
             let upstream = state
-                .apply_upstream_auth(state.client.post(state.config.upstream_messages_url()))
-                .header(header::ACCEPT, "text/event-stream")
-                .json(&converted.request)
-                .send()
+                .anthropic_stream_with_web_search_retry(converted.request)
                 .await?;
-            let status = upstream.status();
-            if !status.is_success() {
-                let body = upstream.text().await?;
-                anyhow::bail!("messages endpoint returned {status}: {body}");
-            }
             map_anthropic_sse_with_image_routes(
-                upstream.bytes_stream(),
+                upstream,
                 body,
                 converted.tool_names,
                 state.custom_image_routes(),
@@ -1508,9 +1642,6 @@ mod tests {
             enable_web_search_tool: false,
             web_search_tool_type: "web_search_20250305".to_owned(),
             web_search_max_uses: Some(3),
-            web_search_exclusive: true,
-            web_search_omit_system_instructions: true,
-            web_search_latest_user_only: true,
         })
         .unwrap();
         state.benchmarks = ModelBenchmarkManager::new(results_path.clone());

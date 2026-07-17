@@ -19,13 +19,14 @@ use crate::config::{
 };
 use crate::sse::drain_events;
 
-const CAPABILITY_FILE_VERSION: u64 = 1;
+const CAPABILITY_FILE_VERSION: u64 = 2;
 const CAPABILITY_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 const PROBE_CONCURRENCY: usize = 4;
 const NO_EVIDENCE_PROBE_ATTEMPTS: usize = 3;
+const POSITIVE_CONFIRMATION_ATTEMPTS: usize = 1;
 const PROBE_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30);
 const RELEASE_REFERENCE_URL: &str = "https://api.github.com/repos/openai/codex/releases/latest";
-const PROBE_PROMPT: &str = "Use web search now to find the latest OpenAI Codex CLI release tag from https://github.com/openai/codex/releases/latest. Reply with the release tag only.";
+const PROBE_PROMPT: &str = "Use the web_search server tool now to find the latest OpenAI Codex CLI release tag from https://github.com/openai/codex/releases/latest. Never call codex_mixin_probe_noop. Reply with the release tag only.";
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct ModelWebSearchCapability {
@@ -104,13 +105,14 @@ impl WebSearchCapabilities {
             let snapshot: CapabilitySnapshot =
                 serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
             if snapshot.version != CAPABILITY_FILE_VERSION {
-                anyhow::bail!(
-                    "unsupported web search capability file version {} in {}",
-                    snapshot.version,
-                    path.display()
+                tracing::info!(
+                    path = %path.display(),
+                    cached_version = snapshot.version,
+                    current_version = CAPABILITY_FILE_VERSION,
+                    "discarding incompatible web search capability cache"
                 );
-            }
-            if snapshot.upstream == upstream {
+                BTreeMap::new()
+            } else if snapshot.upstream == upstream {
                 snapshot.models
             } else {
                 BTreeMap::new()
@@ -405,28 +407,32 @@ async fn probe_model(
         };
         match verdict {
             ProbeVerdict::Supported(evidence) => {
-                match timeout(
-                    PROBE_ATTEMPT_TIMEOUT,
-                    probe_model_once(client, config, model, release_reference),
-                )
-                .await
-                {
-                    Ok(Ok(ProbeVerdict::Unsupported(evidence))) => {
-                        return Ok((false, evidence.to_owned()));
+                for _ in 0..POSITIVE_CONFIRMATION_ATTEMPTS {
+                    match timeout(
+                        PROBE_ATTEMPT_TIMEOUT,
+                        probe_model_once(client, config, model, release_reference),
+                    )
+                    .await
+                    {
+                        Ok(Ok(ProbeVerdict::Supported(_))) => {}
+                        Ok(Ok(ProbeVerdict::Unsupported(evidence))) => {
+                            return Ok((false, evidence.to_owned()));
+                        }
+                        Ok(Ok(ProbeVerdict::NoEvidence)) => {
+                            return Ok((false, "inconsistent_no_search_evidence".to_owned()));
+                        }
+                        Ok(Err(error)) => {
+                            return Err(error).with_context(|| {
+                                format!("web search confirmation failed for {model}")
+                            });
+                        }
+                        Err(_) => {
+                            anyhow::bail!(
+                                "web search confirmation timed out after {} seconds for {model}",
+                                PROBE_ATTEMPT_TIMEOUT.as_secs()
+                            );
+                        }
                     }
-                    Ok(Ok(ProbeVerdict::Supported(_) | ProbeVerdict::NoEvidence)) => {}
-                    Ok(Err(error)) => {
-                        tracing::warn!(
-                            model,
-                            error = %error,
-                            "web search confirmation failed after a successful probe"
-                        );
-                    }
-                    Err(_) => tracing::warn!(
-                        model,
-                        timeout_seconds = PROBE_ATTEMPT_TIMEOUT.as_secs(),
-                        "web search confirmation timed out after a successful probe"
-                    ),
                 }
                 return Ok((true, evidence.to_owned()));
             }
@@ -459,11 +465,23 @@ async fn probe_model_once(
             "role": "user",
             "content": [{"type": "text", "text": PROBE_PROMPT}]
         }],
-        "tools": [{
-            "type": config.web_search_tool_type,
-            "name": "web_search",
-            "max_uses": 1
-        }]
+        "tool_choice": {"type": "tool", "name": "web_search"},
+        "tools": [
+            {
+                "type": config.web_search_tool_type,
+                "name": "web_search",
+                "max_uses": 1
+            },
+            {
+                "name": "codex_mixin_probe_noop",
+                "description": "Compatibility probe only. Never call this tool.",
+                "input_schema": {
+                    "type": "object",
+                    "properties": {},
+                    "additionalProperties": false
+                }
+            }
+        ]
     });
     if config.provider_preset == ProviderPreset::BaiduOneApi {
         body["metadata"] = json!({
@@ -674,9 +692,6 @@ mod tests {
             enable_web_search_tool: true,
             web_search_tool_type: "web_search_20250305".to_owned(),
             web_search_max_uses: Some(3),
-            web_search_exclusive: true,
-            web_search_omit_system_instructions: true,
-            web_search_latest_user_only: true,
         }
     }
 
@@ -757,8 +772,20 @@ mod tests {
         assert!(!loaded.supports_model("Removed Model"));
 
         let another_upstream = test_config("https://two.example");
-        let invalidated = WebSearchCapabilities::load(path, &another_upstream).unwrap();
+        let invalidated = WebSearchCapabilities::load(path.clone(), &another_upstream).unwrap();
         assert!(!invalidated.supports_model("Claude Haiku 4.5"));
+        assert!(invalidated.results().is_empty());
+
+        let old_snapshot = CapabilitySnapshot {
+            version: CAPABILITY_FILE_VERSION - 1,
+            upstream: UpstreamIdentity::from_config(&config),
+            models: BTreeMap::from([(
+                "Claude Haiku 4.5".to_owned(),
+                capability("Claude Haiku 4.5"),
+            )]),
+        };
+        fs::write(&path, serde_json::to_vec_pretty(&old_snapshot).unwrap()).unwrap();
+        let invalidated = WebSearchCapabilities::load(path, &config).unwrap();
         assert!(invalidated.results().is_empty());
     }
 }

@@ -31,7 +31,7 @@ enum MockMode {
     NamespacedTool,
     CustomTool,
     ToolSearch,
-    WebSearch,
+    WebSearchRetry,
     ImageTool,
     ImageToolFailure,
 }
@@ -89,9 +89,6 @@ fn test_config(upstream_base_url: String) -> GatewayConfig {
         enable_web_search_tool: false,
         web_search_tool_type: "web_search_20250305".to_owned(),
         web_search_max_uses: Some(3),
-        web_search_exclusive: true,
-        web_search_omit_system_instructions: true,
-        web_search_latest_user_only: true,
     }
 }
 
@@ -276,6 +273,31 @@ async fn mock_messages(
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok());
     assert_eq!(auth, Some("Bearer upstream-key"));
+    let has_hosted_web_search = body
+        .get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| {
+            tools.iter().any(|tool| {
+                tool.get("name").and_then(Value::as_str) == Some("web_search")
+                    && tool
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .is_some_and(|tool_type| tool_type.starts_with("web_search_"))
+            })
+        });
+    let hosted_web_search_forced = body.get("tool_choice").is_some_and(|tool_choice| {
+        tool_choice.get("type").and_then(Value::as_str) == Some("tool")
+            && tool_choice.get("name").and_then(Value::as_str) == Some("web_search")
+    });
+    let is_capability_probe = body
+        .get("tools")
+        .and_then(Value::as_array)
+        .is_some_and(|tools| {
+            tools.iter().any(|tool| {
+                tool.get("name").and_then(Value::as_str) == Some("codex_mixin_probe_noop")
+            })
+        });
+    let request_index = state.requests.lock().unwrap().len();
     state.requests.lock().unwrap().push(body);
     let payload = match state.mode {
         MockMode::Text => text_sse(),
@@ -292,7 +314,14 @@ async fn mock_messages(
         MockMode::ToolSearch => {
             tool_sse("tool_search", json!({"query":"calendar create","limit":1}))
         }
-        MockMode::WebSearch => web_search_sse(),
+        MockMode::WebSearchRetry if !has_hosted_web_search => text_sse(),
+        MockMode::WebSearchRetry if is_capability_probe && hosted_web_search_forced => {
+            web_search_sse()
+        }
+        MockMode::WebSearchRetry if hosted_web_search_forced && request_index >= 2 => {
+            web_search_sse()
+        }
+        MockMode::WebSearchRetry => tool_sse("web_search", json!({})),
         MockMode::ImageTool | MockMode::ImageToolFailure => tool_sse(
             "image_gen__imagegen",
             json!({
@@ -1507,6 +1536,73 @@ async fn maps_custom_websocket_to_responses_frames() {
 }
 
 #[tokio::test]
+async fn retries_demoted_web_search_on_custom_websocket() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::WebSearchRetry).await;
+    let mut config = test_config(upstream_url);
+    config.provider_preset = ProviderPreset::BaiduOneApi;
+    config.enable_web_search_tool = true;
+    let capability_dir = tempfile::tempdir().unwrap();
+    let capabilities = WebSearchCapabilities::load(
+        capability_dir.path().join("web-search-capabilities.json"),
+        &config,
+    )
+    .unwrap();
+    let mut models = vec![ModelInfo {
+        id: "Claude Sonnet 5".to_owned(),
+        ..ModelInfo::default()
+    }];
+    capabilities
+        .probe_models(&mut models, &config, true)
+        .await
+        .unwrap();
+    requests.lock().unwrap().clear();
+
+    let state = AppState::with_web_search_capabilities(config, capabilities).unwrap();
+    let gateway_url = spawn_router(router(state)).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    request
+        .headers_mut()
+        .insert("session-id", "web-search-session".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    let mut body = responses_request();
+    body.as_object_mut().unwrap().remove("stream");
+    body["type"] = json!("response.create");
+    body["model"] = json!("Claude Sonnet 5");
+    body["tools"]
+        .as_array_mut()
+        .unwrap()
+        .push(json!({"type":"web_search","external_web_access":true}));
+    socket
+        .send(WsMessage::Text(body.to_string().into()))
+        .await
+        .unwrap();
+
+    let frames = websocket_response_frames(&mut socket).await.join("\n");
+    assert!(frames.contains("\"type\":\"web_search_call\""));
+    assert!(frames.contains("\"type\":\"response.completed\""));
+    assert!(!frames.contains("\"name\":\"web_search\",\"type\":\"function_call\""));
+    let upstream_requests = requests.lock().unwrap();
+    assert_eq!(upstream_requests.len(), 3);
+    assert_eq!(
+        upstream_requests[0]["metadata"]["session_id"],
+        "web-search-session"
+    );
+    assert!(
+        upstream_requests[1]["metadata"]["session_id"]
+            .as_str()
+            .unwrap()
+            .starts_with("web-search-session-web-search-retry-")
+    );
+    assert_eq!(upstream_requests[2]["tool_choice"]["name"], "web_search");
+}
+
+#[tokio::test]
 async fn rebuilds_custom_history_from_previous_response_id() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let gateway_url = spawn_gateway(upstream_url).await;
@@ -2385,7 +2481,7 @@ where
 
 #[tokio::test]
 async fn forwards_thinking_and_anthropic_server_web_search() {
-    let (upstream_url, requests) = spawn_mock_upstream(MockMode::WebSearch).await;
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::WebSearchRetry).await;
     let mut config = test_config(upstream_url);
     config.thinking_mode = ThinkingMode::Auto;
     config.enable_web_search_tool = true;
@@ -2404,6 +2500,16 @@ async fn forwards_thinking_and_anthropic_server_web_search() {
         .probe_models(&mut models, &config, true)
         .await
         .unwrap();
+    let probe_requests = requests.lock().unwrap().clone();
+    assert_eq!(probe_requests.len(), 1 + 1);
+    assert_eq!(probe_requests[0]["tools"].as_array().unwrap().len(), 2);
+    assert_eq!(probe_requests[0]["tool_choice"]["type"], "tool");
+    assert_eq!(probe_requests[0]["tool_choice"]["name"], "web_search");
+    assert_eq!(probe_requests[0]["tools"][0]["name"], "web_search");
+    assert_eq!(
+        probe_requests[0]["tools"][1]["name"],
+        "codex_mixin_probe_noop"
+    );
     requests.lock().unwrap().clear();
     let state = AppState::with_web_search_capabilities(config, capabilities).unwrap();
     let gateway_url = spawn_router(router(state)).await;
@@ -2411,6 +2517,12 @@ async fn forwards_thinking_and_anthropic_server_web_search() {
     let mut request = responses_request();
     request["model"] = json!("Claude Sonnet 5");
     request["reasoning"] = json!({"effort": "xhigh"});
+    request["input"] = json!([
+        {"type":"message","role":"developer","content":[{"type":"input_text","text":"dev rules"}]},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"Teach me KDA attention"}]},
+        {"type":"message","role":"assistant","content":[{"type":"output_text","text":"KDA keeps a recurrent matrix state."}]},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"Continue polishing the lesson"}]}
+    ]);
     request["tools"]
         .as_array_mut()
         .unwrap()
@@ -2429,14 +2541,32 @@ async fn forwards_thinking_and_anthropic_server_web_search() {
     assert!(body.contains("\"type\":\"web_search_call\""));
     assert!(body.contains("\"query\":\"OpenAI Codex\""));
 
-    let upstream_request = requests.lock().unwrap()[0].clone();
+    let supported_requests = requests.lock().unwrap().clone();
+    assert_eq!(supported_requests.len(), 3);
+    assert_ne!(supported_requests[0]["tool_choice"]["type"], "tool");
+    assert_eq!(supported_requests[1]["tool_choice"]["type"], "tool");
+    assert_eq!(supported_requests[1]["tool_choice"]["name"], "web_search");
+    assert_eq!(supported_requests[2]["tool_choice"]["type"], "tool");
+    assert_eq!(supported_requests[2]["tool_choice"]["name"], "web_search");
+    let upstream_request = supported_requests[2].clone();
     assert_eq!(upstream_request["thinking"]["type"], "adaptive");
     assert_eq!(upstream_request["output_config"]["effort"], "max");
-    assert_eq!(upstream_request["tools"].as_array().unwrap().len(), 1);
-    assert_eq!(upstream_request["tools"][0]["type"], "web_search_20250305");
-    assert_eq!(upstream_request["tools"][0]["name"], "web_search");
-    assert_eq!(upstream_request["tools"][0]["max_uses"], 1);
-    assert!(upstream_request["tools"][0].get("input_schema").is_none());
+    assert_eq!(upstream_request["system"].as_array().unwrap().len(), 2);
+    assert_eq!(upstream_request["messages"].as_array().unwrap().len(), 3);
+    assert_eq!(
+        upstream_request["messages"][0]["content"][0]["text"],
+        "Teach me KDA attention"
+    );
+    assert_eq!(
+        upstream_request["messages"][2]["content"][0]["text"],
+        "Continue polishing the lesson"
+    );
+    assert_eq!(upstream_request["tools"].as_array().unwrap().len(), 2);
+    assert_eq!(upstream_request["tools"][0]["name"], "exec_command");
+    assert_eq!(upstream_request["tools"][1]["type"], "web_search_20250305");
+    assert_eq!(upstream_request["tools"][1]["name"], "web_search");
+    assert_eq!(upstream_request["tools"][1]["max_uses"], 1);
+    assert!(upstream_request["tools"][1].get("input_schema").is_none());
 
     let mut unsupported_request = responses_request();
     unsupported_request["model"] = json!("DeepSeek-V4-Flash");
@@ -2454,7 +2584,7 @@ async fn forwards_thinking_and_anthropic_server_web_search() {
     assert_eq!(response.status(), StatusCode::OK);
     let _ = response.text().await.unwrap();
 
-    let upstream_request = requests.lock().unwrap()[1].clone();
+    let upstream_request = requests.lock().unwrap()[3].clone();
     assert_eq!(upstream_request["tools"].as_array().unwrap().len(), 1);
     assert_ne!(upstream_request["tools"][0]["name"], "web_search");
 }
