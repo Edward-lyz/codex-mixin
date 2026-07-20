@@ -41,6 +41,7 @@ const HOSTED_WEB_SEARCH_RETRY_ATTEMPTS: usize = 3;
 const MODEL_CACHE_TTL: Duration = Duration::from_secs(30);
 const CATALOG_SOURCE_CACHE_TTL: Duration = Duration::from_secs(60);
 const CATALOG_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(30);
+const ANTHROPIC_FAST_BETA: &str = "fast-mode-2026-02-01";
 
 enum AnthropicStreamDisposition {
     Ready(AnthropicByteStream),
@@ -341,12 +342,7 @@ impl AppState {
                 request.header("x-api-key", &self.config.upstream_api_key)
             }
         };
-        let request = request.header("anthropic-version", &self.config.anthropic_version);
-        if let Some(beta) = &self.config.anthropic_beta {
-            request.header("anthropic-beta", beta)
-        } else {
-            request
-        }
+        request.header("anthropic-version", &self.config.anthropic_version)
     }
 
     fn apply_oneapi_affinity(
@@ -366,8 +362,28 @@ impl AppState {
         request: &MessageRequest,
         hash_key: Option<&str>,
     ) -> Result<AnthropicByteStream, GatewayError> {
-        let upstream_request =
+        let mut upstream_request =
             self.apply_upstream_auth(self.client.post(self.config.upstream_messages_url()));
+        let beta = if request.speed.as_deref() == Some("fast") {
+            Some(match self.config.anthropic_beta.as_deref() {
+                Some(configured)
+                    if configured
+                        .split(',')
+                        .any(|item| item.trim() == ANTHROPIC_FAST_BETA) =>
+                {
+                    configured.to_owned()
+                }
+                Some(configured) if !configured.trim().is_empty() => {
+                    format!("{configured},{ANTHROPIC_FAST_BETA}")
+                }
+                _ => ANTHROPIC_FAST_BETA.to_owned(),
+            })
+        } else {
+            self.config.anthropic_beta.clone()
+        };
+        if let Some(beta) = beta {
+            upstream_request = upstream_request.header("anthropic-beta", beta);
+        }
         let response = self
             .apply_oneapi_affinity(upstream_request, hash_key)
             .header(header::ACCEPT, "text/event-stream")

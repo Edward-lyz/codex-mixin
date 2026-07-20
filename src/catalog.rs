@@ -145,6 +145,7 @@ fn codex_catalog_from_models_with_options(
             item["supported_in_api"] = json!(true);
             item["supports_search_tool"] = json!(true);
             item["use_responses_lite"] = json!(false);
+            enable_fast_service_tier(&mut item);
             if model.supports_web_search == Some(true) {
                 item["web_search_tool_type"] = json!("text");
             } else if let Some(item) = item.as_object_mut() {
@@ -207,6 +208,7 @@ pub fn refresh_managed_oauth_catalog(
             .and_then(Value::as_bool)
             .unwrap_or(true);
         model["supports_search_tool"] = json!(supports_search_tool);
+        enable_fast_service_tier(&mut model);
         ensure_instruction_fields(&mut model);
         models.push(model);
     }
@@ -216,6 +218,15 @@ pub fn refresh_managed_oauth_catalog(
 
     refreshed.insert("models".to_owned(), Value::Array(models));
     Ok(Value::Object(refreshed))
+}
+
+fn enable_fast_service_tier(model: &mut Value) {
+    model["additional_speed_tiers"] = json!(["fast"]);
+    model["service_tiers"] = json!([{
+        "id": "priority",
+        "name": "Fast",
+        "description": "Requests faster processing when the upstream provider supports it"
+    }]);
 }
 
 fn ensure_instruction_fields(model: &mut Value) {
@@ -359,6 +370,11 @@ mod tests {
         }];
         let catalog = codex_catalog_from_models(&models, 1_000_000, None);
         assert_eq!(catalog["models"][0]["slug"], "DeepSeek-V4-Flash");
+        assert_eq!(
+            catalog["models"][0]["additional_speed_tiers"],
+            json!(["fast"])
+        );
+        assert_eq!(catalog["models"][0]["service_tiers"][0]["id"], "priority");
         assert_eq!(
             catalog["models"][0]["base_instructions"],
             FALLBACK_BASE_INSTRUCTIONS
@@ -558,6 +574,15 @@ mod tests {
         );
         assert_eq!(refreshed["models"][2]["multi_agent_version"], "v2");
         assert_eq!(refreshed["models"][3]["multi_agent_version"], "v2");
+        assert_eq!(
+            refreshed["models"][2]["additional_speed_tiers"],
+            json!(["fast"])
+        );
+        assert_eq!(refreshed["models"][2]["service_tiers"][0]["id"], "priority");
+        assert_eq!(
+            refreshed["models"][3]["additional_speed_tiers"],
+            json!(["fast"])
+        );
         assert!(refreshed["models"][2].get("web_search_tool_type").is_none());
         for model in refreshed["models"].as_array().unwrap() {
             assert_eq!(model["base_instructions"], FALLBACK_BASE_INSTRUCTIONS);

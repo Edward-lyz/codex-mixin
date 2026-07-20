@@ -187,6 +187,11 @@ pub(crate) fn responses_to_anthropic_with_web_search(
         web_search_enabled,
     )?;
     let thinking = convert_thinking(&model, max_tokens, body.get("reasoning"), config)?;
+    let speed = body
+        .get("service_tier")
+        .and_then(Value::as_str)
+        .filter(|tier| matches!(*tier, "fast" | "priority"))
+        .map(|_| "fast".to_owned());
     let tool_choice = if tools.is_empty() {
         None
     } else {
@@ -200,6 +205,7 @@ pub(crate) fn responses_to_anthropic_with_web_search(
             model,
             max_tokens,
             stream: true,
+            speed,
             messages,
             system: if system.is_empty() {
                 None
@@ -1237,6 +1243,24 @@ mod tests {
             }
         );
         assert_eq!(converted.request.tools[0]["name"], "exec_command");
+    }
+
+    #[test]
+    fn maps_codex_fast_service_tier_to_anthropic_speed() {
+        for service_tier in ["priority", "fast"] {
+            let converted = responses_to_anthropic(
+                &json!({
+                    "model": "Claude Sonnet 5",
+                    "stream": true,
+                    "service_tier": service_tier,
+                    "input": "say hi"
+                }),
+                &config(),
+            )
+            .unwrap();
+
+            assert_eq!(converted.request.speed.as_deref(), Some("fast"));
+        }
     }
 
     #[test]

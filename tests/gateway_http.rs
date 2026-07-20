@@ -306,6 +306,10 @@ async fn mock_messages(
         .get("x-hash-key")
         .and_then(|value| value.to_str().ok())
         .map_or(Value::Null, |value| json!(value));
+    body["__anthropic_beta"] = headers
+        .get("anthropic-beta")
+        .and_then(|value| value.to_str().ok())
+        .map_or(Value::Null, |value| json!(value));
     state.requests.lock().unwrap().push(body);
     let payload = match state.mode {
         MockMode::Text => text_sse(),
@@ -1049,6 +1053,33 @@ async fn model_request_smoke_succeeds_end_to_end() {
 }
 
 #[tokio::test]
+async fn maps_fast_service_tier_to_anthropic_request_and_beta() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    config.anthropic_beta = Some("existing-beta".to_owned());
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut request = responses_request();
+    request["service_tier"] = json!("priority");
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let _ = response.text().await.unwrap();
+
+    let upstream_request = requests.lock().unwrap()[0].clone();
+    assert_eq!(upstream_request["speed"], "fast");
+    assert_eq!(
+        upstream_request["__anthropic_beta"],
+        "existing-beta,fast-mode-2026-02-01"
+    );
+}
+
+#[tokio::test]
 async fn maps_stable_session_to_anthropic_metadata() {
     let upstream_url = spawn_session_required_upstream().await;
     let mut config = test_config(upstream_url);
@@ -1143,11 +1174,13 @@ async fn maps_oneapi_affinity_for_openai_chat() {
     config.upstream_messages_path = "/chat/completions".to_owned();
     config.upstream_models_path = "/models".to_owned();
     let gateway_url = spawn_gateway_with_config(config).await;
+    let mut request = responses_request();
+    request["service_tier"] = json!("priority");
     let response = reqwest::Client::new()
         .post(format!("{gateway_url}/v1/responses"))
         .bearer_auth("gateway-key")
         .header("thread-id", "openai-chat-thread")
-        .json(&responses_request())
+        .json(&request)
         .send()
         .await
         .unwrap();
@@ -1157,6 +1190,7 @@ async fn maps_oneapi_affinity_for_openai_chat() {
     let upstream_request = requests.lock().unwrap()[0].clone();
     let hash_key = upstream_request["__x_hash_key"].as_str().unwrap();
     assert!(uuid::Uuid::parse_str(hash_key).is_ok());
+    assert_eq!(upstream_request["service_tier"], "priority");
 }
 
 #[tokio::test]

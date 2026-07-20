@@ -6,6 +6,8 @@ pub struct MessageRequest {
     pub model: String,
     pub max_tokens: u64,
     pub stream: bool,
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub speed: Option<String>,
     pub messages: Vec<Message>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub system: Option<Vec<ContentBlock>>,

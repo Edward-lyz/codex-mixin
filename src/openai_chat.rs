@@ -66,6 +66,13 @@ pub fn responses_to_openai_chat(body: &Value) -> Result<ConvertedChatRequest, Ga
     if let Some(top_p) = body.get("top_p") {
         request["top_p"] = top_p.clone();
     }
+    if let Some(service_tier) = body.get("service_tier").and_then(Value::as_str) {
+        request["service_tier"] = json!(if service_tier == "fast" {
+            "priority"
+        } else {
+            service_tier
+        });
+    }
     if !tools.is_empty() {
         if let Some(tool_choice) = body.get("tool_choice") {
             request["tool_choice"] = tool_choice.clone();
@@ -540,6 +547,21 @@ mod tests {
             converted.request["messages"][0]["content"],
             "[Agent message from /root to /root/worker]\nInspect the repository"
         );
+    }
+
+    #[test]
+    fn maps_codex_fast_service_tier_to_openai_priority() {
+        for service_tier in ["priority", "fast"] {
+            let converted = responses_to_openai_chat(&json!({
+                "model": "deepseek-chat",
+                "stream": true,
+                "service_tier": service_tier,
+                "input": "say hi"
+            }))
+            .unwrap();
+
+            assert_eq!(converted.request["service_tier"], "priority");
+        }
     }
 
     #[test]
