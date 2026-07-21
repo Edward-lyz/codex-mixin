@@ -47,6 +47,16 @@ chmod +x "$RESOURCES_DIR/codex-mixin"
 xcrun swiftc \
   -target "$SWIFT_ARCH-apple-macosx$MACOS_DEPLOYMENT_TARGET" \
   "$ROOT_DIR/macos/MenuBarApp.swift" \
+  "$ROOT_DIR/macos/GatewayService.swift" \
+  "$ROOT_DIR/macos/SettingsActions.swift" \
+  "$ROOT_DIR/macos/CodexActions.swift" \
+  "$ROOT_DIR/macos/UpdateController.swift" \
+  "$ROOT_DIR/macos/UpdateSupport.swift" \
+  "$ROOT_DIR/macos/SettingsPanel.swift" \
+  "$ROOT_DIR/macos/MenuViews.swift" \
+  "$ROOT_DIR/macos/InstallCodexPanel.swift" \
+  "$ROOT_DIR/macos/QuotaSupport.swift" \
+  "$ROOT_DIR/macos/AppSupport.swift" \
   "$ROOT_DIR/macos/ModelBenchmarkWindow.swift" \
   "$ROOT_DIR/macos/FusionSettingsWindow.swift" \
   -framework Cocoa \

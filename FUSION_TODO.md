@@ -33,6 +33,7 @@
     "max_completion_tokens": 2048,
     "timeout_ms": 300000,
     "fuse_every_user_turn": true,
+    "show_intermediate_results": true,
     "panel_tools": { "enabled": true, "max_rounds": 16, "max_calls_per_model": 64 }
   }
   ```
@@ -52,6 +53,7 @@
   Panel 输出作为不可信数据（分隔符包裹，指令注入防护措辞）。JSON 解析失败时容忍：整段文本作为分析注入 Final。
 - [x] Final 阶段：原始请求 body 深拷贝，input 末尾注入一条 developer/user 消息（Judge 分析 + 各 panel 要点摘要），model 改写 final_model，走 `stream_response` 原样转发给下游。
 - [x] 进度事件：Panel/Judge 期间向下游合成 `response.reasoning_summary_text.delta` SSE 事件（"panel <model> 完成 (2/3)…"、"judge 分析中…"），避免 Codex 客户端干等假死。注意事件序号/结构与 Codex 期望一致（参考 `src/openai_events.rs` 现有事件构造）。
+- [x] 中间结果展示：`show_intermediate_results=true` 时依次输出折叠的 Panel 结果表、Judge 结果和 Final 标题；关闭时只保留 Final 内容。
 
 ### 3. `src/fusion_tools.rs`（新文件）：Panel 进程内只读工具
 
@@ -82,6 +84,7 @@
   - Panel 模型：checkbox 列表多选（1–8 个，超出/为空时禁用保存并提示）。
   - Judge / Final 模型：两个 NSPopUpButton 单选（默认同一个模型）。
   - 高级选项（次要区域）：`min_successful`、`timeout_ms`、每个用户轮次固定启用的说明、panel 工具开关。
+  - 中间结果开关：控制回答区是否展示 Panel/Judge；默认开启以兼容既有行为。
   - Profile id 文本框（默认 `default`）；MVP 先支持编辑单个 profile，多 profile 列表增删可后续加。
 - [x] 持久化：直接读写 stored config JSON 中的 `fusion_profiles` 数组（复用 `loadStoredConfig` ~line 1622 及与登录设置面板相同的保存机制），保存后沿用现有"设置保存→重启网关进程"逻辑使 catalog 生效。
 - [x] 保存前本地校验与 Rust 端一致：1–8 panel、禁止 `mixin/fusion/` 前缀、`min_successful <= panel 数`。

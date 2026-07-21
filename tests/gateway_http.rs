@@ -203,7 +203,7 @@ async fn spawn_mock_openai_image_chat() -> (String, Arc<Mutex<Vec<Value>>>) {
 }
 
 async fn spawn_baidu_metadata_upstream() -> String {
-    let app = Router::new().route("/v1/models", get(mock_models)).route(
+    let app = Router::new().route(
         "/openapi/v2/available_models",
         post(mock_baidu_available_models),
     );
@@ -324,6 +324,26 @@ async fn mock_baidu_available_models(
                 "context_window": 256000,
                 "ratio": "1.0x",
                 "model_description": "Long-context coding model"
+            },
+            "price_type": "Value model"
+        }, {
+            "model": "auto-内部",
+            "capability": {
+                "supports_image": false,
+                "supports_thinking": true,
+                "context_window": 100000,
+                "ratio": "2.0x",
+                "model_description": "Internal default model"
+            },
+            "price_type": "Internal model"
+        }, {
+            "model": "auto",
+            "capability": {
+                "supports_image": false,
+                "supports_thinking": true,
+                "context_window": 200000,
+                "ratio": "1.0x",
+                "model_description": "Default model"
             },
             "price_type": "Value model"
         }]
@@ -988,6 +1008,7 @@ fn fusion_profile() -> FusionProfile {
         max_completion_tokens: 2048,
         timeout_ms: 5_000,
         fuse_every_user_turn: true,
+        show_intermediate_results: true,
         panel_tools: PanelToolsConfig {
             enabled: false,
             ..PanelToolsConfig::default()
@@ -1061,7 +1082,7 @@ async fn proxies_models_and_generates_catalog() {
 }
 
 #[tokio::test]
-async fn enriches_baidu_models_and_catalog_from_available_models() {
+async fn uses_baidu_available_models_as_authoritative_catalog_source() {
     let upstream_url = spawn_baidu_metadata_upstream().await;
     let mut config = test_config(upstream_url);
     config.provider_preset = ProviderPreset::BaiduOneApi;
@@ -1074,21 +1095,28 @@ async fn enriches_baidu_models_and_catalog_from_available_models() {
         .send()
         .await
         .unwrap()
+        .error_for_status()
+        .unwrap()
         .json()
         .await
         .unwrap();
     assert_eq!(models["data"][0]["ratio"], "0.2x");
     assert_eq!(models["data"][0]["description"], "Fast coding model");
     assert_eq!(models["data"][0]["context_window"], 1_024_000);
-    assert_eq!(models["data"].as_array().unwrap().len(), 2);
+    assert_eq!(models["data"].as_array().unwrap().len(), 3);
     assert_eq!(models["data"][1]["id"], "Kimi-K2.7-Code");
     assert_eq!(models["data"][1]["ratio"], "1.0x");
+    assert_eq!(models["data"][2]["id"], "auto");
+    assert_eq!(models["data"][2]["description"], "Default model");
+    assert_eq!(models["data"][2]["context_window"], 200_000);
 
     let catalog: Value = client
         .get(format!("{gateway_url}/v1/codex-model-catalog"))
         .bearer_auth("gateway-key")
         .send()
         .await
+        .unwrap()
+        .error_for_status()
         .unwrap()
         .json()
         .await
@@ -1105,6 +1133,14 @@ async fn enriches_baidu_models_and_catalog_from_available_models() {
     );
     assert_eq!(model["context_window"], 1_024_000);
     assert_eq!(model["input_modalities"], json!(["text"]));
+    let auto = catalog["models"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|model| model["slug"] == "auto")
+        .unwrap();
+    assert_eq!(auto["description"], "Default model | 1.0x | Value model");
+    assert_eq!(auto["context_window"], 200_000);
 }
 
 #[tokio::test]
@@ -1189,7 +1225,7 @@ async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
             event["item"]["type"] == "message"
                 && event["item"]["content"][0]["text"]
                     .as_str()
-                    .is_some_and(|text| text.starts_with("### Fusion "))
+                    .is_some_and(|text| text.starts_with("## Fusion · "))
         })
         .collect::<Vec<_>>();
     assert_eq!(detail_items.len(), 3);
@@ -1199,17 +1235,30 @@ async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
             .is_some_and(|id| id.starts_with("msg_"))
             && event["item"]["role"] == "assistant"
     }));
+    let panel_results = detail_items
+        .iter()
+        .find(|event| {
+            event["item"]["content"][0]["text"]
+                .as_str()
+                .is_some_and(|text| text.starts_with("## Fusion · Panel Results"))
+        })
+        .unwrap();
+    let panel_results = panel_results["item"]["content"][0]["text"]
+        .as_str()
+        .unwrap();
+    assert!(panel_results.contains("| # | Panel Model | Status | Result |"));
+    assert!(panel_results.contains("<code>panel-a</code>"));
+    assert!(panel_results.contains("<code>panel-b</code>"));
+    assert_eq!(panel_results.matches("<details>").count(), 2);
     assert!(detail_items.iter().any(|event| {
         event["item"]["content"][0]["text"]
             .as_str()
-            .unwrap()
-            .starts_with("### Fusion Panel · panel-a")
+            .is_some_and(|text| text.starts_with("## Fusion · Judge Result"))
     }));
     assert!(detail_items.iter().any(|event| {
         event["item"]["content"][0]["text"]
             .as_str()
-            .unwrap()
-            .starts_with("### Fusion Judge · judge")
+            .is_some_and(|text| text.starts_with("## Fusion · Final Answer"))
     }));
     let final_message = events
         .iter()
@@ -1219,7 +1268,7 @@ async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
             event["item"]["type"] == "message"
                 && !event["item"]["content"][0]["text"]
                     .as_str()
-                    .is_some_and(|text| text.starts_with("### Fusion "))
+                    .is_some_and(|text| text.starts_with("## Fusion · "))
         })
         .unwrap();
     assert_eq!(final_message["output_index"], 3);
@@ -1298,6 +1347,53 @@ async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
     let captured = requests.lock().unwrap();
     assert_eq!(captured.len(), 9);
     assert_eq!(captured.last().unwrap()["model"], "final");
+}
+
+#[tokio::test]
+async fn fusion_can_hide_intermediate_results() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut profile = fusion_profile();
+    profile.show_intermediate_results = false;
+    let mut config = test_config(upstream_url);
+    config.fusion_profiles = vec![profile];
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut request = responses_request();
+    request["model"] = json!("mixin/fusion/default");
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut encoded = response.bytes().await.unwrap().to_vec();
+    let events = drain_events(&mut encoded);
+    assert!(!events.iter().any(|event| {
+        serde_json::from_str::<Value>(&event.data)
+            .ok()
+            .and_then(|event| {
+                event["item"]["content"][0]["text"]
+                    .as_str()
+                    .map(str::to_owned)
+            })
+            .is_some_and(|text| text.starts_with("## Fusion · "))
+    }));
+    let final_message = events
+        .iter()
+        .filter(|event| event.event.as_deref() == Some("response.output_item.done"))
+        .filter_map(|event| serde_json::from_str::<Value>(&event.data).ok())
+        .find(|event| event["item"]["type"] == "message")
+        .unwrap();
+    assert_eq!(final_message["output_index"], 0);
+    let completed = events
+        .iter()
+        .find(|event| event.event.as_deref() == Some("response.completed"))
+        .unwrap();
+    let completed: Value = serde_json::from_str(&completed.data).unwrap();
+    assert_eq!(completed["response"]["output"].as_array().unwrap().len(), 1);
+    assert_eq!(requests.lock().unwrap().len(), 4);
 }
 
 #[tokio::test]
@@ -1402,6 +1498,7 @@ async fn fusion_routes_models_across_official_and_upstream_providers() {
         max_completion_tokens: 2048,
         timeout_ms: 300_000,
         fuse_every_user_turn: true,
+        show_intermediate_results: true,
         panel_tools: PanelToolsConfig {
             enabled: false,
             ..PanelToolsConfig::default()

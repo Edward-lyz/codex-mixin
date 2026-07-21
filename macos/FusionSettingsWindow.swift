@@ -23,6 +23,7 @@ struct FusionSettingsProfile {
     var minSuccessful = 1
     var maxCompletionTokens = 2048
     var timeoutMs = 300_000
+    var showIntermediateResults = true
     var panelToolsEnabled = true
     var panelMaxRounds = 16
     var panelMaxCallsPerModel = 64
@@ -40,6 +41,7 @@ struct FusionSettingsProfile {
         value.minSuccessful = (profile["min_successful"] as? NSNumber)?.intValue ?? value.minSuccessful
         value.maxCompletionTokens = (profile["max_completion_tokens"] as? NSNumber)?.intValue ?? value.maxCompletionTokens
         value.timeoutMs = (profile["timeout_ms"] as? NSNumber)?.intValue ?? value.timeoutMs
+        value.showIntermediateResults = (profile["show_intermediate_results"] as? NSNumber)?.boolValue ?? value.showIntermediateResults
         if let tools = profile["panel_tools"] as? [String: Any] {
             value.panelToolsEnabled = (tools["enabled"] as? NSNumber)?.boolValue ?? value.panelToolsEnabled
             let storedRounds = (tools["max_rounds"] as? NSNumber)?.intValue
@@ -61,6 +63,7 @@ struct FusionSettingsProfile {
             "max_completion_tokens": maxCompletionTokens,
             "timeout_ms": timeoutMs,
             "fuse_every_user_turn": true,
+            "show_intermediate_results": showIntermediateResults,
             "panel_tools": [
                 "enabled": panelToolsEnabled,
                 "max_rounds": panelMaxRounds,
@@ -89,6 +92,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
     private let finalPopup = NSPopUpButton()
     private let minSuccessfulField = NSTextField()
     private let timeoutField = NSTextField()
+    private let resultsCheckbox = NSButton(checkboxWithTitle: "在回答中显示 Panel / Judge 中间结果", target: nil, action: nil)
     private let toolsCheckbox = NSButton(checkboxWithTitle: "允许 Panel 使用进程内只读工具", target: nil, action: nil)
     private let statusLabel = NSTextField(wrappingLabelWithString: "正在读取配置...")
     private let saveButton = NSButton(title: "保存并重启网关", target: nil, action: nil)
@@ -231,6 +235,8 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
         judgePopup.action = #selector(controlChanged)
         finalPopup.target = self
         finalPopup.action = #selector(controlChanged)
+        resultsCheckbox.target = self
+        resultsCheckbox.action = #selector(controlChanged)
         toolsCheckbox.target = self
         toolsCheckbox.action = #selector(controlChanged)
 
@@ -240,6 +246,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
             settingsRow("最少成功 Panel", minSuccessfulField),
             settingsRow("单模型超时 (ms)", timeoutField),
             everyUserTurnLabel(),
+            resultsCheckbox,
             toolsCheckbox,
         ])
         advancedStack.orientation = .vertical
@@ -300,6 +307,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
         profileIdField.stringValue = loadedProfile.id
         minSuccessfulField.stringValue = String(loadedProfile.minSuccessful)
         timeoutField.stringValue = String(loadedProfile.timeoutMs)
+        resultsCheckbox.state = loadedProfile.showIntermediateResults ? .on : .off
         toolsCheckbox.state = loadedProfile.panelToolsEnabled ? .on : .off
         selectedPanels = Set(loadedProfile.panelModels)
     }
@@ -418,6 +426,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
         profile.finalModel = selectedModel(finalPopup) ?? ""
         profile.minSuccessful = Int(minSuccessfulField.stringValue) ?? 1
         profile.timeoutMs = Int(timeoutField.stringValue) ?? 300_000
+        profile.showIntermediateResults = resultsCheckbox.state == .on
         profile.panelToolsEnabled = toolsCheckbox.state == .on
         saveButton.isEnabled = false
         statusLabel.stringValue = "正在保存并重启本地网关..."

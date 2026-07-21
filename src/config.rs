@@ -19,6 +19,13 @@ pub enum ProviderPreset {
 }
 
 impl ProviderPreset {
+    pub const ALL: [Self; 4] = [
+        Self::Custom,
+        Self::BaiduOneApi,
+        Self::OpenRouter,
+        Self::DeepSeek,
+    ];
+
     pub fn parse(value: &str) -> anyhow::Result<Self> {
         match value {
             "custom" => Ok(Self::Custom),
@@ -36,6 +43,14 @@ impl ProviderPreset {
             Self::OpenRouter => "openrouter",
             Self::DeepSeek => "deepseek",
         }
+    }
+
+    pub fn strip_model_provider_suffix(model: &str) -> Option<&str> {
+        Self::ALL.into_iter().find_map(|provider| {
+            model
+                .strip_suffix(provider.as_str())
+                .and_then(|canonical| canonical.strip_suffix('-'))
+        })
     }
 
     pub fn default_base_url(self) -> Option<&'static str> {
