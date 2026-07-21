@@ -1,12 +1,14 @@
 import Cocoa
 
 extension AppDelegate {
+    @MainActor
     @objc func checkForUpdatesFromMenu() {
         Task { @MainActor in
             await checkForUpdates(interactive: true)
         }
     }
 
+    @MainActor
     func checkForUpdates(interactive: Bool) async {
         let strings = UpdateStrings.current
         let release: GitHubRelease
@@ -56,6 +58,7 @@ extension AppDelegate {
         }
     }
 
+    @MainActor
     func presentUpdatePrompt(
         release: GitHubRelease,
         currentVersion: String,
