@@ -164,7 +164,11 @@ async fn spawn_fusion_mock_upstream(
                     Response::builder()
                         .status(StatusCode::OK)
                         .header(header::CONTENT_TYPE, "text/event-stream")
-                        .body(Body::from(text_sse()))
+                        .body(Body::from(if is_panel {
+                            panel_report_sse()
+                        } else {
+                            text_sse()
+                        }))
                         .unwrap()
                 },
             ),
@@ -359,6 +363,9 @@ async fn mock_messages(
                 tool.get("name").and_then(Value::as_str) == Some("codex_mixin_probe_noop")
             })
         });
+    let is_fusion_panel = body["system"]
+        .to_string()
+        .contains("substantive, concise report");
     let request_index = state.requests.lock().unwrap().len();
     body["__x_hash_key"] = headers
         .get("x-hash-key")
@@ -370,6 +377,7 @@ async fn mock_messages(
         .map_or(Value::Null, |value| json!(value));
     state.requests.lock().unwrap().push(body);
     let payload = match state.mode {
+        MockMode::Text if is_fusion_panel => panel_report_sse(),
         MockMode::Text => text_sse(),
         MockMode::Tool => tool_sse("exec_command", json!({"cmd":"pwd"})),
         MockMode::FableMcpTool => tool_sse("mcp__codex__exec_command", json!({"cmd":"pwd"})),
@@ -810,37 +818,41 @@ async fn serve_mock_official_websocket(
 }
 
 fn text_sse() -> String {
-    [
-        r#"event: message_start
-data: {"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"DeepSeek-V4-Flash","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}
+    text_sse_with_parts(&["hello", " codex"])
+}
 
-"#,
-        r#"event: content_block_start
-data: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}
+fn panel_report_sse() -> String {
+    text_sse_with(
+        r#"{"findings":["The implementation has a concrete finding."],"risks":[],"recommendations":["Apply the recommended change."],"evidence":["mock evidence"]}"#,
+    )
+}
 
-"#,
-        r#"event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"hello"}}
+fn text_sse_with(text: &str) -> String {
+    text_sse_with_parts(&[text])
+}
 
-"#,
-        r#"event: content_block_delta
-data: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":" codex"}}
-
-"#,
-        r#"event: content_block_stop
-data: {"type":"content_block_stop","index":0}
-
-"#,
-        r#"event: message_delta
-data: {"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}
-
-"#,
-        r#"event: message_stop
-data: {"type":"message_stop"}
-
-"#,
-    ]
-    .join("")
+fn text_sse_with_parts(parts: &[&str]) -> String {
+    let mut events = vec![
+        json!({"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"DeepSeek-V4-Flash","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+    ];
+    events.extend(parts.iter().map(|text| {
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":text}})
+    }));
+    events.extend([
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":2}}),
+        json!({"type":"message_stop"}),
+    ]);
+    events
+        .into_iter()
+        .map(|event| {
+            format!(
+                "event: {}\ndata: {event}\n\n",
+                event["type"].as_str().unwrap()
+            )
+        })
+        .collect()
 }
 
 fn openai_chat_sse() -> String {
@@ -1166,14 +1178,61 @@ async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let response_body = response.text().await.unwrap();
-    assert!(response_body.contains("response.reasoning_summary_text.delta"));
+    assert!(response_body.contains("response.output_text.delta"));
     let mut encoded = response_body.into_bytes();
-    let completed = drain_events(&mut encoded)
+    let events = drain_events(&mut encoded);
+    let detail_items = events
+        .iter()
+        .filter(|event| event.event.as_deref() == Some("response.output_item.done"))
+        .filter_map(|event| serde_json::from_str::<Value>(&event.data).ok())
+        .filter(|event| {
+            event["item"]["type"] == "message"
+                && event["item"]["content"][0]["text"]
+                    .as_str()
+                    .is_some_and(|text| text.starts_with("### Fusion "))
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(detail_items.len(), 3);
+    assert!(detail_items.iter().all(|event| {
+        event["item"]["id"]
+            .as_str()
+            .is_some_and(|id| id.starts_with("msg_"))
+            && event["item"]["role"] == "assistant"
+    }));
+    assert!(detail_items.iter().any(|event| {
+        event["item"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("### Fusion Panel · panel-a")
+    }));
+    assert!(detail_items.iter().any(|event| {
+        event["item"]["content"][0]["text"]
+            .as_str()
+            .unwrap()
+            .starts_with("### Fusion Judge · judge")
+    }));
+    let final_message = events
+        .iter()
+        .filter(|event| event.event.as_deref() == Some("response.output_item.done"))
+        .filter_map(|event| serde_json::from_str::<Value>(&event.data).ok())
+        .find(|event| {
+            event["item"]["type"] == "message"
+                && !event["item"]["content"][0]["text"]
+                    .as_str()
+                    .is_some_and(|text| text.starts_with("### Fusion "))
+        })
+        .unwrap();
+    assert_eq!(final_message["output_index"], 3);
+    let completed = events
         .into_iter()
         .find(|event| event.event.as_deref() == Some("response.completed"))
         .unwrap();
     let completed: Value = serde_json::from_str(&completed.data).unwrap();
     assert_eq!(completed["response"]["model"], "mixin/fusion/default");
+    assert_eq!(completed["response"]["output"][0]["type"], "message");
+    assert_eq!(completed["response"]["output"][1]["type"], "message");
+    assert_eq!(completed["response"]["output"][2]["type"], "message");
+    assert_eq!(completed["response"]["output"][3]["type"], "message");
 
     let first_turn_requests = requests.lock().unwrap().clone();
     assert_eq!(first_turn_requests.len(), 4);
@@ -1263,6 +1322,151 @@ async fn fusion_panels_run_concurrently() {
     let _ = response.text().await.unwrap();
     assert_eq!(max_active.load(Ordering::SeqCst), 2);
     assert!(started.elapsed() < Duration::from_millis(380));
+}
+
+#[tokio::test]
+async fn fusion_routes_models_across_official_and_upstream_providers() {
+    let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let official_requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let captured = official_requests.clone();
+    let official_url = spawn_router(Router::new().route(
+        "/v1/responses",
+        post(move |Json(body): Json<Value>| {
+            let captured = captured.clone();
+            async move {
+                captured.lock().unwrap().push(body.clone());
+                let model = body["model"].as_str().unwrap_or("gpt-5.6-sol");
+                let output = if body["instructions"]
+                    .as_str()
+                    .is_some_and(|instructions| {
+                        instructions.contains("substantive, concise report")
+                    })
+                {
+                    r#"{"findings":["Official panel finding."],"risks":[],"recommendations":["Official recommendation."],"evidence":["official evidence"]}"#
+                } else {
+                    "official result"
+                };
+                let item = json!({
+                    "id":"msg_official",
+                    "type":"message",
+                    "status":"completed",
+                    "role":"assistant",
+                    "content":[{"type":"output_text","text":output,"annotations":[]}]
+                });
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/event-stream")
+                    .body(Body::from(format!(
+                        "event: response.output_item.done\ndata: {}\n\nevent: response.completed\ndata: {}\n\n",
+                        json!({
+                            "type":"response.output_item.done",
+                            "output_index":0,
+                            "item":item
+                        }),
+                        json!({
+                            "type":"response.completed",
+                            "response":{
+                                "id":"resp_official",
+                                "object":"response",
+                                "status":"completed",
+                                "model":model,
+                                "output":[],
+                                "usage":null
+                            }
+                        })
+                    )))
+                    .unwrap()
+            }
+        }),
+    ))
+    .await;
+    let mut config = test_config(upstream_url);
+    config.provider_preset = ProviderPreset::BaiduOneApi;
+    config.official_responses_url = format!("{official_url}/v1/responses");
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    config.fusion_profiles = vec![FusionProfile {
+        id: "mixed".to_owned(),
+        panel_models: vec![
+            "official:gpt-5.6-sol".to_owned(),
+            "baidu-oneapi:panel-custom".to_owned(),
+        ],
+        judge_model: "baidu-oneapi:judge-custom".to_owned(),
+        final_model: "official:gpt-5.6-sol".to_owned(),
+        min_successful: 2,
+        max_completion_tokens: 2048,
+        timeout_ms: 300_000,
+        fuse_every_user_turn: true,
+        panel_tools: PanelToolsConfig {
+            enabled: false,
+            ..PanelToolsConfig::default()
+        },
+    }];
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut request = responses_request();
+    request["model"] = json!("mixin/fusion/mixed");
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("official result"));
+    let upstream_models = upstream_requests
+        .lock()
+        .unwrap()
+        .iter()
+        .map(|request| request["model"].as_str().unwrap().to_owned())
+        .collect::<Vec<_>>();
+    assert!(upstream_models.contains(&"panel-custom".to_owned()));
+    assert!(upstream_models.contains(&"judge-custom".to_owned()));
+    {
+        let official = official_requests.lock().unwrap();
+        assert_eq!(official.len(), 2);
+        assert!(
+            official
+                .iter()
+                .all(|request| request["model"] == "gpt-5.6-sol")
+        );
+        assert!(official.iter().all(|request| request["store"] == false));
+        assert!(
+            official
+                .iter()
+                .all(|request| request.get("max_output_tokens").is_none())
+        );
+        assert!(official[0].get("text").is_none());
+        assert!(official[1].to_string().contains("JUDGE_ANALYSIS"));
+    }
+
+    request["input"] = json!([
+        {"type":"function_call","call_id":"call_1","name":"exec_command","arguments":"{\"cmd\":\"pwd\"}"},
+        {"type":"function_call_output","call_id":"call_1","output":"/tmp"}
+    ]);
+    let continuation = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(continuation.status(), StatusCode::OK);
+    assert!(
+        continuation
+            .text()
+            .await
+            .unwrap()
+            .contains("mixin/fusion/mixed")
+    );
+    assert_eq!(official_requests.lock().unwrap().len(), 3);
+    assert_eq!(upstream_requests.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]
@@ -1373,12 +1577,15 @@ async fn fusion_panel_tool_loop_stops_at_round_limit() {
             .contains("response.completed")
     );
     let captured = requests.lock().unwrap();
-    assert_eq!(
-        captured
-            .iter()
-            .filter(|request| request["model"] == "panel-a")
-            .count(),
-        2
+    let panel_requests = captured
+        .iter()
+        .filter(|request| request["model"] == "panel-a")
+        .collect::<Vec<_>>();
+    assert_eq!(panel_requests.len(), 2);
+    assert!(
+        panel_requests[1]
+            .to_string()
+            .contains("tool budget is exhausted")
     );
     assert_eq!(captured.last().unwrap()["model"], "final");
 }

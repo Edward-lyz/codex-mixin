@@ -7,6 +7,7 @@ use crate::model_metadata::ModelMetadataResolver;
 
 const FALLBACK_BASE_INSTRUCTIONS: &str = "You are Codex, a coding agent. Work in the user's workspace, use tools carefully, and keep responses concise.";
 const CUSTOM_MODEL_MARKER: &str = "codex_mixin_managed";
+const UPSTREAM_MODEL_MARKER: &str = "codex_mixin_upstream_model";
 
 pub fn codex_catalog_from_models(
     models: &[ModelInfo],
@@ -18,6 +19,7 @@ pub fn codex_catalog_from_models(
         default_context_window,
         template_catalog,
         false,
+        None,
         None,
     )
 }
@@ -33,6 +35,7 @@ pub fn codex_oauth_proxy_catalog_from_models(
         template_catalog,
         true,
         None,
+        Some("custom"),
     )
 }
 
@@ -48,6 +51,7 @@ pub fn codex_catalog_from_models_with_metadata(
         template_catalog,
         false,
         Some(metadata),
+        None,
     )
 }
 
@@ -63,6 +67,24 @@ pub fn codex_oauth_proxy_catalog_from_models_with_metadata(
         template_catalog,
         true,
         Some(metadata),
+        Some("custom"),
+    )
+}
+
+pub fn codex_oauth_proxy_catalog_from_models_with_metadata_for_provider(
+    models: &[ModelInfo],
+    default_context_window: u64,
+    template_catalog: Option<&Value>,
+    metadata: &ModelMetadataResolver,
+    provider_suffix: &str,
+) -> Value {
+    codex_catalog_from_models_with_options(
+        models,
+        default_context_window,
+        template_catalog,
+        true,
+        Some(metadata),
+        Some(provider_suffix),
     )
 }
 
@@ -72,6 +94,7 @@ fn codex_catalog_from_models_with_options(
     template_catalog: Option<&Value>,
     include_template_models: bool,
     metadata: Option<&ModelMetadataResolver>,
+    provider_suffix: Option<&str>,
 ) -> Value {
     let template = template_catalog
         .and_then(|catalog| catalog.get("models"))
@@ -97,13 +120,19 @@ fn codex_catalog_from_models_with_options(
                 .unwrap_or_else(|| fallback_template(default_context_window));
             let is_gpt = is_gpt_model(&model.id);
             let slug = if include_template_models && is_gpt {
-                format!("{}-custom", model.id)
+                format!("{}-{}", model.id, provider_suffix.unwrap_or("custom"))
             } else {
                 model.id.clone()
             };
             let display_name = model.display_name.clone().unwrap_or_else(|| {
                 if include_template_models && is_gpt {
-                    format!("{} (Custom)", model.id)
+                    let provider = provider_suffix.unwrap_or("custom");
+                    let provider = if provider == "custom" {
+                        "Custom"
+                    } else {
+                        provider
+                    };
+                    format!("{} ({provider})", model.id)
                 } else {
                     model.id.clone()
                 }
@@ -124,6 +153,7 @@ fn codex_catalog_from_models_with_options(
             }
             item["description"] = json!(description);
             item[CUSTOM_MODEL_MARKER] = json!(true);
+            item[UPSTREAM_MODEL_MARKER] = json!(model.id);
             item["multi_agent_version"] = json!("v2");
             if item.get("base_instructions").is_none() {
                 item["base_instructions"] = json!(FALLBACK_BASE_INSTRUCTIONS);
@@ -284,7 +314,10 @@ pub fn apply_web_search_capabilities(
             .get("slug")
             .and_then(Value::as_str)
             .ok_or_else(|| anyhow::anyhow!("custom model is missing slug"))?;
-        let upstream_model = slug.strip_suffix("-custom").unwrap_or(slug);
+        let upstream_model = model
+            .get(UPSTREAM_MODEL_MARKER)
+            .and_then(Value::as_str)
+            .unwrap_or_else(|| slug.strip_suffix("-custom").unwrap_or(slug));
         let supported = supported_models.contains(&upstream_model.to_ascii_lowercase());
         if supported && model.get("web_search_tool_type").and_then(Value::as_str) != Some("text") {
             model["web_search_tool_type"] = json!("text");
@@ -525,6 +558,26 @@ mod tests {
             FALLBACK_BASE_INSTRUCTIONS
         );
         assert_eq!(catalog["models"][1]["multi_agent_version"], "v2");
+    }
+
+    #[test]
+    fn oauth_proxy_catalog_uses_provider_suffix_for_gpt_collisions() {
+        let template = json!({"models":[{"slug":"gpt-5.5","display_name":"GPT-5.5"}]});
+        let models = vec![ModelInfo {
+            id: "gpt-5.5".to_owned(),
+            ..ModelInfo::default()
+        }];
+        let metadata = ModelMetadataResolver::empty();
+        let catalog = codex_oauth_proxy_catalog_from_models_with_metadata_for_provider(
+            &models,
+            1_000_000,
+            Some(&template),
+            &metadata,
+            "baidu-oneapi",
+        );
+        assert_eq!(catalog["models"][0]["slug"], "gpt-5.5");
+        assert_eq!(catalog["models"][1]["slug"], "gpt-5.5-baidu-oneapi");
+        assert_eq!(catalog["models"][1][UPSTREAM_MODEL_MARKER], "gpt-5.5");
     }
 
     #[test]

@@ -22,10 +22,10 @@ struct FusionSettingsProfile {
     var finalModel = ""
     var minSuccessful = 1
     var maxCompletionTokens = 2048
-    var timeoutMs = 90_000
+    var timeoutMs = 300_000
     var panelToolsEnabled = true
-    var panelMaxRounds = 4
-    var panelMaxCallsPerModel = 8
+    var panelMaxRounds = 16
+    var panelMaxCallsPerModel = 64
 
     static func fromStoredConfig(_ stored: [String: Any]) -> FusionSettingsProfile {
         guard
@@ -42,8 +42,11 @@ struct FusionSettingsProfile {
         value.timeoutMs = (profile["timeout_ms"] as? NSNumber)?.intValue ?? value.timeoutMs
         if let tools = profile["panel_tools"] as? [String: Any] {
             value.panelToolsEnabled = (tools["enabled"] as? NSNumber)?.boolValue ?? value.panelToolsEnabled
-            value.panelMaxRounds = (tools["max_rounds"] as? NSNumber)?.intValue ?? value.panelMaxRounds
-            value.panelMaxCallsPerModel = (tools["max_calls_per_model"] as? NSNumber)?.intValue ?? value.panelMaxCallsPerModel
+            let storedRounds = (tools["max_rounds"] as? NSNumber)?.intValue
+            let storedCalls = (tools["max_calls_per_model"] as? NSNumber)?.intValue
+            // Automatically migrate the original, overly restrictive defaults.
+            value.panelMaxRounds = storedRounds == 4 ? 16 : (storedRounds ?? value.panelMaxRounds)
+            value.panelMaxCallsPerModel = storedCalls == 8 ? 64 : (storedCalls ?? value.panelMaxCallsPerModel)
         }
         return value
     }
@@ -139,6 +142,18 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
             guard let self else { return }
             do {
                 let fetched = try await fetchModelsHandler()
+                loadedProfile.panelModels = loadedProfile.panelModels.map {
+                    self.qualifyLegacyReference($0, using: fetched)
+                }
+                loadedProfile.judgeModel = qualifyLegacyReference(
+                    loadedProfile.judgeModel,
+                    using: fetched
+                )
+                loadedProfile.finalModel = qualifyLegacyReference(
+                    loadedProfile.finalModel,
+                    using: fetched
+                )
+                selectedPanels = Set(loadedProfile.panelModels)
                 var byId = Dictionary(uniqueKeysWithValues: fetched.map { ($0.id, $0) })
                 for id in loadedProfile.panelModels + [loadedProfile.judgeModel, loadedProfile.finalModel] where !id.isEmpty && !id.hasPrefix("mixin/fusion/") {
                     byId[id] = byId[id] ?? FusionModelOption(id: id, displayName: id)
@@ -147,7 +162,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
                     $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
                 }
                 rebuildModelControls()
-                statusLabel.stringValue = "已加载 \(options.count) 个上游模型。Panel 可选择 1–8 个。"
+                statusLabel.stringValue = "已加载 \(options.count) 个跨 Provider 模型。Panel 可选择 1–8 个。"
                 statusLabel.textColor = .secondaryLabelColor
                 updateValidation()
             } catch {
@@ -160,6 +175,19 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
         }
     }
 
+    private func qualifyLegacyReference(
+        _ reference: String,
+        using options: [FusionModelOption]
+    ) -> String {
+        guard !reference.isEmpty else { return reference }
+        if options.contains(where: { $0.id == reference }) {
+            return reference
+        }
+        return options.first(where: {
+            !$0.id.hasPrefix("official:") && $0.id.hasSuffix(":\(reference)")
+        })?.id ?? reference
+    }
+
     private func buildContent(in window: NSWindow) {
         guard let contentView = window.contentView else { return }
 
@@ -170,7 +198,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
 
         configureTextField(profileIdField, value: "default")
         configureTextField(minSuccessfulField, value: "1")
-        configureTextField(timeoutField, value: "90000")
+        configureTextField(timeoutField, value: "300000")
         profileIdField.delegate = self
         minSuccessfulField.delegate = self
         timeoutField.delegate = self
@@ -389,7 +417,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
         profile.judgeModel = selectedModel(judgePopup) ?? ""
         profile.finalModel = selectedModel(finalPopup) ?? ""
         profile.minSuccessful = Int(minSuccessfulField.stringValue) ?? 1
-        profile.timeoutMs = Int(timeoutField.stringValue) ?? 90_000
+        profile.timeoutMs = Int(timeoutField.stringValue) ?? 300_000
         profile.panelToolsEnabled = toolsCheckbox.state == .on
         saveButton.isEnabled = false
         statusLabel.stringValue = "正在保存并重启本地网关..."

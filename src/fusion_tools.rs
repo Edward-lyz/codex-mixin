@@ -37,10 +37,10 @@ impl PanelToolExecutor {
                     "type":"object",
                     "properties":{
                         "path":{"type":"string"},
-                        "offset":{"type":"integer","minimum":0},
-                        "limit":{"type":"integer","minimum":1}
+                        "offset":{"type":["integer","null"],"minimum":0},
+                        "limit":{"type":["integer","null"],"minimum":1}
                     },
-                    "required":["path"],
+                    "required":["path","offset","limit"],
                     "additionalProperties":false
                 }),
             ),
@@ -50,9 +50,10 @@ impl PanelToolExecutor {
                 json!({
                     "type":"object",
                     "properties":{
-                        "path":{"type":"string"},
-                        "glob":{"type":"string"}
+                        "path":{"type":["string","null"]},
+                        "glob":{"type":["string","null"]}
                     },
+                    "required":["path","glob"],
                     "additionalProperties":false
                 }),
             ),
@@ -63,10 +64,10 @@ impl PanelToolExecutor {
                     "type":"object",
                     "properties":{
                         "pattern":{"type":"string"},
-                        "path":{"type":"string"},
-                        "glob":{"type":"string"}
+                        "path":{"type":["string","null"]},
+                        "glob":{"type":["string","null"]}
                     },
-                    "required":["pattern"],
+                    "required":["pattern","path","glob"],
                     "additionalProperties":false
                 }),
             ),
@@ -77,9 +78,9 @@ impl PanelToolExecutor {
                     "type":"object",
                     "properties":{
                         "subcommand":{"type":"string","enum":["status","log","diff","show"]},
-                        "args":{"type":"array","items":{"type":"string"},"maxItems":32}
+                        "args":{"type":["array","null"],"items":{"type":"string"},"maxItems":32}
                     },
-                    "required":["subcommand"],
+                    "required":["subcommand","args"],
                     "additionalProperties":false
                 }),
             ),
@@ -348,27 +349,25 @@ fn required_string<'a>(arguments: &'a Value, name: &str) -> Result<&'a str, Stri
 }
 
 fn optional_usize(arguments: &Value, name: &str) -> Result<Option<usize>, String> {
-    arguments
-        .get(name)
-        .map(|value| {
-            value
-                .as_u64()
-                .and_then(|value| usize::try_from(value).ok())
-                .ok_or_else(|| format!("{name} must be a non-negative integer"))
-        })
-        .transpose()
+    match arguments.get(name) {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_u64()
+            .and_then(|value| usize::try_from(value).ok())
+            .ok_or_else(|| format!("{name} must be a non-negative integer"))
+            .map(Some),
+    }
 }
 
 fn optional_glob(arguments: &Value) -> Result<Option<Regex>, String> {
-    arguments
-        .get("glob")
-        .map(|value| {
-            value
-                .as_str()
-                .ok_or_else(|| "glob must be a string".to_owned())
-                .and_then(glob_regex)
-        })
-        .transpose()
+    match arguments.get("glob") {
+        None | Some(Value::Null) => Ok(None),
+        Some(value) => value
+            .as_str()
+            .ok_or_else(|| "glob must be a string".to_owned())
+            .and_then(glob_regex)
+            .map(Some),
+    }
 }
 
 fn glob_regex(pattern: &str) -> Result<Regex, String> {
@@ -444,6 +443,20 @@ fn truncate_string(mut value: String) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn strict_tool_schemas_require_every_declared_property() {
+        for tool in PanelToolExecutor::schemas() {
+            let properties = tool["parameters"]["properties"].as_object().unwrap();
+            let required = tool["parameters"]["required"].as_array().unwrap();
+            assert_eq!(properties.len(), required.len(), "{}", tool["name"]);
+            assert!(properties.keys().all(|name| {
+                required
+                    .iter()
+                    .any(|required| required.as_str() == Some(name))
+            }));
+        }
+    }
 
     #[test]
     fn rejects_path_escape_and_unsafe_git_commands() {

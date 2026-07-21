@@ -17,6 +17,7 @@ use crate::anthropic::ModelInfo;
 use crate::config::{
     GatewayConfig, ProviderPreset, UpstreamAuthHeader, UpstreamKind, stored_config_path,
 };
+use crate::fusion::canonical_upstream_model_alias;
 use crate::sse::SseDecoder;
 
 const CAPABILITY_FILE_VERSION: u64 = 2;
@@ -128,7 +129,7 @@ impl WebSearchCapabilities {
     }
 
     pub fn supports_model(&self, model: &str) -> bool {
-        let model = model.strip_suffix("-custom").unwrap_or(model);
+        let model = canonical_upstream_model_alias(model);
         let now = unix_seconds().expect("system clock before Unix epoch");
         self.models
             .read()

@@ -117,10 +117,17 @@ pub(crate) async fn collect_response_with_routing(
     routing: Option<&UpstreamRouting>,
 ) -> Result<CollectedResponse, GatewayError> {
     body["stream"] = Value::Bool(true);
-    let mut stream = stream_response_with_options(state, body, routing, None).await?;
+    let stream = stream_response_with_options(state, body, routing, None).await?;
+    collect_response_stream(stream).await
+}
+
+pub(crate) async fn collect_response_stream(
+    mut stream: ResponseStream,
+) -> Result<CollectedResponse, GatewayError> {
     let mut decoder = SseDecoder::default();
     let mut completed = None;
     let mut terminal_error = None;
+    let mut observed_output = Vec::new();
     while let Some(chunk) = stream.next().await {
         let bytes = match chunk {
             Ok(bytes) => bytes,
@@ -131,6 +138,12 @@ pub(crate) async fn collect_response_with_routing(
                 Some("response.completed") => {
                     let mut payload: Value = serde_json::from_str(&event.data)?;
                     completed = payload.get_mut("response").map(Value::take);
+                }
+                Some("response.output_item.done") => {
+                    let mut payload: Value = serde_json::from_str(&event.data)?;
+                    if let Some(item) = payload.get_mut("item").map(Value::take) {
+                        observed_output.push(item);
+                    }
                 }
                 Some("response.failed" | "response.incomplete") => {
                     let payload: Value = serde_json::from_str(&event.data)?;
@@ -150,14 +163,18 @@ pub(crate) async fn collect_response_with_routing(
     if let Some(message) = terminal_error {
         return Err(GatewayError::Upstream(message));
     }
-    let response = completed.ok_or_else(|| {
+    let mut response = completed.ok_or_else(|| {
         GatewayError::Upstream("upstream ended without response.completed".to_owned())
     })?;
-    let output = response
+    let mut output = response
         .get("output")
         .and_then(Value::as_array)
         .cloned()
         .unwrap_or_default();
+    if output.is_empty() && !observed_output.is_empty() {
+        output = observed_output;
+        response["output"] = Value::Array(output.clone());
+    }
     let output_text = collect_output_text(&output);
     let usage = response.get("usage").cloned().unwrap_or(Value::Null);
     Ok(CollectedResponse {

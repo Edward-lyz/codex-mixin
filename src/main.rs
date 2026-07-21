@@ -23,7 +23,7 @@ use std::os::unix::process::CommandExt;
 use codex_mixin::CODEX_MIXIN_PROVIDER;
 use codex_mixin::catalog::{
     apply_web_search_capabilities, codex_catalog_from_models_with_metadata,
-    codex_oauth_proxy_catalog_from_models_with_metadata, load_template_catalog,
+    codex_oauth_proxy_catalog_from_models_with_metadata_for_provider, load_template_catalog,
     refresh_managed_oauth_catalog,
 };
 use codex_mixin::config::{
@@ -1086,11 +1086,12 @@ async fn install_codex(options: InstallCodexOptions) -> anyhow::Result<()> {
         .await?;
     let metadata = load_model_metadata_resolver().await?;
     let catalog = if codex_oauth_proxy {
-        codex_oauth_proxy_catalog_from_models_with_metadata(
+        codex_oauth_proxy_catalog_from_models_with_metadata_for_provider(
             &models,
             gateway_config.default_context_window,
             template.as_ref(),
             &metadata,
+            gateway_config.provider_preset.as_str(),
         )
     } else {
         codex_catalog_from_models_with_metadata(
@@ -1133,6 +1134,7 @@ async fn install_codex(options: InstallCodexOptions) -> anyhow::Result<()> {
                 &models,
                 template.as_ref(),
                 &doc,
+                gateway_config.provider_preset.as_str(),
             )?)
         } else {
             None
@@ -1321,11 +1323,12 @@ async fn refresh_default_managed_codex_catalog() -> anyhow::Result<()> {
     }
     let metadata = load_model_metadata_resolver().await?;
     let catalog = if requires_openai_auth {
-        codex_oauth_proxy_catalog_from_models_with_metadata(
+        codex_oauth_proxy_catalog_from_models_with_metadata_for_provider(
             &models,
             gateway_config.default_context_window,
             template.as_ref(),
             &metadata,
+            gateway_config.provider_preset.as_str(),
         )
     } else {
         codex_catalog_from_models_with_metadata(
@@ -1811,19 +1814,20 @@ fn select_codex_oauth_proxy_model(
     models: &[codex_mixin::anthropic::ModelInfo],
     template_catalog: Option<&serde_json::Value>,
     doc: &DocumentMut,
+    provider_suffix: &str,
 ) -> anyhow::Result<String> {
     if let Some(model) = requested_model {
         if model_exists_in_oauth_proxy_catalog(&model, models, template_catalog) {
             return Ok(model);
         }
-        if let Some(canonical) = model.strip_suffix("-custom")
+        if let Some(canonical) = strip_provider_suffix(&model, provider_suffix)
             && is_gpt_model(canonical)
             && models.iter().any(|candidate| candidate.id == canonical)
         {
             return Ok(model);
         }
         if is_gpt_model(&model) && models.iter().any(|candidate| candidate.id == model) {
-            return Ok(format!("{model}-custom"));
+            return Ok(format!("{model}-{provider_suffix}"));
         }
         anyhow::bail!("requested model is not present in generated Codex catalog: {model}");
     }
@@ -1854,7 +1858,7 @@ fn select_codex_oauth_proxy_model(
     }
     let first = &models[0].id;
     if is_gpt_model(first) {
-        Ok(format!("{first}-custom"))
+        Ok(format!("{first}-{provider_suffix}"))
     } else {
         Ok(first.clone())
     }
@@ -1868,7 +1872,9 @@ fn model_exists_in_oauth_proxy_catalog(
     if template_catalog_has_model(template_catalog, model) {
         return true;
     }
-    if let Some(canonical) = model.strip_suffix("-custom")
+    if let Some(canonical) = ["custom", "baidu-oneapi", "openrouter", "deepseek"]
+        .into_iter()
+        .find_map(|provider| strip_provider_suffix(model, provider))
         && is_gpt_model(canonical)
     {
         return models.iter().any(|candidate| candidate.id == canonical);
@@ -1876,6 +1882,10 @@ fn model_exists_in_oauth_proxy_catalog(
     models
         .iter()
         .any(|candidate| candidate.id == model && !is_gpt_model(&candidate.id))
+}
+
+fn strip_provider_suffix<'a>(model: &'a str, provider_suffix: &str) -> Option<&'a str> {
+    model.strip_suffix(&format!("-{provider_suffix}"))
 }
 
 fn template_catalog_has_model(template_catalog: Option<&serde_json::Value>, slug: &str) -> bool {

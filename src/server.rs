@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::convert::Infallible;
 use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
@@ -26,12 +27,13 @@ use crate::catalog::{codex_catalog_from_models_with_metadata, load_template_cata
 use crate::config::{GatewayConfig, ProviderPreset, UpstreamAuthHeader};
 use crate::error::GatewayError;
 use crate::fusion::{
-    FusionEngine, ModelRoute, model_route, should_fuse_turn, validate_fusion_profiles,
+    FusionEngine, ModelRoute, canonical_upstream_model_alias, model_route, should_fuse_turn,
+    validate_fusion_profiles,
 };
 use crate::image_generation::ImageRouteRegistry;
 use crate::model_metadata::ModelMetadataResolver;
-use crate::sse::SseDecoder;
-use crate::upstream::{UpstreamRouting, stream_response_with_options};
+use crate::sse::{SseDecoder, encode_event};
+use crate::upstream::{ResponseStream, UpstreamRouting, stream_response_with_options};
 use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};
 
 type OfficialWebSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
@@ -332,7 +334,7 @@ impl AppState {
         Ok(body)
     }
 
-    async fn official_auth(
+    pub(crate) async fn official_auth(
         &self,
     ) -> anyhow::Result<(axum::http::HeaderValue, axum::http::HeaderValue)> {
         read_codex_official_auth(&self.config.codex_auth_path, &self.official_auth_cache).await
@@ -721,17 +723,15 @@ async fn responses(
                 })?
                 .clone();
             if should_fuse_turn(&body) {
-                FusionEngine::new(&state, &profile).stream_with_routing(body, oneapi_routing)
+                FusionEngine::new(&state, &profile)
+                    .with_headers(headers.clone())
+                    .stream_with_routing(body, oneapi_routing)
             } else {
-                body["model"] = Value::String(profile.final_model);
                 body["stream"] = Value::Bool(true);
-                stream_response_with_options(
-                    &state,
-                    body,
-                    oneapi_routing.as_ref(),
-                    Some(&requested_model),
-                )
-                .await?
+                FusionEngine::new(&state, &profile)
+                    .with_headers(headers.clone())
+                    .stream_final_continuation(body, oneapi_routing.as_ref())
+                    .await?
             }
         }
     };
@@ -1268,17 +1268,15 @@ async fn proxy_custom_responses_ws(
                 .ok_or_else(|| anyhow::anyhow!("unknown fusion profile: {profile_id}"))?
                 .clone();
             if should_fuse_turn(&body) {
-                FusionEngine::new(state, &profile).stream_with_routing(body, oneapi_routing)
+                FusionEngine::new(state, &profile)
+                    .with_headers(headers.clone())
+                    .stream_with_routing(body, oneapi_routing)
             } else {
-                body["model"] = Value::String(profile.final_model);
                 body["stream"] = Value::Bool(true);
-                stream_response_with_options(
-                    state,
-                    body,
-                    oneapi_routing.as_ref(),
-                    Some(&requested_model),
-                )
-                .await?
+                FusionEngine::new(state, &profile)
+                    .with_headers(headers.clone())
+                    .stream_final_continuation(body, oneapi_routing.as_ref())
+                    .await?
             }
         }
     };
@@ -1359,7 +1357,7 @@ fn expand_custom_websocket_history(
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("custom request is missing model"))?;
-    if model.strip_suffix("-custom").unwrap_or(model) != state.model {
+    if canonical_upstream_model_alias(model) != state.model {
         anyhow::bail!(
             "custom previous_response_id belongs to model {}",
             state.model
@@ -1383,7 +1381,7 @@ async fn complete_custom_noop(
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("custom noop request is missing model"))?;
-    let model = model.strip_suffix("-custom").unwrap_or(model).to_owned();
+    let model = canonical_upstream_model_alias(model).to_owned();
     let history = take_custom_request_input(&mut body)?;
     let response_id = format!("resp_{}", Uuid::new_v4().simple());
     for status in ["in_progress", "completed"] {
@@ -1498,6 +1496,68 @@ async fn forward_official_responses(
         .header(header::CACHE_CONTROL, "no-cache")
         .body(Body::from_stream(upstream.bytes_stream()))
         .map_err(|err| GatewayError::Other(err.into()))
+}
+
+pub(crate) async fn stream_official_response(
+    state: &AppState,
+    headers: &HeaderMap,
+    body: Value,
+) -> Result<ResponseStream, GatewayError> {
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .unwrap_or("official")
+        .to_owned();
+    let (authorization, account_id) = state.official_auth().await.map_err(GatewayError::Other)?;
+    let upstream = forward_official_headers(
+        state
+            .client
+            .post(&state.config.official_responses_url)
+            .header(header::AUTHORIZATION, authorization)
+            .header("chatgpt-account-id", account_id)
+            .header(header::ACCEPT, "text/event-stream"),
+        headers,
+    )
+    .json(&body)
+    .send()
+    .await?;
+    let status = upstream.status();
+    if !status.is_success() {
+        let body = upstream.text().await.unwrap_or_default();
+        return Err(GatewayError::Upstream(format!(
+            "official responses endpoint returned {status}: {body}"
+        )));
+    }
+    let stream = async_stream::stream! {
+        let mut upstream = upstream.bytes_stream();
+        while let Some(chunk) = upstream.next().await {
+            match chunk {
+                Ok(bytes) => yield Ok::<Bytes, Infallible>(bytes),
+                Err(error) => {
+                    let error = json!({"message":error.to_string(),"type":"server_error"});
+                    let event = encode_event(
+                        "response.failed",
+                        &json!({
+                            "type":"response.failed",
+                            "response":{
+                                "id":format!("resp_{}", Uuid::new_v4().simple()),
+                                "object":"response",
+                                "status":"failed",
+                                "model":model,
+                                "error":error,
+                                "output":[]
+                            },
+                            "error":error
+                        }),
+                    )
+                    .expect("official failure event is serializable");
+                    yield Ok(event);
+                    break;
+                }
+            }
+        }
+    };
+    Ok(stream.boxed())
 }
 
 async fn image_generations(
@@ -1710,7 +1770,8 @@ fn normalize_custom_model_alias(body: &mut Value) {
     let Some(model) = body.get("model").and_then(Value::as_str) else {
         return;
     };
-    if let Some(canonical) = model.strip_suffix("-custom") {
+    let canonical = canonical_upstream_model_alias(model);
+    if canonical != model {
         body["model"] = Value::String(canonical.to_owned());
     }
 }

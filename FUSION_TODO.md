@@ -31,9 +31,9 @@
     "final_model": "model-d",
     "min_successful": 2,
     "max_completion_tokens": 2048,
-    "timeout_ms": 90000,
+    "timeout_ms": 300000,
     "fuse_every_user_turn": true,
-    "panel_tools": { "enabled": true, "max_rounds": 4, "max_calls_per_model": 8 }
+    "panel_tools": { "enabled": true, "max_rounds": 16, "max_calls_per_model": 64 }
   }
   ```
 - [x] 持久化：`StoredGatewayConfig`（`src/config.rs` ~line 415）加 `fusion_profiles: Vec<FusionProfile>` 字段（serde default，向后兼容旧配置文件）。`GatewayConfig` 带解析后的 profiles。
@@ -60,7 +60,7 @@
   - `list_files { path?, glob? }`：walkdir，限制条目数。
   - `grep { pattern, path?, glob? }`：优先调用系统 `rg`，无则退化为内置逐文件正则；只读。
   - `git_inspect { subcommand, args? }`：仅白名单 `status` / `log` / `diff` / `show`，参数过滤（禁止 `-o`、`--output` 等写出参数）。
-- [x] 安全约束：所有路径 canonicalize 后必须位于 cwd（jail 根）内，拒绝 symlink 逃逸；拒绝任意 shell；每模型上限 `max_rounds` 轮 / `max_calls_per_model` 次调用，超限后强制无工具收尾。
+- [x] 安全约束：所有路径 canonicalize 后必须位于 cwd（jail 根）内，拒绝 symlink 逃逸；拒绝任意 shell；默认允许每模型 16 轮 / 64 次只读工具调用，整体仍受单 Panel 5 分钟超时约束。
 - [x] 工具循环：panel 模型返回 tool_calls → 进程内执行 → 结果作为 tool role 消息追加 → 再调 `collect_response`，直到无 tool_calls 或超限。
 
 ### 4. 暴露虚拟模型
@@ -86,6 +86,10 @@
 - [x] 持久化：直接读写 stored config JSON 中的 `fusion_profiles` 数组（复用 `loadStoredConfig` ~line 1622 及与登录设置面板相同的保存机制），保存后沿用现有"设置保存→重启网关进程"逻辑使 catalog 生效。
 - [x] 保存前本地校验与 Rust 端一致：1–8 panel、禁止 `mixin/fusion/` 前缀、`min_successful <= panel 数`。
 - [x] `macos/build_app.sh` 若按文件列表编译需加入新 Swift 文件。
+- [x] 跨 Provider：模型引用持久化为 `official:<model>` 或 `<provider>:<model>`；旧的无前缀引用按当前上游兼容。UI 合并 OpenAI 官方 cache 与当前上游模型，Panel/Judge/Final 均可混合选择。
+- [x] 官方 GPT 与上游 GPT 重名时，上游 catalog slug 使用实际 provider 后缀（如 `-baidu-oneapi`），并兼容旧 `-custom` alias。
+- [x] 官方 Fusion 子请求固定 `store=false`；Panel 最终报告使用严格 JSON schema，拒绝过渡语、原始工具标记及空洞报告，避免形式成功但无有效分析。
+- [x] Panel/Judge 接受 JSON、Markdown 或纯文本报告，避免因 Provider 不支持结构化输出而误判失败；默认 Panel/Judge 超时窗口为 5 分钟。
 
 ### 7. 测试（`tests/gateway_http.rs` 风格，参考现有 mock 上游）
 
@@ -96,6 +100,7 @@
 - [x] Judge JSON 解析失败容忍。
 - [x] 只读工具：路径逃逸拒绝、git 子命令白名单、轮次上限。
 - [x] SSE 中 model 字段保持 fusion slug；进度事件合法。
+- [x] 跨 Provider mixed mock：官方与上游 Panel/Judge/Final 分别命中正确端点，工具 continuation 保持 Final provider。
 - [x] `cargo fmt` / `cargo clippy` / `cargo test` 全绿。
 
 ### 8. Plan 后续写代码轮次

@@ -187,6 +187,10 @@ pub(crate) fn responses_to_anthropic_with_web_search(
         web_search_enabled,
     )?;
     let thinking = convert_thinking(&model, max_tokens, body.get("reasoning"), config)?;
+    let output_config = merge_anthropic_output_format(
+        thinking.output_config,
+        body.get("text").and_then(|text| text.get("format")),
+    )?;
     let speed = body
         .get("service_tier")
         .and_then(Value::as_str)
@@ -215,11 +219,34 @@ pub(crate) fn responses_to_anthropic_with_web_search(
             tools,
             tool_choice,
             thinking: thinking.thinking,
-            output_config: thinking.output_config,
+            output_config,
             metadata: None,
         },
         tool_names,
     })
+}
+
+fn merge_anthropic_output_format(
+    output_config: Option<Value>,
+    format: Option<&Value>,
+) -> Result<Option<Value>, GatewayError> {
+    let Some(format) = format else {
+        return Ok(output_config);
+    };
+    match format.get("type").and_then(Value::as_str) {
+        None | Some("text") => Ok(output_config),
+        Some("json_schema") => {
+            let schema = format.get("schema").ok_or_else(|| {
+                GatewayError::BadRequest("text.format json_schema missing schema".to_owned())
+            })?;
+            let mut output_config = output_config.unwrap_or_else(|| json!({}));
+            output_config["format"] = json!({"type":"json_schema","schema":schema});
+            Ok(Some(output_config))
+        }
+        Some(other) => Err(GatewayError::BadRequest(format!(
+            "unsupported text format for Anthropic upstream: {other}"
+        ))),
+    }
 }
 
 fn append_input_item(
@@ -1208,6 +1235,34 @@ mod tests {
             web_search_max_uses: Some(3),
             fusion_profiles: Vec::new(),
         }
+    }
+
+    #[test]
+    fn maps_responses_json_schema_to_anthropic_output_config() {
+        let converted = responses_to_anthropic(
+            &json!({
+                "model":"Claude Sonnet 5",
+                "stream":true,
+                "input":"analyze",
+                "text":{"format":{
+                    "type":"json_schema",
+                    "name":"panel",
+                    "strict":true,
+                    "schema":{
+                        "type":"object",
+                        "properties":{"findings":{"type":"array","items":{"type":"string"}}},
+                        "required":["findings"],
+                        "additionalProperties":false
+                    }
+                }}
+            }),
+            &config(),
+        )
+        .unwrap();
+        assert_eq!(
+            converted.request.output_config.unwrap()["format"]["type"],
+            "json_schema"
+        );
     }
 
     #[test]

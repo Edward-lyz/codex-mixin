@@ -268,6 +268,16 @@ impl GatewayConfig {
             }),
             provider_preset.default_image_generation_path(),
         );
+        let mut fusion_profiles = stored_config
+            .as_ref()
+            .map(|config| config.fusion_profiles.clone())
+            .unwrap_or_default();
+        for profile in &mut fusion_profiles {
+            if profile.panel_tools.max_rounds == 4 && profile.panel_tools.max_calls_per_model == 8 {
+                profile.panel_tools.max_rounds = 16;
+                profile.panel_tools.max_calls_per_model = 64;
+            }
+        }
         let config = Self {
             bind,
             provider_preset,
@@ -342,10 +352,7 @@ impl GatewayConfig {
                 "CODEX_GATEWAY_WEB_SEARCH_MAX_USES",
                 Some(3),
             )?,
-            fusion_profiles: stored_config
-                .as_ref()
-                .map(|config| config.fusion_profiles.clone())
-                .unwrap_or_default(),
+            fusion_profiles,
         };
         validate_fusion_profiles(&config.fusion_profiles)?;
         Ok(config)

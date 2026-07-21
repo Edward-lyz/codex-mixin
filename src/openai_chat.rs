@@ -66,6 +66,33 @@ pub fn responses_to_openai_chat(body: &Value) -> Result<ConvertedChatRequest, Ga
     if let Some(top_p) = body.get("top_p") {
         request["top_p"] = top_p.clone();
     }
+    if let Some(format) = body.get("text").and_then(|text| text.get("format")) {
+        match format.get("type").and_then(Value::as_str) {
+            None | Some("text") => {}
+            Some("json_schema") => {
+                let name = format
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .unwrap_or("structured_output");
+                let schema = format.get("schema").ok_or_else(|| {
+                    GatewayError::BadRequest("text.format json_schema missing schema".to_owned())
+                })?;
+                request["response_format"] = json!({
+                    "type":"json_schema",
+                    "json_schema":{
+                        "name":name,
+                        "strict":format.get("strict").and_then(Value::as_bool).unwrap_or(true),
+                        "schema":schema
+                    }
+                });
+            }
+            Some(other) => {
+                return Err(GatewayError::BadRequest(format!(
+                    "unsupported text format for OpenAI chat upstream: {other}"
+                )));
+            }
+        }
+    }
     if let Some(service_tier) = body.get("service_tier").and_then(Value::as_str) {
         request["service_tier"] = json!(if service_tier == "fast" {
             "priority"
@@ -527,6 +554,32 @@ fn convert_custom_tool(tool: &Value) -> Result<(Value, String), GatewayError> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn maps_responses_json_schema_to_chat_response_format() {
+        let converted = responses_to_openai_chat(&json!({
+            "model":"deepseek-chat",
+            "stream":true,
+            "input":"analyze",
+            "text":{"format":{
+                "type":"json_schema",
+                "name":"panel",
+                "strict":true,
+                "schema":{
+                    "type":"object",
+                    "properties":{"findings":{"type":"array","items":{"type":"string"}}},
+                    "required":["findings"],
+                    "additionalProperties":false
+                }
+            }}
+        }))
+        .unwrap();
+        assert_eq!(converted.request["response_format"]["type"], "json_schema");
+        assert_eq!(
+            converted.request["response_format"]["json_schema"]["name"],
+            "panel"
+        );
+    }
 
     #[test]
     fn converts_plaintext_agent_message_for_subagents() {

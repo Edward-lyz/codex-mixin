@@ -589,17 +589,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         else {
             throw FusionSettingsError.message("模型接口返回了无效 JSON")
         }
-        return models.compactMap { model in
+        let provider = stored["provider_preset"] as? String ?? "custom"
+        let upstream: [FusionModelOption] = models.compactMap { model -> FusionModelOption? in
             guard
                 let id = model["id"] as? String,
                 !id.hasPrefix("mixin/fusion/")
             else { return nil }
             return FusionModelOption(
-                id: id,
-                displayName: model["display_name"] as? String ?? id
+                id: "\(provider):\(id)",
+                displayName: "\(model["display_name"] as? String ?? id) · \(provider)"
             )
         }
-        .sorted { $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending }
+        let official = try loadOfficialFusionModelOptions()
+        return (official + upstream).sorted {
+            $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+        }
+    }
+
+    private func loadOfficialFusionModelOptions() throws -> [FusionModelOption] {
+        let cacheURL = FileManager.default.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex/models_cache.json")
+        guard FileManager.default.fileExists(atPath: cacheURL.path) else { return [] }
+        let data = try Data(contentsOf: cacheURL)
+        guard
+            let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let models = object["models"] as? [[String: Any]]
+        else {
+            throw FusionSettingsError.message("OpenAI 官方模型缓存格式无效")
+        }
+        return models.compactMap { model -> FusionModelOption? in
+            guard
+                let slug = model["slug"] as? String,
+                (model["visibility"] as? String ?? "list") != "hide"
+            else { return nil }
+            return FusionModelOption(
+                id: "official:\(slug)",
+                displayName: "\(model["display_name"] as? String ?? slug) · OpenAI 官方"
+            )
+        }
     }
 
     private func modelBenchmarkRequest(method: String, timeoutSeconds: Int?) async throws -> ModelBenchmarkSnapshot? {
@@ -1590,7 +1617,7 @@ private func runInstallCodexPanel() -> Bool {
     titleLabel.font = .boldSystemFont(ofSize: 18)
     titleLabel.textColor = .labelColor
 
-    let detailLabel = NSTextField(wrappingLabelWithString: "会先备份当前 ~/.codex/config.toml，再注册独立的 codex-mixin provider，并把现有历史会话统一迁移到该 provider。官方 GPT 保留原名并走 Codex 官方路径，自定义 GPT 使用 -custom 后缀。完成后需要重启 Codex App；CLI 需要开新会话。")
+    let detailLabel = NSTextField(wrappingLabelWithString: "会先备份当前 ~/.codex/config.toml，再注册独立的 codex-mixin provider，并把现有历史会话统一迁移到该 provider。官方 GPT 保留原名并走 Codex 官方路径；上游 GPT 重名时使用 provider 后缀（例如 -baidu-oneapi）。完成后需要重启 Codex App；CLI 需要开新会话。")
     detailLabel.textColor = .secondaryLabelColor
     detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     detailLabel.translatesAutoresizingMaskIntoConstraints = false
