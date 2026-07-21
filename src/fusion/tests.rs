@@ -4,7 +4,7 @@ use crate::config::ProviderPreset;
 
 use super::render::{panel_results_detail, render_fusion_details};
 use super::routing::{FusionModelProvider, resolve_fusion_model};
-use super::types::{FusionPanelDetail, FusionPanelStatus};
+use super::types::{FusionPanelDetail, FusionPanelStatus, JudgeSynthesis};
 use super::*;
 
 fn profile() -> FusionProfile {
@@ -80,6 +80,17 @@ fn accepts_structured_and_plain_text_panel_reports() {
 }
 
 #[test]
+fn normalizes_three_part_judge_synthesis() {
+    let normalized = normalize_judge_analysis(
+        r#"{"points":[{"title":"共识","body":"共同发现。"},{"title":"分歧与缺口","body":"覆盖不足。"},{"title":"建议","body":"应用修复。"}]}"#,
+    );
+    let synthesis: JudgeSynthesis = serde_json::from_str(&normalized).unwrap();
+    assert_eq!(synthesis.points.len(), 3);
+    assert_eq!(synthesis.points[0].title, "共识");
+    assert_eq!(synthesis.points[2].body, "应用修复。");
+}
+
+#[test]
 fn panel_requests_allow_plain_text_and_default_to_five_minutes() {
     let request = panel_request(&profile(), "panel-a", "analyze", false);
     assert!(request.get("text").is_none());
@@ -92,6 +103,16 @@ fn panel_requests_allow_plain_text_and_default_to_five_minutes() {
     .unwrap();
     assert_eq!(parsed.timeout_ms, 300_000);
     assert!(parsed.show_intermediate_results);
+}
+
+#[test]
+fn judge_requests_exactly_three_plain_text_points() {
+    let request = judge_request(&profile(), "panel reports", "请分析这个实现");
+    let prompt = request["input"][0]["content"][0]["text"].as_str().unwrap();
+    assert!(prompt.contains("exactly one JSON object"));
+    assert!(prompt.contains("`points` array containing exactly three objects"));
+    assert!(prompt.contains("same language as the original user task"));
+    assert!(prompt.contains("请分析这个实现"));
 }
 
 #[test]

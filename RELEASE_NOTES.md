@@ -1,26 +1,26 @@
 <!-- codex-mixin:zh-Hans:start -->
-## v0.2.25
+## v0.3.0
 
-- Fusion 新增 `show_intermediate_results` 开关；关闭时只显示 Final 回答，Panel 和 Judge 仍在后台参与生成。
-- 开启中间结果时，Panel 输出按配置顺序合并为可折叠表格，并使用统一的 `Fusion · Panel Results`、`Fusion · Judge Result`、`Fusion · Final Answer` 标题。
-- Baidu OneAPI 改用 `/openapi/v2/available_models` 作为权威模型源，修复 `auto` 模型未进入 Codex 模型列表的问题。
-- 将过大的 Rust 与 macOS 源文件按职责拆分，并集中 provider suffix 与 Baidu/Fable 兼容判断，降低后续维护成本。
+- Fusion 中间结果升级为 Codex 原生交互式 `Fusion · Review`：Panel 报告以并列小卡片展示，可点击展开完整内容。
+- Judge 输出重构为三个可点选的编号要点，分别覆盖共识与证据、分歧与缺口、建议的具体做法；标题和正文跟随当前用户请求的语言。
+- Final 回答恢复为普通 Codex 流式消息，不再插入额外标题或模型说明；关闭 `show_intermediate_results` 时仍只显示 Final。
+- visualization 文件限定在当前 Codex task 目录、拒绝路径逃逸并使用私有文件权限；目录不可用时自动回退到 Markdown 展示。
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
-## v0.2.25
+## v0.3.0
 
-- Fusion 新增 `show_intermediate_results` 開關；關閉時只顯示 Final 回答，Panel 與 Judge 仍會在背景參與生成。
-- 開啟中間結果時，Panel 輸出會依設定順序合併成可摺疊表格，並使用統一的 `Fusion · Panel Results`、`Fusion · Judge Result`、`Fusion · Final Answer` 標題。
-- Baidu OneAPI 改用 `/openapi/v2/available_models` 作為權威模型來源，修正 `auto` 模型未進入 Codex 模型清單的問題。
-- 將過大的 Rust 與 macOS 原始檔依職責拆分，並集中 provider suffix 與 Baidu/Fable 相容判斷，降低後續維護成本。
+- Fusion 中間結果升級為 Codex 原生互動式 `Fusion · Review`：Panel 報告以並列小卡片呈現，可點擊展開完整內容。
+- Judge 輸出重構為三個可點選的編號要點，分別涵蓋共識與證據、分歧與缺口、建議的具體做法；標題與正文會跟隨目前使用者請求的語言。
+- Final 回答恢復為一般 Codex 串流訊息，不再插入額外標題或模型說明；關閉 `show_intermediate_results` 時仍只顯示 Final。
+- visualization 檔案限定在目前 Codex task 目錄、拒絕路徑逃逸並使用私有檔案權限；目錄不可用時自動回退到 Markdown 顯示。
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
-## v0.2.25
+## v0.3.0
 
-- Added `show_intermediate_results` for Fusion profiles. Disabling it keeps only the Final answer visible while Panel and Judge still participate.
-- When intermediate results are visible, Panel output is grouped into one collapsible table followed by consistently titled Judge and Final sections.
-- Made `/openapi/v2/available_models` authoritative for Baidu OneAPI, fixing the missing `auto` model in the Codex model picker.
-- Split oversized Rust and macOS sources by responsibility and centralized provider-suffix and Baidu/Fable compatibility checks.
+- Upgraded visible Fusion intermediates to a native interactive `Fusion · Review` in Codex, with compact side-by-side Panel cards that expand on click.
+- Restructured Judge output into three selectable numbered points for consensus and evidence, tensions and gaps, and a concrete recommendation; titles and bodies follow the current user's language.
+- Restored the Final answer to a normal streamed Codex message without an extra heading or model label. Disabling `show_intermediate_results` still keeps only the Final visible.
+- Confined visualization files to the current Codex task directory, rejected path escapes, applied private file permissions, and retained a Markdown fallback when visualization is unavailable.
 <!-- codex-mixin:en:end -->

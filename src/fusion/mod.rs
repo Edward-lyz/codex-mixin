@@ -25,6 +25,7 @@ mod prompts;
 mod render;
 mod routing;
 mod types;
+mod visualization;
 
 pub use engine::FusionEngine;
 pub use profile::{

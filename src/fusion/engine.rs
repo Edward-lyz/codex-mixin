@@ -4,6 +4,7 @@ use super::prompts::*;
 use super::render::*;
 use super::routing::{FusionModelProvider, resolve_fusion_model};
 use super::types::*;
+use super::visualization::create_fusion_visualization;
 use super::*;
 
 #[derive(Clone)]
@@ -136,19 +137,14 @@ impl FusionEngine {
             }
             successful.sort_by_key(|result| result.index);
             panel_details.sort_by_key(|result| result.index);
-            let mut details = if self.profile.show_intermediate_results {
-                vec![panel_results_detail(&panel_details)]
-            } else {
-                Vec::new()
-            };
 
             let mut final_body = body.clone();
             final_body["model"] = Value::String(self.profile.final_model.clone());
             final_body["stream"] = Value::Bool(true);
-            if successful.len() >= self.profile.min_successful {
+            let judge_detail = if successful.len() >= self.profile.min_successful {
                 yield Ok(progress_event(&fusion_model, "judge 分析中…"));
                 let panel_bundle = format_panel_bundle(&successful);
-                let judge_body = judge_request(&self.profile, &panel_bundle);
+                let judge_body = judge_request(&self.profile, &panel_bundle, &task);
                 let judge_result = tokio::time::timeout(
                     Duration::from_millis(self.profile.timeout_ms),
                     collect_fusion_response(
@@ -160,47 +156,46 @@ impl FusionEngine {
                     ),
                 )
                 .await;
-                let analysis = match judge_result {
+                let (analysis, judge_detail) = match judge_result {
                     Ok(Ok(collected)) => {
                         let analysis = normalize_judge_analysis(&collected.output_text);
-                        if self.profile.show_intermediate_results {
-                            details.push(judge_result_detail(
-                                &self.profile.judge_model,
-                                "Completed",
-                                analysis.clone(),
-                            ));
-                        }
-                        analysis
+                        let detail = FusionJudgeDetail {
+                            model: self.profile.judge_model.clone(),
+                            status: FusionJudgeStatus::Completed,
+                            text: analysis.clone(),
+                        };
+                        (analysis, detail)
                     }
                     Ok(Err(error)) => {
                         tracing::warn!(error = %error, "fusion judge failed; using panel outputs");
-                        if self.profile.show_intermediate_results {
-                            details.push(judge_result_detail(
-                                &self.profile.judge_model,
-                                "Failed",
-                                format!(
+                        (
+                            panel_bundle.clone(),
+                            FusionJudgeDetail {
+                                model: self.profile.judge_model.clone(),
+                                status: FusionJudgeStatus::Failed,
+                                text: format!(
                                     "{error}\n\nFalling back to the successful panel outputs."
                                 ),
-                            ));
-                        }
-                        panel_bundle.clone()
+                            },
+                        )
                     }
                     Err(_) => {
                         tracing::warn!("fusion judge timed out; using panel outputs");
-                        if self.profile.show_intermediate_results {
-                            details.push(judge_result_detail(
-                                &self.profile.judge_model,
-                                "Timed Out",
-                                format!(
+                        (
+                            panel_bundle.clone(),
+                            FusionJudgeDetail {
+                                model: self.profile.judge_model.clone(),
+                                status: FusionJudgeStatus::TimedOut,
+                                text: format!(
                                     "Timed out after {} ms. Falling back to the successful panel outputs.",
                                     self.profile.timeout_ms
                                 ),
-                            ));
-                        }
-                        panel_bundle.clone()
+                            },
+                        )
                     }
                 };
                 inject_fusion_analysis(&mut final_body, &analysis, &successful);
+                judge_detail
             } else {
                 tracing::warn!(
                     successful = successful.len(),
@@ -211,21 +206,40 @@ impl FusionEngine {
                     &fusion_model,
                     "panel 成功数不足，回退 final 模型…",
                 ));
-                if self.profile.show_intermediate_results {
-                    details.push(judge_result_detail(
-                        &self.profile.judge_model,
-                        "Skipped",
-                        format!(
+                FusionJudgeDetail {
+                    model: self.profile.judge_model.clone(),
+                    status: FusionJudgeStatus::Skipped,
+                    text: format!(
                             "Only {} panel(s) succeeded; {} required. The final model ran without judge analysis.",
                             successful.len(),
                             self.profile.min_successful
                         ),
-                    ));
                 }
-            }
+            };
 
+            let mut details = Vec::new();
             if self.profile.show_intermediate_results {
-                details.push(final_answer_detail(&self.profile.final_model));
+                let visualization = match create_fusion_visualization(
+                    &body,
+                    &self.headers,
+                    &self.state.config.codex_auth_path,
+                    &panel_details,
+                    &judge_detail,
+                )
+                .await
+                {
+                    Ok(visualization) => visualization,
+                    Err(error) => {
+                        tracing::warn!(error, "fusion visualization failed; using markdown fallback");
+                        None
+                    }
+                };
+                if let Some(visualization) = visualization {
+                    details.push(visualization);
+                } else {
+                    details.push(panel_results_detail(&panel_details));
+                    details.push(judge_result_detail(&judge_detail));
+                }
             }
 
             match stream_fusion_response(

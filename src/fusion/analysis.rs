@@ -1,5 +1,5 @@
 use super::routing::{input_items, is_user_message};
-use super::types::{PanelAnalysis, PanelResult};
+use super::types::{JudgeSynthesis, PanelAnalysis, PanelResult};
 use super::*;
 
 pub(super) fn normalize_panel_analysis(text: &str) -> Result<String, String> {
@@ -67,10 +67,18 @@ pub(super) fn format_panel_bundle(results: &[PanelResult]) -> String {
 }
 
 pub(super) fn normalize_judge_analysis(text: &str) -> String {
-    parse_json_output::<Value>(text)
-        .ok()
-        .and_then(|value| serde_json::to_string_pretty(&value).ok())
-        .unwrap_or_else(|| text.to_owned())
+    let Ok(synthesis) = parse_json_output::<JudgeSynthesis>(text) else {
+        return text.to_owned();
+    };
+    if synthesis.points.len() != 3
+        || synthesis
+            .points
+            .iter()
+            .any(|point| point.title.trim().is_empty() || point.body.trim().is_empty())
+    {
+        return text.to_owned();
+    }
+    serde_json::to_string_pretty(&synthesis).unwrap_or_else(|_| text.to_owned())
 }
 
 pub(super) fn inject_fusion_analysis(body: &mut Value, analysis: &str, panels: &[PanelResult]) {

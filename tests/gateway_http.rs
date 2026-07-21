@@ -1228,7 +1228,7 @@ async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
                     .is_some_and(|text| text.starts_with("## Fusion · "))
         })
         .collect::<Vec<_>>();
-    assert_eq!(detail_items.len(), 3);
+    assert_eq!(detail_items.len(), 2);
     assert!(detail_items.iter().all(|event| {
         event["item"]["id"]
             .as_str()
@@ -1253,12 +1253,7 @@ async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
     assert!(detail_items.iter().any(|event| {
         event["item"]["content"][0]["text"]
             .as_str()
-            .is_some_and(|text| text.starts_with("## Fusion · Judge Result"))
-    }));
-    assert!(detail_items.iter().any(|event| {
-        event["item"]["content"][0]["text"]
-            .as_str()
-            .is_some_and(|text| text.starts_with("## Fusion · Final Answer"))
+            .is_some_and(|text| text.starts_with("## Fusion · Judge Synthesis"))
     }));
     let final_message = events
         .iter()
@@ -1271,7 +1266,7 @@ async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
                     .is_some_and(|text| text.starts_with("## Fusion · "))
         })
         .unwrap();
-    assert_eq!(final_message["output_index"], 3);
+    assert_eq!(final_message["output_index"], 2);
     let completed = events
         .into_iter()
         .find(|event| event.event.as_deref() == Some("response.completed"))
@@ -1281,7 +1276,6 @@ async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
     assert_eq!(completed["response"]["output"][0]["type"], "message");
     assert_eq!(completed["response"]["output"][1]["type"], "message");
     assert_eq!(completed["response"]["output"][2]["type"], "message");
-    assert_eq!(completed["response"]["output"][3]["type"], "message");
 
     let first_turn_requests = requests.lock().unwrap().clone();
     assert_eq!(first_turn_requests.len(), 4);
@@ -1347,6 +1341,91 @@ async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
     let captured = requests.lock().unwrap();
     assert_eq!(captured.len(), 9);
     assert_eq!(captured.last().unwrap()["model"], "final");
+}
+
+#[tokio::test]
+async fn fusion_uses_codex_inline_visualization_when_thread_root_is_available() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let codex_home = tempfile::tempdir().unwrap();
+    let thread_id = uuid::Uuid::new_v4().to_string();
+    let visualization_dir = codex_home
+        .path()
+        .join("visualizations/2026/07/21")
+        .join(&thread_id);
+    let mut config = test_config(upstream_url);
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    config.fusion_profiles = vec![fusion_profile()];
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut request = responses_request();
+    request["model"] = json!("mixin/fusion/default");
+    request["input"].as_array_mut().unwrap().insert(
+        0,
+        json!({
+            "type":"message",
+            "role":"developer",
+            "content":[{
+                "type":"input_text",
+                "text":format!(
+                    "<workspace_roots><root>{}</root></workspace_roots>",
+                    visualization_dir.display()
+                )
+            }]
+        }),
+    );
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("thread-id", &thread_id)
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut encoded = response.bytes().await.unwrap().to_vec();
+    let events = drain_events(&mut encoded);
+    let detail_texts = events
+        .iter()
+        .filter(|event| event.event.as_deref() == Some("response.output_item.done"))
+        .filter_map(|event| serde_json::from_str::<Value>(&event.data).ok())
+        .filter_map(|event| {
+            event["item"]["content"][0]["text"]
+                .as_str()
+                .map(str::to_owned)
+        })
+        .filter(|text| text.starts_with("## Fusion · "))
+        .collect::<Vec<_>>();
+    assert_eq!(detail_texts.len(), 1, "{detail_texts:#?}");
+    let visualization = detail_texts
+        .iter()
+        .find(|text| text.starts_with("## Fusion · Review"))
+        .unwrap();
+    let file_name = visualization
+        .lines()
+        .find_map(|line| {
+            line.strip_prefix("::codex-inline-vis{file=\"")
+                .and_then(|value| value.strip_suffix("\"}"))
+        })
+        .unwrap();
+    let fragment = std::fs::read_to_string(visualization_dir.join(file_name)).unwrap();
+    assert!(fragment.contains("class=\"viz-grid fusion-panels\""));
+    assert!(fragment.contains("class=\"card fusion-panel\""));
+    assert!(fragment.contains("panel-a"));
+    assert!(fragment.contains("panel-b"));
+    assert!(fragment.contains("Judge synthesis"));
+    assert!(fragment.contains("data-fusion-point"));
+    assert!(
+        !detail_texts
+            .iter()
+            .any(|text| text.contains("Final Answer"))
+    );
+    let completed = events
+        .iter()
+        .find(|event| event.event.as_deref() == Some("response.completed"))
+        .unwrap();
+    let completed: Value = serde_json::from_str(&completed.data).unwrap();
+    assert_eq!(completed["response"]["output"].as_array().unwrap().len(), 2);
+    assert_eq!(requests.lock().unwrap().len(), 4);
 }
 
 #[tokio::test]

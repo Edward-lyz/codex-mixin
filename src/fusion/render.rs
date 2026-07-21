@@ -1,9 +1,10 @@
-use super::types::{FusionDetail, FusionPanelDetail, FusionPanelStatus, RenderedFusionDetail};
+use super::types::{
+    FusionDetail, FusionJudgeDetail, FusionPanelDetail, FusionPanelStatus, RenderedFusionDetail,
+};
 use super::*;
 
-const PANEL_RESULTS_TITLE: &str = "Fusion · Panel Results";
-const JUDGE_RESULT_TITLE: &str = "Fusion · Judge Result";
-const FINAL_ANSWER_TITLE: &str = "Fusion · Final Answer";
+pub(super) const PANEL_RESULTS_TITLE: &str = "Fusion · Panel Results";
+const JUDGE_RESULT_TITLE: &str = "Fusion · Judge Synthesis";
 
 pub(super) fn progress_event(model: &str, delta: &str) -> Bytes {
     encode_event(
@@ -135,24 +136,19 @@ pub(super) fn panel_results_detail(panels: &[FusionPanelDetail]) -> FusionDetail
     }
 }
 
-pub(super) fn judge_result_detail(model: &str, status: &str, text: String) -> FusionDetail {
+pub(super) fn judge_result_detail(judge: &FusionJudgeDetail) -> FusionDetail {
     FusionDetail {
         title: JUDGE_RESULT_TITLE.to_owned(),
         text: format!(
-            "**Model:** <code>{}</code>\n\n**Status:** {status}\n\n{text}",
-            escape_html(model)
+            "**Judge model:** <code>{}</code> · {}\n\n{}",
+            escape_html(&judge.model),
+            judge.status.label(),
+            judge.text
         ),
     }
 }
 
-pub(super) fn final_answer_detail(model: &str) -> FusionDetail {
-    FusionDetail {
-        title: FINAL_ANSWER_TITLE.to_owned(),
-        text: format!("**Model:** <code>{}</code>", escape_html(model)),
-    }
-}
-
-fn escape_html(value: &str) -> String {
+pub(super) fn escape_html(value: &str) -> String {
     value
         .replace('&', "&amp;")
         .replace('<', "&lt;")
