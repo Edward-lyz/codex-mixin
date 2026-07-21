@@ -101,11 +101,13 @@ fn codex_catalog_from_models_with_options(
             } else {
                 model.id.clone()
             };
-            let display_name = if include_template_models && is_gpt {
-                format!("{} (Custom)", model.id)
-            } else {
-                model.id.clone()
-            };
+            let display_name = model.display_name.clone().unwrap_or_else(|| {
+                if include_template_models && is_gpt {
+                    format!("{} (Custom)", model.id)
+                } else {
+                    model.id.clone()
+                }
+            });
             item["slug"] = json!(slug);
             item["display_name"] = json!(display_name);
             let mut description = model

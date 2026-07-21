@@ -8,6 +8,8 @@ use std::time::Duration;
 use anyhow::{Context, anyhow};
 use serde::{Deserialize, Serialize};
 
+use crate::fusion::{FusionProfile, validate_fusion_profiles};
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProviderPreset {
     Custom,
@@ -186,6 +188,7 @@ pub struct GatewayConfig {
     pub enable_web_search_tool: bool,
     pub web_search_tool_type: String,
     pub web_search_max_uses: Option<u64>,
+    pub fusion_profiles: Vec<FusionProfile>,
 }
 
 impl GatewayConfig {
@@ -265,7 +268,7 @@ impl GatewayConfig {
             }),
             provider_preset.default_image_generation_path(),
         );
-        Ok(Self {
+        let config = Self {
             bind,
             provider_preset,
             upstream_kind,
@@ -339,7 +342,13 @@ impl GatewayConfig {
                 "CODEX_GATEWAY_WEB_SEARCH_MAX_USES",
                 Some(3),
             )?,
-        })
+            fusion_profiles: stored_config
+                .as_ref()
+                .map(|config| config.fusion_profiles.clone())
+                .unwrap_or_default(),
+        };
+        validate_fusion_profiles(&config.fusion_profiles)?;
+        Ok(config)
     }
 
     pub fn upstream_messages_url(&self) -> String {
@@ -435,6 +444,8 @@ pub struct StoredGatewayConfig {
     pub quota_url: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub quota_username: Option<String>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub fusion_profiles: Vec<FusionProfile>,
 }
 
 pub fn stored_config_path() -> PathBuf {
@@ -595,6 +606,7 @@ mod tests {
             gateway_api_key: Some("local-key".to_owned()),
             quota_url: Some("https://example.test/quota".to_owned()),
             quota_username: Some("quota-user".to_owned()),
+            fusion_profiles: Vec::new(),
         };
         save_stored_config_to_path(&path, &config).unwrap();
         let loaded = load_stored_config_from_path(&path).unwrap().unwrap();
@@ -621,6 +633,12 @@ mod tests {
             Some("https://example.test/quota")
         );
         assert_eq!(loaded.quota_username.as_deref(), Some("quota-user"));
+    }
+
+    #[test]
+    fn old_stored_config_defaults_to_no_fusion_profiles() {
+        let config: StoredGatewayConfig = serde_json::from_str("{}").unwrap();
+        assert!(config.fusion_profiles.is_empty());
     }
 
     #[test]
@@ -670,6 +688,7 @@ mod tests {
             enable_web_search_tool: false,
             web_search_tool_type: "web_search_20250305".to_owned(),
             web_search_max_uses: Some(3),
+            fusion_profiles: Vec::new(),
         };
         assert_eq!(
             config.upstream_image_generation_url().as_deref(),

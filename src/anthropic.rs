@@ -56,6 +56,8 @@ pub struct ModelsResponse {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ModelInfo {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub display_name: Option<String>,
     #[serde(default)]
     pub object: Option<String>,
     #[serde(default)]

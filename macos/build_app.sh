@@ -48,6 +48,7 @@ xcrun swiftc \
   -target "$SWIFT_ARCH-apple-macosx$MACOS_DEPLOYMENT_TARGET" \
   "$ROOT_DIR/macos/MenuBarApp.swift" \
   "$ROOT_DIR/macos/ModelBenchmarkWindow.swift" \
+  "$ROOT_DIR/macos/FusionSettingsWindow.swift" \
   -framework Cocoa \
   -o "$MACOS_DIR/CodexMixinMenu"
 chmod +x "$MACOS_DIR/CodexMixinMenu"

@@ -1,6 +1,6 @@
 [package]
 name = "codex-mixin"
-version = "0.2.22"
+version = "0.2.23"
 edition = "2024"
 license-file = "LICENSE"
 
@@ -28,6 +28,7 @@ tower-http = { version = "0.6", features = ["decompression-zstd"] }
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1.18", features = ["v4", "v5"] }
+walkdir = "2.5"
 
 [dev-dependencies]
 http-body-util = "0.1"

@@ -1206,6 +1206,7 @@ mod tests {
             enable_web_search_tool: false,
             web_search_tool_type: "web_search_20250305".to_owned(),
             web_search_max_uses: Some(3),
+            fusion_profiles: Vec::new(),
         }
     }
 

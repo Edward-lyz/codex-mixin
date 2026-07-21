@@ -13,6 +13,7 @@ use codex_mixin::anthropic::ModelInfo;
 use codex_mixin::config::{
     GatewayConfig, ProviderPreset, ThinkingMode, UpstreamAuthHeader, UpstreamKind,
 };
+use codex_mixin::fusion::{FusionProfile, PanelToolsConfig};
 use codex_mixin::server::{AppState, router};
 use codex_mixin::sse::drain_events;
 use codex_mixin::web_search::WebSearchCapabilities;
@@ -40,6 +41,15 @@ enum MockMode {
 struct MockState {
     mode: MockMode,
     requests: Arc<Mutex<Vec<Value>>>,
+}
+
+#[derive(Clone)]
+struct FusionMockState {
+    requests: Arc<Mutex<Vec<Value>>>,
+    failing_models: Arc<Vec<String>>,
+    panel_delay: Duration,
+    active_panels: Arc<AtomicUsize>,
+    max_active_panels: Arc<AtomicUsize>,
 }
 
 #[derive(Clone)]
@@ -89,6 +99,7 @@ fn test_config(upstream_base_url: String) -> GatewayConfig {
         enable_web_search_tool: false,
         web_search_tool_type: "web_search_20250305".to_owned(),
         web_search_max_uses: Some(3),
+        fusion_profiles: Vec::new(),
     }
 }
 
@@ -113,6 +124,53 @@ async fn spawn_mock_upstream(mode: MockMode) -> (String, Arc<Mutex<Vec<Value>>>)
         .route("/v1/images/generations", post(mock_image_generations))
         .with_state(state);
     (spawn_router(app).await, requests)
+}
+
+async fn spawn_fusion_mock_upstream(
+    panel_delay: Duration,
+    failing_models: Vec<&str>,
+) -> (String, Arc<Mutex<Vec<Value>>>, Arc<AtomicUsize>) {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let max_active_panels = Arc::new(AtomicUsize::new(0));
+    let state = FusionMockState {
+        requests: requests.clone(),
+        failing_models: Arc::new(failing_models.into_iter().map(str::to_owned).collect()),
+        panel_delay,
+        active_panels: Arc::new(AtomicUsize::new(0)),
+        max_active_panels: max_active_panels.clone(),
+    };
+    let app = Router::new()
+        .route("/v1/models", get(mock_models))
+        .route(
+            "/v1/messages",
+            post(
+                |State(state): State<FusionMockState>, Json(body): Json<Value>| async move {
+                    let model = body["model"].as_str().unwrap_or_default().to_owned();
+                    state.requests.lock().unwrap().push(body);
+                    let is_panel = model.starts_with("panel-");
+                    if is_panel {
+                        let active = state.active_panels.fetch_add(1, Ordering::SeqCst) + 1;
+                        state.max_active_panels.fetch_max(active, Ordering::SeqCst);
+                        tokio::time::sleep(state.panel_delay).await;
+                        state.active_panels.fetch_sub(1, Ordering::SeqCst);
+                    }
+                    if state.failing_models.contains(&model) {
+                        return (
+                            StatusCode::INTERNAL_SERVER_ERROR,
+                            "intentional fusion panel failure".to_owned(),
+                        )
+                            .into_response();
+                    }
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, "text/event-stream")
+                        .body(Body::from(text_sse()))
+                        .unwrap()
+                },
+            ),
+        )
+        .with_state(state);
+    (spawn_router(app).await, requests, max_active_panels)
 }
 
 async fn spawn_mock_openai_chat() -> (String, Arc<Mutex<Vec<Value>>>) {
@@ -908,6 +966,23 @@ fn responses_request() -> Value {
     })
 }
 
+fn fusion_profile() -> FusionProfile {
+    FusionProfile {
+        id: "default".to_owned(),
+        panel_models: vec!["panel-a".to_owned(), "panel-b".to_owned()],
+        judge_model: "judge".to_owned(),
+        final_model: "final".to_owned(),
+        min_successful: 2,
+        max_completion_tokens: 2048,
+        timeout_ms: 5_000,
+        fuse_every_user_turn: true,
+        panel_tools: PanelToolsConfig {
+            enabled: false,
+            ..PanelToolsConfig::default()
+        },
+    }
+}
+
 fn image_tool_request() -> Value {
     let mut request = responses_request();
     request["tools"] = json!([{
@@ -1050,6 +1125,262 @@ async fn model_request_smoke_succeeds_end_to_end() {
             .unwrap()
             .contains("You are Codex")
     );
+}
+
+#[tokio::test]
+async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    config.fusion_profiles = vec![fusion_profile()];
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+
+    let models: Value = client
+        .get(format!("{gateway_url}/v1/models"))
+        .bearer_auth("gateway-key")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let fusion_model = models["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|model| model["id"] == "mixin/fusion/default")
+        .unwrap();
+    assert_eq!(
+        fusion_model["display_name"],
+        "Fusion (default): panel-a+panel-b → judge judge"
+    );
+
+    let mut request = responses_request();
+    request["model"] = json!("mixin/fusion/default");
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response_body = response.text().await.unwrap();
+    assert!(response_body.contains("response.reasoning_summary_text.delta"));
+    let mut encoded = response_body.into_bytes();
+    let completed = drain_events(&mut encoded)
+        .into_iter()
+        .find(|event| event.event.as_deref() == Some("response.completed"))
+        .unwrap();
+    let completed: Value = serde_json::from_str(&completed.data).unwrap();
+    assert_eq!(completed["response"]["model"], "mixin/fusion/default");
+
+    let first_turn_requests = requests.lock().unwrap().clone();
+    assert_eq!(first_turn_requests.len(), 4);
+    let mut models = first_turn_requests
+        .iter()
+        .map(|request| request["model"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    models.sort_unstable();
+    assert_eq!(models, ["final", "judge", "panel-a", "panel-b"]);
+    let final_request = first_turn_requests
+        .iter()
+        .find(|request| request["model"] == "final")
+        .unwrap();
+    assert!(
+        final_request["system"]
+            .to_string()
+            .contains("JUDGE_ANALYSIS")
+    );
+    assert!(final_request["system"].to_string().contains("hello codex"));
+    for panel_request in first_turn_requests
+        .iter()
+        .filter(|request| request["model"].as_str().unwrap().starts_with("panel-"))
+    {
+        assert!(
+            !panel_request["system"]
+                .to_string()
+                .contains("You are Codex")
+        );
+    }
+
+    request["input"] = json!([
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"first"}]},
+        {"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"follow up"}]}
+    ]);
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let later_body = response.text().await.unwrap();
+    assert!(later_body.contains("response.reasoning_summary_text.delta"));
+    assert_eq!(requests.lock().unwrap().len(), 8);
+
+    request["input"] = json!([
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"run a tool"}]},
+        {"type":"function_call","call_id":"call_1","name":"exec_command","arguments":"{\"cmd\":\"pwd\"}"},
+        {"type":"function_call_output","call_id":"call_1","output":"/tmp"}
+    ]);
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let continuation_body = response.text().await.unwrap();
+    assert!(!continuation_body.contains("response.reasoning_summary_text.delta"));
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 9);
+    assert_eq!(captured.last().unwrap()["model"], "final");
+}
+
+#[tokio::test]
+async fn fusion_panels_run_concurrently() {
+    let delay = Duration::from_millis(200);
+    let (upstream_url, _, max_active) = spawn_fusion_mock_upstream(delay, Vec::new()).await;
+    let mut config = test_config(upstream_url);
+    config.fusion_profiles = vec![fusion_profile()];
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut request = responses_request();
+    request["model"] = json!("mixin/fusion/default");
+
+    let started = Instant::now();
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let _ = response.text().await.unwrap();
+    assert_eq!(max_active.load(Ordering::SeqCst), 2);
+    assert!(started.elapsed() < Duration::from_millis(380));
+}
+
+#[tokio::test]
+async fn fusion_degrades_on_partial_and_total_panel_failure() {
+    let (upstream_url, requests, _) =
+        spawn_fusion_mock_upstream(Duration::ZERO, vec!["panel-b"]).await;
+    let mut partial_profile = fusion_profile();
+    partial_profile.min_successful = 1;
+    let mut config = test_config(upstream_url);
+    config.fusion_profiles = vec![partial_profile];
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut request = responses_request();
+    request["model"] = json!("mixin/fusion/default");
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("response.completed"));
+    assert!(
+        requests
+            .lock()
+            .unwrap()
+            .iter()
+            .any(|body| body["model"] == "judge")
+    );
+
+    let (upstream_url, requests, _) =
+        spawn_fusion_mock_upstream(Duration::ZERO, vec!["panel-a", "panel-b"]).await;
+    let mut config = test_config(upstream_url);
+    config.fusion_profiles = vec![fusion_profile()];
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("panel 成功数不足"));
+    assert!(body.contains("response.completed"));
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 3);
+    assert!(!captured.iter().any(|body| body["model"] == "judge"));
+    assert!(captured.iter().any(|body| body["model"] == "final"));
+}
+
+#[tokio::test]
+async fn fusion_panel_tool_loop_stops_at_round_limit() {
+    let requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let app = Router::new()
+        .route(
+            "/v1/messages",
+            post(
+                |State(requests): State<Arc<Mutex<Vec<Value>>>>, Json(body): Json<Value>| async move {
+                    let model = body["model"].as_str().unwrap_or_default().to_owned();
+                    requests.lock().unwrap().push(body);
+                    let payload = if model == "panel-a" {
+                        tool_sse("read_file", json!({"path":"input.txt"}))
+                    } else {
+                        text_sse()
+                    };
+                    Response::builder()
+                        .status(StatusCode::OK)
+                        .header(header::CONTENT_TYPE, "text/event-stream")
+                        .body(Body::from(payload))
+                        .unwrap()
+                },
+            ),
+        )
+        .with_state(requests.clone());
+    let upstream_url = spawn_router(app).await;
+    let workspace = tempfile::tempdir().unwrap();
+    std::fs::write(workspace.path().join("input.txt"), "tool input").unwrap();
+    let mut profile = fusion_profile();
+    profile.panel_models = vec!["panel-a".to_owned()];
+    profile.min_successful = 1;
+    profile.panel_tools.enabled = true;
+    profile.panel_tools.max_rounds = 1;
+    let mut config = test_config(upstream_url);
+    config.fusion_profiles = vec![profile];
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut request = responses_request();
+    request["model"] = json!("mixin/fusion/default");
+    request["input"][1]["content"][0]["text"] = json!(format!(
+        "inspect the file\n<environment_context><cwd>{}</cwd></environment_context>",
+        workspace.path().display()
+    ));
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response
+            .text()
+            .await
+            .unwrap()
+            .contains("response.completed")
+    );
+    let captured = requests.lock().unwrap();
+    assert_eq!(
+        captured
+            .iter()
+            .filter(|request| request["model"] == "panel-a")
+            .count(),
+        2
+    );
+    assert_eq!(captured.last().unwrap()["model"], "final");
 }
 
 #[tokio::test]
@@ -1604,6 +1935,91 @@ async fn maps_custom_websocket_to_responses_frames() {
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0]["model"], "DeepSeek-V4-Flash");
     assert_eq!(requests[0]["metadata"]["session_id"], "websocket-session");
+}
+
+#[tokio::test]
+async fn fusion_uses_same_pipeline_on_custom_websocket() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    config.fusion_profiles = vec![fusion_profile()];
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    let mut body = responses_request();
+    body.as_object_mut().unwrap().remove("stream");
+    body["type"] = json!("response.create");
+    body["model"] = json!("mixin/fusion/default");
+    socket
+        .send(WsMessage::Text(body.to_string().into()))
+        .await
+        .unwrap();
+
+    let frames = websocket_response_frames(&mut socket).await;
+    assert!(
+        frames
+            .iter()
+            .any(|frame| frame.contains("response.reasoning_summary_text.delta"))
+    );
+    let completed: Value = frames
+        .iter()
+        .filter_map(|frame| serde_json::from_str(frame).ok())
+        .find(|event: &Value| event["type"] == "response.completed")
+        .unwrap();
+    assert_eq!(completed["response"]["model"], "mixin/fusion/default");
+
+    let follow_up = json!({
+        "type":"response.create",
+        "model":"mixin/fusion/default",
+        "previous_response_id":completed["response"]["id"],
+        "input":[{
+            "type":"message",
+            "role":"user",
+            "content":[{"type":"input_text","text":"follow up"}]
+        }]
+    });
+    socket
+        .send(WsMessage::Text(follow_up.to_string().into()))
+        .await
+        .unwrap();
+    let follow_up_frames = websocket_response_frames(&mut socket).await;
+    assert!(
+        follow_up_frames
+            .iter()
+            .any(|frame| frame.contains("response.reasoning_summary_text.delta"))
+    );
+    assert_eq!(requests.lock().unwrap().len(), 8);
+    let follow_up_completed: Value = follow_up_frames
+        .iter()
+        .filter_map(|frame| serde_json::from_str(frame).ok())
+        .find(|event: &Value| event["type"] == "response.completed")
+        .unwrap();
+
+    let tool_continuation = json!({
+        "type":"response.create",
+        "model":"mixin/fusion/default",
+        "previous_response_id":follow_up_completed["response"]["id"],
+        "input":[
+            {"type":"function_call","call_id":"call_1","name":"exec_command","arguments":"{\"cmd\":\"pwd\"}"},
+            {"type":"function_call_output","call_id":"call_1","output":"/tmp"}
+        ]
+    });
+    socket
+        .send(WsMessage::Text(tool_continuation.to_string().into()))
+        .await
+        .unwrap();
+    let continuation_frames = websocket_response_frames(&mut socket).await;
+    assert!(
+        continuation_frames
+            .iter()
+            .all(|frame| !frame.contains("response.reasoning_summary_text.delta"))
+    );
+    assert_eq!(requests.lock().unwrap().len(), 9);
 }
 
 #[tokio::test]
@@ -2803,32 +3219,33 @@ async fn routes_official_gpt_and_custom_gpt_aliases_separately() {
         official_account_headers.lock().unwrap()[0].as_deref(),
         Some("account-1")
     );
-    let forwarded_headers = official_forwarded_headers.lock().unwrap();
-    assert_eq!(
-        forwarded_headers[0]
-            .get("originator")
-            .and_then(|value| value.to_str().ok()),
-        Some("codex_cli_rs")
-    );
-    assert_eq!(
-        forwarded_headers[0]
-            .get("x-codex-originator")
-            .and_then(|value| value.to_str().ok()),
-        Some("legacy-codex")
-    );
-    assert_eq!(
-        forwarded_headers[0]
-            .get("x-openai-subagent")
-            .and_then(|value| value.to_str().ok()),
-        Some("review")
-    );
-    assert_eq!(
-        forwarded_headers[0]
-            .get("x-openai-memgen-request")
-            .and_then(|value| value.to_str().ok()),
-        Some("true")
-    );
-    drop(forwarded_headers);
+    {
+        let forwarded_headers = official_forwarded_headers.lock().unwrap();
+        assert_eq!(
+            forwarded_headers[0]
+                .get("originator")
+                .and_then(|value| value.to_str().ok()),
+            Some("codex_cli_rs")
+        );
+        assert_eq!(
+            forwarded_headers[0]
+                .get("x-codex-originator")
+                .and_then(|value| value.to_str().ok()),
+            Some("legacy-codex")
+        );
+        assert_eq!(
+            forwarded_headers[0]
+                .get("x-openai-subagent")
+                .and_then(|value| value.to_str().ok()),
+            Some("review")
+        );
+        assert_eq!(
+            forwarded_headers[0]
+                .get("x-openai-memgen-request")
+                .and_then(|value| value.to_str().ok()),
+            Some("true")
+        );
+    }
     assert!(upstream_requests.lock().unwrap().is_empty());
 
     let mut custom_request = responses_request();

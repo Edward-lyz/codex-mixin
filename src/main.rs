@@ -73,6 +73,7 @@ impl ManagedConfigLock {
             let lock_path = sibling_path_with_extra_extension(config_path, "codex-mixin.lock");
             let file = OpenOptions::new()
                 .create(true)
+                .truncate(false)
                 .read(true)
                 .write(true)
                 .open(&lock_path)?;
@@ -352,17 +353,17 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             env_key,
             no_env_key,
         } => {
-            install_codex(
-                model,
+            install_codex(InstallCodexOptions {
+                requested_model: model,
                 set_default,
                 codex_oauth_proxy,
-                config,
-                catalog,
+                config_path: config,
+                catalog_path: catalog,
                 base_url,
                 web_search,
                 env_key,
                 no_env_key,
-            )
+            })
             .await
         }
         Command::UninstallCodex { config, catalog } => uninstall_codex(config, catalog),
@@ -484,6 +485,7 @@ fn login(
             .map(|username| trim_required("quota username", username))
             .transpose()?
             .or(existing.quota_username),
+        fusion_profiles: existing.fusion_profiles,
     };
     let path = save_stored_config(&config)?;
     if provider_changed || explicit_key {
@@ -776,10 +778,10 @@ fn resolve_quota_url(stored: &StoredGatewayConfig) -> anyhow::Result<reqwest::Ur
         ),
     };
     let mut url = reqwest::Url::parse(&quota_url)?;
-    if !url.query_pairs().any(|(key, _)| key == "username") {
-        if let Some(username) = quota_username(stored) {
-            url.query_pairs_mut().append_pair("username", &username);
-        }
+    if !url.query_pairs().any(|(key, _)| key == "username")
+        && let Some(username) = quota_username(stored)
+    {
+        url.query_pairs_mut().append_pair("username", &username);
     }
     Ok(url)
 }
@@ -901,7 +903,8 @@ fn show_config(json_output: bool, scope: ConfigScope) -> anyhow::Result<()> {
                 "upstream_api_key": stored.upstream_api_key.as_ref().map(|_| "<redacted>"),
                 "gateway_api_key": stored.gateway_api_key.as_ref().map(|_| "<redacted>"),
                 "quota_url": stored.quota_url,
-                "quota_username": stored.quota_username
+                "quota_username": stored.quota_username,
+                "fusion_profiles": stored.fusion_profiles
             });
             print_config_value(json_output, &value)
         }
@@ -1046,7 +1049,7 @@ async fn fetch_litellm_metadata() -> anyhow::Result<String> {
     Ok(body)
 }
 
-async fn install_codex(
+struct InstallCodexOptions {
     requested_model: Option<String>,
     set_default: bool,
     codex_oauth_proxy: bool,
@@ -1056,7 +1059,20 @@ async fn install_codex(
     web_search: String,
     env_key: Option<String>,
     no_env_key: bool,
-) -> anyhow::Result<()> {
+}
+
+async fn install_codex(options: InstallCodexOptions) -> anyhow::Result<()> {
+    let InstallCodexOptions {
+        requested_model,
+        set_default,
+        codex_oauth_proxy,
+        config_path,
+        catalog_path,
+        base_url,
+        web_search,
+        env_key,
+        no_env_key,
+    } = options;
     let paths = resolve_codex_install_paths(config_path, catalog_path)?;
     let template = load_codex_install_template(&paths, codex_oauth_proxy)?;
     let gateway_config = GatewayConfig::from_env()?;

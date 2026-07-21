@@ -89,6 +89,7 @@ jobs:
     needs: build
     runs-on: ubuntu-latest
     steps:
+      - uses: actions/checkout@v4
       - name: Resolve release tag
         id: version
         shell: bash
@@ -109,4 +110,5 @@ jobs:
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Codex Mixin ${{ steps.version.outputs.tag }}
+          body_path: RELEASE_NOTES.md
           files: dist/release/*

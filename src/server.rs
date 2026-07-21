@@ -23,16 +23,15 @@ use uuid::Uuid;
 use crate::anthropic::{BaiduAvailableModelsResponse, MessageRequest, ModelInfo, ModelsResponse};
 use crate::benchmark::{BenchmarkSnapshotResponse, ModelBenchmarkManager, StartBenchmarkRequest};
 use crate::catalog::{codex_catalog_from_models_with_metadata, load_template_catalog};
-use crate::config::{GatewayConfig, ProviderPreset, UpstreamAuthHeader, UpstreamKind};
-use crate::convert::responses_to_anthropic_with_web_search;
+use crate::config::{GatewayConfig, ProviderPreset, UpstreamAuthHeader};
 use crate::error::GatewayError;
+use crate::fusion::{
+    FusionEngine, ModelRoute, model_route, should_fuse_turn, validate_fusion_profiles,
+};
 use crate::image_generation::ImageRouteRegistry;
 use crate::model_metadata::ModelMetadataResolver;
-use crate::openai_chat::responses_to_openai_chat;
-use crate::openai_events::{
-    map_anthropic_sse_with_image_routes, map_openai_chat_sse_with_image_routes,
-};
 use crate::sse::SseDecoder;
+use crate::upstream::{UpstreamRouting, stream_response_with_options};
 use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};
 
 type OfficialWebSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
@@ -78,12 +77,6 @@ struct CustomWebSocketState {
     history: Vec<Value>,
 }
 
-#[derive(Debug, Eq, PartialEq)]
-struct OneApiRouting {
-    session_id: String,
-    hash_key: String,
-}
-
 struct CachedModels {
     fetched_at: Instant,
     models: Vec<ModelInfo>,
@@ -113,8 +106,8 @@ struct CachedOfficialAuth {
 
 #[derive(Clone)]
 pub struct AppState {
-    config: Arc<GatewayConfig>,
-    client: Client,
+    pub(crate) config: Arc<GatewayConfig>,
+    pub(crate) client: Client,
     image_routes: ImageRouteRegistry,
     benchmarks: ModelBenchmarkManager,
     web_search_capabilities: WebSearchCapabilities,
@@ -134,6 +127,7 @@ impl AppState {
         config: GatewayConfig,
         web_search_capabilities: WebSearchCapabilities,
     ) -> anyhow::Result<Self> {
+        validate_fusion_profiles(&config.fusion_profiles)?;
         let client = Client::builder()
             .timeout(config.request_timeout)
             .pool_max_idle_per_host(64)
@@ -151,7 +145,7 @@ impl AppState {
         })
     }
 
-    fn custom_image_routes(&self) -> Option<ImageRouteRegistry> {
+    pub(crate) fn custom_image_routes(&self) -> Option<ImageRouteRegistry> {
         self.config
             .upstream_image_generation_path
             .is_some()
@@ -167,6 +161,7 @@ impl AppState {
             let mut models = cached.models.clone();
             drop(cache);
             self.web_search_capabilities.annotate_models(&mut models);
+            self.append_fusion_models(&mut models);
             return Ok(models);
         }
 
@@ -177,7 +172,35 @@ impl AppState {
         });
         drop(cache);
         self.web_search_capabilities.annotate_models(&mut models);
+        self.append_fusion_models(&mut models);
         Ok(models)
+    }
+
+    fn append_fusion_models(&self, models: &mut Vec<ModelInfo>) {
+        models.extend(self.config.fusion_profiles.iter().map(|profile| ModelInfo {
+            id: profile.model_slug(),
+            display_name: Some(format!(
+                "Fusion ({}): {} → judge {}",
+                profile.id,
+                profile.panel_models.join("+"),
+                profile.judge_model
+            )),
+            object: Some("model".to_owned()),
+            created: None,
+            owned_by: Some("codex-mixin".to_owned()),
+            description: Some(format!(
+                "Fusion pipeline: {} panel models in parallel, judged by {}, finalized by {}",
+                profile.panel_models.len(),
+                profile.judge_model,
+                profile.final_model
+            )),
+            ratio: None,
+            price_type: None,
+            context_window: None,
+            supports_image: Some(false),
+            supports_thinking: Some(true),
+            supports_web_search: Some(false),
+        }));
     }
 
     async fn fetch_models_uncached(&self) -> Result<Vec<ModelInfo>, GatewayError> {
@@ -325,7 +348,7 @@ impl AppState {
             .await
     }
 
-    fn web_search_enabled_for_custom_request(&self, body: &Value) -> bool {
+    pub(crate) fn web_search_enabled_for_custom_request(&self, body: &Value) -> bool {
         let model = body
             .get("model")
             .and_then(Value::as_str)
@@ -333,7 +356,10 @@ impl AppState {
         self.config.enable_web_search_tool && self.web_search_capabilities.supports_model(model)
     }
 
-    fn apply_upstream_auth(&self, request: reqwest::RequestBuilder) -> reqwest::RequestBuilder {
+    pub(crate) fn apply_upstream_auth(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> reqwest::RequestBuilder {
         let request = match self.config.upstream_auth_header {
             UpstreamAuthHeader::AuthorizationBearer => {
                 request.bearer_auth(&self.config.upstream_api_key)
@@ -345,7 +371,7 @@ impl AppState {
         request.header("anthropic-version", &self.config.anthropic_version)
     }
 
-    fn apply_oneapi_affinity(
+    pub(crate) fn apply_oneapi_affinity(
         &self,
         request: reqwest::RequestBuilder,
         hash_key: Option<&str>,
@@ -400,7 +426,7 @@ impl AppState {
         Ok(response.bytes_stream().boxed())
     }
 
-    async fn anthropic_stream_with_web_search_retry(
+    pub(crate) async fn anthropic_stream_with_web_search_retry(
         &self,
         mut request: MessageRequest,
         hash_key: Option<&str>,
@@ -662,70 +688,54 @@ async fn responses(
     Json(mut body): Json<Value>,
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers)?;
-    if should_forward_to_official(&body) {
+    let requested_model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?
+        .to_owned();
+    let route = model_route(&requested_model);
+    if route == ModelRoute::Official {
         return forward_official_responses(&state, &headers, body).await;
     }
-    normalize_custom_model_alias(&mut body);
+    if route == ModelRoute::Direct {
+        normalize_custom_model_alias(&mut body);
+    }
     let oneapi_routing = if state.config.provider_preset == ProviderPreset::BaiduOneApi {
         stable_oneapi_routing(&headers, &body)?
     } else {
         None
     };
-    let stream = match state.config.upstream_kind {
-        UpstreamKind::AnthropicMessages => {
-            let mut converted = responses_to_anthropic_with_web_search(
-                &body,
-                &state.config,
-                state.web_search_enabled_for_custom_request(&body),
-            )?;
-            if let Some(routing) = &oneapi_routing {
-                converted.request.metadata = Some(json!({"session_id": routing.session_id}));
-            }
-            let upstream = state
-                .anthropic_stream_with_web_search_retry(
-                    converted.request,
-                    oneapi_routing
-                        .as_ref()
-                        .map(|routing| routing.hash_key.as_str()),
-                )
-                .await?;
-            Body::from_stream(map_anthropic_sse_with_image_routes(
-                upstream,
-                body,
-                converted.tool_names,
-                state.custom_image_routes(),
-            ))
+    let stream = match route {
+        ModelRoute::Official => unreachable!("official route returned above"),
+        ModelRoute::Direct => {
+            stream_response_with_options(&state, body, oneapi_routing.as_ref(), None).await?
         }
-        UpstreamKind::OpenAiChat => {
-            let converted = responses_to_openai_chat(&body)?;
-            let upstream_request =
-                state.apply_upstream_auth(state.client.post(state.config.upstream_messages_url()));
-            let upstream = state
-                .apply_oneapi_affinity(
-                    upstream_request,
-                    oneapi_routing
-                        .as_ref()
-                        .map(|routing| routing.hash_key.as_str()),
+        ModelRoute::Fusion { profile_id } => {
+            let profile = state
+                .config
+                .fusion_profiles
+                .iter()
+                .find(|profile| profile.id == profile_id)
+                .ok_or_else(|| {
+                    GatewayError::BadRequest(format!("unknown fusion profile: {profile_id}"))
+                })?
+                .clone();
+            if should_fuse_turn(&body) {
+                FusionEngine::new(&state, &profile).stream_with_routing(body, oneapi_routing)
+            } else {
+                body["model"] = Value::String(profile.final_model);
+                body["stream"] = Value::Bool(true);
+                stream_response_with_options(
+                    &state,
+                    body,
+                    oneapi_routing.as_ref(),
+                    Some(&requested_model),
                 )
-                .header(header::ACCEPT, "text/event-stream")
-                .json(&converted.request)
-                .send()
-                .await?;
-            let status = upstream.status();
-            if !status.is_success() {
-                let body = upstream.text().await.unwrap_or_default();
-                return Err(GatewayError::Upstream(format!(
-                    "chat completions endpoint returned {status}: {body}"
-                )));
+                .await?
             }
-            Body::from_stream(map_openai_chat_sse_with_image_routes(
-                upstream.bytes_stream(),
-                body,
-                converted.tool_names,
-                state.custom_image_routes(),
-            ))
         }
     };
+    let stream = Body::from_stream(stream);
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")
@@ -1217,11 +1227,19 @@ async fn proxy_custom_responses_ws(
     client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
     mut body: Value,
 ) -> anyhow::Result<Option<CustomWebSocketState>> {
-    normalize_custom_model_alias(&mut body);
-    let model = body
+    let requested_model = body
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("custom request is missing model"))?
+        .to_owned();
+    let route = model_route(&requested_model);
+    if route == ModelRoute::Direct {
+        normalize_custom_model_alias(&mut body);
+    }
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .expect("custom model was validated")
         .to_owned();
     if !body.get("input").is_some_and(Value::is_array) {
         anyhow::bail!("custom request input must be an array");
@@ -1231,70 +1249,37 @@ async fn proxy_custom_responses_ws(
     } else {
         None
     };
-    let (stream, mut history): (
-        futures_util::stream::BoxStream<'static, Result<bytes::Bytes, std::convert::Infallible>>,
-        Vec<Value>,
-    ) = match state.config.upstream_kind {
-        UpstreamKind::AnthropicMessages => {
-            let mut converted = responses_to_anthropic_with_web_search(
-                &body,
-                &state.config,
-                state.web_search_enabled_for_custom_request(&body),
-            )?;
-            if let Some(routing) = &oneapi_routing {
-                converted.request.metadata = Some(json!({"session_id": routing.session_id}));
-            }
-            let upstream = state
-                .anthropic_stream_with_web_search_retry(
-                    converted.request,
-                    oneapi_routing
-                        .as_ref()
-                        .map(|routing| routing.hash_key.as_str()),
-                )
-                .await?;
-            let history = take_custom_request_input(&mut body)?;
-            (
-                map_anthropic_sse_with_image_routes(
-                    upstream,
-                    body,
-                    converted.tool_names,
-                    state.custom_image_routes(),
-                )
-                .boxed(),
-                history,
-            )
+    let mut history = body
+        .get("input")
+        .and_then(Value::as_array)
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("custom request input must be an array"))?;
+    let stream = match route {
+        ModelRoute::Official => anyhow::bail!("official model reached custom websocket proxy"),
+        ModelRoute::Direct => {
+            stream_response_with_options(state, body, oneapi_routing.as_ref(), None).await?
         }
-        UpstreamKind::OpenAiChat => {
-            let converted = responses_to_openai_chat(&body)?;
-            let upstream_request =
-                state.apply_upstream_auth(state.client.post(state.config.upstream_messages_url()));
-            let upstream = state
-                .apply_oneapi_affinity(
-                    upstream_request,
-                    oneapi_routing
-                        .as_ref()
-                        .map(|routing| routing.hash_key.as_str()),
-                )
-                .header(header::ACCEPT, "text/event-stream")
-                .json(&converted.request)
-                .send()
-                .await?;
-            let status = upstream.status();
-            if !status.is_success() {
-                let body = upstream.text().await?;
-                anyhow::bail!("chat completions endpoint returned {status}: {body}");
-            }
-            let history = take_custom_request_input(&mut body)?;
-            (
-                map_openai_chat_sse_with_image_routes(
-                    upstream.bytes_stream(),
+        ModelRoute::Fusion { profile_id } => {
+            let profile = state
+                .config
+                .fusion_profiles
+                .iter()
+                .find(|profile| profile.id == profile_id)
+                .ok_or_else(|| anyhow::anyhow!("unknown fusion profile: {profile_id}"))?
+                .clone();
+            if should_fuse_turn(&body) {
+                FusionEngine::new(state, &profile).stream_with_routing(body, oneapi_routing)
+            } else {
+                body["model"] = Value::String(profile.final_model);
+                body["stream"] = Value::Bool(true);
+                stream_response_with_options(
+                    state,
                     body,
-                    converted.tool_names,
-                    state.custom_image_routes(),
+                    oneapi_routing.as_ref(),
+                    Some(&requested_model),
                 )
-                .boxed(),
-                history,
-            )
+                .await?
+            }
         }
     };
     tokio::pin!(stream);
@@ -1718,7 +1703,7 @@ fn should_forward_to_official(body: &Value) -> bool {
     let Some(model) = body.get("model").and_then(Value::as_str) else {
         return false;
     };
-    is_gpt_model(model) && !model.ends_with("-custom")
+    model_route(model) == ModelRoute::Official
 }
 
 fn normalize_custom_model_alias(body: &mut Value) {
@@ -1728,12 +1713,6 @@ fn normalize_custom_model_alias(body: &mut Value) {
     if let Some(canonical) = model.strip_suffix("-custom") {
         body["model"] = Value::String(canonical.to_owned());
     }
-}
-
-fn is_gpt_model(model: &str) -> bool {
-    model
-        .get(..4)
-        .is_some_and(|prefix| prefix.eq_ignore_ascii_case("gpt-"))
 }
 
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
@@ -1764,7 +1743,7 @@ fn check_gateway_auth(state: &AppState, headers: &HeaderMap) -> Result<(), Gatew
 fn stable_oneapi_routing(
     headers: &HeaderMap,
     body: &Value,
-) -> Result<Option<OneApiRouting>, GatewayError> {
+) -> Result<Option<UpstreamRouting>, GatewayError> {
     let mut route_key = None;
     for header_name in ["session-id", "thread-id", "x-client-request-id"] {
         if let Some(value) = headers.get(header_name) {
@@ -1791,7 +1770,7 @@ fn stable_oneapi_routing(
             }
         }
     }
-    Ok(route_key.map(|session_id| OneApiRouting {
+    Ok(route_key.map(|session_id| UpstreamRouting {
         session_id: session_id.to_owned(),
         hash_key: Uuid::new_v5(&Uuid::NAMESPACE_URL, session_id.as_bytes()).to_string(),
     }))
@@ -1808,7 +1787,7 @@ mod tests {
 
     use super::*;
     use crate::benchmark::ModelBenchmarkManager;
-    use crate::config::{ThinkingMode, UpstreamAuthHeader};
+    use crate::config::{ThinkingMode, UpstreamAuthHeader, UpstreamKind};
 
     #[test]
     fn oneapi_routing_uses_stable_identifier_priority() {
@@ -1983,6 +1962,7 @@ mod tests {
             enable_web_search_tool: false,
             web_search_tool_type: "web_search_20250305".to_owned(),
             web_search_max_uses: Some(3),
+            fusion_profiles: Vec::new(),
         })
         .unwrap();
         state.benchmarks = ModelBenchmarkManager::new(results_path.clone());
