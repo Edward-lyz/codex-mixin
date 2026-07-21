@@ -367,7 +367,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             .await
         }
         Command::UninstallCodex { config, catalog } => uninstall_codex(config, catalog),
-        Command::RefreshCodexCatalog => refresh_default_managed_codex_catalog(),
+        Command::RefreshCodexCatalog => refresh_default_managed_codex_catalog().await,
         Command::ProbeWebSearch { force, json } => probe_web_search(force, json).await,
     }
 }
@@ -1296,17 +1296,99 @@ fn uninstall_codex(
     Ok(())
 }
 
-fn refresh_default_managed_codex_catalog() -> anyhow::Result<()> {
+async fn refresh_default_managed_codex_catalog() -> anyhow::Result<()> {
     let config_path = resolve_codex_config_path(None)?;
+    let Some((requires_openai_auth, catalog_path)) = managed_catalog_settings(&config_path)? else {
+        println!("Codex model catalog is not managed by codex-mixin");
+        return Ok(());
+    };
     let gateway_config = GatewayConfig::from_env()?;
+    let state = AppState::new(gateway_config.clone())?;
+    let models = state.fetch_models().await?;
+    if models.is_empty() {
+        anyhow::bail!("upstream /v1/models returned no models");
+    }
+    let codex_home = config_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?;
+    let models_cache = codex_home.join("models_cache.json");
+    let template = load_template_catalog(Some(&models_cache))?;
+    if requires_openai_auth && template.is_none() {
+        anyhow::bail!(
+            "official Codex model cache is missing: {}. Open Codex once before refreshing Codex Mixin",
+            models_cache.display()
+        );
+    }
+    let metadata = load_model_metadata_resolver().await?;
+    let catalog = if requires_openai_auth {
+        codex_oauth_proxy_catalog_from_models_with_metadata(
+            &models,
+            gateway_config.default_context_window,
+            template.as_ref(),
+            &metadata,
+        )
+    } else {
+        codex_catalog_from_models_with_metadata(
+            &models,
+            gateway_config.default_context_window,
+            template.as_ref(),
+            &metadata,
+        )
+    };
     let supported_models =
         WebSearchCapabilities::from_default_path(&gateway_config)?.supported_model_ids();
-    if refresh_managed_codex_catalog_with_capabilities(&config_path, Some(&supported_models))? {
-        println!("Codex model catalog refreshed");
+    if write_generated_managed_codex_catalog(&config_path, catalog, &supported_models)? {
+        println!("Codex model catalog refreshed: {}", catalog_path.display());
     } else {
-        println!("Codex model catalog already current or not managed by codex-mixin");
+        println!(
+            "Codex model catalog already current: {}",
+            catalog_path.display()
+        );
     }
     Ok(())
+}
+
+fn managed_catalog_settings(config_path: &Path) -> anyhow::Result<Option<(bool, PathBuf)>> {
+    let config_path = absolute_path(config_path.to_path_buf())?;
+    if !config_path.exists() {
+        return Ok(None);
+    }
+    let raw_config = fs::read_to_string(&config_path)?;
+    if !is_managed_config(&raw_config) {
+        return Ok(None);
+    }
+    let doc = raw_config.parse::<DocumentMut>()?;
+    let provider = doc
+        .get("model_providers")
+        .and_then(Item::as_table)
+        .and_then(|providers| providers.get(CODEX_MIXIN_PROVIDER))
+        .and_then(Item::as_table)
+        .ok_or_else(|| anyhow::anyhow!("managed Codex config has no codex-mixin provider"))?;
+    let requires_openai_auth = match provider.get("requires_openai_auth") {
+        Some(item) => item
+            .as_bool()
+            .ok_or_else(|| anyhow::anyhow!("codex-mixin requires_openai_auth must be a boolean"))?,
+        None => false,
+    };
+    let catalog_path = managed_catalog_path(&doc, &config_path)?;
+    Ok(Some((requires_openai_auth, catalog_path)))
+}
+
+fn write_generated_managed_codex_catalog(
+    config_path: &Path,
+    mut catalog: serde_json::Value,
+    supported_web_search_models: &HashSet<String>,
+) -> anyhow::Result<bool> {
+    let config_path = absolute_path(config_path.to_path_buf())?;
+    let _config_lock = ManagedConfigLock::acquire(&config_path)?;
+    let raw_config = fs::read_to_string(&config_path)?;
+    if !is_managed_config(&raw_config) {
+        return Ok(false);
+    }
+    let doc = raw_config.parse::<DocumentMut>()?;
+    let catalog_path = managed_catalog_path(&doc, &config_path)?;
+    apply_web_search_capabilities(&mut catalog, supported_web_search_models)?;
+    write_atomic_if_changed(&catalog_path, &serde_json::to_vec_pretty(&catalog)?)
 }
 
 #[cfg(test)]
@@ -2844,6 +2926,46 @@ custom_field = "stale"
             serde_json::from_slice(&fs::read(catalog_path).unwrap()).unwrap();
         assert_eq!(refreshed["models"][0]["web_search_tool_type"], "text");
         assert!(refreshed["models"][1].get("web_search_tool_type").is_none());
+    }
+
+    #[test]
+    fn generated_catalog_refresh_adds_new_fusion_models() {
+        let dir = tempfile::tempdir().unwrap();
+        let config_path = dir.path().join("config.toml");
+        let catalog_path = dir.path().join("mixin-models.json");
+        fs::write(
+            &config_path,
+            format!(
+                "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\n",
+                catalog_path.to_string_lossy()
+            ),
+        )
+        .unwrap();
+        fs::write(
+            &catalog_path,
+            r#"{"models":[{"slug":"DeepSeek-V4-Flash","codex_mixin_managed":true}]}"#,
+        )
+        .unwrap();
+        let generated = serde_json::json!({
+            "models": [
+                {"slug":"DeepSeek-V4-Flash","codex_mixin_managed":true},
+                {"slug":"mixin/fusion/default","display_name":"Fusion (default)","codex_mixin_managed":true}
+            ]
+        });
+
+        assert!(
+            write_generated_managed_codex_catalog(&config_path, generated, &HashSet::new())
+                .unwrap()
+        );
+        let refreshed: serde_json::Value =
+            serde_json::from_slice(&fs::read(catalog_path).unwrap()).unwrap();
+        assert!(
+            refreshed["models"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .any(|model| { model["slug"] == "mixin/fusion/default" })
+        );
     }
 
     #[test]
