@@ -2,8 +2,7 @@ import Cocoa
 
 extension AppDelegate {
     @objc func installCodexConfig() {
-        guard runInstallCodexPanel() else { return }
-        let args = ["install-codex", "--codex-oauth-proxy"]
+        guard let installMode = runInstallCodexPanel() else { return }
         Task { @MainActor in
             serviceBusy = true
             serviceStatus = "正在准备 Codex 配置..."
@@ -11,10 +10,10 @@ extension AppDelegate {
             do {
                 let status = try await ensureGatewayReady()
                 applyGatewayStatus(status)
-                _ = try await runGateway(args)
+                _ = try await runGateway(installMode.commandArguments)
                 showAlert(
                     title: "Codex 配置已更新",
-                    message: "模型目录和 Web Search 能力探测已完成。请重启 Codex App；CLI 需要开新会话。"
+                    message: installMode.completionMessage
                 )
                 await refreshStatusNow()
             } catch {

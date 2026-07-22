@@ -2538,6 +2538,76 @@ async fn rebuilds_custom_history_from_previous_response_id() {
 }
 
 #[tokio::test]
+async fn preserves_steered_user_input_after_custom_tool_call() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Tool).await;
+    let mut config = test_config(upstream_url);
+    config.provider_preset = ProviderPreset::BaiduOneApi;
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+
+    let mut first = responses_request();
+    first.as_object_mut().unwrap().remove("stream");
+    first["type"] = json!("response.create");
+    first["model"] = json!("gpt-5.6-sol-baidu-oneapi");
+    socket
+        .send(WsMessage::Text(first.to_string().into()))
+        .await
+        .unwrap();
+    let first_frames = websocket_response_frames(&mut socket).await;
+    let completed = first_frames
+        .iter()
+        .filter_map(|frame| serde_json::from_str::<Value>(frame).ok())
+        .find(|event| event["type"] == "response.completed")
+        .unwrap();
+
+    let follow_up = json!({
+        "type": "response.create",
+        "model": "gpt-5.6-sol-baidu-oneapi",
+        "previous_response_id": completed["response"]["id"],
+        "input": [
+            {
+                "type": "function_call_output",
+                "call_id": "toolu_1",
+                "output": "command interrupted by new input"
+            },
+            {
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "steer: inspect the logs instead"}]
+            }
+        ],
+        "tools": first["tools"]
+    });
+    socket
+        .send(WsMessage::Text(follow_up.to_string().into()))
+        .await
+        .unwrap();
+    let follow_up_frames = websocket_response_frames(&mut socket).await.join("\n");
+    assert!(follow_up_frames.contains("\"type\":\"response.completed\""));
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[1]["model"], "gpt-5.6-sol");
+    let messages = requests[1]["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[1]["role"], "assistant");
+    assert_eq!(messages[1]["content"][0]["type"], "tool_use");
+    assert_eq!(messages[2]["role"], "user");
+    assert_eq!(messages[2]["content"][0]["type"], "tool_result");
+    assert_eq!(
+        messages[2]["content"][1]["text"],
+        "steer: inspect the logs instead"
+    );
+}
+
+#[tokio::test]
 async fn switches_between_official_and_custom_models_on_one_websocket() {
     let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
     let (

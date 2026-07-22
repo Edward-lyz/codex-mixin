@@ -33,14 +33,19 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
     let codex_home = config_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?;
-    let models_cache = codex_home.join("models_cache.json");
-    let template = load_template_catalog(Some(&models_cache))?;
-    if requires_openai_auth && template.is_none() {
-        anyhow::bail!(
-            "official Codex model cache is missing: {}. Open Codex once before refreshing Codex Mixin",
-            models_cache.display()
-        );
-    }
+    let template = if requires_openai_auth {
+        let models_cache = codex_home.join("models_cache.json");
+        let template = load_template_catalog(Some(&models_cache))?;
+        if template.is_none() {
+            anyhow::bail!(
+                "official Codex model cache is missing: {}. Open Codex once before refreshing Codex Mixin",
+                models_cache.display()
+            );
+        }
+        template
+    } else {
+        None
+    };
     let metadata = load_model_metadata_resolver().await?;
     let catalog = if requires_openai_auth {
         codex_oauth_proxy_catalog_from_models_with_metadata_for_provider(
@@ -175,8 +180,11 @@ pub(in crate::cli) fn load_codex_install_template(
     paths: &CodexInstallPaths,
     codex_oauth_proxy: bool,
 ) -> anyhow::Result<Option<serde_json::Value>> {
+    if !codex_oauth_proxy {
+        return Ok(None);
+    }
     let template = load_template_catalog(Some(&paths.models_cache))?;
-    if codex_oauth_proxy && template.is_none() {
+    if template.is_none() {
         anyhow::bail!(
             "official Codex model cache is missing: {}. Open Codex once before installing Codex Mixin",
             paths.models_cache.display()

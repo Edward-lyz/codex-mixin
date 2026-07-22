@@ -1,7 +1,30 @@
 import Cocoa
 
-func runInstallCodexPanel() -> Bool {
-    let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 760, height: 330))
+enum CodexInstallMode: Equatable {
+    case openAIAccount
+    case customModelsOnly
+
+    var commandArguments: [String] {
+        switch self {
+        case .openAIAccount:
+            return ["install-codex", "--codex-oauth-proxy"]
+        case .customModelsOnly:
+            return ["install-codex", "--custom-only"]
+        }
+    }
+
+    var completionMessage: String {
+        switch self {
+        case .openAIAccount:
+            return "官方 GPT、自定义模型目录和 Web Search 能力探测已完成。请重启 Codex App；CLI 需要开新会话。"
+        case .customModelsOnly:
+            return "自定义模型目录和 Web Search 能力探测已完成，未读取 OpenAI 模型缓存，并已选择自定义默认模型。请重启 Codex App；CLI 需要开新会话。"
+        }
+    }
+}
+
+func runInstallCodexPanel() -> CodexInstallMode? {
+    let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 760, height: 440))
     let panel = NSPanel(
         contentRect: contentView.frame,
         styleMask: [.titled, .closable],
@@ -13,20 +36,56 @@ func runInstallCodexPanel() -> Bool {
     panel.isReleasedWhenClosed = false
     panel.center()
 
-    let titleLabel = NSTextField(labelWithString: "安装 Codex OAuth 代理")
+    let titleLabel = NSTextField(labelWithString: "选择 Codex 安装模式")
     titleLabel.font = .boldSystemFont(ofSize: 18)
     titleLabel.textColor = .labelColor
 
-    let detailLabel = NSTextField(wrappingLabelWithString: "会先备份当前 ~/.codex/config.toml，再注册独立的 codex-mixin provider，并把现有历史会话统一迁移到该 provider。官方 GPT 保留原名并走 Codex 官方路径；上游 GPT 重名时使用 provider 后缀（例如 -baidu-oneapi）。完成后需要重启 Codex App；CLI 需要开新会话。")
+    let detailLabel = NSTextField(wrappingLabelWithString: "两种模式都会备份 ~/.codex/config.toml、注册独立的 codex-mixin provider，并迁移现有历史会话。请选择与你的账号情况一致的模式。")
     detailLabel.textColor = .secondaryLabelColor
     detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     detailLabel.translatesAutoresizingMaskIntoConstraints = false
     detailLabel.widthAnchor.constraint(equalToConstant: 660).isActive = true
 
+    let oauthButton = NSButton(title: "我有 OpenAI / ChatGPT 账号（保留官方 GPT）", target: nil, action: nil)
+    oauthButton.setButtonType(.radio)
+    let oauthDetail = NSTextField(wrappingLabelWithString: "需要 Codex 已登录并生成 ~/.codex/models_cache.json；官方 GPT 继续走官方路径，自定义模型走本地网关。")
+    oauthDetail.textColor = .secondaryLabelColor
+    oauthDetail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+    oauthDetail.translatesAutoresizingMaskIntoConstraints = false
+    oauthDetail.widthAnchor.constraint(equalToConstant: 626).isActive = true
+
+    let customOnlyButton = NSButton(title: "我没有 OpenAI / ChatGPT 账号（仅使用自定义模型）", target: nil, action: nil)
+    customOnlyButton.setButtonType(.radio)
+    let customOnlyDetail = NSTextField(wrappingLabelWithString: "不需要也不会读取 models_cache.json；只安装上游模型，并自动选择一个自定义模型作为默认模型。")
+    customOnlyDetail.textColor = .secondaryLabelColor
+    customOnlyDetail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+    customOnlyDetail.translatesAutoresizingMaskIntoConstraints = false
+    customOnlyDetail.widthAnchor.constraint(equalToConstant: 626).isActive = true
+
+    let oauthOption = NSStackView(views: [oauthButton, oauthDetail])
+    oauthOption.orientation = .vertical
+    oauthOption.alignment = .leading
+    oauthOption.spacing = 3
+    oauthOption.setCustomSpacing(8, after: oauthButton)
+    oauthDetail.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+    let customOnlyOption = NSStackView(views: [customOnlyButton, customOnlyDetail])
+    customOnlyOption.orientation = .vertical
+    customOnlyOption.alignment = .leading
+    customOnlyOption.spacing = 3
+    customOnlyOption.setCustomSpacing(8, after: customOnlyButton)
+    customOnlyDetail.setContentHuggingPriority(.defaultLow, for: .horizontal)
+
+    let modeStack = NSStackView(views: [oauthOption, customOnlyOption])
+    modeStack.orientation = .vertical
+    modeStack.alignment = .leading
+    modeStack.spacing = 12
+
+    let providerField = copyableTextField("")
     let pathStack = NSStackView(views: [
         labeledView("Codex 配置", copyableTextField("~/.codex/config.toml")),
         labeledView("模型目录", copyableTextField("~/.codex/model-catalogs/mixin-models.json")),
-        labeledView("Provider", copyableTextField("codex-mixin / requires_openai_auth")),
+        labeledView("Provider", providerField),
     ])
     pathStack.orientation = .vertical
     pathStack.spacing = 10
@@ -57,10 +116,10 @@ func runInstallCodexPanel() -> Bool {
         buttonRow.centerYAnchor.constraint(equalTo: buttonRowContainer.centerYAnchor),
     ])
 
-    let mainStack = NSStackView(views: [titleLabel, detailLabel, pathStack, buttonRowContainer])
+    let mainStack = NSStackView(views: [titleLabel, detailLabel, modeStack, pathStack, buttonRowContainer])
     mainStack.orientation = .vertical
     mainStack.alignment = .leading
-    mainStack.spacing = 16
+    mainStack.spacing = 14
     mainStack.translatesAutoresizingMaskIntoConstraints = false
     contentView.addSubview(mainStack)
     NSLayoutConstraint.activate([
@@ -69,9 +128,33 @@ func runInstallCodexPanel() -> Bool {
         mainStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 28),
     ])
 
-    var confirmed = false
+    let modelsCachePath = NSString(string: "~/.codex/models_cache.json").expandingTildeInPath
+    var selectedMode: CodexInstallMode = FileManager.default.fileExists(atPath: modelsCachePath)
+        ? .openAIAccount
+        : .customModelsOnly
+    let applySelection: (CodexInstallMode) -> Void = { mode in
+        selectedMode = mode
+        oauthButton.state = mode == .openAIAccount ? .on : .off
+        customOnlyButton.state = mode == .customModelsOnly ? .on : .off
+        providerField.stringValue = mode == .openAIAccount
+            ? "codex-mixin / requires_openai_auth"
+            : "codex-mixin / custom models only"
+    }
+    let oauthTarget = ModalActionTarget {
+        applySelection(.openAIAccount)
+    }
+    let customOnlyTarget = ModalActionTarget {
+        applySelection(.customModelsOnly)
+    }
+    oauthButton.target = oauthTarget
+    oauthButton.action = #selector(ModalActionTarget.run(_:))
+    customOnlyButton.target = customOnlyTarget
+    customOnlyButton.action = #selector(ModalActionTarget.run(_:))
+    applySelection(selectedMode)
+
+    var confirmedMode: CodexInstallMode?
     let installTarget = ModalActionTarget {
-        confirmed = true
+        confirmedMode = selectedMode
         NSApp.stopModal(withCode: .OK)
     }
     let cancelTarget = ModalActionTarget {
@@ -87,8 +170,9 @@ func runInstallCodexPanel() -> Bool {
     NSApp.activate(ignoringOtherApps: true)
     let response = NSApp.runModal(for: panel)
     panel.close()
+    _ = oauthTarget
+    _ = customOnlyTarget
     _ = installTarget
     _ = cancelTarget
-    return response == .OK && confirmed
+    return response == .OK ? confirmedMode : nil
 }
-

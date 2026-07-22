@@ -117,8 +117,17 @@ enum Command {
         model: Option<String>,
         #[arg(long)]
         set_default: bool,
-        #[arg(long)]
+        #[arg(
+            long,
+            help = "Merge official GPT and custom models using Codex OpenAI auth; requires models_cache.json"
+        )]
         codex_oauth_proxy: bool,
+        #[arg(
+            long,
+            conflicts_with = "codex_oauth_proxy",
+            help = "Install only custom upstream models without OpenAI auth or models_cache.json, and select a custom default model"
+        )]
+        custom_only: bool,
         #[arg(long)]
         config: Option<PathBuf>,
         #[arg(long)]
@@ -249,6 +258,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             model,
             set_default,
             codex_oauth_proxy,
+            custom_only,
             config,
             catalog,
             base_url,
@@ -258,7 +268,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         } => {
             install_codex(InstallCodexOptions {
                 requested_model: model,
-                set_default,
+                set_default: set_default || custom_only,
                 codex_oauth_proxy,
                 config_path: config,
                 catalog_path: catalog,

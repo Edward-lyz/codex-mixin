@@ -121,9 +121,9 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 2. 点击菜单栏图标，选择 `设置供应商与密钥...`。
 3. 选择 provider，填入 API Key。上游地址只填根地址，不要填 `/v1/messages` 或 `/v1/chat/completions`。
 4. 点击 `启动本地网关`。
-5. 点击 `安装到 Codex...`。
+5. 点击 `安装到 Codex...`，按实际情况选择“有 OpenAI / ChatGPT 账号”或“仅使用自定义模型”。
 6. 重启 Codex App。
-7. 在 Codex 模型选择器里选择官方 GPT 或自定义模型。
+7. 在 Codex 模型选择器里选择可用模型。
 
 ![Menu bar status](docs/assets/menu-status.png)
 
@@ -132,9 +132,14 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 ```bash
 codex-mixin login --provider openrouter --key sk-or-v1-...
 codex-mixin doctor
+# 有 OpenAI / ChatGPT 账号：保留官方 GPT
 codex-mixin install-codex --codex-oauth-proxy
+# 没有 OpenAI / ChatGPT 账号：不依赖 models_cache.json
+codex-mixin install-codex --custom-only
 codex-mixin start --daemon
 ```
+
+上面两个安装命令二选一，不要同时执行。
 
 然后重新打开 Codex CLI 会话，在模型选择器里选择接入后的模型。
 
@@ -170,11 +175,12 @@ codex-mixin logs -n 200
 
 ### 安装到 Codex 的行为
 
-推荐命令：
+安装面板和 CLI 都提供两种互斥模式：
 
-```bash
-codex-mixin install-codex --codex-oauth-proxy
-```
+| 模式 | CLI 命令 | `models_cache.json` | 安装结果 |
+| --- | --- | --- | --- |
+| 有 OpenAI / ChatGPT 账号 | `codex-mixin install-codex --codex-oauth-proxy` | 必须存在；请先登录并打开一次 Codex | 合并官方 GPT 与自定义模型，保留官方 OAuth 能力 |
+| 没有 OpenAI / ChatGPT 账号 | `codex-mixin install-codex --custom-only` | 不依赖、不要求存在 | 只安装上游模型，并自动设置一个自定义默认模型 |
 
 安装会做这些事：
 
@@ -184,9 +190,9 @@ codex-mixin install-codex --codex-oauth-proxy
 4. 注册独立的 `codex-mixin` provider，不覆盖 Codex 内置 `openai` provider。
 5. 将顶层 `model_provider` 设置为 `codex-mixin`，由本地网关分流官方 GPT 与自定义模型。
 6. 将现有 JSONL 和 SQLite 历史索引统一迁移到 `codex-mixin`，并保留迁移前备份。
-7. 标记 `codex-mixin` provider 仍然使用 Codex 官方 OAuth 能力。
+7. 有账号模式会标记 provider 使用 Codex 官方 OAuth；仅自定义模型模式不会写入该标记，也不会加载官方模型缓存。
 
-关键配置形态：
+有账号模式的关键配置形态：
 
 ```toml
 model_catalog_json = "/Users/you/.codex/model-catalogs/mixin-models.json"
@@ -200,9 +206,22 @@ requires_openai_auth = true
 supports_websockets = true
 ```
 
-最新版 Codex 禁止覆盖内置 `openai` provider，因此 Codex Mixin 始终使用独立的 `codex-mixin` provider。即使首次配置里没有 `model_provider` 或 `model_providers`，安装器也会补齐所需配置。官方 GPT 请求仍由网关转发到官方 Codex backend，自定义模型请求转发到已配置的上游。
+仅自定义模型模式的 provider 不含 `requires_openai_auth`，并会把一个上游模型写成默认模型：
 
-安装后可以在同一个 Codex 会话中从官方 GPT 切换到自定义模型，也可以再切回官方模型。Codex Mixin 会按每个 Responses WebSocket 请求重新分流，并在自定义模型连续调用时重建增量上下文。
+```toml
+model = "DeepSeek-V4-Flash"
+model_catalog_json = "/Users/you/.codex/model-catalogs/mixin-models.json"
+model_provider = "codex-mixin"
+
+[model_providers.codex-mixin]
+name = "Codex Mixin"
+base_url = "http://127.0.0.1:<自动分配端口>/v1"
+wire_api = "responses"
+```
+
+最新版 Codex 禁止覆盖内置 `openai` provider，因此 Codex Mixin 始终使用独立的 `codex-mixin` provider。即使首次配置里没有 `model_provider` 或 `model_providers`，安装器也会补齐所需配置。有账号模式下，官方 GPT 请求由网关转发到官方 Codex backend；两种模式下的自定义模型请求都会转发到已配置的上游。
+
+有账号模式安装后，可以在同一个 Codex 会话中从官方 GPT 切换到自定义模型，也可以再切回官方模型。Codex Mixin 会按每个 Responses WebSocket 请求重新分流，并在自定义模型连续调用时重建增量上下文。
 
 默认不会改顶层 `model`。如果确实要顺手设置默认模型，可以显式传入：
 
@@ -232,7 +251,7 @@ codex-mixin uninstall-codex
 - `设置供应商与密钥...`：选择 provider、填写 API Key、上游根地址、本地保护密钥和额度接口。
 - `Fusion 设置...`：选择 1–8 个 Panel 模型以及 Judge、Final 模型，并控制是否在回答中展示中间结果。
 - `模型测速...`：按模型串行测试 TTFT 和 TPS；上游一次性返回全部输出时，TPS 按 output tokens / 请求总耗时计算。可点击表头切换升降序；关闭窗口或退出 App 不会停止后台任务，重开 App 会从 `~/.codex-mixin/model-benchmarks.json` 恢复上次结果。配置额度接口后，本次花费按测速前后的已用额度差估算。
-- `安装到 Codex...`：先确保网关已启动，再按实际动态端口生成模型目录并写入托管 Codex 配置。
+- `安装到 Codex...`：选择有账号或仅自定义模型模式；先确保网关已启动，再按实际动态端口生成模型目录并写入托管 Codex 配置。未检测到 `models_cache.json` 时默认选择仅自定义模型。
 - `从 Codex 恢复...`：恢复安装前备份并删除托管模型目录。
 - `检查更新...`：查询 GitHub 最新 release，下载并打开当前架构对应的 DMG。
 - `复制本地接口地址`：复制当前实际监听的本地接口地址。
@@ -486,18 +505,23 @@ After launch, follow the menu bar actions to configure a provider and install it
 2. Open `Set Provider and Key...` from the menu bar.
 3. Choose a provider and enter your API key. Only enter the upstream root URL, not `/v1/messages` or `/v1/chat/completions`.
 4. Click `Start Local Gateway`.
-5. Click `Install to Codex...`.
+5. Click `Install to Codex...`, then choose whether you have an OpenAI / ChatGPT account or need custom models only.
 6. Restart Codex Desktop.
-7. Pick an official GPT model or a custom model in Codex.
+7. Pick an available model in Codex.
 
 #### For Codex CLI
 
 ```bash
 codex-mixin login --provider openrouter --key sk-or-v1-...
 codex-mixin doctor
+# With an OpenAI / ChatGPT account: keep official GPT models
 codex-mixin install-codex --codex-oauth-proxy
+# Without an OpenAI / ChatGPT account: do not require models_cache.json
+codex-mixin install-codex --custom-only
 codex-mixin start --daemon
 ```
+
+Choose one install command; do not run both.
 
 Then start a new Codex CLI session.
 
@@ -514,13 +538,14 @@ Only enter the upstream root URL in the settings window. Codex Mixin adds provid
 
 ### Codex Install Behavior
 
-Recommended:
+The install panel and CLI expose two mutually exclusive modes:
 
-```bash
-codex-mixin install-codex --codex-oauth-proxy
-```
+| Mode | CLI command | `models_cache.json` | Result |
+| --- | --- | --- | --- |
+| OpenAI / ChatGPT account | `codex-mixin install-codex --codex-oauth-proxy` | Required; sign in and open Codex once first | Merges official GPT and custom models while preserving official OAuth features |
+| No OpenAI / ChatGPT account | `codex-mixin install-codex --custom-only` | Never read or required | Installs upstream models only and selects a custom default model |
 
-This command:
+Installation:
 
 1. Fetches upstream models.
 2. Generates `~/.codex/model-catalogs/mixin-models.json`.
@@ -528,9 +553,9 @@ This command:
 4. Registers a separate `codex-mixin` provider without overriding Codex's built-in `openai` provider.
 5. Sets `model_provider = "codex-mixin"`; the local gateway routes official GPT and custom models separately.
 6. Migrates existing JSONL and SQLite history indexes to `codex-mixin` while keeping backups.
-7. Marks the `codex-mixin` provider as OpenAI-authenticated and websocket-capable.
+7. In account mode, marks the provider as OpenAI-authenticated and websocket-capable. Custom-only mode omits those settings and does not load the official model cache.
 
-Example managed shape:
+Account-mode managed shape:
 
 ```toml
 model_catalog_json = "/Users/you/.codex/model-catalogs/mixin-models.json"
@@ -544,7 +569,20 @@ requires_openai_auth = true
 supports_websockets = true
 ```
 
-You can switch from an official GPT model to a custom model and back within the same Codex task. Codex Mixin routes each Responses WebSocket request independently and rebuilds incremental custom-model context across turns.
+The custom-only provider omits `requires_openai_auth` and writes an upstream model as the default:
+
+```toml
+model = "DeepSeek-V4-Flash"
+model_catalog_json = "/Users/you/.codex/model-catalogs/mixin-models.json"
+model_provider = "codex-mixin"
+
+[model_providers.codex-mixin]
+name = "Codex Mixin"
+base_url = "http://127.0.0.1:<auto-selected-port>/v1"
+wire_api = "responses"
+```
+
+In account mode, you can switch from an official GPT model to a custom model and back within the same Codex task. Codex Mixin routes each Responses WebSocket request independently and rebuilds incremental custom-model context across turns.
 
 Rollback:
 

@@ -92,6 +92,20 @@ fn install_command_rejects_provider_override() {
 }
 
 #[test]
+fn install_command_accepts_explicit_custom_only_mode() {
+    assert!(Cli::try_parse_from(["codex-mixin", "install-codex", "--custom-only"]).is_ok());
+    assert!(
+        Cli::try_parse_from([
+            "codex-mixin",
+            "install-codex",
+            "--custom-only",
+            "--codex-oauth-proxy",
+        ])
+        .is_err()
+    );
+}
+
+#[test]
 fn oauth_proxy_catalog_recognizes_every_provider_suffix() {
     let models = vec![ModelInfo {
         id: "gpt-5.6-sol".to_owned(),
@@ -209,6 +223,38 @@ fn oauth_install_missing_cache_creates_no_restore_marker_or_directory() {
     assert!(!config_path.parent().unwrap().exists());
     assert!(!managed_backup_path(&config_path).exists());
     assert!(!managed_absent_marker_path(&config_path).exists());
+}
+
+#[test]
+fn custom_only_install_ignores_models_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("managed-codex").join("config.toml");
+    let paths = resolve_codex_install_paths(Some(config_path.clone()), None).unwrap();
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::write(&paths.models_cache, "not valid JSON").unwrap();
+
+    assert_eq!(load_codex_install_template(&paths, false).unwrap(), None);
+}
+
+#[test]
+fn custom_only_provider_does_not_require_openai_auth() {
+    let mut doc = DocumentMut::new();
+
+    upsert_codex_config(
+        &mut doc,
+        Some("DeepSeek-V4-Flash"),
+        Path::new("/tmp/mixin-models.json"),
+        "http://127.0.0.1:8787/v1",
+        "live",
+        None,
+        false,
+    )
+    .unwrap();
+
+    assert_eq!(doc["model"].as_str(), Some("DeepSeek-V4-Flash"));
+    let provider = doc["model_providers"]["codex-mixin"].as_table().unwrap();
+    assert!(provider.get("requires_openai_auth").is_none());
+    assert!(provider.get("supports_websockets").is_none());
 }
 
 #[test]
