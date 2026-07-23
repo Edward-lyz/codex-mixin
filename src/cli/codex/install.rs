@@ -48,9 +48,9 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
         no_env_key,
     } = options;
     let paths = resolve_codex_install_paths(config_path, catalog_path)?;
-    let template = load_codex_install_template(&paths, codex_oauth_proxy)?;
     let gateway_config = GatewayConfig::from_env()?;
     let state = AppState::new(gateway_config.clone())?;
+    let template = load_codex_install_template_online(&paths, codex_oauth_proxy, &state).await?;
     let mut models = state.fetch_models().await?;
     if models.is_empty() {
         anyhow::bail!("upstream /v1/models returned no models");

@@ -94,6 +94,104 @@ async fn official_auth_cache_refreshes_and_does_not_hide_invalid_files() {
 }
 
 #[tokio::test]
+async fn fetches_official_models_with_codex_auth_and_client_version() {
+    let captured = Arc::new(Mutex::new(None));
+    let captured_request = Arc::clone(&captured);
+    let upstream =
+        Router::new().route(
+            "/backend-api/codex/models",
+            get(
+                move |headers: HeaderMap,
+                      axum::extract::Query(query): axum::extract::Query<
+                    HashMap<String, String>,
+                >| {
+                    let captured_request = Arc::clone(&captured_request);
+                    async move {
+                        *captured_request.lock().unwrap() = Some((
+                            headers
+                                .get(header::AUTHORIZATION)
+                                .unwrap()
+                                .to_str()
+                                .unwrap()
+                                .to_owned(),
+                            headers
+                                .get("chatgpt-account-id")
+                                .unwrap()
+                                .to_str()
+                                .unwrap()
+                                .to_owned(),
+                            query.get("client_version").unwrap().to_owned(),
+                        ));
+                        Json(json!({
+                            "models": [{
+                                "slug": "gpt-5.6-sol",
+                                "context_window": 272000,
+                                "max_context_window": 272000
+                            }]
+                        }))
+                    }
+                },
+            ),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, upstream).await.unwrap();
+    });
+    let directory = tempfile::tempdir().unwrap();
+    let auth_path = directory.path().join("auth.json");
+    tokio::fs::write(
+        &auth_path,
+        r#"{"tokens":{"access_token":"secret","account_id":"account-one"}}"#,
+    )
+    .await
+    .unwrap();
+    let state = AppState::new(GatewayConfig {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        provider_preset: ProviderPreset::Custom,
+        upstream_kind: UpstreamKind::AnthropicMessages,
+        upstream_base_url: "https://example.invalid".to_owned(),
+        upstream_messages_path: "/v1/messages".to_owned(),
+        upstream_models_path: "/v1/models".to_owned(),
+        upstream_image_generation_path: None,
+        upstream_api_key: "upstream-key".to_owned(),
+        quota_url: None,
+        quota_username: None,
+        official_responses_url: format!("http://{address}/backend-api/codex/responses"),
+        codex_auth_path: auth_path,
+        upstream_auth_header: UpstreamAuthHeader::AuthorizationBearer,
+        anthropic_version: "2023-06-01".to_owned(),
+        anthropic_beta: None,
+        gateway_api_key: None,
+        accept_codex_oauth: true,
+        default_max_tokens: 8192,
+        default_context_window: 1_000_000,
+        request_timeout: Duration::from_secs(2),
+        thinking_mode: ThinkingMode::Off,
+        enable_web_search_tool: false,
+        web_search_tool_type: "web_search_20250305".to_owned(),
+        web_search_max_uses: Some(3),
+        fusion_profiles: Vec::new(),
+    })
+    .unwrap();
+
+    let catalog = state
+        .fetch_official_models_catalog("0.144.4")
+        .await
+        .unwrap();
+
+    assert_eq!(catalog["models"][0]["context_window"], 272_000);
+    assert_eq!(
+        captured.lock().unwrap().as_ref().unwrap(),
+        &(
+            "Bearer secret".to_owned(),
+            "account-one".to_owned(),
+            "0.144.4".to_owned()
+        )
+    );
+}
+
+#[tokio::test]
 async fn benchmark_api_runs_after_the_start_request_returns_and_persists_results() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let captured_requests = Arc::clone(&requests);

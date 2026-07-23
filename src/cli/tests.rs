@@ -2,6 +2,7 @@ use std::collections::HashSet;
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
+use std::time::Duration;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -10,7 +11,11 @@ use clap::Parser;
 use toml_edit::DocumentMut;
 
 use codex_mixin::anthropic::ModelInfo;
-use codex_mixin::config::{ProviderPreset, StoredGatewayConfig};
+use codex_mixin::config::{
+    GatewayConfig, ProviderPreset, StoredGatewayConfig, ThinkingMode, UpstreamAuthHeader,
+    UpstreamKind,
+};
+use codex_mixin::server::AppState;
 
 use super::Cli;
 use super::{atomic_file::*, auth::*, codex::*, runtime::*, service::*, status::*};
@@ -234,6 +239,69 @@ fn custom_only_install_ignores_models_cache() {
     fs::write(&paths.models_cache, "not valid JSON").unwrap();
 
     assert_eq!(load_codex_install_template(&paths, false).unwrap(), None);
+}
+
+#[tokio::test]
+async fn oauth_install_falls_back_to_local_cache_when_official_fetch_fails() {
+    let upstream = axum::Router::new().route(
+        "/backend-api/codex/models",
+        axum::routing::get(|| async { axum::http::StatusCode::SERVICE_UNAVAILABLE }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, upstream).await.unwrap();
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let paths = resolve_codex_install_paths(Some(config_path), None).unwrap();
+    fs::write(
+        &paths.models_cache,
+        r#"{"client_version":"0.144.0","models":[{"slug":"gpt-5.6-sol","context_window":272000}]}"#,
+    )
+    .unwrap();
+    let auth_path = dir.path().join("auth.json");
+    fs::write(
+        &auth_path,
+        r#"{"tokens":{"access_token":"secret","account_id":"account-one"}}"#,
+    )
+    .unwrap();
+    let state = AppState::new(GatewayConfig {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        provider_preset: ProviderPreset::Custom,
+        upstream_kind: UpstreamKind::AnthropicMessages,
+        upstream_base_url: "https://example.invalid".to_owned(),
+        upstream_messages_path: "/v1/messages".to_owned(),
+        upstream_models_path: "/v1/models".to_owned(),
+        upstream_image_generation_path: None,
+        upstream_api_key: "upstream-key".to_owned(),
+        quota_url: None,
+        quota_username: None,
+        official_responses_url: format!("http://{address}/backend-api/codex/responses"),
+        codex_auth_path: auth_path,
+        upstream_auth_header: UpstreamAuthHeader::AuthorizationBearer,
+        anthropic_version: "2023-06-01".to_owned(),
+        anthropic_beta: None,
+        gateway_api_key: None,
+        accept_codex_oauth: true,
+        default_max_tokens: 8192,
+        default_context_window: 1_000_000,
+        request_timeout: Duration::from_secs(2),
+        thinking_mode: ThinkingMode::Off,
+        enable_web_search_tool: false,
+        web_search_tool_type: "web_search_20250305".to_owned(),
+        web_search_max_uses: Some(3),
+        fusion_profiles: Vec::new(),
+    })
+    .unwrap();
+
+    let template = load_codex_install_template_online(&paths, true, &state)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(template["models"][0]["slug"], "gpt-5.6-sol");
+    assert_eq!(template["models"][0]["context_window"], 272_000);
 }
 
 #[test]
@@ -508,6 +576,47 @@ fn refreshes_managed_catalog_from_latest_official_catalog() {
         assert!(model["model_messages"]["instructions_template"].is_string());
     }
     assert!(!refresh_managed_codex_catalog(&config_path).unwrap());
+}
+
+#[test]
+fn capability_refresh_does_not_restore_stale_official_cache() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let official_path = dir.path().join("models_cache.json");
+    let catalog_path = dir.path().join("mixin-models.json");
+    fs::write(
+        &config_path,
+        format!(
+            "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\n",
+            catalog_path.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        official_path,
+        r#"{"models":[{"slug":"gpt-5.6-sol","context_window":372000}]}"#,
+    )
+    .unwrap();
+    fs::write(
+        &catalog_path,
+        r#"{"models":[{"slug":"gpt-5.6-sol","context_window":272000},{"slug":"DeepSeek-V4-Flash","codex_mixin_managed":true}]}"#,
+    )
+    .unwrap();
+
+    refresh_managed_codex_catalog_with_capabilities(&config_path, Some(&HashSet::new())).unwrap();
+
+    let refreshed: serde_json::Value =
+        serde_json::from_slice(&fs::read(catalog_path).unwrap()).unwrap();
+    assert_eq!(refreshed["models"][0]["context_window"], 272_000);
+}
+
+#[test]
+fn parses_installed_codex_client_version() {
+    assert_eq!(
+        parse_codex_client_version("codex-cli 0.144.4\n").as_deref(),
+        Some("0.144.4")
+    );
+    assert_eq!(parse_codex_client_version("codex-cli unknown"), None);
 }
 
 #[test]

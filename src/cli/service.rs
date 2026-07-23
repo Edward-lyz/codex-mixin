@@ -14,16 +14,17 @@ use std::os::unix::fs::PermissionsExt;
 use std::os::unix::process::CommandExt;
 
 use codex_mixin::config::{GatewayConfig, load_stored_config, save_stored_config};
-use codex_mixin::server::serve_on_listener;
+use codex_mixin::server::{AppState, serve_on_listener};
 use codex_mixin::web_search::WebSearchCapabilities;
 
 use super::codex::{
-    refresh_managed_codex_catalog_with_capabilities, resolve_codex_config_path,
-    sync_managed_codex_gateway_base_url,
+    refresh_managed_codex_catalog_with_capabilities, refresh_managed_official_codex_catalog,
+    resolve_codex_config_path, sync_managed_codex_gateway_base_url,
 };
 use super::runtime::*;
 
 pub(super) const CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
+pub(super) const OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
 pub(super) const GATEWAY_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
 
 pub(super) fn init_tracing(log_file: Option<&Path>) -> anyhow::Result<()> {
@@ -144,7 +145,20 @@ pub(super) async fn start(
         Ok(false) => {}
         Err(err) => tracing::warn!(error = %err, "failed to refresh Codex model catalog"),
     }
+    let official_catalog_state = AppState::new(config.clone())?;
+    match refresh_managed_official_codex_catalog(
+        &config_path,
+        &official_catalog_state,
+        Some(&supported_models),
+    )
+    .await
+    {
+        Ok(true) => tracing::info!("official Codex model catalog refreshed"),
+        Ok(false) => {}
+        Err(err) => tracing::warn!(error = %err, "failed to refresh official Codex model catalog"),
+    }
     let refresh_config = config.clone();
+    let capabilities_config_path = config_path.clone();
     let refresh_task = tokio::spawn(async move {
         let mut interval = tokio::time::interval(CODEX_CATALOG_REFRESH_INTERVAL);
         interval.tick().await;
@@ -154,7 +168,7 @@ pub(super) async fn start(
                 .map(|capabilities| capabilities.supported_model_ids())
                 .and_then(|supported_models| {
                     refresh_managed_codex_catalog_with_capabilities(
-                        &config_path,
+                        &capabilities_config_path,
                         Some(&supported_models),
                     )
                 });
@@ -162,6 +176,36 @@ pub(super) async fn start(
                 Ok(true) => tracing::info!("Codex model catalog refreshed"),
                 Ok(false) => {}
                 Err(err) => tracing::warn!(error = %err, "failed to refresh Codex model catalog"),
+            }
+        }
+    });
+    let official_refresh_config = config.clone();
+    let official_refresh_config_path = config_path.clone();
+    let official_refresh_task = tokio::spawn(async move {
+        let mut interval = tokio::time::interval(OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL);
+        interval.tick().await;
+        loop {
+            interval.tick().await;
+            let supported_models =
+                match WebSearchCapabilities::from_default_path(&official_refresh_config) {
+                    Ok(capabilities) => Some(capabilities.supported_model_ids()),
+                    Err(err) => {
+                        tracing::warn!(error = %err, "failed to load web search capabilities");
+                        None
+                    }
+                };
+            match refresh_managed_official_codex_catalog(
+                &official_refresh_config_path,
+                &official_catalog_state,
+                supported_models.as_ref(),
+            )
+            .await
+            {
+                Ok(true) => tracing::info!("official Codex model catalog refreshed"),
+                Ok(false) => {}
+                Err(err) => {
+                    tracing::warn!(error = %err, "failed to refresh official Codex model catalog")
+                }
             }
         }
     });
@@ -175,6 +219,7 @@ pub(super) async fn start(
     let _runtime_guard = RuntimeMetadataGuard { pid };
     let result = serve_on_listener(config, listener).await;
     refresh_task.abort();
+    official_refresh_task.abort();
     match &result {
         Ok(()) => tracing::info!(pid, "gateway stopped"),
         Err(error) => tracing::error!(pid, error = %error, "gateway stopped with error"),

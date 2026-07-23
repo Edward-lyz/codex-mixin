@@ -163,7 +163,14 @@ fn codex_catalog_from_models_with_options(
                 .unwrap_or_else(|| {
                     ModelMetadataResolver::empty().resolve(&model.id, default_context_window)
                 });
-            let context_window = model.context_window.unwrap_or(metadata.context_window);
+            let mut context_window = model.context_window.unwrap_or(metadata.context_window);
+            if include_template_models
+                && is_gpt
+                && let Some(official_context_window) =
+                    template_model_context_window(template_catalog, &model.id)
+            {
+                context_window = context_window.min(official_context_window);
+            }
             let input_modalities = match model.supports_image {
                 Some(true) => vec!["text".to_owned(), "image".to_owned()],
                 Some(false) => vec!["text".to_owned()],
@@ -210,6 +217,15 @@ pub fn refresh_managed_oauth_catalog(
         .get("models")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow::anyhow!("managed Codex catalog has no models array"))?;
+    let official_context_windows = models
+        .iter()
+        .filter_map(|model| {
+            Some((
+                model.get("slug")?.as_str()?.to_owned(),
+                model_context_window(model)?,
+            ))
+        })
+        .collect::<std::collections::HashMap<_, _>>();
     let mut slugs = HashSet::with_capacity(models.len() + managed_models.len());
     for model in &models {
         let slug = model
@@ -240,6 +256,7 @@ pub fn refresh_managed_oauth_catalog(
             .and_then(Value::as_bool)
             .unwrap_or(true);
         model["supports_search_tool"] = json!(supports_search_tool);
+        clamp_managed_gpt_context(&mut model, &official_context_windows);
         enable_fast_service_tier(&mut model);
         ensure_instruction_fields(&mut model);
         models.push(model);
@@ -277,6 +294,47 @@ fn ensure_instruction_fields(model: &mut Value) {
 
 fn is_gpt_model(model: &str) -> bool {
     model.to_ascii_lowercase().starts_with("gpt-")
+}
+
+fn template_model_context_window(template_catalog: Option<&Value>, slug: &str) -> Option<u64> {
+    template_catalog
+        .and_then(|catalog| catalog.get("models"))
+        .and_then(Value::as_array)
+        .and_then(|models| {
+            models
+                .iter()
+                .find(|model| model.get("slug").and_then(Value::as_str) == Some(slug))
+        })
+        .and_then(model_context_window)
+}
+
+fn model_context_window(model: &Value) -> Option<u64> {
+    model
+        .get("context_window")
+        .and_then(Value::as_u64)
+        .or_else(|| model.get("max_context_window").and_then(Value::as_u64))
+}
+
+fn clamp_managed_gpt_context(
+    model: &mut Value,
+    official_context_windows: &std::collections::HashMap<String, u64>,
+) {
+    let Some(upstream_model) = model
+        .get(UPSTREAM_MODEL_MARKER)
+        .and_then(Value::as_str)
+        .filter(|model| is_gpt_model(model))
+    else {
+        return;
+    };
+    let Some(official_context_window) = official_context_windows.get(upstream_model).copied()
+    else {
+        return;
+    };
+    let context_window = model_context_window(model)
+        .map(|context_window| context_window.min(official_context_window))
+        .unwrap_or(official_context_window);
+    model["context_window"] = json!(context_window);
+    model["max_context_window"] = json!(context_window);
 }
 
 fn is_managed_custom_model(model: &Value) -> bool {
@@ -562,9 +620,15 @@ mod tests {
 
     #[test]
     fn oauth_proxy_catalog_uses_provider_suffix_for_gpt_collisions() {
-        let template = json!({"models":[{"slug":"gpt-5.5","display_name":"GPT-5.5"}]});
+        let template = json!({"models":[{
+            "slug":"gpt-5.5",
+            "display_name":"GPT-5.5",
+            "context_window":272000,
+            "max_context_window":272000
+        }]});
         let models = vec![ModelInfo {
             id: "gpt-5.5".to_owned(),
+            context_window: Some(372_000),
             ..ModelInfo::default()
         }];
         let metadata = ModelMetadataResolver::empty();
@@ -578,6 +642,25 @@ mod tests {
         assert_eq!(catalog["models"][0]["slug"], "gpt-5.5");
         assert_eq!(catalog["models"][1]["slug"], "gpt-5.5-baidu-oneapi");
         assert_eq!(catalog["models"][1][UPSTREAM_MODEL_MARKER], "gpt-5.5");
+        assert_eq!(catalog["models"][1]["context_window"], 272_000);
+        assert_eq!(catalog["models"][1]["max_context_window"], 272_000);
+    }
+
+    #[test]
+    fn oauth_proxy_catalog_keeps_smaller_upstream_gpt_context() {
+        let template = json!({"models":[{
+            "slug":"gpt-5.5",
+            "context_window":272000,
+            "max_context_window":272000
+        }]});
+        let models = vec![ModelInfo {
+            id: "gpt-5.5".to_owned(),
+            context_window: Some(200_000),
+            ..ModelInfo::default()
+        }];
+        let catalog = codex_oauth_proxy_catalog_from_models(&models, 1_000_000, Some(&template));
+        assert_eq!(catalog["models"][1]["context_window"], 200_000);
+        assert_eq!(catalog["models"][1]["max_context_window"], 200_000);
     }
 
     #[test]
@@ -586,7 +669,7 @@ mod tests {
             "client_version": "1.2.3",
             "etag": "catalog-etag",
             "models": [
-                {"slug":"gpt-5.6-sol","display_name":"GPT-5.6-Sol"},
+                {"slug":"gpt-5.6-sol","display_name":"GPT-5.6-Sol","context_window":272000,"max_context_window":272000},
                 {"slug":"gpt-5.5","display_name":"GPT-5.5"}
             ]
         });
@@ -602,9 +685,12 @@ mod tests {
                     "web_search_tool_type":"text_and_image"
                 },
                 {
-                    "slug":"gpt-5.5-custom",
+                    "slug":"gpt-5.6-sol-custom",
                     "display_name":"gpt-5.5 (Custom)",
-                    "description":"Custom upstream model exposed through codex-mixin"
+                    "description":"Custom upstream model exposed through codex-mixin",
+                    "codex_mixin_upstream_model":"gpt-5.6-sol",
+                    "context_window":372000,
+                    "max_context_window":372000
                 }
             ]
         });
@@ -624,7 +710,7 @@ mod tests {
                 "gpt-5.6-sol",
                 "gpt-5.5",
                 "DeepSeek-V4-Flash",
-                "gpt-5.5-custom"
+                "gpt-5.6-sol-custom"
             ]
         );
         assert_eq!(refreshed["models"][2]["multi_agent_version"], "v2");
@@ -638,6 +724,8 @@ mod tests {
             refreshed["models"][3]["additional_speed_tiers"],
             json!(["fast"])
         );
+        assert_eq!(refreshed["models"][3]["context_window"], 272_000);
+        assert_eq!(refreshed["models"][3]["max_context_window"], 272_000);
         assert!(refreshed["models"][2].get("web_search_tool_type").is_none());
         for model in refreshed["models"].as_array().unwrap() {
             assert_eq!(model["base_instructions"], FALLBACK_BASE_INSTRUCTIONS);

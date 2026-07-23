@@ -1,6 +1,7 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
+use std::process::Command as ProcessCommand;
 
 use toml_edit::{DocumentMut, Item};
 
@@ -14,6 +15,7 @@ use codex_mixin::config::{GatewayConfig, ProviderPreset};
 use codex_mixin::server::AppState;
 use codex_mixin::web_search::WebSearchCapabilities;
 
+use super::install::resolve_codex_cli;
 use super::managed_config::*;
 use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::metadata::load_model_metadata_resolver;
@@ -35,7 +37,8 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
         .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?;
     let template = if requires_openai_auth {
         let models_cache = codex_home.join("models_cache.json");
-        let template = load_template_catalog(Some(&models_cache))?;
+        let template =
+            load_preferred_official_catalog(&state, &models_cache, Some(&catalog_path)).await?;
         if template.is_none() {
             anyhow::bail!(
                 "official Codex model cache is missing: {}. Open Codex once before refreshing Codex Mixin",
@@ -123,11 +126,42 @@ pub(in crate::cli) fn write_generated_managed_codex_catalog(
 
 #[cfg(test)]
 pub(in crate::cli) fn refresh_managed_codex_catalog(config_path: &Path) -> anyhow::Result<bool> {
-    refresh_managed_codex_catalog_with_capabilities(config_path, None)
+    let Some((requires_openai_auth, _)) = managed_catalog_settings(config_path)? else {
+        return Ok(false);
+    };
+    if !requires_openai_auth {
+        return Ok(false);
+    }
+    let official_catalog_path = config_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?
+        .join("models_cache.json");
+    let official_catalog = serde_json::from_slice(&fs::read(official_catalog_path)?)?;
+    refresh_managed_codex_catalog_from_official(config_path, &official_catalog, None)
 }
 
 pub(in crate::cli) fn refresh_managed_codex_catalog_with_capabilities(
     config_path: &Path,
+    supported_web_search_models: Option<&HashSet<String>>,
+) -> anyhow::Result<bool> {
+    refresh_managed_codex_catalog_with_source(config_path, None, supported_web_search_models)
+}
+
+pub(in crate::cli) fn refresh_managed_codex_catalog_from_official(
+    config_path: &Path,
+    official_catalog: &serde_json::Value,
+    supported_web_search_models: Option<&HashSet<String>>,
+) -> anyhow::Result<bool> {
+    refresh_managed_codex_catalog_with_source(
+        config_path,
+        Some(official_catalog),
+        supported_web_search_models,
+    )
+}
+
+fn refresh_managed_codex_catalog_with_source(
+    config_path: &Path,
+    official_catalog: Option<&serde_json::Value>,
     supported_web_search_models: Option<&HashSet<String>>,
 ) -> anyhow::Result<bool> {
     let config_path = absolute_path(config_path.to_path_buf())?;
@@ -160,13 +194,8 @@ pub(in crate::cli) fn refresh_managed_codex_catalog_with_capabilities(
     }
     let catalog_path = managed_catalog_path(&doc, &config_path)?;
     let managed_catalog = serde_json::from_slice(&fs::read(&catalog_path)?)?;
-    let mut refreshed = if requires_openai_auth {
-        let official_catalog_path = config_path
-            .parent()
-            .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?
-            .join("models_cache.json");
-        let official_catalog = serde_json::from_slice(&fs::read(&official_catalog_path)?)?;
-        refresh_managed_oauth_catalog(&official_catalog, &managed_catalog)?
+    let mut refreshed = if requires_openai_auth && let Some(official_catalog) = official_catalog {
+        refresh_managed_oauth_catalog(official_catalog, &managed_catalog)?
     } else {
         managed_catalog
     };
@@ -176,6 +205,26 @@ pub(in crate::cli) fn refresh_managed_codex_catalog_with_capabilities(
     write_atomic_if_changed(&catalog_path, &serde_json::to_vec_pretty(&refreshed)?)
 }
 
+pub(in crate::cli) async fn load_codex_install_template_online(
+    paths: &CodexInstallPaths,
+    codex_oauth_proxy: bool,
+    state: &AppState,
+) -> anyhow::Result<Option<serde_json::Value>> {
+    if !codex_oauth_proxy {
+        return Ok(None);
+    }
+    let template =
+        load_preferred_official_catalog(state, &paths.models_cache, Some(&paths.catalog)).await?;
+    if template.is_none() {
+        anyhow::bail!(
+            "official Codex model cache is missing: {}. Open Codex once before installing Codex Mixin",
+            paths.models_cache.display()
+        );
+    }
+    Ok(template)
+}
+
+#[cfg(test)]
 pub(in crate::cli) fn load_codex_install_template(
     paths: &CodexInstallPaths,
     codex_oauth_proxy: bool,
@@ -191,6 +240,117 @@ pub(in crate::cli) fn load_codex_install_template(
         );
     }
     Ok(template)
+}
+
+pub(in crate::cli) async fn refresh_managed_official_codex_catalog(
+    config_path: &Path,
+    state: &AppState,
+    supported_web_search_models: Option<&HashSet<String>>,
+) -> anyhow::Result<bool> {
+    let Some((requires_openai_auth, _)) = managed_catalog_settings(config_path)? else {
+        return Ok(false);
+    };
+    if !requires_openai_auth {
+        return Ok(false);
+    }
+    let models_cache = config_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?
+        .join("models_cache.json");
+    let client_version = resolve_codex_client_version(&models_cache)
+        .ok_or_else(|| anyhow::anyhow!("Codex client version could not be determined"))?;
+    let official_catalog = state.fetch_official_models_catalog(&client_version).await?;
+    refresh_managed_codex_catalog_from_official(
+        config_path,
+        &official_catalog,
+        supported_web_search_models,
+    )
+}
+
+async fn load_preferred_official_catalog(
+    state: &AppState,
+    models_cache: &Path,
+    managed_catalog: Option<&Path>,
+) -> anyhow::Result<Option<serde_json::Value>> {
+    if let Some(client_version) = resolve_codex_client_version(models_cache) {
+        match state.fetch_official_models_catalog(&client_version).await {
+            Ok(catalog) => return Ok(Some(catalog)),
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to fetch official Codex model catalog");
+            }
+        }
+    } else {
+        tracing::warn!("Codex client version could not be determined; using local model catalog");
+    }
+    if let Some(path) = managed_catalog
+        && let Some(catalog) = load_current_official_catalog(path)?
+    {
+        return Ok(Some(catalog));
+    }
+    load_template_catalog(Some(models_cache))
+}
+
+fn load_current_official_catalog(path: &Path) -> anyhow::Result<Option<serde_json::Value>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let mut catalog: serde_json::Value = serde_json::from_slice(&fs::read(path)?)?;
+    let Some(models) = catalog
+        .get_mut("models")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return Ok(None);
+    };
+    models.retain(|model| !is_managed_catalog_model(model));
+    Ok((!models.is_empty()).then_some(catalog))
+}
+
+fn is_managed_catalog_model(model: &serde_json::Value) -> bool {
+    model
+        .get("codex_mixin_managed")
+        .and_then(serde_json::Value::as_bool)
+        == Some(true)
+        || model
+            .get("description")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|description| {
+                description.starts_with("Custom upstream model exposed through codex-")
+            })
+        || model
+            .get("slug")
+            .and_then(serde_json::Value::as_str)
+            .is_some_and(|slug| slug.ends_with("-custom"))
+}
+
+fn resolve_codex_client_version(models_cache: &Path) -> Option<String> {
+    if let Ok(codex_cli) = resolve_codex_cli()
+        && let Ok(output) = ProcessCommand::new(codex_cli).arg("--version").output()
+        && output.status.success()
+        && let Some(version) = parse_codex_client_version(&String::from_utf8_lossy(&output.stdout))
+    {
+        return Some(version);
+    }
+    load_template_catalog(Some(models_cache))
+        .ok()
+        .flatten()
+        .and_then(|catalog| {
+            catalog
+                .get("client_version")
+                .and_then(serde_json::Value::as_str)
+                .map(str::to_owned)
+        })
+}
+
+pub(in crate::cli) fn parse_codex_client_version(output: &str) -> Option<String> {
+    output
+        .split_whitespace()
+        .find(|part| {
+            part.chars()
+                .next()
+                .is_some_and(|character| character.is_ascii_digit())
+        })
+        .map(|part| part.trim().to_owned())
+        .filter(|part| !part.is_empty())
 }
 
 pub(in crate::cli) fn select_codex_model(

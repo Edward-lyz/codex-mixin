@@ -290,6 +290,34 @@ impl AppState {
         read_codex_official_auth(&self.config.codex_auth_path, &self.official_auth_cache).await
     }
 
+    pub async fn fetch_official_models_catalog(
+        &self,
+        client_version: &str,
+    ) -> anyhow::Result<Value> {
+        let url = official_models_url(&self.config.official_responses_url, client_version)?;
+        let (authorization, account_id) = self.official_auth().await?;
+        let response = tokio::time::timeout(
+            Duration::from_secs(5),
+            self.client
+                .get(url)
+                .header(header::AUTHORIZATION, authorization)
+                .header("chatgpt-account-id", account_id)
+                .header(header::ACCEPT, "application/json")
+                .send(),
+        )
+        .await
+        .map_err(|_| anyhow::anyhow!("official models endpoint timed out"))??;
+        let status = response.status();
+        if !status.is_success() {
+            anyhow::bail!("official models endpoint returned {status}");
+        }
+        let catalog: Value = response.json().await?;
+        if catalog.get("models").and_then(Value::as_array).is_none() {
+            anyhow::bail!("official models endpoint returned no models array");
+        }
+        Ok(catalog)
+    }
+
     pub async fn probe_web_search_capabilities(
         &self,
         models: &mut [crate::anthropic::ModelInfo],
@@ -438,6 +466,22 @@ impl AppState {
             }
         }
     }
+}
+
+fn official_models_url(
+    official_responses_url: &str,
+    client_version: &str,
+) -> anyhow::Result<reqwest::Url> {
+    let mut url = reqwest::Url::parse(official_responses_url)?;
+    let path = url.path().trim_end_matches('/');
+    let prefix = path
+        .strip_suffix("/responses")
+        .ok_or_else(|| anyhow::anyhow!("official responses URL must end with /responses"))?;
+    url.set_path(&format!("{prefix}/models"));
+    url.set_query(None);
+    url.query_pairs_mut()
+        .append_pair("client_version", client_version);
+    Ok(url)
 }
 
 async fn inspect_anthropic_stream(
