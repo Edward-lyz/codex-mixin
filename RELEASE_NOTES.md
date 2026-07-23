@@ -1,26 +1,26 @@
 <!-- codex-mixin:zh-Hans:start -->
-## v0.3.2
+## v0.3.3
 
-- “安装到 Codex”面板新增账号模式选择：有 OpenAI / ChatGPT 账号时继续合并官方 GPT 与自定义模型；没有账号时可只安装自定义模型。
-- 新增 `install-codex --custom-only`。该模式不依赖 `~/.codex/models_cache.json`，不会启用 OpenAI OAuth，并会自动选择一个可用的自定义默认模型。
-- 未检测到官方模型缓存时，macOS 安装面板会默认选择“仅使用自定义模型”，避免首次安装被缺失缓存阻断。
-- 自定义模式与 OAuth 模式现在是明确互斥的 CLI 选项；README 补充两种模式的配置形态和使用说明。
+- 官方模型目录现在会在 Gateway 启动时在线同步，并每 5 分钟自动刷新；手动刷新命令也使用相同来源，不再被旧的本地 `models_cache.json` 覆盖。
+- 在线同步失败时保留当前可用目录；仅首次离线安装回退到本地缓存，避免已更新的上下文窗口回滚。
+- GPT 自定义上游别名的上下文窗口会与官方同名模型取较小值。官方目录为 272K 时，对应的 `sol`、`terra`、`luna` provider 别名也会同步为 272K。
+- 修复自定义模型完成多轮工具调用后，Codex App 无法自动折叠执行过程的问题。中间工具轮次现在标记为 `commentary`，最终回答标记为 `final_answer`。
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
-## v0.3.2
+## v0.3.3
 
-- 「安裝到 Codex」面板新增帳號模式選擇：有 OpenAI / ChatGPT 帳號時繼續合併官方 GPT 與自訂模型；沒有帳號時可只安裝自訂模型。
-- 新增 `install-codex --custom-only`。此模式不依賴 `~/.codex/models_cache.json`，不會啟用 OpenAI OAuth，並會自動選擇一個可用的自訂預設模型。
-- 未偵測到官方模型快取時，macOS 安裝面板會預設選擇「僅使用自訂模型」，避免首次安裝因缺少快取而中斷。
-- 自訂模式與 OAuth 模式現在是明確互斥的 CLI 選項；README 補充兩種模式的設定形式與使用說明。
+- 官方模型目錄現在會在 Gateway 啟動時線上同步，並每 5 分鐘自動更新；手動更新命令也使用相同來源，不再被舊的本機 `models_cache.json` 覆蓋。
+- 線上同步失敗時保留目前可用目錄；僅首次離線安裝回退到本機快取，避免已更新的上下文視窗回滾。
+- GPT 自訂上游別名的上下文視窗會與官方同名模型取較小值。官方目錄為 272K 時，對應的 `sol`、`terra`、`luna` provider 別名也會同步為 272K。
+- 修復自訂模型完成多輪工具呼叫後，Codex App 無法自動摺疊執行過程的問題。中間工具輪次現在標記為 `commentary`，最終回答標記為 `final_answer`。
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
-## v0.3.2
+## v0.3.3
 
-- Added an account-mode choice to the Install to Codex panel: users with an OpenAI / ChatGPT account can keep official GPT models alongside custom models, while users without an account can install custom models only.
-- Added `install-codex --custom-only`. This mode does not depend on `~/.codex/models_cache.json`, does not enable OpenAI OAuth, and automatically selects an available custom default model.
-- The macOS install panel now defaults to custom-only mode when no official model cache is detected, preventing first-time installation from being blocked by a missing cache.
-- Custom-only and OAuth modes are now explicit, mutually exclusive CLI options, with both managed configuration shapes documented in the README.
+- The official model catalog is now synchronized online when the Gateway starts and refreshed every five minutes. Manual refresh uses the same source and can no longer be overwritten by a stale local `models_cache.json`.
+- A failed online sync preserves the current usable catalog. Only a first-time offline installation falls back to the local cache, preventing updated context windows from being rolled back.
+- GPT custom-upstream aliases now clamp their context window to the matching official model. When the official catalog reports 272K, the corresponding `sol`, `terra`, and `luna` provider aliases also use 272K.
+- Fixed Codex App failing to collapse the execution history after custom models complete multi-turn tool calls. Intermediate tool turns are now marked as `commentary`, while the terminal response is marked as `final_answer`.
 <!-- codex-mixin:en:end -->
