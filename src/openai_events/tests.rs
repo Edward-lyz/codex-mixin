@@ -14,6 +14,178 @@ where
     String::from_utf8(output).unwrap()
 }
 
+fn assert_message_phase(body: &str, expected: &str) {
+    let mut encoded = body.as_bytes().to_vec();
+    let events = drain_events(&mut encoded);
+    let added: Value = serde_json::from_str(
+        &events
+            .iter()
+            .find(|event| {
+                event.event.as_deref() == Some("response.output_item.added")
+                    && serde_json::from_str::<Value>(&event.data)
+                        .ok()
+                        .is_some_and(|event| event["item"]["type"] == "message")
+            })
+            .expect("message added event")
+            .data,
+    )
+    .unwrap();
+    assert!(added["item"].get("phase").is_none(), "{body}");
+
+    let done: Value = serde_json::from_str(
+        &events
+            .iter()
+            .find(|event| {
+                event.event.as_deref() == Some("response.output_item.done")
+                    && serde_json::from_str::<Value>(&event.data)
+                        .ok()
+                        .is_some_and(|event| event["item"]["type"] == "message")
+            })
+            .expect("message done event")
+            .data,
+    )
+    .unwrap();
+    assert_eq!(done["item"]["phase"], expected, "{body}");
+
+    let completed: Value = serde_json::from_str(
+        &events
+            .iter()
+            .find(|event| event.event.as_deref() == Some("response.completed"))
+            .expect("response completed event")
+            .data,
+    )
+    .unwrap();
+    let completed_item = completed["response"]["output"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|item| item["id"] == done["item"]["id"])
+        .expect("completed message item");
+    assert_eq!(completed_item, &done["item"]);
+}
+
+async fn map_openai_events(events: &[Value], done: bool) -> String {
+    let mut stream = events
+        .iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect::<String>();
+    if done {
+        stream.push_str("data: [DONE]\n\n");
+    }
+    let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(stream))]);
+    collect_events(map_openai_chat_sse(
+        upstream,
+        json!({}),
+        ToolNameMap::default(),
+    ))
+    .await
+}
+
+async fn map_anthropic_events(events: &[Value]) -> String {
+    let stream = events
+        .iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect::<String>();
+    let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(stream))]);
+    collect_events(map_anthropic_sse(
+        upstream,
+        json!({}),
+        ToolNameMap::default(),
+    ))
+    .await
+}
+
+#[tokio::test]
+async fn marks_openai_chat_text_by_finish_reason() {
+    let final_body = map_openai_events(
+        &[
+            json!({"choices":[{"delta":{"content":"final"},"finish_reason":null}]}),
+            json!({"choices":[{"delta":{},"finish_reason":"stop"}]}),
+        ],
+        true,
+    )
+    .await;
+    assert_message_phase(&final_body, "final_answer");
+
+    let tool_body = map_openai_events(
+        &[
+            json!({"choices":[{"delta":{"content":"checking"},"finish_reason":null}]}),
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"exec_command","arguments":"{\"cmd\":\"pwd\"}"}}]},"finish_reason":"tool_calls"}]}),
+        ],
+        true,
+    )
+    .await;
+    assert_message_phase(&tool_body, "commentary");
+}
+
+#[tokio::test]
+async fn infers_openai_chat_phase_when_finish_reason_is_missing() {
+    let final_body = map_openai_events(
+        &[json!({"choices":[{"delta":{"content":"final"},"finish_reason":null}]})],
+        true,
+    )
+    .await;
+    assert_message_phase(&final_body, "final_answer");
+
+    let tool_body = map_openai_events(
+        &[
+            json!({"choices":[{"delta":{"content":"checking"},"finish_reason":null}]}),
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_1","function":{"name":"exec_command","arguments":"{\"cmd\":\"pwd\"}"}}]},"finish_reason":null}]}),
+        ],
+        true,
+    )
+    .await;
+    assert_message_phase(&tool_body, "commentary");
+}
+
+#[tokio::test]
+async fn marks_anthropic_text_by_stop_reason() {
+    let final_body = map_anthropic_events(&[
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"final"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}}),
+        json!({"type":"message_stop"}),
+    ])
+    .await;
+    assert_message_phase(&final_body, "final_answer");
+
+    let tool_body = map_anthropic_events(&[
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"checking"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_1","name":"exec_command","input":{"cmd":"pwd"}}}),
+        json!({"type":"content_block_stop","index":1}),
+        json!({"type":"message_delta","delta":{"stop_reason":"tool_use"}}),
+        json!({"type":"message_stop"}),
+    ])
+    .await;
+    assert_message_phase(&tool_body, "commentary");
+}
+
+#[tokio::test]
+async fn infers_anthropic_phase_when_stop_reason_is_missing() {
+    let final_body = map_anthropic_events(&[
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"final"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"message_stop"}),
+    ])
+    .await;
+    assert_message_phase(&final_body, "final_answer");
+
+    let tool_body = map_anthropic_events(&[
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"checking"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"call_1","name":"exec_command","input":{"cmd":"pwd"}}}),
+        json!({"type":"content_block_stop","index":1}),
+        json!({"type":"message_stop"}),
+    ])
+    .await;
+    assert_message_phase(&tool_body, "commentary");
+}
+
 async fn map_openai_tool_call(tool_call: Value, tool_names: ToolNameMap) -> String {
     let chunk = json!({
         "choices": [{

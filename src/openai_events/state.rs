@@ -7,6 +7,21 @@ pub(super) struct TextBlock {
     pub(super) text: String,
 }
 
+#[derive(Clone, Copy, Debug)]
+pub(super) enum AssistantMessagePhase {
+    Commentary,
+    FinalAnswer,
+}
+
+impl AssistantMessagePhase {
+    fn as_str(self) -> &'static str {
+        match self {
+            Self::Commentary => "commentary",
+            Self::FinalAnswer => "final_answer",
+        }
+    }
+}
+
 #[derive(Debug)]
 pub(super) struct ToolBlock {
     pub(super) id: Option<String>,
@@ -162,7 +177,7 @@ impl MapperState {
         events
     }
 
-    pub(super) fn finish_text(&mut self) -> Vec<Bytes> {
+    pub(super) fn finish_text(&mut self, phase: AssistantMessagePhase) -> Vec<Bytes> {
         let Some(block) = self.current_text.take() else {
             return Vec::new();
         };
@@ -171,6 +186,7 @@ impl MapperState {
             "type": "message",
             "status": "completed",
             "role": "assistant",
+            "phase": phase.as_str(),
             "content": [{"type":"output_text","text":block.text,"annotations":[]}]
         });
         self.output.push(item.clone());
@@ -191,6 +207,14 @@ impl MapperState {
             )
             .unwrap(),
         ]
+    }
+
+    pub(super) fn fallback_text_phase(&self) -> AssistantMessagePhase {
+        if self.tools.is_empty() && self.pending_web_searches.is_empty() {
+            AssistantMessagePhase::FinalAnswer
+        } else {
+            AssistantMessagePhase::Commentary
+        }
     }
 
     pub(super) fn finish_tool(

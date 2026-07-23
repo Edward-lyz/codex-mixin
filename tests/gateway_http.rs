@@ -28,6 +28,7 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 enum MockMode {
     Text,
     Tool,
+    ToolThenText,
     FableMcpTool,
     NamespacedTool,
     CustomTool,
@@ -386,6 +387,19 @@ async fn mock_messages(
     let is_fusion_panel = body["system"]
         .to_string()
         .contains("substantive, concise report");
+    let has_tool_result = body
+        .get("messages")
+        .and_then(Value::as_array)
+        .is_some_and(|messages| {
+            messages.iter().any(|message| {
+                message
+                    .get("content")
+                    .and_then(Value::as_array)
+                    .is_some_and(|content| {
+                        content.iter().any(|block| block["type"] == "tool_result")
+                    })
+            })
+        });
     let request_index = state.requests.lock().unwrap().len();
     body["__x_hash_key"] = headers
         .get("x-hash-key")
@@ -400,6 +414,8 @@ async fn mock_messages(
         MockMode::Text if is_fusion_panel => panel_report_sse(),
         MockMode::Text => text_sse(),
         MockMode::Tool => tool_sse("exec_command", json!({"cmd":"pwd"})),
+        MockMode::ToolThenText if has_tool_result => text_sse(),
+        MockMode::ToolThenText => text_then_tool_sse("exec_command", json!({"cmd":"pwd"})),
         MockMode::FableMcpTool => tool_sse("mcp__codex__exec_command", json!({"cmd":"pwd"})),
         MockMode::NamespacedTool => tool_sse(
             "collaboration__spawn_agent",
@@ -928,6 +944,23 @@ fn tool_sse(name: &str, arguments: Value) -> String {
     .collect()
 }
 
+fn text_then_tool_sse(name: &str, arguments: Value) -> String {
+    [
+        json!({"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"DeepSeek-V4-Flash","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"checking"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"content_block_start","index":1,"content_block":{"type":"tool_use","id":"toolu_1","name":name,"input":{}}}),
+        json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":arguments.to_string()}}),
+        json!({"type":"content_block_stop","index":1}),
+        json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}),
+        json!({"type":"message_stop"}),
+    ]
+    .into_iter()
+    .map(|event| format!("event: {}\ndata: {event}\n\n", event["type"].as_str().unwrap()))
+    .collect()
+}
+
 fn web_search_sse() -> String {
     [
         json!({"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"Claude Sonnet 5","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}),
@@ -1173,6 +1206,76 @@ async fn model_request_smoke_succeeds_end_to_end() {
             .unwrap()
             .contains("You are Codex")
     );
+}
+
+#[tokio::test]
+async fn custom_tool_loop_marks_commentary_and_final_answer() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::ToolThenText).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&responses_request())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut encoded = response.bytes().await.unwrap().to_vec();
+    let events = drain_events(&mut encoded);
+    let done_items = events
+        .iter()
+        .filter(|event| event.event.as_deref() == Some("response.output_item.done"))
+        .map(|event| serde_json::from_str::<Value>(&event.data).unwrap()["item"].clone())
+        .collect::<Vec<_>>();
+    let commentary = done_items
+        .iter()
+        .find(|item| item["type"] == "message")
+        .unwrap();
+    assert_eq!(commentary["phase"], "commentary");
+    let tool_call = done_items
+        .iter()
+        .find(|item| item["type"] == "function_call")
+        .unwrap();
+    let call_id = tool_call["call_id"].as_str().unwrap();
+
+    let mut follow_up = responses_request();
+    follow_up["input"] = json!([
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"check the directory"}]},
+        {
+            "type":"function_call",
+            "call_id":call_id,
+            "name":tool_call["name"],
+            "arguments":tool_call["arguments"]
+        },
+        {"type":"function_call_output","call_id":call_id,"output":"/tmp"}
+    ]);
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&follow_up)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut encoded = response.bytes().await.unwrap().to_vec();
+    let events = drain_events(&mut encoded);
+    let final_answer: Value = serde_json::from_str(
+        &events
+            .iter()
+            .find(|event| {
+                event.event.as_deref() == Some("response.output_item.done")
+                    && serde_json::from_str::<Value>(&event.data)
+                        .ok()
+                        .is_some_and(|event| event["item"]["type"] == "message")
+            })
+            .unwrap()
+            .data,
+    )
+    .unwrap();
+    assert_eq!(final_answer["item"]["phase"], "final_answer");
+    assert_eq!(requests.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]

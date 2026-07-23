@@ -1,4 +1,4 @@
-use super::state::{MapperState, ToolBlock, ToolBlockKind};
+use super::state::{AssistantMessagePhase, MapperState, ToolBlock, ToolBlockKind};
 use super::*;
 
 pub fn map_anthropic_sse<S>(
@@ -60,7 +60,8 @@ where
                     return;
                 }
                 if data.get("type").and_then(Value::as_str) == Some("message_stop") {
-                    for mapped in state.finish_text() {
+                    let phase = state.fallback_text_phase();
+                    for mapped in state.finish_text(phase) {
                         yield Ok(mapped);
                     }
                     match state.finish_tools(image_routes.as_ref()) {
@@ -83,7 +84,8 @@ where
                 }
             }
         }
-        for mapped in state.finish_text() {
+        let phase = state.fallback_text_phase();
+        for mapped in state.finish_text(phase) {
             yield Ok(mapped);
         }
         match state.finish_tools(image_routes.as_ref()) {
@@ -148,13 +150,13 @@ fn handle_anthropic_event(state: &mut MapperState, data: &Value) -> Result<Vec<B
                             kind: ToolBlockKind::Function,
                         },
                     );
-                    Ok(state.finish_text())
+                    Ok(state.finish_text(AssistantMessagePhase::Commentary))
                 }
                 Some("server_tool_use") => {
                     let content_block = data
                         .get("content_block")
                         .ok_or_else(|| "server_tool_use missing content_block".to_owned())?;
-                    let mut events = state.finish_text();
+                    let mut events = state.finish_text(AssistantMessagePhase::Commentary);
                     events.extend(
                         state.start_web_search(
                             index,
@@ -179,7 +181,7 @@ fn handle_anthropic_event(state: &mut MapperState, data: &Value) -> Result<Vec<B
                     let content_block = data
                         .get("content_block")
                         .ok_or_else(|| "web_search result missing content_block".to_owned())?;
-                    let mut events = state.finish_text();
+                    let mut events = state.finish_text(AssistantMessagePhase::Commentary);
                     events.extend(state.finish_web_search_result(index, content_block)?);
                     Ok(events)
                 }
@@ -230,11 +232,12 @@ fn handle_anthropic_event(state: &mut MapperState, data: &Value) -> Result<Vec<B
             {
                 Ok(Vec::new())
             } else {
-                Ok(state.finish_text())
+                Ok(Vec::new())
             }
         }
         Some("message_delta") => {
-            if data.pointer("/delta/stop_reason").and_then(Value::as_str) == Some("pause_turn") {
+            let stop_reason = data.pointer("/delta/stop_reason").and_then(Value::as_str);
+            if stop_reason == Some("pause_turn") {
                 return Err(
                     "Anthropic returned pause_turn; automatic server-tool continuation is unsupported"
                         .to_owned(),
@@ -245,7 +248,11 @@ fn handle_anthropic_event(state: &mut MapperState, data: &Value) -> Result<Vec<B
             {
                 state.usage.output_tokens = Some(output_tokens);
             }
-            Ok(Vec::new())
+            match stop_reason {
+                Some("tool_use") => Ok(state.finish_text(AssistantMessagePhase::Commentary)),
+                Some(_) => Ok(state.finish_text(AssistantMessagePhase::FinalAnswer)),
+                None => Ok(Vec::new()),
+            }
         }
         Some("error") => Ok(vec![
             state.failed_event(

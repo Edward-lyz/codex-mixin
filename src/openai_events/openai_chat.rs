@@ -1,4 +1,4 @@
-use super::state::{MapperState, ToolBlock, ToolBlockKind};
+use super::state::{AssistantMessagePhase, MapperState, ToolBlock, ToolBlockKind};
 use super::*;
 
 pub fn map_openai_chat_sse<S>(
@@ -39,7 +39,8 @@ where
             };
             for event in decoder.push(&bytes) {
                 if event.data == "[DONE]" {
-                    for bytes in state.finish_text() {
+                    let phase = state.fallback_text_phase();
+                    for bytes in state.finish_text(phase) {
                         yield Ok(bytes);
                     }
                     match state.finish_tools(image_routes.as_ref()) {
@@ -104,7 +105,7 @@ where
                 }
                 match choice.get("finish_reason").and_then(Value::as_str) {
                     Some("tool_calls") => {
-                        for bytes in state.finish_text() {
+                        for bytes in state.finish_text(AssistantMessagePhase::Commentary) {
                             yield Ok(bytes);
                         }
                         match state.finish_tools(image_routes.as_ref()) {
@@ -120,7 +121,7 @@ where
                         }
                     }
                     Some("stop") | Some("length") | Some("content_filter") => {
-                        for bytes in state.finish_text() {
+                        for bytes in state.finish_text(AssistantMessagePhase::FinalAnswer) {
                             yield Ok(bytes);
                         }
                     }
@@ -128,7 +129,8 @@ where
                 }
             }
         }
-        for bytes in state.finish_text() {
+        let phase = state.fallback_text_phase();
+        for bytes in state.finish_text(phase) {
             yield Ok(bytes);
         }
         match state.finish_tools(image_routes.as_ref()) {
