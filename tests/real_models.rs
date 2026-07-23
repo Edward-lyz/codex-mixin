@@ -33,13 +33,7 @@ async fn all_registered_models_can_say_hi() {
         .await
         .expect("fetch custom upstream models")
         .into_iter()
-        .map(|model| {
-            if model.id.starts_with("gpt-") {
-                format!("{}-custom", model.id)
-            } else {
-                model.id
-            }
-        })
+        .map(|model| model.id)
         .collect::<HashSet<_>>();
     let gateway_url = spawn_gateway(router(state)).await;
     let catalog_path = std::env::var("CODEX_MIXIN_REAL_CATALOG")
@@ -55,14 +49,23 @@ async fn all_registered_models_can_say_hi() {
             .unwrap_or_else(|err| panic!("read catalog {}: {err}", catalog_path.display())),
     )
     .unwrap_or_else(|err| panic!("parse catalog {}: {err}", catalog_path.display()));
+    let managed_upstream_models = catalog["models"]
+        .as_array()
+        .expect("catalog models must be an array")
+        .iter()
+        .filter_map(|model| model["codex_mixin_upstream_model"].as_str())
+        .collect::<HashSet<_>>();
     let mut models = catalog["models"]
         .as_array()
         .expect("catalog models must be an array")
         .iter()
         .filter(|model| {
-            model["slug"]
+            model["codex_mixin_upstream_model"]
                 .as_str()
-                .is_some_and(|slug| custom_models.contains(slug))
+                .is_some_and(|upstream| custom_models.contains(upstream))
+                || model["slug"].as_str().is_some_and(|slug| {
+                    custom_models.contains(slug) && !managed_upstream_models.contains(slug)
+                })
         })
         .map(|model| {
             model["slug"]
