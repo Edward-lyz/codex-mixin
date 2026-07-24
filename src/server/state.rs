@@ -110,10 +110,10 @@ impl AppState {
                 let model = resolved.model.expect("routable model has cached metadata");
                 models.push(ModelInfo {
                     id: slug,
-                    display_name: Some(format!(
-                        "{} · {}",
-                        model.display_name.as_deref().unwrap_or(upstream_model_id),
-                        provider.display_name()
+                    display_name: Some(provider_model_display_name(
+                        upstream_model_id,
+                        model.display_name.as_deref(),
+                        provider.display_name(),
                     )),
                     object: Some("model".to_owned()),
                     created: None,
@@ -501,6 +501,14 @@ impl AppState {
             }
         }
     }
+}
+
+pub(super) fn provider_model_display_name(
+    upstream_model_id: &str,
+    _upstream_display_name: Option<&str>,
+    provider_display_name: &str,
+) -> String {
+    format!("{upstream_model_id} · {provider_display_name}")
 }
 
 fn official_models_url(

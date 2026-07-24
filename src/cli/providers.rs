@@ -1,14 +1,17 @@
 use std::collections::HashSet;
+use std::time::Duration;
 
 use codex_mixin::config::{StoredGatewayConfig, load_stored_config, mutate_stored_config};
 use codex_mixin::provider::{
     ProviderModel, ProviderModelSource, ProviderPreset, ProviderProtocol, ProviderQuotaParser,
-    apply_discovered_models, discover_provider_models, redact_provider_error,
+    ProviderRegistry, apply_discovered_models, discover_provider_models, redact_provider_error,
 };
 use codex_mixin::web_search::WebSearchCapabilities;
+use futures_util::{StreamExt, stream};
 use serde_json::json;
 
 use super::config_input::{normalize_base_url, trim_required};
+use super::status::{QuotaUsageSummary, quota_usage};
 
 #[derive(Clone, Debug)]
 pub(super) struct AddProviderOptions {
@@ -315,7 +318,27 @@ pub(super) async fn discover_models(id: &str) -> anyhow::Result<()> {
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
-    let models = match discover_provider_models(&client, &provider).await {
+    let quota_probe = async {
+        if provider.preset_id.as_deref() == Some("custom") && provider.quota_url.is_none() {
+            discover_custom_quota(&client, &provider).await
+        } else {
+            Ok(None)
+        }
+    };
+    let (models, discovered_quota) =
+        tokio::join!(discover_provider_models(&client, &provider), quota_probe);
+    let discovered_quota = match discovered_quota {
+        Ok(discovered) => discovered,
+        Err(error) => {
+            tracing::warn!(
+                provider_id = provider.id,
+                error = %redact_provider_error(&provider, &format!("{error:#}")),
+                "custom quota discovery failed"
+            );
+            None
+        }
+    };
+    let models = match models {
         Ok(models) => models,
         Err(error) => {
             let stored_error = redact_provider_error(&provider, &format!("{error:#}"));
@@ -326,6 +349,9 @@ pub(super) async fn discover_models(id: &str) -> anyhow::Result<()> {
                     "provider {id} discovery settings changed during refresh; retry"
                 );
                 current.models_refresh_error = Some(stored_error);
+                if let Some(discovered_quota) = &discovered_quota {
+                    apply_discovered_quota(current, discovered_quota);
+                }
                 Ok(())
             })?;
             return Err(error);
@@ -338,9 +364,18 @@ pub(super) async fn discover_models(id: &str) -> anyhow::Result<()> {
             discovery_settings_match(current, &provider),
             "provider {id} discovery settings changed during refresh; retry"
         );
+        if let Some(discovered_quota) = &discovered_quota {
+            apply_discovered_quota(current, discovered_quota);
+        }
         apply_discovered_models(current, models)
     })?;
     println!("provider models refreshed: {id} ({count} available)");
+    if let Some(discovered_quota) = discovered_quota {
+        println!(
+            "provider quota endpoint detected: {id} ({})",
+            discovered_quota.url
+        );
+    }
     Ok(())
 }
 
@@ -514,6 +549,141 @@ fn normalize_model_ids(models: Vec<String>) -> anyhow::Result<Vec<String>> {
     Ok(normalized)
 }
 
+#[derive(Clone, Debug, PartialEq)]
+struct DiscoveredQuotaEndpoint {
+    url: reqwest::Url,
+    parser: ProviderQuotaParser,
+    currency: Option<String>,
+    usage: QuotaUsageSummary,
+}
+
+async fn discover_custom_quota(
+    client: &reqwest::Client,
+    provider: &codex_mixin::provider::ProviderDefinition,
+) -> anyhow::Result<Option<DiscoveredQuotaEndpoint>> {
+    let registry = ProviderRegistry::new(vec![provider.clone()])?;
+    let runtime = registry
+        .provider(&provider.id)
+        .expect("newly constructed provider registry contains the custom provider");
+    let probes = tokio::time::timeout(
+        Duration::from_secs(8),
+        stream::iter(
+            custom_quota_candidate_urls(&provider.base_url)?
+                .into_iter()
+                .enumerate()
+                .map(|(index, url)| {
+                    let runtime = &runtime;
+                    async move {
+                        let response = runtime
+                            .apply_auth(
+                                client
+                                    .get(url.clone())
+                                    .header(reqwest::header::ACCEPT, "application/json")
+                                    .timeout(Duration::from_secs(5)),
+                            )
+                            .send()
+                            .await
+                            .ok()?;
+                        if !response.status().is_success() {
+                            return None;
+                        }
+                        let body = response.bytes().await.ok()?;
+                        let value: serde_json::Value = serde_json::from_slice(&body).ok()?;
+                        let parser = ProviderQuotaParser::Generic;
+                        let usage = quota_usage(parser, &value).ok()?;
+                        Some((
+                            index,
+                            DiscoveredQuotaEndpoint {
+                                url,
+                                parser,
+                                currency: quota_currency(&value),
+                                usage,
+                            },
+                        ))
+                    }
+                }),
+        )
+        .buffer_unordered(4)
+        .filter_map(|result| async move { result })
+        .collect::<Vec<_>>(),
+    )
+    .await
+    .unwrap_or_default();
+    Ok(probes
+        .into_iter()
+        .min_by_key(|(index, _)| *index)
+        .map(|(_, discovered)| discovered))
+}
+
+fn custom_quota_candidate_urls(base_url: &str) -> anyhow::Result<Vec<reqwest::Url>> {
+    let base = reqwest::Url::parse(base_url)?;
+    let mut origin = base.clone();
+    origin.set_path("/");
+    origin.set_query(None);
+    origin.set_fragment(None);
+    let paths = [
+        "api/v1/credits",
+        "v1/credits",
+        "credits",
+        "api/usage/token",
+        "api/usage",
+        "v1/usage",
+        "usage",
+        "api/token/usage",
+        "api/user/usage",
+        "v1/dashboard/billing/usage",
+        "dashboard/billing/usage",
+        "api/user/self",
+    ];
+    let mut bases = vec![origin];
+    if base.path() != "/" {
+        let mut base = base;
+        let path = format!("{}/", base.path().trim_end_matches('/'));
+        base.set_path(&path);
+        base.set_query(None);
+        base.set_fragment(None);
+        bases.push(base);
+    }
+    let mut seen = HashSet::new();
+    let mut urls = Vec::new();
+    for base in bases {
+        for path in paths {
+            let url = base.join(path)?;
+            if seen.insert(url.as_str().to_owned()) {
+                urls.push(url);
+            }
+        }
+    }
+    Ok(urls)
+}
+
+fn quota_currency(value: &serde_json::Value) -> Option<String> {
+    [
+        "/currency",
+        "/data/currency",
+        "/quota/currency",
+        "/data/quota/currency",
+        "/usage/currency",
+        "/data/usage/currency",
+    ]
+    .into_iter()
+    .find_map(|pointer| value.pointer(pointer).and_then(serde_json::Value::as_str))
+    .map(str::trim)
+    .filter(|currency| {
+        currency.len() == 3 && currency.bytes().all(|byte| byte.is_ascii_alphabetic())
+    })
+    .map(str::to_ascii_uppercase)
+}
+
+fn apply_discovered_quota(
+    provider: &mut codex_mixin::provider::ProviderDefinition,
+    discovered: &DiscoveredQuotaEndpoint,
+) {
+    provider.quota_url = Some(discovered.url.to_string());
+    provider.quota_parser = discovered.parser;
+    provider.quota_currency = discovered.currency.clone();
+}
+
 #[derive(Debug, Eq, PartialEq)]
 struct InferredCustomProviderEndpoint {
     base_url: String,
@@ -619,7 +789,63 @@ fn apply_inferred_custom_endpoint(
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use axum::Router;
+    use axum::http::{HeaderMap, header};
+    use axum::routing::get;
+
     use super::*;
+
+    #[tokio::test]
+    async fn discovers_a_read_only_custom_quota_endpoint() {
+        let authorization = Arc::new(Mutex::new(None));
+        let captured_authorization = Arc::clone(&authorization);
+        let app = Router::new().route(
+            "/api/v1/credits",
+            get(move |headers: HeaderMap| {
+                let captured_authorization = Arc::clone(&captured_authorization);
+                async move {
+                    *captured_authorization.lock().unwrap() = headers
+                        .get(header::AUTHORIZATION)
+                        .and_then(|value| value.to_str().ok())
+                        .map(str::to_owned);
+                    axum::Json(serde_json::json!({
+                        "data": {
+                            "total_usage": 12.5,
+                            "total_credits": 100,
+                            "currency": "USD"
+                        }
+                    }))
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut provider = codex_mixin::provider::custom_provider("community", "community-secret");
+        provider.base_url = format!("http://{address}");
+        let client = reqwest::Client::new();
+
+        let discovered = discover_custom_quota(&client, &provider)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            discovered.url.as_str(),
+            format!("http://{address}/api/v1/credits")
+        );
+        assert_eq!(discovered.currency.as_deref(), Some("USD"));
+        assert_eq!(discovered.usage.used, 12.5);
+        assert_eq!(discovered.usage.limit, Some(100.0));
+        assert_eq!(
+            authorization.lock().unwrap().as_deref(),
+            Some("Bearer community-secret")
+        );
+    }
 
     #[test]
     fn infers_custom_provider_endpoints_without_exposing_protocol_fields() {

@@ -79,6 +79,7 @@ func runAddProviderPanel() -> AddProviderFormValues? {
     panel.title = appText("新增供应商", "新增供應商", "Add Provider")
     panel.contentView = contentView
     panel.isReleasedWhenClosed = false
+    configureTransientModalPanel(panel)
     panel.center()
 
     let titleLabel = NSTextField(
@@ -242,6 +243,13 @@ func runAddProviderPanel() -> AddProviderFormValues? {
     _ = saveTarget
     _ = cancelTarget
     return response == .OK ? values : nil
+}
+
+func configureTransientModalPanel(_ panel: NSPanel) {
+    panel.level = .normal
+    panel.isFloatingPanel = false
+    panel.hidesOnDeactivate = true
+    panel.becomesKeyOnlyIfNeeded = false
 }
 
 func selectedProviderID(_ popup: NSPopUpButton) -> String {

@@ -811,6 +811,7 @@ pub(super) fn quota_usage(
                 "used_quota",
                 "usage",
                 "total_usage",
+                "total_used",
                 "spent",
                 "cost",
                 "consumed",
@@ -819,12 +820,18 @@ pub(super) fn quota_usage(
                 "limit",
                 "total",
                 "total_credits",
+                "total_granted",
                 "quota",
                 "quota_limit",
                 "month_quota_limit",
                 "budget",
             ],
-            &["remaining", "remaining_quota", "available"],
+            &[
+                "remaining",
+                "remaining_quota",
+                "available",
+                "total_available",
+            ],
         ),
     };
     let used = first_quota_value(value, used_fields)

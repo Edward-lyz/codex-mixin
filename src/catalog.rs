@@ -135,18 +135,23 @@ fn codex_catalog_from_models_with_options(
                 .cloned()
                 .unwrap_or_else(|| fallback_template(default_context_window));
             let is_gpt = is_gpt_model(&model.id);
-            let slug = if include_template_models && is_gpt {
-                format!("{}-{}", model.id, provider_suffix.unwrap_or("custom"))
+            let slug = if include_template_models
+                && is_gpt
+                && let Some(provider_suffix) = provider_suffix
+            {
+                format!("{}-{provider_suffix}", model.id)
             } else {
                 model.id.clone()
             };
             let display_name = model.display_name.clone().unwrap_or_else(|| {
-                if include_template_models && is_gpt {
-                    let provider = provider_suffix.unwrap_or("custom");
-                    let provider = if provider == "custom" {
+                if include_template_models
+                    && is_gpt
+                    && let Some(provider_suffix) = provider_suffix
+                {
+                    let provider = if provider_suffix == "custom" {
                         "Custom"
                     } else {
-                        provider
+                        provider_suffix
                     };
                     format!("{} ({provider})", model.id)
                 } else {
@@ -660,6 +665,31 @@ mod tests {
         assert_eq!(catalog["models"][1][UPSTREAM_MODEL_MARKER], "gpt-5.5");
         assert_eq!(catalog["models"][1]["context_window"], 272_000);
         assert_eq!(catalog["models"][1]["max_context_window"], 272_000);
+    }
+
+    #[test]
+    fn aggregated_oauth_catalog_does_not_suffix_provider_qualified_gpt_twice() {
+        let template = json!({"models":[{
+            "slug":"gpt-5.6-sol",
+            "display_name":"5.6 Sol",
+            "context_window":272000
+        }]});
+        let models = vec![ModelInfo {
+            id: "gpt-5.6-sol-custom-2".to_owned(),
+            display_name: Some("5.6 Sol · AIHub".to_owned()),
+            ..ModelInfo::default()
+        }];
+        let metadata = ModelMetadataResolver::empty();
+
+        let catalog = codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
+            &models,
+            1_000_000,
+            Some(&template),
+            &metadata,
+        );
+
+        assert_eq!(catalog["models"][1]["slug"], "gpt-5.6-sol-custom-2");
+        assert_eq!(catalog["models"][1]["display_name"], "5.6 Sol · AIHub");
     }
 
     #[test]

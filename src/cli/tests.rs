@@ -784,6 +784,24 @@ fn preserves_quota_limit_and_remaining_for_visualization() {
             remaining: Some(87.5),
         }
     );
+    assert_eq!(
+        quota_usage(
+            codex_mixin::provider::ProviderQuotaParser::Generic,
+            &serde_json::json!({
+                "data": {
+                    "total_used": "25.5",
+                    "total_granted": 100,
+                    "total_available": 74.5
+                }
+            })
+        )
+        .unwrap(),
+        QuotaUsageSummary {
+            used: 25.5,
+            limit: Some(100.0),
+            remaining: Some(74.5),
+        }
+    );
 }
 
 #[test]

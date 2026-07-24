@@ -7,7 +7,7 @@ use std::time::Duration;
 use bytes::Bytes;
 
 use super::auth::*;
-use super::state::read_codex_official_auth;
+use super::state::{provider_model_display_name, read_codex_official_auth};
 use super::*;
 use crate::benchmark::ModelBenchmarkManager;
 use crate::config::ThinkingMode;
@@ -22,6 +22,18 @@ fn test_provider(base_url: String, model: &str) -> crate::provider::ProviderDefi
         ..ProviderModel::default()
     }];
     provider
+}
+
+#[test]
+fn provider_model_display_name_keeps_the_model_id_visible() {
+    assert_eq!(
+        provider_model_display_name("gpt-5.6-sol", Some("GPT‑5.6 系列旗舰模型"), "Baidu OneAPI"),
+        "gpt-5.6-sol · Baidu OneAPI"
+    );
+    assert_eq!(
+        provider_model_display_name("gpt-5.6-sol", Some("gpt-5.6-sol"), "AIHub"),
+        "gpt-5.6-sol · AIHub"
+    );
 }
 
 #[test]

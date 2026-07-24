@@ -6,7 +6,7 @@ func serviceMenuView(
     isRunning: Bool,
     isBusy: Bool
 ) -> NSView {
-    let view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 56))
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 68))
     let statusColor: NSColor
     if title.contains("失败") {
         statusColor = .systemRed
@@ -35,6 +35,9 @@ func serviceMenuView(
     titleLabel.font = .boldSystemFont(ofSize: 13)
     titleLabel.textColor = .labelColor
     titleLabel.lineBreakMode = .byTruncatingTail
+    titleLabel.maximumNumberOfLines = 1
+    titleLabel.cell?.usesSingleLineMode = true
+    titleLabel.setContentCompressionResistancePriority(.required, for: .vertical)
 
     let detail: String
     if let endpoint {
@@ -54,11 +57,14 @@ func serviceMenuView(
     detailLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
     detailLabel.textColor = .secondaryLabelColor
     detailLabel.lineBreakMode = .byTruncatingMiddle
+    detailLabel.maximumNumberOfLines = 1
+    detailLabel.cell?.usesSingleLineMode = true
+    detailLabel.setContentCompressionResistancePriority(.required, for: .vertical)
 
     let textStack = NSStackView(views: [titleLabel, detailLabel])
     textStack.orientation = .vertical
     textStack.alignment = .leading
-    textStack.spacing = 3
+    textStack.spacing = 5
     textStack.translatesAutoresizingMaskIntoConstraints = false
 
     view.addSubview(statusDot)
@@ -70,7 +76,8 @@ func serviceMenuView(
         statusDot.heightAnchor.constraint(equalToConstant: 18),
         textStack.leadingAnchor.constraint(equalTo: statusDot.trailingAnchor, constant: 11),
         textStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
-        textStack.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        textStack.topAnchor.constraint(equalTo: view.topAnchor, constant: 12),
+        textStack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -12),
         titleLabel.widthAnchor.constraint(equalTo: textStack.widthAnchor),
         detailLabel.widthAnchor.constraint(equalTo: textStack.widthAnchor),
     ])
@@ -139,7 +146,7 @@ func providerQuotaMenuView(_ usages: [ProviderQuotaUsage]) -> NSView {
             progress: nil
         )
     }
-    let rowHeight: CGFloat = 62
+    let rowHeight: CGFloat = 68
     let view = NSView(frame: NSRect(
         x: 0,
         y: 0,
@@ -227,9 +234,8 @@ func providerQuotaRow(_ usage: ProviderQuotaUsage) -> NSView {
     let row = NSStackView(views: rows)
     row.orientation = .vertical
     row.alignment = .leading
-    row.spacing = 3
+    row.spacing = 4
     row.translatesAutoresizingMaskIntoConstraints = false
-    row.heightAnchor.constraint(equalToConstant: 62).isActive = true
     heading.widthAnchor.constraint(equalTo: row.widthAnchor).isActive = true
     progressView?.widthAnchor.constraint(equalTo: row.widthAnchor).isActive = true
 
@@ -238,8 +244,8 @@ func providerQuotaRow(_ usage: ProviderQuotaUsage) -> NSView {
     NSLayoutConstraint.activate([
         row.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
         row.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
-        row.topAnchor.constraint(equalTo: container.topAnchor),
-        row.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+        row.topAnchor.constraint(equalTo: container.topAnchor, constant: 3),
+        row.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -3),
     ])
     return container
 }

@@ -34,6 +34,7 @@ func runInstallCodexPanel() -> CodexInstallMode? {
     panel.title = "安装到 Codex"
     panel.contentView = contentView
     panel.isReleasedWhenClosed = false
+    configureTransientModalPanel(panel)
     panel.center()
 
     let titleLabel = NSTextField(labelWithString: "选择 Codex 安装模式")
