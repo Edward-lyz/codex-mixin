@@ -289,11 +289,18 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         model.width = 430
         model.minWidth = 240
         model.resizingMask = [.autoresizingMask, .userResizingMask]
+        let ratio = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("ratio"))
+        ratio.title = appText("倍率", "倍率", "Rate")
+        ratio.width = 72
+        ratio.minWidth = 60
+        ratio.maxWidth = 96
+        ratio.isHidden = true
         let context = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("context"))
         context.title = "Context"
         context.width = 100
         modelTable.addTableColumn(selected)
         modelTable.addTableColumn(model)
+        modelTable.addTableColumn(ratio)
         modelTable.addTableColumn(context)
         modelTable.delegate = self
         modelTable.dataSource = self
@@ -414,9 +421,16 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             cell.textField?.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
             cell.textField?.textColor = model.isAvailable ? .labelColor : .secondaryLabelColor
             cell.toolTip = model.description
+        } else if identifier.rawValue == "ratio" {
+            cell.textField?.stringValue = model.ratio ?? "-"
+            cell.textField?.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+            cell.textField?.alignment = .center
+            cell.toolTip = model.priceType
         } else {
             cell.textField?.stringValue = model.contextWindow.map(formatContextWindow) ?? "-"
             cell.textField?.font = .systemFont(ofSize: 11)
+            cell.textField?.alignment = .natural
+            cell.toolTip = nil
         }
         return cell
     }
@@ -470,6 +484,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         customDisplayNameRow?.isHidden = !isCustom
         customBaseURLRow?.isHidden = !isCustom
         quotaUsernameRow?.isHidden = provider.presetID != "baidu-oneapi"
+        updateModelRatioColumn(for: provider)
         selectedModelIDs = Set(provider.selectedModels)
         searchField.stringValue = ""
         selectPopupValue(modelFilterPopup, "all")
@@ -491,6 +506,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         }
         selectedModelIDs = []
         filteredModels = []
+        updateModelRatioColumn(for: nil)
         modelTable.reloadData()
         statusLabel.stringValue = providers.isEmpty ? "等待新增 Provider" : "请选择 Provider"
         statusLabel.toolTip = nil
@@ -521,6 +537,12 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             return matchesQuery && matchesFilter
         }
         modelTable.reloadData()
+    }
+
+    private func updateModelRatioColumn(for provider: ProviderView?) {
+        let identifier = NSUserInterfaceItemIdentifier("ratio")
+        modelTable.tableColumn(withIdentifier: identifier)?.isHidden =
+            !shouldShowModelRatioColumn(for: provider)
     }
 
     private func setBusy(_ busy: Bool, status: String) {

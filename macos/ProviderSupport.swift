@@ -79,6 +79,8 @@ struct ProviderView: Decodable {
                     id: $0,
                     displayName: nil,
                     description: "该模型仍保留在 allowlist，但本次模型发现未返回它。",
+                    ratio: nil,
+                    priceType: nil,
                     contextWindow: nil
                 ),
                 isAvailable: false,
@@ -97,12 +99,16 @@ struct ProviderModelView: Decodable {
     let id: String
     let displayName: String?
     let description: String?
+    let ratio: String?
+    let priceType: String?
     let contextWindow: UInt64?
 
     enum CodingKeys: String, CodingKey {
         case id
         case displayName = "display_name"
         case description
+        case ratio
+        case priceType = "price_type"
         case contextWindow = "context_window"
     }
 }
@@ -115,7 +121,13 @@ struct ProviderModelListItem {
     var id: String { model.id }
     var displayName: String? { model.displayName }
     var description: String? { model.description }
+    var ratio: String? { model.ratio }
+    var priceType: String? { model.priceType }
     var contextWindow: UInt64? { model.contextWindow }
+}
+
+func shouldShowModelRatioColumn(for provider: ProviderView?) -> Bool {
+    provider?.presetID == "baidu-oneapi"
 }
 
 struct ProviderTestResponse: Decodable {
