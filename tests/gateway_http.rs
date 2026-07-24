@@ -10,10 +10,12 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use codex_mixin::anthropic::ModelInfo;
-use codex_mixin::config::{
-    GatewayConfig, ProviderPreset, ThinkingMode, UpstreamAuthHeader, UpstreamKind,
-};
+use codex_mixin::config::{GatewayConfig, ThinkingMode};
 use codex_mixin::fusion::{FusionProfile, PanelToolsConfig};
+use codex_mixin::provider::{
+    ProviderModel, ProviderModelSource, ProviderProtocol, ProviderRegistry, ProviderRequestPolicy,
+    apply_discovered_models, custom_provider, discover_provider_models,
+};
 use codex_mixin::server::{AppState, router};
 use codex_mixin::sse::drain_events;
 use codex_mixin::web_search::WebSearchCapabilities;
@@ -75,22 +77,36 @@ enum OfficialWebSocketBehavior {
 }
 
 fn test_config(upstream_base_url: String) -> GatewayConfig {
+    let mut provider = custom_provider("custom", "upstream-key");
+    provider.base_url = upstream_base_url;
+    provider.cached_models = [
+        "DeepSeek-V4-Flash",
+        "Claude Sonnet 5",
+        "Kimi-K2.7-Code",
+        "Fable 5",
+        "panel-a",
+        "panel-b",
+        "judge",
+        "final",
+        "gpt-5.5",
+        "gpt-5.6-sol",
+    ]
+    .into_iter()
+    .map(|id| ProviderModel {
+        id: id.to_owned(),
+        ..ProviderModel::default()
+    })
+    .collect();
+    provider.selected_models = provider
+        .cached_models
+        .iter()
+        .map(|model| model.id.clone())
+        .collect();
     GatewayConfig {
         bind: "127.0.0.1:0".parse().unwrap(),
-        provider_preset: ProviderPreset::Custom,
-        upstream_kind: UpstreamKind::AnthropicMessages,
-        upstream_base_url,
-        upstream_messages_path: "/v1/messages".to_owned(),
-        upstream_models_path: "/v1/models".to_owned(),
-        upstream_image_generation_path: None,
-        upstream_api_key: "upstream-key".to_owned(),
-        quota_url: None,
-        quota_username: None,
+        providers: vec![provider],
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
         codex_auth_path: std::path::PathBuf::from("/tmp/codex-auth.json"),
-        upstream_auth_header: UpstreamAuthHeader::AuthorizationBearer,
-        anthropic_version: "2023-06-01".to_owned(),
-        anthropic_beta: None,
         gateway_api_key: Some("gateway-key".to_owned()),
         accept_codex_oauth: true,
         default_max_tokens: 8192,
@@ -102,6 +118,19 @@ fn test_config(upstream_base_url: String) -> GatewayConfig {
         web_search_max_uses: Some(3),
         fusion_profiles: Vec::new(),
     }
+}
+
+fn configure_baidu_policy(config: &mut GatewayConfig) {
+    config.providers[0].preset_id = Some("baidu-oneapi".to_owned());
+    config.providers[0].request_policy = ProviderRequestPolicy {
+        session_affinity_header: Some("x-hash-key".to_owned()),
+        mcp_bridge_for_fable: true,
+    };
+}
+
+fn configure_openai_chat(config: &mut GatewayConfig, api_path: &str) {
+    config.providers[0].protocol = ProviderProtocol::OpenAiChat;
+    config.providers[0].api_path = api_path.to_owned();
 }
 
 async fn spawn_router(app: Router) -> String {
@@ -314,7 +343,7 @@ async fn mock_baidu_available_models(
             },
             "price_type": "Value model"
         }, {
-            "model": "Claude Sonnet 5",
+            "model": "Claude Sonnet 5-custom",
             "capability": null,
             "price_type": "Expensive model"
         }, {
@@ -1018,7 +1047,7 @@ async fn spawn_gateway_with_mock_official(
 
 fn responses_request() -> Value {
     json!({
-        "model": "DeepSeek-V4-Flash",
+        "model": "DeepSeek-V4-Flash-custom",
         "stream": true,
         "instructions": "You are Codex.",
         "input": [
@@ -1034,9 +1063,9 @@ fn responses_request() -> Value {
 fn fusion_profile() -> FusionProfile {
     FusionProfile {
         id: "default".to_owned(),
-        panel_models: vec!["panel-a".to_owned(), "panel-b".to_owned()],
-        judge_model: "judge".to_owned(),
-        final_model: "final".to_owned(),
+        panel_models: vec!["panel-a-custom".to_owned(), "panel-b-custom".to_owned()],
+        judge_model: "judge-custom".to_owned(),
+        final_model: "final-custom".to_owned(),
         min_successful: 2,
         max_completion_tokens: 2048,
         timeout_ms: 5_000,
@@ -1100,7 +1129,7 @@ async fn proxies_models_and_generates_catalog() {
         .json()
         .await
         .unwrap();
-    assert_eq!(models["data"][0]["id"], "DeepSeek-V4-Flash");
+    assert_eq!(models["data"][0]["id"], "DeepSeek-V4-Flash-custom");
 
     let catalog: Value = client
         .get(format!("{gateway_url}/v1/codex-model-catalog"))
@@ -1111,14 +1140,21 @@ async fn proxies_models_and_generates_catalog() {
         .json()
         .await
         .unwrap();
-    assert_eq!(catalog["models"][1]["slug"], "Claude Sonnet 5");
+    assert_eq!(catalog["models"][1]["slug"], "Claude Sonnet 5-custom");
 }
 
 #[tokio::test]
 async fn uses_baidu_available_models_as_authoritative_catalog_source() {
     let upstream_url = spawn_baidu_metadata_upstream().await;
     let mut config = test_config(upstream_url);
-    config.provider_preset = ProviderPreset::BaiduOneApi;
+    configure_baidu_policy(&mut config);
+    config.providers[0].model_source = ProviderModelSource::BaiduOneApi;
+    config.providers[0].cached_models.clear();
+    config.providers[0].selected_models.clear();
+    let discovered = discover_provider_models(&reqwest::Client::new(), &config.providers[0])
+        .await
+        .unwrap();
+    apply_discovered_models(&mut config.providers[0], discovered).unwrap();
     let gateway_url = spawn_gateway_with_config(config).await;
     let client = reqwest::Client::new();
 
@@ -1133,15 +1169,26 @@ async fn uses_baidu_available_models_as_authoritative_catalog_source() {
         .json()
         .await
         .unwrap();
-    assert_eq!(models["data"][0]["ratio"], "0.2x");
-    assert_eq!(models["data"][0]["description"], "Fast coding model");
-    assert_eq!(models["data"][0]["context_window"], 1_024_000);
-    assert_eq!(models["data"].as_array().unwrap().len(), 3);
-    assert_eq!(models["data"][1]["id"], "Kimi-K2.7-Code");
-    assert_eq!(models["data"][1]["ratio"], "1.0x");
-    assert_eq!(models["data"][2]["id"], "auto");
-    assert_eq!(models["data"][2]["description"], "Default model");
-    assert_eq!(models["data"][2]["context_window"], 200_000);
+    let models = models["data"].as_array().unwrap();
+    assert_eq!(models.len(), 3);
+    let deepseek = models
+        .iter()
+        .find(|model| model["id"] == "DeepSeek-V4-Flash-custom")
+        .unwrap();
+    assert_eq!(deepseek["ratio"], "0.2x");
+    assert_eq!(deepseek["description"], "Fast coding model");
+    assert_eq!(deepseek["context_window"], 1_024_000);
+    let kimi = models
+        .iter()
+        .find(|model| model["id"] == "Kimi-K2.7-Code-custom")
+        .unwrap();
+    assert_eq!(kimi["ratio"], "1.0x");
+    let auto = models
+        .iter()
+        .find(|model| model["id"] == "auto-custom")
+        .unwrap();
+    assert_eq!(auto["description"], "Default model");
+    assert_eq!(auto["context_window"], 200_000);
 
     let catalog: Value = client
         .get(format!("{gateway_url}/v1/codex-model-catalog"))
@@ -1158,7 +1205,7 @@ async fn uses_baidu_available_models_as_authoritative_catalog_source() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|model| model["slug"] == "DeepSeek-V4-Flash")
+        .find(|model| model["slug"] == "DeepSeek-V4-Flash-custom")
         .unwrap();
     assert_eq!(
         model["description"],
@@ -1170,10 +1217,229 @@ async fn uses_baidu_available_models_as_authoritative_catalog_source() {
         .as_array()
         .unwrap()
         .iter()
-        .find(|model| model["slug"] == "auto")
+        .find(|model| model["slug"] == "auto-custom")
         .unwrap();
     assert_eq!(auto["description"], "Default model | 1.0x | Value model");
     assert_eq!(auto["context_window"], 200_000);
+}
+
+#[tokio::test]
+async fn isolates_http_and_websocket_routes_across_two_providers() {
+    let alpha_requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let captured_alpha = alpha_requests.clone();
+    let alpha_url = spawn_router(Router::new().route(
+        "/v1/messages",
+        post(move |headers: HeaderMap, Json(mut body): Json<Value>| {
+            let captured_alpha = captured_alpha.clone();
+            async move {
+                body["__authorization"] = headers
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map_or(Value::Null, |value| json!(value));
+                let failing = body["model"] == "broken";
+                captured_alpha.lock().unwrap().push(body);
+                if failing {
+                    return (StatusCode::BAD_GATEWAY, "alpha failed").into_response();
+                }
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/event-stream")
+                    .body(Body::from(text_sse()))
+                    .unwrap()
+            }
+        }),
+    ))
+    .await;
+    let beta_requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let captured_beta = beta_requests.clone();
+    let beta_url = spawn_router(Router::new().route(
+        "/v1/chat/completions",
+        post(move |headers: HeaderMap, Json(mut body): Json<Value>| {
+            let captured_beta = captured_beta.clone();
+            async move {
+                body["__authorization"] = headers
+                    .get(header::AUTHORIZATION)
+                    .and_then(|value| value.to_str().ok())
+                    .map_or(Value::Null, |value| json!(value));
+                captured_beta.lock().unwrap().push(body);
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/event-stream")
+                    .body(Body::from(openai_chat_sse()))
+                    .unwrap()
+            }
+        }),
+    ))
+    .await;
+
+    let mut alpha = custom_provider("alpha", "alpha-key");
+    alpha.base_url = alpha_url;
+    alpha.cached_models = ["shared", "hidden", "broken"]
+        .into_iter()
+        .map(|id| ProviderModel {
+            id: id.to_owned(),
+            ..ProviderModel::default()
+        })
+        .collect();
+    alpha.selected_models = vec!["shared".to_owned(), "broken".to_owned()];
+    let mut beta = custom_provider("beta", "beta-key");
+    beta.base_url = beta_url;
+    beta.protocol = ProviderProtocol::OpenAiChat;
+    beta.api_path = "/v1/chat/completions".to_owned();
+    beta.cached_models = vec![ProviderModel {
+        id: "shared".to_owned(),
+        ..ProviderModel::default()
+    }];
+    beta.selected_models = vec!["shared".to_owned()];
+    let mut config = test_config("http://unused.invalid".to_owned());
+    config.providers = vec![alpha, beta];
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+
+    let models: Value = client
+        .get(format!("{gateway_url}/v1/models"))
+        .bearer_auth("gateway-key")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    let model_ids = models["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|model| model["id"].as_str().unwrap())
+        .collect::<Vec<_>>();
+    assert_eq!(model_ids, ["shared-alpha", "broken-alpha", "shared-beta"]);
+    assert!(!model_ids.contains(&"hidden-alpha"));
+
+    for model in ["shared-alpha", "shared-beta"] {
+        let mut request = responses_request();
+        request["model"] = json!(model);
+        let response = client
+            .post(format!("{gateway_url}/v1/responses"))
+            .bearer_auth("gateway-key")
+            .json(&request)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK, "{model}");
+        assert!(
+            response
+                .text()
+                .await
+                .unwrap()
+                .contains("response.completed")
+        );
+    }
+
+    let mut hidden = responses_request();
+    hidden["model"] = json!("hidden-alpha");
+    assert_eq!(
+        client
+            .post(format!("{gateway_url}/v1/responses"))
+            .bearer_auth("gateway-key")
+            .json(&hidden)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_REQUEST
+    );
+    let mut broken = responses_request();
+    broken["model"] = json!("broken-alpha");
+    assert_eq!(
+        client
+            .post(format!("{gateway_url}/v1/responses"))
+            .bearer_auth("gateway-key")
+            .json(&broken)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::BAD_GATEWAY
+    );
+    let mut beta_after_failure = responses_request();
+    beta_after_failure["model"] = json!("shared-beta");
+    assert_eq!(
+        client
+            .post(format!("{gateway_url}/v1/responses"))
+            .bearer_auth("gateway-key")
+            .json(&beta_after_failure)
+            .send()
+            .await
+            .unwrap()
+            .status(),
+        StatusCode::OK
+    );
+
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut websocket_request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    websocket_request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(websocket_request).await.unwrap();
+    socket
+        .send(WsMessage::Text(
+            json!({
+                "type": "response.create",
+                "model": "shared-alpha",
+                "generate": false,
+                "input": []
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let alpha_frames = websocket_response_frames(&mut socket).await;
+    let previous_response_id = alpha_frames
+        .iter()
+        .filter_map(|frame| serde_json::from_str::<Value>(frame).ok())
+        .find(|event| event["type"] == "response.completed")
+        .unwrap()["response"]["id"]
+        .clone();
+    socket
+        .send(WsMessage::Text(
+            json!({
+                "type": "response.create",
+                "model": "shared-beta",
+                "previous_response_id": previous_response_id,
+                "generate": false,
+                "input": []
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let cross_provider = websocket_response_frames(&mut socket).await.join("\n");
+    assert!(cross_provider.contains("\"type\":\"response.failed\""));
+    assert!(cross_provider.contains("belongs to model shared-alpha"));
+
+    let alpha_requests = alpha_requests.lock().unwrap();
+    assert!(
+        alpha_requests
+            .iter()
+            .all(|body| body["__authorization"] == "Bearer alpha-key")
+    );
+    assert!(
+        alpha_requests
+            .iter()
+            .all(|body| matches!(body["model"].as_str(), Some("shared" | "broken")))
+    );
+    let beta_requests = beta_requests.lock().unwrap();
+    assert!(
+        beta_requests
+            .iter()
+            .all(|body| body["__authorization"] == "Bearer beta-key")
+    );
+    assert!(beta_requests.iter().all(|body| body["model"] == "shared"));
 }
 
 #[tokio::test]
@@ -1303,7 +1569,7 @@ async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
         .unwrap();
     assert_eq!(
         fusion_model["display_name"],
-        "Fusion (default): panel-a+panel-b → judge judge"
+        "Fusion (default): panel-a-custom+panel-b-custom → judge judge-custom"
     );
 
     let mut request = responses_request();
@@ -1350,8 +1616,8 @@ async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
         .as_str()
         .unwrap();
     assert!(panel_results.contains("| # | Panel Model | Status | Result |"));
-    assert!(panel_results.contains("<code>panel-a</code>"));
-    assert!(panel_results.contains("<code>panel-b</code>"));
+    assert!(panel_results.contains("<code>panel-a-custom</code>"));
+    assert!(panel_results.contains("<code>panel-b-custom</code>"));
     assert_eq!(panel_results.matches("<details>").count(), 2);
     assert!(detail_items.iter().any(|event| {
         event["item"]["content"][0]["text"]
@@ -1659,7 +1925,7 @@ async fn fusion_routes_models_across_official_and_upstream_providers() {
     ))
     .await;
     let mut config = test_config(upstream_url);
-    config.provider_preset = ProviderPreset::BaiduOneApi;
+    configure_baidu_policy(&mut config);
     config.official_responses_url = format!("{official_url}/v1/responses");
     let codex_home = tempfile::tempdir().unwrap();
     config.codex_auth_path = codex_home.path().join("auth.json");
@@ -1672,9 +1938,9 @@ async fn fusion_routes_models_across_official_and_upstream_providers() {
         id: "mixed".to_owned(),
         panel_models: vec![
             "official:gpt-5.6-sol".to_owned(),
-            "baidu-oneapi:panel-custom".to_owned(),
+            "panel-a-custom".to_owned(),
         ],
-        judge_model: "baidu-oneapi:judge-custom".to_owned(),
+        judge_model: "judge-custom".to_owned(),
         final_model: "official:gpt-5.6-sol".to_owned(),
         min_successful: 2,
         max_completion_tokens: 2048,
@@ -1705,8 +1971,8 @@ async fn fusion_routes_models_across_official_and_upstream_providers() {
         .iter()
         .map(|request| request["model"].as_str().unwrap().to_owned())
         .collect::<Vec<_>>();
-    assert!(upstream_models.contains(&"panel-custom".to_owned()));
-    assert!(upstream_models.contains(&"judge-custom".to_owned()));
+    assert!(upstream_models.contains(&"panel-a".to_owned()));
+    assert!(upstream_models.contains(&"judge".to_owned()));
     {
         let official = official_requests.lock().unwrap();
         assert_eq!(official.len(), 2);
@@ -1827,7 +2093,7 @@ async fn fusion_panel_tool_loop_stops_at_round_limit() {
     let workspace = tempfile::tempdir().unwrap();
     std::fs::write(workspace.path().join("input.txt"), "tool input").unwrap();
     let mut profile = fusion_profile();
-    profile.panel_models = vec!["panel-a".to_owned()];
+    profile.panel_models = vec!["panel-a-custom".to_owned()];
     profile.min_successful = 1;
     profile.panel_tools.enabled = true;
     profile.panel_tools.max_rounds = 1;
@@ -1873,7 +2139,7 @@ async fn fusion_panel_tool_loop_stops_at_round_limit() {
 async fn maps_fast_service_tier_to_anthropic_request_and_beta() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let mut config = test_config(upstream_url);
-    config.anthropic_beta = Some("existing-beta".to_owned());
+    config.providers[0].anthropic_beta = Some("existing-beta".to_owned());
     let gateway_url = spawn_gateway_with_config(config).await;
     let mut request = responses_request();
     request["service_tier"] = json!("priority");
@@ -1900,7 +2166,7 @@ async fn maps_fast_service_tier_to_anthropic_request_and_beta() {
 async fn maps_stable_session_to_anthropic_metadata() {
     let upstream_url = spawn_session_required_upstream().await;
     let mut config = test_config(upstream_url);
-    config.provider_preset = ProviderPreset::BaiduOneApi;
+    configure_baidu_policy(&mut config);
     let gateway_url = spawn_gateway_with_config(config).await;
     let response = reqwest::Client::new()
         .post(format!("{gateway_url}/v1/responses"))
@@ -1923,7 +2189,7 @@ async fn maps_compaction_style_request_without_tools() {
         .post(format!("{gateway_url}/v1/responses"))
         .bearer_auth("gateway-key")
         .json(&json!({
-            "model": "Claude Sonnet 5",
+            "model": "Claude Sonnet 5-custom",
             "stream": true,
             "instructions": "Summarize the conversation for continuation.",
             "input": [
@@ -1955,10 +2221,7 @@ async fn maps_compaction_style_request_without_tools() {
 async fn maps_openai_chat_stream_to_responses_sse() {
     let (upstream_url, requests) = spawn_mock_openai_chat().await;
     let mut config = test_config(upstream_url);
-    config.provider_preset = ProviderPreset::DeepSeek;
-    config.upstream_kind = UpstreamKind::OpenAiChat;
-    config.upstream_messages_path = "/chat/completions".to_owned();
-    config.upstream_models_path = "/models".to_owned();
+    configure_openai_chat(&mut config, "/chat/completions");
     let gateway_url = spawn_gateway_with_config(config).await;
     let client = reqwest::Client::new();
     let response = client
@@ -1986,10 +2249,8 @@ async fn maps_openai_chat_stream_to_responses_sse() {
 async fn maps_oneapi_affinity_for_openai_chat() {
     let (upstream_url, requests) = spawn_mock_openai_chat().await;
     let mut config = test_config(upstream_url);
-    config.provider_preset = ProviderPreset::BaiduOneApi;
-    config.upstream_kind = UpstreamKind::OpenAiChat;
-    config.upstream_messages_path = "/chat/completions".to_owned();
-    config.upstream_models_path = "/models".to_owned();
+    configure_baidu_policy(&mut config);
+    configure_openai_chat(&mut config, "/chat/completions");
     let gateway_url = spawn_gateway_with_config(config).await;
     let mut request = responses_request();
     request["service_tier"] = json!("priority");
@@ -2037,11 +2298,11 @@ async fn maps_tool_use_to_responses_function_call() {
 async fn maps_baidu_fable_mcp_tool_name_back_to_codex() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::FableMcpTool).await;
     let mut config = test_config(upstream_url);
-    config.provider_preset = ProviderPreset::BaiduOneApi;
+    configure_baidu_policy(&mut config);
     let gateway_url = spawn_gateway_with_config(config).await;
     let client = reqwest::Client::new();
     let mut request = responses_request();
-    request["model"] = json!("Fable 5");
+    request["model"] = json!("Fable 5-custom");
 
     let response = client
         .post(format!("{gateway_url}/v1/responses"))
@@ -2104,7 +2365,7 @@ async fn preserves_namespaced_tool_call_for_codex_executor() {
 async fn custom_image_tool_calls_configured_upstream_generation_endpoint() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::ImageTool).await;
     let mut config = test_config(upstream_url);
-    config.upstream_image_generation_path = Some("/v1/images/generations".to_owned());
+    config.providers[0].image_generation_path = Some("/v1/images/generations".to_owned());
     let gateway_url = spawn_gateway_with_config(config).await;
 
     let response = reqwest::Client::new()
@@ -2153,10 +2414,8 @@ async fn custom_image_tool_calls_configured_upstream_generation_endpoint() {
 async fn openai_chat_image_tool_calls_configured_upstream_generation_endpoint() {
     let (upstream_url, requests) = spawn_mock_openai_image_chat().await;
     let mut config = test_config(upstream_url);
-    config.provider_preset = ProviderPreset::DeepSeek;
-    config.upstream_kind = UpstreamKind::OpenAiChat;
-    config.upstream_messages_path = "/chat/completions".to_owned();
-    config.upstream_image_generation_path = Some("/images/generations".to_owned());
+    configure_openai_chat(&mut config, "/chat/completions");
+    config.providers[0].image_generation_path = Some("/images/generations".to_owned());
     let gateway_url = spawn_gateway_with_config(config).await;
 
     let response = reqwest::Client::new()
@@ -2259,7 +2518,7 @@ async fn custom_image_tool_uses_official_backend_without_upstream_image_endpoint
 async fn custom_image_generation_endpoint_failure_is_explicit() {
     let (upstream_url, _) = spawn_mock_upstream(MockMode::ImageToolFailure).await;
     let mut config = test_config(upstream_url);
-    config.upstream_image_generation_path = Some("/v1/images/generations".to_owned());
+    config.providers[0].image_generation_path = Some("/v1/images/generations".to_owned());
     let gateway_url = spawn_gateway_with_config(config).await;
 
     let response = reqwest::Client::new()
@@ -2299,7 +2558,7 @@ async fn custom_image_generation_endpoint_failure_is_explicit() {
 async fn rejects_unknown_custom_image_route_marker_without_official_fallback() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::ImageTool).await;
     let mut config = test_config(upstream_url);
-    config.upstream_image_generation_path = Some("/v1/images/generations".to_owned());
+    config.providers[0].image_generation_path = Some("/v1/images/generations".to_owned());
     let gateway_url = spawn_gateway_with_config(config).await;
 
     let response = reqwest::Client::new()
@@ -2386,7 +2645,7 @@ async fn maps_deferred_tool_search_back_to_codex_call() {
 async fn maps_custom_websocket_to_responses_frames() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let mut config = test_config(upstream_url);
-    config.provider_preset = ProviderPreset::BaiduOneApi;
+    configure_baidu_policy(&mut config);
     let gateway_url = spawn_gateway_with_config(config).await;
     let websocket_url = gateway_url.replacen("http://", "ws://", 1);
     let mut request = format!("{websocket_url}/v1/responses")
@@ -2512,7 +2771,7 @@ async fn fusion_uses_same_pipeline_on_custom_websocket() {
 async fn retries_demoted_web_search_on_custom_websocket() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::WebSearchRetry).await;
     let mut config = test_config(upstream_url);
-    config.provider_preset = ProviderPreset::BaiduOneApi;
+    configure_baidu_policy(&mut config);
     config.enable_web_search_tool = true;
     let capability_dir = tempfile::tempdir().unwrap();
     let capabilities = WebSearchCapabilities::load(
@@ -2521,11 +2780,12 @@ async fn retries_demoted_web_search_on_custom_websocket() {
     )
     .unwrap();
     let mut models = vec![ModelInfo {
-        id: "Claude Sonnet 5".to_owned(),
+        id: "Claude Sonnet 5-custom".to_owned(),
         ..ModelInfo::default()
     }];
+    let registry = ProviderRegistry::new(config.providers.clone()).unwrap();
     capabilities
-        .probe_models(&mut models, &config, true)
+        .probe_models(&mut models, &config, &registry, true)
         .await
         .unwrap();
     requests.lock().unwrap().clear();
@@ -2546,7 +2806,7 @@ async fn retries_demoted_web_search_on_custom_websocket() {
     let mut body = responses_request();
     body.as_object_mut().unwrap().remove("stream");
     body["type"] = json!("response.create");
-    body["model"] = json!("Claude Sonnet 5");
+    body["model"] = json!("Claude Sonnet 5-custom");
     body["tools"]
         .as_array_mut()
         .unwrap()
@@ -2612,7 +2872,7 @@ async fn rebuilds_custom_history_from_previous_response_id() {
 
     let second = json!({
         "type": "response.create",
-        "model": "DeepSeek-V4-Flash",
+        "model": "DeepSeek-V4-Flash-custom",
         "previous_response_id": previous_response_id,
         "input": [{
             "type": "message",
@@ -2644,7 +2904,7 @@ async fn rebuilds_custom_history_from_previous_response_id() {
 async fn preserves_steered_user_input_after_custom_tool_call() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Tool).await;
     let mut config = test_config(upstream_url);
-    config.provider_preset = ProviderPreset::BaiduOneApi;
+    configure_baidu_policy(&mut config);
     let gateway_url = spawn_gateway_with_config(config).await;
     let websocket_url = gateway_url.replacen("http://", "ws://", 1);
     let mut request = format!("{websocket_url}/v1/responses")
@@ -2658,7 +2918,7 @@ async fn preserves_steered_user_input_after_custom_tool_call() {
     let mut first = responses_request();
     first.as_object_mut().unwrap().remove("stream");
     first["type"] = json!("response.create");
-    first["model"] = json!("gpt-5.6-sol-baidu-oneapi");
+    first["model"] = json!("gpt-5.6-sol-custom");
     socket
         .send(WsMessage::Text(first.to_string().into()))
         .await
@@ -2672,7 +2932,7 @@ async fn preserves_steered_user_input_after_custom_tool_call() {
 
     let follow_up = json!({
         "type": "response.create",
-        "model": "gpt-5.6-sol-baidu-oneapi",
+        "model": "gpt-5.6-sol-custom",
         "previous_response_id": completed["response"]["id"],
         "input": [
             {
@@ -3372,7 +3632,7 @@ async fn keeps_custom_websocket_open_after_noop_request() {
         .send(WsMessage::Text(
             json!({
                 "type": "response.create",
-                "model": "DeepSeek-V4-Flash",
+                "model": "DeepSeek-V4-Flash-custom",
                 "generate": false,
                 "input": []
             })
@@ -3543,11 +3803,12 @@ async fn forwards_thinking_and_anthropic_server_web_search() {
     )
     .unwrap();
     let mut models = vec![ModelInfo {
-        id: "Claude Sonnet 5".to_owned(),
+        id: "Claude Sonnet 5-custom".to_owned(),
         ..ModelInfo::default()
     }];
+    let registry = ProviderRegistry::new(config.providers.clone()).unwrap();
     capabilities
-        .probe_models(&mut models, &config, true)
+        .probe_models(&mut models, &config, &registry, true)
         .await
         .unwrap();
     let probe_requests = requests.lock().unwrap().clone();
@@ -3565,7 +3826,7 @@ async fn forwards_thinking_and_anthropic_server_web_search() {
     let gateway_url = spawn_router(router(state)).await;
     let client = reqwest::Client::new();
     let mut request = responses_request();
-    request["model"] = json!("Claude Sonnet 5");
+    request["model"] = json!("Claude Sonnet 5-custom");
     request["reasoning"] = json!({"effort": "xhigh"});
     request["input"] = json!([
         {"type":"message","role":"developer","content":[{"type":"input_text","text":"dev rules"}]},
@@ -3619,7 +3880,7 @@ async fn forwards_thinking_and_anthropic_server_web_search() {
     assert!(upstream_request["tools"][1].get("input_schema").is_none());
 
     let mut unsupported_request = responses_request();
-    unsupported_request["model"] = json!("DeepSeek-V4-Flash");
+    unsupported_request["model"] = json!("DeepSeek-V4-Flash-custom");
     unsupported_request["tools"]
         .as_array_mut()
         .unwrap()
@@ -3645,7 +3906,7 @@ async fn proxies_codex_image_generation_to_official_backend() {
     let (official_url, official_requests, auth_headers, account_headers, _, _) =
         spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
     let mut config = test_config(upstream_url);
-    config.upstream_image_generation_path = Some("/v1/images/generations".to_owned());
+    config.providers[0].image_generation_path = Some("/v1/images/generations".to_owned());
     config.official_responses_url = format!("{official_url}/v1/responses");
     let codex_home = tempfile::tempdir().unwrap();
     config.codex_auth_path = codex_home.path().join("auth.json");

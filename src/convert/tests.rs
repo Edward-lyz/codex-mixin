@@ -2,29 +2,16 @@ use std::time::Duration;
 
 use serde_json::json;
 
-use crate::config::{
-    GatewayConfig, ProviderPreset, ThinkingMode, UpstreamAuthHeader, UpstreamKind,
-};
+use crate::config::{GatewayConfig, ThinkingMode};
 
 use super::*;
 
 fn config() -> GatewayConfig {
     GatewayConfig {
         bind: "127.0.0.1:0".parse().unwrap(),
-        provider_preset: ProviderPreset::Custom,
-        upstream_kind: UpstreamKind::AnthropicMessages,
-        upstream_base_url: "http://127.0.0.1".to_owned(),
-        upstream_messages_path: "/v1/messages".to_owned(),
-        upstream_models_path: "/v1/models".to_owned(),
-        upstream_image_generation_path: None,
-        upstream_api_key: "test".to_owned(),
-        quota_url: None,
-        quota_username: None,
+        providers: vec![crate::provider::open_code_go_provider("test", "test")],
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
         codex_auth_path: std::path::PathBuf::from("/tmp/codex-auth.json"),
-        upstream_auth_header: UpstreamAuthHeader::AuthorizationBearer,
-        anthropic_version: "2023-06-01".to_owned(),
-        anthropic_beta: None,
         gateway_api_key: None,
         accept_codex_oauth: true,
         default_max_tokens: 8192,
@@ -122,8 +109,7 @@ fn maps_codex_fast_service_tier_to_anthropic_speed() {
 
 #[test]
 fn uses_mcp_tool_names_for_baidu_fable_bridge_and_history() {
-    let mut config = config();
-    config.provider_preset = ProviderPreset::BaiduOneApi;
+    let config = config();
     let body = json!({
         "model": "Fable 5",
         "stream": true,
@@ -145,7 +131,7 @@ fn uses_mcp_tool_names_for_baidu_fable_bridge_and_history() {
         ]
     });
 
-    let converted = responses_to_anthropic(&body, &config).unwrap();
+    let converted = responses_to_anthropic_with_web_search(&body, &config, false, true).unwrap();
     assert_eq!(
         converted.request.messages[1].content[0],
         ContentBlock::ToolUse {
@@ -193,22 +179,13 @@ fn uses_mcp_tool_names_for_baidu_fable_bridge_and_history() {
 
 #[test]
 fn limits_mcp_bridge_names_to_baidu_fable_models() {
-    for (provider, model, expected_tool_name) in [
-        (
-            ProviderPreset::BaiduOneApi,
-            "Fable 5",
-            "mcp__codex__exec_command",
-        ),
-        (ProviderPreset::Custom, "Fable 5", "exec_command"),
-        (
-            ProviderPreset::BaiduOneApi,
-            "Claude Sonnet 5",
-            "exec_command",
-        ),
+    for (bridge, model, expected_tool_name) in [
+        (true, "Fable 5", "mcp__codex__exec_command"),
+        (false, "Fable 5", "exec_command"),
+        (false, "Claude Sonnet 5", "exec_command"),
     ] {
-        let mut config = config();
-        config.provider_preset = provider;
-        let converted = responses_to_anthropic(
+        let config = config();
+        let converted = responses_to_anthropic_with_web_search(
             &json!({
                 "model": model,
                 "stream": true,
@@ -220,6 +197,8 @@ fn limits_mcp_bridge_names_to_baidu_fable_models() {
                 }]
             }),
             &config,
+            false,
+            bridge,
         )
         .unwrap();
 

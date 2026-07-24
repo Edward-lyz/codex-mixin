@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) const CAPABILITY_FILE_VERSION: u64 = 2;
+pub(super) const CAPABILITY_FILE_VERSION: u64 = 3;
 pub(super) const CAPABILITY_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 pub(super) const PROBE_CONCURRENCY: usize = 4;
 pub(super) const NO_EVIDENCE_PROBE_ATTEMPTS: usize = 3;
@@ -13,6 +13,8 @@ pub(super) const PROBE_PROMPT: &str = "Use the web_search server tool now to fin
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub struct ModelWebSearchCapability {
     pub model: String,
+    pub provider_id: String,
+    pub upstream_model: String,
     pub supported: bool,
     pub evidence: String,
     #[serde(skip_serializing_if = "Option::is_none")]
@@ -32,20 +34,33 @@ pub struct WebSearchProbeSummary {
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
 pub(super) struct UpstreamIdentity {
-    pub(super) provider_preset: String,
-    pub(super) upstream_kind: String,
-    pub(super) upstream_base_url: String,
-    pub(super) upstream_messages_path: String,
+    pub(super) providers: Vec<ProviderIdentity>,
     pub(super) web_search_tool_type: String,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
+pub(super) struct ProviderIdentity {
+    pub(super) id: String,
+    pub(super) enabled: bool,
+    pub(super) protocol: ProviderProtocol,
+    pub(super) base_url: String,
+    pub(super) api_path: String,
 }
 
 impl UpstreamIdentity {
     pub(super) fn from_config(config: &GatewayConfig) -> Self {
         Self {
-            provider_preset: config.provider_preset.as_str().to_owned(),
-            upstream_kind: config.upstream_kind.as_str().to_owned(),
-            upstream_base_url: config.upstream_base_url.clone(),
-            upstream_messages_path: config.upstream_messages_path.clone(),
+            providers: config
+                .providers
+                .iter()
+                .map(|provider| ProviderIdentity {
+                    id: provider.id.clone(),
+                    enabled: provider.enabled,
+                    protocol: provider.protocol,
+                    base_url: provider.base_url.clone(),
+                    api_path: provider.api_path.clone(),
+                })
+                .collect(),
             web_search_tool_type: config.web_search_tool_type.clone(),
         }
     }

@@ -14,10 +14,8 @@ use serde_json::{Value, json};
 use tokio::time::{Instant, timeout_at};
 use uuid::Uuid;
 
-use crate::anthropic::ModelInfo;
-use crate::config::{
-    GatewayConfig, ProviderPreset, UpstreamAuthHeader, UpstreamKind, stored_config_path,
-};
+use crate::config::stored_config_path;
+use crate::provider::{ProviderProtocol, ProviderQuotaParser, ProviderRuntime};
 use crate::sse::SseDecoder;
 
 mod manager;
@@ -26,10 +24,11 @@ mod types;
 
 #[cfg(test)]
 pub(crate) use types::BENCHMARK_PROMPT;
+pub(crate) use types::BenchmarkTarget;
 pub use types::{
     BENCHMARK_TARGET_OUTPUT_TOKENS, BenchmarkResultStatus, BenchmarkRunStatus,
     BenchmarkSnapshotResponse, ModelBenchmarkManager, ModelBenchmarkResult, ModelBenchmarkSnapshot,
-    StartBenchmarkRequest,
+    ProviderBenchmarkCost, StartBenchmarkRequest,
 };
 
 #[cfg(test)]

@@ -25,7 +25,7 @@ async fn spawn_gateway(app: Router) -> String {
 #[tokio::test]
 #[ignore = "requires local provider credentials and makes real model requests"]
 async fn all_registered_models_can_say_hi() {
-    let config = GatewayConfig::from_env().expect("load local Codex Mixin configuration");
+    let config = GatewayConfig::from_stored_config().expect("load local Codex Mixin configuration");
     let gateway_api_key = config.gateway_api_key.clone();
     let state = AppState::new(config).unwrap();
     let custom_models = state

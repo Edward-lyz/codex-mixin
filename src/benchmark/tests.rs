@@ -10,9 +10,15 @@ use super::manager::{load_snapshot, save_snapshot};
 use super::runner::*;
 use super::types::BENCHMARK_FILE_VERSION;
 use super::*;
-use crate::config::ThinkingMode;
+use crate::provider::{
+    ProviderProtocol, ProviderQuotaParser, ProviderRegistry, ProviderRuntime, custom_provider,
+};
 
-async fn spawn_benchmark_server(delay: Duration) -> GatewayConfig {
+async fn spawn_benchmark_server(delay: Duration) -> ProviderRuntime {
+    spawn_benchmark_server_for("benchmark-provider", delay).await
+}
+
+async fn spawn_benchmark_server_for(id: &str, delay: Duration) -> ProviderRuntime {
     let quota_calls = Arc::new(AtomicUsize::new(0));
     let quota_counter = Arc::clone(&quota_calls);
     let app = Router::new()
@@ -56,12 +62,20 @@ async fn spawn_benchmark_server(delay: Duration) -> GatewayConfig {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let mut config = test_config(format!("http://{address}"));
-    config.quota_url = Some(format!("http://{address}/quota"));
-    config
+    let mut provider = test_provider(
+        format!("http://{address}"),
+        ProviderProtocol::AnthropicMessages,
+    );
+    provider.id = id.to_owned();
+    provider.display_name = id.to_owned();
+    provider.quota_url = Some(format!("http://{address}/quota"));
+    provider.quota_username = Some("benchmark-user".to_owned());
+    provider.quota_currency = Some("CNY".to_owned());
+    provider.quota_parser = ProviderQuotaParser::BaiduOneApi;
+    runtime(provider)
 }
 
-async fn spawn_openai_benchmark_server(delay: Duration) -> GatewayConfig {
+async fn spawn_openai_benchmark_server(delay: Duration) -> ProviderRuntime {
     let app = Router::new().route(
         "/chat/completions",
         post(move || async move {
@@ -86,57 +100,47 @@ async fn spawn_openai_benchmark_server(delay: Duration) -> GatewayConfig {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let mut config = test_config(format!("http://{address}"));
-    config.upstream_kind = UpstreamKind::OpenAiChat;
-    config.upstream_messages_path = "/chat/completions".to_owned();
-    config
+    let mut provider = test_provider(format!("http://{address}"), ProviderProtocol::OpenAiChat);
+    provider.api_path = "/chat/completions".to_owned();
+    runtime(provider)
 }
 
-fn test_config(upstream_base_url: String) -> GatewayConfig {
-    GatewayConfig {
-        bind: "127.0.0.1:0".parse().unwrap(),
-        provider_preset: ProviderPreset::Custom,
-        upstream_kind: UpstreamKind::AnthropicMessages,
-        upstream_base_url,
-        upstream_messages_path: "/v1/messages".to_owned(),
-        upstream_models_path: "/v1/models".to_owned(),
-        upstream_image_generation_path: None,
-        upstream_api_key: "upstream-key".to_owned(),
-        quota_url: None,
-        quota_username: None,
-        official_responses_url: "https://example.invalid/responses".to_owned(),
-        codex_auth_path: PathBuf::from("/tmp/codex-auth.json"),
-        upstream_auth_header: UpstreamAuthHeader::AuthorizationBearer,
-        anthropic_version: "2023-06-01".to_owned(),
-        anthropic_beta: None,
-        gateway_api_key: None,
-        accept_codex_oauth: true,
-        default_max_tokens: 8192,
-        default_context_window: 1_000_000,
-        request_timeout: Duration::from_secs(2),
-        thinking_mode: ThinkingMode::Off,
-        enable_web_search_tool: false,
-        web_search_tool_type: "web_search_20250305".to_owned(),
-        web_search_max_uses: Some(3),
-        fusion_profiles: Vec::new(),
-    }
+fn test_provider(
+    upstream_base_url: String,
+    protocol: ProviderProtocol,
+) -> crate::provider::ProviderDefinition {
+    let mut provider = custom_provider("benchmark-provider", "upstream-key");
+    provider.base_url = upstream_base_url;
+    provider.protocol = protocol;
+    provider
 }
 
-fn model(id: &str) -> ModelInfo {
-    ModelInfo {
-        id: id.to_owned(),
-        ..Default::default()
+fn runtime(provider: crate::provider::ProviderDefinition) -> ProviderRuntime {
+    ProviderRegistry::new(vec![provider]).unwrap().providers()[0].clone()
+}
+
+fn target(provider: &ProviderRuntime, model: &str) -> BenchmarkTarget {
+    BenchmarkTarget {
+        catalog_slug: format!("{model}-{}", provider.id()),
+        provider_id: provider.id().to_owned(),
+        provider_name: provider.display_name().to_owned(),
+        upstream_model_id: model.to_owned(),
+        provider: provider.clone(),
     }
 }
 
 #[tokio::test]
 async fn measures_ttft_and_generation_tps() {
-    let config = spawn_benchmark_server(Duration::from_millis(20)).await;
+    let provider = spawn_benchmark_server(Duration::from_millis(20)).await;
     let client = Client::new();
 
-    let result = benchmark_model(&client, &config, "Claude Sonnet 5", Duration::from_secs(1))
-        .await
-        .unwrap();
+    let result = benchmark_model(
+        &client,
+        &target(&provider, "Claude Sonnet 5"),
+        Duration::from_secs(1),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(result.status, BenchmarkResultStatus::Completed);
     assert_eq!(result.output_tokens, Some(100));
@@ -147,12 +151,16 @@ async fn measures_ttft_and_generation_tps() {
 
 #[tokio::test]
 async fn records_per_model_timeout() {
-    let config = spawn_benchmark_server(Duration::from_millis(100)).await;
+    let provider = spawn_benchmark_server(Duration::from_millis(100)).await;
     let client = Client::new();
 
-    let result = benchmark_model(&client, &config, "slow-model", Duration::from_millis(20))
-        .await
-        .unwrap();
+    let result = benchmark_model(
+        &client,
+        &target(&provider, "slow-model"),
+        Duration::from_millis(20),
+    )
+    .await
+    .unwrap();
 
     assert_eq!(result.status, BenchmarkResultStatus::TimedOut);
     assert!(result.error.unwrap().contains("timed out"));
@@ -160,13 +168,12 @@ async fn records_per_model_timeout() {
 
 #[tokio::test]
 async fn measures_openai_reasoning_tokens() {
-    let config = spawn_openai_benchmark_server(Duration::from_millis(20)).await;
+    let provider = spawn_openai_benchmark_server(Duration::from_millis(20)).await;
     let client = Client::new();
 
     let result = benchmark_model(
         &client,
-        &config,
-        "deepseek-reasoner",
+        &target(&provider, "deepseek-reasoner"),
         Duration::from_secs(1),
     )
     .await
@@ -195,12 +202,14 @@ async fn uses_end_to_end_tps_when_all_output_arrives_in_one_network_chunk() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
-    let config = test_config(format!("http://{address}"));
+    let provider = runtime(test_provider(
+        format!("http://{address}"),
+        ProviderProtocol::AnthropicMessages,
+    ));
 
     let result = benchmark_model(
         &Client::new(),
-        &config,
-        "Kimi-K2.7-Code",
+        &target(&provider, "Kimi-K2.7-Code"),
         Duration::from_secs(1),
     )
     .await
@@ -216,16 +225,14 @@ async fn uses_end_to_end_tps_when_all_output_arrives_in_one_network_chunk() {
 
 #[tokio::test]
 async fn persists_each_result_and_finishes_the_run() {
-    let mut config = spawn_benchmark_server(Duration::from_millis(5)).await;
-    config.provider_preset = ProviderPreset::BaiduOneApi;
+    let provider = spawn_benchmark_server(Duration::from_millis(5)).await;
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("model-benchmarks.json");
     let manager = ModelBenchmarkManager::new(path.clone());
 
     manager
         .start(
-            vec![model("model-b"), model("model-a")],
-            config,
+            vec![target(&provider, "model-a"), target(&provider, "model-b")],
             Duration::from_secs(1),
         )
         .unwrap();
@@ -233,8 +240,8 @@ async fn persists_each_result_and_finishes_the_run() {
         let snapshot = manager.snapshot().unwrap().unwrap();
         if snapshot.status == BenchmarkRunStatus::Completed {
             assert_eq!(snapshot.results.len(), 2);
-            assert_eq!(snapshot.results[0].model, "model-a");
-            assert_eq!(snapshot.results[1].model, "model-b");
+            assert_eq!(snapshot.results[0].model, "model-a-benchmark-provider");
+            assert_eq!(snapshot.results[1].model, "model-b-benchmark-provider");
             assert_eq!(snapshot.estimated_cost, Some(0.25));
             assert_eq!(snapshot.cost_currency.as_deref(), Some("CNY"));
             assert!(snapshot.cost_error.is_none());
@@ -246,6 +253,43 @@ async fn persists_each_result_and_finishes_the_run() {
         tokio::time::sleep(Duration::from_millis(10)).await;
     }
     panic!("benchmark did not finish");
+}
+
+#[tokio::test]
+async fn runs_different_provider_groups_concurrently() {
+    let first = spawn_benchmark_server_for("first-provider", Duration::from_millis(75)).await;
+    let second = spawn_benchmark_server_for("second-provider", Duration::from_millis(75)).await;
+    let directory = tempfile::tempdir().unwrap();
+    let manager = ModelBenchmarkManager::new(directory.path().join("model-benchmarks.json"));
+    let started = Instant::now();
+
+    manager
+        .start(
+            vec![target(&first, "same-model"), target(&second, "same-model")],
+            Duration::from_secs(2),
+        )
+        .unwrap();
+    for _ in 0..100 {
+        let snapshot = manager.snapshot().unwrap().unwrap();
+        if snapshot.status == BenchmarkRunStatus::Completed {
+            assert_eq!(snapshot.results.len(), 2);
+            assert!(
+                snapshot
+                    .results
+                    .iter()
+                    .all(|result| result.status == BenchmarkResultStatus::Completed)
+            );
+            assert_eq!(snapshot.provider_costs.len(), 2);
+            assert!(
+                started.elapsed() < Duration::from_millis(400),
+                "provider groups ran sequentially: {:?}",
+                started.elapsed()
+            );
+            return;
+        }
+        tokio::time::sleep(Duration::from_millis(10)).await;
+    }
+    panic!("multi-provider benchmark did not finish");
 }
 
 #[test]
@@ -268,6 +312,7 @@ fn marks_an_unfinished_run_interrupted_after_gateway_restart() {
         estimated_cost: None,
         cost_currency: None,
         cost_error: None,
+        provider_costs: Vec::new(),
     };
     save_snapshot(&path, &snapshot).unwrap();
 
@@ -283,7 +328,7 @@ fn marks_an_unfinished_run_interrupted_after_gateway_restart() {
 }
 
 #[test]
-fn loads_a_completed_snapshot_without_new_cost_fields() {
+fn rejects_a_snapshot_from_the_single_provider_schema() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("model-benchmarks.json");
     fs::write(
@@ -306,10 +351,10 @@ fn loads_a_completed_snapshot_without_new_cost_fields() {
     )
     .unwrap();
 
-    let snapshot = load_snapshot(&path).unwrap().unwrap();
-
-    assert_eq!(snapshot.run_id, "previous-version");
-    assert!(snapshot.estimated_cost.is_none());
-    assert!(snapshot.cost_currency.is_none());
-    assert!(snapshot.cost_error.is_none());
+    assert!(
+        load_snapshot(&path)
+            .unwrap_err()
+            .to_string()
+            .contains("unsupported")
+    );
 }

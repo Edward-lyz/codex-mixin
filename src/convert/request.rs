@@ -14,13 +14,14 @@ pub fn responses_to_anthropic(
     body: &Value,
     config: &GatewayConfig,
 ) -> Result<ConvertedRequest, GatewayError> {
-    responses_to_anthropic_with_web_search(body, config, config.enable_web_search_tool)
+    responses_to_anthropic_with_web_search(body, config, config.enable_web_search_tool, false)
 }
 
 pub(crate) fn responses_to_anthropic_with_web_search(
     body: &Value,
     config: &GatewayConfig,
     web_search_enabled: bool,
+    use_mcp_bridge_names: bool,
 ) -> Result<ConvertedRequest, GatewayError> {
     if body.get("stream").and_then(Value::as_bool) != Some(true) {
         return Err(GatewayError::BadRequest(
@@ -32,7 +33,6 @@ pub(crate) fn responses_to_anthropic_with_web_search(
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?
         .to_owned();
-    let use_mcp_bridge_names = needs_baidu_fable_mcp_bridge(config.provider_preset, &model);
     let max_tokens = body
         .get("max_output_tokens")
         .and_then(Value::as_u64)
@@ -118,11 +118,6 @@ pub(crate) fn responses_to_anthropic_with_web_search(
         },
         tool_names,
     })
-}
-
-/// Baidu OneAPI's Fable compatibility layer expects client tools under `mcp__codex__`.
-fn needs_baidu_fable_mcp_bridge(provider: ProviderPreset, model: &str) -> bool {
-    provider == ProviderPreset::BaiduOneApi && model.to_ascii_lowercase().contains("fable")
 }
 
 pub(super) fn merge_anthropic_output_format(

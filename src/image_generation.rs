@@ -11,10 +11,30 @@ const ROUTE_TTL: Duration = Duration::from_secs(10 * 60);
 
 #[derive(Clone, Default)]
 pub(crate) struct ImageRouteRegistry {
-    routes: Arc<Mutex<HashMap<String, Instant>>>,
+    routes: Arc<Mutex<HashMap<String, ImageRoute>>>,
+    provider_id: Option<String>,
+}
+
+#[derive(Clone)]
+struct ImageRoute {
+    provider_id: Option<String>,
+    expires_at: Instant,
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) struct ResolvedImageRoute {
+    pub(crate) clean_prompt: String,
+    pub(crate) provider_id: Option<String>,
 }
 
 impl ImageRouteRegistry {
+    pub(crate) fn for_provider(&self, provider_id: &str) -> Self {
+        Self {
+            routes: Arc::clone(&self.routes),
+            provider_id: Some(provider_id.to_owned()),
+        }
+    }
+
     pub(crate) fn mark_arguments(&self, arguments: &str) -> Result<String, String> {
         let mut arguments: Value = serde_json::from_str(arguments)
             .map_err(|error| format!("imagegen arguments are not valid JSON: {error}"))?;
@@ -63,12 +83,21 @@ impl ImageRouteRegistry {
             .routes
             .lock()
             .map_err(|_| "image route registry lock poisoned".to_owned())?;
-        routes.retain(|_, expires_at| *expires_at > now);
-        routes.insert(route_id, now + ROUTE_TTL);
+        routes.retain(|_, route| route.expires_at > now);
+        routes.insert(
+            route_id,
+            ImageRoute {
+                provider_id: self.provider_id.clone(),
+                expires_at: now + ROUTE_TTL,
+            },
+        );
         Ok(encoded)
     }
 
-    pub(crate) fn resolve_prompt(&self, prompt: &str) -> Result<Option<String>, String> {
+    pub(crate) fn resolve_prompt(
+        &self,
+        prompt: &str,
+    ) -> Result<Option<ResolvedImageRoute>, String> {
         let Some((clean_prompt, marker)) = prompt.rsplit_once(ROUTE_MARKER_START) else {
             if prompt.contains("codex-mixin-image-route:") {
                 return Err("malformed codex-mixin image route marker".to_owned());
@@ -86,11 +115,14 @@ impl ImageRouteRegistry {
             .routes
             .lock()
             .map_err(|_| "image route registry lock poisoned".to_owned())?;
-        routes.retain(|_, expires_at| *expires_at > now);
-        if !routes.contains_key(route_id) {
-            return Err("unknown or expired codex-mixin image route marker".to_owned());
-        }
-        Ok(Some(clean_prompt.to_owned()))
+        routes.retain(|_, route| route.expires_at > now);
+        let route = routes
+            .get(route_id)
+            .ok_or_else(|| "unknown or expired codex-mixin image route marker".to_owned())?;
+        Ok(Some(ResolvedImageRoute {
+            clean_prompt: clean_prompt.to_owned(),
+            provider_id: route.provider_id.clone(),
+        }))
     }
 }
 
@@ -110,8 +142,11 @@ mod tests {
         let marked_prompt = marked["prompt"].as_str().unwrap();
         assert!(marked_prompt.contains("codex-mixin-image-route:"));
         assert_eq!(
-            registry.resolve_prompt(marked_prompt).unwrap().as_deref(),
-            Some("draw a square")
+            registry
+                .resolve_prompt(marked_prompt)
+                .unwrap()
+                .map(|route| route.clean_prompt),
+            Some("draw a square".to_owned())
         );
         assert!(registry.resolve_prompt("draw a square").unwrap().is_none());
     }
@@ -147,8 +182,23 @@ mod tests {
             registry
                 .resolve_prompt(marked["prompt"].as_str().unwrap())
                 .unwrap()
-                .as_deref(),
-            Some(prompt)
+                .map(|route| route.clean_prompt),
+            Some(prompt.to_owned())
         );
+    }
+
+    #[test]
+    fn keeps_provider_identity_in_shared_route_registry() {
+        let registry = ImageRouteRegistry::default();
+        let provider = registry.for_provider("provider-a");
+        let marked = provider
+            .mark_arguments(r#"{"prompt":"draw a provider square"}"#)
+            .unwrap();
+        let marked: Value = serde_json::from_str(&marked).unwrap();
+        let route = registry
+            .resolve_prompt(marked["prompt"].as_str().unwrap())
+            .unwrap()
+            .unwrap();
+        assert_eq!(route.provider_id.as_deref(), Some("provider-a"));
     }
 }

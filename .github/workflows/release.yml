@@ -25,12 +25,12 @@ jobs:
           - name: linux-x86_64
             os: linux
             runner: ubuntu-latest
-            target: x86_64-unknown-linux-gnu
+            target: x86_64-unknown-linux-musl
             deb_arch: amd64
           - name: linux-aarch64
             os: linux
             runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-gnu
+            target: aarch64-unknown-linux-musl
             deb_arch: arm64
           - name: macos-x86_64
             os: macos
@@ -50,6 +50,11 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           key: ${{ matrix.target }}
+      - name: Install musl linker
+        if: matrix.os == 'linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
       - name: Resolve version
         id: version
         shell: bash
@@ -62,7 +67,17 @@ jobs:
           echo "tag=$tag" >>"$GITHUB_OUTPUT"
           echo "version=${tag#v}" >>"$GITHUB_OUTPUT"
       - name: Build CLI
-        run: cargo build --locked --release --target "${{ matrix.target }}"
+        run: |
+          if [[ "${{ matrix.os }}" == "linux" ]]; then
+            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
+            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
+            export CC_x86_64_unknown_linux_musl=musl-gcc
+            export CC_aarch64_unknown_linux_musl=musl-gcc
+          fi
+          cargo build --locked --release --target "${{ matrix.target }}"
+      - name: Verify static Linux CLI
+        if: matrix.os == 'linux'
+        run: ./scripts/verify-linux-static.sh "target/${{ matrix.target }}/release/codex-mixin"
       - name: Build macOS app
         if: matrix.os == 'macos'
         env:

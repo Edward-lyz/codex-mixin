@@ -19,6 +19,7 @@ struct ModelBenchmarkSnapshot: Decodable {
     let estimatedCost: Double?
     let costCurrency: String?
     let costError: String?
+    let providerCosts: [ProviderBenchmarkCost]
 
     enum CodingKeys: String, CodingKey {
         case runId = "run_id"
@@ -35,11 +36,34 @@ struct ModelBenchmarkSnapshot: Decodable {
         case estimatedCost = "estimated_cost"
         case costCurrency = "cost_currency"
         case costError = "cost_error"
+        case providerCosts = "provider_costs"
     }
+}
+
+struct ProviderBenchmarkCost: Decodable {
+    let providerID: String
+    let currency: String?
+    let estimatedCost: Double?
+    let error: String?
+
+    enum CodingKeys: String, CodingKey {
+        case providerID = "provider_id"
+        case currency
+        case estimatedCost = "estimated_cost"
+        case error
+    }
+}
+
+struct BenchmarkProviderOption {
+    let id: String
+    let displayName: String
 }
 
 struct ModelBenchmarkResult: Decodable {
     let model: String
+    let providerID: String
+    let providerName: String
+    let upstreamModel: String
     let status: String
     let ttftMs: UInt64?
     let generationMs: UInt64?
@@ -50,6 +74,9 @@ struct ModelBenchmarkResult: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case model
+        case providerID = "provider_id"
+        case providerName = "provider_name"
+        case upstreamModel = "upstream_model"
         case status
         case ttftMs = "ttft_ms"
         case generationMs = "generation_ms"
@@ -61,17 +88,20 @@ struct ModelBenchmarkResult: Decodable {
 }
 
 final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
-    typealias StartHandler = (Int) async throws -> ModelBenchmarkSnapshot
+    typealias StartHandler = (Int, String?) async throws -> ModelBenchmarkSnapshot
     typealias FetchHandler = () async throws -> ModelBenchmarkSnapshot?
+    typealias ProviderOptionsHandler = () async throws -> [BenchmarkProviderOption]
 
     private let snapshotURL: URL
     private let startHandler: StartHandler
     private let fetchHandler: FetchHandler
+    private let providerOptionsHandler: ProviderOptionsHandler
     private var pollingTask: Task<Void, Never>?
     private var snapshot: ModelBenchmarkSnapshot?
     private var displayedResults: [ModelBenchmarkResult] = []
 
     private let timeoutPopup = NSPopUpButton()
+    private let providerPopup = NSPopUpButton()
     private let startButton = NSButton(title: "开始测速", target: nil, action: nil)
     private let progressIndicator = NSProgressIndicator()
     private let statusLabel = NSTextField(labelWithString: "尚无测速结果")
@@ -80,18 +110,24 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
     private let tableView = NSTableView()
     private let emptyLabel = NSTextField(labelWithString: "暂无测速结果")
 
-    init(snapshotURL: URL, startHandler: @escaping StartHandler, fetchHandler: @escaping FetchHandler) {
+    init(
+        snapshotURL: URL,
+        startHandler: @escaping StartHandler,
+        fetchHandler: @escaping FetchHandler,
+        providerOptionsHandler: @escaping ProviderOptionsHandler
+    ) {
         self.snapshotURL = snapshotURL
         self.startHandler = startHandler
         self.fetchHandler = fetchHandler
+        self.providerOptionsHandler = providerOptionsHandler
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 920, height: 560),
+            contentRect: NSRect(x: 0, y: 0, width: 1080, height: 580),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "模型测速"
-        window.minSize = NSSize(width: 760, height: 420)
+        window.minSize = NSSize(width: 920, height: 440)
         window.isReleasedWhenClosed = false
         window.center()
         super.init(window: window)
@@ -105,6 +141,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
 
     func present() {
         loadPersistedSnapshot()
+        reloadProviderOptions()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -144,6 +181,9 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
 
         let text: String
         switch identifier.rawValue {
+        case "provider":
+            text = result.providerName
+            cell.toolTip = result.providerID
         case "model":
             text = result.model
             cell.textField?.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
@@ -174,7 +214,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         }
         if identifier.rawValue != "result" {
             cell.textField?.textColor = .labelColor
-            if identifier.rawValue != "tps" {
+            if identifier.rawValue != "tps" && identifier.rawValue != "provider" {
                 cell.toolTip = nil
             }
         }
@@ -215,8 +255,17 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         timeoutPopup.translatesAutoresizingMaskIntoConstraints = false
         timeoutPopup.widthAnchor.constraint(equalToConstant: 96).isActive = true
 
+        providerPopup.addItem(withTitle: "全部 Provider")
+        providerPopup.lastItem?.representedObject = ""
+        providerPopup.target = self
+        providerPopup.action = #selector(providerFilterChanged)
+        providerPopup.translatesAutoresizingMaskIntoConstraints = false
+        providerPopup.widthAnchor.constraint(equalToConstant: 150).isActive = true
+
         let timeoutLabel = NSTextField(labelWithString: "单模型超时")
         timeoutLabel.textColor = .secondaryLabelColor
+        let providerLabel = NSTextField(labelWithString: "Provider")
+        providerLabel.textColor = .secondaryLabelColor
 
         startButton.bezelStyle = .rounded
         startButton.image = benchmarkSymbol("speedometer")
@@ -226,7 +275,13 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         startButton.translatesAutoresizingMaskIntoConstraints = false
         startButton.widthAnchor.constraint(equalToConstant: 118).isActive = true
 
-        let controls = NSStackView(views: [timeoutLabel, timeoutPopup, startButton])
+        let controls = NSStackView(views: [
+            providerLabel,
+            providerPopup,
+            timeoutLabel,
+            timeoutPopup,
+            startButton,
+        ])
         controls.orientation = .horizontal
         controls.alignment = .centerY
         controls.spacing = 10
@@ -261,12 +316,13 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         statusStack.translatesAutoresizingMaskIntoConstraints = false
 
         let columns: [(id: String, title: String, width: CGFloat)] = [
-            ("model", "模型", 300),
-            ("ttft", "TTFT", 105),
-            ("tps", "TPS", 115),
-            ("tokens", "Usage / 上限", 110),
-            ("total", "总耗时", 100),
-            ("result", "结果", 100),
+            ("provider", "Provider", 130),
+            ("model", "模型", 260),
+            ("ttft", "TTFT", 90),
+            ("tps", "TPS", 100),
+            ("tokens", "Usage / 上限", 105),
+            ("total", "总耗时", 90),
+            ("result", "结果", 90),
         ]
         for definition in columns {
             let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(definition.id))
@@ -328,6 +384,12 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         UserDefaults.standard.set(selectedTimeout(), forKey: "modelBenchmarkTimeoutSeconds")
     }
 
+    @objc private func providerFilterChanged() {
+        updateDisplayedResults()
+        tableView.reloadData()
+        emptyLabel.isHidden = !displayedResults.isEmpty
+    }
+
     @objc private func startBenchmark() {
         let timeout = selectedTimeout()
         UserDefaults.standard.set(timeout, forKey: "modelBenchmarkTimeoutSeconds")
@@ -338,7 +400,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let snapshot = try await startHandler(timeout)
+                let snapshot = try await startHandler(timeout, selectedProviderFilter())
                 applySnapshot(snapshot)
                 if window?.isVisible == true {
                     beginPolling()
@@ -354,6 +416,11 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
 
     private func selectedTimeout() -> Int {
         timeoutPopup.selectedItem?.representedObject as? Int ?? 10
+    }
+
+    private func selectedProviderFilter() -> String? {
+        let value = providerPopup.selectedItem?.representedObject as? String ?? ""
+        return value.isEmpty ? nil : value
     }
 
     private func beginPolling() {
@@ -410,6 +477,9 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
 
     private func applySnapshot(_ snapshot: ModelBenchmarkSnapshot?) {
         self.snapshot = snapshot
+        if let snapshot {
+            updateProviderOptions(snapshot)
+        }
         updateDisplayedResults()
         tableView.reloadData()
         emptyLabel.isHidden = !displayedResults.isEmpty
@@ -424,6 +494,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
             progressIndicator.doubleValue = 0
             startButton.isEnabled = true
             timeoutPopup.isEnabled = true
+            providerPopup.isEnabled = true
             return
         }
 
@@ -432,8 +503,20 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         let running = snapshot.status == "running"
         startButton.isEnabled = !running
         timeoutPopup.isEnabled = !running
+        providerPopup.isEnabled = !running
         summaryLabel.stringValue = "\(formatBenchmarkDate(snapshot.startedAt)) · 单模型超时 \(snapshot.timeoutSeconds) 秒 · 请求上限 \(snapshot.targetOutputTokens) tokens"
-        if let cost = snapshot.estimatedCost {
+        if !snapshot.providerCosts.isEmpty {
+            costLabel.stringValue = snapshot.providerCosts
+                .map(formatProviderBenchmarkCost)
+                .joined(separator: " · ")
+            costLabel.textColor = snapshot.providerCosts.contains { $0.error != nil }
+                ? .systemOrange
+                : .systemGreen
+            let errors = snapshot.providerCosts.compactMap { cost in
+                cost.error.map { "\(cost.providerID): \($0)" }
+            }
+            costLabel.toolTip = errors.isEmpty ? nil : errors.joined(separator: "\n")
+        } else if let cost = snapshot.estimatedCost {
             switch snapshot.costCurrency {
             case "CNY":
                 costLabel.stringValue = String(format: "本次测试花费约 ¥%.2f", cost)
@@ -482,7 +565,10 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
     }
 
     private func updateDisplayedResults() {
-        let results = snapshot?.results ?? []
+        let providerFilter = selectedProviderFilter()
+        let results = (snapshot?.results ?? []).filter {
+            providerFilter == nil || $0.providerID == providerFilter
+        }
         guard
             let descriptor = tableView.sortDescriptors.first,
             let key = descriptor.key
@@ -492,9 +578,9 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         }
         let ascending = descriptor.ascending
         displayedResults = results.sorted { left, right in
-            if key == "model" || key == "result" {
-                let leftValue = key == "model" ? left.model : left.status
-                let rightValue = key == "model" ? right.model : right.status
+            if key == "provider" || key == "model" || key == "result" {
+                let leftValue = benchmarkStringValue(left, key: key)
+                let rightValue = benchmarkStringValue(right, key: key)
                 let comparison = leftValue.localizedStandardCompare(rightValue)
                 if comparison == .orderedSame {
                     return left.model.localizedStandardCompare(right.model) == .orderedAscending
@@ -533,6 +619,61 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
                 }
                 return ascending ? leftValue < rightValue : leftValue > rightValue
             }
+        }
+    }
+
+    private func updateProviderOptions(_ snapshot: ModelBenchmarkSnapshot) {
+        let providers = Dictionary(
+            snapshot.results.map { ($0.providerID, $0.providerName) },
+            uniquingKeysWith: { first, _ in first }
+        )
+        setProviderOptions(providers.map {
+            BenchmarkProviderOption(id: $0.key, displayName: $0.value)
+        })
+    }
+
+    private func reloadProviderOptions() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            if let options = try? await providerOptionsHandler() {
+                setProviderOptions(options)
+            }
+        }
+    }
+
+    private func setProviderOptions(_ options: [BenchmarkProviderOption]) {
+        let selected = selectedProviderFilter()
+        let sorted = options.sorted {
+            $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+        }
+        guard !sorted.isEmpty else { return }
+        let currentIDs = providerPopup.itemArray.compactMap {
+            ($0.representedObject as? String).flatMap { $0.isEmpty ? nil : $0 }
+        }
+        let providerIDs = sorted.map(\.id)
+        guard currentIDs != providerIDs else { return }
+        providerPopup.removeAllItems()
+        providerPopup.addItem(withTitle: "全部 Provider")
+        providerPopup.lastItem?.representedObject = ""
+        for option in sorted {
+            providerPopup.addItem(withTitle: option.displayName)
+            providerPopup.lastItem?.representedObject = option.id
+            providerPopup.lastItem?.toolTip = option.id
+        }
+        if let selected,
+           let index = providerPopup.itemArray.firstIndex(where: {
+               ($0.representedObject as? String) == selected
+           })
+        {
+            providerPopup.selectItem(at: index)
+        }
+    }
+
+    private func benchmarkStringValue(_ result: ModelBenchmarkResult, key: String) -> String {
+        switch key {
+        case "provider": return result.providerName
+        case "model": return result.model
+        default: return result.status
         }
     }
 }
@@ -574,6 +715,22 @@ private func formatBenchmarkDate(_ milliseconds: UInt64) -> String {
     formatter.dateStyle = .medium
     formatter.timeStyle = .short
     return formatter.string(from: Date(timeIntervalSince1970: Double(milliseconds) / 1_000))
+}
+
+private func formatProviderBenchmarkCost(_ cost: ProviderBenchmarkCost) -> String {
+    guard let value = cost.estimatedCost else {
+        return "\(cost.providerID)：费用不可用"
+    }
+    switch cost.currency {
+    case "CNY":
+        return String(format: "%@：¥%.2f", cost.providerID, value)
+    case "USD":
+        return String(format: "%@：$%.4f", cost.providerID, value)
+    case let currency?:
+        return String(format: "%@：%.4f %@", cost.providerID, value, currency)
+    case nil:
+        return String(format: "%@：%.4f", cost.providerID, value)
+    }
 }
 
 private func presentBenchmarkError(title: String, message: String) {

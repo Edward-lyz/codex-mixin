@@ -22,20 +22,28 @@ impl WebSearchCapabilities {
         let models = if path.exists() {
             let raw =
                 fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
-            let snapshot: CapabilitySnapshot =
+            let raw_value: Value =
                 serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
-            if snapshot.version != CAPABILITY_FILE_VERSION {
+            let cached_version = raw_value
+                .get("version")
+                .and_then(Value::as_u64)
+                .unwrap_or_default();
+            if cached_version != CAPABILITY_FILE_VERSION {
                 tracing::info!(
                     path = %path.display(),
-                    cached_version = snapshot.version,
+                    cached_version,
                     current_version = CAPABILITY_FILE_VERSION,
                     "discarding incompatible web search capability cache"
                 );
                 BTreeMap::new()
-            } else if snapshot.upstream == upstream {
-                snapshot.models
             } else {
-                BTreeMap::new()
+                let snapshot: CapabilitySnapshot = serde_json::from_value(raw_value)
+                    .with_context(|| format!("parse {}", path.display()))?;
+                if snapshot.upstream == upstream {
+                    snapshot.models
+                } else {
+                    BTreeMap::new()
+                }
             }
         } else {
             BTreeMap::new()
@@ -48,7 +56,6 @@ impl WebSearchCapabilities {
     }
 
     pub fn supports_model(&self, model: &str) -> bool {
-        let model = canonical_upstream_model_alias(model);
         let now = unix_seconds().expect("system clock before Unix epoch");
         self.models
             .read()
@@ -95,26 +102,38 @@ impl WebSearchCapabilities {
         &self,
         models: &mut [ModelInfo],
         config: &GatewayConfig,
+        providers: &ProviderRegistry,
         force: bool,
     ) -> anyhow::Result<WebSearchProbeSummary> {
         let now = unix_seconds()?;
-        let mut model_ids = models
+        let mut model_targets = models
             .iter()
-            .map(|model| model.id.clone())
+            .filter_map(|model| {
+                providers.resolve(&model.id).map(|resolved| {
+                    (
+                        model.id.clone(),
+                        resolved.provider.clone(),
+                        resolved.upstream_model_id.to_owned(),
+                    )
+                })
+            })
             .collect::<Vec<_>>();
-        model_ids.sort_by_key(|model| model.to_ascii_lowercase());
-        model_ids.dedup();
-        let current_models = model_ids.iter().cloned().collect::<HashSet<_>>();
+        model_targets.sort_by_key(|(model, _, _)| model.to_ascii_lowercase());
+        model_targets.dedup_by(|left, right| left.0 == right.0);
+        let current_models = model_targets
+            .iter()
+            .map(|(model, _, _)| model.clone())
+            .collect::<HashSet<_>>();
         let candidates = {
             let capabilities = self
                 .models
                 .read()
                 .expect("web search capability lock poisoned");
-            model_ids
+            model_targets
                 .iter()
-                .filter(|model| {
+                .filter(|(model, _, _)| {
                     force
-                        || capabilities.get(*model).is_none_or(|capability| {
+                        || capabilities.get(model).is_none_or(|capability| {
                             capability.error.is_some()
                                 || now.saturating_sub(capability.probed_at)
                                     >= CAPABILITY_TTL.as_secs()
@@ -137,7 +156,7 @@ impl WebSearchCapabilities {
             let client = Client::builder().build()?;
             let release_reference = if candidates
                 .iter()
-                .any(|model| model.to_ascii_lowercase().starts_with("gpt-"))
+                .any(|(_, _, model)| model.to_ascii_lowercase().starts_with("gpt-"))
             {
                 match fetch_release_reference(&client).await {
                     Ok(reference) => Some(reference),
@@ -152,33 +171,45 @@ impl WebSearchCapabilities {
             } else {
                 None
             };
-            let config = Arc::new(config.clone());
+            let web_search_tool_type = Arc::new(config.web_search_tool_type.clone());
             let client = Arc::new(client);
-            let probe_results = stream::iter(candidates.into_iter().map(|model| {
-                let client = Arc::clone(&client);
-                let config = Arc::clone(&config);
-                let release_reference = release_reference.clone();
-                async move {
-                    let result =
-                        probe_model(&client, &config, &model, release_reference.as_deref()).await;
-                    match result {
-                        Ok((supported, evidence)) => ModelWebSearchCapability {
-                            model,
-                            supported,
-                            evidence,
-                            error: None,
-                            probed_at: now,
-                        },
-                        Err(error) => ModelWebSearchCapability {
-                            model,
-                            supported: false,
-                            evidence: "probe_failed".to_owned(),
-                            error: Some(error.to_string()),
-                            probed_at: now,
-                        },
+            let probe_results = stream::iter(candidates.into_iter().map(
+                |(model, provider, upstream_model)| {
+                    let client = Arc::clone(&client);
+                    let web_search_tool_type = Arc::clone(&web_search_tool_type);
+                    let release_reference = release_reference.clone();
+                    async move {
+                        let result = probe_model(
+                            &client,
+                            &provider,
+                            &upstream_model,
+                            &web_search_tool_type,
+                            release_reference.as_deref(),
+                        )
+                        .await;
+                        match result {
+                            Ok((supported, evidence)) => ModelWebSearchCapability {
+                                model,
+                                provider_id: provider.id().to_owned(),
+                                upstream_model,
+                                supported,
+                                evidence,
+                                error: None,
+                                probed_at: now,
+                            },
+                            Err(error) => ModelWebSearchCapability {
+                                model,
+                                provider_id: provider.id().to_owned(),
+                                upstream_model,
+                                supported: false,
+                                evidence: "probe_failed".to_owned(),
+                                error: Some(error.to_string()),
+                                probed_at: now,
+                            },
+                        }
                     }
-                }
-            }))
+                },
+            ))
             .buffer_unordered(PROBE_CONCURRENCY)
             .collect::<Vec<_>>()
             .await;

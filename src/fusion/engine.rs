@@ -411,8 +411,7 @@ pub(super) async fn stream_fusion_response(
     routing: Option<&UpstreamRouting>,
     downstream_model: Option<&str>,
 ) -> Result<ResponseStream, GatewayError> {
-    let (provider, model) =
-        resolve_fusion_model(model_reference, state.config.provider_preset.as_str());
+    let (provider, model) = resolve_fusion_model(model_reference);
     body["model"] = Value::String(model);
     match provider {
         FusionModelProvider::Official => {
@@ -426,7 +425,7 @@ pub(super) async fn stream_fusion_response(
                 None => stream,
             })
         }
-        FusionModelProvider::Upstream => {
+        FusionModelProvider::Provider => {
             stream_response_with_options(state, body, routing, downstream_model).await
         }
     }

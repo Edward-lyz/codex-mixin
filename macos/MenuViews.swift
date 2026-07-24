@@ -10,7 +10,7 @@ func serviceMenuView(
     let statusColor: NSColor
     if title.contains("失败") {
         statusColor = .systemRed
-    } else if title.contains("等待配置") {
+    } else if title.contains("等待配置") || title.contains("降级") || title.contains("无启用") {
         statusColor = .systemOrange
     } else if isBusy {
         statusColor = .systemOrange
@@ -127,6 +127,80 @@ func quotaMenuView(title: String, detail: String?, progress: Double?) -> NSView 
     return view
 }
 
+func providerQuotaMenuView(_ usages: [ProviderQuotaUsage]) -> NSView {
+    if usages.isEmpty {
+        return quotaMenuView(title: "Provider 额度：无可查询项", detail: nil, progress: nil)
+    }
+    let rowHeight: CGFloat = 38
+    let view = NSView(frame: NSRect(
+        x: 0,
+        y: 0,
+        width: 320,
+        height: max(rowHeight * CGFloat(usages.count), rowHeight)
+    ))
+    let rows = usages.map(providerQuotaRow)
+    let stack = NSStackView(views: rows)
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.distribution = .fillEqually
+    stack.spacing = 0
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(stack)
+    NSLayoutConstraint.activate([
+        stack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+        stack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        stack.topAnchor.constraint(equalTo: view.topAnchor),
+        stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+    ])
+    return view
+}
+
+func providerQuotaRow(_ usage: ProviderQuotaUsage) -> NSView {
+    let icon = NSImageView(image: menuItemImage("chart.bar") ?? NSImage())
+    icon.translatesAutoresizingMaskIntoConstraints = false
+    icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
+    icon.heightAnchor.constraint(equalToConstant: 16).isActive = true
+
+    let providerLabel = NSTextField(labelWithString: usage.providerID)
+    providerLabel.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+    providerLabel.lineBreakMode = .byTruncatingMiddle
+
+    let value: String
+    if let amount = usage.value {
+        let currency = usage.currency.map { " \($0)" } ?? ""
+        value = "\(formatQuotaAmount(amount))\(currency)"
+    } else if usage.error?.contains("not configured") == true {
+        value = "未配置额度接口"
+    } else {
+        value = "查询失败"
+    }
+    let valueLabel = NSTextField(labelWithString: value)
+    valueLabel.font = .systemFont(ofSize: 11)
+    valueLabel.textColor = usage.value == nil ? .secondaryLabelColor : .labelColor
+    valueLabel.alignment = .right
+    valueLabel.lineBreakMode = .byTruncatingTail
+    valueLabel.toolTip = usage.error
+
+    let row = NSStackView(views: [icon, providerLabel, NSView(), valueLabel])
+    row.orientation = .horizontal
+    row.alignment = .centerY
+    row.spacing = 8
+    row.translatesAutoresizingMaskIntoConstraints = false
+    row.heightAnchor.constraint(equalToConstant: 38).isActive = true
+    providerLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 100).isActive = true
+    valueLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 90).isActive = true
+
+    let container = NSView()
+    container.addSubview(row)
+    NSLayoutConstraint.activate([
+        row.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
+        row.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+        row.topAnchor.constraint(equalTo: container.topAnchor),
+        row.bottomAnchor.constraint(equalTo: container.bottomAnchor),
+    ])
+    return container
+}
+
 
 func formatQuotaAmount(_ value: Double) -> String {
     let formatter = NumberFormatter()
@@ -199,4 +273,3 @@ func codexStatusImage(isRunning: Bool) -> NSImage {
     image.isTemplate = false
     return image
 }
-

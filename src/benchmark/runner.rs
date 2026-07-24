@@ -4,15 +4,17 @@ use super::*;
 
 pub(super) async fn benchmark_model(
     client: &Client,
-    config: &GatewayConfig,
-    model: &str,
+    target: &BenchmarkTarget,
     timeout: Duration,
 ) -> anyhow::Result<ModelBenchmarkResult> {
-    let attempt = benchmark_request(client, config, model, timeout).await;
+    let attempt = benchmark_request(client, target, timeout).await;
     let completed_at = unix_millis()?;
     match attempt {
         Ok(metrics) => Ok(ModelBenchmarkResult {
-            model: model.to_owned(),
+            model: target.catalog_slug.clone(),
+            provider_id: target.provider_id.clone(),
+            provider_name: target.provider_name.clone(),
+            upstream_model: target.upstream_model_id.clone(),
             status: BenchmarkResultStatus::Completed,
             ttft_ms: Some(metrics.ttft_ms),
             generation_ms: metrics.generation_ms,
@@ -23,7 +25,10 @@ pub(super) async fn benchmark_model(
             completed_at,
         }),
         Err(failure) => Ok(ModelBenchmarkResult {
-            model: model.to_owned(),
+            model: target.catalog_slug.clone(),
+            provider_id: target.provider_id.clone(),
+            provider_name: target.provider_name.clone(),
+            upstream_model: target.upstream_model_id.clone(),
             status: if failure.timed_out {
                 BenchmarkResultStatus::TimedOut
             } else {
@@ -42,25 +47,12 @@ pub(super) async fn benchmark_model(
 
 pub(super) async fn fetch_used_quota(
     client: &Client,
-    config: &GatewayConfig,
+    provider: &ProviderRuntime,
 ) -> anyhow::Result<f64> {
-    let quota_url = config
-        .quota_url
-        .as_ref()
+    let quota_url = provider
+        .quota_url()
         .context("quota endpoint is not configured")?;
-    let mut quota_url = reqwest::Url::parse(quota_url).context("invalid quota endpoint URL")?;
-    if !quota_url.query_pairs().any(|(key, _)| key == "username")
-        && let Some(username) = &config.quota_username
-    {
-        quota_url
-            .query_pairs_mut()
-            .append_pair("username", username);
-    }
-    let response = client
-        .get(quota_url)
-        .bearer_auth(&config.upstream_api_key)
-        .send()
-        .await?;
+    let response = provider.apply_auth(client.get(quota_url)).send().await?;
     let status = response.status();
     let body = response.text().await?;
     if !status.is_success() {
@@ -68,11 +60,11 @@ pub(super) async fn fetch_used_quota(
     }
     let payload: Value =
         serde_json::from_str(&body).context("quota endpoint returned invalid JSON")?;
-    used_quota_from_json(config.provider_preset, &payload)
+    used_quota_from_json(provider.quota_parser(), &payload)
 }
 
 pub(super) fn used_quota_from_json(
-    provider: ProviderPreset,
+    parser: ProviderQuotaParser,
     payload: &Value,
 ) -> anyhow::Result<f64> {
     if payload.get("success").and_then(Value::as_bool) == Some(false) {
@@ -82,10 +74,10 @@ pub(super) fn used_quota_from_json(
             .unwrap_or("quota endpoint reported failure");
         anyhow::bail!("quota endpoint failed: {message}");
     }
-    let pointers: &[&str] = match provider {
-        ProviderPreset::BaiduOneApi => &["/data/used_quota"],
-        ProviderPreset::OpenRouter => &["/data/total_usage"],
-        ProviderPreset::Custom | ProviderPreset::DeepSeek => &[
+    let pointers: &[&str] = match parser {
+        ProviderQuotaParser::BaiduOneApi => &["/data/used_quota"],
+        ProviderQuotaParser::OpenRouter => &["/data/total_usage"],
+        ProviderQuotaParser::Generic => &[
             "/data/used_quota",
             "/data/total_usage",
             "/data/used",
@@ -114,15 +106,16 @@ pub(super) fn used_quota_from_json(
 
 pub(super) async fn benchmark_request(
     client: &Client,
-    config: &GatewayConfig,
-    model: &str,
+    target: &BenchmarkTarget,
     timeout: Duration,
 ) -> Result<BenchmarkMetrics, BenchmarkAttemptFailure> {
     let started = Instant::now();
     let deadline = started + timeout;
-    let mut body = match config.upstream_kind {
-        UpstreamKind::AnthropicMessages => json!({
-            "model": model,
+    let provider = &target.provider;
+    let protocol = provider.protocol();
+    let mut body = match protocol {
+        ProviderProtocol::AnthropicMessages => json!({
+            "model": target.upstream_model_id,
             "max_tokens": BENCHMARK_TARGET_OUTPUT_TOKENS,
             "stream": true,
             "messages": [{
@@ -130,30 +123,32 @@ pub(super) async fn benchmark_request(
                 "content": [{"type": "text", "text": BENCHMARK_PROMPT}]
             }]
         }),
-        UpstreamKind::OpenAiChat => json!({
-            "model": model,
+        ProviderProtocol::OpenAiChat => json!({
+            "model": target.upstream_model_id,
             "max_tokens": BENCHMARK_TARGET_OUTPUT_TOKENS,
             "stream": true,
             "stream_options": {"include_usage": true},
             "messages": [{"role": "user", "content": BENCHMARK_PROMPT}]
         }),
+        ProviderProtocol::OpenAiResponses => json!({
+            "model": target.upstream_model_id,
+            "max_output_tokens": BENCHMARK_TARGET_OUTPUT_TOKENS,
+            "stream": true,
+            "input": BENCHMARK_PROMPT
+        }),
     };
-    if config.provider_preset == ProviderPreset::BaiduOneApi {
+    if provider.uses_session_affinity() {
         body["metadata"] = json!({
             "session_id": format!("benchmark-{}", Uuid::new_v4().simple())
         });
     }
-    let request = client
-        .post(config.upstream_messages_url())
-        .header("accept", "text/event-stream");
-    let request = match config.upstream_auth_header {
-        UpstreamAuthHeader::AuthorizationBearer => request.bearer_auth(&config.upstream_api_key),
-        UpstreamAuthHeader::XApiKey => request.header("x-api-key", &config.upstream_api_key),
-    };
-    let mut request = request.header("anthropic-version", &config.anthropic_version);
-    if let Some(beta) = &config.anthropic_beta {
-        request = request.header("anthropic-beta", beta);
-    }
+    let request = provider.apply_auth(
+        client
+            .post(provider.api_url().clone())
+            .header("accept", "text/event-stream"),
+    );
+    let request =
+        provider.apply_anthropic_beta(request, provider.definition().anthropic_beta.as_deref());
     let request = request.json(&body);
     let response = match timeout_at(deadline, request.send()).await {
         Ok(Ok(response)) => response,
@@ -202,7 +197,11 @@ pub(super) async fn benchmark_request(
                 ));
             }
             Ok(None) => {
-                if config.upstream_kind == UpstreamKind::OpenAiChat && openai_finished {
+                if matches!(
+                    protocol,
+                    ProviderProtocol::OpenAiChat | ProviderProtocol::OpenAiResponses
+                ) && openai_finished
+                {
                     return finish_metrics(started, first_token_at, last_token_at, output_tokens);
                 }
                 return Err(attempt_failure(
@@ -223,7 +222,7 @@ pub(super) async fn benchmark_request(
         };
         let chunk_received_at = Instant::now();
         for event in decoder.push(&chunk) {
-            if config.upstream_kind == UpstreamKind::OpenAiChat && event.data == "[DONE]" {
+            if protocol == ProviderProtocol::OpenAiChat && event.data == "[DONE]" {
                 return finish_metrics(started, first_token_at, last_token_at, output_tokens);
             }
             let payload: Value = serde_json::from_str(&event.data).map_err(|error| {
@@ -234,8 +233,8 @@ pub(super) async fn benchmark_request(
                     first_token_at,
                 )
             })?;
-            match config.upstream_kind {
-                UpstreamKind::AnthropicMessages => {
+            match protocol {
+                ProviderProtocol::AnthropicMessages => {
                     match payload.get("type").and_then(Value::as_str) {
                         Some("message_start") => {
                             if let Some(tokens) = payload
@@ -298,7 +297,7 @@ pub(super) async fn benchmark_request(
                         _ => {}
                     }
                 }
-                UpstreamKind::OpenAiChat => {
+                ProviderProtocol::OpenAiChat => {
                     if let Some(message) = payload.pointer("/error/message").and_then(Value::as_str)
                     {
                         return Err(attempt_failure(false, message, started, first_token_at));
@@ -334,6 +333,45 @@ pub(super) async fn benchmark_request(
                         {
                             openai_finished = true;
                         }
+                    }
+                }
+                ProviderProtocol::OpenAiResponses => {
+                    if let Some(message) = payload.pointer("/error/message").and_then(Value::as_str)
+                    {
+                        return Err(attempt_failure(false, message, started, first_token_at));
+                    }
+                    match payload.get("type").and_then(Value::as_str) {
+                        Some("response.output_text.delta") => {
+                            if payload
+                                .get("delta")
+                                .and_then(Value::as_str)
+                                .is_some_and(|delta| !delta.is_empty())
+                            {
+                                first_token_at.get_or_insert(chunk_received_at);
+                                last_token_at = Some(chunk_received_at);
+                            }
+                        }
+                        Some("response.completed") => {
+                            output_tokens = payload
+                                .pointer("/response/usage/output_tokens")
+                                .and_then(Value::as_u64)
+                                .or(output_tokens);
+                            return finish_metrics(
+                                started,
+                                first_token_at,
+                                last_token_at,
+                                output_tokens,
+                            );
+                        }
+                        Some("response.failed" | "response.incomplete") => {
+                            let message = payload
+                                .pointer("/response/error/message")
+                                .or_else(|| payload.pointer("/error/message"))
+                                .and_then(Value::as_str)
+                                .unwrap_or("upstream returned a terminal error");
+                            return Err(attempt_failure(false, message, started, first_token_at));
+                        }
+                        _ => {}
                     }
                 }
             }

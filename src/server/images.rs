@@ -14,30 +14,34 @@ pub(super) async fn image_generations(
         .transpose()
         .map_err(GatewayError::BadRequest)?
         .flatten();
-    if let Some(prompt) = routed_prompt {
-        body["prompt"] = Value::String(prompt);
-        let url = state
-            .config
-            .upstream_image_generation_url()
+    if let Some(route) = routed_prompt {
+        body["prompt"] = Value::String(route.clean_prompt);
+        let provider_id = route.provider_id.ok_or_else(|| {
+            GatewayError::BadRequest(
+                "routed image request is missing its provider identity".to_owned(),
+            )
+        })?;
+        let provider = state.providers.provider(&provider_id).ok_or_else(|| {
+            GatewayError::BadRequest(format!(
+                "routed image request references unknown provider {provider_id}"
+            ))
+        })?;
+        let url = provider
+            .image_generation_url()
             .ok_or_else(|| {
                 GatewayError::Other(anyhow::anyhow!(
-                    "routed image request has no configured upstream image generation endpoint"
+                    "routed image request provider {provider_id} has no image generation endpoint"
                 ))
-            })?;
-        let request = state
-            .client
-            .post(url)
-            .header(header::ACCEPT, "application/json");
-        let request = match state.config.upstream_auth_header {
-            UpstreamAuthHeader::AuthorizationBearer => {
-                request.bearer_auth(&state.config.upstream_api_key)
-            }
-            UpstreamAuthHeader::XApiKey => {
-                request.header("x-api-key", &state.config.upstream_api_key)
-            }
-        };
+            })?
+            .clone();
+        let request = provider.apply_auth(
+            state
+                .client
+                .post(url)
+                .header(header::ACCEPT, "application/json"),
+        );
         let upstream = request.json(&body).send().await?;
-        return proxy_image_response(upstream, "upstream").await;
+        return proxy_image_response(upstream, &format!("provider {provider_id}")).await;
     }
     let url = state
         .config

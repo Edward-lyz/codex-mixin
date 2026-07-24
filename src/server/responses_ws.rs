@@ -1,7 +1,4 @@
-use super::auth::{
-    check_gateway_auth, normalize_custom_model_alias, should_forward_to_official,
-    stable_oneapi_routing,
-};
+use super::auth::{check_gateway_auth, stable_oneapi_routing};
 use super::*;
 
 type OfficialWebSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
@@ -33,6 +30,7 @@ enum OfficialWebSocketResponse {
 struct CustomWebSocketState {
     response_id: String,
     model: String,
+    route: ResolvedModelRoute,
     history: Vec<Value>,
 }
 
@@ -49,7 +47,10 @@ pub(super) async fn responses_ws(
 
 async fn handle_responses_ws(state: AppState, headers: HeaderMap, client_socket: WebSocket) {
     if let Err(err) = route_responses_ws(state, headers, client_socket).await {
-        tracing::warn!(error = %err, "responses websocket failed");
+        tracing::warn!(
+            error = %format!("{err:#}"),
+            "responses websocket failed"
+        );
     }
 }
 
@@ -78,7 +79,10 @@ async fn route_responses_ws(
             .unwrap_or("<missing>")
             .to_owned();
 
-        if should_forward_to_official(&body) {
+        if matches!(
+            state.resolve_model_route(&model),
+            Ok(ResolvedModelRoute::Official)
+        ) {
             custom_state = None;
             tracing::debug!(
                 model = model.as_str(),
@@ -225,20 +229,27 @@ async fn route_responses_ws(
             route = "custom_ws",
             "routing responses websocket request"
         );
-        let next_state = match expand_custom_websocket_history(&mut body, custom_state.take()) {
-            Ok(()) if is_noop_responses_ws_request(&body) => {
-                complete_custom_noop(&mut client_sender, body)
-                    .await
-                    .map(Some)
-            }
-            Ok(()) => proxy_custom_responses_ws(&state, &headers, &mut client_sender, body).await,
-            Err(err) => Err(err),
-        };
+        let next_state =
+            match expand_custom_websocket_history(&state, &mut body, custom_state.take()) {
+                Ok(()) if is_noop_responses_ws_request(&body) => {
+                    complete_custom_noop(&state, &mut client_sender, body)
+                        .await
+                        .map(Some)
+                }
+                Ok(()) => {
+                    proxy_custom_responses_ws(&state, &headers, &mut client_sender, body).await
+                }
+                Err(err) => Err(err),
+            };
         match next_state {
             Ok(next_state) => custom_state = next_state,
             Err(err) => {
                 custom_state = None;
-                tracing::warn!(error = %err, "custom responses websocket request failed");
+                tracing::warn!(
+                    model = model.as_str(),
+                    error = %format!("{err:#}"),
+                    "custom responses websocket request failed"
+                );
                 let message = err.to_string();
                 let error = json!({"message": message, "type": "invalid_request_error"});
                 client_sender
@@ -524,50 +535,43 @@ async fn proxy_custom_responses_ws(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("custom request is missing model"))?
         .to_owned();
-    let route = model_route(&requested_model);
-    if route == ModelRoute::Direct {
-        normalize_custom_model_alias(&mut body);
-    }
-    let model = body
-        .get("model")
-        .and_then(Value::as_str)
-        .expect("custom model was validated")
-        .to_owned();
+    let route = state
+        .resolve_model_route(&requested_model)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    let model = requested_model;
     if !body.get("input").is_some_and(Value::is_array) {
         anyhow::bail!("custom request input must be an array");
     }
-    let oneapi_routing = if state.config.provider_preset == ProviderPreset::BaiduOneApi {
-        stable_oneapi_routing(headers, &body)?
-    } else {
-        None
-    };
+    let provider_routing = stable_oneapi_routing(headers, &body)?;
     let mut history = body
         .get("input")
         .and_then(Value::as_array)
         .cloned()
         .ok_or_else(|| anyhow::anyhow!("custom request input must be an array"))?;
-    let stream = match route {
-        ModelRoute::Official => anyhow::bail!("official model reached custom websocket proxy"),
-        ModelRoute::Direct => {
-            stream_response_with_options(state, body, oneapi_routing.as_ref(), None).await?
+    let stream = match &route {
+        ResolvedModelRoute::Official => {
+            anyhow::bail!("official model reached custom websocket proxy")
         }
-        ModelRoute::Fusion { profile_id } => {
+        ResolvedModelRoute::Provider { .. } => {
+            stream_response_with_options(state, body, provider_routing.as_ref(), None).await?
+        }
+        ResolvedModelRoute::Fusion { profile_id } => {
             let profile = state
                 .config
                 .fusion_profiles
                 .iter()
-                .find(|profile| profile.id == profile_id)
+                .find(|profile| profile.id == *profile_id)
                 .ok_or_else(|| anyhow::anyhow!("unknown fusion profile: {profile_id}"))?
                 .clone();
             if should_fuse_turn(&body) {
                 FusionEngine::new(state, &profile)
                     .with_headers(headers.clone())
-                    .stream_with_routing(body, oneapi_routing)
+                    .stream_with_routing(body, provider_routing)
             } else {
                 body["stream"] = Value::Bool(true);
                 FusionEngine::new(state, &profile)
                     .with_headers(headers.clone())
-                    .stream_final_continuation(body, oneapi_routing.as_ref())
+                    .stream_final_continuation(body, provider_routing.as_ref())
                     .await?
             }
         }
@@ -614,6 +618,7 @@ async fn proxy_custom_responses_ws(
     Ok(Some(CustomWebSocketState {
         response_id,
         model,
+        route,
         history,
     }))
 }
@@ -629,6 +634,7 @@ fn take_custom_request_input(body: &mut Value) -> anyhow::Result<Vec<Value>> {
 }
 
 fn expand_custom_websocket_history(
+    app_state: &AppState,
     body: &mut Value,
     state: Option<CustomWebSocketState>,
 ) -> anyhow::Result<()> {
@@ -649,7 +655,10 @@ fn expand_custom_websocket_history(
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("custom request is missing model"))?;
-    if canonical_upstream_model_alias(model) != state.model {
+    let route = app_state
+        .resolve_model_route(model)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    if route != state.route {
         anyhow::bail!(
             "custom previous_response_id belongs to model {}",
             state.model
@@ -666,6 +675,7 @@ fn expand_custom_websocket_history(
 }
 
 async fn complete_custom_noop(
+    state: &AppState,
     client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
     mut body: Value,
 ) -> anyhow::Result<CustomWebSocketState> {
@@ -673,7 +683,13 @@ async fn complete_custom_noop(
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("custom noop request is missing model"))?;
-    let model = canonical_upstream_model_alias(model).to_owned();
+    let model = model.to_owned();
+    let route = state
+        .resolve_model_route(&model)
+        .map_err(|error| anyhow::anyhow!(error.to_string()))?;
+    if route == ResolvedModelRoute::Official {
+        anyhow::bail!("official model reached custom websocket noop");
+    }
     let history = take_custom_request_input(&mut body)?;
     let response_id = format!("resp_{}", Uuid::new_v4().simple());
     for status in ["in_progress", "completed"] {
@@ -697,6 +713,7 @@ async fn complete_custom_noop(
     Ok(CustomWebSocketState {
         response_id,
         model,
+        route,
         history,
     })
 }

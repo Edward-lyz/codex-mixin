@@ -170,8 +170,8 @@ extension AppDelegate {
 
     func isMissingGatewayConfiguration(_ error: Error) -> Bool {
         let message = String(describing: error)
-        return message.contains("run login --key")
-            || message.contains("run login --base-url")
+        return message.contains("provider configuration is missing")
+            || message.contains("provider configuration is empty")
     }
 
     func restartGatewayProcess() async throws {
@@ -234,11 +234,21 @@ extension AppDelegate {
 
     func applyGatewayStatus(_ status: String?) {
         isRunning = status?.contains("gateway: running") == true
+        let providerReadiness = status?
+            .split(separator: "\n")
+            .first(where: { $0.hasPrefix("provider-readiness: ") })
+            .map { String($0.dropFirst("provider-readiness: ".count)) }
         serviceEndpoint = status?
             .split(separator: "\n")
             .first(where: { $0.hasPrefix("endpoint: ") })
             .map { String($0.dropFirst("endpoint: ".count)) }
-        serviceStatus = isRunning ? "本地网关运行中" : "本地网关已停止"
+        if isRunning, providerReadiness == "degraded" {
+            serviceStatus = "本地网关运行中 · Provider 降级"
+        } else if isRunning, providerReadiness == "disabled" {
+            serviceStatus = "本地网关运行中 · 无启用 Provider"
+        } else {
+            serviceStatus = isRunning ? "本地网关运行中" : "本地网关已停止"
+        }
         updateStatusTitle()
         updateActionStates()
     }
@@ -267,34 +277,22 @@ extension AppDelegate {
         }
         do {
             let quota = try await runGateway(["quota", "--json"])
-            let usage = try parseQuotaUsage(quota)
-            let title: String
-            let detail: String?
-            let progress: Double?
-            if let limit = usage.limit {
-                title = "额度：已用 \(formatQuotaAmount(usage.used)) / \(formatQuotaAmount(limit))"
-                detail = usage.remaining.map { "剩余 \(formatQuotaAmount($0))" }
-                progress = limit > 0 ? usage.used / limit : nil
-            } else {
-                title = "额度：已用 \(formatQuotaAmount(usage.used))"
-                detail = nil
-                progress = nil
-            }
-            updateQuotaStatus(title: title, detail: detail, progress: progress)
+            updateProviderQuotaStatus(try parseProviderQuotaUsage(quota))
         } catch {
-            let message = String(describing: error)
-            if message.contains("quota URL") {
-                updateQuotaStatus(title: "额度：未配置接口", detail: nil, progress: nil)
-            } else if message.contains("auth key") {
-                updateQuotaStatus(title: "额度：未配置密钥", detail: nil, progress: nil)
-            } else {
-                updateQuotaStatus(title: "额度：不可用", detail: nil, progress: nil)
-            }
+            updateQuotaStatus(
+                title: "Provider 额度：不可用",
+                detail: String(describing: error),
+                progress: nil
+            )
         }
     }
 
     func updateQuotaStatus(title: String, detail: String?, progress: Double?) {
         quotaStatusItem?.view = quotaMenuView(title: title, detail: detail, progress: progress)
+    }
+
+    func updateProviderQuotaStatus(_ usages: [ProviderQuotaUsage]) {
+        quotaStatusItem?.view = providerQuotaMenuView(usages)
     }
     @objc func openLogs() {
         let logURL = stateDir().appendingPathComponent("gateway.log")
@@ -440,7 +438,15 @@ extension AppDelegate {
     }
 
     func runGateway(_ arguments: [String]) async throws -> String {
-        try await runProcess(try gatewayExecutableURL().path, arguments)
+        do {
+            return try await runProcess(try gatewayExecutableURL().path, arguments)
+        } catch {
+            let action = arguments.prefix(2).joined(separator: " ")
+            appendDiagnosticLog(
+                "App CLI operation failed: \(action.isEmpty ? "<default>" : action)\n\(String(describing: error))"
+            )
+            throw error
+        }
     }
 
     func bootoutIfLoaded(_ domainAndLabel: String) async throws {
@@ -463,7 +469,16 @@ extension AppDelegate {
                 process.arguments = arguments
                 process.standardOutput = outputPipe
                 process.standardError = outputPipe
-                process.environment = ProcessInfo.processInfo.environment
+                var environment = ProcessInfo.processInfo.environment
+                let ignoredKeys = environment.keys.filter { key in
+                    key.hasPrefix("CODEX_GATEWAY_")
+                    || key == "ANTHROPIC_BASE_URL"
+                    || key == "ANTHROPIC_API_KEY"
+                }
+                for key in ignoredKeys {
+                    environment.removeValue(forKey: key)
+                }
+                process.environment = environment
                 do {
                     try process.run()
                     process.waitUntilExit()
@@ -494,6 +509,35 @@ extension AppDelegate {
 
     func stateDir() -> URL {
         FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex-mixin")
+    }
+
+    func appendDiagnosticLog(_ message: String) {
+        let directory = stateDir()
+        let logURL = directory.appendingPathComponent("gateway.log")
+        do {
+            try FileManager.default.createDirectory(
+                at: directory,
+                withIntermediateDirectories: true
+            )
+            if !FileManager.default.fileExists(atPath: logURL.path) {
+                FileManager.default.createFile(
+                    atPath: logURL.path,
+                    contents: nil,
+                    attributes: [.posixPermissions: NSNumber(value: 0o600)]
+                )
+            }
+            let formatter = ISO8601DateFormatter()
+            let boundedMessage = String(message.prefix(8_000))
+            let entry = "\n\(formatter.string(from: Date())) APP_DIAGNOSTIC \(boundedMessage)\n"
+            let handle = try FileHandle(forWritingTo: logURL)
+            try handle.seekToEnd()
+            if let data = entry.data(using: .utf8) {
+                try handle.write(contentsOf: data)
+            }
+            try handle.close()
+        } catch {
+            NSLog("Codex Mixin could not append diagnostic log: \(error)")
+        }
     }
 
     func launchAgentPath() -> URL {

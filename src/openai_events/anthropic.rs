@@ -227,11 +227,8 @@ fn handle_anthropic_event(state: &mut MapperState, data: &Value) -> Result<Vec<B
                 .is_some_and(|tool| matches!(&tool.kind, ToolBlockKind::WebSearch { .. }))
             {
                 state.finish_tool(index, None)
-            } else if state.tools.contains_key(&index)
-                || state.web_search_result_indexes.remove(&index)
-            {
-                Ok(Vec::new())
             } else {
+                state.web_search_result_indexes.remove(&index);
                 Ok(Vec::new())
             }
         }

@@ -13,6 +13,7 @@ mod image_generation;
 pub mod model_metadata;
 pub mod openai_chat;
 pub mod openai_events;
+pub mod provider;
 pub mod server;
 pub mod sse;
 pub mod upstream;

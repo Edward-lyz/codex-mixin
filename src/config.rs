@@ -6,156 +6,15 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
+use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
-use crate::fusion::{FusionProfile, validate_fusion_profiles};
+use crate::fusion::{FusionProfile, validate_fusion_model_references, validate_fusion_profiles};
+use crate::provider::{CONFIG_VERSION, ProviderDefinition, ProviderRegistry};
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum ProviderPreset {
-    Custom,
-    BaiduOneApi,
-    OpenRouter,
-    DeepSeek,
-}
-
-impl ProviderPreset {
-    pub const ALL: [Self; 4] = [
-        Self::Custom,
-        Self::BaiduOneApi,
-        Self::OpenRouter,
-        Self::DeepSeek,
-    ];
-
-    pub fn parse(value: &str) -> anyhow::Result<Self> {
-        match value {
-            "custom" => Ok(Self::Custom),
-            "baidu-oneapi" => Ok(Self::BaiduOneApi),
-            "openrouter" => Ok(Self::OpenRouter),
-            "deepseek" => Ok(Self::DeepSeek),
-            _ => Err(anyhow!("unsupported provider preset: {value}")),
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::Custom => "custom",
-            Self::BaiduOneApi => "baidu-oneapi",
-            Self::OpenRouter => "openrouter",
-            Self::DeepSeek => "deepseek",
-        }
-    }
-
-    pub fn strip_model_provider_suffix(model: &str) -> Option<&str> {
-        Self::ALL.into_iter().find_map(|provider| {
-            model
-                .strip_suffix(provider.as_str())
-                .and_then(|canonical| canonical.strip_suffix('-'))
-        })
-    }
-
-    pub fn default_base_url(self) -> Option<&'static str> {
-        match self {
-            Self::Custom => None,
-            Self::BaiduOneApi => Some("https://oneapi-comate.baidu-int.com"),
-            Self::OpenRouter => Some("https://openrouter.ai/api"),
-            Self::DeepSeek => Some("https://api.deepseek.com"),
-        }
-    }
-
-    pub fn normalize_upstream_base_url(self, base_url: String) -> String {
-        let base_url = trim_trailing_slash(base_url);
-        if self == Self::BaiduOneApi {
-            return base_url.strip_suffix("/v1").unwrap_or(&base_url).to_owned();
-        }
-        base_url
-    }
-
-    pub fn default_quota_url(self, upstream_base_url: &str) -> Option<String> {
-        match self {
-            Self::BaiduOneApi => Some(format!(
-                "{}/openapi/v3/user/quota",
-                upstream_base_url.trim_end_matches('/')
-            )),
-            Self::OpenRouter => Some(format!(
-                "{}/v1/credits",
-                upstream_base_url.trim_end_matches('/')
-            )),
-            Self::Custom | Self::DeepSeek => None,
-        }
-    }
-
-    pub fn default_upstream_kind(self) -> UpstreamKind {
-        match self {
-            Self::Custom | Self::BaiduOneApi => UpstreamKind::AnthropicMessages,
-            Self::OpenRouter | Self::DeepSeek => UpstreamKind::OpenAiChat,
-        }
-    }
-
-    pub fn default_messages_path(self) -> &'static str {
-        match self {
-            Self::Custom | Self::BaiduOneApi => "/v1/messages",
-            Self::OpenRouter => "/v1/chat/completions",
-            Self::DeepSeek => "/chat/completions",
-        }
-    }
-
-    pub fn default_models_path(self) -> &'static str {
-        match self {
-            Self::DeepSeek => "/models",
-            Self::Custom | Self::BaiduOneApi | Self::OpenRouter => "/v1/models",
-        }
-    }
-
-    pub fn default_image_generation_path(self) -> Option<&'static str> {
-        match self {
-            Self::BaiduOneApi => Some("/v1/images/generations"),
-            Self::Custom | Self::OpenRouter | Self::DeepSeek => None,
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum UpstreamKind {
-    AnthropicMessages,
-    OpenAiChat,
-}
-
-impl UpstreamKind {
-    pub fn parse(value: &str) -> anyhow::Result<Self> {
-        match value {
-            "anthropic_messages" | "anthropic-messages" | "anthropic" => {
-                Ok(Self::AnthropicMessages)
-            }
-            "openai_chat" | "openai-chat" | "chat_completions" | "chat-completions" => {
-                Ok(Self::OpenAiChat)
-            }
-            _ => Err(anyhow!("unsupported upstream kind: {value}")),
-        }
-    }
-
-    pub fn as_str(self) -> &'static str {
-        match self {
-            Self::AnthropicMessages => "anthropic_messages",
-            Self::OpenAiChat => "openai_chat",
-        }
-    }
-}
-
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum UpstreamAuthHeader {
-    AuthorizationBearer,
-    XApiKey,
-}
-
-impl UpstreamAuthHeader {
-    fn from_env_value(value: &str) -> anyhow::Result<Self> {
-        match value {
-            "authorization" | "bearer" | "authorization-bearer" => Ok(Self::AuthorizationBearer),
-            "x-api-key" | "x_api_key" => Ok(Self::XApiKey),
-            _ => Err(anyhow!("unsupported upstream auth header: {value}")),
-        }
-    }
-}
+pub use crate::provider::{
+    ProviderAuthHeader as UpstreamAuthHeader, ProviderPreset, ProviderProtocol as UpstreamKind,
+};
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ThinkingMode {
@@ -165,35 +24,12 @@ pub enum ThinkingMode {
     Auto,
 }
 
-impl ThinkingMode {
-    fn from_env_value(value: &str) -> anyhow::Result<Self> {
-        match value {
-            "off" => Ok(Self::Off),
-            "anthropic" | "manual" => Ok(Self::Manual),
-            "adaptive" => Ok(Self::Adaptive),
-            "auto" => Ok(Self::Auto),
-            _ => Err(anyhow!("unsupported CODEX_GATEWAY_THINKING_MODE: {value}")),
-        }
-    }
-}
-
 #[derive(Clone, Debug)]
 pub struct GatewayConfig {
     pub bind: SocketAddr,
-    pub provider_preset: ProviderPreset,
-    pub upstream_kind: UpstreamKind,
-    pub upstream_base_url: String,
-    pub upstream_messages_path: String,
-    pub upstream_models_path: String,
-    pub upstream_image_generation_path: Option<String>,
-    pub upstream_api_key: String,
-    pub quota_url: Option<String>,
-    pub quota_username: Option<String>,
+    pub providers: Vec<ProviderDefinition>,
     pub official_responses_url: String,
     pub codex_auth_path: PathBuf,
-    pub upstream_auth_header: UpstreamAuthHeader,
-    pub anthropic_version: String,
-    pub anthropic_beta: Option<String>,
     pub gateway_api_key: Option<String>,
     pub accept_codex_oauth: bool,
     pub default_max_tokens: u64,
@@ -207,86 +43,26 @@ pub struct GatewayConfig {
 }
 
 impl GatewayConfig {
-    pub fn from_env() -> anyhow::Result<Self> {
-        let stored_config = load_stored_config()?;
-        let provider_preset = first_env_value(&["CODEX_GATEWAY_PROVIDER"])
-            .or_else(|| {
-                stored_config
-                    .as_ref()
-                    .and_then(|config| config.provider_preset.clone())
-            })
-            .map(|value| ProviderPreset::parse(&value))
-            .transpose()?
-            .unwrap_or(ProviderPreset::Custom);
-        let bind = env::var("CODEX_GATEWAY_BIND")
-            .ok()
-            .filter(|value| !value.is_empty())
-            .or_else(|| {
-                stored_config
-                    .as_ref()
-                    .and_then(|config| config.gateway_bind.clone())
-            })
-            .unwrap_or_else(|| "127.0.0.1:8787".to_owned())
-            .parse()
-            .context("invalid CODEX_GATEWAY_BIND")?;
-        let upstream_base_url =
-            first_env_value(&["CODEX_GATEWAY_UPSTREAM_BASE_URL", "ANTHROPIC_BASE_URL"])
-                .or_else(|| {
-                    stored_config
-                        .as_ref()
-                        .and_then(|config| config.upstream_base_url.clone())
-                })
-                .or_else(|| {
-                    provider_preset
-                        .default_base_url()
-                        .map(std::borrow::ToOwned::to_owned)
-                })
-            .ok_or_else(|| {
-                anyhow!(
-                    "set CODEX_GATEWAY_UPSTREAM_BASE_URL, ANTHROPIC_BASE_URL, choose a provider preset, or run login --base-url <url>"
-                )
-            })?;
-        let upstream_base_url = provider_preset.normalize_upstream_base_url(upstream_base_url);
-        let upstream_kind = first_env_value(&["CODEX_GATEWAY_UPSTREAM_KIND"])
-            .or_else(|| {
-                stored_config
-                    .as_ref()
-                    .and_then(|config| config.upstream_kind.clone())
-            })
-            .map(|value| UpstreamKind::parse(&value))
-            .transpose()?
-            .unwrap_or_else(|| provider_preset.default_upstream_kind());
-        let upstream_api_key = first_env_value(&[
-            "CODEX_GATEWAY_UPSTREAM_API_KEY",
-            "ANTHROPIC_API_KEY",
-        ])
-        .or_else(|| {
-            stored_config
-                .as_ref()
-                .and_then(|config| config.upstream_api_key.clone())
-        })
-        .ok_or_else(|| {
+    pub fn from_stored_config() -> anyhow::Result<Self> {
+        let stored_config = load_stored_config()?.ok_or_else(|| {
             anyhow!(
-                "set CODEX_GATEWAY_UPSTREAM_API_KEY, ANTHROPIC_API_KEY, or run login --key <key>"
+                "provider configuration is missing; run `codex-mixin providers add --preset <preset> --key <key>`"
             )
         })?;
-        let upstream_auth_header = UpstreamAuthHeader::from_env_value(
-            &first_env_value(&["CODEX_GATEWAY_UPSTREAM_AUTH_HEADER"])
-                .unwrap_or_else(|| "authorization".to_owned()),
-        )?;
-        let request_timeout_ms = read_u64_env("CODEX_GATEWAY_REQUEST_TIMEOUT_MS", 600_000)?;
-        let upstream_image_generation_path = resolve_image_generation_path_setting(
-            first_env_value(&["CODEX_GATEWAY_IMAGE_GENERATION_PATH"]).or_else(|| {
-                stored_config
-                    .as_ref()
-                    .and_then(|config| config.upstream_image_generation_path.clone())
-            }),
-            provider_preset.default_image_generation_path(),
-        );
-        let mut fusion_profiles = stored_config
-            .as_ref()
-            .map(|config| config.fusion_profiles.clone())
-            .unwrap_or_default();
+        ensure_config_version(stored_config.config_version)?;
+        if stored_config.providers.is_empty() {
+            anyhow::bail!(
+                "provider configuration is empty; run `codex-mixin providers add --preset <preset> --key <key>`"
+            );
+        }
+        ProviderRegistry::new(stored_config.providers.clone())?;
+        let bind = stored_config
+            .gateway_bind
+            .clone()
+            .unwrap_or_else(|| "127.0.0.1:8787".to_owned())
+            .parse()
+            .context("invalid stored gateway bind")?;
+        let mut fusion_profiles = stored_config.fusion_profiles.clone();
         for profile in &mut fusion_profiles {
             if profile.panel_tools.max_rounds == 4 && profile.panel_tools.max_calls_per_model == 8 {
                 profile.panel_tools.max_rounds = 16;
@@ -295,104 +71,22 @@ impl GatewayConfig {
         }
         let config = Self {
             bind,
-            provider_preset,
-            upstream_kind,
-            quota_url: first_env_value(&["CODEX_GATEWAY_QUOTA_URL"])
-                .or_else(|| {
-                    stored_config
-                        .as_ref()
-                        .and_then(|config| config.quota_url.clone())
-                })
-                .or_else(|| provider_preset.default_quota_url(&upstream_base_url)),
-            quota_username: first_env_value(&["CODEX_GATEWAY_QUOTA_USERNAME"]).or_else(|| {
-                stored_config
-                    .as_ref()
-                    .and_then(|config| config.quota_username.clone())
-            }),
-            upstream_base_url,
-            upstream_messages_path: first_env_value(&[
-                "CODEX_GATEWAY_MESSAGES_PATH",
-                "ANTHROPIC_MESSAGES_PATH",
-            ])
-            .or_else(|| {
-                stored_config
-                    .as_ref()
-                    .and_then(|config| config.upstream_messages_path.clone())
-            })
-            .unwrap_or_else(|| provider_preset.default_messages_path().to_owned()),
-            upstream_models_path: first_env_value(&[
-                "CODEX_GATEWAY_MODELS_PATH",
-                "ANTHROPIC_MODELS_PATH",
-            ])
-            .or_else(|| {
-                stored_config
-                    .as_ref()
-                    .and_then(|config| config.upstream_models_path.clone())
-            })
-            .unwrap_or_else(|| provider_preset.default_models_path().to_owned()),
-            upstream_image_generation_path,
-            upstream_api_key,
-            official_responses_url: env::var("CODEX_GATEWAY_OFFICIAL_RESPONSES_URL")
-                .unwrap_or_else(|_| "https://chatgpt.com/backend-api/codex/responses".to_owned()),
+            providers: stored_config.providers,
+            official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
             codex_auth_path: default_codex_auth_path(),
-            upstream_auth_header,
-            anthropic_version: first_env_value(&[
-                "CODEX_GATEWAY_ANTHROPIC_VERSION",
-                "ANTHROPIC_VERSION",
-            ])
-            .unwrap_or_else(|| "2023-06-01".to_owned()),
-            anthropic_beta: first_env_value(&["CODEX_GATEWAY_ANTHROPIC_BETA", "ANTHROPIC_BETA"]),
-            gateway_api_key: env::var("CODEX_GATEWAY_KEY")
-                .ok()
-                .filter(|value| !value.is_empty())
-                .or_else(|| {
-                    stored_config
-                        .as_ref()
-                        .and_then(|config| config.gateway_api_key.clone())
-                }),
-            accept_codex_oauth: read_bool_env("CODEX_GATEWAY_ACCEPT_CODEX_OAUTH", true)?,
-            default_max_tokens: read_u64_env("CODEX_GATEWAY_DEFAULT_MAX_TOKENS", 8192)?,
-            default_context_window: read_u64_env(
-                "CODEX_GATEWAY_DEFAULT_CONTEXT_WINDOW",
-                1_000_000,
-            )?,
-            request_timeout: Duration::from_millis(request_timeout_ms),
-            thinking_mode: ThinkingMode::from_env_value(
-                &env::var("CODEX_GATEWAY_THINKING_MODE").unwrap_or_else(|_| "auto".to_owned()),
-            )?,
-            enable_web_search_tool: read_bool_env("CODEX_GATEWAY_ENABLE_WEB_SEARCH_TOOL", true)?,
-            web_search_tool_type: env::var("CODEX_GATEWAY_WEB_SEARCH_TOOL_TYPE")
-                .unwrap_or_else(|_| "web_search_20250305".to_owned()),
-            web_search_max_uses: read_optional_positive_u64_env(
-                "CODEX_GATEWAY_WEB_SEARCH_MAX_USES",
-                Some(3),
-            )?,
+            gateway_api_key: stored_config.gateway_api_key,
+            accept_codex_oauth: true,
+            default_max_tokens: 8192,
+            default_context_window: 1_000_000,
+            request_timeout: Duration::from_millis(600_000),
+            thinking_mode: ThinkingMode::Auto,
+            enable_web_search_tool: true,
+            web_search_tool_type: "web_search_20250305".to_owned(),
+            web_search_max_uses: Some(3),
             fusion_profiles,
         };
         validate_fusion_profiles(&config.fusion_profiles)?;
         Ok(config)
-    }
-
-    pub fn upstream_messages_url(&self) -> String {
-        format!(
-            "{}{}",
-            self.upstream_base_url,
-            ensure_leading_slash(&self.upstream_messages_path)
-        )
-    }
-
-    pub fn upstream_models_url(&self) -> String {
-        format!(
-            "{}{}",
-            self.upstream_base_url,
-            ensure_leading_slash(&self.upstream_models_path)
-        )
-    }
-
-    pub fn upstream_image_generation_url(&self) -> Option<String> {
-        self.upstream_image_generation_path
-            .as_ref()
-            .map(|path| format!("{}{}", self.upstream_base_url, ensure_leading_slash(path)))
     }
 
     pub fn official_image_generation_url(&self) -> anyhow::Result<String> {
@@ -417,17 +111,6 @@ impl GatewayConfig {
     }
 }
 
-fn resolve_image_generation_path_setting(
-    configured: Option<String>,
-    provider_default: Option<&str>,
-) -> Option<String> {
-    match configured {
-        Some(path) if path.trim().is_empty() => None,
-        Some(path) => Some(path.trim().to_owned()),
-        None => provider_default.map(str::to_owned),
-    }
-}
-
 fn default_codex_auth_path() -> PathBuf {
     codex_home_path().join("auth.json")
 }
@@ -442,32 +125,37 @@ fn codex_home_path() -> PathBuf {
     )
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct StoredGatewayConfig {
+    pub config_version: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gateway_bind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
-    pub provider_preset: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub upstream_kind: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub upstream_base_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub upstream_messages_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub upstream_models_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub upstream_image_generation_path: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub upstream_api_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
     pub gateway_api_key: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quota_url: Option<String>,
-    #[serde(skip_serializing_if = "Option::is_none")]
-    pub quota_username: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fusion_profiles: Vec<FusionProfile>,
+    pub providers: Vec<ProviderDefinition>,
+}
+
+impl Default for StoredGatewayConfig {
+    fn default() -> Self {
+        Self {
+            config_version: CONFIG_VERSION,
+            gateway_bind: None,
+            gateway_api_key: None,
+            fusion_profiles: Vec::new(),
+            providers: Vec::new(),
+        }
+    }
+}
+
+pub fn ensure_config_version(version: u32) -> anyhow::Result<()> {
+    if version != CONFIG_VERSION {
+        anyhow::bail!(
+            "unsupported config version {version}; expected {CONFIG_VERSION}. Recreate the provider configuration"
+        );
+    }
+    Ok(())
 }
 
 pub fn stored_config_path() -> PathBuf {
@@ -492,7 +180,9 @@ pub fn load_stored_config_from_path(
         return Ok(None);
     }
     let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let parsed = serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+    let parsed: StoredGatewayConfig =
+        serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+    ensure_config_version(parsed.config_version)?;
     Ok(Some(parsed))
 }
 
@@ -502,27 +192,90 @@ pub fn save_stored_config(config: &StoredGatewayConfig) -> anyhow::Result<PathBu
     Ok(path)
 }
 
+pub fn mutate_stored_config<T>(
+    mutation: impl FnOnce(&mut StoredGatewayConfig) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    mutate_stored_config_at_path(&stored_config_path(), mutation)
+}
+
+pub fn mutate_stored_config_at_path<T>(
+    path: &std::path::Path,
+    mutation: impl FnOnce(&mut StoredGatewayConfig) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let _lock = lock_stored_config(path)?;
+    let mut config = load_stored_config_from_path(path)?.unwrap_or_default();
+    let result = mutation(&mut config)?;
+    save_stored_config_to_path_unlocked(path, &config)?;
+    Ok(result)
+}
+
 pub fn save_stored_config_to_path(
     path: &std::path::Path,
     config: &StoredGatewayConfig,
 ) -> anyhow::Result<()> {
+    let _lock = lock_stored_config(path)?;
+    save_stored_config_to_path_unlocked(path, config)
+}
+
+fn save_stored_config_to_path_unlocked(
+    path: &std::path::Path,
+    config: &StoredGatewayConfig,
+) -> anyhow::Result<()> {
+    ensure_config_version(config.config_version)?;
+    let providers = ProviderRegistry::new(config.providers.clone())?;
+    validate_fusion_profiles(&config.fusion_profiles)?;
+    validate_fusion_model_references(&config.fusion_profiles, &providers)?;
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
         set_private_dir_permissions(parent)?;
     }
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow!("invalid config filename: {}", path.display()))?;
+    let temporary_path =
+        path.with_file_name(format!("{file_name}.tmp.{}", uuid::Uuid::new_v4().simple()));
     let mut file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .write(true)
-        .open(path)
-        .with_context(|| format!("open {}", path.display()))?;
+        .open(&temporary_path)
+        .with_context(|| format!("open {}", temporary_path.display()))?;
     set_private_file_permissions(&file)?;
     let content = serde_json::to_vec_pretty(config)?;
     file.write_all(&content)
-        .with_context(|| format!("write {}", path.display()))?;
+        .with_context(|| format!("write {}", temporary_path.display()))?;
     file.write_all(b"\n")
-        .with_context(|| format!("write {}", path.display()))?;
+        .with_context(|| format!("write {}", temporary_path.display()))?;
+    file.sync_all()
+        .with_context(|| format!("sync {}", temporary_path.display()))?;
+    drop(file);
+    if let Err(error) = fs::rename(&temporary_path, path) {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(error).with_context(|| format!("replace {}", path.display()));
+    }
     Ok(())
+}
+
+fn lock_stored_config(path: &std::path::Path) -> anyhow::Result<fs::File> {
+    if let Some(parent) = path.parent() {
+        fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
+        set_private_dir_permissions(parent)?;
+    }
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow!("invalid config filename: {}", path.display()))?;
+    let lock_path = path.with_file_name(format!("{file_name}.lock"));
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .with_context(|| format!("open {}", lock_path.display()))?;
+    set_private_file_permissions(&lock)?;
+    FileExt::lock_exclusive(&lock).with_context(|| format!("lock {}", lock_path.display()))?;
+    Ok(lock)
 }
 
 pub fn delete_stored_config() -> anyhow::Result<bool> {
@@ -553,61 +306,6 @@ fn set_private_file_permissions(file: &fs::File) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn trim_trailing_slash(mut value: String) -> String {
-    while value.ends_with('/') {
-        value.pop();
-    }
-    value
-}
-
-fn ensure_leading_slash(value: &str) -> String {
-    if value.starts_with('/') {
-        value.to_owned()
-    } else {
-        format!("/{value}")
-    }
-}
-
-fn read_u64_env(name: &str, default: u64) -> anyhow::Result<u64> {
-    match env::var(name) {
-        Ok(value) => value.parse().with_context(|| format!("invalid {name}")),
-        Err(_) => Ok(default),
-    }
-}
-
-fn first_env_value(names: &[&str]) -> Option<String> {
-    names
-        .iter()
-        .find_map(|name| env::var(name).ok().filter(|value| !value.trim().is_empty()))
-}
-
-fn read_bool_env(name: &str, default: bool) -> anyhow::Result<bool> {
-    match env::var(name) {
-        Ok(value) => match value.as_str() {
-            "1" | "true" | "yes" | "on" => Ok(true),
-            "0" | "false" | "no" | "off" => Ok(false),
-            _ => Err(anyhow!("invalid {name}: {value}")),
-        },
-        Err(_) => Ok(default),
-    }
-}
-
-fn read_optional_positive_u64_env(name: &str, default: Option<u64>) -> anyhow::Result<Option<u64>> {
-    match env::var(name) {
-        Ok(value) if value.is_empty() => Ok(None),
-        Ok(value) => {
-            let parsed = value
-                .parse::<u64>()
-                .with_context(|| format!("invalid {name}"))?;
-            if parsed == 0 {
-                return Err(anyhow!("{name} must be greater than zero"));
-            }
-            Ok(Some(parsed))
-        }
-        Err(_) => Ok(default),
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -617,90 +315,152 @@ mod tests {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
         let config = StoredGatewayConfig {
+            config_version: CONFIG_VERSION,
             gateway_bind: Some("127.0.0.1:18787".to_owned()),
-            provider_preset: Some("custom".to_owned()),
-            upstream_kind: Some("anthropic_messages".to_owned()),
-            upstream_base_url: Some("https://example.test".to_owned()),
-            upstream_messages_path: Some("/v1/messages".to_owned()),
-            upstream_models_path: Some("/v1/models".to_owned()),
-            upstream_image_generation_path: Some("/v1/images/generations".to_owned()),
-            upstream_api_key: Some("secret-key".to_owned()),
             gateway_api_key: Some("local-key".to_owned()),
-            quota_url: Some("https://example.test/quota".to_owned()),
-            quota_username: Some("quota-user".to_owned()),
             fusion_profiles: Vec::new(),
+            providers: vec![crate::provider::open_code_go_provider(
+                "opencode-go",
+                "opencode-key",
+            )],
         };
         save_stored_config_to_path(&path, &config).unwrap();
         let loaded = load_stored_config_from_path(&path).unwrap().unwrap();
+        assert_eq!(loaded.config_version, CONFIG_VERSION);
         assert_eq!(loaded.gateway_bind.as_deref(), Some("127.0.0.1:18787"));
-        assert_eq!(
-            loaded.upstream_base_url.as_deref(),
-            Some("https://example.test")
-        );
-        assert_eq!(loaded.provider_preset.as_deref(), Some("custom"));
-        assert_eq!(loaded.upstream_kind.as_deref(), Some("anthropic_messages"));
-        assert_eq!(
-            loaded.upstream_messages_path.as_deref(),
-            Some("/v1/messages")
-        );
-        assert_eq!(loaded.upstream_models_path.as_deref(), Some("/v1/models"));
-        assert_eq!(
-            loaded.upstream_image_generation_path.as_deref(),
-            Some("/v1/images/generations")
-        );
-        assert_eq!(loaded.upstream_api_key.as_deref(), Some("secret-key"));
         assert_eq!(loaded.gateway_api_key.as_deref(), Some("local-key"));
-        assert_eq!(
-            loaded.quota_url.as_deref(),
-            Some("https://example.test/quota")
-        );
-        assert_eq!(loaded.quota_username.as_deref(), Some("quota-user"));
+        assert_eq!(loaded.providers[0].id, "opencode-go");
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(path).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
     }
 
     #[test]
-    fn old_stored_config_defaults_to_no_fusion_profiles() {
-        let config: StoredGatewayConfig = serde_json::from_str("{}").unwrap();
-        assert!(config.fusion_profiles.is_empty());
-    }
-
-    #[test]
-    fn baidu_oneapi_normalizes_optional_v1_suffix() {
-        assert_eq!(
-            ProviderPreset::BaiduOneApi
-                .normalize_upstream_base_url("https://oneapi.example/v1/".to_owned()),
-            "https://oneapi.example"
-        );
-        assert_eq!(
-            ProviderPreset::BaiduOneApi
-                .normalize_upstream_base_url("https://oneapi.example".to_owned()),
-            "https://oneapi.example"
-        );
-        assert_eq!(
-            ProviderPreset::Custom
-                .normalize_upstream_base_url("https://example.test/v1/".to_owned()),
-            "https://example.test/v1"
+    fn rejects_missing_or_wrong_config_version() {
+        assert!(serde_json::from_str::<StoredGatewayConfig>("{}").is_err());
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        fs::write(
+            &path,
+            r#"{"config_version":1,"providers":[],"fusion_profiles":[]}"#,
+        )
+        .unwrap();
+        assert!(
+            load_stored_config_from_path(&path)
+                .unwrap_err()
+                .to_string()
+                .contains("unsupported config version")
         );
     }
 
     #[test]
-    fn resolves_official_and_upstream_image_generation_urls() {
+    fn saves_multiple_providers() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let config = StoredGatewayConfig {
+            providers: vec![
+                crate::provider::open_code_go_provider("primary", "one"),
+                crate::provider::open_code_go_provider("backup", "two"),
+            ],
+            ..StoredGatewayConfig::default()
+        };
+        save_stored_config_to_path(&path, &config).unwrap();
+        let loaded = load_stored_config_from_path(&path).unwrap().unwrap();
+        assert_eq!(
+            loaded
+                .providers
+                .iter()
+                .map(|provider| provider.id.as_str())
+                .collect::<Vec<_>>(),
+            ["primary", "backup"]
+        );
+    }
+
+    #[test]
+    fn serializes_provider_mutations_with_a_config_lock() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        save_stored_config_to_path(&path, &StoredGatewayConfig::default()).unwrap();
+        let barrier = std::sync::Arc::new(std::sync::Barrier::new(3));
+        let handles = ["first", "second"].map(|id| {
+            let path = path.clone();
+            let barrier = barrier.clone();
+            std::thread::spawn(move || {
+                barrier.wait();
+                mutate_stored_config_at_path(&path, |config| {
+                    config
+                        .providers
+                        .push(crate::provider::open_code_go_provider(id, "secret"));
+                    Ok(())
+                })
+                .unwrap();
+            })
+        });
+        barrier.wait();
+        for handle in handles {
+            handle.join().unwrap();
+        }
+        let config = load_stored_config_from_path(&path).unwrap().unwrap();
+        assert_eq!(config.providers.len(), 2);
+        assert!(
+            config
+                .providers
+                .iter()
+                .any(|provider| provider.id == "first")
+        );
+        assert!(
+            config
+                .providers
+                .iter()
+                .any(|provider| provider.id == "second")
+        );
+    }
+
+    #[test]
+    fn rejects_stored_fusion_references_to_unavailable_provider_models() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let config = StoredGatewayConfig {
+            providers: vec![crate::provider::open_code_go_provider(
+                "opencode-go",
+                "secret",
+            )],
+            fusion_profiles: vec![FusionProfile {
+                id: "invalid".to_owned(),
+                panel_models: vec!["missing-opencode-go".to_owned()],
+                judge_model: "glm-5.2-opencode-go".to_owned(),
+                final_model: "glm-5.2-opencode-go".to_owned(),
+                min_successful: 1,
+                max_completion_tokens: 2048,
+                timeout_ms: 30_000,
+                fuse_every_user_turn: true,
+                show_intermediate_results: true,
+                panel_tools: crate::fusion::PanelToolsConfig::default(),
+            }],
+            ..StoredGatewayConfig::default()
+        };
+        let error = save_stored_config_to_path(&path, &config).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("references unavailable provider model missing-opencode-go")
+        );
+        assert!(!path.exists());
+    }
+
+    #[test]
+    fn resolves_official_image_generation_urls() {
         let config = GatewayConfig {
             bind: "127.0.0.1:0".parse().unwrap(),
-            provider_preset: ProviderPreset::BaiduOneApi,
-            upstream_kind: UpstreamKind::AnthropicMessages,
-            upstream_base_url: "https://oneapi.example".to_owned(),
-            upstream_messages_path: "/v1/messages".to_owned(),
-            upstream_models_path: "/v1/models".to_owned(),
-            upstream_image_generation_path: Some("/v1/images/generations".to_owned()),
-            upstream_api_key: "key".to_owned(),
-            quota_url: None,
-            quota_username: None,
+            providers: vec![crate::provider::open_code_go_provider("opencode-go", "key")],
             official_responses_url: "https://chatgpt.example/backend-api/codex/responses"
                 .to_owned(),
             codex_auth_path: PathBuf::from("/tmp/auth.json"),
-            upstream_auth_header: UpstreamAuthHeader::AuthorizationBearer,
-            anthropic_version: "2023-06-01".to_owned(),
-            anthropic_beta: None,
             gateway_api_key: None,
             accept_codex_oauth: true,
             default_max_tokens: 8192,
@@ -713,31 +473,12 @@ mod tests {
             fusion_profiles: Vec::new(),
         };
         assert_eq!(
-            config.upstream_image_generation_url().as_deref(),
-            Some("https://oneapi.example/v1/images/generations")
-        );
-        assert_eq!(
             config.official_image_generation_url().unwrap(),
             "https://chatgpt.example/backend-api/codex/images/generations"
         );
         assert_eq!(
             config.official_image_edit_url().unwrap(),
             "https://chatgpt.example/backend-api/codex/images/edits"
-        );
-    }
-
-    #[test]
-    fn explicit_empty_image_path_disables_provider_default() {
-        assert_eq!(
-            resolve_image_generation_path_setting(
-                Some(String::new()),
-                Some("/v1/images/generations")
-            ),
-            None
-        );
-        assert_eq!(
-            resolve_image_generation_path_setting(None, Some("/v1/images/generations")),
-            Some("/v1/images/generations".to_owned())
         );
     }
 }

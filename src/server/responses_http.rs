@@ -1,7 +1,4 @@
-use super::auth::{
-    check_gateway_auth, forward_official_headers, normalize_custom_model_alias,
-    stable_oneapi_routing,
-};
+use super::auth::{check_gateway_auth, forward_official_headers, stable_oneapi_routing};
 use super::*;
 
 pub(super) async fn responses(
@@ -15,24 +12,43 @@ pub(super) async fn responses(
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?
         .to_owned();
-    let route = model_route(&requested_model);
-    if route == ModelRoute::Official {
+    let route = state.resolve_model_route(&requested_model)?;
+    match &route {
+        ResolvedModelRoute::Official => {
+            tracing::info!(catalog_slug = %requested_model, route = "official", "routing responses request");
+        }
+        ResolvedModelRoute::Fusion { profile_id } => {
+            tracing::info!(
+                catalog_slug = %requested_model,
+                fusion_profile_id = %profile_id,
+                route = "fusion",
+                "routing responses request"
+            );
+        }
+        ResolvedModelRoute::Provider {
+            provider_id,
+            upstream_model_id,
+            ..
+        } => {
+            tracing::info!(
+                catalog_slug = %requested_model,
+                provider_id = %provider_id,
+                upstream_model_id = %upstream_model_id,
+                route = "provider",
+                "routing responses request"
+            );
+        }
+    }
+    if route == ResolvedModelRoute::Official {
         return forward_official_responses(&state, &headers, body).await;
     }
-    if route == ModelRoute::Direct {
-        normalize_custom_model_alias(&mut body);
-    }
-    let oneapi_routing = if state.config.provider_preset == ProviderPreset::BaiduOneApi {
-        stable_oneapi_routing(&headers, &body)?
-    } else {
-        None
-    };
+    let provider_routing = stable_oneapi_routing(&headers, &body)?;
     let stream = match route {
-        ModelRoute::Official => unreachable!("official route returned above"),
-        ModelRoute::Direct => {
-            stream_response_with_options(&state, body, oneapi_routing.as_ref(), None).await?
+        ResolvedModelRoute::Official => unreachable!("official route returned above"),
+        ResolvedModelRoute::Provider { .. } => {
+            stream_response_with_options(&state, body, provider_routing.as_ref(), None).await?
         }
-        ModelRoute::Fusion { profile_id } => {
+        ResolvedModelRoute::Fusion { profile_id } => {
             let profile = state
                 .config
                 .fusion_profiles
@@ -45,12 +61,12 @@ pub(super) async fn responses(
             if should_fuse_turn(&body) {
                 FusionEngine::new(&state, &profile)
                     .with_headers(headers.clone())
-                    .stream_with_routing(body, oneapi_routing)
+                    .stream_with_routing(body, provider_routing)
             } else {
                 body["stream"] = Value::Bool(true);
                 FusionEngine::new(&state, &profile)
                     .with_headers(headers.clone())
-                    .stream_final_continuation(body, oneapi_routing.as_ref())
+                    .stream_final_continuation(body, provider_routing.as_ref())
                     .await?
             }
         }

@@ -4,22 +4,18 @@ use super::types::{CAPABILITY_FILE_VERSION, CapabilitySnapshot, UpstreamIdentity
 use super::*;
 
 fn test_config(upstream_base_url: &str) -> GatewayConfig {
+    let mut provider = crate::provider::custom_provider("test-provider", "test-key");
+    provider.base_url = upstream_base_url.to_owned();
+    provider.selected_models = vec!["Claude Haiku 4.5".to_owned()];
+    provider.cached_models = vec![crate::provider::ProviderModel {
+        id: "Claude Haiku 4.5".to_owned(),
+        ..crate::provider::ProviderModel::default()
+    }];
     GatewayConfig {
         bind: "127.0.0.1:0".parse().unwrap(),
-        provider_preset: ProviderPreset::Custom,
-        upstream_kind: UpstreamKind::AnthropicMessages,
-        upstream_base_url: upstream_base_url.to_owned(),
-        upstream_messages_path: "/v1/messages".to_owned(),
-        upstream_models_path: "/v1/models".to_owned(),
-        upstream_image_generation_path: None,
-        upstream_api_key: "test-key".to_owned(),
-        quota_url: None,
-        quota_username: None,
+        providers: vec![provider],
         official_responses_url: "https://example.test/responses".to_owned(),
         codex_auth_path: PathBuf::from("/tmp/auth.json"),
-        upstream_auth_header: UpstreamAuthHeader::AuthorizationBearer,
-        anthropic_version: "2023-06-01".to_owned(),
-        anthropic_beta: None,
         gateway_api_key: None,
         accept_codex_oauth: false,
         default_max_tokens: 8192,
@@ -80,6 +76,8 @@ async fn persists_prunes_and_invalidates_capabilities() {
     let capabilities = WebSearchCapabilities::load(path.clone(), &config).unwrap();
     let capability = |model: &str| ModelWebSearchCapability {
         model: model.to_owned(),
+        provider_id: "test-provider".to_owned(),
+        upstream_model: "Claude Haiku 4.5".to_owned(),
         supported: true,
         evidence: "server_tool_result".to_owned(),
         error: None,
@@ -88,22 +86,23 @@ async fn persists_prunes_and_invalidates_capabilities() {
     {
         let mut models = capabilities.models.write().unwrap();
         models.insert(
-            "Claude Haiku 4.5".to_owned(),
-            capability("Claude Haiku 4.5"),
+            "Claude Haiku 4.5-test-provider".to_owned(),
+            capability("Claude Haiku 4.5-test-provider"),
         );
         models.insert("Removed Model".to_owned(), capability("Removed Model"));
     }
     capabilities.save().unwrap();
 
     let loaded = WebSearchCapabilities::load(path.clone(), &config).unwrap();
-    assert!(loaded.supports_model("Claude Haiku 4.5"));
+    assert!(loaded.supports_model("Claude Haiku 4.5-test-provider"));
     assert!(loaded.supports_model("Removed Model"));
     let mut current_models = vec![ModelInfo {
-        id: "Claude Haiku 4.5".to_owned(),
+        id: "Claude Haiku 4.5-test-provider".to_owned(),
         ..ModelInfo::default()
     }];
+    let registry = ProviderRegistry::new(config.providers.clone()).unwrap();
     let summary = loaded
-        .probe_models(&mut current_models, &config, false)
+        .probe_models(&mut current_models, &config, &registry, false)
         .await
         .unwrap();
     assert_eq!(summary.attempted, 0);
@@ -111,15 +110,15 @@ async fn persists_prunes_and_invalidates_capabilities() {
 
     let another_upstream = test_config("https://two.example");
     let invalidated = WebSearchCapabilities::load(path.clone(), &another_upstream).unwrap();
-    assert!(!invalidated.supports_model("Claude Haiku 4.5"));
+    assert!(!invalidated.supports_model("Claude Haiku 4.5-test-provider"));
     assert!(invalidated.results().is_empty());
 
     let old_snapshot = CapabilitySnapshot {
         version: CAPABILITY_FILE_VERSION - 1,
         upstream: UpstreamIdentity::from_config(&config),
         models: BTreeMap::from([(
-            "Claude Haiku 4.5".to_owned(),
-            capability("Claude Haiku 4.5"),
+            "Claude Haiku 4.5-test-provider".to_owned(),
+            capability("Claude Haiku 4.5-test-provider"),
         )]),
     };
     fs::write(&path, serde_json::to_vec_pretty(&old_snapshot).unwrap()).unwrap();

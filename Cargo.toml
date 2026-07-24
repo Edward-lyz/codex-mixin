@@ -14,6 +14,7 @@ axum = { version = "0.8", features = ["ws"] }
 bytes = "1.10"
 clap = { version = "4.5", features = ["derive"] }
 futures-util = "0.3"
+fs2 = "0.4"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 regex = "1.12"
 serde = { version = "1.0", features = ["derive"] }

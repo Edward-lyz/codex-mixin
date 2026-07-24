@@ -11,49 +11,12 @@ use clap::Parser;
 use toml_edit::DocumentMut;
 
 use codex_mixin::anthropic::ModelInfo;
-use codex_mixin::config::{
-    GatewayConfig, ProviderPreset, StoredGatewayConfig, ThinkingMode, UpstreamAuthHeader,
-    UpstreamKind,
-};
+use codex_mixin::config::{GatewayConfig, ThinkingMode};
+use codex_mixin::provider::{ProviderPreset, ProviderRegistry};
 use codex_mixin::server::AppState;
 
 use super::Cli;
-use super::{atomic_file::*, auth::*, codex::*, runtime::*, service::*, status::*};
-
-#[test]
-fn resolves_explicit_preserved_and_default_image_generation_paths() {
-    assert_eq!(
-        resolve_image_generation_path(
-            Some(" /custom/images ".to_owned()),
-            false,
-            Some("/old/images".to_owned()),
-            Some("/default/images"),
-        ),
-        Some("/custom/images".to_owned())
-    );
-    assert_eq!(
-        resolve_image_generation_path(
-            None,
-            false,
-            Some("/old/images".to_owned()),
-            Some("/default/images"),
-        ),
-        Some("/old/images".to_owned())
-    );
-    assert_eq!(
-        resolve_image_generation_path(None, true, None, Some("/default/images")),
-        Some("/default/images".to_owned())
-    );
-    assert_eq!(
-        resolve_image_generation_path(
-            Some("  ".to_owned()),
-            false,
-            Some("/old/images".to_owned()),
-            Some("/default/images"),
-        ),
-        Some(String::new())
-    );
-}
+use super::{atomic_file::*, codex::*, runtime::*, service::*, status::*};
 
 #[test]
 fn rotates_gateway_log_at_size_limit() {
@@ -111,16 +74,57 @@ fn install_command_accepts_explicit_custom_only_mode() {
 }
 
 #[test]
-fn oauth_proxy_catalog_recognizes_every_provider_suffix() {
+fn provider_select_accepts_an_empty_allowlist() {
+    assert!(Cli::try_parse_from(["codex-mixin", "providers", "select", "provider-a"]).is_ok());
+}
+
+#[test]
+fn macos_bridge_commands_accept_multi_provider_arguments() {
+    assert!(
+        Cli::try_parse_from([
+            "codex-mixin",
+            "benchmark",
+            "start",
+            "--timeout-seconds",
+            "10",
+            "--provider",
+            "provider-a",
+            "--provider",
+            "provider-b",
+        ])
+        .is_ok()
+    );
+    assert!(
+        Cli::try_parse_from([
+            "codex-mixin",
+            "fusion",
+            "set",
+            "--profile-json",
+            r#"{"id":"default","panel_models":["model-provider-a"],"judge_model":"model-provider-a","final_model":"model-provider-a"}"#,
+            "--replace-id",
+            "default",
+        ])
+        .is_ok()
+    );
+}
+
+#[test]
+fn oauth_proxy_catalog_uses_exact_aggregated_slugs() {
     let models = vec![ModelInfo {
-        id: "gpt-5.6-sol".to_owned(),
+        id: "gpt-5.6-sol-provider-with-hyphens".to_owned(),
         ..ModelInfo::default()
     }];
 
-    for provider in ProviderPreset::ALL {
-        let alias = format!("gpt-5.6-sol-{}", provider.as_str());
-        assert!(model_exists_in_oauth_proxy_catalog(&alias, &models, None));
-    }
+    assert!(model_exists_in_oauth_proxy_catalog(
+        "gpt-5.6-sol-provider-with-hyphens",
+        &models,
+        None
+    ));
+    assert!(!model_exists_in_oauth_proxy_catalog(
+        "gpt-5.6-sol-other-provider",
+        &models,
+        None
+    ));
 }
 
 #[test]
@@ -268,20 +272,12 @@ async fn oauth_install_falls_back_to_local_cache_when_official_fetch_fails() {
     .unwrap();
     let state = AppState::new(GatewayConfig {
         bind: "127.0.0.1:0".parse().unwrap(),
-        provider_preset: ProviderPreset::Custom,
-        upstream_kind: UpstreamKind::AnthropicMessages,
-        upstream_base_url: "https://example.invalid".to_owned(),
-        upstream_messages_path: "/v1/messages".to_owned(),
-        upstream_models_path: "/v1/models".to_owned(),
-        upstream_image_generation_path: None,
-        upstream_api_key: "upstream-key".to_owned(),
-        quota_url: None,
-        quota_username: None,
+        providers: vec![codex_mixin::provider::open_code_go_provider(
+            "test-provider",
+            "upstream-key",
+        )],
         official_responses_url: format!("http://{address}/backend-api/codex/responses"),
         codex_auth_path: auth_path,
-        upstream_auth_header: UpstreamAuthHeader::AuthorizationBearer,
-        anthropic_version: "2023-06-01".to_owned(),
-        anthropic_beta: None,
         gateway_api_key: None,
         accept_codex_oauth: true,
         default_max_tokens: 8192,
@@ -758,30 +754,36 @@ fn summarizes_generic_quota_shapes() {
 
 #[test]
 fn provider_presets_resolve_quota_urls() {
-    let baidu = StoredGatewayConfig {
-        provider_preset: Some("baidu-oneapi".to_owned()),
-        upstream_base_url: Some("https://oneapi.example".to_owned()),
-        ..StoredGatewayConfig::default()
-    };
+    let mut baidu = ProviderPreset::BaiduOneApi.create("baidu", "key");
+    baidu.base_url = "https://oneapi.example".to_owned();
+    baidu.quota_url = Some("https://oneapi.example/openapi/v3/user/quota".to_owned());
+    baidu.quota_username = Some("quota-user".to_owned());
+    let registry = ProviderRegistry::new(vec![baidu]).unwrap();
     assert_eq!(
-        resolve_quota_url(&baidu).unwrap().as_str(),
-        "https://oneapi.example/openapi/v3/user/quota"
+        registry
+            .provider("baidu")
+            .unwrap()
+            .quota_url()
+            .unwrap()
+            .as_str(),
+        "https://oneapi.example/openapi/v3/user/quota?username=quota-user"
     );
 
-    let openrouter = StoredGatewayConfig {
-        provider_preset: Some("openrouter".to_owned()),
-        ..StoredGatewayConfig::default()
-    };
+    let openrouter = ProviderPreset::OpenRouter.create("openrouter", "key");
+    let registry = ProviderRegistry::new(vec![openrouter]).unwrap();
     assert_eq!(
-        resolve_quota_url(&openrouter).unwrap().as_str(),
+        registry
+            .provider("openrouter")
+            .unwrap()
+            .quota_url()
+            .unwrap()
+            .as_str(),
         "https://openrouter.ai/api/v1/credits"
     );
 
-    let deepseek = StoredGatewayConfig {
-        provider_preset: Some("deepseek".to_owned()),
-        ..StoredGatewayConfig::default()
-    };
-    assert!(resolve_quota_url(&deepseek).is_err());
+    let deepseek = ProviderPreset::DeepSeek.create("deepseek", "key");
+    let registry = ProviderRegistry::new(vec![deepseek]).unwrap();
+    assert!(registry.provider("deepseek").unwrap().quota_url().is_none());
 }
 
 #[tokio::test]

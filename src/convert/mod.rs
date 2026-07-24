@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{Value, json};
 
 use crate::anthropic::{ContentBlock, Message, MessageRequest, Tool};
-use crate::config::{GatewayConfig, ProviderPreset, ThinkingMode};
+use crate::config::{GatewayConfig, ThinkingMode};
 use crate::error::GatewayError;
 
 mod content;

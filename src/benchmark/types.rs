@@ -1,7 +1,7 @@
 use super::*;
 
 pub const BENCHMARK_TARGET_OUTPUT_TOKENS: u64 = 100;
-pub(super) const BENCHMARK_FILE_VERSION: u64 = 1;
+pub(super) const BENCHMARK_FILE_VERSION: u64 = 2;
 pub(crate) const BENCHMARK_PROMPT: &str = "Generate an endless stream of unrelated lowercase English words separated by single spaces. Do not count, explain, punctuate, repeat a fixed pattern, or conclude. Continue until the server cuts off generation.";
 
 #[derive(Clone, Debug, Deserialize, Serialize, Eq, PartialEq)]
@@ -24,6 +24,9 @@ pub enum BenchmarkResultStatus {
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct ModelBenchmarkResult {
     pub model: String,
+    pub provider_id: String,
+    pub provider_name: String,
+    pub upstream_model: String,
     pub status: BenchmarkResultStatus,
     pub ttft_ms: Option<u64>,
     pub generation_ms: Option<u64>,
@@ -32,6 +35,14 @@ pub struct ModelBenchmarkResult {
     pub tps: Option<f64>,
     pub error: Option<String>,
     pub completed_at: u64,
+}
+
+#[derive(Clone, Debug, Deserialize, Serialize)]
+pub struct ProviderBenchmarkCost {
+    pub provider_id: String,
+    pub currency: Option<String>,
+    pub estimated_cost: Option<f64>,
+    pub error: Option<String>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -54,11 +65,17 @@ pub struct ModelBenchmarkSnapshot {
     pub cost_currency: Option<String>,
     #[serde(default)]
     pub cost_error: Option<String>,
+    #[serde(default)]
+    pub provider_costs: Vec<ProviderBenchmarkCost>,
 }
 
 #[derive(Clone, Debug, Deserialize)]
 pub struct StartBenchmarkRequest {
     pub timeout_seconds: u64,
+    #[serde(default)]
+    pub providers: Vec<String>,
+    #[serde(default)]
+    pub models: Vec<String>,
 }
 
 #[derive(Clone, Debug, Serialize)]
@@ -94,4 +111,13 @@ pub(super) struct BenchmarkAttemptFailure {
     pub(super) message: String,
     pub(super) ttft_ms: Option<u64>,
     pub(super) total_ms: u64,
+}
+
+#[derive(Clone)]
+pub(crate) struct BenchmarkTarget {
+    pub(crate) catalog_slug: String,
+    pub(crate) provider_id: String,
+    pub(crate) provider_name: String,
+    pub(crate) upstream_model_id: String,
+    pub(crate) provider: ProviderRuntime,
 }

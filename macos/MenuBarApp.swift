@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var startMenuItem: NSMenuItem?
     var restartMenuItem: NSMenuItem?
     var launchAtLoginMenuItem: NSMenuItem?
+    var providerSettingsWindowController: ProviderSettingsWindowController?
     var modelBenchmarkWindowController: ModelBenchmarkWindowController?
     var fusionSettingsWindowController: FusionSettingsWindowController?
     var timer: Timer?
@@ -107,6 +108,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         launchAtLoginMenuItem = actionItem("登录时启动并开启服务", #selector(toggleLaunchAtLogin), "poweron")
         menu.addItem(launchAtLoginMenuItem!)
         menu.addItem(actionItem("刷新状态与额度", #selector(refreshStatus), "arrow.clockwise"))
+        menu.addItem(actionItem("自动检测...", #selector(runAutomaticDoctor), "stethoscope"))
         menu.addItem(.separator())
         menu.addItem(actionItem("设置供应商与密钥...", #selector(configureLogin), "gearshape"))
         menu.addItem(actionItem("Fusion 设置…", #selector(showFusionSettings), "rectangle.3.group"))

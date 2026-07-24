@@ -42,11 +42,17 @@ pub async fn serve_on_listener(
                         .probe_web_search_capabilities(&mut models, false)
                         .await
                     {
-                        tracing::warn!(error = %error, "web search capability discovery failed");
+                        tracing::warn!(
+                            error = %format!("{error:#}"),
+                            "web search capability discovery failed"
+                        );
                     }
                 }
                 Err(error) => {
-                    tracing::warn!(error = %error, "failed to load models for web search discovery");
+                    tracing::warn!(
+                        error = %format!("{error:#}"),
+                        "failed to load models for web search discovery"
+                    );
                 }
             }
         })
@@ -118,12 +124,10 @@ async fn start_model_benchmarks(
             "model benchmark timeout must be between 1 and 300 seconds".to_owned(),
         ));
     }
-    let models = tokio::time::timeout(timeout, state.fetch_models())
-        .await
-        .map_err(|_| GatewayError::Upstream("models endpoint timed out".to_owned()))??;
+    let targets = state.benchmark_targets(&request.providers, &request.models)?;
     let snapshot = state
         .benchmarks
-        .start(models, (*state.config).clone(), timeout)
+        .start(targets, timeout)
         .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
     Ok((
         StatusCode::ACCEPTED,

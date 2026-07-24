@@ -7,21 +7,28 @@ use codex_mixin::config::GatewayConfig;
 use codex_mixin::server::AppState;
 
 mod atomic_file;
-mod auth;
+mod benchmark_proxy;
 mod codex;
 mod config_input;
+mod fusion_config;
 mod maintenance;
 mod metadata;
+mod providers;
 mod runtime;
 mod service;
 mod status;
 
-use auth::{login, logout};
+use benchmark_proxy::{benchmark_start, benchmark_status};
 use codex::{
     InstallCodexOptions, install_codex, refresh_default_managed_codex_catalog, uninstall_codex,
 };
+use fusion_config::{get_fusion_profile, set_fusion_profile};
 use maintenance::migrate_history;
 use metadata::{load_model_metadata_resolver, refresh_metadata};
+use providers::{
+    AddProviderOptions, UpdateProviderOptions, add_provider, discover_models, list_providers,
+    remove_provider, select_models, set_provider_enabled, test_provider, update_provider,
+};
 use service::{init_tracing, logs, restart, start, stop};
 use status::{doctor, models, probe_web_search, quota, show_config, status};
 
@@ -34,27 +41,27 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    #[command(visible_alias = "auth")]
-    Login {
-        #[arg(long)]
-        provider: Option<String>,
-        #[arg(long)]
-        key: Option<String>,
-        #[arg(long)]
-        base_url: Option<String>,
-        #[arg(long)]
-        image_generation_path: Option<String>,
-        #[arg(long)]
-        gateway_key: Option<String>,
-        #[arg(long)]
-        quota_url: Option<String>,
-        #[arg(long)]
-        quota_username: Option<String>,
+    Providers {
+        #[command(subcommand)]
+        command: Box<ProviderCommand>,
     },
-    Logout,
+    Fusion {
+        #[command(subcommand)]
+        command: FusionCommand,
+    },
+    Benchmark {
+        #[command(subcommand)]
+        command: BenchmarkCommand,
+    },
     #[command(visible_alias = "check")]
-    Doctor,
-    Status,
+    Doctor {
+        #[arg(long)]
+        json: bool,
+    },
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
     Models {
         #[arg(long)]
         json: bool,
@@ -62,6 +69,8 @@ enum Command {
     Quota {
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        provider: Option<String>,
     },
     Config {
         #[arg(long)]
@@ -159,6 +168,131 @@ enum Command {
     },
 }
 
+#[derive(Debug, Subcommand)]
+enum FusionCommand {
+    Get {
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    Set {
+        #[arg(long)]
+        profile_json: String,
+        #[arg(long)]
+        replace_id: Option<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum BenchmarkCommand {
+    Status,
+    Start {
+        #[arg(long)]
+        timeout_seconds: u64,
+        #[arg(long = "provider")]
+        providers: Vec<String>,
+        #[arg(long = "model")]
+        models: Vec<String>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ProviderCommand {
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    Add {
+        #[arg(long)]
+        preset: String,
+        #[arg(long)]
+        id: Option<String>,
+        #[arg(long)]
+        key: String,
+        #[arg(long)]
+        display_name: Option<String>,
+        #[arg(long)]
+        base_url: Option<String>,
+        #[arg(long)]
+        protocol: Option<String>,
+        #[arg(long)]
+        api_path: Option<String>,
+        #[arg(long)]
+        models_path: Option<String>,
+        #[arg(long)]
+        image_generation_path: Option<String>,
+        #[arg(long)]
+        quota_url: Option<String>,
+        #[arg(long, help = "Quota username; required by the baidu-oneapi preset")]
+        quota_username: Option<String>,
+        #[arg(long)]
+        quota_currency: Option<String>,
+        #[arg(long)]
+        quota_parser: Option<String>,
+        #[arg(long)]
+        gateway_key: Option<String>,
+        #[arg(long = "model")]
+        static_models: Vec<String>,
+    },
+    Update {
+        id: String,
+        #[arg(long)]
+        key: Option<String>,
+        #[arg(long, conflicts_with = "key")]
+        clear_key: bool,
+        #[arg(long)]
+        display_name: Option<String>,
+        #[arg(long)]
+        base_url: Option<String>,
+        #[arg(long)]
+        protocol: Option<String>,
+        #[arg(long)]
+        api_path: Option<String>,
+        #[arg(long)]
+        models_path: Option<String>,
+        #[arg(long)]
+        image_generation_path: Option<String>,
+        #[arg(long)]
+        clear_image_generation: bool,
+        #[arg(long)]
+        quota_url: Option<String>,
+        #[arg(long)]
+        clear_quota: bool,
+        #[arg(
+            long,
+            help = "Quota username; required by the Baidu OneAPI quota parser"
+        )]
+        quota_username: Option<String>,
+        #[arg(long)]
+        quota_currency: Option<String>,
+        #[arg(long)]
+        quota_parser: Option<String>,
+    },
+    Enable {
+        id: String,
+    },
+    Disable {
+        id: String,
+    },
+    Remove {
+        id: String,
+    },
+    Discover {
+        id: String,
+    },
+    Test {
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
+    Select {
+        id: String,
+        #[arg(long = "model")]
+        models: Vec<String>,
+    },
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
 enum ConfigScope {
     Stored,
@@ -202,28 +336,100 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         daemon: false,
         log_file: None,
     }) {
-        Command::Login {
-            provider,
-            key,
-            base_url,
-            image_generation_path,
-            gateway_key,
-            quota_url,
-            quota_username,
-        } => login(
-            provider,
-            key,
-            base_url,
-            image_generation_path,
-            gateway_key,
-            quota_url,
-            quota_username,
-        ),
-        Command::Logout => logout(),
-        Command::Doctor => doctor().await,
-        Command::Status => status().await,
+        Command::Providers { command } => match *command {
+            ProviderCommand::List { json } => list_providers(json),
+            ProviderCommand::Add {
+                preset,
+                id,
+                key,
+                display_name,
+                base_url,
+                protocol,
+                api_path,
+                models_path,
+                image_generation_path,
+                quota_url,
+                quota_username,
+                quota_currency,
+                quota_parser,
+                gateway_key,
+                static_models,
+            } => add_provider(AddProviderOptions {
+                preset,
+                id,
+                key,
+                display_name,
+                base_url,
+                protocol,
+                api_path,
+                models_path,
+                image_generation_path,
+                quota_url,
+                quota_username,
+                quota_currency,
+                quota_parser,
+                gateway_key,
+                static_models,
+            }),
+            ProviderCommand::Update {
+                id,
+                key,
+                clear_key,
+                display_name,
+                base_url,
+                protocol,
+                api_path,
+                models_path,
+                image_generation_path,
+                clear_image_generation,
+                quota_url,
+                clear_quota,
+                quota_username,
+                quota_currency,
+                quota_parser,
+            } => update_provider(UpdateProviderOptions {
+                id,
+                key,
+                clear_key,
+                display_name,
+                base_url,
+                protocol,
+                api_path,
+                models_path,
+                image_generation_path,
+                clear_image_generation,
+                quota_url,
+                clear_quota,
+                quota_username,
+                quota_currency,
+                quota_parser,
+            }),
+            ProviderCommand::Enable { id } => set_provider_enabled(&id, true),
+            ProviderCommand::Disable { id } => set_provider_enabled(&id, false),
+            ProviderCommand::Remove { id } => remove_provider(&id),
+            ProviderCommand::Discover { id } => discover_models(&id).await,
+            ProviderCommand::Test { id, json } => test_provider(&id, json).await,
+            ProviderCommand::Select { id, models } => select_models(&id, models),
+        },
+        Command::Fusion { command } => match command {
+            FusionCommand::Get { id, json } => get_fusion_profile(id.as_deref(), json),
+            FusionCommand::Set {
+                profile_json,
+                replace_id,
+            } => set_fusion_profile(&profile_json, replace_id.as_deref()),
+        },
+        Command::Benchmark { command } => match command {
+            BenchmarkCommand::Status => benchmark_status().await,
+            BenchmarkCommand::Start {
+                timeout_seconds,
+                providers,
+                models,
+            } => benchmark_start(timeout_seconds, providers, models).await,
+        },
+        Command::Doctor { json } => doctor(json).await,
+        Command::Status { json } => status(json).await,
         Command::Models { json } => models(json).await,
-        Command::Quota { json } => quota(json).await,
+        Command::Quota { json, provider } => quota(json, provider.as_deref()).await,
         Command::Config { json, scope } => show_config(json, scope),
         Command::Start {
             bind,
@@ -235,7 +441,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Logs { lines, follow } => logs(lines, follow),
         Command::Serve { bind } => start(bind, false, None).await,
         Command::Catalog { template_catalog } => {
-            let config = GatewayConfig::from_env()?;
+            let config = GatewayConfig::from_stored_config()?;
             let state = AppState::new(config.clone())?;
             let mut models = state.fetch_models().await?;
             state

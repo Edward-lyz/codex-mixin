@@ -1,6 +1,7 @@
 use axum::http::StatusCode;
 use axum::response::{IntoResponse, Response};
 use serde_json::json;
+use std::error::Error;
 
 #[derive(Debug, thiserror::Error)]
 pub enum GatewayError {
@@ -22,8 +23,18 @@ pub enum GatewayError {
 
 impl IntoResponse for GatewayError {
     fn into_response(self) -> Response {
-        if matches!(&self, GatewayError::Io(_) | GatewayError::Other(_)) {
-            tracing::error!(error = %self, "gateway request failed");
+        let error_chain = format_error_chain(&self);
+        match &self {
+            GatewayError::Unauthorized => {}
+            GatewayError::BadRequest(_) | GatewayError::Json(_) => {
+                tracing::warn!(error = %error_chain, "gateway request rejected");
+            }
+            GatewayError::Upstream(_) | GatewayError::Http(_) => {
+                tracing::error!(error = %error_chain, "gateway upstream request failed");
+            }
+            GatewayError::Io(_) | GatewayError::Other(_) => {
+                tracing::error!(error = %error_chain, "gateway request failed");
+            }
         }
         let (status, message) = match &self {
             GatewayError::BadRequest(message) => (StatusCode::BAD_REQUEST, message.clone()),
@@ -42,6 +53,17 @@ impl IntoResponse for GatewayError {
         };
         (status, axum::Json(json!({"error": {"message": message}}))).into_response()
     }
+}
+
+pub fn format_error_chain(error: &(dyn Error + 'static)) -> String {
+    let mut chain = error.to_string();
+    let mut source = error.source();
+    while let Some(error) = source {
+        chain.push_str(": ");
+        chain.push_str(&error.to_string());
+        source = error.source();
+    }
+    chain
 }
 
 #[cfg(test)]
@@ -63,5 +85,17 @@ mod tests {
                 json!({"error":{"message":"internal server error"}})
             );
         }
+    }
+
+    #[test]
+    fn formats_the_complete_error_chain_for_logs() {
+        let error = GatewayError::Other(
+            anyhow::anyhow!("connection refused").context("request provider models"),
+        );
+
+        assert_eq!(
+            format_error_chain(&error),
+            "request provider models: connection refused"
+        );
     }
 }

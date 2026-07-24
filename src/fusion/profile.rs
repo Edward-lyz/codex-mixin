@@ -1,4 +1,5 @@
 use super::*;
+use crate::provider::ProviderRegistry;
 
 pub const FUSION_MODEL_PREFIX: &str = "mixin/fusion/";
 pub const OFFICIAL_MODEL_PREFIX: &str = "official:";
@@ -65,10 +66,7 @@ impl FusionProfile {
             if model.trim().is_empty() {
                 anyhow::bail!("fusion profile {id} contains an empty model name");
             }
-            let canonical = model
-                .strip_prefix(OFFICIAL_MODEL_PREFIX)
-                .or_else(|| model.split_once(':').map(|(_, model)| model))
-                .unwrap_or(model);
+            let canonical = model.strip_prefix(OFFICIAL_MODEL_PREFIX).unwrap_or(model);
             if canonical.starts_with(FUSION_MODEL_PREFIX) {
                 anyhow::bail!(
                     "fusion profile {id} cannot recursively reference fusion model {model}"
@@ -103,6 +101,41 @@ pub fn validate_fusion_profiles(profiles: &[FusionProfile]) -> anyhow::Result<()
         profile.validate()?;
         if !ids.insert(profile.id.as_str()) {
             anyhow::bail!("duplicate fusion profile id: {}", profile.id);
+        }
+    }
+    Ok(())
+}
+
+pub fn validate_fusion_model_references(
+    profiles: &[FusionProfile],
+    providers: &ProviderRegistry,
+) -> anyhow::Result<()> {
+    for profile in profiles {
+        for reference in profile
+            .panel_models
+            .iter()
+            .chain([&profile.judge_model, &profile.final_model])
+        {
+            if let Some(official_model) = reference.strip_prefix(OFFICIAL_MODEL_PREFIX) {
+                anyhow::ensure!(
+                    !official_model.trim().is_empty(),
+                    "fusion profile {} contains an empty official model reference",
+                    profile.id
+                );
+                continue;
+            }
+            anyhow::ensure!(
+                !reference.starts_with(FUSION_MODEL_PREFIX),
+                "fusion profile {} cannot recursively reference fusion model {}",
+                profile.id,
+                reference
+            );
+            anyhow::ensure!(
+                providers.resolve(reference).is_some(),
+                "fusion profile {} references unavailable provider model {}",
+                profile.id,
+                reference
+            );
         }
     }
     Ok(())

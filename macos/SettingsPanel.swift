@@ -1,19 +1,34 @@
 import Cocoa
 
-struct LoginFormValues {
-    let provider: String
+struct AddProviderFormValues {
+    let preset: String
+    let id: String
+    let displayName: String
     let apiKey: String
     let baseUrl: String
+    let protocolID: String
+    let apiPath: String
+    let modelsPath: String
     let imageGenerationPath: String
     let gatewayKey: String
     let quotaUrl: String
     let quotaUsername: String
+    let quotaCurrency: String
+    let quotaParser: String
 }
 
-struct QuotaUsage {
-    let used: Double
-    let limit: Double?
-    let remaining: Double?
+struct ProviderPresetFormDefaults {
+    let id: String
+    let displayName: String
+    let baseURL: String
+    let protocolID: String
+    let apiPath: String
+    let modelsPath: String
+    let imageGenerationPath: String
+    let quotaURL: String
+    let quotaCurrency: String
+    let quotaParser: String
+    let credentialURL: String
 }
 
 final class ModalActionTarget: NSObject {
@@ -28,85 +43,104 @@ final class ModalActionTarget: NSObject {
     }
 }
 
-func runLoginSettingsPanel(stored: [String: Any]) -> LoginFormValues? {
+func runAddProviderPanel(gatewayAuthConfigured: Bool) -> AddProviderFormValues? {
     let providerPopup = NSPopUpButton()
     let providers: [(title: String, id: String)] = [
         ("Custom", "custom"),
         ("Baidu OneAPI", "baidu-oneapi"),
         ("OpenRouter", "openrouter"),
         ("DeepSeek", "deepseek"),
+        ("OpenCode Go", "opencode-go"),
     ]
     for provider in providers {
         providerPopup.addItem(withTitle: provider.title)
         providerPopup.lastItem?.representedObject = provider.id
     }
-    let storedProvider = stored["provider_preset"] as? String ?? "custom"
-    if let index = providers.firstIndex(where: { $0.id == storedProvider }) {
-        providerPopup.selectItem(at: index)
-    }
     providerPopup.translatesAutoresizingMaskIntoConstraints = false
     providerPopup.heightAnchor.constraint(equalToConstant: 28).isActive = true
 
+    let idField = formTextField()
+    idField.placeholderString = "小写字母、数字、点、下划线或短横线；会作为模型后缀"
+    let displayNameField = formTextField()
+    displayNameField.placeholderString = "在设置页和测速页显示的名称"
     let apiKeyField = formTextField()
-    apiKeyField.placeholderString = stored["upstream_api_key"] == nil ? "必填：上游服务 API Key" : "留空保留已保存密钥"
+    apiKeyField.placeholderString = "必填：只交给 Rust CLI 保存，Swift 不读取已保存密钥"
     let baseUrlField = formTextField()
-    baseUrlField.placeholderString = "只填根地址，如 https://host；不要填 /v1/messages、/v1/chat/completions 或 /anthropic"
-    baseUrlField.stringValue = stored["upstream_base_url"] as? String ?? defaultBaseURL(for: storedProvider)
+    baseUrlField.placeholderString = "根地址，如 https://host"
+    let protocolPopup = NSPopUpButton()
+    for protocolOption in [
+        ("Anthropic Messages", "anthropic_messages"),
+        ("OpenAI Chat Completions", "open_ai_chat"),
+        ("OpenAI Responses", "open_ai_responses"),
+    ] {
+        protocolPopup.addItem(withTitle: protocolOption.0)
+        protocolPopup.lastItem?.representedObject = protocolOption.1
+    }
+    protocolPopup.translatesAutoresizingMaskIntoConstraints = false
+    protocolPopup.heightAnchor.constraint(equalToConstant: 28).isActive = true
+    let apiPathField = formTextField()
+    let modelsPathField = formTextField()
     let imageGenerationPathField = formTextField()
-    imageGenerationPathField.placeholderString = "可选：如 /v1/images/generations；留空时自定义模型也走官方生图"
-    imageGenerationPathField.stringValue = stored["upstream_image_generation_path"] as? String ?? defaultImageGenerationPath(for: storedProvider)
+    imageGenerationPathField.placeholderString = "可选，如 /v1/images/generations"
     let gatewayKeyField = formTextField()
-    gatewayKeyField.placeholderString = stored["gateway_api_key"] == nil ? "可选：保护本地 127.0.0.1 网关的访问密钥" : "留空保留已保存密钥"
+    gatewayKeyField.placeholderString = gatewayAuthConfigured
+        ? "本地网关密钥已配置；留空保留"
+        : "可选：保护本地 127.0.0.1 网关"
     let quotaUrlField = formTextField()
-    quotaUrlField.placeholderString = "可选：完整额度查询 URL；返回 JSON 中包含 used/limit 等字段"
-    quotaUrlField.stringValue = stored["quota_url"] as? String ?? defaultQuotaURL(for: storedProvider, baseURL: baseUrlField.stringValue)
+    quotaUrlField.placeholderString = "可选：完整额度查询 URL"
     let quotaUsernameField = formTextField()
-    quotaUsernameField.placeholderString = "可选：需要 username 查询参数的接口才填写"
-    quotaUsernameField.stringValue = stored["quota_username"] as? String ?? ""
+    quotaUsernameField.placeholderString = "Baidu OneAPI 必填"
+    let quotaCurrencyField = formTextField()
+    quotaCurrencyField.placeholderString = "可选，三位币种代码，如 USD/CNY"
+    let quotaParserPopup = NSPopUpButton()
+    for parser in [
+        ("Generic", "generic"),
+        ("Baidu OneAPI", "baidu_oneapi"),
+        ("OpenRouter", "openrouter"),
+    ] {
+        quotaParserPopup.addItem(withTitle: parser.0)
+        quotaParserPopup.lastItem?.representedObject = parser.1
+    }
 
     let providerTarget = ModalActionTarget {
         let provider = selectedProviderID(providerPopup)
-        let presetBaseURL = defaultBaseURL(for: provider)
-        if !presetBaseURL.isEmpty {
-            baseUrlField.stringValue = presetBaseURL
-        }
-        let presetImagePath = defaultImageGenerationPath(for: provider)
-        if !presetImagePath.isEmpty {
-            imageGenerationPathField.stringValue = presetImagePath
-        } else if provider != storedProvider {
-            imageGenerationPathField.stringValue = ""
-        }
-        let presetQuotaURL = defaultQuotaURL(for: provider, baseURL: baseUrlField.stringValue)
-        if !presetQuotaURL.isEmpty {
-            quotaUrlField.stringValue = presetQuotaURL
-        } else if provider != storedProvider {
-            quotaUrlField.stringValue = ""
-        }
+        let defaults = providerFormDefaults(provider)
+        idField.stringValue = defaults.id
+        displayNameField.stringValue = defaults.displayName
+        baseUrlField.stringValue = defaults.baseURL
+        selectPopupValue(protocolPopup, defaults.protocolID)
+        apiPathField.stringValue = defaults.apiPath
+        modelsPathField.stringValue = defaults.modelsPath
+        imageGenerationPathField.stringValue = defaults.imageGenerationPath
+        quotaUrlField.stringValue = defaults.quotaURL
+        quotaCurrencyField.stringValue = defaults.quotaCurrency
+        selectPopupValue(quotaParserPopup, defaults.quotaParser)
     }
     providerPopup.target = providerTarget
     providerPopup.action = #selector(ModalActionTarget.run(_:))
+    providerTarget.run(nil)
 
-    let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 760, height: 480))
+    let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 780, height: 720))
     let panel = NSPanel(
         contentRect: contentView.frame,
         styleMask: [.titled, .closable],
         backing: .buffered,
         defer: false
     )
-    panel.title = "设置 Codex Mixin"
+    panel.title = "新增供应商"
     panel.contentView = contentView
     panel.isReleasedWhenClosed = false
     panel.center()
 
-    let titleLabel = NSTextField(labelWithString: "设置供应商与密钥")
+    let titleLabel = NSTextField(labelWithString: "新增供应商")
     titleLabel.font = .boldSystemFont(ofSize: 18)
     titleLabel.textColor = .labelColor
 
-    let detailLabel = NSTextField(wrappingLabelWithString: "配置会保存到 ~/.codex-mixin/config.json。API 密钥留空会保留已有配置；上游地址只填写根地址，路径由供应商预设或网关补齐。")
+    let detailLabel = NSTextField(wrappingLabelWithString: "模型会以 <上游模型 ID>-<供应商 ID> 出现在 Codex。保存通过 Rust CLI 完成文件锁、校验和原子替换；窗口不会读取配置文件中的明文密钥。")
     detailLabel.textColor = .secondaryLabelColor
     detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     detailLabel.translatesAutoresizingMaskIntoConstraints = false
-    detailLabel.widthAnchor.constraint(equalToConstant: 660).isActive = true
+    detailLabel.widthAnchor.constraint(equalToConstant: 680).isActive = true
 
     let tokenButton = NSButton(title: "打开密钥页面", target: nil, action: nil)
     tokenButton.bezelStyle = .inline
@@ -117,9 +151,10 @@ func runLoginSettingsPanel(stored: [String: Any]) -> LoginFormValues? {
     tokenButton.translatesAutoresizingMaskIntoConstraints = false
     let tokenTarget = ModalActionTarget {
         let provider = selectedProviderID(providerPopup)
-        let rawURL = defaultCredentialURL(for: provider, baseURL: baseUrlField.stringValue)
+        let presetURL = providerFormDefaults(provider).credentialURL
+        let rawURL = presetURL.isEmpty ? baseUrlField.stringValue : presetURL
         guard let url = URL(string: rawURL), !rawURL.isEmpty else {
-            showAlert(title: "缺少密钥页面", message: "Custom 模式没有内置密钥页面。可以填写上游根地址后再打开，或直接从服务商控制台复制 API Key。")
+            showAlert(title: "缺少密钥页面", message: "Custom 预设没有内置密钥页面。请从服务商控制台复制 API Key。")
             return
         }
         NSWorkspace.shared.open(url)
@@ -128,16 +163,23 @@ func runLoginSettingsPanel(stored: [String: Any]) -> LoginFormValues? {
     tokenButton.action = #selector(ModalActionTarget.run(_:))
 
     let formStack = NSStackView(views: [
-        labeledView("供应商", providerPopup),
+        labeledView("预设", providerPopup),
+        labeledView("供应商 ID", idField),
+        labeledView("显示名称", displayNameField),
         labeledView("API 密钥", apiKeyField),
-        labeledView("上游地址", baseUrlField),
-        labeledView("上游生图路径", imageGenerationPathField),
+        labeledView("上游根地址", baseUrlField),
+        labeledView("协议", protocolPopup),
+        labeledView("推理路径", apiPathField),
+        labeledView("模型路径", modelsPathField),
+        labeledView("生图路径", imageGenerationPathField),
         labeledView("本地密钥", gatewayKeyField),
         labeledView("额度接口", quotaUrlField),
-        labeledView("额度用户", quotaUsernameField),
+        labeledView("额度用户名 *", quotaUsernameField),
+        labeledView("额度币种", quotaCurrencyField),
+        labeledView("额度解析器", quotaParserPopup),
     ])
     formStack.orientation = .vertical
-    formStack.spacing = 10
+    formStack.spacing = 7
 
     let cancelButton = NSButton(title: "取消", target: nil, action: nil)
     cancelButton.bezelStyle = .rounded
@@ -158,7 +200,7 @@ func runLoginSettingsPanel(stored: [String: Any]) -> LoginFormValues? {
     buttonRowContainer.translatesAutoresizingMaskIntoConstraints = false
     buttonRowContainer.addSubview(buttonRow)
     NSLayoutConstraint.activate([
-        buttonRowContainer.widthAnchor.constraint(equalToConstant: 660),
+        buttonRowContainer.widthAnchor.constraint(equalToConstant: 680),
         buttonRowContainer.heightAnchor.constraint(equalToConstant: 34),
         buttonRow.trailingAnchor.constraint(equalTo: buttonRowContainer.trailingAnchor),
         buttonRow.centerYAnchor.constraint(equalTo: buttonRowContainer.centerYAnchor),
@@ -177,16 +219,33 @@ func runLoginSettingsPanel(stored: [String: Any]) -> LoginFormValues? {
         buttonRow.trailingAnchor.constraint(equalTo: mainStack.trailingAnchor),
     ])
 
-    var values: LoginFormValues?
+    var values: AddProviderFormValues?
     let saveTarget = ModalActionTarget {
-        values = LoginFormValues(
-            provider: selectedProviderID(providerPopup),
+        let preset = selectedProviderID(providerPopup)
+        if preset == "baidu-oneapi",
+           quotaUsernameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+        {
+            showAlert(
+                title: "缺少额度用户名",
+                message: "Baidu OneAPI 查询额度必须填写用户名。"
+            )
+            return
+        }
+        values = AddProviderFormValues(
+            preset: preset,
+            id: idField.stringValue,
+            displayName: displayNameField.stringValue,
             apiKey: apiKeyField.stringValue,
             baseUrl: baseUrlField.stringValue,
+            protocolID: selectedPopupValue(protocolPopup, fallback: "anthropic_messages"),
+            apiPath: apiPathField.stringValue,
+            modelsPath: modelsPathField.stringValue,
             imageGenerationPath: imageGenerationPathField.stringValue,
             gatewayKey: gatewayKeyField.stringValue,
             quotaUrl: quotaUrlField.stringValue,
-            quotaUsername: quotaUsernameField.stringValue
+            quotaUsername: quotaUsernameField.stringValue,
+            quotaCurrency: quotaCurrencyField.stringValue,
+            quotaParser: selectedPopupValue(quotaParserPopup, fallback: "generic")
         )
         NSApp.stopModal(withCode: .OK)
     }
@@ -210,50 +269,92 @@ func runLoginSettingsPanel(stored: [String: Any]) -> LoginFormValues? {
     return response == .OK ? values : nil
 }
 
-
 func selectedProviderID(_ popup: NSPopUpButton) -> String {
     popup.selectedItem?.representedObject as? String ?? "custom"
 }
 
-func defaultBaseURL(for provider: String) -> String {
+func providerFormDefaults(_ provider: String) -> ProviderPresetFormDefaults {
     switch provider {
     case "baidu-oneapi":
-        return "https://oneapi-comate.baidu-int.com"
+        return ProviderPresetFormDefaults(
+            id: provider,
+            displayName: "Baidu OneAPI",
+            baseURL: "https://oneapi-comate.baidu-int.com",
+            protocolID: "anthropic_messages",
+            apiPath: "/v1/messages",
+            modelsPath: "",
+            imageGenerationPath: "/v1/images/generations",
+            quotaURL: "https://oneapi-comate.baidu-int.com/openapi/v3/user/quota",
+            quotaCurrency: "CNY",
+            quotaParser: "baidu_oneapi",
+            credentialURL: "https://oneapi-comate.baidu-int.com/token"
+        )
     case "openrouter":
-        return "https://openrouter.ai/api"
+        return ProviderPresetFormDefaults(
+            id: provider,
+            displayName: "OpenRouter",
+            baseURL: "https://openrouter.ai/api",
+            protocolID: "open_ai_chat",
+            apiPath: "/v1/chat/completions",
+            modelsPath: "/v1/models",
+            imageGenerationPath: "",
+            quotaURL: "https://openrouter.ai/api/v1/credits",
+            quotaCurrency: "USD",
+            quotaParser: "openrouter",
+            credentialURL: "https://openrouter.ai/settings/keys"
+        )
     case "deepseek":
-        return "https://api.deepseek.com"
+        return ProviderPresetFormDefaults(
+            id: provider,
+            displayName: "DeepSeek",
+            baseURL: "https://api.deepseek.com",
+            protocolID: "open_ai_chat",
+            apiPath: "/chat/completions",
+            modelsPath: "/models",
+            imageGenerationPath: "",
+            quotaURL: "",
+            quotaCurrency: "",
+            quotaParser: "generic",
+            credentialURL: "https://platform.deepseek.com/api_keys"
+        )
+    case "opencode-go":
+        return ProviderPresetFormDefaults(
+            id: provider,
+            displayName: "OpenCode Go",
+            baseURL: "https://opencode.ai/zen/go",
+            protocolID: "open_ai_chat",
+            apiPath: "/v1/chat/completions",
+            modelsPath: "/v1/models",
+            imageGenerationPath: "",
+            quotaURL: "",
+            quotaCurrency: "",
+            quotaParser: "generic",
+            credentialURL: "https://opencode.ai/go"
+        )
     default:
-        return ""
+        return ProviderPresetFormDefaults(
+            id: "custom",
+            displayName: "Custom",
+            baseURL: "",
+            protocolID: "anthropic_messages",
+            apiPath: "/v1/messages",
+            modelsPath: "/v1/models",
+            imageGenerationPath: "",
+            quotaURL: "",
+            quotaCurrency: "",
+            quotaParser: "generic",
+            credentialURL: ""
+        )
     }
 }
 
-func defaultQuotaURL(for provider: String, baseURL: String) -> String {
-    let trimmed = baseURL.trimmingCharacters(in: CharacterSet(charactersIn: "/"))
-    switch provider {
-    case "baidu-oneapi":
-        return trimmed.isEmpty ? "" : "\(trimmed)/openapi/v3/user/quota"
-    case "openrouter":
-        return trimmed.isEmpty ? "" : "\(trimmed)/v1/credits"
-    default:
-        return ""
-    }
+func selectedPopupValue(_ popup: NSPopUpButton, fallback: String) -> String {
+    popup.selectedItem?.representedObject as? String ?? fallback
 }
 
-func defaultImageGenerationPath(for provider: String) -> String {
-    provider == "baidu-oneapi" ? "/v1/images/generations" : ""
-}
-
-func defaultCredentialURL(for provider: String, baseURL: String) -> String {
-    switch provider {
-    case "baidu-oneapi":
-        return "https://oneapi-comate.baidu-int.com/token"
-    case "openrouter":
-        return "https://openrouter.ai/settings/keys"
-    case "deepseek":
-        return "https://platform.deepseek.com/api_keys"
-    default:
-        return baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+func selectPopupValue(_ popup: NSPopUpButton, _ value: String) {
+    if let item = popup.itemArray.first(where: { ($0.representedObject as? String) == value }) {
+        popup.select(item)
     }
 }
 
@@ -296,26 +397,4 @@ func copyableTextField(_ value: String) -> NSTextField {
     field.translatesAutoresizingMaskIntoConstraints = false
     field.heightAnchor.constraint(equalToConstant: 28).isActive = true
     return field
-}
-
-func loadStoredConfig() throws -> [String: Any] {
-    let configURL = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".codex-mixin")
-        .appendingPathComponent("config.json")
-    guard FileManager.default.fileExists(atPath: configURL.path) else {
-        return [:]
-    }
-    let data = try Data(contentsOf: configURL)
-    guard let object = try JSONSerialization.jsonObject(with: data) as? [String: Any] else {
-        throw GatewayError.command("\(configURL.path) 不是 JSON 对象")
-    }
-    return object
-}
-
-func appendOptionalArg(_ args: inout [String], _ name: String, _ rawValue: String) {
-    let value = rawValue.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !value.isEmpty {
-        args.append(name)
-        args.append(value)
-    }
 }

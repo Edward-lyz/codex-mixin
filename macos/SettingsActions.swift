@@ -1,58 +1,89 @@
 import Cocoa
 
 extension AppDelegate {
-    @objc func configureLogin() {
-        let stored: [String: Any]
-        do {
-            stored = try loadStoredConfig()
-        } catch {
-            showAlert(title: "读取配置失败", message: String(describing: error))
-            return
-        }
-        guard let values = runLoginSettingsPanel(stored: stored) else { return }
-        let apiKey = values.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if apiKey.isEmpty && stored["upstream_api_key"] == nil {
-            showAlert(title: "缺少 API 密钥", message: "首次配置必须填写上游 API 密钥。")
-            return
-        }
-        if values.provider == "custom" && values.baseUrl.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty && stored["upstream_base_url"] == nil {
-            showAlert(title: "缺少上游地址", message: "Custom 模式必须填写上游服务根地址。")
-            return
-        }
-        var args = ["login"]
-        appendOptionalArg(&args, "--provider", values.provider)
-        appendOptionalArg(&args, "--key", apiKey)
-        appendOptionalArg(&args, "--base-url", values.baseUrl)
-        args.append("--image-generation-path")
-        args.append(values.imageGenerationPath.trimmingCharacters(in: .whitespacesAndNewlines))
-        appendOptionalArg(&args, "--gateway-key", values.gatewayKey)
-        appendOptionalArg(&args, "--quota-url", values.quotaUrl)
-        appendOptionalArg(&args, "--quota-username", values.quotaUsername)
+    @objc func runAutomaticDoctor() {
+        guard !serviceBusy else { return }
+        serviceBusy = true
+        serviceStatus = "正在自动检测..."
         Task { @MainActor in
-            serviceBusy = true
-            serviceStatus = "正在应用新配置..."
-            serviceEndpoint = nil
-            defer { serviceBusy = false }
+            defer {
+                serviceBusy = false
+                Task { @MainActor in
+                    await self.refreshStatusNow()
+                }
+            }
             do {
-                let output = try await runGateway(args)
-                try await restartGatewayProcess()
-                let status = try await waitForGatewayStatus()
-                applyGatewayStatus(status)
-                _ = try await runGateway(["refresh-codex-catalog"])
-                showAlert(title: "设置已保存", message: output.isEmpty ? "完成" : output)
-                await refreshStatusNow()
+                let report = try await runGateway(["doctor"])
+                appendDiagnosticLog("Automatic doctor report\n\(report)")
+                showDiagnosticReport(title: "Codex Mixin 自动检测", report: report)
             } catch {
-                serviceStatus = "应用配置失败"
-                showAlert(title: "保存设置失败", message: String(describing: error))
+                showAlert(title: "自动检测失败", message: String(describing: error))
             }
         }
+    }
+
+    @objc func configureLogin() {
+        if providerSettingsWindowController == nil {
+            providerSettingsWindowController = ProviderSettingsWindowController(
+                loadHandler: { [weak self] in
+                    guard let self else {
+                        throw GatewayError.command("Codex Mixin 已退出")
+                    }
+                    return try decodeProviderList(
+                        try await self.runGateway(["providers", "list", "--json"])
+                    )
+                },
+                runHandler: { [weak self] arguments in
+                    guard let self else {
+                        throw GatewayError.command("Codex Mixin 已退出")
+                    }
+                    return try await self.runGateway(arguments)
+                },
+                applyHandler: { [weak self] in
+                    guard let self else {
+                        throw GatewayError.command("Codex Mixin 已退出")
+                    }
+                    self.serviceBusy = true
+                    self.serviceStatus = "正在应用 Provider 配置..."
+                    self.serviceEndpoint = nil
+                    defer { self.serviceBusy = false }
+                    let providers = try decodeProviderList(
+                        try await self.runGateway(["providers", "list", "--json"])
+                    )
+                    if providers.providers.isEmpty {
+                        if FileManager.default.fileExists(atPath: self.launchAgentPath().path) {
+                            try await self.bootoutIfLoaded(self.launchDomainAndLabel())
+                        }
+                        _ = try await self.runGateway(["stop"])
+                        try await self.waitForGatewayStopped()
+                        self.isRunning = false
+                        self.serviceStatus = "等待配置上游 API"
+                        self.serviceEndpoint = nil
+                        self.updateQuotaStatus(
+                            title: "额度：等待配置",
+                            detail: nil,
+                            progress: nil
+                        )
+                        self.updateStatusTitle()
+                        self.updateActionStates()
+                        return
+                    }
+                    try await self.restartGatewayProcess()
+                    let status = try await self.waitForGatewayStatus()
+                    self.applyGatewayStatus(status)
+                    _ = try await self.runGateway(["refresh-codex-catalog"])
+                    await self.refreshStatusNow()
+                }
+            )
+        }
+        providerSettingsWindowController?.present()
     }
 
     @objc func showModelBenchmark() {
         if modelBenchmarkWindowController == nil {
             modelBenchmarkWindowController = ModelBenchmarkWindowController(
                 snapshotURL: stateDir().appendingPathComponent("model-benchmarks.json"),
-                startHandler: { [weak self] timeoutSeconds in
+                startHandler: { [weak self] timeoutSeconds, providerID in
                     guard let self else {
                         throw GatewayError.command("Codex Mixin 已退出")
                     }
@@ -60,7 +91,8 @@ extension AppDelegate {
                     self.applyGatewayStatus(status)
                     guard let snapshot = try await self.modelBenchmarkRequest(
                         method: "POST",
-                        timeoutSeconds: timeoutSeconds
+                        timeoutSeconds: timeoutSeconds,
+                        providerID: providerID
                     ) else {
                         throw GatewayError.command("网关未返回测速任务")
                     }
@@ -75,7 +107,24 @@ extension AppDelegate {
                     {
                         self.applyGatewayStatus(status)
                     }
-                    return try await self.modelBenchmarkRequest(method: "GET", timeoutSeconds: nil)
+                    return try await self.modelBenchmarkRequest(
+                        method: "GET",
+                        timeoutSeconds: nil,
+                        providerID: nil
+                    )
+                },
+                providerOptionsHandler: { [weak self] in
+                    guard let self else {
+                        throw GatewayError.command("Codex Mixin 已退出")
+                    }
+                    let response = try decodeProviderList(
+                        try await self.runGateway(["providers", "list", "--json"])
+                    )
+                    return response.providers
+                        .filter(\.enabled)
+                        .map {
+                            BenchmarkProviderOption(id: $0.id, displayName: $0.displayName)
+                        }
                 }
             )
         }
@@ -85,8 +134,13 @@ extension AppDelegate {
     @objc func showFusionSettings() {
         if fusionSettingsWindowController == nil {
             fusionSettingsWindowController = FusionSettingsWindowController(
-                loadHandler: {
-                    FusionSettingsProfile.fromStoredConfig(try loadStoredConfig())
+                loadHandler: { [weak self] in
+                    guard let self else {
+                        throw FusionSettingsError.message("Codex Mixin 已退出")
+                    }
+                    return try FusionSettingsProfile.fromCLIJSON(
+                        try await self.runGateway(["fusion", "get", "--json"])
+                    )
                 },
                 fetchModelsHandler: { [weak self] in
                     guard let self else {
@@ -94,11 +148,18 @@ extension AppDelegate {
                     }
                     return try await self.fetchFusionModelOptions()
                 },
-                saveHandler: { [weak self] profile in
+                saveHandler: { [weak self] profile, replacedProfileID in
                     guard let self else {
                         throw FusionSettingsError.message("Codex Mixin 已退出")
                     }
-                    try saveFusionProfile(profile)
+                    var arguments = [
+                        "fusion",
+                        "set",
+                        "--profile-json",
+                        try profile.jsonString(),
+                    ]
+                    arguments.append(contentsOf: ["--replace-id", replacedProfileID])
+                    _ = try await self.runGateway(arguments)
                     self.serviceBusy = true
                     self.serviceStatus = "正在应用 Fusion 配置..."
                     self.serviceEndpoint = nil
@@ -115,41 +176,20 @@ extension AppDelegate {
     }
 
     func fetchFusionModelOptions() async throws -> [FusionModelOption] {
+        let data = Data(try await runGateway(["models", "--json"]).utf8)
         guard
-            let endpoint = serviceEndpoint,
-            let url = URL(string: "\(endpoint)/models")
-        else {
-            throw FusionSettingsError.message("本地网关未运行，请先从菜单启动本地网关。")
-        }
-        var request = URLRequest(url: url)
-        request.timeoutInterval = 15
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let stored = try loadStoredConfig()
-        let bearer = stored["gateway_api_key"] as? String ?? "codex-mixin-menu"
-        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw FusionSettingsError.message("模型接口没有返回 HTTP 状态")
-        }
-        guard (200..<300).contains(httpResponse.statusCode) else {
-            let body = String(data: data, encoding: .utf8) ?? "HTTP \(httpResponse.statusCode)"
-            throw FusionSettingsError.message("读取模型失败：\(body)")
-        }
-        guard
-            let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let models = object["data"] as? [[String: Any]]
+            let models = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
         else {
             throw FusionSettingsError.message("模型接口返回了无效 JSON")
         }
-        let provider = stored["provider_preset"] as? String ?? "custom"
         let upstream: [FusionModelOption] = models.compactMap { model -> FusionModelOption? in
             guard
                 let id = model["id"] as? String,
                 !id.hasPrefix("mixin/fusion/")
             else { return nil }
             return FusionModelOption(
-                id: "\(provider):\(id)",
-                displayName: "\(model["display_name"] as? String ?? id) · \(provider)"
+                id: id,
+                displayName: model["display_name"] as? String ?? id
             )
         }
         let official = try loadOfficialFusionModelOptions()
@@ -181,38 +221,29 @@ extension AppDelegate {
         }
     }
 
-    func modelBenchmarkRequest(method: String, timeoutSeconds: Int?) async throws -> ModelBenchmarkSnapshot? {
-        guard
-            let endpoint = serviceEndpoint,
-            let url = URL(string: "\(endpoint)/model-benchmarks")
-        else {
-            throw GatewayError.command("本地网关尚未就绪")
+    func modelBenchmarkRequest(
+        method: String,
+        timeoutSeconds: Int?,
+        providerID: String?
+    ) async throws -> ModelBenchmarkSnapshot? {
+        let output: String
+        if method == "POST", let timeoutSeconds {
+            var arguments = [
+                "benchmark",
+                "start",
+                "--timeout-seconds",
+                String(timeoutSeconds),
+            ]
+            if let providerID {
+                arguments.append(contentsOf: ["--provider", providerID])
+            }
+            output = try await runGateway(arguments)
+        } else {
+            output = try await runGateway(["benchmark", "status"])
         }
-        var request = URLRequest(url: url)
-        request.httpMethod = method
-        request.timeoutInterval = TimeInterval((timeoutSeconds ?? 0) + 5)
-        request.setValue("application/json", forHTTPHeaderField: "Accept")
-        let stored = try loadStoredConfig()
-        let bearer = stored["gateway_api_key"] as? String ?? "codex-mixin-menu"
-        request.setValue("Bearer \(bearer)", forHTTPHeaderField: "Authorization")
-        if let timeoutSeconds {
-            request.setValue("application/json", forHTTPHeaderField: "Content-Type")
-            request.httpBody = try JSONSerialization.data(withJSONObject: [
-                "timeout_seconds": timeoutSeconds,
-            ])
-        }
-        let (data, response) = try await URLSession.shared.data(for: request)
-        guard let httpResponse = response as? HTTPURLResponse else {
-            throw GatewayError.command("测速接口没有返回 HTTP 状态")
-        }
-        guard (200..<300).contains(httpResponse.statusCode) else {
-            let message = ((try? JSONSerialization.jsonObject(with: data)) as? [String: Any])
-                .flatMap { $0["error"] as? [String: Any] }?
-                .flatMap { $0["message"] as? String }
-                ?? String(data: data, encoding: .utf8)
-                ?? "HTTP \(httpResponse.statusCode)"
-            throw GatewayError.command(message)
-        }
-        return try JSONDecoder().decode(ModelBenchmarkSnapshotEnvelope.self, from: data).snapshot
+        return try JSONDecoder().decode(
+            ModelBenchmarkSnapshotEnvelope.self,
+            from: Data(output.utf8)
+        ).snapshot
     }
 }

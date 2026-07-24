@@ -23,15 +23,22 @@ pub(super) async fn fetch_release_reference(client: &Client) -> anyhow::Result<S
 
 pub(super) async fn probe_model(
     client: &Client,
-    config: &GatewayConfig,
-    model: &str,
+    provider: &ProviderRuntime,
+    upstream_model: &str,
+    web_search_tool_type: &str,
     release_reference: Option<&str>,
 ) -> anyhow::Result<(bool, String)> {
     let mut last_error = None;
     for _ in 0..NO_EVIDENCE_PROBE_ATTEMPTS {
         let verdict = match timeout(
             PROBE_ATTEMPT_TIMEOUT,
-            probe_model_once(client, config, model, release_reference),
+            probe_model_once(
+                client,
+                provider,
+                upstream_model,
+                web_search_tool_type,
+                release_reference,
+            ),
         )
         .await
         {
@@ -53,7 +60,13 @@ pub(super) async fn probe_model(
                 for _ in 0..POSITIVE_CONFIRMATION_ATTEMPTS {
                     match timeout(
                         PROBE_ATTEMPT_TIMEOUT,
-                        probe_model_once(client, config, model, release_reference),
+                        probe_model_once(
+                            client,
+                            provider,
+                            upstream_model,
+                            web_search_tool_type,
+                            release_reference,
+                        ),
                     )
                     .await
                     {
@@ -66,12 +79,12 @@ pub(super) async fn probe_model(
                         }
                         Ok(Err(error)) => {
                             return Err(error).with_context(|| {
-                                format!("web search confirmation failed for {model}")
+                                format!("web search confirmation failed for {upstream_model}")
                             });
                         }
                         Err(_) => {
                             anyhow::bail!(
-                                "web search confirmation timed out after {} seconds for {model}",
+                                "web search confirmation timed out after {} seconds for {upstream_model}",
                                 PROBE_ATTEMPT_TIMEOUT.as_secs()
                             );
                         }
@@ -91,17 +104,18 @@ pub(super) async fn probe_model(
 
 pub(super) async fn probe_model_once(
     client: &Client,
-    config: &GatewayConfig,
-    model: &str,
+    provider: &ProviderRuntime,
+    upstream_model: &str,
+    web_search_tool_type: &str,
     release_reference: Option<&str>,
 ) -> anyhow::Result<ProbeVerdict> {
-    if config.upstream_kind == UpstreamKind::OpenAiChat {
+    if provider.protocol() != ProviderProtocol::AnthropicMessages {
         return Ok(ProbeVerdict::Unsupported(
-            "openai_chat_adapter_has_no_hosted_search",
+            "provider_protocol_has_no_anthropic_hosted_search",
         ));
     }
     let mut body = json!({
-        "model": model,
+        "model": upstream_model,
         "max_tokens": 512,
         "stream": true,
         "messages": [{
@@ -111,7 +125,7 @@ pub(super) async fn probe_model_once(
         "tool_choice": {"type": "tool", "name": "web_search"},
         "tools": [
             {
-                "type": config.web_search_tool_type,
+                "type": web_search_tool_type,
                 "name": "web_search",
                 "max_uses": 1
             },
@@ -126,22 +140,18 @@ pub(super) async fn probe_model_once(
             }
         ]
     });
-    if config.provider_preset == ProviderPreset::BaiduOneApi {
+    if provider.uses_session_affinity() {
         body["metadata"] = json!({
-            "session_id": format!("web-search-probe-{}", Uuid::new_v4().simple())
+            "session_id": format!("web-search-probe-{}", uuid::Uuid::new_v4().simple())
         });
     }
-    let request = client
-        .post(config.upstream_messages_url())
-        .header("accept", "text/event-stream");
-    let request = match config.upstream_auth_header {
-        UpstreamAuthHeader::AuthorizationBearer => request.bearer_auth(&config.upstream_api_key),
-        UpstreamAuthHeader::XApiKey => request.header("x-api-key", &config.upstream_api_key),
-    };
-    let mut request = request.header("anthropic-version", &config.anthropic_version);
-    if let Some(beta) = &config.anthropic_beta {
-        request = request.header("anthropic-beta", beta);
-    }
+    let request = provider.apply_auth(
+        client
+            .post(provider.api_url().clone())
+            .header("accept", "text/event-stream"),
+    );
+    let request =
+        provider.apply_anthropic_beta(request, provider.definition().anthropic_beta.as_deref());
     let response = request.json(&body).send().await?;
     let status = response.status();
     if !status.is_success() {
@@ -194,7 +204,7 @@ pub(super) async fn probe_model_once(
     if observation.server_tool_started {
         anyhow::bail!("web search server tool started without returning a result");
     }
-    if !model.to_ascii_lowercase().starts_with("gpt-") {
+    if !upstream_model.to_ascii_lowercase().starts_with("gpt-") {
         return Ok(ProbeVerdict::NoEvidence);
     }
     let Some(release_reference) = release_reference else {

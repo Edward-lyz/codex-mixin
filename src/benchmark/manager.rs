@@ -2,6 +2,15 @@ use super::runner::{benchmark_model, fetch_used_quota};
 use super::types::*;
 use super::*;
 
+const MAX_CONCURRENT_PROVIDER_GROUPS: usize = 4;
+
+struct BenchmarkProviderGroup {
+    provider: ProviderRuntime,
+    targets: std::collections::VecDeque<BenchmarkTarget>,
+    quota_before: Option<f64>,
+    cost: ProviderBenchmarkCost,
+}
+
 impl ModelBenchmarkManager {
     pub fn new(snapshot_path: PathBuf) -> Self {
         Self {
@@ -52,22 +61,32 @@ impl ModelBenchmarkManager {
         Ok(Some(snapshot))
     }
 
-    pub fn start(
+    pub(crate) fn start(
         &self,
-        mut models: Vec<ModelInfo>,
-        config: GatewayConfig,
+        targets: Vec<BenchmarkTarget>,
         timeout: Duration,
     ) -> anyhow::Result<ModelBenchmarkSnapshot> {
         if timeout.is_zero() || timeout > Duration::from_secs(300) {
             anyhow::bail!("model benchmark timeout must be between 1 and 300 seconds");
         }
-        if models.is_empty() {
+        if targets.is_empty() {
             anyhow::bail!("model benchmark requires at least one available model");
         }
         if self.running.swap(true, Ordering::AcqRel) {
             anyhow::bail!("a model benchmark is already running");
         }
-        models.sort_by_key(|model| model.id.to_lowercase());
+        let unique_providers = targets
+            .iter()
+            .map(|target| target.provider_id.as_str())
+            .collect::<std::collections::HashSet<_>>();
+        let single_currency = if unique_providers.len() == 1 {
+            targets
+                .first()
+                .and_then(|target| target.provider.quota_currency())
+                .map(str::to_owned)
+        } else {
+            None
+        };
         let now = unix_millis()?;
         let snapshot = ModelBenchmarkSnapshot {
             version: BENCHMARK_FILE_VERSION,
@@ -78,17 +97,14 @@ impl ModelBenchmarkManager {
             finished_at: None,
             timeout_seconds: timeout.as_secs(),
             target_output_tokens: BENCHMARK_TARGET_OUTPUT_TOKENS,
-            total_models: models.len(),
+            total_models: targets.len(),
             current_model: None,
-            results: Vec::with_capacity(models.len()),
+            results: Vec::with_capacity(targets.len()),
             error: None,
             estimated_cost: None,
-            cost_currency: match config.provider_preset {
-                ProviderPreset::BaiduOneApi => Some("CNY".to_owned()),
-                ProviderPreset::OpenRouter => Some("USD".to_owned()),
-                ProviderPreset::Custom | ProviderPreset::DeepSeek => None,
-            },
+            cost_currency: single_currency,
             cost_error: None,
+            provider_costs: Vec::new(),
         };
         if let Err(error) = self.persist_snapshot(&snapshot) {
             self.running.store(false, Ordering::Release);
@@ -99,7 +115,7 @@ impl ModelBenchmarkManager {
         let task_snapshot = snapshot.clone();
         tokio::spawn(async move {
             let _running_reset = RunningReset(Arc::clone(&manager.running));
-            if let Err(error) = manager.run(task_snapshot, models, config, timeout).await {
+            if let Err(error) = manager.run(task_snapshot, targets, timeout).await {
                 tracing::error!(error = %error, "model benchmark stopped unexpectedly");
                 if let Err(persist_error) = manager.persist_failed_run(error.to_string()) {
                     tracing::error!(
@@ -115,62 +131,149 @@ impl ModelBenchmarkManager {
     async fn run(
         &self,
         mut snapshot: ModelBenchmarkSnapshot,
-        models: Vec<ModelInfo>,
-        config: GatewayConfig,
+        targets: Vec<BenchmarkTarget>,
         timeout: Duration,
     ) -> anyhow::Result<()> {
         let client = Client::builder().build()?;
-        let quota_before = if config.quota_url.is_some() {
-            match tokio::time::timeout(Duration::from_secs(10), fetch_used_quota(&client, &config))
-                .await
+        let target_order = targets
+            .iter()
+            .enumerate()
+            .map(|(index, target)| (target.catalog_slug.clone(), index))
+            .collect::<std::collections::HashMap<_, _>>();
+        let mut grouped_targets: Vec<(ProviderRuntime, Vec<BenchmarkTarget>)> = Vec::new();
+        for target in targets {
+            if let Some((_, group_targets)) = grouped_targets
+                .iter_mut()
+                .find(|(provider, _)| provider.id() == target.provider_id)
             {
-                Ok(Ok(used)) => Some(used),
-                Ok(Err(error)) => {
-                    snapshot.cost_error = Some(error.to_string());
-                    None
-                }
-                Err(_) => {
-                    snapshot.cost_error =
-                        Some("quota endpoint timed out before benchmark".to_owned());
-                    None
-                }
+                group_targets.push(target);
+            } else {
+                grouped_targets.push((target.provider.clone(), vec![target]));
             }
-        } else {
-            snapshot.cost_error = Some("quota endpoint is not configured".to_owned());
-            None
-        };
-        snapshot.updated_at = unix_millis()?;
-        self.persist_snapshot(&snapshot)?;
+        }
+        let mut groups = grouped_targets
+            .into_iter()
+            .map(|(provider, targets)| BenchmarkProviderGroup {
+                cost: ProviderBenchmarkCost {
+                    provider_id: provider.id().to_owned(),
+                    currency: provider.quota_currency().map(str::to_owned),
+                    estimated_cost: None,
+                    error: None,
+                },
+                provider,
+                targets: targets.into(),
+                quota_before: None,
+            })
+            .collect::<Vec<_>>();
 
-        for model in models {
-            snapshot.current_model = Some(model.id.clone());
-            snapshot.updated_at = unix_millis()?;
-            self.persist_snapshot(&snapshot)?;
-
-            let result = benchmark_model(&client, &config, &model.id, timeout).await?;
-            snapshot.results.push(result);
-            snapshot.updated_at = unix_millis()?;
-            self.persist_snapshot(&snapshot)?;
+        let quota_providers = groups
+            .iter()
+            .enumerate()
+            .map(|(index, group)| (index, group.provider.clone()))
+            .collect::<Vec<_>>();
+        let quota_before =
+            futures_util::stream::iter(quota_providers.into_iter().map(|(index, provider)| {
+                let client = &client;
+                async move {
+                    (
+                        index,
+                        fetch_benchmark_quota(client, &provider, "before benchmark").await,
+                    )
+                }
+            }))
+            .buffer_unordered(MAX_CONCURRENT_PROVIDER_GROUPS)
+            .collect::<Vec<_>>()
+            .await;
+        for (index, quota) in quota_before {
+            match quota {
+                Ok(value) => groups[index].quota_before = Some(value),
+                Err(error) => groups[index].cost.error = Some(error),
+            }
         }
 
-        if let Some(quota_before) = quota_before {
-            match tokio::time::timeout(Duration::from_secs(10), fetch_used_quota(&client, &config))
-                .await
-            {
-                Ok(Ok(quota_after)) if quota_after >= quota_before => {
-                    snapshot.estimated_cost = Some(quota_after - quota_before);
-                    snapshot.cost_error = None;
+        loop {
+            let batch = groups
+                .iter_mut()
+                .enumerate()
+                .filter_map(|(index, group)| {
+                    group.targets.pop_front().map(|target| (index, target))
+                })
+                .collect::<Vec<_>>();
+            if batch.is_empty() {
+                break;
+            }
+            snapshot.current_model = batch.first().map(|(_, target)| target.catalog_slug.clone());
+            snapshot.updated_at = unix_millis()?;
+            self.persist_snapshot(&snapshot)?;
+
+            let mut results =
+                futures_util::stream::iter(batch.into_iter().map(|(group_index, target)| {
+                    let client = &client;
+                    async move { (group_index, benchmark_model(client, &target, timeout).await) }
+                }))
+                .buffer_unordered(MAX_CONCURRENT_PROVIDER_GROUPS)
+                .collect::<Vec<_>>()
+                .await;
+            results.sort_by_key(|(group_index, _)| *group_index);
+            for (_, result) in results {
+                snapshot.results.push(result?);
+                snapshot.updated_at = unix_millis()?;
+                self.persist_snapshot(&snapshot)?;
+            }
+        }
+
+        let quota_providers = groups
+            .iter()
+            .enumerate()
+            .filter_map(|(index, group)| {
+                group
+                    .quota_before
+                    .map(|quota_before| (index, quota_before, group.provider.clone()))
+            })
+            .collect::<Vec<_>>();
+        let quota_after = futures_util::stream::iter(quota_providers.into_iter().map(
+            |(index, quota_before, provider)| {
+                let client = &client;
+                async move {
+                    (
+                        index,
+                        quota_before,
+                        fetch_benchmark_quota(client, &provider, "after benchmark").await,
+                    )
                 }
-                Ok(Ok(_)) => {
-                    snapshot.cost_error =
+            },
+        ))
+        .buffer_unordered(MAX_CONCURRENT_PROVIDER_GROUPS)
+        .collect::<Vec<_>>()
+        .await;
+        for (index, quota_before, quota_after) in quota_after {
+            match quota_after {
+                Ok(quota_after) if quota_after >= quota_before => {
+                    groups[index].cost.estimated_cost = Some(quota_after - quota_before);
+                    groups[index].cost.error = None;
+                }
+                Ok(_) => {
+                    groups[index].cost.error =
                         Some("used quota decreased while benchmark was running".to_owned());
                 }
-                Ok(Err(error)) => snapshot.cost_error = Some(error.to_string()),
-                Err(_) => {
-                    snapshot.cost_error =
-                        Some("quota endpoint timed out after benchmark".to_owned());
-                }
+                Err(error) => groups[index].cost.error = Some(error),
             }
+        }
+        snapshot.provider_costs = groups.into_iter().map(|group| group.cost).collect();
+        snapshot.results.sort_by_key(|result| {
+            target_order
+                .get(&result.model)
+                .copied()
+                .unwrap_or(usize::MAX)
+        });
+
+        if snapshot.provider_costs.len() == 1 {
+            snapshot.estimated_cost = snapshot.provider_costs[0].estimated_cost;
+            snapshot.cost_error = snapshot.provider_costs[0].error.clone();
+        } else {
+            snapshot.estimated_cost = None;
+            snapshot.cost_currency = None;
+            snapshot.cost_error = None;
         }
 
         let now = unix_millis()?;
@@ -206,6 +309,21 @@ impl ModelBenchmarkManager {
             .map_err(|_| anyhow::anyhow!("model benchmark snapshot cache is poisoned"))? =
             Some(snapshot.clone());
         Ok(())
+    }
+}
+
+async fn fetch_benchmark_quota(
+    client: &Client,
+    provider: &ProviderRuntime,
+    phase: &str,
+) -> Result<f64, String> {
+    if provider.quota_url().is_none() {
+        return Err("quota endpoint is not configured".to_owned());
+    }
+    match tokio::time::timeout(Duration::from_secs(10), fetch_used_quota(client, provider)).await {
+        Ok(Ok(used)) => Ok(used),
+        Ok(Err(error)) => Err(error.to_string()),
+        Err(_) => Err(format!("quota endpoint timed out {phase}")),
     }
 }
 

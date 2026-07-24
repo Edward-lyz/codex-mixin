@@ -28,9 +28,6 @@ pub(super) const OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::f
 pub(super) const GATEWAY_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
 
 pub(super) fn init_tracing(log_file: Option<&Path>) -> anyhow::Result<()> {
-    let filter = tracing_subscriber::EnvFilter::builder()
-        .with_default_directive(tracing::Level::INFO.into())
-        .from_env_lossy();
     if let Some(log_file) = log_file {
         rotate_gateway_log_if_needed(log_file, GATEWAY_LOG_MAX_BYTES)?;
         if let Some(parent) = log_file.parent() {
@@ -44,14 +41,22 @@ pub(super) fn init_tracing(log_file: Option<&Path>) -> anyhow::Result<()> {
         fs::set_permissions(log_file, fs::Permissions::from_mode(0o600))?;
         tracing_subscriber::fmt()
             .with_ansi(false)
-            .with_env_filter(filter)
+            .with_max_level(tracing::Level::INFO)
+            .with_target(true)
+            .with_file(true)
+            .with_line_number(true)
+            .with_thread_ids(true)
             .with_writer(Mutex::new(file))
             .try_init()
             .map_err(|error| anyhow::anyhow!("failed to install tracing subscriber: {error}"))?;
     } else {
         tracing_subscriber::fmt()
             .with_writer(io::stderr)
-            .with_env_filter(filter)
+            .with_max_level(tracing::Level::INFO)
+            .with_target(true)
+            .with_file(true)
+            .with_line_number(true)
+            .with_thread_ids(true)
             .try_init()
             .map_err(|error| anyhow::anyhow!("failed to install tracing subscriber: {error}"))?;
     }
@@ -109,14 +114,12 @@ pub(super) async fn start(
     daemon: bool,
     log_file: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let mut config = GatewayConfig::from_env()?;
-    let automatic_bind = bind.is_none()
-        && std::env::var("CODEX_GATEWAY_BIND")
-            .ok()
-            .is_none_or(|value| value.is_empty());
+    let mut config = GatewayConfig::from_stored_config()?;
+    let automatic_bind = bind.is_none();
     if let Some(bind) = bind {
         config.bind = bind;
     }
+    log_gateway_configuration(&config);
     if daemon {
         return start_daemon(bind, log_file);
     }
@@ -143,7 +146,10 @@ pub(super) async fn start(
     match refresh_managed_codex_catalog_with_capabilities(&config_path, Some(&supported_models)) {
         Ok(true) => tracing::info!("Codex model catalog refreshed"),
         Ok(false) => {}
-        Err(err) => tracing::warn!(error = %err, "failed to refresh Codex model catalog"),
+        Err(err) => tracing::warn!(
+            error = %format!("{err:#}"),
+            "failed to refresh Codex model catalog"
+        ),
     }
     let official_catalog_state = AppState::new(config.clone())?;
     match refresh_managed_official_codex_catalog(
@@ -155,7 +161,10 @@ pub(super) async fn start(
     {
         Ok(true) => tracing::info!("official Codex model catalog refreshed"),
         Ok(false) => {}
-        Err(err) => tracing::warn!(error = %err, "failed to refresh official Codex model catalog"),
+        Err(err) => tracing::warn!(
+            error = %format!("{err:#}"),
+            "failed to refresh official Codex model catalog"
+        ),
     }
     let refresh_config = config.clone();
     let capabilities_config_path = config_path.clone();
@@ -175,7 +184,10 @@ pub(super) async fn start(
             match refresh_result {
                 Ok(true) => tracing::info!("Codex model catalog refreshed"),
                 Ok(false) => {}
-                Err(err) => tracing::warn!(error = %err, "failed to refresh Codex model catalog"),
+                Err(err) => tracing::warn!(
+                    error = %format!("{err:#}"),
+                    "failed to refresh Codex model catalog"
+                ),
             }
         }
     });
@@ -190,7 +202,10 @@ pub(super) async fn start(
                 match WebSearchCapabilities::from_default_path(&official_refresh_config) {
                     Ok(capabilities) => Some(capabilities.supported_model_ids()),
                     Err(err) => {
-                        tracing::warn!(error = %err, "failed to load web search capabilities");
+                        tracing::warn!(
+                            error = %format!("{err:#}"),
+                            "failed to load web search capabilities"
+                        );
                         None
                     }
                 };
@@ -204,7 +219,10 @@ pub(super) async fn start(
                 Ok(true) => tracing::info!("official Codex model catalog refreshed"),
                 Ok(false) => {}
                 Err(err) => {
-                    tracing::warn!(error = %err, "failed to refresh official Codex model catalog")
+                    tracing::warn!(
+                        error = %format!("{err:#}"),
+                        "failed to refresh official Codex model catalog"
+                    )
                 }
             }
         }
@@ -222,9 +240,66 @@ pub(super) async fn start(
     official_refresh_task.abort();
     match &result {
         Ok(()) => tracing::info!(pid, "gateway stopped"),
-        Err(error) => tracing::error!(pid, error = %error, "gateway stopped with error"),
+        Err(error) => tracing::error!(
+            pid,
+            error = %format!("{error:#}"),
+            "gateway stopped with error"
+        ),
     }
     result
+}
+
+fn log_gateway_configuration(config: &GatewayConfig) {
+    tracing::info!(
+        config_path = %codex_mixin::config::stored_config_path().display(),
+        bind = %config.bind,
+        provider_count = config.providers.len(),
+        gateway_auth = if config.gateway_api_key.is_some() {
+            "configured"
+        } else {
+            "disabled"
+        },
+        "gateway configuration loaded from stored config; runtime environment overrides are disabled"
+    );
+    for provider in &config.providers {
+        let readiness = provider.readiness();
+        tracing::info!(
+            provider_id = %provider.id,
+            display_name = %provider.display_name,
+            enabled = provider.enabled,
+            protocol = ?provider.protocol,
+            base_url = %sanitized_url(&provider.base_url),
+            api_path = %sanitized_path(&provider.api_path),
+            model_source = match &provider.model_source {
+                codex_mixin::provider::ProviderModelSource::OpenAiCompatible { .. } => "open_ai_compatible",
+                codex_mixin::provider::ProviderModelSource::BaiduOneApi => "baidu_oneapi",
+                codex_mixin::provider::ProviderModelSource::Static => "static",
+            },
+            selected_models = provider.selected_models.len(),
+            routable_models = readiness.routable_model_count,
+            readiness = readiness.status.as_str(),
+            "provider configuration loaded"
+        );
+    }
+}
+
+fn sanitized_path(raw: &str) -> &str {
+    raw.split(['?', '#']).next().unwrap_or("<invalid-path>")
+}
+
+fn sanitized_url(raw: &str) -> String {
+    let Ok(mut url) = reqwest::Url::parse(raw) else {
+        return "<invalid-url>".to_owned();
+    };
+    url.set_query(None);
+    url.set_fragment(None);
+    if !url.username().is_empty() {
+        let _ = url.set_username("<redacted>");
+    }
+    if url.password().is_some() {
+        let _ = url.set_password(Some("<redacted>"));
+    }
+    url.to_string().trim_end_matches('/').to_owned()
 }
 
 pub(super) fn start_daemon(

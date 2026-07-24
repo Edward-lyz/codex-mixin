@@ -8,10 +8,10 @@ use toml_edit::{DocumentMut, Item};
 use codex_mixin::CODEX_MIXIN_PROVIDER;
 use codex_mixin::catalog::{
     apply_web_search_capabilities, codex_catalog_from_models_with_metadata,
-    codex_oauth_proxy_catalog_from_models_with_metadata_for_provider, load_template_catalog,
+    codex_oauth_proxy_catalog_from_aggregated_models_with_metadata, load_template_catalog,
     refresh_managed_oauth_catalog,
 };
-use codex_mixin::config::{GatewayConfig, ProviderPreset};
+use codex_mixin::config::GatewayConfig;
 use codex_mixin::server::AppState;
 use codex_mixin::web_search::WebSearchCapabilities;
 
@@ -26,7 +26,7 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
         println!("Codex model catalog is not managed by codex-mixin");
         return Ok(());
     };
-    let gateway_config = GatewayConfig::from_env()?;
+    let gateway_config = GatewayConfig::from_stored_config()?;
     let state = AppState::new(gateway_config.clone())?;
     let models = state.fetch_models().await?;
     if models.is_empty() {
@@ -51,12 +51,11 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
     };
     let metadata = load_model_metadata_resolver().await?;
     let catalog = if requires_openai_auth {
-        codex_oauth_proxy_catalog_from_models_with_metadata_for_provider(
+        codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
             &models,
             gateway_config.default_context_window,
             template.as_ref(),
             &metadata,
-            gateway_config.provider_preset.as_str(),
         )
     } else {
         codex_catalog_from_models_with_metadata(
@@ -380,20 +379,10 @@ pub(in crate::cli) fn select_codex_oauth_proxy_model(
     models: &[codex_mixin::anthropic::ModelInfo],
     template_catalog: Option<&serde_json::Value>,
     doc: &DocumentMut,
-    provider_suffix: &str,
 ) -> anyhow::Result<String> {
     if let Some(model) = requested_model {
         if model_exists_in_oauth_proxy_catalog(&model, models, template_catalog) {
             return Ok(model);
-        }
-        if let Some(canonical) = strip_provider_suffix(&model, provider_suffix)
-            && is_gpt_model(canonical)
-            && models.iter().any(|candidate| candidate.id == canonical)
-        {
-            return Ok(model);
-        }
-        if is_gpt_model(&model) && models.iter().any(|candidate| candidate.id == model) {
-            return Ok(format!("{model}-{provider_suffix}"));
         }
         anyhow::bail!("requested model is not present in generated Codex catalog: {model}");
     }
@@ -419,15 +408,7 @@ pub(in crate::cli) fn select_codex_oauth_proxy_model(
     {
         return Ok(model.to_owned());
     }
-    if let Some(model) = models.iter().find(|model| model.id == "Claude Sonnet 5") {
-        return Ok(model.id.clone());
-    }
-    let first = &models[0].id;
-    if is_gpt_model(first) {
-        Ok(format!("{first}-{provider_suffix}"))
-    } else {
-        Ok(first.clone())
-    }
+    Ok(models[0].id.clone())
 }
 
 pub(in crate::cli) fn model_exists_in_oauth_proxy_catalog(
@@ -438,21 +419,7 @@ pub(in crate::cli) fn model_exists_in_oauth_proxy_catalog(
     if template_catalog_has_model(template_catalog, model) {
         return true;
     }
-    if let Some(canonical) = ProviderPreset::strip_model_provider_suffix(model)
-        && is_gpt_model(canonical)
-    {
-        return models.iter().any(|candidate| candidate.id == canonical);
-    }
-    models
-        .iter()
-        .any(|candidate| candidate.id == model && !is_gpt_model(&candidate.id))
-}
-
-pub(in crate::cli) fn strip_provider_suffix<'a>(
-    model: &'a str,
-    provider_suffix: &str,
-) -> Option<&'a str> {
-    model.strip_suffix(&format!("-{provider_suffix}"))
+    models.iter().any(|candidate| candidate.id == model)
 }
 
 pub(in crate::cli) fn template_catalog_has_model(

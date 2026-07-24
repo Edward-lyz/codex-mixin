@@ -88,6 +88,22 @@ pub fn codex_oauth_proxy_catalog_from_models_with_metadata_for_provider(
     )
 }
 
+pub fn codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
+    models: &[ModelInfo],
+    default_context_window: u64,
+    template_catalog: Option<&Value>,
+    metadata: &ModelMetadataResolver,
+) -> Value {
+    codex_catalog_from_models_with_options(
+        models,
+        default_context_window,
+        template_catalog,
+        true,
+        Some(metadata),
+        None,
+    )
+}
+
 fn codex_catalog_from_models_with_options(
     models: &[ModelInfo],
     default_context_window: u64,

@@ -1,3 +1,4 @@
+use std::collections::HashMap;
 use std::convert::Infallible;
 use std::sync::atomic::{AtomicUsize, Ordering};
 use std::sync::{Arc, Mutex};
@@ -9,7 +10,19 @@ use super::auth::*;
 use super::state::read_codex_official_auth;
 use super::*;
 use crate::benchmark::ModelBenchmarkManager;
-use crate::config::{ThinkingMode, UpstreamAuthHeader, UpstreamKind};
+use crate::config::ThinkingMode;
+use crate::provider::{ProviderModel, custom_provider};
+
+fn test_provider(base_url: String, model: &str) -> crate::provider::ProviderDefinition {
+    let mut provider = custom_provider("test-provider", "upstream-key");
+    provider.base_url = base_url;
+    provider.selected_models = vec![model.to_owned()];
+    provider.cached_models = vec![ProviderModel {
+        id: model.to_owned(),
+        ..ProviderModel::default()
+    }];
+    provider
+}
 
 #[test]
 fn oneapi_routing_uses_stable_identifier_priority() {
@@ -148,20 +161,12 @@ async fn fetches_official_models_with_codex_auth_and_client_version() {
     .unwrap();
     let state = AppState::new(GatewayConfig {
         bind: "127.0.0.1:0".parse().unwrap(),
-        provider_preset: ProviderPreset::Custom,
-        upstream_kind: UpstreamKind::AnthropicMessages,
-        upstream_base_url: "https://example.invalid".to_owned(),
-        upstream_messages_path: "/v1/messages".to_owned(),
-        upstream_models_path: "/v1/models".to_owned(),
-        upstream_image_generation_path: None,
-        upstream_api_key: "upstream-key".to_owned(),
-        quota_url: None,
-        quota_username: None,
+        providers: vec![test_provider(
+            "https://example.invalid".to_owned(),
+            "test-model",
+        )],
         official_responses_url: format!("http://{address}/backend-api/codex/responses"),
         codex_auth_path: auth_path,
-        upstream_auth_header: UpstreamAuthHeader::AuthorizationBearer,
-        anthropic_version: "2023-06-01".to_owned(),
-        anthropic_beta: None,
         gateway_api_key: None,
         accept_codex_oauth: true,
         default_max_tokens: 8192,
@@ -257,20 +262,12 @@ async fn benchmark_api_runs_after_the_start_request_returns_and_persists_results
     let results_path = results_directory.path().join("model-benchmarks.json");
     let mut state = AppState::new(GatewayConfig {
         bind: gateway_address,
-        provider_preset: ProviderPreset::Custom,
-        upstream_kind: UpstreamKind::AnthropicMessages,
-        upstream_base_url: format!("http://{upstream_address}"),
-        upstream_messages_path: "/v1/messages".to_owned(),
-        upstream_models_path: "/v1/models".to_owned(),
-        upstream_image_generation_path: None,
-        upstream_api_key: "upstream-key".to_owned(),
-        quota_url: None,
-        quota_username: None,
+        providers: vec![test_provider(
+            format!("http://{upstream_address}"),
+            "benchmark-model",
+        )],
         official_responses_url: "https://example.invalid/responses".to_owned(),
         codex_auth_path: results_directory.path().join("auth.json"),
-        upstream_auth_header: UpstreamAuthHeader::AuthorizationBearer,
-        anthropic_version: "2023-06-01".to_owned(),
-        anthropic_beta: None,
         gateway_api_key: Some("gateway-key".to_owned()),
         accept_codex_oauth: false,
         default_max_tokens: 8192,
@@ -299,7 +296,7 @@ async fn benchmark_api_runs_after_the_start_request_returns_and_persists_results
             .error_for_status()
             .unwrap();
     }
-    assert_eq!(model_requests.load(Ordering::Relaxed), 1);
+    assert_eq!(model_requests.load(Ordering::Relaxed), 0);
     let started: Value = client
         .post(format!("http://{gateway_address}/v1/model-benchmarks"))
         .bearer_auth("gateway-key")

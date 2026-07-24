@@ -28,11 +28,16 @@ struct FusionSettingsProfile {
     var panelMaxRounds = 16
     var panelMaxCallsPerModel = 64
 
-    static func fromStoredConfig(_ stored: [String: Any]) -> FusionSettingsProfile {
+    static func fromCLIJSON(_ rawJSON: String) throws -> FusionSettingsProfile {
+        let data = Data(rawJSON.utf8)
         guard
-            let profiles = stored["fusion_profiles"] as? [[String: Any]],
-            let profile = profiles.first
-        else { return FusionSettingsProfile() }
+            let envelope = try JSONSerialization.jsonObject(with: data) as? [String: Any]
+        else {
+            throw FusionSettingsError.message("Fusion CLI 返回了无效 JSON")
+        }
+        guard let profile = envelope["profile"] as? [String: Any] else {
+            return FusionSettingsProfile()
+        }
         var value = FusionSettingsProfile()
         value.id = profile["id"] as? String ?? value.id
         value.panelModels = profile["panel_models"] as? [String] ?? value.panelModels
@@ -71,12 +76,23 @@ struct FusionSettingsProfile {
             ],
         ]
     }
+
+    func jsonString() throws -> String {
+        let data = try JSONSerialization.data(
+            withJSONObject: dictionary,
+            options: [.sortedKeys]
+        )
+        guard let value = String(data: data, encoding: .utf8) else {
+            throw FusionSettingsError.message("Fusion 配置无法编码为 UTF-8 JSON")
+        }
+        return value
+    }
 }
 
 final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
-    typealias LoadHandler = () throws -> FusionSettingsProfile
+    typealias LoadHandler = () async throws -> FusionSettingsProfile
     typealias FetchModelsHandler = () async throws -> [FusionModelOption]
-    typealias SaveHandler = (FusionSettingsProfile) async throws -> Void
+    typealias SaveHandler = (FusionSettingsProfile, String) async throws -> Void
 
     private let loadHandler: LoadHandler
     private let fetchModelsHandler: FetchModelsHandler
@@ -135,28 +151,12 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
         saveButton.isEnabled = false
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.stringValue = "正在从本地网关读取模型列表..."
-        do {
-            loadedProfile = try loadHandler()
-            applyProfileFields()
-        } catch {
-            presentFusionAlert(title: "读取 Fusion 配置失败", message: String(describing: error))
-            return
-        }
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
+                loadedProfile = try await loadHandler()
+                applyProfileFields()
                 let fetched = try await fetchModelsHandler()
-                loadedProfile.panelModels = loadedProfile.panelModels.map {
-                    self.qualifyLegacyReference($0, using: fetched)
-                }
-                loadedProfile.judgeModel = qualifyLegacyReference(
-                    loadedProfile.judgeModel,
-                    using: fetched
-                )
-                loadedProfile.finalModel = qualifyLegacyReference(
-                    loadedProfile.finalModel,
-                    using: fetched
-                )
                 selectedPanels = Set(loadedProfile.panelModels)
                 var byId = Dictionary(uniqueKeysWithValues: fetched.map { ($0.id, $0) })
                 for id in loadedProfile.panelModels + [loadedProfile.judgeModel, loadedProfile.finalModel] where !id.isEmpty && !id.hasPrefix("mixin/fusion/") {
@@ -177,19 +177,6 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
                 saveButton.isEnabled = false
             }
         }
-    }
-
-    private func qualifyLegacyReference(
-        _ reference: String,
-        using options: [FusionModelOption]
-    ) -> String {
-        guard !reference.isEmpty else { return reference }
-        if options.contains(where: { $0.id == reference }) {
-            return reference
-        }
-        return options.first(where: {
-            !$0.id.hasPrefix("official:") && $0.id.hasSuffix(":\(reference)")
-        })?.id ?? reference
     }
 
     private func buildContent(in window: NSWindow) {
@@ -431,10 +418,11 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
         saveButton.isEnabled = false
         statusLabel.stringValue = "正在保存并重启本地网关..."
         statusLabel.textColor = .controlAccentColor
+        let replacedProfileID = loadedProfile.id
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                try await saveHandler(profile)
+                try await saveHandler(profile, replacedProfileID)
                 loadedProfile = profile
                 statusLabel.stringValue = "保存成功。虚拟模型 mixin/fusion/\(profile.id) 已写入 catalog。"
                 statusLabel.textColor = .systemGreen
@@ -455,28 +443,6 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
     @objc private func closeWindow() {
         window?.close()
     }
-}
-
-func saveFusionProfile(_ profile: FusionSettingsProfile) throws {
-    let directory = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".codex-mixin", isDirectory: true)
-    let configURL = directory.appendingPathComponent("config.json")
-    try FileManager.default.createDirectory(
-        at: directory,
-        withIntermediateDirectories: true,
-        attributes: [.posixPermissions: 0o700]
-    )
-    var stored = try loadStoredConfig()
-    var profiles = stored["fusion_profiles"] as? [[String: Any]] ?? []
-    if profiles.isEmpty {
-        profiles.append(profile.dictionary)
-    } else {
-        profiles[0] = profile.dictionary
-    }
-    stored["fusion_profiles"] = profiles
-    let data = try JSONSerialization.data(withJSONObject: stored, options: [.prettyPrinted, .sortedKeys])
-    try data.write(to: configURL, options: .atomic)
-    try FileManager.default.setAttributes([.posixPermissions: 0o600], ofItemAtPath: configURL.path)
 }
 
 private func configureTextField(_ field: NSTextField, value: String) {

@@ -2,19 +2,26 @@ use super::*;
 
 type AnthropicByteStream = BoxStream<'static, Result<Bytes, reqwest::Error>>;
 const HOSTED_WEB_SEARCH_RETRY_ATTEMPTS: usize = 3;
-const MODEL_CACHE_TTL: Duration = Duration::from_secs(30);
 const CATALOG_SOURCE_CACHE_TTL: Duration = Duration::from_secs(60);
 const CATALOG_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(30);
 const ANTHROPIC_FAST_BETA: &str = "fast-mode-2026-02-01";
 
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(crate) enum ResolvedModelRoute {
+    Official,
+    Fusion {
+        profile_id: String,
+    },
+    Provider {
+        catalog_slug: String,
+        provider_id: String,
+        upstream_model_id: String,
+    },
+}
+
 enum AnthropicStreamDisposition {
     Ready(AnthropicByteStream),
     RetryHostedWebSearch,
-}
-
-struct CachedModels {
-    fetched_at: Instant,
-    models: Vec<ModelInfo>,
 }
 
 struct CatalogSources {
@@ -42,11 +49,11 @@ pub(super) struct CachedOfficialAuth {
 #[derive(Clone)]
 pub struct AppState {
     pub(crate) config: Arc<GatewayConfig>,
+    pub(crate) providers: Arc<ProviderRegistry>,
     pub(crate) client: Client,
     pub(super) image_routes: ImageRouteRegistry,
     pub(super) benchmarks: ModelBenchmarkManager,
     web_search_capabilities: WebSearchCapabilities,
-    models_cache: Arc<tokio::sync::Mutex<Option<CachedModels>>>,
     catalog_sources_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogSources>>>,
     catalog_response_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogResponse>>>,
     official_auth_cache: Arc<tokio::sync::Mutex<Option<CachedOfficialAuth>>>,
@@ -63,52 +70,123 @@ impl AppState {
         web_search_capabilities: WebSearchCapabilities,
     ) -> anyhow::Result<Self> {
         validate_fusion_profiles(&config.fusion_profiles)?;
+        let providers = Arc::new(ProviderRegistry::new(config.providers.clone())?);
+        crate::fusion::validate_fusion_model_references(&config.fusion_profiles, &providers)?;
         let client = Client::builder()
             .timeout(config.request_timeout)
             .pool_max_idle_per_host(64)
             .build()?;
         Ok(Self {
             config: Arc::new(config),
+            providers,
             client,
             image_routes: ImageRouteRegistry::default(),
             benchmarks: ModelBenchmarkManager::from_default_path(),
             web_search_capabilities,
-            models_cache: Arc::new(tokio::sync::Mutex::new(None)),
             catalog_sources_cache: Arc::new(tokio::sync::Mutex::new(None)),
             catalog_response_cache: Arc::new(tokio::sync::Mutex::new(None)),
             official_auth_cache: Arc::new(tokio::sync::Mutex::new(None)),
         })
     }
 
-    pub(crate) fn custom_image_routes(&self) -> Option<ImageRouteRegistry> {
-        self.config
-            .upstream_image_generation_path
+    pub(crate) fn custom_image_routes(
+        &self,
+        provider: &ProviderRuntime,
+    ) -> Option<ImageRouteRegistry> {
+        provider
+            .image_generation_url()
             .is_some()
-            .then(|| self.image_routes.clone())
+            .then(|| self.image_routes.for_provider(provider.id()))
     }
 
     pub async fn fetch_models(&self) -> Result<Vec<ModelInfo>, GatewayError> {
-        let mut cache = self.models_cache.lock().await;
-        if let Some(cached) = cache
-            .as_ref()
-            .filter(|cached| cached.fetched_at.elapsed() < MODEL_CACHE_TTL)
-        {
-            let mut models = cached.models.clone();
-            drop(cache);
-            self.web_search_capabilities.annotate_models(&mut models);
-            self.append_fusion_models(&mut models);
-            return Ok(models);
+        let mut models = Vec::new();
+        for provider in self.providers.providers() {
+            for upstream_model_id in &provider.definition().selected_models {
+                let slug = catalog_model_slug(upstream_model_id, provider.id());
+                let Some(resolved) = self.providers.resolve(&slug) else {
+                    continue;
+                };
+                let model = resolved.model.expect("routable model has cached metadata");
+                models.push(ModelInfo {
+                    id: slug,
+                    display_name: Some(format!(
+                        "{} · {}",
+                        model.display_name.as_deref().unwrap_or(upstream_model_id),
+                        provider.display_name()
+                    )),
+                    object: Some("model".to_owned()),
+                    created: None,
+                    owned_by: Some(provider.id().to_owned()),
+                    description: model.description.clone().or_else(|| {
+                        Some(format!(
+                            "{} model {}",
+                            provider.display_name(),
+                            upstream_model_id
+                        ))
+                    }),
+                    ratio: model.ratio.clone(),
+                    price_type: model.price_type.clone(),
+                    context_window: model.context_window,
+                    supports_image: model.supports_image,
+                    supports_thinking: model.supports_thinking,
+                    supports_web_search: model.supports_web_search,
+                });
+            }
         }
-
-        let mut models = self.fetch_models_uncached().await?;
-        *cache = Some(CachedModels {
-            fetched_at: Instant::now(),
-            models: models.clone(),
-        });
-        drop(cache);
         self.web_search_capabilities.annotate_models(&mut models);
         self.append_fusion_models(&mut models);
         Ok(models)
+    }
+
+    pub(crate) fn benchmark_targets(
+        &self,
+        provider_filters: &[String],
+        model_filters: &[String],
+    ) -> Result<Vec<BenchmarkTarget>, GatewayError> {
+        for provider_id in provider_filters {
+            if self.providers.provider(provider_id).is_none() {
+                return Err(GatewayError::BadRequest(format!(
+                    "unknown benchmark provider: {provider_id}"
+                )));
+            }
+        }
+        for model in model_filters {
+            if self.providers.resolve(model).is_none() {
+                return Err(GatewayError::BadRequest(format!(
+                    "benchmark model is not routable: {model}"
+                )));
+            }
+        }
+        let mut targets = Vec::new();
+        for provider in self.providers.providers() {
+            if !provider_filters.is_empty()
+                && !provider_filters
+                    .iter()
+                    .any(|provider_id| provider_id == provider.id())
+            {
+                continue;
+            }
+            for upstream_model_id in &provider.definition().selected_models {
+                let catalog_slug = catalog_model_slug(upstream_model_id, provider.id());
+                let Some(resolved) = self.providers.resolve(&catalog_slug) else {
+                    continue;
+                };
+                if !model_filters.is_empty()
+                    && !model_filters.iter().any(|model| model == &catalog_slug)
+                {
+                    continue;
+                }
+                targets.push(BenchmarkTarget {
+                    catalog_slug,
+                    provider_id: provider.id().to_owned(),
+                    provider_name: provider.display_name().to_owned(),
+                    upstream_model_id: resolved.upstream_model_id.to_owned(),
+                    provider: provider.clone(),
+                });
+            }
+        }
+        Ok(targets)
     }
 
     fn append_fusion_models(&self, models: &mut Vec<ModelInfo>) {
@@ -136,98 +214,6 @@ impl AppState {
             supports_thinking: Some(true),
             supports_web_search: Some(false),
         }));
-    }
-
-    async fn fetch_models_uncached(&self) -> Result<Vec<ModelInfo>, GatewayError> {
-        if self.config.provider_preset == ProviderPreset::BaiduOneApi {
-            return self.fetch_baidu_models().await;
-        }
-
-        let response = self
-            .apply_upstream_auth(self.client.get(self.config.upstream_models_url()))
-            .send()
-            .await?;
-        let status = response.status();
-        let body = response.text().await?;
-        if !status.is_success() {
-            return Err(GatewayError::Upstream(format!(
-                "models endpoint returned {status}: {body}"
-            )));
-        }
-        let parsed: ModelsResponse = serde_json::from_str(&body)?;
-        Ok(parsed.data)
-    }
-
-    async fn fetch_baidu_models(&self) -> Result<Vec<ModelInfo>, GatewayError> {
-        let response = self
-            .apply_upstream_auth(self.client.post(format!(
-                "{}/openapi/v2/available_models",
-                self.config.upstream_base_url
-            )))
-            .json(&json!({}))
-            .send()
-            .await?;
-        let status = response.status();
-        let body = response.text().await?;
-        if !status.is_success() {
-            return Err(GatewayError::Upstream(format!(
-                "available models endpoint returned {status}: {body}"
-            )));
-        }
-        let available: BaiduAvailableModelsResponse =
-            serde_json::from_str(&body).map_err(|err| {
-                GatewayError::Upstream(format!(
-                    "available models endpoint returned invalid JSON: {err}"
-                ))
-            })?;
-        if !available.success {
-            return Err(GatewayError::Upstream(format!(
-                "available models endpoint failed: {}",
-                available.message
-            )));
-        }
-
-        let mut available_by_model = Vec::with_capacity(available.data.len());
-        let mut model_indices = HashMap::with_capacity(available.data.len());
-        for model in available.data {
-            let (id, is_internal) = match model.model.strip_suffix("-内部") {
-                Some(canonical) => (canonical.to_owned(), true),
-                None => (model.model.clone(), false),
-            };
-            if let Some(&index) = model_indices.get(&id) {
-                if !is_internal {
-                    available_by_model[index] = (id, model);
-                }
-            } else {
-                model_indices.insert(id.clone(), available_by_model.len());
-                available_by_model.push((id, model));
-            }
-        }
-
-        Ok(available_by_model
-            .into_iter()
-            .filter_map(|(id, model)| {
-                let Some(capability) = model.capability else {
-                    tracing::warn!(
-                        model = %model.model,
-                        "excluding available models entry without capability metadata"
-                    );
-                    return None;
-                };
-                Some(ModelInfo {
-                    id,
-                    object: Some("model".to_owned()),
-                    owned_by: Some("custom".to_owned()),
-                    description: Some(capability.model_description),
-                    ratio: Some(capability.ratio),
-                    price_type: Some(model.price_type),
-                    context_window: Some(capability.context_window),
-                    supports_image: Some(capability.supports_image),
-                    supports_thinking: Some(capability.supports_thinking),
-                    ..ModelInfo::default()
-                })
-            })
-            .collect())
     }
 
     async fn catalog_sources(&self) -> Result<Arc<CatalogSources>, GatewayError> {
@@ -324,7 +310,7 @@ impl AppState {
         force: bool,
     ) -> anyhow::Result<WebSearchProbeSummary> {
         self.web_search_capabilities
-            .probe_models(models, &self.config, force)
+            .probe_models(models, &self.config, &self.providers, force)
             .await
     }
 
@@ -336,42 +322,75 @@ impl AppState {
         self.config.enable_web_search_tool && self.web_search_capabilities.supports_model(model)
     }
 
-    pub(crate) fn apply_upstream_auth(
+    pub(crate) fn resolve_model_route(
         &self,
-        request: reqwest::RequestBuilder,
-    ) -> reqwest::RequestBuilder {
-        let request = match self.config.upstream_auth_header {
-            UpstreamAuthHeader::AuthorizationBearer => {
-                request.bearer_auth(&self.config.upstream_api_key)
+        model: &str,
+    ) -> Result<ResolvedModelRoute, GatewayError> {
+        if let Some(profile_id) = model.strip_prefix(crate::fusion::FUSION_MODEL_PREFIX) {
+            if self
+                .config
+                .fusion_profiles
+                .iter()
+                .any(|profile| profile.id == profile_id)
+            {
+                return Ok(ResolvedModelRoute::Fusion {
+                    profile_id: profile_id.to_owned(),
+                });
             }
-            UpstreamAuthHeader::XApiKey => {
-                request.header("x-api-key", &self.config.upstream_api_key)
-            }
-        };
-        request.header("anthropic-version", &self.config.anthropic_version)
+            return Err(GatewayError::BadRequest(format!(
+                "unknown fusion profile: {profile_id}"
+            )));
+        }
+        if let Some(resolved) = self.providers.resolve(model) {
+            return Ok(ResolvedModelRoute::Provider {
+                catalog_slug: model.to_owned(),
+                provider_id: resolved.provider.id().to_owned(),
+                upstream_model_id: resolved.upstream_model_id.to_owned(),
+            });
+        }
+        if let Some(known) = self.providers.resolve_known(model) {
+            let reason = if !known.provider.definition().enabled {
+                "provider is disabled"
+            } else if known.model.is_none() {
+                "model is currently unavailable"
+            } else {
+                "model is not routable"
+            };
+            return Err(GatewayError::BadRequest(format!(
+                "model {model} is not available: provider {} {reason}",
+                known.provider.id()
+            )));
+        }
+        if model
+            .get(..4)
+            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("gpt-"))
+        {
+            return Ok(ResolvedModelRoute::Official);
+        }
+        Err(GatewayError::BadRequest(format!(
+            "unknown model slug: {model}"
+        )))
     }
 
-    pub(crate) fn apply_oneapi_affinity(
+    pub(crate) fn resolved_provider_model(
         &self,
-        request: reqwest::RequestBuilder,
-        hash_key: Option<&str>,
-    ) -> reqwest::RequestBuilder {
-        if let Some(hash_key) = hash_key {
-            request.header("x-hash-key", hash_key)
-        } else {
-            request
-        }
+        catalog_slug: &str,
+    ) -> Result<ResolvedProviderModel<'_>, GatewayError> {
+        self.providers.resolve(catalog_slug).ok_or_else(|| {
+            GatewayError::BadRequest(format!("model is not routable: {catalog_slug}"))
+        })
     }
 
     async fn send_anthropic_request(
         &self,
+        provider: &ProviderRuntime,
         request: &MessageRequest,
         hash_key: Option<&str>,
     ) -> Result<AnthropicByteStream, GatewayError> {
         let mut upstream_request =
-            self.apply_upstream_auth(self.client.post(self.config.upstream_messages_url()));
+            provider.apply_auth(self.client.post(provider.api_url().clone()));
         let beta = if request.speed.as_deref() == Some("fast") {
-            Some(match self.config.anthropic_beta.as_deref() {
+            Some(match provider.definition().anthropic_beta.as_deref() {
                 Some(configured)
                     if configured
                         .split(',')
@@ -385,22 +404,33 @@ impl AppState {
                 _ => ANTHROPIC_FAST_BETA.to_owned(),
             })
         } else {
-            self.config.anthropic_beta.clone()
+            provider.definition().anthropic_beta.clone()
         };
-        if let Some(beta) = beta {
-            upstream_request = upstream_request.header("anthropic-beta", beta);
-        }
+        upstream_request = provider.apply_anthropic_beta(upstream_request, beta.as_deref());
         let response = self
-            .apply_oneapi_affinity(upstream_request, hash_key)
+            .providers
+            .provider(provider.id())
+            .expect("resolved provider belongs to registry")
+            .apply_session_affinity(upstream_request, hash_key)
             .header(header::ACCEPT, "text/event-stream")
             .json(request)
             .send()
-            .await?;
+            .await
+            .map_err(|error| {
+                tracing::error!(
+                    provider_id = provider.id(),
+                    upstream_model_id = %request.model,
+                    error = %crate::error::format_error_chain(&error),
+                    "provider messages request failed before receiving a response"
+                );
+                GatewayError::Http(error)
+            })?;
         let status = response.status();
         if !status.is_success() {
             let body = response.text().await?;
             return Err(GatewayError::Upstream(format!(
-                "messages endpoint returned {status}: {body}"
+                "provider {} messages endpoint returned {status}: {body}",
+                provider.id()
             )));
         }
         Ok(response.bytes_stream().boxed())
@@ -408,6 +438,7 @@ impl AppState {
 
     pub(crate) async fn anthropic_stream_with_web_search_retry(
         &self,
+        provider: &ProviderRuntime,
         mut request: MessageRequest,
         hash_key: Option<&str>,
     ) -> Result<AnthropicByteStream, GatewayError> {
@@ -418,7 +449,9 @@ impl AppState {
                     .and_then(Value::as_str)
                     .is_some_and(|tool_type| tool_type.starts_with("web_search_"))
         });
-        let upstream = self.send_anthropic_request(&request, hash_key).await?;
+        let upstream = self
+            .send_anthropic_request(provider, &request, hash_key)
+            .await?;
         if !has_hosted_web_search {
             return Ok(upstream);
         }
@@ -449,7 +482,9 @@ impl AppState {
                             )),
                         );
                     }
-                    let retry = self.send_anthropic_request(&request, hash_key).await?;
+                    let retry = self
+                        .send_anthropic_request(provider, &request, hash_key)
+                        .await?;
                     match inspect_anthropic_stream(retry).await? {
                         AnthropicStreamDisposition::Ready(retry) => return Ok(retry),
                         AnthropicStreamDisposition::RetryHostedWebSearch => tracing::warn!(

@@ -1,7 +1,5 @@
 use serde_json::json;
 
-use crate::config::ProviderPreset;
-
 use super::render::{panel_results_detail, render_fusion_details};
 use super::routing::{FusionModelProvider, resolve_fusion_model};
 use super::types::{FusionPanelDetail, FusionPanelStatus, JudgeSynthesis};
@@ -40,20 +38,17 @@ fn validates_panel_bounds_recursion_and_minimum() {
 }
 
 #[test]
-fn routes_provider_suffixed_gpt_aliases_to_upstream() {
-    assert_eq!(model_route("gpt-5.6-sol"), ModelRoute::Official);
-    for provider in ProviderPreset::ALL {
-        let alias = format!("gpt-5.6-sol-{}", provider.as_str());
-        assert_eq!(model_route(&alias), ModelRoute::Direct);
-        assert_eq!(canonical_upstream_model_alias(&alias), "gpt-5.6-sol");
-    }
+fn resolves_only_explicit_official_fusion_references() {
     assert_eq!(
-        resolve_fusion_model("official:gpt-5.6-sol", "baidu-oneapi"),
+        resolve_fusion_model("official:gpt-5.6-sol"),
         (FusionModelProvider::Official, "gpt-5.6-sol".to_owned())
     );
     assert_eq!(
-        resolve_fusion_model("baidu-oneapi:gpt-5.6-sol", "baidu-oneapi"),
-        (FusionModelProvider::Upstream, "gpt-5.6-sol".to_owned())
+        resolve_fusion_model("gpt-5.6-sol-baidu-oneapi"),
+        (
+            FusionModelProvider::Provider,
+            "gpt-5.6-sol-baidu-oneapi".to_owned()
+        )
     );
 }
 

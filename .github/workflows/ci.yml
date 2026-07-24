@@ -28,6 +28,16 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Run unit and integration tests
         run: cargo test --locked --all-targets
+      - name: Build static Linux CLI
+        if: runner.os == 'Linux'
+        run: |
+          sudo apt-get update
+          sudo apt-get install --yes musl-tools
+          rustup target add x86_64-unknown-linux-musl
+          CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc \
+          CC_x86_64_unknown_linux_musl=musl-gcc \
+            cargo build --locked --release --target x86_64-unknown-linux-musl
+          ./scripts/verify-linux-static.sh target/x86_64-unknown-linux-musl/release/codex-mixin
       - name: Build macOS app
         if: runner.os == 'macOS'
         env:

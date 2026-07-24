@@ -8,7 +8,7 @@ use toml_edit::{DocumentMut, Item};
 use codex_mixin::CODEX_MIXIN_PROVIDER;
 use codex_mixin::catalog::{
     codex_catalog_from_models_with_metadata,
-    codex_oauth_proxy_catalog_from_models_with_metadata_for_provider,
+    codex_oauth_proxy_catalog_from_aggregated_models_with_metadata,
 };
 use codex_mixin::config::GatewayConfig;
 use codex_mixin::history::{
@@ -48,7 +48,7 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
         no_env_key,
     } = options;
     let paths = resolve_codex_install_paths(config_path, catalog_path)?;
-    let gateway_config = GatewayConfig::from_env()?;
+    let gateway_config = GatewayConfig::from_stored_config()?;
     let state = AppState::new(gateway_config.clone())?;
     let template = load_codex_install_template_online(&paths, codex_oauth_proxy, &state).await?;
     let mut models = state.fetch_models().await?;
@@ -60,12 +60,11 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
         .await?;
     let metadata = load_model_metadata_resolver().await?;
     let catalog = if codex_oauth_proxy {
-        codex_oauth_proxy_catalog_from_models_with_metadata_for_provider(
+        codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
             &models,
             gateway_config.default_context_window,
             template.as_ref(),
             &metadata,
-            gateway_config.provider_preset.as_str(),
         )
     } else {
         codex_catalog_from_models_with_metadata(
@@ -108,7 +107,6 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
                 &models,
                 template.as_ref(),
                 &doc,
-                gateway_config.provider_preset.as_str(),
             )?)
         } else {
             None

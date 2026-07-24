@@ -34,23 +34,6 @@ pub(super) fn forward_official_headers(
     request
 }
 
-pub(super) fn should_forward_to_official(body: &Value) -> bool {
-    let Some(model) = body.get("model").and_then(Value::as_str) else {
-        return false;
-    };
-    model_route(model) == ModelRoute::Official
-}
-
-pub(super) fn normalize_custom_model_alias(body: &mut Value) {
-    let Some(model) = body.get("model").and_then(Value::as_str) else {
-        return;
-    };
-    let canonical = canonical_upstream_model_alias(model);
-    if canonical != model {
-        body["model"] = Value::String(canonical.to_owned());
-    }
-}
-
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     headers
         .get(header::AUTHORIZATION)
