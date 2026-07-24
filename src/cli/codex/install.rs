@@ -48,6 +48,16 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
         no_env_key,
     } = options;
     let paths = resolve_codex_install_paths(config_path, catalog_path)?;
+    println!(
+        "codex install started: mode={}, config={}, catalog={}",
+        if codex_oauth_proxy {
+            "codex_oauth_proxy"
+        } else {
+            "custom_only"
+        },
+        paths.config.display(),
+        paths.catalog.display()
+    );
     let gateway_config = GatewayConfig::from_stored_config()?;
     let state = AppState::new(gateway_config.clone())?;
     let template = load_codex_install_template_online(&paths, codex_oauth_proxy, &state).await?;
@@ -280,12 +290,24 @@ pub(in crate::cli) fn write_managed_codex_files(
     };
     let created_restore_point = !is_managed_config(raw_config);
     create_managed_config_restore_point(&paths.config, raw_config)?;
+    println!("codex install step: restore point prepared; created={created_restore_point}");
     let install_result = (|| -> anyhow::Result<()> {
-        write_atomic_if_changed(&paths.catalog, serialized_catalog)?;
-        write_atomic_if_changed(&paths.config, serialized_config)?;
+        let catalog_changed = write_atomic_if_changed(&paths.catalog, serialized_catalog)?;
+        println!(
+            "codex install step: catalog written; path={}; changed={catalog_changed}; bytes={}",
+            paths.catalog.display(),
+            serialized_catalog.len()
+        );
+        let config_changed = write_atomic_if_changed(&paths.config, serialized_config)?;
+        println!(
+            "codex install step: config written; path={}; changed={config_changed}; bytes={}",
+            paths.config.display(),
+            serialized_config.len()
+        );
         validate()
     })();
     let Err(install_error) = install_result else {
+        println!("codex install step: validation completed");
         return Ok(());
     };
 
@@ -326,10 +348,15 @@ pub(in crate::cli) fn write_managed_codex_files(
         }
     }
     if rollback_errors.is_empty() {
+        println!("codex install rollback: completed");
         anyhow::bail!(
             "Codex rejected the managed configuration; installation rolled back: {install_error}"
         );
     }
+    println!(
+        "codex install rollback: incomplete; errors={}",
+        rollback_errors.len()
+    );
     anyhow::bail!(
         "Codex rejected the managed configuration: {install_error}; rollback also failed: {}",
         rollback_errors.join("; ")
@@ -341,6 +368,12 @@ pub(in crate::cli) fn validate_codex_install(
     expected_model_slugs: &[String],
 ) -> anyhow::Result<()> {
     let codex_cli = resolve_codex_cli()?;
+    println!(
+        "codex validation started: cli={}, codex_home={}, expected_models={}",
+        codex_cli.display(),
+        codex_home.display(),
+        expected_model_slugs.len()
+    );
     let doctor = ProcessCommand::new(&codex_cli)
         .args(["doctor", "--json"])
         .env("CODEX_HOME", codex_home)
@@ -374,6 +407,7 @@ pub(in crate::cli) fn validate_codex_install(
             effective_provider
         );
     }
+    println!("codex validation: doctor config.load ok; provider={CODEX_MIXIN_PROVIDER}");
 
     let models = ProcessCommand::new(&codex_cli)
         .args(["debug", "models"])
@@ -402,6 +436,12 @@ pub(in crate::cli) fn validate_codex_install(
         .filter(|slug| !loaded_slugs.contains(slug.as_str()))
         .cloned()
         .collect::<Vec<_>>();
+    println!(
+        "codex validation: debug models loaded {} models; expected {}; missing {}",
+        loaded_slugs.len(),
+        expected_model_slugs.len(),
+        missing_slugs.len()
+    );
     if !missing_slugs.is_empty() {
         anyhow::bail!(
             "Codex did not load {} managed models: {}",

@@ -607,6 +607,32 @@ fn capability_refresh_does_not_restore_stale_official_cache() {
 }
 
 #[test]
+fn reports_managed_catalog_path_mode_and_model_counts() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let catalog_path = dir.path().join("mixin-models.json");
+    fs::write(
+        &config_path,
+        format!(
+            "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\n",
+            catalog_path.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &catalog_path,
+        r#"{"models":[{"slug":"gpt-5.6-sol"},{"slug":"DeepSeek-V4-Flash","codex_mixin_managed":true}]}"#,
+    )
+    .unwrap();
+
+    let summary = managed_catalog_summary(&config_path).unwrap().unwrap();
+    assert_eq!(summary.catalog_path, catalog_path);
+    assert_eq!(summary.mode, "codex_oauth_proxy");
+    assert_eq!(summary.model_count, 2);
+    assert_eq!(summary.managed_model_count, 1);
+}
+
+#[test]
 fn parses_installed_codex_client_version() {
     assert_eq!(
         parse_codex_client_version("codex-cli 0.144.4\n").as_deref(),

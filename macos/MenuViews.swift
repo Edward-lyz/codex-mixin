@@ -161,12 +161,16 @@ func providerQuotaMenuView(_ usages: [ProviderQuotaUsage]) -> NSView {
     stack.spacing = 0
     stack.translatesAutoresizingMaskIntoConstraints = false
     view.addSubview(stack)
-    NSLayoutConstraint.activate([
+    let containerConstraints = [
         stack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
         stack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
         stack.topAnchor.constraint(equalTo: view.topAnchor),
         stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
-    ])
+    ]
+    let rowWidthConstraints = rows.map {
+        $0.widthAnchor.constraint(equalTo: stack.widthAnchor)
+    }
+    NSLayoutConstraint.activate(containerConstraints + rowWidthConstraints)
     return view
 }
 

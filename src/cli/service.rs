@@ -18,8 +18,9 @@ use codex_mixin::server::{AppState, serve_on_listener};
 use codex_mixin::web_search::WebSearchCapabilities;
 
 use super::codex::{
-    refresh_managed_codex_catalog_with_capabilities, refresh_managed_official_codex_catalog,
-    resolve_codex_config_path, sync_managed_codex_gateway_base_url,
+    managed_catalog_summary, refresh_managed_codex_catalog_with_capabilities,
+    refresh_managed_official_codex_catalog, resolve_codex_config_path,
+    sync_managed_codex_gateway_base_url,
 };
 use super::runtime::*;
 
@@ -143,15 +144,20 @@ pub(super) async fn start(
     let config_path = resolve_codex_config_path(None)?;
     sync_managed_codex_gateway_base_url(&config_path, actual_bind)?;
     let supported_models = WebSearchCapabilities::from_default_path(&config)?.supported_model_ids();
+    log_codex_catalog_refresh_started(&config_path, "gateway_start", "capability_cache");
     match refresh_managed_codex_catalog_with_capabilities(&config_path, Some(&supported_models)) {
-        Ok(true) => tracing::info!("Codex model catalog refreshed"),
-        Ok(false) => {}
+        Ok(changed) => {
+            log_codex_catalog_refresh(&config_path, "gateway_start", "capability_cache", changed)
+        }
         Err(err) => tracing::warn!(
+            trigger = "gateway_start",
+            source = "capability_cache",
             error = %format!("{err:#}"),
             "failed to refresh Codex model catalog"
         ),
     }
     let official_catalog_state = AppState::new(config.clone())?;
+    log_codex_catalog_refresh_started(&config_path, "gateway_start", "official_remote");
     match refresh_managed_official_codex_catalog(
         &config_path,
         &official_catalog_state,
@@ -159,9 +165,12 @@ pub(super) async fn start(
     )
     .await
     {
-        Ok(true) => tracing::info!("official Codex model catalog refreshed"),
-        Ok(false) => {}
+        Ok(changed) => {
+            log_codex_catalog_refresh(&config_path, "gateway_start", "official_remote", changed)
+        }
         Err(err) => tracing::warn!(
+            trigger = "gateway_start",
+            source = "official_remote",
             error = %format!("{err:#}"),
             "failed to refresh official Codex model catalog"
         ),
@@ -173,6 +182,11 @@ pub(super) async fn start(
         interval.tick().await;
         loop {
             interval.tick().await;
+            log_codex_catalog_refresh_started(
+                &capabilities_config_path,
+                "periodic",
+                "capability_cache",
+            );
             let refresh_result = WebSearchCapabilities::from_default_path(&refresh_config)
                 .map(|capabilities| capabilities.supported_model_ids())
                 .and_then(|supported_models| {
@@ -182,9 +196,15 @@ pub(super) async fn start(
                     )
                 });
             match refresh_result {
-                Ok(true) => tracing::info!("Codex model catalog refreshed"),
-                Ok(false) => {}
+                Ok(changed) => log_codex_catalog_refresh(
+                    &capabilities_config_path,
+                    "periodic",
+                    "capability_cache",
+                    changed,
+                ),
                 Err(err) => tracing::warn!(
+                    trigger = "periodic",
+                    source = "capability_cache",
                     error = %format!("{err:#}"),
                     "failed to refresh Codex model catalog"
                 ),
@@ -198,6 +218,11 @@ pub(super) async fn start(
         interval.tick().await;
         loop {
             interval.tick().await;
+            log_codex_catalog_refresh_started(
+                &official_refresh_config_path,
+                "periodic",
+                "official_remote",
+            );
             let supported_models =
                 match WebSearchCapabilities::from_default_path(&official_refresh_config) {
                     Ok(capabilities) => Some(capabilities.supported_model_ids()),
@@ -216,10 +241,16 @@ pub(super) async fn start(
             )
             .await
             {
-                Ok(true) => tracing::info!("official Codex model catalog refreshed"),
-                Ok(false) => {}
+                Ok(changed) => log_codex_catalog_refresh(
+                    &official_refresh_config_path,
+                    "periodic",
+                    "official_remote",
+                    changed,
+                ),
                 Err(err) => {
                     tracing::warn!(
+                        trigger = "periodic",
+                        source = "official_remote",
                         error = %format!("{err:#}"),
                         "failed to refresh official Codex model catalog"
                     )
@@ -247,6 +278,45 @@ pub(super) async fn start(
         ),
     }
     result
+}
+
+fn log_codex_catalog_refresh_started(config_path: &Path, trigger: &str, source: &str) {
+    tracing::info!(
+        trigger,
+        source,
+        config_path = %config_path.display(),
+        "Codex model catalog refresh started"
+    );
+}
+
+fn log_codex_catalog_refresh(config_path: &Path, trigger: &str, source: &str, changed: bool) {
+    match managed_catalog_summary(config_path) {
+        Ok(Some(summary)) => tracing::info!(
+            trigger,
+            source,
+            changed,
+            catalog_path = %summary.catalog_path.display(),
+            mode = summary.mode,
+            model_count = summary.model_count,
+            managed_model_count = summary.managed_model_count,
+            "Codex model catalog refresh completed"
+        ),
+        Ok(None) => tracing::info!(
+            trigger,
+            source,
+            changed,
+            config_path = %config_path.display(),
+            "Codex model catalog refresh skipped; config is not managed"
+        ),
+        Err(error) => tracing::warn!(
+            trigger,
+            source,
+            changed,
+            config_path = %config_path.display(),
+            error = %format!("{error:#}"),
+            "Codex model catalog refreshed but summary could not be read"
+        ),
+    }
 }
 
 fn log_gateway_configuration(config: &GatewayConfig) {

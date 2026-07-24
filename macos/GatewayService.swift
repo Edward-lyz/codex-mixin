@@ -472,12 +472,29 @@ extension AppDelegate {
     }
 
     func runGateway(_ arguments: [String]) async throws -> String {
+        let operationID = String(UUID().uuidString.prefix(8))
+        let command = diagnosticCommandDescription(arguments)
+        let startedAt = Date()
+        appendDiagnosticLog(
+            "APP_OPERATION started id=\(operationID) command=\(command.isEmpty ? "<default>" : command)"
+        )
         do {
-            return try await runProcess(try gatewayExecutableURL().path, arguments)
-        } catch {
-            let action = arguments.prefix(2).joined(separator: " ")
+            let output = try await runProcess(try gatewayExecutableURL().path, arguments)
+            let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
             appendDiagnosticLog(
-                "App CLI operation failed: \(action.isEmpty ? "<default>" : action)\n\(String(describing: error))"
+                """
+                APP_OPERATION completed id=\(operationID) duration_ms=\(durationMilliseconds) command=\(command.isEmpty ? "<default>" : command)
+                \(diagnosticOutputSummary(arguments: arguments, output: output))
+                """
+            )
+            return output
+        } catch {
+            let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
+            appendDiagnosticLog(
+                """
+                APP_OPERATION failed id=\(operationID) duration_ms=\(durationMilliseconds) command=\(command.isEmpty ? "<default>" : command)
+                \(diagnosticErrorDescription(error))
+                """
             )
             throw error
         }
@@ -495,7 +512,14 @@ extension AppDelegate {
     }
 
     func runProcess(_ executable: String, _ arguments: [String]) async throws -> String {
-        try await withCheckedThrowingContinuation { continuation in
+        let operationID = String(UUID().uuidString.prefix(8))
+        let command = diagnosticCommandDescription(arguments)
+        let startedAt = Date()
+        appendDiagnosticLog(
+            "APP_PROCESS started id=\(operationID) executable=\(executable) arguments=\(command)"
+        )
+        let diagnosticDirectory = stateDir()
+        return try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
                 let outputPipe = Pipe()
@@ -519,12 +543,33 @@ extension AppDelegate {
                     let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
                     let output = String(data: data, encoding: .utf8) ?? ""
                     let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
                     if process.terminationStatus == 0 {
+                        appendAppDiagnosticLog(
+                            """
+                            APP_PROCESS completed id=\(operationID) duration_ms=\(durationMilliseconds) exit=0 executable=\(executable) arguments=\(command) output_bytes=\(output.lengthOfBytes(using: .utf8))
+                            """,
+                            directory: diagnosticDirectory
+                        )
                         continuation.resume(returning: trimmed)
                     } else {
+                        appendAppDiagnosticLog(
+                            """
+                            APP_PROCESS failed id=\(operationID) duration_ms=\(durationMilliseconds) exit=\(process.terminationStatus) executable=\(executable) arguments=\(command) output_bytes=\(output.lengthOfBytes(using: .utf8))
+                            """,
+                            directory: diagnosticDirectory
+                        )
                         continuation.resume(throwing: GatewayError.command(trimmed.isEmpty ? "exit \(process.terminationStatus)" : trimmed))
                     }
                 } catch {
+                    let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
+                    appendAppDiagnosticLog(
+                        """
+                        APP_PROCESS launch_failed id=\(operationID) duration_ms=\(durationMilliseconds) executable=\(executable) arguments=\(command)
+                        \(diagnosticErrorDescription(error))
+                        """,
+                        directory: diagnosticDirectory
+                    )
                     continuation.resume(throwing: error)
                 }
             }
@@ -546,32 +591,7 @@ extension AppDelegate {
     }
 
     func appendDiagnosticLog(_ message: String) {
-        let directory = stateDir()
-        let logURL = directory.appendingPathComponent("gateway.log")
-        do {
-            try FileManager.default.createDirectory(
-                at: directory,
-                withIntermediateDirectories: true
-            )
-            if !FileManager.default.fileExists(atPath: logURL.path) {
-                FileManager.default.createFile(
-                    atPath: logURL.path,
-                    contents: nil,
-                    attributes: [.posixPermissions: NSNumber(value: 0o600)]
-                )
-            }
-            let formatter = ISO8601DateFormatter()
-            let boundedMessage = String(message.prefix(8_000))
-            let entry = "\n\(formatter.string(from: Date())) APP_DIAGNOSTIC \(boundedMessage)\n"
-            let handle = try FileHandle(forWritingTo: logURL)
-            try handle.seekToEnd()
-            if let data = entry.data(using: .utf8) {
-                try handle.write(contentsOf: data)
-            }
-            try handle.close()
-        } catch {
-            NSLog("Codex Mixin could not append diagnostic log: \(error)")
-        }
+        appendAppDiagnosticLog(message, directory: stateDir())
     }
 
     func launchAgentPath() -> URL {

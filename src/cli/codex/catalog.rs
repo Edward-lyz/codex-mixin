@@ -75,6 +75,11 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
             catalog_path.display()
         );
     }
+    if let Some(summary) = managed_catalog_summary(&config_path)? {
+        println!("catalog mode: {}", summary.mode);
+        println!("catalog models: {}", summary.model_count);
+        println!("catalog managed models: {}", summary.managed_model_count);
+    }
     Ok(())
 }
 
@@ -104,6 +109,40 @@ pub(in crate::cli) fn managed_catalog_settings(
     };
     let catalog_path = managed_catalog_path(&doc, &config_path)?;
     Ok(Some((requires_openai_auth, catalog_path)))
+}
+
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub(in crate::cli) struct ManagedCatalogSummary {
+    pub catalog_path: PathBuf,
+    pub mode: &'static str,
+    pub model_count: usize,
+    pub managed_model_count: usize,
+}
+
+pub(in crate::cli) fn managed_catalog_summary(
+    config_path: &Path,
+) -> anyhow::Result<Option<ManagedCatalogSummary>> {
+    let Some((requires_openai_auth, catalog_path)) = managed_catalog_settings(config_path)? else {
+        return Ok(None);
+    };
+    let catalog: serde_json::Value = serde_json::from_slice(&fs::read(&catalog_path)?)?;
+    let models = catalog
+        .get("models")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("managed Codex model catalog has no models array"))?;
+    Ok(Some(ManagedCatalogSummary {
+        catalog_path,
+        mode: if requires_openai_auth {
+            "codex_oauth_proxy"
+        } else {
+            "custom_only"
+        },
+        model_count: models.len(),
+        managed_model_count: models
+            .iter()
+            .filter(|model| is_managed_catalog_model(model))
+            .count(),
+    }))
 }
 
 pub(in crate::cli) fn write_generated_managed_codex_catalog(

@@ -56,6 +56,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/ProviderSupport.swift" \
   "$ROOT_DIR/macos/ProviderSettingsWindow.swift" \
   "$ROOT_DIR/macos/MenuViewUpdateSupport.swift" \
+  "$ROOT_DIR/macos/AppOperationLogging.swift" \
   "$ROOT_DIR/macos/MenuViews.swift" \
   "$ROOT_DIR/macos/InstallCodexPanel.swift" \
   "$ROOT_DIR/macos/QuotaSupport.swift" \
