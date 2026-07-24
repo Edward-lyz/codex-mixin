@@ -815,6 +815,7 @@ pub(super) fn quota_usage(
                 "spent",
                 "cost",
                 "consumed",
+                "actual_cost",
             ],
             &[
                 "limit",
@@ -831,14 +832,16 @@ pub(super) fn quota_usage(
                 "remaining_quota",
                 "available",
                 "total_available",
+                "balance",
             ],
         ),
     };
     let used = first_quota_value(value, used_fields)
         .ok_or_else(|| anyhow::anyhow!("quota response does not contain a valid used amount"))?;
-    let limit = first_quota_value(value, limit_fields);
-    let remaining = first_quota_value(value, remaining_fields)
-        .or_else(|| limit.map(|limit| (limit - used).max(0.0)));
+    let reported_remaining = first_quota_value(value, remaining_fields);
+    let limit = first_quota_value(value, limit_fields)
+        .or_else(|| reported_remaining.map(|remaining| used + remaining));
+    let remaining = reported_remaining.or_else(|| limit.map(|limit| (limit - used).max(0.0)));
     Ok(QuotaUsageSummary {
         used,
         limit,
@@ -854,6 +857,8 @@ fn first_quota_value(value: &serde_json::Value, fields: &[&str]) -> Option<f64> 
         "/data/quota",
         "/usage",
         "/data/usage",
+        "/usage/total",
+        "/data/usage/total",
     ]
     .iter()
     .find_map(|base| {

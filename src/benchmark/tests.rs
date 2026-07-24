@@ -119,6 +119,32 @@ fn runtime(provider: crate::provider::ProviderDefinition) -> ProviderRuntime {
     ProviderRegistry::new(vec![provider]).unwrap().providers()[0].clone()
 }
 
+#[test]
+fn reads_sub2api_total_actual_cost_for_benchmark_deltas() {
+    let payload = json!({
+        "mode": "unrestricted",
+        "remaining": 37.5,
+        "usage": {
+            "total": {
+                "actual_cost": 12.5
+            }
+        }
+    });
+
+    assert_eq!(
+        used_quota_from_json(ProviderQuotaParser::Generic, &payload).unwrap(),
+        12.5
+    );
+    assert_eq!(
+        used_quota_from_json(
+            ProviderQuotaParser::Generic,
+            &json!({"data": {"total_used": 8.25}})
+        )
+        .unwrap(),
+        8.25
+    );
+}
+
 fn target(provider: &ProviderRuntime, model: &str) -> BenchmarkTarget {
     BenchmarkTarget {
         catalog_slug: format!("{model}-{}", provider.id()),

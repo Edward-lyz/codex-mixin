@@ -156,13 +156,15 @@ codex-mixin logs -n 200
 
 | Provider | 上游协议 | 上游根地址 | 对话接口 | 生图接口 | 模型接口 | 额度接口 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `custom` | Anthropic Messages 默认 | 用户填写 | `/v1/messages` | 可选，用户填写 | `/v1/models` | 无默认值 |
+| `custom` | Anthropic Messages 默认 | 用户填写 | `/v1/messages` | 可选，用户填写 | `/v1/models` | 自动探测常见只读端点 |
 | `baidu-oneapi` | Anthropic Messages | `https://oneapi-comate.baidu-int.com` | `/v1/messages` | `/v1/images/generations` | `POST /openapi/v2/available_models` | `/openapi/v3/user/quota` |
 | `openrouter` | OpenAI Chat Completions | `https://openrouter.ai/api` | `/v1/chat/completions` | 可选，用户填写 | `/v1/models` | `/v1/credits` |
 | `deepseek` | OpenAI Chat Completions | `https://api.deepseek.com` | `/chat/completions` | 可选，用户填写 | `/models` | 无默认值 |
 
 设置窗口里的上游地址只填根地址。路径由 provider preset 补齐。
 Baidu OneAPI 的额度接口必须同时填写额度用户名；CLI 和 App 都会在保存时校验。
+新增或刷新 `custom` Provider 时会并发尝试 New API、Sub2API、OpenRouter
+等常见只读额度端点；只有返回可识别额度数据的端点才会保存，不会发起付费推理。
 
 示例：
 
@@ -526,13 +528,16 @@ Then start a new Codex CLI session.
 
 | Provider | Upstream protocol | Base URL | Chat path | Image path | Models path | Quota path |
 | --- | --- | --- | --- | --- | --- | --- |
-| `custom` | Anthropic Messages by default | User provided | `/v1/messages` | Optional, user provided | `/v1/models` | None |
+| `custom` | Anthropic Messages by default | User provided | `/v1/messages` | Optional, user provided | `/v1/models` | Auto-detected from common read-only endpoints |
 | `baidu-oneapi` | Anthropic Messages | `https://oneapi-comate.baidu-int.com` | `/v1/messages` | `/v1/images/generations` | `POST /openapi/v2/available_models` | `/openapi/v3/user/quota` |
 | `openrouter` | OpenAI Chat Completions | `https://openrouter.ai/api` | `/v1/chat/completions` | Optional, user provided | `/v1/models` | `/v1/credits` |
 | `deepseek` | OpenAI Chat Completions | `https://api.deepseek.com` | `/chat/completions` | Optional, user provided | `/models` | None |
 
 Only enter the upstream root URL in the settings window. Codex Mixin adds provider-specific paths.
 The Baidu OneAPI quota endpoint also requires a quota username; both the CLI and app validate it before saving.
+When a `custom` provider is added or refreshed, Codex Mixin concurrently probes common
+read-only quota endpoints used by New API, Sub2API, OpenRouter, and similar gateways.
+It stores an endpoint only after receiving recognizable quota data and never runs paid inference.
 
 ### Codex Install Behavior
 

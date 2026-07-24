@@ -660,54 +660,45 @@ async fn discover_custom_quota(
     let runtime = registry
         .provider(&provider.id)
         .expect("newly constructed provider registry contains the custom provider");
-    let probes = tokio::time::timeout(
-        Duration::from_secs(8),
-        stream::iter(
-            custom_quota_candidate_urls(&provider.base_url)?
-                .into_iter()
-                .enumerate()
-                .map(|(index, url)| {
-                    let runtime = &runtime;
-                    async move {
-                        let response = runtime
-                            .apply_auth(
-                                client
-                                    .get(url.clone())
-                                    .header(reqwest::header::ACCEPT, "application/json")
-                                    .timeout(Duration::from_secs(5)),
-                            )
-                            .send()
-                            .await
-                            .ok()?;
-                        if !response.status().is_success() {
-                            return None;
-                        }
-                        let body = response.bytes().await.ok()?;
-                        let value: serde_json::Value = serde_json::from_slice(&body).ok()?;
-                        let parser = ProviderQuotaParser::Generic;
-                        let usage = quota_usage(parser, &value).ok()?;
-                        Some((
-                            index,
-                            DiscoveredQuotaEndpoint {
-                                url,
-                                parser,
-                                currency: quota_currency(&value),
-                                usage,
-                            },
-                        ))
+    let probes = stream::iter(
+        custom_quota_candidate_urls(&provider.base_url)?
+            .into_iter()
+            .map(|url| {
+                let runtime = &runtime;
+                async move {
+                    let response = runtime
+                        .apply_auth(
+                            client
+                                .get(url.clone())
+                                .header(reqwest::header::ACCEPT, "application/json")
+                                .timeout(Duration::from_secs(5)),
+                        )
+                        .send()
+                        .await
+                        .ok()?;
+                    if !response.status().is_success() {
+                        return None;
                     }
-                }),
-        )
-        .buffer_unordered(4)
-        .filter_map(|result| async move { result })
-        .collect::<Vec<_>>(),
+                    let body = response.bytes().await.ok()?;
+                    let value: serde_json::Value = serde_json::from_slice(&body).ok()?;
+                    let parser = ProviderQuotaParser::Generic;
+                    let usage = quota_usage(parser, &value).ok()?;
+                    Some(DiscoveredQuotaEndpoint {
+                        url,
+                        parser,
+                        currency: quota_currency(&value),
+                        usage,
+                    })
+                }
+            }),
     )
-    .await
-    .unwrap_or_default();
-    Ok(probes
-        .into_iter()
-        .min_by_key(|(index, _)| *index)
-        .map(|(_, discovered)| discovered))
+    .buffer_unordered(4)
+    .filter_map(|result| async move { result });
+    tokio::pin!(probes);
+    let discovered = tokio::time::timeout(Duration::from_secs(8), probes.next())
+        .await
+        .unwrap_or(None);
+    Ok(discovered)
 }
 
 fn custom_quota_candidate_urls(base_url: &str) -> anyhow::Result<Vec<reqwest::Url>> {
@@ -717,12 +708,15 @@ fn custom_quota_candidate_urls(base_url: &str) -> anyhow::Result<Vec<reqwest::Ur
     origin.set_query(None);
     origin.set_fragment(None);
     let paths = [
+        // New API's canonical read-only token endpoint includes the trailing slash.
+        "api/usage/token/",
+        "api/usage/token",
+        // Sub2API exposes key-level quota, subscription, and wallet usage here.
+        "v1/usage",
         "api/v1/credits",
         "v1/credits",
         "credits",
-        "api/usage/token",
         "api/usage",
-        "v1/usage",
         "usage",
         "api/token/usage",
         "api/user/usage",
@@ -755,11 +749,17 @@ fn custom_quota_candidate_urls(base_url: &str) -> anyhow::Result<Vec<reqwest::Ur
 fn quota_currency(value: &serde_json::Value) -> Option<String> {
     [
         "/currency",
+        "/unit",
         "/data/currency",
+        "/data/unit",
         "/quota/currency",
+        "/quota/unit",
         "/data/quota/currency",
+        "/data/quota/unit",
         "/usage/currency",
+        "/usage/unit",
         "/data/usage/currency",
+        "/data/usage/unit",
     ]
     .into_iter()
     .find_map(|pointer| value.pointer(pointer).and_then(serde_json::Value::as_str))
@@ -941,6 +941,87 @@ mod tests {
             authorization.lock().unwrap().as_deref(),
             Some("Bearer community-secret")
         );
+    }
+
+    #[tokio::test]
+    async fn discovers_new_api_token_usage_with_its_canonical_trailing_slash() {
+        let app = Router::new().route(
+            "/api/usage/token/",
+            get(|| async {
+                axum::Json(serde_json::json!({
+                    "code": true,
+                    "message": "ok",
+                    "data": {
+                        "object": "token_usage",
+                        "total_granted": 100,
+                        "total_used": 12.5,
+                        "total_available": 87.5
+                    }
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut provider = codex_mixin::provider::custom_provider("new-api", "new-api-key");
+        provider.base_url = format!("http://{address}");
+
+        let discovered = discover_custom_quota(&reqwest::Client::new(), &provider)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            discovered.url.as_str(),
+            format!("http://{address}/api/usage/token/")
+        );
+        assert_eq!(discovered.usage.used, 12.5);
+        assert_eq!(discovered.usage.limit, Some(100.0));
+        assert_eq!(discovered.usage.remaining, Some(87.5));
+    }
+
+    #[tokio::test]
+    async fn discovers_sub2api_wallet_usage_from_the_api_key_endpoint() {
+        let app = Router::new().route(
+            "/v1/usage",
+            get(|| async {
+                axum::Json(serde_json::json!({
+                    "mode": "unrestricted",
+                    "isValid": true,
+                    "remaining": 37.5,
+                    "balance": 37.5,
+                    "unit": "USD",
+                    "usage": {
+                        "total": {
+                            "actual_cost": 12.5
+                        }
+                    }
+                }))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut provider = codex_mixin::provider::custom_provider("sub2api", "sub2api-key");
+        provider.base_url = format!("http://{address}");
+
+        let discovered = discover_custom_quota(&reqwest::Client::new(), &provider)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(
+            discovered.url.as_str(),
+            format!("http://{address}/v1/usage")
+        );
+        assert_eq!(discovered.currency.as_deref(), Some("USD"));
+        assert_eq!(discovered.usage.used, 12.5);
+        assert_eq!(discovered.usage.limit, Some(50.0));
+        assert_eq!(discovered.usage.remaining, Some(37.5));
     }
 
     #[test]
