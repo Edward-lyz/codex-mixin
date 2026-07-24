@@ -160,6 +160,7 @@ codex-mixin logs -n 200
 | `baidu-oneapi` | Anthropic Messages | `https://oneapi-comate.baidu-int.com` | `/v1/messages` | `/v1/images/generations` | `POST /openapi/v2/available_models` | `/openapi/v3/user/quota` |
 | `openrouter` | OpenAI Chat Completions | `https://openrouter.ai/api` | `/v1/chat/completions` | 可选，用户填写 | `/v1/models` | `/v1/credits` |
 | `deepseek` | OpenAI Chat Completions | `https://api.deepseek.com` | `/chat/completions` | 可选，用户填写 | `/models` | 无默认值 |
+| `opencode-go` | OpenAI Chat Completions | `https://opencode.ai/zen/go` | `/v1/chat/completions` | 无 | `/v1/models` | 无默认值 |
 
 设置窗口里的上游地址只填根地址。路径由 provider preset 补齐。
 Baidu OneAPI 的额度接口必须同时填写额度用户名；CLI 和 App 都会在保存时校验。
@@ -532,6 +533,7 @@ Then start a new Codex CLI session.
 | `baidu-oneapi` | Anthropic Messages | `https://oneapi-comate.baidu-int.com` | `/v1/messages` | `/v1/images/generations` | `POST /openapi/v2/available_models` | `/openapi/v3/user/quota` |
 | `openrouter` | OpenAI Chat Completions | `https://openrouter.ai/api` | `/v1/chat/completions` | Optional, user provided | `/v1/models` | `/v1/credits` |
 | `deepseek` | OpenAI Chat Completions | `https://api.deepseek.com` | `/chat/completions` | Optional, user provided | `/models` | None |
+| `opencode-go` | OpenAI Chat Completions | `https://opencode.ai/zen/go` | `/v1/chat/completions` | None | `/v1/models` | None |
 
 Only enter the upstream root URL in the settings window. Codex Mixin adds provider-specific paths.
 The Baidu OneAPI quota endpoint also requires a quota username; both the CLI and app validate it before saving.
