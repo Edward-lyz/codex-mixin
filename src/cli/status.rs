@@ -714,6 +714,7 @@ pub(super) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
         let Some(url) = provider.quota_url() else {
             results.push(serde_json::json!({
                 "provider_id": provider.id(),
+                "display_name": provider.display_name(),
                 "currency": provider.quota_currency(),
                 "value": null,
                 "error": "quota endpoint is not configured",
@@ -736,6 +737,7 @@ pub(super) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
         match result {
             Ok((usage, raw)) => results.push(serde_json::json!({
                 "provider_id": provider.id(),
+                "display_name": provider.display_name(),
                 "currency": provider.quota_currency(),
                 "value": usage.used,
                 "used": usage.used,
@@ -747,6 +749,7 @@ pub(super) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
             })),
             Err(error) => results.push(serde_json::json!({
                 "provider_id": provider.id(),
+                "display_name": provider.display_name(),
                 "currency": provider.quota_currency(),
                 "value": null,
                 "error": error.to_string(),

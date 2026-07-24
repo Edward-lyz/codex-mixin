@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var providerSettingsWindowController: ProviderSettingsWindowController?
     var modelBenchmarkWindowController: ModelBenchmarkWindowController?
     var fusionSettingsWindowController: FusionSettingsWindowController?
+    let menuItemViewUpdater = MenuItemViewUpdater()
     var timer: Timer?
     var terminationInProgress = false
     var isRunning = false
@@ -89,6 +90,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func buildMenu() -> NSMenu {
         let menu = NSMenu()
+        menu.delegate = menuItemViewUpdater
         let serviceItem = NSMenuItem(title: serviceStatus, action: nil, keyEquivalent: "")
         serviceItem.isEnabled = false
         let quotaItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
@@ -141,12 +143,19 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func updateServiceStatusView() {
-        serviceStatusItem?.view = serviceMenuView(
-            title: serviceStatus,
-            endpoint: serviceEndpoint,
-            isRunning: isRunning,
-            isBusy: serviceBusy
-        )
+        guard let serviceStatusItem else { return }
+        let title = serviceStatus
+        let endpoint = serviceEndpoint
+        let running = isRunning
+        let busy = serviceBusy
+        menuItemViewUpdater.setView(for: serviceStatusItem) {
+            serviceMenuView(
+                title: title,
+                endpoint: endpoint,
+                isRunning: running,
+                isBusy: busy
+            )
+        }
     }
 
     func updateActionStates() {

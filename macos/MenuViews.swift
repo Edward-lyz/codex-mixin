@@ -176,7 +176,7 @@ func providerQuotaRow(_ usage: ProviderQuotaUsage) -> NSView {
     icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
     icon.heightAnchor.constraint(equalToConstant: 16).isActive = true
 
-    let providerLabel = NSTextField(labelWithString: usage.providerID)
+    let providerLabel = NSTextField(labelWithString: usage.menuLabel)
     providerLabel.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
     providerLabel.lineBreakMode = .byTruncatingMiddle
 

@@ -316,11 +316,17 @@ extension AppDelegate {
     }
 
     func updateQuotaStatus(title: String, detail: String?, progress: Double?) {
-        quotaStatusItem?.view = quotaMenuView(title: title, detail: detail, progress: progress)
+        guard let quotaStatusItem else { return }
+        menuItemViewUpdater.setView(for: quotaStatusItem) {
+            quotaMenuView(title: title, detail: detail, progress: progress)
+        }
     }
 
     func updateProviderQuotaStatus(_ usages: [ProviderQuotaUsage]) {
-        quotaStatusItem?.view = providerQuotaMenuView(usages)
+        guard let quotaStatusItem else { return }
+        menuItemViewUpdater.setView(for: quotaStatusItem) {
+            providerQuotaMenuView(usages)
+        }
     }
     @objc func openLogs() {
         let logURL = stateDir().appendingPathComponent("gateway.log")

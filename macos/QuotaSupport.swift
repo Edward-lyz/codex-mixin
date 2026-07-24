@@ -2,6 +2,7 @@ import Foundation
 
 struct ProviderQuotaUsage: Decodable {
     let providerID: String
+    let displayName: String?
     let currency: String?
     let used: Double?
     let limit: Double?
@@ -11,6 +12,7 @@ struct ProviderQuotaUsage: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case providerID = "provider_id"
+        case displayName = "display_name"
         case currency
         case used
         case value
@@ -23,6 +25,7 @@ struct ProviderQuotaUsage: Decodable {
     init(from decoder: Decoder) throws {
         let values = try decoder.container(keyedBy: CodingKeys.self)
         providerID = try values.decode(String.self, forKey: .providerID)
+        displayName = try values.decodeIfPresent(String.self, forKey: .displayName)
         currency = try values.decodeIfPresent(String.self, forKey: .currency)
         used = try values.decodeIfPresent(Double.self, forKey: .used)
             ?? values.decodeIfPresent(Double.self, forKey: .value)
@@ -30,6 +33,15 @@ struct ProviderQuotaUsage: Decodable {
         remaining = try values.decodeIfPresent(Double.self, forKey: .remaining)
         error = try values.decodeIfPresent(String.self, forKey: .error)
         staleAt = try values.decodeIfPresent(String.self, forKey: .staleAt)
+    }
+
+    var menuLabel: String {
+        guard let displayName = displayName?.trimmingCharacters(in: .whitespacesAndNewlines),
+              !displayName.isEmpty
+        else {
+            return providerID
+        }
+        return displayName
     }
 }
 
