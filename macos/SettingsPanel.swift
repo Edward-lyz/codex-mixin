@@ -20,7 +20,10 @@ final class ModalActionTarget: NSObject {
     }
 }
 
-func runAddProviderPanel() -> AddProviderFormValues? {
+func runAddProviderSheet(
+    attachedTo parentWindow: NSWindow,
+    completion: @escaping (AddProviderFormValues?) -> Void
+) {
     let providerPopup = NSPopUpButton()
     let providers: [(title: String, id: String)] = [
         ("Baidu OneAPI", "baidu-oneapi"),
@@ -70,7 +73,7 @@ func runAddProviderPanel() -> AddProviderFormValues? {
     )
 
     let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 650, height: 455))
-    let panel = NSPanel(
+    let panel = NSWindow(
         contentRect: contentView.frame,
         styleMask: [.titled, .closable],
         backing: .buffered,
@@ -79,8 +82,6 @@ func runAddProviderPanel() -> AddProviderFormValues? {
     panel.title = appText("新增供应商", "新增供應商", "Add Provider")
     panel.contentView = contentView
     panel.isReleasedWhenClosed = false
-    configureTransientModalPanel(panel)
-    panel.center()
 
     let titleLabel = NSTextField(
         labelWithString: appText("新增供应商", "新增供應商", "Add Provider")
@@ -223,10 +224,10 @@ func runAddProviderPanel() -> AddProviderFormValues? {
             apiKey: apiKey,
             quotaUsername: username
         )
-        NSApp.stopModal(withCode: .OK)
+        parentWindow.endSheet(panel, returnCode: .OK)
     }
     let cancelTarget = ModalActionTarget {
-        NSApp.stopModal(withCode: .cancel)
+        parentWindow.endSheet(panel, returnCode: .cancel)
     }
     saveButton.target = saveTarget
     saveButton.action = #selector(ModalActionTarget.run(_:))
@@ -236,13 +237,12 @@ func runAddProviderPanel() -> AddProviderFormValues? {
     panel.standardWindowButton(.closeButton)?.action = #selector(ModalActionTarget.run(_:))
 
     NSApp.activate(ignoringOtherApps: true)
-    let response = NSApp.runModal(for: panel)
-    panel.close()
-    _ = tokenTarget
-    _ = providerTarget
-    _ = saveTarget
-    _ = cancelTarget
-    return response == .OK ? values : nil
+    let actionTargets = [tokenTarget, providerTarget, saveTarget, cancelTarget]
+    parentWindow.beginSheet(panel) { response in
+        panel.close()
+        _ = actionTargets
+        completion(response == .OK ? values : nil)
+    }
 }
 
 func configureTransientModalPanel(_ panel: NSPanel) {

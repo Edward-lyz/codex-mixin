@@ -576,7 +576,14 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     }
 
     @objc private func addProvider() {
-        guard !isBusy, let values = runAddProviderPanel() else { return }
+        guard !isBusy, let window else { return }
+        runAddProviderSheet(attachedTo: window) { [weak self] values in
+            guard let self, let values else { return }
+            submitNewProvider(values)
+        }
+    }
+
+    private func submitNewProvider(_ values: AddProviderFormValues) {
         let id = nextProviderID(for: values.preset)
         let key = values.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         guard !key.isEmpty else {
