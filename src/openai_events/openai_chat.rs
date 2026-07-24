@@ -84,17 +84,26 @@ where
                             id: tool_call
                                 .get("id")
                                 .and_then(Value::as_str)
+                                .filter(|id| !id.trim().is_empty())
                                 .map(str::to_owned),
                             name: None,
                             start_input_json: String::new(),
                             delta_input_json: String::new(),
                             kind: ToolBlockKind::Function,
                         });
-                        if let Some(id) = tool_call.get("id").and_then(Value::as_str) {
+                        if let Some(id) = tool_call
+                            .get("id")
+                            .and_then(Value::as_str)
+                            .filter(|id| !id.trim().is_empty())
+                        {
                             entry.id = Some(id.to_owned());
                         }
                         if let Some(function) = tool_call.get("function") {
-                            if let Some(name) = function.get("name").and_then(Value::as_str) {
+                            if let Some(name) = function
+                                .get("name")
+                                .and_then(Value::as_str)
+                                .filter(|name| !name.trim().is_empty())
+                            {
                                 entry.name = Some(name.to_owned());
                             }
                             if let Some(arguments) = function.get("arguments").and_then(Value::as_str) {

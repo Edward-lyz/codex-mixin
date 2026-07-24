@@ -1,10 +1,11 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::time::Duration;
 
 use codex_mixin::config::{StoredGatewayConfig, load_stored_config, mutate_stored_config};
 use codex_mixin::provider::{
     ProviderModel, ProviderModelSource, ProviderPreset, ProviderProtocol, ProviderQuotaParser,
-    ProviderRegistry, apply_discovered_models, discover_provider_models, redact_provider_error,
+    ProviderRegistry, apply_discovered_models, catalog_model_slug, discover_provider_models,
+    redact_provider_error,
 };
 use codex_mixin::web_search::WebSearchCapabilities;
 use futures_util::{StreamExt, stream};
@@ -294,17 +295,111 @@ pub(super) fn set_provider_enabled(id: &str, enabled: bool) -> anyhow::Result<()
 }
 
 pub(super) fn remove_provider(id: &str) -> anyhow::Result<()> {
-    mutate_and_invalidate(|config| {
+    let renames = mutate_and_invalidate(|config| {
         ensure_has_providers(config)?;
-        let previous_len = config.providers.len();
-        config.providers.retain(|provider| provider.id != id);
-        if config.providers.len() == previous_len {
-            anyhow::bail!("unknown provider: {id}");
-        }
-        Ok(())
+        remove_provider_from_config(config, id)
     })?;
     println!("provider removed: {id}");
+    for (old_id, new_id) in renames {
+        println!("provider renumbered: {old_id} -> {new_id}");
+    }
     Ok(())
+}
+
+fn remove_provider_from_config(
+    config: &mut StoredGatewayConfig,
+    id: &str,
+) -> anyhow::Result<Vec<(String, String)>> {
+    let index = config
+        .providers
+        .iter()
+        .position(|provider| provider.id == id)
+        .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?;
+    let removed = config.providers.remove(index);
+    let Some(preset_id) = removed.preset_id else {
+        return Ok(Vec::new());
+    };
+    let preset = ProviderPreset::parse(&preset_id)?;
+    Ok(compact_generated_provider_ids(config, preset))
+}
+
+fn compact_generated_provider_ids(
+    config: &mut StoredGatewayConfig,
+    preset: ProviderPreset,
+) -> Vec<(String, String)> {
+    let base_id = preset.default_id();
+    let mut generated = config
+        .providers
+        .iter()
+        .enumerate()
+        .filter_map(|(index, provider)| {
+            (provider.preset_id.as_deref() == Some(preset.as_str()))
+                .then(|| generated_provider_ordinal(&provider.id, base_id))
+                .flatten()
+                .map(|ordinal| (ordinal, index))
+        })
+        .collect::<Vec<_>>();
+    generated.sort_unstable_by_key(|(ordinal, _)| *ordinal);
+
+    let renames = generated
+        .into_iter()
+        .enumerate()
+        .filter_map(|(position, (_, provider_index))| {
+            let new_id = if position == 0 {
+                base_id.to_owned()
+            } else {
+                format!("{base_id}-{}", position + 1)
+            };
+            let old_id = config.providers[provider_index].id.clone();
+            (old_id != new_id).then_some((provider_index, old_id, new_id))
+        })
+        .collect::<Vec<_>>();
+
+    let mut model_reference_renames = HashMap::new();
+    for (provider_index, old_id, new_id) in &renames {
+        let provider = &config.providers[*provider_index];
+        for upstream_model_id in provider
+            .selected_models
+            .iter()
+            .chain(provider.cached_models.iter().map(|model| &model.id))
+        {
+            model_reference_renames.insert(
+                catalog_model_slug(upstream_model_id, old_id),
+                catalog_model_slug(upstream_model_id, new_id),
+            );
+        }
+    }
+
+    for (provider_index, _, new_id) in &renames {
+        config.providers[*provider_index].id.clone_from(new_id);
+    }
+    for profile in &mut config.fusion_profiles {
+        for reference in profile
+            .panel_models
+            .iter_mut()
+            .chain([&mut profile.judge_model, &mut profile.final_model])
+        {
+            if let Some(new_reference) = model_reference_renames.get(reference) {
+                reference.clone_from(new_reference);
+            }
+        }
+    }
+
+    renames
+        .into_iter()
+        .map(|(_, old_id, new_id)| (old_id, new_id))
+        .collect()
+}
+
+fn generated_provider_ordinal(id: &str, base_id: &str) -> Option<usize> {
+    if id == base_id {
+        return Some(1);
+    }
+    id.strip_prefix(base_id)?
+        .strip_prefix('-')?
+        .parse::<usize>()
+        .ok()
+        .filter(|ordinal| *ordinal >= 2)
 }
 
 pub(super) async fn discover_models(id: &str) -> anyhow::Result<()> {
@@ -794,6 +889,7 @@ mod tests {
     use axum::Router;
     use axum::http::{HeaderMap, header};
     use axum::routing::get;
+    use codex_mixin::fusion::{FusionProfile, PanelToolsConfig};
 
     use super::*;
 
@@ -844,6 +940,67 @@ mod tests {
         assert_eq!(
             authorization.lock().unwrap().as_deref(),
             Some("Bearer community-secret")
+        );
+    }
+
+    #[test]
+    fn removing_a_generated_provider_compacts_ids_and_fusion_model_references() {
+        let mut first = codex_mixin::provider::custom_provider("custom", "first-key");
+        first.selected_models = vec!["first-model".to_owned()];
+        first.cached_models = vec![ProviderModel {
+            id: "first-model".to_owned(),
+            ..ProviderModel::default()
+        }];
+        let mut second = codex_mixin::provider::custom_provider("custom-2", "second-key");
+        second.selected_models = vec!["second-model".to_owned()];
+        second.cached_models = vec![ProviderModel {
+            id: "second-model".to_owned(),
+            ..ProviderModel::default()
+        }];
+        let mut third = codex_mixin::provider::custom_provider("custom-3", "third-key");
+        third.selected_models = vec!["third-model".to_owned()];
+        third.cached_models = vec![ProviderModel {
+            id: "third-model".to_owned(),
+            ..ProviderModel::default()
+        }];
+        let mut config = StoredGatewayConfig {
+            providers: vec![first, second, third],
+            fusion_profiles: vec![FusionProfile {
+                id: "review".to_owned(),
+                panel_models: vec![
+                    "second-model-custom-2".to_owned(),
+                    "third-model-custom-3".to_owned(),
+                ],
+                judge_model: "second-model-custom-2".to_owned(),
+                final_model: "third-model-custom-3".to_owned(),
+                min_successful: 1,
+                max_completion_tokens: 2_048,
+                timeout_ms: 300_000,
+                fuse_every_user_turn: true,
+                show_intermediate_results: true,
+                panel_tools: PanelToolsConfig::default(),
+            }],
+            ..StoredGatewayConfig::default()
+        };
+
+        remove_provider_from_config(&mut config, "custom").unwrap();
+
+        assert_eq!(
+            config
+                .providers
+                .iter()
+                .map(|provider| provider.id.as_str())
+                .collect::<Vec<_>>(),
+            ["custom", "custom-2"]
+        );
+        assert_eq!(
+            config.fusion_profiles[0].panel_models,
+            ["second-model-custom", "third-model-custom-2"]
+        );
+        assert_eq!(config.fusion_profiles[0].judge_model, "second-model-custom");
+        assert_eq!(
+            config.fusion_profiles[0].final_model,
+            "third-model-custom-2"
         );
     }
 

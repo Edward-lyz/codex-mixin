@@ -771,6 +771,18 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 try await applyHandler()
                 setBusy(false, status: "配置已保存")
                 reloadProviders(selecting: providerID)
+                showAlert(
+                    title: appText(
+                        "供应商配置已更新",
+                        "供應商設定已更新",
+                        "Provider Configuration Updated"
+                    ),
+                    message: appText(
+                        "Codex 模型目录已重新生成。请完全退出并重新打开 Codex App；Codex CLI 请开启新会话。",
+                        "Codex 模型目錄已重新產生。請完全結束並重新開啟 Codex App；Codex CLI 請開啟新工作階段。",
+                        "The Codex model catalog has been regenerated. Fully quit and reopen the Codex App, and start a new Codex CLI session."
+                    )
+                )
             } catch {
                 setBusy(false, status: "操作失败")
                 showAlert(title: "供应商操作失败", message: String(describing: error))

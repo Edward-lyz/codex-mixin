@@ -211,6 +211,44 @@ fn tool_call(id: Option<&str>, name: Option<&str>, arguments: &str) -> Value {
 }
 
 #[tokio::test]
+async fn preserves_tool_name_when_a_later_chunk_contains_an_empty_name() {
+    let chunks = [
+        json!({
+            "choices":[{
+                "delta":{"tool_calls":[{
+                    "index":0,
+                    "id":"call_time",
+                    "type":"function",
+                    "function":{"name":"get_current_time","arguments":""}
+                }]},
+                "finish_reason":null
+            }]
+        }),
+        json!({
+            "choices":[{
+                "delta":{"tool_calls":[{
+                    "index":0,
+                    "function":{"name":"","arguments":"{}"}
+                }]},
+                "finish_reason":null
+            }]
+        }),
+        json!({
+            "choices":[{
+                "delta":{"content":""},
+                "finish_reason":"tool_calls"
+            }]
+        }),
+    ];
+    let body = map_openai_events(&chunks, true).await;
+
+    assert!(!body.contains("event: response.failed"), "{body}");
+    assert!(body.contains("\"name\":\"get_current_time\""), "{body}");
+    assert!(body.contains("\"arguments\":\"{}\""), "{body}");
+    assert!(body.contains("event: response.completed"), "{body}");
+}
+
+#[tokio::test]
 async fn maps_valid_special_and_namespaced_tool_calls() {
     let mut custom_names = ToolNameMap::default();
     custom_names
