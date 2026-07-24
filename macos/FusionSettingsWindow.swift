@@ -13,6 +13,13 @@ enum FusionSettingsError: Error, CustomStringConvertible {
 struct FusionModelOption: Hashable {
     let id: String
     let displayName: String
+    let isAvailable: Bool
+
+    init(id: String, displayName: String, isAvailable: Bool = true) {
+        self.id = id
+        self.displayName = displayName
+        self.isAvailable = isAvailable
+    }
 }
 
 struct FusionSettingsProfile {
@@ -157,14 +164,27 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
                 loadedProfile = try await loadHandler()
                 applyProfileFields()
                 let fetched = try await fetchModelsHandler()
-                selectedPanels = Set(loadedProfile.panelModels)
                 var byId = Dictionary(uniqueKeysWithValues: fetched.map { ($0.id, $0) })
                 for id in loadedProfile.panelModels + [loadedProfile.judgeModel, loadedProfile.finalModel] where !id.isEmpty && !id.hasPrefix("mixin/fusion/") {
-                    byId[id] = byId[id] ?? FusionModelOption(id: id, displayName: id)
+                    byId[id] = byId[id] ?? FusionModelOption(
+                        id: id,
+                        displayName: appText("当前模型列表中不可用", "目前模型清單中不可用", "Unavailable in the current model list"),
+                        isAvailable: false
+                    )
                 }
                 options = byId.values.sorted {
-                    $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
+                    $0.id.localizedStandardCompare($1.id) == .orderedAscending
                 }
+                let selection = resolveFusionModelSelection(
+                    availableModelIDs: options.map(\.id),
+                    storedPanelModels: loadedProfile.panelModels,
+                    storedJudgeModel: loadedProfile.judgeModel,
+                    storedFinalModel: loadedProfile.finalModel
+                )
+                loadedProfile.panelModels = selection.panelModels
+                loadedProfile.judgeModel = selection.judgeModel
+                loadedProfile.finalModel = selection.finalModel
+                selectedPanels = Set(selection.panelModels)
                 rebuildModelControls()
                 statusLabel.stringValue = "已加载 \(options.count) 个跨 Provider 模型。Panel 可选择 1–8 个。"
                 statusLabel.textColor = .secondaryLabelColor
@@ -172,7 +192,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
             } catch {
                 options = []
                 rebuildModelControls()
-                statusLabel.stringValue = String(describing: error)
+                statusLabel.stringValue = localizedErrorDescription(error)
                 statusLabel.textColor = .systemOrange
                 saveButton.isEnabled = false
             }
@@ -311,16 +331,29 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
             panelStack.addArrangedSubview(empty)
         } else {
             for option in options {
-                let title = option.displayName == option.id
+                let buttonTitle = option.isAvailable
                     ? option.id
-                    : "\(option.displayName)  ·  \(option.id)"
-                let button = NSButton(checkboxWithTitle: title, target: self, action: #selector(panelSelectionChanged(_:)))
+                    : "\(option.id)  \(appText("（当前不可用）", "（目前不可用）", "(unavailable)"))"
+                let button = NSButton(checkboxWithTitle: buttonTitle, target: self, action: #selector(panelSelectionChanged(_:)))
                 button.state = selectedPanels.contains(option.id) ? .on : .off
                 button.identifier = NSUserInterfaceItemIdentifier(option.id)
                 button.lineBreakMode = .byTruncatingMiddle
-                button.toolTip = option.id
+                button.toolTip = "\(option.id)\n\(option.displayName)"
                 panelButtons[option.id] = button
-                panelStack.addArrangedSubview(button)
+
+                let detail = NSTextField(labelWithString: option.displayName)
+                detail.textColor = option.isAvailable ? .secondaryLabelColor : .systemOrange
+                detail.font = .systemFont(ofSize: 11)
+                detail.lineBreakMode = .byTruncatingTail
+                detail.toolTip = option.displayName
+
+                let row = NSStackView(views: [button, detail])
+                row.orientation = .vertical
+                row.alignment = .leading
+                row.spacing = 1
+                row.translatesAutoresizingMaskIntoConstraints = false
+                row.widthAnchor.constraint(equalToConstant: 690).isActive = true
+                panelStack.addArrangedSubview(row)
             }
         }
         configurePopup(judgePopup, selected: loadedProfile.judgeModel)
@@ -330,9 +363,12 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
     private func configurePopup(_ popup: NSPopUpButton, selected: String) {
         popup.removeAllItems()
         for option in options {
-            popup.addItem(withTitle: option.displayName)
+            let title = option.isAvailable
+                ? option.id
+                : "\(option.id) \(appText("（当前不可用）", "（目前不可用）", "(unavailable)"))"
+            popup.addItem(withTitle: title)
             popup.lastItem?.representedObject = option.id
-            popup.lastItem?.toolTip = option.id
+            popup.lastItem?.toolTip = "\(option.id)\n\(option.displayName)"
         }
         if let index = popup.itemArray.firstIndex(where: { ($0.representedObject as? String) == selected }) {
             popup.selectItem(at: index)
@@ -428,10 +464,17 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
                 statusLabel.textColor = .systemGreen
                 saveButton.isEnabled = true
             } catch {
-                statusLabel.stringValue = "保存失败：\(error)"
+                statusLabel.stringValue = appText(
+                    "保存失败：\(localizedErrorDescription(error))",
+                    "儲存失敗：\(localizedErrorDescription(error))",
+                    "Save failed: \(localizedErrorDescription(error))"
+                )
                 statusLabel.textColor = .systemRed
                 saveButton.isEnabled = true
-                presentFusionAlert(title: "保存 Fusion 设置失败", message: String(describing: error))
+                presentFusionAlert(
+                    title: "保存 Fusion 设置失败",
+                    message: localizedErrorDescription(error)
+                )
             }
         }
     }
@@ -485,10 +528,10 @@ private func everyUserTurnLabel() -> NSTextField {
 
 private func presentFusionAlert(title: String, message: String) {
     let alert = NSAlert()
-    alert.messageText = title
-    alert.informativeText = message
+    alert.messageText = localizedPrompt(title)
+    alert.informativeText = localizedGatewayMessage(message)
     alert.alertStyle = .warning
-    alert.addButton(withTitle: "确定")
+    alert.addButton(withTitle: appText("确定", "確定", "OK"))
     NSApp.activate(ignoringOtherApps: true)
     alert.runModal()
 }

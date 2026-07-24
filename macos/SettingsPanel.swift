@@ -2,33 +2,10 @@ import Cocoa
 
 struct AddProviderFormValues {
     let preset: String
-    let id: String
-    let displayName: String
-    let apiKey: String
-    let baseUrl: String
-    let protocolID: String
-    let apiPath: String
-    let modelsPath: String
-    let imageGenerationPath: String
-    let gatewayKey: String
-    let quotaUrl: String
-    let quotaUsername: String
-    let quotaCurrency: String
-    let quotaParser: String
-}
-
-struct ProviderPresetFormDefaults {
-    let id: String
     let displayName: String
     let baseURL: String
-    let protocolID: String
-    let apiPath: String
-    let modelsPath: String
-    let imageGenerationPath: String
-    let quotaURL: String
-    let quotaCurrency: String
-    let quotaParser: String
-    let credentialURL: String
+    let apiKey: String
+    let quotaUsername: String
 }
 
 final class ModalActionTarget: NSObject {
@@ -43,14 +20,14 @@ final class ModalActionTarget: NSObject {
     }
 }
 
-func runAddProviderPanel(gatewayAuthConfigured: Bool) -> AddProviderFormValues? {
+func runAddProviderPanel() -> AddProviderFormValues? {
     let providerPopup = NSPopUpButton()
     let providers: [(title: String, id: String)] = [
-        ("Custom", "custom"),
         ("Baidu OneAPI", "baidu-oneapi"),
         ("OpenRouter", "openrouter"),
         ("DeepSeek", "deepseek"),
         ("OpenCode Go", "opencode-go"),
+        (appText("自定义站点", "自訂站點", "Custom site"), "custom"),
     ]
     for provider in providers {
         providerPopup.addItem(withTitle: provider.title)
@@ -59,102 +36,77 @@ func runAddProviderPanel(gatewayAuthConfigured: Bool) -> AddProviderFormValues? 
     providerPopup.translatesAutoresizingMaskIntoConstraints = false
     providerPopup.heightAnchor.constraint(equalToConstant: 28).isActive = true
 
-    let idField = formTextField()
-    idField.placeholderString = "小写字母、数字、点、下划线或短横线；会作为模型后缀"
-    let displayNameField = formTextField()
-    displayNameField.placeholderString = "在设置页和测速页显示的名称"
-    let apiKeyField = formTextField()
-    apiKeyField.placeholderString = "必填：只交给 Rust CLI 保存，Swift 不读取已保存密钥"
-    let baseUrlField = formTextField()
-    baseUrlField.placeholderString = "根地址，如 https://host"
-    let protocolPopup = NSPopUpButton()
-    for protocolOption in [
-        ("Anthropic Messages", "anthropic_messages"),
-        ("OpenAI Chat Completions", "open_ai_chat"),
-        ("OpenAI Responses", "open_ai_responses"),
-    ] {
-        protocolPopup.addItem(withTitle: protocolOption.0)
-        protocolPopup.lastItem?.representedObject = protocolOption.1
-    }
-    protocolPopup.translatesAutoresizingMaskIntoConstraints = false
-    protocolPopup.heightAnchor.constraint(equalToConstant: 28).isActive = true
-    let apiPathField = formTextField()
-    let modelsPathField = formTextField()
-    let imageGenerationPathField = formTextField()
-    imageGenerationPathField.placeholderString = "可选，如 /v1/images/generations"
-    let gatewayKeyField = formTextField()
-    gatewayKeyField.placeholderString = gatewayAuthConfigured
-        ? "本地网关密钥已配置；留空保留"
-        : "可选：保护本地 127.0.0.1 网关"
-    let quotaUrlField = formTextField()
-    quotaUrlField.placeholderString = "可选：完整额度查询 URL"
+    let apiKeyField = secureFormTextField()
+    apiKeyField.placeholderString = appText(
+        "必填；密钥只交给本地 Rust CLI 保存",
+        "必填；金鑰只交給本機 Rust CLI 儲存",
+        "Required; stored only by the local Rust CLI"
+    )
     let quotaUsernameField = formTextField()
-    quotaUsernameField.placeholderString = "Baidu OneAPI 必填"
-    let quotaCurrencyField = formTextField()
-    quotaCurrencyField.placeholderString = "可选，三位币种代码，如 USD/CNY"
-    let quotaParserPopup = NSPopUpButton()
-    for parser in [
-        ("Generic", "generic"),
-        ("Baidu OneAPI", "baidu_oneapi"),
-        ("OpenRouter", "openrouter"),
-    ] {
-        quotaParserPopup.addItem(withTitle: parser.0)
-        quotaParserPopup.lastItem?.representedObject = parser.1
-    }
+    quotaUsernameField.placeholderString = appText(
+        "Baidu OneAPI 额度查询用户名",
+        "Baidu OneAPI 額度查詢使用者名稱",
+        "Baidu OneAPI quota username"
+    )
+    let quotaUsernameRow = labeledView(
+        appText("额度用户名", "額度使用者名稱", "Quota username"),
+        quotaUsernameField
+    )
+    let displayNameField = formTextField()
+    displayNameField.placeholderString = appText(
+        "例如：社区公益站",
+        "例如：社群公益站",
+        "For example: Community API"
+    )
+    let displayNameRow = labeledView(
+        appText("站点名称", "站點名稱", "Site name"),
+        displayNameField
+    )
+    let baseURLField = formTextField()
+    baseURLField.placeholderString = "https://example.com/v1"
+    let baseURLRow = labeledView(
+        appText("API 地址", "API 位址", "API URL"),
+        baseURLField
+    )
 
-    let providerTarget = ModalActionTarget {
-        let provider = selectedProviderID(providerPopup)
-        let defaults = providerFormDefaults(provider)
-        idField.stringValue = defaults.id
-        displayNameField.stringValue = defaults.displayName
-        baseUrlField.stringValue = defaults.baseURL
-        selectPopupValue(protocolPopup, defaults.protocolID)
-        apiPathField.stringValue = defaults.apiPath
-        modelsPathField.stringValue = defaults.modelsPath
-        imageGenerationPathField.stringValue = defaults.imageGenerationPath
-        quotaUrlField.stringValue = defaults.quotaURL
-        quotaCurrencyField.stringValue = defaults.quotaCurrency
-        selectPopupValue(quotaParserPopup, defaults.quotaParser)
-    }
-    providerPopup.target = providerTarget
-    providerPopup.action = #selector(ModalActionTarget.run(_:))
-    providerTarget.run(nil)
-
-    let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 780, height: 720))
+    let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 650, height: 455))
     let panel = NSPanel(
         contentRect: contentView.frame,
         styleMask: [.titled, .closable],
         backing: .buffered,
         defer: false
     )
-    panel.title = "新增供应商"
+    panel.title = appText("新增供应商", "新增供應商", "Add Provider")
     panel.contentView = contentView
     panel.isReleasedWhenClosed = false
     panel.center()
 
-    let titleLabel = NSTextField(labelWithString: "新增供应商")
+    let titleLabel = NSTextField(
+        labelWithString: appText("新增供应商", "新增供應商", "Add Provider")
+    )
     titleLabel.font = .boldSystemFont(ofSize: 18)
-    titleLabel.textColor = .labelColor
 
-    let detailLabel = NSTextField(wrappingLabelWithString: "模型会以 <上游模型 ID>-<供应商 ID> 出现在 Codex。保存通过 Rust CLI 完成文件锁、校验和原子替换；窗口不会读取配置文件中的明文密钥。")
+    let detailLabel = NSTextField(wrappingLabelWithString: appText(
+        "只需选择订阅并填写凭据。地址、协议、接口路径、额度规则和模型发现均由 Codex Mixin 自动配置。",
+        "只需選擇訂閱並填寫憑證。地址、協議、端點路徑、額度規則和模型探索均由 Codex Mixin 自動設定。",
+        "Choose a subscription and enter its credentials. Codex Mixin configures endpoints, protocols, quota rules, and model discovery automatically."
+    ))
     detailLabel.textColor = .secondaryLabelColor
     detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     detailLabel.translatesAutoresizingMaskIntoConstraints = false
-    detailLabel.widthAnchor.constraint(equalToConstant: 680).isActive = true
+    detailLabel.widthAnchor.constraint(equalToConstant: 550).isActive = true
 
-    let tokenButton = NSButton(title: "打开密钥页面", target: nil, action: nil)
+    let tokenButton = NSButton(
+        title: appText("打开密钥页面", "開啟金鑰頁面", "Open API Key Page"),
+        target: nil,
+        action: nil
+    )
     tokenButton.bezelStyle = .inline
     tokenButton.image = menuItemImage("key")
     tokenButton.imagePosition = .imageLeading
     tokenButton.contentTintColor = .controlAccentColor
-    tokenButton.setButtonType(.momentaryPushIn)
-    tokenButton.translatesAutoresizingMaskIntoConstraints = false
     let tokenTarget = ModalActionTarget {
-        let provider = selectedProviderID(providerPopup)
-        let presetURL = providerFormDefaults(provider).credentialURL
-        let rawURL = presetURL.isEmpty ? baseUrlField.stringValue : presetURL
-        guard let url = URL(string: rawURL), !rawURL.isEmpty else {
-            showAlert(title: "缺少密钥页面", message: "Custom 预设没有内置密钥页面。请从服务商控制台复制 API Key。")
+        guard let url = URL(string: providerCredentialURL(selectedProviderID(providerPopup))) else {
             return
         }
         NSWorkspace.shared.open(url)
@@ -162,90 +114,113 @@ func runAddProviderPanel(gatewayAuthConfigured: Bool) -> AddProviderFormValues? 
     tokenButton.target = tokenTarget
     tokenButton.action = #selector(ModalActionTarget.run(_:))
 
+    let providerTarget = ModalActionTarget {
+        let provider = selectedProviderID(providerPopup)
+        let isCustom = provider == "custom"
+        quotaUsernameRow.isHidden = provider != "baidu-oneapi"
+        displayNameRow.isHidden = !isCustom
+        baseURLRow.isHidden = !isCustom
+        tokenButton.isHidden = isCustom
+    }
+    providerPopup.target = providerTarget
+    providerPopup.action = #selector(ModalActionTarget.run(_:))
+    providerTarget.run(nil)
+
     let formStack = NSStackView(views: [
-        labeledView("预设", providerPopup),
-        labeledView("供应商 ID", idField),
-        labeledView("显示名称", displayNameField),
-        labeledView("API 密钥", apiKeyField),
-        labeledView("上游根地址", baseUrlField),
-        labeledView("协议", protocolPopup),
-        labeledView("推理路径", apiPathField),
-        labeledView("模型路径", modelsPathField),
-        labeledView("生图路径", imageGenerationPathField),
-        labeledView("本地密钥", gatewayKeyField),
-        labeledView("额度接口", quotaUrlField),
-        labeledView("额度用户名 *", quotaUsernameField),
-        labeledView("额度币种", quotaCurrencyField),
-        labeledView("额度解析器", quotaParserPopup),
+        labeledView(appText("供应商", "供應商", "Provider"), providerPopup),
+        displayNameRow,
+        baseURLRow,
+        labeledView("API Key", apiKeyField),
+        quotaUsernameRow,
     ])
     formStack.orientation = .vertical
-    formStack.spacing = 7
+    formStack.spacing = 10
 
-    let cancelButton = NSButton(title: "取消", target: nil, action: nil)
+    let cancelButton = NSButton(
+        title: appText("取消", "取消", "Cancel"),
+        target: nil,
+        action: nil
+    )
     cancelButton.bezelStyle = .rounded
-    cancelButton.translatesAutoresizingMaskIntoConstraints = false
-    cancelButton.widthAnchor.constraint(equalToConstant: 96).isActive = true
-    let saveButton = NSButton(title: "保存", target: nil, action: nil)
+    let saveButton = NSButton(
+        title: appText("添加", "新增", "Add"),
+        target: nil,
+        action: nil
+    )
     saveButton.bezelStyle = .rounded
     saveButton.keyEquivalent = "\r"
-    saveButton.translatesAutoresizingMaskIntoConstraints = false
-    saveButton.widthAnchor.constraint(equalToConstant: 96).isActive = true
     let buttonRow = NSStackView(views: [cancelButton, saveButton])
     buttonRow.orientation = .horizontal
-    buttonRow.alignment = .centerY
     buttonRow.spacing = 12
-    buttonRow.translatesAutoresizingMaskIntoConstraints = false
 
-    let buttonRowContainer = NSView()
-    buttonRowContainer.translatesAutoresizingMaskIntoConstraints = false
-    buttonRowContainer.addSubview(buttonRow)
-    NSLayoutConstraint.activate([
-        buttonRowContainer.widthAnchor.constraint(equalToConstant: 680),
-        buttonRowContainer.heightAnchor.constraint(equalToConstant: 34),
-        buttonRow.trailingAnchor.constraint(equalTo: buttonRowContainer.trailingAnchor),
-        buttonRow.centerYAnchor.constraint(equalTo: buttonRowContainer.centerYAnchor),
+    let mainStack = NSStackView(views: [
+        titleLabel,
+        detailLabel,
+        tokenButton,
+        formStack,
+        buttonRow,
     ])
-
-    let mainStack = NSStackView(views: [titleLabel, detailLabel, tokenButton, formStack, buttonRowContainer])
     mainStack.orientation = .vertical
     mainStack.alignment = .leading
-    mainStack.spacing = 16
+    mainStack.spacing = 18
     mainStack.translatesAutoresizingMaskIntoConstraints = false
     contentView.addSubview(mainStack)
     NSLayoutConstraint.activate([
-        mainStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 32),
-        mainStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -32),
-        mainStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 28),
+        mainStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 36),
+        mainStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -36),
+        mainStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 30),
         buttonRow.trailingAnchor.constraint(equalTo: mainStack.trailingAnchor),
     ])
 
     var values: AddProviderFormValues?
     let saveTarget = ModalActionTarget {
         let preset = selectedProviderID(providerPopup)
-        if preset == "baidu-oneapi",
-           quotaUsernameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
-        {
+        let displayName = displayNameField.stringValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let baseURL = baseURLField.stringValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if preset == "custom", displayName.isEmpty || baseURL.isEmpty {
+            showAlert(
+                title: appText("缺少自定义站点信息", "缺少自訂站點資訊", "Custom Site Information Required"),
+                message: appText(
+                    "请填写站点名称和 API 地址。地址可粘贴站点根地址、/v1 或完整推理接口，Codex Mixin 会自动识别。",
+                    "請填寫站點名稱和 API 位址。可貼上站點根位址、/v1 或完整推理端點，Codex Mixin 會自動識別。",
+                    "Enter the site name and API URL. You can paste the root URL, /v1 URL, or a full inference endpoint; Codex Mixin detects it automatically."
+                )
+            )
+            return
+        }
+        let apiKey = apiKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !apiKey.isEmpty else {
+            showAlert(
+                title: "缺少 API 密钥",
+                message: appText(
+                    "请填写供应商 API Key。",
+                    "請填寫供應商 API Key。",
+                    "Enter the provider API key."
+                )
+            )
+            return
+        }
+        let username = quotaUsernameField.stringValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if preset == "baidu-oneapi", username.isEmpty {
             showAlert(
                 title: "缺少额度用户名",
-                message: "Baidu OneAPI 查询额度必须填写用户名。"
+                message: appText(
+                    "请填写 Baidu OneAPI 额度用户名。",
+                    "請填寫 Baidu OneAPI 額度使用者名稱。",
+                    "Enter the Baidu OneAPI quota username."
+                )
             )
             return
         }
         values = AddProviderFormValues(
             preset: preset,
-            id: idField.stringValue,
-            displayName: displayNameField.stringValue,
-            apiKey: apiKeyField.stringValue,
-            baseUrl: baseUrlField.stringValue,
-            protocolID: selectedPopupValue(protocolPopup, fallback: "anthropic_messages"),
-            apiPath: apiPathField.stringValue,
-            modelsPath: modelsPathField.stringValue,
-            imageGenerationPath: imageGenerationPathField.stringValue,
-            gatewayKey: gatewayKeyField.stringValue,
-            quotaUrl: quotaUrlField.stringValue,
-            quotaUsername: quotaUsernameField.stringValue,
-            quotaCurrency: quotaCurrencyField.stringValue,
-            quotaParser: selectedPopupValue(quotaParserPopup, fallback: "generic")
+            displayName: displayName,
+            baseURL: baseURL,
+            apiKey: apiKey,
+            quotaUsername: username
         )
         NSApp.stopModal(withCode: .OK)
     }
@@ -270,81 +245,16 @@ func runAddProviderPanel(gatewayAuthConfigured: Bool) -> AddProviderFormValues? 
 }
 
 func selectedProviderID(_ popup: NSPopUpButton) -> String {
-    popup.selectedItem?.representedObject as? String ?? "custom"
+    popup.selectedItem?.representedObject as? String ?? "baidu-oneapi"
 }
 
-func providerFormDefaults(_ provider: String) -> ProviderPresetFormDefaults {
+func providerCredentialURL(_ provider: String) -> String {
     switch provider {
-    case "baidu-oneapi":
-        return ProviderPresetFormDefaults(
-            id: provider,
-            displayName: "Baidu OneAPI",
-            baseURL: "https://oneapi-comate.baidu-int.com",
-            protocolID: "anthropic_messages",
-            apiPath: "/v1/messages",
-            modelsPath: "",
-            imageGenerationPath: "/v1/images/generations",
-            quotaURL: "https://oneapi-comate.baidu-int.com/openapi/v3/user/quota",
-            quotaCurrency: "CNY",
-            quotaParser: "baidu_oneapi",
-            credentialURL: "https://oneapi-comate.baidu-int.com/token"
-        )
-    case "openrouter":
-        return ProviderPresetFormDefaults(
-            id: provider,
-            displayName: "OpenRouter",
-            baseURL: "https://openrouter.ai/api",
-            protocolID: "open_ai_chat",
-            apiPath: "/v1/chat/completions",
-            modelsPath: "/v1/models",
-            imageGenerationPath: "",
-            quotaURL: "https://openrouter.ai/api/v1/credits",
-            quotaCurrency: "USD",
-            quotaParser: "openrouter",
-            credentialURL: "https://openrouter.ai/settings/keys"
-        )
-    case "deepseek":
-        return ProviderPresetFormDefaults(
-            id: provider,
-            displayName: "DeepSeek",
-            baseURL: "https://api.deepseek.com",
-            protocolID: "open_ai_chat",
-            apiPath: "/chat/completions",
-            modelsPath: "/models",
-            imageGenerationPath: "",
-            quotaURL: "",
-            quotaCurrency: "",
-            quotaParser: "generic",
-            credentialURL: "https://platform.deepseek.com/api_keys"
-        )
-    case "opencode-go":
-        return ProviderPresetFormDefaults(
-            id: provider,
-            displayName: "OpenCode Go",
-            baseURL: "https://opencode.ai/zen/go",
-            protocolID: "open_ai_chat",
-            apiPath: "/v1/chat/completions",
-            modelsPath: "/v1/models",
-            imageGenerationPath: "",
-            quotaURL: "",
-            quotaCurrency: "",
-            quotaParser: "generic",
-            credentialURL: "https://opencode.ai/go"
-        )
-    default:
-        return ProviderPresetFormDefaults(
-            id: "custom",
-            displayName: "Custom",
-            baseURL: "",
-            protocolID: "anthropic_messages",
-            apiPath: "/v1/messages",
-            modelsPath: "/v1/models",
-            imageGenerationPath: "",
-            quotaURL: "",
-            quotaCurrency: "",
-            quotaParser: "generic",
-            credentialURL: ""
-        )
+    case "baidu-oneapi": return "https://oneapi-comate.baidu-int.com/token"
+    case "openrouter": return "https://openrouter.ai/settings/keys"
+    case "deepseek": return "https://platform.deepseek.com/api_keys"
+    case "opencode-go": return "https://opencode.ai/go"
+    default: return ""
     }
 }
 
@@ -358,7 +268,6 @@ func selectPopupValue(_ popup: NSPopUpButton, _ value: String) {
     }
 }
 
-
 func labeledView(_ title: String, _ field: NSView) -> NSView {
     let label = NSTextField(labelWithString: title)
     label.alignment = .right
@@ -366,7 +275,7 @@ func labeledView(_ title: String, _ field: NSView) -> NSView {
     label.translatesAutoresizingMaskIntoConstraints = false
     label.widthAnchor.constraint(equalToConstant: 110).isActive = true
     field.translatesAutoresizingMaskIntoConstraints = false
-    field.widthAnchor.constraint(equalToConstant: 540).isActive = true
+    field.widthAnchor.constraint(equalToConstant: 420).isActive = true
     let row = NSStackView(views: [label, field])
     row.orientation = .horizontal
     row.alignment = .centerY
@@ -375,7 +284,14 @@ func labeledView(_ title: String, _ field: NSView) -> NSView {
 }
 
 func formTextField() -> NSTextField {
-    let field = NSTextField()
+    configuredFormTextField(NSTextField())
+}
+
+func secureFormTextField() -> NSSecureTextField {
+    configuredFormTextField(NSSecureTextField())
+}
+
+private func configuredFormTextField<T: NSTextField>(_ field: T) -> T {
     field.controlSize = .regular
     field.font = .systemFont(ofSize: NSFont.systemFontSize)
     field.lineBreakMode = .byTruncatingMiddle

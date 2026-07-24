@@ -10,7 +10,10 @@ use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
 use crate::fusion::{FusionProfile, validate_fusion_model_references, validate_fusion_profiles};
-use crate::provider::{CONFIG_VERSION, ProviderDefinition, ProviderRegistry};
+use crate::provider::{
+    CONFIG_VERSION, ProviderDefinition, ProviderModelSource, ProviderProtocol, ProviderQuotaParser,
+    ProviderRegistry,
+};
 
 pub use crate::provider::{
     ProviderAuthHeader as UpstreamAuthHeader, ProviderPreset, ProviderProtocol as UpstreamKind,
@@ -137,6 +140,34 @@ pub struct StoredGatewayConfig {
     pub providers: Vec<ProviderDefinition>,
 }
 
+#[derive(Clone, Debug, Default, Deserialize)]
+struct LegacyStoredGatewayConfig {
+    #[serde(default)]
+    gateway_bind: Option<String>,
+    #[serde(default)]
+    provider_preset: Option<String>,
+    #[serde(default)]
+    upstream_kind: Option<String>,
+    #[serde(default)]
+    upstream_base_url: Option<String>,
+    #[serde(default)]
+    upstream_messages_path: Option<String>,
+    #[serde(default)]
+    upstream_models_path: Option<String>,
+    #[serde(default)]
+    upstream_image_generation_path: Option<String>,
+    #[serde(default)]
+    upstream_api_key: Option<String>,
+    #[serde(default)]
+    gateway_api_key: Option<String>,
+    #[serde(default)]
+    quota_url: Option<String>,
+    #[serde(default)]
+    quota_username: Option<String>,
+    #[serde(default)]
+    fusion_profiles: Vec<FusionProfile>,
+}
+
 impl Default for StoredGatewayConfig {
     fn default() -> Self {
         Self {
@@ -180,10 +211,114 @@ pub fn load_stored_config_from_path(
         return Ok(None);
     }
     let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
-    let parsed: StoredGatewayConfig =
-        serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
-    ensure_config_version(parsed.config_version)?;
+    let parsed = parse_stored_config(&raw)
+        .map_err(|error| anyhow!("parse {}: {error:#}", path.display()))?;
     Ok(Some(parsed))
+}
+
+fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConfig> {
+    let document: serde_json::Value = serde_json::from_str(raw)?;
+    if let Some(version) = document
+        .get("config_version")
+        .and_then(serde_json::Value::as_u64)
+    {
+        let parsed: StoredGatewayConfig = serde_json::from_value(document)?;
+        ensure_config_version(u32::try_from(version).context("config_version is too large")?)?;
+        return Ok(parsed);
+    } else if document.get("config_version").is_some() {
+        anyhow::bail!("config_version must be an unsigned integer");
+    }
+    let object = document
+        .as_object()
+        .ok_or_else(|| anyhow!("stored configuration must be a JSON object"))?;
+    let is_legacy = [
+        "provider_preset",
+        "upstream_kind",
+        "upstream_base_url",
+        "upstream_messages_path",
+        "upstream_models_path",
+        "upstream_api_key",
+        "quota_url",
+        "quota_username",
+    ]
+    .iter()
+    .any(|field| object.contains_key(*field));
+    if !is_legacy {
+        anyhow::bail!(
+            "configuration has no config_version and does not match the legacy single-provider format"
+        );
+    }
+    migrate_legacy_config(serde_json::from_value(document)?)
+}
+
+fn migrate_legacy_config(legacy: LegacyStoredGatewayConfig) -> anyhow::Result<StoredGatewayConfig> {
+    let preset = ProviderPreset::parse(legacy.provider_preset.as_deref().unwrap_or("custom"))?;
+    let mut provider = preset.create(
+        preset.default_id(),
+        legacy.upstream_api_key.unwrap_or_default(),
+    );
+    if let Some(base_url) = legacy.upstream_base_url {
+        let mut base_url = base_url.trim().trim_end_matches('/').to_owned();
+        if preset == ProviderPreset::BaiduOneApi {
+            base_url = base_url.strip_suffix("/v1").unwrap_or(&base_url).to_owned();
+        }
+        provider.base_url = base_url;
+    }
+    if let Some(kind) = legacy.upstream_kind {
+        provider.protocol = match kind.as_str() {
+            "anthropic_messages" | "anthropic-messages" | "anthropic" => {
+                ProviderProtocol::AnthropicMessages
+            }
+            "openai_chat" | "openai-chat" | "chat_completions" | "chat-completions" => {
+                ProviderProtocol::OpenAiChat
+            }
+            other => anyhow::bail!("unsupported legacy upstream kind: {other}"),
+        };
+    }
+    if let Some(path) = legacy.upstream_messages_path {
+        provider.api_path = normalize_legacy_path(path);
+    }
+    if preset != ProviderPreset::BaiduOneApi
+        && let Some(path) = legacy.upstream_models_path
+    {
+        provider.model_source = ProviderModelSource::OpenAiCompatible {
+            path: normalize_legacy_path(path),
+        };
+    }
+    provider.image_generation_path = legacy
+        .upstream_image_generation_path
+        .filter(|path| !path.trim().is_empty())
+        .map(normalize_legacy_path);
+    if let Some(quota_url) = legacy.quota_url.filter(|url| !url.trim().is_empty()) {
+        provider.quota_url = Some(quota_url.trim().to_owned());
+    }
+    provider.quota_username = legacy
+        .quota_username
+        .filter(|username| !username.trim().is_empty())
+        .map(|username| username.trim().to_owned());
+    if provider.quota_parser == ProviderQuotaParser::BaiduOneApi
+        && provider.quota_username.is_none()
+    {
+        provider.quota_url = None;
+    }
+    provider.enabled =
+        !provider.auth.api_key.trim().is_empty() && !provider.base_url.trim().is_empty();
+    Ok(StoredGatewayConfig {
+        config_version: CONFIG_VERSION,
+        gateway_bind: legacy.gateway_bind,
+        gateway_api_key: legacy.gateway_api_key,
+        fusion_profiles: legacy.fusion_profiles,
+        providers: vec![provider],
+    })
+}
+
+fn normalize_legacy_path(path: String) -> String {
+    let path = path.trim();
+    if path.starts_with('/') {
+        path.to_owned()
+    } else {
+        format!("/{path}")
+    }
 }
 
 pub fn save_stored_config(config: &StoredGatewayConfig) -> anyhow::Result<PathBuf> {
@@ -205,8 +340,42 @@ pub fn mutate_stored_config_at_path<T>(
     let _lock = lock_stored_config(path)?;
     let mut config = load_stored_config_from_path(path)?.unwrap_or_default();
     let result = mutation(&mut config)?;
+    backup_legacy_config_if_needed(path)?;
     save_stored_config_to_path_unlocked(path, &config)?;
     Ok(result)
+}
+
+fn backup_legacy_config_if_needed(path: &std::path::Path) -> anyhow::Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    let raw = fs::read_to_string(path).with_context(|| format!("read {}", path.display()))?;
+    let document: serde_json::Value =
+        serde_json::from_str(&raw).with_context(|| format!("parse {}", path.display()))?;
+    if document.get("config_version").is_some() {
+        return Ok(());
+    }
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow!("invalid config filename: {}", path.display()))?;
+    let backup_path = path.with_file_name(format!("{file_name}.v1.backup"));
+    if backup_path.exists() {
+        return Ok(());
+    }
+    let mut backup = fs::OpenOptions::new()
+        .create_new(true)
+        .write(true)
+        .open(&backup_path)
+        .with_context(|| format!("create legacy config backup {}", backup_path.display()))?;
+    set_private_file_permissions(&backup)?;
+    backup
+        .write_all(raw.as_bytes())
+        .with_context(|| format!("write {}", backup_path.display()))?;
+    backup
+        .sync_all()
+        .with_context(|| format!("sync {}", backup_path.display()))?;
+    Ok(())
 }
 
 pub fn save_stored_config_to_path(
@@ -341,7 +510,7 @@ mod tests {
     }
 
     #[test]
-    fn rejects_missing_or_wrong_config_version() {
+    fn rejects_unrecognized_missing_or_wrong_config_version() {
         assert!(serde_json::from_str::<StoredGatewayConfig>("{}").is_err());
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
@@ -356,6 +525,67 @@ mod tests {
                 .to_string()
                 .contains("unsupported config version")
         );
+    }
+
+    #[test]
+    fn reads_legacy_single_provider_config_without_rewriting_it() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let legacy = r#"{
+          "gateway_bind": "127.0.0.1:18787",
+          "provider_preset": "baidu-oneapi",
+          "upstream_kind": "anthropic_messages",
+          "upstream_base_url": "https://oneapi.example/v1/",
+          "upstream_messages_path": "/v1/messages",
+          "upstream_models_path": "/v1/models",
+          "upstream_image_generation_path": "/v1/images/generations",
+          "upstream_api_key": "legacy-secret",
+          "gateway_api_key": "gateway-secret",
+          "quota_url": "https://oneapi.example/quota",
+          "quota_username": "legacy-user"
+        }"#;
+        fs::write(&path, legacy).unwrap();
+
+        let loaded = load_stored_config_from_path(&path).unwrap().unwrap();
+
+        assert_eq!(loaded.config_version, CONFIG_VERSION);
+        assert_eq!(loaded.gateway_bind.as_deref(), Some("127.0.0.1:18787"));
+        assert_eq!(loaded.gateway_api_key.as_deref(), Some("gateway-secret"));
+        assert_eq!(loaded.providers.len(), 1);
+        let provider = &loaded.providers[0];
+        assert_eq!(provider.id, "baidu-oneapi");
+        assert_eq!(provider.base_url, "https://oneapi.example");
+        assert_eq!(provider.api_path, "/v1/messages");
+        assert_eq!(provider.auth.api_key, "legacy-secret");
+        assert_eq!(provider.quota_username.as_deref(), Some("legacy-user"));
+        assert_eq!(provider.models_refreshed_at_ms, None);
+        assert!(provider.selected_models.is_empty());
+        assert_eq!(fs::read_to_string(&path).unwrap(), legacy);
+    }
+
+    #[test]
+    fn backs_up_legacy_config_before_first_mutation() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let legacy = r#"{
+          "provider_preset": "deepseek",
+          "upstream_base_url": "https://api.deepseek.com",
+          "upstream_api_key": "legacy-secret"
+        }"#;
+        fs::write(&path, legacy).unwrap();
+
+        mutate_stored_config_at_path(&path, |config| {
+            config.gateway_bind = Some("127.0.0.1:18787".to_owned());
+            Ok(())
+        })
+        .unwrap();
+
+        let backup = path.with_file_name("config.json.v1.backup");
+        assert_eq!(fs::read_to_string(backup).unwrap(), legacy);
+        let stored: serde_json::Value =
+            serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
+        assert_eq!(stored["config_version"], CONFIG_VERSION);
+        assert_eq!(stored["providers"][0]["id"], "deepseek");
     }
 
     #[test]

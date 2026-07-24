@@ -71,10 +71,13 @@ impl WebSearchCapabilities {
             .read()
             .expect("web search capability lock poisoned");
         for model in models {
-            model.supports_web_search = capabilities
+            if let Some(supported) = capabilities
                 .get(&model.id)
                 .filter(|capability| capability_is_fresh(capability, now))
-                .map(|capability| capability.supported);
+                .map(|capability| capability.supported)
+            {
+                model.supports_web_search = Some(supported);
+            }
         }
     }
 

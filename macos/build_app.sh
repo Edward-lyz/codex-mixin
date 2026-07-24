@@ -60,6 +60,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/QuotaSupport.swift" \
   "$ROOT_DIR/macos/AppSupport.swift" \
   "$ROOT_DIR/macos/ModelBenchmarkWindow.swift" \
+  "$ROOT_DIR/macos/FusionSettingsLogic.swift" \
   "$ROOT_DIR/macos/FusionSettingsWindow.swift" \
   -framework Cocoa \
   -o "$MACOS_DIR/CodexMixinMenu"

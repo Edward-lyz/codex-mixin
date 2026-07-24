@@ -68,6 +68,23 @@ fn verifies_flattened_release_answers() {
     ));
 }
 
+#[test]
+fn capability_annotation_preserves_provider_hint_until_probe_finishes() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("web-search-capabilities.json");
+    let config = test_config("https://one.example");
+    let capabilities = WebSearchCapabilities::load(path, &config).unwrap();
+    let mut models = vec![ModelInfo {
+        id: "Claude Haiku 4.5-test-provider".to_owned(),
+        supports_web_search: Some(true),
+        ..ModelInfo::default()
+    }];
+
+    capabilities.annotate_models(&mut models);
+
+    assert_eq!(models[0].supports_web_search, Some(true));
+}
+
 #[tokio::test]
 async fn persists_prunes_and_invalidates_capabilities() {
     let directory = tempfile::tempdir().unwrap();

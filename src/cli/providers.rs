@@ -136,7 +136,18 @@ pub(super) fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
     if let Some(display_name) = options.display_name {
         provider.display_name = trim_required("display name", display_name)?;
     }
-    if let Some(base_url) = options.base_url {
+    let inferred_endpoint = if preset == ProviderPreset::Custom {
+        options
+            .base_url
+            .as_deref()
+            .map(infer_custom_provider_endpoint)
+            .transpose()?
+    } else {
+        None
+    };
+    if let Some(endpoint) = inferred_endpoint {
+        apply_inferred_custom_endpoint(&mut provider, endpoint);
+    } else if let Some(base_url) = options.base_url {
         provider.base_url = normalize_base_url(base_url)?;
     }
     if preset == ProviderPreset::Custom && provider.base_url.is_empty() {
@@ -211,7 +222,18 @@ pub(super) fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<
         if let Some(display_name) = options.display_name {
             provider.display_name = trim_required("display name", display_name)?;
         }
-        if let Some(base_url) = options.base_url {
+        let inferred_endpoint = if provider.preset_id.as_deref() == Some("custom") {
+            options
+                .base_url
+                .as_deref()
+                .map(infer_custom_provider_endpoint)
+                .transpose()?
+        } else {
+            None
+        };
+        if let Some(endpoint) = inferred_endpoint {
+            apply_inferred_custom_endpoint(provider, endpoint);
+        } else if let Some(base_url) = options.base_url {
             provider.base_url = normalize_base_url(base_url)?;
         }
         if let Some(protocol) = options.protocol {
@@ -492,9 +514,135 @@ fn normalize_model_ids(models: Vec<String>) -> anyhow::Result<Vec<String>> {
     Ok(normalized)
 }
 
+#[derive(Debug, Eq, PartialEq)]
+struct InferredCustomProviderEndpoint {
+    base_url: String,
+    protocol: ProviderProtocol,
+    api_path: String,
+    models_path: String,
+}
+
+fn infer_custom_provider_endpoint(raw_url: &str) -> anyhow::Result<InferredCustomProviderEndpoint> {
+    let normalized = normalize_base_url(raw_url.to_owned())?;
+    let mut url = reqwest::Url::parse(&normalized)?;
+    anyhow::ensure!(
+        url.query().is_none() && url.fragment().is_none(),
+        "custom provider URL must not contain a query or fragment"
+    );
+    let path = url.path().trim_end_matches('/').to_owned();
+    let candidates = [
+        (
+            "/v1/chat/completions",
+            ProviderProtocol::OpenAiChat,
+            "/v1/chat/completions",
+            "/v1/models",
+        ),
+        (
+            "/chat/completions",
+            ProviderProtocol::OpenAiChat,
+            "/chat/completions",
+            "/models",
+        ),
+        (
+            "/v1/messages",
+            ProviderProtocol::AnthropicMessages,
+            "/v1/messages",
+            "/v1/models",
+        ),
+        (
+            "/messages",
+            ProviderProtocol::AnthropicMessages,
+            "/messages",
+            "/models",
+        ),
+        (
+            "/v1/responses",
+            ProviderProtocol::OpenAiResponses,
+            "/v1/responses",
+            "/v1/models",
+        ),
+        (
+            "/responses",
+            ProviderProtocol::OpenAiResponses,
+            "/responses",
+            "/models",
+        ),
+    ];
+    let (base_path, protocol, api_path, models_path) = candidates
+        .iter()
+        .find_map(|(suffix, protocol, api_path, models_path)| {
+            path.strip_suffix(suffix).map(|base_path| {
+                (
+                    base_path.to_owned(),
+                    *protocol,
+                    (*api_path).to_owned(),
+                    (*models_path).to_owned(),
+                )
+            })
+        })
+        .unwrap_or_else(|| {
+            let base_path = path.strip_suffix("/v1").unwrap_or(&path).to_owned();
+            (
+                base_path,
+                ProviderProtocol::OpenAiChat,
+                "/v1/chat/completions".to_owned(),
+                "/v1/models".to_owned(),
+            )
+        });
+    url.set_path(if base_path.is_empty() {
+        "/"
+    } else {
+        &base_path
+    });
+    let base_url = url.to_string().trim_end_matches('/').to_owned();
+    Ok(InferredCustomProviderEndpoint {
+        base_url,
+        protocol,
+        api_path,
+        models_path,
+    })
+}
+
+fn apply_inferred_custom_endpoint(
+    provider: &mut codex_mixin::provider::ProviderDefinition,
+    endpoint: InferredCustomProviderEndpoint,
+) {
+    provider.base_url = endpoint.base_url;
+    provider.protocol = endpoint.protocol;
+    provider.api_path = endpoint.api_path;
+    provider.model_source = ProviderModelSource::OpenAiCompatible {
+        path: endpoint.models_path,
+    };
+    provider.anthropic_version =
+        (endpoint.protocol == ProviderProtocol::AnthropicMessages).then(|| "2023-06-01".to_owned());
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn infers_custom_provider_endpoints_without_exposing_protocol_fields() {
+        let openai = infer_custom_provider_endpoint("https://public.example/v1").unwrap();
+        assert_eq!(openai.base_url, "https://public.example");
+        assert_eq!(openai.protocol, ProviderProtocol::OpenAiChat);
+        assert_eq!(openai.api_path, "/v1/chat/completions");
+        assert_eq!(openai.models_path, "/v1/models");
+
+        let anthropic =
+            infer_custom_provider_endpoint("https://public.example/api/v1/messages").unwrap();
+        assert_eq!(anthropic.base_url, "https://public.example/api");
+        assert_eq!(anthropic.protocol, ProviderProtocol::AnthropicMessages);
+        assert_eq!(anthropic.api_path, "/v1/messages");
+        assert_eq!(anthropic.models_path, "/v1/models");
+
+        let responses =
+            infer_custom_provider_endpoint("https://public.example/v1/responses").unwrap();
+        assert_eq!(responses.base_url, "https://public.example");
+        assert_eq!(responses.protocol, ProviderProtocol::OpenAiResponses);
+        assert_eq!(responses.api_path, "/v1/responses");
+        assert_eq!(responses.models_path, "/v1/models");
+    }
 
     #[test]
     fn model_selection_can_preserve_or_remove_an_unavailable_selected_model() {

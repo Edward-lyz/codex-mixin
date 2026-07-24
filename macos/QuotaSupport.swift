@@ -3,16 +3,33 @@ import Foundation
 struct ProviderQuotaUsage: Decodable {
     let providerID: String
     let currency: String?
-    let value: Double?
+    let used: Double?
+    let limit: Double?
+    let remaining: Double?
     let error: String?
     let staleAt: String?
 
     enum CodingKeys: String, CodingKey {
         case providerID = "provider_id"
         case currency
+        case used
         case value
+        case limit
+        case remaining
         case error
         case staleAt = "stale_at"
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        providerID = try values.decode(String.self, forKey: .providerID)
+        currency = try values.decodeIfPresent(String.self, forKey: .currency)
+        used = try values.decodeIfPresent(Double.self, forKey: .used)
+            ?? values.decodeIfPresent(Double.self, forKey: .value)
+        limit = try values.decodeIfPresent(Double.self, forKey: .limit)
+        remaining = try values.decodeIfPresent(Double.self, forKey: .remaining)
+        error = try values.decodeIfPresent(String.self, forKey: .error)
+        staleAt = try values.decodeIfPresent(String.self, forKey: .staleAt)
     }
 }
 

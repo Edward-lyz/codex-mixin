@@ -51,13 +51,10 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
     let gateway_config = GatewayConfig::from_stored_config()?;
     let state = AppState::new(gateway_config.clone())?;
     let template = load_codex_install_template_online(&paths, codex_oauth_proxy, &state).await?;
-    let mut models = state.fetch_models().await?;
+    let models = state.fetch_models().await?;
     if models.is_empty() {
         anyhow::bail!("upstream /v1/models returned no models");
     }
-    let web_search_probe = state
-        .probe_web_search_capabilities(&mut models, false)
-        .await?;
     let metadata = load_model_metadata_resolver().await?;
     let catalog = if codex_oauth_proxy {
         codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
@@ -162,10 +159,8 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
     println!("model catalog written: {}", paths.catalog.display());
     println!("models installed: {}", models.len());
     println!("metadata entries loaded: {}", metadata.len());
-    println!(
-        "web search capabilities: {} supported, {} unsupported, {} failed",
-        web_search_probe.supported, web_search_probe.unsupported, web_search_probe.failed
-    );
+    println!("web search capabilities: cached/provider metadata applied");
+    println!("web search discovery: continues in the gateway background");
     println!("provider: {CODEX_MIXIN_PROVIDER}");
     println!(
         "history migrated: {} JSONL files, {} SQLite rows",

@@ -133,6 +133,7 @@ extension AppDelegate {
     }
 
     func ensureGatewayReady() async throws -> String {
+        await initializeProviderModelsIfNeeded()
         if let status = try? await runGateway(["status"]), status.contains("gateway: running") {
             let launchAgentInstalled = FileManager.default.fileExists(atPath: launchAgentPath().path)
             var launchAgentNeedsMigration = false
@@ -166,6 +167,33 @@ extension AppDelegate {
             _ = try await runGateway(["start", "--daemon"])
         }
         return try await waitForGatewayStatus()
+    }
+
+    func initializeProviderModelsIfNeeded() async {
+        do {
+            let response = try decodeProviderList(
+                try await runGateway(["providers", "list", "--json"])
+            )
+            for provider in response.providers
+                where provider.enabled
+                    && provider.modelsRefreshedAtMilliseconds == nil
+                    && provider.cachedModels.isEmpty
+            {
+                serviceStatus = "正在迁移 \(provider.displayName) 模型配置..."
+                do {
+                    _ = try await runGateway(["providers", "discover", provider.id])
+                } catch {
+                    appendDiagnosticLog(
+                        "Initial model discovery failed for \(provider.id)\n"
+                            + localizedErrorDescription(error)
+                    )
+                }
+            }
+        } catch {
+            appendDiagnosticLog(
+                "Initial Provider migration check failed\n" + localizedErrorDescription(error)
+            )
+        }
     }
 
     func isMissingGatewayConfiguration(_ error: Error) -> Bool {
@@ -281,7 +309,7 @@ extension AppDelegate {
         } catch {
             updateQuotaStatus(
                 title: "Provider 额度：不可用",
-                detail: String(describing: error),
+                detail: localizedErrorDescription(error),
                 progress: nil
             )
         }

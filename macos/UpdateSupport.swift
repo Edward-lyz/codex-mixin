@@ -45,7 +45,7 @@ enum UpdatePromptAction {
     case later
 }
 
-enum UpdateLanguage {
+enum UpdateLanguage: Equatable {
     case simplifiedChinese
     case traditionalChinese
     case english
@@ -291,4 +291,3 @@ func releaseNotesView(title: String, notes: String) -> NSView {
     container.addSubview(scrollView)
     return container
 }
-

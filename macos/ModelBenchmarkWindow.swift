@@ -408,7 +408,10 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
             } catch {
                 startButton.isEnabled = true
                 timeoutPopup.isEnabled = true
-                presentBenchmarkError(title: "启动测速失败", message: String(describing: error))
+                presentBenchmarkError(
+                    title: "启动测速失败",
+                    message: localizedErrorDescription(error)
+                )
                 await refreshFromGateway()
             }
         }
@@ -735,10 +738,10 @@ private func formatProviderBenchmarkCost(_ cost: ProviderBenchmarkCost) -> Strin
 
 private func presentBenchmarkError(title: String, message: String) {
     let alert = NSAlert()
-    alert.messageText = title
-    alert.informativeText = message
+    alert.messageText = localizedPrompt(title)
+    alert.informativeText = localizedGatewayMessage(message)
     alert.alertStyle = .warning
-    alert.addButton(withTitle: "确定")
+    alert.addButton(withTitle: appText("确定", "確定", "OK"))
     NSApp.activate(ignoringOtherApps: true)
     alert.runModal()
 }

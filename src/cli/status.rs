@@ -729,15 +729,18 @@ pub(super) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
                 anyhow::bail!("quota endpoint returned {status}: {body}");
             }
             let value: serde_json::Value = serde_json::from_str(&body)?;
-            let used = quota_used_value(provider.quota_parser(), &value)?;
-            Ok::<_, anyhow::Error>((used, value))
+            let usage = quota_usage(provider.quota_parser(), &value)?;
+            Ok::<_, anyhow::Error>((usage, value))
         }
         .await;
         match result {
-            Ok((used, raw)) => results.push(serde_json::json!({
+            Ok((usage, raw)) => results.push(serde_json::json!({
                 "provider_id": provider.id(),
                 "currency": provider.quota_currency(),
-                "value": used,
+                "value": usage.used,
+                "used": usage.used,
+                "limit": usage.limit,
+                "remaining": usage.remaining,
                 "error": null,
                 "stale_at": null,
                 "raw": raw,
@@ -760,36 +763,103 @@ pub(super) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
         if let Some(error) = result["error"].as_str() {
             println!("{provider_id}: error: {error}");
         } else {
-            let value = &result["value"];
+            let used = &result["used"];
+            let limit = &result["limit"];
+            let remaining = &result["remaining"];
             let currency = result["currency"].as_str().unwrap_or("");
-            println!("{provider_id}: {value} {currency}");
+            if !limit.is_null() {
+                println!("{provider_id}: used {used} / {limit} {currency}, remaining {remaining}");
+            } else {
+                println!("{provider_id}: used {used} {currency}");
+            }
         }
     }
     Ok(())
 }
 
-fn quota_used_value(parser: ProviderQuotaParser, value: &serde_json::Value) -> anyhow::Result<f64> {
-    let pointers: &[&str] = match parser {
-        ProviderQuotaParser::BaiduOneApi => &["/data/used_quota"],
-        ProviderQuotaParser::OpenRouter => &["/data/total_usage"],
-        ProviderQuotaParser::Generic => &[
-            "/data/used_quota",
-            "/data/total_usage",
-            "/data/used",
-            "/data/spent",
-            "/data/cost",
-            "/used_quota",
-            "/total_usage",
-            "/used",
-            "/spent",
-            "/cost",
-        ],
+#[derive(Clone, Copy, Debug, PartialEq)]
+pub(super) struct QuotaUsageSummary {
+    pub(super) used: f64,
+    pub(super) limit: Option<f64>,
+    pub(super) remaining: Option<f64>,
+}
+
+pub(super) fn quota_usage(
+    parser: ProviderQuotaParser,
+    value: &serde_json::Value,
+) -> anyhow::Result<QuotaUsageSummary> {
+    let (used_fields, limit_fields, remaining_fields): (&[&str], &[&str], &[&str]) = match parser {
+        ProviderQuotaParser::BaiduOneApi => (
+            &["used_quota", "used", "usage"],
+            &[
+                "month_quota_limit",
+                "quota_limit",
+                "limit",
+                "total",
+                "quota",
+            ],
+            &["remaining_quota", "remaining", "available"],
+        ),
+        ProviderQuotaParser::OpenRouter => (
+            &["total_usage", "used", "usage"],
+            &["total_credits", "limit", "total", "budget"],
+            &["remaining", "remaining_quota", "available"],
+        ),
+        ProviderQuotaParser::Generic => (
+            &[
+                "used",
+                "used_quota",
+                "usage",
+                "total_usage",
+                "spent",
+                "cost",
+                "consumed",
+            ],
+            &[
+                "limit",
+                "total",
+                "total_credits",
+                "quota",
+                "quota_limit",
+                "month_quota_limit",
+                "budget",
+            ],
+            &["remaining", "remaining_quota", "available"],
+        ),
     };
-    pointers
-        .iter()
-        .find_map(|pointer| value.pointer(pointer).and_then(json_f64))
-        .filter(|value| value.is_finite() && *value >= 0.0)
-        .ok_or_else(|| anyhow::anyhow!("quota response does not contain a valid used amount"))
+    let used = first_quota_value(value, used_fields)
+        .ok_or_else(|| anyhow::anyhow!("quota response does not contain a valid used amount"))?;
+    let limit = first_quota_value(value, limit_fields);
+    let remaining = first_quota_value(value, remaining_fields)
+        .or_else(|| limit.map(|limit| (limit - used).max(0.0)));
+    Ok(QuotaUsageSummary {
+        used,
+        limit,
+        remaining,
+    })
+}
+
+fn first_quota_value(value: &serde_json::Value, fields: &[&str]) -> Option<f64> {
+    [
+        "",
+        "/data",
+        "/quota",
+        "/data/quota",
+        "/usage",
+        "/data/usage",
+    ]
+    .iter()
+    .find_map(|base| {
+        fields.iter().find_map(|field| {
+            let pointer = if base.is_empty() {
+                format!("/{field}")
+            } else {
+                format!("{base}/{field}")
+            };
+            value.pointer(&pointer).and_then(json_f64)
+        })
+    })
+    .filter(|value| value.is_finite() && *value >= 0.0)
 }
 
 fn json_f64(value: &serde_json::Value) -> Option<f64> {

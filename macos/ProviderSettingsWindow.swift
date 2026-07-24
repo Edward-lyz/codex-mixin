@@ -24,17 +24,13 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
     private let idField = copyableTextField("")
     private let displayNameField = formTextField()
-    private let apiKeyField = formTextField()
-    private let clearKeyButton = NSButton(title: "清除密钥", target: nil, action: nil)
     private let baseURLField = formTextField()
-    private let protocolPopup = NSPopUpButton()
-    private let apiPathField = formTextField()
-    private let modelsPathField = formTextField()
-    private let imagePathField = formTextField()
-    private let quotaURLField = formTextField()
+    private let apiKeyField = secureFormTextField()
+    private let clearKeyButton = NSButton(title: "清除密钥", target: nil, action: nil)
     private let quotaUsernameField = formTextField()
-    private let quotaCurrencyField = formTextField()
-    private let quotaParserPopup = NSPopUpButton()
+    private var customDisplayNameRow: NSView?
+    private var customBaseURLRow: NSView?
+    private var quotaUsernameRow: NSView?
 
     private let addButton = NSButton(title: "新增", target: nil, action: nil)
     private let removeButton = NSButton(title: "删除", target: nil, action: nil)
@@ -115,7 +111,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
         let titleLabel = NSTextField(labelWithString: "供应商与模型")
         titleLabel.font = .boldSystemFont(ofSize: 20)
-        let detailLabel = NSTextField(wrappingLabelWithString: "每个 Provider 独立保存地址、协议、密钥和模型 allowlist。Codex 中的第三方模型使用 <模型 ID>-<Provider ID>。")
+        let detailLabel = NSTextField(wrappingLabelWithString: "每个 Provider 独立保存凭据和模型 allowlist。预设站点自动管理连接细节；自定义站点只需填写名称、API 地址和密钥。")
         detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         detailLabel.textColor = .secondaryLabelColor
 
@@ -155,19 +151,26 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         apiKeyControls.alignment = .centerY
         apiKeyControls.spacing = 8
 
+        let quotaUsernameRow = compactLabeledView("额度用户名", quotaUsernameField)
+        self.quotaUsernameRow = quotaUsernameRow
+        let customDisplayNameRow = compactLabeledView("站点名称", displayNameField)
+        self.customDisplayNameRow = customDisplayNameRow
+        let customBaseURLRow = compactLabeledView("API 地址", baseURLField)
+        self.customBaseURLRow = customBaseURLRow
+        let managedConfigurationLabel = NSTextField(wrappingLabelWithString: appText(
+            "协议和接口路径会自动识别，不需要手动选择。",
+            "協議和端點路徑會自動識別，不需要手動選擇。",
+            "Protocols and endpoint paths are detected automatically."
+        ))
+        managedConfigurationLabel.textColor = .secondaryLabelColor
+        managedConfigurationLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         let form = NSStackView(views: [
             compactLabeledView("Provider ID", idField),
-            compactLabeledView("显示名称", displayNameField),
+            customDisplayNameRow,
+            customBaseURLRow,
             compactLabeledView("API 密钥", apiKeyControls),
-            compactLabeledView("上游根地址", baseURLField),
-            compactLabeledView("协议", protocolPopup),
-            compactLabeledView("推理路径", apiPathField),
-            compactLabeledView("模型路径", modelsPathField),
-            compactLabeledView("生图路径", imagePathField),
-            compactLabeledView("额度接口", quotaURLField),
-            compactLabeledView("额度用户名 *", quotaUsernameField),
-            compactLabeledView("额度币种", quotaCurrencyField),
-            compactLabeledView("额度解析器", quotaParserPopup),
+            quotaUsernameRow,
+            managedConfigurationLabel,
         ])
         form.orientation = .vertical
         form.alignment = .leading
@@ -301,22 +304,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
     private func configurePopups() {
         for item in [
-            ("Anthropic Messages", "anthropic_messages"),
-            ("OpenAI Chat Completions", "open_ai_chat"),
-            ("OpenAI Responses", "open_ai_responses"),
-        ] {
-            protocolPopup.addItem(withTitle: item.0)
-            protocolPopup.lastItem?.representedObject = item.1
-        }
-        for item in [
-            ("Generic", "generic"),
-            ("Baidu OneAPI", "baidu_oneapi"),
-            ("OpenRouter", "openrouter"),
-        ] {
-            quotaParserPopup.addItem(withTitle: item.0)
-            quotaParserPopup.lastItem?.representedObject = item.1
-        }
-        for item in [
             ("全部模型", "all"),
             ("已选", "selected"),
             ("新增", "new"),
@@ -332,13 +319,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private func configureFields() {
         idField.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         apiKeyField.placeholderString = "留空保留已保存密钥"
-        baseURLField.placeholderString = "https://host"
-        apiPathField.placeholderString = "/v1/messages 或 /v1/chat/completions"
-        modelsPathField.placeholderString = "动态模型源，如 /v1/models"
-        imagePathField.placeholderString = "留空表示不配置上游生图"
-        quotaURLField.placeholderString = "留空表示不查询该 Provider 额度"
         quotaUsernameField.placeholderString = "Baidu OneAPI 额度接口必填"
-        quotaCurrencyField.placeholderString = "USD / CNY"
     }
 
     private func configureButton(_ button: NSButton, action: Selector) {
@@ -479,20 +460,16 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         setDetailControlsEnabled(!isBusy)
         idField.stringValue = provider.id
         displayNameField.stringValue = provider.displayName
+        baseURLField.stringValue = provider.baseURL
         apiKeyField.stringValue = ""
         apiKeyField.placeholderString = provider.apiKeyConfigured
             ? "已配置；留空保留"
             : "尚未配置；启用前必须填写"
-        baseURLField.stringValue = provider.baseURL
-        selectPopupValue(protocolPopup, provider.protocolID)
-        apiPathField.stringValue = provider.apiPath
-        modelsPathField.stringValue = provider.modelsPath ?? ""
-        modelsPathField.isEnabled = provider.modelSource.kind == "open_ai_compatible"
-        imagePathField.stringValue = provider.imageGenerationPath ?? ""
-        quotaURLField.stringValue = provider.quotaURL ?? ""
         quotaUsernameField.stringValue = provider.quotaUsername ?? ""
-        quotaCurrencyField.stringValue = provider.quotaCurrency ?? ""
-        selectPopupValue(quotaParserPopup, provider.quotaParser)
+        let isCustom = provider.presetID == "custom"
+        customDisplayNameRow?.isHidden = !isCustom
+        customBaseURLRow?.isHidden = !isCustom
+        quotaUsernameRow?.isHidden = provider.presetID != "baidu-oneapi"
         selectedModelIDs = Set(provider.selectedModels)
         searchField.stringValue = ""
         selectPopupValue(modelFilterPopup, "all")
@@ -506,14 +483,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         for field in [
             idField,
             displayNameField,
-            apiKeyField,
             baseURLField,
-            apiPathField,
-            modelsPathField,
-            imagePathField,
-            quotaURLField,
+            apiKeyField,
             quotaUsernameField,
-            quotaCurrencyField,
         ] {
             field.stringValue = ""
         }
@@ -561,17 +533,10 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
     private func setDetailControlsEnabled(_ enabled: Bool) {
         let controls: [NSControl] = [
-            displayNameField,
             apiKeyField,
+            displayNameField,
             baseURLField,
-            protocolPopup,
-            apiPathField,
-            modelsPathField,
-            imagePathField,
-            quotaURLField,
             quotaUsernameField,
-            quotaCurrencyField,
-            quotaParserPopup,
             searchField,
             modelFilterPopup,
             modelTable,
@@ -599,7 +564,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             refresh = "尚未在线刷新模型"
         }
         var details = [
-            provider.protocolID,
             "\(provider.routableModelCount) 个模型可路由",
             "\(provider.newModels.count) 个新增",
             "\(provider.unavailableSelectedModels.count) 个不可用",
@@ -612,32 +576,25 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     }
 
     @objc private func addProvider() {
-        guard !isBusy, let values = runAddProviderPanel(
-            gatewayAuthConfigured: response?.gatewayAuthConfigured == true
-        ) else { return }
-        let id = values.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !isBusy, let values = runAddProviderPanel() else { return }
+        let id = nextProviderID(for: values.preset)
         let key = values.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !id.isEmpty else {
-            showAlert(title: "缺少 Provider ID", message: "Provider ID 会作为模型后缀，不能为空。")
-            return
-        }
         guard !key.isEmpty else {
             showAlert(title: "缺少 API 密钥", message: "新增 Provider 必须填写 API 密钥。")
             return
         }
         var arguments = ["providers", "add", "--preset", values.preset, "--id", id, "--key", key]
-        appendProviderArgument(&arguments, "--display-name", values.displayName)
-        appendProviderArgument(&arguments, "--base-url", values.baseUrl)
-        appendProviderArgument(&arguments, "--protocol", values.protocolID)
-        appendProviderArgument(&arguments, "--api-path", values.apiPath)
-        appendProviderArgument(&arguments, "--models-path", values.modelsPath)
-        appendProviderArgument(&arguments, "--image-generation-path", values.imageGenerationPath)
-        appendProviderArgument(&arguments, "--gateway-key", values.gatewayKey)
-        appendProviderArgument(&arguments, "--quota-url", values.quotaUrl)
+        if values.preset == "custom" {
+            appendProviderArgument(&arguments, "--display-name", values.displayName)
+            appendProviderArgument(&arguments, "--base-url", values.baseURL)
+        }
         appendProviderArgument(&arguments, "--quota-username", values.quotaUsername)
-        appendProviderArgument(&arguments, "--quota-currency", values.quotaCurrency)
-        appendProviderArgument(&arguments, "--quota-parser", values.quotaParser)
-        performMutation(arguments, status: "正在新增 \(id)…", selecting: id)
+        performMutation(
+            arguments,
+            then: ["providers", "discover", id],
+            status: "正在新增并发现模型 \(id)…",
+            selecting: id
+        )
     }
 
     @objc private func removeProvider() {
@@ -718,52 +675,36 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
     @objc private func saveProvider() {
         guard let provider = selectedProvider, !isBusy else { return }
-        let displayName = displayNameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !displayName.isEmpty else {
-            showAlert(title: "缺少显示名称", message: "Provider 显示名称不能为空。")
-            return
-        }
         var update = ["providers", "update", provider.id]
-        appendProviderArgument(&update, "--display-name", displayName)
         appendProviderArgument(&update, "--key", apiKeyField.stringValue)
-        appendProviderArgument(&update, "--base-url", baseURLField.stringValue)
-        appendProviderArgument(
-            &update,
-            "--protocol",
-            selectedPopupValue(protocolPopup, fallback: provider.protocolID)
-        )
-        appendProviderArgument(&update, "--api-path", apiPathField.stringValue)
-        if provider.modelSource.kind == "open_ai_compatible" {
-            appendProviderArgument(&update, "--models-path", modelsPathField.stringValue)
+        if provider.presetID == "custom" {
+            let displayName = displayNameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            let baseURL = baseURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !displayName.isEmpty, !baseURL.isEmpty else {
+                showAlert(
+                    title: appText("缺少自定义站点信息", "缺少自訂站點資訊", "Custom Site Information Required"),
+                    message: appText(
+                        "站点名称和 API 地址不能为空。",
+                        "站點名稱和 API 位址不能為空。",
+                        "Site name and API URL cannot be empty."
+                    )
+                )
+                return
+            }
+            appendProviderArgument(&update, "--display-name", displayName)
+            appendProviderArgument(&update, "--base-url", baseURL)
         }
-        let imagePath = imagePathField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        if imagePath.isEmpty, provider.imageGenerationPath != nil {
-            update.append("--clear-image-generation")
-        } else {
-            appendProviderArgument(&update, "--image-generation-path", imagePath)
-        }
-        let quotaURL = quotaURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let quotaParser = selectedPopupValue(quotaParserPopup, fallback: provider.quotaParser)
         let quotaUsername = quotaUsernameField.stringValue
             .trimmingCharacters(in: .whitespacesAndNewlines)
-        if !quotaURL.isEmpty, quotaParser == "baidu_oneapi", quotaUsername.isEmpty {
+        if provider.presetID == "baidu-oneapi", quotaUsername.isEmpty {
             showAlert(
                 title: "缺少额度用户名",
                 message: "Baidu OneAPI 查询额度必须填写用户名。"
             )
             return
         }
-        if quotaURL.isEmpty, provider.quotaURL != nil {
-            update.append("--clear-quota")
-        } else if !quotaURL.isEmpty {
-            appendProviderArgument(&update, "--quota-url", quotaURL)
+        if provider.presetID == "baidu-oneapi" {
             appendProviderArgument(&update, "--quota-username", quotaUsername)
-            appendProviderArgument(&update, "--quota-currency", quotaCurrencyField.stringValue)
-            appendProviderArgument(
-                &update,
-                "--quota-parser",
-                quotaParser
-            )
         }
         let selectedModels = provider.modelItems
             .map(\.id)
@@ -778,6 +719,18 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             status: "正在保存 \(provider.id)…",
             selecting: provider.id
         )
+    }
+
+    private func nextProviderID(for preset: String) -> String {
+        let existing = Set(providers.map(\.id))
+        if !existing.contains(preset) {
+            return preset
+        }
+        var suffix = 2
+        while existing.contains("\(preset)-\(suffix)") {
+            suffix += 1
+        }
+        return "\(preset)-\(suffix)"
     }
 
     @objc private func selectAllModels() {

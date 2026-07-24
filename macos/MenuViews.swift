@@ -129,9 +129,17 @@ func quotaMenuView(title: String, detail: String?, progress: Double?) -> NSView 
 
 func providerQuotaMenuView(_ usages: [ProviderQuotaUsage]) -> NSView {
     if usages.isEmpty {
-        return quotaMenuView(title: "Provider 额度：无可查询项", detail: nil, progress: nil)
+        return quotaMenuView(
+            title: appText(
+                "Provider 额度：无可查询项",
+                "Provider 額度：無可查詢項目",
+                "Provider quota: nothing to query"
+            ),
+            detail: nil,
+            progress: nil
+        )
     }
-    let rowHeight: CGFloat = 38
+    let rowHeight: CGFloat = 62
     let view = NSView(frame: NSRect(
         x: 0,
         y: 0,
@@ -166,29 +174,64 @@ func providerQuotaRow(_ usage: ProviderQuotaUsage) -> NSView {
     providerLabel.lineBreakMode = .byTruncatingMiddle
 
     let value: String
-    if let amount = usage.value {
+    if let amount = usage.used, let limit = usage.limit {
+        let currency = usage.currency.map { " \($0)" } ?? ""
+        value = "\(formatQuotaAmount(amount)) / \(formatQuotaAmount(limit))\(currency)"
+    } else if let amount = usage.used {
         let currency = usage.currency.map { " \($0)" } ?? ""
         value = "\(formatQuotaAmount(amount))\(currency)"
     } else if usage.error?.contains("not configured") == true {
-        value = "未配置额度接口"
+        value = appText("未配置额度接口", "未設定額度端點", "Quota endpoint not configured")
     } else {
-        value = "查询失败"
+        value = appText("查询失败", "查詢失敗", "Query failed")
     }
     let valueLabel = NSTextField(labelWithString: value)
     valueLabel.font = .systemFont(ofSize: 11)
-    valueLabel.textColor = usage.value == nil ? .secondaryLabelColor : .labelColor
+    valueLabel.textColor = usage.used == nil ? .secondaryLabelColor : .labelColor
     valueLabel.alignment = .right
     valueLabel.lineBreakMode = .byTruncatingTail
     valueLabel.toolTip = usage.error
 
-    let row = NSStackView(views: [icon, providerLabel, NSView(), valueLabel])
-    row.orientation = .horizontal
-    row.alignment = .centerY
-    row.spacing = 8
-    row.translatesAutoresizingMaskIntoConstraints = false
-    row.heightAnchor.constraint(equalToConstant: 38).isActive = true
+    let heading = NSStackView(views: [icon, providerLabel, NSView(), valueLabel])
+    heading.orientation = .horizontal
+    heading.alignment = .centerY
+    heading.spacing = 8
     providerLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 100).isActive = true
     valueLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 90).isActive = true
+
+    var rows: [NSView] = [heading]
+    var progressView: NSProgressIndicator?
+    if let used = usage.used, let limit = usage.limit, limit > 0 {
+        let progress = NSProgressIndicator()
+        progress.isIndeterminate = false
+        progress.style = .bar
+        progress.minValue = 0
+        progress.maxValue = 1
+        progress.doubleValue = min(max(used / limit, 0), 1)
+        progress.heightAnchor.constraint(equalToConstant: 8).isActive = true
+        progressView = progress
+        rows.append(progress)
+
+        if let remaining = usage.remaining {
+            let currency = usage.currency.map { " \($0)" } ?? ""
+            let detail = NSTextField(labelWithString: appText(
+                "剩余 \(formatQuotaAmount(remaining))\(currency)",
+                "剩餘 \(formatQuotaAmount(remaining))\(currency)",
+                "Remaining \(formatQuotaAmount(remaining))\(currency)"
+            ))
+            detail.font = .systemFont(ofSize: 10)
+            detail.textColor = .secondaryLabelColor
+            rows.append(detail)
+        }
+    }
+    let row = NSStackView(views: rows)
+    row.orientation = .vertical
+    row.alignment = .leading
+    row.spacing = 3
+    row.translatesAutoresizingMaskIntoConstraints = false
+    row.heightAnchor.constraint(equalToConstant: 62).isActive = true
+    heading.widthAnchor.constraint(equalTo: row.widthAnchor).isActive = true
+    progressView?.widthAnchor.constraint(equalTo: row.widthAnchor).isActive = true
 
     let container = NSView()
     container.addSubview(row)

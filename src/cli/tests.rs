@@ -753,6 +753,40 @@ fn summarizes_generic_quota_shapes() {
 }
 
 #[test]
+fn preserves_quota_limit_and_remaining_for_visualization() {
+    assert_eq!(
+        quota_usage(
+            codex_mixin::provider::ProviderQuotaParser::BaiduOneApi,
+            &serde_json::json!({
+                "data": {
+                    "used_quota": 10,
+                    "month_quota_limit": 50,
+                    "remaining_quota": 40
+                }
+            })
+        )
+        .unwrap(),
+        QuotaUsageSummary {
+            used: 10.0,
+            limit: Some(50.0),
+            remaining: Some(40.0),
+        }
+    );
+    assert_eq!(
+        quota_usage(
+            codex_mixin::provider::ProviderQuotaParser::OpenRouter,
+            &serde_json::json!({"data":{"total_usage":12.5,"total_credits":100}})
+        )
+        .unwrap(),
+        QuotaUsageSummary {
+            used: 12.5,
+            limit: Some(100.0),
+            remaining: Some(87.5),
+        }
+    );
+}
+
+#[test]
 fn provider_presets_resolve_quota_urls() {
     let mut baidu = ProviderPreset::BaiduOneApi.create("baidu", "key");
     baidu.base_url = "https://oneapi.example".to_owned();
