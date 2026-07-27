@@ -26,7 +26,7 @@ func localizedPrompt(_ text: String) -> String {
         "自动启动网关失败": ("自動啟動閘道失敗", "Unable to Start Gateway Automatically"),
         "刷新 Codex 模型失败": ("重新整理 Codex 模型失敗", "Unable to Refresh Codex Models"),
         "更新登录自启失败": ("更新登入時啟動失敗", "Unable to Update Launch at Login"),
-        "自动检测失败": ("自動檢測失敗", "Automatic Check Failed"),
+        "健康检测和修复失败": ("健康檢測與修復失敗", "Health Check & Repair Failed"),
         "打开配置目录失败": ("開啟設定目錄失敗", "Unable to Open Configuration Folder"),
         "日志还不存在": ("日誌尚不存在", "No Log File Yet"),
         "退出 Codex Mixin 失败": ("結束 Codex Mixin 失敗", "Unable to Quit Codex Mixin"),

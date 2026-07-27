@@ -19,6 +19,18 @@ use super::Cli;
 use super::{atomic_file::*, codex::*, runtime::*, service::*, status::*};
 
 #[test]
+fn managed_model_catalog_refreshes_promptly() {
+    assert_eq!(
+        CODEX_CATALOG_REFRESH_INTERVAL,
+        std::time::Duration::from_secs(15)
+    );
+    assert_eq!(
+        OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL,
+        std::time::Duration::from_secs(60)
+    );
+}
+
+#[test]
 fn rotates_gateway_log_at_size_limit() {
     let dir = tempfile::tempdir().unwrap();
     let log = dir.path().join("gateway.log");
@@ -61,7 +73,9 @@ fn install_command_rejects_provider_override() {
 
 #[test]
 fn install_command_accepts_explicit_custom_only_mode() {
+    assert!(Cli::try_parse_from(["codex-mixin", "install-codex"]).is_err());
     assert!(Cli::try_parse_from(["codex-mixin", "install-codex", "--custom-only"]).is_ok());
+    assert!(Cli::try_parse_from(["codex-mixin", "install-codex", "--codex-oauth-proxy"]).is_ok());
     assert!(
         Cli::try_parse_from([
             "codex-mixin",
@@ -301,7 +315,7 @@ async fn oauth_install_falls_back_to_local_cache_when_official_fetch_fails() {
 }
 
 #[test]
-fn custom_only_provider_does_not_require_openai_auth() {
+fn custom_only_provider_uses_bedrock_identity_without_unsupported_overrides() {
     let mut doc = DocumentMut::new();
 
     upsert_codex_config(
@@ -316,9 +330,203 @@ fn custom_only_provider_does_not_require_openai_auth() {
     .unwrap();
 
     assert_eq!(doc["model"].as_str(), Some("DeepSeek-V4-Flash"));
-    let provider = doc["model_providers"]["codex-mixin"].as_table().unwrap();
+    assert_eq!(doc["model_provider"].as_str(), Some("amazon-bedrock"));
+    let provider = doc["model_providers"]["amazon-bedrock"].as_table().unwrap();
+    assert_eq!(
+        provider.get("base_url").and_then(|item| item.as_str()),
+        Some("http://127.0.0.1:8787/v1")
+    );
+    assert!(provider.get("name").is_none());
+    assert!(provider.get("wire_api").is_none());
     assert!(provider.get("requires_openai_auth").is_none());
     assert!(provider.get("supports_websockets").is_none());
+}
+
+#[test]
+fn official_provider_preserves_existing_amazon_bedrock_override() {
+    let mut doc = r#"
+model_provider = "amazon-bedrock"
+
+[model_providers.amazon-bedrock]
+base_url = "https://bedrock-runtime.us-west-2.amazonaws.com"
+"#
+    .parse::<DocumentMut>()
+    .unwrap();
+
+    upsert_codex_config(
+        &mut doc,
+        None,
+        Path::new("/tmp/mixin-models.json"),
+        "http://127.0.0.1:8787/v1",
+        "live",
+        None,
+        true,
+    )
+    .unwrap();
+
+    assert_eq!(doc["model_provider"].as_str(), Some("codex-mixin"));
+    assert_eq!(
+        doc["model_providers"]["amazon-bedrock"]["base_url"].as_str(),
+        Some("https://bedrock-runtime.us-west-2.amazonaws.com")
+    );
+    assert_eq!(
+        doc["model_providers"]["codex-mixin"]["base_url"].as_str(),
+        Some("http://127.0.0.1:8787/v1")
+    );
+}
+
+#[test]
+fn custom_auth_install_backs_up_and_uninstall_restores_existing_auth() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let auth_path = dir.path().join("auth.json");
+    let backup_path = dir.path().join("auth.json.codex-mixin.backup");
+    let original = br#"{"auth_mode":"chatgpt","tokens":{"access_token":"official"}}"#;
+    fs::write(&auth_path, original).unwrap();
+
+    ManagedAuthTransaction::begin(&config_path, ManagedAuthMode::CustomOnly)
+        .unwrap()
+        .commit()
+        .unwrap();
+
+    assert!(is_managed_fake_auth(&auth_path).unwrap());
+    let fake: serde_json::Value = serde_json::from_slice(&fs::read(&auth_path).unwrap()).unwrap();
+    assert_eq!(fake["auth_mode"], "bedrockApiKey");
+    assert_eq!(fake["bedrock_api_key"]["region"], "us-east-1");
+    assert!(
+        fake["bedrock_api_key"]["api_key"]
+            .as_str()
+            .unwrap()
+            .starts_with("codex-mixin-local-")
+    );
+    assert!(fake.get("OPENAI_API_KEY").is_none());
+    assert_eq!(fs::read(&backup_path).unwrap(), original);
+    #[cfg(unix)]
+    assert_eq!(
+        fs::metadata(&auth_path).unwrap().permissions().mode() & 0o777,
+        0o600
+    );
+
+    assert_eq!(
+        uninstall_managed_custom_auth(&config_path).unwrap(),
+        ManagedAuthUninstall::RestoredBackup
+    );
+    assert_eq!(fs::read(&auth_path).unwrap(), original);
+    assert!(!backup_path.exists());
+}
+
+#[test]
+fn custom_auth_without_original_is_removed_on_uninstall() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let auth_path = dir.path().join("auth.json");
+    let absent_path = dir.path().join("auth.json.codex-mixin.absent");
+
+    ManagedAuthTransaction::begin(&config_path, ManagedAuthMode::CustomOnly)
+        .unwrap()
+        .commit()
+        .unwrap();
+
+    assert!(is_managed_fake_auth(&auth_path).unwrap());
+    assert!(absent_path.exists());
+    assert_eq!(
+        uninstall_managed_custom_auth(&config_path).unwrap(),
+        ManagedAuthUninstall::RemovedFake
+    );
+    assert!(!auth_path.exists());
+    assert!(!absent_path.exists());
+}
+
+#[test]
+fn custom_auth_upgrade_replaces_legacy_fake_without_losing_restore_point() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let auth_path = dir.path().join("auth.json");
+    let backup_path = dir.path().join("auth.json.codex-mixin.backup");
+    let original = br#"{"auth_mode":"chatgpt","tokens":{"access_token":"official"}}"#;
+    let legacy =
+        br#"{"auth_mode":"apikey","OPENAI_API_KEY":"codex-mixin-local-legacy-placeholder"}"#;
+    fs::write(&auth_path, legacy).unwrap();
+    fs::write(&backup_path, original).unwrap();
+
+    ManagedAuthTransaction::begin(&config_path, ManagedAuthMode::CustomOnly)
+        .unwrap()
+        .commit()
+        .unwrap();
+
+    let upgraded: serde_json::Value =
+        serde_json::from_slice(&fs::read(&auth_path).unwrap()).unwrap();
+    assert_eq!(upgraded["auth_mode"], "bedrockApiKey");
+    assert_eq!(fs::read(&backup_path).unwrap(), original);
+    assert_eq!(
+        uninstall_managed_custom_auth(&config_path).unwrap(),
+        ManagedAuthUninstall::RestoredBackup
+    );
+    assert_eq!(fs::read(&auth_path).unwrap(), original);
+}
+
+#[test]
+fn failed_custom_install_rolls_back_auth_and_restore_point() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let auth_path = dir.path().join("auth.json");
+    let backup_path = dir.path().join("auth.json.codex-mixin.backup");
+    let original = br#"{"auth_mode":"chatgpt","tokens":{"access_token":"official"}}"#;
+    fs::write(&auth_path, original).unwrap();
+
+    ManagedAuthTransaction::begin(&config_path, ManagedAuthMode::CustomOnly)
+        .unwrap()
+        .rollback()
+        .unwrap();
+
+    assert_eq!(fs::read(&auth_path).unwrap(), original);
+    assert!(!backup_path.exists());
+}
+
+#[test]
+fn failed_switch_to_official_restores_managed_fake_auth() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let auth_path = dir.path().join("auth.json");
+    let original = br#"{"auth_mode":"chatgpt","tokens":{"access_token":"official"}}"#;
+    fs::write(&auth_path, original).unwrap();
+    ManagedAuthTransaction::begin(&config_path, ManagedAuthMode::CustomOnly)
+        .unwrap()
+        .commit()
+        .unwrap();
+    let fake = fs::read(&auth_path).unwrap();
+
+    let official = ManagedAuthTransaction::begin(&config_path, ManagedAuthMode::Official).unwrap();
+    assert_eq!(fs::read(&auth_path).unwrap(), original);
+    official.rollback().unwrap();
+
+    assert_eq!(fs::read(&auth_path).unwrap(), fake);
+    assert!(is_managed_fake_auth(&auth_path).unwrap());
+}
+
+#[test]
+fn uninstall_preserves_auth_changed_after_custom_install() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let auth_path = dir.path().join("auth.json");
+    let backup_path = dir.path().join("auth.json.codex-mixin.backup");
+    let original = br#"{"auth_mode":"chatgpt","tokens":{"access_token":"old"}}"#;
+    let current = br#"{"auth_mode":"chatgpt","tokens":{"access_token":"new"}}"#;
+    fs::write(&auth_path, original).unwrap();
+    ManagedAuthTransaction::begin(&config_path, ManagedAuthMode::CustomOnly)
+        .unwrap()
+        .commit()
+        .unwrap();
+    fs::write(&auth_path, current).unwrap();
+
+    assert_eq!(
+        uninstall_managed_custom_auth(&config_path).unwrap(),
+        ManagedAuthUninstall::PreservedChangedAuth {
+            backup: Some(backup_path.clone())
+        }
+    );
+    assert_eq!(fs::read(&auth_path).unwrap(), current);
+    assert_eq!(fs::read(&backup_path).unwrap(), original);
 }
 
 #[test]
@@ -345,7 +553,7 @@ fn managed_install_backup_and_uninstall_restore_existing_config() {
     fs::write(
         &config_path,
         format!(
-            "{MANAGED_CONFIG_HEADER}\nmodel = \"Claude Sonnet 5\"\nmodel_catalog_json = {:?}\n",
+            "{MANAGED_CONFIG_HEADER}\nmodel_provider = \"codex-mixin\"\nmodel = \"Claude Sonnet 5\"\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nbase_url = \"http://127.0.0.1:8787/v1\"\n",
             catalog_path.to_string_lossy()
         ),
     )
@@ -406,7 +614,7 @@ fn managed_uninstall_removes_config_when_none_existed_before() {
     fs::write(
         &config_path,
         format!(
-            "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n",
+            "{MANAGED_CONFIG_HEADER}\nmodel_provider = \"codex-mixin\"\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nbase_url = \"http://127.0.0.1:8787/v1\"\n",
             catalog_path.to_string_lossy()
         ),
     )
@@ -543,7 +751,7 @@ fn refreshes_managed_catalog_from_latest_official_catalog() {
     fs::write(
         &config_path,
         format!(
-            "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\n",
+            "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\nsupports_websockets = true\n",
             catalog_path.to_string_lossy()
         ),
     )
@@ -583,7 +791,7 @@ fn capability_refresh_does_not_restore_stale_official_cache() {
     fs::write(
         &config_path,
         format!(
-            "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\n",
+            "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\nsupports_websockets = true\n",
             catalog_path.to_string_lossy()
         ),
     )
@@ -614,7 +822,7 @@ fn reports_managed_catalog_path_mode_and_model_counts() {
     fs::write(
         &config_path,
         format!(
-            "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\n",
+            "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\nsupports_websockets = true\n",
             catalog_path.to_string_lossy()
         ),
     )
@@ -633,6 +841,29 @@ fn reports_managed_catalog_path_mode_and_model_counts() {
 }
 
 #[test]
+fn reports_custom_only_mode_when_websockets_are_disabled() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let catalog_path = dir.path().join("mixin-models.json");
+    fs::write(
+        &config_path,
+        format!(
+            "{MANAGED_CONFIG_HEADER}\nmodel_provider = \"amazon-bedrock\"\nmodel_catalog_json = {:?}\n\n[model_providers.amazon-bedrock]\nbase_url = \"http://127.0.0.1:8787/v1\"\n",
+            catalog_path.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    fs::write(
+        &catalog_path,
+        r#"{"models":[{"slug":"DeepSeek-V4-Flash","codex_mixin_managed":true}]}"#,
+    )
+    .unwrap();
+
+    let summary = managed_catalog_summary(&config_path).unwrap().unwrap();
+    assert_eq!(summary.mode, "custom_only");
+}
+
+#[test]
 fn parses_installed_codex_client_version() {
     assert_eq!(
         parse_codex_client_version("codex-cli 0.144.4\n").as_deref(),
@@ -648,7 +879,7 @@ fn non_oauth_managed_config_skips_oauth_catalog_refresh() {
     fs::write(
         &config_path,
         format!(
-            "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nwire_api = \"responses\"\n",
+            "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\nwire_api = \"responses\"\n",
             dir.path().join("mixin-models.json").to_string_lossy()
         ),
     )
@@ -665,7 +896,7 @@ fn refreshes_per_model_web_search_for_non_oauth_catalog() {
     fs::write(
         &config_path,
         format!(
-            "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nwire_api = \"responses\"\n",
+            "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\nwire_api = \"responses\"\n",
             catalog_path.to_string_lossy()
         ),
     )
@@ -735,7 +966,7 @@ fn uninstall_rejects_catalog_that_differs_from_managed_config() {
     fs::write(
         &config_path,
         format!(
-            "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n",
+            "{MANAGED_CONFIG_HEADER}\nmodel_provider = \"codex-mixin\"\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nbase_url = \"http://127.0.0.1:8787/v1\"\n",
             managed_catalog_path.to_string_lossy()
         ),
     )
@@ -913,13 +1144,13 @@ fn outdated_gateway_runtime_is_replaced_on_its_existing_bind() {
 }
 
 #[test]
-fn syncs_dynamic_gateway_port_to_managed_codex_provider() {
+fn syncs_dynamic_gateway_port_to_managed_custom_provider() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
     fs::write(
         &config_path,
         format!(
-            "{MANAGED_CONFIG_HEADER}\n\n[model_providers.codex-mixin]\nbase_url = \"http://127.0.0.1:8787/v1\"\nwire_api = \"responses\"\n\n[model_providers.other]\nbase_url = \"https://example.test/v1\"\n"
+            "{MANAGED_CONFIG_HEADER}\nmodel_provider = \"amazon-bedrock\"\n\n[model_providers.amazon-bedrock]\nbase_url = \"http://127.0.0.1:8787/v1\"\n\n[model_providers.other]\nbase_url = \"https://example.test/v1\"\n"
         ),
     )
     .unwrap();
@@ -933,7 +1164,7 @@ fn syncs_dynamic_gateway_port_to_managed_codex_provider() {
         .parse::<DocumentMut>()
         .unwrap();
     assert_eq!(
-        doc["model_providers"]["codex-mixin"]["base_url"].as_str(),
+        doc["model_providers"]["amazon-bedrock"]["base_url"].as_str(),
         Some("http://127.0.0.1:18787/v1")
     );
     assert_eq!(

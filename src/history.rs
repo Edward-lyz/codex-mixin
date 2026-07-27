@@ -19,16 +19,31 @@ pub struct HistoryMigrationOutcome {
 pub fn migrate_history_to_mixin_provider(
     codex_home: &Path,
 ) -> anyhow::Result<HistoryMigrationOutcome> {
-    migrate_history_provider(codex_home, None, CODEX_MIXIN_PROVIDER, "unify-codex-mixin")
+    migrate_history_to_provider(codex_home, CODEX_MIXIN_PROVIDER)
 }
 
 pub fn migrate_history_from_mixin_provider(
     codex_home: &Path,
     target_provider: &str,
 ) -> anyhow::Result<HistoryMigrationOutcome> {
+    migrate_history_from_provider(codex_home, CODEX_MIXIN_PROVIDER, target_provider)
+}
+
+pub fn migrate_history_to_provider(
+    codex_home: &Path,
+    target_provider: &str,
+) -> anyhow::Result<HistoryMigrationOutcome> {
+    migrate_history_provider(codex_home, None, target_provider, "unify-codex-mixin")
+}
+
+pub fn migrate_history_from_provider(
+    codex_home: &Path,
+    source_provider: &str,
+    target_provider: &str,
+) -> anyhow::Result<HistoryMigrationOutcome> {
     migrate_history_provider(
         codex_home,
-        Some(CODEX_MIXIN_PROVIDER),
+        Some(source_provider),
         target_provider,
         "restore-from-codex-mixin",
     )

@@ -9,6 +9,7 @@ pub(super) async fn benchmark_status() -> anyhow::Result<()> {
 
 pub(super) async fn benchmark_start(
     timeout_seconds: u64,
+    target_output_tokens: u64,
     providers: Vec<String>,
     models: Vec<String>,
 ) -> anyhow::Result<()> {
@@ -16,6 +17,7 @@ pub(super) async fn benchmark_start(
         reqwest::Method::POST,
         Some(json!({
             "timeout_seconds": timeout_seconds,
+            "target_output_tokens": target_output_tokens,
             "providers": providers,
             "models": models,
         })),

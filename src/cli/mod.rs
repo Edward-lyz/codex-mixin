@@ -10,6 +10,7 @@ mod atomic_file;
 mod benchmark_proxy;
 mod codex;
 mod config_input;
+mod doctor;
 mod fusion_config;
 mod maintenance;
 mod metadata;
@@ -22,6 +23,7 @@ use benchmark_proxy::{benchmark_start, benchmark_status};
 use codex::{
     InstallCodexOptions, install_codex, refresh_default_managed_codex_catalog, uninstall_codex,
 };
+use doctor::doctor;
 use fusion_config::{get_fusion_profile, set_fusion_profile};
 use maintenance::migrate_history;
 use metadata::{load_model_metadata_resolver, refresh_metadata};
@@ -30,7 +32,7 @@ use providers::{
     remove_provider, select_models, set_provider_enabled, test_provider, update_provider,
 };
 use service::{init_tracing, logs, restart, start, stop};
-use status::{doctor, models, probe_web_search, quota, show_config, status};
+use status::{models, probe_web_search, quota, show_config, status};
 
 #[derive(Debug, Parser)]
 #[command(author, version, about)]
@@ -57,6 +59,22 @@ enum Command {
     Doctor {
         #[arg(long)]
         json: bool,
+        #[arg(
+            long,
+            help = "自动修复可以安全修复的问题（权限、失效状态、网关启动、base_url、模型目录）"
+        )]
+        fix: bool,
+        #[arg(
+            long = "restart-apps",
+            requires = "fix",
+            help = "允许 --fix 重启 ChatGPT/Codex App（会中断正在进行的会话）"
+        )]
+        restart_apps: bool,
+        #[arg(
+            long,
+            help = "使用 GUI 友好的缓存检查并跳过 Codex 内核实测；普通 doctor 保持深度检查"
+        )]
+        quick: bool,
     },
     Status {
         #[arg(long)]
@@ -128,13 +146,16 @@ enum Command {
         set_default: bool,
         #[arg(
             long,
+            required_unless_present = "custom_only",
+            conflicts_with = "custom_only",
             help = "Merge official GPT and custom models using Codex OpenAI auth; requires models_cache.json"
         )]
         codex_oauth_proxy: bool,
         #[arg(
             long,
+            required_unless_present = "codex_oauth_proxy",
             conflicts_with = "codex_oauth_proxy",
-            help = "Install only custom upstream models without OpenAI auth or models_cache.json, and select a custom default model"
+            help = "Install only custom upstream models using a managed local login placeholder; official plugins and cloud features are unavailable"
         )]
         custom_only: bool,
         #[arg(long)]
@@ -190,6 +211,8 @@ enum BenchmarkCommand {
     Start {
         #[arg(long)]
         timeout_seconds: u64,
+        #[arg(long, default_value_t = codex_mixin::benchmark::BENCHMARK_TARGET_OUTPUT_TOKENS)]
+        target_output_tokens: u64,
         #[arg(long = "provider")]
         providers: Vec<String>,
         #[arg(long = "model")]
@@ -422,11 +445,17 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             BenchmarkCommand::Status => benchmark_status().await,
             BenchmarkCommand::Start {
                 timeout_seconds,
+                target_output_tokens,
                 providers,
                 models,
-            } => benchmark_start(timeout_seconds, providers, models).await,
+            } => benchmark_start(timeout_seconds, target_output_tokens, providers, models).await,
         },
-        Command::Doctor { json } => doctor(json).await,
+        Command::Doctor {
+            json,
+            fix,
+            restart_apps,
+            quick,
+        } => doctor(json, fix, restart_apps, quick).await,
         Command::Status { json } => status(json).await,
         Command::Models { json } => models(json).await,
         Command::Quota { json, provider } => quota(json, provider.as_deref()).await,

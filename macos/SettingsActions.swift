@@ -4,7 +4,7 @@ extension AppDelegate {
     @objc func runAutomaticDoctor() {
         guard !serviceBusy else { return }
         serviceBusy = true
-        serviceStatus = "正在自动检测..."
+        serviceStatus = "正在健康检测和修复..."
         Task { @MainActor in
             defer {
                 serviceBusy = false
@@ -13,11 +13,11 @@ extension AppDelegate {
                 }
             }
             do {
-                let report = try await runGateway(["doctor"])
-                appendDiagnosticLog("Automatic doctor report\n\(report)")
-                showDiagnosticReport(title: "Codex Mixin 自动检测", report: report)
+                let report = try await runGateway(["doctor", "--fix", "--quick"])
+                appendDiagnosticLog("Health check and repair report\n\(report)")
+                showDiagnosticReport(title: "Codex Mixin 健康检测和修复", report: report)
             } catch {
-                showAlert(title: "自动检测失败", message: String(describing: error))
+                showAlert(title: "健康检测和修复失败", message: String(describing: error))
             }
         }
     }
@@ -83,7 +83,7 @@ extension AppDelegate {
         if modelBenchmarkWindowController == nil {
             modelBenchmarkWindowController = ModelBenchmarkWindowController(
                 snapshotURL: stateDir().appendingPathComponent("model-benchmarks.json"),
-                startHandler: { [weak self] timeoutSeconds, providerID in
+                startHandler: { [weak self] timeoutSeconds, providerID, targetOutputTokens in
                     guard let self else {
                         throw GatewayError.command("Codex Mixin 已退出")
                     }
@@ -92,7 +92,8 @@ extension AppDelegate {
                     guard let snapshot = try await self.modelBenchmarkRequest(
                         method: "POST",
                         timeoutSeconds: timeoutSeconds,
-                        providerID: providerID
+                        providerID: providerID,
+                        targetOutputTokens: targetOutputTokens
                     ) else {
                         throw GatewayError.command("网关未返回测速任务")
                     }
@@ -110,21 +111,38 @@ extension AppDelegate {
                     return try await self.modelBenchmarkRequest(
                         method: "GET",
                         timeoutSeconds: nil,
-                        providerID: nil
+                        providerID: nil,
+                        targetOutputTokens: nil
                     )
                 },
-                providerOptionsHandler: { [weak self] in
+                loadProvidersHandler: { [weak self] in
                     guard let self else {
                         throw GatewayError.command("Codex Mixin 已退出")
                     }
-                    let response = try decodeProviderList(
+                    return try decodeProviderList(
                         try await self.runGateway(["providers", "list", "--json"])
                     )
-                    return response.providers
-                        .filter(\.enabled)
-                        .map {
-                            BenchmarkProviderOption(id: $0.id, displayName: $0.displayName)
+                },
+                saveSelectionsHandler: { [weak self] selections in
+                    guard let self else {
+                        throw GatewayError.command("Codex Mixin 已退出")
+                    }
+                    for providerID in selections.keys.sorted() {
+                        var arguments = ["providers", "select", providerID]
+                        for modelID in selections[providerID] ?? [] {
+                            arguments.append(contentsOf: ["--model", modelID])
                         }
+                        _ = try await self.runGateway(arguments)
+                    }
+                    self.serviceBusy = true
+                    self.serviceStatus = "正在应用模型选择..."
+                    self.serviceEndpoint = nil
+                    defer { self.serviceBusy = false }
+                    try await self.restartGatewayProcess()
+                    let status = try await self.waitForGatewayStatus()
+                    self.applyGatewayStatus(status)
+                    _ = try await self.runGateway(["refresh-codex-catalog"])
+                    await self.refreshStatusNow()
                 }
             )
         }
@@ -224,7 +242,8 @@ extension AppDelegate {
     func modelBenchmarkRequest(
         method: String,
         timeoutSeconds: Int?,
-        providerID: String?
+        providerID: String?,
+        targetOutputTokens: Int?
     ) async throws -> ModelBenchmarkSnapshot? {
         let output: String
         if method == "POST", let timeoutSeconds {
@@ -236,6 +255,12 @@ extension AppDelegate {
             ]
             if let providerID {
                 arguments.append(contentsOf: ["--provider", providerID])
+            }
+            if let targetOutputTokens {
+                arguments.append(contentsOf: [
+                    "--target-output-tokens",
+                    String(targetOutputTokens),
+                ])
             }
             output = try await runGateway(arguments)
         } else {

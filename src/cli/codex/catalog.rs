@@ -5,7 +5,6 @@ use std::process::Command as ProcessCommand;
 
 use toml_edit::{DocumentMut, Item};
 
-use codex_mixin::CODEX_MIXIN_PROVIDER;
 use codex_mixin::catalog::{
     apply_web_search_capabilities, codex_catalog_from_models_with_metadata,
     codex_oauth_proxy_catalog_from_aggregated_models_with_metadata, load_template_catalog,
@@ -22,7 +21,7 @@ use crate::cli::metadata::load_model_metadata_resolver;
 
 pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::Result<()> {
     let config_path = resolve_codex_config_path(None)?;
-    let Some((requires_openai_auth, catalog_path)) = managed_catalog_settings(&config_path)? else {
+    let Some((oauth_proxy, catalog_path)) = managed_catalog_settings(&config_path)? else {
         println!("Codex model catalog is not managed by codex-mixin");
         return Ok(());
     };
@@ -35,7 +34,7 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
     let codex_home = config_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?;
-    let template = if requires_openai_auth {
+    let template = if oauth_proxy {
         let models_cache = codex_home.join("models_cache.json");
         let template =
             load_preferred_official_catalog(&state, &models_cache, Some(&catalog_path)).await?;
@@ -50,7 +49,7 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
         None
     };
     let metadata = load_model_metadata_resolver().await?;
-    let catalog = if requires_openai_auth {
+    let catalog = if oauth_proxy {
         codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
             &models,
             gateway_config.default_context_window,
@@ -95,20 +94,18 @@ pub(in crate::cli) fn managed_catalog_settings(
         return Ok(None);
     }
     let doc = raw_config.parse::<DocumentMut>()?;
+    let provider_id = managed_config_provider_id(&doc)?;
     let provider = doc
         .get("model_providers")
         .and_then(Item::as_table)
-        .and_then(|providers| providers.get(CODEX_MIXIN_PROVIDER))
+        .and_then(|providers| providers.get(provider_id))
         .and_then(Item::as_table)
-        .ok_or_else(|| anyhow::anyhow!("managed Codex config has no codex-mixin provider"))?;
-    let requires_openai_auth = match provider.get("requires_openai_auth") {
-        Some(item) => item
-            .as_bool()
-            .ok_or_else(|| anyhow::anyhow!("codex-mixin requires_openai_auth must be a boolean"))?,
-        None => false,
-    };
+        .ok_or_else(|| {
+            anyhow::anyhow!("managed Codex config has no {provider_id} provider table")
+        })?;
+    let oauth_proxy = managed_oauth_proxy_mode(provider_id, provider)?;
     let catalog_path = managed_catalog_path(&doc, &config_path)?;
-    Ok(Some((requires_openai_auth, catalog_path)))
+    Ok(Some((oauth_proxy, catalog_path)))
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -122,7 +119,7 @@ pub(in crate::cli) struct ManagedCatalogSummary {
 pub(in crate::cli) fn managed_catalog_summary(
     config_path: &Path,
 ) -> anyhow::Result<Option<ManagedCatalogSummary>> {
-    let Some((requires_openai_auth, catalog_path)) = managed_catalog_settings(config_path)? else {
+    let Some((oauth_proxy, catalog_path)) = managed_catalog_settings(config_path)? else {
         return Ok(None);
     };
     let catalog: serde_json::Value = serde_json::from_slice(&fs::read(&catalog_path)?)?;
@@ -132,7 +129,7 @@ pub(in crate::cli) fn managed_catalog_summary(
         .ok_or_else(|| anyhow::anyhow!("managed Codex model catalog has no models array"))?;
     Ok(Some(ManagedCatalogSummary {
         catalog_path,
-        mode: if requires_openai_auth {
+        mode: if oauth_proxy {
             "codex_oauth_proxy"
         } else {
             "custom_only"
@@ -164,10 +161,10 @@ pub(in crate::cli) fn write_generated_managed_codex_catalog(
 
 #[cfg(test)]
 pub(in crate::cli) fn refresh_managed_codex_catalog(config_path: &Path) -> anyhow::Result<bool> {
-    let Some((requires_openai_auth, _)) = managed_catalog_settings(config_path)? else {
+    let Some((oauth_proxy, _)) = managed_catalog_settings(config_path)? else {
         return Ok(false);
     };
-    if !requires_openai_auth {
+    if !oauth_proxy {
         return Ok(false);
     }
     let official_catalog_path = config_path
@@ -215,24 +212,22 @@ fn refresh_managed_codex_catalog_with_source(
         return Ok(false);
     }
     let doc = raw_config.parse::<DocumentMut>()?;
+    let provider_id = managed_config_provider_id(&doc)?;
     let provider = doc
         .get("model_providers")
         .and_then(Item::as_table)
-        .and_then(|providers| providers.get(CODEX_MIXIN_PROVIDER))
+        .and_then(|providers| providers.get(provider_id))
         .and_then(Item::as_table)
-        .ok_or_else(|| anyhow::anyhow!("managed Codex config has no codex-mixin provider"))?;
-    let requires_openai_auth = match provider.get("requires_openai_auth") {
-        Some(item) => item
-            .as_bool()
-            .ok_or_else(|| anyhow::anyhow!("codex-mixin requires_openai_auth must be a boolean"))?,
-        None => false,
-    };
-    if !requires_openai_auth && supported_web_search_models.is_none() {
+        .ok_or_else(|| {
+            anyhow::anyhow!("managed Codex config has no {provider_id} provider table")
+        })?;
+    let oauth_proxy = managed_oauth_proxy_mode(provider_id, provider)?;
+    if !oauth_proxy && supported_web_search_models.is_none() {
         return Ok(false);
     }
     let catalog_path = managed_catalog_path(&doc, &config_path)?;
     let managed_catalog = serde_json::from_slice(&fs::read(&catalog_path)?)?;
-    let mut refreshed = if requires_openai_auth && let Some(official_catalog) = official_catalog {
+    let mut refreshed = if oauth_proxy && let Some(official_catalog) = official_catalog {
         refresh_managed_oauth_catalog(official_catalog, &managed_catalog)?
     } else {
         managed_catalog
@@ -241,6 +236,21 @@ fn refresh_managed_codex_catalog_with_source(
         apply_web_search_capabilities(&mut refreshed, supported_web_search_models)?;
     }
     write_atomic_if_changed(&catalog_path, &serde_json::to_vec_pretty(&refreshed)?)
+}
+
+fn managed_oauth_proxy_mode(
+    provider_id: &str,
+    provider: &toml_edit::Table,
+) -> anyhow::Result<bool> {
+    if provider_id == CUSTOM_ONLY_CODEX_PROVIDER {
+        return Ok(false);
+    }
+    match provider.get("supports_websockets") {
+        Some(item) => item
+            .as_bool()
+            .ok_or_else(|| anyhow::anyhow!("codex-mixin supports_websockets must be a boolean")),
+        None => Ok(false),
+    }
 }
 
 pub(in crate::cli) async fn load_codex_install_template_online(
@@ -285,10 +295,10 @@ pub(in crate::cli) async fn refresh_managed_official_codex_catalog(
     state: &AppState,
     supported_web_search_models: Option<&HashSet<String>>,
 ) -> anyhow::Result<bool> {
-    let Some((requires_openai_auth, _)) = managed_catalog_settings(config_path)? else {
+    let Some((oauth_proxy, _)) = managed_catalog_settings(config_path)? else {
         return Ok(false);
     };
-    if !requires_openai_auth {
+    if !oauth_proxy {
         return Ok(false);
     }
     let models_cache = config_path
@@ -343,7 +353,7 @@ fn load_current_official_catalog(path: &Path) -> anyhow::Result<Option<serde_jso
     Ok((!models.is_empty()).then_some(catalog))
 }
 
-fn is_managed_catalog_model(model: &serde_json::Value) -> bool {
+pub(in crate::cli) fn is_managed_catalog_model(model: &serde_json::Value) -> bool {
     model
         .get("codex_mixin_managed")
         .and_then(serde_json::Value::as_bool)

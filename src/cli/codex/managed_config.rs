@@ -11,6 +11,7 @@ use crate::cli::atomic_file::write_atomic_if_changed;
 
 pub(in crate::cli) const MANAGED_CONFIG_MARKER: &str = "codex-mixin managed config";
 pub(in crate::cli) const MANAGED_CONFIG_HEADER: &str = "# codex-mixin managed config. Run `codex-mixin uninstall-codex` to restore the previous config.";
+pub(in crate::cli) const CUSTOM_ONLY_CODEX_PROVIDER: &str = "amazon-bedrock";
 
 #[derive(Debug, Eq, PartialEq)]
 pub(in crate::cli) struct CodexInstallPaths {
@@ -193,11 +194,12 @@ pub(in crate::cli) fn upsert_codex_config(
     catalog_path: &std::path::Path,
     base_url: &str,
     web_search: &str,
-    env_key: Option<&str>,
+    _env_key: Option<&str>,
     codex_oauth_proxy: bool,
 ) -> anyhow::Result<()> {
+    let provider_id = managed_codex_provider_id(codex_oauth_proxy);
     doc["model_catalog_json"] = value(catalog_path.to_string_lossy().to_string());
-    doc["model_provider"] = value(CODEX_MIXIN_PROVIDER);
+    doc["model_provider"] = value(provider_id);
     doc["web_search"] = value(web_search);
     if let Some(model) = default_model {
         doc["model"] = value(model);
@@ -212,25 +214,45 @@ pub(in crate::cli) fn upsert_codex_config(
     let providers = doc["model_providers"]
         .as_table_mut()
         .ok_or_else(|| anyhow::anyhow!("model_providers must be a TOML table"))?;
+    providers.remove(CODEX_MIXIN_PROVIDER);
+    if !codex_oauth_proxy {
+        providers.remove(CUSTOM_ONLY_CODEX_PROVIDER);
+    }
     let mut provider_table = Table::new();
-    provider_table["name"] = value("Codex Mixin");
     provider_table["base_url"] = value(base_url);
-    provider_table["wire_api"] = value("responses");
     if codex_oauth_proxy {
+        provider_table["name"] = value("Codex Mixin");
+        provider_table["wire_api"] = value("responses");
         provider_table["requires_openai_auth"] = value(true);
         provider_table["supports_websockets"] = value(true);
-        provider_table.remove("env_key");
-    } else {
-        provider_table.remove("requires_openai_auth");
-        provider_table.remove("supports_websockets");
-        if let Some(env_key) = env_key {
-            provider_table["env_key"] = value(env_key);
-        } else {
-            provider_table.remove("env_key");
-        }
     }
-    providers.insert(CODEX_MIXIN_PROVIDER, Item::Table(provider_table));
+    providers.insert(provider_id, Item::Table(provider_table));
     Ok(())
+}
+
+pub(in crate::cli) fn managed_codex_provider_id(codex_oauth_proxy: bool) -> &'static str {
+    if codex_oauth_proxy {
+        CODEX_MIXIN_PROVIDER
+    } else {
+        CUSTOM_ONLY_CODEX_PROVIDER
+    }
+}
+
+pub(in crate::cli) fn managed_config_provider_id(doc: &DocumentMut) -> anyhow::Result<&str> {
+    if let Some(provider_id) = doc.get("model_provider").and_then(Item::as_str) {
+        if provider_id == CODEX_MIXIN_PROVIDER || provider_id == CUSTOM_ONLY_CODEX_PROVIDER {
+            return Ok(provider_id);
+        }
+        anyhow::bail!("unsupported managed Codex provider: {provider_id}");
+    }
+    let providers = doc.get("model_providers").and_then(Item::as_table);
+    if providers.is_some_and(|providers| providers.contains_key(CUSTOM_ONLY_CODEX_PROVIDER)) {
+        return Ok(CUSTOM_ONLY_CODEX_PROVIDER);
+    }
+    if providers.is_some_and(|providers| providers.contains_key(CODEX_MIXIN_PROVIDER)) {
+        return Ok(CODEX_MIXIN_PROVIDER);
+    }
+    anyhow::bail!("managed Codex config has no supported provider table")
 }
 
 pub(in crate::cli) fn sync_managed_codex_gateway_base_url(
@@ -247,12 +269,15 @@ pub(in crate::cli) fn sync_managed_codex_gateway_base_url(
         return Ok(false);
     }
     let mut doc = raw_config.parse::<DocumentMut>()?;
+    let provider_id = managed_config_provider_id(&doc)?.to_owned();
     let provider = doc
         .get_mut("model_providers")
         .and_then(Item::as_table_mut)
-        .and_then(|providers| providers.get_mut(CODEX_MIXIN_PROVIDER))
+        .and_then(|providers| providers.get_mut(provider_id.as_str()))
         .and_then(Item::as_table_mut)
-        .ok_or_else(|| anyhow::anyhow!("managed Codex config has no codex-mixin provider"))?;
+        .ok_or_else(|| {
+            anyhow::anyhow!("managed Codex config has no {provider_id} provider table")
+        })?;
     let base_url = format!("http://{bind}/v1");
     if provider.get("base_url").and_then(Item::as_str) == Some(base_url.as_str()) {
         return Ok(false);

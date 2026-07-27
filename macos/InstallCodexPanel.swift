@@ -16,15 +16,15 @@ enum CodexInstallMode: Equatable {
     var completionMessage: String {
         switch self {
         case .openAIAccount:
-            return "官方 GPT、自定义模型目录和 Web Search 能力探测已完成。请重启 Codex App；CLI 需要开新会话。"
+            return "官方账号模式已安装：官方 GPT、插件、云任务和账户功能保持可用，自定义模型同时加入模型选择器。请重启 Codex App；CLI 需要开新会话。"
         case .customModelsOnly:
-            return "自定义模型目录和 Web Search 能力探测已完成，未读取 OpenAI 模型缓存，并已选择自定义默认模型。请重启 Codex App；CLI 需要开新会话。"
+            return "仅自定义模型模式已安装：模型选择器会显示自定义模型；界面中的 amazon-bedrock 只是本地登录占位，不会连接 AWS。官方插件、云任务和账户功能不可用。以后登录官方账号时，请先“从 Codex 恢复”，再改装官方账号模式。"
         }
     }
 }
 
 func runInstallCodexPanel() -> CodexInstallMode? {
-    let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 760, height: 440))
+    let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 820, height: 520))
     let panel = NSPanel(
         contentRect: contentView.frame,
         styleMask: [.titled, .closable],
@@ -41,27 +41,27 @@ func runInstallCodexPanel() -> CodexInstallMode? {
     titleLabel.font = .boldSystemFont(ofSize: 18)
     titleLabel.textColor = .labelColor
 
-    let detailLabel = NSTextField(wrappingLabelWithString: "两种模式都会备份 ~/.codex/config.toml、注册独立的 codex-mixin provider，并迁移现有历史会话。请选择与你的账号情况一致的模式。")
+    let detailLabel = NSTextField(wrappingLabelWithString: "先按下面条件选择模式。安装会备份 ~/.codex/config.toml；仅自定义模式还会备份 auth.json，卸载时一并恢复。两种模式可以切换，但请先执行“从 Codex 恢复”，再重新安装。")
     detailLabel.textColor = .secondaryLabelColor
     detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     detailLabel.translatesAutoresizingMaskIntoConstraints = false
-    detailLabel.widthAnchor.constraint(equalToConstant: 660).isActive = true
+    detailLabel.widthAnchor.constraint(equalToConstant: 720).isActive = true
 
-    let oauthButton = NSButton(title: "我有 OpenAI / ChatGPT 账号（保留官方 GPT）", target: nil, action: nil)
+    let oauthButton = NSButton(title: "官方账号模式（推荐：已登录 Codex）", target: nil, action: nil)
     oauthButton.setButtonType(.radio)
-    let oauthDetail = NSTextField(wrappingLabelWithString: "需要 Codex 已登录并生成 ~/.codex/models_cache.json；官方 GPT 继续走官方路径，自定义模型走本地网关。")
+    let oauthDetail = NSTextField(wrappingLabelWithString: "前提：先在官方 Codex App 登录并打开一次。保留官方认证、GPT、插件、云任务和账户功能；自定义模型经本地网关加入同一个模型选择器。若尚未登录，请先取消安装并去 Codex 登录。")
     oauthDetail.textColor = .secondaryLabelColor
     oauthDetail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     oauthDetail.translatesAutoresizingMaskIntoConstraints = false
-    oauthDetail.widthAnchor.constraint(equalToConstant: 626).isActive = true
+    oauthDetail.widthAnchor.constraint(equalToConstant: 686).isActive = true
 
-    let customOnlyButton = NSButton(title: "我没有 OpenAI / ChatGPT 账号（仅使用自定义模型）", target: nil, action: nil)
+    let customOnlyButton = NSButton(title: "仅自定义模型模式（没有官方登录也可用）", target: nil, action: nil)
     customOnlyButton.setButtonType(.radio)
-    let customOnlyDetail = NSTextField(wrappingLabelWithString: "不需要也不会读取 models_cache.json；只安装上游模型，并自动选择一个自定义模型作为默认模型。")
+    let customOnlyDetail = NSTextField(wrappingLabelWithString: "会备份并临时替换 ~/.codex/auth.json，用本地 Bedrock 形态的占位身份开启 Desktop 模型选择器。界面可能显示 amazon-bedrock，但请求只到本地网关，不连接 AWS。官方插件、云任务和账户功能不可用；以后要用官方账号时，请先恢复再改装官方模式。")
     customOnlyDetail.textColor = .secondaryLabelColor
     customOnlyDetail.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     customOnlyDetail.translatesAutoresizingMaskIntoConstraints = false
-    customOnlyDetail.widthAnchor.constraint(equalToConstant: 626).isActive = true
+    customOnlyDetail.widthAnchor.constraint(equalToConstant: 686).isActive = true
 
     let oauthOption = NSStackView(views: [oauthButton, oauthDetail])
     oauthOption.orientation = .vertical
@@ -98,6 +98,7 @@ func runInstallCodexPanel() -> CodexInstallMode? {
     let installButton = NSButton(title: "安装", target: nil, action: nil)
     installButton.bezelStyle = .rounded
     installButton.keyEquivalent = "\r"
+    installButton.isEnabled = false
     installButton.translatesAutoresizingMaskIntoConstraints = false
     installButton.widthAnchor.constraint(equalToConstant: 96).isActive = true
 
@@ -111,7 +112,7 @@ func runInstallCodexPanel() -> CodexInstallMode? {
     buttonRowContainer.translatesAutoresizingMaskIntoConstraints = false
     buttonRowContainer.addSubview(buttonRow)
     NSLayoutConstraint.activate([
-        buttonRowContainer.widthAnchor.constraint(equalToConstant: 660),
+        buttonRowContainer.widthAnchor.constraint(equalToConstant: 720),
         buttonRowContainer.heightAnchor.constraint(equalToConstant: 34),
         buttonRow.trailingAnchor.constraint(equalTo: buttonRowContainer.trailingAnchor),
         buttonRow.centerYAnchor.constraint(equalTo: buttonRowContainer.centerYAnchor),
@@ -129,17 +130,15 @@ func runInstallCodexPanel() -> CodexInstallMode? {
         mainStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 28),
     ])
 
-    let modelsCachePath = NSString(string: "~/.codex/models_cache.json").expandingTildeInPath
-    var selectedMode: CodexInstallMode = FileManager.default.fileExists(atPath: modelsCachePath)
-        ? .openAIAccount
-        : .customModelsOnly
+    var selectedMode: CodexInstallMode?
     let applySelection: (CodexInstallMode) -> Void = { mode in
         selectedMode = mode
         oauthButton.state = mode == .openAIAccount ? .on : .off
         customOnlyButton.state = mode == .customModelsOnly ? .on : .off
+        installButton.isEnabled = true
         providerField.stringValue = mode == .openAIAccount
-            ? "codex-mixin / requires_openai_auth"
-            : "codex-mixin / custom models only"
+            ? "codex-mixin / 官方 OAuth 代理"
+            : "amazon-bedrock / 本地占位（不连接 AWS）"
     }
     let oauthTarget = ModalActionTarget {
         applySelection(.openAIAccount)
@@ -151,10 +150,9 @@ func runInstallCodexPanel() -> CodexInstallMode? {
     oauthButton.action = #selector(ModalActionTarget.run(_:))
     customOnlyButton.target = customOnlyTarget
     customOnlyButton.action = #selector(ModalActionTarget.run(_:))
-    applySelection(selectedMode)
-
     var confirmedMode: CodexInstallMode?
     let installTarget = ModalActionTarget {
+        guard let selectedMode else { return }
         confirmedMode = selectedMode
         NSApp.stopModal(withCode: .OK)
     }

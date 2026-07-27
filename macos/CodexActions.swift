@@ -24,7 +24,7 @@ extension AppDelegate {
     }
 
     @objc func uninstallCodexConfig() {
-        guard confirm(title: "从 Codex 恢复官方配置", message: "会恢复安装前备份的 ~/.codex/config.toml，将历史会话迁回原 provider，并删除 Codex Mixin 托管的模型目录。完成后需要重启 Codex App；CLI 需要开新会话。") else { return }
+        guard confirm(title: "从 Codex 恢复安装前配置", message: "会恢复安装前备份的 ~/.codex/config.toml；如果使用过“仅自定义模型模式”，也会删除本地登录占位并恢复原 ~/.codex/auth.json。历史会话将迁回原 provider，托管模型目录会被删除。完成后需要重启 Codex App；CLI 需要开新会话。") else { return }
         Task { @MainActor in
             do {
                 let output = try await runGateway(["uninstall-codex"])

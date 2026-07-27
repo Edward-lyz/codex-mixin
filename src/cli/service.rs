@@ -24,8 +24,8 @@ use super::codex::{
 };
 use super::runtime::*;
 
-pub(super) const CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
-pub(super) const OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(300);
+pub(super) const CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
+pub(super) const OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 pub(super) const GATEWAY_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
 
 pub(super) fn init_tracing(log_file: Option<&Path>) -> anyhow::Result<()> {

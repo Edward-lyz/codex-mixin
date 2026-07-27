@@ -155,6 +155,20 @@ fn target(provider: &ProviderRuntime, model: &str) -> BenchmarkTarget {
     }
 }
 
+#[test]
+fn benchmark_request_defaults_to_full_test_and_accepts_ttft_only() {
+    let full: StartBenchmarkRequest =
+        serde_json::from_value(json!({"timeout_seconds": 10})).unwrap();
+    assert_eq!(full.target_output_tokens, BENCHMARK_TARGET_OUTPUT_TOKENS);
+
+    let ttft: StartBenchmarkRequest = serde_json::from_value(json!({
+        "timeout_seconds": 10,
+        "target_output_tokens": 1
+    }))
+    .unwrap();
+    assert_eq!(ttft.target_output_tokens, 1);
+}
+
 #[tokio::test]
 async fn measures_ttft_and_generation_tps() {
     let provider = spawn_benchmark_server(Duration::from_millis(20)).await;
@@ -164,6 +178,7 @@ async fn measures_ttft_and_generation_tps() {
         &client,
         &target(&provider, "Claude Sonnet 5"),
         Duration::from_secs(1),
+        BENCHMARK_TARGET_OUTPUT_TOKENS,
     )
     .await
     .unwrap();
@@ -176,6 +191,28 @@ async fn measures_ttft_and_generation_tps() {
 }
 
 #[tokio::test]
+async fn ttft_only_finishes_at_the_first_token() {
+    let provider = spawn_benchmark_server(Duration::from_millis(30)).await;
+    let client = Client::new();
+
+    let result = benchmark_model(
+        &client,
+        &target(&provider, "latency-only"),
+        Duration::from_millis(50),
+        1,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.status, BenchmarkResultStatus::Completed);
+    assert_eq!(result.output_tokens, Some(1));
+    assert!(result.ttft_ms.unwrap() >= 25);
+    assert!(result.total_ms < 50);
+    assert!(result.generation_ms.is_none());
+    assert!(result.tps.is_none());
+}
+
+#[tokio::test]
 async fn records_per_model_timeout() {
     let provider = spawn_benchmark_server(Duration::from_millis(100)).await;
     let client = Client::new();
@@ -184,6 +221,7 @@ async fn records_per_model_timeout() {
         &client,
         &target(&provider, "slow-model"),
         Duration::from_millis(20),
+        BENCHMARK_TARGET_OUTPUT_TOKENS,
     )
     .await
     .unwrap();
@@ -201,6 +239,7 @@ async fn measures_openai_reasoning_tokens() {
         &client,
         &target(&provider, "deepseek-reasoner"),
         Duration::from_secs(1),
+        BENCHMARK_TARGET_OUTPUT_TOKENS,
     )
     .await
     .unwrap();
@@ -237,6 +276,7 @@ async fn uses_end_to_end_tps_when_all_output_arrives_in_one_network_chunk() {
         &Client::new(),
         &target(&provider, "Kimi-K2.7-Code"),
         Duration::from_secs(1),
+        BENCHMARK_TARGET_OUTPUT_TOKENS,
     )
     .await
     .unwrap();
@@ -260,6 +300,7 @@ async fn persists_each_result_and_finishes_the_run() {
         .start(
             vec![target(&provider, "model-a"), target(&provider, "model-b")],
             Duration::from_secs(1),
+            BENCHMARK_TARGET_OUTPUT_TOKENS,
         )
         .unwrap();
     for _ in 0..100 {
@@ -293,6 +334,7 @@ async fn runs_different_provider_groups_concurrently() {
         .start(
             vec![target(&first, "same-model"), target(&second, "same-model")],
             Duration::from_secs(2),
+            BENCHMARK_TARGET_OUTPUT_TOKENS,
         )
         .unwrap();
     for _ in 0..100 {

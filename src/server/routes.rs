@@ -127,7 +127,7 @@ async fn start_model_benchmarks(
     let targets = state.benchmark_targets(&request.providers, &request.models)?;
     let snapshot = state
         .benchmarks
-        .start(targets, timeout)
+        .start(targets, timeout, request.target_output_tokens)
         .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
     Ok((
         StatusCode::ACCEPTED,

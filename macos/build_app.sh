@@ -54,6 +54,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/UpdateSupport.swift" \
   "$ROOT_DIR/macos/SettingsPanel.swift" \
   "$ROOT_DIR/macos/ProviderSupport.swift" \
+  "$ROOT_DIR/macos/ProviderWindowLayoutSupport.swift" \
   "$ROOT_DIR/macos/ProviderSettingsWindow.swift" \
   "$ROOT_DIR/macos/MenuViewUpdateSupport.swift" \
   "$ROOT_DIR/macos/AppOperationLogging.swift" \

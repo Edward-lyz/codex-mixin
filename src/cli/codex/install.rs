@@ -5,18 +5,16 @@ use std::process::Command as ProcessCommand;
 
 use toml_edit::{DocumentMut, Item};
 
-use codex_mixin::CODEX_MIXIN_PROVIDER;
 use codex_mixin::catalog::{
     codex_catalog_from_models_with_metadata,
     codex_oauth_proxy_catalog_from_aggregated_models_with_metadata,
 };
 use codex_mixin::config::GatewayConfig;
-use codex_mixin::history::{
-    migrate_history_from_mixin_provider, migrate_history_to_mixin_provider,
-};
+use codex_mixin::history::{migrate_history_from_provider, migrate_history_to_provider};
 use codex_mixin::server::AppState;
 
 use super::catalog::*;
+use super::managed_auth::*;
 use super::managed_config::*;
 use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::config_input::normalize_base_url;
@@ -36,6 +34,26 @@ pub(in crate::cli) struct InstallCodexOptions {
 }
 
 pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyhow::Result<()> {
+    let config_path = resolve_codex_config_path(options.config_path.clone())?;
+    let auth_mode = if options.codex_oauth_proxy {
+        ManagedAuthMode::Official
+    } else {
+        ManagedAuthMode::CustomOnly
+    };
+    let auth_transaction = ManagedAuthTransaction::begin(&config_path, auth_mode)?;
+    let result = install_codex_inner(options).await;
+    match result {
+        Ok(()) => auth_transaction.commit(),
+        Err(install_error) => match auth_transaction.rollback() {
+            Ok(()) => Err(install_error),
+            Err(rollback_error) => Err(anyhow::anyhow!(
+                "{install_error}; Codex auth rollback also failed: {rollback_error}"
+            )),
+        },
+    }
+}
+
+async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()> {
     let InstallCodexOptions {
         requested_model,
         set_default,
@@ -47,6 +65,11 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
         env_key,
         no_env_key,
     } = options;
+    if env_key.is_some() || no_env_key {
+        println!(
+            "codex auth note: --env-key/--no-env-key are ignored; both install modes use Codex auth"
+        );
+    }
     let paths = resolve_codex_install_paths(config_path, catalog_path)?;
     println!(
         "codex install started: mode={}, config={}, catalog={}",
@@ -88,17 +111,7 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
     };
     let gateway_base_url =
         normalize_base_url(base_url.unwrap_or_else(|| format!("http://{gateway_bind}/v1")))?;
-    let env_key = if codex_oauth_proxy || no_env_key {
-        None
-    } else {
-        env_key.or_else(|| {
-            gateway_config
-                .gateway_api_key
-                .as_ref()
-                .map(|_| "CODEX_GATEWAY_KEY".to_owned())
-        })
-    };
-
+    let provider_id = managed_codex_provider_id(codex_oauth_proxy);
     let _config_lock = ManagedConfigLock::acquire(&paths.config)?;
     let raw_config = read_managed_config_for_install(&paths.config)?;
     let mut doc = if raw_config.trim().is_empty() {
@@ -129,7 +142,7 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
         &paths.catalog,
         &gateway_base_url,
         &web_search,
-        env_key.as_deref(),
+        None,
         codex_oauth_proxy,
     )?;
     let serialized_config = format!("{MANAGED_CONFIG_HEADER}\n{doc}");
@@ -157,10 +170,10 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
         &raw_config,
         &serialized_catalog,
         serialized_config.as_bytes(),
-        || validate_codex_install(codex_home, &expected_model_slugs),
+        || validate_codex_install(codex_home, provider_id, &expected_model_slugs),
     )?;
 
-    let history = migrate_history_to_mixin_provider(codex_home)?;
+    let history = migrate_history_to_provider(codex_home, provider_id)?;
     println!("codex config updated: {}", paths.config.display());
     println!(
         "codex config backup: {}",
@@ -171,7 +184,7 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
     println!("metadata entries loaded: {}", metadata.len());
     println!("web search capabilities: cached/provider metadata applied");
     println!("web search discovery: continues in the gateway background");
-    println!("provider: {CODEX_MIXIN_PROVIDER}");
+    println!("provider: {provider_id}");
     println!(
         "history migrated: {} JSONL files, {} SQLite rows",
         history.jsonl_files_changed, history.sqlite_rows_changed
@@ -181,6 +194,12 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
     }
     if codex_oauth_proxy {
         println!("codex oauth proxy: enabled");
+        println!("codex auth: official account preserved");
+    } else {
+        println!(
+            "custom-only model picker: enabled with a local Bedrock-shaped login placeholder (no AWS connection)"
+        );
+        println!("official Codex plugins, cloud tasks, and account features: unavailable");
     }
     if let Some(selected_model) = selected_model {
         println!("default model: {selected_model}");
@@ -188,11 +207,6 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
         println!("default model: unchanged");
     }
     println!("base_url: {gateway_base_url}");
-    if let Some(env_key) = env_key
-        && !codex_oauth_proxy
-    {
-        println!("env_key: {env_key}");
-    }
     println!("reload required: restart Codex app; for Codex CLI, start a new session");
     Ok(())
 }
@@ -215,6 +229,7 @@ pub(in crate::cli) fn uninstall_codex(
         );
     }
     let managed_doc = raw_config.parse::<DocumentMut>()?;
+    let managed_provider = managed_config_provider_id(&managed_doc)?.to_owned();
     let managed_catalog_path = managed_catalog_path(&managed_doc, &config_path)?;
     if let Some(explicit_catalog_path) = catalog_path {
         let explicit_catalog_path = absolute_path(explicit_catalog_path)?;
@@ -255,10 +270,25 @@ pub(in crate::cli) fn uninstall_codex(
         fs::remove_file(&absent_marker_path)?;
         println!("codex config removed; no previous config existed");
     }
+    match uninstall_managed_custom_auth(&config_path)? {
+        ManagedAuthUninstall::NotManaged => {}
+        ManagedAuthUninstall::RemovedFake => {
+            println!("codex custom-mode login placeholder removed");
+        }
+        ManagedAuthUninstall::RestoredBackup => {
+            println!("codex auth restored from the pre-install backup");
+        }
+        ManagedAuthUninstall::PreservedChangedAuth { backup } => {
+            println!("codex auth changed after custom-mode installation; current login preserved");
+            if let Some(backup) = backup {
+                println!("previous auth backup retained: {}", backup.display());
+            }
+        }
+    }
     let codex_home = config_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?;
-    let history = migrate_history_from_mixin_provider(codex_home, &restored_provider)?;
+    let history = migrate_history_from_provider(codex_home, &managed_provider, &restored_provider)?;
     println!("history provider restored: {restored_provider}");
     println!(
         "history restored: {} JSONL files, {} SQLite rows",
@@ -365,6 +395,7 @@ pub(in crate::cli) fn write_managed_codex_files(
 
 pub(in crate::cli) fn validate_codex_install(
     codex_home: &Path,
+    expected_provider: &str,
     expected_model_slugs: &[String],
 ) -> anyhow::Result<()> {
     let codex_cli = resolve_codex_cli()?;
@@ -401,13 +432,13 @@ pub(in crate::cli) fn validate_codex_install(
     let effective_provider = config_check
         .pointer("/details/model provider")
         .and_then(serde_json::Value::as_str);
-    if effective_provider != Some(CODEX_MIXIN_PROVIDER) {
+    if effective_provider != Some(expected_provider) {
         anyhow::bail!(
-            "Codex loaded model provider {:?}, expected {CODEX_MIXIN_PROVIDER}",
+            "Codex loaded model provider {:?}, expected {expected_provider}",
             effective_provider
         );
     }
-    println!("codex validation: doctor config.load ok; provider={CODEX_MIXIN_PROVIDER}");
+    println!("codex validation: doctor config.load ok; provider={expected_provider}");
 
     let models = ProcessCommand::new(&codex_cli)
         .args(["debug", "models"])

@@ -75,7 +75,7 @@ Codex Mixin 的解法是：Codex 连到本机自动分配的 loopback 端口，�
 - 协议转换：支持 Anthropic Messages 和 OpenAI Chat Completions 上游。
 - 图片能力：官方 GPT 保留 Codex 原生生图；自定义模型可调用上游 OpenAI-compatible 生图接口。
 - 模型 metadata 补齐：结合 LiteLLM metadata 和内置正则规则补齐上下文窗口、能力和 instruction 字段。
-- 模型测速：菜单栏一键测试全部上游模型的 TTFT、TPS、实际 usage tokens、总耗时和本次额度花费；结果可按列升降序排列，并持续保存后台结果。
+- 模型选择与测速：独立窗口统一完成模型搜索、勾选和保存，并对已选模型测试 TTFT、TPS、实际 usage tokens、总耗时和本次额度花费；结果可按列升降序排列并持续保存。
 - Fusion 多模型编排：多个 Panel 并行分析，经 Judge 汇总后由 Final 模型流式回答；中间结果可使用 Codex 原生交互式 `Fusion · Review` 展示。
 - 菜单栏产品化：启动、暂停、重启、配置密钥、安装到 Codex、恢复、查看额度和日志都在菜单栏完成。
 - App 启动即用：打开菜单栏 App 后自动启动后台网关，并在菜单顶部显示实际 endpoint。
@@ -118,10 +118,10 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 #### 本地 Codex App 用户
 
 1. 打开 `Codex Mixin.app`。
-2. 点击菜单栏图标，选择 `设置供应商与密钥...`。
+2. 点击菜单栏图标，选择 `供应商设置...`。
 3. 选择 provider，填入 API Key。上游地址只填根地址，不要填 `/v1/messages` 或 `/v1/chat/completions`。
 4. 点击 `启动本地网关`。
-5. 点击 `安装到 Codex...`，按实际情况选择“有 OpenAI / ChatGPT 账号”或“仅使用自定义模型”。
+5. 点击 `安装到 Codex...`，明确选择“官方账号模式”或“仅自定义模型模式”。
 6. 重启 Codex App。
 7. 在 Codex 模型选择器里选择可用模型。
 
@@ -132,9 +132,9 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 ```bash
 codex-mixin providers add --preset openrouter --key sk-or-v1-...
 codex-mixin doctor
-# 有 OpenAI / ChatGPT 账号：保留官方 GPT
+# 官方账号模式：请先在 Codex 登录并打开一次
 codex-mixin install-codex --codex-oauth-proxy
-# 没有 OpenAI / ChatGPT 账号：不依赖 models_cache.json
+# 仅自定义模型模式：不依赖 models_cache.json
 codex-mixin install-codex --custom-only
 codex-mixin start --daemon
 ```
@@ -183,18 +183,21 @@ Baidu OneAPI 的额度接口必须同时填写额度用户名；CLI 和 App 都�
 
 | 模式 | CLI 命令 | `models_cache.json` | 安装结果 |
 | --- | --- | --- | --- |
-| 有 OpenAI / ChatGPT 账号 | `codex-mixin install-codex --codex-oauth-proxy` | 必须存在；请先登录并打开一次 Codex | 合并官方 GPT 与自定义模型，保留官方 OAuth 能力 |
-| 没有 OpenAI / ChatGPT 账号 | `codex-mixin install-codex --custom-only` | 不依赖、不要求存在 | 只安装上游模型，并自动设置一个自定义默认模型 |
+| 官方账号模式 | `codex-mixin install-codex --codex-oauth-proxy` | 必须存在；请先登录并打开一次 Codex | 合并官方 GPT 与自定义模型，保留官方 OAuth、插件、云任务和账户能力 |
+| 仅自定义模型模式 | `codex-mixin install-codex --custom-only` | 不依赖、不要求存在 | 备份并临时替换 Codex 登录，用本地登录占位开启模型选择器；官方插件、云任务和账户功能不可用 |
+
+CLI 不会根据 `auth.json` 或 `models_cache.json` 猜测模式，也不允许省略模式参数。即使你有官方账号，也可以明确选择仅自定义模型模式；如果想使用官方能力，请先取消安装，在 Codex 中登录并打开一次，然后选择官方账号模式。
 
 安装会做这些事：
 
 1. 读取上游 models 接口，生成 Codex 可用的模型目录。
 2. 写入独立模型目录文件 `~/.codex/model-catalogs/mixin-models.json`。
 3. 备份当前 `~/.codex/config.toml`。
-4. 注册独立的 `codex-mixin` provider，不覆盖 Codex 内置 `openai` provider。
-5. 将顶层 `model_provider` 设置为 `codex-mixin`，由本地网关分流官方 GPT 与自定义模型。
-6. 将现有 JSONL 和 SQLite 历史索引统一迁移到 `codex-mixin`，并保留迁移前备份。
-7. 有账号模式会标记 provider 使用 Codex 官方 OAuth；仅自定义模型模式不会写入该标记，也不会加载官方模型缓存。
+4. 官方账号模式注册独立的 `codex-mixin` provider；仅自定义模式复用 Codex 内置 `amazon-bedrock` provider，并只把它的 `base_url` 指向本地网关。两种模式都不覆盖内置 `openai` provider。
+5. 将顶层 `model_provider` 设置为当前模式对应的托管 provider。
+6. 将现有 JSONL 和 SQLite 历史索引迁移到当前托管 provider，并保留迁移前备份。
+7. 官方账号模式写入 `requires_openai_auth = true` 和 `supports_websockets = true`。仅自定义模式使用本地 Bedrock-shaped 登录占位；Codex Desktop 对该账户类型不应用官方模型白名单，因此完整自定义目录会出现在模型选择器。
+8. 仅自定义模型模式会把原 `~/.codex/auth.json` 备份到 `auth.json.codex-mixin.backup`；原文件不存在时写入 `auth.json.codex-mixin.absent` 标记，然后安装由 codex-mixin 管理的本地登录占位。
 
 有账号模式的关键配置形态：
 
@@ -210,20 +213,18 @@ requires_openai_auth = true
 supports_websockets = true
 ```
 
-仅自定义模型模式的 provider 不含 `requires_openai_auth`，并会把一个上游模型写成默认模型：
+仅自定义模型模式只覆盖内置 `amazon-bedrock` provider 允许覆盖的 `base_url`，并会把一个上游模型写成默认模型：
 
 ```toml
 model = "DeepSeek-V4-Flash"
 model_catalog_json = "/Users/you/.codex/model-catalogs/mixin-models.json"
-model_provider = "codex-mixin"
+model_provider = "amazon-bedrock"
 
-[model_providers.codex-mixin]
-name = "Codex Mixin"
+[model_providers.amazon-bedrock]
 base_url = "http://127.0.0.1:<自动分配端口>/v1"
-wire_api = "responses"
 ```
 
-最新版 Codex 禁止覆盖内置 `openai` provider，因此 Codex Mixin 始终使用独立的 `codex-mixin` provider。即使首次配置里没有 `model_provider` 或 `model_providers`，安装器也会补齐所需配置。有账号模式下，官方 GPT 请求由网关转发到官方 Codex backend；两种模式下的自定义模型请求都会转发到已配置的上游。
+最新版 Codex 禁止覆盖内置 `openai` provider，并严格限制内置 provider 可修改的字段。Codex Mixin 的官方账号模式使用独立的 `codex-mixin` provider；仅自定义模式只修改 `amazon-bedrock.base_url`，其余 Bedrock provider 字段保持 Codex 默认值。即使首次配置里没有 `model_provider` 或 `model_providers`，安装器也会补齐所需配置。有账号模式下，官方 GPT 请求由网关转发到官方 Codex backend；两种模式下的自定义模型请求都会转发到已配置的上游。
 
 有账号模式安装后，可以在同一个 Codex 会话中从官方 GPT 切换到自定义模型，也可以再切回官方模型。Codex Mixin 会按每个 Responses WebSocket 请求重新分流，并在自定义模型连续调用时重建增量上下文。
 
@@ -239,7 +240,9 @@ codex-mixin install-codex --codex-oauth-proxy --model deepseek-chat --set-defaul
 codex-mixin uninstall-codex
 ```
 
-卸载会从备份配置读取原 provider；原配置没有显式 provider 时使用 Codex 默认的 `openai`。当前 `codex-mixin` 历史会同步迁回该 provider，避免恢复配置后会话消失。
+卸载会从备份配置读取原 provider；原配置没有显式 provider 时使用 Codex 默认的 `openai`。当前托管 provider 的历史会同步迁回该 provider，避免恢复配置后会话消失。仅自定义模型模式创建的本地登录占位会被删除，并恢复安装前的 `auth.json`；如果用户安装后自行改过登录，卸载会保留当前登录且不会用旧备份覆盖它。
+
+从仅自定义模型模式切到官方账号模式时，先执行卸载，登录 Codex 并打开一次以生成模型缓存，再用 `--codex-oauth-proxy` 重新安装。切回仅自定义模型模式时，直接用 `--custom-only` 重新安装即可，当前官方登录会被备份。
 
 安装或卸载后需要重启 Codex App。Codex CLI 需要开启新会话。
 
@@ -252,9 +255,9 @@ codex-mixin uninstall-codex
 - `重启本地网关`：按当前登录自启设置重启服务。
 - `登录时启动并开启服务`：登录后同时打开菜单栏 App 和网关；开启时将当前 daemon 切换为 launchd 服务，关闭时将仍在运行的服务切回后台 daemon。
 - `刷新状态与额度`：刷新服务状态和额度进度条。
-- `设置供应商与密钥...`：选择 provider、填写 API Key、上游根地址、本地保护密钥和额度接口。
+- `供应商设置...`：新增、删除和启停 provider，填写 API Key、上游根地址和额度信息，并刷新上游模型缓存。
+- `模型选择与测速...`：搜索、筛选和勾选要加入 Codex 的模型；未保存的选择会在测速前自动保存。下方结果表按模型显示 TTFT、TPS、usage、总耗时和状态，可点击表头切换升降序。关闭窗口或退出 App 不会停止后台测速，重开 App 会从 `~/.codex-mixin/model-benchmarks.json` 恢复上次结果。
 - `Fusion 设置...`：选择 1–8 个 Panel 模型以及 Judge、Final 模型，并控制是否在回答中展示中间结果。
-- `模型测速...`：按模型串行测试 TTFT 和 TPS；上游一次性返回全部输出时，TPS 按 output tokens / 请求总耗时计算。可点击表头切换升降序；关闭窗口或退出 App 不会停止后台任务，重开 App 会从 `~/.codex-mixin/model-benchmarks.json` 恢复上次结果。配置额度接口后，本次花费按测速前后的已用额度差估算。
 - `安装到 Codex...`：选择有账号或仅自定义模型模式；先确保网关已启动，再按实际动态端口生成模型目录并写入托管 Codex 配置。未检测到 `models_cache.json` 时默认选择仅自定义模型。
 - `从 Codex 恢复...`：恢复安装前备份并删除托管模型目录。
 - `检查更新...`：查询 GitHub 最新 release，下载并打开当前架构对应的 DMG。
@@ -286,6 +289,8 @@ Fusion 虚拟模型使用 `Panel → Judge → Final` 三段式管线。打开�
 codex-mixin providers list
 codex-mixin providers add --preset <preset> --key <key>
 codex-mixin doctor
+codex-mixin doctor --fix               # 自动修复权限、失效状态、网关启动、base_url、模型目录
+codex-mixin doctor --fix --restart-apps # 额外允许重启 ChatGPT/Codex App（会中断进行中的会话）
 codex-mixin status
 codex-mixin models --json
 codex-mixin quota --json
@@ -351,6 +356,9 @@ App 或 CLI 显式保存，临时监听地址使用 `start/serve --bind`。
 | 模型测速结果 | `~/.codex-mixin/model-benchmarks.json` |
 | Codex 配置 | `~/.codex/config.toml` |
 | Codex 配置备份 | `~/.codex/config.toml.codex-mixin.backup` |
+| Codex 登录 | `~/.codex/auth.json` |
+| 仅自定义模式登录备份 | `~/.codex/auth.json.codex-mixin.backup` |
+| 安装前无登录文件标记 | `~/.codex/auth.json.codex-mixin.absent` |
 | Codex 模型目录 | `~/.codex/model-catalogs/mixin-models.json` |
 
 做 Codex 配置实验时不要直接碰真实配置，可以使用隔离目录：
@@ -457,7 +465,7 @@ Codex Mixin exposes a Responses-compatible endpoint on an automatically selected
 - Supports Anthropic Messages and OpenAI Chat Completions upstreams.
 - Keeps native Codex image generation for official GPT models and can route custom-model image calls to an OpenAI-compatible upstream image endpoint.
 - Completes model metadata using LiteLLM metadata plus built-in model-family rules.
-- Benchmarks every upstream model from the menu bar, recording sortable TTFT, TPS, actual usage tokens, total latency, timeout results, and an estimated quota cost that survives app restarts.
+- Provides one model-selection and benchmark window for searching, enabling, and saving models, then recording sortable TTFT, TPS, actual usage tokens, total latency, timeout results, and estimated quota cost.
 - Orchestrates multiple Panel models in parallel, compares them with a Judge model, and streams a Final answer, with an optional native interactive `Fusion · Review` surface in Codex.
 - Provides a macOS menu bar control surface for service lifecycle, provider setup, Codex install, rollback, quota, logs, and updates.
 - Starts the background gateway when the menu bar app opens and prominently shows the active endpoint.
@@ -505,7 +513,7 @@ After launch, follow the menu bar actions to configure a provider and install it
 2. Open `Set Provider and Key...` from the menu bar.
 3. Choose a provider and enter your API key. Only enter the upstream root URL, not `/v1/messages` or `/v1/chat/completions`.
 4. Click `Start Local Gateway`.
-5. Click `Install to Codex...`, then choose whether you have an OpenAI / ChatGPT account or need custom models only.
+5. Click `Install to Codex...`, then explicitly choose Official Account Mode or Custom Models Only.
 6. Restart Codex Desktop.
 7. Pick an available model in Codex.
 
@@ -514,9 +522,9 @@ After launch, follow the menu bar actions to configure a provider and install it
 ```bash
 codex-mixin providers add --preset openrouter --key sk-or-v1-...
 codex-mixin doctor
-# With an OpenAI / ChatGPT account: keep official GPT models
+# Official account mode: sign in to Codex and open it once first
 codex-mixin install-codex --codex-oauth-proxy
-# Without an OpenAI / ChatGPT account: do not require models_cache.json
+# Custom-only mode: does not require models_cache.json
 codex-mixin install-codex --custom-only
 codex-mixin start --daemon
 ```
@@ -547,18 +555,21 @@ The install panel and CLI expose two mutually exclusive modes:
 
 | Mode | CLI command | `models_cache.json` | Result |
 | --- | --- | --- | --- |
-| OpenAI / ChatGPT account | `codex-mixin install-codex --codex-oauth-proxy` | Required; sign in and open Codex once first | Merges official GPT and custom models while preserving official OAuth features |
-| No OpenAI / ChatGPT account | `codex-mixin install-codex --custom-only` | Never read or required | Installs upstream models only and selects a custom default model |
+| Official account mode | `codex-mixin install-codex --codex-oauth-proxy` | Required; sign in and open Codex once first | Merges official GPT and custom models while preserving official OAuth, plugins, cloud tasks, and account features |
+| Custom models only | `codex-mixin install-codex --custom-only` | Never read or required | Backs up and temporarily replaces Codex auth, then uses a local login placeholder to enable the model picker; official plugins, cloud tasks, and account features are unavailable |
+
+The CLI never guesses a mode from `auth.json` or `models_cache.json`, and the mode flag is required. Even if you have an official account, you may explicitly choose custom-only mode. To use official features, cancel installation, sign in to Codex and open it once, then select official account mode.
 
 Installation:
 
 1. Fetches upstream models.
 2. Generates `~/.codex/model-catalogs/mixin-models.json`.
 3. Backs up `~/.codex/config.toml`.
-4. Registers a separate `codex-mixin` provider without overriding Codex's built-in `openai` provider.
-5. Sets `model_provider = "codex-mixin"`; the local gateway routes official GPT and custom models separately.
-6. Migrates existing JSONL and SQLite history indexes to `codex-mixin` while keeping backups.
-7. In account mode, marks the provider as OpenAI-authenticated and websocket-capable. Custom-only mode omits those settings and does not load the official model cache.
+4. Official account mode registers a separate `codex-mixin` provider. Custom-only mode reuses Codex's built-in `amazon-bedrock` provider and only points its `base_url` at the local gateway. Neither mode overrides the built-in `openai` provider.
+5. Sets `model_provider` to the managed provider for the selected mode.
+6. Migrates existing JSONL and SQLite history indexes to that managed provider while keeping backups.
+7. Official account mode writes `requires_openai_auth = true` and `supports_websockets = true`. Custom-only mode uses a local Bedrock-shaped login placeholder, which makes Codex Desktop skip its official-model allowlist and expose the complete custom catalog.
+8. In custom-only mode, backs up `~/.codex/auth.json` as `auth.json.codex-mixin.backup`; if no auth file existed, it creates an `auth.json.codex-mixin.absent` marker, then installs a codex-mixin-managed local login placeholder.
 
 Account-mode managed shape:
 
@@ -574,17 +585,15 @@ requires_openai_auth = true
 supports_websockets = true
 ```
 
-The custom-only provider omits `requires_openai_auth` and writes an upstream model as the default:
+Custom-only mode only overrides the built-in `amazon-bedrock` provider's supported `base_url` field and writes an upstream model as the default:
 
 ```toml
 model = "DeepSeek-V4-Flash"
 model_catalog_json = "/Users/you/.codex/model-catalogs/mixin-models.json"
-model_provider = "codex-mixin"
+model_provider = "amazon-bedrock"
 
-[model_providers.codex-mixin]
-name = "Codex Mixin"
+[model_providers.amazon-bedrock]
 base_url = "http://127.0.0.1:<auto-selected-port>/v1"
-wire_api = "responses"
 ```
 
 In account mode, you can switch from an official GPT model to a custom model and back within the same Codex task. Codex Mixin routes each Responses WebSocket request independently and rebuilds incremental custom-model context across turns.
@@ -595,7 +604,9 @@ Rollback:
 codex-mixin uninstall-codex
 ```
 
-Uninstall reads the original provider from the config backup, or uses Codex's default `openai` provider when none was configured. Existing `codex-mixin` sessions are migrated back so they remain visible after rollback.
+Uninstall reads the original provider from the config backup, or uses Codex's default `openai` provider when none was configured. Sessions using the managed provider are migrated back so they remain visible after rollback. It also removes the custom-only login placeholder and restores the pre-install `auth.json`. If the user changed auth after installation, uninstall preserves the current login instead of overwriting it with the old backup.
+
+To move from custom-only to official account mode, uninstall first, sign in to Codex and open it once to generate the model cache, then reinstall with `--codex-oauth-proxy`. To move back to custom-only mode, reinstall with `--custom-only`; the current official login is backed up.
 
 Restart Codex Desktop after install or uninstall. Start a new session for Codex CLI.
 
@@ -631,6 +642,8 @@ Custom upstreams currently support text-to-image generation only. Non-empty `ref
 codex-mixin providers list
 codex-mixin providers add --preset <preset> --key <key>
 codex-mixin doctor
+codex-mixin doctor --fix               # auto-repair permissions, stale state, gateway startup, base_url, model catalog
+codex-mixin doctor --fix --restart-apps # additionally allow restarting the ChatGPT/Codex app (interrupts active sessions)
 codex-mixin status
 codex-mixin models --json
 codex-mixin quota --json
@@ -656,6 +669,9 @@ codex-mixin migrate-history
 | LiteLLM metadata cache | `~/.codex-mixin/model_metadata_litellm.json` |
 | Codex config | `~/.codex/config.toml` |
 | Codex config backup | `~/.codex/config.toml.codex-mixin.backup` |
+| Codex auth | `~/.codex/auth.json` |
+| Custom-only auth backup | `~/.codex/auth.json.codex-mixin.backup` |
+| Pre-install auth-absent marker | `~/.codex/auth.json.codex-mixin.absent` |
 | Codex model catalog | `~/.codex/model-catalogs/mixin-models.json` |
 
 Use an isolated Codex home for experiments:

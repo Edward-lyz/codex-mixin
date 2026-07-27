@@ -72,10 +72,16 @@ pub struct ModelBenchmarkSnapshot {
 #[derive(Clone, Debug, Deserialize)]
 pub struct StartBenchmarkRequest {
     pub timeout_seconds: u64,
+    #[serde(default = "default_benchmark_target_output_tokens")]
+    pub target_output_tokens: u64,
     #[serde(default)]
     pub providers: Vec<String>,
     #[serde(default)]
     pub models: Vec<String>,
+}
+
+fn default_benchmark_target_output_tokens() -> u64 {
+    BENCHMARK_TARGET_OUTPUT_TOKENS
 }
 
 #[derive(Clone, Debug, Serialize)]

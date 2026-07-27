@@ -54,11 +54,6 @@ struct ProviderBenchmarkCost: Decodable {
     }
 }
 
-struct BenchmarkProviderOption {
-    let id: String
-    let displayName: String
-}
-
 struct ModelBenchmarkResult: Decodable {
     let model: String
     let providerID: String
@@ -87,47 +82,76 @@ struct ModelBenchmarkResult: Decodable {
     }
 }
 
-final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
-    typealias StartHandler = (Int, String?) async throws -> ModelBenchmarkSnapshot
+private struct ModelBenchmarkTableRow {
+    let providerID: String
+    let model: ProviderModelListItem
+    let result: ModelBenchmarkResult?
+
+    var key: String {
+        providerModelSelectionKey(providerID: providerID, modelID: model.id)
+    }
+}
+
+final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate,
+    NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate
+{
+    typealias StartHandler = (Int, String, Int) async throws -> ModelBenchmarkSnapshot
     typealias FetchHandler = () async throws -> ModelBenchmarkSnapshot?
-    typealias ProviderOptionsHandler = () async throws -> [BenchmarkProviderOption]
+    typealias LoadProvidersHandler = () async throws -> ProviderListResponse
+    typealias SaveSelectionsHandler = ([String: [String]]) async throws -> Void
 
     private let snapshotURL: URL
     private let startHandler: StartHandler
     private let fetchHandler: FetchHandler
-    private let providerOptionsHandler: ProviderOptionsHandler
+    private let loadProvidersHandler: LoadProvidersHandler
+    private let saveSelectionsHandler: SaveSelectionsHandler
     private var pollingTask: Task<Void, Never>?
     private var snapshot: ModelBenchmarkSnapshot?
-    private var displayedResults: [ModelBenchmarkResult] = []
+    private var providers: [ProviderView] = []
+    private var rows: [ModelBenchmarkTableRow] = []
+    private var resultCache: [String: ModelBenchmarkResult] = [:]
+    private var selectedModelKeys: Set<String> = []
+    private var savedModelKeys: Set<String> = []
+    private var isSavingSelections = false
+    private var isLaunchingBenchmark = false
 
-    private let timeoutPopup = NSPopUpButton()
     private let providerPopup = NSPopUpButton()
-    private let startButton = NSButton(title: "开始测速", target: nil, action: nil)
+    private let modePopup = NSPopUpButton()
+    private let timeoutPopup = NSPopUpButton()
+    private let startButton = NSButton(title: "测试当前 Provider", target: nil, action: nil)
+    private let searchField = NSSearchField()
+    private let selectionFilterPopup = NSPopUpButton()
+    private let selectAllButton = NSButton(title: "全选", target: nil, action: nil)
+    private let selectNoneButton = NSButton(title: "全不选", target: nil, action: nil)
+    private let saveSelectionButton = NSButton(title: "保存模型选择", target: nil, action: nil)
     private let progressIndicator = NSProgressIndicator()
-    private let statusLabel = NSTextField(labelWithString: "尚无测速结果")
-    private let summaryLabel = NSTextField(labelWithString: "")
-    private let costLabel = NSTextField(labelWithString: "")
+    private let statusLabel = NSTextField(labelWithString: "请选择 Provider")
+    private let summaryLabel = NSTextField(labelWithString: "默认只测试首 token 延迟（TTFT）")
     private let tableView = NSTableView()
-    private let emptyLabel = NSTextField(labelWithString: "暂无测速结果")
+    private let emptyLabel = NSTextField(labelWithString: "当前 Provider 没有模型")
 
     init(
         snapshotURL: URL,
         startHandler: @escaping StartHandler,
         fetchHandler: @escaping FetchHandler,
-        providerOptionsHandler: @escaping ProviderOptionsHandler
+        loadProvidersHandler: @escaping LoadProvidersHandler,
+        saveSelectionsHandler: @escaping SaveSelectionsHandler
     ) {
         self.snapshotURL = snapshotURL
         self.startHandler = startHandler
         self.fetchHandler = fetchHandler
-        self.providerOptionsHandler = providerOptionsHandler
+        self.loadProvidersHandler = loadProvidersHandler
+        self.saveSelectionsHandler = saveSelectionsHandler
+        let visibleFrame = NSScreen.main?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1_280, height: 800)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1080, height: 580),
+            contentRect: NSRect(origin: .zero, size: modelBenchmarkContentSize(for: visibleFrame)),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        window.title = "模型测速"
-        window.minSize = NSSize(width: 920, height: 440)
+        window.title = "模型选择与测速"
+        window.minSize = NSSize(width: 920, height: 520)
         window.isReleasedWhenClosed = false
         window.center()
         super.init(window: window)
@@ -141,7 +165,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
 
     func present() {
         loadPersistedSnapshot()
-        reloadProviderOptions()
+        reloadProviderModels()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
@@ -154,225 +178,288 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        displayedResults.count
+        rows.count
     }
 
-    func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let column = tableColumn, displayedResults.indices.contains(row) else { return nil }
-        let result = displayedResults[row]
+    func tableView(
+        _ tableView: NSTableView,
+        viewFor tableColumn: NSTableColumn?,
+        row: Int
+    ) -> NSView? {
+        guard let column = tableColumn, rows.indices.contains(row) else { return nil }
+        let modelRow = rows[row]
+        if column.identifier.rawValue == "selected" {
+            let button = NSButton(
+                checkboxWithTitle: "",
+                target: self,
+                action: #selector(toggleSelectedModel(_:))
+            )
+            button.state = selectedModelKeys.contains(modelRow.key) ? .on : .off
+            button.isEnabled = modelRow.model.isAvailable && !isSavingSelections
+            button.identifier = NSUserInterfaceItemIdentifier(modelRow.key)
+            let cell = NSTableCellView()
+            cell.addSubview(button)
+            button.translatesAutoresizingMaskIntoConstraints = false
+            NSLayoutConstraint.activate([
+                button.centerXAnchor.constraint(equalTo: cell.centerXAnchor),
+                button.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
+            ])
+            return cell
+        }
+
         let identifier = column.identifier
         let cell: NSTableCellView
-        if let reused = tableView.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView {
+        if let reused = tableView.makeView(withIdentifier: identifier, owner: self)
+            as? NSTableCellView
+        {
             cell = reused
         } else {
             cell = NSTableCellView()
             cell.identifier = identifier
             let field = NSTextField(labelWithString: "")
-            field.lineBreakMode = identifier.rawValue == "model" ? .byTruncatingMiddle : .byTruncatingTail
             field.translatesAutoresizingMaskIntoConstraints = false
+            field.lineBreakMode = identifier.rawValue == "model"
+                ? .byTruncatingMiddle
+                : .byTruncatingTail
             cell.textField = field
             cell.addSubview(field)
             NSLayoutConstraint.activate([
-                field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-                field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
+                field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 7),
+                field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -7),
                 field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
             ])
         }
-
-        let text: String
-        switch identifier.rawValue {
-        case "provider":
-            text = result.providerName
-            cell.toolTip = result.providerID
-        case "model":
-            text = result.model
-            cell.textField?.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-        case "ttft":
-            text = result.ttftMs.map(formatMilliseconds) ?? "-"
-        case "tps":
-            text = result.tps.map { String(format: "%.1f tok/s", $0) } ?? "-"
-            cell.toolTip = result.tps != nil && result.generationMs == nil
-                ? "上游一次性返回全部输出，TPS 按 output tokens / 请求总耗时计算。"
-                : nil
-        case "tokens":
-            if let outputTokens = result.outputTokens, let target = snapshot?.targetOutputTokens {
-                text = "\(outputTokens) / \(target)"
-            } else {
-                text = "-"
-            }
-        case "total":
-            text = formatMilliseconds(result.totalMs)
-        case "result":
-            text = resultStatusTitle(result.status)
-            cell.textField?.textColor = resultStatusColor(result.status)
-            cell.toolTip = result.error
-        default:
-            text = ""
-        }
-        if identifier.rawValue != "model" {
-            cell.textField?.font = .systemFont(ofSize: 12)
-        }
-        if identifier.rawValue != "result" {
-            cell.textField?.textColor = .labelColor
-            if identifier.rawValue != "tps" && identifier.rawValue != "provider" {
-                cell.toolTip = nil
-            }
-        }
-        cell.textField?.stringValue = text
+        configureCell(cell, for: modelRow, columnID: identifier.rawValue)
         return cell
     }
 
-    func tableView(_ tableView: NSTableView, sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]) {
-        updateDisplayedResults()
-        tableView.reloadData()
+    func tableView(
+        _ tableView: NSTableView,
+        sortDescriptorsDidChange oldDescriptors: [NSSortDescriptor]
+    ) {
+        rebuildRows()
+    }
+
+    func controlTextDidChange(_ obj: Notification) {
+        guard let field = obj.object as? NSSearchField, field === searchField else { return }
+        rebuildRows()
+    }
+
+    private func configureCell(
+        _ cell: NSTableCellView,
+        for row: ModelBenchmarkTableRow,
+        columnID: String
+    ) {
+        let field = cell.textField
+        field?.font = .systemFont(ofSize: 12)
+        field?.textColor = .labelColor
+        field?.alignment = .left
+        cell.toolTip = nil
+        switch columnID {
+        case "model":
+            let displayName = row.model.displayName.flatMap { $0 == row.model.id ? nil : $0 }
+            var suffixes: [String] = []
+            if row.model.isNew { suffixes.append("新增") }
+            if !row.model.isAvailable { suffixes.append("不可用") }
+            let suffix = suffixes.isEmpty ? "" : " [\(suffixes.joined(separator: " · "))]"
+            field?.stringValue =
+                (displayName.map { "\(row.model.id) · \($0)" } ?? row.model.id) + suffix
+            field?.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
+            field?.textColor = row.model.isAvailable ? .labelColor : .secondaryLabelColor
+            cell.toolTip = row.model.description
+        case "ttft":
+            field?.alignment = .right
+            if let result = row.result, result.status != "completed" {
+                let measured = result.ttftMs.map { " · \(formatMilliseconds($0))" } ?? ""
+                field?.stringValue = "\(resultStatusTitle(result.status))\(measured)"
+                field?.textColor = resultStatusColor(result.status)
+                cell.toolTip = result.error
+            } else if let ttft = row.result?.ttftMs {
+                field?.stringValue = formatMilliseconds(ttft)
+                field?.textColor = latencyColor(ttft)
+            } else {
+                field?.stringValue = "-"
+                field?.textColor = .secondaryLabelColor
+            }
+        case "tps":
+            field?.alignment = .right
+            field?.stringValue = row.result?.tps.map { String(format: "%.1f tok/s", $0) } ?? "-"
+            field?.textColor = row.result?.tps == nil ? .secondaryLabelColor : .labelColor
+        case "context":
+            field?.alignment = .right
+            field?.stringValue = row.model.contextWindow.map(formatContextWindow) ?? "-"
+        case "ratio":
+            field?.alignment = .right
+            field?.stringValue = row.model.ratio ?? "-"
+            cell.toolTip = row.model.priceType
+        default:
+            field?.stringValue = ""
+        }
     }
 
     private func buildContent(in window: NSWindow) {
         guard let contentView = window.contentView else { return }
 
-        let titleLabel = NSTextField(labelWithString: "模型测速")
+        let titleLabel = NSTextField(labelWithString: "模型选择与测速")
         titleLabel.font = .boldSystemFont(ofSize: 20)
-
         summaryLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         summaryLabel.textColor = .secondaryLabelColor
-        summaryLabel.lineBreakMode = .byTruncatingTail
+        let titleStack = NSStackView(views: [titleLabel, summaryLabel])
+        titleStack.orientation = .vertical
+        titleStack.alignment = .leading
+        titleStack.spacing = 3
 
-        costLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        costLabel.lineBreakMode = .byTruncatingTail
+        providerPopup.target = self
+        providerPopup.action = #selector(providerChanged)
+        providerPopup.widthAnchor.constraint(equalToConstant: 170).isActive = true
 
-        timeoutPopup.removeAllItems()
-        for seconds in [10, 20, 30, 60] {
+        modePopup.addItem(withTitle: "延迟（TTFT）")
+        modePopup.lastItem?.representedObject = 1
+        modePopup.addItem(withTitle: "完整（TTFT + 吞吐）")
+        modePopup.lastItem?.representedObject = 100
+        modePopup.widthAnchor.constraint(equalToConstant: 164).isActive = true
+
+        for seconds in [5, 10, 20, 30, 60] {
             timeoutPopup.addItem(withTitle: "\(seconds) 秒")
             timeoutPopup.lastItem?.representedObject = seconds
         }
-        let savedTimeout = UserDefaults.standard.integer(forKey: "modelBenchmarkTimeoutSeconds")
-        let initialTimeout = [10, 20, 30, 60].contains(savedTimeout) ? savedTimeout : 10
-        if let index = timeoutPopup.itemArray.firstIndex(where: { ($0.representedObject as? Int) == initialTimeout }) {
+        let timeoutDefaultsKey = "modelBenchmarkTimeoutSecondsV2"
+        let savedTimeout = UserDefaults.standard.integer(forKey: timeoutDefaultsKey)
+        let initialTimeout = [5, 10, 20, 30, 60].contains(savedTimeout) ? savedTimeout : 5
+        if let index = timeoutPopup.itemArray.firstIndex(where: {
+            ($0.representedObject as? Int) == initialTimeout
+        }) {
             timeoutPopup.selectItem(at: index)
         }
         timeoutPopup.target = self
         timeoutPopup.action = #selector(timeoutChanged)
-        timeoutPopup.translatesAutoresizingMaskIntoConstraints = false
-        timeoutPopup.widthAnchor.constraint(equalToConstant: 96).isActive = true
-
-        providerPopup.addItem(withTitle: "全部 Provider")
-        providerPopup.lastItem?.representedObject = ""
-        providerPopup.target = self
-        providerPopup.action = #selector(providerFilterChanged)
-        providerPopup.translatesAutoresizingMaskIntoConstraints = false
-        providerPopup.widthAnchor.constraint(equalToConstant: 150).isActive = true
-
-        let timeoutLabel = NSTextField(labelWithString: "单模型超时")
-        timeoutLabel.textColor = .secondaryLabelColor
-        let providerLabel = NSTextField(labelWithString: "Provider")
-        providerLabel.textColor = .secondaryLabelColor
+        timeoutPopup.widthAnchor.constraint(equalToConstant: 92).isActive = true
 
         startButton.bezelStyle = .rounded
         startButton.image = benchmarkSymbol("speedometer")
         startButton.imagePosition = .imageLeading
         startButton.target = self
         startButton.action = #selector(startBenchmark)
-        startButton.translatesAutoresizingMaskIntoConstraints = false
-        startButton.widthAnchor.constraint(equalToConstant: 118).isActive = true
+        startButton.widthAnchor.constraint(equalToConstant: 148).isActive = true
 
-        let controls = NSStackView(views: [
-            providerLabel,
-            providerPopup,
-            timeoutLabel,
-            timeoutPopup,
+        let topControls = NSStackView(views: [
+            labeledControl("Provider", providerPopup),
+            labeledControl("测速", modePopup),
+            labeledControl("超时", timeoutPopup),
             startButton,
         ])
-        controls.orientation = .horizontal
-        controls.alignment = .centerY
-        controls.spacing = 10
+        topControls.orientation = .horizontal
+        topControls.alignment = .centerY
+        topControls.spacing = 12
 
-        let headerLeft = NSStackView(views: [titleLabel, summaryLabel, costLabel])
-        headerLeft.orientation = .vertical
-        headerLeft.alignment = .leading
-        headerLeft.spacing = 4
-
-        let header = NSStackView(views: [headerLeft, NSView(), controls])
+        let header = NSStackView(views: [titleStack, NSView(), topControls])
         header.orientation = .horizontal
         header.alignment = .centerY
-        header.spacing = 12
+        header.spacing = 16
         header.translatesAutoresizingMaskIntoConstraints = false
 
-        statusLabel.font = .systemFont(ofSize: 13, weight: .medium)
-        statusLabel.lineBreakMode = .byTruncatingMiddle
-        statusLabel.translatesAutoresizingMaskIntoConstraints = false
+        searchField.placeholderString = "搜索当前 Provider 的模型"
+        searchField.delegate = self
+        searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 280).isActive = true
+        for item in [
+            ("全部模型", "all"),
+            ("已加入 Codex", "selected"),
+            ("新增", "new"),
+            ("不可用", "unavailable"),
+        ] {
+            selectionFilterPopup.addItem(withTitle: item.0)
+            selectionFilterPopup.lastItem?.representedObject = item.1
+        }
+        selectionFilterPopup.target = self
+        selectionFilterPopup.action = #selector(selectionFilterChanged)
 
-        progressIndicator.style = .bar
-        progressIndicator.isIndeterminate = false
-        progressIndicator.minValue = 0
-        progressIndicator.maxValue = 1
-        progressIndicator.doubleValue = 0
-        progressIndicator.translatesAutoresizingMaskIntoConstraints = false
-        progressIndicator.heightAnchor.constraint(equalToConstant: 8).isActive = true
+        for button in [selectAllButton, selectNoneButton, saveSelectionButton] {
+            button.bezelStyle = .rounded
+            button.target = self
+        }
+        selectAllButton.action = #selector(selectAllVisibleModels)
+        selectNoneButton.action = #selector(selectNoVisibleModels)
+        saveSelectionButton.action = #selector(saveModelSelections)
+        let selectionControls = NSStackView(views: [
+            searchField,
+            selectionFilterPopup,
+            NSView(),
+            selectAllButton,
+            selectNoneButton,
+            saveSelectionButton,
+        ])
+        selectionControls.orientation = .horizontal
+        selectionControls.alignment = .centerY
+        selectionControls.spacing = 8
+        selectionControls.translatesAutoresizingMaskIntoConstraints = false
 
-        let statusStack = NSStackView(views: [statusLabel, progressIndicator])
-        statusStack.orientation = .vertical
-        statusStack.alignment = .leading
-        statusStack.spacing = 7
-        statusStack.translatesAutoresizingMaskIntoConstraints = false
-
-        let columns: [(id: String, title: String, width: CGFloat)] = [
-            ("provider", "Provider", 130),
-            ("model", "模型", 260),
-            ("ttft", "TTFT", 90),
-            ("tps", "TPS", 100),
-            ("tokens", "Usage / 上限", 105),
-            ("total", "总耗时", 90),
-            ("result", "结果", 90),
-        ]
-        for definition in columns {
-            let column = NSTableColumn(identifier: NSUserInterfaceItemIdentifier(definition.id))
+        for definition in modelBenchmarkColumnDefinitions() {
+            let column = NSTableColumn(
+                identifier: NSUserInterfaceItemIdentifier(definition.id)
+            )
             column.title = definition.title
             column.width = definition.width
-            column.minWidth = definition.id == "model" ? 180 : 80
+            column.minWidth = definition.minimumWidth
             column.resizingMask = [.userResizingMask, .autoresizingMask]
-            column.sortDescriptorPrototype = NSSortDescriptor(key: definition.id, ascending: true)
+            column.sortDescriptorPrototype = NSSortDescriptor(
+                key: definition.id,
+                ascending: definition.defaultAscending
+            )
             tableView.addTableColumn(column)
         }
         tableView.delegate = self
         tableView.dataSource = self
         tableView.rowHeight = 30
         tableView.usesAlternatingRowBackgroundColors = true
-        tableView.allowsMultipleSelection = false
         tableView.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
+        tableView.sortDescriptors = [NSSortDescriptor(key: "model", ascending: true)]
 
         let scrollView = NSScrollView()
         scrollView.documentView = tableView
-        scrollView.hasVerticalScroller = true
-        scrollView.hasHorizontalScroller = false
-        scrollView.autohidesScrollers = true
-        scrollView.borderType = .bezelBorder
+        configureModelTableScrollView(scrollView)
         scrollView.translatesAutoresizingMaskIntoConstraints = false
+
+        statusLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        statusLabel.lineBreakMode = .byTruncatingMiddle
+        progressIndicator.style = .bar
+        progressIndicator.isIndeterminate = false
+        progressIndicator.minValue = 0
+        progressIndicator.maxValue = 1
+        progressIndicator.doubleValue = 0
+        progressIndicator.heightAnchor.constraint(equalToConstant: 6).isActive = true
+        let statusStack = NSStackView(views: [statusLabel, progressIndicator])
+        statusStack.orientation = .vertical
+        statusStack.alignment = .leading
+        statusStack.spacing = 6
+        statusStack.translatesAutoresizingMaskIntoConstraints = false
 
         emptyLabel.font = .systemFont(ofSize: 13)
         emptyLabel.textColor = .secondaryLabelColor
         emptyLabel.alignment = .center
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        contentView.addSubview(header)
-        contentView.addSubview(statusStack)
-        contentView.addSubview(scrollView)
-        contentView.addSubview(emptyLabel)
+        for view in [header, selectionControls, scrollView, statusStack, emptyLabel] {
+            contentView.addSubview(view)
+        }
         NSLayoutConstraint.activate([
             header.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
             header.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
-            header.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 22),
-            summaryLabel.widthAnchor.constraint(lessThanOrEqualToConstant: 480),
+            header.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
+
+            selectionControls.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            selectionControls.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            selectionControls.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 16),
+
+            scrollView.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            scrollView.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            scrollView.topAnchor.constraint(equalTo: selectionControls.bottomAnchor, constant: 8),
 
             statusStack.leadingAnchor.constraint(equalTo: header.leadingAnchor),
             statusStack.trailingAnchor.constraint(equalTo: header.trailingAnchor),
-            statusStack.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 18),
+            statusStack.topAnchor.constraint(equalTo: scrollView.bottomAnchor, constant: 12),
+            statusStack.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -18),
             statusLabel.widthAnchor.constraint(equalTo: statusStack.widthAnchor),
             progressIndicator.widthAnchor.constraint(equalTo: statusStack.widthAnchor),
-
-            scrollView.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
-            scrollView.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
-            scrollView.topAnchor.constraint(equalTo: statusStack.bottomAnchor, constant: 18),
-            scrollView.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -22),
 
             emptyLabel.centerXAnchor.constraint(equalTo: scrollView.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: scrollView.centerYAnchor),
@@ -380,34 +467,96 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         applySnapshot(nil)
     }
 
+    @objc private func providerChanged() {
+        rebuildRows()
+        applySnapshotStatus()
+        updateActionState()
+    }
+
     @objc private func timeoutChanged() {
-        UserDefaults.standard.set(selectedTimeout(), forKey: "modelBenchmarkTimeoutSeconds")
+        UserDefaults.standard.set(
+            selectedTimeout(),
+            forKey: "modelBenchmarkTimeoutSecondsV2"
+        )
     }
 
-    @objc private func providerFilterChanged() {
-        updateDisplayedResults()
-        tableView.reloadData()
-        emptyLabel.isHidden = !displayedResults.isEmpty
+    @objc private func selectionFilterChanged() {
+        rebuildRows()
     }
 
-    @objc private func startBenchmark() {
-        let timeout = selectedTimeout()
-        UserDefaults.standard.set(timeout, forKey: "modelBenchmarkTimeoutSeconds")
-        startButton.isEnabled = false
-        timeoutPopup.isEnabled = false
-        statusLabel.stringValue = "正在创建测速任务..."
-        statusLabel.textColor = .secondaryLabelColor
+    @objc private func selectAllVisibleModels() {
+        selectedModelKeys.formUnion(rows.filter(\.model.isAvailable).map(\.key))
+        rebuildRows()
+        updateActionState()
+    }
+
+    @objc private func selectNoVisibleModels() {
+        selectedModelKeys.subtract(rows.map(\.key))
+        rebuildRows()
+        updateActionState()
+    }
+
+    @objc private func toggleSelectedModel(_ sender: NSButton) {
+        guard let key = sender.identifier?.rawValue else { return }
+        if sender.state == .on {
+            selectedModelKeys.insert(key)
+        } else {
+            selectedModelKeys.remove(key)
+        }
+        if tableView.sortDescriptors.first?.key == "selected" {
+            rebuildRows()
+        }
+        updateActionState()
+    }
+
+    @objc private func saveModelSelections() {
+        guard !isSavingSelections else { return }
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let snapshot = try await startHandler(timeout, selectedProviderFilter())
+                try await persistSelectionsIfNeeded()
+                presentBenchmarkMessage(
+                    title: "模型选择已保存",
+                    message: "Codex 模型目录已更新；重启 Codex App 后模型选择器会使用新列表。"
+                )
+            } catch {
+                presentBenchmarkError(
+                    title: "保存模型选择失败",
+                    message: localizedErrorDescription(error)
+                )
+            }
+        }
+    }
+
+    @objc private func startBenchmark() {
+        guard let providerID = selectedProviderID() else { return }
+        let timeout = selectedTimeout()
+        let targetOutputTokens = modePopup.selectedItem?.representedObject as? Int ?? 1
+        UserDefaults.standard.set(timeout, forKey: "modelBenchmarkTimeoutSecondsV2")
+        isLaunchingBenchmark = true
+        updateActionState()
+        statusLabel.stringValue = targetOutputTokens == 1
+            ? "正在创建延迟测速任务…"
+            : "正在创建完整测速任务…"
+        statusLabel.textColor = .secondaryLabelColor
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                isLaunchingBenchmark = false
+                updateActionState()
+            }
+            do {
+                try await persistSelectionsIfNeeded()
+                let snapshot = try await startHandler(
+                    timeout,
+                    providerID,
+                    targetOutputTokens
+                )
                 applySnapshot(snapshot)
                 if window?.isVisible == true {
                     beginPolling()
                 }
             } catch {
-                startButton.isEnabled = true
-                timeoutPopup.isEnabled = true
                 presentBenchmarkError(
                     title: "启动测速失败",
                     message: localizedErrorDescription(error)
@@ -417,13 +566,186 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         }
     }
 
-    private func selectedTimeout() -> Int {
-        timeoutPopup.selectedItem?.representedObject as? Int ?? 10
+    private func selectedProviderID() -> String? {
+        providerPopup.selectedItem?.representedObject as? String
     }
 
-    private func selectedProviderFilter() -> String? {
-        let value = providerPopup.selectedItem?.representedObject as? String ?? ""
-        return value.isEmpty ? nil : value
+    private func selectedProvider() -> ProviderView? {
+        guard let providerID = selectedProviderID() else { return nil }
+        return providers.first { $0.id == providerID }
+    }
+
+    private func selectedTimeout() -> Int {
+        timeoutPopup.selectedItem?.representedObject as? Int ?? 5
+    }
+
+    private func reloadProviderModels() {
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                let response = try await loadProvidersHandler()
+                providers = response.providers
+                selectedModelKeys = selectedProviderModelKeys(providers)
+                savedModelKeys = selectedModelKeys
+                setProviderOptions(configuredProviderOptions(providers))
+                rebuildRows()
+                applySnapshotStatus()
+                updateActionState()
+            } catch {
+                providers = []
+                rows = []
+                tableView.reloadData()
+                emptyLabel.isHidden = false
+                presentBenchmarkError(
+                    title: "读取模型列表失败",
+                    message: localizedErrorDescription(error)
+                )
+            }
+        }
+    }
+
+    private func setProviderOptions(_ options: [ProviderPickerOption]) {
+        let previousID = selectedProviderID()
+        providerPopup.removeAllItems()
+        for option in options {
+            providerPopup.addItem(withTitle: option.displayName)
+            providerPopup.lastItem?.representedObject = option.id
+            providerPopup.lastItem?.toolTip = option.id
+        }
+        if let previousID,
+           let index = providerPopup.itemArray.firstIndex(where: {
+               ($0.representedObject as? String) == previousID
+           })
+        {
+            providerPopup.selectItem(at: index)
+        } else if !options.isEmpty {
+            providerPopup.selectItem(at: 0)
+        }
+    }
+
+    private func rebuildRows() {
+        guard let provider = selectedProvider() else {
+            rows = []
+            tableView.reloadData()
+            emptyLabel.isHidden = false
+            return
+        }
+        let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        let filter = selectionFilterPopup.selectedItem?.representedObject as? String ?? "all"
+        rows = provider.modelItems.compactMap { model in
+            let key = providerModelSelectionKey(providerID: provider.id, modelID: model.id)
+            let matchesQuery = query.isEmpty
+                || model.id.localizedCaseInsensitiveContains(query)
+                || model.displayName?.localizedCaseInsensitiveContains(query) == true
+                || model.description?.localizedCaseInsensitiveContains(query) == true
+            let matchesFilter: Bool
+            switch filter {
+            case "selected":
+                matchesFilter = selectedModelKeys.contains(key)
+            case "new":
+                matchesFilter = model.isNew
+            case "unavailable":
+                matchesFilter = !model.isAvailable
+            default:
+                matchesFilter = true
+            }
+            guard matchesQuery && matchesFilter else { return nil }
+            return ModelBenchmarkTableRow(
+                providerID: provider.id,
+                model: model,
+                result: resultCache[key]
+            )
+        }
+        sortRows()
+        tableView.reloadData()
+        emptyLabel.isHidden = !rows.isEmpty
+        updateActionState()
+    }
+
+    private func sortRows() {
+        guard let descriptor = tableView.sortDescriptors.first, let key = descriptor.key else {
+            return
+        }
+        let ascending = descriptor.ascending
+        rows.sort { left, right in
+            let comparison = compareRows(left, right, key: key)
+            if comparison == .orderedSame {
+                return left.model.id.localizedStandardCompare(right.model.id)
+                    == .orderedAscending
+            }
+            return ascending
+                ? comparison == .orderedAscending
+                : comparison == .orderedDescending
+        }
+    }
+
+    private func compareRows(
+        _ left: ModelBenchmarkTableRow,
+        _ right: ModelBenchmarkTableRow,
+        key: String
+    ) -> ComparisonResult {
+        switch key {
+        case "selected":
+            return compareOptionalNumbers(
+                selectedModelKeys.contains(left.key) ? 1 : 0,
+                selectedModelKeys.contains(right.key) ? 1 : 0
+            )
+        case "ttft":
+            return compareOptionalNumbers(left.result?.ttftMs, right.result?.ttftMs)
+        case "tps":
+            return compareOptionalNumbers(left.result?.tps, right.result?.tps)
+        case "context":
+            return compareOptionalNumbers(left.model.contextWindow, right.model.contextWindow)
+        case "ratio":
+            return compareOptionalNumbers(
+                benchmarkRatioValue(left.model.ratio),
+                benchmarkRatioValue(right.model.ratio)
+            )
+        default:
+            return left.model.id.localizedStandardCompare(right.model.id)
+        }
+    }
+
+    private func updateActionState() {
+        let dirty = selectedModelKeys != savedModelKeys
+        let providerSelectedCount = rowsForSelectedProvider().filter {
+            selectedModelKeys.contains($0.key) && $0.model.isAvailable
+        }.count
+        let busy = isSavingSelections || isLaunchingBenchmark || snapshot?.status == "running"
+        saveSelectionButton.isEnabled = dirty && !busy
+        selectAllButton.isEnabled = !busy && selectedProvider() != nil
+        selectNoneButton.isEnabled = !busy && selectedProvider() != nil
+        startButton.title = dirty ? "保存并测试" : "测试当前 Provider"
+        startButton.isEnabled = !busy && providerSelectedCount > 0
+        providerPopup.isEnabled = !busy
+        modePopup.isEnabled = !busy
+        timeoutPopup.isEnabled = !busy
+    }
+
+    private func rowsForSelectedProvider() -> [ModelBenchmarkTableRow] {
+        guard let provider = selectedProvider() else { return [] }
+        return provider.modelItems.map { model in
+            let key = providerModelSelectionKey(providerID: provider.id, modelID: model.id)
+            return ModelBenchmarkTableRow(
+                providerID: provider.id,
+                model: model,
+                result: resultCache[key]
+            )
+        }
+    }
+
+    private func persistSelectionsIfNeeded() async throws {
+        guard selectedModelKeys != savedModelKeys else { return }
+        isSavingSelections = true
+        updateActionState()
+        defer {
+            isSavingSelections = false
+            updateActionState()
+        }
+        statusLabel.stringValue = "正在保存模型选择并更新 Codex 目录…"
+        let selections = providerModelSelections(providers, selectedKeys: selectedModelKeys)
+        try await saveSelectionsHandler(selections)
+        savedModelKeys = selectedModelKeys
     }
 
     private func beginPolling() {
@@ -432,9 +754,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
             guard let self else { return }
             while !Task.isCancelled {
                 await refreshFromGateway()
-                if snapshot?.status != "running" {
-                    return
-                }
+                if snapshot?.status != "running" { return }
                 try? await Task.sleep(nanoseconds: 1_000_000_000)
             }
         }
@@ -442,8 +762,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
 
     private func refreshFromGateway() async {
         do {
-            let remote = try await fetchHandler()
-            if let remote {
+            if let remote = try await fetchHandler() {
                 applySnapshot(remote)
             } else {
                 loadPersistedSnapshot()
@@ -467,96 +786,75 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
             applySnapshot(try JSONDecoder().decode(ModelBenchmarkSnapshot.self, from: data))
         } catch {
             snapshot = nil
-            displayedResults = []
-            tableView.reloadData()
-            emptyLabel.isHidden = false
             statusLabel.stringValue = "测速结果文件无法读取"
             statusLabel.textColor = .systemRed
             summaryLabel.stringValue = snapshotURL.path
-            startButton.isEnabled = true
-            timeoutPopup.isEnabled = true
+            progressIndicator.doubleValue = 0
+            updateActionState()
         }
     }
 
     private func applySnapshot(_ snapshot: ModelBenchmarkSnapshot?) {
         self.snapshot = snapshot
         if let snapshot {
-            updateProviderOptions(snapshot)
+            for result in snapshot.results {
+                let key = providerModelSelectionKey(
+                    providerID: result.providerID,
+                    modelID: result.upstreamModel
+                )
+                resultCache[key] = mergedBenchmarkResult(
+                    result,
+                    previous: resultCache[key],
+                    targetOutputTokens: snapshot.targetOutputTokens
+                )
+            }
         }
-        updateDisplayedResults()
-        tableView.reloadData()
-        emptyLabel.isHidden = !displayedResults.isEmpty
+        rebuildRows()
+        applySnapshotStatus()
+        updateActionState()
+    }
+
+    private func applySnapshotStatus() {
         guard let snapshot else {
             statusLabel.stringValue = "尚无测速结果"
             statusLabel.textColor = .secondaryLabelColor
-            summaryLabel.stringValue = "单模型超时默认 10 秒"
-            costLabel.stringValue = "测速完成后显示本次费用"
-            costLabel.textColor = .secondaryLabelColor
-            costLabel.toolTip = nil
+            summaryLabel.stringValue = "默认只测试首 token 延迟（TTFT）"
             progressIndicator.maxValue = 1
             progressIndicator.doubleValue = 0
-            startButton.isEnabled = true
-            timeoutPopup.isEnabled = true
-            providerPopup.isEnabled = true
             return
         }
-
+        let selectedProviderID = selectedProviderID()
+        let providerResults = snapshot.results.filter {
+            selectedProviderID == nil || $0.providerID == selectedProviderID
+        }
         progressIndicator.maxValue = Double(max(snapshot.totalModels, 1))
         progressIndicator.doubleValue = Double(snapshot.results.count)
-        let running = snapshot.status == "running"
-        startButton.isEnabled = !running
-        timeoutPopup.isEnabled = !running
-        providerPopup.isEnabled = !running
-        summaryLabel.stringValue = "\(formatBenchmarkDate(snapshot.startedAt)) · 单模型超时 \(snapshot.timeoutSeconds) 秒 · 请求上限 \(snapshot.targetOutputTokens) tokens"
-        if !snapshot.providerCosts.isEmpty {
-            costLabel.stringValue = snapshot.providerCosts
-                .map(formatProviderBenchmarkCost)
-                .joined(separator: " · ")
-            costLabel.textColor = snapshot.providerCosts.contains { $0.error != nil }
-                ? .systemOrange
-                : .systemGreen
-            let errors = snapshot.providerCosts.compactMap { cost in
-                cost.error.map { "\(cost.providerID): \($0)" }
-            }
-            costLabel.toolTip = errors.isEmpty ? nil : errors.joined(separator: "\n")
-        } else if let cost = snapshot.estimatedCost {
-            switch snapshot.costCurrency {
-            case "CNY":
-                costLabel.stringValue = String(format: "本次测试花费约 ¥%.2f", cost)
-            case "USD":
-                costLabel.stringValue = String(format: "本次测试花费约 $%.4f", cost)
-            default:
-                costLabel.stringValue = String(format: "本次测试额度消耗约 %.4f", cost)
-            }
-            costLabel.textColor = .systemGreen
-            costLabel.toolTip = "根据测速前后的已用额度差计算，期间其他请求可能计入结果。"
-        } else if snapshot.status == "running" {
-            costLabel.stringValue = "本次测试费用统计中"
-            costLabel.textColor = .secondaryLabelColor
-            costLabel.toolTip = nil
-        } else if let costError = snapshot.costError {
-            costLabel.stringValue = "本次测试费用不可用"
-            costLabel.textColor = .systemOrange
-            costLabel.toolTip = costError
-        } else {
-            costLabel.stringValue = "上次测速未记录费用"
-            costLabel.textColor = .secondaryLabelColor
-            costLabel.toolTip = nil
-        }
-
-        let completed = snapshot.results.filter { $0.status == "completed" }.count
-        let timedOut = snapshot.results.filter { $0.status == "timed_out" }.count
-        let failed = snapshot.results.filter { $0.status == "failed" }.count
+        let mode = snapshot.targetOutputTokens == 1 ? "延迟" : "完整"
+        summaryLabel.stringValue =
+            "\(formatBenchmarkDate(snapshot.startedAt)) · \(mode)测速 · 超时 \(snapshot.timeoutSeconds) 秒"
+        let completed = providerResults.filter { $0.status == "completed" }.count
+        let timedOut = providerResults.filter { $0.status == "timed_out" }.count
+        let failed = providerResults.filter { $0.status == "failed" }.count
         switch snapshot.status {
         case "running":
             let index = min(snapshot.results.count + 1, snapshot.totalModels)
-            statusLabel.stringValue = "正在测试 \(snapshot.currentModel ?? "下一模型")（\(index) / \(snapshot.totalModels)）"
+            statusLabel.stringValue =
+                "正在测试 \(snapshot.currentModel ?? "下一模型")（\(index) / \(snapshot.totalModels)）"
             statusLabel.textColor = .controlAccentColor
         case "completed":
-            statusLabel.stringValue = "测速完成：成功 \(completed)，超时 \(timedOut)，失败 \(failed)"
-            statusLabel.textColor = failed == 0 && timedOut == 0 ? .systemGreen : .systemOrange
+            if providerResults.isEmpty {
+                statusLabel.stringValue = "当前 Provider 尚未测速"
+                statusLabel.textColor = .secondaryLabelColor
+            } else {
+                statusLabel.stringValue =
+                    "测速完成：成功 \(completed)，超时 \(timedOut)，失败 \(failed)"
+                statusLabel.textColor = failed == 0 && timedOut == 0
+                    ? .systemGreen
+                    : .systemOrange
+            }
         case "interrupted":
-            statusLabel.stringValue = "上次测速已中断，已保存 \(snapshot.results.count) / \(snapshot.totalModels) 个结果"
+            statusLabel.stringValue =
+                "上次测速已中断，已保存 \(snapshot.results.count) / \(snapshot.totalModels) 个结果"
             statusLabel.textColor = .systemOrange
         case "failed":
             statusLabel.stringValue = "测速任务失败：\(snapshot.error ?? "未知错误")"
@@ -566,118 +864,57 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
             statusLabel.textColor = .secondaryLabelColor
         }
     }
+}
 
-    private func updateDisplayedResults() {
-        let providerFilter = selectedProviderFilter()
-        let results = (snapshot?.results ?? []).filter {
-            providerFilter == nil || $0.providerID == providerFilter
-        }
-        guard
-            let descriptor = tableView.sortDescriptors.first,
-            let key = descriptor.key
-        else {
-            displayedResults = results
-            return
-        }
-        let ascending = descriptor.ascending
-        displayedResults = results.sorted { left, right in
-            if key == "provider" || key == "model" || key == "result" {
-                let leftValue = benchmarkStringValue(left, key: key)
-                let rightValue = benchmarkStringValue(right, key: key)
-                let comparison = leftValue.localizedStandardCompare(rightValue)
-                if comparison == .orderedSame {
-                    return left.model.localizedStandardCompare(right.model) == .orderedAscending
-                }
-                return ascending ? comparison == .orderedAscending : comparison == .orderedDescending
-            }
+private func labeledControl(_ title: String, _ control: NSView) -> NSStackView {
+    let label = NSTextField(labelWithString: title)
+    label.textColor = .secondaryLabelColor
+    let stack = NSStackView(views: [label, control])
+    stack.orientation = .horizontal
+    stack.alignment = .centerY
+    stack.spacing = 6
+    return stack
+}
 
-            let leftValue: Double?
-            let rightValue: Double?
-            switch key {
-            case "ttft":
-                leftValue = left.ttftMs.map(Double.init)
-                rightValue = right.ttftMs.map(Double.init)
-            case "tps":
-                leftValue = left.tps
-                rightValue = right.tps
-            case "tokens":
-                leftValue = left.outputTokens.map(Double.init)
-                rightValue = right.outputTokens.map(Double.init)
-            case "total":
-                leftValue = Double(left.totalMs)
-                rightValue = Double(right.totalMs)
-            default:
-                return false
-            }
-            switch (leftValue, rightValue) {
-            case (nil, nil):
-                return left.model.localizedStandardCompare(right.model) == .orderedAscending
-            case (nil, _):
-                return false
-            case (_, nil):
-                return true
-            case let (leftValue?, rightValue?):
-                if leftValue == rightValue {
-                    return left.model.localizedStandardCompare(right.model) == .orderedAscending
-                }
-                return ascending ? leftValue < rightValue : leftValue > rightValue
-            }
-        }
-    }
+private func mergedBenchmarkResult(
+    _ result: ModelBenchmarkResult,
+    previous: ModelBenchmarkResult?,
+    targetOutputTokens: UInt64
+) -> ModelBenchmarkResult {
+    guard targetOutputTokens == 1 else { return result }
+    return ModelBenchmarkResult(
+        model: result.model,
+        providerID: result.providerID,
+        providerName: result.providerName,
+        upstreamModel: result.upstreamModel,
+        status: result.status,
+        ttftMs: result.ttftMs,
+        generationMs: previous?.generationMs,
+        totalMs: result.totalMs,
+        outputTokens: result.outputTokens,
+        tps: previous?.tps,
+        error: result.error
+    )
+}
 
-    private func updateProviderOptions(_ snapshot: ModelBenchmarkSnapshot) {
-        let providers = Dictionary(
-            snapshot.results.map { ($0.providerID, $0.providerName) },
-            uniquingKeysWith: { first, _ in first }
-        )
-        setProviderOptions(providers.map {
-            BenchmarkProviderOption(id: $0.key, displayName: $0.value)
-        })
-    }
+private func compareOptionalNumbers<T: BinaryInteger>(
+    _ left: T?,
+    _ right: T?
+) -> ComparisonResult {
+    compareOptionalNumbers(left.map(Double.init), right.map(Double.init))
+}
 
-    private func reloadProviderOptions() {
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            if let options = try? await providerOptionsHandler() {
-                setProviderOptions(options)
-            }
-        }
-    }
-
-    private func setProviderOptions(_ options: [BenchmarkProviderOption]) {
-        let selected = selectedProviderFilter()
-        let sorted = options.sorted {
-            $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
-        }
-        guard !sorted.isEmpty else { return }
-        let currentIDs = providerPopup.itemArray.compactMap {
-            ($0.representedObject as? String).flatMap { $0.isEmpty ? nil : $0 }
-        }
-        let providerIDs = sorted.map(\.id)
-        guard currentIDs != providerIDs else { return }
-        providerPopup.removeAllItems()
-        providerPopup.addItem(withTitle: "全部 Provider")
-        providerPopup.lastItem?.representedObject = ""
-        for option in sorted {
-            providerPopup.addItem(withTitle: option.displayName)
-            providerPopup.lastItem?.representedObject = option.id
-            providerPopup.lastItem?.toolTip = option.id
-        }
-        if let selected,
-           let index = providerPopup.itemArray.firstIndex(where: {
-               ($0.representedObject as? String) == selected
-           })
-        {
-            providerPopup.selectItem(at: index)
-        }
-    }
-
-    private func benchmarkStringValue(_ result: ModelBenchmarkResult, key: String) -> String {
-        switch key {
-        case "provider": return result.providerName
-        case "model": return result.model
-        default: return result.status
-        }
+private func compareOptionalNumbers(
+    _ left: Double?,
+    _ right: Double?
+) -> ComparisonResult {
+    switch (left, right) {
+    case (nil, nil): return .orderedSame
+    case (nil, _): return .orderedDescending
+    case (_, nil): return .orderedAscending
+    case let (left?, right?):
+        if left == right { return .orderedSame }
+        return left < right ? .orderedAscending : .orderedDescending
     }
 }
 
@@ -689,10 +926,16 @@ private func benchmarkSymbol(_ name: String) -> NSImage? {
 }
 
 private func formatMilliseconds(_ milliseconds: UInt64) -> String {
-    if milliseconds < 1_000 {
-        return "\(milliseconds) ms"
-    }
+    if milliseconds < 1_000 { return "\(milliseconds) ms" }
     return String(format: "%.2f s", Double(milliseconds) / 1_000)
+}
+
+private func latencyColor(_ milliseconds: UInt64) -> NSColor {
+    switch milliseconds {
+    case ..<1_000: return .systemGreen
+    case ..<3_000: return .systemOrange
+    default: return .systemRed
+    }
 }
 
 private func resultStatusTitle(_ status: String) -> String {
@@ -720,27 +963,21 @@ private func formatBenchmarkDate(_ milliseconds: UInt64) -> String {
     return formatter.string(from: Date(timeIntervalSince1970: Double(milliseconds) / 1_000))
 }
 
-private func formatProviderBenchmarkCost(_ cost: ProviderBenchmarkCost) -> String {
-    guard let value = cost.estimatedCost else {
-        return "\(cost.providerID)：费用不可用"
-    }
-    switch cost.currency {
-    case "CNY":
-        return String(format: "%@：¥%.2f", cost.providerID, value)
-    case "USD":
-        return String(format: "%@：$%.4f", cost.providerID, value)
-    case let currency?:
-        return String(format: "%@：%.4f %@", cost.providerID, value, currency)
-    case nil:
-        return String(format: "%@：%.4f", cost.providerID, value)
-    }
-}
-
 private func presentBenchmarkError(title: String, message: String) {
     let alert = NSAlert()
     alert.messageText = localizedPrompt(title)
     alert.informativeText = localizedGatewayMessage(message)
     alert.alertStyle = .warning
+    alert.addButton(withTitle: appText("确定", "確定", "OK"))
+    NSApp.activate(ignoringOtherApps: true)
+    alert.runModal()
+}
+
+private func presentBenchmarkMessage(title: String, message: String) {
+    let alert = NSAlert()
+    alert.messageText = localizedPrompt(title)
+    alert.informativeText = localizedGatewayMessage(message)
+    alert.alertStyle = .informational
     alert.addButton(withTitle: appText("确定", "確定", "OK"))
     NSApp.activate(ignoringOtherApps: true)
     alert.runModal()

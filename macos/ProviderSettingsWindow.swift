@@ -1,6 +1,6 @@
 import Cocoa
 
-final class ProviderSettingsWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate, NSSearchFieldDelegate {
+final class ProviderSettingsWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
     typealias LoadHandler = () async throws -> ProviderListResponse
     typealias RunHandler = ([String]) async throws -> String
     typealias ApplyHandler = () async throws -> Void
@@ -9,16 +9,10 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private let runHandler: RunHandler
     private let applyHandler: ApplyHandler
 
-    private var response: ProviderListResponse?
     private var providers: [ProviderView] = []
-    private var filteredModels: [ProviderModelListItem] = []
-    private var selectedModelIDs: Set<String> = []
     private var isBusy = false
 
     private let providerTable = NSTableView()
-    private let modelTable = NSTableView()
-    private let searchField = NSSearchField()
-    private let modelFilterPopup = NSPopUpButton()
     private let statusLabel = NSTextField(labelWithString: "正在读取供应商…")
     private let emptyLabel = NSTextField(labelWithString: "还没有供应商，点击“新增”开始配置。")
 
@@ -37,8 +31,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private let enableButton = NSButton(title: "停用", target: nil, action: nil)
     private let testButton = NSButton(title: "测试连接", target: nil, action: nil)
     private let discoverButton = NSButton(title: "刷新模型", target: nil, action: nil)
-    private let selectAllButton = NSButton(title: "全选", target: nil, action: nil)
-    private let selectNoneButton = NSButton(title: "全不选", target: nil, action: nil)
     private let saveButton = NSButton(title: "保存更改", target: nil, action: nil)
 
     init(
@@ -49,14 +41,17 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         self.loadHandler = loadHandler
         self.runHandler = runHandler
         self.applyHandler = applyHandler
+        let visibleFrame = NSScreen.main?.visibleFrame
+            ?? NSRect(x: 0, y: 0, width: 1_280, height: 800)
+        let contentSize = providerSettingsContentSize(for: visibleFrame)
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 1080, height: 720),
+            contentRect: NSRect(origin: .zero, size: contentSize),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
-        window.title = "供应商与模型"
-        window.minSize = NSSize(width: 920, height: 620)
+        window.title = "供应商设置"
+        window.minSize = NSSize(width: 720, height: 400)
         window.isReleasedWhenClosed = false
         window.center()
         super.init(window: window)
@@ -76,17 +71,12 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     }
 
     func numberOfRows(in tableView: NSTableView) -> Int {
-        tableView === providerTable ? providers.count : filteredModels.count
+        providers.count
     }
 
     func tableView(_ tableView: NSTableView, viewFor tableColumn: NSTableColumn?, row: Int) -> NSView? {
-        guard let tableColumn else { return nil }
-        if tableView === providerTable {
-            guard providers.indices.contains(row) else { return nil }
-            return providerCell(providers[row], identifier: tableColumn.identifier)
-        }
-        guard filteredModels.indices.contains(row) else { return nil }
-        return modelCell(filteredModels[row], column: tableColumn)
+        guard let tableColumn, providers.indices.contains(row) else { return nil }
+        return providerCell(providers[row], identifier: tableColumn.identifier)
     }
 
     func tableViewSelectionDidChange(_ notification: Notification) {
@@ -94,11 +84,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             return
         }
         loadSelectedProvider()
-    }
-
-    func controlTextDidChange(_ obj: Notification) {
-        guard let field = obj.object as? NSSearchField, field === searchField else { return }
-        updateFilteredModels()
     }
 
     private var selectedProvider: ProviderView? {
@@ -109,9 +94,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private func buildContent(in window: NSWindow) {
         guard let contentView = window.contentView else { return }
 
-        let titleLabel = NSTextField(labelWithString: "供应商与模型")
+        let titleLabel = NSTextField(labelWithString: "供应商设置")
         titleLabel.font = .boldSystemFont(ofSize: 20)
-        let detailLabel = NSTextField(wrappingLabelWithString: "每个 Provider 独立保存凭据和模型 allowlist。预设站点自动管理连接细节；自定义站点只需填写名称、API 地址和密钥。")
+        let detailLabel = NSTextField(wrappingLabelWithString: "这里只配置供应商地址、密钥、启停和模型发现。模型勾选、性能对比与测速请使用独立的“模型选择与测速…”入口。")
         detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         detailLabel.textColor = .secondaryLabelColor
 
@@ -128,6 +113,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         providerScroll.autohidesScrollers = true
         providerScroll.borderType = .bezelBorder
         providerScroll.translatesAutoresizingMaskIntoConstraints = false
+        providerScroll.heightAnchor.constraint(equalToConstant: 238).isActive = true
 
         configureButton(addButton, action: #selector(addProvider))
         configureButton(removeButton, action: #selector(removeProvider))
@@ -140,11 +126,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         providerPane.orientation = .vertical
         providerPane.spacing = 10
         providerPane.translatesAutoresizingMaskIntoConstraints = false
-        providerPane.widthAnchor.constraint(equalToConstant: 250).isActive = true
+        providerPane.widthAnchor.constraint(equalToConstant: 220).isActive = true
 
-        configurePopups()
         configureFields()
-        configureModelTable()
         configureButton(clearKeyButton, action: #selector(clearProviderKey))
         let apiKeyControls = NSStackView(views: [apiKeyField, clearKeyButton])
         apiKeyControls.orientation = .horizontal
@@ -170,60 +154,28 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             customBaseURLRow,
             compactLabeledView("API 密钥", apiKeyControls),
             quotaUsernameRow,
-            managedConfigurationLabel,
+            compactLabeledView("", managedConfigurationLabel),
         ])
         form.orientation = .vertical
         form.alignment = .leading
-        form.spacing = 7
-
-        let formDocument = NSView()
+        form.spacing = 9
         form.translatesAutoresizingMaskIntoConstraints = false
-        formDocument.addSubview(form)
-        NSLayoutConstraint.activate([
-            form.leadingAnchor.constraint(equalTo: formDocument.leadingAnchor),
-            form.trailingAnchor.constraint(equalTo: formDocument.trailingAnchor),
-            form.topAnchor.constraint(equalTo: formDocument.topAnchor),
-            form.bottomAnchor.constraint(equalTo: formDocument.bottomAnchor),
-            formDocument.widthAnchor.constraint(greaterThanOrEqualToConstant: 650),
-        ])
-        let formScroll = NSScrollView()
-        formScroll.documentView = formDocument
-        formScroll.hasVerticalScroller = true
-        formScroll.autohidesScrollers = true
-        formScroll.drawsBackground = false
-        formScroll.translatesAutoresizingMaskIntoConstraints = false
-        formScroll.heightAnchor.constraint(equalToConstant: 345).isActive = true
 
-        searchField.placeholderString = "搜索模型"
-        searchField.delegate = self
-        searchField.translatesAutoresizingMaskIntoConstraints = false
-        searchField.widthAnchor.constraint(greaterThanOrEqualToConstant: 220).isActive = true
-        configureButton(selectAllButton, action: #selector(selectAllModels))
-        configureButton(selectNoneButton, action: #selector(selectNoModels))
-        let modelControls = NSStackView(views: [
-            searchField,
-            modelFilterPopup,
-            NSView(),
-            selectAllButton,
-            selectNoneButton,
-        ])
-        modelControls.orientation = .horizontal
-        modelControls.alignment = .centerY
-        modelControls.spacing = 8
-
-        let modelScroll = NSScrollView()
-        modelScroll.documentView = modelTable
-        modelScroll.hasVerticalScroller = true
-        modelScroll.autohidesScrollers = true
-        modelScroll.borderType = .bezelBorder
-        modelScroll.translatesAutoresizingMaskIntoConstraints = false
+        let sectionTitle = NSTextField(labelWithString: "连接配置")
+        sectionTitle.font = .systemFont(ofSize: 14, weight: .semibold)
 
         configureButton(enableButton, action: #selector(toggleProvider))
         configureButton(testButton, action: #selector(testProvider))
         configureButton(discoverButton, action: #selector(discoverModels))
         configureButton(saveButton, action: #selector(saveProvider))
         saveButton.keyEquivalent = "\r"
-        let actionRow = NSStackView(views: [enableButton, testButton, discoverButton, NSView(), saveButton])
+        let actionRow = NSStackView(views: [
+            enableButton,
+            testButton,
+            discoverButton,
+            NSView(),
+            saveButton,
+        ])
         actionRow.orientation = .horizontal
         actionRow.alignment = .centerY
         actionRow.spacing = 9
@@ -232,9 +184,10 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.lineBreakMode = .byTruncatingMiddle
 
-        let detailsPane = NSStackView(views: [formScroll, modelControls, modelScroll, actionRow, statusLabel])
+        let detailsPane = NSStackView(views: [sectionTitle, form, actionRow, statusLabel])
         detailsPane.orientation = .vertical
-        detailsPane.spacing = 10
+        detailsPane.alignment = .leading
+        detailsPane.spacing = 12
         detailsPane.translatesAutoresizingMaskIntoConstraints = false
 
         emptyLabel.textColor = .secondaryLabelColor
@@ -243,6 +196,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
         let body = NSStackView(views: [providerPane, detailsPane])
         body.orientation = .horizontal
+        body.alignment = .top
         body.spacing = 16
         body.translatesAutoresizingMaskIntoConstraints = false
 
@@ -257,8 +211,11 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             body.leadingAnchor.constraint(equalTo: header.leadingAnchor),
             body.trailingAnchor.constraint(equalTo: header.trailingAnchor),
             body.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 16),
-            body.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
-            detailsPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 620),
+            body.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -20),
+            detailsPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 476),
+            form.widthAnchor.constraint(equalTo: detailsPane.widthAnchor),
+            actionRow.widthAnchor.constraint(equalTo: detailsPane.widthAnchor),
+            statusLabel.widthAnchor.constraint(equalTo: detailsPane.widthAnchor),
 
             emptyLabel.centerXAnchor.constraint(equalTo: detailsPane.centerXAnchor),
             emptyLabel.centerYAnchor.constraint(equalTo: detailsPane.centerYAnchor),
@@ -277,50 +234,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         providerTable.rowHeight = 42
         providerTable.allowsMultipleSelection = false
         providerTable.usesAlternatingRowBackgroundColors = true
-    }
-
-    private func configureModelTable() {
-        let selected = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("selected"))
-        selected.title = "加入 Codex"
-        selected.width = 90
-        selected.minWidth = 80
-        let model = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("model"))
-        model.title = "上游模型"
-        model.width = 430
-        model.minWidth = 240
-        model.resizingMask = [.autoresizingMask, .userResizingMask]
-        let ratio = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("ratio"))
-        ratio.title = appText("倍率", "倍率", "Rate")
-        ratio.width = 72
-        ratio.minWidth = 60
-        ratio.maxWidth = 96
-        ratio.isHidden = true
-        let context = NSTableColumn(identifier: NSUserInterfaceItemIdentifier("context"))
-        context.title = "Context"
-        context.width = 100
-        modelTable.addTableColumn(selected)
-        modelTable.addTableColumn(model)
-        modelTable.addTableColumn(ratio)
-        modelTable.addTableColumn(context)
-        modelTable.delegate = self
-        modelTable.dataSource = self
-        modelTable.rowHeight = 28
-        modelTable.usesAlternatingRowBackgroundColors = true
-        modelTable.columnAutoresizingStyle = .lastColumnOnlyAutoresizingStyle
-    }
-
-    private func configurePopups() {
-        for item in [
-            ("全部模型", "all"),
-            ("已选", "selected"),
-            ("新增", "new"),
-            ("不可用", "unavailable"),
-        ] {
-            modelFilterPopup.addItem(withTitle: item.0)
-            modelFilterPopup.lastItem?.representedObject = item.1
-        }
-        modelFilterPopup.target = self
-        modelFilterPopup.action = #selector(changeModelFilter)
     }
 
     private func configureFields() {
@@ -375,66 +288,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         return cell
     }
 
-    private func modelCell(_ model: ProviderModelListItem, column: NSTableColumn) -> NSView {
-        let identifier = column.identifier
-        if identifier.rawValue == "selected" {
-            let button = NSButton(checkboxWithTitle: "", target: self, action: #selector(toggleModel(_:)))
-            button.state = selectedModelIDs.contains(model.id) ? .on : .off
-            button.identifier = NSUserInterfaceItemIdentifier(model.id)
-            let cell = NSTableCellView()
-            cell.addSubview(button)
-            button.translatesAutoresizingMaskIntoConstraints = false
-            NSLayoutConstraint.activate([
-                button.centerXAnchor.constraint(equalTo: cell.centerXAnchor),
-                button.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            ])
-            return cell
-        }
-        let cell: NSTableCellView
-        if let reused = modelTable.makeView(withIdentifier: identifier, owner: self) as? NSTableCellView {
-            cell = reused
-        } else {
-            cell = NSTableCellView()
-            cell.identifier = identifier
-            let field = NSTextField(labelWithString: "")
-            field.translatesAutoresizingMaskIntoConstraints = false
-            field.lineBreakMode = .byTruncatingMiddle
-            cell.textField = field
-            cell.addSubview(field)
-            NSLayoutConstraint.activate([
-                field.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 6),
-                field.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -6),
-                field.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-            ])
-        }
-        if identifier.rawValue == "model" {
-            let name = model.displayName.flatMap { $0 == model.id ? nil : $0 }
-            var labels: [String] = []
-            if model.isNew {
-                labels.append("新增")
-            }
-            if !model.isAvailable {
-                labels.append("不可用")
-            }
-            let status = labels.isEmpty ? "" : " [\(labels.joined(separator: " · "))]"
-            cell.textField?.stringValue = (name.map { "\(model.id) · \($0)" } ?? model.id) + status
-            cell.textField?.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
-            cell.textField?.textColor = model.isAvailable ? .labelColor : .secondaryLabelColor
-            cell.toolTip = model.description
-        } else if identifier.rawValue == "ratio" {
-            cell.textField?.stringValue = model.ratio ?? "-"
-            cell.textField?.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
-            cell.textField?.alignment = .center
-            cell.toolTip = model.priceType
-        } else {
-            cell.textField?.stringValue = model.contextWindow.map(formatContextWindow) ?? "-"
-            cell.textField?.font = .systemFont(ofSize: 11)
-            cell.textField?.alignment = .natural
-            cell.toolTip = nil
-        }
-        return cell
-    }
-
     private func reloadProviders(selecting providerID: String? = nil) {
         guard !isBusy else { return }
         setBusy(true, status: "正在读取供应商…")
@@ -444,7 +297,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             do {
                 let previousID = providerID ?? selectedProvider?.id
                 let loaded = try await loadHandler()
-                response = loaded
                 providers = loaded.providers
                 providerTable.reloadData()
                 emptyLabel.isHidden = !providers.isEmpty
@@ -484,11 +336,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         customDisplayNameRow?.isHidden = !isCustom
         customBaseURLRow?.isHidden = !isCustom
         quotaUsernameRow?.isHidden = provider.presetID != "baidu-oneapi"
-        updateModelRatioColumn(for: provider)
-        selectedModelIDs = Set(provider.selectedModels)
-        searchField.stringValue = ""
-        selectPopupValue(modelFilterPopup, "all")
-        updateFilteredModels()
         enableButton.title = provider.enabled ? "停用" : "启用"
         statusLabel.stringValue = selectedProviderStatus()
         statusLabel.toolTip = provider.lastModelRefreshError
@@ -504,45 +351,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         ] {
             field.stringValue = ""
         }
-        selectedModelIDs = []
-        filteredModels = []
-        updateModelRatioColumn(for: nil)
-        modelTable.reloadData()
         statusLabel.stringValue = providers.isEmpty ? "等待新增 Provider" : "请选择 Provider"
         statusLabel.toolTip = nil
-    }
-
-    private func updateFilteredModels() {
-        guard let provider = selectedProvider else {
-            filteredModels = []
-            modelTable.reloadData()
-            return
-        }
-        let query = searchField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        let filter = selectedPopupValue(modelFilterPopup, fallback: "all")
-        filteredModels = provider.modelItems.filter { model in
-            let matchesQuery = query.isEmpty
-                || model.id.localizedCaseInsensitiveContains(query)
-                || model.displayName?.localizedCaseInsensitiveContains(query) == true
-            let matchesFilter = switch filter {
-            case "selected":
-                selectedModelIDs.contains(model.id)
-            case "new":
-                model.isNew
-            case "unavailable":
-                !model.isAvailable
-            default:
-                true
-            }
-            return matchesQuery && matchesFilter
-        }
-        modelTable.reloadData()
-    }
-
-    private func updateModelRatioColumn(for provider: ProviderView?) {
-        let identifier = NSUserInterfaceItemIdentifier("ratio")
-        modelTable.tableColumn(withIdentifier: identifier)?.isHidden =
-            !shouldShowModelRatioColumn(for: provider)
     }
 
     private func setBusy(_ busy: Bool, status: String) {
@@ -559,14 +369,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             displayNameField,
             baseURLField,
             quotaUsernameField,
-            searchField,
-            modelFilterPopup,
-            modelTable,
             enableButton,
             testButton,
             discoverButton,
-            selectAllButton,
-            selectNoneButton,
             saveButton,
         ]
         for control in controls {
@@ -698,10 +503,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         )
     }
 
-    @objc private func changeModelFilter() {
-        updateFilteredModels()
-    }
-
     @objc private func saveProvider() {
         guard let provider = selectedProvider, !isBusy else { return }
         var update = ["providers", "update", provider.id]
@@ -735,16 +536,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         if provider.presetID == "baidu-oneapi" {
             appendProviderArgument(&update, "--quota-username", quotaUsername)
         }
-        let selectedModels = provider.modelItems
-            .map(\.id)
-            .filter { selectedModelIDs.contains($0) }
-        var select = ["providers", "select", provider.id]
-        for model in selectedModels {
-            select.append(contentsOf: ["--model", model])
-        }
         performMutation(
             update,
-            then: select,
             status: "正在保存 \(provider.id)…",
             selecting: provider.id
         )
@@ -760,26 +553,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             suffix += 1
         }
         return "\(preset)-\(suffix)"
-    }
-
-    @objc private func selectAllModels() {
-        selectedModelIDs.formUnion(filteredModels.map(\.id))
-        updateFilteredModels()
-    }
-
-    @objc private func selectNoModels() {
-        selectedModelIDs.subtract(filteredModels.map(\.id))
-        updateFilteredModels()
-    }
-
-    @objc private func toggleModel(_ sender: NSButton) {
-        guard let modelID = sender.identifier?.rawValue else { return }
-        if sender.state == .on {
-            selectedModelIDs.insert(modelID)
-        } else {
-            selectedModelIDs.remove(modelID)
-        }
-        updateFilteredModels()
     }
 
     private func performMutation(
@@ -826,24 +599,14 @@ func compactLabeledView(_ title: String, _ field: NSView) -> NSView {
     label.alignment = .right
     label.textColor = .secondaryLabelColor
     label.translatesAutoresizingMaskIntoConstraints = false
-    label.widthAnchor.constraint(equalToConstant: 96).isActive = true
+    label.widthAnchor.constraint(equalToConstant: 78).isActive = true
     field.translatesAutoresizingMaskIntoConstraints = false
-    field.widthAnchor.constraint(equalToConstant: 520).isActive = true
+    field.widthAnchor.constraint(equalToConstant: 390).isActive = true
     let row = NSStackView(views: [label, field])
     row.orientation = .horizontal
     row.alignment = .centerY
-    row.spacing = 9
+    row.spacing = 8
     return row
-}
-
-func formatContextWindow(_ value: UInt64) -> String {
-    if value >= 1_000_000 {
-        return String(format: "%.1fM", Double(value) / 1_000_000)
-    }
-    if value >= 1_000 {
-        return String(format: "%.0fK", Double(value) / 1_000)
-    }
-    return "\(value)"
 }
 
 func formatProviderTimestamp(_ milliseconds: UInt64) -> String {

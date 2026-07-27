@@ -70,6 +70,25 @@ struct ProviderSupportTests {
         precondition(shouldShowModelRatioColumn(for: baidu))
         precondition(!shouldShowModelRatioColumn(for: response.providers[1]))
         precondition(!shouldShowModelRatioColumn(for: nil))
+        let selectedKeys = selectedProviderModelKeys(response.providers)
+        precondition(
+            selectedKeys.contains(
+                providerModelSelectionKey(providerID: baidu.id, modelID: baidu.selectedModels[0])
+            )
+        )
+        let selections = providerModelSelections(response.providers, selectedKeys: selectedKeys)
+        precondition(selections[baidu.id] == baidu.selectedModels)
+        let providerOptions = configuredProviderOptions(response.providers)
+        precondition(providerOptions.count == response.providers.count)
+        precondition(Set(providerOptions.map(\.id)) == Set(response.providers.map(\.id)))
+        let benchmarkColumns = modelBenchmarkColumnDefinitions()
+        precondition(
+            benchmarkColumns.map(\.title)
+                == ["加入 Codex", "上游模型", "TTFT", "吞吐", "上下文", "倍率"]
+        )
+        precondition(Set(benchmarkColumns.map(\.id)).count == benchmarkColumns.count)
+        precondition(benchmarkRatioValue("0.5x") == 0.5)
+        precondition(benchmarkRatioValue(nil) == nil)
         print("Provider model ratio support: passed")
     }
 }

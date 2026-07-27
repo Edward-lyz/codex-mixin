@@ -6,8 +6,9 @@ pub(super) async fn benchmark_model(
     client: &Client,
     target: &BenchmarkTarget,
     timeout: Duration,
+    target_output_tokens: u64,
 ) -> anyhow::Result<ModelBenchmarkResult> {
-    let attempt = benchmark_request(client, target, timeout).await;
+    let attempt = benchmark_request(client, target, timeout, target_output_tokens).await;
     let completed_at = unix_millis()?;
     match attempt {
         Ok(metrics) => Ok(ModelBenchmarkResult {
@@ -114,6 +115,7 @@ pub(super) async fn benchmark_request(
     client: &Client,
     target: &BenchmarkTarget,
     timeout: Duration,
+    target_output_tokens: u64,
 ) -> Result<BenchmarkMetrics, BenchmarkAttemptFailure> {
     let started = Instant::now();
     let deadline = started + timeout;
@@ -122,7 +124,7 @@ pub(super) async fn benchmark_request(
     let mut body = match protocol {
         ProviderProtocol::AnthropicMessages => json!({
             "model": target.upstream_model_id,
-            "max_tokens": BENCHMARK_TARGET_OUTPUT_TOKENS,
+            "max_tokens": target_output_tokens,
             "stream": true,
             "messages": [{
                 "role": "user",
@@ -131,14 +133,14 @@ pub(super) async fn benchmark_request(
         }),
         ProviderProtocol::OpenAiChat => json!({
             "model": target.upstream_model_id,
-            "max_tokens": BENCHMARK_TARGET_OUTPUT_TOKENS,
+            "max_tokens": target_output_tokens,
             "stream": true,
             "stream_options": {"include_usage": true},
             "messages": [{"role": "user", "content": BENCHMARK_PROMPT}]
         }),
         ProviderProtocol::OpenAiResponses => json!({
             "model": target.upstream_model_id,
-            "max_output_tokens": BENCHMARK_TARGET_OUTPUT_TOKENS,
+            "max_output_tokens": target_output_tokens,
             "stream": true,
             "input": BENCHMARK_PROMPT
         }),
@@ -380,6 +382,18 @@ pub(super) async fn benchmark_request(
                         _ => {}
                     }
                 }
+            }
+            if target_output_tokens == 1
+                && let Some(first_token_at) = first_token_at
+            {
+                let total = first_token_at.duration_since(started);
+                return Ok(BenchmarkMetrics {
+                    ttft_ms: total.as_millis() as u64,
+                    generation_ms: None,
+                    total_ms: total.as_millis() as u64,
+                    output_tokens: 1,
+                    tps: None,
+                });
             }
         }
     }

@@ -65,12 +65,16 @@ impl ModelBenchmarkManager {
         &self,
         targets: Vec<BenchmarkTarget>,
         timeout: Duration,
+        target_output_tokens: u64,
     ) -> anyhow::Result<ModelBenchmarkSnapshot> {
         if timeout.is_zero() || timeout > Duration::from_secs(300) {
             anyhow::bail!("model benchmark timeout must be between 1 and 300 seconds");
         }
         if targets.is_empty() {
             anyhow::bail!("model benchmark requires at least one available model");
+        }
+        if !(1..=1_000).contains(&target_output_tokens) {
+            anyhow::bail!("model benchmark output tokens must be between 1 and 1000");
         }
         if self.running.swap(true, Ordering::AcqRel) {
             anyhow::bail!("a model benchmark is already running");
@@ -96,7 +100,7 @@ impl ModelBenchmarkManager {
             updated_at: now,
             finished_at: None,
             timeout_seconds: timeout.as_secs(),
-            target_output_tokens: BENCHMARK_TARGET_OUTPUT_TOKENS,
+            target_output_tokens,
             total_models: targets.len(),
             current_model: None,
             results: Vec::with_capacity(targets.len()),
@@ -115,7 +119,10 @@ impl ModelBenchmarkManager {
         let task_snapshot = snapshot.clone();
         tokio::spawn(async move {
             let _running_reset = RunningReset(Arc::clone(&manager.running));
-            if let Err(error) = manager.run(task_snapshot, targets, timeout).await {
+            if let Err(error) = manager
+                .run(task_snapshot, targets, timeout, target_output_tokens)
+                .await
+            {
                 tracing::error!(error = %error, "model benchmark stopped unexpectedly");
                 if let Err(persist_error) = manager.persist_failed_run(error.to_string()) {
                     tracing::error!(
@@ -133,6 +140,7 @@ impl ModelBenchmarkManager {
         mut snapshot: ModelBenchmarkSnapshot,
         targets: Vec<BenchmarkTarget>,
         timeout: Duration,
+        target_output_tokens: u64,
     ) -> anyhow::Result<()> {
         let client = Client::builder().build()?;
         let target_order = targets
@@ -209,7 +217,12 @@ impl ModelBenchmarkManager {
             let mut results =
                 futures_util::stream::iter(batch.into_iter().map(|(group_index, target)| {
                     let client = &client;
-                    async move { (group_index, benchmark_model(client, &target, timeout).await) }
+                    async move {
+                        (
+                            group_index,
+                            benchmark_model(client, &target, timeout, target_output_tokens).await,
+                        )
+                    }
                 }))
                 .buffer_unordered(MAX_CONCURRENT_PROVIDER_GROUPS)
                 .collect::<Vec<_>>()

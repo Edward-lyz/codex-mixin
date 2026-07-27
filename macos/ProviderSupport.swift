@@ -126,8 +126,86 @@ struct ProviderModelListItem {
     var contextWindow: UInt64? { model.contextWindow }
 }
 
+struct ProviderPickerOption {
+    let id: String
+    let displayName: String
+}
+
+struct ModelBenchmarkColumnDefinition: Equatable {
+    let id: String
+    let title: String
+    let width: Double
+    let minimumWidth: Double
+    let defaultAscending: Bool
+}
+
+func modelBenchmarkColumnDefinitions() -> [ModelBenchmarkColumnDefinition] {
+    [
+        .init(id: "selected", title: "加入 Codex", width: 94, minimumWidth: 86, defaultAscending: false),
+        .init(id: "model", title: "上游模型", width: 520, minimumWidth: 260, defaultAscending: true),
+        .init(id: "ttft", title: "TTFT", width: 104, minimumWidth: 82, defaultAscending: true),
+        .init(id: "tps", title: "吞吐", width: 112, minimumWidth: 88, defaultAscending: false),
+        .init(id: "context", title: "上下文", width: 104, minimumWidth: 84, defaultAscending: false),
+        .init(id: "ratio", title: "倍率", width: 86, minimumWidth: 70, defaultAscending: true),
+    ]
+}
+
+func benchmarkRatioValue(_ ratio: String?) -> Double? {
+    guard let ratio else { return nil }
+    return Double(
+        ratio
+            .lowercased()
+            .replacingOccurrences(of: "x", with: "")
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+    )
+}
+
+func configuredProviderOptions(_ providers: [ProviderView]) -> [ProviderPickerOption] {
+    providers.map {
+        ProviderPickerOption(id: $0.id, displayName: $0.displayName)
+    }
+}
+
 func shouldShowModelRatioColumn(for provider: ProviderView?) -> Bool {
     provider?.presetID == "baidu-oneapi"
+}
+
+func formatContextWindow(_ value: UInt64) -> String {
+    if value >= 1_000_000 {
+        return String(format: "%.1fM", Double(value) / 1_000_000)
+    }
+    if value >= 1_000 {
+        return String(format: "%.0fK", Double(value) / 1_000)
+    }
+    return "\(value)"
+}
+
+func providerModelSelectionKey(providerID: String, modelID: String) -> String {
+    "\(providerID)\u{1f}\(modelID)"
+}
+
+func selectedProviderModelKeys(_ providers: [ProviderView]) -> Set<String> {
+    Set(providers.flatMap { provider in
+        provider.selectedModels.map {
+            providerModelSelectionKey(providerID: provider.id, modelID: $0)
+        }
+    })
+}
+
+func providerModelSelections(
+    _ providers: [ProviderView],
+    selectedKeys: Set<String>
+) -> [String: [String]] {
+    Dictionary(uniqueKeysWithValues: providers.map { provider in
+        let modelIDs = provider.modelItems
+            .filter {
+                selectedKeys.contains(
+                    providerModelSelectionKey(providerID: provider.id, modelID: $0.id)
+                )
+            }
+            .map(\.id)
+        return (provider.id, modelIDs)
+    })
 }
 
 struct ProviderTestResponse: Decodable {

@@ -35,7 +35,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         installApplicationMenu()
         installStatusItem()
         startGatewayAtLaunch()
-        timer = Timer.scheduledTimer(withTimeInterval: 60, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 self?.refreshStatus()
             }
@@ -110,11 +110,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         launchAtLoginMenuItem = actionItem("登录时启动并开启服务", #selector(toggleLaunchAtLogin), "poweron")
         menu.addItem(launchAtLoginMenuItem!)
         menu.addItem(actionItem("刷新状态与额度", #selector(refreshStatus), "arrow.clockwise"))
-        menu.addItem(actionItem("自动检测...", #selector(runAutomaticDoctor), "stethoscope"))
+        menu.addItem(actionItem("健康检测和修复...", #selector(runAutomaticDoctor), "stethoscope"))
         menu.addItem(.separator())
-        menu.addItem(actionItem("设置供应商与密钥...", #selector(configureLogin), "gearshape"))
+        menu.addItem(actionItem("供应商设置...", #selector(configureLogin), "gearshape"))
+        menu.addItem(actionItem("模型选择与测速...", #selector(showModelBenchmark), "speedometer"))
         menu.addItem(actionItem("Fusion 设置…", #selector(showFusionSettings), "rectangle.3.group"))
-        menu.addItem(actionItem("模型测速...", #selector(showModelBenchmark), "speedometer"))
         menu.addItem(actionItem("安装到 Codex...", #selector(installCodexConfig), "square.and.arrow.down"))
         menu.addItem(actionItem("从 Codex 恢复...", #selector(uninstallCodexConfig), "arrow.uturn.backward.circle"))
         menu.addItem(.separator())
