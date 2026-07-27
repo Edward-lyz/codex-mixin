@@ -5,7 +5,7 @@
 ## 核心设计决策（已定，不要偏离）
 
 1. **三段式管线**：Panel(N 并行) → Judge(严格 JSON) → Final(流式 + 完整 Codex 工具)。成本 N+2 次调用。
-2. **每个新用户轮次都 fusion**：不区分 Plan / Default / 写代码阶段；只要 input 最后一个可操作项是 user 消息，就触发 Panel→Judge。`function_call_output` 等同一轮工具续跑直接改写 model 为 `final_model` 透传，避免重复执行 Panel。旧配置中的 `fuse_every_user_turn` 字段仅为兼容保留，保存时固定为 true。
+2. **仅 Plan 模式 fusion**：只有当前 collaboration mode 为 Plan，且 input 最后一个可操作项是 user 消息，才触发 Panel→Judge。Default / 写代码阶段的新用户轮次以及 `function_call_output` 等工具续跑都改写 model 为 `final_model` 透传，避免在执行阶段重复分析。
 3. **不做 ReadOnlyToolBroker / 跨请求状态机**：Panel 的只读工具在 gateway 进程内直接执行（本机运行、用户自己的权限），整个 Panel 工具循环在一次请求处理内完成。不往返 Codex 客户端。
 4. **Final 阶段就是普通代理请求**：把 Judge 分析注入 input、model 改写为 final_model，走现有转发路径。工具续跑（input 最后可操作项为 `function_call_output`）由用户轮次谓词排除，不需要 pending_tools 映射。
 5. **model 字段一致性**：返回给下游的所有事件中 model 保持 `mixin/fusion/<id>` 原样，仅发上游时改写。否则 Codex 的 `previous_response_id` 校验会失败。
@@ -32,7 +32,6 @@
     "min_successful": 2,
     "max_completion_tokens": 2048,
     "timeout_ms": 300000,
-    "fuse_every_user_turn": true,
     "show_intermediate_results": true,
     "panel_tools": { "enabled": true, "max_rounds": 16, "max_calls_per_model": 64 }
   }
@@ -40,7 +39,7 @@
 - [x] 持久化：`StoredGatewayConfig`（`src/config.rs` ~line 415）加 `fusion_profiles: Vec<FusionProfile>` 字段（serde default，向后兼容旧配置文件）。`GatewayConfig` 带解析后的 profiles。
 - [x] 校验：panel 1–8 个；panel/judge/final 不得引用 `mixin/fusion/` 前缀（防递归）；`min_successful <= panel 数`。
 - [x] 路由：`ModelRoute { Official, Direct, Fusion { profile_id } }` 解析函数；`mixin/fusion/<id>` 命中 Fusion。
-- [x] 用户轮次判定谓词 `should_fuse_turn(body) -> bool`：以 input 最后可操作项区分新 user 消息与同一轮 `function_call_output`，不受历史 assistant / `previous_response_id` 限制。
+- [x] 用户轮次判定谓词 `should_fuse_turn(body) -> bool`：读取可信 instructions / developer / system 中的 collaboration mode，并以 input 最后可操作项区分新 user 消息与同一轮 `function_call_output`；仅 Plan 的新 user 消息返回 true。
 - [x] Panel 阶段：
   - 从 input 提取用户任务与 `<environment_context>` 中的 cwd（工具 jail 根目录；解析不到则禁用工具，Panel 退化为纯文本）。
   - Panel prompt 精简：用户任务 + 必要上下文，不带 Codex 全量 instructions。
@@ -83,7 +82,7 @@
   - 启动时经网关 `/v1/models` 拉取可用模型列表（带 gateway key，同 benchmark 窗口 ~line 542 的做法）；网关未运行时提示先启动。
   - Panel 模型：checkbox 列表多选（1–8 个，超出/为空时禁用保存并提示）。
   - Judge / Final 模型：两个 NSPopUpButton 单选（默认同一个模型）。
-  - 高级选项（次要区域）：`min_successful`、`timeout_ms`、每个用户轮次固定启用的说明、panel 工具开关。
+  - 高级选项（次要区域）：`min_successful`、`timeout_ms`、仅 Plan 模式启用的说明、panel 工具开关。
   - 中间结果开关：控制回答区是否展示 Panel/Judge；默认开启以兼容既有行为。
   - Profile id 文本框（默认 `default`）；MVP 先支持编辑单个 profile，多 profile 列表增删可后续加。
 - [x] 持久化：直接读写 stored config JSON 中的 `fusion_profiles` 数组（复用 `loadStoredConfig` ~line 1622 及与登录设置面板相同的保存机制），保存后沿用现有"设置保存→重启网关进程"逻辑使 catalog 生效。
@@ -97,7 +96,7 @@
 ### 7. 测试（`tests/gateway_http.rs` 风格，参考现有 mock 上游）
 
 - [x] profile 校验：1–8 panel、递归引用拒绝、min_successful 越界。
-- [x] 首轮触发 fusion、次轮（含 assistant 历史 / function_call_output / previous_response_id）直接透传。
+- [x] Plan 轮次触发 fusion；切换 Default 后的新用户轮次，以及 function_call_output / previous_response_id 续跑，直接透传 Final。
 - [x] Panel 并行（mock 两个慢上游，总耗时 < 串行和）。
 - [x] 部分 panel 失败降级、全失败回退纯 final。
 - [x] Judge JSON 解析失败容忍。
@@ -108,9 +107,9 @@
 
 ### 8. Plan 后续写代码轮次
 
-- [x] Fusion 不读取 collaboration mode；Plan、Default 与写代码阶段的新 user 消息使用同一路由。
-- [x] 有历史 assistant 或 `previous_response_id` 的后续 user 消息仍执行 Panel→Judge→Final。
-- [x] 同一轮 `function_call_output` 续跑不重复 Fusion，直接交给 `final_model`。
+- [x] Fusion 从顶层 instructions 或 developer/system 消息读取 collaboration mode；用户正文中的伪造标签不生效。
+- [x] Plan 模式的新 user 消息执行 Panel→Judge→Final。
+- [x] Default / 写代码阶段的新 user 消息和 `function_call_output` 续跑不重复 Fusion，直接交给 `final_model`。
 
 ### 9. 暂缓（本次不做）
 

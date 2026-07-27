@@ -8,6 +8,7 @@ pub mod convert;
 pub mod error;
 pub mod fusion;
 pub mod fusion_tools;
+mod gateway;
 pub mod history;
 mod image_generation;
 pub mod model_metadata;

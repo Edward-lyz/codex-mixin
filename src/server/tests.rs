@@ -27,13 +27,60 @@ fn test_provider(base_url: String, model: &str) -> crate::provider::ProviderDefi
 #[test]
 fn provider_model_display_name_keeps_the_model_id_visible() {
     assert_eq!(
-        provider_model_display_name("gpt-5.6-sol", Some("GPT‑5.6 系列旗舰模型"), "Baidu OneAPI"),
+        provider_model_display_name("gpt-5.6-sol", "Baidu OneAPI"),
         "gpt-5.6-sol · Baidu OneAPI"
     );
     assert_eq!(
-        provider_model_display_name("gpt-5.6-sol", Some("gpt-5.6-sol"), "AIHub"),
+        provider_model_display_name("gpt-5.6-sol", "AIHub"),
         "gpt-5.6-sol · AIHub"
     );
+}
+
+#[tokio::test]
+async fn gateway_auth_accepts_only_the_configured_key_or_actual_codex_oauth_token() {
+    let directory = tempfile::tempdir().unwrap();
+    let auth_path = directory.path().join("auth.json");
+    tokio::fs::write(
+        &auth_path,
+        r#"{"tokens":{"access_token":"oauth-secret","account_id":"account"}}"#,
+    )
+    .await
+    .unwrap();
+    let state = AppState::new(GatewayConfig {
+        bind: "127.0.0.1:8787".parse().unwrap(),
+        providers: vec![test_provider(
+            "https://example.invalid".to_owned(),
+            "test-model",
+        )],
+        official_responses_url: "https://example.invalid/responses".to_owned(),
+        codex_auth_path: auth_path,
+        gateway_api_key: Some("gateway-secret".to_owned()),
+        accept_codex_oauth: true,
+        default_max_tokens: 8192,
+        default_context_window: 1_000_000,
+        request_timeout: Duration::from_secs(2),
+        thinking_mode: ThinkingMode::Off,
+        enable_web_search_tool: false,
+        web_search_tool_type: "web_search_20250305".to_owned(),
+        web_search_max_uses: Some(3),
+        fusion_profiles: Vec::new(),
+    })
+    .unwrap();
+
+    for token in ["gateway-secret", "oauth-secret"] {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        assert!(check_gateway_auth(&state, &headers).await.is_ok());
+    }
+    let mut headers = HeaderMap::new();
+    headers.insert(header::AUTHORIZATION, "Bearer arbitrary".parse().unwrap());
+    assert!(matches!(
+        check_gateway_auth(&state, &headers).await,
+        Err(GatewayError::Unauthorized)
+    ));
 }
 
 #[test]

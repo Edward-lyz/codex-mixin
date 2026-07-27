@@ -57,39 +57,6 @@ pub(super) async fn probe_model(
         };
         match verdict {
             ProbeVerdict::Supported(evidence) => {
-                for _ in 0..POSITIVE_CONFIRMATION_ATTEMPTS {
-                    match timeout(
-                        PROBE_ATTEMPT_TIMEOUT,
-                        probe_model_once(
-                            client,
-                            provider,
-                            upstream_model,
-                            web_search_tool_type,
-                            release_reference,
-                        ),
-                    )
-                    .await
-                    {
-                        Ok(Ok(ProbeVerdict::Supported(_))) => {}
-                        Ok(Ok(ProbeVerdict::Unsupported(evidence))) => {
-                            return Ok((false, evidence.to_owned()));
-                        }
-                        Ok(Ok(ProbeVerdict::NoEvidence)) => {
-                            return Ok((false, "inconsistent_no_search_evidence".to_owned()));
-                        }
-                        Ok(Err(error)) => {
-                            return Err(error).with_context(|| {
-                                format!("web search confirmation failed for {upstream_model}")
-                            });
-                        }
-                        Err(_) => {
-                            anyhow::bail!(
-                                "web search confirmation timed out after {} seconds for {upstream_model}",
-                                PROBE_ATTEMPT_TIMEOUT.as_secs()
-                            );
-                        }
-                    }
-                }
                 return Ok((true, evidence.to_owned()));
             }
             ProbeVerdict::Unsupported(evidence) => return Ok((false, evidence.to_owned())),

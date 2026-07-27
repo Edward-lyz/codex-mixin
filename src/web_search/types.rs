@@ -4,7 +4,6 @@ pub(super) const CAPABILITY_FILE_VERSION: u64 = 3;
 pub(super) const CAPABILITY_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 pub(super) const PROBE_CONCURRENCY: usize = 4;
 pub(super) const NO_EVIDENCE_PROBE_ATTEMPTS: usize = 3;
-pub(super) const POSITIVE_CONFIRMATION_ATTEMPTS: usize = 1;
 pub(super) const PROBE_ATTEMPT_TIMEOUT: Duration = Duration::from_secs(30);
 pub(super) const RELEASE_REFERENCE_URL: &str =
     "https://api.github.com/repos/openai/codex/releases/latest";

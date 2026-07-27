@@ -1057,7 +1057,6 @@ mod tests {
                 min_successful: 1,
                 max_completion_tokens: 2_048,
                 timeout_ms: 300_000,
-                fuse_every_user_turn: true,
                 show_intermediate_results: true,
                 panel_tools: PanelToolsConfig::default(),
             }],

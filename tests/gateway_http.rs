@@ -461,7 +461,7 @@ async fn mock_messages(
         MockMode::WebSearchRetry if is_capability_probe && hosted_web_search_forced => {
             web_search_sse()
         }
-        MockMode::WebSearchRetry if hosted_web_search_forced && request_index >= 2 => {
+        MockMode::WebSearchRetry if hosted_web_search_forced && request_index >= 1 => {
             web_search_sse()
         }
         MockMode::WebSearchRetry => tool_sse("web_search", json!({})),
@@ -1069,13 +1069,21 @@ fn fusion_profile() -> FusionProfile {
         min_successful: 2,
         max_completion_tokens: 2048,
         timeout_ms: 5_000,
-        fuse_every_user_turn: true,
         show_intermediate_results: true,
         panel_tools: PanelToolsConfig {
             enabled: false,
             ..PanelToolsConfig::default()
         },
     }
+}
+
+fn fusion_request() -> Value {
+    let mut request = responses_request();
+    request["model"] = json!("mixin/fusion/default");
+    request["instructions"] = json!(
+        "You are Codex.\n<collaboration_mode># Collaboration Mode: Plan\nPlan the requested work.</collaboration_mode>"
+    );
+    request
 }
 
 fn image_tool_request() -> Value {
@@ -1545,7 +1553,7 @@ async fn custom_tool_loop_marks_commentary_and_final_answer() {
 }
 
 #[tokio::test]
-async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
+async fn fusion_runs_only_in_plan_mode_then_routes_execution_to_final() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let mut config = test_config(upstream_url);
     config.fusion_profiles = vec![fusion_profile()];
@@ -1572,8 +1580,7 @@ async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
         "Fusion (default): panel-a-custom+panel-b-custom → judge judge-custom"
     );
 
-    let mut request = responses_request();
-    request["model"] = json!("mixin/fusion/default");
+    let mut request = fusion_request();
     let response = client
         .post(format!("{gateway_url}/v1/responses"))
         .bearer_auth("gateway-key")
@@ -1678,8 +1685,11 @@ async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
     request["input"] = json!([
         {"type":"message","role":"user","content":[{"type":"input_text","text":"first"}]},
         {"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]},
-        {"type":"message","role":"user","content":[{"type":"input_text","text":"follow up"}]}
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"implement the plan"}]}
     ]);
+    request["instructions"] = json!(
+        "You are Codex.\n<collaboration_mode># Collaboration Mode: Default\nExecute the requested work.</collaboration_mode>"
+    );
     let response = client
         .post(format!("{gateway_url}/v1/responses"))
         .bearer_auth("gateway-key")
@@ -1689,8 +1699,9 @@ async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
         .unwrap();
     assert_eq!(response.status(), StatusCode::OK);
     let later_body = response.text().await.unwrap();
-    assert!(later_body.contains("response.reasoning_summary_text.delta"));
-    assert_eq!(requests.lock().unwrap().len(), 8);
+    assert!(!later_body.contains("response.reasoning_summary_text.delta"));
+    assert_eq!(requests.lock().unwrap().len(), 5);
+    assert_eq!(requests.lock().unwrap().last().unwrap()["model"], "final");
 
     request["input"] = json!([
         {"type":"message","role":"user","content":[{"type":"input_text","text":"run a tool"}]},
@@ -1708,7 +1719,7 @@ async fn fusion_runs_on_later_user_turns_and_directs_tool_continuations() {
     let continuation_body = response.text().await.unwrap();
     assert!(!continuation_body.contains("response.reasoning_summary_text.delta"));
     let captured = requests.lock().unwrap();
-    assert_eq!(captured.len(), 9);
+    assert_eq!(captured.len(), 6);
     assert_eq!(captured.last().unwrap()["model"], "final");
 }
 
@@ -1725,8 +1736,7 @@ async fn fusion_uses_codex_inline_visualization_when_thread_root_is_available() 
     config.codex_auth_path = codex_home.path().join("auth.json");
     config.fusion_profiles = vec![fusion_profile()];
     let gateway_url = spawn_gateway_with_config(config).await;
-    let mut request = responses_request();
-    request["model"] = json!("mixin/fusion/default");
+    let mut request = fusion_request();
     request["input"].as_array_mut().unwrap().insert(
         0,
         json!({
@@ -1805,8 +1815,7 @@ async fn fusion_can_hide_intermediate_results() {
     let mut config = test_config(upstream_url);
     config.fusion_profiles = vec![profile];
     let gateway_url = spawn_gateway_with_config(config).await;
-    let mut request = responses_request();
-    request["model"] = json!("mixin/fusion/default");
+    let request = fusion_request();
 
     let response = reqwest::Client::new()
         .post(format!("{gateway_url}/v1/responses"))
@@ -1851,8 +1860,7 @@ async fn fusion_panels_run_concurrently() {
     let mut config = test_config(upstream_url);
     config.fusion_profiles = vec![fusion_profile()];
     let gateway_url = spawn_gateway_with_config(config).await;
-    let mut request = responses_request();
-    request["model"] = json!("mixin/fusion/default");
+    let request = fusion_request();
 
     let started = Instant::now();
     let response = reqwest::Client::new()
@@ -1945,7 +1953,6 @@ async fn fusion_routes_models_across_official_and_upstream_providers() {
         min_successful: 2,
         max_completion_tokens: 2048,
         timeout_ms: 300_000,
-        fuse_every_user_turn: true,
         show_intermediate_results: true,
         panel_tools: PanelToolsConfig {
             enabled: false,
@@ -1953,7 +1960,7 @@ async fn fusion_routes_models_across_official_and_upstream_providers() {
         },
     }];
     let gateway_url = spawn_gateway_with_config(config).await;
-    let mut request = responses_request();
+    let mut request = fusion_request();
     request["model"] = json!("mixin/fusion/mixed");
     let response = reqwest::Client::new()
         .post(format!("{gateway_url}/v1/responses"))
@@ -2023,8 +2030,7 @@ async fn fusion_degrades_on_partial_and_total_panel_failure() {
     let mut config = test_config(upstream_url);
     config.fusion_profiles = vec![partial_profile];
     let gateway_url = spawn_gateway_with_config(config).await;
-    let mut request = responses_request();
-    request["model"] = json!("mixin/fusion/default");
+    let request = fusion_request();
     let response = reqwest::Client::new()
         .post(format!("{gateway_url}/v1/responses"))
         .bearer_auth("gateway-key")
@@ -2100,8 +2106,7 @@ async fn fusion_panel_tool_loop_stops_at_round_limit() {
     let mut config = test_config(upstream_url);
     config.fusion_profiles = vec![profile];
     let gateway_url = spawn_gateway_with_config(config).await;
-    let mut request = responses_request();
-    request["model"] = json!("mixin/fusion/default");
+    let mut request = fusion_request();
     request["input"][1]["content"][0]["text"] = json!(format!(
         "inspect the file\n<environment_context><cwd>{}</cwd></environment_context>",
         workspace.path().display()
@@ -2696,10 +2701,9 @@ async fn fusion_uses_same_pipeline_on_custom_websocket() {
         .headers_mut()
         .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
     let (mut socket, _) = connect_async(request).await.unwrap();
-    let mut body = responses_request();
+    let mut body = fusion_request();
     body.as_object_mut().unwrap().remove("stream");
     body["type"] = json!("response.create");
-    body["model"] = json!("mixin/fusion/default");
     socket
         .send(WsMessage::Text(body.to_string().into()))
         .await
@@ -2722,6 +2726,7 @@ async fn fusion_uses_same_pipeline_on_custom_websocket() {
         "type":"response.create",
         "model":"mixin/fusion/default",
         "previous_response_id":completed["response"]["id"],
+        "instructions":"You are Codex.\n<collaboration_mode># Collaboration Mode: Default\nExecute the requested work.</collaboration_mode>",
         "input":[{
             "type":"message",
             "role":"user",
@@ -2736,9 +2741,10 @@ async fn fusion_uses_same_pipeline_on_custom_websocket() {
     assert!(
         follow_up_frames
             .iter()
-            .any(|frame| frame.contains("response.reasoning_summary_text.delta"))
+            .all(|frame| !frame.contains("response.reasoning_summary_text.delta"))
     );
-    assert_eq!(requests.lock().unwrap().len(), 8);
+    assert_eq!(requests.lock().unwrap().len(), 5);
+    assert_eq!(requests.lock().unwrap().last().unwrap()["model"], "final");
     let follow_up_completed: Value = follow_up_frames
         .iter()
         .filter_map(|frame| serde_json::from_str(frame).ok())
@@ -2764,7 +2770,8 @@ async fn fusion_uses_same_pipeline_on_custom_websocket() {
             .iter()
             .all(|frame| !frame.contains("response.reasoning_summary_text.delta"))
     );
-    assert_eq!(requests.lock().unwrap().len(), 9);
+    assert_eq!(requests.lock().unwrap().len(), 6);
+    assert_eq!(requests.lock().unwrap().last().unwrap()["model"], "final");
 }
 
 #[tokio::test]
@@ -2821,7 +2828,7 @@ async fn retries_demoted_web_search_on_custom_websocket() {
     assert!(frames.contains("\"type\":\"response.completed\""));
     assert!(!frames.contains("\"name\":\"web_search\",\"type\":\"function_call\""));
     let upstream_requests = requests.lock().unwrap();
-    assert_eq!(upstream_requests.len(), 3);
+    assert_eq!(upstream_requests.len(), 2);
     assert_eq!(
         upstream_requests[0]["metadata"]["session_id"],
         "web-search-session"
@@ -2832,7 +2839,7 @@ async fn retries_demoted_web_search_on_custom_websocket() {
             .unwrap()
             .starts_with("web-search-session-web-search-retry-")
     );
-    assert_eq!(upstream_requests[2]["tool_choice"]["name"], "web_search");
+    assert_eq!(upstream_requests[1]["tool_choice"]["name"], "web_search");
     let hash_key = upstream_requests[0]["__x_hash_key"].as_str().unwrap();
     assert!(uuid::Uuid::parse_str(hash_key).is_ok());
     assert!(
@@ -3812,7 +3819,7 @@ async fn forwards_thinking_and_anthropic_server_web_search() {
         .await
         .unwrap();
     let probe_requests = requests.lock().unwrap().clone();
-    assert_eq!(probe_requests.len(), 1 + 1);
+    assert_eq!(probe_requests.len(), 1);
     assert_eq!(probe_requests[0]["tools"].as_array().unwrap().len(), 2);
     assert_eq!(probe_requests[0]["tool_choice"]["type"], "tool");
     assert_eq!(probe_requests[0]["tool_choice"]["name"], "web_search");
@@ -3853,13 +3860,11 @@ async fn forwards_thinking_and_anthropic_server_web_search() {
     assert!(body.contains("\"query\":\"OpenAI Codex\""));
 
     let supported_requests = requests.lock().unwrap().clone();
-    assert_eq!(supported_requests.len(), 3);
+    assert_eq!(supported_requests.len(), 2);
     assert_ne!(supported_requests[0]["tool_choice"]["type"], "tool");
     assert_eq!(supported_requests[1]["tool_choice"]["type"], "tool");
     assert_eq!(supported_requests[1]["tool_choice"]["name"], "web_search");
-    assert_eq!(supported_requests[2]["tool_choice"]["type"], "tool");
-    assert_eq!(supported_requests[2]["tool_choice"]["name"], "web_search");
-    let upstream_request = supported_requests[2].clone();
+    let upstream_request = supported_requests[1].clone();
     assert_eq!(upstream_request["thinking"]["type"], "adaptive");
     assert_eq!(upstream_request["output_config"]["effort"], "max");
     assert_eq!(upstream_request["system"].as_array().unwrap().len(), 2);
@@ -3895,7 +3900,7 @@ async fn forwards_thinking_and_anthropic_server_web_search() {
     assert_eq!(response.status(), StatusCode::OK);
     let _ = response.text().await.unwrap();
 
-    let upstream_request = requests.lock().unwrap()[3].clone();
+    let upstream_request = requests.lock().unwrap()[2].clone();
     assert_eq!(upstream_request["tools"].as_array().unwrap().len(), 1);
     assert_ne!(upstream_request["tools"][0]["name"], "web_search");
 }

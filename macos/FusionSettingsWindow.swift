@@ -74,7 +74,6 @@ struct FusionSettingsProfile {
             "min_successful": minSuccessful,
             "max_completion_tokens": maxCompletionTokens,
             "timeout_ms": timeoutMs,
-            "fuse_every_user_turn": true,
             "show_intermediate_results": showIntermediateResults,
             "panel_tools": [
                 "enabled": panelToolsEnabled,
@@ -252,7 +251,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
         let advancedStack = NSStackView(views: [
             settingsRow("最少成功 Panel", minSuccessfulField),
             settingsRow("单模型超时 (ms)", timeoutField),
-            everyUserTurnLabel(),
+            planModeLabel(),
             resultsCheckbox,
             toolsCheckbox,
         ])
@@ -518,8 +517,8 @@ private func sectionLabel(_ title: String) -> NSTextField {
     return label
 }
 
-private func everyUserTurnLabel() -> NSTextField {
-    let label = NSTextField(wrappingLabelWithString: "Fusion 会在每个新用户轮次运行，包括 Plan 与后续写代码阶段；同一轮的工具结果续跑直接交给 Final 模型。")
+private func planModeLabel() -> NSTextField {
+    let label = NSTextField(wrappingLabelWithString: "Fusion 仅在 Plan 模式的新用户轮次运行；进入 Default 执行模式后，后续请求与工具结果续跑均直接交给 Final 模型。")
     label.textColor = .secondaryLabelColor
     label.translatesAutoresizingMaskIntoConstraints = false
     label.widthAnchor.constraint(equalToConstant: 680).isActive = true

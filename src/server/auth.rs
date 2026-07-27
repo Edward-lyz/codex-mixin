@@ -1,32 +1,34 @@
 use super::*;
 
+pub(super) const FORWARDED_OFFICIAL_HEADERS: &[&str] = &[
+    "openai-beta",
+    "x-codex-installation-id",
+    "x-codex-beta-features",
+    "originator",
+    "x-codex-originator",
+    "x-openai-subagent",
+    "x-openai-memgen-request",
+    "x-codex-turn-state",
+    "x-codex-turn-metadata",
+    "x-codex-parent-thread-id",
+    "x-oai-attestation",
+    "x-responsesapi-include-timing-metrics",
+    "x-openai-internal-codex-responses-lite",
+    "openai-organization",
+    "openai-project",
+    "user-agent",
+    "accept-language",
+    "session-id",
+    "thread-id",
+    "x-client-request-id",
+    "x-codex-window-id",
+];
+
 pub(super) fn forward_official_headers(
     mut request: reqwest::RequestBuilder,
     headers: &HeaderMap,
 ) -> reqwest::RequestBuilder {
-    for name in [
-        "openai-beta",
-        "x-codex-installation-id",
-        "x-codex-beta-features",
-        "originator",
-        "x-codex-originator",
-        "x-openai-subagent",
-        "x-openai-memgen-request",
-        "x-codex-turn-state",
-        "x-codex-turn-metadata",
-        "x-codex-parent-thread-id",
-        "x-oai-attestation",
-        "x-responsesapi-include-timing-metrics",
-        "x-openai-internal-codex-responses-lite",
-        "openai-organization",
-        "openai-project",
-        "user-agent",
-        "accept-language",
-        "session-id",
-        "thread-id",
-        "x-client-request-id",
-        "x-codex-window-id",
-    ] {
+    for &name in FORWARDED_OFFICIAL_HEADERS {
         if let Some(value) = headers.get(name) {
             request = request.header(name, value);
         }
@@ -41,7 +43,7 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
         .and_then(|value| value.strip_prefix("Bearer "))
 }
 
-pub(super) fn check_gateway_auth(
+pub(super) async fn check_gateway_auth(
     state: &AppState,
     headers: &HeaderMap,
 ) -> Result<(), GatewayError> {
@@ -50,12 +52,25 @@ pub(super) fn check_gateway_auth(
     let Some(expected) = &state.config.gateway_api_key else {
         return Ok(());
     };
-    let actual = bearer_token(headers);
-    let accepts_codex_oauth =
-        state.config.accept_codex_oauth && state.config.bind.ip().is_loopback() && actual.is_some();
-    let gateway_key_matches =
-        actual.is_some_and(|actual| actual.as_bytes().ct_eq(expected.as_bytes()).into());
-    if accepts_codex_oauth || gateway_key_matches {
+    let Some(actual) = bearer_token(headers) else {
+        return Err(GatewayError::Unauthorized);
+    };
+    if bool::from(actual.as_bytes().ct_eq(expected.as_bytes())) {
+        return Ok(());
+    }
+    if !state.config.accept_codex_oauth || !state.config.bind.ip().is_loopback() {
+        return Err(GatewayError::Unauthorized);
+    }
+    let (authorization, _) = state
+        .official_auth()
+        .await
+        .map_err(|_| GatewayError::Unauthorized)?;
+    let oauth_token = authorization
+        .to_str()
+        .ok()
+        .and_then(|authorization| authorization.strip_prefix("Bearer "))
+        .ok_or(GatewayError::Unauthorized)?;
+    if bool::from(actual.as_bytes().ct_eq(oauth_token.as_bytes())) {
         Ok(())
     } else {
         Err(GatewayError::Unauthorized)

@@ -1,15 +1,21 @@
 use std::fs;
-use std::io::{Read, Seek, SeekFrom};
+use std::io::{self, Read, Seek, SeekFrom};
 use std::path::{Component, Path, PathBuf};
-use std::process::Command;
+use std::process::{Command, Output, Stdio};
+use std::time::Duration;
+
+#[cfg(unix)]
+use std::os::unix::process::CommandExt;
 
 use regex::Regex;
 use serde_json::{Value, json};
+use wait_timeout::ChildExt;
 use walkdir::WalkDir;
 
 const MAX_RESULT_BYTES: usize = 32 * 1024;
 const MAX_LIST_ENTRIES: usize = 500;
 const MAX_GREP_MATCHES: usize = 200;
+const SUBPROCESS_TIMEOUT: Duration = Duration::from_secs(30);
 
 #[derive(Clone, Debug)]
 pub struct PanelToolExecutor {
@@ -136,19 +142,15 @@ impl PanelToolExecutor {
         let path = self.resolve_existing(path)?;
         let matcher = optional_glob(arguments)?;
         let mut files = Vec::new();
-        for entry in WalkDir::new(&path).follow_links(false) {
+        for entry in workspace_entries(&path) {
             let entry = entry.map_err(|error| format!("walk {}: {error}", path.display()))?;
             if entry.file_type().is_symlink() || !entry.file_type().is_file() {
                 continue;
             }
-            let canonical = entry
+            let relative = entry
                 .path()
-                .canonicalize()
-                .map_err(|error| format!("canonicalize {}: {error}", entry.path().display()))?;
-            self.ensure_inside(&canonical)?;
-            let relative = canonical
                 .strip_prefix(&self.root)
-                .expect("validated workspace path")
+                .expect("walked workspace path")
                 .to_string_lossy()
                 .into_owned();
             if matcher
@@ -191,12 +193,16 @@ impl PanelToolExecutor {
             "never",
             "--max-count",
             &MAX_GREP_MATCHES.to_string(),
+            "--glob",
+            "!.git/**",
+            "--glob",
+            "!target/**",
         ]);
         if let Some(glob) = glob {
             command.arg("-g").arg(glob);
         }
         command.arg("--").arg(pattern).arg(path);
-        let output = command.output().map_err(|error| {
+        let output = command_output_with_timeout(&mut command).map_err(|error| {
             if error.kind() == std::io::ErrorKind::NotFound {
                 RgError::Unavailable
             } else {
@@ -221,19 +227,15 @@ impl PanelToolExecutor {
         let regex = Regex::new(pattern).map_err(|error| format!("invalid regex: {error}"))?;
         let matcher = glob.map(glob_regex).transpose()?;
         let mut matches = Vec::new();
-        for entry in WalkDir::new(path).follow_links(false) {
+        for entry in workspace_entries(path) {
             let entry = entry.map_err(|error| format!("walk {}: {error}", path.display()))?;
             if entry.file_type().is_symlink() || !entry.file_type().is_file() {
                 continue;
             }
-            let canonical = entry
+            let relative = entry
                 .path()
-                .canonicalize()
-                .map_err(|error| format!("canonicalize {}: {error}", entry.path().display()))?;
-            self.ensure_inside(&canonical)?;
-            let relative = canonical
                 .strip_prefix(&self.root)
-                .expect("validated workspace path")
+                .expect("walked workspace path")
                 .to_string_lossy();
             if matcher
                 .as_ref()
@@ -241,7 +243,7 @@ impl PanelToolExecutor {
             {
                 continue;
             }
-            let Ok(content) = fs::read_to_string(&canonical) else {
+            let Ok(content) = fs::read_to_string(entry.path()) else {
                 continue;
             };
             for (line_index, line) in content.lines().enumerate() {
@@ -275,17 +277,18 @@ impl PanelToolExecutor {
             Some(_) => return Err("git args must be an array".to_owned()),
         };
         for arg in &args {
-            validate_git_arg(arg)?;
+            validate_git_arg(subcommand, arg)?;
         }
-        let output = Command::new("git")
+        let mut command = Command::new("git");
+        command
             .current_dir(&self.root)
             .env("GIT_PAGER", "cat")
             .env("PAGER", "cat")
             .env_remove("GIT_EXTERNAL_DIFF")
             .arg("--no-pager")
             .arg(subcommand)
-            .args(&args)
-            .output()
+            .args(&args);
+        let output = command_output_with_timeout(&mut command)
             .map_err(|error| format!("run git {subcommand}: {error}"))?;
         if !output.status.success() {
             return Err(format!(
@@ -390,37 +393,207 @@ fn glob_regex(pattern: &str) -> Result<Regex, String> {
 
 fn glob_matches(regex: &Regex, relative: &str) -> bool {
     regex.is_match(relative)
-        || (!relative.contains('/') && regex.is_match(relative))
         || relative
             .rsplit_once('/')
             .is_some_and(|(_, file_name)| regex.is_match(file_name))
 }
 
-fn validate_git_arg(arg: &str) -> Result<(), String> {
-    const FORBIDDEN: &[&str] = &[
-        "-o",
-        "--output",
-        "--ext-diff",
-        "--textconv",
-        "--no-index",
-        "--git-dir",
-        "--work-tree",
-        "--config-env",
-        "--pathspec-from-file",
-        "--exec",
-    ];
+fn workspace_entries(path: &Path) -> impl Iterator<Item = walkdir::Result<walkdir::DirEntry>> {
+    WalkDir::new(path)
+        .follow_links(false)
+        .into_iter()
+        .filter_entry(|entry| {
+            !entry.file_type().is_dir()
+                || !matches!(entry.file_name().to_str(), Some(".git" | "target"))
+        })
+}
+
+fn command_output_with_timeout(command: &mut Command) -> io::Result<Output> {
+    command_output_with_deadline(command, SUBPROCESS_TIMEOUT)
+}
+
+fn command_output_with_deadline(command: &mut Command, timeout: Duration) -> io::Result<Output> {
+    #[cfg(unix)]
+    command.process_group(0);
+    let mut child = command
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .spawn()?;
+    let stdout = child.stdout.take().expect("piped child stdout");
+    let stderr = child.stderr.take().expect("piped child stderr");
+    let stdout_reader = std::thread::spawn(move || {
+        let mut stdout = stdout;
+        let mut bytes = Vec::new();
+        stdout.read_to_end(&mut bytes)?;
+        Ok::<_, io::Error>(bytes)
+    });
+    let stderr_reader = std::thread::spawn(move || {
+        let mut stderr = stderr;
+        let mut bytes = Vec::new();
+        stderr.read_to_end(&mut bytes)?;
+        Ok::<_, io::Error>(bytes)
+    });
+    let status = match child.wait_timeout(timeout)? {
+        Some(status) => status,
+        None => {
+            terminate_child_tree(&mut child)?;
+            child.wait()?;
+            join_reader(stdout_reader)?;
+            join_reader(stderr_reader)?;
+            return Err(io::Error::new(
+                io::ErrorKind::TimedOut,
+                format!("subprocess timed out after {}ms", timeout.as_millis()),
+            ));
+        }
+    };
+    Ok(Output {
+        status,
+        stdout: join_reader(stdout_reader)?,
+        stderr: join_reader(stderr_reader)?,
+    })
+}
+
+fn terminate_child_tree(child: &mut std::process::Child) -> io::Result<()> {
+    #[cfg(unix)]
+    {
+        let result = rustix::process::kill_process_group(
+            rustix::process::Pid::from_child(child),
+            rustix::process::Signal::KILL,
+        );
+        if let Err(error) = result
+            && child.try_wait()?.is_none()
+        {
+            return Err(error.into());
+        }
+        Ok(())
+    }
+    #[cfg(not(unix))]
+    {
+        child.kill()
+    }
+}
+
+fn join_reader(reader: std::thread::JoinHandle<io::Result<Vec<u8>>>) -> io::Result<Vec<u8>> {
+    reader
+        .join()
+        .map_err(|_| io::Error::other("subprocess output reader panicked"))?
+}
+
+fn validate_git_arg(subcommand: &str, arg: &str) -> Result<(), String> {
     if arg.contains(['\0', '\n', '\r'])
-        || FORBIDDEN
-            .iter()
-            .any(|forbidden| arg == *forbidden || arg.starts_with(&format!("{forbidden}=")))
         || Path::new(arg).is_absolute()
         || Path::new(arg)
             .components()
             .any(|component| component == Component::ParentDir)
+        || (arg.starts_with('-') && !allowed_git_option(subcommand, arg))
     {
         return Err(format!("git argument is not allowed: {arg}"));
     }
     Ok(())
+}
+
+fn allowed_git_option(subcommand: &str, arg: &str) -> bool {
+    if arg == "--" {
+        return true;
+    }
+    let diff_option = matches!(
+        arg,
+        "-p" | "-u"
+            | "--patch"
+            | "--no-patch"
+            | "--stat"
+            | "--shortstat"
+            | "--numstat"
+            | "--name-only"
+            | "--name-status"
+            | "--check"
+            | "--quiet"
+            | "--exit-code"
+            | "--binary"
+            | "--full-index"
+            | "--no-renames"
+            | "--minimal"
+            | "--patience"
+            | "--histogram"
+            | "--cached"
+            | "--staged"
+            | "--merge-base"
+    ) || arg
+        .strip_prefix("-U")
+        .is_some_and(|lines| !lines.is_empty() && lines.chars().all(|c| c.is_ascii_digit()))
+        || [
+            "--unified=",
+            "--diff-filter=",
+            "--find-renames=",
+            "--relative=",
+            "--color=",
+        ]
+        .iter()
+        .any(|prefix| arg.starts_with(prefix));
+    match subcommand {
+        "status" => {
+            matches!(
+                arg,
+                "-s" | "-b"
+                    | "--short"
+                    | "--branch"
+                    | "--show-stash"
+                    | "--porcelain"
+                    | "--ahead-behind"
+                    | "--no-ahead-behind"
+                    | "--renames"
+                    | "--no-renames"
+                    | "--ignored"
+            ) || ["--porcelain=", "--untracked-files=", "--ignored="]
+                .iter()
+                .any(|prefix| arg.starts_with(prefix))
+        }
+        "diff" => diff_option,
+        "log" | "show" => {
+            diff_option
+                || matches!(
+                    arg,
+                    "--oneline"
+                        | "--graph"
+                        | "--decorate"
+                        | "--no-decorate"
+                        | "--abbrev-commit"
+                        | "--no-abbrev-commit"
+                        | "--all"
+                        | "--branches"
+                        | "--tags"
+                        | "--remotes"
+                        | "--no-merges"
+                        | "--merges"
+                        | "--first-parent"
+                        | "--reverse"
+                        | "-n"
+                )
+                || arg.strip_prefix('-').is_some_and(|count| {
+                    !count.is_empty() && count.chars().all(|c| c.is_ascii_digit())
+                })
+                || [
+                    "--pretty=",
+                    "--format=",
+                    "--date=",
+                    "--max-count=",
+                    "--skip=",
+                    "--since=",
+                    "--after=",
+                    "--until=",
+                    "--before=",
+                    "--author=",
+                    "--committer=",
+                    "--grep=",
+                    "--branches=",
+                    "--tags=",
+                    "--remotes=",
+                ]
+                .iter()
+                .any(|prefix| arg.starts_with(prefix))
+        }
+        _ => false,
+    }
 }
 
 fn truncate_bytes(bytes: &[u8]) -> String {
@@ -498,6 +671,47 @@ mod tests {
                     r#"{"subcommand":"diff","args":["--output=/tmp/leak"]}"#
                 )
                 .is_err()
+        );
+        assert!(validate_git_arg("log", "--oneline").is_ok());
+        assert!(validate_git_arg("log", "-10").is_ok());
+        assert!(validate_git_arg("diff", "--definitely-unknown").is_err());
+    }
+
+    #[test]
+    fn workspace_walks_skip_repository_metadata_and_build_outputs() {
+        let root = tempfile::tempdir().unwrap();
+        fs::create_dir(root.path().join(".git")).unwrap();
+        fs::create_dir(root.path().join("target")).unwrap();
+        fs::write(root.path().join("visible.rs"), "needle").unwrap();
+        fs::write(root.path().join(".git/hidden.rs"), "needle").unwrap();
+        fs::write(root.path().join("target/generated.rs"), "needle").unwrap();
+        let executor = PanelToolExecutor::new(root.path()).unwrap();
+
+        let listed = executor
+            .execute("list_files", r#"{"path":".","glob":null}"#)
+            .unwrap();
+        assert_eq!(listed, "visible.rs");
+
+        let matches = executor
+            .execute("grep", r#"{"pattern":"needle","path":".","glob":null}"#)
+            .unwrap();
+        assert!(matches.contains("visible.rs:1:needle"));
+        assert!(!matches.contains("hidden.rs"));
+        assert!(!matches.contains("generated.rs"));
+    }
+
+    #[test]
+    #[cfg(unix)]
+    fn terminates_panel_tool_subprocess_tree_at_the_deadline() {
+        let mut command = Command::new("sh");
+        command.args(["-c", "sleep 5 & wait"]);
+        let started = std::time::Instant::now();
+        let error =
+            command_output_with_deadline(&mut command, Duration::from_millis(20)).unwrap_err();
+        assert_eq!(error.kind(), io::ErrorKind::TimedOut);
+        assert!(
+            started.elapsed() < Duration::from_secs(1),
+            "descendant retained the output pipe after timeout"
         );
     }
 }

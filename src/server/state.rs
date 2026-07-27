@@ -1,23 +1,9 @@
 use super::*;
 
 type AnthropicByteStream = BoxStream<'static, Result<Bytes, reqwest::Error>>;
-const HOSTED_WEB_SEARCH_RETRY_ATTEMPTS: usize = 3;
 const CATALOG_SOURCE_CACHE_TTL: Duration = Duration::from_secs(60);
 const CATALOG_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(30);
 const ANTHROPIC_FAST_BETA: &str = "fast-mode-2026-02-01";
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(crate) enum ResolvedModelRoute {
-    Official,
-    Fusion {
-        profile_id: String,
-    },
-    Provider {
-        catalog_slug: String,
-        provider_id: String,
-        upstream_model_id: String,
-    },
-}
 
 enum AnthropicStreamDisposition {
     Ready(AnthropicByteStream),
@@ -112,7 +98,6 @@ impl AppState {
                     id: slug,
                     display_name: Some(provider_model_display_name(
                         upstream_model_id,
-                        model.display_name.as_deref(),
                         provider.display_name(),
                     )),
                     object: Some("model".to_owned()),
@@ -322,54 +307,8 @@ impl AppState {
         self.config.enable_web_search_tool && self.web_search_capabilities.supports_model(model)
     }
 
-    pub(crate) fn resolve_model_route(
-        &self,
-        model: &str,
-    ) -> Result<ResolvedModelRoute, GatewayError> {
-        if let Some(profile_id) = model.strip_prefix(crate::fusion::FUSION_MODEL_PREFIX) {
-            if self
-                .config
-                .fusion_profiles
-                .iter()
-                .any(|profile| profile.id == profile_id)
-            {
-                return Ok(ResolvedModelRoute::Fusion {
-                    profile_id: profile_id.to_owned(),
-                });
-            }
-            return Err(GatewayError::BadRequest(format!(
-                "unknown fusion profile: {profile_id}"
-            )));
-        }
-        if let Some(resolved) = self.providers.resolve(model) {
-            return Ok(ResolvedModelRoute::Provider {
-                catalog_slug: model.to_owned(),
-                provider_id: resolved.provider.id().to_owned(),
-                upstream_model_id: resolved.upstream_model_id.to_owned(),
-            });
-        }
-        if let Some(known) = self.providers.resolve_known(model) {
-            let reason = if !known.provider.definition().enabled {
-                "provider is disabled"
-            } else if known.model.is_none() {
-                "model is currently unavailable"
-            } else {
-                "model is not routable"
-            };
-            return Err(GatewayError::BadRequest(format!(
-                "model {model} is not available: provider {} {reason}",
-                known.provider.id()
-            )));
-        }
-        if model
-            .get(..4)
-            .is_some_and(|prefix| prefix.eq_ignore_ascii_case("gpt-"))
-        {
-            return Ok(ResolvedModelRoute::Official);
-        }
-        Err(GatewayError::BadRequest(format!(
-            "unknown model slug: {model}"
-        )))
+    pub(crate) fn model_router(&self) -> ModelRouter<'_> {
+        ModelRouter::new(&self.config.fusion_profiles, &self.providers)
     }
 
     pub(crate) fn resolved_provider_model(
@@ -407,10 +346,7 @@ impl AppState {
             provider.definition().anthropic_beta.clone()
         };
         upstream_request = provider.apply_anthropic_beta(upstream_request, beta.as_deref());
-        let response = self
-            .providers
-            .provider(provider.id())
-            .expect("resolved provider belongs to registry")
+        let response = provider
             .apply_session_affinity(upstream_request, hash_key)
             .header(header::ACCEPT, "text/event-stream")
             .json(request)
@@ -470,34 +406,28 @@ impl AppState {
                     .and_then(|metadata| metadata.get("session_id"))
                     .and_then(Value::as_str)
                     .map(str::to_owned);
-                for attempt in 1..=HOSTED_WEB_SEARCH_RETRY_ATTEMPTS {
-                    if let Some(metadata) = request.metadata.as_mut().and_then(Value::as_object_mut)
-                    {
-                        metadata.insert(
-                            "session_id".to_owned(),
-                            json!(format!(
-                                "{}-web-search-retry-{}",
-                                original_session_id.as_deref().unwrap_or("codex-mixin"),
-                                Uuid::new_v4().simple()
-                            )),
-                        );
-                    }
-                    let retry = self
-                        .send_anthropic_request(provider, &request, hash_key)
-                        .await?;
-                    match inspect_anthropic_stream(retry).await? {
-                        AnthropicStreamDisposition::Ready(retry) => return Ok(retry),
-                        AnthropicStreamDisposition::RetryHostedWebSearch => tracing::warn!(
-                            model = %request.model,
-                            attempt,
-                            "forced hosted web_search was still returned as a client tool"
-                        ),
+                if let Some(metadata) = request.metadata.as_mut().and_then(Value::as_object_mut) {
+                    metadata.insert(
+                        "session_id".to_owned(),
+                        json!(format!(
+                            "{}-web-search-retry-{}",
+                            original_session_id.as_deref().unwrap_or("codex-mixin"),
+                            Uuid::new_v4().simple()
+                        )),
+                    );
+                }
+                let retry = self
+                    .send_anthropic_request(provider, &request, hash_key)
+                    .await?;
+                match inspect_anthropic_stream(retry).await? {
+                    AnthropicStreamDisposition::Ready(retry) => Ok(retry),
+                    AnthropicStreamDisposition::RetryHostedWebSearch => {
+                        Err(GatewayError::Upstream(format!(
+                            "model {} returned a client-style web_search call after a forced hosted-tool retry",
+                            request.model
+                        )))
                     }
                 }
-                Err(GatewayError::Upstream(format!(
-                    "model {} returned a client-style web_search call after {} hosted-tool retries",
-                    request.model, HOSTED_WEB_SEARCH_RETRY_ATTEMPTS
-                )))
             }
         }
     }
@@ -505,7 +435,6 @@ impl AppState {
 
 pub(super) fn provider_model_display_name(
     upstream_model_id: &str,
-    _upstream_display_name: Option<&str>,
     provider_display_name: &str,
 ) -> String {
     format!("{upstream_model_id} · {provider_display_name}")

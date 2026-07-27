@@ -11,6 +11,32 @@ pub(crate) fn collect_active_tools(body: &Value) -> Result<Value, GatewayError> 
         }
         None => Vec::new(),
     };
+    let mut exact_tools = HashSet::new();
+    let mut namespace_indexes = HashMap::new();
+    let mut namespace_tool_indexes = HashMap::<String, HashMap<String, usize>>::new();
+    for (index, tool) in active_tools.iter().enumerate() {
+        if tool.get("type").and_then(Value::as_str) == Some("namespace")
+            && let Some(namespace) = tool.get("name").and_then(Value::as_str)
+        {
+            namespace_indexes
+                .entry(namespace.to_owned())
+                .or_insert(index);
+            let nested_indexes = namespace_tool_indexes
+                .entry(namespace.to_owned())
+                .or_default();
+            if let Some(nested_tools) = tool.get("tools").and_then(Value::as_array) {
+                for (nested_index, nested) in nested_tools.iter().enumerate() {
+                    if let Some(name) = nested.get("name").and_then(Value::as_str) {
+                        nested_indexes
+                            .entry(name.to_owned())
+                            .or_insert(nested_index);
+                    }
+                }
+            }
+        } else {
+            exact_tools.insert(tool.to_string());
+        }
+    }
     let Some(Value::Array(input)) = body.get("input") else {
         return Ok(Value::Array(active_tools));
     };
@@ -38,21 +64,8 @@ pub(crate) fn collect_active_tools(body: &Value) -> Result<Value, GatewayError> 
                 let namespace = tool.get("name").and_then(Value::as_str).ok_or_else(|| {
                     GatewayError::BadRequest("namespace tool missing name".to_owned())
                 })?;
-                if let Some(existing_index) = active_tools.iter().position(|existing| {
-                    existing.get("type").and_then(Value::as_str) == Some("namespace")
-                        && existing.get("name").and_then(Value::as_str) == Some(namespace)
-                }) {
-                    let mut existing_metadata = active_tools[existing_index].clone();
-                    existing_metadata
-                        .as_object_mut()
-                        .expect("namespace tool must be an object")
-                        .remove("tools");
-                    let mut discovered_metadata = tool.clone();
-                    discovered_metadata
-                        .as_object_mut()
-                        .expect("namespace tool must be an object")
-                        .remove("tools");
-                    if existing_metadata != discovered_metadata {
+                if let Some(&existing_index) = namespace_indexes.get(namespace) {
+                    if !namespace_metadata_matches(&active_tools[existing_index], tool) {
                         return Err(GatewayError::BadRequest(format!(
                             "conflicting namespace definitions across tool search history: {namespace}"
                         )));
@@ -62,6 +75,9 @@ pub(crate) fn collect_active_tools(body: &Value) -> Result<Value, GatewayError> 
                         tool.get("tools").and_then(Value::as_array).ok_or_else(|| {
                             GatewayError::BadRequest("namespace tool missing tools".to_owned())
                         })?;
+                    let nested_indexes = namespace_tool_indexes
+                        .entry(namespace.to_owned())
+                        .or_default();
                     let existing_nested = active_tools[existing_index]
                         .get_mut("tools")
                         .and_then(Value::as_array_mut)
@@ -75,27 +91,54 @@ pub(crate) fn collect_active_tools(body: &Value) -> Result<Value, GatewayError> 
                                     "namespace function tool missing name".to_owned(),
                                 )
                             })?;
-                        if let Some(existing) = existing_nested.iter().find(|existing| {
-                            existing.get("name").and_then(Value::as_str) == Some(nested_name)
-                        }) {
-                            if existing != nested {
+                        if let Some(&nested_index) = nested_indexes.get(nested_name) {
+                            if existing_nested[nested_index] != *nested {
                                 return Err(GatewayError::BadRequest(format!(
                                     "conflicting definitions for discovered tool: {namespace}.{nested_name}"
                                 )));
                             }
                         } else {
+                            nested_indexes.insert(nested_name.to_owned(), existing_nested.len());
                             existing_nested.push(nested.clone());
                         }
                     }
                     continue;
                 }
+                namespace_indexes.insert(namespace.to_owned(), active_tools.len());
+                let nested_indexes = namespace_tool_indexes
+                    .entry(namespace.to_owned())
+                    .or_default();
+                if let Some(nested_tools) = tool.get("tools").and_then(Value::as_array) {
+                    for (nested_index, nested) in nested_tools.iter().enumerate() {
+                        if let Some(name) = nested.get("name").and_then(Value::as_str) {
+                            nested_indexes
+                                .entry(name.to_owned())
+                                .or_insert(nested_index);
+                        }
+                    }
+                }
+                active_tools.push(tool.clone());
+                continue;
             }
-            if !active_tools.contains(tool) {
+            if exact_tools.insert(tool.to_string()) {
                 active_tools.push(tool.clone());
             }
         }
     }
     Ok(Value::Array(active_tools))
+}
+
+fn namespace_metadata_matches(existing: &Value, discovered: &Value) -> bool {
+    let Some(existing) = existing.as_object() else {
+        return false;
+    };
+    let Some(discovered) = discovered.as_object() else {
+        return false;
+    };
+    existing
+        .iter()
+        .filter(|(key, _)| key.as_str() != "tools")
+        .eq(discovered.iter().filter(|(key, _)| key.as_str() != "tools"))
 }
 
 pub(super) fn convert_tools(

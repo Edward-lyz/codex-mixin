@@ -37,16 +37,27 @@ impl FusionEngine {
         body: Value,
         routing: Option<&UpstreamRouting>,
     ) -> Result<ResponseStream, GatewayError> {
+        self.stream_final_continuation_and_body(body, routing)
+            .await
+            .map(|(stream, _)| stream)
+    }
+
+    pub(crate) async fn stream_final_continuation_and_body(
+        &self,
+        body: Value,
+        routing: Option<&UpstreamRouting>,
+    ) -> Result<(ResponseStream, Value), GatewayError> {
         let fusion_model = self.profile.model_slug();
-        stream_fusion_response(
+        let plan = fusion_request_plan(
             &self.state,
             &self.profile.final_model,
             body,
-            &self.headers,
             routing,
-            Some(&fusion_model),
-        )
-        .await
+            Some(fusion_model),
+        )?;
+        UpstreamExecutor::new(&self.state)
+            .stream_and_return_body(plan, &self.headers)
+            .await
     }
 
     pub(crate) fn stream_with_routing(
@@ -320,9 +331,11 @@ pub(super) async fn run_panel_model(
     let mut tool_evidence = Vec::new();
     let mut conclusion_attempted = false;
     loop {
-        let collected = collect_fusion_response(state, model, body.clone(), headers, routing)
-            .await
-            .map_err(|error| error.to_string())?;
+        let (collected, returned_body) =
+            collect_fusion_response_preserving_body(state, model, body, headers, routing)
+                .await
+                .map_err(|error| error.to_string())?;
+        body = returned_body;
         let tool_calls = collected
             .output
             .iter()
@@ -403,60 +416,86 @@ pub(super) async fn collect_fusion_response(
     collect_response_stream(stream).await
 }
 
+async fn collect_fusion_response_preserving_body(
+    state: &AppState,
+    model_reference: &str,
+    body: Value,
+    headers: &HeaderMap,
+    routing: Option<&UpstreamRouting>,
+) -> Result<(crate::upstream::CollectedResponse, Value), GatewayError> {
+    let original_model = body.get("model").cloned();
+    let original_store = body.get("store").cloned();
+    let original_max_output_tokens = body.get("max_output_tokens").cloned();
+    let plan = fusion_request_plan(state, model_reference, body, routing, None)?;
+    let (stream, mut body) = UpstreamExecutor::new(state)
+        .stream_and_return_body(plan, headers)
+        .await?;
+    restore_request_field(&mut body, "model", original_model);
+    restore_request_field(&mut body, "store", original_store);
+    restore_request_field(&mut body, "max_output_tokens", original_max_output_tokens);
+    let collected = collect_response_stream(stream).await?;
+    Ok((collected, body))
+}
+
 pub(super) async fn stream_fusion_response(
     state: &AppState,
     model_reference: &str,
-    mut body: Value,
+    body: Value,
     headers: &HeaderMap,
     routing: Option<&UpstreamRouting>,
     downstream_model: Option<&str>,
 ) -> Result<ResponseStream, GatewayError> {
+    let plan = fusion_request_plan(
+        state,
+        model_reference,
+        body,
+        routing,
+        downstream_model.map(str::to_owned),
+    )?;
+    UpstreamExecutor::new(state).stream(plan, headers).await
+}
+
+fn fusion_request_plan(
+    state: &AppState,
+    model_reference: &str,
+    mut body: Value,
+    routing: Option<&UpstreamRouting>,
+    downstream_model: Option<String>,
+) -> Result<RequestPlan, GatewayError> {
     let (provider, model) = resolve_fusion_model(model_reference);
-    body["model"] = Value::String(model);
+    body["model"] = Value::String(model.clone());
     match provider {
         FusionModelProvider::Official => {
             body["store"] = Value::Bool(false);
             body.as_object_mut()
                 .expect("responses request must be an object")
                 .remove("max_output_tokens");
-            let stream = stream_official_response(state, headers, body).await?;
-            Ok(match downstream_model {
-                Some(model) => rewrite_response_model(stream, model.to_owned()),
-                None => stream,
-            })
+            RequestPlan::official(body, downstream_model)
         }
         FusionModelProvider::Provider => {
-            stream_response_with_options(state, body, routing, downstream_model).await
+            let resolved = state.resolved_provider_model(&model)?;
+            RequestPlan::provider(
+                model,
+                resolved.provider.id().to_owned(),
+                resolved.upstream_model_id.to_owned(),
+                body,
+                routing.cloned(),
+                downstream_model,
+            )
         }
     }
 }
 
-pub(super) fn rewrite_response_model(
-    mut stream: ResponseStream,
-    downstream_model: String,
-) -> ResponseStream {
-    let rewritten = async_stream::stream! {
-        let mut decoder = SseDecoder::default();
-        while let Some(chunk) = stream.next().await {
-            let bytes = match chunk {
-                Ok(bytes) => bytes,
-                Err(never) => match never {},
-            };
-            for event in decoder.push(&bytes) {
-                let event_name = event.event.as_deref().unwrap_or("message");
-                match serde_json::from_str::<Value>(&event.data) {
-                    Ok(mut payload) => {
-                        patch_final_event(&mut payload, 0, &[], &downstream_model);
-                        yield Ok::<Bytes, Infallible>(encode_event(event_name, &payload)
-                            .expect("rewritten official event is serializable"));
-                    }
-                    Err(_) => yield Ok(encode_raw_event(event_name, &event.data)),
-                }
-            }
+fn restore_request_field(body: &mut Value, field: &str, original: Option<Value>) {
+    let object = body
+        .as_object_mut()
+        .expect("responses request must be an object");
+    match original {
+        Some(value) => {
+            object.insert(field.to_owned(), value);
         }
-        if !decoder.remaining().is_empty() {
-            yield Ok(Bytes::copy_from_slice(decoder.remaining()));
+        None => {
+            object.remove(field);
         }
-    };
-    rewritten.boxed()
+    }
 }

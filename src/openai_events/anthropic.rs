@@ -228,7 +228,6 @@ fn handle_anthropic_event(state: &mut MapperState, data: &Value) -> Result<Vec<B
             {
                 state.finish_tool(index, None)
             } else {
-                state.web_search_result_indexes.remove(&index);
                 Ok(Vec::new())
             }
         }

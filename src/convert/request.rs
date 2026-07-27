@@ -14,6 +14,11 @@ pub fn responses_to_anthropic(
     body: &Value,
     config: &GatewayConfig,
 ) -> Result<ConvertedRequest, GatewayError> {
+    if body.get("stream").and_then(Value::as_bool) != Some(true) {
+        return Err(GatewayError::BadRequest(
+            "Codex gateway currently requires stream=true".to_owned(),
+        ));
+    }
     responses_to_anthropic_with_web_search(body, config, config.enable_web_search_tool, false)
 }
 
@@ -23,11 +28,6 @@ pub(crate) fn responses_to_anthropic_with_web_search(
     web_search_enabled: bool,
     use_mcp_bridge_names: bool,
 ) -> Result<ConvertedRequest, GatewayError> {
-    if body.get("stream").and_then(Value::as_bool) != Some(true) {
-        return Err(GatewayError::BadRequest(
-            "Codex gateway currently requires stream=true".to_owned(),
-        ));
-    }
     let model = body
         .get("model")
         .and_then(Value::as_str)

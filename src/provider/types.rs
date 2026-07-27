@@ -171,12 +171,6 @@ impl ProviderDefinition {
         Ok(())
     }
 
-    pub fn selects_model(&self, model: &str) -> bool {
-        self.selected_models
-            .iter()
-            .any(|selected| selected == model)
-    }
-
     pub fn readiness(&self) -> ProviderReadiness {
         let available_models = self
             .cached_models
@@ -222,6 +216,12 @@ impl ProviderDefinition {
             last_model_refresh_error: self.models_refresh_error.clone(),
             issues,
         }
+    }
+
+    pub fn selects_model(&self, model: &str) -> bool {
+        self.selected_models
+            .iter()
+            .any(|selected| selected == model)
     }
 }
 

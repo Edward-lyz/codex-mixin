@@ -14,6 +14,12 @@ pub fn responses_to_openai_chat(body: &Value) -> Result<ConvertedChatRequest, Ga
             "Codex gateway currently requires stream=true".to_owned(),
         ));
     }
+    responses_to_openai_chat_streaming(body)
+}
+
+pub(crate) fn responses_to_openai_chat_streaming(
+    body: &Value,
+) -> Result<ConvertedChatRequest, GatewayError> {
     let model = body
         .get("model")
         .and_then(Value::as_str)

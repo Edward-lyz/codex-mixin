@@ -12,11 +12,10 @@ use serde_json::{Value, json};
 
 use crate::error::GatewayError;
 use crate::fusion_tools::PanelToolExecutor;
-use crate::server::{AppState, stream_official_response};
+use crate::gateway::{RequestPlan, UpstreamExecutor};
+use crate::server::AppState;
 use crate::sse::{SseDecoder, encode_event, encode_raw_event};
-use crate::upstream::{
-    ResponseStream, UpstreamRouting, collect_response_stream, stream_response_with_options,
-};
+use crate::upstream::{ResponseStream, UpstreamRouting, collect_response_stream};
 
 mod analysis;
 mod engine;

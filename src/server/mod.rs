@@ -28,13 +28,14 @@ use crate::catalog::{codex_catalog_from_models_with_metadata, load_template_cata
 use crate::config::GatewayConfig;
 use crate::error::GatewayError;
 use crate::fusion::{FusionEngine, should_fuse_turn, validate_fusion_profiles};
+use crate::gateway::{ModelRouter, RequestPlan, ResolvedModelRoute, UpstreamExecutor};
 use crate::image_generation::ImageRouteRegistry;
 use crate::model_metadata::ModelMetadataResolver;
 use crate::provider::{
     ProviderRegistry, ProviderRuntime, ResolvedProviderModel, catalog_model_slug,
 };
 use crate::sse::{SseDecoder, encode_event};
-use crate::upstream::{ResponseStream, UpstreamRouting, stream_response_with_options};
+use crate::upstream::{ResponseStream, UpstreamRouting};
 use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};
 
 mod auth;
@@ -47,7 +48,6 @@ mod state;
 pub(crate) use responses_http::stream_official_response;
 pub use routes::{router, serve, serve_on_listener};
 pub use state::AppState;
-pub(crate) use state::ResolvedModelRoute;
 
 #[cfg(test)]
 mod tests;

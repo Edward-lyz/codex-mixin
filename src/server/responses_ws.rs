@@ -1,4 +1,4 @@
-use super::auth::{check_gateway_auth, stable_oneapi_routing};
+use super::auth::{FORWARDED_OFFICIAL_HEADERS, check_gateway_auth, stable_oneapi_routing};
 use super::*;
 
 type OfficialWebSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
@@ -39,7 +39,7 @@ pub(super) async fn responses_ws(
     headers: HeaderMap,
     ws: WebSocketUpgrade,
 ) -> Result<Response, GatewayError> {
-    check_gateway_auth(&state, &headers)?;
+    check_gateway_auth(&state, &headers).await?;
     Ok(ws
         .on_upgrade(move |socket| handle_responses_ws(state, headers, socket))
         .into_response())
@@ -80,7 +80,7 @@ async fn route_responses_ws(
             .to_owned();
 
         if matches!(
-            state.resolve_model_route(&model),
+            state.model_router().resolve(&model),
             Ok(ResolvedModelRoute::Official)
         ) {
             custom_state = None;
@@ -96,20 +96,14 @@ async fn route_responses_ws(
                         official_socket = None;
                         official_state = None;
                         let message = err.to_string();
-                        let error = json!({"message": message, "type": "invalid_request_error"});
                         client_sender
                             .send(AxumWsMessage::Text(
-                                json!({
-                                    "type": "response.failed",
-                                    "response": {
-                                        "id": format!("resp_{}", Uuid::new_v4().simple()),
-                                        "object": "response",
-                                        "status": "failed",
-                                        "error": error,
-                                        "output": []
-                                    },
-                                    "error": error
-                                })
+                                crate::sse::response_failed_payload(
+                                    None,
+                                    None,
+                                    message,
+                                    "invalid_request_error",
+                                )
                                 .to_string()
                                 .into(),
                             ))
@@ -193,22 +187,14 @@ async fn route_responses_ws(
                     "official responses websocket request failed"
                 );
                 let message = err.to_string();
-                let error = json!({"message": message, "type": "server_error"});
-                let response_id =
-                    response_id.unwrap_or_else(|| format!("resp_{}", Uuid::new_v4().simple()));
                 client_sender
                     .send(AxumWsMessage::Text(
-                        json!({
-                            "type": "response.failed",
-                            "response": {
-                                "id": response_id,
-                                "object": "response",
-                                "status": "failed",
-                                "error": error,
-                                "output": []
-                            },
-                            "error": error
-                        })
+                        crate::sse::response_failed_payload(
+                            response_id,
+                            None,
+                            message,
+                            "server_error",
+                        )
                         .to_string()
                         .into(),
                     ))
@@ -251,20 +237,14 @@ async fn route_responses_ws(
                     "custom responses websocket request failed"
                 );
                 let message = err.to_string();
-                let error = json!({"message": message, "type": "invalid_request_error"});
                 client_sender
                     .send(AxumWsMessage::Text(
-                        json!({
-                            "type": "response.failed",
-                            "response": {
-                                "id": format!("resp_{}", Uuid::new_v4().simple()),
-                                "object": "response",
-                                "status": "failed",
-                                "error": error,
-                                "output": []
-                            },
-                            "error": error
-                        })
+                        crate::sse::response_failed_payload(
+                            None,
+                            None,
+                            message,
+                            "invalid_request_error",
+                        )
                         .to_string()
                         .into(),
                     ))
@@ -294,26 +274,7 @@ async fn connect_official_responses_ws(
         let (authorization, account_id) = state.official_auth().await?;
         request_headers.insert(header::AUTHORIZATION, authorization);
         request_headers.insert("chatgpt-account-id", account_id);
-        for name in [
-            "openai-beta",
-            "x-codex-installation-id",
-            "x-codex-beta-features",
-            "originator",
-            "x-codex-originator",
-            "x-openai-subagent",
-            "x-openai-memgen-request",
-            "x-codex-turn-state",
-            "x-codex-turn-metadata",
-            "x-codex-parent-thread-id",
-            "x-oai-attestation",
-            "x-responsesapi-include-timing-metrics",
-            "accept-language",
-            "user-agent",
-            "session-id",
-            "thread-id",
-            "x-client-request-id",
-            "x-codex-window-id",
-        ] {
+        for &name in FORWARDED_OFFICIAL_HEADERS {
             if let Some(value) = headers.get(name) {
                 request_headers.insert(name, value.clone());
             }
@@ -536,24 +497,26 @@ async fn proxy_custom_responses_ws(
         .ok_or_else(|| anyhow::anyhow!("custom request is missing model"))?
         .to_owned();
     let route = state
-        .resolve_model_route(&requested_model)
+        .model_router()
+        .resolve(&requested_model)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let model = requested_model;
     if !body.get("input").is_some_and(Value::is_array) {
         anyhow::bail!("custom request input must be an array");
     }
     let provider_routing = stable_oneapi_routing(headers, &body)?;
-    let mut history = body
-        .get("input")
-        .and_then(Value::as_array)
-        .cloned()
-        .ok_or_else(|| anyhow::anyhow!("custom request input must be an array"))?;
-    let stream = match &route {
+    let mut preserved_history = None;
+    let (stream, returned_body) = match &route {
         ResolvedModelRoute::Official => {
             anyhow::bail!("official model reached custom websocket proxy")
         }
         ResolvedModelRoute::Provider { .. } => {
-            stream_response_with_options(state, body, provider_routing.as_ref(), None).await?
+            let plan =
+                RequestPlan::from_route(route.clone(), body, provider_routing.clone(), None)?;
+            let (stream, body) = UpstreamExecutor::new(state)
+                .stream_and_return_body(plan, headers)
+                .await?;
+            (stream, Some(body))
         }
         ResolvedModelRoute::Fusion { profile_id } => {
             let profile = state
@@ -564,15 +527,23 @@ async fn proxy_custom_responses_ws(
                 .ok_or_else(|| anyhow::anyhow!("unknown fusion profile: {profile_id}"))?
                 .clone();
             if should_fuse_turn(&body) {
-                FusionEngine::new(state, &profile)
+                preserved_history = Some(
+                    body.get("input")
+                        .and_then(Value::as_array)
+                        .cloned()
+                        .expect("validated custom request input"),
+                );
+                let stream = FusionEngine::new(state, &profile)
                     .with_headers(headers.clone())
-                    .stream_with_routing(body, provider_routing)
+                    .stream_with_routing(body, provider_routing);
+                (stream, None)
             } else {
                 body["stream"] = Value::Bool(true);
-                FusionEngine::new(state, &profile)
+                let (stream, body) = FusionEngine::new(state, &profile)
                     .with_headers(headers.clone())
-                    .stream_final_continuation(body, provider_routing.as_ref())
-                    .await?
+                    .stream_final_continuation_and_body(body, provider_routing.as_ref())
+                    .await?;
+                (stream, Some(body))
             }
         }
     };
@@ -614,6 +585,10 @@ async fn proxy_custom_responses_ws(
         .get_mut("output")
         .and_then(Value::as_array_mut)
         .ok_or_else(|| anyhow::anyhow!("custom completed response output must be an array"))?;
+    let mut history = match returned_body {
+        Some(mut body) => take_custom_request_input(&mut body)?,
+        None => preserved_history.expect("fusion request history was preserved"),
+    };
     history.append(output);
     Ok(Some(CustomWebSocketState {
         response_id,
@@ -656,7 +631,8 @@ fn expand_custom_websocket_history(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("custom request is missing model"))?;
     let route = app_state
-        .resolve_model_route(model)
+        .model_router()
+        .resolve(model)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     if route != state.route {
         anyhow::bail!(
@@ -685,7 +661,8 @@ async fn complete_custom_noop(
         .ok_or_else(|| anyhow::anyhow!("custom noop request is missing model"))?;
     let model = model.to_owned();
     let route = state
-        .resolve_model_route(&model)
+        .model_router()
+        .resolve(&model)
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     if route == ResolvedModelRoute::Official {
         anyhow::bail!("official model reached custom websocket noop");

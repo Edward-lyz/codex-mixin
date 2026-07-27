@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
 use std::sync::LazyLock;
 
@@ -17,6 +17,7 @@ pub struct ModelMetadata {
 #[derive(Clone, Debug, Default)]
 pub struct ModelMetadataResolver {
     entries: Vec<ModelMetadataEntry>,
+    token_index: HashMap<String, Vec<usize>>,
 }
 
 #[derive(Clone, Debug)]
@@ -66,9 +67,7 @@ struct PiModelSpec {
 
 impl ModelMetadataResolver {
     pub fn empty() -> Self {
-        Self {
-            entries: Vec::new(),
-        }
+        Self::default()
     }
 
     pub fn from_json(value: &Value) -> anyhow::Result<Self> {
@@ -105,7 +104,7 @@ impl ModelMetadataResolver {
                 key,
             });
         }
-        Ok(Self { entries })
+        Ok(Self::from_entries(entries))
     }
 
     pub fn from_json_file(path: &Path) -> anyhow::Result<Self> {
@@ -159,7 +158,7 @@ impl ModelMetadataResolver {
                 });
             }
         }
-        Ok(Self { entries })
+        Ok(Self::from_entries(entries))
     }
 
     pub fn resolve(&self, model: &str, default_context_window: u64) -> ModelMetadata {
@@ -171,8 +170,22 @@ impl ModelMetadataResolver {
     }
 
     fn best_litellm_match(&self, query_variants: &[Vec<String>]) -> Option<&ModelMetadataEntry> {
+        let mut candidates = vec![false; self.entries.len()];
+        for query in query_variants {
+            let Some(first_token) = query.first() else {
+                continue;
+            };
+            if let Some(indexes) = self.token_index.get(first_token) {
+                for &index in indexes {
+                    candidates[index] = true;
+                }
+            }
+        }
         self.entries
             .iter()
+            .enumerate()
+            .filter(|(index, _)| candidates[*index])
+            .map(|(_, entry)| entry)
             .filter(|entry| {
                 query_variants.iter().any(|query| {
                     entry
@@ -188,6 +201,22 @@ impl ModelMetadataResolver {
                     entry.key.len(),
                 )
             })
+    }
+
+    fn from_entries(entries: Vec<ModelMetadataEntry>) -> Self {
+        let mut token_index = HashMap::<String, Vec<usize>>::new();
+        for (index, entry) in entries.iter().enumerate() {
+            let mut indexed = HashSet::new();
+            for token in entry.token_variants.iter().flatten() {
+                if indexed.insert(token.as_str()) {
+                    token_index.entry(token.clone()).or_default().push(index);
+                }
+            }
+        }
+        Self {
+            entries,
+            token_index,
+        }
     }
 }
 

@@ -15,7 +15,7 @@ const OFFICIAL_MODEL_PREFIX: &str = "official:";
 struct ProviderRouteTarget {
     provider_index: usize,
     upstream_model_id: String,
-    model_index: usize,
+    model_index: Option<usize>,
 }
 
 #[derive(Clone, Debug)]
@@ -207,7 +207,7 @@ impl ProviderRegistry {
                 let target = ProviderRouteTarget {
                     provider_index,
                     upstream_model_id: model.id.clone(),
-                    model_index,
+                    model_index: Some(model_index),
                 };
                 insert_route(&runtimes, &runtime, &mut known_routes, &slug, &target)?;
             }
@@ -218,17 +218,16 @@ impl ProviderRegistry {
                     .definition
                     .cached_models
                     .iter()
-                    .position(|model| model.id == *upstream_model_id)
-                    .unwrap_or(usize::MAX);
+                    .position(|model| model.id == *upstream_model_id);
                 let target = ProviderRouteTarget {
                     provider_index,
                     upstream_model_id: upstream_model_id.clone(),
                     model_index,
                 };
-                if model_index == usize::MAX {
+                if model_index.is_none() {
                     insert_route(&runtimes, &runtime, &mut known_routes, &slug, &target)?;
                 }
-                if runtime.definition.enabled && model_index != usize::MAX {
+                if runtime.definition.enabled && model_index.is_some() {
                     insert_route(&runtimes, &runtime, &mut routes, &slug, &target)?;
                 }
             }
@@ -277,9 +276,9 @@ impl ProviderRegistry {
     ) -> Option<ResolvedProviderModel<'a>> {
         let (catalog_slug, target) = routes.get_key_value(catalog_slug)?;
         let provider = self.providers.get(target.provider_index)?;
-        let model = (target.model_index != usize::MAX)
-            .then(|| provider.definition.cached_models.get(target.model_index))
-            .flatten();
+        let model = target
+            .model_index
+            .and_then(|index| provider.definition.cached_models.get(index));
         Some(ResolvedProviderModel {
             catalog_slug: catalog_slug.as_str(),
             provider,

@@ -523,6 +523,45 @@ async fn maps_anthropic_server_web_search_lifecycle() {
 }
 
 #[tokio::test]
+async fn rejects_reused_web_search_result_index_after_block_stop() {
+    let result = json!({
+        "type": "content_block_start",
+        "index": 2,
+        "content_block": {
+            "type": "web_search_tool_result",
+            "tool_use_id": "srvtoolu_123",
+            "content": []
+        }
+    });
+    let events = [
+        json!({"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_123","name":"web_search","input":{}}}),
+        json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{\"query\":\"Codex\"}"}}),
+        json!({"type":"content_block_stop","index":1}),
+        result.clone(),
+        json!({"type":"content_block_stop","index":2}),
+        result,
+    ];
+    let stream = events
+        .into_iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect::<String>();
+    let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(stream))]);
+
+    let body = collect_events(map_anthropic_sse(
+        upstream,
+        json!({}),
+        ToolNameMap::default(),
+    ))
+    .await;
+
+    assert!(
+        body.contains("duplicate web_search result index: 2"),
+        "{body}"
+    );
+    assert!(body.contains("event: response.failed"), "{body}");
+}
+
+#[tokio::test]
 async fn infers_omitted_web_search_tool_use_id_when_unambiguous() {
     let events = [
         json!({"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_123","name":"web_search","input":{}}}),

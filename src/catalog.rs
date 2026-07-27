@@ -279,7 +279,6 @@ pub fn refresh_managed_oauth_catalog(
         model["supports_search_tool"] = json!(supports_search_tool);
         clamp_managed_gpt_context(&mut model, &official_context_windows);
         enable_fast_service_tier(&mut model);
-        ensure_instruction_fields(&mut model);
         models.push(model);
     }
     for model in &mut models {
@@ -366,10 +365,6 @@ fn is_managed_custom_model(model: &Value) -> bool {
             .is_some_and(|description| {
                 description.starts_with("Custom upstream model exposed through codex-")
             })
-        || model
-            .get("slug")
-            .and_then(Value::as_str)
-            .is_some_and(|slug| slug.ends_with("-custom"))
 }
 
 pub fn apply_web_search_capabilities(
@@ -598,7 +593,8 @@ mod tests {
             "models": [
                 {"slug":"gpt-5.5","web_search_tool_type":"text"},
                 {"slug":"gpt-5.6-sol-custom","codex_mixin_managed":true,"web_search_tool_type":"text_and_image","use_responses_lite":true},
-                {"slug":"DeepSeek-V4-Flash","codex_mixin_managed":true,"web_search_tool_type":"text"}
+                {"slug":"DeepSeek-V4-Flash","codex_mixin_managed":true,"web_search_tool_type":"text"},
+                {"slug":"user-model-custom","web_search_tool_type":"text_and_image","use_responses_lite":true}
             ]
         });
         let supported = HashSet::from(["gpt-5.6-sol".to_owned()]);
@@ -608,6 +604,11 @@ mod tests {
         assert_eq!(catalog["models"][1]["web_search_tool_type"], "text");
         assert_eq!(catalog["models"][1]["use_responses_lite"], false);
         assert!(catalog["models"][2].get("web_search_tool_type").is_none());
+        assert_eq!(
+            catalog["models"][3]["web_search_tool_type"],
+            "text_and_image"
+        );
+        assert_eq!(catalog["models"][3]["use_responses_lite"], true);
     }
 
     #[test]

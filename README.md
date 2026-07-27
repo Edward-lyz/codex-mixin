@@ -271,6 +271,8 @@ codex-mixin uninstall-codex
 
 Fusion 虚拟模型使用 `Panel → Judge → Final` 三段式管线。打开菜单栏的 `Fusion 设置...`，选择 1–8 个并行 Panel 模型、一个 Judge 模型和一个 Final 模型；保存并重启网关后，`mixin/fusion/<profile-id>` 会出现在 Codex 模型选择器中。
 
+Fusion 只在 Plan 模式的新用户轮次运行 Panel 和 Judge。切换到 Default 模式执行计划后，所有后续用户轮次与工具结果续跑都直接交给该 profile 的 Final 模型，避免在编码阶段重复分析。
+
 ![Codex 中的交互式 Fusion Review](docs/assets/fusion-review.png)
 
 高级选项 `在回答中显示 Panel / Judge 中间结果` 默认开启，对应 stored config 中的 `show_intermediate_results: true`。开启后，Codex Mixin 会直接使用 Codex 原生 inline visualization：
@@ -613,6 +615,8 @@ Restart Codex Desktop after install or uninstall. Start a new session for Codex 
 ### Model Fusion
 
 Fusion virtual models run a `Panel → Judge → Final` pipeline. Open `Fusion Settings...` from the menu bar, select 1–8 Panel models plus one Judge and one Final model, then save and restart the gateway. The virtual model appears in Codex as `mixin/fusion/<profile-id>`.
+
+Fusion runs Panel and Judge only for new user turns in Plan mode. After switching to Default mode to execute the plan, all later user turns and tool-result continuations go directly to the profile's Final model, avoiding repeated analysis during implementation.
 
 ![Interactive Fusion Review in Codex](docs/assets/fusion-review.png)
 

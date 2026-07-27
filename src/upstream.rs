@@ -1,5 +1,6 @@
 use std::convert::Infallible;
 
+use axum::http::HeaderMap;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
@@ -7,13 +8,17 @@ use serde_json::{Value, json};
 
 use crate::convert::responses_to_anthropic_with_web_search;
 use crate::error::GatewayError;
-use crate::openai_chat::responses_to_openai_chat;
+use crate::gateway::{RequestPlan, UpstreamExecutor};
+use crate::openai_chat::responses_to_openai_chat_streaming;
 use crate::openai_events::{
     map_anthropic_sse_with_image_routes, map_openai_chat_sse_with_image_routes,
 };
 use crate::provider::ProviderProtocol;
 use crate::server::AppState;
-use crate::sse::{SseDecoder, encode_event, encode_raw_event};
+use crate::sse::{
+    SseDecoder, encode_event, encode_raw_event, event_contains_response_metadata,
+    response_failed_payload,
+};
 
 pub type ResponseStream = BoxStream<'static, Result<Bytes, Infallible>>;
 
@@ -35,47 +40,63 @@ pub async fn stream_response(
     state: &AppState,
     body: Value,
 ) -> Result<ResponseStream, GatewayError> {
-    stream_response_with_options(state, body, None, None).await
-}
-
-pub(crate) async fn stream_response_with_options(
-    state: &AppState,
-    body: Value,
-    routing: Option<&UpstreamRouting>,
-    downstream_model: Option<&str>,
-) -> Result<ResponseStream, GatewayError> {
-    if body.get("stream").and_then(Value::as_bool) != Some(true) {
-        return Err(GatewayError::BadRequest(
-            "Codex gateway currently requires stream=true".to_owned(),
-        ));
-    }
     let catalog_slug = body
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?
         .to_owned();
     let resolved = state.resolved_provider_model(&catalog_slug)?;
-    let provider = resolved.provider.clone();
-    let upstream_model_id = resolved.upstream_model_id.to_owned();
-    let mut upstream_body = body.clone();
-    upstream_body["model"] = Value::String(upstream_model_id.clone());
-    let mut downstream_body = body.clone();
-    if let Some(model) = downstream_model {
-        downstream_body["model"] = Value::String(model.to_owned());
-    }
-    let downstream_model = downstream_body
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or(&catalog_slug)
-        .to_owned();
+    let plan = RequestPlan::provider(
+        catalog_slug,
+        resolved.provider.id().to_owned(),
+        resolved.upstream_model_id.to_owned(),
+        body,
+        None,
+        None,
+    )?;
+    UpstreamExecutor::new(state)
+        .stream(plan, &HeaderMap::new())
+        .await
+}
+
+pub async fn collect_response(
+    state: &AppState,
+    mut body: Value,
+) -> Result<CollectedResponse, GatewayError> {
+    body["stream"] = Value::Bool(true);
+    let stream = stream_response(state, body).await?;
+    collect_response_stream(stream).await
+}
+
+pub(crate) async fn stream_provider_response(
+    state: &AppState,
+    body: &mut Value,
+    catalog_slug: &str,
+    provider_id: &str,
+    upstream_model_id: &str,
+    routing: Option<&UpstreamRouting>,
+    downstream_model: Option<&str>,
+) -> Result<ResponseStream, GatewayError> {
+    let provider = state
+        .providers
+        .provider(provider_id)
+        .ok_or_else(|| GatewayError::BadRequest(format!("unknown provider: {provider_id}")))?;
+    let upstream_model_id = upstream_model_id.to_owned();
+    let downstream_model = downstream_model.unwrap_or(catalog_slug).to_owned();
+    let downstream_body = response_metadata_request(body, &downstream_model);
+    let web_search_enabled = state.web_search_enabled_for_custom_request(body);
+    let original_model = body.get("model").cloned();
+    body["model"] = Value::String(upstream_model_id.clone());
     let stream = match provider.protocol() {
         ProviderProtocol::AnthropicMessages => {
-            let mut converted = responses_to_anthropic_with_web_search(
-                &upstream_body,
+            let converted = responses_to_anthropic_with_web_search(
+                body,
                 &state.config,
-                state.web_search_enabled_for_custom_request(&body),
+                web_search_enabled,
                 provider.uses_mcp_bridge_names(&upstream_model_id),
-            )?;
+            );
+            restore_field(body, "model", original_model);
+            let mut converted = converted?;
             if provider.uses_session_affinity()
                 && let Some(routing) = routing
             {
@@ -83,7 +104,7 @@ pub(crate) async fn stream_response_with_options(
             }
             let upstream = state
                 .anthropic_stream_with_web_search_retry(
-                    &provider,
+                    provider,
                     converted.request,
                     routing.map(|routing| routing.hash_key.as_str()),
                 )
@@ -92,12 +113,14 @@ pub(crate) async fn stream_response_with_options(
                 upstream,
                 downstream_body,
                 converted.tool_names,
-                state.custom_image_routes(&provider),
+                state.custom_image_routes(provider),
             )
             .boxed()
         }
         ProviderProtocol::OpenAiChat => {
-            let converted = responses_to_openai_chat(&upstream_body)?;
+            let converted = responses_to_openai_chat_streaming(body);
+            restore_field(body, "model", original_model);
+            let converted = converted?;
             let upstream_request =
                 provider.apply_auth(state.client.post(provider.api_url().clone()));
             let upstream = provider
@@ -131,7 +154,7 @@ pub(crate) async fn stream_response_with_options(
                 upstream.bytes_stream(),
                 downstream_body,
                 converted.tool_names,
-                state.custom_image_routes(&provider),
+                state.custom_image_routes(provider),
             )
             .boxed()
         }
@@ -144,19 +167,20 @@ pub(crate) async fn stream_response_with_options(
                     routing.map(|routing| routing.hash_key.as_str()),
                 )
                 .header(reqwest::header::ACCEPT, "text/event-stream")
-                .json(&upstream_body)
+                .json(body)
                 .send()
-                .await
-                .map_err(|error| {
-                    tracing::error!(
-                        provider_id = provider.id(),
-                        catalog_slug = %catalog_slug,
-                        upstream_model_id = %upstream_model_id,
-                        error = %crate::error::format_error_chain(&error),
-                        "provider responses request failed before receiving a response"
-                    );
-                    GatewayError::Http(error)
-                })?;
+                .await;
+            restore_field(body, "model", original_model);
+            let upstream = upstream.map_err(|error| {
+                tracing::error!(
+                    provider_id = provider.id(),
+                    catalog_slug = %catalog_slug,
+                    upstream_model_id = %upstream_model_id,
+                    error = %crate::error::format_error_chain(&error),
+                    "provider responses request failed before receiving a response"
+                );
+                GatewayError::Http(error)
+            })?;
             let status = upstream.status();
             if !status.is_success() {
                 let body = upstream.text().await.unwrap_or_default();
@@ -169,6 +193,50 @@ pub(crate) async fn stream_response_with_options(
         }
     };
     Ok(stream)
+}
+
+fn restore_field(body: &mut Value, field: &str, original: Option<Value>) {
+    let object = body
+        .as_object_mut()
+        .expect("responses request must be an object");
+    match original {
+        Some(value) => {
+            object.insert(field.to_owned(), value);
+        }
+        None => {
+            object.remove(field);
+        }
+    }
+}
+
+fn response_metadata_request(body: &Value, downstream_model: &str) -> Value {
+    const RESPONSE_FIELDS: &[&str] = &[
+        "instructions",
+        "max_output_tokens",
+        "parallel_tool_calls",
+        "previous_response_id",
+        "reasoning",
+        "store",
+        "temperature",
+        "text",
+        "tool_choice",
+        "tools",
+        "top_p",
+        "truncation",
+        "user",
+        "metadata",
+    ];
+    let mut request = serde_json::Map::with_capacity(RESPONSE_FIELDS.len() + 1);
+    request.insert(
+        "model".to_owned(),
+        Value::String(downstream_model.to_owned()),
+    );
+    for &field in RESPONSE_FIELDS {
+        if let Some(value) = body.get(field) {
+            request.insert(field.to_owned(), value.clone());
+        }
+    }
+    Value::Object(request)
 }
 
 fn map_openai_responses_sse<S>(
@@ -191,9 +259,13 @@ where
                             yield Ok(encode_raw_event(event_name, &event.data));
                             continue;
                         }
+                        if !event_contains_response_metadata(event_name) {
+                            yield Ok(encode_raw_event(event_name, &event.data));
+                            continue;
+                        }
                         match serde_json::from_str::<Value>(&event.data) {
                             Ok(mut payload) => {
-                                rewrite_matching_model_fields(
+                                rewrite_response_model_field(
                                     &mut payload,
                                     &upstream_model,
                                     &downstream_model,
@@ -206,21 +278,14 @@ where
                     }
                 }
                 Err(error) => {
-                    let error = json!({"message":error.to_string(),"type":"server_error"});
                     yield Ok(encode_event(
                         "response.failed",
-                        &json!({
-                            "type":"response.failed",
-                            "response":{
-                                "id":format!("resp_{}", uuid::Uuid::new_v4().simple()),
-                                "object":"response",
-                                "status":"failed",
-                                "model":downstream_model,
-                                "error":error,
-                                "output":[]
-                            },
-                            "error":error
-                        }),
+                        &response_failed_payload(
+                            None,
+                            Some(&downstream_model),
+                            error.to_string(),
+                            "server_error",
+                        ),
                     ).expect("responses transport error is serializable"));
                     return;
                 }
@@ -233,41 +298,14 @@ where
     .boxed()
 }
 
-fn rewrite_matching_model_fields(value: &mut Value, upstream_model: &str, downstream_model: &str) {
-    match value {
-        Value::Object(object) => {
-            for (key, value) in object {
-                if key == "model" && value.as_str() == Some(upstream_model) {
-                    *value = Value::String(downstream_model.to_owned());
-                } else {
-                    rewrite_matching_model_fields(value, upstream_model, downstream_model);
-                }
-            }
-        }
-        Value::Array(values) => {
-            for value in values {
-                rewrite_matching_model_fields(value, upstream_model, downstream_model);
-            }
-        }
-        _ => {}
+fn rewrite_response_model_field(payload: &mut Value, upstream_model: &str, downstream_model: &str) {
+    if let Some(model) = payload
+        .get_mut("response")
+        .and_then(|response| response.get_mut("model"))
+        && model.as_str() == Some(upstream_model)
+    {
+        *model = Value::String(downstream_model.to_owned());
     }
-}
-
-pub async fn collect_response(
-    state: &AppState,
-    body: Value,
-) -> Result<CollectedResponse, GatewayError> {
-    collect_response_with_routing(state, body, None).await
-}
-
-pub(crate) async fn collect_response_with_routing(
-    state: &AppState,
-    mut body: Value,
-    routing: Option<&UpstreamRouting>,
-) -> Result<CollectedResponse, GatewayError> {
-    body["stream"] = Value::Bool(true);
-    let stream = stream_response_with_options(state, body, routing, None).await?;
-    collect_response_stream(stream).await
 }
 
 pub(crate) async fn collect_response_stream(
@@ -353,4 +391,46 @@ fn collect_output_text(output: &[Value]) -> String {
         })
         .collect::<Vec<_>>()
         .join("\n")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn response_metadata_does_not_copy_input_history() {
+        let body = json!({
+            "model": "upstream",
+            "instructions": "system",
+            "input": [{"role": "user", "content": "large history"}],
+            "tools": [{"type": "function", "name": "lookup"}],
+            "stream": true
+        });
+
+        let metadata = response_metadata_request(&body, "catalog");
+
+        assert_eq!(metadata["model"], "catalog");
+        assert_eq!(metadata["instructions"], "system");
+        assert_eq!(metadata["tools"], body["tools"]);
+        assert!(metadata.get("input").is_none());
+        assert!(metadata.get("stream").is_none());
+    }
+
+    #[test]
+    fn model_rewrite_only_touches_the_response_metadata() {
+        let mut payload = json!({
+            "type": "response.completed",
+            "response": {
+                "model": "upstream",
+                "output": [{"model": "upstream"}]
+            },
+            "model": "upstream"
+        });
+
+        rewrite_response_model_field(&mut payload, "upstream", "catalog");
+
+        assert_eq!(payload["response"]["model"], "catalog");
+        assert_eq!(payload["response"]["output"][0]["model"], "upstream");
+        assert_eq!(payload["model"], "upstream");
+    }
 }

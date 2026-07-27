@@ -6,7 +6,7 @@ pub(super) async fn image_generations(
     headers: HeaderMap,
     Json(mut body): Json<Value>,
 ) -> Result<Response, GatewayError> {
-    check_gateway_auth(&state, &headers)?;
+    check_gateway_auth(&state, &headers).await?;
     let routed_prompt = body
         .get("prompt")
         .and_then(Value::as_str)
@@ -55,7 +55,7 @@ pub(super) async fn image_edits(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Result<Response, GatewayError> {
-    check_gateway_auth(&state, &headers)?;
+    check_gateway_auth(&state, &headers).await?;
     if body
         .get("prompt")
         .and_then(Value::as_str)

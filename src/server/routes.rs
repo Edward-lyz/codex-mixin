@@ -86,7 +86,7 @@ async fn models(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, GatewayError> {
-    check_gateway_auth(&state, &headers)?;
+    check_gateway_auth(&state, &headers).await?;
     let models = state.fetch_models().await?;
     Ok(Json(json!({"object":"list","data":models})).into_response())
 }
@@ -95,7 +95,7 @@ async fn codex_model_catalog(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, GatewayError> {
-    check_gateway_auth(&state, &headers)?;
+    check_gateway_auth(&state, &headers).await?;
     let body = state.catalog_response().await?;
     Response::builder()
         .header(header::CONTENT_TYPE, "application/json")
@@ -107,7 +107,7 @@ async fn model_benchmarks(
     State(state): State<AppState>,
     headers: HeaderMap,
 ) -> Result<Response, GatewayError> {
-    check_gateway_auth(&state, &headers)?;
+    check_gateway_auth(&state, &headers).await?;
     let snapshot = state.benchmarks.snapshot().map_err(GatewayError::Other)?;
     Ok(Json(BenchmarkSnapshotResponse { snapshot }).into_response())
 }
@@ -117,7 +117,7 @@ async fn start_model_benchmarks(
     headers: HeaderMap,
     Json(request): Json<StartBenchmarkRequest>,
 ) -> Result<Response, GatewayError> {
-    check_gateway_auth(&state, &headers)?;
+    check_gateway_auth(&state, &headers).await?;
     let timeout = std::time::Duration::from_secs(request.timeout_seconds);
     if timeout.is_zero() || timeout > std::time::Duration::from_secs(300) {
         return Err(GatewayError::BadRequest(

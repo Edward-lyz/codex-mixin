@@ -36,9 +36,6 @@ pub struct FusionProfile {
     pub max_completion_tokens: u64,
     #[serde(default = "default_timeout_ms")]
     pub timeout_ms: u64,
-    /// Retained for stored-config compatibility. Fusion now runs on every user turn.
-    #[serde(default = "default_true")]
-    pub fuse_every_user_turn: bool,
     #[serde(default = "default_true")]
     pub show_intermediate_results: bool,
     #[serde(default)]

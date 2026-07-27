@@ -259,9 +259,32 @@ fn model_label(model: &str) -> String {
 }
 
 fn panel_preview(text: &str) -> String {
-    let compact = text.split_whitespace().collect::<Vec<_>>().join(" ");
-    let mut preview = compact.chars().take(96).collect::<String>();
-    if compact.chars().count() > 96 {
+    let mut preview = String::with_capacity(99);
+    let mut preview_len = 0;
+    let mut pending_space = false;
+    let mut truncated = false;
+    for character in text.chars() {
+        if character.is_whitespace() {
+            pending_space = !preview.is_empty();
+            continue;
+        }
+        if pending_space {
+            if preview_len == 96 {
+                truncated = true;
+                break;
+            }
+            preview.push(' ');
+            preview_len += 1;
+            pending_space = false;
+        }
+        if preview_len == 96 {
+            truncated = true;
+            break;
+        }
+        preview.push(character);
+        preview_len += 1;
+    }
+    if truncated {
         preview.push('…');
     }
     escape_html(&preview)
@@ -431,5 +454,12 @@ mod tests {
         assert_eq!(points[0].title, "Consensus");
         assert_eq!(points[1].title, "Risks");
         assert_eq!(points[2].title, "Recommendation");
+    }
+
+    #[test]
+    fn panel_preview_compacts_and_truncates_without_materializing_full_text() {
+        assert_eq!(panel_preview("  one\n\ttwo  "), "one two");
+        let long = "界".repeat(97);
+        assert_eq!(panel_preview(&long), format!("{}…", "界".repeat(96)));
     }
 }

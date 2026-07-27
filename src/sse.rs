@@ -1,5 +1,6 @@
 use bytes::Bytes;
 use serde::Serialize;
+use serde_json::{Value, json};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub struct SseEvent {
@@ -67,6 +68,38 @@ pub fn encode_raw_event(event: &str, data: &str) -> Bytes {
     Bytes::from(encoded)
 }
 
+pub(crate) fn event_contains_response_metadata(event: &str) -> bool {
+    matches!(
+        event,
+        "response.created"
+            | "response.queued"
+            | "response.in_progress"
+            | "response.completed"
+            | "response.failed"
+            | "response.incomplete"
+    )
+}
+
+pub(crate) fn response_failed_payload(
+    response_id: Option<String>,
+    model: Option<&str>,
+    message: impl Into<String>,
+    error_type: &str,
+) -> Value {
+    let error = json!({"message": message.into(), "type": error_type});
+    let mut response = json!({
+        "id": response_id.unwrap_or_else(|| format!("resp_{}", uuid::Uuid::new_v4().simple())),
+        "object": "response",
+        "status": "failed",
+        "error": error,
+        "output": []
+    });
+    if let Some(model) = model {
+        response["model"] = Value::String(model.to_owned());
+    }
+    json!({"type": "response.failed", "response": response, "error": error})
+}
+
 pub fn drain_events(buffer: &mut Vec<u8>) -> Vec<SseEvent> {
     let mut decoder = SseDecoder {
         buffer: std::mem::take(buffer),
@@ -88,7 +121,8 @@ fn line_break_len(buffer: &[u8], index: usize) -> Option<usize> {
 fn parse_event(raw: &[u8]) -> Option<SseEvent> {
     let text = String::from_utf8_lossy(raw);
     let mut event = None;
-    let mut data_lines = Vec::new();
+    let mut data = String::new();
+    let mut has_data = false;
     for line in text.lines() {
         let line = line.strip_suffix('\r').unwrap_or(line);
         if line.is_empty() || line.starts_with(':') {
@@ -97,16 +131,17 @@ fn parse_event(raw: &[u8]) -> Option<SseEvent> {
         if let Some(value) = line.strip_prefix("event:") {
             event = Some(value.trim_start().to_owned());
         } else if let Some(value) = line.strip_prefix("data:") {
-            data_lines.push(value.trim_start());
+            if has_data {
+                data.push('\n');
+            }
+            data.push_str(value.trim_start());
+            has_data = true;
         }
     }
-    if data_lines.is_empty() {
+    if !has_data {
         return None;
     }
-    Some(SseEvent {
-        event,
-        data: data_lines.join("\n"),
-    })
+    Some(SseEvent { event, data })
 }
 
 #[cfg(test)]
@@ -139,5 +174,40 @@ mod tests {
         assert_eq!(events[0].event.as_deref(), Some("two"));
         assert_eq!(events[0].data, "2");
         assert!(decoder.remaining().is_empty());
+    }
+
+    #[test]
+    fn preserves_empty_and_multiline_data_fields() {
+        let mut decoder = SseDecoder::default();
+        let events = decoder.push(b"event: empty\ndata:\n\nevent: multi\ndata: one\ndata: two\n\n");
+        assert_eq!(events[0].data, "");
+        assert_eq!(events[1].data, "one\ntwo");
+    }
+
+    #[test]
+    fn identifies_only_events_that_carry_response_metadata() {
+        assert!(event_contains_response_metadata("response.created"));
+        assert!(event_contains_response_metadata("response.completed"));
+        assert!(!event_contains_response_metadata(
+            "response.output_text.delta"
+        ));
+        assert!(!event_contains_response_metadata(
+            "response.output_item.done"
+        ));
+    }
+
+    #[test]
+    fn builds_consistent_failed_response_payloads() {
+        let payload = response_failed_payload(
+            Some("resp_test".to_owned()),
+            Some("model-test"),
+            "failed",
+            "server_error",
+        );
+        assert_eq!(payload["type"], "response.failed");
+        assert_eq!(payload["response"]["id"], "resp_test");
+        assert_eq!(payload["response"]["model"], "model-test");
+        assert_eq!(payload["response"]["error"]["message"], "failed");
+        assert_eq!(payload["error"]["type"], "server_error");
     }
 }

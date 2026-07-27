@@ -149,19 +149,35 @@ pub(super) fn judge_result_detail(judge: &FusionJudgeDetail) -> FusionDetail {
 }
 
 pub(super) fn escape_html(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&#39;")
+    escape_markup(value, false)
 }
 
 fn escape_table_cell(value: &str) -> String {
-    escape_html(value)
-        .replace('|', "&#124;")
-        .replace("\r\n", "<br>")
-        .replace(['\r', '\n'], "<br>")
+    escape_markup(value, true)
+}
+
+fn escape_markup(value: &str, table_cell: bool) -> String {
+    let mut escaped = String::with_capacity(value.len());
+    let mut chars = value.chars().peekable();
+    while let Some(character) = chars.next() {
+        match character {
+            '&' => escaped.push_str("&amp;"),
+            '<' => escaped.push_str("&lt;"),
+            '>' => escaped.push_str("&gt;"),
+            '"' => escaped.push_str("&quot;"),
+            '\'' => escaped.push_str("&#39;"),
+            '|' if table_cell => escaped.push_str("&#124;"),
+            '\r' if table_cell => {
+                if chars.peek() == Some(&'\n') {
+                    chars.next();
+                }
+                escaped.push_str("<br>");
+            }
+            '\n' if table_cell => escaped.push_str("<br>"),
+            _ => escaped.push(character),
+        }
+    }
+    escaped
 }
 
 pub(super) fn patch_final_event(
@@ -198,22 +214,9 @@ pub(super) fn patch_final_event(
 }
 
 pub(super) fn failed_event(model: &str, message: &str) -> Bytes {
-    let response_id = format!("resp_{}", uuid::Uuid::new_v4().simple());
-    let error = json!({"message":message,"type":"server_error"});
     encode_event(
         "response.failed",
-        &json!({
-            "type":"response.failed",
-            "response":{
-                "id":response_id,
-                "object":"response",
-                "status":"failed",
-                "model":model,
-                "error":error,
-                "output":[]
-            },
-            "error":error
-        }),
+        &crate::sse::response_failed_payload(None, Some(model), message, "server_error"),
     )
     .expect("fusion failure event is serializable")
 }

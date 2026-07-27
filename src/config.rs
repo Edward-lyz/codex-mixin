@@ -52,6 +52,10 @@ impl GatewayConfig {
                 "provider configuration is missing; run `codex-mixin providers add --preset <preset> --key <key>`"
             )
         })?;
+        Self::from_stored_config_value(stored_config)
+    }
+
+    fn from_stored_config_value(stored_config: StoredGatewayConfig) -> anyhow::Result<Self> {
         ensure_config_version(stored_config.config_version)?;
         if stored_config.providers.is_empty() {
             anyhow::bail!(
@@ -65,13 +69,8 @@ impl GatewayConfig {
             .unwrap_or_else(|| "127.0.0.1:8787".to_owned())
             .parse()
             .context("invalid stored gateway bind")?;
-        let mut fusion_profiles = stored_config.fusion_profiles.clone();
-        for profile in &mut fusion_profiles {
-            if profile.panel_tools.max_rounds == 4 && profile.panel_tools.max_calls_per_model == 8 {
-                profile.panel_tools.max_rounds = 16;
-                profile.panel_tools.max_calls_per_model = 64;
-            }
-        }
+        let mut fusion_profiles = stored_config.fusion_profiles;
+        migrate_legacy_fusion_panel_tool_limits(&mut fusion_profiles);
         let config = Self {
             bind,
             providers: stored_config.providers,
@@ -111,6 +110,15 @@ impl GatewayConfig {
                 )
             })?;
         Ok(format!("{base}/{path}"))
+    }
+}
+
+fn migrate_legacy_fusion_panel_tool_limits(profiles: &mut [FusionProfile]) {
+    for profile in profiles {
+        if profile.panel_tools.max_rounds == 4 && profile.panel_tools.max_calls_per_model == 8 {
+            profile.panel_tools.max_rounds = 16;
+            profile.panel_tools.max_calls_per_model = 64;
+        }
     }
 }
 
@@ -668,7 +676,6 @@ mod tests {
                 min_successful: 1,
                 max_completion_tokens: 2048,
                 timeout_ms: 30_000,
-                fuse_every_user_turn: true,
                 show_intermediate_results: true,
                 panel_tools: crate::fusion::PanelToolsConfig::default(),
             }],
@@ -681,6 +688,37 @@ mod tests {
                 .contains("references unavailable provider model missing-opencode-go")
         );
         assert!(!path.exists());
+    }
+
+    #[test]
+    fn upgrades_legacy_stored_fusion_panel_tool_limits() {
+        let stored = StoredGatewayConfig {
+            providers: vec![crate::provider::open_code_go_provider("provider", "secret")],
+            fusion_profiles: vec![FusionProfile {
+                id: "legacy".to_owned(),
+                panel_models: vec!["panel-provider".to_owned()],
+                judge_model: "judge-provider".to_owned(),
+                final_model: "final-provider".to_owned(),
+                min_successful: 1,
+                max_completion_tokens: 2048,
+                timeout_ms: 30_000,
+                show_intermediate_results: true,
+                panel_tools: crate::fusion::PanelToolsConfig {
+                    max_rounds: 4,
+                    max_calls_per_model: 8,
+                    ..Default::default()
+                },
+            }],
+            ..StoredGatewayConfig::default()
+        };
+
+        let config = GatewayConfig::from_stored_config_value(stored).unwrap();
+
+        assert_eq!(config.fusion_profiles[0].panel_tools.max_rounds, 16);
+        assert_eq!(
+            config.fusion_profiles[0].panel_tools.max_calls_per_model,
+            64
+        );
     }
 
     #[test]

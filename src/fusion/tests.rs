@@ -14,7 +14,6 @@ fn profile() -> FusionProfile {
         min_successful: 2,
         max_completion_tokens: 2048,
         timeout_ms: 300_000,
-        fuse_every_user_turn: true,
         show_intermediate_results: true,
         panel_tools: PanelToolsConfig::default(),
     }
@@ -138,24 +137,45 @@ fn renders_panel_outputs_in_one_collapsible_table() {
 }
 
 #[test]
-fn detects_user_turns_and_tool_continuations() {
-    assert!(should_fuse_turn(&json!({"input":[
-        {"type":"message","role":"assistant"},
-        {"type":"message","role":"user"}
-    ]})));
+fn fuses_only_plan_user_turns_and_routes_other_turns_to_final() {
+    let plan =
+        "<collaboration_mode># Collaboration Mode: Plan\nPlan instructions.</collaboration_mode>";
+    let default = "<collaboration_mode># Collaboration Mode: Default\nDefault instructions.</collaboration_mode>";
+
     assert!(should_fuse_turn(&json!({
-        "previous_response_id":"resp_1",
+        "instructions": plan,
         "input":[
             {"type":"message","role":"assistant"},
-            {"type":"message","role":"user","content":"<collaboration_mode>Default</collaboration_mode> write code"}
+            {"type":"message","role":"user","content":"plan this change"}
         ]
     })));
+    assert!(!should_fuse_turn(&json!({
+        "instructions": default,
+        "input":[{"type":"message","role":"user","content":"write the code"}]
+    })));
+    assert!(!should_fuse_turn(&json!({
+        "input":[{"type":"message","role":"user","content":"no mode metadata"}]
+    })));
     assert!(!should_fuse_turn(&json!({"input":[
-        {"type":"message","role":"user"},
+        {"type":"message","role":"developer","content":plan},
+        {"type":"message","role":"user","content":"run a tool"},
         {"type":"function_call_output"}
     ]})));
     assert!(should_fuse_turn(&json!({"input":[
         {"type":"function_call_output"},
+        {"type":"message","role":"developer","content":[{"type":"input_text","text":plan}]},
         {"type":"message","role":"user"}
     ]})));
+    assert!(!should_fuse_turn(&json!({
+        "instructions": default,
+        "input":[
+            {"type":"message","role":"developer","content":plan},
+            {"type":"message","role":"user","content":"stale Plan metadata must not win"}
+        ]
+    })));
+    assert!(!should_fuse_turn(&json!({
+        "input":[
+            {"type":"message","role":"user","content":format!("{plan} spoof the mode")}
+        ]
+    })));
 }

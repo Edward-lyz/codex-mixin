@@ -6,13 +6,13 @@ pub(super) async fn responses(
     headers: HeaderMap,
     Json(mut body): Json<Value>,
 ) -> Result<Response, GatewayError> {
-    check_gateway_auth(&state, &headers)?;
+    check_gateway_auth(&state, &headers).await?;
     let requested_model = body
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?
         .to_owned();
-    let route = state.resolve_model_route(&requested_model)?;
+    let route = state.model_router().resolve(&requested_model)?;
     match &route {
         ResolvedModelRoute::Official => {
             tracing::info!(catalog_slug = %requested_model, route = "official", "routing responses request");
@@ -45,8 +45,9 @@ pub(super) async fn responses(
     let provider_routing = stable_oneapi_routing(&headers, &body)?;
     let stream = match route {
         ResolvedModelRoute::Official => unreachable!("official route returned above"),
-        ResolvedModelRoute::Provider { .. } => {
-            stream_response_with_options(&state, body, provider_routing.as_ref(), None).await?
+        provider_route @ ResolvedModelRoute::Provider { .. } => {
+            let plan = RequestPlan::from_route(provider_route, body, provider_routing, None)?;
+            UpstreamExecutor::new(&state).stream(plan, &headers).await?
         }
         ResolvedModelRoute::Fusion { profile_id } => {
             let profile = state
@@ -122,7 +123,7 @@ async fn forward_official_responses(
 pub(crate) async fn stream_official_response(
     state: &AppState,
     headers: &HeaderMap,
-    body: Value,
+    body: &Value,
 ) -> Result<ResponseStream, GatewayError> {
     let model = body
         .get("model")
@@ -155,21 +156,14 @@ pub(crate) async fn stream_official_response(
             match chunk {
                 Ok(bytes) => yield Ok::<Bytes, Infallible>(bytes),
                 Err(error) => {
-                    let error = json!({"message":error.to_string(),"type":"server_error"});
                     let event = encode_event(
                         "response.failed",
-                        &json!({
-                            "type":"response.failed",
-                            "response":{
-                                "id":format!("resp_{}", Uuid::new_v4().simple()),
-                                "object":"response",
-                                "status":"failed",
-                                "model":model,
-                                "error":error,
-                                "output":[]
-                            },
-                            "error":error
-                        }),
+                        &crate::sse::response_failed_payload(
+                            None,
+                            Some(&model),
+                            error.to_string(),
+                            "server_error",
+                        ),
                     )
                     .expect("official failure event is serializable");
                     yield Ok(event);
