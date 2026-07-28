@@ -3,6 +3,7 @@ use super::thinking::*;
 use super::tool_map::ToolNameMap;
 use super::tools::*;
 use super::*;
+use crate::model_reasoning::{AnthropicThinkingKind, anthropic_thinking_kind};
 
 #[derive(Clone, Debug)]
 pub struct ConvertedRequest {
@@ -27,6 +28,26 @@ pub(crate) fn responses_to_anthropic_with_web_search(
     config: &GatewayConfig,
     web_search_enabled: bool,
     use_mcp_bridge_names: bool,
+) -> Result<ConvertedRequest, GatewayError> {
+    let auto_thinking_kind = body
+        .get("model")
+        .and_then(Value::as_str)
+        .and_then(anthropic_thinking_kind);
+    responses_to_anthropic_with_web_search_and_thinking_kind(
+        body,
+        config,
+        web_search_enabled,
+        use_mcp_bridge_names,
+        auto_thinking_kind,
+    )
+}
+
+pub(crate) fn responses_to_anthropic_with_web_search_and_thinking_kind(
+    body: &Value,
+    config: &GatewayConfig,
+    web_search_enabled: bool,
+    use_mcp_bridge_names: bool,
+    auto_thinking_kind: Option<AnthropicThinkingKind>,
 ) -> Result<ConvertedRequest, GatewayError> {
     let model = body
         .get("model")
@@ -80,7 +101,12 @@ pub(crate) fn responses_to_anthropic_with_web_search(
         use_mcp_bridge_names,
         web_search_enabled,
     )?;
-    let thinking = convert_thinking(&model, max_tokens, body.get("reasoning"), config)?;
+    let thinking = convert_thinking(
+        max_tokens,
+        body.get("reasoning"),
+        config,
+        auto_thinking_kind,
+    )?;
     let output_config = merge_anthropic_output_format(
         thinking.output_config,
         body.get("text").and_then(|text| text.get("format")),

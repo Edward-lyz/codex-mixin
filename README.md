@@ -332,6 +332,13 @@ codex-mixin migrate-history
 
 ### Thinking 与 Web Search
 
+自定义模型默认在 Codex picker 中暴露
+`Off / low / medium / high / xhigh / max / ultra`，并启用 multi-agent v2。
+其中 Off 的 Codex wire value 是 `none`。Provider 的 per-model capability 明确报告
+`supports_thinking = false` 时只保留 `Off / ultra`：Ultra 仍由 Codex 客户端主动派生
+subagent，但不会向不支持思考的远端发送 `reasoning`。其他模型的 Ultra 在远端映射为
+最高合法档位 `max`，不会把客户端专用的字面值 `ultra` 传给上游。
+
 Anthropic 风格上游支持 Codex reasoning effort 到 thinking 的映射：
 
 | Codex effort | Anthropic thinking |
@@ -339,7 +346,7 @@ Anthropic 风格上游支持 Codex reasoning effort 到 thinking 的映射：
 | `minimal` / `low` | `low` |
 | `medium` | `medium` |
 | `high` | `high` |
-| `xhigh` / `exhigh` / `max` | `max` |
+| `xhigh` / `max` | `max` |
 
 未知 effort 会返回 400，而不是静默降级到错误档位。
 

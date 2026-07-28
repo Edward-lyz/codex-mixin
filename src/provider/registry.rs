@@ -22,6 +22,7 @@ struct ProviderRouteTarget {
 pub struct ProviderRuntime {
     definition: ProviderDefinition,
     api_url: Url,
+    openai_responses_url: Option<Url>,
     models_url: Option<Url>,
     image_generation_url: Option<Url>,
     quota_url: Option<Url>,
@@ -32,6 +33,13 @@ impl ProviderRuntime {
         definition.validate()?;
         let api_url = endpoint_url(&definition.base_url, &definition.api_path)
             .with_context(|| format!("provider {} API URL", definition.id))?;
+        let openai_responses_url = match &definition.model_source {
+            ProviderModelSource::BaiduOneApi => Some(
+                endpoint_url(&definition.base_url, "/v1/responses")
+                    .with_context(|| format!("provider {} Responses URL", definition.id))?,
+            ),
+            _ => None,
+        };
         let models_url = match &definition.model_source {
             ProviderModelSource::OpenAiCompatible { path } => Some(
                 endpoint_url(&definition.base_url, path)
@@ -58,6 +66,7 @@ impl ProviderRuntime {
         Ok(Self {
             definition,
             api_url,
+            openai_responses_url,
             models_url,
             image_generation_url,
             quota_url,
@@ -80,8 +89,26 @@ impl ProviderRuntime {
         self.definition.protocol
     }
 
+    pub fn protocol_for_model(&self, model: &str) -> ProviderProtocol {
+        if self.is_baidu_model_source() && model.trim().to_ascii_lowercase().starts_with("gpt-") {
+            ProviderProtocol::OpenAiResponses
+        } else {
+            self.protocol()
+        }
+    }
+
     pub fn api_url(&self) -> &Url {
         &self.api_url
+    }
+
+    pub fn api_url_for_model(&self, model: &str) -> &Url {
+        if self.protocol_for_model(model) == ProviderProtocol::OpenAiResponses
+            && let Some(url) = &self.openai_responses_url
+        {
+            url
+        } else {
+            &self.api_url
+        }
     }
 
     pub fn models_url(&self) -> Option<&Url> {
@@ -111,6 +138,14 @@ impl ProviderRuntime {
     }
 
     pub fn apply_auth(&self, request: RequestBuilder) -> RequestBuilder {
+        self.apply_auth_for_protocol(request, self.protocol())
+    }
+
+    pub fn apply_auth_for_protocol(
+        &self,
+        request: RequestBuilder,
+        protocol: ProviderProtocol,
+    ) -> RequestBuilder {
         let request = match self.definition.auth.header {
             ProviderAuthHeader::AuthorizationBearer => {
                 request.bearer_auth(&self.definition.auth.api_key)
@@ -119,7 +154,7 @@ impl ProviderRuntime {
                 request.header("x-api-key", &self.definition.auth.api_key)
             }
         };
-        if self.protocol() == ProviderProtocol::AnthropicMessages {
+        if protocol == ProviderProtocol::AnthropicMessages {
             request.header(
                 "anthropic-version",
                 self.definition
@@ -170,6 +205,14 @@ impl ProviderRuntime {
     pub fn uses_mcp_bridge_names(&self, model: &str) -> bool {
         self.definition.request_policy.mcp_bridge_for_fable
             && model.to_ascii_lowercase().contains("fable")
+    }
+
+    pub fn model_supports_thinking(&self, model: &str) -> Option<bool> {
+        self.definition
+            .cached_models
+            .iter()
+            .find(|candidate| candidate.id.eq_ignore_ascii_case(model))
+            .and_then(|candidate| candidate.supports_thinking)
     }
 
     pub fn is_baidu_model_source(&self) -> bool {
@@ -354,7 +397,8 @@ fn endpoint_url(base_url: &str, path: &str) -> anyhow::Result<Url> {
 mod tests {
     use super::*;
     use crate::provider::{
-        ProviderAuthConfig, ProviderModelSource, ProviderProtocol, open_code_go_provider,
+        ProviderAuthConfig, ProviderModelSource, ProviderProtocol, baidu_oneapi_provider,
+        open_code_go_provider,
     };
     use crate::provider::{ProviderQuotaParser, ProviderRequestPolicy};
 
@@ -452,6 +496,47 @@ mod tests {
         assert_eq!(
             runtime.models_url().unwrap().as_str(),
             "https://opencode.ai/zen/go/v1/models"
+        );
+    }
+
+    #[test]
+    fn baidu_routes_gpt_to_responses_and_claude_to_messages() {
+        let mut provider = baidu_oneapi_provider("baidu-oneapi", "secret");
+        provider.quota_username = Some("quota-user".to_owned());
+        let registry = ProviderRegistry::new(vec![provider]).unwrap();
+        let runtime = registry.provider("baidu-oneapi").unwrap();
+
+        assert_eq!(
+            runtime.protocol_for_model("GPT-5.6-Sol"),
+            ProviderProtocol::OpenAiResponses
+        );
+        assert_eq!(
+            runtime.api_url_for_model("gpt-5.6-sol").as_str(),
+            "https://oneapi-comate.baidu-int.com/v1/responses"
+        );
+        assert_eq!(
+            runtime.protocol_for_model("Claude Opus 4.6"),
+            ProviderProtocol::AnthropicMessages
+        );
+        assert_eq!(
+            runtime.api_url_for_model("Claude Opus 4.6").as_str(),
+            "https://oneapi-comate.baidu-int.com/v1/messages"
+        );
+    }
+
+    #[test]
+    fn non_baidu_provider_keeps_configured_protocol_for_gpt() {
+        let provider = test_provider("custom");
+        let registry = ProviderRegistry::new(vec![provider]).unwrap();
+        let runtime = registry.provider("custom").unwrap();
+
+        assert_eq!(
+            runtime.protocol_for_model("gpt-5.6-sol"),
+            ProviderProtocol::OpenAiChat
+        );
+        assert_eq!(
+            runtime.api_url_for_model("gpt-5.6-sol").as_str(),
+            "https://example.test/v1/chat/completions"
         );
     }
 

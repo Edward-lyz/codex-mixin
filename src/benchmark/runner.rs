@@ -120,7 +120,7 @@ pub(super) async fn benchmark_request(
     let started = Instant::now();
     let deadline = started + timeout;
     let provider = &target.provider;
-    let protocol = provider.protocol();
+    let protocol = provider.protocol_for_model(&target.upstream_model_id);
     let mut body = match protocol {
         ProviderProtocol::AnthropicMessages => json!({
             "model": target.upstream_model_id,
@@ -150,13 +150,21 @@ pub(super) async fn benchmark_request(
             "session_id": format!("benchmark-{}", Uuid::new_v4().simple())
         });
     }
-    let request = provider.apply_auth(
+    let request = provider.apply_auth_for_protocol(
         client
-            .post(provider.api_url().clone())
+            .post(
+                provider
+                    .api_url_for_model(&target.upstream_model_id)
+                    .clone(),
+            )
             .header("accept", "text/event-stream"),
+        protocol,
     );
-    let request =
-        provider.apply_anthropic_beta(request, provider.definition().anthropic_beta.as_deref());
+    let request = if protocol == ProviderProtocol::AnthropicMessages {
+        provider.apply_anthropic_beta(request, provider.definition().anthropic_beta.as_deref())
+    } else {
+        request
+    };
     let request = request.json(&body);
     let response = match timeout_at(deadline, request.send()).await {
         Ok(Ok(response)) => response,

@@ -4,10 +4,12 @@ use serde_json::{Value, json};
 
 use crate::anthropic::ModelInfo;
 use crate::model_metadata::ModelMetadataResolver;
+use crate::model_reasoning::resolve_model_reasoning;
 
 const FALLBACK_BASE_INSTRUCTIONS: &str = "You are Codex, a coding agent. Work in the user's workspace, use tools carefully, and keep responses concise.";
 const CUSTOM_MODEL_MARKER: &str = "codex_mixin_managed";
 const UPSTREAM_MODEL_MARKER: &str = "codex_mixin_upstream_model";
+const SUPPORTS_THINKING_MARKER: &str = "codex_mixin_supports_thinking";
 
 pub fn codex_catalog_from_models(
     models: &[ModelInfo],
@@ -175,7 +177,11 @@ fn codex_catalog_from_models_with_options(
             item["description"] = json!(description);
             item[CUSTOM_MODEL_MARKER] = json!(true);
             item[UPSTREAM_MODEL_MARKER] = json!(model.id);
-            item["multi_agent_version"] = json!("v2");
+            if let Some(supports_thinking) = model.supports_thinking {
+                item[SUPPORTS_THINKING_MARKER] = json!(supports_thinking);
+            } else if let Some(item) = item.as_object_mut() {
+                item.remove(SUPPORTS_THINKING_MARKER);
+            }
             if item.get("base_instructions").is_none() {
                 item["base_instructions"] = json!(FALLBACK_BASE_INSTRUCTIONS);
             }
@@ -206,6 +212,7 @@ fn codex_catalog_from_models_with_options(
             item["supports_search_tool"] = json!(true);
             item["use_responses_lite"] = json!(false);
             enable_fast_service_tier(&mut item);
+            apply_model_reasoning_capabilities(&mut item, &model.id, model.supports_thinking);
             if model.supports_web_search == Some(true) {
                 item["web_search_tool_type"] = json!("text");
             } else if let Some(item) = item.as_object_mut() {
@@ -271,7 +278,13 @@ pub fn refresh_managed_oauth_catalog(
         if !slugs.insert(slug.clone()) {
             anyhow::bail!("custom model slug collides with existing catalog: {slug}");
         }
-        model["multi_agent_version"] = json!("v2");
+        let reasoning_model_id = model
+            .get(UPSTREAM_MODEL_MARKER)
+            .and_then(Value::as_str)
+            .unwrap_or(&slug)
+            .to_owned();
+        let advertised_support = model.get(SUPPORTS_THINKING_MARKER).and_then(Value::as_bool);
+        apply_model_reasoning_capabilities(&mut model, &reasoning_model_id, advertised_support);
         let supports_search_tool = model
             .get("supports_search_tool")
             .and_then(Value::as_bool)
@@ -296,6 +309,49 @@ fn enable_fast_service_tier(model: &mut Value) {
         "name": "Fast",
         "description": "Requests faster processing when the upstream provider supports it"
     }]);
+}
+
+fn apply_model_reasoning_capabilities(
+    model: &mut Value,
+    model_id: &str,
+    advertised_support: Option<bool>,
+) {
+    let model = model
+        .as_object_mut()
+        .expect("Codex catalog model must be an object");
+    let Some(capabilities) = resolve_model_reasoning(model_id, advertised_support) else {
+        model.remove("default_reasoning_level");
+        model.remove("supported_reasoning_levels");
+        model.remove("multi_agent_version");
+        return;
+    };
+    model.insert(
+        "default_reasoning_level".to_owned(),
+        json!(capabilities.default_effort),
+    );
+    model.insert(
+        "supported_reasoning_levels".to_owned(),
+        Value::Array(
+            capabilities
+                .supported_levels
+                .iter()
+                .map(|level| {
+                    json!({
+                        "effort": level.effort,
+                        "description": level.description,
+                    })
+                })
+                .collect(),
+        ),
+    );
+    match capabilities.multi_agent_version {
+        Some(version) => {
+            model.insert("multi_agent_version".to_owned(), json!(version));
+        }
+        None => {
+            model.remove("multi_agent_version");
+        }
+    }
 }
 
 fn ensure_instruction_fields(model: &mut Value) {
@@ -468,6 +524,15 @@ fn fallback_template(default_context_window: u64) -> Value {
 mod tests {
     use super::*;
 
+    fn reasoning_efforts(model: &Value) -> Vec<&str> {
+        model["supported_reasoning_levels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|level| level["effort"].as_str().unwrap())
+            .collect()
+    }
+
     #[test]
     fn builds_codex_catalog_from_live_model_shape() {
         let models = vec![ModelInfo {
@@ -495,6 +560,11 @@ mod tests {
         assert_eq!(catalog["models"][0]["context_window"], 1_000_000);
         assert_eq!(catalog["models"][0]["supports_search_tool"], true);
         assert!(catalog["models"][0].get("web_search_tool_type").is_none());
+        assert_eq!(
+            reasoning_efforts(&catalog["models"][0]),
+            ["none", "low", "medium", "high", "xhigh", "max", "ultra"]
+        );
+        assert_eq!(catalog["models"][0]["multi_agent_version"], "v2");
     }
 
     #[test]
@@ -546,6 +616,119 @@ mod tests {
         assert_eq!(catalog["models"][0]["context_window"], 1_024_000);
         assert_eq!(catalog["models"][0]["input_modalities"], json!(["text"]));
         assert_eq!(catalog["models"][0][CUSTOM_MODEL_MARKER], true);
+        assert_eq!(
+            reasoning_efforts(&catalog["models"][0]),
+            ["none", "low", "medium", "high", "xhigh", "max", "ultra"]
+        );
+        assert_eq!(catalog["models"][0]["multi_agent_version"], "v2");
+    }
+
+    #[test]
+    fn applies_known_gpt_and_claude_reasoning_profiles() {
+        let models = [
+            "gpt-5.6-sol",
+            "gpt-5.6-terra",
+            "gpt-5.6-luna",
+            "gpt-5.5",
+            "Claude Opus 4.6",
+        ]
+        .into_iter()
+        .map(|id| ModelInfo {
+            id: id.to_owned(),
+            supports_thinking: Some(true),
+            ..ModelInfo::default()
+        })
+        .collect::<Vec<_>>();
+
+        let catalog = codex_catalog_from_models(&models, 1_000_000, None);
+        let models = catalog["models"].as_array().unwrap();
+        let sol = &models[0];
+        assert_eq!(sol["default_reasoning_level"], "low");
+        assert_eq!(
+            reasoning_efforts(sol),
+            ["none", "low", "medium", "high", "xhigh", "max", "ultra"]
+        );
+        assert_eq!(sol["multi_agent_version"], "v2");
+
+        let terra = &models[1];
+        assert_eq!(terra["default_reasoning_level"], "medium");
+        assert_eq!(
+            reasoning_efforts(terra),
+            ["none", "low", "medium", "high", "xhigh", "max", "ultra"]
+        );
+        assert_eq!(terra["multi_agent_version"], "v2");
+
+        let luna = &models[2];
+        assert_eq!(
+            reasoning_efforts(luna),
+            ["none", "low", "medium", "high", "xhigh", "max", "ultra"]
+        );
+        assert_eq!(luna["multi_agent_version"], "v2");
+
+        let gpt_5_5 = &models[3];
+        assert_eq!(
+            reasoning_efforts(gpt_5_5),
+            ["none", "low", "medium", "high", "xhigh", "max", "ultra"]
+        );
+        assert_eq!(gpt_5_5["multi_agent_version"], "v2");
+
+        let opus = &models[4];
+        assert_eq!(
+            reasoning_efforts(opus),
+            ["none", "low", "medium", "high", "xhigh", "max", "ultra"]
+        );
+        assert_eq!(opus["multi_agent_version"], "v2");
+    }
+
+    #[test]
+    fn applies_advertised_reasoning_to_other_model_families() {
+        let models = [
+            "DeepSeek-V4-Flash",
+            "GLM-5.2",
+            "Kimi-K2.7-Code",
+            "MiniMax-M3",
+            "grok-4.5",
+        ]
+        .into_iter()
+        .map(|id| ModelInfo {
+            id: id.to_owned(),
+            supports_thinking: Some(true),
+            ..ModelInfo::default()
+        })
+        .collect::<Vec<_>>();
+
+        let catalog = codex_catalog_from_models(&models, 1_000_000, None);
+        for model in catalog["models"].as_array().unwrap() {
+            assert_eq!(
+                reasoning_efforts(model),
+                ["none", "low", "medium", "high", "xhigh", "max", "ultra"],
+                "{}",
+                model["slug"]
+            );
+            assert_eq!(model["multi_agent_version"], "v2");
+            assert_eq!(model[SUPPORTS_THINKING_MARKER], true);
+        }
+    }
+
+    #[test]
+    fn keeps_off_and_ultra_when_provider_reports_no_thinking_support() {
+        let template = json!({"models":[{
+            "slug":"gpt-5.4-mini",
+            "default_reasoning_level":"medium",
+            "supported_reasoning_levels":[{"effort":"medium","description":"Inherited"}],
+            "multi_agent_version":"v2"
+        }]});
+        let models = vec![ModelInfo {
+            id: "plain-model".to_owned(),
+            supports_thinking: Some(false),
+            ..ModelInfo::default()
+        }];
+
+        let catalog = codex_catalog_from_models(&models, 1_000_000, Some(&template));
+        let model = &catalog["models"][0];
+        assert_eq!(model["default_reasoning_level"], "none");
+        assert_eq!(reasoning_efforts(model), ["none", "ultra"]);
+        assert_eq!(model["multi_agent_version"], "v2");
     }
 
     #[test]

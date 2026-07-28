@@ -12,6 +12,7 @@ mod gateway;
 pub mod history;
 mod image_generation;
 pub mod model_metadata;
+pub mod model_reasoning;
 pub mod openai_chat;
 pub mod openai_events;
 pub mod provider;

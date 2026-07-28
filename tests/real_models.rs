@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use axum::Router;
 use codex_mixin::config::GatewayConfig;
+use codex_mixin::provider::{ProviderModelSource, catalog_model_slug};
 use codex_mixin::server::{AppState, router};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -168,4 +169,141 @@ async fn all_registered_models_can_say_hi() {
         models.len(),
         failures.join("\n")
     );
+}
+
+#[tokio::test]
+#[ignore = "requires local Baidu OneAPI credentials and makes real model requests"]
+async fn baidu_reasoning_profiles_reach_real_upstream() {
+    let mut config =
+        GatewayConfig::from_stored_config().expect("load local Codex Mixin configuration");
+    let gateway_api_key = config.gateway_api_key.clone();
+    let provider_index = config
+        .providers
+        .iter()
+        .position(|provider| provider.model_source == ProviderModelSource::BaiduOneApi)
+        .expect("Baidu OneAPI provider is not configured");
+    let mut provider = config.providers.remove(provider_index);
+    let provider_id = provider.id.clone();
+    let models = [
+        "gpt-5.6-sol",
+        "Claude Opus 4.6",
+        "DeepSeek-V4-Flash",
+        "GLM-5.2",
+    ];
+    for model in models {
+        assert!(
+            provider
+                .cached_models
+                .iter()
+                .any(|candidate| candidate.id == model),
+            "Baidu OneAPI catalog does not contain {model}"
+        );
+        if !provider
+            .selected_models
+            .iter()
+            .any(|candidate| candidate == model)
+        {
+            provider.selected_models.push(model.to_owned());
+        }
+    }
+    config.providers = vec![provider];
+    config.fusion_profiles.clear();
+    let gateway_url = spawn_gateway(router(AppState::new(config).unwrap())).await;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(180))
+        .build()
+        .unwrap();
+
+    let mut catalog_request = client.get(format!("{gateway_url}/v1/codex-model-catalog"));
+    if let Some(api_key) = &gateway_api_key {
+        catalog_request = catalog_request.bearer_auth(api_key);
+    }
+    let catalog: Value = catalog_request
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    for (model, expected_efforts) in [
+        (
+            "gpt-5.6-sol",
+            &["none", "low", "medium", "high", "xhigh", "max", "ultra"][..],
+        ),
+        (
+            "Claude Opus 4.6",
+            &["none", "low", "medium", "high", "xhigh", "max", "ultra"][..],
+        ),
+        (
+            "DeepSeek-V4-Flash",
+            &["none", "low", "medium", "high", "xhigh", "max", "ultra"][..],
+        ),
+        (
+            "GLM-5.2",
+            &["none", "low", "medium", "high", "xhigh", "max", "ultra"][..],
+        ),
+    ] {
+        let slug = catalog_model_slug(model, &provider_id);
+        let profile = catalog["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|candidate| candidate["slug"] == slug)
+            .unwrap_or_else(|| panic!("catalog does not contain {slug}"));
+        let efforts = profile["supported_reasoning_levels"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|level| level["effort"].as_str().unwrap())
+            .collect::<Vec<_>>();
+        assert_eq!(efforts, expected_efforts, "{model}");
+        assert_eq!(profile["multi_agent_version"], "v2", "{model}");
+    }
+
+    for (index, model) in models.into_iter().enumerate() {
+        for effort in ["xhigh", "max", "ultra"] {
+            let started = Instant::now();
+            let mut request = client
+                .post(format!("{gateway_url}/v1/responses"))
+                .header("session-id", format!("real-{effort}-{index}"))
+                .json(&json!({
+                    "model": catalog_model_slug(model, &provider_id),
+                    "stream": true,
+                    "store": false,
+                    "max_output_tokens": 1024,
+                    "reasoning": {"effort": effort},
+                    "instructions": "Reply with hi only.",
+                    "input": [{
+                        "type": "message",
+                        "role": "user",
+                        "content": [{"type": "input_text", "text": "Say hi."}]
+                    }],
+                    "tools": []
+                }));
+            if let Some(api_key) = &gateway_api_key {
+                request = request.bearer_auth(api_key);
+            }
+            let response = request.send().await.unwrap();
+            let status = response.status();
+            let body = response.text().await.unwrap();
+            assert!(
+                status.is_success(),
+                "{model} {effort} returned {status}: {body}"
+            );
+            assert!(
+                body.contains("response.completed"),
+                "{model} {effort} did not complete: {body}"
+            );
+            assert!(
+                !body.contains("response.failed"),
+                "{model} {effort} failed: {body}"
+            );
+            println!(
+                "PASS {model} {effort} ({} ms)",
+                started.elapsed().as_millis()
+            );
+        }
+    }
 }

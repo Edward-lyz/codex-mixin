@@ -47,6 +47,11 @@ struct MockState {
 }
 
 #[derive(Clone)]
+struct ProtocolRouteState {
+    requests: Arc<Mutex<Vec<Value>>>,
+}
+
+#[derive(Clone)]
 struct FusionMockState {
     requests: Arc<Mutex<Vec<Value>>>,
     failing_models: Arc<Vec<String>>,
@@ -152,6 +157,18 @@ async fn spawn_mock_upstream(mode: MockMode) -> (String, Arc<Mutex<Vec<Value>>>)
         .route("/v1/models", get(mock_models))
         .route("/v1/messages", post(mock_messages))
         .route("/v1/images/generations", post(mock_image_generations))
+        .with_state(state);
+    (spawn_router(app).await, requests)
+}
+
+async fn spawn_baidu_protocol_upstream() -> (String, Arc<Mutex<Vec<Value>>>) {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let state = ProtocolRouteState {
+        requests: requests.clone(),
+    };
+    let app = Router::new()
+        .route("/v1/messages", post(mock_baidu_routed_messages))
+        .route("/v1/responses", post(mock_baidu_routed_responses))
         .with_state(state);
     (spawn_router(app).await, requests)
 }
@@ -479,6 +496,56 @@ async fn mock_messages(
         .header(header::CONTENT_TYPE, "text/event-stream")
         .body(Body::from(payload))
         .unwrap()
+}
+
+async fn mock_baidu_routed_messages(
+    State(state): State<ProtocolRouteState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    record_baidu_protocol_request(&state, "/v1/messages", &headers, body);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .body(Body::from(text_sse()))
+        .unwrap()
+}
+
+async fn mock_baidu_routed_responses(
+    State(state): State<ProtocolRouteState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    record_baidu_protocol_request(&state, "/v1/responses", &headers, body);
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .body(Body::from(concat!(
+            "event: response.completed\n",
+            "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_baidu\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"gpt-5.6-sol\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":1,\"total_tokens\":2}}}\n\n"
+        )))
+        .unwrap()
+}
+
+fn record_baidu_protocol_request(
+    state: &ProtocolRouteState,
+    path: &str,
+    headers: &HeaderMap,
+    body: Value,
+) {
+    assert_eq!(
+        headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok()),
+        Some("Bearer upstream-key")
+    );
+    state.requests.lock().unwrap().push(json!({
+        "path": path,
+        "anthropic_version": headers
+            .get("anthropic-version")
+            .and_then(|value| value.to_str().ok()),
+        "body": body,
+    }));
 }
 
 async fn mock_image_generations(
@@ -2183,6 +2250,117 @@ async fn maps_stable_session_to_anthropic_metadata() {
         .unwrap();
 
     assert_eq!(response.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn routes_baidu_models_with_per_model_reasoning_capabilities() {
+    let (upstream_url, requests) = spawn_baidu_protocol_upstream().await;
+    let mut config = test_config(upstream_url);
+    configure_baidu_policy(&mut config);
+    config.providers[0].model_source = ProviderModelSource::BaiduOneApi;
+    config.thinking_mode = ThinkingMode::Auto;
+    config.providers[0]
+        .cached_models
+        .iter_mut()
+        .find(|model| model.id == "DeepSeek-V4-Flash")
+        .unwrap()
+        .supports_thinking = Some(true);
+    config.providers[0].cached_models.push(ProviderModel {
+        id: "Claude Opus 4.6".to_owned(),
+        supports_thinking: Some(true),
+        ..ProviderModel::default()
+    });
+    config.providers[0]
+        .selected_models
+        .push("Claude Opus 4.6".to_owned());
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+
+    let mut gpt_request = responses_request();
+    gpt_request["model"] = json!("gpt-5.6-sol-custom");
+    gpt_request["reasoning"] = json!({"effort": "ultra"});
+    let gpt_response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&gpt_request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(gpt_response.status(), StatusCode::OK);
+    assert!(
+        gpt_response
+            .text()
+            .await
+            .unwrap()
+            .contains("response.completed")
+    );
+
+    let mut opus_request = responses_request();
+    opus_request["model"] = json!("Claude Opus 4.6-custom");
+    opus_request["reasoning"] = json!({"effort": "ultra"});
+    let opus_response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&opus_request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(opus_response.status(), StatusCode::OK);
+    assert!(
+        opus_response
+            .text()
+            .await
+            .unwrap()
+            .contains("response.completed")
+    );
+
+    let mut deepseek_request = responses_request();
+    deepseek_request["reasoning"] = json!({"effort": "ultra"});
+    let deepseek_response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&deepseek_request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(deepseek_response.status(), StatusCode::OK);
+    assert!(
+        deepseek_response
+            .text()
+            .await
+            .unwrap()
+            .contains("response.completed")
+    );
+
+    let requests = requests.lock().unwrap().clone();
+    assert_eq!(requests.len(), 3);
+    let responses_request = requests
+        .iter()
+        .find(|request| request["path"] == "/v1/responses")
+        .unwrap();
+    assert_eq!(responses_request["body"]["model"], "gpt-5.6-sol");
+    assert_eq!(responses_request["body"]["reasoning"]["effort"], "max");
+    assert!(responses_request["anthropic_version"].is_null());
+
+    let messages_request = requests
+        .iter()
+        .find(|request| {
+            request["path"] == "/v1/messages" && request["body"]["model"] == "Claude Opus 4.6"
+        })
+        .unwrap();
+    assert_eq!(messages_request["body"]["model"], "Claude Opus 4.6");
+    assert_eq!(messages_request["body"]["thinking"]["type"], "adaptive");
+    assert_eq!(messages_request["body"]["output_config"]["effort"], "max");
+    assert_eq!(messages_request["anthropic_version"], "2023-06-01");
+
+    let deepseek_request = requests
+        .iter()
+        .find(|request| {
+            request["path"] == "/v1/messages" && request["body"]["model"] == "DeepSeek-V4-Flash"
+        })
+        .unwrap();
+    assert_eq!(deepseek_request["body"]["thinking"]["type"], "adaptive");
+    assert_eq!(deepseek_request["body"]["output_config"]["effort"], "max");
 }
 
 #[tokio::test]

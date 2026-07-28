@@ -636,14 +636,14 @@ fn rejects_incomplete_client_tool_history() {
 }
 
 #[test]
-fn auto_thinking_maps_exhigh_to_adaptive_max_for_new_claude() {
+fn auto_thinking_maps_xhigh_to_adaptive_max_for_new_claude() {
     let mut config = config();
     config.thinking_mode = ThinkingMode::Auto;
     let body = json!({
         "model": "Claude Sonnet 5",
         "stream": true,
         "max_output_tokens": 64,
-        "reasoning": {"effort": "exhigh"},
+        "reasoning": {"effort": "xhigh"},
         "input": "hi"
     });
     let converted = responses_to_anthropic(&body, &config).unwrap();
@@ -661,7 +661,6 @@ fn adaptive_thinking_maps_common_effort_levels() {
         ("medium", "medium"),
         ("high", "high"),
         ("xhigh", "max"),
-        ("exhigh", "max"),
         ("max", "max"),
     ] {
         let body = json!({
@@ -676,6 +675,23 @@ fn adaptive_thinking_maps_common_effort_levels() {
             expected,
             "input effort {input}"
         );
+    }
+}
+
+#[test]
+fn explicit_none_disables_anthropic_thinking() {
+    let mut config = config();
+    config.thinking_mode = ThinkingMode::Auto;
+    for model in ["Claude Opus 4.6", "Claude Haiku 4.5"] {
+        let body = json!({
+            "model": model,
+            "stream": true,
+            "reasoning": {"effort": "none"},
+            "input": "hi"
+        });
+        let converted = responses_to_anthropic(&body, &config).unwrap();
+        assert!(converted.request.thinking.is_none(), "{model}");
+        assert!(converted.request.output_config.is_none(), "{model}");
     }
 }
 

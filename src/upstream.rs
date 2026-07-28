@@ -6,9 +6,10 @@ use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use serde_json::{Value, json};
 
-use crate::convert::responses_to_anthropic_with_web_search;
+use crate::convert::responses_to_anthropic_with_web_search_and_thinking_kind;
 use crate::error::GatewayError;
 use crate::gateway::{RequestPlan, UpstreamExecutor};
+use crate::model_reasoning::{anthropic_thinking_kind_with_advertised, prepare_upstream_reasoning};
 use crate::openai_chat::responses_to_openai_chat_streaming;
 use crate::openai_events::{
     map_anthropic_sse_with_image_routes, map_openai_chat_sse_with_image_routes,
@@ -70,7 +71,7 @@ pub async fn collect_response(
 
 pub(crate) async fn stream_provider_response(
     state: &AppState,
-    body: &mut Value,
+    body: &Value,
     catalog_slug: &str,
     provider_id: &str,
     upstream_model_id: &str,
@@ -85,17 +86,22 @@ pub(crate) async fn stream_provider_response(
     let downstream_model = downstream_model.unwrap_or(catalog_slug).to_owned();
     let downstream_body = response_metadata_request(body, &downstream_model);
     let web_search_enabled = state.web_search_enabled_for_custom_request(body);
-    let original_model = body.get("model").cloned();
-    body["model"] = Value::String(upstream_model_id.clone());
-    let stream = match provider.protocol() {
+    let protocol = provider.protocol_for_model(&upstream_model_id);
+    let advertised_thinking = provider.model_supports_thinking(&upstream_model_id);
+    let mut upstream_body = body.clone();
+    upstream_body["model"] = Value::String(upstream_model_id.clone());
+    prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
+    let stream = match protocol {
         ProviderProtocol::AnthropicMessages => {
-            let converted = responses_to_anthropic_with_web_search(
-                body,
+            let auto_thinking_kind =
+                anthropic_thinking_kind_with_advertised(&upstream_model_id, advertised_thinking);
+            let converted = responses_to_anthropic_with_web_search_and_thinking_kind(
+                &upstream_body,
                 &state.config,
                 web_search_enabled,
                 provider.uses_mcp_bridge_names(&upstream_model_id),
+                auto_thinking_kind,
             );
-            restore_field(body, "model", original_model);
             let mut converted = converted?;
             if provider.uses_session_affinity()
                 && let Some(routing) = routing
@@ -118,11 +124,13 @@ pub(crate) async fn stream_provider_response(
             .boxed()
         }
         ProviderProtocol::OpenAiChat => {
-            let converted = responses_to_openai_chat_streaming(body);
-            restore_field(body, "model", original_model);
-            let converted = converted?;
-            let upstream_request =
-                provider.apply_auth(state.client.post(provider.api_url().clone()));
+            let converted = responses_to_openai_chat_streaming(&upstream_body)?;
+            let upstream_request = provider.apply_auth_for_protocol(
+                state
+                    .client
+                    .post(provider.api_url_for_model(&upstream_model_id).clone()),
+                protocol,
+            );
             let upstream = provider
                 .apply_session_affinity(
                     upstream_request,
@@ -159,18 +167,21 @@ pub(crate) async fn stream_provider_response(
             .boxed()
         }
         ProviderProtocol::OpenAiResponses => {
-            let upstream_request =
-                provider.apply_auth(state.client.post(provider.api_url().clone()));
+            let upstream_request = provider.apply_auth_for_protocol(
+                state
+                    .client
+                    .post(provider.api_url_for_model(&upstream_model_id).clone()),
+                protocol,
+            );
             let upstream = provider
                 .apply_session_affinity(
                     upstream_request,
                     routing.map(|routing| routing.hash_key.as_str()),
                 )
                 .header(reqwest::header::ACCEPT, "text/event-stream")
-                .json(body)
+                .json(&upstream_body)
                 .send()
                 .await;
-            restore_field(body, "model", original_model);
             let upstream = upstream.map_err(|error| {
                 tracing::error!(
                     provider_id = provider.id(),
@@ -193,20 +204,6 @@ pub(crate) async fn stream_provider_response(
         }
     };
     Ok(stream)
-}
-
-fn restore_field(body: &mut Value, field: &str, original: Option<Value>) {
-    let object = body
-        .as_object_mut()
-        .expect("responses request must be an object");
-    match original {
-        Some(value) => {
-            object.insert(field.to_owned(), value);
-        }
-        None => {
-            object.remove(field);
-        }
-    }
 }
 
 fn response_metadata_request(body: &Value, downstream_model: &str) -> Value {

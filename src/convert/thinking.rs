@@ -1,4 +1,5 @@
 use super::*;
+use crate::model_reasoning::AnthropicThinkingKind;
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct ThinkingSettings {
@@ -7,10 +8,10 @@ pub(super) struct ThinkingSettings {
 }
 
 pub(super) fn convert_thinking(
-    model: &str,
     max_tokens: u64,
     reasoning: Option<&Value>,
     config: &GatewayConfig,
+    auto_thinking_kind: Option<AnthropicThinkingKind>,
 ) -> Result<ThinkingSettings, GatewayError> {
     let effort = reasoning
         .and_then(|value| value.get("effort"))
@@ -22,11 +23,11 @@ pub(super) fn convert_thinking(
         ThinkingMode::Off => Ok(ThinkingSettings::default()),
         ThinkingMode::Manual => manual_thinking(max_tokens, effort),
         ThinkingMode::Adaptive => adaptive_thinking(effort),
-        ThinkingMode::Auto if model_uses_adaptive_thinking(model) => adaptive_thinking(effort),
-        ThinkingMode::Auto if model_uses_manual_thinking(model) => {
-            manual_thinking(max_tokens, effort)
-        }
-        ThinkingMode::Auto => Ok(ThinkingSettings::default()),
+        ThinkingMode::Auto => match auto_thinking_kind {
+            Some(AnthropicThinkingKind::Adaptive) => adaptive_thinking(effort),
+            Some(AnthropicThinkingKind::Manual) => manual_thinking(max_tokens, effort),
+            None => Ok(ThinkingSettings::default()),
+        },
     }
 }
 
@@ -60,7 +61,7 @@ pub(super) fn adaptive_effort(effort: Option<&str>) -> Result<&'static str, Gate
         "minimal" | "low" => Ok("low"),
         "medium" => Ok("medium"),
         "high" => Ok("high"),
-        "xhigh" | "exhigh" | "max" => Ok("max"),
+        "xhigh" | "max" => Ok("max"),
         other => Err(GatewayError::BadRequest(format!(
             "unsupported reasoning effort for Anthropic adaptive thinking: {other}"
         ))),
@@ -72,54 +73,9 @@ pub(super) fn manual_budget_tokens(effort: Option<&str>) -> Result<u64, GatewayE
         "minimal" | "low" => Ok(1024),
         "medium" => Ok(4096),
         "high" => Ok(8192),
-        "xhigh" | "exhigh" | "max" => Ok(16_384),
+        "xhigh" | "max" => Ok(16_384),
         other => Err(GatewayError::BadRequest(format!(
             "unsupported reasoning effort for manual Anthropic thinking: {other}"
         ))),
     }
-}
-
-pub(super) fn model_uses_adaptive_thinking(model: &str) -> bool {
-    let model = model.to_ascii_lowercase();
-    [
-        "fable",
-        "mythos",
-        "sonnet 5",
-        "sonnet-5",
-        "sonnet_5",
-        "sonnet 4.6",
-        "sonnet-4-6",
-        "sonnet_4_6",
-        "opus 4.8",
-        "opus-4-8",
-        "opus_4_8",
-        "opus 4.7",
-        "opus-4-7",
-        "opus_4_7",
-        "opus 4.6",
-        "opus-4-6",
-        "opus_4_6",
-    ]
-    .iter()
-    .any(|needle| model.contains(needle))
-}
-
-pub(super) fn model_uses_manual_thinking(model: &str) -> bool {
-    let model = model.to_ascii_lowercase();
-    [
-        "sonnet 3.7",
-        "sonnet-3-7",
-        "sonnet_3_7",
-        "sonnet 4",
-        "sonnet-4",
-        "sonnet_4",
-        "opus 4",
-        "opus-4",
-        "opus_4",
-        "haiku 4.5",
-        "haiku-4-5",
-        "haiku_4_5",
-    ]
-    .iter()
-    .any(|needle| model.contains(needle))
 }

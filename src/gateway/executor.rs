@@ -32,7 +32,7 @@ impl<'a> UpstreamExecutor<'a> {
 
     pub(crate) async fn stream_and_return_body(
         self,
-        mut plan: RequestPlan,
+        plan: RequestPlan,
         headers: &HeaderMap,
     ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
         match plan.target {
@@ -51,7 +51,7 @@ impl<'a> UpstreamExecutor<'a> {
                 routing,
             } => stream_provider_response(
                 self.state,
-                &mut plan.body,
+                &plan.body,
                 &catalog_slug,
                 &provider_id,
                 &upstream_model_id,

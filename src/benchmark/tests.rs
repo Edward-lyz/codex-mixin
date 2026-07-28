@@ -1,8 +1,12 @@
 use std::convert::Infallible;
+use std::sync::Mutex;
 use std::sync::atomic::AtomicUsize;
 
+use axum::Json;
 use axum::Router;
 use axum::body::Body;
+use axum::extract::State;
+use axum::http::HeaderMap;
 use axum::routing::{get, post};
 use bytes::Bytes;
 
@@ -11,7 +15,8 @@ use super::runner::*;
 use super::types::BENCHMARK_FILE_VERSION;
 use super::*;
 use crate::provider::{
-    ProviderProtocol, ProviderQuotaParser, ProviderRegistry, ProviderRuntime, custom_provider,
+    ProviderModelSource, ProviderProtocol, ProviderQuotaParser, ProviderRegistry, ProviderRuntime,
+    custom_provider,
 };
 
 async fn spawn_benchmark_server(delay: Duration) -> ProviderRuntime {
@@ -103,6 +108,40 @@ async fn spawn_openai_benchmark_server(delay: Duration) -> ProviderRuntime {
     let mut provider = test_provider(format!("http://{address}"), ProviderProtocol::OpenAiChat);
     provider.api_path = "/chat/completions".to_owned();
     runtime(provider)
+}
+
+async fn spawn_baidu_responses_benchmark_server() -> (ProviderRuntime, Arc<Mutex<Vec<Value>>>) {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let app = Router::new()
+        .route(
+            "/v1/responses",
+            post(
+                |State(requests): State<Arc<Mutex<Vec<Value>>>>,
+                 headers: HeaderMap,
+                 Json(body): Json<Value>| async move {
+                    requests.lock().unwrap().push(json!({
+                        "body": body,
+                        "anthropic_version": headers
+                            .get("anthropic-version")
+                            .and_then(|value| value.to_str().ok()),
+                    }));
+                    Body::from(concat!(
+                        "data: {\"type\":\"response.output_text.delta\",\"delta\":\"x\"}\n\n",
+                        "data: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"output_tokens\":100}}}\n\n"
+                    ))
+                },
+            ),
+        )
+        .with_state(requests.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut provider = test_provider(
+        format!("http://{address}"),
+        ProviderProtocol::AnthropicMessages,
+    );
+    provider.model_source = ProviderModelSource::BaiduOneApi;
+    (runtime(provider), requests)
 }
 
 fn test_provider(
@@ -248,6 +287,28 @@ async fn measures_openai_reasoning_tokens() {
     assert_eq!(result.output_tokens, Some(100));
     assert!(result.ttft_ms.unwrap() >= 15);
     assert!(result.tps.unwrap().is_finite());
+}
+
+#[tokio::test]
+async fn benchmarks_baidu_gpt_through_responses_protocol() {
+    let (provider, requests) = spawn_baidu_responses_benchmark_server().await;
+
+    let result = benchmark_model(
+        &Client::new(),
+        &target(&provider, "gpt-5.6-sol"),
+        Duration::from_secs(1),
+        BENCHMARK_TARGET_OUTPUT_TOKENS,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.status, BenchmarkResultStatus::Completed);
+    assert_eq!(result.output_tokens, Some(100));
+    let request = requests.lock().unwrap()[0].clone();
+    assert_eq!(request["body"]["model"], "gpt-5.6-sol");
+    assert_eq!(request["body"]["input"], BENCHMARK_PROMPT);
+    assert!(request["body"].get("messages").is_none());
+    assert!(request["anthropic_version"].is_null());
 }
 
 #[tokio::test]
