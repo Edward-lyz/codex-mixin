@@ -99,12 +99,14 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
     typealias FetchHandler = () async throws -> ModelBenchmarkSnapshot?
     typealias LoadProvidersHandler = () async throws -> ProviderListResponse
     typealias SaveSelectionsHandler = ([String: [String]]) async throws -> Void
+    typealias DiscoverHandler = (String) async throws -> Void
 
     private let snapshotURL: URL
     private let startHandler: StartHandler
     private let fetchHandler: FetchHandler
     private let loadProvidersHandler: LoadProvidersHandler
     private let saveSelectionsHandler: SaveSelectionsHandler
+    private let discoverHandler: DiscoverHandler
     private var pollingTask: Task<Void, Never>?
     private var snapshot: ModelBenchmarkSnapshot?
     private var providers: [ProviderView] = []
@@ -114,11 +116,13 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
     private var savedModelKeys: Set<String> = []
     private var isSavingSelections = false
     private var isLaunchingBenchmark = false
+    private var isDiscoveringModels = false
 
     private let providerPopup = NSPopUpButton()
     private let modePopup = NSPopUpButton()
     private let timeoutPopup = NSPopUpButton()
     private let startButton = NSButton(title: "测试当前 Provider", target: nil, action: nil)
+    private let discoverButton = NSButton(title: "刷新模型", target: nil, action: nil)
     private let searchField = NSSearchField()
     private let selectionFilterPopup = NSPopUpButton()
     private let selectAllButton = NSButton(title: "全选", target: nil, action: nil)
@@ -135,13 +139,15 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         startHandler: @escaping StartHandler,
         fetchHandler: @escaping FetchHandler,
         loadProvidersHandler: @escaping LoadProvidersHandler,
-        saveSelectionsHandler: @escaping SaveSelectionsHandler
+        saveSelectionsHandler: @escaping SaveSelectionsHandler,
+        discoverHandler: @escaping DiscoverHandler
     ) {
         self.snapshotURL = snapshotURL
         self.startHandler = startHandler
         self.fetchHandler = fetchHandler
         self.loadProvidersHandler = loadProvidersHandler
         self.saveSelectionsHandler = saveSelectionsHandler
+        self.discoverHandler = discoverHandler
         let visibleFrame = NSScreen.main?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1_280, height: 800)
         let window = NSWindow(
@@ -342,10 +348,17 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         startButton.action = #selector(startBenchmark)
         startButton.widthAnchor.constraint(equalToConstant: 148).isActive = true
 
+        discoverButton.bezelStyle = .rounded
+        discoverButton.image = benchmarkSymbol("arrow.clockwise")
+        discoverButton.imagePosition = .imageLeading
+        discoverButton.target = self
+        discoverButton.action = #selector(refreshProviderModels)
+
         let topControls = NSStackView(views: [
             labeledControl("Provider", providerPopup),
             labeledControl("测速", modePopup),
             labeledControl("超时", timeoutPopup),
+            discoverButton,
             startButton,
         ])
         topControls.orientation = .horizontal
@@ -566,6 +579,33 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         }
     }
 
+    @objc private func refreshProviderModels() {
+        guard let providerID = selectedProviderID(), !isDiscoveringModels else { return }
+        let providerName = selectedProvider()?.displayName ?? providerID
+        isDiscoveringModels = true
+        updateActionState()
+        statusLabel.stringValue = "正在刷新 \(providerName) 的模型…"
+        statusLabel.textColor = .secondaryLabelColor
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                isDiscoveringModels = false
+                updateActionState()
+            }
+            do {
+                try await discoverHandler(providerID)
+                reloadProviderModels()
+                statusLabel.stringValue = "已刷新 \(providerName) 的模型"
+                statusLabel.textColor = .systemGreen
+            } catch {
+                presentBenchmarkError(
+                    title: "刷新模型失败",
+                    message: localizedErrorDescription(error)
+                )
+            }
+        }
+    }
+
     private func selectedProviderID() -> String? {
         providerPopup.selectedItem?.representedObject as? String
     }
@@ -711,12 +751,14 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         let providerSelectedCount = rowsForSelectedProvider().filter {
             selectedModelKeys.contains($0.key) && $0.model.isAvailable
         }.count
-        let busy = isSavingSelections || isLaunchingBenchmark || snapshot?.status == "running"
+        let busy = isSavingSelections || isLaunchingBenchmark || isDiscoveringModels
+            || snapshot?.status == "running"
         saveSelectionButton.isEnabled = dirty && !busy
         selectAllButton.isEnabled = !busy && selectedProvider() != nil
         selectNoneButton.isEnabled = !busy && selectedProvider() != nil
         startButton.title = dirty ? "保存并测试" : "测试当前 Provider"
         startButton.isEnabled = !busy && providerSelectedCount > 0
+        discoverButton.isEnabled = !busy && selectedProvider() != nil
         providerPopup.isEnabled = !busy
         modePopup.isEnabled = !busy
         timeoutPopup.isEnabled = !busy

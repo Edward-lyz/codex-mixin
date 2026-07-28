@@ -30,7 +30,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private let removeButton = NSButton(title: "删除", target: nil, action: nil)
     private let enableButton = NSButton(title: "停用", target: nil, action: nil)
     private let testButton = NSButton(title: "测试连接", target: nil, action: nil)
-    private let discoverButton = NSButton(title: "刷新模型", target: nil, action: nil)
     private let saveButton = NSButton(title: "保存更改", target: nil, action: nil)
 
     init(
@@ -96,7 +95,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
         let titleLabel = NSTextField(labelWithString: "供应商设置")
         titleLabel.font = .boldSystemFont(ofSize: 20)
-        let detailLabel = NSTextField(wrappingLabelWithString: "这里只配置供应商地址、密钥、启停和模型发现。模型勾选、性能对比与测速请使用独立的“模型选择与测速…”入口。")
+        let detailLabel = NSTextField(wrappingLabelWithString: "这里只配置供应商地址、密钥与启停。模型勾选、刷新模型、性能对比与测速请使用独立的“模型选择与测速…”入口。")
         detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         detailLabel.textColor = .secondaryLabelColor
 
@@ -166,13 +165,11 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
         configureButton(enableButton, action: #selector(toggleProvider))
         configureButton(testButton, action: #selector(testProvider))
-        configureButton(discoverButton, action: #selector(discoverModels))
         configureButton(saveButton, action: #selector(saveProvider))
         saveButton.keyEquivalent = "\r"
         let actionRow = NSStackView(views: [
             enableButton,
             testButton,
-            discoverButton,
             NSView(),
             saveButton,
         ])
@@ -371,7 +368,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             quotaUsernameField,
             enableButton,
             testButton,
-            discoverButton,
             saveButton,
         ]
         for control in controls {
@@ -472,15 +468,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 showAlert(title: "连接测试失败", message: String(describing: error))
             }
         }
-    }
-
-    @objc private func discoverModels() {
-        guard let provider = selectedProvider, !isBusy else { return }
-        performMutation(
-            ["providers", "discover", provider.id],
-            status: "正在刷新 \(provider.id) 的模型…",
-            selecting: provider.id
-        )
     }
 
     @objc private func clearProviderKey() {

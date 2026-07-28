@@ -143,6 +143,14 @@ extension AppDelegate {
                     self.applyGatewayStatus(status)
                     _ = try await self.runGateway(["refresh-codex-catalog"])
                     await self.refreshStatusNow()
+                },
+                discoverHandler: { [weak self] providerID in
+                    guard let self else {
+                        throw GatewayError.command("Codex Mixin 已退出")
+                    }
+                    _ = try await self.runGateway([
+                        "providers", "discover", providerID,
+                    ])
                 }
             )
         }
