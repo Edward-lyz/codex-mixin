@@ -3,8 +3,8 @@ use std::sync::Arc;
 use std::time::{Duration, Instant, SystemTime};
 
 use axum::body::Body;
-use axum::extract::State;
 use axum::extract::ws::{Message as AxumWsMessage, WebSocket, WebSocketUpgrade};
+use axum::extract::{OriginalUri, Path, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -40,6 +40,7 @@ use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};
 
 mod auth;
 mod images;
+mod realtime;
 mod responses_http;
 mod responses_ws;
 mod routes;

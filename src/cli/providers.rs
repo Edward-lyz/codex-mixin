@@ -11,6 +11,7 @@ use codex_mixin::web_search::WebSearchCapabilities;
 use futures_util::{StreamExt, stream};
 use serde_json::json;
 
+use super::codex::{managed_codex_install_mode, resolve_codex_config_path};
 use super::config_input::{normalize_base_url, trim_required};
 use super::status::{QuotaUsageSummary, quota_usage};
 
@@ -36,6 +37,7 @@ pub(super) struct AddProviderOptions {
 #[derive(Clone, Debug)]
 pub(super) struct UpdateProviderOptions {
     pub(super) id: String,
+    pub(super) auxiliary_model_upstream: Option<bool>,
     pub(super) key: Option<String>,
     pub(super) clear_key: bool,
     pub(super) display_name: Option<String>,
@@ -55,6 +57,7 @@ pub(super) struct UpdateProviderOptions {
 pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
     let config = load_stored_config()?.unwrap_or_default();
     if json_output {
+        let codex_install_mode = managed_codex_install_mode(&resolve_codex_config_path(None)?)?;
         let providers = config
             .providers
             .iter()
@@ -74,6 +77,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     "id": provider.id,
                     "display_name": provider.display_name,
                     "enabled": provider.enabled,
+                    "auxiliary_model_upstream": provider.auxiliary_model_upstream,
                     "preset_id": provider.preset_id,
                     "protocol": provider.protocol,
                     "base_url": provider.base_url,
@@ -103,6 +107,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                 "config_version": config.config_version,
                 "gateway_bind": config.gateway_bind,
                 "gateway_auth_configured": config.gateway_api_key.is_some(),
+                "codex_install_mode": codex_install_mode,
                 "providers": providers,
             }))?
         );
@@ -217,6 +222,9 @@ pub(super) fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
 pub(super) fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<()> {
     let id = options.id.clone();
     mutate_and_invalidate(|config| {
+        if let Some(enabled) = options.auxiliary_model_upstream {
+            set_auxiliary_model_upstream(config, &id, enabled)?;
+        }
         let provider = find_provider_mut(config, &id)?;
         if options.clear_key {
             provider.auth.api_key.clear();
@@ -278,6 +286,26 @@ pub(super) fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<
         provider.validate()
     })?;
     println!("provider updated: {id}");
+    Ok(())
+}
+
+fn set_auxiliary_model_upstream(
+    config: &mut StoredGatewayConfig,
+    id: &str,
+    enabled: bool,
+) -> anyhow::Result<()> {
+    ensure_has_providers(config)?;
+    let selected_index = config
+        .providers
+        .iter()
+        .position(|provider| provider.id == id)
+        .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?;
+    if enabled {
+        for provider in &mut config.providers {
+            provider.auxiliary_model_upstream = false;
+        }
+    }
+    config.providers[selected_index].auxiliary_model_upstream = enabled;
     Ok(())
 }
 
@@ -1081,6 +1109,29 @@ mod tests {
         assert_eq!(
             config.fusion_profiles[0].final_model,
             "third-model-custom-2"
+        );
+    }
+
+    #[test]
+    fn selecting_auxiliary_model_upstream_is_exclusive_and_can_be_cleared() {
+        let first = codex_mixin::provider::custom_provider("first", "first-key");
+        let mut second = codex_mixin::provider::custom_provider("second", "second-key");
+        second.auxiliary_model_upstream = true;
+        let mut config = StoredGatewayConfig {
+            providers: vec![first, second],
+            ..StoredGatewayConfig::default()
+        };
+
+        set_auxiliary_model_upstream(&mut config, "first", true).unwrap();
+        assert!(config.providers[0].auxiliary_model_upstream);
+        assert!(!config.providers[1].auxiliary_model_upstream);
+
+        set_auxiliary_model_upstream(&mut config, "first", false).unwrap();
+        assert!(
+            config
+                .providers
+                .iter()
+                .all(|provider| !provider.auxiliary_model_upstream)
         );
     }
 

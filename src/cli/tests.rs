@@ -838,6 +838,10 @@ fn reports_managed_catalog_path_mode_and_model_counts() {
     assert_eq!(summary.mode, "codex_oauth_proxy");
     assert_eq!(summary.model_count, 2);
     assert_eq!(summary.managed_model_count, 1);
+    assert_eq!(
+        managed_codex_install_mode(&config_path).unwrap(),
+        Some("codex_oauth_proxy")
+    );
 }
 
 #[test]
@@ -861,6 +865,10 @@ fn reports_custom_only_mode_when_websockets_are_disabled() {
 
     let summary = managed_catalog_summary(&config_path).unwrap().unwrap();
     assert_eq!(summary.mode, "custom_only");
+    assert_eq!(
+        managed_codex_install_mode(&config_path).unwrap(),
+        Some("custom_only")
+    );
 }
 
 #[test]

@@ -80,7 +80,7 @@ async fn route_responses_ws(
             .to_owned();
 
         if matches!(
-            state.model_router().resolve(&model),
+            state.resolve_model_route(&model).await,
             Ok(ResolvedModelRoute::Official)
         ) {
             custom_state = None;
@@ -216,7 +216,7 @@ async fn route_responses_ws(
             "routing responses websocket request"
         );
         let next_state =
-            match expand_custom_websocket_history(&state, &mut body, custom_state.take()) {
+            match expand_custom_websocket_history(&state, &mut body, custom_state.take()).await {
                 Ok(()) if is_noop_responses_ws_request(&body) => {
                     complete_custom_noop(&state, &mut client_sender, body)
                         .await
@@ -497,8 +497,8 @@ async fn proxy_custom_responses_ws(
         .ok_or_else(|| anyhow::anyhow!("custom request is missing model"))?
         .to_owned();
     let route = state
-        .model_router()
-        .resolve(&requested_model)
+        .resolve_model_route(&requested_model)
+        .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     let model = requested_model;
     if !body.get("input").is_some_and(Value::is_array) {
@@ -608,7 +608,7 @@ fn take_custom_request_input(body: &mut Value) -> anyhow::Result<Vec<Value>> {
     }
 }
 
-fn expand_custom_websocket_history(
+async fn expand_custom_websocket_history(
     app_state: &AppState,
     body: &mut Value,
     state: Option<CustomWebSocketState>,
@@ -631,8 +631,8 @@ fn expand_custom_websocket_history(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("custom request is missing model"))?;
     let route = app_state
-        .model_router()
-        .resolve(model)
+        .resolve_model_route(model)
+        .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     if route != state.route {
         anyhow::bail!(
@@ -661,8 +661,8 @@ async fn complete_custom_noop(
         .ok_or_else(|| anyhow::anyhow!("custom noop request is missing model"))?;
     let model = model.to_owned();
     let route = state
-        .model_router()
-        .resolve(&model)
+        .resolve_model_route(&model)
+        .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
     if route == ResolvedModelRoute::Official {
         anyhow::bail!("official model reached custom websocket noop");

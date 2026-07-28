@@ -260,6 +260,8 @@ enum ProviderCommand {
     },
     Update {
         id: String,
+        #[arg(long, value_name = "BOOL")]
+        auxiliary_model_upstream: Option<bool>,
         #[arg(long)]
         key: Option<String>,
         #[arg(long, conflicts_with = "key")]
@@ -396,6 +398,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             }),
             ProviderCommand::Update {
                 id,
+                auxiliary_model_upstream,
                 key,
                 clear_key,
                 display_name,
@@ -412,6 +415,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 quota_parser,
             } => update_provider(UpdateProviderOptions {
                 id,
+                auxiliary_model_upstream,
                 key,
                 clear_key,
                 display_name,

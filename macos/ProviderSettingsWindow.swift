@@ -10,6 +10,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private let applyHandler: ApplyHandler
 
     private var providers: [ProviderView] = []
+    private var codexInstallMode: ManagedCodexInstallMode?
     private var isBusy = false
 
     private let providerTable = NSTableView()
@@ -22,6 +23,15 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private let apiKeyField = secureFormTextField()
     private let clearKeyButton = NSButton(title: "清除密钥", target: nil, action: nil)
     private let quotaUsernameField = formTextField()
+    private let auxiliaryModelUpstreamButton = NSButton(
+        checkboxWithTitle: appText(
+            "用作语音、自动审查等辅助模型上游",
+            "用作語音、自動審查等輔助模型上游",
+            "Use for voice, auto review, and other auxiliary models"
+        ),
+        target: nil,
+        action: nil
+    )
     private var customDisplayNameRow: NSView?
     private var customBaseURLRow: NSView?
     private var quotaUsernameRow: NSView?
@@ -147,12 +157,14 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         ))
         managedConfigurationLabel.textColor = .secondaryLabelColor
         managedConfigurationLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
+        auxiliaryModelUpstreamButton.toolTip = auxiliaryModelDefaultTooltip()
         let form = NSStackView(views: [
             compactLabeledView("Provider ID", idField),
             customDisplayNameRow,
             customBaseURLRow,
             compactLabeledView("API 密钥", apiKeyControls),
             quotaUsernameRow,
+            compactLabeledView("辅助模型", auxiliaryModelUpstreamButton),
             compactLabeledView("", managedConfigurationLabel),
         ])
         form.orientation = .vertical
@@ -281,7 +293,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             .compactMap { $0 as? NSStackView }
             .flatMap(\.arrangedSubviews)
             .first { $0.identifier?.rawValue == "detail" } as? NSTextField
-        detail?.stringValue = "\(provider.id) · \(readinessLabel(provider.readiness)) · 已选 \(provider.selectedModels.count) / 可用 \(provider.cachedModels.count)"
+        let auxiliary = provider.auxiliaryModelUpstream ? " · 辅助上游" : ""
+        detail?.stringValue = "\(provider.id) · \(readinessLabel(provider.readiness))\(auxiliary) · 已选 \(provider.selectedModels.count) / 可用 \(provider.cachedModels.count)"
         return cell
     }
 
@@ -294,6 +307,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             do {
                 let previousID = providerID ?? selectedProvider?.id
                 let loaded = try await loadHandler()
+                codexInstallMode = loaded.codexInstallMode
                 providers = loaded.providers
                 providerTable.reloadData()
                 emptyLabel.isHidden = !providers.isEmpty
@@ -329,6 +343,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             ? "已配置；留空保留"
             : "尚未配置；启用前必须填写"
         quotaUsernameField.stringValue = provider.quotaUsername ?? ""
+        auxiliaryModelUpstreamButton.state = provider.auxiliaryModelUpstream ? .on : .off
+        auxiliaryModelUpstreamButton.toolTip = auxiliaryModelTooltip(for: provider)
         let isCustom = provider.presetID == "custom"
         customDisplayNameRow?.isHidden = !isCustom
         customBaseURLRow?.isHidden = !isCustom
@@ -348,6 +364,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         ] {
             field.stringValue = ""
         }
+        auxiliaryModelUpstreamButton.state = .off
+        auxiliaryModelUpstreamButton.toolTip = auxiliaryModelDefaultTooltip()
         statusLabel.stringValue = providers.isEmpty ? "等待新增 Provider" : "请选择 Provider"
         statusLabel.toolTip = nil
     }
@@ -366,6 +384,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             displayNameField,
             baseURLField,
             quotaUsernameField,
+            auxiliaryModelUpstreamButton,
             enableButton,
             testButton,
             saveButton,
@@ -373,7 +392,119 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         for control in controls {
             control.isEnabled = enabled
         }
+        auxiliaryModelUpstreamButton.isEnabled = enabled
+            && selectedProvider.map {
+                isAuxiliaryModelUpstreamSelectable(
+                    for: $0,
+                    codexInstallMode: codexInstallMode
+                )
+            } == true
         clearKeyButton.isEnabled = enabled && selectedProvider?.apiKeyConfigured == true
+    }
+
+    private func auxiliaryModelDefaultTooltip() -> String {
+        switch codexInstallMode {
+        case .customOnly:
+            return appText(
+                "同一时间只能指定一个辅助模型上游。custom-only 安装没有官方回落，供应商缺失的辅助能力将无法使用。",
+                "同一時間只能指定一個輔助模型上游。custom-only 安裝沒有官方回退，供應商缺少的輔助能力將無法使用。",
+                "Only one auxiliary-model provider can be selected. A custom-only installation has no official fallback, so missing capabilities remain unavailable."
+            )
+        case .codexOAuthProxy:
+            return appText(
+                "同一时间只能指定一个辅助模型上游。开启后会覆盖 OAuth 的官方辅助模型路由；该供应商没有对应模型时仍使用默认路由。",
+                "同一時間只能指定一個輔助模型上游。開啟後會覆蓋 OAuth 的官方輔助模型路由；該供應商沒有對應模型時仍使用預設路由。",
+                "Only one auxiliary-model provider can be selected. It overrides the official OAuth route when the model is available, otherwise the default route is used."
+            )
+        case nil:
+            return appText(
+                "同一时间只能指定一个辅助模型上游。",
+                "同一時間只能指定一個輔助模型上游。",
+                "Only one auxiliary-model provider can be selected."
+            )
+        }
+    }
+
+    private func auxiliaryModelTooltip(for provider: ProviderView) -> String {
+        let capability: String
+        switch (codexInstallMode, provider.auxiliaryModelSupport) {
+        case (.customOnly, .none):
+            capability = appText(
+                "该供应商既不支持自动审查，也不支持语音；custom-only 安装下无法设为辅助模型上游。",
+                "該供應商既不支援自動審查，也不支援語音；custom-only 安裝下無法設為輔助模型上游。",
+                "This provider supports neither auto review nor voice, so it cannot be used for auxiliary models in a custom-only installation."
+            )
+        case (.customOnly, .autoReviewOnly):
+            capability = appText(
+                "该供应商仅支持自动审查；语音不可用。",
+                "該供應商僅支援自動審查；語音無法使用。",
+                "This provider supports auto review only; voice is unavailable."
+            )
+        case (.customOnly, .voiceOnly):
+            capability = appText(
+                "该供应商仅支持语音；自动审查不可用。",
+                "該供應商僅支援語音；自動審查無法使用。",
+                "This provider supports voice only; auto review is unavailable."
+            )
+        case (.codexOAuthProxy, .none):
+            capability = appText(
+                "该供应商不提供自动审查或语音；两者将继续使用 OAuth 默认路由。",
+                "該供應商不提供自動審查或語音；兩者將繼續使用 OAuth 預設路由。",
+                "This provider offers neither auto review nor voice; both continue to use the default OAuth route."
+            )
+        case (.codexOAuthProxy, .autoReviewOnly):
+            capability = appText(
+                "该供应商仅提供自动审查；语音将继续使用 OAuth 默认路由。",
+                "該供應商僅提供自動審查；語音將繼續使用 OAuth 預設路由。",
+                "This provider offers auto review only; voice continues to use the default OAuth route."
+            )
+        case (.codexOAuthProxy, .voiceOnly):
+            capability = appText(
+                "该供应商仅提供语音；自动审查将继续使用 OAuth 默认路由。",
+                "該供應商僅提供語音；自動審查將繼續使用 OAuth 預設路由。",
+                "This provider offers voice only; auto review continues to use the default OAuth route."
+            )
+        case (_, .none):
+            capability = appText(
+                "当前模型缓存未发现自动审查或语音模型。",
+                "目前模型快取未發現自動審查或語音模型。",
+                "The current model cache contains no auto-review or voice model."
+            )
+        case (_, .autoReviewOnly):
+            capability = appText(
+                "该供应商仅支持自动审查。",
+                "該供應商僅支援自動審查。",
+                "This provider supports auto review only."
+            )
+        case (_, .voiceOnly):
+            capability = appText(
+                "该供应商仅支持语音。",
+                "該供應商僅支援語音。",
+                "This provider supports voice only."
+            )
+        case (_, .autoReviewAndVoice):
+            capability = appText(
+                "该供应商支持自动审查和语音。",
+                "該供應商支援自動審查和語音。",
+                "This provider supports both auto review and voice."
+            )
+        }
+        return "\(capability)\n\n\(auxiliaryModelDefaultTooltip())"
+    }
+
+    private func auxiliaryModelStatus(for provider: ProviderView) -> String? {
+        switch (codexInstallMode, provider.auxiliaryModelSupport) {
+        case (.customOnly, .none):
+            return "辅助模型不可用：自动审查和语音均不支持"
+        case (_, .autoReviewOnly):
+            return "辅助模型：仅支持自动审查"
+        case (_, .voiceOnly):
+            return "辅助模型：仅支持语音"
+        case (.codexOAuthProxy, .none):
+            return "辅助模型：使用 OAuth 默认路由"
+        case (_, .none), (_, .autoReviewAndVoice):
+            return nil
+        }
     }
 
     private func selectedProviderStatus() -> String {
@@ -392,6 +523,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             "\(provider.unavailableSelectedModels.count) 个不可用",
             refresh,
         ]
+        if let auxiliaryStatus = auxiliaryModelStatus(for: provider) {
+            details.insert(auxiliaryStatus, at: 0)
+        }
         if provider.lastModelRefreshError != nil {
             details.append("上次刷新失败")
         }
@@ -493,6 +627,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     @objc private func saveProvider() {
         guard let provider = selectedProvider, !isBusy else { return }
         var update = ["providers", "update", provider.id]
+        update.append("--auxiliary-model-upstream")
+        update.append(auxiliaryModelUpstreamButton.state == .on ? "true" : "false")
         appendProviderArgument(&update, "--key", apiKeyField.stringValue)
         if provider.presetID == "custom" {
             let displayName = displayNameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)

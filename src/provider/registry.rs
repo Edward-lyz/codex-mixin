@@ -230,6 +230,16 @@ pub struct ProviderRegistry {
 
 impl ProviderRegistry {
     pub fn new(providers: Vec<ProviderDefinition>) -> anyhow::Result<Self> {
+        let auxiliary_providers = providers
+            .iter()
+            .filter(|provider| provider.auxiliary_model_upstream)
+            .map(|provider| provider.id.as_str())
+            .collect::<Vec<_>>();
+        ensure!(
+            auxiliary_providers.len() <= 1,
+            "multiple auxiliary model upstreams configured: {}",
+            auxiliary_providers.join(", ")
+        );
         let mut provider_ids = HashSet::with_capacity(providers.len());
         let mut runtimes = Vec::with_capacity(providers.len());
         let mut provider_indices = HashMap::with_capacity(providers.len());
@@ -304,6 +314,47 @@ impl ProviderRegistry {
 
     pub fn resolve_known(&self, catalog_slug: &str) -> Option<ResolvedProviderModel<'_>> {
         self.resolve_from(&self.known_routes, catalog_slug)
+    }
+
+    pub fn resolve_auxiliary_model(
+        &self,
+        upstream_model_id: &str,
+    ) -> Option<ResolvedProviderModel<'_>> {
+        let provider = self.providers.iter().find(|provider| {
+            provider.definition.enabled && provider.definition.auxiliary_model_upstream
+        })?;
+        let catalog_slug = catalog_model_slug(upstream_model_id, provider.id());
+        self.resolve_known(&catalog_slug)
+            .filter(|resolved| resolved.model.is_some())
+    }
+
+    pub fn resolve_available_model(
+        &self,
+        upstream_model_id: &str,
+    ) -> Option<ResolvedProviderModel<'_>> {
+        let mut fallback = None;
+        for provider in &self.providers {
+            if !provider.definition.enabled {
+                continue;
+            }
+            let catalog_slug = catalog_model_slug(upstream_model_id, provider.id());
+            let Some(resolved) = self
+                .resolve_known(&catalog_slug)
+                .filter(|resolved| resolved.model.is_some())
+            else {
+                continue;
+            };
+            if provider
+                .definition
+                .selected_models
+                .iter()
+                .any(|selected| selected == upstream_model_id)
+            {
+                return Some(resolved);
+            }
+            fallback.get_or_insert(resolved);
+        }
+        fallback
     }
 
     pub fn routable_models(&self) -> impl Iterator<Item = ResolvedProviderModel<'_>> {
@@ -540,11 +591,27 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rejects_multiple_auxiliary_model_upstreams() {
+        let mut first = test_provider("first");
+        first.auxiliary_model_upstream = true;
+        let mut second = test_provider("second");
+        second.auxiliary_model_upstream = true;
+
+        assert!(
+            ProviderRegistry::new(vec![first, second])
+                .unwrap_err()
+                .to_string()
+                .contains("multiple auxiliary model upstreams configured: first, second")
+        );
+    }
+
     fn test_provider(id: &str) -> ProviderDefinition {
         ProviderDefinition {
             id: id.to_owned(),
             display_name: id.to_owned(),
             enabled: true,
+            auxiliary_model_upstream: false,
             preset_id: None,
             protocol: ProviderProtocol::OpenAiChat,
             base_url: "https://example.test".to_owned(),

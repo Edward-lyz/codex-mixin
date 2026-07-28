@@ -1,5 +1,6 @@
 use super::auth::check_gateway_auth;
 use super::images::{image_edits, image_generations};
+use super::realtime::{live_sideband_ws, live_ws, realtime_call, realtime_ws};
 use super::responses_http::responses;
 use super::responses_ws::responses_ws;
 use super::*;
@@ -14,6 +15,10 @@ pub fn router(state: AppState) -> Router {
             get(model_benchmarks).post(start_model_benchmarks),
         )
         .route("/v1/responses", get(responses_ws).post(responses))
+        .route("/v1/realtime", get(realtime_ws))
+        .route("/v1/realtime/calls", post(realtime_call))
+        .route("/v1/live", get(live_ws).post(realtime_call))
+        .route("/v1/live/{call_id}", get(live_sideband_ws))
         .route("/v1/images/generations", post(image_generations))
         .route("/v1/images/edits", post(image_edits))
         .layer(RequestDecompressionLayer::new())

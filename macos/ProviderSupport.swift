@@ -1,23 +1,38 @@
 import Foundation
 
+enum ManagedCodexInstallMode: String, Decodable {
+    case customOnly = "custom_only"
+    case codexOAuthProxy = "codex_oauth_proxy"
+}
+
 struct ProviderListResponse: Decodable {
     let configVersion: UInt64
     let gatewayBind: String?
     let gatewayAuthConfigured: Bool
+    let codexInstallMode: ManagedCodexInstallMode?
     let providers: [ProviderView]
 
     enum CodingKeys: String, CodingKey {
         case configVersion = "config_version"
         case gatewayBind = "gateway_bind"
         case gatewayAuthConfigured = "gateway_auth_configured"
+        case codexInstallMode = "codex_install_mode"
         case providers
     }
+}
+
+enum AuxiliaryModelSupport: Equatable {
+    case none
+    case autoReviewOnly
+    case voiceOnly
+    case autoReviewAndVoice
 }
 
 struct ProviderView: Decodable {
     let id: String
     let displayName: String
     let enabled: Bool
+    let auxiliaryModelUpstream: Bool
     let presetID: String?
     let protocolID: String
     let baseURL: String
@@ -43,6 +58,7 @@ struct ProviderView: Decodable {
         case id
         case displayName = "display_name"
         case enabled
+        case auxiliaryModelUpstream = "auxiliary_model_upstream"
         case presetID = "preset_id"
         case protocolID = "protocol"
         case baseURL = "base_url"
@@ -69,6 +85,31 @@ struct ProviderView: Decodable {
         modelSource.path
     }
 
+    var supportsAutoReview: Bool {
+        cachedModels.contains { $0.id == "codex-auto-review" }
+    }
+
+    var supportsVoice: Bool {
+        let voiceModelIDs = Set([
+            "gpt-realtime-1.5",
+            "gpt-live-1-boulder-alpha",
+        ])
+        return cachedModels.contains { voiceModelIDs.contains($0.id) }
+    }
+
+    var auxiliaryModelSupport: AuxiliaryModelSupport {
+        switch (supportsAutoReview, supportsVoice) {
+        case (false, false):
+            return .none
+        case (true, false):
+            return .autoReviewOnly
+        case (false, true):
+            return .voiceOnly
+        case (true, true):
+            return .autoReviewAndVoice
+        }
+    }
+
     var modelItems: [ProviderModelListItem] {
         let newModelIDs = Set(newModels)
         return cachedModels.map {
@@ -88,6 +129,13 @@ struct ProviderView: Decodable {
             )
         }
     }
+}
+
+func isAuxiliaryModelUpstreamSelectable(
+    for provider: ProviderView,
+    codexInstallMode: ManagedCodexInstallMode?
+) -> Bool {
+    codexInstallMode != .customOnly || provider.auxiliaryModelSupport != .none
 }
 
 struct ProviderModelSourceView: Decodable {

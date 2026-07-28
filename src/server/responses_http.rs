@@ -12,7 +12,7 @@ pub(super) async fn responses(
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?
         .to_owned();
-    let route = state.model_router().resolve(&requested_model)?;
+    let route = state.resolve_model_route(&requested_model).await?;
     match &route {
         ResolvedModelRoute::Official => {
             tracing::info!(catalog_slug = %requested_model, route = "official", "routing responses request");

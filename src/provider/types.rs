@@ -78,6 +78,8 @@ pub struct ProviderDefinition {
     pub display_name: String,
     #[serde(default = "default_true")]
     pub enabled: bool,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub auxiliary_model_upstream: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset_id: Option<String>,
     pub protocol: ProviderProtocol,
@@ -364,6 +366,10 @@ fn ensure_unique_model_ids<T: AsRef<str>>(
 
 const fn default_true() -> bool {
     true
+}
+
+const fn is_false(value: &bool) -> bool {
+    !*value
 }
 
 #[cfg(test)]

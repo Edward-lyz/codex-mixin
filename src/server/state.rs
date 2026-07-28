@@ -307,17 +307,50 @@ impl AppState {
         self.config.enable_web_search_tool && self.web_search_capabilities.supports_model(model)
     }
 
-    pub(crate) fn model_router(&self) -> ModelRouter<'_> {
-        ModelRouter::new(&self.config.fusion_profiles, &self.providers)
+    pub(crate) async fn resolve_model_route(
+        &self,
+        model: &str,
+    ) -> Result<ResolvedModelRoute, GatewayError> {
+        let custom_result =
+            ModelRouter::new(&self.config.fusion_profiles, &self.providers, false).resolve(model);
+        if custom_result.is_ok() || !crate::gateway::is_official_model_slug(model) {
+            return custom_result;
+        }
+        if self.config.accept_codex_oauth && self.official_auth().await.is_ok() {
+            return Ok(ResolvedModelRoute::Official);
+        }
+        if model.eq_ignore_ascii_case(crate::gateway::AUTO_REVIEW_MODEL_SLUG)
+            && let Some(resolved) = self
+                .providers
+                .resolve_available_model(crate::gateway::AUTO_REVIEW_MODEL_SLUG)
+        {
+            return Ok(ResolvedModelRoute::Provider {
+                catalog_slug: resolved.catalog_slug.to_owned(),
+                provider_id: resolved.provider.id().to_owned(),
+                upstream_model_id: resolved.upstream_model_id.to_owned(),
+            });
+        }
+        custom_result
     }
 
     pub(crate) fn resolved_provider_model(
         &self,
         catalog_slug: &str,
     ) -> Result<ResolvedProviderModel<'_>, GatewayError> {
-        self.providers.resolve(catalog_slug).ok_or_else(|| {
-            GatewayError::BadRequest(format!("model is not routable: {catalog_slug}"))
-        })
+        self.providers
+            .resolve(catalog_slug)
+            .or_else(|| {
+                self.providers
+                    .resolve_known(catalog_slug)
+                    .filter(|resolved| {
+                        resolved.provider.definition().enabled
+                            && resolved.provider.definition().auxiliary_model_upstream
+                            && resolved.model.is_some()
+                    })
+            })
+            .ok_or_else(|| {
+                GatewayError::BadRequest(format!("model is not routable: {catalog_slug}"))
+            })
     }
 
     async fn send_anthropic_request(

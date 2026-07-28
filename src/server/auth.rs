@@ -19,6 +19,7 @@ pub(super) const FORWARDED_OFFICIAL_HEADERS: &[&str] = &[
     "user-agent",
     "accept-language",
     "session-id",
+    "x-session-id",
     "thread-id",
     "x-client-request-id",
     "x-codex-window-id",

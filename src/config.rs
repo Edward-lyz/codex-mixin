@@ -507,6 +507,7 @@ mod tests {
         assert_eq!(loaded.gateway_bind.as_deref(), Some("127.0.0.1:18787"));
         assert_eq!(loaded.gateway_api_key.as_deref(), Some("local-key"));
         assert_eq!(loaded.providers[0].id, "opencode-go");
+        assert!(!loaded.providers[0].auxiliary_model_upstream);
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -600,11 +601,11 @@ mod tests {
     fn saves_multiple_providers() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
+        let primary = crate::provider::open_code_go_provider("primary", "one");
+        let mut backup = crate::provider::open_code_go_provider("backup", "two");
+        backup.auxiliary_model_upstream = true;
         let config = StoredGatewayConfig {
-            providers: vec![
-                crate::provider::open_code_go_provider("primary", "one"),
-                crate::provider::open_code_go_provider("backup", "two"),
-            ],
+            providers: vec![primary, backup],
             ..StoredGatewayConfig::default()
         };
         save_stored_config_to_path(&path, &config).unwrap();
@@ -617,6 +618,8 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["primary", "backup"]
         );
+        assert!(!loaded.providers[0].auxiliary_model_upstream);
+        assert!(loaded.providers[1].auxiliary_model_upstream);
     }
 
     #[test]

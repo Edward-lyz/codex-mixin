@@ -129,17 +129,28 @@ pub(in crate::cli) fn managed_catalog_summary(
         .ok_or_else(|| anyhow::anyhow!("managed Codex model catalog has no models array"))?;
     Ok(Some(ManagedCatalogSummary {
         catalog_path,
-        mode: if oauth_proxy {
-            "codex_oauth_proxy"
-        } else {
-            "custom_only"
-        },
+        mode: codex_install_mode_name(oauth_proxy),
         model_count: models.len(),
         managed_model_count: models
             .iter()
             .filter(|model| is_managed_catalog_model(model))
             .count(),
     }))
+}
+
+pub(in crate::cli) fn managed_codex_install_mode(
+    config_path: &Path,
+) -> anyhow::Result<Option<&'static str>> {
+    Ok(managed_catalog_settings(config_path)?
+        .map(|(oauth_proxy, _)| codex_install_mode_name(oauth_proxy)))
+}
+
+fn codex_install_mode_name(oauth_proxy: bool) -> &'static str {
+    if oauth_proxy {
+        "codex_oauth_proxy"
+    } else {
+        "custom_only"
+    }
 }
 
 pub(in crate::cli) fn write_generated_managed_codex_catalog(

@@ -3,8 +3,8 @@ use std::sync::{Arc, Mutex};
 use std::time::{Duration, Instant};
 
 use axum::body::Body;
-use axum::extract::State;
 use axum::extract::ws::{Message as AxumWsMessage, WebSocket, WebSocketUpgrade};
+use axum::extract::{OriginalUri, State};
 use axum::http::{HeaderMap, StatusCode, header};
 use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
@@ -156,9 +156,95 @@ async fn spawn_mock_upstream(mode: MockMode) -> (String, Arc<Mutex<Vec<Value>>>)
     let app = Router::new()
         .route("/v1/models", get(mock_models))
         .route("/v1/messages", post(mock_messages))
+        .route("/v1/realtime", get(mock_custom_realtime_ws))
+        .route("/v1/realtime/calls", post(mock_custom_realtime_call))
+        .route(
+            "/v1/live",
+            get(mock_custom_realtime_ws).post(mock_custom_realtime_call),
+        )
+        .route("/v1/live/{call_id}", get(mock_custom_realtime_ws))
         .route("/v1/images/generations", post(mock_image_generations))
         .with_state(state);
     (spawn_router(app).await, requests)
+}
+
+async fn mock_custom_realtime_ws(
+    State(state): State<MockState>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
+    let authorization = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    let query = uri.query().unwrap_or_default().to_owned();
+    let path = uri.path().to_owned();
+    ws.on_upgrade(move |mut socket| async move {
+        while let Some(Ok(message)) = socket.next().await {
+            let body = match message {
+                AxumWsMessage::Text(text) => serde_json::from_str::<Value>(&text).unwrap(),
+                AxumWsMessage::Binary(bytes) => serde_json::from_slice::<Value>(&bytes).unwrap(),
+                AxumWsMessage::Ping(bytes) => {
+                    socket.send(AxumWsMessage::Pong(bytes)).await.unwrap();
+                    continue;
+                }
+                AxumWsMessage::Pong(_) => continue,
+                AxumWsMessage::Close(_) => break,
+            };
+            state.requests.lock().unwrap().push(body);
+            socket
+                .send(AxumWsMessage::Text(
+                    json!({
+                        "type": "session.updated",
+                        "authorization": authorization,
+                        "upstream_path": path,
+                        "upstream_query": query,
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .unwrap();
+        }
+    })
+    .into_response()
+}
+
+async fn mock_custom_realtime_call(
+    State(state): State<MockState>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+    body: Body,
+) -> Response {
+    let authorization = headers
+        .get(header::AUTHORIZATION)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    let content_type = headers
+        .get(header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or_default()
+        .to_owned();
+    let body = axum::body::to_bytes(body, 4 * 1024 * 1024).await.unwrap();
+    state.requests.lock().unwrap().push(json!({
+        "authorization": authorization,
+        "body": String::from_utf8(body.to_vec()).unwrap(),
+        "content_type": content_type,
+        "path": uri.path(),
+        "query": uri.query().unwrap_or_default(),
+    }));
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/sdp")
+        .header(
+            header::LOCATION,
+            "https://custom.example/v1/realtime/calls/custom-call",
+        )
+        .body(Body::from("custom-answer-sdp"))
+        .unwrap()
 }
 
 async fn spawn_baidu_protocol_upstream() -> (String, Arc<Mutex<Vec<Value>>>) {
@@ -298,6 +384,9 @@ async fn spawn_mock_official(
     let forwarded_headers = Arc::new(Mutex::new(Vec::new()));
     let websocket_connections = Arc::new(AtomicUsize::new(0));
     let app = Router::new()
+        .route("/v1", get(mock_official_realtime_ws))
+        .route("/v1/{call_id}", get(mock_official_realtime_ws))
+        .route("/v1/realtime/calls", post(mock_official_realtime_call))
         .route(
             "/v1/responses",
             get(mock_official_responses_ws).post(mock_official_responses),
@@ -320,6 +409,92 @@ async fn spawn_mock_official(
         websocket_connections,
         forwarded_headers,
     )
+}
+
+async fn mock_official_realtime_ws(
+    State(state): State<OfficialState>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+    ws: WebSocketUpgrade,
+) -> Response {
+    state
+        .forwarded_headers
+        .lock()
+        .unwrap()
+        .push(headers.clone());
+    state.auth_headers.lock().unwrap().push(
+        headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
+    );
+    state.account_headers.lock().unwrap().push(
+        headers
+            .get("chatgpt-account-id")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
+    );
+    state.websocket_connections.fetch_add(1, Ordering::SeqCst);
+    let query = uri.query().unwrap_or_default().to_owned();
+    ws.on_upgrade(move |mut socket| async move {
+        while let Some(Ok(message)) = socket.next().await {
+            let body = match message {
+                AxumWsMessage::Text(text) => serde_json::from_str::<Value>(&text).unwrap(),
+                AxumWsMessage::Binary(bytes) => serde_json::from_slice::<Value>(&bytes).unwrap(),
+                AxumWsMessage::Ping(bytes) => {
+                    socket.send(AxumWsMessage::Pong(bytes)).await.unwrap();
+                    continue;
+                }
+                AxumWsMessage::Pong(_) => continue,
+                AxumWsMessage::Close(_) => break,
+            };
+            state.requests.lock().unwrap().push(body);
+            socket
+                .send(AxumWsMessage::Text(
+                    json!({
+                        "type": "session.updated",
+                        "session": {"id": "voice-session"},
+                        "upstream_path": uri.path(),
+                        "upstream_query": query,
+                    })
+                    .to_string()
+                    .into(),
+                ))
+                .await
+                .unwrap();
+        }
+    })
+    .into_response()
+}
+
+async fn mock_official_realtime_call(
+    State(state): State<OfficialState>,
+    OriginalUri(uri): OriginalUri,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    state.auth_headers.lock().unwrap().push(
+        headers
+            .get(header::AUTHORIZATION)
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
+    );
+    state.account_headers.lock().unwrap().push(
+        headers
+            .get("chatgpt-account-id")
+            .and_then(|value| value.to_str().ok())
+            .map(str::to_owned),
+    );
+    state.requests.lock().unwrap().push(json!({
+        "body": body,
+        "query": uri.query().unwrap_or_default(),
+    }));
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "application/sdp")
+        .header(header::LOCATION, "/v1/realtime/calls/call-456")
+        .body(Body::from("answer-sdp"))
+        .unwrap()
 }
 
 async fn mock_models(headers: HeaderMap) -> impl IntoResponse {
@@ -3313,6 +3488,668 @@ async fn switches_between_official_and_custom_models_on_one_websocket() {
 }
 
 #[tokio::test]
+async fn routes_auto_review_to_official_websocket() {
+    let (gateway_url, official_requests, official_websocket_connections, _codex_home) =
+        spawn_gateway_with_mock_official(
+            OfficialWebSocketBehavior::Persistent,
+            Duration::from_secs(2),
+        )
+        .await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    let mut body = responses_request();
+    body.as_object_mut().unwrap().remove("stream");
+    body["type"] = json!("response.create");
+    body["model"] = json!("codex-auto-review");
+
+    socket
+        .send(WsMessage::Text(body.to_string().into()))
+        .await
+        .unwrap();
+
+    assert!(
+        websocket_response_frames(&mut socket)
+            .await
+            .join("\n")
+            .contains("\"type\":\"response.completed\"")
+    );
+    let official_requests = official_requests.lock().unwrap();
+    assert_eq!(official_requests.len(), 1);
+    assert_eq!(official_requests[0]["model"], "codex-auto-review");
+    assert_eq!(official_requests[0]["stream"], true);
+    assert_eq!(official_websocket_connections.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn proxies_realtime_voice_websocket_to_official_backend() {
+    let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
+    let (
+        official_url,
+        official_requests,
+        official_auth_headers,
+        official_account_headers,
+        official_websocket_connections,
+        official_forwarded_headers,
+    ) = spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
+    let mut config = test_config(upstream_url);
+    config.official_responses_url = format!("{official_url}/v1/responses");
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request =
+        format!("{websocket_url}/v1/realtime?intent=quicksilver&model=gpt-realtime-1.5")
+            .into_client_request()
+            .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    request
+        .headers_mut()
+        .insert("originator", "codex-app".parse().unwrap());
+    request
+        .headers_mut()
+        .insert("x-session-id", "voice-session".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+
+    let session_update = json!({
+        "type": "session.update",
+        "session": {"voice": "verse"}
+    });
+    socket
+        .send(WsMessage::Text(session_update.to_string().into()))
+        .await
+        .unwrap();
+    let response = socket.next().await.unwrap().unwrap();
+    let response: Value = match response {
+        WsMessage::Text(text) => serde_json::from_str(&text).unwrap(),
+        other => panic!("expected text response, got {other:?}"),
+    };
+
+    assert_eq!(response["type"], "session.updated");
+    assert_eq!(response["upstream_path"], "/v1");
+    assert_eq!(
+        response["upstream_query"],
+        "intent=quicksilver&model=gpt-realtime-1.5"
+    );
+    assert_eq!(
+        official_requests.lock().unwrap().as_slice(),
+        &[session_update]
+    );
+    assert_eq!(
+        official_auth_headers.lock().unwrap().as_slice(),
+        &[Some("Bearer codex-oauth-token".to_owned())]
+    );
+    assert_eq!(
+        official_account_headers.lock().unwrap().as_slice(),
+        &[Some("account-1".to_owned())]
+    );
+    assert_eq!(
+        official_forwarded_headers.lock().unwrap()[0]
+            .get("x-session-id")
+            .unwrap(),
+        "voice-session"
+    );
+    assert_eq!(official_websocket_connections.load(Ordering::SeqCst), 1);
+}
+
+#[tokio::test]
+async fn maps_live_voice_sideband_to_official_call_path() {
+    let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
+    let (official_url, _, _, _, _, _) =
+        spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
+    let mut config = test_config(upstream_url);
+    config.official_responses_url = format!("{official_url}/v1/responses");
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/live/call-123?model=gpt-live-1-boulder-alpha")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+
+    socket
+        .send(WsMessage::Text(
+            json!({"type": "session.update"}).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    let response = socket.next().await.unwrap().unwrap();
+    let response: Value = match response {
+        WsMessage::Text(text) => serde_json::from_str(&text).unwrap(),
+        other => panic!("expected text response, got {other:?}"),
+    };
+
+    assert_eq!(response["upstream_path"], "/v1/call-123");
+    assert_eq!(response["upstream_query"], "model=gpt-live-1-boulder-alpha");
+}
+
+#[tokio::test]
+async fn rejects_realtime_voice_when_official_oauth_routing_is_disabled() {
+    let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    config.accept_codex_oauth = false;
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request =
+        format!("{websocket_url}/v1/realtime?intent=quicksilver&model=gpt-realtime-1.5")
+            .into_client_request()
+            .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+
+    let error = connect_async(request).await.unwrap_err();
+    assert!(
+        error.to_string().contains("400"),
+        "expected HTTP 400, got {error}"
+    );
+}
+
+#[tokio::test]
+async fn maps_realtime_webrtc_call_to_official_backend_shape() {
+    let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
+    let (official_url, official_requests, official_auth_headers, official_account_headers, _, _) =
+        spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
+    let mut config = test_config(upstream_url);
+    config.official_responses_url = format!("{official_url}/v1/responses");
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let boundary = "codex-realtime-call-boundary";
+    let multipart = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"sdp\"\r\nContent-Type: application/sdp\r\n\r\noffer-sdp\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"session\"\r\nContent-Type: application/json\r\n\r\n{{\"model\":\"gpt-realtime-1.5\",\"voice\":\"verse\"}}\r\n--{boundary}--\r\n"
+    );
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{gateway_url}/v1/realtime/calls?intent=quicksilver&architecture=avas"
+        ))
+        .bearer_auth("gateway-key")
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(multipart)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        response.headers().get(header::LOCATION).unwrap(),
+        "/v1/realtime/calls/call-456"
+    );
+    assert_eq!(response.text().await.unwrap(), "answer-sdp");
+    assert_eq!(
+        official_requests.lock().unwrap().as_slice(),
+        &[json!({
+            "body": {
+                "sdp": "offer-sdp",
+                "session": {"model": "gpt-realtime-1.5", "voice": "verse"}
+            },
+            "query": "intent=quicksilver&architecture=avas"
+        })]
+    );
+    assert_eq!(
+        official_auth_headers.lock().unwrap().as_slice(),
+        &[Some("Bearer codex-oauth-token".to_owned())]
+    );
+    assert_eq!(
+        official_account_headers.lock().unwrap().as_slice(),
+        &[Some("account-1".to_owned())]
+    );
+}
+
+#[tokio::test]
+async fn custom_only_routes_available_realtime_model_to_provider_websocket() {
+    let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    config.providers[0].cached_models.push(ProviderModel {
+        id: "gpt-realtime-1.5".to_owned(),
+        ..ProviderModel::default()
+    });
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"auth_mode":"bedrockApiKey","bedrock_api_key":{"api_key":"codex-mixin-local-test","region":"us-east-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request =
+        format!("{websocket_url}/v1/realtime?intent=quicksilver&model=gpt-realtime-1.5")
+            .into_client_request()
+            .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    let session_update = json!({"type": "session.update", "session": {"voice": "verse"}});
+    socket
+        .send(WsMessage::Text(session_update.to_string().into()))
+        .await
+        .unwrap();
+    let response = socket.next().await.unwrap().unwrap();
+    let response: Value = match response {
+        WsMessage::Text(text) => serde_json::from_str(&text).unwrap(),
+        other => panic!("expected text response, got {other:?}"),
+    };
+
+    assert_eq!(response["authorization"], "Bearer upstream-key");
+    assert_eq!(response["upstream_path"], "/v1/realtime");
+    assert_eq!(
+        response["upstream_query"],
+        "intent=quicksilver&model=gpt-realtime-1.5"
+    );
+    assert_eq!(
+        upstream_requests.lock().unwrap().as_slice(),
+        &[session_update]
+    );
+}
+
+#[tokio::test]
+async fn custom_only_routes_available_realtime_model_to_provider_webrtc() {
+    let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    config.providers[0].cached_models.push(ProviderModel {
+        id: "gpt-realtime-1.5".to_owned(),
+        ..ProviderModel::default()
+    });
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"auth_mode":"bedrockApiKey","bedrock_api_key":{"api_key":"codex-mixin-local-test","region":"us-east-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let boundary = "codex-realtime-call-boundary";
+    let multipart = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"sdp\"\r\nContent-Type: application/sdp\r\n\r\noffer-sdp\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"session\"\r\nContent-Type: application/json\r\n\r\n{{\"model\":\"gpt-realtime-1.5\",\"voice\":\"verse\"}}\r\n--{boundary}--\r\n"
+    );
+
+    let response = reqwest::Client::new()
+        .post(format!(
+            "{gateway_url}/v1/realtime/calls?intent=quicksilver&architecture=avas"
+        ))
+        .bearer_auth("gateway-key")
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(multipart)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let location = response
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(
+        location,
+        "/v1/realtime/calls/codex-mixin~custom~custom-call"
+    );
+    assert_eq!(response.text().await.unwrap(), "custom-answer-sdp");
+    {
+        let requests = upstream_requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["authorization"], "Bearer upstream-key");
+        assert_eq!(requests[0]["path"], "/v1/realtime/calls");
+        assert_eq!(requests[0]["query"], "intent=quicksilver&architecture=avas");
+        assert!(
+            requests[0]["body"]
+                .as_str()
+                .unwrap()
+                .contains(r#""model":"gpt-realtime-1.5""#)
+        );
+    }
+
+    let call_id = location.rsplit('/').next().unwrap();
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/realtime?call_id={call_id}")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    let sideband_message = json!({"type": "session.update"});
+    socket
+        .send(WsMessage::Text(sideband_message.to_string().into()))
+        .await
+        .unwrap();
+    let response = socket.next().await.unwrap().unwrap();
+    let response: Value = match response {
+        WsMessage::Text(text) => serde_json::from_str(&text).unwrap(),
+        other => panic!("expected text response, got {other:?}"),
+    };
+    assert_eq!(response["authorization"], "Bearer upstream-key");
+    assert_eq!(response["upstream_path"], "/v1/realtime");
+    assert_eq!(response["upstream_query"], "call_id=custom-call");
+    assert_eq!(upstream_requests.lock().unwrap()[1], sideband_message);
+}
+
+#[tokio::test]
+async fn custom_only_routes_available_live_model_and_sideband_to_provider() {
+    let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    config.providers[0].cached_models.push(ProviderModel {
+        id: "gpt-live-1-boulder-alpha".to_owned(),
+        ..ProviderModel::default()
+    });
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"auth_mode":"bedrockApiKey","bedrock_api_key":{"api_key":"codex-mixin-local-test","region":"us-east-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let boundary = "codex-live-call-boundary";
+    let multipart = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"sdp\"\r\nContent-Type: application/sdp\r\n\r\noffer-sdp\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"session\"\r\nContent-Type: application/json\r\n\r\n{{\"model\":\"gpt-live-1-boulder-alpha\",\"voice\":\"verse\"}}\r\n--{boundary}--\r\n"
+    );
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/live"))
+        .bearer_auth("gateway-key")
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(multipart)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let location = response
+        .headers()
+        .get(header::LOCATION)
+        .unwrap()
+        .to_str()
+        .unwrap()
+        .to_owned();
+    assert_eq!(location, "/v1/live/codex-mixin~custom~custom-call");
+    assert_eq!(response.text().await.unwrap(), "custom-answer-sdp");
+    {
+        let requests = upstream_requests.lock().unwrap();
+        assert_eq!(requests.len(), 1);
+        assert_eq!(requests[0]["path"], "/v1/live");
+        assert!(
+            requests[0]["body"]
+                .as_str()
+                .unwrap()
+                .contains(r#""model":"gpt-live-1-boulder-alpha""#)
+        );
+    }
+
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}{location}")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    socket
+        .send(WsMessage::Text(
+            json!({"type": "session.update"}).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    let response = socket.next().await.unwrap().unwrap();
+    let response: Value = match response {
+        WsMessage::Text(text) => serde_json::from_str(&text).unwrap(),
+        other => panic!("expected text response, got {other:?}"),
+    };
+    assert_eq!(response["authorization"], "Bearer upstream-key");
+    assert_eq!(response["upstream_path"], "/v1/live/custom-call");
+    assert_eq!(response["upstream_query"], "");
+}
+
+#[tokio::test]
+async fn custom_only_rejects_unavailable_realtime_model() {
+    let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"auth_mode":"bedrockApiKey","bedrock_api_key":{"api_key":"codex-mixin-local-test","region":"us-east-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/realtime?model=gpt-realtime-1.5")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+
+    let error = connect_async(request).await.unwrap_err();
+    assert!(
+        error.to_string().contains("400"),
+        "expected HTTP 400, got {error}"
+    );
+}
+
+#[tokio::test]
+async fn provider_qualified_realtime_model_overrides_available_official_oauth() {
+    let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    config.providers[0].cached_models.push(ProviderModel {
+        id: "gpt-realtime-1.5".to_owned(),
+        ..ProviderModel::default()
+    });
+    config.providers[0]
+        .selected_models
+        .push("gpt-realtime-1.5".to_owned());
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/realtime?model=gpt-realtime-1.5-custom")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    socket
+        .send(WsMessage::Text(
+            json!({"type": "session.update"}).to_string().into(),
+        ))
+        .await
+        .unwrap();
+    let response = socket.next().await.unwrap().unwrap();
+    let response: Value = match response {
+        WsMessage::Text(text) => serde_json::from_str(&text).unwrap(),
+        other => panic!("expected text response, got {other:?}"),
+    };
+
+    assert_eq!(response["authorization"], "Bearer upstream-key");
+    assert_eq!(response["upstream_query"], "model=gpt-realtime-1.5");
+}
+
+#[tokio::test]
+async fn auxiliary_realtime_provider_overrides_available_official_oauth() {
+    let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let (official_url, _, _, _, official_websocket_connections, _) =
+        spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
+    let mut config = test_config(upstream_url);
+    config.official_responses_url = format!("{official_url}/v1/responses");
+    config.providers[0].auxiliary_model_upstream = true;
+    config.providers[0].cached_models.push(ProviderModel {
+        id: "gpt-realtime-1.5".to_owned(),
+        ..ProviderModel::default()
+    });
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/realtime?model=gpt-realtime-1.5")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    let session_update = json!({"type": "session.update"});
+    socket
+        .send(WsMessage::Text(session_update.to_string().into()))
+        .await
+        .unwrap();
+    let response = socket.next().await.unwrap().unwrap();
+    let response: Value = match response {
+        WsMessage::Text(text) => serde_json::from_str(&text).unwrap(),
+        other => panic!("expected text response, got {other:?}"),
+    };
+
+    assert_eq!(response["authorization"], "Bearer upstream-key");
+    assert_eq!(response["upstream_query"], "model=gpt-realtime-1.5");
+    assert_eq!(
+        upstream_requests.lock().unwrap().as_slice(),
+        &[session_update]
+    );
+    assert_eq!(official_websocket_connections.load(Ordering::SeqCst), 0);
+}
+
+#[tokio::test]
+async fn custom_only_uses_first_available_provider_for_shared_realtime_model() {
+    let (primary_url, primary_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let (secondary_url, secondary_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(primary_url);
+    config.providers[0].cached_models.push(ProviderModel {
+        id: "gpt-realtime-1.5".to_owned(),
+        ..ProviderModel::default()
+    });
+    let mut secondary = config.providers[0].clone();
+    secondary.id = "secondary".to_owned();
+    secondary.display_name = "Secondary".to_owned();
+    secondary.base_url = secondary_url;
+    config.providers.push(secondary);
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"auth_mode":"bedrockApiKey","bedrock_api_key":{"api_key":"codex-mixin-local-test","region":"us-east-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/realtime?model=gpt-realtime-1.5")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    let session_update = json!({"type": "session.update"});
+    socket
+        .send(WsMessage::Text(session_update.to_string().into()))
+        .await
+        .unwrap();
+    let _ = socket.next().await.unwrap().unwrap();
+
+    assert_eq!(
+        primary_requests.lock().unwrap().as_slice(),
+        &[session_update]
+    );
+    assert!(secondary_requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn custom_only_prefers_provider_with_selected_shared_realtime_model() {
+    let (primary_url, primary_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let (secondary_url, secondary_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(primary_url);
+    config.providers[0].cached_models.push(ProviderModel {
+        id: "gpt-realtime-1.5".to_owned(),
+        ..ProviderModel::default()
+    });
+    let mut secondary = config.providers[0].clone();
+    secondary.id = "secondary".to_owned();
+    secondary.display_name = "Secondary".to_owned();
+    secondary.base_url = secondary_url;
+    secondary
+        .selected_models
+        .push("gpt-realtime-1.5".to_owned());
+    config.providers.push(secondary);
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"auth_mode":"bedrockApiKey","bedrock_api_key":{"api_key":"codex-mixin-local-test","region":"us-east-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/realtime?model=gpt-realtime-1.5")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    let session_update = json!({"type": "session.update"});
+    socket
+        .send(WsMessage::Text(session_update.to_string().into()))
+        .await
+        .unwrap();
+    let _ = socket.next().await.unwrap().unwrap();
+
+    assert!(primary_requests.lock().unwrap().is_empty());
+    assert_eq!(
+        secondary_requests.lock().unwrap().as_slice(),
+        &[session_update]
+    );
+}
+
+#[tokio::test]
 async fn reconnects_official_upstream_without_resetting_client_websocket() {
     let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
     let (official_url, official_requests, _, _, official_websocket_connections, _) =
@@ -4173,6 +5010,128 @@ async fn proxies_codex_image_edits_to_official_backend() {
         account_headers.lock().unwrap().as_slice(),
         &[Some("account-1".to_owned())]
     );
+}
+
+#[tokio::test]
+async fn routes_auto_review_to_official_http_backend() {
+    let (gateway_url, official_requests, _, _codex_home) = spawn_gateway_with_mock_official(
+        OfficialWebSocketBehavior::Persistent,
+        Duration::from_secs(2),
+    )
+    .await;
+    let mut request = responses_request();
+    request["model"] = json!("codex-auto-review");
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(official_requests.lock().unwrap().as_slice(), &[request]);
+}
+
+#[tokio::test]
+async fn auxiliary_provider_overrides_official_auto_review_http_backend() {
+    let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let (official_url, official_requests, _, _, _, _) =
+        spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
+    let mut config = test_config(upstream_url);
+    config.official_responses_url = format!("{official_url}/v1/responses");
+    config.providers[0].auxiliary_model_upstream = true;
+    config.providers[0].cached_models.push(ProviderModel {
+        id: "codex-auto-review".to_owned(),
+        ..ProviderModel::default()
+    });
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut request = responses_request();
+    request["model"] = json!("codex-auto-review");
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        upstream_requests.lock().unwrap()[0]["model"],
+        "codex-auto-review"
+    );
+    assert!(official_requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn custom_only_routes_available_auto_review_model_to_provider() {
+    let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    config.providers[0].cached_models.push(ProviderModel {
+        id: "codex-auto-review".to_owned(),
+        ..ProviderModel::default()
+    });
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"auth_mode":"bedrockApiKey","bedrock_api_key":{"api_key":"codex-mixin-local-test","region":"us-east-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut request = responses_request();
+    request["model"] = json!("codex-auto-review");
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        upstream_requests.lock().unwrap()[0]["model"],
+        "codex-auto-review"
+    );
+}
+
+#[tokio::test]
+async fn custom_only_rejects_unavailable_auto_review_model_without_official_auth() {
+    let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"auth_mode":"bedrockApiKey","bedrock_api_key":{"api_key":"codex-mixin-local-test","region":"us-east-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut request = responses_request();
+    request["model"] = json!("codex-auto-review");
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(upstream_requests.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
