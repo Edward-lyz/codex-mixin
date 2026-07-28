@@ -1,32 +1,29 @@
 <!-- codex-mixin:zh-Hans:start -->
-## v0.3.5
+## v0.3.6
 
-- 新增 Codex Desktop 官方账号与 Custom-only 两种安装路径。Custom-only 可在没有官方登录时使用本地占位认证加载自定义模型，并在安装、切换和卸载时明确提示官方插件、云任务及账户功能的差异。
-- 重做 Provider 设置窗口，缩小无效空白并修复表单横向不可达问题；Provider 选择器始终以本地配置为唯一数据源，不再因历史测速快照漏掉供应商。
-- 将模型选择与测速合并为单 Provider 模型表，支持搜索、筛选、Codex allowlist、TTFT、吞吐、上下文和 Baidu OneAPI 倍率展示；所有列均可排序。
-- 延迟测速默认使用 5 秒超时并在首 token 到达时立即完成，避免上游迟迟不关闭流造成假超时；完整模式继续提供吞吐测试。
-- App 的“自动检测并修复”新增快速路径，使用缓存与网关实际状态，跳过无关的上游和 Codex 内核深度实测；热运行由约 8 秒降至约 0.05 秒，CLI 普通 `doctor` 仍保留完整检查。
-- 加快模型目录与菜单状态刷新频率，并补充 Custom 安装、Desktop 模型选择、Provider 布局及 Doctor 性能回归测试。
+- 强化 Fusion 规划与网关路由：仅在 Plan 模式的新用户轮次运行 Panel 与 Judge，Default/编码阶段及工具续跑直接交给 Final；HTTP、WebSocket 与 Fusion 统一使用同一套模型解析和上游执行路径，并补强 Panel 工具超时、进程树清理与事件一致性。
+- 新增按模型声明的 reasoning 能力和完整 Ultra 支持。自定义模型可在 Codex 中显示 `Off / low / medium / high / xhigh / max / ultra`，Ultra 启用 multi-agent v2，并在远端安全映射为最高合法档位；明确不支持思考的模型不会收到 `reasoning`。
+- 新发现的上游模型现在会自动加入 Codex allowlist；模型刷新入口移至“模型选择与测速”窗口，刷新、选择和测速集中在同一工作流。
+- Provider 设置新增唯一的辅助模型上游，可接管 `codex-auto-review`、Realtime 与 Live 语音模型。OAuth 安装会在 Provider 缺少能力时回落官方路由；Custom-only 安装会根据实际模型能力置灰不可用选项，并提示仅支持自动审查或语音的情况。
+- 新增 Realtime WebSocket、Live、WebRTC call 与 sideband 的完整透传和自定义 Provider 路由；Custom-only 缺少辅助模型时返回明确的 400，不再误打官方接口或转成 500。
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
-## v0.3.5
+## v0.3.6
 
-- 新增 Codex Desktop 官方帳號與 Custom-only 兩種安裝路徑。Custom-only 可在沒有官方登入時使用本機佔位認證載入自訂模型，並在安裝、切換和解除安裝時明確提示官方外掛、雲端任務及帳號功能的差異。
-- 重做 Provider 設定視窗，縮小無效空白並修復表單橫向不可達問題；Provider 選擇器固定以本機設定為唯一資料來源，不再因歷史測速快照漏掉供應商。
-- 將模型選擇與測速合併為單 Provider 模型表，支援搜尋、篩選、Codex allowlist、TTFT、吞吐、上下文和 Baidu OneAPI 倍率顯示；所有欄位均可排序。
-- 延遲測速預設使用 5 秒逾時並在首個 token 到達時立即完成，避免上游遲遲不關閉串流造成假逾時；完整模式繼續提供吞吐測試。
-- App 的「自動檢測並修復」新增快速路徑，使用快取與 Gateway 實際狀態，跳過無關的上游和 Codex 核心深度實測；熱執行由約 8 秒降至約 0.05 秒，CLI 普通 `doctor` 仍保留完整檢查。
-- 加快模型目錄與選單狀態更新頻率，並補充 Custom 安裝、Desktop 模型選擇、Provider 版面配置及 Doctor 效能回歸測試。
+- 強化 Fusion 規劃與 Gateway 路由：僅在 Plan 模式的新使用者輪次執行 Panel 與 Judge，Default／編碼階段及工具續跑直接交給 Final；HTTP、WebSocket 與 Fusion 統一使用同一套模型解析和上游執行路徑，並補強 Panel 工具逾時、程序樹清理與事件一致性。
+- 新增依模型宣告的 reasoning 能力和完整 Ultra 支援。自訂模型可在 Codex 中顯示 `Off / low / medium / high / xhigh / max / ultra`，Ultra 啟用 multi-agent v2，並在遠端安全映射為最高合法檔位；明確不支援思考的模型不會收到 `reasoning`。
+- 新探索到的上游模型現在會自動加入 Codex allowlist；模型更新入口移至「模型選擇與測速」視窗，更新、選擇和測速集中在同一工作流程。
+- Provider 設定新增唯一的輔助模型上游，可接管 `codex-auto-review`、Realtime 與 Live 語音模型。OAuth 安裝會在 Provider 缺少能力時回退官方路由；Custom-only 安裝會依實際模型能力停用不可用選項，並提示僅支援自動審查或語音的情況。
+- 新增 Realtime WebSocket、Live、WebRTC call 與 sideband 的完整透傳和自訂 Provider 路由；Custom-only 缺少輔助模型時回傳明確的 400，不再誤打官方端點或轉成 500。
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
-## v0.3.5
+## v0.3.6
 
-- Added separate official-account and Custom-only installation paths for Codex Desktop. Custom-only installations can load custom models without an official login through a managed local placeholder, with clear warnings about unavailable official plugins, cloud tasks, and account features.
-- Redesigned Provider Settings to remove wasted space and unreachable horizontal content. Provider pickers now use local configuration as their sole data source, so benchmark history can no longer hide configured providers.
-- Combined model selection and benchmarking into a single-provider model table with search, filters, the Codex allowlist, TTFT, throughput, context, and Baidu OneAPI rate metadata. Every column is sortable.
-- Latency benchmarks now default to a five-second timeout and finish as soon as the first token arrives, preventing false timeouts when an upstream leaves its stream open. Full benchmarks remain available for throughput measurement.
-- Added a fast path for the App's Automatic Diagnostics and Repair action. It uses cached/provider gateway state and skips unrelated upstream and Codex engine deep probes, reducing warm execution from roughly eight seconds to around 0.05 seconds. Regular CLI `doctor` retains the complete checks.
-- Increased model-catalog and menu refresh frequency and added regression coverage for Custom installation, Desktop model selection, Provider layout, and Doctor performance.
+- Hardened Fusion planning and gateway routing. Panel and Judge now run only for new user turns in Plan mode, while Default/coding turns and tool continuations go directly to Final. HTTP, WebSocket, and Fusion share model resolution and upstream execution, with stronger panel-tool timeouts, process-tree cleanup, and event consistency.
+- Added model-specific reasoning capabilities and complete Ultra support. Custom models can expose `Off / low / medium / high / xhigh / max / ultra` in Codex; Ultra enables multi-agent v2 and is safely mapped to the highest legal upstream effort, while models that explicitly lack thinking never receive `reasoning`.
+- Newly discovered upstream models now join the Codex allowlist automatically. Model refresh moved into the Model Selection & Benchmark window so refresh, selection, and benchmarking share one workflow.
+- Added one configurable auxiliary-model Provider for `codex-auto-review`, Realtime, and Live voice models. OAuth installations fall back to official routing for missing capabilities; Custom-only installations disable unsupported choices and identify providers that support only auto review or voice.
+- Added complete proxying and custom-Provider routing for Realtime WebSocket, Live, WebRTC calls, and sideband connections. Custom-only installations now return a clear 400 when an auxiliary model is unavailable instead of contacting official endpoints or surfacing a 500.
 <!-- codex-mixin:en:end -->
