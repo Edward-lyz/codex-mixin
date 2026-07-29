@@ -1,9 +1,13 @@
+use axum::extract::DefaultBodyLimit;
+
 use super::auth::check_gateway_auth;
 use super::images::{image_edits, image_generations};
 use super::realtime::{live_sideband_ws, live_ws, realtime_call, realtime_ws};
 use super::responses_http::responses;
 use super::responses_ws::responses_ws;
 use super::*;
+
+const RESPONSES_BODY_LIMIT_BYTES: usize = 16 * 1024 * 1024;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -14,7 +18,12 @@ pub fn router(state: AppState) -> Router {
             "/v1/model-benchmarks",
             get(model_benchmarks).post(start_model_benchmarks),
         )
-        .route("/v1/responses", get(responses_ws).post(responses))
+        .route(
+            "/v1/responses",
+            get(responses_ws)
+                .post(responses)
+                .layer(DefaultBodyLimit::max(RESPONSES_BODY_LIMIT_BYTES)),
+        )
         .route("/v1/realtime", get(realtime_ws))
         .route("/v1/realtime/calls", post(realtime_call))
         .route("/v1/live", get(live_ws).post(realtime_call))

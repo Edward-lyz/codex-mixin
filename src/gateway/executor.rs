@@ -4,6 +4,7 @@ use axum::http::HeaderMap;
 use bytes::Bytes;
 use futures_util::StreamExt;
 
+use super::compaction::compact_embedded_tool_images;
 use super::{RequestPlan, UpstreamTarget};
 use crate::error::GatewayError;
 use crate::server::{AppState, stream_official_response};
@@ -32,9 +33,18 @@ impl<'a> UpstreamExecutor<'a> {
 
     pub(crate) async fn stream_and_return_body(
         self,
-        plan: RequestPlan,
+        mut plan: RequestPlan,
         headers: &HeaderMap,
     ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
+        if matches!(&plan.target, UpstreamTarget::Provider { .. }) {
+            let removed_images = compact_embedded_tool_images(&mut plan.body);
+            if removed_images > 0 {
+                tracing::info!(
+                    removed_images,
+                    "pruned older embedded tool images from provider request"
+                );
+            }
+        }
         match plan.target {
             UpstreamTarget::Official => {
                 let stream = stream_official_response(self.state, headers, &plan.body).await?;

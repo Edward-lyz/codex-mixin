@@ -1725,6 +1725,91 @@ async fn model_request_smoke_succeeds_end_to_end() {
 }
 
 #[tokio::test]
+async fn prunes_old_embedded_tool_images_before_forwarding_oversized_responses() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let client = reqwest::Client::new();
+    let old_image = format!("data:image/png;base64,{}", "AAAA".repeat(300_000));
+    let latest_image = format!("data:image/png;base64,{}", "BBBB".repeat(300_000));
+    let mut request = responses_request();
+    request["input"].as_array_mut().unwrap().extend([
+        json!({
+            "type": "function_call",
+            "call_id": "call_old_image",
+            "name": "view_image",
+            "arguments": "{}"
+        }),
+        json!({
+            "type": "function_call_output",
+            "call_id": "call_old_image",
+            "output": [
+                {"type":"input_text","text":"old screenshot"},
+                {"type":"input_image","image_url":old_image}
+            ]
+        }),
+        json!({
+            "type": "function_call",
+            "call_id": "call_latest_image",
+            "name": "view_image",
+            "arguments": "{}"
+        }),
+        json!({
+            "type": "function_call_output",
+            "call_id": "call_latest_image",
+            "output": [
+                {"type":"input_text","text":"latest screenshot"},
+                {"type":"input_image","image_url":latest_image}
+            ]
+        }),
+    ]);
+    assert!(request.to_string().len() > 2 * 1024 * 1024);
+
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response
+            .text()
+            .await
+            .unwrap()
+            .contains("response.completed")
+    );
+
+    let upstream_request = requests.lock().unwrap()[0].clone();
+    let tool_results = upstream_request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|message| {
+            message
+                .get("content")
+                .and_then(Value::as_array)
+                .into_iter()
+                .flatten()
+        })
+        .filter(|block| block["type"] == "tool_result")
+        .collect::<Vec<_>>();
+    assert_eq!(tool_results.len(), 2);
+    assert_eq!(
+        tool_results[0]["content"],
+        json!([{"type":"text","text":"old screenshot"}])
+    );
+    assert_eq!(tool_results[1]["content"][0]["text"], "latest screenshot");
+    assert_eq!(
+        tool_results[1]["content"][1]["source"]["data"]
+            .as_str()
+            .unwrap()
+            .len(),
+        1_200_000
+    );
+}
+
+#[tokio::test]
 async fn custom_tool_loop_marks_commentary_and_final_answer() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::ToolThenText).await;
     let gateway_url = spawn_gateway(upstream_url).await;

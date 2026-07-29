@@ -1,3 +1,4 @@
+mod compaction;
 mod executor;
 mod plan;
 mod router;
