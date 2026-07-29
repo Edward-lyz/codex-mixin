@@ -154,6 +154,19 @@ struct ProviderSupportTests {
         precondition(Set(benchmarkColumns.map(\.id)).count == benchmarkColumns.count)
         precondition(benchmarkRatioValue("0.5x") == 0.5)
         precondition(benchmarkRatioValue(nil) == nil)
+        precondition(
+            providerIssueDetails(
+                fromGatewayStatus: """
+                gateway: running
+                provider-readiness: degraded
+                provider-issue: Baidu OneAPI：模型 unreachable-model 当前不可达
+                provider-issue: AIHub：模型列表刷新失败：upstream returned 503
+                """
+            ) == [
+                "Baidu OneAPI：模型 unreachable-model 当前不可达",
+                "AIHub：模型列表刷新失败：upstream returned 503",
+            ]
+        )
         print("Provider model ratio support: passed")
     }
 }

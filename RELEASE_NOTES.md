@@ -1,29 +1,20 @@
 <!-- codex-mixin:zh-Hans:start -->
-## v0.3.6
+## v0.3.7
 
-- 强化 Fusion 规划与网关路由：仅在 Plan 模式的新用户轮次运行 Panel 与 Judge，Default/编码阶段及工具续跑直接交给 Final；HTTP、WebSocket 与 Fusion 统一使用同一套模型解析和上游执行路径，并补强 Panel 工具超时、进程树清理与事件一致性。
-- 新增按模型声明的 reasoning 能力和完整 Ultra 支持。自定义模型可在 Codex 中显示 `Off / low / medium / high / xhigh / max / ultra`，Ultra 启用 multi-agent v2，并在远端安全映射为最高合法档位；明确不支持思考的模型不会收到 `reasoning`。
-- 新发现的上游模型现在会自动加入 Codex allowlist；模型刷新入口移至“模型选择与测速”窗口，刷新、选择和测速集中在同一工作流。
-- Provider 设置新增唯一的辅助模型上游，可接管 `codex-auto-review`、Realtime 与 Live 语音模型。OAuth 安装会在 Provider 缺少能力时回落官方路由；Custom-only 安装会根据实际模型能力置灰不可用选项，并提示仅支持自动审查或语音的情况。
-- 新增 Realtime WebSocket、Live、WebRTC call 与 sideband 的完整透传和自定义 Provider 路由；Custom-only 缺少辅助模型时返回明确的 400，不再误打官方接口或转成 500。
+- 修复连续使用 Browser 或 Computer Use 截图时，请求历史中的 base64 图片不断累积并触发网关或上游 Payload 限制的问题。网关现在允许最多 16 MiB 的 `/v1/responses` 请求，并在转发到自定义 Provider 前丢弃旧工具截图，只保留最新工具图片、所有文字、用户提供的图片和远程 URL。
+- Provider 降级提示现在会明确列出具体 Provider 和原因，包括不可达模型、模型列表刷新失败、未配置 API Key，以及没有已启用的可用模型；CLI `status` 与 macOS 菜单栏均可直接查看。
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
-## v0.3.6
+## v0.3.7
 
-- 強化 Fusion 規劃與 Gateway 路由：僅在 Plan 模式的新使用者輪次執行 Panel 與 Judge，Default／編碼階段及工具續跑直接交給 Final；HTTP、WebSocket 與 Fusion 統一使用同一套模型解析和上游執行路徑，並補強 Panel 工具逾時、程序樹清理與事件一致性。
-- 新增依模型宣告的 reasoning 能力和完整 Ultra 支援。自訂模型可在 Codex 中顯示 `Off / low / medium / high / xhigh / max / ultra`，Ultra 啟用 multi-agent v2，並在遠端安全映射為最高合法檔位；明確不支援思考的模型不會收到 `reasoning`。
-- 新探索到的上游模型現在會自動加入 Codex allowlist；模型更新入口移至「模型選擇與測速」視窗，更新、選擇和測速集中在同一工作流程。
-- Provider 設定新增唯一的輔助模型上游，可接管 `codex-auto-review`、Realtime 與 Live 語音模型。OAuth 安裝會在 Provider 缺少能力時回退官方路由；Custom-only 安裝會依實際模型能力停用不可用選項，並提示僅支援自動審查或語音的情況。
-- 新增 Realtime WebSocket、Live、WebRTC call 與 sideband 的完整透傳和自訂 Provider 路由；Custom-only 缺少輔助模型時回傳明確的 400，不再誤打官方端點或轉成 500。
+- 修正連續使用 Browser 或 Computer Use 截圖時，請求歷史中的 base64 圖片持續累積並觸發 Gateway 或上游 Payload 限制的問題。Gateway 現在允許最大 16 MiB 的 `/v1/responses` 請求，並在轉送至自訂 Provider 前丟棄舊工具截圖，只保留最新工具圖片、所有文字、使用者提供的圖片和遠端 URL。
+- Provider 降級提示現在會明確列出具體 Provider 和原因，包括無法連線的模型、模型清單更新失敗、未設定 API Key，以及沒有已啟用的可用模型；CLI `status` 與 macOS 選單列皆可直接查看。
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
-## v0.3.6
+## v0.3.7
 
-- Hardened Fusion planning and gateway routing. Panel and Judge now run only for new user turns in Plan mode, while Default/coding turns and tool continuations go directly to Final. HTTP, WebSocket, and Fusion share model resolution and upstream execution, with stronger panel-tool timeouts, process-tree cleanup, and event consistency.
-- Added model-specific reasoning capabilities and complete Ultra support. Custom models can expose `Off / low / medium / high / xhigh / max / ultra` in Codex; Ultra enables multi-agent v2 and is safely mapped to the highest legal upstream effort, while models that explicitly lack thinking never receive `reasoning`.
-- Newly discovered upstream models now join the Codex allowlist automatically. Model refresh moved into the Model Selection & Benchmark window so refresh, selection, and benchmarking share one workflow.
-- Added one configurable auxiliary-model Provider for `codex-auto-review`, Realtime, and Live voice models. OAuth installations fall back to official routing for missing capabilities; Custom-only installations disable unsupported choices and identify providers that support only auto review or voice.
-- Added complete proxying and custom-Provider routing for Realtime WebSocket, Live, WebRTC calls, and sideband connections. Custom-only installations now return a clear 400 when an auxiliary model is unavailable instead of contacting official endpoints or surfacing a 500.
+- Fixed repeated Browser or Computer Use screenshots accumulating base64 image history until the gateway or upstream payload limit was exceeded. The gateway now accepts `/v1/responses` requests up to 16 MiB and discards older tool screenshots before forwarding to a custom Provider, while preserving the newest tool image, all text, user-provided images, and remote URLs.
+- Provider degradation messages now identify the affected Provider and the exact reason, including unreachable models, model-list refresh failures, missing API keys, and no enabled usable models. The details are visible in both CLI `status` and the macOS menu bar.
 <!-- codex-mixin:en:end -->

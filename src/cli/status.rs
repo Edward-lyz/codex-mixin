@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::time::Duration;
 
 use codex_mixin::config::{GatewayConfig, load_stored_config, stored_config_path};
@@ -98,6 +99,9 @@ pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
                     readiness.2,
                     readiness.3,
                 );
+                for issue in provider_readiness_issue_descriptions(&config.providers) {
+                    println!("provider-issue: {issue}");
+                }
             }
             Ok(())
         }
@@ -142,6 +146,79 @@ fn provider_readiness_values(providers: &[ProviderDefinition]) -> Vec<serde_json
             })
         })
         .collect()
+}
+
+fn provider_readiness_issue_descriptions(providers: &[ProviderDefinition]) -> Vec<String> {
+    let mut descriptions = Vec::new();
+    for provider in providers {
+        let readiness = provider.readiness();
+        if readiness.status != ProviderReadinessStatus::Degraded {
+            continue;
+        }
+        let provider_name = single_line(&provider.display_name);
+        if provider.auth.api_key.trim().is_empty() {
+            descriptions.push(format!("{provider_name}：未配置 API Key"));
+        }
+        let available_models = provider
+            .cached_models
+            .iter()
+            .map(|model| model.id.as_str())
+            .collect::<HashSet<_>>();
+        let unavailable_models = provider
+            .selected_models
+            .iter()
+            .filter(|model| !available_models.contains(model.as_str()))
+            .map(|model| single_line(model))
+            .collect::<Vec<_>>();
+        if unavailable_models.is_empty() {
+            if readiness.routable_model_count == 0 {
+                descriptions.push(format!("{provider_name}：没有已启用的可用模型"));
+            }
+        } else {
+            descriptions.push(format!(
+                "{provider_name}：模型 {} 当前不可达",
+                unavailable_models.join("、")
+            ));
+        }
+        if let Some(error) = provider.models_refresh_error.as_deref() {
+            descriptions.push(format!(
+                "{provider_name}：模型列表刷新失败：{}",
+                single_line(error)
+            ));
+        }
+    }
+    descriptions
+}
+
+fn single_line(value: &str) -> String {
+    value.split_whitespace().collect::<Vec<_>>().join(" ")
+}
+
+#[cfg(test)]
+mod provider_readiness_tests {
+    use super::provider_readiness_issue_descriptions;
+    use codex_mixin::provider::{ProviderModel, custom_provider};
+
+    #[test]
+    fn provider_issue_descriptions_name_unavailable_models_and_refresh_errors() {
+        let mut provider = custom_provider("baidu-oneapi", "secret");
+        provider.display_name = "Baidu OneAPI".to_owned();
+        provider.selected_models =
+            vec!["available-model".to_owned(), "unreachable-model".to_owned()];
+        provider.cached_models = vec![ProviderModel {
+            id: "available-model".to_owned(),
+            ..ProviderModel::default()
+        }];
+        provider.models_refresh_error = Some("request failed\nupstream returned 503".to_owned());
+
+        assert_eq!(
+            provider_readiness_issue_descriptions(&[provider]),
+            vec![
+                "Baidu OneAPI：模型 unreachable-model 当前不可达",
+                "Baidu OneAPI：模型列表刷新失败：request failed upstream returned 503",
+            ]
+        );
+    }
 }
 
 pub(super) async fn models(json_output: bool) -> anyhow::Result<()> {

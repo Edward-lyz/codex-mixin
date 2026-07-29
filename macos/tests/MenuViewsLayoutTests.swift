@@ -47,6 +47,17 @@ struct MenuViewsLayoutTests {
             abs(widths[0] - widths[1]) < 0.5,
             "All Provider quota tracks must have equal widths; got \(widths)"
         )
+        let providerIssue = "Baidu OneAPI：模型 unreachable-model 当前不可达"
+        let serviceView = serviceMenuView(
+            title: "本地网关运行中 · Provider 降级",
+            endpoint: "http://127.0.0.1:8787/v1",
+            statusDetail: providerIssue,
+            isRunning: true,
+            isBusy: false
+        )
+        let labels = descendants(of: serviceView, matching: NSTextField.self)
+        precondition(labels.contains { $0.stringValue == providerIssue })
+        precondition(labels.contains { $0.toolTip == providerIssue })
         print("Provider quota track widths: passed")
     }
 }

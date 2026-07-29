@@ -29,6 +29,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var serviceEndpoint: String? {
         didSet { updateServiceStatusView() }
     }
+    var providerStatusDetail: String? {
+        didSet { updateServiceStatusView() }
+    }
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
@@ -146,12 +149,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let serviceStatusItem else { return }
         let title = serviceStatus
         let endpoint = serviceEndpoint
+        let statusDetail = serviceStatus.contains("降级") ? providerStatusDetail : nil
         let running = isRunning
         let busy = serviceBusy
         menuItemViewUpdater.setView(for: serviceStatusItem) {
             serviceMenuView(
                 title: title,
                 endpoint: endpoint,
+                statusDetail: statusDetail,
                 isRunning: running,
                 isBusy: busy
             )

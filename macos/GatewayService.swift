@@ -262,6 +262,10 @@ extension AppDelegate {
 
     func applyGatewayStatus(_ status: String?) {
         isRunning = status?.contains("gateway: running") == true
+        let providerIssues = providerIssueDetails(fromGatewayStatus: status)
+        providerStatusDetail = providerIssues.isEmpty
+            ? nil
+            : providerIssues.joined(separator: "；")
         let providerReadiness = status?
             .split(separator: "\n")
             .first(where: { $0.hasPrefix("provider-readiness: ") })

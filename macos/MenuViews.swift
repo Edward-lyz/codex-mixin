@@ -3,6 +3,7 @@ import Cocoa
 func serviceMenuView(
     title: String,
     endpoint: String?,
+    statusDetail: String?,
     isRunning: Bool,
     isBusy: Bool
 ) -> NSView {
@@ -40,7 +41,9 @@ func serviceMenuView(
     titleLabel.setContentCompressionResistancePriority(.required, for: .vertical)
 
     let detail: String
-    if let endpoint {
+    if let statusDetail, !statusDetail.isEmpty {
+        detail = statusDetail
+    } else if let endpoint {
         detail = endpoint
     } else if title.contains("失败") {
         detail = "请查看运行日志"
@@ -60,6 +63,7 @@ func serviceMenuView(
     detailLabel.maximumNumberOfLines = 1
     detailLabel.cell?.usesSingleLineMode = true
     detailLabel.setContentCompressionResistancePriority(.required, for: .vertical)
+    detailLabel.toolTip = statusDetail
 
     let textStack = NSStackView(views: [titleLabel, detailLabel])
     textStack.orientation = .vertical

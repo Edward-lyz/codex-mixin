@@ -280,6 +280,17 @@ func decodeProviderList(_ json: String) throws -> ProviderListResponse {
     }
 }
 
+func providerIssueDetails(fromGatewayStatus status: String?) -> [String] {
+    let prefix = "provider-issue: "
+    return status?
+        .split(separator: "\n")
+        .compactMap { line in
+            guard line.hasPrefix(prefix) else { return nil }
+            let detail = String(line.dropFirst(prefix.count))
+            return detail.isEmpty ? nil : detail
+        } ?? []
+}
+
 func decodeProviderTest(_ json: String) throws -> ProviderTestResponse {
     do {
         return try JSONDecoder().decode(ProviderTestResponse.self, from: Data(json.utf8))
