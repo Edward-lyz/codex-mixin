@@ -11,8 +11,8 @@ use serde::{Deserialize, Serialize};
 
 use crate::fusion::{FusionProfile, validate_fusion_model_references, validate_fusion_profiles};
 use crate::provider::{
-    CONFIG_VERSION, ProviderDefinition, ProviderModelSource, ProviderProtocol, ProviderQuotaParser,
-    ProviderRegistry,
+    CONFIG_VERSION, ProviderDefinition, ProviderModel, ProviderModelSource, ProviderProtocol,
+    ProviderQuotaParser, ProviderRegistry,
 };
 
 pub use crate::provider::{
@@ -230,8 +230,9 @@ fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConfig> {
         .get("config_version")
         .and_then(serde_json::Value::as_u64)
     {
-        let parsed: StoredGatewayConfig = serde_json::from_value(document)?;
+        let mut parsed: StoredGatewayConfig = serde_json::from_value(document)?;
         ensure_config_version(u32::try_from(version).context("config_version is too large")?)?;
+        bootstrap_unrefreshed_selected_models(&mut parsed);
         return Ok(parsed);
     } else if document.get("config_version").is_some() {
         anyhow::bail!("config_version must be an unsigned integer");
@@ -256,7 +257,27 @@ fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConfig> {
             "configuration has no config_version and does not match the legacy single-provider format"
         );
     }
-    migrate_legacy_config(serde_json::from_value(document)?)
+    let mut migrated = migrate_legacy_config(serde_json::from_value(document)?)?;
+    bootstrap_unrefreshed_selected_models(&mut migrated);
+    Ok(migrated)
+}
+
+fn bootstrap_unrefreshed_selected_models(config: &mut StoredGatewayConfig) {
+    for provider in &mut config.providers {
+        if provider.models_refreshed_at_ms.is_none()
+            && provider.cached_models.is_empty()
+            && !provider.selected_models.is_empty()
+        {
+            provider.cached_models = provider
+                .selected_models
+                .iter()
+                .map(|id| ProviderModel {
+                    id: id.clone(),
+                    ..ProviderModel::default()
+                })
+                .collect();
+        }
+    }
 }
 
 fn migrate_legacy_config(legacy: LegacyStoredGatewayConfig) -> anyhow::Result<StoredGatewayConfig> {
@@ -570,6 +591,54 @@ mod tests {
         assert_eq!(provider.models_refreshed_at_ms, None);
         assert!(provider.selected_models.is_empty());
         assert_eq!(fs::read_to_string(&path).unwrap(), legacy);
+    }
+
+    #[test]
+    fn selected_models_bootstrap_an_unrefreshed_empty_cache() {
+        let mut provider = crate::provider::baidu_oneapi_provider("baidu-oneapi", "secret");
+        provider.quota_username = Some("user@example.com".to_owned());
+        provider.selected_models = vec!["GLM-5.2".to_owned(), "gpt-5.6-luna".to_owned()];
+        assert!(provider.cached_models.is_empty());
+        assert_eq!(provider.models_refreshed_at_ms, None);
+        let stored = StoredGatewayConfig {
+            providers: vec![provider],
+            ..StoredGatewayConfig::default()
+        };
+
+        let loaded = parse_stored_config(&serde_json::to_string(&stored).unwrap()).unwrap();
+        let provider = &loaded.providers[0];
+
+        assert_eq!(
+            provider
+                .cached_models
+                .iter()
+                .map(|model| model.id.as_str())
+                .collect::<Vec<_>>(),
+            ["GLM-5.2", "gpt-5.6-luna"]
+        );
+        assert_eq!(provider.readiness().routable_model_count, 2);
+        let registry = ProviderRegistry::new(loaded.providers).unwrap();
+        assert!(registry.resolve("GLM-5.2-baidu-oneapi").is_some());
+        assert!(registry.resolve("gpt-5.6-luna-baidu-oneapi").is_some());
+    }
+
+    #[test]
+    fn refreshed_empty_cache_does_not_restore_unavailable_models() {
+        let mut provider = crate::provider::baidu_oneapi_provider("baidu-oneapi", "secret");
+        provider.quota_username = Some("user@example.com".to_owned());
+        provider.selected_models = vec!["removed-model".to_owned()];
+        provider.models_refreshed_at_ms = Some(1);
+        let stored = StoredGatewayConfig {
+            providers: vec![provider],
+            ..StoredGatewayConfig::default()
+        };
+
+        let loaded = parse_stored_config(&serde_json::to_string(&stored).unwrap()).unwrap();
+        let provider = &loaded.providers[0];
+
+        assert!(provider.cached_models.is_empty());
+        assert_eq!(provider.readiness().routable_model_count, 0);
+        assert_eq!(provider.readiness().unavailable_selected_model_count, 1);
     }
 
     #[test]
