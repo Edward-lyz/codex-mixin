@@ -43,3 +43,6 @@ jobs:
         env:
           MACOSX_DEPLOYMENT_TARGET: "12.0"
         run: ./macos/build_app.sh
+      - name: Test macOS DUCX setup flow
+        if: runner.os == 'macOS'
+        run: ./scripts/test_provider_settings_navigation.sh
