@@ -36,14 +36,15 @@ struct SettingsPanelPresentationTests {
         precondition(sheet.level == .normal, "The add-provider sheet must use the normal window level")
         precondition(NSApp.modalWindow == nil, "The add-provider form must not start an app-modal loop")
         let buttons = descendantViews(of: NSButton.self, in: sheet.contentView)
-        guard let duccCheckbox = buttons.first(where: {
-            $0.title.contains("DUCC Header") && $0.title.contains("风险由我自行承担")
+        guard let ducxCheckbox = buttons.first(where: {
+            $0.title.contains("持久 DUCX app-server")
+                && $0.title.contains("禁用已知的 DUCX hooks")
         }) else {
-            preconditionFailure("The Baidu setup must show the DUCC risk acknowledgment")
+            preconditionFailure("The Baidu setup must offer DUCX app-server routing")
         }
         precondition(
-            duccCheckbox.state == .off,
-            "DUCC authentication must be unchecked by default"
+            ducxCheckbox.state == .off,
+            "DUCX app-server routing must be unchecked by default"
         )
 
         parent.endSheet(sheet, returnCode: .cancel)

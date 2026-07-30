@@ -12,7 +12,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private var providers: [ProviderView] = []
     private var codexInstallMode: ManagedCodexInstallMode?
     private var isBusy = false
-    private var remindedDuccProviderIDs = Set<String>()
+    private var remindedDucxProviderIDs = Set<String>()
 
     private let providerTable = NSTableView()
     private let statusLabel = NSTextField(labelWithString: "正在读取供应商…")
@@ -33,11 +33,11 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         target: nil,
         action: nil
     )
-    private let duccAuthButton = NSButton(
+    private let ducxAppServerButton = NSButton(
         checkboxWithTitle: appText(
-            "我自愿启用 DUCC Header 认证，并允许通过本机 DUCC hook 向百度上报请求使用信息；由此产生的费用、数据、账号和合规风险由我自行承担。项目开发者不保证免计费，也不对相关损失承担责任（适用法律另有规定除外）。",
-            "我自願啟用 DUCC Header 認證，並允許透過本機 DUCC hook 向百度上報請求使用資訊；由此產生的費用、資料、帳號和合規風險由我自行承擔。專案開發者不保證免計費，也不對相關損失承擔責任（適用法律另有規定除外）。",
-            "I voluntarily enable DUCC Header authentication and allow the local DUCC hook to report request-usage information to Baidu. I accept all resulting billing, data, account, and compliance risks. The developers do not guarantee billing exemption and are not liable for related losses, except where applicable law provides otherwise."
+            "通过本机持久 DUCX app-server 转发请求。Codex Mixin 会清空附加指令，并禁用已知的 DUCX hooks、插件和工具。",
+            "透過本機持久 DUCX app-server 轉送請求。Codex Mixin 會清空附加指令，並停用已知的 DUCX hooks、外掛與工具。",
+            "Route requests through a persistent local DUCX app-server. Codex Mixin supplies empty extra instructions and disables known DUCX hooks, plugins, and tools."
         ),
         target: nil,
         action: nil
@@ -45,7 +45,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private var customDisplayNameRow: NSView?
     private var customBaseURLRow: NSView?
     private var quotaUsernameRow: NSView?
-    private var duccAuthRow: NSView?
+    private var ducxAppServerRow: NSView?
 
     private let addButton = NSButton(title: "新增", target: nil, action: nil)
     private let removeButton = NSButton(title: "删除", target: nil, action: nil)
@@ -169,19 +169,19 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         managedConfigurationLabel.textColor = .secondaryLabelColor
         managedConfigurationLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         auxiliaryModelUpstreamButton.toolTip = auxiliaryModelDefaultTooltip()
-        duccAuthButton.cell?.wraps = true
-        duccAuthButton.alignment = .left
-        duccAuthButton.translatesAutoresizingMaskIntoConstraints = false
-        duccAuthButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 88).isActive = true
-        let duccAuthRow = compactLabeledView("DUCC", duccAuthButton)
-        self.duccAuthRow = duccAuthRow
+        ducxAppServerButton.cell?.wraps = true
+        ducxAppServerButton.alignment = .left
+        ducxAppServerButton.translatesAutoresizingMaskIntoConstraints = false
+        ducxAppServerButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 88).isActive = true
+        let ducxAppServerRow = compactLabeledView("DUCX", ducxAppServerButton)
+        self.ducxAppServerRow = ducxAppServerRow
         let form = NSStackView(views: [
             compactLabeledView("Provider ID", idField),
             customDisplayNameRow,
             customBaseURLRow,
             compactLabeledView("API 密钥", apiKeyControls),
             quotaUsernameRow,
-            duccAuthRow,
+            ducxAppServerRow,
             compactLabeledView("辅助模型", auxiliaryModelUpstreamButton),
             compactLabeledView("", managedConfigurationLabel),
         ])
@@ -338,7 +338,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                     loadSelectedProvider()
                 }
                 DispatchQueue.main.async { [weak self] in
-                    self?.showLegacyDuccReminderIfNeeded()
+                    self?.showDucxReminderIfNeeded()
                 }
             } catch {
                 statusLabel.stringValue = "读取失败"
@@ -365,13 +365,13 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             : "尚未配置；启用前必须填写"
         quotaUsernameField.stringValue = provider.quotaUsername ?? ""
         auxiliaryModelUpstreamButton.state = provider.auxiliaryModelUpstream ? .on : .off
-        duccAuthButton.state = provider.duccAuth == true ? .on : .off
+        ducxAppServerButton.state = provider.ducxAppServer == true ? .on : .off
         auxiliaryModelUpstreamButton.toolTip = auxiliaryModelTooltip(for: provider)
         let isCustom = provider.presetID == "custom"
         customDisplayNameRow?.isHidden = !isCustom
         customBaseURLRow?.isHidden = !isCustom
         quotaUsernameRow?.isHidden = provider.presetID != "baidu-oneapi"
-        duccAuthRow?.isHidden = provider.presetID != "baidu-oneapi"
+        ducxAppServerRow?.isHidden = provider.presetID != "baidu-oneapi"
         enableButton.title = provider.enabled ? "停用" : "启用"
         statusLabel.stringValue = selectedProviderStatus()
         statusLabel.toolTip = provider.lastModelRefreshError
@@ -388,7 +388,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             field.stringValue = ""
         }
         auxiliaryModelUpstreamButton.state = .off
-        duccAuthButton.state = .off
+        ducxAppServerButton.state = .off
         auxiliaryModelUpstreamButton.toolTip = auxiliaryModelDefaultTooltip()
         statusLabel.stringValue = providers.isEmpty ? "等待新增 Provider" : "请选择 Provider"
         statusLabel.toolTip = nil
@@ -409,7 +409,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             baseURLField,
             quotaUsernameField,
             auxiliaryModelUpstreamButton,
-            duccAuthButton,
+            ducxAppServerButton,
             enableButton,
             testButton,
             saveButton,
@@ -579,13 +579,17 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         }
         appendProviderArgument(&arguments, "--quota-username", values.quotaUsername)
         if values.preset == "baidu-oneapi" {
-            arguments.append(contentsOf: ["--ducc-auth", values.duccAuth ? "true" : "false"])
+            arguments.append(contentsOf: [
+                "--ducx-app-server",
+                values.ducxAppServer ? "true" : "false",
+            ])
         }
         performMutation(
             arguments,
             then: ["providers", "discover", id],
             status: "正在新增并发现模型 \(id)…",
-            selecting: id
+            selecting: id,
+            requiresDucx: values.preset == "baidu-oneapi" && values.ducxAppServer
         )
     }
 
@@ -687,37 +691,39 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         if provider.presetID == "baidu-oneapi" {
             appendProviderArgument(&update, "--quota-username", quotaUsername)
             update.append(contentsOf: [
-                "--ducc-auth",
-                duccAuthButton.state == .on ? "true" : "false",
+                "--ducx-app-server",
+                ducxAppServerButton.state == .on ? "true" : "false",
             ])
         }
         performMutation(
             update,
             status: "正在保存 \(provider.id)…",
-            selecting: provider.id
+            selecting: provider.id,
+            requiresDucx: provider.presetID == "baidu-oneapi"
+                && ducxAppServerButton.state == .on
         )
     }
 
-    private func showLegacyDuccReminderIfNeeded() {
+    private func showDucxReminderIfNeeded() {
         guard !isBusy, let window else { return }
         guard let provider = providers.first(where: {
             $0.presetID == "baidu-oneapi"
-                && $0.duccAuth == nil
-                && !remindedDuccProviderIDs.contains($0.id)
+                && $0.ducxAppServer == nil
+                && !remindedDucxProviderIDs.contains($0.id)
         }) else { return }
-        remindedDuccProviderIDs.insert(provider.id)
+        remindedDucxProviderIDs.insert(provider.id)
 
         let alert = NSAlert()
-        alert.alertStyle = .warning
+        alert.alertStyle = .informational
         alert.messageText = appText(
-            "是否配置 DUCC Header 认证？",
-            "是否設定 DUCC Header 認證？",
-            "Configure DUCC Header Authentication?"
+            "是否通过 DUCX app-server 转发？",
+            "是否透過 DUCX app-server 轉送？",
+            "Route Through DUCX App Server?"
         )
         alert.informativeText = appText(
-            "该功能默认保持关闭。启用后会通过本机 DUCC hook 向百度上报请求使用信息；请先确认已安装并登录 Comate 和 DUCC。DUCC Header 不保证免计费；由此产生的费用、数据、账号和合规风险由你自行承担，项目开发者不对相关损失承担责任（适用法律另有规定除外）。",
-            "此功能預設保持關閉。啟用後會透過本機 DUCC hook 向百度上報請求使用資訊；請先確認已安裝並登入 Comate 和 DUCC。DUCC Header 不保證免計費；由此產生的費用、資料、帳號和合規風險由你自行承擔，專案開發者不對相關損失承擔責任（適用法律另有規定除外）。",
-            "This feature remains off by default. When enabled, the local DUCC hook reports request-usage information to Baidu; first install and sign in to Comate and DUCC. A DUCC Header does not guarantee billing exemption. You accept all resulting billing, data, account, and compliance risks; the developers are not liable for related losses, except where applicable law provides otherwise."
+            "该功能默认关闭。启用后，请求会进入本机持久 DUCX app-server。Codex Mixin 会传入空的附加指令并禁用已知的 hooks、插件和工具，但 DUCX 仍会读取自身登录信息和模型代理配置。请先安装 DUCX 并完成 ducx login。",
+            "此功能預設關閉。啟用後，請求會進入本機持久 DUCX app-server。Codex Mixin 會傳入空的附加指令並停用已知的 hooks、外掛與工具，但 DUCX 仍會讀取自身登入資訊與模型代理設定。請先安裝 DUCX 並完成 ducx login。",
+            "This feature is off by default. When enabled, requests enter a persistent local DUCX app-server. Codex Mixin supplies empty extra instructions and disables known hooks, plugins, and tools, while DUCX still reads its own login and model-proxy configuration. Install DUCX and complete ducx login first."
         )
         alert.addButton(withTitle: appText("前往配置", "前往設定", "Open Settings"))
         alert.addButton(withTitle: appText("保持关闭", "保持關閉", "Keep Disabled"))
@@ -732,22 +738,22 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                     loadSelectedProvider()
                 }
             } else {
-                persistLegacyDuccDisabled(provider.id)
+                persistDucxDisabled(provider.id)
             }
         }
     }
 
-    private func persistLegacyDuccDisabled(_ providerID: String) {
+    private func persistDucxDisabled(_ providerID: String) {
         guard !isBusy else { return }
-        setBusy(true, status: "正在保持 DUCC 认证关闭…")
+        setBusy(true, status: "正在保持 DUCX app-server 关闭…")
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
                 _ = try await runHandler([
-                    "providers", "update", providerID, "--ducc-auth", "false",
+                    "providers", "update", providerID, "--ducx-app-server", "false",
                 ])
                 try await applyHandler()
-                setBusy(false, status: "DUCC 认证保持关闭")
+                setBusy(false, status: "DUCX app-server 保持关闭")
                 reloadProviders(selecting: providerID)
             } catch {
                 setBusy(false, status: "操作失败")
@@ -772,13 +778,20 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         _ arguments: [String],
         then secondArguments: [String]? = nil,
         status: String,
-        selecting providerID: String?
+        selecting providerID: String?,
+        requiresDucx: Bool = false
     ) {
         guard !isBusy else { return }
         setBusy(true, status: status)
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
+                if requiresDucx {
+                    try requireDucxInstalled()
+                    if ducxLoginRequired() {
+                        try await runDucxLogin()
+                    }
+                }
                 _ = try await runHandler(arguments)
                 if let secondArguments {
                     _ = try await runHandler(secondArguments)
@@ -805,6 +818,113 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             }
         }
     }
+
+    private func requireDucxInstalled() throws {
+        guard ducxExecutableURL() != nil else {
+            throw NSError(
+                domain: "CodexMixin.DucxSetup",
+                code: 1,
+                userInfo: [
+                    NSLocalizedDescriptionKey: appText(
+                        "未找到 DUCX。请先安装 DUCX，确认 ~/.baidu-cx/baidu-cx/bin/ducx 可执行，然后重试。",
+                        "找不到 DUCX。請先安裝 DUCX，確認 ~/.baidu-cx/baidu-cx/bin/ducx 可執行，然後重試。",
+                        "DUCX was not found. Install DUCX, verify ~/.baidu-cx/baidu-cx/bin/ducx is executable, then retry."
+                    )
+                ]
+            )
+        }
+    }
+
+    private func runDucxLogin() async throws {
+        guard let executable = ducxExecutableURL() else {
+            throw NSError(
+                domain: "CodexMixin.DucxSetup",
+                code: 2,
+                userInfo: [NSLocalizedDescriptionKey: "未找到 ducx 可执行文件。"]
+            )
+        }
+        setBusy(true, status: "请在终端扫码登录 DUCX…")
+        let directory = FileManager.default.temporaryDirectory
+            .appendingPathComponent("codex-mixin-ducx-login-\(UUID().uuidString)")
+        let script = directory.appendingPathComponent("DUCX Login.command")
+        let status = directory.appendingPathComponent("status")
+        try FileManager.default.createDirectory(
+            at: directory,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: directory) }
+        let contents = """
+        #!/bin/zsh
+        printf '\\033]0;Codex Mixin — DUCX Login\\007'
+        echo '请使用手机扫码登录 DUCX。登录完成后，本窗口会自动退出。'
+        \(shellQuoted(executable.path)) login
+        result=$?
+        printf '%s' "$result" > \(shellQuoted(status.path))
+        exit "$result"
+        """
+        try contents.write(to: script, atomically: true, encoding: .utf8)
+        try FileManager.default.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: script.path
+        )
+        guard NSWorkspace.shared.open(script) else {
+            throw NSError(
+                domain: "CodexMixin.DucxSetup",
+                code: 3,
+                userInfo: [NSLocalizedDescriptionKey: "无法打开 Terminal 执行 ducx login。"]
+            )
+        }
+        for _ in 0..<300 {
+            if let value = try? String(contentsOf: status, encoding: .utf8)
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            {
+                guard value == "0" else {
+                    throw NSError(
+                        domain: "CodexMixin.DucxSetup",
+                        code: 4,
+                        userInfo: [
+                            NSLocalizedDescriptionKey:
+                                "ducx login 未成功完成（退出码 \(value)）。"
+                        ]
+                    )
+                }
+                return
+            }
+            try await Task.sleep(nanoseconds: 1_000_000_000)
+        }
+        throw NSError(
+            domain: "CodexMixin.DucxSetup",
+            code: 5,
+            userInfo: [NSLocalizedDescriptionKey: "等待 ducx login 超时。"]
+        )
+    }
+}
+
+private func ducxExecutableURL() -> URL? {
+    let home = FileManager.default.homeDirectoryForCurrentUser
+    let installed = home.appendingPathComponent(".baidu-cx/baidu-cx/bin/ducx")
+    if FileManager.default.isExecutableFile(atPath: installed.path) {
+        return installed
+    }
+    let environment = ProcessInfo.processInfo.environment
+    for directory in environment["PATH"]?.split(separator: ":") ?? [] {
+        let candidate = URL(fileURLWithPath: String(directory))
+            .appendingPathComponent("ducx")
+        if FileManager.default.isExecutableFile(atPath: candidate.path) {
+            return candidate
+        }
+    }
+    return nil
+}
+
+private func ducxLoginRequired() -> Bool {
+    let user = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".baidu-cx/user.json")
+    return !FileManager.default.isReadableFile(atPath: user.path)
+}
+
+private func shellQuoted(_ value: String) -> String {
+    "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
 }
 
 func compactLabeledView(_ title: String, _ field: NSView) -> NSView {

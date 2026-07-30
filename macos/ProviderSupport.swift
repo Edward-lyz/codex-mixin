@@ -44,7 +44,7 @@ struct ProviderView: Decodable {
     let quotaUsername: String?
     let quotaCurrency: String?
     let quotaParser: String
-    let duccAuth: Bool?
+    let ducxAppServer: Bool?
     let selectedModels: [String]
     let newModels: [String]
     let unavailableSelectedModels: [String]
@@ -71,7 +71,7 @@ struct ProviderView: Decodable {
         case quotaUsername = "quota_username"
         case quotaCurrency = "quota_currency"
         case quotaParser = "quota_parser"
-        case duccAuth = "ducc_auth"
+        case ducxAppServer = "ducx_app_server"
         case selectedModels = "selected_models"
         case newModels = "new_models"
         case unavailableSelectedModels = "unavailable_selected_models"

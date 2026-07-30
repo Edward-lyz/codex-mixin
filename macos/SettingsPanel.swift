@@ -6,7 +6,7 @@ struct AddProviderFormValues {
     let baseURL: String
     let apiKey: String
     let quotaUsername: String
-    let duccAuth: Bool
+    let ducxAppServer: Bool
 }
 
 final class ModalActionTarget: NSObject {
@@ -72,21 +72,21 @@ func runAddProviderSheet(
         appText("API 地址", "API 位址", "API URL"),
         baseURLField
     )
-    let duccAuthButton = NSButton(
+    let ducxAppServerButton = NSButton(
         checkboxWithTitle: appText(
-            "我自愿启用 DUCC Header 认证，并允许通过本机 DUCC hook 向百度上报请求使用信息；由此产生的费用、数据、账号和合规风险由我自行承担。项目开发者不保证免计费，也不对相关损失承担责任（适用法律另有规定除外）。",
-            "我自願啟用 DUCC Header 認證，並允許透過本機 DUCC hook 向百度上報請求使用資訊；由此產生的費用、資料、帳號和合規風險由我自行承擔。專案開發者不保證免計費，也不對相關損失承擔責任（適用法律另有規定除外）。",
-            "I voluntarily enable DUCC Header authentication and allow the local DUCC hook to report request-usage information to Baidu. I accept all resulting billing, data, account, and compliance risks. The developers do not guarantee billing exemption and are not liable for related losses, except where applicable law provides otherwise."
+            "通过本机持久 DUCX app-server 转发请求。Codex Mixin 会清空附加指令，并禁用已知的 DUCX hooks、插件和工具。",
+            "透過本機持久 DUCX app-server 轉送請求。Codex Mixin 會清空附加指令，並停用已知的 DUCX hooks、外掛與工具。",
+            "Route requests through a persistent local DUCX app-server. Codex Mixin supplies empty extra instructions and disables known DUCX hooks, plugins, and tools."
         ),
         target: nil,
         action: nil
     )
-    duccAuthButton.state = .off
-    duccAuthButton.cell?.wraps = true
-    duccAuthButton.alignment = .left
-    duccAuthButton.translatesAutoresizingMaskIntoConstraints = false
-    duccAuthButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 88).isActive = true
-    let duccAuthRow = labeledView("DUCC", duccAuthButton)
+    ducxAppServerButton.state = .off
+    ducxAppServerButton.cell?.wraps = true
+    ducxAppServerButton.alignment = .left
+    ducxAppServerButton.translatesAutoresizingMaskIntoConstraints = false
+    ducxAppServerButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 88).isActive = true
+    let ducxAppServerRow = labeledView("DUCX", ducxAppServerButton)
 
     let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 650, height: 575))
     let panel = NSWindow(
@@ -138,7 +138,7 @@ func runAddProviderSheet(
         quotaUsernameRow.isHidden = provider != "baidu-oneapi"
         displayNameRow.isHidden = !isCustom
         baseURLRow.isHidden = !isCustom
-        duccAuthRow.isHidden = provider != "baidu-oneapi"
+        ducxAppServerRow.isHidden = provider != "baidu-oneapi"
         tokenButton.isHidden = isCustom
     }
     providerPopup.target = providerTarget
@@ -151,7 +151,7 @@ func runAddProviderSheet(
         baseURLRow,
         labeledView("API Key", apiKeyField),
         quotaUsernameRow,
-        duccAuthRow,
+        ducxAppServerRow,
     ])
     formStack.orientation = .vertical
     formStack.spacing = 10
@@ -241,7 +241,7 @@ func runAddProviderSheet(
             baseURL: baseURL,
             apiKey: apiKey,
             quotaUsername: username,
-            duccAuth: duccAuthButton.state == .on
+            ducxAppServer: ducxAppServerButton.state == .on
         )
         parentWindow.endSheet(panel, returnCode: .OK)
     }

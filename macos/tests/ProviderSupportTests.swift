@@ -26,6 +26,7 @@ struct ProviderSupportTests {
                   "model_source": {"kind": "baidu_oneapi", "path": "/v1/models"},
                   "api_key_configured": true,
                   "quota_parser": "baidu_one_api",
+                  "ducx_app_server": true,
                   "selected_models": ["Claude Opus 4.6"],
                   "new_models": [],
                   "unavailable_selected_models": [],
@@ -101,7 +102,8 @@ struct ProviderSupportTests {
         let autoReviewOnly = response.providers[1]
         let unsupported = response.providers[2]
         precondition(response.codexInstallMode == .customOnly)
-        precondition(baidu.duccAuth == nil)
+        precondition(baidu.ducxAppServer == true)
+        precondition(autoReviewOnly.ducxAppServer == nil)
         precondition(baidu.auxiliaryModelUpstream)
         precondition(!autoReviewOnly.auxiliaryModelUpstream)
         precondition(baidu.auxiliaryModelSupport == .autoReviewAndVoice)

@@ -164,14 +164,25 @@ codex-mixin logs -n 200
 
 设置窗口里的上游地址只填根地址。路径由 provider preset 补齐。
 Baidu OneAPI 的额度接口必须同时填写额度用户名；CLI 和 App 都会在保存时校验。
-Baidu OneAPI 的 DUCC Header 认证默认关闭。首次新增 Baidu Provider 时会显示风险确认；
-旧配置尚未作出选择时，打开供应商设置也会收到提醒。只有用户明确勾选后，Codex Mixin
-才会通过本地 `ducc` 获取签名的 `comate_custom_header`，因此启用前必须已安装并登录
-Comate 和 DUCC。启用后，网关还会按 DUCC 的 SessionStart、UserPromptSubmit、Stop
-和 SessionEnd hook 生命周期，调用本机 `data-report` 向百度上报请求使用信息。签名
-Header 仅保存在网关进程内存中，签发失败时请求会被阻止，不会静默回退；hook 上报失败
-只记录警告，不中断模型响应。DUCC Header 不保证免计费，相关费用、数据、账号和合规
-风险由用户自行承担，项目开发者不对相关损失承担责任（适用法律另有规定除外）。
+启用 Baidu OneAPI 的「DUCX app-server」后，Responses 请求会通过一个按需启动、持续复用的
+本机 DUCX 进程转发，而不是提取或改写 DUCC Header。网关启动时不会启动 DUCX；首次请求
+初始化完成后，后续请求复用同一进程，避免在热路径反复拉起子进程。
+
+Codex Mixin 会把原请求的 instructions、文本输入和 function tools 映射到 DUCX 协议，
+传入空的 developer instructions，并禁用已知的 DUCX hooks、插件、内置工具和技能。
+初始化还会强制检查 DUCX 暴露的 hook 数量为零；检查失败就拒绝转发。目前图片输入和
+非 function 内置工具会明确报错，不会静默丢弃。DUCX 仍需读取自身的登录信息与模型代理
+配置来完成请求，但 Codex Mixin 不会写入这些配置。仓库中的隔离探针会对
+`config.toml`、`hooks.json` 和报告相关文件做前后指纹检查。
+
+启用前请先安装 DUCX，并完成 `ducx login`。macOS App 会检测
+`~/.baidu-cx/baidu-cx/bin/ducx`（也支持 PATH）；未安装时会提示用户先安装，不会下载或
+执行未知安装脚本。缺少 DUCX 登录文件时，App 会打开独立 Terminal 窗口执行
+`ducx login`，扫码完成后自动关闭窗口并继续保存。
+Provider 可通过 `--header-env NAME=ENV_VAR` 转发用户自行提供的自定义请求头。配置文件
+只保存 Header 名和环境变量名，不保存值；网关启动时读取一次，缺失或空值会阻止启动，
+更新值后需重启网关。`authorization`、`x-api-key` 和传输层 Header 不允许覆盖。Codex
+Mixin 不生成、校验或授权任何凭据，用户须自行确认对相关账号、凭据和服务有使用权。
 新增或刷新 `custom` Provider 时会并发尝试 New API、Sub2API、OpenRouter
 等常见只读额度端点；只有返回可识别额度数据的端点才会保存，不会发起付费推理。
 
@@ -562,17 +573,30 @@ Then start a new Codex CLI session.
 
 Only enter the upstream root URL in the settings window. Codex Mixin adds provider-specific paths.
 The Baidu OneAPI quota endpoint also requires a quota username; both the CLI and app validate it before saving.
-DUCC Header authentication is off by default for Baidu OneAPI. The first Baidu provider setup
-shows a risk acknowledgment, and legacy configurations with no recorded choice are reminded
-when provider settings open. Codex Mixin asks the local `ducc` executable for a signed
-`comate_custom_header` only after explicit opt-in, so Comate and DUCC must be installed and
-signed in before enabling it. Once enabled, the gateway also invokes the local `data-report`
-program using DUCC's SessionStart, UserPromptSubmit, Stop, and SessionEnd hook lifecycle to
-report request-usage information to Baidu. The signed header stays in gateway process memory,
-and signing failures stop the request instead of silently falling back; hook-reporting failures
-are logged without interrupting the model response. A DUCC Header does not guarantee billing
-exemption: users accept the resulting billing, data, account, and compliance risks, and the
-developers are not liable for related losses except where applicable law provides otherwise.
+When “DUCX app-server” is enabled for Baidu OneAPI, Responses requests are routed through one
+local DUCX process that starts lazily and stays alive for reuse. Codex Mixin does not extract or
+rewrite a DUCC Header, and gateway startup does not start DUCX. After first-request initialization,
+the hot path reuses the same process instead of spawning one per request.
+
+Codex Mixin maps the original instructions, text input, and function tools into the DUCX protocol,
+supplies empty developer instructions, and disables known DUCX hooks, plugins, built-in tools, and
+skills. Initialization also requires DUCX to report zero exposed hooks or routing fails closed.
+Image input and non-function built-in tools currently fail explicitly instead of being silently
+dropped. DUCX still reads its own login and model-proxy configuration to complete requests, but
+Codex Mixin never writes those files. The isolated repository probe fingerprints `config.toml`,
+`hooks.json`, and reporting-related files before and after execution.
+
+Install DUCX and complete `ducx login` before enabling this route. The macOS App checks
+`~/.baidu-cx/baidu-cx/bin/ducx` and PATH. If DUCX is missing, it asks the user to install it first
+and does not download or execute an unknown installer. If the DUCX login file is missing, the App
+opens a dedicated Terminal window for `ducx login`, closes it after successful QR-code login, and
+continues saving the provider.
+Providers can forward user-supplied custom request headers with
+`--header-env NAME=ENV_VAR`. The configuration stores only the header and environment-variable
+names, never the value. The gateway reads values once at startup and fails closed when a value is
+missing or empty; restart it after changing a value. Primary authentication and transport headers
+cannot be overridden. Codex Mixin does not generate, validate, or authorize credentials; users
+must confirm that they are entitled to use the relevant account, credential, and service.
 When a `custom` provider is added or refreshed, Codex Mixin concurrently probes common
 read-only quota endpoints used by New API, Sub2API, OpenRouter, and similar gateways.
 It stores an endpoint only after receiving recognizable quota data and never runs paid inference.
