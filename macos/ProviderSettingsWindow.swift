@@ -35,9 +35,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     )
     private let ducxAppServerButton = NSButton(
         checkboxWithTitle: appText(
-            "通过本机持久 DUCX app-server 转发请求；缺失时可确认下载。Codex Mixin 会清空附加指令，并禁用已知的 DUCX hooks、插件和工具。",
-            "透過本機持久 DUCX app-server 轉送請求；缺少時可確認下載。Codex Mixin 會清空附加指令，並停用已知的 DUCX hooks、外掛與工具。",
-            "Route requests through a persistent local DUCX app-server, with a confirmed download if missing. Codex Mixin supplies empty extra instructions and disables known DUCX hooks, plugins, and tools."
+            "通过 Codex Mixin 托管的持久 DUCX app-server 转发请求；首次启用会确认下载独立副本，不复用系统 DUCX。",
+            "透過 Codex Mixin 管理的持久 DUCX app-server 轉送請求；首次啟用會確認下載獨立副本，不重用系統 DUCX。",
+            "Route requests through a persistent DUCX app-server managed by Codex Mixin. First use confirms a separate download instead of reusing a system DUCX."
         ),
         target: nil,
         action: nil
@@ -721,9 +721,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             "Route Through DUCX App Server?"
         )
         alert.informativeText = appText(
-            "该功能默认关闭。启用后，请求会进入本机持久 DUCX app-server。Codex Mixin 会传入空的附加指令并禁用已知的 hooks、插件和工具，但 DUCX 仍会读取自身登录信息和模型代理配置。缺少 DUCX 时可确认下载；未登录时会打开终端执行 ducx login。",
-            "此功能預設關閉。啟用後，請求會進入本機持久 DUCX app-server。Codex Mixin 會傳入空的附加指令並停用已知的 hooks、外掛與工具，但 DUCX 仍會讀取自身登入資訊與模型代理設定。缺少 DUCX 時可確認下載；未登入時會開啟終端執行 ducx login。",
-            "This feature is off by default. When enabled, requests enter a persistent local DUCX app-server. Codex Mixin supplies empty extra instructions and disables known hooks, plugins, and tools, while DUCX still reads its own login and model-proxy configuration. If DUCX is missing, you can confirm a download; if login is missing, Terminal opens for ducx login."
+            "该功能默认关闭。启用后，Codex Mixin 会下载并只使用自己的 DUCX 副本，不复用系统 DUCX。请求由 DUCX 添加认证 Header，再经本机净化入口恢复原始内容后发送。首次启用会确认下载；未登录时会打开终端执行 ducx login。",
+            "此功能預設關閉。啟用後，Codex Mixin 會下載並只使用自己的 DUCX 副本，不重用系統 DUCX。請求由 DUCX 加入認證 Header，再經本機淨化入口還原原始內容後送出。首次啟用會確認下載；未登入時會開啟終端執行 ducx login。",
+            "This feature is off by default. When enabled, Codex Mixin downloads and exclusively uses its own DUCX copy instead of reusing a system DUCX. DUCX adds the authentication header, then a local sanitizer restores the original request before forwarding it. First use confirms the download; if login is missing, Terminal opens for ducx login."
         )
         alert.addButton(withTitle: appText("前往配置", "前往設定", "Open Settings"))
         alert.addButton(withTitle: appText("保持关闭", "保持關閉", "Keep Disabled"))
@@ -838,9 +838,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 "Download DUCX?"
             ),
             message: appText(
-                "未检测到 DUCX。继续后将通过 HTTP 从百度 BCE BOS 下载约 100 MB 的 DUCX \(release.version)：\n\n\(release.archiveURL.absoluteString)\n\n文件会解压到：\n\(destination.path)\n\nCodex Mixin 只使用该目录中的 app-server；不会运行安装脚本，也不会修改 ~/.baidu-cx/baidu-cx。",
-                "未偵測到 DUCX。繼續後將透過 HTTP 從百度 BCE BOS 下載約 100 MB 的 DUCX \(release.version)：\n\n\(release.archiveURL.absoluteString)\n\n檔案會解壓縮到：\n\(destination.path)\n\nCodex Mixin 只使用該目錄中的 app-server；不會執行安裝指令碼，也不會修改 ~/.baidu-cx/baidu-cx。",
-                "DUCX was not found. Continuing downloads about 100 MB of DUCX \(release.version) over HTTP from Baidu BCE BOS:\n\n\(release.archiveURL.absoluteString)\n\nFiles are extracted to:\n\(destination.path)\n\nCodex Mixin only uses the app-server in that directory. It does not run an installer script or modify ~/.baidu-cx/baidu-cx."
+                "Codex Mixin 尚未安装自己的 DUCX 副本。无论系统是否已安装 DUCX，继续后都会通过 HTTP 从百度 BCE BOS 下载约 100 MB 的 DUCX \(release.version)：\n\n\(release.archiveURL.absoluteString)\n\n文件会解压到：\n\(destination.path)\n\nCodex Mixin 只使用该托管目录中的 app-server；不会运行安装脚本，也不会修改或复用 ~/.baidu-cx/baidu-cx。",
+                "Codex Mixin 尚未安裝自己的 DUCX 副本。無論系統是否已安裝 DUCX，繼續後都會透過 HTTP 從百度 BCE BOS 下載約 100 MB 的 DUCX \(release.version)：\n\n\(release.archiveURL.absoluteString)\n\n檔案會解壓縮到：\n\(destination.path)\n\nCodex Mixin 只使用該管理目錄中的 app-server；不會執行安裝指令碼，也不會修改或重用 ~/.baidu-cx/baidu-cx。",
+                "Codex Mixin has not installed its own DUCX copy. Regardless of any system DUCX installation, continuing downloads about 100 MB of DUCX \(release.version) over HTTP from Baidu BCE BOS:\n\n\(release.archiveURL.absoluteString)\n\nFiles are extracted to:\n\(destination.path)\n\nCodex Mixin only uses the app-server in this managed directory. It does not run an installer script or modify or reuse ~/.baidu-cx/baidu-cx."
             )
         ) else {
             throw NSError(
@@ -931,31 +931,8 @@ private struct DucxRelease {
 
 private let ducxDownloadBaseURL = "http://baidu-cc-client.bj.bcebos.com/baidu-cx"
 
-private func managedDucxRoot() -> URL {
-    FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".codex-mixin/ducx", isDirectory: true)
-}
-
 private func ducxExecutableURL() -> URL? {
-    let home = FileManager.default.homeDirectoryForCurrentUser
-    let managed = managedDucxRoot()
-        .appendingPathComponent("current/bin/ducx")
-    if FileManager.default.isExecutableFile(atPath: managed.path) {
-        return managed
-    }
-    let installed = home.appendingPathComponent(".baidu-cx/baidu-cx/bin/ducx")
-    if FileManager.default.isExecutableFile(atPath: installed.path) {
-        return installed
-    }
-    let environment = ProcessInfo.processInfo.environment
-    for directory in environment["PATH"]?.split(separator: ":") ?? [] {
-        let candidate = URL(fileURLWithPath: String(directory))
-            .appendingPathComponent("ducx")
-        if FileManager.default.isExecutableFile(atPath: candidate.path) {
-            return candidate
-        }
-    }
-    return nil
+    managedDucxExecutableURL()
 }
 
 private func fetchLatestDucxRelease() async throws -> DucxRelease {

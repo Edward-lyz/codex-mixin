@@ -74,9 +74,9 @@ func runAddProviderSheet(
     )
     let ducxAppServerButton = NSButton(
         checkboxWithTitle: appText(
-            "通过本机持久 DUCX app-server 转发请求；缺失时可确认下载。Codex Mixin 会清空附加指令，并禁用已知的 DUCX hooks、插件和工具。",
-            "透過本機持久 DUCX app-server 轉送請求；缺少時可確認下載。Codex Mixin 會清空附加指令，並停用已知的 DUCX hooks、外掛與工具。",
-            "Route requests through a persistent local DUCX app-server, with a confirmed download if missing. Codex Mixin supplies empty extra instructions and disables known DUCX hooks, plugins, and tools."
+            "通过 Codex Mixin 托管的持久 DUCX app-server 转发请求；首次启用会确认下载独立副本，不复用系统 DUCX。",
+            "透過 Codex Mixin 管理的持久 DUCX app-server 轉送請求；首次啟用會確認下載獨立副本，不重用系統 DUCX。",
+            "Route requests through a persistent DUCX app-server managed by Codex Mixin. First use confirms a separate download instead of reusing a system DUCX."
         ),
         target: nil,
         action: nil

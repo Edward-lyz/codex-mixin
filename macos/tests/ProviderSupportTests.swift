@@ -7,6 +7,46 @@ enum GatewayError: Error {
 @main
 struct ProviderSupportTests {
     static func main() throws {
+        let fileManager = FileManager.default
+        let testHome = fileManager.temporaryDirectory
+            .appendingPathComponent("codex-mixin-managed-ducx-\(UUID().uuidString)")
+        try fileManager.createDirectory(at: testHome, withIntermediateDirectories: true)
+        defer { try? fileManager.removeItem(at: testHome) }
+        let systemDucx = testHome.appendingPathComponent(".baidu-cx/baidu-cx/bin/ducx")
+        try fileManager.createDirectory(
+            at: systemDucx.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        precondition(fileManager.createFile(atPath: systemDucx.path, contents: Data()))
+        try fileManager.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: systemDucx.path
+        )
+        precondition(
+            managedDucxExecutableURL(
+                homeDirectory: testHome,
+                fileManager: fileManager
+            ) == nil,
+            "A system DUCX installation must not satisfy the managed DUCX requirement"
+        )
+        let managedDucx = managedDucxRoot(homeDirectory: testHome)
+            .appendingPathComponent("current/bin/ducx")
+        try fileManager.createDirectory(
+            at: managedDucx.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        precondition(fileManager.createFile(atPath: managedDucx.path, contents: Data()))
+        try fileManager.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: managedDucx.path
+        )
+        precondition(
+            managedDucxExecutableURL(
+                homeDirectory: testHome,
+                fileManager: fileManager
+            ) == managedDucx
+        )
+
         let response = try decodeProviderList(
             """
             {

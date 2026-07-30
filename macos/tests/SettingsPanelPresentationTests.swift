@@ -38,7 +38,7 @@ struct SettingsPanelPresentationTests {
         let buttons = descendantViews(of: NSButton.self, in: sheet.contentView)
         guard let ducxCheckbox = buttons.first(where: {
             $0.title.contains("持久 DUCX app-server")
-                && $0.title.contains("禁用已知的 DUCX hooks")
+                && $0.title.contains("不复用系统 DUCX")
         }) else {
             preconditionFailure("The Baidu setup must offer DUCX app-server routing")
         }

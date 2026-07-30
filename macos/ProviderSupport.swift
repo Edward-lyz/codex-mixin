@@ -1,5 +1,20 @@
 import Foundation
 
+func managedDucxRoot(
+    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+) -> URL {
+    homeDirectory.appendingPathComponent(".codex-mixin/ducx", isDirectory: true)
+}
+
+func managedDucxExecutableURL(
+    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+    fileManager: FileManager = .default
+) -> URL? {
+    let executable = managedDucxRoot(homeDirectory: homeDirectory)
+        .appendingPathComponent("current/bin/ducx")
+    return fileManager.isExecutableFile(atPath: executable.path) ? executable : nil
+}
+
 enum ManagedCodexInstallMode: String, Decodable {
     case customOnly = "custom_only"
     case codexOAuthProxy = "codex_oauth_proxy"

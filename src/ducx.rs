@@ -17,21 +17,14 @@ use tokio::sync::{Mutex, broadcast, oneshot, watch};
 type PendingResponse = oneshot::Sender<anyhow::Result<Value>>;
 
 pub(crate) fn default_ducx_executable() -> Option<PathBuf> {
-    let installed = env::var_os("HOME").map(PathBuf::from).and_then(|home| {
-        [
-            home.join(".codex-mixin/ducx/current/bin/ducx"),
-            home.join(".baidu-cx/baidu-cx/bin/ducx"),
-        ]
-        .into_iter()
-        .find(|path| path.is_file())
-    });
-    installed.or_else(|| {
-        env::var_os("PATH").and_then(|paths| {
-            env::split_paths(&paths)
-                .map(|path| path.join("ducx"))
-                .find(|path| path.is_file())
-        })
-    })
+    env::var_os("HOME")
+        .map(PathBuf::from)
+        .and_then(|home| managed_ducx_executable(&home))
+}
+
+fn managed_ducx_executable(home: &Path) -> Option<PathBuf> {
+    let executable = home.join(".codex-mixin/ducx/current/bin/ducx");
+    executable.is_file().then_some(executable)
 }
 
 #[derive(Clone, Debug)]
@@ -652,6 +645,20 @@ mod tests {
     use serde_json::json;
 
     use super::*;
+
+    #[test]
+    fn managed_ducx_discovery_ignores_system_installation() {
+        let home = tempfile::tempdir().unwrap();
+        let system = home.path().join(".baidu-cx/baidu-cx/bin/ducx");
+        std::fs::create_dir_all(system.parent().unwrap()).unwrap();
+        std::fs::write(&system, b"system").unwrap();
+        assert_eq!(managed_ducx_executable(home.path()), None);
+
+        let managed = home.path().join(".codex-mixin/ducx/current/bin/ducx");
+        std::fs::create_dir_all(managed.parent().unwrap()).unwrap();
+        std::fs::write(&managed, b"managed").unwrap();
+        assert_eq!(managed_ducx_executable(home.path()), Some(managed));
+    }
 
     fn mock_server() -> (tempfile::TempDir, DucxProcessConfig) {
         let directory = tempfile::tempdir().unwrap();
