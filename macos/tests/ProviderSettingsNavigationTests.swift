@@ -35,6 +35,39 @@ struct ProviderSettingsNavigationTests {
             setupScript.contains("trap 'exit 130' HUP INT TERM"),
             "Closing the setup terminal early must fail the App workflow promptly"
         )
+        let managedRoot = FileManager.default.temporaryDirectory
+            .appendingPathComponent("codex-mixin-ducx-layout-\(UUID().uuidString)")
+        try FileManager.default.createDirectory(
+            at: managedRoot,
+            withIntermediateDirectories: true
+        )
+        defer { try? FileManager.default.removeItem(at: managedRoot) }
+        try replaceManagedDucxLink(
+            named: "baidu-cx",
+            destination: "10.145.0.3",
+            root: managedRoot,
+            fileManager: .default
+        )
+        try replaceManagedDucxLink(
+            named: "current",
+            destination: "10.145.0.3",
+            root: managedRoot,
+            fileManager: .default
+        )
+        let officialDestination = try FileManager.default.destinationOfSymbolicLink(
+            atPath: managedRoot.appendingPathComponent("baidu-cx").path
+        )
+        let currentDestination = try FileManager.default.destinationOfSymbolicLink(
+            atPath: managedRoot.appendingPathComponent("current").path
+        )
+        precondition(
+            officialDestination == "10.145.0.3",
+            "The managed install must expose DUCX's official baidu-cx runtime entry"
+        )
+        precondition(
+            currentDestination == "10.145.0.3",
+            "The managed install must retain Codex Mixin's stable current entry"
+        )
         let syntaxCheck = Process()
         syntaxCheck.executableURL = URL(fileURLWithPath: "/bin/zsh")
         syntaxCheck.arguments = ["-n", "-c", setupScript]

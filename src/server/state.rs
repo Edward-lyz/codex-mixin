@@ -118,6 +118,7 @@ impl AppState {
                     "DUCX app-server is enabled but the ducx executable was not found".to_owned(),
                 )
             })?;
+        crate::ducx::ensure_managed_ducx_layout(&executable).map_err(GatewayError::Other)?;
         let timeout = self.config.request_timeout;
         let runtime = self
             .ducx_runtime

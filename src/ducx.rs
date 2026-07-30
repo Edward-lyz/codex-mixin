@@ -22,6 +22,55 @@ pub(crate) fn default_ducx_executable() -> Option<PathBuf> {
         .and_then(|home| managed_ducx_executable(&home))
 }
 
+pub(crate) fn ensure_managed_ducx_layout(executable: &Path) -> anyhow::Result<()> {
+    let Some(bin_directory) = executable.parent() else {
+        return Ok(());
+    };
+    let Some(current) = bin_directory.parent() else {
+        return Ok(());
+    };
+    if current.file_name().and_then(|name| name.to_str()) != Some("current") {
+        return Ok(());
+    }
+    let Some(root) = current.parent() else {
+        return Ok(());
+    };
+    if root.file_name().and_then(|name| name.to_str()) != Some("ducx")
+        || root
+            .parent()
+            .and_then(Path::file_name)
+            .and_then(|name| name.to_str())
+            != Some(".codex-mixin")
+    {
+        return Ok(());
+    }
+
+    let official_entry = root.join("baidu-cx");
+    if !official_entry.exists() {
+        let target = std::fs::read_link(current)
+            .with_context(|| format!("read managed DUCX link {}", current.display()))?;
+        match std::os::unix::fs::symlink(&target, &official_entry) {
+            Ok(()) => {}
+            Err(error) if error.kind() == std::io::ErrorKind::AlreadyExists => {}
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!(
+                        "create managed DUCX runtime link {} -> {}",
+                        official_entry.display(),
+                        target.display()
+                    )
+                });
+            }
+        }
+    }
+    ensure!(
+        official_entry.join("version").is_file(),
+        "managed DUCX runtime layout is incomplete: {} is missing",
+        official_entry.join("version").display()
+    );
+    Ok(())
+}
+
 fn managed_ducx_executable(home: &Path) -> Option<PathBuf> {
     let executable = home.join(".codex-mixin/ducx/current/bin/ducx");
     executable.is_file().then_some(executable)
@@ -658,6 +707,26 @@ mod tests {
         std::fs::create_dir_all(managed.parent().unwrap()).unwrap();
         std::fs::write(&managed, b"managed").unwrap();
         assert_eq!(managed_ducx_executable(home.path()), Some(managed));
+    }
+
+    #[test]
+    fn repairs_official_runtime_link_for_managed_install() {
+        let home = tempfile::tempdir().unwrap();
+        let root = home.path().join(".codex-mixin/ducx");
+        let version = root.join("10.145.0.3");
+        std::fs::create_dir_all(version.join("bin")).unwrap();
+        std::fs::write(version.join("bin/ducx"), b"managed").unwrap();
+        std::fs::write(version.join("version"), b"10.145.0.3\n").unwrap();
+        std::os::unix::fs::symlink("10.145.0.3", root.join("current")).unwrap();
+        let executable = root.join("current/bin/ducx");
+
+        ensure_managed_ducx_layout(&executable).unwrap();
+
+        assert_eq!(
+            std::fs::read_link(root.join("baidu-cx")).unwrap(),
+            PathBuf::from("10.145.0.3")
+        );
+        assert!(root.join("baidu-cx/version").is_file());
     }
 
     fn mock_server() -> (tempfile::TempDir, DucxProcessConfig) {

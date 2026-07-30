@@ -1217,29 +1217,50 @@ private func installDucxArchive(
         try fileManager.moveItem(at: staging, to: versionDirectory)
     }
 
-    let current = root.appendingPathComponent("current")
-    let temporaryLink = root.appendingPathComponent(".current-\(UUID().uuidString)")
-    try fileManager.createSymbolicLink(
-        atPath: temporaryLink.path,
-        withDestinationPath: release.version
+    try replaceManagedDucxLink(
+        named: "baidu-cx",
+        destination: release.version,
+        root: root,
+        fileManager: fileManager
     )
-    let existingLinkDestination = try? fileManager.destinationOfSymbolicLink(
-        atPath: current.path
+    try replaceManagedDucxLink(
+        named: "current",
+        destination: release.version,
+        root: root,
+        fileManager: fileManager
     )
-    if fileManager.fileExists(atPath: current.path) || existingLinkDestination != nil {
-        guard existingLinkDestination != nil else {
-            try? fileManager.removeItem(at: temporaryLink)
-            throw GatewayError.command("DUCX current 路径已存在且不是符号链接。")
-        }
-        try fileManager.removeItem(at: current)
-    }
-    try fileManager.moveItem(at: temporaryLink, to: current)
 
+    let current = root.appendingPathComponent("current")
     let executable = current.appendingPathComponent("bin/ducx")
     guard fileManager.isExecutableFile(atPath: executable.path) else {
         throw GatewayError.command("DUCX 下载完成，但入口不可执行。")
     }
     return executable
+}
+
+func replaceManagedDucxLink(
+    named name: String,
+    destination: String,
+    root: URL,
+    fileManager: FileManager
+) throws {
+    let link = root.appendingPathComponent(name)
+    let temporaryLink = root.appendingPathComponent(".\(name)-\(UUID().uuidString)")
+    try fileManager.createSymbolicLink(
+        atPath: temporaryLink.path,
+        withDestinationPath: destination
+    )
+    let existingLinkDestination = try? fileManager.destinationOfSymbolicLink(
+        atPath: link.path
+    )
+    if fileManager.fileExists(atPath: link.path) || existingLinkDestination != nil {
+        guard existingLinkDestination != nil else {
+            try? fileManager.removeItem(at: temporaryLink)
+            throw GatewayError.command("DUCX \(name) 路径已存在且不是符号链接。")
+        }
+        try fileManager.removeItem(at: link)
+    }
+    try fileManager.moveItem(at: temporaryLink, to: link)
 }
 
 private func ducxLoginRequired() -> Bool {
