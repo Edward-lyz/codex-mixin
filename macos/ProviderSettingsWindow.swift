@@ -35,9 +35,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     )
     private let ducxAppServerButton = NSButton(
         checkboxWithTitle: appText(
-            "通过本机持久 DUCX app-server 转发请求。Codex Mixin 会清空附加指令，并禁用已知的 DUCX hooks、插件和工具。",
-            "透過本機持久 DUCX app-server 轉送請求。Codex Mixin 會清空附加指令，並停用已知的 DUCX hooks、外掛與工具。",
-            "Route requests through a persistent local DUCX app-server. Codex Mixin supplies empty extra instructions and disables known DUCX hooks, plugins, and tools."
+            "通过本机持久 DUCX app-server 转发请求；缺失时可确认下载。Codex Mixin 会清空附加指令，并禁用已知的 DUCX hooks、插件和工具。",
+            "透過本機持久 DUCX app-server 轉送請求；缺少時可確認下載。Codex Mixin 會清空附加指令，並停用已知的 DUCX hooks、外掛與工具。",
+            "Route requests through a persistent local DUCX app-server, with a confirmed download if missing. Codex Mixin supplies empty extra instructions and disables known DUCX hooks, plugins, and tools."
         ),
         target: nil,
         action: nil
@@ -721,9 +721,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             "Route Through DUCX App Server?"
         )
         alert.informativeText = appText(
-            "该功能默认关闭。启用后，请求会进入本机持久 DUCX app-server。Codex Mixin 会传入空的附加指令并禁用已知的 hooks、插件和工具，但 DUCX 仍会读取自身登录信息和模型代理配置。请先安装 DUCX 并完成 ducx login。",
-            "此功能預設關閉。啟用後，請求會進入本機持久 DUCX app-server。Codex Mixin 會傳入空的附加指令並停用已知的 hooks、外掛與工具，但 DUCX 仍會讀取自身登入資訊與模型代理設定。請先安裝 DUCX 並完成 ducx login。",
-            "This feature is off by default. When enabled, requests enter a persistent local DUCX app-server. Codex Mixin supplies empty extra instructions and disables known hooks, plugins, and tools, while DUCX still reads its own login and model-proxy configuration. Install DUCX and complete ducx login first."
+            "该功能默认关闭。启用后，请求会进入本机持久 DUCX app-server。Codex Mixin 会传入空的附加指令并禁用已知的 hooks、插件和工具，但 DUCX 仍会读取自身登录信息和模型代理配置。缺少 DUCX 时可确认下载；未登录时会打开终端执行 ducx login。",
+            "此功能預設關閉。啟用後，請求會進入本機持久 DUCX app-server。Codex Mixin 會傳入空的附加指令並停用已知的 hooks、外掛與工具，但 DUCX 仍會讀取自身登入資訊與模型代理設定。缺少 DUCX 時可確認下載；未登入時會開啟終端執行 ducx login。",
+            "This feature is off by default. When enabled, requests enter a persistent local DUCX app-server. Codex Mixin supplies empty extra instructions and disables known hooks, plugins, and tools, while DUCX still reads its own login and model-proxy configuration. If DUCX is missing, you can confirm a download; if login is missing, Terminal opens for ducx login."
         )
         alert.addButton(withTitle: appText("前往配置", "前往設定", "Open Settings"))
         alert.addButton(withTitle: appText("保持关闭", "保持關閉", "Keep Disabled"))
@@ -775,7 +775,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     }
 
     private func performMutation(
-        _ arguments: [String],
+        _ initialArguments: [String],
         then secondArguments: [String]? = nil,
         status: String,
         selecting providerID: String?,
@@ -786,8 +786,13 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
+                var arguments = initialArguments
                 if requiresDucx {
-                    try requireDucxInstalled()
+                    let executable = try await ensureDucxAvailable()
+                    arguments.append(contentsOf: [
+                        "--ducx-executable",
+                        executable.path,
+                    ])
                     if ducxLoginRequired() {
                         try await runDucxLogin()
                     }
@@ -819,20 +824,39 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         }
     }
 
-    private func requireDucxInstalled() throws {
-        guard ducxExecutableURL() != nil else {
+    private func ensureDucxAvailable() async throws -> URL {
+        if let executable = ducxExecutableURL() {
+            return executable
+        }
+        let release = try await fetchLatestDucxRelease()
+        let destination = managedDucxRoot()
+            .appendingPathComponent(release.version, isDirectory: true)
+        guard confirm(
+            title: appText(
+                "下载 DUCX？",
+                "下載 DUCX？",
+                "Download DUCX?"
+            ),
+            message: appText(
+                "未检测到 DUCX。继续后将通过 HTTP 从百度 BCE BOS 下载约 100 MB 的 DUCX \(release.version)：\n\n\(release.archiveURL.absoluteString)\n\n文件会解压到：\n\(destination.path)\n\nCodex Mixin 只使用该目录中的 app-server；不会运行安装脚本，也不会修改 ~/.baidu-cx/baidu-cx。",
+                "未偵測到 DUCX。繼續後將透過 HTTP 從百度 BCE BOS 下載約 100 MB 的 DUCX \(release.version)：\n\n\(release.archiveURL.absoluteString)\n\n檔案會解壓縮到：\n\(destination.path)\n\nCodex Mixin 只使用該目錄中的 app-server；不會執行安裝指令碼，也不會修改 ~/.baidu-cx/baidu-cx。",
+                "DUCX was not found. Continuing downloads about 100 MB of DUCX \(release.version) over HTTP from Baidu BCE BOS:\n\n\(release.archiveURL.absoluteString)\n\nFiles are extracted to:\n\(destination.path)\n\nCodex Mixin only uses the app-server in that directory. It does not run an installer script or modify ~/.baidu-cx/baidu-cx."
+            )
+        ) else {
             throw NSError(
                 domain: "CodexMixin.DucxSetup",
                 code: 1,
                 userInfo: [
                     NSLocalizedDescriptionKey: appText(
-                        "未找到 DUCX。请先安装 DUCX，确认 ~/.baidu-cx/baidu-cx/bin/ducx 可执行，然后重试。",
-                        "找不到 DUCX。請先安裝 DUCX，確認 ~/.baidu-cx/baidu-cx/bin/ducx 可執行，然後重試。",
-                        "DUCX was not found. Install DUCX, verify ~/.baidu-cx/baidu-cx/bin/ducx is executable, then retry."
+                        "用户取消了 DUCX 下载。",
+                        "使用者取消了 DUCX 下載。",
+                        "The DUCX download was cancelled."
                     )
                 ]
             )
         }
+        setBusy(true, status: "正在下载并准备 DUCX \(release.version)…")
+        return try await downloadAndInstallDucx(release)
     }
 
     private func runDucxLogin() async throws {
@@ -900,8 +924,25 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     }
 }
 
+private struct DucxRelease {
+    let version: String
+    let archiveURL: URL
+}
+
+private let ducxDownloadBaseURL = "http://baidu-cc-client.bj.bcebos.com/baidu-cx"
+
+private func managedDucxRoot() -> URL {
+    FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".codex-mixin/ducx", isDirectory: true)
+}
+
 private func ducxExecutableURL() -> URL? {
     let home = FileManager.default.homeDirectoryForCurrentUser
+    let managed = managedDucxRoot()
+        .appendingPathComponent("current/bin/ducx")
+    if FileManager.default.isExecutableFile(atPath: managed.path) {
+        return managed
+    }
     let installed = home.appendingPathComponent(".baidu-cx/baidu-cx/bin/ducx")
     if FileManager.default.isExecutableFile(atPath: installed.path) {
         return installed
@@ -917,6 +958,147 @@ private func ducxExecutableURL() -> URL? {
     return nil
 }
 
+private func fetchLatestDucxRelease() async throws -> DucxRelease {
+    let versionURL = URL(
+        string: "\(ducxDownloadBaseURL)/baidu_cx_latest_version.txt"
+    )!
+    var request = URLRequest(url: versionURL)
+    request.setValue("Codex Mixin", forHTTPHeaderField: "User-Agent")
+    let (data, response) = try await URLSession.shared.data(for: request)
+    guard let httpResponse = response as? HTTPURLResponse,
+          httpResponse.statusCode == 200
+    else {
+        throw GatewayError.command("DUCX 版本清单下载失败。")
+    }
+    let version = String(decoding: data, as: UTF8.self)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    let versionParts = version.split(separator: ".", omittingEmptySubsequences: false)
+    guard versionParts.count >= 3,
+          versionParts.allSatisfy({
+              !$0.isEmpty && $0.allSatisfy(\.isNumber)
+          })
+    else {
+        throw GatewayError.command("DUCX 版本清单包含无效版本号。")
+    }
+    let archiveName = "baidu-cx-darwin-\(ducxArchitecture())-\(version).tar.bz2"
+    guard let archiveURL = URL(string: "\(ducxDownloadBaseURL)/\(archiveName)") else {
+        throw GatewayError.command("无法生成 DUCX 下载地址。")
+    }
+    return DucxRelease(version: version, archiveURL: archiveURL)
+}
+
+private func ducxArchitecture() -> String {
+    var systemInfo = utsname()
+    uname(&systemInfo)
+    let machine = withUnsafePointer(to: &systemInfo.machine) {
+        $0.withMemoryRebound(to: CChar.self, capacity: 1) {
+            String(cString: $0)
+        }
+    }
+    return machine == "arm64" || machine == "aarch64" ? "arm64" : "amd64"
+}
+
+private func downloadAndInstallDucx(_ release: DucxRelease) async throws -> URL {
+    var request = URLRequest(url: release.archiveURL)
+    request.setValue("Codex Mixin", forHTTPHeaderField: "User-Agent")
+    let (archive, response) = try await URLSession.shared.download(for: request)
+    defer { try? FileManager.default.removeItem(at: archive) }
+    guard let httpResponse = response as? HTTPURLResponse,
+          httpResponse.statusCode == 200
+    else {
+        throw GatewayError.command("DUCX 安装包下载失败。")
+    }
+
+    let fileManager = FileManager.default
+    let root = managedDucxRoot()
+    try fileManager.createDirectory(
+        at: root,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+    )
+    let staging = root.appendingPathComponent(
+        ".install-\(UUID().uuidString)",
+        isDirectory: true
+    )
+    try fileManager.createDirectory(
+        at: staging,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? fileManager.removeItem(at: staging) }
+
+    let entries = try await listDucxArchive(archive)
+    guard entries.allSatisfy(isSafeDucxArchiveEntry) else {
+        throw GatewayError.command("DUCX 安装包包含不安全的文件路径。")
+    }
+    _ = try await runDucxSetupProcess(
+        "/usr/bin/tar",
+        ["-xjf", archive.path, "-C", staging.path]
+    )
+    for name in ["config.toml", "auth.json", "hooks.json"] {
+        let bundledConfig = staging.appendingPathComponent(name)
+        if fileManager.fileExists(atPath: bundledConfig.path) {
+            try fileManager.removeItem(at: bundledConfig)
+        }
+    }
+    let launcher = staging.appendingPathComponent("bin/codex")
+    let innerCodex = staging.appendingPathComponent("codex/bin/codex")
+    let packagedVersion = try String(
+        contentsOf: staging.appendingPathComponent("version"),
+        encoding: .utf8
+    ).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard fileManager.isExecutableFile(atPath: launcher.path),
+          fileManager.isExecutableFile(atPath: innerCodex.path),
+          packagedVersion == release.version
+    else {
+        throw GatewayError.command("DUCX 安装包内容或版本不匹配。")
+    }
+    let ducx = staging.appendingPathComponent("bin/ducx")
+    try fileManager.createSymbolicLink(
+        atPath: ducx.path,
+        withDestinationPath: "codex"
+    )
+
+    let versionDirectory = root.appendingPathComponent(
+        release.version,
+        isDirectory: true
+    )
+    if fileManager.fileExists(atPath: versionDirectory.path) {
+        let existing = versionDirectory.appendingPathComponent("bin/ducx")
+        guard fileManager.isExecutableFile(atPath: existing.path) else {
+            throw GatewayError.command(
+                "DUCX 目标目录已存在但不完整：\(versionDirectory.path)"
+            )
+        }
+    } else {
+        try fileManager.moveItem(at: staging, to: versionDirectory)
+    }
+
+    let current = root.appendingPathComponent("current")
+    let temporaryLink = root.appendingPathComponent(".current-\(UUID().uuidString)")
+    try fileManager.createSymbolicLink(
+        atPath: temporaryLink.path,
+        withDestinationPath: release.version
+    )
+    let existingLinkDestination = try? fileManager.destinationOfSymbolicLink(
+        atPath: current.path
+    )
+    if fileManager.fileExists(atPath: current.path) || existingLinkDestination != nil {
+        guard existingLinkDestination != nil else {
+            try? fileManager.removeItem(at: temporaryLink)
+            throw GatewayError.command("DUCX current 路径已存在且不是符号链接。")
+        }
+        try fileManager.removeItem(at: current)
+    }
+    try fileManager.moveItem(at: temporaryLink, to: current)
+
+    let executable = current.appendingPathComponent("bin/ducx")
+    guard fileManager.isExecutableFile(atPath: executable.path) else {
+        throw GatewayError.command("DUCX 下载完成，但入口不可执行。")
+    }
+    return executable
+}
+
 private func ducxLoginRequired() -> Bool {
     let user = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".baidu-cx/user.json")
@@ -925,6 +1107,62 @@ private func ducxLoginRequired() -> Bool {
 
 private func shellQuoted(_ value: String) -> String {
     "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
+}
+
+private func isSafeDucxArchiveEntry(_ entry: String) -> Bool {
+    var path = entry.hasPrefix("./") ? String(entry.dropFirst(2)) : entry
+    if path.isEmpty { return true }
+    if path.hasSuffix("/") {
+        path.removeLast()
+    }
+    guard !path.isEmpty, !path.hasPrefix("/") else { return false }
+    return path.split(separator: "/", omittingEmptySubsequences: false)
+        .allSatisfy { !$0.isEmpty && $0 != ".." }
+}
+
+private func listDucxArchive(_ archive: URL) async throws -> [String] {
+    let output = try await runDucxSetupProcess(
+        "/usr/bin/tar",
+        ["-tjf", archive.path],
+        captureOutput: true
+    )
+    let entries = output.split(whereSeparator: \.isNewline).map(String.init)
+    guard !entries.isEmpty else {
+        throw GatewayError.command("DUCX 安装包为空。")
+    }
+    return entries
+}
+
+private func runDucxSetupProcess(
+    _ executable: String,
+    _ arguments: [String],
+    captureOutput: Bool = false
+) async throws -> String {
+    try await withCheckedThrowingContinuation { continuation in
+        DispatchQueue.global(qos: .userInitiated).async {
+            let process = Process()
+            process.executableURL = URL(fileURLWithPath: executable)
+            process.arguments = arguments
+            let output = Pipe()
+            process.standardOutput = captureOutput ? output : FileHandle.nullDevice
+            process.standardError = FileHandle.nullDevice
+            do {
+                try process.run()
+                let data = captureOutput
+                    ? output.fileHandleForReading.readDataToEndOfFile()
+                    : Data()
+                process.waitUntilExit()
+                guard process.terminationStatus == 0 else {
+                    throw GatewayError.command(
+                        "DUCX 解压失败（退出码 \(process.terminationStatus)）。"
+                    )
+                }
+                continuation.resume(returning: String(decoding: data, as: UTF8.self))
+            } catch {
+                continuation.resume(throwing: error)
+            }
+        }
+    }
 }
 
 func compactLabeledView(_ title: String, _ field: NSView) -> NSView {

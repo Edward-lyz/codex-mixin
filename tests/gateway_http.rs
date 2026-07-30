@@ -5515,3 +5515,123 @@ input.on("line", (line) => {
     assert!(body.contains("through ducx"));
     assert!(body.contains("response.completed"));
 }
+
+#[tokio::test]
+async fn responses_websocket_can_route_through_ducx_app_server() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("mock-ducx.cjs");
+    std::fs::write(
+        &executable,
+        r#"#!/usr/bin/env node
+const readline = require("node:readline");
+const input = readline.createInterface({ input: process.stdin });
+function send(message) {
+  process.stdout.write(JSON.stringify(message) + "\n");
+}
+input.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    send({ id: message.id, result: { userAgent: "mock-ducx" } });
+  } else if (message.method === "hooks/list") {
+    send({ id: message.id, result: { data: [{ hooks: [] }] } });
+  } else if (message.method === "thread/start") {
+    send({ id: message.id, result: { thread: { id: "thread_gateway_ws" } } });
+  } else if (message.method === "turn/start") {
+    send({ id: message.id, result: { turn: { id: "turn_gateway_ws" } } });
+    send({
+      method: "item/agentMessage/delta",
+      params: {
+        threadId: message.params.threadId,
+        turnId: "turn_gateway_ws",
+        itemId: "message_gateway_ws",
+        delta: "through ducx websocket",
+      },
+    });
+    send({
+      method: "turn/completed",
+      params: {
+        threadId: message.params.threadId,
+        turn: { id: "turn_gateway_ws", status: "completed" },
+      },
+    });
+  }
+});
+"#,
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&executable, permissions).unwrap();
+
+    let mut config = test_config("https://unused.invalid".to_owned());
+    let provider = &mut config.providers[0];
+    provider.model_source = ProviderModelSource::BaiduOneApi;
+    provider.protocol = ProviderProtocol::OpenAiResponses;
+    provider.cached_models = vec![ProviderModel {
+        id: "gpt-5.6-luna".to_owned(),
+        ..ProviderModel::default()
+    }];
+    provider.selected_models = vec!["gpt-5.6-luna".to_owned()];
+    provider.request_policy.ducx_app_server = Some(true);
+    provider.request_policy.ducx_executable = Some(executable);
+    let gateway_url = spawn_gateway_with_config(config).await;
+
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    socket
+        .send(WsMessage::Text(
+            json!({
+                "type": "response.create",
+                "model": "gpt-5.6-luna-custom",
+                "instructions": "Keep the websocket request thin.",
+                "input": [{
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "hello"}]
+                }]
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+
+    let frames = websocket_response_frames(&mut socket).await;
+    let joined = frames.join("\n");
+    assert!(joined.contains("\"type\":\"response.output_text.delta\""));
+    assert!(joined.contains("through ducx websocket"));
+    let completed: Value = frames
+        .iter()
+        .filter_map(|frame| serde_json::from_str(frame).ok())
+        .find(|event: &Value| event["type"] == "response.completed")
+        .unwrap();
+
+    socket
+        .send(WsMessage::Text(
+            json!({
+                "type": "response.create",
+                "model": "gpt-5.6-luna-custom",
+                "previous_response_id": completed["response"]["id"],
+                "input": [{
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type": "input_text", "text": "follow up"}]
+                }]
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+    let follow_up = websocket_response_frames(&mut socket).await.join("\n");
+    assert!(follow_up.contains("through ducx websocket"));
+    assert!(follow_up.contains("\"type\":\"response.completed\""));
+}

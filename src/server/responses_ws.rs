@@ -518,13 +518,29 @@ async fn proxy_custom_responses_ws(
         ResolvedModelRoute::Official => {
             anyhow::bail!("official model reached custom websocket proxy")
         }
-        ResolvedModelRoute::Provider { .. } => {
-            let plan =
-                RequestPlan::from_route(route.clone(), body, provider_routing.clone(), None)?;
-            let (stream, body) = UpstreamExecutor::new(state)
-                .stream_and_return_body(plan, headers)
-                .await?;
-            (stream, Some(body))
+        ResolvedModelRoute::Provider {
+            provider_id,
+            upstream_model_id,
+            ..
+        } => {
+            let provider = state
+                .providers
+                .provider(provider_id)
+                .ok_or_else(|| anyhow::anyhow!("unknown provider: {provider_id}"))?;
+            if provider.uses_ducx_app_server() {
+                let returned_body = body.clone();
+                let stream = state
+                    .stream_ducx_response(provider, upstream_model_id, body)
+                    .await?;
+                (stream, Some(returned_body))
+            } else {
+                let plan =
+                    RequestPlan::from_route(route.clone(), body, provider_routing.clone(), None)?;
+                let (stream, body) = UpstreamExecutor::new(state)
+                    .stream_and_return_body(plan, headers)
+                    .await?;
+                (stream, Some(body))
+            }
         }
         ResolvedModelRoute::Fusion { profile_id } => {
             let profile = state

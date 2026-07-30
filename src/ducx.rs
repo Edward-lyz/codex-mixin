@@ -17,10 +17,14 @@ use tokio::sync::{Mutex, broadcast, oneshot, watch};
 type PendingResponse = oneshot::Sender<anyhow::Result<Value>>;
 
 pub(crate) fn default_ducx_executable() -> Option<PathBuf> {
-    let installed = env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join(".baidu-cx/baidu-cx/bin/ducx"))
-        .filter(|path| path.is_file());
+    let installed = env::var_os("HOME").map(PathBuf::from).and_then(|home| {
+        [
+            home.join(".codex-mixin/ducx/current/bin/ducx"),
+            home.join(".baidu-cx/baidu-cx/bin/ducx"),
+        ]
+        .into_iter()
+        .find(|path| path.is_file())
+    });
     installed.or_else(|| {
         env::var_os("PATH").and_then(|paths| {
             env::split_paths(&paths)
@@ -54,17 +58,25 @@ impl DucxProcessConfig {
             "browser_use",
             "browser_use_external",
             "browser_use_full_cdp_access",
+            "code_mode",
+            "code_mode_buffered_exec",
             "code_mode_host",
+            "code_mode_only",
             "computer_use",
+            "default_mode_request_user_input",
+            "deferred_executor",
             "goals",
+            "guardian_approval",
             "hooks",
             "image_generation",
             "in_app_browser",
             "multi_agent",
+            "personality",
             "plugin_sharing",
             "plugins",
             "remote_plugin",
             "shell_tool",
+            "shell_snapshot",
             "skill_mcp_dependency_install",
             "skill_search",
             "tool_call_mcp_elicitation",
@@ -92,6 +104,8 @@ impl DucxProcessConfig {
             "project_doc_max_bytes=0".to_owned(),
             "-c".to_owned(),
             "project_doc_fallback_filenames=[]".to_owned(),
+            "-c".to_owned(),
+            "tools.default_tools_enabled=false".to_owned(),
         ]);
         Self {
             executable: executable.into(),
@@ -148,11 +162,18 @@ pub(crate) fn build_turn_params(
         "runtimeWorkspaceRoots": [],
         "sandbox": "read-only",
         "config": {
-            "mcp_servers": {}
+            "mcp_servers": {},
+            "tools": {
+                "default_tools_enabled": false
+            },
+            "include_permissions_instructions": false,
+            "include_apps_instructions": false,
+            "include_collaboration_mode_instructions": false,
+            "include_environment_context": false
         }
     });
     let turn = json!({
-        "input": [{"type":"text","text":input}],
+        "input": input,
         "approvalPolicy": "never",
         "cwd": cwd,
         "environments": [],
@@ -201,15 +222,15 @@ fn map_dynamic_tools(tools: Option<&Value>) -> anyhow::Result<Vec<Value>> {
         .collect()
 }
 
-fn map_turn_input(input: &Value) -> anyhow::Result<String> {
+fn map_turn_input(input: &Value) -> anyhow::Result<Vec<Value>> {
     if let Some(text) = input.as_str() {
         ensure!(!text.is_empty(), "Responses input must not be empty");
-        return Ok(text.to_owned());
+        return Ok(vec![json!({"type":"text","text":text})]);
     }
     let items = input
         .as_array()
         .context("DUCX app-server currently supports string or message-array input")?;
-    let mut transcript = Vec::new();
+    let mut mapped = Vec::new();
     for item in items {
         ensure!(
             item.get("type").and_then(Value::as_str) == Some("message"),
@@ -219,31 +240,58 @@ fn map_turn_input(input: &Value) -> anyhow::Result<String> {
         let content = item
             .get("content")
             .context("Responses message input is missing content")?;
-        let text = if let Some(text) = content.as_str() {
-            text.to_owned()
-        } else {
-            let parts = content
-                .as_array()
-                .context("Responses message content must be text or an array")?;
-            let mut text = Vec::new();
-            for part in parts {
-                let part_type = part.get("type").and_then(Value::as_str);
-                ensure!(
-                    matches!(part_type, Some("input_text" | "text")),
-                    "DUCX app-server currently supports only text message content"
-                );
-                text.push(
-                    part.get("text")
+        if let Some(text) = content.as_str() {
+            mapped.push(json!({
+                "type": "text",
+                "text": format!("[{role}]\n{text}")
+            }));
+            continue;
+        }
+        let parts = content
+            .as_array()
+            .context("Responses message content must be text or an array")?;
+        let mut text = format!("[{role}]\n");
+        for part in parts {
+            match part.get("type").and_then(Value::as_str) {
+                Some("input_text" | "output_text" | "text") => {
+                    let value = part
+                        .get("text")
                         .and_then(Value::as_str)
-                        .context("Responses text content is missing text")?,
-                );
+                        .context("Responses text content is missing text")?;
+                    if !text.ends_with('\n') {
+                        text.push('\n');
+                    }
+                    text.push_str(value);
+                }
+                Some("input_image") => {
+                    if !text.trim().is_empty() {
+                        mapped.push(json!({"type":"text","text":text}));
+                        text = String::new();
+                    }
+                    let url = part
+                        .get("image_url")
+                        .and_then(Value::as_str)
+                        .context("Responses image content is missing image_url")?;
+                    let mut image = json!({"type":"image","url":url});
+                    if let Some(detail) = part.get("detail").and_then(Value::as_str) {
+                        image["detail"] = Value::String(detail.to_owned());
+                    }
+                    mapped.push(image);
+                }
+                Some(other) => {
+                    anyhow::bail!(
+                        "DUCX app-server does not support Responses content type {other}"
+                    );
+                }
+                None => anyhow::bail!("Responses message content is missing type"),
             }
-            text.join("\n")
-        };
-        transcript.push(format!("[{role}]\n{text}"));
+        }
+        if !text.trim().is_empty() {
+            mapped.push(json!({"type":"text","text":text}));
+        }
     }
-    ensure!(!transcript.is_empty(), "Responses input must not be empty");
-    Ok(transcript.join("\n\n"))
+    ensure!(!mapped.is_empty(), "Responses input must not be empty");
+    Ok(mapped)
 }
 
 impl DucxAppServer {
@@ -708,20 +756,60 @@ input.on("line", (line) => {
     }
 
     #[test]
-    fn rejects_non_text_input_without_silently_dropping_it() {
+    fn maps_websocket_text_history() {
+        let request = json!({
+            "input": [
+                {
+                    "type": "message",
+                    "role": "assistant",
+                    "content": [{"type":"output_text","text":"first answer"}]
+                },
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": [{"type":"input_text","text":"follow up"}]
+                }
+            ]
+        });
+        let (_, turn) = build_turn_params(&request, "gpt-5.6-luna", Path::new("/tmp")).unwrap();
+
+        assert_eq!(
+            turn["input"],
+            json!([
+                {"type":"text","text":"[assistant]\nfirst answer"},
+                {"type":"text","text":"[user]\nfollow up"}
+            ])
+        );
+    }
+
+    #[test]
+    fn maps_image_input_without_dropping_text_or_detail() {
         let request = json!({
             "input": [{
                 "type": "message",
                 "role": "user",
-                "content": [{"type":"input_image","image_url":"https://example.test/a.png"}]
+                "content": [
+                    {"type":"input_text","text":"describe this"},
+                    {
+                        "type":"input_image",
+                        "image_url":"data:image/png;base64,aGVsbG8=",
+                        "detail":"high"
+                    }
+                ]
             }]
         });
-        let error = build_turn_params(&request, "gpt-5.6-luna", Path::new("/tmp")).unwrap_err();
+        let (_, turn) = build_turn_params(&request, "gpt-5.6-luna", Path::new("/tmp")).unwrap();
 
-        assert!(
-            error
-                .to_string()
-                .contains("currently supports only text message content")
+        assert_eq!(
+            turn["input"],
+            json!([
+                {"type":"text","text":"[user]\ndescribe this"},
+                {
+                    "type":"image",
+                    "url":"data:image/png;base64,aGVsbG8=",
+                    "detail":"high"
+                }
+            ])
         );
     }
 

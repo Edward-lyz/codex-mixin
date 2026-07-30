@@ -26,5 +26,18 @@
   <true/>
   <key>NSHighResolutionCapable</key>
   <true/>
+  <key>NSAppTransportSecurity</key>
+  <dict>
+    <key>NSExceptionDomains</key>
+    <dict>
+      <key>baidu-cc-client.bj.bcebos.com</key>
+      <dict>
+        <key>NSExceptionAllowsInsecureHTTPLoads</key>
+        <true/>
+        <key>NSIncludesSubdomains</key>
+        <false/>
+      </dict>
+    </dict>
+  </dict>
 </dict>
 </plist>

@@ -170,15 +170,22 @@ Baidu OneAPI 的额度接口必须同时填写额度用户名；CLI 和 App 都�
 
 Codex Mixin 会把原请求的 instructions、文本输入和 function tools 映射到 DUCX 协议，
 传入空的 developer instructions，并禁用已知的 DUCX hooks、插件、内置工具和技能。
-初始化还会强制检查 DUCX 暴露的 hook 数量为零；检查失败就拒绝转发。目前图片输入和
-非 function 内置工具会明确报错，不会静默丢弃。DUCX 仍需读取自身的登录信息与模型代理
+初始化还会强制检查 DUCX 暴露的 hook 数量为零；检查失败就拒绝转发。文本与
+`input_image`（HTTP(S) URL 或 data URL）会映射为 DUCX 原生输入；非 function 内置工具
+仍会明确报错，不会静默丢弃。DUCX 仍需读取自身的登录信息与模型代理
 配置来完成请求，但 Codex Mixin 不会写入这些配置。仓库中的隔离探针会对
 `config.toml`、`hooks.json` 和报告相关文件做前后指纹检查。
+`scripts/verify_ducx_oneapi_transport.mjs` 会把真实 DUCX 指向本机假 OneAPI，验证 DUCX
+Header 和图片没有丢失。DUCX 10.145.0.3 仍会额外声明 `exec`、`wait`、
+`request_user_input`；脚本会把这一点报告为 `thinGateway: false`，后续还需在转发层清除。
 
-启用前请先安装 DUCX，并完成 `ducx login`。macOS App 会检测
-`~/.baidu-cx/baidu-cx/bin/ducx`（也支持 PATH）；未安装时会提示用户先安装，不会下载或
-执行未知安装脚本。缺少 DUCX 登录文件时，App 会打开独立 Terminal 窗口执行
-`ducx login`，扫码完成后自动关闭窗口并继续保存。
+macOS App 会依次检测 Codex Mixin 自管版本、`~/.baidu-cx/baidu-cx/bin/ducx` 和 PATH。
+未安装时，App 会先展示官方 HTTP 下载地址、版本、约 100 MB 的大小和目标目录；用户确认
+后才按百度 `baidu-cx/install.sh` 的规则下载 `.tar.bz2` 包并解压到
+`~/.codex-mixin/ducx/<version>/`。App 不执行安装脚本、不修改 shell profile，也会像
+官方脚本一样删除包内的 `config.toml`、`auth.json` 和 `hooks.json`，Provider 只保存
+自管 `current/bin/ducx` 的绝对路径。缺少 DUCX 登录文件时，App 会打开独立 Terminal
+窗口执行 `ducx login`，扫码完成后自动关闭窗口并继续保存。
 Provider 可通过 `--header-env NAME=ENV_VAR` 转发用户自行提供的自定义请求头。配置文件
 只保存 Header 名和环境变量名，不保存值；网关启动时读取一次，缺失或空值会阻止启动，
 更新值后需重启网关。`authorization`、`x-api-key` 和传输层 Header 不允许覆盖。Codex
@@ -581,16 +588,25 @@ the hot path reuses the same process instead of spawning one per request.
 Codex Mixin maps the original instructions, text input, and function tools into the DUCX protocol,
 supplies empty developer instructions, and disables known DUCX hooks, plugins, built-in tools, and
 skills. Initialization also requires DUCX to report zero exposed hooks or routing fails closed.
-Image input and non-function built-in tools currently fail explicitly instead of being silently
-dropped. DUCX still reads its own login and model-proxy configuration to complete requests, but
+Text and `input_image` content (HTTP(S) or data URLs) map to native DUCX input. Non-function
+built-in tools still fail explicitly instead of being silently dropped. DUCX still reads its own
+login and model-proxy configuration to complete requests, but
 Codex Mixin never writes those files. The isolated repository probe fingerprints `config.toml`,
 `hooks.json`, and reporting-related files before and after execution.
+`scripts/verify_ducx_oneapi_transport.mjs` points real DUCX at a local mock OneAPI and verifies
+that the DUCX Header and image survive. DUCX 10.145.0.3 still declares `exec`, `wait`, and
+`request_user_input`; the verifier reports this as `thinGateway: false`, so a sanitizing forwarding
+layer is still required.
 
-Install DUCX and complete `ducx login` before enabling this route. The macOS App checks
-`~/.baidu-cx/baidu-cx/bin/ducx` and PATH. If DUCX is missing, it asks the user to install it first
-and does not download or execute an unknown installer. If the DUCX login file is missing, the App
-opens a dedicated Terminal window for `ducx login`, closes it after successful QR-code login, and
-continues saving the provider.
+The macOS App checks the Codex Mixin-managed version, `~/.baidu-cx/baidu-cx/bin/ducx`, and PATH,
+in that order. If DUCX is missing, the App first shows the official HTTP URL, version, approximate
+100 MB size, and destination. Only after confirmation does it follow Baidu's `baidu-cx/install.sh`
+package rules, downloading the `.tar.bz2` archive into
+`~/.codex-mixin/ducx/<version>/`. It never executes the installer or edits a shell profile, and,
+like the official script, removes the bundled `config.toml`, `auth.json`, and `hooks.json`.
+The Provider stores the absolute managed `current/bin/ducx` path. If the DUCX login file is
+missing, the App opens a dedicated Terminal window for `ducx login`, closes it after successful
+QR-code login, and continues saving the provider.
 Providers can forward user-supplied custom request headers with
 `--header-env NAME=ENV_VAR`. The configuration stores only the header and environment-variable
 names, never the value. The gateway reads values once at startup and fails closed when a value is

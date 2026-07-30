@@ -316,6 +316,7 @@ async function main() {
     process.env.DUCX_PROBE_ALLOW_INSTALLED_CONFIG === "1";
   const allowDiscoveredHooks =
     process.env.DUCX_PROBE_ALLOW_DISCOVERED_HOOKS === "1";
+  const oneApiBaseURL = process.env.DUCX_PROBE_ONEAPI_BASE_URL;
   const hookEvents = [
     "preToolUse",
     "permissionRequest",
@@ -334,17 +335,25 @@ async function main() {
     "browser_use",
     "browser_use_external",
     "browser_use_full_cdp_access",
+    "code_mode",
+    "code_mode_buffered_exec",
     "code_mode_host",
+    "code_mode_only",
     "computer_use",
+    "default_mode_request_user_input",
+    "deferred_executor",
     "goals",
+    "guardian_approval",
     "hooks",
     "image_generation",
     "in_app_browser",
     "multi_agent",
+    "personality",
     "plugin_sharing",
     "plugins",
     "remote_plugin",
     "shell_tool",
+    "shell_snapshot",
     "skill_mcp_dependency_install",
     "skill_search",
     "tool_call_mcp_elicitation",
@@ -376,6 +385,14 @@ async function main() {
     "project_doc_max_bytes=0",
     "-c",
     "project_doc_fallback_filenames=[]",
+    "-c",
+    "tools.default_tools_enabled=false",
+    ...(oneApiBaseURL
+      ? [
+          "-c",
+          `model_providers.oneapi.base_url=${JSON.stringify(oneApiBaseURL)}`,
+        ]
+      : []),
     ...hookEvents.flatMap((eventName) => [
       "-c",
       `hooks.${eventName}=[]`,
@@ -430,14 +447,21 @@ async function main() {
       approvalPolicy: "never",
       model: process.env.DUCX_PROBE_MODEL || "gpt-5.6-luna",
       modelProvider: "oneapi",
-      baseInstructions: "",
-      developerInstructions: "",
+      baseInstructions: process.env.DUCX_PROBE_BASE_INSTRUCTIONS || "",
+      developerInstructions: process.env.DUCX_PROBE_DEVELOPER_INSTRUCTIONS || "",
       dynamicTools: [],
       config: {
         hooks: Object.fromEntries(
           hookEvents.map((eventName) => [eventName, []]),
         ),
         mcp_servers: {},
+        tools: {
+          default_tools_enabled: false,
+        },
+        include_permissions_instructions: false,
+        include_apps_instructions: false,
+        include_collaboration_mode_instructions: false,
+        include_environment_context: false,
       },
       environments: [],
       ephemeral: true,
@@ -449,14 +473,17 @@ async function main() {
 
     let turnStatus = null;
     if (process.env.DUCX_PROBE_RUN_TURN === "1") {
+      const turnInput = process.env.DUCX_PROBE_TURN_INPUT
+        ? JSON.parse(process.env.DUCX_PROBE_TURN_INPUT)
+        : [
+            {
+              type: "text",
+              text: "Reply with exactly DUCX_PROBE_OK. Do not call tools.",
+            },
+          ];
       await client.request("turn/start", {
         threadId: thread.thread.id,
-        input: [
-          {
-            type: "text",
-            text: "Reply with exactly DUCX_PROBE_OK. Do not call tools.",
-          },
-        ],
+        input: turnInput,
         approvalPolicy: "never",
         cwd: workspace,
         environments: [],
