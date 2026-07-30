@@ -261,6 +261,8 @@ enum ProviderCommand {
         header_env: Vec<String>,
         #[arg(long, value_name = "BOOL")]
         ducx_app_server: Option<bool>,
+        #[arg(long, value_name = "PATH")]
+        ducx_executable: Option<PathBuf>,
     },
     Update {
         id: String,
@@ -303,6 +305,8 @@ enum ProviderCommand {
         clear_header_env: bool,
         #[arg(long, value_name = "BOOL")]
         ducx_app_server: Option<bool>,
+        #[arg(long, value_name = "PATH")]
+        ducx_executable: Option<PathBuf>,
     },
     Enable {
         id: String,
@@ -391,6 +395,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 static_models,
                 header_env,
                 ducx_app_server,
+                ducx_executable,
             } => add_provider(AddProviderOptions {
                 preset,
                 id,
@@ -409,6 +414,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 static_models,
                 header_env,
                 ducx_app_server,
+                ducx_executable,
             }),
             ProviderCommand::Update {
                 id,
@@ -430,6 +436,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 header_env,
                 clear_header_env,
                 ducx_app_server,
+                ducx_executable,
             } => update_provider(UpdateProviderOptions {
                 id,
                 auxiliary_model_upstream,
@@ -450,6 +457,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 header_env,
                 clear_header_env,
                 ducx_app_server,
+                ducx_executable,
             }),
             ProviderCommand::Enable { id } => set_provider_enabled(&id, true),
             ProviderCommand::Disable { id } => set_provider_enabled(&id, false),

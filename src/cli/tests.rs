@@ -15,7 +15,7 @@ use codex_mixin::config::{GatewayConfig, ThinkingMode};
 use codex_mixin::provider::{ProviderPreset, ProviderRegistry};
 use codex_mixin::server::AppState;
 
-use super::Cli;
+use super::{Cli, Command, ProviderCommand};
 use super::{atomic_file::*, codex::*, runtime::*, service::*, status::*};
 
 #[test]
@@ -90,6 +90,47 @@ fn install_command_accepts_explicit_custom_only_mode() {
 #[test]
 fn provider_select_accepts_an_empty_allowlist() {
     assert!(Cli::try_parse_from(["codex-mixin", "providers", "select", "provider-a"]).is_ok());
+}
+
+#[test]
+fn provider_mutations_accept_managed_ducx_executable() {
+    let executable = "/Users/example/.codex-mixin/ducx/current/bin/ducx";
+    for arguments in [
+        vec![
+            "codex-mixin",
+            "providers",
+            "add",
+            "--preset",
+            "baidu-oneapi",
+            "--key",
+            "key",
+            "--ducx-executable",
+            executable,
+        ],
+        vec![
+            "codex-mixin",
+            "providers",
+            "update",
+            "baidu-oneapi",
+            "--ducx-executable",
+            executable,
+        ],
+    ] {
+        let cli = Cli::try_parse_from(arguments).unwrap();
+        let parsed = match cli.command.unwrap() {
+            Command::Providers { command } => match *command {
+                ProviderCommand::Add {
+                    ducx_executable, ..
+                }
+                | ProviderCommand::Update {
+                    ducx_executable, ..
+                } => ducx_executable,
+                _ => panic!("expected a provider mutation"),
+            },
+            _ => panic!("expected providers command"),
+        };
+        assert_eq!(parsed, Some(PathBuf::from(executable)));
+    }
 }
 
 #[test]

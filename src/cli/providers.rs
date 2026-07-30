@@ -1,11 +1,12 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
+use std::path::PathBuf;
 use std::time::Duration;
 
 use codex_mixin::config::{StoredGatewayConfig, load_stored_config, mutate_stored_config};
 use codex_mixin::provider::{
-    ProviderModel, ProviderModelSource, ProviderPreset, ProviderProtocol, ProviderQuotaParser,
-    ProviderRegistry, apply_discovered_models, catalog_model_slug, discover_provider_models,
-    redact_provider_error,
+    ProviderDefinition, ProviderModel, ProviderModelSource, ProviderPreset, ProviderProtocol,
+    ProviderQuotaParser, ProviderRegistry, apply_discovered_models, catalog_model_slug,
+    discover_provider_models, redact_provider_error,
 };
 use codex_mixin::web_search::WebSearchCapabilities;
 use futures_util::{StreamExt, stream};
@@ -34,6 +35,7 @@ pub(super) struct AddProviderOptions {
     pub(super) static_models: Vec<String>,
     pub(super) header_env: Vec<String>,
     pub(super) ducx_app_server: Option<bool>,
+    pub(super) ducx_executable: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug)]
@@ -57,6 +59,7 @@ pub(super) struct UpdateProviderOptions {
     pub(super) header_env: Vec<String>,
     pub(super) clear_header_env: bool,
     pub(super) ducx_app_server: Option<bool>,
+    pub(super) ducx_executable: Option<PathBuf>,
 }
 
 pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
@@ -208,9 +211,11 @@ pub(super) fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
         provider.quota_parser = parse_quota_parser(&parser)?;
     }
     provider.request_policy.custom_headers_from_env = parse_header_env(&options.header_env)?;
-    if let Some(ducx_app_server) = options.ducx_app_server {
-        provider.request_policy.ducx_app_server = Some(ducx_app_server);
-    }
+    apply_ducx_options(
+        &mut provider,
+        options.ducx_app_server,
+        options.ducx_executable,
+    );
     provider.validate()?;
     let gateway_api_key = options
         .gateway_key
@@ -304,13 +309,24 @@ pub(super) fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<
                 .custom_headers_from_env
                 .extend(header_env.clone());
         }
-        if let Some(ducx_app_server) = options.ducx_app_server {
-            provider.request_policy.ducx_app_server = Some(ducx_app_server);
-        }
+        apply_ducx_options(provider, options.ducx_app_server, options.ducx_executable);
         provider.validate()
     })?;
     println!("provider updated: {id}");
     Ok(())
+}
+
+fn apply_ducx_options(
+    provider: &mut ProviderDefinition,
+    app_server: Option<bool>,
+    executable: Option<PathBuf>,
+) {
+    if let Some(app_server) = app_server {
+        provider.request_policy.ducx_app_server = Some(app_server);
+    }
+    if let Some(executable) = executable {
+        provider.request_policy.ducx_executable = Some(executable);
+    }
 }
 
 fn parse_header_env(values: &[String]) -> anyhow::Result<BTreeMap<String, String>> {
@@ -956,6 +972,19 @@ mod tests {
     use codex_mixin::fusion::{FusionProfile, PanelToolsConfig};
 
     use super::*;
+
+    #[test]
+    fn provider_mutations_persist_managed_ducx_options() {
+        let mut provider = codex_mixin::provider::baidu_oneapi_provider("baidu-oneapi", "key");
+        provider.quota_username = Some("user@example.com".to_owned());
+        let executable = PathBuf::from("/Users/example/.codex-mixin/ducx/current/bin/ducx");
+
+        apply_ducx_options(&mut provider, Some(true), Some(executable.clone()));
+
+        assert_eq!(provider.request_policy.ducx_app_server, Some(true));
+        assert_eq!(provider.request_policy.ducx_executable, Some(executable));
+        provider.validate().unwrap();
+    }
 
     #[test]
     fn parses_custom_header_environment_mappings() {
