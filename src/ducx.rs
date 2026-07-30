@@ -1,5 +1,5 @@
 use std::collections::HashMap;
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicU64, Ordering};
@@ -46,6 +46,136 @@ pub(crate) struct DucxTurn {
     thread_id: String,
     turn_id: String,
     events: broadcast::Receiver<Value>,
+}
+
+pub(crate) fn build_turn_params(
+    request: &Value,
+    upstream_model: &str,
+    cwd: &Path,
+) -> anyhow::Result<(Value, Value)> {
+    let instructions = request
+        .get("instructions")
+        .and_then(Value::as_str)
+        .unwrap_or_default();
+    let dynamic_tools = map_dynamic_tools(request.get("tools"))?;
+    let input = map_turn_input(
+        request
+            .get("input")
+            .context("Responses request is missing input")?,
+    )?;
+    let cwd = cwd
+        .to_str()
+        .context("DUCX working directory is not valid UTF-8")?;
+    let thread = json!({
+        "approvalPolicy": "never",
+        "baseInstructions": instructions,
+        "developerInstructions": "",
+        "dynamicTools": dynamic_tools,
+        "environments": [],
+        "ephemeral": true,
+        "experimentalRawEvents": true,
+        "cwd": cwd,
+        "model": upstream_model,
+        "modelProvider": "oneapi",
+        "runtimeWorkspaceRoots": [],
+        "sandbox": "read-only",
+        "config": {
+            "mcp_servers": {}
+        }
+    });
+    let turn = json!({
+        "input": [{"type":"text","text":input}],
+        "approvalPolicy": "never",
+        "cwd": cwd,
+        "environments": [],
+        "runtimeWorkspaceRoots": [],
+        "sandboxPolicy": {
+            "type": "readOnly",
+            "networkAccess": false
+        }
+    });
+    Ok((thread, turn))
+}
+
+fn map_dynamic_tools(tools: Option<&Value>) -> anyhow::Result<Vec<Value>> {
+    let Some(tools) = tools else {
+        return Ok(Vec::new());
+    };
+    let tools = tools
+        .as_array()
+        .context("Responses tools must be an array")?;
+    tools
+        .iter()
+        .map(|tool| {
+            ensure!(
+                tool.get("type").and_then(Value::as_str) == Some("function"),
+                "DUCX app-server currently supports only function tools"
+            );
+            let name = tool
+                .get("name")
+                .and_then(Value::as_str)
+                .filter(|name| !name.trim().is_empty())
+                .context("Responses function tool is missing name")?;
+            let input_schema = tool
+                .get("parameters")
+                .cloned()
+                .unwrap_or_else(|| json!({"type":"object","properties":{}}));
+            Ok(json!({
+                "type": "function",
+                "name": name,
+                "description": tool
+                    .get("description")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default(),
+                "inputSchema": input_schema
+            }))
+        })
+        .collect()
+}
+
+fn map_turn_input(input: &Value) -> anyhow::Result<String> {
+    if let Some(text) = input.as_str() {
+        ensure!(!text.is_empty(), "Responses input must not be empty");
+        return Ok(text.to_owned());
+    }
+    let items = input
+        .as_array()
+        .context("DUCX app-server currently supports string or message-array input")?;
+    let mut transcript = Vec::new();
+    for item in items {
+        ensure!(
+            item.get("type").and_then(Value::as_str) == Some("message"),
+            "DUCX app-server currently supports only message input items"
+        );
+        let role = item.get("role").and_then(Value::as_str).unwrap_or("user");
+        let content = item
+            .get("content")
+            .context("Responses message input is missing content")?;
+        let text = if let Some(text) = content.as_str() {
+            text.to_owned()
+        } else {
+            let parts = content
+                .as_array()
+                .context("Responses message content must be text or an array")?;
+            let mut text = Vec::new();
+            for part in parts {
+                let part_type = part.get("type").and_then(Value::as_str);
+                ensure!(
+                    matches!(part_type, Some("input_text" | "text")),
+                    "DUCX app-server currently supports only text message content"
+                );
+                text.push(
+                    part.get("text")
+                        .and_then(Value::as_str)
+                        .context("Responses text content is missing text")?,
+                );
+            }
+            text.join("\n")
+        };
+        transcript.push(format!("[{role}]\n{text}"));
+    }
+    ensure!(!transcript.is_empty(), "Responses input must not be empty");
+    Ok(transcript.join("\n\n"))
 }
 
 impl DucxAppServer {
@@ -328,6 +458,7 @@ fn redact_rpc_error(error: &Value) -> String {
 #[cfg(test)]
 mod tests {
     use std::os::unix::fs::PermissionsExt;
+    use std::path::Path;
 
     use serde_json::json;
 
@@ -435,5 +566,68 @@ input.on("line", (line) => {
         assert_eq!(events[0]["params"]["delta"], "hello");
         assert_eq!(events[1]["method"], "turn/completed");
         server.shutdown();
+    }
+
+    #[test]
+    fn maps_responses_instructions_tools_and_text() {
+        let request = json!({
+            "instructions": "SYSTEM",
+            "input": "hello",
+            "tools": [{
+                "type": "function",
+                "name": "lookup",
+                "description": "Look something up",
+                "parameters": {
+                    "type": "object",
+                    "properties": {"query": {"type": "string"}},
+                    "required": ["query"]
+                }
+            }]
+        });
+        let (thread, turn) =
+            build_turn_params(&request, "gpt-5.6-luna", Path::new("/tmp")).unwrap();
+
+        assert_eq!(thread["baseInstructions"], "SYSTEM");
+        assert_eq!(thread["developerInstructions"], "");
+        assert_eq!(thread["modelProvider"], "oneapi");
+        assert_eq!(thread["dynamicTools"][0]["name"], "lookup");
+        assert_eq!(
+            thread["dynamicTools"][0]["inputSchema"]["required"][0],
+            "query"
+        );
+        assert_eq!(turn["input"][0]["text"], "hello");
+    }
+
+    #[test]
+    fn rejects_non_text_input_without_silently_dropping_it() {
+        let request = json!({
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [{"type":"input_image","image_url":"https://example.test/a.png"}]
+            }]
+        });
+        let error = build_turn_params(&request, "gpt-5.6-luna", Path::new("/tmp")).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("currently supports only text message content")
+        );
+    }
+
+    #[test]
+    fn rejects_builtin_tools_without_silently_dropping_them() {
+        let request = json!({
+            "input": "hello",
+            "tools": [{"type":"web_search"}]
+        });
+        let error = build_turn_params(&request, "gpt-5.6-luna", Path::new("/tmp")).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("currently supports only function tools")
+        );
     }
 }
