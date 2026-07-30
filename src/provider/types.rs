@@ -1,4 +1,5 @@
 use std::collections::HashSet;
+use std::path::PathBuf;
 
 use anyhow::ensure;
 use serde::{Deserialize, Serialize};
@@ -49,6 +50,10 @@ pub struct ProviderRequestPolicy {
     pub session_affinity_header: Option<String>,
     #[serde(default)]
     pub mcp_bridge_for_fable: bool,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ducc_auth: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ducc_executable: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -135,6 +140,21 @@ impl ProviderDefinition {
             ensure!(
                 is_valid_header_name(header),
                 "provider {} has invalid session affinity header {header}",
+                self.id
+            );
+        }
+        if self.request_policy.ducc_auth.is_some() || self.request_policy.ducc_executable.is_some()
+        {
+            ensure!(
+                self.model_source == ProviderModelSource::BaiduOneApi,
+                "provider {} can configure DUCC authentication only for Baidu OneAPI",
+                self.id
+            );
+        }
+        if let Some(executable) = &self.request_policy.ducc_executable {
+            ensure!(
+                executable.is_absolute(),
+                "provider {} DUCC executable path must be absolute",
                 self.id
             );
         }
@@ -432,6 +452,28 @@ mod tests {
 
         provider.quota_username = Some("user@example.com".to_owned());
         provider.validate().unwrap();
+    }
+
+    #[test]
+    fn ducc_executable_is_restricted_to_baidu_oneapi() {
+        let mut provider = crate::provider::open_code_go_provider("provider", "key");
+        provider.request_policy.ducc_executable = Some("/usr/local/bin/ducc".into());
+
+        assert!(
+            provider
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("only for Baidu OneAPI")
+        );
+    }
+
+    #[test]
+    fn missing_ducc_auth_deserializes_as_undecided() {
+        let policy: ProviderRequestPolicy =
+            serde_json::from_str(r#"{"mcp_bridge_for_fable":true}"#).unwrap();
+
+        assert_eq!(policy.ducc_auth, None);
     }
 
     #[test]

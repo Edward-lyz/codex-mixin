@@ -101,6 +101,7 @@ struct ProviderSupportTests {
         let autoReviewOnly = response.providers[1]
         let unsupported = response.providers[2]
         precondition(response.codexInstallMode == .customOnly)
+        precondition(baidu.duccAuth == nil)
         precondition(baidu.auxiliaryModelUpstream)
         precondition(!autoReviewOnly.auxiliaryModelUpstream)
         precondition(baidu.auxiliaryModelSupport == .autoReviewAndVoice)

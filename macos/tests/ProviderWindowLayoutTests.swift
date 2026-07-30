@@ -8,7 +8,7 @@ struct ProviderWindowLayoutTests {
         let largeScreen = NSRect(x: 0, y: 0, width: 1440, height: 900)
         let largeSize = providerSettingsContentSize(for: largeScreen)
         precondition(largeSize.width == 800)
-        precondition(largeSize.height == 430)
+        precondition(largeSize.height == 550)
         precondition(largeSize.width <= largeScreen.width - 48)
         precondition(largeSize.height <= largeScreen.height - 48)
 

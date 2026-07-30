@@ -130,7 +130,48 @@ fn configure_baidu_policy(config: &mut GatewayConfig) {
     config.providers[0].request_policy = ProviderRequestPolicy {
         session_affinity_header: Some("x-hash-key".to_owned()),
         mcp_bridge_for_fable: true,
+        ..ProviderRequestPolicy::default()
     };
+}
+
+fn configure_fake_ducc_auth(config: &mut GatewayConfig) -> tempfile::TempDir {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("ducc");
+    std::fs::write(
+        &executable,
+        concat!(
+            "#!/bin/sh\n",
+            "printf '%s\\n' 'ANTHROPIC_CUSTOM_HEADERS: ",
+            "comate_custom_header:{\\\"source\\\":\\\"ducc\\\",",
+            "\\\"x-source-auth-version\\\":\\\"v2\\\",",
+            "\\\"x-source-auth-timestamp\\\":\\\"2026-07-30T03:02Z\\\",",
+            "\\\"x-source-auth-signature\\\":\\\"signed-value\\\"}' >&2\n",
+            "exit 2\n",
+        ),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&executable, permissions).unwrap();
+    let report_executable = directory.path().join("data-report");
+    let report_log = directory.path().join("ducc-reports.log");
+    std::fs::write(
+        &report_executable,
+        format!(
+            "#!/bin/sh\nprintf '%s\\n' \"$1\" >> '{}'\ncat >> '{}'\n",
+            report_log.display(),
+            report_log.display()
+        ),
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&report_executable).unwrap().permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&report_executable, permissions).unwrap();
+    config.providers[0].request_policy.ducc_executable = Some(executable);
+    config.providers[0].request_policy.ducc_auth = Some(true);
+    directory
 }
 
 fn configure_openai_chat(config: &mut GatewayConfig, api_path: &str) {
@@ -713,6 +754,10 @@ fn record_baidu_protocol_request(
             .get(header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok()),
         Some("Bearer upstream-key")
+    );
+    assert!(
+        headers.get("comate_custom_header").is_some(),
+        "Baidu OneAPI request must include the DUCC authentication header"
     );
     state.requests.lock().unwrap().push(json!({
         "path": path,
@@ -2517,6 +2562,7 @@ async fn routes_baidu_models_with_per_model_reasoning_capabilities() {
     let (upstream_url, requests) = spawn_baidu_protocol_upstream().await;
     let mut config = test_config(upstream_url);
     configure_baidu_policy(&mut config);
+    let _ducc = configure_fake_ducc_auth(&mut config);
     config.providers[0].model_source = ProviderModelSource::BaiduOneApi;
     config.thinking_mode = ThinkingMode::Auto;
     config.providers[0]
@@ -2601,6 +2647,28 @@ async fn routes_baidu_models_with_per_model_reasoning_capabilities() {
     assert_eq!(responses_request["body"]["model"], "gpt-5.6-sol");
     assert_eq!(responses_request["body"]["reasoning"]["effort"], "max");
     assert!(responses_request["anthropic_version"].is_null());
+    for _ in 0..50 {
+        let report =
+            std::fs::read_to_string(_ducc.path().join("ducc-reports.log")).unwrap_or_default();
+        if report.contains("--session-start")
+            && report.contains("--user-prompt-submit")
+            && report.contains("--stop")
+            && report.contains("--session-end")
+        {
+            assert!(report.contains("\"hook_event_name\":\"UserPromptSubmit\""));
+            break;
+        }
+        tokio::time::sleep(Duration::from_millis(20)).await;
+    }
+    let report = std::fs::read_to_string(_ducc.path().join("ducc-reports.log")).unwrap_or_default();
+    assert!(report.contains("--session-start"));
+    assert!(report.contains("--user-prompt-submit"));
+    assert!(report.contains("--stop"));
+    assert!(report.contains("--session-end"));
+    assert_eq!(report.matches("--session-start").count(), 3);
+    assert_eq!(report.matches("--user-prompt-submit").count(), 3);
+    assert_eq!(report.matches("--stop").count(), 3);
+    assert_eq!(report.matches("--session-end").count(), 3);
 
     let messages_request = requests
         .iter()

@@ -3,8 +3,8 @@ import Cocoa
 func providerSettingsContentSize(for visibleFrame: NSRect) -> NSSize {
     adaptiveWindowContentSize(
         for: visibleFrame,
-        ideal: NSSize(width: 800, height: 430),
-        minimum: NSSize(width: 720, height: 400)
+        ideal: NSSize(width: 800, height: 550),
+        minimum: NSSize(width: 720, height: 500)
     )
 }
 

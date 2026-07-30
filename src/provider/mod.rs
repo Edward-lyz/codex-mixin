@@ -1,4 +1,5 @@
 mod discovery;
+mod ducc;
 mod presets;
 mod registry;
 mod types;

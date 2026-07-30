@@ -257,6 +257,8 @@ enum ProviderCommand {
         gateway_key: Option<String>,
         #[arg(long = "model")]
         static_models: Vec<String>,
+        #[arg(long, value_name = "BOOL")]
+        ducc_auth: Option<bool>,
     },
     Update {
         id: String,
@@ -293,6 +295,8 @@ enum ProviderCommand {
         quota_currency: Option<String>,
         #[arg(long)]
         quota_parser: Option<String>,
+        #[arg(long, value_name = "BOOL")]
+        ducc_auth: Option<bool>,
     },
     Enable {
         id: String,
@@ -379,6 +383,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 quota_parser,
                 gateway_key,
                 static_models,
+                ducc_auth,
             } => add_provider(AddProviderOptions {
                 preset,
                 id,
@@ -395,6 +400,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 quota_parser,
                 gateway_key,
                 static_models,
+                ducc_auth,
             }),
             ProviderCommand::Update {
                 id,
@@ -413,6 +419,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 quota_username,
                 quota_currency,
                 quota_parser,
+                ducc_auth,
             } => update_provider(UpdateProviderOptions {
                 id,
                 auxiliary_model_upstream,
@@ -430,6 +437,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 quota_username,
                 quota_currency,
                 quota_parser,
+                ducc_auth,
             }),
             ProviderCommand::Enable { id } => set_provider_enabled(&id, true),
             ProviderCommand::Disable { id } => set_provider_enabled(&id, false),

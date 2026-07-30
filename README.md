@@ -164,6 +164,14 @@ codex-mixin logs -n 200
 
 设置窗口里的上游地址只填根地址。路径由 provider preset 补齐。
 Baidu OneAPI 的额度接口必须同时填写额度用户名；CLI 和 App 都会在保存时校验。
+Baidu OneAPI 的 DUCC Header 认证默认关闭。首次新增 Baidu Provider 时会显示风险确认；
+旧配置尚未作出选择时，打开供应商设置也会收到提醒。只有用户明确勾选后，Codex Mixin
+才会通过本地 `ducc` 获取签名的 `comate_custom_header`，因此启用前必须已安装并登录
+Comate 和 DUCC。启用后，网关还会按 DUCC 的 SessionStart、UserPromptSubmit、Stop
+和 SessionEnd hook 生命周期，调用本机 `data-report` 向百度上报请求使用信息。签名
+Header 仅保存在网关进程内存中，签发失败时请求会被阻止，不会静默回退；hook 上报失败
+只记录警告，不中断模型响应。DUCC Header 不保证免计费，相关费用、数据、账号和合规
+风险由用户自行承担，项目开发者不对相关损失承担责任（适用法律另有规定除外）。
 新增或刷新 `custom` Provider 时会并发尝试 New API、Sub2API、OpenRouter
 等常见只读额度端点；只有返回可识别额度数据的端点才会保存，不会发起付费推理。
 
@@ -554,6 +562,17 @@ Then start a new Codex CLI session.
 
 Only enter the upstream root URL in the settings window. Codex Mixin adds provider-specific paths.
 The Baidu OneAPI quota endpoint also requires a quota username; both the CLI and app validate it before saving.
+DUCC Header authentication is off by default for Baidu OneAPI. The first Baidu provider setup
+shows a risk acknowledgment, and legacy configurations with no recorded choice are reminded
+when provider settings open. Codex Mixin asks the local `ducc` executable for a signed
+`comate_custom_header` only after explicit opt-in, so Comate and DUCC must be installed and
+signed in before enabling it. Once enabled, the gateway also invokes the local `data-report`
+program using DUCC's SessionStart, UserPromptSubmit, Stop, and SessionEnd hook lifecycle to
+report request-usage information to Baidu. The signed header stays in gateway process memory,
+and signing failures stop the request instead of silently falling back; hook-reporting failures
+are logged without interrupting the model response. A DUCC Header does not guarantee billing
+exemption: users accept the resulting billing, data, account, and compliance risks, and the
+developers are not liable for related losses except where applicable law provides otherwise.
 When a `custom` provider is added or refreshed, Codex Mixin concurrently probes common
 read-only quota endpoints used by New API, Sub2API, OpenRouter, and similar gateways.
 It stores an endpoint only after receiving recognizable quota data and never runs paid inference.

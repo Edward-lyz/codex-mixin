@@ -159,6 +159,8 @@ pub fn baidu_oneapi_provider(
     provider.request_policy = ProviderRequestPolicy {
         session_affinity_header: Some("x-hash-key".to_owned()),
         mcp_bridge_for_fable: true,
+        ducc_auth: None,
+        ducc_executable: None,
     };
     provider
 }

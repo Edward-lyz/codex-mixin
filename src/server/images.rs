@@ -40,6 +40,12 @@ pub(super) async fn image_generations(
                 .post(url)
                 .header(header::ACCEPT, "application/json"),
         );
+        let _ducc_report = provider.begin_ducc_report(
+            &body,
+            headers
+                .get("session-id")
+                .and_then(|value| value.to_str().ok()),
+        );
         let upstream = request.json(&body).send().await?;
         return proxy_image_response(upstream, &format!("provider {provider_id}")).await;
     }

@@ -6,6 +6,7 @@ struct AddProviderFormValues {
     let baseURL: String
     let apiKey: String
     let quotaUsername: String
+    let duccAuth: Bool
 }
 
 final class ModalActionTarget: NSObject {
@@ -71,8 +72,23 @@ func runAddProviderSheet(
         appText("API 地址", "API 位址", "API URL"),
         baseURLField
     )
+    let duccAuthButton = NSButton(
+        checkboxWithTitle: appText(
+            "我自愿启用 DUCC Header 认证，并允许通过本机 DUCC hook 向百度上报请求使用信息；由此产生的费用、数据、账号和合规风险由我自行承担。项目开发者不保证免计费，也不对相关损失承担责任（适用法律另有规定除外）。",
+            "我自願啟用 DUCC Header 認證，並允許透過本機 DUCC hook 向百度上報請求使用資訊；由此產生的費用、資料、帳號和合規風險由我自行承擔。專案開發者不保證免計費，也不對相關損失承擔責任（適用法律另有規定除外）。",
+            "I voluntarily enable DUCC Header authentication and allow the local DUCC hook to report request-usage information to Baidu. I accept all resulting billing, data, account, and compliance risks. The developers do not guarantee billing exemption and are not liable for related losses, except where applicable law provides otherwise."
+        ),
+        target: nil,
+        action: nil
+    )
+    duccAuthButton.state = .off
+    duccAuthButton.cell?.wraps = true
+    duccAuthButton.alignment = .left
+    duccAuthButton.translatesAutoresizingMaskIntoConstraints = false
+    duccAuthButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 88).isActive = true
+    let duccAuthRow = labeledView("DUCC", duccAuthButton)
 
-    let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 650, height: 455))
+    let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 650, height: 575))
     let panel = NSWindow(
         contentRect: contentView.frame,
         styleMask: [.titled, .closable],
@@ -122,6 +138,7 @@ func runAddProviderSheet(
         quotaUsernameRow.isHidden = provider != "baidu-oneapi"
         displayNameRow.isHidden = !isCustom
         baseURLRow.isHidden = !isCustom
+        duccAuthRow.isHidden = provider != "baidu-oneapi"
         tokenButton.isHidden = isCustom
     }
     providerPopup.target = providerTarget
@@ -134,6 +151,7 @@ func runAddProviderSheet(
         baseURLRow,
         labeledView("API Key", apiKeyField),
         quotaUsernameRow,
+        duccAuthRow,
     ])
     formStack.orientation = .vertical
     formStack.spacing = 10
@@ -222,7 +240,8 @@ func runAddProviderSheet(
             displayName: displayName,
             baseURL: baseURL,
             apiKey: apiKey,
-            quotaUsername: username
+            quotaUsername: username,
+            duccAuth: duccAuthButton.state == .on
         )
         parentWindow.endSheet(panel, returnCode: .OK)
     }

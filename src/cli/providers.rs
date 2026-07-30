@@ -32,6 +32,7 @@ pub(super) struct AddProviderOptions {
     pub(super) quota_parser: Option<String>,
     pub(super) gateway_key: Option<String>,
     pub(super) static_models: Vec<String>,
+    pub(super) ducc_auth: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -52,6 +53,7 @@ pub(super) struct UpdateProviderOptions {
     pub(super) quota_username: Option<String>,
     pub(super) quota_currency: Option<String>,
     pub(super) quota_parser: Option<String>,
+    pub(super) ducc_auth: Option<bool>,
 }
 
 pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
@@ -89,6 +91,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     "quota_username": provider.quota_username,
                     "quota_currency": provider.quota_currency,
                     "quota_parser": provider.quota_parser,
+                    "ducc_auth": provider.request_policy.ducc_auth,
                     "selected_models": provider.selected_models,
                     "new_models": provider.new_models,
                     "unavailable_selected_models": unavailable_selected_models,
@@ -200,6 +203,9 @@ pub(super) fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
     if let Some(parser) = options.quota_parser {
         provider.quota_parser = parse_quota_parser(&parser)?;
     }
+    if let Some(ducc_auth) = options.ducc_auth {
+        provider.request_policy.ducc_auth = Some(ducc_auth);
+    }
     provider.validate()?;
     let gateway_api_key = options
         .gateway_key
@@ -282,6 +288,9 @@ pub(super) fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<
             if let Some(parser) = options.quota_parser {
                 provider.quota_parser = parse_quota_parser(&parser)?;
             }
+        }
+        if let Some(ducc_auth) = options.ducc_auth {
+            provider.request_policy.ducc_auth = Some(ducc_auth);
         }
         provider.validate()
     })?;

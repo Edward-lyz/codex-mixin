@@ -1,8 +1,10 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use anyhow::{Context, ensure};
+use reqwest::header::{HeaderMap, HeaderValue};
 use reqwest::{RequestBuilder, Url};
 
+use super::ducc::{DUCC_HEADER_NAME, DuccReportGuard, DuccReporter, resolve_ducc_integration};
 use super::types::{
     ProviderAuthHeader, ProviderDefinition, ProviderModel, ProviderModelKey, ProviderModelSource,
     ProviderProtocol, ProviderQuotaParser,
@@ -26,6 +28,8 @@ pub struct ProviderRuntime {
     models_url: Option<Url>,
     image_generation_url: Option<Url>,
     quota_url: Option<Url>,
+    ducc_auth_header: Option<HeaderValue>,
+    ducc_reporter: Option<DuccReporter>,
 }
 
 impl ProviderRuntime {
@@ -63,6 +67,20 @@ impl ProviderRuntime {
             .map(Url::parse)
             .transpose()
             .with_context(|| format!("provider {} quota URL", definition.id))?;
+        let ducc_integration = if definition.enabled
+            && definition.model_source == ProviderModelSource::BaiduOneApi
+            && definition.request_policy.ducc_auth == Some(true)
+        {
+            resolve_ducc_integration(&definition.request_policy)
+                .map(Some)
+                .with_context(|| format!("provider {} DUCC authentication", definition.id))?
+        } else {
+            None
+        };
+        let ducc_auth_header = ducc_integration
+            .as_ref()
+            .map(|integration| integration.header.clone());
+        let ducc_reporter = ducc_integration.map(|integration| integration.reporter);
         Ok(Self {
             definition,
             api_url,
@@ -70,6 +88,8 @@ impl ProviderRuntime {
             models_url,
             image_generation_url,
             quota_url,
+            ducc_auth_header,
+            ducc_reporter,
         })
     }
 
@@ -154,6 +174,10 @@ impl ProviderRuntime {
                 request.header("x-api-key", &self.definition.auth.api_key)
             }
         };
+        let request = match &self.ducc_auth_header {
+            Some(value) => request.header(DUCC_HEADER_NAME, value),
+            None => request,
+        };
         if protocol == ProviderProtocol::AnthropicMessages {
             request.header(
                 "anthropic-version",
@@ -165,6 +189,22 @@ impl ProviderRuntime {
         } else {
             request
         }
+    }
+
+    pub fn apply_ducc_auth_header(&self, headers: &mut HeaderMap) {
+        if let Some(value) = &self.ducc_auth_header {
+            headers.insert(DUCC_HEADER_NAME, value.clone());
+        }
+    }
+
+    pub(crate) fn begin_ducc_report(
+        &self,
+        body: &serde_json::Value,
+        session_hint: Option<&str>,
+    ) -> Option<DuccReportGuard> {
+        self.ducc_reporter
+            .as_ref()
+            .map(|reporter| reporter.begin_request(body, session_hint))
     }
 
     pub fn apply_anthropic_beta(
@@ -573,6 +613,38 @@ mod tests {
             runtime.api_url_for_model("Claude Opus 4.6").as_str(),
             "https://oneapi-comate.baidu-int.com/v1/messages"
         );
+    }
+
+    #[test]
+    fn baidu_ducc_auth_defaults_off_and_only_fails_closed_when_enabled() {
+        let missing_ducc = std::path::PathBuf::from("/definitely/missing/codex-mixin-ducc");
+        let mut provider = baidu_oneapi_provider("baidu-oneapi", "secret");
+        provider.quota_username = Some("quota-user".to_owned());
+        provider.request_policy.ducc_executable = Some(missing_ducc.clone());
+
+        provider.request_policy.ducc_auth = None;
+        let registry = ProviderRegistry::new(vec![provider.clone()]).unwrap();
+        let request = registry
+            .provider("baidu-oneapi")
+            .unwrap()
+            .apply_auth(reqwest::Client::new().get("https://example.test"))
+            .build()
+            .unwrap();
+        assert!(!request.headers().contains_key(DUCC_HEADER_NAME));
+
+        provider.request_policy.ducc_auth = Some(false);
+        let registry = ProviderRegistry::new(vec![provider.clone()]).unwrap();
+        let request = registry
+            .provider("baidu-oneapi")
+            .unwrap()
+            .apply_auth(reqwest::Client::new().get("https://example.test"))
+            .build()
+            .unwrap();
+        assert!(!request.headers().contains_key(DUCC_HEADER_NAME));
+
+        provider.request_policy.ducc_auth = Some(true);
+        let error = ProviderRegistry::new(vec![provider]).unwrap_err();
+        assert!(format!("{error:#}").contains("configured DUCC executable does not exist"));
     }
 
     #[test]

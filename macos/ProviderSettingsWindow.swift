@@ -12,6 +12,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private var providers: [ProviderView] = []
     private var codexInstallMode: ManagedCodexInstallMode?
     private var isBusy = false
+    private var remindedDuccProviderIDs = Set<String>()
 
     private let providerTable = NSTableView()
     private let statusLabel = NSTextField(labelWithString: "正在读取供应商…")
@@ -32,9 +33,19 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         target: nil,
         action: nil
     )
+    private let duccAuthButton = NSButton(
+        checkboxWithTitle: appText(
+            "我自愿启用 DUCC Header 认证，并允许通过本机 DUCC hook 向百度上报请求使用信息；由此产生的费用、数据、账号和合规风险由我自行承担。项目开发者不保证免计费，也不对相关损失承担责任（适用法律另有规定除外）。",
+            "我自願啟用 DUCC Header 認證，並允許透過本機 DUCC hook 向百度上報請求使用資訊；由此產生的費用、資料、帳號和合規風險由我自行承擔。專案開發者不保證免計費，也不對相關損失承擔責任（適用法律另有規定除外）。",
+            "I voluntarily enable DUCC Header authentication and allow the local DUCC hook to report request-usage information to Baidu. I accept all resulting billing, data, account, and compliance risks. The developers do not guarantee billing exemption and are not liable for related losses, except where applicable law provides otherwise."
+        ),
+        target: nil,
+        action: nil
+    )
     private var customDisplayNameRow: NSView?
     private var customBaseURLRow: NSView?
     private var quotaUsernameRow: NSView?
+    private var duccAuthRow: NSView?
 
     private let addButton = NSButton(title: "新增", target: nil, action: nil)
     private let removeButton = NSButton(title: "删除", target: nil, action: nil)
@@ -158,12 +169,19 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         managedConfigurationLabel.textColor = .secondaryLabelColor
         managedConfigurationLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         auxiliaryModelUpstreamButton.toolTip = auxiliaryModelDefaultTooltip()
+        duccAuthButton.cell?.wraps = true
+        duccAuthButton.alignment = .left
+        duccAuthButton.translatesAutoresizingMaskIntoConstraints = false
+        duccAuthButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 88).isActive = true
+        let duccAuthRow = compactLabeledView("DUCC", duccAuthButton)
+        self.duccAuthRow = duccAuthRow
         let form = NSStackView(views: [
             compactLabeledView("Provider ID", idField),
             customDisplayNameRow,
             customBaseURLRow,
             compactLabeledView("API 密钥", apiKeyControls),
             quotaUsernameRow,
+            duccAuthRow,
             compactLabeledView("辅助模型", auxiliaryModelUpstreamButton),
             compactLabeledView("", managedConfigurationLabel),
         ])
@@ -319,6 +337,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                     providerTable.deselectAll(nil)
                     loadSelectedProvider()
                 }
+                DispatchQueue.main.async { [weak self] in
+                    self?.showLegacyDuccReminderIfNeeded()
+                }
             } catch {
                 statusLabel.stringValue = "读取失败"
                 showAlert(title: "读取供应商失败", message: String(describing: error))
@@ -344,11 +365,13 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             : "尚未配置；启用前必须填写"
         quotaUsernameField.stringValue = provider.quotaUsername ?? ""
         auxiliaryModelUpstreamButton.state = provider.auxiliaryModelUpstream ? .on : .off
+        duccAuthButton.state = provider.duccAuth == true ? .on : .off
         auxiliaryModelUpstreamButton.toolTip = auxiliaryModelTooltip(for: provider)
         let isCustom = provider.presetID == "custom"
         customDisplayNameRow?.isHidden = !isCustom
         customBaseURLRow?.isHidden = !isCustom
         quotaUsernameRow?.isHidden = provider.presetID != "baidu-oneapi"
+        duccAuthRow?.isHidden = provider.presetID != "baidu-oneapi"
         enableButton.title = provider.enabled ? "停用" : "启用"
         statusLabel.stringValue = selectedProviderStatus()
         statusLabel.toolTip = provider.lastModelRefreshError
@@ -365,6 +388,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             field.stringValue = ""
         }
         auxiliaryModelUpstreamButton.state = .off
+        duccAuthButton.state = .off
         auxiliaryModelUpstreamButton.toolTip = auxiliaryModelDefaultTooltip()
         statusLabel.stringValue = providers.isEmpty ? "等待新增 Provider" : "请选择 Provider"
         statusLabel.toolTip = nil
@@ -385,6 +409,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             baseURLField,
             quotaUsernameField,
             auxiliaryModelUpstreamButton,
+            duccAuthButton,
             enableButton,
             testButton,
             saveButton,
@@ -553,6 +578,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             appendProviderArgument(&arguments, "--base-url", values.baseURL)
         }
         appendProviderArgument(&arguments, "--quota-username", values.quotaUsername)
+        if values.preset == "baidu-oneapi" {
+            arguments.append(contentsOf: ["--ducc-auth", values.duccAuth ? "true" : "false"])
+        }
         performMutation(
             arguments,
             then: ["providers", "discover", id],
@@ -658,12 +686,74 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         }
         if provider.presetID == "baidu-oneapi" {
             appendProviderArgument(&update, "--quota-username", quotaUsername)
+            update.append(contentsOf: [
+                "--ducc-auth",
+                duccAuthButton.state == .on ? "true" : "false",
+            ])
         }
         performMutation(
             update,
             status: "正在保存 \(provider.id)…",
             selecting: provider.id
         )
+    }
+
+    private func showLegacyDuccReminderIfNeeded() {
+        guard !isBusy, let window else { return }
+        guard let provider = providers.first(where: {
+            $0.presetID == "baidu-oneapi"
+                && $0.duccAuth == nil
+                && !remindedDuccProviderIDs.contains($0.id)
+        }) else { return }
+        remindedDuccProviderIDs.insert(provider.id)
+
+        let alert = NSAlert()
+        alert.alertStyle = .warning
+        alert.messageText = appText(
+            "是否配置 DUCC Header 认证？",
+            "是否設定 DUCC Header 認證？",
+            "Configure DUCC Header Authentication?"
+        )
+        alert.informativeText = appText(
+            "该功能默认保持关闭。启用后会通过本机 DUCC hook 向百度上报请求使用信息；请先确认已安装并登录 Comate 和 DUCC。DUCC Header 不保证免计费；由此产生的费用、数据、账号和合规风险由你自行承担，项目开发者不对相关损失承担责任（适用法律另有规定除外）。",
+            "此功能預設保持關閉。啟用後會透過本機 DUCC hook 向百度上報請求使用資訊；請先確認已安裝並登入 Comate 和 DUCC。DUCC Header 不保證免計費；由此產生的費用、資料、帳號和合規風險由你自行承擔，專案開發者不對相關損失承擔責任（適用法律另有規定除外）。",
+            "This feature remains off by default. When enabled, the local DUCC hook reports request-usage information to Baidu; first install and sign in to Comate and DUCC. A DUCC Header does not guarantee billing exemption. You accept all resulting billing, data, account, and compliance risks; the developers are not liable for related losses, except where applicable law provides otherwise."
+        )
+        alert.addButton(withTitle: appText("前往配置", "前往設定", "Open Settings"))
+        alert.addButton(withTitle: appText("保持关闭", "保持關閉", "Keep Disabled"))
+        alert.beginSheetModal(for: window) { [weak self] response in
+            guard let self else { return }
+            if response == .alertFirstButtonReturn {
+                if let row = providers.firstIndex(where: { $0.id == provider.id }) {
+                    providerTable.selectRowIndexes(
+                        IndexSet(integer: row),
+                        byExtendingSelection: false
+                    )
+                    loadSelectedProvider()
+                }
+            } else {
+                persistLegacyDuccDisabled(provider.id)
+            }
+        }
+    }
+
+    private func persistLegacyDuccDisabled(_ providerID: String) {
+        guard !isBusy else { return }
+        setBusy(true, status: "正在保持 DUCC 认证关闭…")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await runHandler([
+                    "providers", "update", providerID, "--ducc-auth", "false",
+                ])
+                try await applyHandler()
+                setBusy(false, status: "DUCC 认证保持关闭")
+                reloadProviders(selecting: providerID)
+            } catch {
+                setBusy(false, status: "操作失败")
+                showAlert(title: "供应商操作失败", message: String(describing: error))
+            }
+        }
     }
 
     private func nextProviderID(for preset: String) -> String {
