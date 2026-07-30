@@ -27,7 +27,7 @@ struct CachedCatalogResponse {
 
 struct DucxRuntime {
     app_server: crate::ducx::DucxAppServer,
-    sanitizer: crate::ducx_sanitizer::DucxSanitizer,
+    bridge: crate::ducx_sanitizer::DucxBridge,
 }
 
 pub(super) struct CachedOfficialAuth {
@@ -129,25 +129,22 @@ impl AppState {
                     crate::ducx::DucxAppServer::spawn_ready(discovery_config, timeout).await?;
                 let upstream_base_url = discovery.oneapi_base_url(&cwd, timeout).await?;
                 discovery.shutdown();
-                let sanitizer = crate::ducx_sanitizer::DucxSanitizer::spawn(
+                let bridge = crate::ducx_sanitizer::DucxBridge::spawn(
                     upstream_base_url,
                     self.client.clone(),
                 )
                 .await?;
                 let app_server_config =
                     crate::ducx::DucxProcessConfig::app_server(executable, &cwd)
-                        .with_oneapi_base_url(sanitizer.base_url());
+                        .with_oneapi_base_url(bridge.base_url());
                 let app_server =
                     crate::ducx::DucxAppServer::spawn_ready(app_server_config, timeout).await?;
-                Ok::<_, anyhow::Error>(Arc::new(DucxRuntime {
-                    app_server,
-                    sanitizer,
-                }))
+                Ok::<_, anyhow::Error>(Arc::new(DucxRuntime { app_server, bridge }))
             })
             .await
             .map_err(GatewayError::Other)?;
         let (request_id, downstream) = runtime
-            .sanitizer
+            .bridge
             .register(&request, upstream_model)
             .await
             .map_err(GatewayError::Other)?;
@@ -181,7 +178,7 @@ impl AppState {
             })?
             .map_err(|_| {
                 GatewayError::Upstream(
-                    "DUCX sanitizer closed before opening the upstream response".to_owned(),
+                    "DUCX bridge closed before opening the upstream response".to_owned(),
                 )
             })
     }

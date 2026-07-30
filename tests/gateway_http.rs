@@ -52,6 +52,12 @@ struct ProtocolRouteState {
 }
 
 #[derive(Clone)]
+struct DucxBridgeMockState {
+    requests: Arc<Mutex<Vec<Value>>>,
+    response_text: Arc<str>,
+}
+
+#[derive(Clone)]
 struct FusionMockState {
     requests: Arc<Mutex<Vec<Value>>>,
     failing_models: Arc<Vec<String>>,
@@ -138,10 +144,7 @@ fn configure_custom_headers_from_env(config: &mut GatewayConfig) {
     config.providers[0]
         .request_policy
         .custom_headers_from_env
-        .insert(
-            "comate_custom_header".to_owned(),
-            "TEST_COMATE_CUSTOM_HEADER".to_owned(),
-        );
+        .insert("x-example-auth".to_owned(), "TEST_EXAMPLE_AUTH".to_owned());
 }
 
 fn configure_openai_chat(config: &mut GatewayConfig, api_path: &str) {
@@ -739,7 +742,7 @@ fn record_baidu_protocol_request(
         Some("Bearer upstream-key")
     );
     assert!(
-        headers.get("comate_custom_header").is_some(),
+        headers.get("x-example-auth").is_some(),
         "request must include the configured custom header"
     );
     state.requests.lock().unwrap().push(json!({
@@ -1282,7 +1285,7 @@ async fn spawn_gateway(upstream_base_url: String) -> String {
 
 async fn spawn_gateway_with_config(config: GatewayConfig) -> String {
     let state = AppState::with_env_lookup(config, |name| {
-        (name == "TEST_COMATE_CUSTOM_HEADER").then(|| "signed-value".to_owned())
+        (name == "TEST_EXAMPLE_AUTH").then(|| "signed-value".to_owned())
     })
     .unwrap();
     spawn_router(router(state)).await
@@ -5435,17 +5438,76 @@ async fn perf_smoke_handles_parallel_streams() {
     );
 }
 
-#[tokio::test]
-async fn responses_can_route_through_ducx_app_server() {
+async fn mock_ducx_bridge_upstream(
+    State(state): State<DucxBridgeMockState>,
+    headers: HeaderMap,
+    Json(body): Json<Value>,
+) -> Response {
+    state.requests.lock().unwrap().push(json!({
+        "ducx_header_present": headers.contains_key("comate_custom_header"),
+        "body": body,
+    }));
+    let delta = json!({
+        "type": "response.output_text.delta",
+        "item_id": "message_ducx_bridge",
+        "output_index": 0,
+        "content_index": 0,
+        "delta": state.response_text.as_ref(),
+    });
+    let completed = json!({
+        "type": "response.completed",
+        "response": {
+            "id": "resp_ducx_bridge",
+            "object": "response",
+            "status": "completed",
+            "model": body.get("model").cloned().unwrap_or(Value::Null),
+            "output": [],
+            "usage": {"input_tokens":1,"output_tokens":1,"total_tokens":2}
+        }
+    });
+    Response::builder()
+        .status(StatusCode::OK)
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .body(Body::from(format!(
+            "event: response.output_text.delta\ndata: {delta}\n\n\
+             event: response.completed\ndata: {completed}\n\n"
+        )))
+        .unwrap()
+}
+
+async fn spawn_mock_ducx_bridge(
+    response_text: &str,
+) -> (
+    tempfile::TempDir,
+    std::path::PathBuf,
+    Arc<Mutex<Vec<Value>>>,
+) {
     use std::os::unix::fs::PermissionsExt;
+
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let upstream = Router::new()
+        .route("/v1/responses", post(mock_ducx_bridge_upstream))
+        .with_state(DucxBridgeMockState {
+            requests: Arc::clone(&requests),
+            response_text: Arc::from(response_text),
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let upstream_base_url = format!("http://{}/v1", listener.local_addr().unwrap());
+    tokio::spawn(async move {
+        axum::serve(listener, upstream).await.unwrap();
+    });
 
     let directory = tempfile::tempdir().unwrap();
     let executable = directory.path().join("mock-ducx.cjs");
-    std::fs::write(
-        &executable,
-        r#"#!/usr/bin/env node
+    let script = r#"#!/usr/bin/env node
 const readline = require("node:readline");
 const input = readline.createInterface({ input: process.stdin });
+const upstreamBase = __UPSTREAM_BASE_URL__;
+const overridePrefix = "model_providers.oneapi.base_url=";
+const override = process.argv.find((arg) => arg.startsWith(overridePrefix));
+const transportBase = override
+  ? JSON.parse(override.slice(overridePrefix.length))
+  : upstreamBase;
 function send(message) {
   process.stdout.write(JSON.stringify(message) + "\n");
 }
@@ -5455,34 +5517,52 @@ input.on("line", (line) => {
     send({ id: message.id, result: { userAgent: "mock-ducx" } });
   } else if (message.method === "hooks/list") {
     send({ id: message.id, result: { data: [{ hooks: [] }] } });
-  } else if (message.method === "thread/start") {
-    send({ id: message.id, result: { thread: { id: "thread_gateway" } } });
-  } else if (message.method === "turn/start") {
-    send({ id: message.id, result: { turn: { id: "turn_gateway" } } });
+  } else if (message.method === "config/read") {
     send({
-      method: "item/agentMessage/delta",
-      params: {
-        threadId: message.params.threadId,
-        turnId: "turn_gateway",
-        itemId: "message_gateway",
-        delta: "through ducx",
-      },
+      id: message.id,
+      result: { config: { model_providers: { oneapi: { base_url: upstreamBase } } } },
     });
-    send({
-      method: "turn/completed",
-      params: {
-        threadId: message.params.threadId,
-        turn: { id: "turn_gateway", status: "completed" },
+  } else if (message.method === "thread/start") {
+    send({ id: message.id, result: { thread: { id: "thread_ducx_bridge" } } });
+  } else if (message.method === "turn/start") {
+    const turnId = `turn_${message.id}`;
+    send({ id: message.id, result: { turn: { id: turnId } } });
+    const metadata = JSON.stringify(message.params.responsesapiClientMetadata || {});
+    fetch(`${transportBase}/responses`, {
+      method: "POST",
+      headers: {
+        "content-type": "application/json",
+        "comate_custom_header": "signed-by-mock-ducx",
       },
+      body: JSON.stringify({
+        client_metadata: { "x-codex-turn-metadata": metadata },
+      }),
+    }).then((response) => response.arrayBuffer()).then(() => {
+      send({
+        method: "turn/completed",
+        params: {
+          threadId: message.params.threadId,
+          turn: { id: turnId, status: "completed" },
+        },
+      });
     });
   }
 });
-"#,
-    )
-    .unwrap();
+"#
+    .replace(
+        "__UPSTREAM_BASE_URL__",
+        &serde_json::to_string(&upstream_base_url).unwrap(),
+    );
+    std::fs::write(&executable, script).unwrap();
     let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
     permissions.set_mode(0o700);
     std::fs::set_permissions(&executable, permissions).unwrap();
+    (directory, executable, requests)
+}
+
+#[tokio::test]
+async fn responses_can_route_through_ducx_app_server() {
+    let (_directory, executable, upstream_requests) = spawn_mock_ducx_bridge("through ducx").await;
 
     let mut config = test_config("https://unused.invalid".to_owned());
     let provider = &mut config.providers[0];
@@ -5514,56 +5594,19 @@ input.on("line", (line) => {
     assert!(body.contains("response.output_text.delta"));
     assert!(body.contains("through ducx"));
     assert!(body.contains("response.completed"));
+    let requests = upstream_requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["ducx_header_present"], true);
+    assert_eq!(
+        requests[0]["body"]["instructions"],
+        "Keep the request thin."
+    );
 }
 
 #[tokio::test]
 async fn responses_websocket_can_route_through_ducx_app_server() {
-    use std::os::unix::fs::PermissionsExt;
-
-    let directory = tempfile::tempdir().unwrap();
-    let executable = directory.path().join("mock-ducx.cjs");
-    std::fs::write(
-        &executable,
-        r#"#!/usr/bin/env node
-const readline = require("node:readline");
-const input = readline.createInterface({ input: process.stdin });
-function send(message) {
-  process.stdout.write(JSON.stringify(message) + "\n");
-}
-input.on("line", (line) => {
-  const message = JSON.parse(line);
-  if (message.method === "initialize") {
-    send({ id: message.id, result: { userAgent: "mock-ducx" } });
-  } else if (message.method === "hooks/list") {
-    send({ id: message.id, result: { data: [{ hooks: [] }] } });
-  } else if (message.method === "thread/start") {
-    send({ id: message.id, result: { thread: { id: "thread_gateway_ws" } } });
-  } else if (message.method === "turn/start") {
-    send({ id: message.id, result: { turn: { id: "turn_gateway_ws" } } });
-    send({
-      method: "item/agentMessage/delta",
-      params: {
-        threadId: message.params.threadId,
-        turnId: "turn_gateway_ws",
-        itemId: "message_gateway_ws",
-        delta: "through ducx websocket",
-      },
-    });
-    send({
-      method: "turn/completed",
-      params: {
-        threadId: message.params.threadId,
-        turn: { id: "turn_gateway_ws", status: "completed" },
-      },
-    });
-  }
-});
-"#,
-    )
-    .unwrap();
-    let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
-    permissions.set_mode(0o700);
-    std::fs::set_permissions(&executable, permissions).unwrap();
+    let (_directory, executable, upstream_requests) =
+        spawn_mock_ducx_bridge("through ducx websocket").await;
 
     let mut config = test_config("https://unused.invalid".to_owned());
     let provider = &mut config.providers[0];
@@ -5634,4 +5677,11 @@ input.on("line", (line) => {
     let follow_up = websocket_response_frames(&mut socket).await.join("\n");
     assert!(follow_up.contains("through ducx websocket"));
     assert!(follow_up.contains("\"type\":\"response.completed\""));
+    let requests = upstream_requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests
+            .iter()
+            .all(|request| request["ducx_header_present"] == true)
+    );
 }

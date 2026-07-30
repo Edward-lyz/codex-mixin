@@ -394,6 +394,7 @@ fn is_forbidden_custom_header(name: &HeaderName) -> bool {
         || matches!(
             name.as_str(),
             "authorization"
+                | "comate_custom_header"
                 | "connection"
                 | "content-length"
                 | "host"
@@ -504,18 +505,20 @@ mod tests {
     }
 
     #[test]
-    fn custom_headers_reject_primary_auth_headers() {
-        let mut provider = crate::provider::open_code_go_provider("provider", "key");
-        provider.request_policy.custom_headers_from_env =
-            BTreeMap::from([("authorization".to_owned(), "CUSTOM_AUTH".to_owned())]);
+    fn custom_headers_reject_primary_and_ducx_auth_headers() {
+        for header in ["authorization", "comate_custom_header"] {
+            let mut provider = crate::provider::open_code_go_provider("provider", "key");
+            provider.request_policy.custom_headers_from_env =
+                BTreeMap::from([(header.to_owned(), "CUSTOM_AUTH".to_owned())]);
 
-        assert!(
-            provider
-                .validate()
-                .unwrap_err()
-                .to_string()
-                .contains("cannot configure custom header authorization")
-        );
+            assert!(
+                provider
+                    .validate()
+                    .unwrap_err()
+                    .to_string()
+                    .contains(&format!("cannot configure custom header {header}"))
+            );
+        }
     }
 
     #[test]

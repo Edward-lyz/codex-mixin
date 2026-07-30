@@ -994,12 +994,12 @@ mod tests {
     #[test]
     fn parses_custom_header_environment_mappings() {
         let mapping = parse_header_env(&[
-            "comate_custom_header=DUCC_HEADER".to_owned(),
+            "x-example-auth=EXAMPLE_AUTH".to_owned(),
             "x-routing-token=ROUTING_TOKEN".to_owned(),
         ])
         .unwrap();
 
-        assert_eq!(mapping["comate_custom_header"], "DUCC_HEADER");
+        assert_eq!(mapping["x-example-auth"], "EXAMPLE_AUTH");
         assert_eq!(mapping["x-routing-token"], "ROUTING_TOKEN");
         assert!(parse_header_env(&["missing-separator".to_owned()]).is_err());
     }

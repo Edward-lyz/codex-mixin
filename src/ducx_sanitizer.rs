@@ -22,27 +22,26 @@ const REQUEST_BODY_LIMIT: usize = 16 * 1024 * 1024;
 const REQUEST_ID_KEY: &str = "codex_mixin_request_id";
 
 #[derive(Clone)]
-struct SanitizerState {
+struct BridgeState {
     upstream_base_url: Arc<str>,
     client: reqwest::Client,
     policies: Arc<Mutex<HashMap<String, RequestPolicy>>>,
 }
 
-#[derive(Clone)]
 struct RequestPolicy {
     created_at: Instant,
     request: Value,
     upstream_model: String,
-    downstream: Arc<Mutex<Option<oneshot::Sender<ResponseStream>>>>,
+    downstream: Option<oneshot::Sender<ResponseStream>>,
 }
 
-pub(crate) struct DucxSanitizer {
+pub(crate) struct DucxBridge {
     base_url: String,
-    state: SanitizerState,
+    state: BridgeState,
     shutdown: watch::Sender<bool>,
 }
 
-impl DucxSanitizer {
+impl DucxBridge {
     pub(crate) async fn spawn(
         upstream_base_url: String,
         client: reqwest::Client,
@@ -53,11 +52,9 @@ impl DucxSanitizer {
         );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
             .await
-            .context("bind DUCX sanitizer")?;
-        let address = listener
-            .local_addr()
-            .context("read DUCX sanitizer address")?;
-        let state = SanitizerState {
+            .context("bind DUCX bridge")?;
+        let address = listener.local_addr().context("read DUCX bridge address")?;
+        let state = BridgeState {
             upstream_base_url: Arc::from(upstream_base_url.trim_end_matches('/')),
             client,
             policies: Arc::new(Mutex::new(HashMap::new())),
@@ -76,7 +73,7 @@ impl DucxSanitizer {
                 })
                 .await;
             if let Err(error) = result {
-                tracing::warn!(%error, "DUCX sanitizer stopped unexpectedly");
+                tracing::warn!(%error, "DUCX bridge stopped unexpectedly");
             }
         });
         Ok(Self {
@@ -107,21 +104,21 @@ impl DucxSanitizer {
                 created_at: now,
                 request: request.clone(),
                 upstream_model: upstream_model.to_owned(),
-                downstream: Arc::new(Mutex::new(Some(downstream_sender))),
+                downstream: Some(downstream_sender),
             },
         );
         Ok((request_id, downstream_receiver))
     }
 }
 
-impl Drop for DucxSanitizer {
+impl Drop for DucxBridge {
     fn drop(&mut self) {
         let _ = self.shutdown.send(true);
     }
 }
 
 async fn forward(
-    State(state): State<SanitizerState>,
+    State(state): State<BridgeState>,
     OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     body: Bytes,
@@ -129,33 +126,35 @@ async fn forward(
     match forward_inner(state, uri, headers, body).await {
         Ok(response) => response,
         Err(error) => {
-            tracing::warn!(error = %format!("{error:#}"), "DUCX sanitizer rejected request");
+            tracing::warn!(error = %format!("{error:#}"), "DUCX bridge rejected request");
             Response::builder()
                 .status(StatusCode::BAD_GATEWAY)
                 .header(header::CONTENT_TYPE, "application/json")
                 .body(Body::from(
-                    r#"{"error":{"message":"DUCX sanitizer rejected the upstream request"}}"#,
+                    r#"{"error":{"message":"DUCX bridge rejected the upstream request"}}"#,
                 ))
-                .expect("static DUCX sanitizer error response is valid")
+                .expect("static DUCX bridge error response is valid")
         }
     }
 }
 
 async fn forward_inner(
-    state: SanitizerState,
+    state: BridgeState,
     uri: axum::http::Uri,
     mut headers: HeaderMap,
     body: Bytes,
 ) -> anyhow::Result<Response<Body>> {
     let mut payload: Value = serde_json::from_slice(&body).context("decode DUCX OneAPI request")?;
     let request_id = metadata_request_id(&payload).context("missing DUCX turn request id")?;
-    let policy = state
+    // A registered user request authorizes exactly one DUCX-originated relay.
+    // Removing it before any network I/O prevents retries or replayed metadata
+    // from producing duplicate upstream inference requests.
+    let mut policy = state
         .policies
         .lock()
         .await
-        .get(&request_id)
-        .cloned()
-        .context("unknown or expired DUCX turn request id")?;
+        .remove(&request_id)
+        .context("unknown, expired, or already used DUCX turn request id")?;
     sanitize_payload(&mut payload, &policy)?;
     let encoded = serde_json::to_vec(&payload).context("encode sanitized DUCX request")?;
     let target = upstream_url(&state.upstream_base_url, &uri);
@@ -179,8 +178,6 @@ async fn forward_inner(
     .boxed();
     let response_sender = policy
         .downstream
-        .lock()
-        .await
         .take()
         .context("DUCX turn already opened an upstream response")?;
     response_sender
@@ -214,7 +211,7 @@ async fn forward_inner(
     });
     builder
         .body(Body::from_stream(ducx_stream))
-        .context("build DUCX sanitizer response")
+        .context("build DUCX bridge response")
 }
 
 fn metadata_request_id(payload: &Value) -> Option<String> {
@@ -272,7 +269,7 @@ mod tests {
                 ]
             }),
             upstream_model: "upstream-model".to_owned(),
-            downstream: Arc::new(Mutex::new(None)),
+            downstream: None,
         };
         let mut payload = json!({
             "instructions": "DUCX platform prompt",
@@ -312,7 +309,7 @@ mod tests {
             created_at: Instant::now(),
             request: json!({"input":[{"type":"message","role":"user"}]}),
             upstream_model: "upstream-model".to_owned(),
-            downstream: Arc::new(Mutex::new(None)),
+            downstream: None,
         };
         let mut payload = json!({
             "input": [
@@ -364,7 +361,7 @@ mod tests {
         });
 
         let client = reqwest::Client::new();
-        let sanitizer = DucxSanitizer::spawn(upstream_base_url, client.clone())
+        let sanitizer = DucxBridge::spawn(upstream_base_url, client.clone())
             .await
             .unwrap();
         let image = "data:image/png;base64,AAAA";
@@ -398,7 +395,7 @@ mod tests {
                 ],
                 "client_metadata": {
                     "x-codex-turn-metadata": serde_json::to_string(&json!({
-                        "codex_mixin_request_id": request_id
+                        "codex_mixin_request_id": request_id.clone()
                     })).unwrap()
                 }
             }))
@@ -417,6 +414,21 @@ mod tests {
         );
         assert_eq!(payload["model"], "upstream-model");
         assert!(payload.get("client_metadata").is_none());
+
+        let replay = client
+            .post(format!("{}/responses", sanitizer.base_url()))
+            .header("comate_custom_header", "present-but-not-logged")
+            .json(&json!({
+                "client_metadata": {
+                    "x-codex-turn-metadata": serde_json::to_string(&json!({
+                        "codex_mixin_request_id": request_id
+                    })).unwrap()
+                }
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(replay.status(), StatusCode::BAD_GATEWAY);
     }
 
     #[tokio::test]
@@ -470,9 +482,7 @@ mod tests {
         });
 
         let client = reqwest::Client::new();
-        let sanitizer = DucxSanitizer::spawn(upstream_base_url, client)
-            .await
-            .unwrap();
+        let sanitizer = DucxBridge::spawn(upstream_base_url, client).await.unwrap();
         let cwd = std::env::temp_dir();
         let config = crate::ducx::DucxProcessConfig::app_server(executable, &cwd)
             .with_oneapi_base_url(sanitizer.base_url());
