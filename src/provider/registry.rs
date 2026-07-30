@@ -1,10 +1,10 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use anyhow::{Context, ensure};
-use reqwest::header::{HeaderMap, HeaderValue};
+use reqwest::header::HeaderMap;
 use reqwest::{RequestBuilder, Url};
 
-use super::ducc::{DUCC_HEADER_NAME, DuccReportGuard, DuccReporter, resolve_ducc_integration};
+use super::external_auth::resolve_custom_headers_from_env;
 use super::types::{
     ProviderAuthHeader, ProviderDefinition, ProviderModel, ProviderModelKey, ProviderModelSource,
     ProviderProtocol, ProviderQuotaParser,
@@ -28,12 +28,14 @@ pub struct ProviderRuntime {
     models_url: Option<Url>,
     image_generation_url: Option<Url>,
     quota_url: Option<Url>,
-    ducc_auth_header: Option<HeaderValue>,
-    ducc_reporter: Option<DuccReporter>,
+    custom_headers: HeaderMap,
 }
 
 impl ProviderRuntime {
-    pub(super) fn new(definition: ProviderDefinition) -> anyhow::Result<Self> {
+    pub(super) fn new(
+        definition: ProviderDefinition,
+        env_lookup: &dyn Fn(&str) -> Option<String>,
+    ) -> anyhow::Result<Self> {
         definition.validate()?;
         let api_url = endpoint_url(&definition.base_url, &definition.api_path)
             .with_context(|| format!("provider {} API URL", definition.id))?;
@@ -67,20 +69,15 @@ impl ProviderRuntime {
             .map(Url::parse)
             .transpose()
             .with_context(|| format!("provider {} quota URL", definition.id))?;
-        let ducc_integration = if definition.enabled
-            && definition.model_source == ProviderModelSource::BaiduOneApi
-            && definition.request_policy.ducc_auth == Some(true)
-        {
-            resolve_ducc_integration(&definition.request_policy)
-                .map(Some)
-                .with_context(|| format!("provider {} DUCC authentication", definition.id))?
+        let custom_headers = if definition.enabled {
+            resolve_custom_headers_from_env(
+                &definition.request_policy.custom_headers_from_env,
+                env_lookup,
+            )
+            .with_context(|| format!("provider {} custom headers", definition.id))?
         } else {
-            None
+            HeaderMap::new()
         };
-        let ducc_auth_header = ducc_integration
-            .as_ref()
-            .map(|integration| integration.header.clone());
-        let ducc_reporter = ducc_integration.map(|integration| integration.reporter);
         Ok(Self {
             definition,
             api_url,
@@ -88,8 +85,7 @@ impl ProviderRuntime {
             models_url,
             image_generation_url,
             quota_url,
-            ducc_auth_header,
-            ducc_reporter,
+            custom_headers,
         })
     }
 
@@ -174,10 +170,7 @@ impl ProviderRuntime {
                 request.header("x-api-key", &self.definition.auth.api_key)
             }
         };
-        let request = match &self.ducc_auth_header {
-            Some(value) => request.header(DUCC_HEADER_NAME, value),
-            None => request,
-        };
+        let request = request.headers(self.custom_headers.clone());
         if protocol == ProviderProtocol::AnthropicMessages {
             request.header(
                 "anthropic-version",
@@ -191,20 +184,8 @@ impl ProviderRuntime {
         }
     }
 
-    pub fn apply_ducc_auth_header(&self, headers: &mut HeaderMap) {
-        if let Some(value) = &self.ducc_auth_header {
-            headers.insert(DUCC_HEADER_NAME, value.clone());
-        }
-    }
-
-    pub(crate) fn begin_ducc_report(
-        &self,
-        body: &serde_json::Value,
-        session_hint: Option<&str>,
-    ) -> Option<DuccReportGuard> {
-        self.ducc_reporter
-            .as_ref()
-            .map(|reporter| reporter.begin_request(body, session_hint))
+    pub fn apply_custom_headers(&self, headers: &mut HeaderMap) {
+        headers.extend(self.custom_headers.clone());
     }
 
     pub fn apply_anthropic_beta(
@@ -247,6 +228,14 @@ impl ProviderRuntime {
             && model.to_ascii_lowercase().contains("fable")
     }
 
+    pub fn uses_ducx_app_server(&self) -> bool {
+        self.definition.request_policy.ducx_app_server == Some(true)
+    }
+
+    pub fn ducx_executable(&self) -> Option<&std::path::Path> {
+        self.definition.request_policy.ducx_executable.as_deref()
+    }
+
     pub fn model_supports_thinking(&self, model: &str) -> Option<bool> {
         self.definition
             .cached_models
@@ -270,6 +259,13 @@ pub struct ProviderRegistry {
 
 impl ProviderRegistry {
     pub fn new(providers: Vec<ProviderDefinition>) -> anyhow::Result<Self> {
+        Self::new_with_env(providers, |name| std::env::var(name).ok())
+    }
+
+    pub fn new_with_env(
+        providers: Vec<ProviderDefinition>,
+        env_lookup: impl Fn(&str) -> Option<String>,
+    ) -> anyhow::Result<Self> {
         let auxiliary_providers = providers
             .iter()
             .filter(|provider| provider.auxiliary_model_upstream)
@@ -293,7 +289,7 @@ impl ProviderRegistry {
             );
             let provider_index = runtimes.len();
             provider_indices.insert(provider.id.clone(), provider_index);
-            let runtime = ProviderRuntime::new(provider)?;
+            let runtime = ProviderRuntime::new(provider, &env_lookup)?;
             for (model_index, model) in runtime.definition.cached_models.iter().enumerate() {
                 let slug = catalog_model_slug(&model.id, runtime.id());
                 validate_catalog_slug(&slug)?;
@@ -486,6 +482,8 @@ fn endpoint_url(base_url: &str, path: &str) -> anyhow::Result<Url> {
 
 #[cfg(test)]
 mod tests {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+
     use super::*;
     use crate::provider::{
         ProviderAuthConfig, ProviderModelSource, ProviderProtocol, baidu_oneapi_provider,
@@ -616,13 +614,10 @@ mod tests {
     }
 
     #[test]
-    fn baidu_ducc_auth_defaults_off_and_only_fails_closed_when_enabled() {
-        let missing_ducc = std::path::PathBuf::from("/definitely/missing/codex-mixin-ducc");
+    fn custom_headers_are_provider_neutral_and_fail_closed() {
         let mut provider = baidu_oneapi_provider("baidu-oneapi", "secret");
         provider.quota_username = Some("quota-user".to_owned());
-        provider.request_policy.ducc_executable = Some(missing_ducc.clone());
 
-        provider.request_policy.ducc_auth = None;
         let registry = ProviderRegistry::new(vec![provider.clone()]).unwrap();
         let request = registry
             .provider("baidu-oneapi")
@@ -630,21 +625,50 @@ mod tests {
             .apply_auth(reqwest::Client::new().get("https://example.test"))
             .build()
             .unwrap();
-        assert!(!request.headers().contains_key(DUCC_HEADER_NAME));
+        assert!(!request.headers().contains_key("x-example-auth"));
 
-        provider.request_policy.ducc_auth = Some(false);
-        let registry = ProviderRegistry::new(vec![provider.clone()]).unwrap();
+        provider.request_policy.custom_headers_from_env =
+            BTreeMap::from([("x-example-auth".to_owned(), "EXAMPLE_AUTH".to_owned())]);
+        let error = ProviderRegistry::new_with_env(vec![provider.clone()], |_| None).unwrap_err();
+        assert!(format!("{error:#}").contains("requires non-empty environment variable"));
+
+        let registry = ProviderRegistry::new_with_env(vec![provider], |name| {
+            (name == "EXAMPLE_AUTH").then(|| "signed-value".to_owned())
+        })
+        .unwrap();
         let request = registry
             .provider("baidu-oneapi")
             .unwrap()
             .apply_auth(reqwest::Client::new().get("https://example.test"))
             .build()
             .unwrap();
-        assert!(!request.headers().contains_key(DUCC_HEADER_NAME));
+        assert_eq!(request.headers()["x-example-auth"], "signed-value");
+    }
 
-        provider.request_policy.ducc_auth = Some(true);
-        let error = ProviderRegistry::new(vec![provider]).unwrap_err();
-        assert!(format!("{error:#}").contains("configured DUCC executable does not exist"));
+    #[test]
+    fn custom_header_sources_are_never_called_on_the_request_path() {
+        let mut provider = baidu_oneapi_provider("baidu-oneapi", "secret");
+        provider.quota_username = Some("quota-user".to_owned());
+        provider.request_policy.custom_headers_from_env =
+            BTreeMap::from([("x-example-auth".to_owned(), "EXAMPLE_AUTH".to_owned())]);
+        let lookups = AtomicUsize::new(0);
+        let registry = ProviderRegistry::new_with_env(vec![provider], |name| {
+            lookups.fetch_add(1, Ordering::Relaxed);
+            (name == "EXAMPLE_AUTH").then(|| "signed-value".to_owned())
+        })
+        .unwrap();
+        assert_eq!(lookups.load(Ordering::Relaxed), 1);
+
+        let provider = registry.provider("baidu-oneapi").unwrap();
+        let client = reqwest::Client::new();
+        for _ in 0..1_000 {
+            provider
+                .apply_auth(client.get("https://example.test"))
+                .build()
+                .unwrap();
+        }
+
+        assert_eq!(lookups.load(Ordering::Relaxed), 1);
     }
 
     #[test]

@@ -150,12 +150,6 @@ pub(super) async fn benchmark_request(
             "session_id": format!("benchmark-{}", Uuid::new_v4().simple())
         });
     }
-    let _ducc_report = provider.begin_ducc_report(
-        &body,
-        body.get("metadata")
-            .and_then(|metadata| metadata.get("session_id"))
-            .and_then(Value::as_str),
-    );
     let request = provider.apply_auth_for_protocol(
         client
             .post(

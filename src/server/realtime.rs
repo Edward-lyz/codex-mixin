@@ -124,12 +124,6 @@ pub(super) async fn realtime_call(
                 format!("multipart/form-data; boundary={boundary}"),
             )
             .body(multipart);
-            let _ducc_report = provider.begin_ducc_report(
-                &session,
-                headers
-                    .get("session-id")
-                    .and_then(|value| value.to_str().ok()),
-            );
             (request.send().await?, Some(provider.id()))
         }
     };
@@ -195,27 +189,11 @@ async fn proxy_realtime_ws(
             requested_call_id.map(str::to_owned),
         )
     };
-    let ducc_report = match &route {
-        RealtimeRoute::Provider {
-            provider,
-            upstream_model_id,
-        } => provider.begin_ducc_report(
-            &json!({
-                "model": upstream_model_id.or(requested_model.as_deref()),
-                "input": "realtime websocket",
-            }),
-            headers
-                .get("session-id")
-                .and_then(|value| value.to_str().ok()),
-        ),
-        RealtimeRoute::Official { .. } => None,
-    };
     let upstream = connect_realtime_ws(&state, &headers, &uri, route, upstream_call_id.as_deref())
         .await
         .map_err(GatewayError::Other)?;
     Ok(ws
         .on_upgrade(move |client| async move {
-            let _ducc_report = ducc_report;
             bridge_realtime_websockets(client, upstream).await;
         })
         .into_response())
@@ -516,7 +494,7 @@ fn apply_provider_websocket_auth(
             headers.insert("x-api-key", auth.api_key.parse()?);
         }
     }
-    provider.apply_ducc_auth_header(headers);
+    provider.apply_custom_headers(headers);
     Ok(())
 }
 

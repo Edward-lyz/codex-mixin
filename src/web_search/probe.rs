@@ -112,12 +112,6 @@ pub(super) async fn probe_model_once(
             "session_id": format!("web-search-probe-{}", uuid::Uuid::new_v4().simple())
         });
     }
-    let _ducc_report = provider.begin_ducc_report(
-        &body,
-        body.get("metadata")
-            .and_then(|metadata| metadata.get("session_id"))
-            .and_then(Value::as_str),
-    );
     let request = provider.apply_auth(
         client
             .post(provider.api_url().clone())

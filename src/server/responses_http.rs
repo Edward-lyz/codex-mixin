@@ -42,6 +42,28 @@ pub(super) async fn responses(
     if route == ResolvedModelRoute::Official {
         return forward_official_responses(&state, &headers, body).await;
     }
+    if let ResolvedModelRoute::Provider {
+        provider_id,
+        upstream_model_id,
+        ..
+    } = &route
+    {
+        let provider = state
+            .providers
+            .provider(provider_id)
+            .ok_or_else(|| GatewayError::BadRequest(format!("unknown provider: {provider_id}")))?;
+        if provider.uses_ducx_app_server() {
+            let stream = state
+                .stream_ducx_response(provider, upstream_model_id, body)
+                .await?;
+            return Response::builder()
+                .status(StatusCode::OK)
+                .header(header::CONTENT_TYPE, "text/event-stream")
+                .header(header::CACHE_CONTROL, "no-cache")
+                .body(Body::from_stream(stream))
+                .map_err(|err| GatewayError::Other(err.into()));
+        }
+    }
     let provider_routing = stable_oneapi_routing(&headers, &body)?;
     let stream = match route {
         ResolvedModelRoute::Official => unreachable!("official route returned above"),

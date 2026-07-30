@@ -257,8 +257,10 @@ enum ProviderCommand {
         gateway_key: Option<String>,
         #[arg(long = "model")]
         static_models: Vec<String>,
+        #[arg(long = "header-env", value_name = "NAME=ENV_VAR")]
+        header_env: Vec<String>,
         #[arg(long, value_name = "BOOL")]
-        ducc_auth: Option<bool>,
+        ducx_app_server: Option<bool>,
     },
     Update {
         id: String,
@@ -295,8 +297,12 @@ enum ProviderCommand {
         quota_currency: Option<String>,
         #[arg(long)]
         quota_parser: Option<String>,
+        #[arg(long = "header-env", value_name = "NAME=ENV_VAR")]
+        header_env: Vec<String>,
+        #[arg(long, conflicts_with = "header_env")]
+        clear_header_env: bool,
         #[arg(long, value_name = "BOOL")]
-        ducc_auth: Option<bool>,
+        ducx_app_server: Option<bool>,
     },
     Enable {
         id: String,
@@ -383,7 +389,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 quota_parser,
                 gateway_key,
                 static_models,
-                ducc_auth,
+                header_env,
+                ducx_app_server,
             } => add_provider(AddProviderOptions {
                 preset,
                 id,
@@ -400,7 +407,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 quota_parser,
                 gateway_key,
                 static_models,
-                ducc_auth,
+                header_env,
+                ducx_app_server,
             }),
             ProviderCommand::Update {
                 id,
@@ -419,7 +427,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 quota_username,
                 quota_currency,
                 quota_parser,
-                ducc_auth,
+                header_env,
+                clear_header_env,
+                ducx_app_server,
             } => update_provider(UpdateProviderOptions {
                 id,
                 auxiliary_model_upstream,
@@ -437,7 +447,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 quota_username,
                 quota_currency,
                 quota_parser,
-                ducc_auth,
+                header_env,
+                clear_header_env,
+                ducx_app_server,
             }),
             ProviderCommand::Enable { id } => set_provider_enabled(&id, true),
             ProviderCommand::Disable { id } => set_provider_enabled(&id, false),

@@ -1,7 +1,8 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
 
 use anyhow::ensure;
+use reqwest::header::HeaderName;
 use serde::{Deserialize, Serialize};
 
 pub const CONFIG_VERSION: u32 = 2;
@@ -50,10 +51,12 @@ pub struct ProviderRequestPolicy {
     pub session_affinity_header: Option<String>,
     #[serde(default)]
     pub mcp_bridge_for_fable: bool,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub custom_headers_from_env: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ducc_auth: Option<bool>,
+    pub ducx_app_server: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ducc_executable: Option<PathBuf>,
+    pub ducx_executable: Option<PathBuf>,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -143,18 +146,38 @@ impl ProviderDefinition {
                 self.id
             );
         }
-        if self.request_policy.ducc_auth.is_some() || self.request_policy.ducc_executable.is_some()
+        for (header, variable) in &self.request_policy.custom_headers_from_env {
+            let parsed_header = HeaderName::from_bytes(header.as_bytes());
+            ensure!(
+                parsed_header.is_ok(),
+                "provider {} has invalid custom header name {header}",
+                self.id,
+            );
+            let header = parsed_header.expect("header checked above");
+            ensure!(
+                !is_forbidden_custom_header(&header),
+                "provider {} cannot configure custom header {header}",
+                self.id,
+            );
+            ensure!(
+                is_valid_env_variable_name(variable),
+                "provider {} has invalid environment variable name {variable} for custom header {header}",
+                self.id,
+            );
+        }
+        if self.request_policy.ducx_app_server.is_some()
+            || self.request_policy.ducx_executable.is_some()
         {
             ensure!(
                 self.model_source == ProviderModelSource::BaiduOneApi,
-                "provider {} can configure DUCC authentication only for Baidu OneAPI",
+                "provider {} can configure DUCX app-server only for Baidu OneAPI",
                 self.id
             );
         }
-        if let Some(executable) = &self.request_policy.ducc_executable {
+        if let Some(executable) = &self.request_policy.ducx_executable {
             ensure!(
                 executable.is_absolute(),
-                "provider {} DUCC executable path must be absolute",
+                "provider {} DUCX executable path must be absolute",
                 self.id
             );
         }
@@ -364,6 +387,30 @@ fn is_valid_header_name(header: &str) -> bool {
         })
 }
 
+fn is_forbidden_custom_header(name: &HeaderName) -> bool {
+    name.as_str().starts_with("proxy-")
+        || matches!(
+            name.as_str(),
+            "authorization"
+                | "connection"
+                | "content-length"
+                | "host"
+                | "keep-alive"
+                | "te"
+                | "trailer"
+                | "transfer-encoding"
+                | "upgrade"
+                | "x-api-key"
+        )
+}
+
+fn is_valid_env_variable_name(value: &str) -> bool {
+    !value.is_empty()
+        && value
+            .bytes()
+            .all(|byte| byte.is_ascii_uppercase() || byte.is_ascii_digit() || byte == b'_')
+}
+
 fn ensure_unique_model_ids<T: AsRef<str>>(
     provider_id: &str,
     label: &str,
@@ -455,25 +502,40 @@ mod tests {
     }
 
     #[test]
-    fn ducc_executable_is_restricted_to_baidu_oneapi() {
+    fn custom_headers_reject_primary_auth_headers() {
         let mut provider = crate::provider::open_code_go_provider("provider", "key");
-        provider.request_policy.ducc_executable = Some("/usr/local/bin/ducc".into());
+        provider.request_policy.custom_headers_from_env =
+            BTreeMap::from([("authorization".to_owned(), "CUSTOM_AUTH".to_owned())]);
 
         assert!(
             provider
                 .validate()
                 .unwrap_err()
                 .to_string()
-                .contains("only for Baidu OneAPI")
+                .contains("cannot configure custom header authorization")
         );
     }
 
     #[test]
-    fn missing_ducc_auth_deserializes_as_undecided() {
+    fn ducx_app_server_is_limited_to_baidu_oneapi() {
+        let mut provider = crate::provider::open_code_go_provider("provider", "key");
+        provider.request_policy.ducx_app_server = Some(true);
+
+        assert!(
+            provider
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("can configure DUCX app-server only for Baidu OneAPI")
+        );
+    }
+
+    #[test]
+    fn missing_custom_headers_deserializes_as_empty() {
         let policy: ProviderRequestPolicy =
             serde_json::from_str(r#"{"mcp_bridge_for_fable":true}"#).unwrap();
 
-        assert_eq!(policy.ducc_auth, None);
+        assert!(policy.custom_headers_from_env.is_empty());
     }
 
     #[test]

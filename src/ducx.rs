@@ -1,4 +1,5 @@
 use std::collections::HashMap;
+use std::env;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -15,6 +16,20 @@ use tokio::sync::{Mutex, broadcast, oneshot, watch};
 
 type PendingResponse = oneshot::Sender<anyhow::Result<Value>>;
 
+pub(crate) fn default_ducx_executable() -> Option<PathBuf> {
+    let installed = env::var_os("HOME")
+        .map(PathBuf::from)
+        .map(|home| home.join(".baidu-cx/baidu-cx/bin/ducx"))
+        .filter(|path| path.is_file());
+    installed.or_else(|| {
+        env::var_os("PATH").and_then(|paths| {
+            env::split_paths(&paths)
+                .map(|path| path.join("ducx"))
+                .find(|path| path.is_file())
+        })
+    })
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct DucxProcessConfig {
     pub(crate) executable: PathBuf,
@@ -28,6 +43,59 @@ impl DucxProcessConfig {
         Self {
             executable: executable.into(),
             args: Vec::new(),
+            cwd: cwd.into(),
+            env: Vec::new(),
+        }
+    }
+
+    pub(crate) fn app_server(executable: impl Into<PathBuf>, cwd: impl Into<PathBuf>) -> Self {
+        let disabled_features = [
+            "apps",
+            "browser_use",
+            "browser_use_external",
+            "browser_use_full_cdp_access",
+            "code_mode_host",
+            "computer_use",
+            "goals",
+            "hooks",
+            "image_generation",
+            "in_app_browser",
+            "multi_agent",
+            "plugin_sharing",
+            "plugins",
+            "remote_plugin",
+            "shell_tool",
+            "skill_mcp_dependency_install",
+            "skill_search",
+            "tool_call_mcp_elicitation",
+            "tool_suggest",
+            "unified_exec",
+            "workspace_dependencies",
+        ];
+        let mut args = disabled_features
+            .into_iter()
+            .flat_map(|feature| ["--disable".to_owned(), feature.to_owned()])
+            .collect::<Vec<_>>();
+        args.extend([
+            "app-server".to_owned(),
+            "--listen".to_owned(),
+            "stdio://".to_owned(),
+            "-c".to_owned(),
+            "history.persistence=\"none\"".to_owned(),
+            "-c".to_owned(),
+            "analytics.enabled=false".to_owned(),
+            "-c".to_owned(),
+            "feedback.enabled=false".to_owned(),
+            "-c".to_owned(),
+            "web_search=\"disabled\"".to_owned(),
+            "-c".to_owned(),
+            "project_doc_max_bytes=0".to_owned(),
+            "-c".to_owned(),
+            "project_doc_fallback_filenames=[]".to_owned(),
+        ]);
+        Self {
+            executable: executable.into(),
+            args,
             cwd: cwd.into(),
             env: Vec::new(),
         }
@@ -272,6 +340,47 @@ impl DucxAppServer {
             events,
             shutdown,
         })
+    }
+
+    pub(crate) async fn spawn_ready(
+        config: DucxProcessConfig,
+        timeout: Duration,
+    ) -> anyhow::Result<Self> {
+        let cwd = config.cwd.clone();
+        let server = Self::spawn(config).await?;
+        server
+            .request(
+                "initialize",
+                json!({
+                    "clientInfo": {
+                        "name": "codex_mixin",
+                        "title": "Codex Mixin",
+                        "version": env!("CARGO_PKG_VERSION")
+                    },
+                    "capabilities": {"experimentalApi": true}
+                }),
+                timeout,
+            )
+            .await
+            .context("initialize DUCX app-server")?;
+        server.notify("initialized", json!({})).await?;
+        let hooks = server
+            .request("hooks/list", json!({"cwds":[cwd]}), timeout)
+            .await
+            .context("audit DUCX hooks")?;
+        let hook_count = hooks
+            .get("data")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(|entry| entry.get("hooks").and_then(Value::as_array))
+            .map(Vec::len)
+            .sum::<usize>();
+        ensure!(
+            hook_count == 0,
+            "DUCX app-server exposed {hook_count} hooks after isolation"
+        );
+        Ok(server)
     }
 
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<Value> {

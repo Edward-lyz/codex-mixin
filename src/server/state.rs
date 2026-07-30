@@ -43,6 +43,7 @@ pub struct AppState {
     catalog_sources_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogSources>>>,
     catalog_response_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogResponse>>>,
     official_auth_cache: Arc<tokio::sync::Mutex<Option<CachedOfficialAuth>>>,
+    ducx_app_server: Arc<tokio::sync::OnceCell<Arc<crate::ducx::DucxAppServer>>>,
 }
 
 impl AppState {
@@ -51,12 +52,33 @@ impl AppState {
         Self::with_web_search_capabilities(config, web_search_capabilities)
     }
 
+    pub fn with_env_lookup(
+        config: GatewayConfig,
+        env_lookup: impl Fn(&str) -> Option<String>,
+    ) -> anyhow::Result<Self> {
+        let web_search_capabilities = WebSearchCapabilities::from_default_path(&config)?;
+        Self::with_web_search_capabilities_and_env(config, web_search_capabilities, env_lookup)
+    }
+
     pub fn with_web_search_capabilities(
         config: GatewayConfig,
         web_search_capabilities: WebSearchCapabilities,
     ) -> anyhow::Result<Self> {
+        Self::with_web_search_capabilities_and_env(config, web_search_capabilities, |name| {
+            std::env::var(name).ok()
+        })
+    }
+
+    fn with_web_search_capabilities_and_env(
+        config: GatewayConfig,
+        web_search_capabilities: WebSearchCapabilities,
+        env_lookup: impl Fn(&str) -> Option<String>,
+    ) -> anyhow::Result<Self> {
         validate_fusion_profiles(&config.fusion_profiles)?;
-        let providers = Arc::new(ProviderRegistry::new(config.providers.clone())?);
+        let providers = Arc::new(ProviderRegistry::new_with_env(
+            config.providers.clone(),
+            env_lookup,
+        )?);
         crate::fusion::validate_fusion_model_references(&config.fusion_profiles, &providers)?;
         let client = Client::builder()
             .timeout(config.request_timeout)
@@ -72,7 +94,45 @@ impl AppState {
             catalog_sources_cache: Arc::new(tokio::sync::Mutex::new(None)),
             catalog_response_cache: Arc::new(tokio::sync::Mutex::new(None)),
             official_auth_cache: Arc::new(tokio::sync::Mutex::new(None)),
+            ducx_app_server: Arc::new(tokio::sync::OnceCell::new()),
         })
+    }
+
+    pub(crate) async fn stream_ducx_response(
+        &self,
+        provider: &ProviderRuntime,
+        upstream_model: &str,
+        request: Value,
+    ) -> Result<ResponseStream, GatewayError> {
+        let executable = provider
+            .ducx_executable()
+            .map(PathBuf::from)
+            .or_else(crate::ducx::default_ducx_executable)
+            .ok_or_else(|| {
+                GatewayError::Upstream(
+                    "DUCX app-server is enabled but the ducx executable was not found".to_owned(),
+                )
+            })?;
+        let timeout = self.config.request_timeout;
+        let server = self
+            .ducx_app_server
+            .get_or_try_init(|| async {
+                let config =
+                    crate::ducx::DucxProcessConfig::app_server(executable, std::env::temp_dir());
+                crate::ducx::DucxAppServer::spawn_ready(config, timeout)
+                    .await
+                    .map(Arc::new)
+            })
+            .await
+            .map_err(GatewayError::Other)?;
+        let (thread_params, turn_params) =
+            crate::ducx::build_turn_params(&request, upstream_model, &std::env::temp_dir())
+                .map_err(GatewayError::Other)?;
+        let turn = server
+            .start_turn(thread_params, turn_params, timeout)
+            .await
+            .map_err(GatewayError::Other)?;
+        Ok(crate::openai_events::map_ducx_events(turn.into_stream(), request).boxed())
     }
 
     pub(crate) fn custom_image_routes(

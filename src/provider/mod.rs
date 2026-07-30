@@ -1,5 +1,5 @@
 mod discovery;
-mod ducc;
+mod external_auth;
 mod presets;
 mod registry;
 mod types;

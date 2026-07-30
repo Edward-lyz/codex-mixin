@@ -91,8 +91,6 @@ pub(crate) async fn stream_provider_response(
     let mut upstream_body = body.clone();
     upstream_body["model"] = Value::String(upstream_model_id.clone());
     prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
-    let ducc_report =
-        provider.begin_ducc_report(body, routing.map(|routing| routing.session_id.as_str()));
     let stream = match protocol {
         ProviderProtocol::AnthropicMessages => {
             let auto_thinking_kind =
@@ -206,7 +204,6 @@ pub(crate) async fn stream_provider_response(
         }
     };
     let stream = async_stream::stream! {
-        let _ducc_report = ducc_report;
         let mut stream = stream;
         while let Some(chunk) = stream.next().await {
             yield chunk;

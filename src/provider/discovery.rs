@@ -13,7 +13,7 @@ pub async fn discover_provider_models(
     client: &Client,
     definition: &ProviderDefinition,
 ) -> anyhow::Result<Vec<ProviderModel>> {
-    let provider = ProviderRuntime::new(definition.clone())?;
+    let provider = ProviderRuntime::new(definition.clone(), &|name| std::env::var(name).ok())?;
     match &definition.model_source {
         ProviderModelSource::Static => Ok(definition.cached_models.clone()),
         ProviderModelSource::OpenAiCompatible { .. } => {

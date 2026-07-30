@@ -1,4 +1,4 @@
-use std::collections::{HashMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
 use std::time::Duration;
 
 use codex_mixin::config::{StoredGatewayConfig, load_stored_config, mutate_stored_config};
@@ -32,7 +32,8 @@ pub(super) struct AddProviderOptions {
     pub(super) quota_parser: Option<String>,
     pub(super) gateway_key: Option<String>,
     pub(super) static_models: Vec<String>,
-    pub(super) ducc_auth: Option<bool>,
+    pub(super) header_env: Vec<String>,
+    pub(super) ducx_app_server: Option<bool>,
 }
 
 #[derive(Clone, Debug)]
@@ -53,7 +54,9 @@ pub(super) struct UpdateProviderOptions {
     pub(super) quota_username: Option<String>,
     pub(super) quota_currency: Option<String>,
     pub(super) quota_parser: Option<String>,
-    pub(super) ducc_auth: Option<bool>,
+    pub(super) header_env: Vec<String>,
+    pub(super) clear_header_env: bool,
+    pub(super) ducx_app_server: Option<bool>,
 }
 
 pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
@@ -91,7 +94,8 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     "quota_username": provider.quota_username,
                     "quota_currency": provider.quota_currency,
                     "quota_parser": provider.quota_parser,
-                    "ducc_auth": provider.request_policy.ducc_auth,
+                    "custom_headers_from_env": provider.request_policy.custom_headers_from_env,
+                    "ducx_app_server": provider.request_policy.ducx_app_server,
                     "selected_models": provider.selected_models,
                     "new_models": provider.new_models,
                     "unavailable_selected_models": unavailable_selected_models,
@@ -203,8 +207,9 @@ pub(super) fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
     if let Some(parser) = options.quota_parser {
         provider.quota_parser = parse_quota_parser(&parser)?;
     }
-    if let Some(ducc_auth) = options.ducc_auth {
-        provider.request_policy.ducc_auth = Some(ducc_auth);
+    provider.request_policy.custom_headers_from_env = parse_header_env(&options.header_env)?;
+    if let Some(ducx_app_server) = options.ducx_app_server {
+        provider.request_policy.ducx_app_server = Some(ducx_app_server);
     }
     provider.validate()?;
     let gateway_api_key = options
@@ -227,6 +232,7 @@ pub(super) fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
 
 pub(super) fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<()> {
     let id = options.id.clone();
+    let header_env = parse_header_env(&options.header_env)?;
     mutate_and_invalidate(|config| {
         if let Some(enabled) = options.auxiliary_model_upstream {
             set_auxiliary_model_upstream(config, &id, enabled)?;
@@ -289,13 +295,34 @@ pub(super) fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<
                 provider.quota_parser = parse_quota_parser(&parser)?;
             }
         }
-        if let Some(ducc_auth) = options.ducc_auth {
-            provider.request_policy.ducc_auth = Some(ducc_auth);
+        if options.clear_header_env {
+            provider.request_policy.custom_headers_from_env.clear();
+        }
+        if !header_env.is_empty() {
+            provider
+                .request_policy
+                .custom_headers_from_env
+                .extend(header_env.clone());
+        }
+        if let Some(ducx_app_server) = options.ducx_app_server {
+            provider.request_policy.ducx_app_server = Some(ducx_app_server);
         }
         provider.validate()
     })?;
     println!("provider updated: {id}");
     Ok(())
+}
+
+fn parse_header_env(values: &[String]) -> anyhow::Result<BTreeMap<String, String>> {
+    values
+        .iter()
+        .map(|value| {
+            let (header, variable) = value.split_once('=').ok_or_else(|| {
+                anyhow::anyhow!("custom header mapping must use NAME=ENV_VAR: {value}")
+            })?;
+            Ok((header.trim().to_owned(), variable.trim().to_owned()))
+        })
+        .collect()
 }
 
 fn set_auxiliary_model_upstream(
@@ -929,6 +956,19 @@ mod tests {
     use codex_mixin::fusion::{FusionProfile, PanelToolsConfig};
 
     use super::*;
+
+    #[test]
+    fn parses_custom_header_environment_mappings() {
+        let mapping = parse_header_env(&[
+            "comate_custom_header=DUCC_HEADER".to_owned(),
+            "x-routing-token=ROUTING_TOKEN".to_owned(),
+        ])
+        .unwrap();
+
+        assert_eq!(mapping["comate_custom_header"], "DUCC_HEADER");
+        assert_eq!(mapping["x-routing-token"], "ROUTING_TOKEN");
+        assert!(parse_header_env(&["missing-separator".to_owned()]).is_err());
+    }
 
     #[tokio::test]
     async fn discovers_a_read_only_custom_quota_endpoint() {

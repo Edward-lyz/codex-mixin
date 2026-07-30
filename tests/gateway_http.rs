@@ -134,44 +134,14 @@ fn configure_baidu_policy(config: &mut GatewayConfig) {
     };
 }
 
-fn configure_fake_ducc_auth(config: &mut GatewayConfig) -> tempfile::TempDir {
-    use std::os::unix::fs::PermissionsExt;
-
-    let directory = tempfile::tempdir().unwrap();
-    let executable = directory.path().join("ducc");
-    std::fs::write(
-        &executable,
-        concat!(
-            "#!/bin/sh\n",
-            "printf '%s\\n' 'ANTHROPIC_CUSTOM_HEADERS: ",
-            "comate_custom_header:{\\\"source\\\":\\\"ducc\\\",",
-            "\\\"x-source-auth-version\\\":\\\"v2\\\",",
-            "\\\"x-source-auth-timestamp\\\":\\\"2026-07-30T03:02Z\\\",",
-            "\\\"x-source-auth-signature\\\":\\\"signed-value\\\"}' >&2\n",
-            "exit 2\n",
-        ),
-    )
-    .unwrap();
-    let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
-    permissions.set_mode(0o700);
-    std::fs::set_permissions(&executable, permissions).unwrap();
-    let report_executable = directory.path().join("data-report");
-    let report_log = directory.path().join("ducc-reports.log");
-    std::fs::write(
-        &report_executable,
-        format!(
-            "#!/bin/sh\nprintf '%s\\n' \"$1\" >> '{}'\ncat >> '{}'\n",
-            report_log.display(),
-            report_log.display()
-        ),
-    )
-    .unwrap();
-    let mut permissions = std::fs::metadata(&report_executable).unwrap().permissions();
-    permissions.set_mode(0o700);
-    std::fs::set_permissions(&report_executable, permissions).unwrap();
-    config.providers[0].request_policy.ducc_executable = Some(executable);
-    config.providers[0].request_policy.ducc_auth = Some(true);
-    directory
+fn configure_custom_headers_from_env(config: &mut GatewayConfig) {
+    config.providers[0]
+        .request_policy
+        .custom_headers_from_env
+        .insert(
+            "comate_custom_header".to_owned(),
+            "TEST_COMATE_CUSTOM_HEADER".to_owned(),
+        );
 }
 
 fn configure_openai_chat(config: &mut GatewayConfig, api_path: &str) {
@@ -770,7 +740,7 @@ fn record_baidu_protocol_request(
     );
     assert!(
         headers.get("comate_custom_header").is_some(),
-        "Baidu OneAPI request must include the DUCC authentication header"
+        "request must include the configured custom header"
     );
     state.requests.lock().unwrap().push(json!({
         "path": path,
@@ -1311,7 +1281,10 @@ async fn spawn_gateway(upstream_base_url: String) -> String {
 }
 
 async fn spawn_gateway_with_config(config: GatewayConfig) -> String {
-    let state = AppState::new(config).unwrap();
+    let state = AppState::with_env_lookup(config, |name| {
+        (name == "TEST_COMATE_CUSTOM_HEADER").then(|| "signed-value".to_owned())
+    })
+    .unwrap();
     spawn_router(router(state)).await
 }
 
@@ -2575,7 +2548,7 @@ async fn routes_baidu_models_with_per_model_reasoning_capabilities() {
     let (upstream_url, requests) = spawn_baidu_protocol_upstream().await;
     let mut config = test_config(upstream_url);
     configure_baidu_policy(&mut config);
-    let _ducc = configure_fake_ducc_auth(&mut config);
+    configure_custom_headers_from_env(&mut config);
     config.providers[0].model_source = ProviderModelSource::BaiduOneApi;
     config.thinking_mode = ThinkingMode::Auto;
     config.providers[0]
@@ -2660,29 +2633,6 @@ async fn routes_baidu_models_with_per_model_reasoning_capabilities() {
     assert_eq!(responses_request["body"]["model"], "gpt-5.6-sol");
     assert_eq!(responses_request["body"]["reasoning"]["effort"], "max");
     assert!(responses_request["anthropic_version"].is_null());
-    for _ in 0..50 {
-        let report =
-            std::fs::read_to_string(_ducc.path().join("ducc-reports.log")).unwrap_or_default();
-        if report.contains("--session-start")
-            && report.contains("--user-prompt-submit")
-            && report.contains("--stop")
-            && report.contains("--session-end")
-        {
-            assert!(report.contains("\"hook_event_name\":\"UserPromptSubmit\""));
-            break;
-        }
-        tokio::time::sleep(Duration::from_millis(20)).await;
-    }
-    let report = std::fs::read_to_string(_ducc.path().join("ducc-reports.log")).unwrap_or_default();
-    assert!(report.contains("--session-start"));
-    assert!(report.contains("--user-prompt-submit"));
-    assert!(report.contains("--stop"));
-    assert!(report.contains("--session-end"));
-    assert_eq!(report.matches("--session-start").count(), 3);
-    assert_eq!(report.matches("--user-prompt-submit").count(), 3);
-    assert_eq!(report.matches("--stop").count(), 3);
-    assert_eq!(report.matches("--session-end").count(), 3);
-
     let messages_request = requests
         .iter()
         .find(|request| {
@@ -3211,7 +3161,7 @@ async fn strips_websocket_envelope_before_baidu_responses_request() {
     let (upstream_url, requests) = spawn_baidu_protocol_upstream().await;
     let mut config = test_config(upstream_url);
     configure_baidu_policy(&mut config);
-    let _ducc = configure_fake_ducc_auth(&mut config);
+    configure_custom_headers_from_env(&mut config);
     config.providers[0].model_source = ProviderModelSource::BaiduOneApi;
     let gateway_url = spawn_gateway_with_config(config).await;
     let websocket_url = gateway_url.replacen("http://", "ws://", 1);
@@ -5483,4 +5433,85 @@ async fn perf_smoke_handles_parallel_streams() {
         requests_per_second > 20.0,
         "gateway mock throughput too low: {requests_per_second:.2} req/s in {elapsed:?}"
     );
+}
+
+#[tokio::test]
+async fn responses_can_route_through_ducx_app_server() {
+    use std::os::unix::fs::PermissionsExt;
+
+    let directory = tempfile::tempdir().unwrap();
+    let executable = directory.path().join("mock-ducx.cjs");
+    std::fs::write(
+        &executable,
+        r#"#!/usr/bin/env node
+const readline = require("node:readline");
+const input = readline.createInterface({ input: process.stdin });
+function send(message) {
+  process.stdout.write(JSON.stringify(message) + "\n");
+}
+input.on("line", (line) => {
+  const message = JSON.parse(line);
+  if (message.method === "initialize") {
+    send({ id: message.id, result: { userAgent: "mock-ducx" } });
+  } else if (message.method === "hooks/list") {
+    send({ id: message.id, result: { data: [{ hooks: [] }] } });
+  } else if (message.method === "thread/start") {
+    send({ id: message.id, result: { thread: { id: "thread_gateway" } } });
+  } else if (message.method === "turn/start") {
+    send({ id: message.id, result: { turn: { id: "turn_gateway" } } });
+    send({
+      method: "item/agentMessage/delta",
+      params: {
+        threadId: message.params.threadId,
+        turnId: "turn_gateway",
+        itemId: "message_gateway",
+        delta: "through ducx",
+      },
+    });
+    send({
+      method: "turn/completed",
+      params: {
+        threadId: message.params.threadId,
+        turn: { id: "turn_gateway", status: "completed" },
+      },
+    });
+  }
+});
+"#,
+    )
+    .unwrap();
+    let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+    permissions.set_mode(0o700);
+    std::fs::set_permissions(&executable, permissions).unwrap();
+
+    let mut config = test_config("https://unused.invalid".to_owned());
+    let provider = &mut config.providers[0];
+    provider.model_source = ProviderModelSource::BaiduOneApi;
+    provider.protocol = ProviderProtocol::OpenAiResponses;
+    provider.cached_models = vec![ProviderModel {
+        id: "gpt-5.6-luna".to_owned(),
+        ..ProviderModel::default()
+    }];
+    provider.selected_models = vec!["gpt-5.6-luna".to_owned()];
+    provider.request_policy.ducx_app_server = Some(true);
+    provider.request_policy.ducx_executable = Some(executable);
+    let gateway_url = spawn_gateway_with_config(config).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model": "gpt-5.6-luna-custom",
+            "instructions": "Keep the request thin.",
+            "input": "hello",
+            "stream": true
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("response.output_text.delta"));
+    assert!(body.contains("through ducx"));
+    assert!(body.contains("response.completed"));
 }
