@@ -6,6 +6,8 @@ use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Duration;
 
 use anyhow::{Context, ensure};
+use futures_util::StreamExt;
+use futures_util::stream::BoxStream;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, Command};
@@ -38,6 +40,12 @@ pub(crate) struct DucxAppServer {
     pending: Arc<Mutex<HashMap<u64, PendingResponse>>>,
     events: broadcast::Sender<Value>,
     shutdown: watch::Sender<bool>,
+}
+
+pub(crate) struct DucxTurn {
+    thread_id: String,
+    turn_id: String,
+    events: broadcast::Receiver<Value>,
 }
 
 impl DucxAppServer {
@@ -180,6 +188,45 @@ impl DucxAppServer {
         let _ = self.shutdown.send(true);
     }
 
+    pub(crate) async fn start_turn(
+        &self,
+        thread_params: Value,
+        turn_params: Value,
+        timeout: Duration,
+    ) -> anyhow::Result<DucxTurn> {
+        let events = self.subscribe();
+        let thread = self
+            .request("thread/start", thread_params, timeout)
+            .await
+            .context("start DUCX thread")?;
+        let thread_id = thread
+            .pointer("/thread/id")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .context("DUCX thread/start response is missing thread.id")?
+            .to_owned();
+        let mut turn_params = turn_params;
+        let params = turn_params
+            .as_object_mut()
+            .context("DUCX turn params must be an object")?;
+        params.insert("threadId".to_owned(), Value::String(thread_id.clone()));
+        let turn = self
+            .request("turn/start", turn_params, timeout)
+            .await
+            .context("start DUCX turn")?;
+        let turn_id = turn
+            .pointer("/turn/id")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .context("DUCX turn/start response is missing turn.id")?
+            .to_owned();
+        Ok(DucxTurn {
+            thread_id,
+            turn_id,
+            events,
+        })
+    }
+
     async fn write_json(&self, message: &Value) -> anyhow::Result<()> {
         let mut encoded = serde_json::to_vec(message).context("encode DUCX JSON-RPC message")?;
         encoded.push(b'\n');
@@ -189,6 +236,35 @@ impl DucxAppServer {
             .await
             .context("write DUCX JSON-RPC message")?;
         stdin.flush().await.context("flush DUCX stdin")
+    }
+}
+
+impl DucxTurn {
+    pub(crate) fn into_stream(mut self) -> BoxStream<'static, anyhow::Result<Value>> {
+        async_stream::try_stream! {
+            loop {
+                let message = self.events.recv().await.context("receive DUCX turn event")?;
+                let params = message.get("params").unwrap_or(&Value::Null);
+                if params.get("threadId").and_then(Value::as_str) != Some(&self.thread_id) {
+                    continue;
+                }
+                if let Some(event_turn_id) = params.get("turnId").and_then(Value::as_str)
+                    && event_turn_id != self.turn_id
+                {
+                    continue;
+                }
+                let completed = message.get("method").and_then(Value::as_str) == Some("turn/completed")
+                    && params
+                        .pointer("/turn/id")
+                        .and_then(Value::as_str)
+                        .is_none_or(|id| id == self.turn_id);
+                yield message;
+                if completed {
+                    break;
+                }
+            }
+        }
+        .boxed()
     }
 }
 
@@ -270,6 +346,13 @@ input.on("line", (line) => {
   if (message.method === "initialize") {
     process.stdout.write(JSON.stringify({ id: message.id, result: { ok: true } }) + "\n");
     process.stdout.write(JSON.stringify({ method: "initialized/event", params: { value: 7 } }) + "\n");
+  } else if (message.method === "thread/start") {
+    process.stdout.write(JSON.stringify({ id: message.id, result: { thread: { id: "thread_1" } } }) + "\n");
+  } else if (message.method === "turn/start") {
+    process.stdout.write(JSON.stringify({ id: message.id, result: { turn: { id: "turn_1" } } }) + "\n");
+    process.stdout.write(JSON.stringify({ method: "item/agentMessage/delta", params: { threadId: "other", turnId: "turn_other", itemId: "x", delta: "ignore" } }) + "\n");
+    process.stdout.write(JSON.stringify({ method: "item/agentMessage/delta", params: { threadId: message.params.threadId, turnId: "turn_1", itemId: "message_1", delta: "hello" } }) + "\n");
+    process.stdout.write(JSON.stringify({ method: "turn/completed", params: { threadId: message.params.threadId, turn: { id: "turn_1", status: "completed" } } }) + "\n");
   } else if (message.method === "fail") {
     process.stdout.write(JSON.stringify({ id: message.id, error: { code: -1, message: "expected failure" } }) + "\n");
   }
@@ -331,6 +414,26 @@ input.on("line", (line) => {
             .unwrap_err();
         assert!(error.to_string().contains("timed out"));
         assert!(server.pending.lock().await.is_empty());
+        server.shutdown();
+    }
+
+    #[tokio::test]
+    async fn isolates_concurrent_turn_notifications() {
+        let (_directory, config) = mock_server();
+        let server = DucxAppServer::spawn(config).await.unwrap();
+        let turn = server
+            .start_turn(json!({}), json!({ "input": [] }), Duration::from_secs(2))
+            .await
+            .unwrap();
+        let events = turn
+            .into_stream()
+            .map(|event| event.unwrap())
+            .collect::<Vec<_>>()
+            .await;
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0]["params"]["delta"], "hello");
+        assert_eq!(events[1]["method"], "turn/completed");
         server.shutdown();
     }
 }
