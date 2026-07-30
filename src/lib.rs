@@ -5,6 +5,8 @@ pub mod benchmark;
 pub mod catalog;
 pub mod config;
 pub mod convert;
+#[allow(dead_code)]
+pub(crate) mod ducx;
 pub mod error;
 pub mod fusion;
 pub mod fusion_tools;
