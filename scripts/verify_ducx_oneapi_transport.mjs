@@ -66,6 +66,10 @@ const child = spawn(process.execPath, [probePath], {
     ...process.env,
     DUCX_PROBE_ALLOW_INSTALLED_CONFIG: "1",
     DUCX_PROBE_BASE_INSTRUCTIONS: "DUCX_TRANSPORT_PROBE_BASE",
+    DUCX_PROBE_CLIENT_METADATA: JSON.stringify({
+      codex_mixin_request_id: "ducx_transport_probe",
+      declared_function_tools: "[]",
+    }),
     DUCX_PROBE_ONEAPI_BASE_URL: upstreamBaseURL,
     DUCX_PROBE_RUN_TURN: "1",
     DUCX_PROBE_TURN_INPUT: JSON.stringify([
@@ -103,6 +107,8 @@ const injectedToolNames = (request.body.input || [])
   .filter((item) => item.type === "additional_tools")
   .flatMap((item) => item.tools || [])
   .map((tool) => tool.name);
+const turnMetadata =
+  request.body.client_metadata?.["x-codex-turn-metadata"] || null;
 assert.match(request.url, /\/responses$/);
 assert.ok(
   typeof request.headers.comate_custom_header === "string" &&
@@ -126,6 +132,10 @@ if (process.env.DUCX_VERIFY_REQUIRE_THIN === "1") {
 }
 const summary = JSON.parse(stdout);
 assert.equal(summary.turnStatus, "completed");
+assert.ok(
+  JSON.stringify(turnMetadata).includes("ducx_transport_probe"),
+  "DUCX dropped responsesapiClientMetadata",
+);
 
 process.stdout.write(
   `${JSON.stringify(
@@ -136,6 +146,15 @@ process.stdout.write(
       multimodalImagePreserved: true,
       suppliedInstructionsPreserved: true,
       injectedToolNames,
+      turnMetadataPreserved:
+        JSON.stringify(turnMetadata).includes("ducx_transport_probe"),
+      turnMetadataType: Array.isArray(turnMetadata)
+        ? "array"
+        : typeof turnMetadata,
+      turnMetadataKeys:
+        turnMetadata && typeof turnMetadata === "object"
+          ? Object.keys(turnMetadata).sort()
+          : [],
       thinGateway: injectedToolNames.length === 0,
       turnStatus: summary.turnStatus,
     },

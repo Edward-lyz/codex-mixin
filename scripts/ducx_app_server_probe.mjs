@@ -484,6 +484,9 @@ async function main() {
       await client.request("turn/start", {
         threadId: thread.thread.id,
         input: turnInput,
+        responsesapiClientMetadata: process.env.DUCX_PROBE_CLIENT_METADATA
+          ? JSON.parse(process.env.DUCX_PROBE_CLIENT_METADATA)
+          : undefined,
         approvalPolicy: "never",
         cwd: workspace,
         environments: [],
@@ -536,6 +539,8 @@ async function main() {
           isolatedCodexHome: codexHome,
           isolatedWorkspace: workspace,
           initialized: Boolean(initialize),
+          oneApiBaseURL:
+            effectiveConfig.config?.model_providers?.oneapi?.base_url || null,
           configLayers: (effectiveConfig.layers || []).map((layer) => layer.name),
           discoveredHooks: discoveredHooks.length,
           emittedHookNotifications: 0,

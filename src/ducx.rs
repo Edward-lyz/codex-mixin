@@ -114,6 +114,17 @@ impl DucxProcessConfig {
             env: Vec::new(),
         }
     }
+
+    pub(crate) fn with_oneapi_base_url(mut self, base_url: &str) -> Self {
+        self.args.extend([
+            "-c".to_owned(),
+            format!(
+                "model_providers.oneapi.base_url={}",
+                serde_json::to_string(base_url).expect("serializing a string cannot fail")
+            ),
+        ]);
+        self
+    }
 }
 
 pub(crate) struct DucxAppServer {
@@ -429,6 +440,27 @@ impl DucxAppServer {
             "DUCX app-server exposed {hook_count} hooks after isolation"
         );
         Ok(server)
+    }
+
+    pub(crate) async fn oneapi_base_url(
+        &self,
+        cwd: &Path,
+        timeout: Duration,
+    ) -> anyhow::Result<String> {
+        let config = self
+            .request(
+                "config/read",
+                json!({"cwd":cwd,"includeLayers":false}),
+                timeout,
+            )
+            .await
+            .context("read DUCX configuration")?;
+        config
+            .pointer("/config/model_providers/oneapi/base_url")
+            .and_then(Value::as_str)
+            .filter(|value| !value.trim().is_empty())
+            .map(str::to_owned)
+            .context("DUCX configuration is missing model_providers.oneapi.base_url")
     }
 
     pub(crate) fn subscribe(&self) -> broadcast::Receiver<Value> {
