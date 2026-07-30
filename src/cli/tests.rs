@@ -1073,9 +1073,10 @@ fn preserves_quota_limit_and_remaining_for_visualization() {
         )
         .unwrap(),
         QuotaUsageSummary {
-            used: 10.0,
+            used: Some(10.0),
             limit: Some(50.0),
             remaining: Some(40.0),
+            currency: None,
         }
     );
     assert_eq!(
@@ -1085,9 +1086,10 @@ fn preserves_quota_limit_and_remaining_for_visualization() {
         )
         .unwrap(),
         QuotaUsageSummary {
-            used: 12.5,
+            used: Some(12.5),
             limit: Some(100.0),
             remaining: Some(87.5),
+            currency: None,
         }
     );
     assert_eq!(
@@ -1103,9 +1105,31 @@ fn preserves_quota_limit_and_remaining_for_visualization() {
         )
         .unwrap(),
         QuotaUsageSummary {
-            used: 25.5,
+            used: Some(25.5),
             limit: Some(100.0),
             remaining: Some(74.5),
+            currency: None,
+        }
+    );
+    assert_eq!(
+        quota_usage(
+            codex_mixin::provider::ProviderQuotaParser::DeepSeek,
+            &serde_json::json!({
+                "is_available": true,
+                "balance_infos": [{
+                    "currency": "CNY",
+                    "total_balance": "110.00",
+                    "granted_balance": "10.00",
+                    "topped_up_balance": "100.00"
+                }]
+            })
+        )
+        .unwrap(),
+        QuotaUsageSummary {
+            used: None,
+            limit: None,
+            remaining: Some(110.0),
+            currency: Some("CNY".to_owned()),
         }
     );
 }
@@ -1141,7 +1165,15 @@ fn provider_presets_resolve_quota_urls() {
 
     let deepseek = ProviderPreset::DeepSeek.create("deepseek", "key");
     let registry = ProviderRegistry::new(vec![deepseek]).unwrap();
-    assert!(registry.provider("deepseek").unwrap().quota_url().is_none());
+    assert_eq!(
+        registry
+            .provider("deepseek")
+            .unwrap()
+            .quota_url()
+            .unwrap()
+            .as_str(),
+        "https://api.deepseek.com/user/balance"
+    );
 }
 
 #[tokio::test]

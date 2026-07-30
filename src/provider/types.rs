@@ -43,6 +43,8 @@ pub enum ProviderQuotaParser {
     Generic,
     BaiduOneApi,
     OpenRouter,
+    #[serde(rename = "deepseek")]
+    DeepSeek,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]

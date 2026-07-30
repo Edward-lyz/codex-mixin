@@ -232,6 +232,7 @@ fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConfig> {
     {
         let mut parsed: StoredGatewayConfig = serde_json::from_value(document)?;
         ensure_config_version(u32::try_from(version).context("config_version is too large")?)?;
+        upgrade_deepseek_quota_defaults(&mut parsed);
         bootstrap_unrefreshed_selected_models(&mut parsed);
         return Ok(parsed);
     } else if document.get("config_version").is_some() {
@@ -258,8 +259,22 @@ fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConfig> {
         );
     }
     let mut migrated = migrate_legacy_config(serde_json::from_value(document)?)?;
+    upgrade_deepseek_quota_defaults(&mut migrated);
     bootstrap_unrefreshed_selected_models(&mut migrated);
     Ok(migrated)
+}
+
+fn upgrade_deepseek_quota_defaults(config: &mut StoredGatewayConfig) {
+    for provider in &mut config.providers {
+        if provider.preset_id.as_deref() == Some("deepseek")
+            && provider.base_url == "https://api.deepseek.com"
+            && provider.quota_url.is_none()
+            && provider.quota_parser == ProviderQuotaParser::Generic
+        {
+            provider.quota_url = Some("https://api.deepseek.com/user/balance".to_owned());
+            provider.quota_parser = ProviderQuotaParser::DeepSeek;
+        }
+    }
 }
 
 fn bootstrap_unrefreshed_selected_models(config: &mut StoredGatewayConfig) {
@@ -591,6 +606,33 @@ mod tests {
         assert_eq!(provider.models_refreshed_at_ms, None);
         assert!(provider.selected_models.is_empty());
         assert_eq!(fs::read_to_string(&path).unwrap(), legacy);
+    }
+
+    #[test]
+    fn upgrades_existing_deepseek_provider_with_balance_endpoint_once() {
+        let mut provider = crate::provider::deepseek_provider("deepseek", "secret");
+        provider.quota_url = None;
+        provider.quota_parser = ProviderQuotaParser::Generic;
+        let stored = StoredGatewayConfig {
+            providers: vec![provider],
+            ..StoredGatewayConfig::default()
+        };
+
+        let mut loaded = parse_stored_config(&serde_json::to_string(&stored).unwrap()).unwrap();
+        let provider = &mut loaded.providers[0];
+        assert_eq!(
+            provider.quota_url.as_deref(),
+            Some("https://api.deepseek.com/user/balance")
+        );
+        assert_eq!(provider.quota_parser, ProviderQuotaParser::DeepSeek);
+
+        provider.quota_url = None;
+        let loaded = parse_stored_config(&serde_json::to_string(&loaded).unwrap()).unwrap();
+        assert_eq!(loaded.providers[0].quota_url, None);
+        assert_eq!(
+            loaded.providers[0].quota_parser,
+            ProviderQuotaParser::DeepSeek
+        );
     }
 
     #[test]

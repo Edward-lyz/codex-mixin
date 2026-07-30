@@ -186,7 +186,7 @@ pub fn openrouter_provider(
 }
 
 pub fn deepseek_provider(id: impl Into<String>, api_key: impl Into<String>) -> ProviderDefinition {
-    openai_chat_provider(
+    let mut provider = openai_chat_provider(
         id,
         "DeepSeek",
         "deepseek",
@@ -194,7 +194,10 @@ pub fn deepseek_provider(id: impl Into<String>, api_key: impl Into<String>) -> P
         "/chat/completions",
         "/models",
         api_key,
-    )
+    );
+    provider.quota_url = Some("https://api.deepseek.com/user/balance".to_owned());
+    provider.quota_parser = ProviderQuotaParser::DeepSeek;
+    provider
 }
 
 fn openai_chat_provider(
@@ -276,6 +279,16 @@ mod tests {
             ]
         );
         assert_eq!(provider.cached_models.len(), 6);
+    }
+
+    #[test]
+    fn deepseek_preset_configures_balance_endpoint() {
+        let provider = deepseek_provider("deepseek", "secret");
+        assert_eq!(
+            provider.quota_url.as_deref(),
+            Some("https://api.deepseek.com/user/balance")
+        );
+        assert_eq!(provider.quota_parser, ProviderQuotaParser::DeepSeek);
     }
 
     #[test]

@@ -78,6 +78,7 @@ pub(super) fn used_quota_from_json(
     let pointers: &[&str] = match parser {
         ProviderQuotaParser::BaiduOneApi => &["/data/used_quota"],
         ProviderQuotaParser::OpenRouter => &["/data/total_usage"],
+        ProviderQuotaParser::DeepSeek => &[],
         ProviderQuotaParser::Generic => &[
             "/data/used_quota",
             "/data/total_usage",

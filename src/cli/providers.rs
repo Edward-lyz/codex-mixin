@@ -285,7 +285,11 @@ pub(super) fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<
             provider.quota_url = None;
             provider.quota_username = None;
             provider.quota_currency = None;
-            provider.quota_parser = ProviderQuotaParser::Generic;
+            provider.quota_parser = if provider.preset_id.as_deref() == Some("deepseek") {
+                ProviderQuotaParser::DeepSeek
+            } else {
+                ProviderQuotaParser::Generic
+            };
         } else {
             if let Some(quota_url) = options.quota_url {
                 provider.quota_url = Some(normalize_base_url(quota_url)?);
@@ -690,6 +694,7 @@ fn parse_quota_parser(value: &str) -> anyhow::Result<ProviderQuotaParser> {
         "generic" => Ok(ProviderQuotaParser::Generic),
         "baidu_oneapi" | "baidu-oneapi" => Ok(ProviderQuotaParser::BaiduOneApi),
         "openrouter" => Ok(ProviderQuotaParser::OpenRouter),
+        "deepseek" => Ok(ProviderQuotaParser::DeepSeek),
         other => anyhow::bail!("unsupported quota parser: {other}"),
     }
 }
@@ -1041,7 +1046,7 @@ mod tests {
             format!("http://{address}/api/v1/credits")
         );
         assert_eq!(discovered.currency.as_deref(), Some("USD"));
-        assert_eq!(discovered.usage.used, 12.5);
+        assert_eq!(discovered.usage.used, Some(12.5));
         assert_eq!(discovered.usage.limit, Some(100.0));
         assert_eq!(
             authorization.lock().unwrap().as_deref(),
@@ -1083,7 +1088,7 @@ mod tests {
             discovered.url.as_str(),
             format!("http://{address}/api/usage/token/")
         );
-        assert_eq!(discovered.usage.used, 12.5);
+        assert_eq!(discovered.usage.used, Some(12.5));
         assert_eq!(discovered.usage.limit, Some(100.0));
         assert_eq!(discovered.usage.remaining, Some(87.5));
     }
@@ -1125,7 +1130,7 @@ mod tests {
             format!("http://{address}/v1/usage")
         );
         assert_eq!(discovered.currency.as_deref(), Some("USD"));
-        assert_eq!(discovered.usage.used, 12.5);
+        assert_eq!(discovered.usage.used, Some(12.5));
         assert_eq!(discovered.usage.limit, Some(50.0));
         assert_eq!(discovered.usage.remaining, Some(37.5));
     }

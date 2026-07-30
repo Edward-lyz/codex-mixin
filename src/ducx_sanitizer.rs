@@ -266,7 +266,10 @@ mod tests {
                 "model":"catalog-slug",
                 "instructions":"caller instructions",
                 "input":[{"type":"message","role":"user","content":"hi"}],
-                "tools":[{"type":"function","name":"lookup"}]
+                "tools":[
+                    {"type":"function","name":"lookup"},
+                    {"type":"web_search"}
+                ]
             }),
             upstream_model: "upstream-model".to_owned(),
             downstream: Arc::new(Mutex::new(None)),
@@ -293,7 +296,10 @@ mod tests {
         assert_eq!(payload["input"][0]["role"], "user");
         assert_eq!(
             payload["tools"],
-            json!([{"type":"function","name":"lookup"}])
+            json!([
+                {"type":"function","name":"lookup"},
+                {"type":"web_search"}
+            ])
         );
         assert_eq!(payload["model"], "upstream-model");
         assert_eq!(payload["stream"], true);

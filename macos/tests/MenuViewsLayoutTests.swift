@@ -30,6 +30,13 @@ struct MenuViewsLayoutTests {
                 "used": 2.21,
                 "limit": 12.01,
                 "remaining": 9.8
+              },
+              {
+                "provider_id": "deepseek",
+                "display_name": "DeepSeek",
+                "currency": "CNY",
+                "used": null,
+                "remaining": 110
               }
             ]
             """
@@ -47,6 +54,8 @@ struct MenuViewsLayoutTests {
             abs(widths[0] - widths[1]) < 0.5,
             "All Provider quota tracks must have equal widths; got \(widths)"
         )
+        let quotaLabels = descendants(of: quotaView, matching: NSTextField.self)
+        precondition(quotaLabels.contains { $0.stringValue == "余额 110 CNY" })
         let providerIssue = "Baidu OneAPI：模型 unreachable-model 当前不可达"
         let serviceView = serviceMenuView(
             title: "本地网关运行中 · Provider 降级",

@@ -308,7 +308,7 @@ pub(super) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
             Ok((usage, raw)) => results.push(serde_json::json!({
                 "provider_id": provider.id(),
                 "display_name": provider.display_name(),
-                "currency": provider.quota_currency(),
+                "currency": usage.currency.as_deref().or(provider.quota_currency()),
                 "value": usage.used,
                 "used": usage.used,
                 "limit": usage.limit,
@@ -340,27 +340,33 @@ pub(super) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
             let limit = &result["limit"];
             let remaining = &result["remaining"];
             let currency = result["currency"].as_str().unwrap_or("");
-            if !limit.is_null() {
+            if !used.is_null() && !limit.is_null() {
                 println!("{provider_id}: used {used} / {limit} {currency}, remaining {remaining}");
-            } else {
+            } else if !used.is_null() {
                 println!("{provider_id}: used {used} {currency}");
+            } else {
+                println!("{provider_id}: remaining {remaining} {currency}");
             }
         }
     }
     Ok(())
 }
 
-#[derive(Clone, Copy, Debug, PartialEq)]
+#[derive(Clone, Debug, PartialEq)]
 pub(super) struct QuotaUsageSummary {
-    pub(super) used: f64,
+    pub(super) used: Option<f64>,
     pub(super) limit: Option<f64>,
     pub(super) remaining: Option<f64>,
+    pub(super) currency: Option<String>,
 }
 
 pub(super) fn quota_usage(
     parser: ProviderQuotaParser,
     value: &serde_json::Value,
 ) -> anyhow::Result<QuotaUsageSummary> {
+    if parser == ProviderQuotaParser::DeepSeek {
+        return deepseek_quota_usage(value);
+    }
     let (used_fields, limit_fields, remaining_fields): (&[&str], &[&str], &[&str]) = match parser {
         ProviderQuotaParser::BaiduOneApi => (
             &["used_quota", "used", "usage"],
@@ -408,6 +414,7 @@ pub(super) fn quota_usage(
                 "balance",
             ],
         ),
+        ProviderQuotaParser::DeepSeek => unreachable!("DeepSeek quota handled above"),
     };
     let used = first_quota_value(value, used_fields)
         .ok_or_else(|| anyhow::anyhow!("quota response does not contain a valid used amount"))?;
@@ -416,9 +423,47 @@ pub(super) fn quota_usage(
         .or_else(|| reported_remaining.map(|remaining| used + remaining));
     let remaining = reported_remaining.or_else(|| limit.map(|limit| (limit - used).max(0.0)));
     Ok(QuotaUsageSummary {
-        used,
+        used: Some(used),
         limit,
         remaining,
+        currency: None,
+    })
+}
+
+fn deepseek_quota_usage(value: &serde_json::Value) -> anyhow::Result<QuotaUsageSummary> {
+    let balances = value
+        .get("balance_infos")
+        .and_then(serde_json::Value::as_array)
+        .ok_or_else(|| anyhow::anyhow!("DeepSeek quota response has no balance_infos array"))?;
+    let parsed = balances
+        .iter()
+        .filter_map(|entry| {
+            let amount = entry.get("total_balance").and_then(json_f64)?;
+            (amount.is_finite() && amount >= 0.0).then(|| {
+                let currency = entry
+                    .get("currency")
+                    .and_then(serde_json::Value::as_str)
+                    .map(str::trim)
+                    .filter(|currency| {
+                        currency.len() == 3
+                            && currency.bytes().all(|byte| byte.is_ascii_alphabetic())
+                    })
+                    .map(str::to_ascii_uppercase);
+                (amount, currency)
+            })
+        })
+        .collect::<Vec<_>>();
+    let balance = parsed
+        .iter()
+        .find(|(amount, _)| *amount > 0.0)
+        .or_else(|| parsed.first())
+        .cloned()
+        .ok_or_else(|| anyhow::anyhow!("DeepSeek quota response has no valid total_balance"))?;
+    Ok(QuotaUsageSummary {
+        used: None,
+        limit: None,
+        remaining: Some(balance.0),
+        currency: balance.1,
     })
 }
 

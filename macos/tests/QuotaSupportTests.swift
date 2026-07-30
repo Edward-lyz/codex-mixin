@@ -20,6 +20,13 @@ struct QuotaSupportTests {
               {
                 "provider_id": "custom-3",
                 "used": 1
+              },
+              {
+                "provider_id": "deepseek",
+                "display_name": "DeepSeek",
+                "currency": "CNY",
+                "used": null,
+                "remaining": 110
               }
             ]
             """
@@ -27,6 +34,9 @@ struct QuotaSupportTests {
 
         precondition(usages[0].menuLabel == "AIHub")
         precondition(usages[1].menuLabel == "custom-3")
+        precondition(usages[2].used == nil)
+        precondition(usages[2].remaining == 110)
+        precondition(usages[2].currency == "CNY")
         print("Provider quota labels: passed")
     }
 }

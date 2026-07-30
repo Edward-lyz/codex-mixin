@@ -195,6 +195,13 @@ func providerQuotaRow(_ usage: ProviderQuotaUsage) -> NSView {
     } else if let amount = usage.used {
         let currency = usage.currency.map { " \($0)" } ?? ""
         value = "\(formatQuotaAmount(amount))\(currency)"
+    } else if let amount = usage.remaining {
+        let currency = usage.currency.map { " \($0)" } ?? ""
+        value = appText(
+            "余额 \(formatQuotaAmount(amount))\(currency)",
+            "餘額 \(formatQuotaAmount(amount))\(currency)",
+            "Balance \(formatQuotaAmount(amount))\(currency)"
+        )
     } else if usage.error?.contains("not configured") == true {
         value = appText("未配置额度接口", "未設定額度端點", "Quota endpoint not configured")
     } else {
@@ -202,7 +209,9 @@ func providerQuotaRow(_ usage: ProviderQuotaUsage) -> NSView {
     }
     let valueLabel = NSTextField(labelWithString: value)
     valueLabel.font = .systemFont(ofSize: 11)
-    valueLabel.textColor = usage.used == nil ? .secondaryLabelColor : .labelColor
+    valueLabel.textColor = usage.used == nil && usage.remaining == nil
+        ? .secondaryLabelColor
+        : .labelColor
     valueLabel.alignment = .right
     valueLabel.lineBreakMode = .byTruncatingTail
     valueLabel.toolTip = usage.error
