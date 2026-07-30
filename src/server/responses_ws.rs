@@ -223,6 +223,7 @@ async fn route_responses_ws(
                         .map(Some)
                 }
                 Ok(()) => {
+                    strip_custom_websocket_envelope(&mut body);
                     proxy_custom_responses_ws(&state, &headers, &mut client_sender, body).await
                 }
                 Err(err) => Err(err),
@@ -261,6 +262,13 @@ fn is_noop_responses_ws_request(body: &Value) -> bool {
     body.get("input")
         .and_then(Value::as_array)
         .is_some_and(Vec::is_empty)
+}
+
+fn strip_custom_websocket_envelope(body: &mut Value) {
+    if let Some(body) = body.as_object_mut() {
+        body.remove("type");
+        body.remove("previous_response_id");
+    }
 }
 
 async fn connect_official_responses_ws(

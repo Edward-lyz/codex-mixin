@@ -732,7 +732,20 @@ async fn mock_baidu_routed_responses(
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
+    let contains_websocket_envelope =
+        body.get("type").is_some() || body.get("previous_response_id").is_some();
     record_baidu_protocol_request(&state, "/v1/responses", &headers, body);
+    if contains_websocket_envelope {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": {
+                    "message": "Responses WebSocket envelope fields are not accepted over HTTP"
+                }
+            })),
+        )
+            .into_response();
+    }
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")
@@ -3191,6 +3204,68 @@ async fn maps_custom_websocket_to_responses_frames() {
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0]["model"], "DeepSeek-V4-Flash");
     assert_eq!(requests[0]["metadata"]["session_id"], "websocket-session");
+}
+
+#[tokio::test]
+async fn strips_websocket_envelope_before_baidu_responses_request() {
+    let (upstream_url, requests) = spawn_baidu_protocol_upstream().await;
+    let mut config = test_config(upstream_url);
+    configure_baidu_policy(&mut config);
+    let _ducc = configure_fake_ducc_auth(&mut config);
+    config.providers[0].model_source = ProviderModelSource::BaiduOneApi;
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+
+    let mut first = responses_request();
+    first.as_object_mut().unwrap().remove("stream");
+    first["type"] = json!("response.create");
+    first["model"] = json!("gpt-5.6-sol-custom");
+    socket
+        .send(WsMessage::Text(first.to_string().into()))
+        .await
+        .unwrap();
+    let first_frames = websocket_response_frames(&mut socket).await;
+    let completed = first_frames
+        .iter()
+        .filter_map(|frame| serde_json::from_str::<Value>(frame).ok())
+        .find(|event| event["type"] == "response.completed")
+        .unwrap();
+
+    let follow_up = json!({
+        "type": "response.create",
+        "model": "gpt-5.6-sol-custom",
+        "previous_response_id": completed["response"]["id"],
+        "input": [{
+            "type": "message",
+            "role": "user",
+            "content": [{"type":"input_text","text":"second turn"}]
+        }],
+        "tools": []
+    });
+    socket
+        .send(WsMessage::Text(follow_up.to_string().into()))
+        .await
+        .unwrap();
+    let follow_up_frames = websocket_response_frames(&mut socket).await;
+    assert!(
+        follow_up_frames
+            .iter()
+            .any(|frame| frame.contains("\"type\":\"response.completed\""))
+    );
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(requests.iter().all(|request| {
+        request["body"].get("type").is_none()
+            && request["body"].get("previous_response_id").is_none()
+    }));
 }
 
 #[tokio::test]
