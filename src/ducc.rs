@@ -19,6 +19,7 @@ use uuid::Uuid;
 
 const REQUEST_BODY_LIMIT: usize = 16 * 1024 * 1024;
 const DUCC_HEADER_NAME: &str = "comate_custom_header";
+const LOOPBACK_API_KEY: &str = "codex-mixin-loopback";
 
 pub(crate) fn default_ducc_executable() -> Option<PathBuf> {
     std::env::var_os("HOME")
@@ -236,6 +237,11 @@ async fn forward_post(
         native_headers.contains_key(DUCC_HEADER_NAME),
         "DUCC request is missing its native authentication header"
     );
+    // Claude Code requires an API key before it will send to a non-official
+    // loopback base URL. The placeholder exists only to unlock that local
+    // request and must never reach the real upstream.
+    native_headers.remove(header::AUTHORIZATION);
+    native_headers.remove("x-api-key");
     strip_hop_by_hop_headers(&mut native_headers);
     for (name, value) in policy.headers {
         if let Some(name) = name {
@@ -341,7 +347,10 @@ impl DuccClient {
         base_url: &str,
     ) -> anyhow::Result<Self> {
         let settings = serde_json::to_string(&json!({
-            "env": {"ANTHROPIC_BASE_URL": base_url}
+            "env": {
+                "ANTHROPIC_BASE_URL": base_url,
+                "ANTHROPIC_API_KEY": LOOPBACK_API_KEY
+            }
         }))
         .expect("static DUCC settings are serializable");
         let mut child = Command::new(executable)
@@ -458,7 +467,11 @@ impl DuccClient {
         while let Some(message) = output.recv().await {
             if message.get("type").and_then(Value::as_str) == Some("result") {
                 if message.get("is_error").and_then(Value::as_bool) == Some(true) {
-                    anyhow::bail!("managed DUCC turn failed");
+                    let detail = message
+                        .get("result")
+                        .and_then(Value::as_str)
+                        .unwrap_or("unknown DUCC error");
+                    anyhow::bail!("managed DUCC turn failed: {detail}");
                 }
                 return Ok(());
             }
@@ -555,17 +568,33 @@ impl DuccRuntime {
             client.shutdown();
             return Err(error);
         }
-        let response = match tokio::time::timeout(timeout, response).await {
-            Ok(Ok(response)) => response,
-            Ok(Err(_)) => {
-                self.bridge.cancel(model, &marker).await;
-                client.shutdown();
-                anyhow::bail!("DUCC loopback response channel closed")
-            }
-            Err(_) => {
-                self.bridge.cancel(model, &marker).await;
-                client.shutdown();
-                anyhow::bail!("DUCC did not open its authenticated request in time")
+        let response = {
+            let early_result = client.wait_for_result();
+            tokio::pin!(early_result);
+            tokio::select! {
+                response = response => match response {
+                    Ok(response) => response,
+                    Err(_) => {
+                        self.bridge.cancel(model, &marker).await;
+                        client.shutdown();
+                        anyhow::bail!("DUCC loopback response channel closed")
+                    }
+                },
+                result = &mut early_result => {
+                    self.bridge.cancel(model, &marker).await;
+                    client.shutdown();
+                    match result {
+                        Ok(()) => anyhow::bail!(
+                            "managed DUCC turn completed without opening its authenticated request"
+                        ),
+                        Err(error) => return Err(error),
+                    }
+                },
+                _ = tokio::time::sleep(timeout) => {
+                    self.bridge.cancel(model, &marker).await;
+                    client.shutdown();
+                    anyhow::bail!("DUCC did not open its authenticated request in time")
+                }
             }
         };
         tokio::spawn(async move {
@@ -591,6 +620,7 @@ mod tests {
     use super::*;
     use axum::Json;
     use axum::routing::post;
+    use std::os::unix::fs::PermissionsExt;
 
     #[test]
     fn derives_managed_home_without_reading_auth_files() {
@@ -611,8 +641,48 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn reports_ducc_failure_before_loopback_timeout() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("home/.baidu-cc/baidu-cc/bin/ducc");
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(
+            &executable,
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' '{"type":"result","is_error":true,"result":"Not logged in"}'
+  exit 0
+done
+"#,
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&executable, permissions).unwrap();
+        let runtime = DuccRuntime::spawn(executable, reqwest::Client::new())
+            .await
+            .unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            runtime.send(
+                "GLM-5.2",
+                "http://127.0.0.1:9/v1/messages".parse().unwrap(),
+                json!({"model":"GLM-5.2","messages":[]}),
+                HeaderMap::new(),
+                Duration::from_secs(30),
+            ),
+        )
+        .await
+        .expect("DUCC failure must beat the loopback timeout")
+        .unwrap_err();
+        assert!(
+            format!("{result:#}").contains("Not logged in"),
+            "unexpected DUCC error: {result:#}"
+        );
+    }
+
+    #[tokio::test]
     async fn bridge_skips_auxiliary_and_replaces_the_entire_multimodal_body_once() {
-        let captured = Arc::new(Mutex::new(Vec::<(Value, bool, Option<String>)>::new()));
+        let captured = Arc::new(Mutex::new(Vec::<(Value, bool, bool, Option<String>)>::new()));
         let upstream_capture = Arc::clone(&captured);
         let app = Router::new().route(
             "/v1/messages",
@@ -622,6 +692,8 @@ mod tests {
                     upstream_capture.lock().await.push((
                         body,
                         headers.contains_key(DUCC_HEADER_NAME),
+                        headers.contains_key("x-api-key")
+                            || headers.contains_key(header::AUTHORIZATION),
                         headers
                             .get("x-hash-key")
                             .and_then(|value| value.to_str().ok())
@@ -678,6 +750,7 @@ mod tests {
         let auxiliary = client
             .post(&url)
             .header(DUCC_HEADER_NAME, "native-value")
+            .header("x-api-key", LOOPBACK_API_KEY)
             .json(&trigger)
             .send()
             .await
@@ -688,6 +761,7 @@ mod tests {
         let main = client
             .post(&url)
             .header(DUCC_HEADER_NAME, "native-value")
+            .header("x-api-key", LOOPBACK_API_KEY)
             .json(&trigger)
             .send()
             .await
@@ -705,7 +779,8 @@ mod tests {
         assert_eq!(snapshot.len(), 1);
         assert_eq!(snapshot[0].0, expected);
         assert!(snapshot[0].1);
-        assert_eq!(snapshot[0].2.as_deref(), Some("session-hash"));
+        assert!(!snapshot[0].2, "loopback placeholder auth must be removed");
+        assert_eq!(snapshot[0].3.as_deref(), Some("session-hash"));
         drop(snapshot);
 
         // Replaying the same DUCC request is answered locally and never opens

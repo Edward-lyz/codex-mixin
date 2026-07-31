@@ -14,6 +14,18 @@ const ducc =
 const timeoutMilliseconds = Number(process.env.DUCC_PROBE_TIMEOUT_MS || "30000");
 const turnCount = Number(process.env.DUCC_PROBE_TURNS || "1");
 const expectedModel = process.env.DUCC_PROBE_MODEL || "Claude Sonnet 5";
+const isolationMode = process.env.DUCC_PROBE_ISOLATION_MODE || "bare";
+const isolationArguments =
+  isolationMode === "safe-mode"
+    ? ["--safe-mode"]
+    : isolationMode === "none"
+      ? []
+      : ["--bare"];
+const turnMarkers = Array.from(
+  { length: turnCount },
+  () => `codex-mixin-ducc-probe-${randomUUID()}`,
+);
+const pendingMarkers = new Set(turnMarkers);
 const captured = [];
 const forwarded = [];
 const protectedConfigurationPaths = [
@@ -135,6 +147,19 @@ function bodyShape(body) {
   };
 }
 
+function containsString(value, expected) {
+  if (typeof value === "string") {
+    return value.includes(expected);
+  }
+  if (Array.isArray(value)) {
+    return value.some((item) => containsString(item, expected));
+  }
+  if (value && typeof value === "object") {
+    return Object.values(value).some((item) => containsString(item, expected));
+  }
+  return false;
+}
+
 function writeSseResponse(response, model) {
   response.writeHead(200, {
     "content-type": "text/event-stream",
@@ -210,6 +235,9 @@ const upstreamServer = http.createServer((request, response) => {
       duccHeaderPresent:
         typeof request.headers.comate_custom_header === "string" &&
         request.headers.comate_custom_header.length > 0,
+      placeholderAuthPresent:
+        typeof request.headers.authorization === "string" ||
+        typeof request.headers["x-api-key"] === "string",
       body: bodyShape(body),
       bodyMatchesRegistered: JSON.stringify(body) === JSON.stringify(registeredBody),
     });
@@ -249,10 +277,14 @@ const server = http.createServer((request, response) => {
       response.end();
       return;
     }
-    if (body?.model !== expectedModel) {
+    const marker = [...pendingMarkers].find((candidate) =>
+      containsString(body, candidate),
+    );
+    if (body?.model !== expectedModel || !marker) {
       writeSseResponse(response, body?.model);
       return;
     }
+    pendingMarkers.delete(marker);
 
     const headers = { ...request.headers };
     for (const name of [
@@ -270,6 +302,8 @@ const server = http.createServer((request, response) => {
     ]) {
       delete headers[name];
     }
+    delete headers.authorization;
+    delete headers["x-api-key"];
     try {
       const upstream = await fetch(`${upstreamBaseURL}${request.url}`, {
         method: "POST",
@@ -308,7 +342,7 @@ const child = spawn(
   [
     "-l",
     ducc,
-    "--bare",
+    ...isolationArguments,
     "--no-ducc-system-prompt",
     "--disable-slash-commands",
     "--no-session-persistence",
@@ -324,6 +358,7 @@ const child = spawn(
     JSON.stringify({
       env: {
         ANTHROPIC_BASE_URL: baseURL,
+        ANTHROPIC_API_KEY: "codex-mixin-loopback",
       },
     }),
     "--print",
@@ -339,6 +374,7 @@ const child = spawn(
       ...process.env,
       ...proxyEnvironment,
       ANTHROPIC_BASE_URL: baseURL,
+      ANTHROPIC_API_KEY: "codex-mixin-loopback",
       DISABLE_BAIDU_CLAUDE_UPDATE: "1",
       DISABLE_DUCC_CLI_UPDATE: "1",
     },
@@ -354,7 +390,7 @@ const inputLines = Array.from({ length: turnCount }, (_, index) =>
       content: [
         {
           type: "text",
-          text: `Open model request ${index + 1} and return its response without calling tools.`,
+          text: `${turnMarkers[index]}\nOpen model request ${index + 1} and return its response without calling tools.`,
         },
         {
           type: "image",
@@ -393,6 +429,7 @@ const configurationUnchanged =
 const result = {
   ducc,
   exit,
+  isolationMode,
   turnCount,
   elapsedMilliseconds,
   maxResidentBytes: maxResidentBytesMatch ? Number(maxResidentBytesMatch[1]) : null,
@@ -434,6 +471,7 @@ if (
   !forwarded.every(
     (request) =>
       request.duccHeaderPresent &&
+      !request.placeholderAuthPresent &&
       request.bodyMatchesRegistered &&
       request.body?.imageBlockCount === 1,
   ) ||
