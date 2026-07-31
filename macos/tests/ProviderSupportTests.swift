@@ -9,58 +9,9 @@ struct ProviderSupportTests {
     static func main() throws {
         let fileManager = FileManager.default
         let testHome = fileManager.temporaryDirectory
-            .appendingPathComponent("codex-mixin-managed-ducx-\(UUID().uuidString)")
+            .appendingPathComponent("codex-mixin-managed-ducc-\(UUID().uuidString)")
         try fileManager.createDirectory(at: testHome, withIntermediateDirectories: true)
         defer { try? fileManager.removeItem(at: testHome) }
-        let systemDucx = testHome.appendingPathComponent(".baidu-cx/baidu-cx/bin/ducx")
-        try fileManager.createDirectory(
-            at: systemDucx.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        precondition(fileManager.createFile(atPath: systemDucx.path, contents: Data()))
-        try fileManager.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: systemDucx.path
-        )
-        precondition(
-            managedDucxExecutableURL(
-                homeDirectory: testHome,
-                fileManager: fileManager
-            ) == nil,
-            "A system DUCX installation must not satisfy the managed DUCX requirement"
-        )
-        let managedDucx = managedDucxRoot(homeDirectory: testHome)
-            .appendingPathComponent("current/bin/ducx")
-        try fileManager.createDirectory(
-            at: managedDucx.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        precondition(fileManager.createFile(atPath: managedDucx.path, contents: Data()))
-        try fileManager.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: managedDucx.path
-        )
-        try "10.145.0.3\n".write(
-            to: managedDucx
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .appendingPathComponent("version"),
-            atomically: true,
-            encoding: .utf8
-        )
-        precondition(
-            managedDucxExecutableURL(
-                homeDirectory: testHome,
-                fileManager: fileManager
-            ) == managedDucx
-        )
-        precondition(
-            managedDucxInstalledVersion(
-                homeDirectory: testHome,
-                fileManager: fileManager
-            ) == "10.145.0.3",
-            "Managed DUCX version must come from the active package"
-        )
         let systemDucc = testHome.appendingPathComponent(".baidu-cc/baidu-cc/bin/ducc")
         try fileManager.createDirectory(
             at: systemDucc.deletingLastPathComponent(),
@@ -138,7 +89,7 @@ struct ProviderSupportTests {
                   "model_source": {"kind": "baidu_oneapi", "path": "/v1/models"},
                   "api_key_configured": true,
                   "quota_parser": "baidu_one_api",
-                  "ducx_app_server": true,
+                  "baidu_auth_bridge": "ducc_loopback",
                   "selected_models": ["Claude Opus 4.6"],
                   "new_models": [],
                   "unavailable_selected_models": [],
@@ -214,10 +165,8 @@ struct ProviderSupportTests {
         let autoReviewOnly = response.providers[1]
         let unsupported = response.providers[2]
         precondition(response.codexInstallMode == .customOnly)
-        precondition(baidu.ducxAppServer == true)
-        precondition(baidu.baiduAuthBridge == nil)
-        precondition(baidu.effectiveBaiduAuthBridge == .ducxAppServer)
-        precondition(autoReviewOnly.ducxAppServer == nil)
+        precondition(baidu.baiduAuthBridge == .duccLoopback)
+        precondition(baidu.effectiveBaiduAuthBridge == .duccLoopback)
         precondition(autoReviewOnly.effectiveBaiduAuthBridge == nil)
         precondition(baidu.auxiliaryModelUpstream)
         precondition(!autoReviewOnly.auxiliaryModelUpstream)

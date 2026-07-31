@@ -8,35 +8,6 @@ func menuItemImage(_ systemSymbolName: String) -> NSImage? {
 struct ProviderSettingsNavigationTests {
     static func main() throws {
         _ = NSApplication.shared
-        let setupScript = ducxTerminalSetupScript(
-            terminalTitle: "Codex Mixin DUCX test-session",
-            releaseVersion: "1.2.3",
-            archiveURL: URL(string: "http://example.invalid/ducx.tar.bz2")!,
-            archive: URL(fileURLWithPath: "/tmp/ducx.tar.bz2"),
-            downloadStatus: URL(fileURLWithPath: "/tmp/download.status"),
-            installStatus: URL(fileURLWithPath: "/tmp/install.status"),
-            loginStatus: URL(fileURLWithPath: "/tmp/login.status"),
-            executable: URL(fileURLWithPath: "/managed/ducx/current/bin/ducx"),
-            loginRequired: true
-        )
-        precondition(
-            setupScript.contains("curl --fail --location --progress-bar --show-error"),
-            "The setup terminal must display curl download progress"
-        )
-        precondition(
-            setupScript.contains("DISABLE_DUCX_CLI_UPDATE=1")
-                && setupScript.contains("DISABLE_BAIDU_CODEX_UPDATE=1")
-                && setupScript.contains("'/managed/ducx/current/bin/ducx' login"),
-            "The same setup terminal must continue into DUCX login"
-        )
-        precondition(
-            setupScript.contains("close candidateWindow"),
-            "The dedicated setup terminal must close itself after success"
-        )
-        precondition(
-            setupScript.contains("trap 'exit 130' HUP INT TERM"),
-            "Closing the setup terminal early must fail the App workflow promptly"
-        )
         let duccSetupScript = duccTerminalSetupScript(
             terminalTitle: "Codex Mixin DUCC test-session",
             releaseVersion: "2.1.218.3",
@@ -87,6 +58,12 @@ struct ProviderSettingsNavigationTests {
         )
         precondition(
             duccSetupScript.contains(
+                "PATH='/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin'"
+            ),
+            "Terminal validation and App extraction must use the same zstd-capable PATH"
+        )
+        precondition(
+            duccSetupScript.contains(
                 "'/managed/ducc/home/.baidu-cc/baidu-cc/bin/ducc' login"
             ),
             "The managed DUCC executable must perform QR-code login"
@@ -105,97 +82,6 @@ struct ProviderSettingsNavigationTests {
             duccSetupScript.contains("具体错误：")
                 && duccSetupScript.contains("'/tmp/ducc-install.error'"),
             "DUCC setup failures must expose the original installer error in Terminal"
-        )
-        let managedRoot = FileManager.default.temporaryDirectory
-            .appendingPathComponent("codex-mixin-ducx-layout-\(UUID().uuidString)")
-        try FileManager.default.createDirectory(
-            at: managedRoot,
-            withIntermediateDirectories: true
-        )
-        defer { try? FileManager.default.removeItem(at: managedRoot) }
-        try replaceManagedDucxLink(
-            named: "baidu-cx",
-            destination: "10.145.0.3",
-            root: managedRoot,
-            fileManager: .default
-        )
-        try replaceManagedDucxLink(
-            named: "current",
-            destination: "10.145.0.3",
-            root: managedRoot,
-            fileManager: .default
-        )
-        let officialDestination = try FileManager.default.destinationOfSymbolicLink(
-            atPath: managedRoot.appendingPathComponent("baidu-cx").path
-        )
-        let currentDestination = try FileManager.default.destinationOfSymbolicLink(
-            atPath: managedRoot.appendingPathComponent("current").path
-        )
-        precondition(
-            officialDestination == "10.145.0.3",
-            "The managed install must expose DUCX's official baidu-cx runtime entry"
-        )
-        precondition(
-            currentDestination == "10.145.0.3",
-            "The managed install must retain Codex Mixin's stable current entry"
-        )
-        for name in ["10.145.0.3", "10.144.0.1", ".install-interrupted"] {
-            try FileManager.default.createDirectory(
-                at: managedRoot.appendingPathComponent(name),
-                withIntermediateDirectories: true
-            )
-        }
-        let preservedState = managedRoot.appendingPathComponent("user.json")
-        try "preserve me".write(
-            to: preservedState,
-            atomically: true,
-            encoding: .utf8
-        )
-        try replaceManagedDucxLink(
-            named: "baidu-cx",
-            destination: "10.144.0.1",
-            root: managedRoot,
-            fileManager: .default
-        )
-        try cleanupManagedDucxInstall(root: managedRoot)
-        precondition(
-            FileManager.default.fileExists(
-                atPath: managedRoot.appendingPathComponent("10.145.0.3").path
-            ),
-            "DUCX cleanup must retain the active version"
-        )
-        precondition(
-            !FileManager.default.fileExists(
-                atPath: managedRoot.appendingPathComponent("10.144.0.1").path
-            )
-                && !FileManager.default.fileExists(
-                    atPath: managedRoot.appendingPathComponent(".install-interrupted").path
-                ),
-            "DUCX cleanup must remove old versions and interrupted staging"
-        )
-        let repairedAlias = try FileManager.default.destinationOfSymbolicLink(
-            atPath: managedRoot.appendingPathComponent("baidu-cx").path
-        )
-        precondition(
-            repairedAlias == "10.145.0.3",
-            "DUCX cleanup must repair a partially switched runtime alias"
-        )
-        let preservedStateContents = try String(
-            contentsOf: preservedState,
-            encoding: .utf8
-        )
-        precondition(
-            preservedStateContents == "preserve me",
-            "DUCX cleanup must preserve non-package state"
-        )
-        let syntaxCheck = Process()
-        syntaxCheck.executableURL = URL(fileURLWithPath: "/bin/zsh")
-        syntaxCheck.arguments = ["-n", "-c", setupScript]
-        try syntaxCheck.run()
-        syntaxCheck.waitUntilExit()
-        precondition(
-            syntaxCheck.terminationStatus == 0,
-            "The generated DUCX setup terminal script must be valid zsh"
         )
         let duccSyntaxCheck = Process()
         duccSyntaxCheck.executableURL = URL(fileURLWithPath: "/bin/zsh")
@@ -230,7 +116,6 @@ struct ProviderSettingsNavigationTests {
                     "quota_username": "tester",
                     "quota_parser": "baidu_oneapi",
                     "baidu_auth_bridge": null,
-                    "ducx_app_server": null,
                     "selected_models": ["GLM-5.2"],
                     "new_models": [],
                     "unavailable_selected_models": [],
@@ -263,9 +148,7 @@ struct ProviderSettingsNavigationTests {
             baiduBridgeSetupHandler: { mode in
                 requestedBridgeModes.append(mode)
                 return URL(
-                    fileURLWithPath: mode == .duccLoopback
-                        ? "/managed/ducc/home/.baidu-cc/baidu-cc/bin/ducc"
-                        : "/managed/ducx/current/bin/ducx"
+                    fileURLWithPath: "/managed/ducc/home/.baidu-cc/baidu-cc/bin/ducc"
                 )
             },
             completionHandler: { title, _ in
@@ -300,13 +183,12 @@ struct ProviderSettingsNavigationTests {
                         "--baidu-auth-bridge",
                         "ducc_loopback",
                     ])
-                    && $0.containsSubsequence(["--ducx-app-server", "false"])
                     && $0.containsSubsequence([
                         "--ducc-executable",
                         "/managed/ducc/home/.baidu-cc/baidu-cc/bin/ducc",
                     ])
             }),
-            "Opening DUCC configuration must save the DUCC bridge and legacy-safe fallback"
+            "Opening DUCC configuration must save only the DUCC bridge"
         )
         precondition(
             applyCount == 1,

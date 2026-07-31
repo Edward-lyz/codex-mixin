@@ -161,8 +161,6 @@ pub fn baidu_oneapi_provider(
         mcp_bridge_for_fable: true,
         custom_headers_from_env: Default::default(),
         baidu_auth_bridge: None,
-        ducx_app_server: None,
-        ducx_executable: None,
         ducc_executable: None,
     };
     provider

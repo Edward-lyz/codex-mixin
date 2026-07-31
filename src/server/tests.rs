@@ -58,12 +58,12 @@ fn messages_endpoint_rejects_non_anthropic_provider_protocols() {
         fusion_profiles: Vec::new(),
     })
     .unwrap();
-    let resolved = state
-        .resolve_native_provider_model("gpt-test")
-        .unwrap();
+    let resolved = state.resolve_native_provider_model("gpt-test").unwrap();
     assert_eq!(resolved.provider.id(), "test-provider");
     assert_ne!(
-        resolved.provider.protocol_for_model(resolved.upstream_model_id),
+        resolved
+            .provider
+            .protocol_for_model(resolved.upstream_model_id),
         crate::provider::ProviderProtocol::AnthropicMessages
     );
 }
@@ -89,7 +89,12 @@ fn native_message_request_normalizes_anthropic_fields() {
     assert_eq!(request.max_tokens, 1024);
     assert!(request.stream);
     assert_eq!(request.messages.len(), 1);
-    assert_eq!(request.messages[0].content[0], crate::anthropic::ContentBlock::Text { text: "hi".to_owned() });
+    assert_eq!(
+        request.messages[0].content[0],
+        crate::anthropic::ContentBlock::Text {
+            text: "hi".to_owned()
+        }
+    );
     assert_eq!(request.system.as_ref().unwrap().len(), 1);
     assert_eq!(request.speed.as_deref(), Some("fast"));
 }

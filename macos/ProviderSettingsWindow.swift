@@ -721,23 +721,16 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             "Choose a Baidu Auth Bridge"
         )
         alert.informativeText = appText(
-            "DUCX 与 DUCC 都会下载 Codex Mixin 管理的独立副本，并让每个请求经过所选客户端。DUCC 的下载、扫码登录和运行使用隔离 HOME，不读取或修改系统 DUCC、Claude 配置及 hooks。成功后会保存 Provider 并重启网关。",
-            "DUCX 與 DUCC 都會下載 Codex Mixin 管理的獨立副本，並讓每個請求經過所選用戶端。DUCC 的下載、掃碼登入和執行使用隔離 HOME，不讀取或修改系統 DUCC、Claude 設定及 hooks。成功後會儲存 Provider 並重新啟動閘道。",
-            "DUCX and DUCC use separate Codex Mixin-managed copies and route every request through the selected client. DUCC downloads, signs in, and runs inside an isolated HOME without reading or changing system DUCC, Claude config, or hooks. Success saves the provider and restarts the gateway."
+            "DUCC 使用 Codex Mixin 管理的独立副本，在隔离 HOME 中下载、扫码登录和运行，不读取或修改系统 DUCC、Claude 配置及 hooks。成功后会保存 Provider 并重启网关。",
+            "DUCC 使用 Codex Mixin 管理的獨立副本，在隔離 HOME 中下載、掃碼登入和執行，不讀取或修改系統 DUCC、Claude 設定及 hooks。成功後會儲存 Provider 並重新啟動閘道。",
+            "DUCC uses a Codex Mixin-managed copy and downloads, signs in, and runs inside an isolated HOME without reading or changing system DUCC, Claude config, or hooks. Success saves the provider and restarts the gateway."
         )
-        alert.addButton(withTitle: appText(
-            "配置 DUCX",
-            "設定 DUCX",
-            "Configure DUCX"
-        ))
         alert.addButton(withTitle: appText("配置 DUCC", "設定 DUCC", "Configure DUCC"))
         alert.addButton(withTitle: appText("保持关闭", "保持關閉", "Keep Disabled"))
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self else { return }
             switch response {
             case .alertFirstButtonReturn:
-                configureBaiduBridgeFromReminder(provider, mode: .ducxAppServer)
-            case .alertSecondButtonReturn:
                 configureBaiduBridgeFromReminder(provider, mode: .duccLoopback)
             default:
                 persistBaiduBridgeDisabled(provider.id)
@@ -882,10 +875,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         mode: BaiduAuthBridgeMode,
         executable: URL? = nil
     ) {
-        arguments.append(contentsOf: [
-            "--baidu-auth-bridge", mode.rawValue,
-            "--ducx-app-server", mode == .ducxAppServer ? "true" : "false",
-        ])
+        arguments.append(contentsOf: ["--baidu-auth-bridge", mode.rawValue])
         if let executable {
             appendBaiduAuthBridgeExecutable(
                 &arguments,
@@ -901,8 +891,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         executable: URL
     ) {
         switch mode {
-        case .ducxAppServer:
-            arguments.append(contentsOf: ["--ducx-executable", executable.path])
         case .duccLoopback:
             arguments.append(contentsOf: ["--ducc-executable", executable.path])
         case .disabled:
@@ -915,9 +903,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             return try await baiduBridgeSetupHandler(mode)
         }
         switch mode {
-        case .ducxAppServer:
-            setBusy(true, status: "请在终端完成 DUCX 下载与扫码登录…")
-            return try await setupDucxInTerminal()
         case .duccLoopback:
             setBusy(true, status: "请在终端完成 DUCC 下载与扫码登录…")
             return try await setupDuccInTerminal()
@@ -930,280 +915,11 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 private func baiduBridgeDisplayName(_ mode: BaiduAuthBridgeMode) -> String {
     switch mode {
     case .disabled: return appText("认证桥接", "認證橋接", "Auth bridge")
-    case .ducxAppServer: return "DUCX"
     case .duccLoopback: return "DUCC"
     }
 }
 
-private struct DucxRelease {
-    let version: String
-    let archiveURL: URL
-}
-
-private let ducxDownloadBaseURL = "http://baidu-cc-client.bj.bcebos.com/baidu-cx"
-
-private func ducxExecutableURL() -> URL? {
-    managedDucxExecutableURL()
-}
-
-private func fetchLatestDucxRelease() async throws -> DucxRelease {
-    let versionURL = URL(
-        string: "\(ducxDownloadBaseURL)/baidu_cx_latest_version.txt"
-    )!
-    var request = URLRequest(url: versionURL)
-    request.setValue("Codex Mixin", forHTTPHeaderField: "User-Agent")
-    let (data, response) = try await URLSession.shared.data(for: request)
-    guard let httpResponse = response as? HTTPURLResponse,
-          httpResponse.statusCode == 200
-    else {
-        throw GatewayError.command("DUCX 版本清单下载失败。")
-    }
-    let version = String(decoding: data, as: UTF8.self)
-        .trimmingCharacters(in: .whitespacesAndNewlines)
-    let versionParts = version.split(separator: ".", omittingEmptySubsequences: false)
-    guard versionParts.count >= 3,
-          versionParts.allSatisfy({
-              !$0.isEmpty && $0.allSatisfy(\.isNumber)
-          })
-    else {
-        throw GatewayError.command("DUCX 版本清单包含无效版本号。")
-    }
-    let archiveName = "baidu-cx-darwin-\(ducxArchitecture())-\(version).tar.bz2"
-    guard let archiveURL = URL(string: "\(ducxDownloadBaseURL)/\(archiveName)") else {
-        throw GatewayError.command("无法生成 DUCX 下载地址。")
-    }
-    return DucxRelease(version: version, archiveURL: archiveURL)
-}
-
-private func ducxArchitecture() -> String {
-    var systemInfo = utsname()
-    uname(&systemInfo)
-    let machine = withUnsafePointer(to: &systemInfo.machine) {
-        $0.withMemoryRebound(to: CChar.self, capacity: 1) {
-            String(cString: $0)
-        }
-    }
-    return machine == "arm64" || machine == "aarch64" ? "arm64" : "amd64"
-}
-
-private func setupDucxInTerminal() async throws -> URL {
-    let existingExecutable = ducxExecutableURL()
-    let latestRelease: DucxRelease?
-    do {
-        latestRelease = try await fetchLatestDucxRelease()
-    } catch {
-        guard existingExecutable != nil else { throw error }
-        latestRelease = nil
-    }
-    let installedVersion = managedDucxInstalledVersion()
-    let release = latestRelease.flatMap {
-        guard let installedVersion else { return $0 }
-        return isManagedVersion($0.version, newerThan: installedVersion) ? $0 : nil
-    }
-    if release == nil, existingExecutable != nil {
-        try cleanupManagedDucxInstall()
-    }
-    let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("codex-mixin-ducx-setup-\(UUID().uuidString)")
-    let script = directory.appendingPathComponent("Configure DUCX.command")
-    let archive = directory.appendingPathComponent("ducx.tar.bz2")
-    let downloadStatus = directory.appendingPathComponent("download.status")
-    let installStatus = directory.appendingPathComponent("install.status")
-    let loginStatus = directory.appendingPathComponent("login.status")
-    let executable = managedDucxRoot()
-        .appendingPathComponent("current/bin/ducx")
-    let terminalTitle = "Codex Mixin DUCX \(UUID().uuidString)"
-    try FileManager.default.createDirectory(
-        at: directory,
-        withIntermediateDirectories: true,
-        attributes: [.posixPermissions: 0o700]
-    )
-    var setupCompleted = false
-    defer {
-        if setupCompleted {
-            try? FileManager.default.removeItem(at: directory)
-        } else {
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 60) {
-                try? FileManager.default.removeItem(at: directory)
-            }
-        }
-    }
-
-    let contents = ducxTerminalSetupScript(
-        terminalTitle: terminalTitle,
-        releaseVersion: release?.version,
-        archiveURL: release?.archiveURL,
-        archive: archive,
-        downloadStatus: downloadStatus,
-        installStatus: installStatus,
-        loginStatus: loginStatus,
-        executable: executable,
-        loginRequired: ducxLoginRequired()
-    )
-    try contents.write(to: script, atomically: true, encoding: .utf8)
-    try FileManager.default.setAttributes(
-        [.posixPermissions: 0o700],
-        ofItemAtPath: script.path
-    )
-    guard NSWorkspace.shared.open(script) else {
-        throw GatewayError.command("无法打开 Terminal 配置 DUCX。")
-    }
-
-    if let release {
-        let downloadResult = try await waitForDucxStatus(
-            at: downloadStatus,
-            stage: "DUCX 下载",
-            timeoutSeconds: 1_800
-        )
-        guard downloadResult == 0 else {
-            throw GatewayError.command(
-                "DUCX 安装包下载失败（退出码 \(downloadResult)）。"
-            )
-        }
-        do {
-            _ = try await installDucxArchive(archive, release: release)
-            try writeDucxStatus(0, to: installStatus)
-        } catch {
-            try? writeDucxStatus(1, to: installStatus)
-            throw error
-        }
-    }
-
-    let loginResult = try await waitForDucxStatus(
-        at: loginStatus,
-        stage: "DUCX 登录",
-        timeoutSeconds: 900
-    )
-    guard loginResult == 0 else {
-        throw GatewayError.command(
-            "ducx login 未成功完成（退出码 \(loginResult)）。"
-        )
-    }
-    guard FileManager.default.isExecutableFile(atPath: executable.path) else {
-        throw GatewayError.command("DUCX 配置完成，但托管入口不可执行。")
-    }
-    setupCompleted = true
-    return executable
-}
-
-func ducxTerminalSetupScript(
-    terminalTitle: String,
-    releaseVersion: String?,
-    archiveURL: URL?,
-    archive: URL,
-    downloadStatus: URL,
-    installStatus: URL,
-    loginStatus: URL,
-    executable: URL,
-    loginRequired: Bool
-) -> String {
-    let download: String
-    if let releaseVersion, let archiveURL {
-        download = """
-        echo '准备下载 DUCX \(releaseVersion)（约 100 MB）'
-        echo \(shellQuoted("来源：\(archiveURL.absoluteString)"))
-        echo \(shellQuoted("目标：\(managedDucxRoot().path)"))
-        echo
-        /usr/bin/curl --fail --location --progress-bar --show-error \
-          --user-agent 'Codex Mixin' \
-          --output \(shellQuoted(archive.path)) \
-          \(shellQuoted(archiveURL.absoluteString))
-        download_result=$?
-        printf '%s' "$download_result" > \(shellQuoted(downloadStatus.path))
-        if [[ "$download_result" -ne 0 ]]; then
-          echo
-          echo "DUCX 下载失败（退出码 $download_result）。"
-          echo '按任意键关闭本窗口。'
-          read -k 1
-          exit "$download_result"
-        fi
-        echo
-        echo '下载完成，Codex Mixin 正在校验并安装...'
-        install_waits=0
-        while [[ ! -f \(shellQuoted(installStatus.path)) ]]; do
-          sleep 0.25
-          install_waits=$((install_waits + 1))
-          if [[ "$install_waits" -ge 2400 ]]; then
-            echo '等待 DUCX 安装超时。'
-            read -k 1
-            exit 1
-          fi
-        done
-        install_result=$(/bin/cat \(shellQuoted(installStatus.path)))
-        if [[ "$install_result" -ne 0 ]]; then
-          echo 'DUCX 安装校验失败，请返回 Codex Mixin 查看错误。'
-          echo '按任意键关闭本窗口。'
-          read -k 1
-          exit "$install_result"
-        fi
-        echo 'DUCX 安装完成。'
-        """
-    } else {
-        download = """
-        echo '已找到 Codex Mixin 托管的 DUCX，跳过下载。'
-        echo \(shellQuoted("位置：\(executable.path)"))
-        """
-    }
-    let login: String
-    if loginRequired {
-        login = """
-        echo
-        echo '请使用手机扫码登录 DUCX。'
-        /usr/bin/env \
-          DISABLE_DUCX_CLI_UPDATE=1 \
-          DISABLE_BAIDU_CODEX_UPDATE=1 \
-          \(shellQuoted(executable.path)) login
-        login_result=$?
-        """
-    } else {
-        login = """
-        echo
-        echo 'DUCX 已登录，跳过扫码。'
-        login_result=0
-        """
-    }
-    return """
-    #!/bin/zsh
-    record_early_exit() {
-      exit_result=$?
-      if [[ ! -f \(shellQuoted(downloadStatus.path)) ]]; then
-        printf '%s' "${exit_result:-130}" > \(shellQuoted(downloadStatus.path))
-      fi
-      if [[ ! -f \(shellQuoted(loginStatus.path)) ]]; then
-        printf '%s' "${exit_result:-130}" > \(shellQuoted(loginStatus.path))
-      fi
-    }
-    trap record_early_exit EXIT
-    trap 'exit 130' HUP INT TERM
-    printf '\\033]0;\(terminalTitle)\\007'
-    echo 'Codex Mixin — DUCX 自动配置'
-    echo '================================'
-    \(download)
-    \(login)
-    printf '%s' "$login_result" > \(shellQuoted(loginStatus.path))
-    if [[ "$login_result" -ne 0 ]]; then
-      echo
-      echo "DUCX 登录失败（退出码 $login_result）。"
-      echo '按任意键关闭本窗口。'
-      read -k 1
-      exit "$login_result"
-    fi
-    echo
-    echo 'DUCX 登录成功，正在返回 Codex Mixin 应用配置...'
-    (
-      sleep 1
-      /usr/bin/osascript \
-        -e 'tell application "Terminal"' \
-        -e 'repeat with candidateWindow in windows' \
-        -e 'if name of candidateWindow contains "\(terminalTitle)" then close candidateWindow' \
-        -e 'end repeat' \
-        -e 'end tell'
-    ) >/dev/null 2>&1 &!
-    exit 0
-    """
-}
-
-private func waitForDucxStatus(
+private func waitForDuccStatus(
     at status: URL,
     stage: String,
     timeoutSeconds: Int
@@ -1220,101 +936,11 @@ private func waitForDucxStatus(
     throw GatewayError.command("等待\(stage)超时。")
 }
 
-private func writeDucxStatus(_ value: Int32, to status: URL) throws {
+private func writeDuccStatus(_ value: Int32, to status: URL) throws {
     try String(value).write(to: status, atomically: true, encoding: .utf8)
 }
 
-private func installDucxArchive(
-    _ archive: URL,
-    release: DucxRelease
-) async throws -> URL {
-    let fileManager = FileManager.default
-    let root = managedDucxRoot()
-    try fileManager.createDirectory(
-        at: root,
-        withIntermediateDirectories: true,
-        attributes: [.posixPermissions: 0o700]
-    )
-    let staging = root.appendingPathComponent(
-        ".install-\(UUID().uuidString)",
-        isDirectory: true
-    )
-    try fileManager.createDirectory(
-        at: staging,
-        withIntermediateDirectories: false,
-        attributes: [.posixPermissions: 0o700]
-    )
-    defer { try? fileManager.removeItem(at: staging) }
-
-    let entries = try await listDucxArchive(archive)
-    guard entries.allSatisfy(isSafeDucxArchiveEntry) else {
-        throw GatewayError.command("DUCX 安装包包含不安全的文件路径。")
-    }
-    _ = try await runDucxSetupProcess(
-        "/usr/bin/tar",
-        ["-xjf", archive.path, "-C", staging.path]
-    )
-    for name in ["config.toml", "auth.json", "hooks.json"] {
-        let bundledConfig = staging.appendingPathComponent(name)
-        if fileManager.fileExists(atPath: bundledConfig.path) {
-            try fileManager.removeItem(at: bundledConfig)
-        }
-    }
-    let launcher = staging.appendingPathComponent("bin/codex")
-    let innerCodex = staging.appendingPathComponent("codex/bin/codex")
-    let packagedVersion = try String(
-        contentsOf: staging.appendingPathComponent("version"),
-        encoding: .utf8
-    ).trimmingCharacters(in: .whitespacesAndNewlines)
-    guard fileManager.isExecutableFile(atPath: launcher.path),
-          fileManager.isExecutableFile(atPath: innerCodex.path),
-          packagedVersion == release.version
-    else {
-        throw GatewayError.command("DUCX 安装包内容或版本不匹配。")
-    }
-    let ducx = staging.appendingPathComponent("bin/ducx")
-    try fileManager.createSymbolicLink(
-        atPath: ducx.path,
-        withDestinationPath: "codex"
-    )
-
-    let versionDirectory = root.appendingPathComponent(
-        release.version,
-        isDirectory: true
-    )
-    if fileManager.fileExists(atPath: versionDirectory.path) {
-        let existing = versionDirectory.appendingPathComponent("bin/ducx")
-        if !fileManager.isExecutableFile(atPath: existing.path) {
-            try fileManager.removeItem(at: versionDirectory)
-            try fileManager.moveItem(at: staging, to: versionDirectory)
-        }
-    } else {
-        try fileManager.moveItem(at: staging, to: versionDirectory)
-    }
-
-    try replaceManagedDucxLink(
-        named: "baidu-cx",
-        destination: release.version,
-        root: root,
-        fileManager: fileManager
-    )
-    try replaceManagedDucxLink(
-        named: "current",
-        destination: release.version,
-        root: root,
-        fileManager: fileManager
-    )
-
-    let current = root.appendingPathComponent("current")
-    let executable = current.appendingPathComponent("bin/ducx")
-    guard fileManager.isExecutableFile(atPath: executable.path) else {
-        throw GatewayError.command("DUCX 下载完成，但入口不可执行。")
-    }
-    try cleanupManagedDucxInstall(root: root, fileManager: fileManager)
-    return executable
-}
-
-func replaceManagedDucxLink(
+func replaceManagedInstallLink(
     named name: String,
     destination: String,
     root: URL,
@@ -1332,7 +958,7 @@ func replaceManagedDucxLink(
     if fileManager.fileExists(atPath: link.path) || existingLinkDestination != nil {
         guard existingLinkDestination != nil else {
             try? fileManager.removeItem(at: temporaryLink)
-            throw GatewayError.command("DUCX \(name) 路径已存在且不是符号链接。")
+            throw GatewayError.command("DUCC \(name) 路径已存在且不是符号链接。")
         }
     }
     guard rename(temporaryLink.path, link.path) == 0 else {
@@ -1342,31 +968,12 @@ func replaceManagedDucxLink(
     }
 }
 
-func cleanupManagedDucxInstall(
-    root: URL = managedDucxRoot(),
-    fileManager: FileManager = .default
-) throws {
-    try cleanupManagedInstall(
-        root: root,
-        activeLink: "current",
-        aliasLink: "baidu-cx",
-        isPackageDirectory: isDucxVersionDirectory,
-        fileManager: fileManager
-    )
-}
-
-private func isDucxVersionDirectory(_ name: String) -> Bool {
+private func isManagedVersionDirectoryName(_ name: String) -> Bool {
     let components = name.split(separator: ".", omittingEmptySubsequences: false)
     return components.count >= 3
         && components.allSatisfy({
             !$0.isEmpty && $0.allSatisfy(\.isNumber)
         })
-}
-
-private func ducxLoginRequired() -> Bool {
-    let user = FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".baidu-cx/user.json")
-    return !FileManager.default.isReadableFile(atPath: user.path)
 }
 
 struct DuccRelease {
@@ -1381,6 +988,19 @@ enum DuccArchiveFormat: String {
 }
 
 private let duccDownloadBaseURL = "http://baidu-cc-client.bj.bcebos.com/baidu-cc"
+private let duccArchiveExecutablePath =
+    "/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/usr/sbin:/sbin"
+
+private func duccArchitecture() -> String {
+    var systemInfo = utsname()
+    uname(&systemInfo)
+    let machine = withUnsafePointer(to: &systemInfo.machine) {
+        $0.withMemoryRebound(to: CChar.self, capacity: 1) {
+            String(cString: $0)
+        }
+    }
+    return machine == "arm64" || machine == "aarch64" ? "arm64" : "amd64"
+}
 
 private func fetchLatestDuccRelease() async throws -> DuccRelease {
     let versionURL = URL(
@@ -1406,7 +1026,7 @@ private func fetchLatestDuccRelease() async throws -> DuccRelease {
     }
     let archiveURLs = duccArchiveURLs(
         version: version,
-        architecture: ducxArchitecture()
+        architecture: duccArchitecture()
     )
     guard let zstdArchiveURL = URL(string: archiveURLs.zstd),
           let bzip2ArchiveURL = URL(string: archiveURLs.bzip2)
@@ -1517,7 +1137,7 @@ private func setupDuccInTerminal() async throws -> URL {
     }
 
     if let release {
-        let downloadResult = try await waitForDucxStatus(
+        let downloadResult = try await waitForDuccStatus(
             at: downloadStatus,
             stage: "DUCC 下载",
             timeoutSeconds: 1_800
@@ -1540,19 +1160,19 @@ private func setupDuccInTerminal() async throws -> URL {
                 release: release,
                 format: archiveFormat
             )
-            try writeDucxStatus(0, to: installStatus)
+            try writeDuccStatus(0, to: installStatus)
         } catch {
             try? String(describing: error).write(
                 to: installErrorStatus,
                 atomically: true,
                 encoding: .utf8
             )
-            try? writeDucxStatus(1, to: installStatus)
+            try? writeDuccStatus(1, to: installStatus)
             throw error
         }
     }
 
-    let loginResult = try await waitForDucxStatus(
+    let loginResult = try await waitForDuccStatus(
         at: loginStatus,
         stage: "DUCC 登录",
         timeoutSeconds: 900
@@ -1604,7 +1224,8 @@ func duccTerminalSetupScript(
         download_result=$?
         archive_format='zstd'
         if [[ "$download_result" -eq 0 ]]; then
-          /usr/bin/tar -tf \(shellQuoted(archive.path)) >/dev/null 2>&1
+          /usr/bin/env PATH=\(shellQuoted(duccArchiveExecutablePath)) \
+            /usr/bin/tar -tf \(shellQuoted(archive.path)) >/dev/null 2>&1
           download_result=$?
           if [[ "$download_result" -ne 0 ]]; then
             echo
@@ -1621,7 +1242,8 @@ func duccTerminalSetupScript(
           download_result=$?
           archive_format='bzip2'
           if [[ "$download_result" -eq 0 ]]; then
-            /usr/bin/tar -tjf \(shellQuoted(archive.path)) >/dev/null 2>&1
+            /usr/bin/env PATH=\(shellQuoted(duccArchiveExecutablePath)) \
+              /usr/bin/tar -tjf \(shellQuoted(archive.path)) >/dev/null 2>&1
             download_result=$?
           fi
         fi
@@ -1736,6 +1358,7 @@ func installDuccArchive(
 ) async throws -> URL {
     let fileManager = FileManager.default
     let root = managedRoot ?? managedDuccInstallRoot()
+    let diagnosticsEnabled = managedRoot == nil
     try fileManager.createDirectory(
         at: root,
         withIntermediateDirectories: true,
@@ -1754,10 +1377,42 @@ func installDuccArchive(
         withIntermediateDirectories: false,
         attributes: [.posixPermissions: 0o700]
     )
-    defer { try? fileManager.removeItem(at: staging) }
+    if diagnosticsEnabled {
+        let archiveAttributes = try? fileManager.attributesOfItem(
+            atPath: archive.path
+        )
+        let archiveSize = (
+            archiveAttributes?[.size] as? NSNumber
+        )?.int64Value ?? -1
+        appendDuccSetupDiagnostic(
+            """
+            DUCC_INSTALL started format=\(format.rawValue) archive=\(archive.path) \
+            archive_bytes=\(archiveSize) root=\(root.path) staging=\(staging.path)
+            """
+        )
+    }
+    defer {
+        if diagnosticsEnabled {
+            let stagingExists = fileManager.fileExists(atPath: staging.path)
+            let stagingEntries = (
+                try? fileManager.contentsOfDirectory(atPath: staging.path).count
+            ) ?? -1
+            appendDuccSetupDiagnostic(
+                """
+                DUCC_INSTALL staging_cleanup path=\(staging.path) \
+                exists=\(stagingExists) top_level_entries=\(stagingEntries)
+                """
+            )
+        }
+        try? fileManager.removeItem(at: staging)
+    }
 
-    let entries = try await listDuccArchive(archive, format: format)
-    guard entries.allSatisfy(isSafeDucxArchiveEntry) else {
+    let entries = try await listDuccArchive(
+        archive,
+        format: format,
+        diagnosticStage: diagnosticsEnabled ? "DUCC 安装包校验" : nil
+    )
+    guard entries.allSatisfy(isSafeDuccArchiveEntry) else {
         throw GatewayError.command("DUCC 安装包包含不安全的文件路径。")
     }
     let extractionArguments: [String]
@@ -1767,9 +1422,11 @@ func installDuccArchive(
     case .bzip2:
         extractionArguments = ["-xjf", archive.path, "-C", staging.path]
     }
-    _ = try await runDucxSetupProcess(
+    _ = try await runDuccSetupProcess(
         "/usr/bin/tar",
-        extractionArguments
+        extractionArguments,
+        environment: ["PATH": duccArchiveExecutablePath],
+        diagnosticStage: diagnosticsEnabled ? "DUCC 安装包解压" : nil
     )
     for name in [
         "user.json",
@@ -1805,7 +1462,7 @@ func installDuccArchive(
     )
 
     let directoryName =
-        "baidu-cc-darwin-\(architecture ?? ducxArchitecture())-\(release.version)"
+        "baidu-cc-darwin-\(architecture ?? duccArchitecture())-\(release.version)"
     let versionDirectory = root.appendingPathComponent(
         directoryName,
         isDirectory: true
@@ -1823,13 +1480,13 @@ func installDuccArchive(
         try fileManager.moveItem(at: staging, to: versionDirectory)
     }
 
-    try replaceManagedDucxLink(
+    try replaceManagedInstallLink(
         named: "baidu-cc",
         destination: directoryName,
         root: root,
         fileManager: fileManager
     )
-    try replaceManagedDucxLink(
+    try replaceManagedInstallLink(
         named: "current",
         destination: directoryName,
         root: root,
@@ -1841,6 +1498,11 @@ func installDuccArchive(
         throw GatewayError.command("DUCC 下载完成，但托管入口不可执行。")
     }
     try cleanupManagedDuccInstall(root: root, fileManager: fileManager)
+    if diagnosticsEnabled {
+        appendDuccSetupDiagnostic(
+            "DUCC_INSTALL completed executable=\(executable.path)"
+        )
+    }
     return executable
 }
 
@@ -1862,7 +1524,7 @@ private func isDuccVersionDirectory(_ name: String) -> Bool {
         "baidu-cc-darwin-arm64-",
         "baidu-cc-darwin-amd64-",
     ] where name.hasPrefix(prefix) {
-        return isDucxVersionDirectory(String(name.dropFirst(prefix.count)))
+        return isManagedVersionDirectoryName(String(name.dropFirst(prefix.count)))
     }
     return false
 }
@@ -1879,7 +1541,7 @@ private func cleanupManagedInstall(
         atPath: root.appendingPathComponent(activeLink).path
     )
     if let activeDestination {
-        try replaceManagedDucxLink(
+        try replaceManagedInstallLink(
             named: aliasLink,
             destination: activeDestination,
             root: root,
@@ -1901,7 +1563,6 @@ private func cleanupManagedInstall(
             && values.isSymbolicLink != true
         let isTemporaryLink = (
             name.hasPrefix(".current-")
-                || name.hasPrefix(".baidu-cx-")
                 || name.hasPrefix(".baidu-cc-")
         ) && values.isSymbolicLink == true
         let isStalePackage = isPackageDirectory(name)
@@ -1915,7 +1576,8 @@ private func cleanupManagedInstall(
 
 private func listDuccArchive(
     _ archive: URL,
-    format: DuccArchiveFormat
+    format: DuccArchiveFormat,
+    diagnosticStage: String? = nil
 ) async throws -> [String] {
     let arguments: [String]
     switch format {
@@ -1924,10 +1586,12 @@ private func listDuccArchive(
     case .bzip2:
         arguments = ["-tjf", archive.path]
     }
-    let output = try await runDucxSetupProcess(
+    let output = try await runDuccSetupProcess(
         "/usr/bin/tar",
         arguments,
-        captureOutput: true
+        captureOutput: true,
+        environment: ["PATH": duccArchiveExecutablePath],
+        diagnosticStage: diagnosticStage
     )
     let entries = output.split(whereSeparator: \.isNewline).map(String.init)
     guard !entries.isEmpty else {
@@ -1942,7 +1606,7 @@ private struct DuccAuthStatus: Decodable {
 
 func duccIsLoggedIn(executable: URL, isolatedHome: URL) async -> Bool {
     do {
-        let output = try await runDucxSetupProcess(
+        let output = try await runDuccSetupProcess(
             executable.path,
             ["auth", "status"],
             captureOutput: true,
@@ -1965,7 +1629,7 @@ private func shellQuoted(_ value: String) -> String {
     "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
 }
 
-private func isSafeDucxArchiveEntry(_ entry: String) -> Bool {
+private func isSafeDuccArchiveEntry(_ entry: String) -> Bool {
     var path = entry.hasPrefix("./") ? String(entry.dropFirst(2)) : entry
     if path.isEmpty { return true }
     if path.hasSuffix("/") {
@@ -1976,27 +1640,21 @@ private func isSafeDucxArchiveEntry(_ entry: String) -> Bool {
         .allSatisfy { !$0.isEmpty && $0 != ".." }
 }
 
-private func listDucxArchive(_ archive: URL) async throws -> [String] {
-    let output = try await runDucxSetupProcess(
-        "/usr/bin/tar",
-        ["-tjf", archive.path],
-        captureOutput: true
-    )
-    let entries = output.split(whereSeparator: \.isNewline).map(String.init)
-    guard !entries.isEmpty else {
-        throw GatewayError.command("DUCX 安装包为空。")
-    }
-    return entries
-}
-
-private func runDucxSetupProcess(
+private func runDuccSetupProcess(
     _ executable: String,
     _ arguments: [String],
     captureOutput: Bool = false,
-    environment: [String: String] = [:]
+    environment: [String: String] = [:],
+    diagnosticStage: String? = nil
 ) async throws -> String {
     try await withCheckedThrowingContinuation { continuation in
         DispatchQueue.global(qos: .userInitiated).async {
+            let startedAt = Date()
+            let command = diagnosticCommandDescription([executable] + arguments)
+            let stderrURL = FileManager.default.temporaryDirectory
+                .appendingPathComponent(
+                    "codex-mixin-setup-stderr-\(UUID().uuidString).log"
+                )
             let process = Process()
             process.executableURL = URL(fileURLWithPath: executable)
             process.arguments = arguments
@@ -2009,24 +1667,94 @@ private func runDucxSetupProcess(
             }
             let output = Pipe()
             process.standardOutput = captureOutput ? output : FileHandle.nullDevice
-            process.standardError = FileHandle.nullDevice
             do {
+                guard FileManager.default.createFile(
+                    atPath: stderrURL.path,
+                    contents: nil,
+                    attributes: [.posixPermissions: 0o600]
+                ) else {
+                    throw GatewayError.command(
+                        "无法创建安装子进程的 stderr 诊断文件。"
+                    )
+                }
+                let stderrHandle = try FileHandle(forWritingTo: stderrURL)
+                defer {
+                    try? stderrHandle.close()
+                    try? FileManager.default.removeItem(at: stderrURL)
+                }
+                process.standardError = stderrHandle
+                if let diagnosticStage {
+                    appendDuccSetupDiagnostic(
+                        """
+                        DUCC_PROCESS started stage=\(diagnosticStage) \
+                        command=\(command) capture_stdout=\(captureOutput) \
+                        environment_keys=\(environment.keys.sorted().joined(separator: ","))
+                        """
+                    )
+                }
                 try process.run()
                 let data = captureOutput
                     ? output.fileHandleForReading.readDataToEndOfFile()
                     : Data()
                 process.waitUntilExit()
+                try? stderrHandle.synchronize()
+                try? stderrHandle.close()
+                let stderrData = (try? Data(contentsOf: stderrURL)) ?? Data()
+                let stderrText = String(decoding: stderrData, as: UTF8.self)
+                let stderrSummary = String(
+                    diagnosticSafeText(
+                        stderrText.trimmingCharacters(in: .whitespacesAndNewlines)
+                    ).prefix(6_000)
+                )
+                let durationMilliseconds = Int(
+                    Date().timeIntervalSince(startedAt) * 1_000
+                )
+                if let diagnosticStage {
+                    appendDuccSetupDiagnostic(
+                        """
+                        DUCC_PROCESS completed stage=\(diagnosticStage) \
+                        duration_ms=\(durationMilliseconds) \
+                        termination_reason=\(process.terminationReason.rawValue) \
+                        exit=\(process.terminationStatus) stdout_bytes=\(data.count) \
+                        stderr_bytes=\(stderrData.count) command=\(command)
+                        \(stderrSummary.isEmpty ? "" : "stderr:\n\(stderrSummary)")
+                        """
+                    )
+                }
                 guard process.terminationStatus == 0 else {
+                    let stderrDetail = stderrSummary.isEmpty
+                        ? "（stderr 为空）"
+                        : stderrSummary
                     throw GatewayError.command(
-                        "DUCX 解压失败（退出码 \(process.terminationStatus)）。"
+                        """
+                        \(diagnosticStage ?? "DUCC 安装子进程")失败\
+                        （退出码 \(process.terminationStatus)）。
+                        命令：\(command)
+                        stderr：\(stderrDetail)
+                        """
                     )
                 }
                 continuation.resume(returning: String(decoding: data, as: UTF8.self))
             } catch {
+                if let diagnosticStage {
+                    appendDuccSetupDiagnostic(
+                        """
+                        DUCC_PROCESS error stage=\(diagnosticStage) \
+                        duration_ms=\(Int(Date().timeIntervalSince(startedAt) * 1_000)) \
+                        command=\(command) error=\(diagnosticErrorDescription(error))
+                        """
+                    )
+                }
                 continuation.resume(throwing: error)
             }
         }
     }
+}
+
+private func appendDuccSetupDiagnostic(_ message: String) {
+    let directory = FileManager.default.homeDirectoryForCurrentUser
+        .appendingPathComponent(".codex-mixin", isDirectory: true)
+    appendAppDiagnosticLog(message, directory: directory)
 }
 
 func compactLabeledView(_ title: String, _ field: NSView) -> NSView {

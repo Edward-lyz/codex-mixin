@@ -212,10 +212,7 @@ pub(in crate::cli) fn claude_status(settings_path: Option<PathBuf>) -> anyhow::R
         .and_then(Value::as_str)
         == Some(MANAGED_CLAUDE_MARKER)
     {
-        println!(
-            "claude-code: installed via {}",
-            settings_path.display()
-        );
+        println!("claude-code: installed via {}", settings_path.display());
     } else {
         println!("claude-code: not installed");
     }

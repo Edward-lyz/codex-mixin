@@ -35,8 +35,6 @@ pub(super) struct AddProviderOptions {
     pub(super) static_models: Vec<String>,
     pub(super) header_env: Vec<String>,
     pub(super) baidu_auth_bridge: Option<String>,
-    pub(super) ducx_app_server: Option<bool>,
-    pub(super) ducx_executable: Option<PathBuf>,
     pub(super) ducc_executable: Option<PathBuf>,
 }
 
@@ -61,8 +59,6 @@ pub(super) struct UpdateProviderOptions {
     pub(super) header_env: Vec<String>,
     pub(super) clear_header_env: bool,
     pub(super) baidu_auth_bridge: Option<String>,
-    pub(super) ducx_app_server: Option<bool>,
-    pub(super) ducx_executable: Option<PathBuf>,
     pub(super) ducc_executable: Option<PathBuf>,
 }
 
@@ -103,7 +99,6 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     "quota_parser": provider.quota_parser,
                     "custom_headers_from_env": provider.request_policy.custom_headers_from_env,
                     "baidu_auth_bridge": provider.request_policy.baidu_auth_bridge,
-                    "ducx_app_server": provider.request_policy.ducx_app_server,
                     "selected_models": provider.selected_models,
                     "new_models": provider.new_models,
                     "unavailable_selected_models": unavailable_selected_models,
@@ -219,8 +214,6 @@ pub(super) fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
     apply_baidu_auth_options(
         &mut provider,
         options.baidu_auth_bridge.as_deref(),
-        options.ducx_app_server,
-        options.ducx_executable,
         options.ducc_executable,
     )?;
     provider.validate()?;
@@ -323,8 +316,6 @@ pub(super) fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<
         apply_baidu_auth_options(
             provider,
             options.baidu_auth_bridge.as_deref(),
-            options.ducx_app_server,
-            options.ducx_executable,
             options.ducc_executable,
         )?;
         provider.validate()
@@ -336,25 +327,16 @@ pub(super) fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<
 fn apply_baidu_auth_options(
     provider: &mut ProviderDefinition,
     bridge: Option<&str>,
-    app_server: Option<bool>,
-    ducx_executable: Option<PathBuf>,
     ducc_executable: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     if let Some(bridge) = bridge {
         provider.request_policy.baidu_auth_bridge = Some(match bridge {
             "disabled" => BaiduAuthBridge::Disabled,
-            "ducx_app_server" => BaiduAuthBridge::DucxAppServer,
             "ducc_loopback" => BaiduAuthBridge::DuccLoopback,
             other => anyhow::bail!(
-                "invalid Baidu auth bridge {other}; expected disabled, ducx_app_server, or ducc_loopback"
+                "invalid Baidu auth bridge {other}; expected disabled or ducc_loopback"
             ),
         });
-    }
-    if let Some(app_server) = app_server {
-        provider.request_policy.ducx_app_server = Some(app_server);
-    }
-    if let Some(executable) = ducx_executable {
-        provider.request_policy.ducx_executable = Some(executable);
     }
     if let Some(executable) = ducc_executable {
         provider.request_policy.ducc_executable = Some(executable);
@@ -1008,22 +990,24 @@ mod tests {
     use super::*;
 
     #[test]
-    fn provider_mutations_persist_managed_ducx_options() {
+    fn provider_mutations_persist_managed_ducc_options() {
         let mut provider = codex_mixin::provider::baidu_oneapi_provider("baidu-oneapi", "key");
         provider.quota_username = Some("user@example.com".to_owned());
-        let executable = PathBuf::from("/Users/example/.codex-mixin/ducx/current/bin/ducx");
+        let executable =
+            PathBuf::from("/Users/example/.codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin/ducc");
 
         apply_baidu_auth_options(
             &mut provider,
-            Some("ducx_app_server"),
-            Some(true),
+            Some("ducc_loopback"),
             Some(executable.clone()),
-            None,
         )
         .unwrap();
 
-        assert_eq!(provider.request_policy.ducx_app_server, Some(true));
-        assert_eq!(provider.request_policy.ducx_executable, Some(executable));
+        assert_eq!(
+            provider.request_policy.baidu_auth_bridge,
+            Some(BaiduAuthBridge::DuccLoopback)
+        );
+        assert_eq!(provider.request_policy.ducc_executable, Some(executable));
         provider.validate().unwrap();
     }
 

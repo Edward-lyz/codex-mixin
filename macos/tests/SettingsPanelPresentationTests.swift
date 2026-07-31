@@ -37,14 +37,13 @@ struct SettingsPanelPresentationTests {
         precondition(NSApp.modalWindow == nil, "The add-provider form must not start an app-modal loop")
         let popups = descendantViews(of: NSPopUpButton.self, in: sheet.contentView)
         guard let bridgePopup = popups.first(where: {
-            $0.itemTitles.contains("DUCX 核心（app-server）")
-                && $0.itemTitles.contains("DUCC 核心（loopback）")
+            $0.itemTitles.contains("DUCC 核心（loopback）")
         }) else {
-            preconditionFailure("The Baidu setup must offer mutually exclusive auth bridges")
+            preconditionFailure("The Baidu setup must offer the DUCC auth bridge")
         }
         precondition(
-            bridgePopup.numberOfItems == 3,
-            "The auth bridge selector must contain disabled, DUCX, and DUCC"
+            bridgePopup.numberOfItems == 2,
+            "The auth bridge selector must contain only disabled and DUCC"
         )
         precondition(
             bridgePopup.selectedItem?.representedObject as? String == "disabled",

@@ -59,34 +59,17 @@ impl<'a> UpstreamExecutor<'a> {
                 provider_id,
                 upstream_model_id,
                 routing,
-            } => {
-                let provider = self.state.providers.provider(&provider_id).ok_or_else(|| {
-                    GatewayError::BadRequest(format!("unknown provider: {provider_id}"))
-                })?;
-                if provider.uses_ducx_app_server() {
-                    let stream = self
-                        .state
-                        .stream_ducx_response(provider, &upstream_model_id, plan.body.clone())
-                        .await?;
-                    let stream = match plan.downstream_model {
-                        Some(downstream_model) => rewrite_response_model(stream, downstream_model),
-                        None => stream,
-                    };
-                    Ok((stream, plan.body))
-                } else {
-                    stream_provider_response(
-                        self.state,
-                        &plan.body,
-                        &catalog_slug,
-                        &provider_id,
-                        &upstream_model_id,
-                        routing.as_ref(),
-                        plan.downstream_model.as_deref(),
-                    )
-                    .await
-                    .map(|stream| (stream, plan.body))
-                }
-            }
+            } => stream_provider_response(
+                self.state,
+                &plan.body,
+                &catalog_slug,
+                &provider_id,
+                &upstream_model_id,
+                routing.as_ref(),
+                plan.downstream_model.as_deref(),
+            )
+            .await
+            .map(|stream| (stream, plan.body)),
         }
     }
 }

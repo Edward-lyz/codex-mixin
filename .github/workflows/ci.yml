@@ -48,7 +48,7 @@ jobs:
         run: |
           ./scripts/test_about_window.sh
           ./scripts/test_install_card.sh
-      - name: Test macOS DUCX setup flow
+      - name: Test macOS DUCC setup flow
         if: runner.os == 'macOS'
         run: ./scripts/test_provider_settings_navigation.sh
       - name: Test macOS DUCC managed installation

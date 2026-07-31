@@ -25,11 +25,6 @@ struct CachedCatalogResponse {
     body: Bytes,
 }
 
-struct DucxRuntime {
-    app_server: crate::ducx::DucxAppServer,
-    bridge: crate::ducx_sanitizer::DucxBridge,
-}
-
 pub(super) struct CachedOfficialAuth {
     modified_at: SystemTime,
     file_len: u64,
@@ -48,7 +43,6 @@ pub struct AppState {
     catalog_sources_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogSources>>>,
     catalog_response_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogResponse>>>,
     official_auth_cache: Arc<tokio::sync::Mutex<Option<CachedOfficialAuth>>>,
-    ducx_runtime: Arc<tokio::sync::OnceCell<Arc<DucxRuntime>>>,
     ducc_runtime: Arc<tokio::sync::OnceCell<Arc<crate::ducc::DuccRuntime>>>,
 }
 
@@ -100,90 +94,8 @@ impl AppState {
             catalog_sources_cache: Arc::new(tokio::sync::Mutex::new(None)),
             catalog_response_cache: Arc::new(tokio::sync::Mutex::new(None)),
             official_auth_cache: Arc::new(tokio::sync::Mutex::new(None)),
-            ducx_runtime: Arc::new(tokio::sync::OnceCell::new()),
             ducc_runtime: Arc::new(tokio::sync::OnceCell::new()),
         })
-    }
-
-    pub(crate) async fn stream_ducx_response(
-        &self,
-        provider: &ProviderRuntime,
-        upstream_model: &str,
-        request: Value,
-    ) -> Result<ResponseStream, GatewayError> {
-        let executable = provider
-            .ducx_executable()
-            .map(PathBuf::from)
-            .or_else(crate::ducx::default_ducx_executable)
-            .ok_or_else(|| {
-                GatewayError::Upstream(
-                    "DUCX app-server is enabled but the ducx executable was not found".to_owned(),
-                )
-            })?;
-        crate::ducx::ensure_managed_ducx_layout(&executable).map_err(GatewayError::Other)?;
-        let timeout = self.config.request_timeout;
-        let runtime = self
-            .ducx_runtime
-            .get_or_try_init(|| async {
-                let cwd = std::env::temp_dir();
-                let discovery_config =
-                    crate::ducx::DucxProcessConfig::app_server(&executable, &cwd);
-                let discovery =
-                    crate::ducx::DucxAppServer::spawn_ready(discovery_config, timeout).await?;
-                let upstream_base_url = discovery.oneapi_base_url(&cwd, timeout).await?;
-                discovery.shutdown();
-                let bridge = crate::ducx_sanitizer::DucxBridge::spawn(
-                    upstream_base_url,
-                    self.client.clone(),
-                )
-                .await?;
-                let app_server_config =
-                    crate::ducx::DucxProcessConfig::app_server(executable, &cwd)
-                        .with_oneapi_base_url(bridge.base_url());
-                let app_server =
-                    crate::ducx::DucxAppServer::spawn_ready(app_server_config, timeout).await?;
-                Ok::<_, anyhow::Error>(Arc::new(DucxRuntime { app_server, bridge }))
-            })
-            .await
-            .map_err(GatewayError::Other)?;
-        let (request_id, downstream) = runtime
-            .bridge
-            .register(&request, upstream_model)
-            .await
-            .map_err(GatewayError::Other)?;
-        let transport_trigger = json!({
-            "input": "Open the authenticated upstream Responses transport."
-        });
-        let (thread_params, mut turn_params) = crate::ducx::build_turn_params(
-            &transport_trigger,
-            upstream_model,
-            &std::env::temp_dir(),
-        )
-        .map_err(GatewayError::Other)?;
-        turn_params["responsesapiClientMetadata"] = json!({
-            "codex_mixin_request_id": request_id
-        });
-        let turn = runtime
-            .app_server
-            .start_turn(thread_params, turn_params, timeout)
-            .await
-            .map_err(GatewayError::Other)?;
-        tokio::spawn(async move {
-            let mut events = turn.into_stream();
-            while events.next().await.is_some() {}
-        });
-        tokio::time::timeout(timeout, downstream)
-            .await
-            .map_err(|_| {
-                GatewayError::Upstream(
-                    "DUCX did not open the sanitized upstream request in time".to_owned(),
-                )
-            })?
-            .map_err(|_| {
-                GatewayError::Upstream(
-                    "DUCX bridge closed before opening the upstream response".to_owned(),
-                )
-            })
     }
 
     pub(crate) fn custom_image_routes(

@@ -164,43 +164,31 @@ codex-mixin logs -n 200
 
 设置窗口里的上游地址只填根地址。路径由 provider preset 补齐。
 Baidu OneAPI 的额度接口必须同时填写额度用户名；CLI 和 App 都会在保存时校验。
-启用 Baidu OneAPI 时可以互斥选择「DUCX 核心」或「DUCC 核心」。每一条 Responses
-上游子请求都会先创建一个真实的 DUCX turn，或投递给长驻的 DUCC stream-json worker。
-所选核心把它认证的 HTTP 请求发到仅监听 `127.0.0.1` 的本机桥；桥使用一次性 request id
+启用 Baidu OneAPI 时可以选择「DUCC 核心」。每一条 Responses 上游子请求都会投递给
+长驻的 DUCC stream-json worker。DUCC 把它认证的 HTTP 请求发到仅监听 `127.0.0.1`
+的本机桥；桥使用一次性 request id
 绑定原始请求，移除核心注入的提示词、工具和输入，再把核心生成的请求头原样转发给
 OneAPI。Codex Mixin 不提取、缓存、重建或伪造认证 Header，一次性 request id 也不能
 重放。Fusion、Web Search、画图和 Auto Review 产生的 Responses 子请求都走同一个统一
 执行层，不会绕过用户选择的核心。
 
-DUCX 按需启动；启用 DUCC 时，网关启动后会在后台预热一个长驻认证载体，不阻塞监听。
+启用 DUCC 时，网关启动后会在后台预热一个长驻认证载体，不阻塞监听。
 GLM、Claude、Opus 等目标模型共享这个约 350 MiB 的载体，切换模型不会重启进程；载体
 只提供 DUCC 原生认证 Header，真实模型和请求体始终由调用方请求决定。桥取得认证 Header
 后会立即结束 DUCC 内部回合，真实 OneAPI 请求异步继续，多个请求不会再因上游首包时间
-串行排队。DUCX 初始化会禁用已知的 hooks、插件、内置工具和技能，并强制检查暴露的 hook
-数量为零；DUCC 使用 `--bare`、空工具和空 MCP 配置，并设置
+串行排队。DUCC 使用 `--bare`、空工具和空 MCP 配置，并设置
 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`，禁止提示建议等无关模型调用。桥只允许
 携带当前一次性 request id 的请求离开本机；其他辅助、重试或重放请求都在回环地址本地
 终止。隔离检查失败就拒绝转发。DUCC 只读取托管 HOME 内的登录信息，不读取或修改用户
-现有的 `~/.claude`、`~/.baidu-cc` 或 shell profile；DUCX 继续使用其独立托管副本和
-现有的隔离检查。
-`scripts/verify_ducx_oneapi_transport.mjs` 会把真实 DUCX 指向本机假 OneAPI，验证 DUCX
-认证 Header 和多模态输入；即使 DUCX 自身声明额外工具，桥也会用调用方原请求整体替换
-DUCX 请求体，因此这些声明不会进入 OneAPI。
+现有的 `~/.claude`、`~/.baidu-cc` 或 shell profile。
 
-macOS App 会依次检测 Codex Mixin 自管版本、`~/.baidu-cx/baidu-cx/bin/ducx` 和 PATH。
-未安装时，App 会先展示官方 HTTP 下载地址、版本、约 100 MB 的大小和目标目录；用户确认
-后才按百度 `baidu-cx/install.sh` 的规则下载 `.tar.bz2` 包并解压到
-`~/.codex-mixin/ducx/<version>/`。App 不执行安装脚本、不修改 shell profile，也会像
-官方脚本一样删除包内的 `config.toml`、`auth.json` 和 `hooks.json`，Provider 只保存
-自管 `current/bin/ducx` 的绝对路径。缺少 DUCX 登录文件时，App 会打开独立 Terminal
-窗口执行 `ducx login`，扫码完成后自动关闭窗口并继续保存。
-选择 DUCC 核心时，App 同样会先确认，再按百度 `baidu-cc/install.sh` 的版本和包规则把
+选择 DUCC 核心时，macOS App 会先确认，再按百度 `baidu-cc/install.sh` 的版本和包规则把
 独立副本下载到 `~/.codex-mixin/ducc/home/`；不会直接执行官方安装脚本。下载完成后，
 独立 Terminal 会显示进度并执行托管副本的 `ducc login`，扫码成功后自动关闭并继续保存。
 Provider 可通过 `--header-env NAME=ENV_VAR` 转发用户自行提供的自定义请求头。配置文件
 只保存 Header 名和环境变量名，不保存值；网关启动时读取一次，缺失或空值会阻止启动，
 更新值后需重启网关。`authorization`、`x-api-key`、`comate_custom_header` 和传输层
-Header 不允许覆盖；`comate_custom_header` 只允许由本次 DUCX 桥接请求产生。Codex Mixin
+Header 不允许覆盖；`comate_custom_header` 只允许由本次 DUCC 桥接请求产生。Codex Mixin
 不生成、校验或授权任何凭据，用户须自行确认对相关账号、凭据和服务有使用权。DUCC 核心
 会把托管登录得到的 `Authorization: Bearer ...`、DUCC 生成的 `x-api-key` 以及
 `comate_custom_header` 原样转发给 OneAPI，不删除也不替换。
@@ -620,45 +608,33 @@ Then start a new Codex CLI session.
 
 Only enter the upstream root URL in the settings window. Codex Mixin adds provider-specific paths.
 The Baidu OneAPI quota endpoint also requires a quota username; both the CLI and app validate it before saving.
-For Baidu OneAPI, users can select either the mutually exclusive “DUCX core” or “DUCC core”.
-Every upstream Responses subrequest first creates a real DUCX turn or is submitted to a persistent
-DUCC stream-json worker. The selected core sends its authenticated HTTP request to a loopback-only
+For Baidu OneAPI, users can select the “DUCC core”. Every upstream Responses subrequest is
+submitted to a persistent DUCC stream-json worker. DUCC sends its authenticated HTTP request to a loopback-only
 bridge. The bridge binds that request to the caller payload with a single-use request ID, removes
 prompt/tool/input additions made by the core, and relays the headers it generated unchanged to OneAPI.
 Codex Mixin does not extract, cache, reconstruct, or forge authentication headers, and request IDs
 cannot be replayed. Responses subrequests created by Fusion, Web Search, image generation, and
 Auto Review use the same executor and cannot bypass the selected core.
 
-DUCX starts lazily. When DUCC is enabled, the gateway prewarms one persistent authentication
+When DUCC is enabled, the gateway prewarms one persistent authentication
 carrier in the background without delaying the listener. Target models such as GLM, Claude, and
 Opus share this roughly 350 MiB carrier, so switching models does not restart the process. The
 carrier supplies only DUCC-native authentication headers; the caller request always determines the
 real model and body. After capturing those headers, the bridge immediately completes DUCC's
 internal turn while the real OneAPI request continues asynchronously, so concurrent requests do not
-serialize on upstream time to first byte. DUCX initialization disables known hooks, plugins,
-built-in tools, and skills, and fails closed unless DUCX reports zero exposed hooks. DUCC runs with
+serialize on upstream time to first byte. DUCC runs with
 `--bare`, empty tools and MCP configuration, under a Codex Mixin-managed HOME, with
 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` to suppress prompt suggestions and other unrelated
 model calls. Only the request carrying the current single-use request ID may leave loopback; helper,
 retry, and replay requests are completed locally. DUCC reads login state only from that managed HOME
-and does not touch the user's existing `~/.claude`, `~/.baidu-cc`, or shell profile; DUCX keeps its
-managed binary and existing isolation checks.
+and does not touch the user's existing `~/.claude`, `~/.baidu-cc`, or shell profile.
 Repository probes verify the authentication header, multimodal payload, and configuration
 fingerprints. The bridge always replaces the complete core-generated request body with the caller
 payload before it reaches OneAPI. For DUCC, the managed login's native `Authorization: Bearer ...`,
 the `x-api-key` value required to reach the local loopback, and `comate_custom_header` are all
 forwarded unchanged to the relay.
 
-The macOS App checks the Codex Mixin-managed version, `~/.baidu-cx/baidu-cx/bin/ducx`, and PATH,
-in that order. If DUCX is missing, the App first shows the official HTTP URL, version, approximate
-100 MB size, and destination. Only after confirmation does it follow Baidu's `baidu-cx/install.sh`
-package rules, downloading the `.tar.bz2` archive into
-`~/.codex-mixin/ducx/<version>/`. It never executes the installer or edits a shell profile, and,
-like the official script, removes the bundled `config.toml`, `auth.json`, and `hooks.json`.
-The Provider stores the absolute managed `current/bin/ducx` path. If the DUCX login file is
-missing, the App opens a dedicated Terminal window for `ducx login`, closes it after successful
-QR-code login, and continues saving the provider.
-For the DUCC core, the App similarly asks for confirmation, follows the package rules from Baidu's
+For the DUCC core, the macOS App asks for confirmation, follows the package rules from Baidu's
 `baidu-cc/install.sh`, and downloads an isolated copy under
 `~/.codex-mixin/ducc/home/` without executing the installer. A dedicated Terminal displays download
 progress and runs the managed copy's `ducc login`; it closes after QR-code login succeeds.
@@ -666,7 +642,7 @@ Providers can forward user-supplied custom request headers with
 `--header-env NAME=ENV_VAR`. The configuration stores only the header and environment-variable
 names, never the value. The gateway reads values once at startup and fails closed when a value is
 missing or empty; restart it after changing a value. Primary authentication and transport headers
-cannot be overridden, and `comate_custom_header` is reserved exclusively for the current DUCX
+cannot be overridden, and `comate_custom_header` is reserved exclusively for the current DUCC
 bridge request. Codex Mixin does not generate, validate, or authorize credentials; users must
 confirm that they are entitled to use the relevant account, credential, and service.
 When a `custom` provider is added or refreshed, Codex Mixin concurrently probes common

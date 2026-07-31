@@ -263,14 +263,6 @@ func baiduAuthBridgePopUpButton() -> NSPopUpButton {
         (appText("不使用（默认）", "不使用（預設）", "Disabled (default)"), "disabled"),
         (
             appText(
-                "DUCX 核心（app-server）",
-                "DUCX 核心（app-server）",
-                "DUCX Core (app-server)"
-            ),
-            "ducx_app_server"
-        ),
-        (
-            appText(
                 "DUCC 核心（loopback）",
                 "DUCC 核心（loopback）",
                 "DUCC Core (loopback)"
@@ -283,9 +275,9 @@ func baiduAuthBridgePopUpButton() -> NSPopUpButton {
         popup.lastItem?.representedObject = value
     }
     popup.toolTip = appText(
-        "DUCX 与 DUCC 均使用 Codex Mixin 管理的独立副本。DUCC 会在隔离 HOME 中下载、登录和运行，不修改系统配置或 hooks。",
-        "DUCX 與 DUCC 均使用 Codex Mixin 管理的獨立副本。DUCC 會在隔離 HOME 中下載、登入和執行，不修改系統設定或 hooks。",
-        "DUCX and DUCC use separate Codex Mixin-managed copies. DUCC downloads, signs in, and runs inside an isolated HOME without changing system config or hooks."
+        "DUCC 使用 Codex Mixin 管理的独立副本，在隔离 HOME 中下载、登录和运行，不修改系统配置或 hooks。",
+        "DUCC 使用 Codex Mixin 管理的獨立副本，在隔離 HOME 中下載、登入和執行，不修改系統設定或 hooks。",
+        "DUCC uses a Codex Mixin-managed copy and downloads, signs in, and runs inside an isolated HOME without changing system config or hooks."
     )
     popup.translatesAutoresizingMaskIntoConstraints = false
     popup.heightAnchor.constraint(equalToConstant: 28).isActive = true

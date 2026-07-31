@@ -24,8 +24,7 @@ pub(super) async fn messages(
         )));
     }
     let request = normalize_message_request(&body, &upstream_model_id)?;
-    let hash_key = stable_oneapi_routing(&headers, &body)?
-        .map(|routing| routing.hash_key);
+    let hash_key = stable_oneapi_routing(&headers, &body)?.map(|routing| routing.hash_key);
     let stream_requested = body_stream_requested(&body);
     let upstream = state
         .anthropic_stream_with_web_search_retry(provider, request, hash_key.as_deref())
@@ -91,10 +90,7 @@ pub(super) fn normalize_message_request(
         model: upstream_model.to_owned(),
         max_tokens,
         stream: body_stream_requested(body),
-        speed: body
-            .get("speed")
-            .and_then(Value::as_str)
-            .map(str::to_owned),
+        speed: body.get("speed").and_then(Value::as_str).map(str::to_owned),
         messages,
         system,
         tools,

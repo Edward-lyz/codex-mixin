@@ -228,18 +228,9 @@ impl ProviderRuntime {
             && model.to_ascii_lowercase().contains("fable")
     }
 
-    pub fn uses_ducx_app_server(&self) -> bool {
-        self.definition.request_policy.effective_baidu_auth_bridge()
-            == BaiduAuthBridge::DucxAppServer
-    }
-
     pub fn uses_ducc_loopback(&self) -> bool {
         self.definition.request_policy.effective_baidu_auth_bridge()
             == BaiduAuthBridge::DuccLoopback
-    }
-
-    pub fn ducx_executable(&self) -> Option<&std::path::Path> {
-        self.definition.request_policy.ducx_executable.as_deref()
     }
 
     pub fn ducc_executable(&self) -> Option<&std::path::Path> {
@@ -408,10 +399,7 @@ impl ProviderRegistry {
     /// Anthropic-native clients such as Claude Code use model IDs without the
     /// Codex `-provider` suffix. This lookup first accepts the catalog slug and
     /// then falls back to a case-insensitive match across selected models.
-    pub fn resolve_native_model(
-        &self,
-        model: &str,
-    ) -> Option<ResolvedProviderModel<'_>> {
+    pub fn resolve_native_model(&self, model: &str) -> Option<ResolvedProviderModel<'_>> {
         if let Some(resolved) = self.resolve(model) {
             return Some(resolved);
         }
