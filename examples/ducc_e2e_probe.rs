@@ -1,4 +1,5 @@
 use std::time::Duration;
+use std::time::Instant;
 
 use anyhow::Context;
 use codex_mixin::anthropic::MessageRequest;
@@ -32,44 +33,58 @@ async fn main() -> anyhow::Result<()> {
         web_search_max_uses: Some(3),
         fusion_profiles: Vec::new(),
     })?;
-    let request = MessageRequest {
-        model: "GLM-5.2".to_owned(),
-        max_tokens: 32,
-        stream: true,
-        speed: None,
-        messages: vec![codex_mixin::anthropic::Message {
-            role: "user".to_owned(),
-            content: vec![codex_mixin::anthropic::ContentBlock::Text {
-                text: "Reply with hi only.".to_owned(),
+    let models = std::env::var("DUCC_E2E_MODELS").unwrap_or_else(|_| "GLM-5.2".to_owned());
+    for model in models
+        .split(',')
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+    {
+        let request = MessageRequest {
+            model: model.to_owned(),
+            max_tokens: 32,
+            stream: true,
+            speed: None,
+            messages: vec![codex_mixin::anthropic::Message {
+                role: "user".to_owned(),
+                content: vec![codex_mixin::anthropic::ContentBlock::Text {
+                    text: "Reply with hi only.".to_owned(),
+                }],
             }],
-        }],
-        system: None,
-        tools: Vec::new(),
-        tool_choice: None,
-        thinking: None,
-        output_config: None,
-        metadata: None,
-    };
-    let stream = state
-        .send_anthropic_request(
-            state.provider("baidu-oneapi").unwrap(),
-            &request,
-            Some("codex-mixin-e2e-probe"),
-        )
-        .await?;
-    let mut stream = stream;
-    let mut saw_delta = false;
-    let mut saw_completed = false;
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(anyhow::Error::from)?;
-        let text = String::from_utf8_lossy(&chunk);
-        if text.contains("content_block_delta") {
-            saw_delta = true;
+            system: None,
+            tools: Vec::new(),
+            tool_choice: None,
+            thinking: None,
+            output_config: None,
+            metadata: None,
+        };
+        let started = Instant::now();
+        let mut stream = state
+            .send_anthropic_request(
+                state.provider("baidu-oneapi").unwrap(),
+                &request,
+                Some("codex-mixin-e2e-probe"),
+            )
+            .await?;
+        let headers_ms = started.elapsed().as_millis();
+        let mut first_chunk_ms = None;
+        let mut saw_delta = false;
+        let mut saw_completed = false;
+        while let Some(chunk) = stream.next().await {
+            first_chunk_ms.get_or_insert_with(|| started.elapsed().as_millis());
+            let chunk = chunk.map_err(anyhow::Error::from)?;
+            let text = String::from_utf8_lossy(&chunk);
+            if text.contains("content_block_delta") {
+                saw_delta = true;
+            }
+            if text.contains("message_stop") {
+                saw_completed = true;
+            }
         }
-        if text.contains("message_stop") {
-            saw_completed = true;
-        }
+        println!(
+            "model={model:?} headers_ms={headers_ms} first_chunk_ms={} total_ms={} saw_delta={saw_delta} saw_completed={saw_completed}",
+            first_chunk_ms.unwrap_or_default(),
+            started.elapsed().as_millis(),
+        );
     }
-    println!("saw_delta={saw_delta} saw_completed={saw_completed}");
     Ok(())
 }

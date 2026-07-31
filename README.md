@@ -172,12 +172,17 @@ OneAPI。Codex Mixin 不提取、缓存、重建或伪造认证 Header，一次�
 重放。Fusion、Web Search、画图和 Auto Review 产生的 Responses 子请求都走同一个统一
 执行层，不会绕过用户选择的核心。
 
-网关启动时不会启动 DUCX 或 DUCC；首次请求初始化完成后，后续请求复用长驻进程，只
-承担一次本机回环转发，不会在热路径反复拉起 200 MB 以上的子进程。DUCX 初始化会禁用
-已知的 hooks、插件、内置工具和技能，并强制检查暴露的 hook 数量为零；DUCC 使用
-`--bare`、空工具和空 MCP 配置，并运行在 Codex Mixin 独立管理的 HOME。隔离检查失败就
-拒绝转发。DUCC 只读取托管 HOME 内的登录信息，不读取或修改用户现有的 `~/.claude`、
-`~/.baidu-cc` 或 shell profile；DUCX 继续使用其独立托管副本和现有的隔离检查。
+DUCX 按需启动；启用 DUCC 时，网关启动后会在后台预热一个长驻认证载体，不阻塞监听。
+GLM、Claude、Opus 等目标模型共享这个约 350 MiB 的载体，切换模型不会重启进程；载体
+只提供 DUCC 原生认证 Header，真实模型和请求体始终由调用方请求决定。桥取得认证 Header
+后会立即结束 DUCC 内部回合，真实 OneAPI 请求异步继续，多个请求不会再因上游首包时间
+串行排队。DUCX 初始化会禁用已知的 hooks、插件、内置工具和技能，并强制检查暴露的 hook
+数量为零；DUCC 使用 `--bare`、空工具和空 MCP 配置，并设置
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`，禁止提示建议等无关模型调用。桥只允许
+携带当前一次性 request id 的请求离开本机；其他辅助、重试或重放请求都在回环地址本地
+终止。隔离检查失败就拒绝转发。DUCC 只读取托管 HOME 内的登录信息，不读取或修改用户
+现有的 `~/.claude`、`~/.baidu-cc` 或 shell profile；DUCX 继续使用其独立托管副本和
+现有的隔离检查。
 `scripts/verify_ducx_oneapi_transport.mjs` 会把真实 DUCX 指向本机假 OneAPI，验证 DUCX
 认证 Header 和多模态输入；即使 DUCX 自身声明额外工具，桥也会用调用方原请求整体替换
 DUCX 请求体，因此这些声明不会进入 OneAPI。
@@ -598,12 +603,20 @@ Codex Mixin does not extract, cache, reconstruct, or forge authentication header
 cannot be replayed. Responses subrequests created by Fusion, Web Search, image generation, and
 Auto Review use the same executor and cannot bypass the selected core.
 
-DUCX and DUCC start lazily and remain alive for reuse, so the hot path adds one loopback relay
-without spawning a 200+ MB process per request. DUCX initialization disables known hooks, plugins,
+DUCX starts lazily. When DUCC is enabled, the gateway prewarms one persistent authentication
+carrier in the background without delaying the listener. Target models such as GLM, Claude, and
+Opus share this roughly 350 MiB carrier, so switching models does not restart the process. The
+carrier supplies only DUCC-native authentication headers; the caller request always determines the
+real model and body. After capturing those headers, the bridge immediately completes DUCC's
+internal turn while the real OneAPI request continues asynchronously, so concurrent requests do not
+serialize on upstream time to first byte. DUCX initialization disables known hooks, plugins,
 built-in tools, and skills, and fails closed unless DUCX reports zero exposed hooks. DUCC runs with
-`--bare`, empty tools and MCP configuration, under a Codex Mixin-managed HOME. DUCC reads login
-state only from that managed HOME and does not touch the user's existing `~/.claude`,
-`~/.baidu-cc`, or shell profile; DUCX keeps its managed binary and existing isolation checks.
+`--bare`, empty tools and MCP configuration, under a Codex Mixin-managed HOME, with
+`CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1` to suppress prompt suggestions and other unrelated
+model calls. Only the request carrying the current single-use request ID may leave loopback; helper,
+retry, and replay requests are completed locally. DUCC reads login state only from that managed HOME
+and does not touch the user's existing `~/.claude`, `~/.baidu-cc`, or shell profile; DUCX keeps its
+managed binary and existing isolation checks.
 Repository probes verify the authentication header, multimodal payload, and configuration
 fingerprints. The bridge always replaces the complete core-generated request body with the caller
 payload before it reaches OneAPI. For DUCC, the managed login's native `Authorization: Bearer ...`,

@@ -379,6 +379,7 @@ const child = spawn(
       ...proxyEnvironment,
       ANTHROPIC_BASE_URL: baseURL,
       ANTHROPIC_API_KEY: loopbackApiKey,
+      CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC: "1",
       DISABLE_BAIDU_CLAUDE_UPDATE: "1",
       DISABLE_DUCC_CLI_UPDATE: "1",
     },
@@ -410,15 +411,49 @@ const inputLines = Array.from({ length: turnCount }, (_, index) =>
     session_id: sessionId,
   }),
 );
-child.stdin.end(`${inputLines.join("\n")}\n`);
 let stdout = "";
+let stdoutBuffer = "";
 let stderr = "";
+const turnStartedAt = [];
+const turnElapsedMilliseconds = [];
+let completedTurns = 0;
+function sendTurn(index) {
+  turnStartedAt[index] = performance.now();
+  const encoded = `${inputLines[index]}\n`;
+  if (index === turnCount - 1) {
+    child.stdin.end(encoded);
+  } else {
+    child.stdin.write(encoded);
+  }
+}
 child.stdout.on("data", (chunk) => {
-  stdout += chunk.toString("utf8");
+  const text = chunk.toString("utf8");
+  stdout += text;
+  stdoutBuffer += text;
+  const lines = stdoutBuffer.split(/\r?\n/);
+  stdoutBuffer = lines.pop() || "";
+  for (const line of lines) {
+    try {
+      const event = JSON.parse(line);
+      if (event.type !== "result" || completedTurns >= turnCount) {
+        continue;
+      }
+      turnElapsedMilliseconds.push(
+        Math.round(performance.now() - turnStartedAt[completedTurns]),
+      );
+      completedTurns += 1;
+      if (completedTurns < turnCount) {
+        sendTurn(completedTurns);
+      }
+    } catch {
+      // Ignore non-JSON diagnostic output.
+    }
+  }
 });
 child.stderr.on("data", (chunk) => {
   stderr += chunk.toString("utf8");
 });
+sendTurn(0);
 const timer = setTimeout(() => child.kill("SIGKILL"), timeoutMilliseconds);
 const exit = await new Promise((resolve) => child.once("exit", (code, signal) => resolve({ code, signal })));
 clearTimeout(timer);
@@ -435,9 +470,12 @@ const result = {
   exit,
   isolationMode,
   turnCount,
+  turnElapsedMilliseconds,
   elapsedMilliseconds,
   maxResidentBytes: maxResidentBytesMatch ? Number(maxResidentBytesMatch[1]) : null,
   requestCount: captured.length,
+  auxiliaryRequestCount:
+    captured.filter((request) => request.method === "POST").length - turnCount,
   requests: captured,
   forwardedRequestCount: forwarded.length,
   forwardedRequests: forwarded,
@@ -467,7 +505,7 @@ const result = {
 process.stdout.write(`${JSON.stringify(result, null, 2)}\n`);
 if (
   exit.code !== 0 ||
-  captured.filter((request) => request.method === "POST").length === 0 ||
+  captured.filter((request) => request.method === "POST").length !== turnCount ||
   !captured
     .filter((request) => request.method === "POST")
     .every((request) => request.duccHeaderPresent) ||

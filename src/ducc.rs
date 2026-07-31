@@ -20,6 +20,7 @@ use uuid::Uuid;
 
 const REQUEST_BODY_LIMIT: usize = 16 * 1024 * 1024;
 const DUCC_HEADER_NAME: &str = "comate_custom_header";
+const DUCC_AUTH_CARRIER_MODEL: &str = "GLM-5.2";
 
 pub(crate) fn default_ducc_executable() -> Option<PathBuf> {
     std::env::var_os("HOME")
@@ -52,11 +53,11 @@ fn managed_home(executable: &Path) -> anyhow::Result<PathBuf> {
 
 struct RelayPolicy {
     marker: String,
-    skip_matching_posts: usize,
     target: reqwest::Url,
     body: Value,
     headers: HeaderMap,
-    response: oneshot::Sender<reqwest::Response>,
+    authenticated: oneshot::Sender<()>,
+    response: oneshot::Sender<anyhow::Result<reqwest::Response>>,
 }
 
 #[derive(Clone)]
@@ -116,15 +117,19 @@ impl DuccBridge {
         target: reqwest::Url,
         body: Value,
         headers: HeaderMap,
-        skip_matching_posts: usize,
-    ) -> anyhow::Result<(String, oneshot::Receiver<reqwest::Response>)> {
+    ) -> anyhow::Result<(
+        String,
+        oneshot::Receiver<()>,
+        oneshot::Receiver<anyhow::Result<reqwest::Response>>,
+    )> {
         ensure!(body.is_object(), "DUCC relay body must be an object");
         let marker = format!(
             "codex-mixin-loopback-{}{}",
             Uuid::new_v4().simple(),
             Uuid::new_v4().simple()
         );
-        let (sender, receiver) = oneshot::channel();
+        let (authenticated_sender, authenticated_receiver) = oneshot::channel();
+        let (response_sender, response_receiver) = oneshot::channel();
         let mut policies = self.state.policies.lock().await;
         ensure!(
             !policies.contains_key(model),
@@ -134,14 +139,14 @@ impl DuccBridge {
             model.to_owned(),
             RelayPolicy {
                 marker: marker.clone(),
-                skip_matching_posts,
                 target,
                 body,
                 headers,
-                response: sender,
+                authenticated: authenticated_sender,
+                response: response_sender,
             },
         );
-        Ok((marker, receiver))
+        Ok((marker, authenticated_receiver, response_receiver))
     }
 
     async fn cancel(&self, model: &str, marker: &str) {
@@ -219,13 +224,6 @@ async fn forward_post(
         let Some(policy) = policies.get_mut(&model) else {
             return Ok(synthetic_messages_response());
         };
-        // A fresh DUCC process opens one internal DeepSeek helper request
-        // before its first user turn. If the requested model is that same
-        // model, skip exactly one matching POST before considering the marker.
-        if policy.skip_matching_posts > 0 {
-            policy.skip_matching_posts -= 1;
-            return Ok(synthetic_messages_response());
-        }
         policy.marker.clone()
     };
     if !bytes_contain(&body, marker.as_bytes()) {
@@ -240,12 +238,20 @@ async fn forward_post(
         .await
         .remove(&model)
         .context("DUCC loopback policy was already consumed")?;
+    let RelayPolicy {
+        target,
+        body: upstream_body,
+        headers: policy_headers,
+        authenticated,
+        response,
+        ..
+    } = policy;
     ensure!(
         native_headers.contains_key(DUCC_HEADER_NAME),
         "DUCC request is missing its native authentication header"
     );
     strip_hop_by_hop_headers(&mut native_headers);
-    for (name, value) in policy.headers {
+    for (name, value) in policy_headers {
         if let Some(name) = name {
             ensure!(
                 name != header::AUTHORIZATION
@@ -257,19 +263,26 @@ async fn forward_post(
         }
     }
     strip_hop_by_hop_headers(&mut native_headers);
-    let encoded = serde_json::to_vec(&policy.body).context("encode sanitized DUCC relay body")?;
-    let upstream = state
-        .client
-        .post(policy.target)
-        .headers(native_headers)
-        .body(encoded)
-        .send()
-        .await
-        .context("forward DUCC-authenticated request")?;
-    policy
-        .response
-        .send(upstream)
-        .map_err(|_| anyhow::anyhow!("DUCC gateway response receiver closed"))?;
+    let encoded = serde_json::to_vec(&upstream_body).context("encode sanitized DUCC relay body")?;
+    authenticated
+        .send(())
+        .map_err(|_| anyhow::anyhow!("DUCC authentication receiver closed"))?;
+    let client = state.client.clone();
+    tokio::spawn(async move {
+        let upstream = client.post(target).headers(native_headers).body(encoded);
+        let mut response = response;
+        tokio::select! {
+            upstream = upstream.send() => {
+                let upstream = upstream.context("forward DUCC-authenticated request");
+                if response.send(upstream).is_err() {
+                    tracing::debug!("DUCC gateway response receiver closed");
+                }
+            }
+            _ = response.closed() => {
+                tracing::debug!("cancelled DUCC-authenticated upstream request");
+            }
+        }
+    });
     Ok(synthetic_messages_response())
 }
 
@@ -396,6 +409,7 @@ impl DuccClient {
             ])
             .env("HOME", home)
             .env("BAIDU_CC_PLATFORM", "AIIDE-terminal")
+            .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
             .env("DISABLE_BAIDU_CLAUDE_UPDATE", "1")
             .env("DISABLE_DUCC_CLI_UPDATE", "1")
             .current_dir(cwd)
@@ -510,7 +524,7 @@ pub(crate) struct DuccRuntime {
     cwd: tempfile::TempDir,
     bridge: DuccBridge,
     api_key: String,
-    client: Mutex<Option<(String, Arc<DuccClient>)>>,
+    client: Mutex<Option<Arc<DuccClient>>>,
     dispatch: Arc<Mutex<()>>,
 }
 
@@ -539,10 +553,9 @@ impl DuccRuntime {
         })
     }
 
-    async fn client_for_model(&self, model: &str) -> anyhow::Result<(Arc<DuccClient>, bool)> {
+    async fn auth_carrier(&self, _target_model: &str) -> anyhow::Result<(Arc<DuccClient>, bool)> {
         let mut slot = self.client.lock().await;
-        if let Some((current_model, client)) = slot.as_ref()
-            && current_model == model
+        if let Some(client) = slot.as_ref()
             && client.is_running()
         {
             return Ok((Arc::clone(client), false));
@@ -553,7 +566,7 @@ impl DuccRuntime {
             url.path_segments_mut()
                 .map_err(|_| anyhow::anyhow!("DUCC loopback URL cannot carry a model path"))?
                 .push("model")
-                .push(model);
+                .push(DUCC_AUTH_CARRIER_MODEL);
             url.to_string()
         };
         let client = Arc::new(
@@ -561,14 +574,23 @@ impl DuccRuntime {
                 &self.executable,
                 &self.home,
                 self.cwd.path(),
-                model,
+                DUCC_AUTH_CARRIER_MODEL,
                 &base_url,
                 &self.api_key,
             )
             .await?,
         );
-        *slot = Some((model.to_owned(), Arc::clone(&client)));
+        *slot = Some(Arc::clone(&client));
         Ok((client, true))
+    }
+
+    pub(crate) async fn warm(&self) -> anyhow::Result<()> {
+        let (client, _) = self.auth_carrier(DUCC_AUTH_CARRIER_MODEL).await?;
+        ensure!(
+            client.is_running(),
+            "managed DUCC authentication carrier is not running"
+        );
+        Ok(())
     }
 
     pub(crate) async fn send(
@@ -579,74 +601,88 @@ impl DuccRuntime {
         headers: HeaderMap,
         timeout: Duration,
     ) -> anyhow::Result<reqwest::Response> {
-        // DUCC is roughly 360 MiB per process. One serialized, long-lived
-        // worker avoids multiplying gateway memory by model or concurrency.
+        // DUCC is roughly 360 MiB per process. The worker only supplies native
+        // authentication headers; the bridge replaces its request body with
+        // the caller's target-model body. One carrier can therefore serve all
+        // models without paying another cold start after a model switch.
         let dispatch_guard = Arc::clone(&self.dispatch).lock_owned().await;
-        let (client, spawned) = self.client_for_model(model).await?;
+        let (client, _) = self.auth_carrier(model).await?;
         ensure!(client.is_running(), "managed DUCC process is not running");
-        let (marker, response) = self
+        let (marker, authenticated, response) = self
             .bridge
-            .register(
-                model,
-                target,
-                body,
-                headers,
-                usize::from(spawned && model.eq_ignore_ascii_case("DeepSeek-V4-Flash")),
-            )
+            .register(DUCC_AUTH_CARRIER_MODEL, target, body, headers)
             .await?;
         if let Err(error) = client.trigger(&marker).await {
-            self.bridge.cancel(model, &marker).await;
+            self.bridge.cancel(DUCC_AUTH_CARRIER_MODEL, &marker).await;
             client.shutdown();
             return Err(error);
         }
-        let response = {
+        tokio::pin!(authenticated);
+        let mut turn_completed = false;
+        let mut request_authenticated = false;
+        let response_result = {
             tokio::pin!(response);
             let deadline = tokio::time::sleep(timeout);
             tokio::pin!(deadline);
             loop {
                 tokio::select! {
+                    biased;
+                    accepted = &mut authenticated, if !request_authenticated => {
+                        accepted.map_err(|_| {
+                            anyhow::anyhow!("DUCC loopback authentication channel closed")
+                        })?;
+                        request_authenticated = true;
+                    },
                     response = &mut response => break match response {
-                        Ok(response) => response,
+                        Ok(Ok(response)) => Ok(response),
+                        Ok(Err(error)) => {
+                            Err(anyhow::anyhow!("DUCC-authenticated upstream request failed: {error:#}"))
+                        }
                         Err(_) => {
-                            self.bridge.cancel(model, &marker).await;
-                            client.shutdown();
-                            anyhow::bail!("DUCC loopback response channel closed")
+                            Err(anyhow::anyhow!("DUCC loopback response channel closed"))
                         }
                     },
-                    result = client.wait_for_result() => {
+                    result = client.wait_for_result(), if !turn_completed => {
                         if let Err(error) = result {
-                            self.bridge.cancel(model, &marker).await;
+                            self.bridge.cancel(DUCC_AUTH_CARRIER_MODEL, &marker).await;
                             client.shutdown();
                             return Err(error);
                         }
+                        if request_authenticated {
+                            turn_completed = true;
+                        }
                         // DUCC can complete an internal helper request before
                         // it opens the marker-bearing authenticated request.
-                        // A successful helper result must not consume or cancel
-                        // the pending gateway turn.
+                        // Only a result observed after the bridge accepts the
+                        // marker can complete the gateway turn.
                     },
                     _ = &mut deadline => {
-                        self.bridge.cancel(model, &marker).await;
+                        self.bridge.cancel(DUCC_AUTH_CARRIER_MODEL, &marker).await;
                         client.shutdown();
                         anyhow::bail!("DUCC did not open its authenticated request in time")
                     }
                 }
             }
         };
-        tokio::spawn(async move {
-            let _dispatch_guard = dispatch_guard;
-            match tokio::time::timeout(timeout, client.wait_for_result()).await {
-                Ok(Ok(())) => {}
-                Ok(Err(error)) => {
-                    client.shutdown();
-                    tracing::warn!(error = %format!("{error:#}"), "managed DUCC turn did not complete");
+        if turn_completed {
+            drop(dispatch_guard);
+        } else {
+            tokio::spawn(async move {
+                let _dispatch_guard = dispatch_guard;
+                match tokio::time::timeout(timeout, client.wait_for_result()).await {
+                    Ok(Ok(())) => {}
+                    Ok(Err(error)) => {
+                        client.shutdown();
+                        tracing::warn!(error = %format!("{error:#}"), "managed DUCC turn did not complete");
+                    }
+                    Err(_) => {
+                        client.shutdown();
+                        tracing::warn!("managed DUCC turn result timed out");
+                    }
                 }
-                Err(_) => {
-                    client.shutdown();
-                    tracing::warn!("managed DUCC turn result timed out");
-                }
-            }
-        });
-        Ok(response)
+            });
+        }
+        response_result
     }
 }
 
@@ -656,6 +692,7 @@ mod tests {
     use axum::Json;
     use axum::routing::post;
     use std::os::unix::fs::PermissionsExt;
+    use std::time::Instant;
 
     #[test]
     fn derives_managed_home_without_reading_auth_files() {
@@ -784,7 +821,98 @@ done
     }
 
     #[tokio::test]
-    async fn bridge_skips_auxiliary_and_replaces_the_entire_multimodal_body_once() {
+    async fn reuses_one_auth_carrier_across_target_models() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("home/.baidu-cc/baidu-cc/bin/ducc");
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(
+            &executable,
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' '{"type":"result","is_error":false,"result":"ok"}'
+done
+"#,
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&executable, permissions).unwrap();
+        let runtime = DuccRuntime::spawn(
+            executable,
+            "test-api-key".to_owned(),
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
+
+        runtime.warm().await.unwrap();
+        let (glm, spawned) = runtime.auth_carrier("GLM-5.2").await.unwrap();
+        assert!(!spawned, "prewarm must create the authentication carrier");
+        let (claude, spawned) = runtime.auth_carrier("Claude Sonnet 5").await.unwrap();
+
+        assert!(
+            Arc::ptr_eq(&glm, &claude),
+            "target-model changes must not restart the authentication carrier"
+        );
+        assert!(!spawned, "the shared authentication carrier must be reused");
+    }
+
+    #[tokio::test]
+    async fn bridge_releases_ducc_before_upstream_response_headers() {
+        let app = Router::new().route(
+            "/v1/messages",
+            post(|| async {
+                tokio::time::sleep(Duration::from_millis(300)).await;
+                Json(json!({"ok":true}))
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let bridge = DuccBridge::spawn(reqwest::Client::new()).await.unwrap();
+        let (marker, authenticated, response) = bridge
+            .register(
+                "GLM-5.2",
+                format!("http://{address}/v1/messages").parse().unwrap(),
+                json!({"model":"GLM-5.2","stream":true,"messages":[]}),
+                HeaderMap::new(),
+            )
+            .await
+            .unwrap();
+        let started = Instant::now();
+        let synthetic = reqwest::Client::new()
+            .post(format!("{}/v1/messages", bridge.base_url))
+            .header(DUCC_HEADER_NAME, "native-value")
+            .json(&json!({
+                "model":"GLM-5.2",
+                "messages":[{"role":"user","content":marker}]
+            }))
+            .send()
+            .await
+            .unwrap();
+
+        assert!(synthetic.status().is_success());
+        authenticated.await.unwrap();
+        assert!(
+            started.elapsed() < Duration::from_millis(150),
+            "DUCC should receive its synthetic result without waiting for upstream headers"
+        );
+        assert!(
+            tokio::time::timeout(Duration::from_secs(1), response)
+                .await
+                .unwrap()
+                .unwrap()
+                .unwrap()
+                .status()
+                .is_success()
+        );
+    }
+
+    #[tokio::test]
+    async fn bridge_rejects_unmarked_auxiliary_and_replaces_multimodal_body_once() {
         let captured = Arc::new(Mutex::new(
             Vec::<(Value, bool, bool, bool, Option<String>)>::new(),
         ));
@@ -832,33 +960,38 @@ done
         extra.insert("x-hash-key", "session-hash".parse().unwrap());
         // This must not survive into the forwarded request.
         extra.insert(header::CONTENT_LENGTH, "0".parse().unwrap());
-        let (marker, response) = bridge
+        let (marker, authenticated, response) = bridge
             .register(
-                "DeepSeek-V4-Flash",
+                DUCC_AUTH_CARRIER_MODEL,
                 format!("http://{address}/v1/messages").parse().unwrap(),
                 expected.clone(),
                 extra,
-                1,
             )
             .await
             .unwrap();
         let trigger = json!({
-            "model":"DeepSeek-V4-Flash",
+            "model":DUCC_AUTH_CARRIER_MODEL,
             "system":"DUCC additions",
             "messages":[{"role":"user","content":marker}],
             "tools":[{"name":"DUCC_only_tool"}]
         });
-        let url = format!("{}/v1/messages?beta=true", bridge.base_url);
+        let url = format!(
+            "{}/model/{}/v1/messages?beta=true",
+            bridge.base_url, DUCC_AUTH_CARRIER_MODEL
+        );
         let client = reqwest::Client::new();
-        // The fresh-process helper call matches the same model and marker but
-        // is locally satisfied without consuming the user policy.
+        // An auxiliary request without the one-time marker is locally
+        // satisfied even while the real policy is pending.
         let test_api_key = "codex-mixin-loopback";
         let auxiliary = client
             .post(&url)
             .header(DUCC_HEADER_NAME, "native-value")
             .header(header::AUTHORIZATION, "Bearer native-ducc-token")
             .header("x-api-key", test_api_key)
-            .json(&trigger)
+            .json(&json!({
+                "model":"DeepSeek-V4-Flash",
+                "messages":[{"role":"user","content":"unrelated helper request"}]
+            }))
             .send()
             .await
             .unwrap();
@@ -875,9 +1008,11 @@ done
             .await
             .unwrap();
         assert!(main.status().is_success());
+        authenticated.await.unwrap();
         assert!(
             tokio::time::timeout(Duration::from_secs(1), response)
                 .await
+                .unwrap()
                 .unwrap()
                 .unwrap()
                 .status()
@@ -912,13 +1047,12 @@ done
     async fn missing_native_ducc_header_consumes_policy_and_fails_closed() {
         let bridge = DuccBridge::spawn(reqwest::Client::new()).await.unwrap();
         let expected = json!({"model":"Claude Sonnet 5","stream":true,"messages":[]});
-        let (marker, response) = bridge
+        let (marker, authenticated, response) = bridge
             .register(
                 "Claude Sonnet 5",
                 "http://127.0.0.1:9/v1/messages".parse().unwrap(),
                 expected,
                 HeaderMap::new(),
-                0,
             )
             .await
             .unwrap();
@@ -934,6 +1068,7 @@ done
             .await
             .unwrap();
         assert_eq!(rejected.status(), StatusCode::BAD_GATEWAY);
+        assert!(authenticated.await.is_err());
         assert!(response.await.is_err());
 
         let replay = client

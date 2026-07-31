@@ -47,6 +47,15 @@ pub async fn serve_on_listener(
     let bind = listener.local_addr()?;
     config.bind = bind;
     let state = AppState::new(config)?;
+    let ducc_prewarm_state = state.clone();
+    let ducc_prewarm_task = tokio::spawn(async move {
+        if let Err(error) = ducc_prewarm_state.prewarm_ducc().await {
+            tracing::warn!(
+                error = %format!("{error:#}"),
+                "managed DUCC authentication carrier prewarm failed"
+            );
+        }
+    });
     let probe_state = state.clone();
     let probe_task = state.config.enable_web_search_tool.then(|| {
         tokio::spawn(async move {
@@ -88,6 +97,7 @@ pub async fn serve_on_listener(
     if let Some(probe_task) = probe_task {
         probe_task.abort();
     }
+    ducc_prewarm_task.abort();
     result?;
     Ok(())
 }

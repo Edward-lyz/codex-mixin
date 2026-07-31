@@ -200,6 +200,48 @@ impl AppState {
         self.providers.provider(provider_id)
     }
 
+    async fn ducc_runtime_for(
+        &self,
+        provider: &ProviderRuntime,
+    ) -> Result<Arc<crate::ducc::DuccRuntime>, GatewayError> {
+        let executable = provider
+            .ducc_executable()
+            .map(PathBuf::from)
+            .or_else(crate::ducc::default_ducc_executable)
+            .ok_or_else(|| {
+                GatewayError::Upstream(
+                    "DUCC loopback is enabled but the managed ducc executable was not found"
+                        .to_owned(),
+                )
+            })?;
+        self.ducc_runtime
+            .get_or_try_init(|| async {
+                let api_key = provider.definition().auth.api_key.clone();
+                crate::ducc::DuccRuntime::spawn(executable, api_key, self.client.clone())
+                    .await
+                    .map(Arc::new)
+            })
+            .await
+            .cloned()
+            .map_err(GatewayError::Other)
+    }
+
+    pub(crate) async fn prewarm_ducc(&self) -> Result<(), GatewayError> {
+        let Some(provider) = self
+            .providers
+            .providers()
+            .iter()
+            .find(|provider| provider.uses_ducc_loopback())
+        else {
+            return Ok(());
+        };
+        self.ducc_runtime_for(provider)
+            .await?
+            .warm()
+            .await
+            .map_err(GatewayError::Other)
+    }
+
     pub async fn fetch_models(&self) -> Result<Vec<ModelInfo>, GatewayError> {
         let mut models = Vec::new();
         for provider in self.providers.providers() {
@@ -492,26 +534,7 @@ impl AppState {
             provider.definition().anthropic_beta.clone()
         };
         if provider.uses_ducc_loopback() {
-            let executable = provider
-                .ducc_executable()
-                .map(PathBuf::from)
-                .or_else(crate::ducc::default_ducc_executable)
-                .ok_or_else(|| {
-                    GatewayError::Upstream(
-                        "DUCC loopback is enabled but the managed ducc executable was not found"
-                            .to_owned(),
-                    )
-                })?;
-            let runtime = self
-                .ducc_runtime
-                .get_or_try_init(|| async {
-                    let api_key = provider.definition().auth.api_key.clone();
-                    crate::ducc::DuccRuntime::spawn(executable, api_key, self.client.clone())
-                        .await
-                        .map(Arc::new)
-                })
-                .await
-                .map_err(GatewayError::Other)?;
+            let runtime = self.ducc_runtime_for(provider).await?;
             // Build only the non-auth transport headers here. The bridge
             // rejects attempts to replace DUCC's native auth headers.
             let upstream_request = provider.apply_anthropic_beta(
