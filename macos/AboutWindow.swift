@@ -31,10 +31,11 @@ struct AppAboutInfo: Equatable {
 final class AboutWindowController: NSWindowController, NSWindowDelegate {
     typealias OpenURLHandler = (URL) -> Void
     typealias CopyTextHandler = (String) -> Void
-    typealias ShowCardHandler = () -> Void
+    typealias ShowCardHandler = (_ wallpaperOffset: Int) -> Void
 
     private let info: AppAboutInfo
     private let cardIdentity: CardIdentityV1
+    private let wallpaperOffset: Int
     private let openURL: OpenURLHandler
     private let copyText: CopyTextHandler
     private let showCard: ShowCardHandler
@@ -43,15 +44,19 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
     init(
         info: AppAboutInfo = .current,
         cardIdentity: CardIdentityV1 = CardIdentityStore.standard.current(),
+        wallpaperOffset: Int = CardWallpaperSelectionStore.standard.nextOffset(
+            count: CardWallpaperCatalog.wallpapers.count
+        ),
         openURL: @escaping OpenURLHandler = { NSWorkspace.shared.open($0) },
         copyText: @escaping CopyTextHandler = { text in
             NSPasteboard.general.clearContents()
             NSPasteboard.general.setString(text, forType: .string)
         },
-        showCard: @escaping ShowCardHandler = {}
+        showCard: @escaping ShowCardHandler = { _ in }
     ) {
         self.info = info
         self.cardIdentity = cardIdentity
+        self.wallpaperOffset = wallpaperOffset
         self.openURL = openURL
         self.copyText = copyText
         self.showCard = showCard
@@ -111,7 +116,8 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
 
         let cardPreview = NSHostingView(rootView: InstallCardThumbnailView(
             identity: cardIdentity,
-            onOpen: showCard
+            wallpaperOffset: wallpaperOffset,
+            onOpen: { [showCard, wallpaperOffset] in showCard(wallpaperOffset) }
         ))
         cardPreview.identifier = NSUserInterfaceItemIdentifier("about.card-preview")
         cardPreview.translatesAutoresizingMaskIntoConstraints = false

@@ -323,7 +323,7 @@ codex-mixin uninstall-codex
 - `Fusion 设置...`：选择 1–8 个 Panel 模型以及 Judge、Final 模型，并控制是否在回答中展示中间结果。
 - `安装到 Codex...`：选择有账号或仅自定义模型模式；先确保网关已启动，再按实际动态端口生成模型目录并写入托管 Codex 配置。未检测到 `models_cache.json` 时默认选择仅自定义模型。
 - `从 Codex 恢复...`：恢复安装前备份并删除托管模型目录。
-- `关于 Codex Mixin...`：显示当前 App 版本、Build 号和 GitHub 仓库链接，可一键复制版本信息；还可以打开只在本机生成的互动 Mixin 卡片并保存或分享 PNG。
+- `关于 Codex Mixin...`：显示当前 App 版本、Build 号和 GitHub 仓库链接，可一键复制版本信息；还可以打开只在本机生成的互动 Mixin 卡片并保存或分享 PNG。每次打开关于页时会随机选择一张与上次不同的当月 NASA 背景，窗口打开期间保持不变；老用户的天数会从 `~/.codex-mixin` 最早的创建时间回迁，全新安装则从第一次记录开始。
 - `检查更新...`：查询 GitHub 最新 release，下载并打开当前架构对应的 DMG。
 - `复制本地接口地址`：复制当前实际监听的本地接口地址。
 - `打开运行日志`：打开当前日志 `~/.codex-mixin/gateway.log`；轮转前的日志保存在 `gateway.log.1`。

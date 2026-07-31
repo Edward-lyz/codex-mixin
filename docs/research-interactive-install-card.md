@@ -47,10 +47,10 @@ Foundation 的 `UUID` 是通用随机标识类型，CryptoKit 提供 SHA-256；
 [UUID][apple-uuid] [SHA256][apple-sha256] [UserDefaults][apple-userdefaults]
 [Keychain Services][apple-keychain]
 
-> 当前代码没有现成的“首次使用 Mixin”记录，因此功能上线时无法可靠还原老用户的
-> 历史首次使用日期。文件创建时间、bundle 时间或配置更新时间都可能因迁移、恢复、
-> 覆盖安装而变化。第一版应记录“我们第一次在本机记录到 Mixin 的时间”，文案用
-> “Mixin 认识你的第 N 天”或“从 2026 年 7 月开始记录”，不要伪称安装日。
+> 当前代码没有现成的“首次使用 Mixin”字段。老用户首次打开卡片时，使用
+> `~/.codex-mixin` 目录及其一级内容最早的文件创建时间做 best-effort 回迁；
+> 这个目录是 Mixin 专用状态目录，比 bundle 时间或持续变化的修改时间可靠。
+> 如果目录不存在或文件系统不提供创建时间，才从本次首次记录开始计算。
 
 ## 五条路线的决策对比
 

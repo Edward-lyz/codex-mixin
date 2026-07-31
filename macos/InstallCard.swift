@@ -14,13 +14,18 @@ final class CardIdentityStore {
 
     private let defaults: UserDefaults
     private let key: String
+    private let earliestHistoryDate: () -> Date?
 
     init(
         defaults: UserDefaults = .standard,
-        key: String = "codexMixin.cardIdentity.v1"
+        key: String = "codexMixin.cardIdentity.v1",
+        earliestHistoryDate: @escaping () -> Date? = {
+            CardIdentityStore.defaultEarliestHistoryDate()
+        }
     ) {
         self.defaults = defaults
         self.key = key
+        self.earliestHistoryDate = earliestHistoryDate
     }
 
     @discardableResult
@@ -28,27 +33,65 @@ final class CardIdentityStore {
         now: Date = Date(),
         makeUUID: () -> UUID = UUID.init
     ) -> CardIdentityV1 {
+        let historicalDate = earliestHistoryDate().flatMap { $0 <= now ? $0 : nil }
         if
             let data = defaults.data(forKey: key),
-            let identity = try? JSONDecoder().decode(CardIdentityV1.self, from: data),
-            identity.seedVersion == 1
+            let identity = try? JSONDecoder().decode(CardIdentityV1.self, from: data)
         {
-            return identity
+            let migratedDate = min(
+                identity.firstRecordedAt,
+                historicalDate ?? identity.firstRecordedAt
+            )
+            let migratedIdentity = CardIdentityV1(
+                installationID: identity.installationID,
+                firstRecordedAt: migratedDate,
+                seedVersion: 2
+            )
+            if migratedIdentity != identity {
+                save(migratedIdentity)
+            }
+            return migratedIdentity
         }
 
         let identity = CardIdentityV1(
             installationID: makeUUID(),
-            firstRecordedAt: now,
-            seedVersion: 1
+            firstRecordedAt: historicalDate ?? now,
+            seedVersion: 2
         )
-        if let data = try? JSONEncoder().encode(identity) {
-            defaults.set(data, forKey: key)
-        }
+        save(identity)
         return identity
     }
 
     func reset() {
         defaults.removeObject(forKey: key)
+    }
+
+    private func save(_ identity: CardIdentityV1) {
+        if let data = try? JSONEncoder().encode(identity) {
+            defaults.set(data, forKey: key)
+        }
+    }
+
+    private static func defaultEarliestHistoryDate(
+        fileManager: FileManager = .default
+    ) -> Date? {
+        let stateDirectory = fileManager.homeDirectoryForCurrentUser
+            .appendingPathComponent(".codex-mixin", isDirectory: true)
+        guard fileManager.fileExists(atPath: stateDirectory.path) else {
+            return nil
+        }
+
+        var candidates = [stateDirectory]
+        if let children = try? fileManager.contentsOfDirectory(
+            at: stateDirectory,
+            includingPropertiesForKeys: [.creationDateKey],
+            options: [.skipsHiddenFiles]
+        ) {
+            candidates.append(contentsOf: children)
+        }
+        return candidates.compactMap { url in
+            try? url.resourceValues(forKeys: [.creationDateKey]).creationDate
+        }.min()
     }
 }
 
@@ -112,6 +155,41 @@ enum CardWallpaperCatalog {
     }
 }
 
+final class CardWallpaperSelectionStore {
+    static let standard = CardWallpaperSelectionStore()
+
+    private let defaults: UserDefaults
+    private let key: String
+
+    init(
+        defaults: UserDefaults = .standard,
+        key: String = "codexMixin.cardWallpaper.lastOffset.v1"
+    ) {
+        self.defaults = defaults
+        self.key = key
+    }
+
+    func nextOffset(
+        count: Int,
+        randomIndex: (_ upperBound: Int) -> Int = {
+            Int.random(in: 0..<$0)
+        }
+    ) -> Int {
+        guard count > 1 else { return 0 }
+
+        let lastOffset = defaults.object(forKey: key) as? Int
+        let candidate: Int
+        if let lastOffset, (0..<count).contains(lastOffset) {
+            let randomOffset = randomIndex(count - 1)
+            candidate = randomOffset >= lastOffset ? randomOffset + 1 : randomOffset
+        } else {
+            candidate = randomIndex(count)
+        }
+        defaults.set(candidate, forKey: key)
+        return candidate
+    }
+}
+
 struct InstallCardDesign: Equatable {
     let seed: UInt64
     let wallpaperIndex: Int
@@ -120,14 +198,39 @@ struct InstallCardDesign: Equatable {
 
     init(
         identity: CardIdentityV1,
+        wallpaperOffset: Int = 0,
         wallpapers: [CardWallpaper] = CardWallpaperCatalog.wallpapers
     ) {
         let digest = cardIdentityDigest(identity)
         seed = digest.prefix(8).reduce(UInt64.zero) { ($0 << 8) | UInt64($1) }
-        wallpaperIndex = wallpapers.isEmpty ? 0 : Int(seed % UInt64(wallpapers.count))
+        wallpaperIndex = cardWallpaperIndex(
+            seed: seed,
+            count: wallpapers.count,
+            offset: wallpaperOffset
+        )
         wallpaper = wallpapers.isEmpty ? nil : wallpapers[wallpaperIndex]
         identityCode = digest.prefix(4).map { String(format: "%02X", $0) }.joined()
     }
+}
+
+func cardWallpaperIndex(seed: UInt64, count: Int, offset: Int) -> Int {
+    guard count > 1 else { return 0 }
+    let start = Int(seed % UInt64(count))
+    var stride = 1 + Int((seed >> 16) % UInt64(count - 1))
+    while greatestCommonDivisor(stride, count) != 1 {
+        stride = stride == count - 1 ? 1 : stride + 1
+    }
+    let normalizedOffset = ((offset % count) + count) % count
+    return (start + normalizedOffset * stride) % count
+}
+
+private func greatestCommonDivisor(_ lhs: Int, _ rhs: Int) -> Int {
+    var a = lhs
+    var b = rhs
+    while b != 0 {
+        (a, b) = (b, a % b)
+    }
+    return a
 }
 
 func cardIdentityDigest(_ identity: CardIdentityV1) -> [UInt8] {
@@ -177,6 +280,7 @@ private func cardWallpaperIssueLabel(_ issue: String) -> String {
 
 struct InstallCardSurface: View {
     let identity: CardIdentityV1
+    let wallpaperOffset: Int
     let elapsed: TimeInterval
     let pointer: CGPoint
     let drag: CGSize
@@ -184,7 +288,7 @@ struct InstallCardSurface: View {
     let now: Date
 
     private var design: InstallCardDesign {
-        InstallCardDesign(identity: identity)
+        InstallCardDesign(identity: identity, wallpaperOffset: wallpaperOffset)
     }
 
     var body: some View {
@@ -231,7 +335,10 @@ struct InstallCardSurface: View {
                 .offset(x: parallaxX, y: parallaxY)
                 .scaleEffect(revealed ? 1.025 : 1)
                 .saturation(revealed ? 1.08 : 1)
+                .id(selected.fileName)
+                .transition(.opacity)
                 .animation(.spring(response: 0.5, dampingFraction: 0.82), value: revealed)
+                .animation(.easeInOut(duration: 0.9), value: selected.fileName)
         } else {
             LinearGradient(
                 colors: [Color(red: 0.02, green: 0.05, blue: 0.1), .black],
@@ -285,14 +392,28 @@ struct InstallCardSurface: View {
                         .tracking(1.6)
                 }
                 Spacer()
-                Text(cardWallpaperIssueLabel(CardWallpaperCatalog.issue))
-                    .font(.system(
-                        size: max(9, size.width * 0.012),
-                        weight: .medium,
-                        design: .monospaced
-                    ))
-                    .tracking(1.2)
-                    .opacity(0.74)
+                HStack(spacing: max(6, size.width * 0.008)) {
+                    HStack(spacing: max(3, size.width * 0.004)) {
+                        ForEach(CardWallpaperCatalog.wallpapers.indices, id: \.self) { index in
+                            Circle()
+                                .fill(Color.white.opacity(
+                                    index == design.wallpaperIndex ? 0.92 : 0.3
+                                ))
+                                .frame(
+                                    width: max(3, size.width * 0.004),
+                                    height: max(3, size.width * 0.004)
+                                )
+                        }
+                    }
+                    Text(cardWallpaperIssueLabel(CardWallpaperCatalog.issue))
+                        .font(.system(
+                            size: max(9, size.width * 0.012),
+                            weight: .medium,
+                            design: .monospaced
+                        ))
+                        .tracking(1.2)
+                        .opacity(0.74)
+                }
             }
 
             Spacer()
@@ -369,8 +490,9 @@ struct InstallCardSurface: View {
 
 struct InstallCardExperienceView: View {
     let identity: CardIdentityV1
-    let onSave: (_ revealed: Bool) -> Void
-    let onShare: (_ revealed: Bool) -> Void
+    let wallpaperOffset: Int
+    let onSave: (_ revealed: Bool, _ wallpaperOffset: Int) -> Void
+    let onShare: (_ revealed: Bool, _ wallpaperOffset: Int) -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
     @State private var pointer = CGPoint(x: 0.5, y: 0.5)
@@ -383,6 +505,7 @@ struct InstallCardExperienceView: View {
             GeometryReader { geometry in
                 InstallCardSurface(
                     identity: identity,
+                    wallpaperOffset: wallpaperOffset,
                     elapsed: 0,
                     pointer: pointer,
                     drag: drag,
@@ -448,13 +571,13 @@ struct InstallCardExperienceView: View {
                 Spacer()
 
                 Button {
-                    onSave(revealed)
+                    onSave(revealed, wallpaperOffset)
                 } label: {
                     Label(appText("保存 PNG", "儲存 PNG", "Save PNG"), systemImage: "square.and.arrow.down")
                 }
 
                 Button {
-                    onShare(revealed)
+                    onShare(revealed, wallpaperOffset)
                 } label: {
                     Label(appText("分享", "分享", "Share"), systemImage: "square.and.arrow.up")
                 }
@@ -468,6 +591,7 @@ struct InstallCardExperienceView: View {
 
 struct InstallCardThumbnailView: View {
     let identity: CardIdentityV1
+    let wallpaperOffset: Int
     let onOpen: () -> Void
 
     @Environment(\.accessibilityReduceMotion) private var reduceMotion
@@ -477,6 +601,7 @@ struct InstallCardThumbnailView: View {
         Button(action: onOpen) {
             InstallCardSurface(
                 identity: identity,
+                wallpaperOffset: wallpaperOffset,
                 elapsed: 0,
                 pointer: hovering && !reduceMotion
                     ? CGPoint(x: 0.58, y: 0.42)
@@ -504,11 +629,13 @@ struct InstallCardThumbnailView: View {
 func renderInstallCardPNG(
     identity: CardIdentityV1,
     revealed: Bool,
+    wallpaperOffset: Int = 0,
     now: Date = Date(),
     size: CGSize = CGSize(width: 1_200, height: 750)
 ) -> Data? {
     let surface = InstallCardSurface(
         identity: identity,
+        wallpaperOffset: wallpaperOffset,
         elapsed: 0,
         pointer: CGPoint(x: 0.5, y: 0.5),
         drag: .zero,
@@ -532,10 +659,15 @@ func renderInstallCardPNG(
 
 final class InstallCardWindowController: NSWindowController, NSWindowDelegate {
     private let identity: CardIdentityV1
+    private let wallpaperOffset: Int
     private var sharingPicker: NSSharingServicePicker?
 
-    init(identityStore: CardIdentityStore = .standard) {
+    init(
+        identityStore: CardIdentityStore = .standard,
+        wallpaperOffset: Int = 0
+    ) {
         identity = identityStore.current()
+        self.wallpaperOffset = wallpaperOffset
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 820, height: 610),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -565,20 +697,25 @@ final class InstallCardWindowController: NSWindowController, NSWindowDelegate {
     private func installContent(in window: NSWindow) {
         let rootView = InstallCardExperienceView(
             identity: identity,
-            onSave: { [weak self] revealed in
-                self?.savePNG(revealed: revealed)
+            wallpaperOffset: wallpaperOffset,
+            onSave: { [weak self] revealed, wallpaperOffset in
+                self?.savePNG(revealed: revealed, wallpaperOffset: wallpaperOffset)
             },
-            onShare: { [weak self] revealed in
-                self?.sharePNG(revealed: revealed)
+            onShare: { [weak self] revealed, wallpaperOffset in
+                self?.sharePNG(revealed: revealed, wallpaperOffset: wallpaperOffset)
             }
         )
         window.contentViewController = NSHostingController(rootView: rootView)
     }
 
-    private func savePNG(revealed: Bool) {
+    private func savePNG(revealed: Bool, wallpaperOffset: Int) {
         guard
             let window,
-            let data = renderInstallCardPNG(identity: identity, revealed: revealed)
+            let data = renderInstallCardPNG(
+                identity: identity,
+                revealed: revealed,
+                wallpaperOffset: wallpaperOffset
+            )
         else {
             showAlert(
                 title: appText("无法生成卡片", "無法生成卡片", "Could Not Render Card"),
@@ -604,11 +741,15 @@ final class InstallCardWindowController: NSWindowController, NSWindowDelegate {
         }
     }
 
-    private func sharePNG(revealed: Bool) {
+    private func sharePNG(revealed: Bool, wallpaperOffset: Int) {
         guard
             let window,
             let anchor = window.contentView,
-            let data = renderInstallCardPNG(identity: identity, revealed: revealed)
+            let data = renderInstallCardPNG(
+                identity: identity,
+                revealed: revealed,
+                wallpaperOffset: wallpaperOffset
+            )
         else {
             showAlert(
                 title: appText("无法生成卡片", "無法生成卡片", "Could Not Render Card"),

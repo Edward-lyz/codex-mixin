@@ -30,13 +30,14 @@ struct AboutWindowTests {
         )
         var openedURL: URL?
         var copiedText: String?
-        var cardWasShown = false
+        var shownCardWallpaperOffset: Int?
         let controller = AboutWindowController(
             info: info,
             cardIdentity: identity,
+            wallpaperOffset: 2,
             openURL: { openedURL = $0 },
             copyText: { copiedText = $0 },
-            showCard: { cardWasShown = true }
+            showCard: { shownCardWallpaperOffset = $0 }
         )
         controller.present()
         guard let window = controller.window else {
@@ -84,8 +85,9 @@ struct AboutWindowTests {
         )
         precondition(cardPreviews.count == 1)
         precondition(cardPreviews[0].identifier?.rawValue == "about.card-preview")
+        precondition(cardPreviews[0].rootView.wallpaperOffset == 2)
         cardPreviews[0].rootView.onOpen()
-        precondition(cardWasShown)
+        precondition(shownCardWallpaperOffset == 2)
 
         let brandPanel = descendantViews(of: NSVisualEffectView.self, in: window.contentView)
         precondition(brandPanel.count == 1)
