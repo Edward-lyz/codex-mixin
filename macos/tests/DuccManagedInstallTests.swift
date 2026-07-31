@@ -18,6 +18,36 @@ struct DuccManagedInstallTests {
         )
         defer { try? fileManager.removeItem(at: temporaryRoot) }
 
+        let authFixtureRoot = temporaryRoot.appendingPathComponent("auth-fixture")
+        let authFixture = authFixtureRoot.appendingPathComponent("ducc")
+        let isolatedHome = authFixtureRoot.appendingPathComponent("home")
+        try fileManager.createDirectory(
+            at: isolatedHome,
+            withIntermediateDirectories: true
+        )
+        try """
+        #!/bin/sh
+        if [ "$HOME" != "\(isolatedHome.path)" ]; then
+          exit 2
+        fi
+        if [ "$1" != "auth" ] || [ "$2" != "status" ]; then
+          exit 3
+        fi
+        printf '{"loggedIn":true,"authMethod":"api_key_helper"}'
+        """.write(to: authFixture, atomically: true, encoding: .utf8)
+        try fileManager.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: authFixture.path
+        )
+        let fixtureIsLoggedIn = await duccIsLoggedIn(
+            executable: authFixture,
+            isolatedHome: isolatedHome
+        )
+        precondition(
+            fixtureIsLoggedIn,
+            "DUCC login detection must use auth status instead of legacy user.json"
+        )
+
         let environment = ProcessInfo.processInfo.environment
         let archive: URL
         let format: DuccArchiveFormat

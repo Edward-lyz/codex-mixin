@@ -1483,6 +1483,15 @@ private func setupDuccInTerminal() async throws -> URL {
         }
     }
 
+    let loginRequired: Bool
+    if existingExecutable == nil {
+        loginRequired = true
+    } else {
+        loginRequired = !(await duccIsLoggedIn(
+            executable: executable,
+            isolatedHome: isolatedHome
+        ))
+    }
     let contents = duccTerminalSetupScript(
         terminalTitle: terminalTitle,
         releaseVersion: release?.version,
@@ -1496,7 +1505,7 @@ private func setupDuccInTerminal() async throws -> URL {
         loginStatus: loginStatus,
         executable: executable,
         isolatedHome: isolatedHome,
-        loginRequired: duccLoginRequired()
+        loginRequired: loginRequired
     )
     try contents.write(to: script, atomically: true, encoding: .utf8)
     try FileManager.default.setAttributes(
@@ -1556,14 +1565,12 @@ private func setupDuccInTerminal() async throws -> URL {
     guard FileManager.default.isExecutableFile(atPath: executable.path) else {
         throw GatewayError.command("DUCC 配置完成，但托管入口不可执行。")
     }
-    let loginFile = managedDuccInstallRoot().appendingPathComponent("user.json")
-    guard FileManager.default.isReadableFile(atPath: loginFile.path) else {
-        throw GatewayError.command("DUCC 登录完成，但托管登录状态不存在。")
+    guard await duccIsLoggedIn(
+        executable: executable,
+        isolatedHome: isolatedHome
+    ) else {
+        throw GatewayError.command("DUCC 登录命令已结束，但认证状态仍未生效。")
     }
-    try FileManager.default.setAttributes(
-        [.posixPermissions: 0o600],
-        ofItemAtPath: loginFile.path
-    )
     setupCompleted = true
     return executable
 }
@@ -1929,9 +1936,29 @@ private func listDuccArchive(
     return entries
 }
 
-private func duccLoginRequired() -> Bool {
-    let user = managedDuccInstallRoot().appendingPathComponent("user.json")
-    return !FileManager.default.isReadableFile(atPath: user.path)
+private struct DuccAuthStatus: Decodable {
+    let loggedIn: Bool
+}
+
+func duccIsLoggedIn(executable: URL, isolatedHome: URL) async -> Bool {
+    do {
+        let output = try await runDucxSetupProcess(
+            executable.path,
+            ["auth", "status"],
+            captureOutput: true,
+            environment: [
+                "HOME": isolatedHome.path,
+                "DISABLE_BAIDU_CLAUDE_UPDATE": "1",
+                "DISABLE_DUCC_CLI_UPDATE": "1",
+            ]
+        )
+        return try JSONDecoder().decode(
+            DuccAuthStatus.self,
+            from: Data(output.utf8)
+        ).loggedIn
+    } catch {
+        return false
+    }
 }
 
 private func shellQuoted(_ value: String) -> String {
@@ -1965,13 +1992,21 @@ private func listDucxArchive(_ archive: URL) async throws -> [String] {
 private func runDucxSetupProcess(
     _ executable: String,
     _ arguments: [String],
-    captureOutput: Bool = false
+    captureOutput: Bool = false,
+    environment: [String: String] = [:]
 ) async throws -> String {
     try await withCheckedThrowingContinuation { continuation in
         DispatchQueue.global(qos: .userInitiated).async {
             let process = Process()
             process.executableURL = URL(fileURLWithPath: executable)
             process.arguments = arguments
+            if !environment.isEmpty {
+                var processEnvironment = ProcessInfo.processInfo.environment
+                for (name, value) in environment {
+                    processEnvironment[name] = value
+                }
+                process.environment = processEnvironment
+            }
             let output = Pipe()
             process.standardOutput = captureOutput ? output : FileHandle.nullDevice
             process.standardError = FileHandle.nullDevice
