@@ -569,31 +569,35 @@ impl DuccRuntime {
             return Err(error);
         }
         let response = {
-            let early_result = client.wait_for_result();
-            tokio::pin!(early_result);
-            tokio::select! {
-                response = response => match response {
-                    Ok(response) => response,
-                    Err(_) => {
+            tokio::pin!(response);
+            let deadline = tokio::time::sleep(timeout);
+            tokio::pin!(deadline);
+            loop {
+                tokio::select! {
+                    response = &mut response => break match response {
+                        Ok(response) => response,
+                        Err(_) => {
+                            self.bridge.cancel(model, &marker).await;
+                            client.shutdown();
+                            anyhow::bail!("DUCC loopback response channel closed")
+                        }
+                    },
+                    result = client.wait_for_result() => {
+                        if let Err(error) = result {
+                            self.bridge.cancel(model, &marker).await;
+                            client.shutdown();
+                            return Err(error);
+                        }
+                        // DUCC can complete an internal helper request before
+                        // it opens the marker-bearing authenticated request.
+                        // A successful helper result must not consume or cancel
+                        // the pending gateway turn.
+                    },
+                    _ = &mut deadline => {
                         self.bridge.cancel(model, &marker).await;
                         client.shutdown();
-                        anyhow::bail!("DUCC loopback response channel closed")
+                        anyhow::bail!("DUCC did not open its authenticated request in time")
                     }
-                },
-                result = &mut early_result => {
-                    self.bridge.cancel(model, &marker).await;
-                    client.shutdown();
-                    match result {
-                        Ok(()) => anyhow::bail!(
-                            "managed DUCC turn completed without opening its authenticated request"
-                        ),
-                        Err(error) => return Err(error),
-                    }
-                },
-                _ = tokio::time::sleep(timeout) => {
-                    self.bridge.cancel(model, &marker).await;
-                    client.shutdown();
-                    anyhow::bail!("DUCC did not open its authenticated request in time")
                 }
             }
         };
@@ -677,6 +681,48 @@ done
         assert!(
             format!("{result:#}").contains("Not logged in"),
             "unexpected DUCC error: {result:#}"
+        );
+    }
+
+    #[tokio::test]
+    async fn ignores_early_success_while_waiting_for_authenticated_request() {
+        let root = tempfile::tempdir().unwrap();
+        let executable = root.path().join("home/.baidu-cc/baidu-cc/bin/ducc");
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(
+            &executable,
+            r#"#!/bin/sh
+while IFS= read -r line; do
+  printf '%s\n' '{"type":"result","is_error":false,"result":"auxiliary request completed"}'
+  sleep 0.05
+  printf '%s\n' '{"type":"result","is_error":true,"result":"later authenticated request failed"}'
+  exit 0
+done
+"#,
+        )
+        .unwrap();
+        let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
+        permissions.set_mode(0o700);
+        std::fs::set_permissions(&executable, permissions).unwrap();
+        let runtime = DuccRuntime::spawn(executable, reqwest::Client::new())
+            .await
+            .unwrap();
+        let result = tokio::time::timeout(
+            Duration::from_secs(1),
+            runtime.send(
+                "GLM-5.2",
+                "http://127.0.0.1:9/v1/messages".parse().unwrap(),
+                json!({"model":"GLM-5.2","messages":[]}),
+                HeaderMap::new(),
+                Duration::from_secs(30),
+            ),
+        )
+        .await
+        .expect("the later DUCC failure must beat the loopback timeout")
+        .unwrap_err();
+        assert!(
+            format!("{result:#}").contains("later authenticated request failed"),
+            "an auxiliary success must not cancel the authenticated request: {result:#}"
         );
     }
 
