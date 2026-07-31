@@ -46,3 +46,6 @@ jobs:
       - name: Test macOS DUCX setup flow
         if: runner.os == 'macOS'
         run: ./scripts/test_provider_settings_navigation.sh
+      - name: Test macOS DUCC managed installation
+        if: runner.os == 'macOS'
+        run: ./scripts/test_ducc_managed_install.sh

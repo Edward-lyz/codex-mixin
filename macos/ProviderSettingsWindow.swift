@@ -1328,13 +1328,13 @@ private func ducxLoginRequired() -> Bool {
     return !FileManager.default.isReadableFile(atPath: user.path)
 }
 
-private struct DuccRelease {
+struct DuccRelease {
     let version: String
     let zstdArchiveURL: URL
     let bzip2ArchiveURL: URL
 }
 
-private enum DuccArchiveFormat: String {
+enum DuccArchiveFormat: String {
     case zstd
     case bzip2
 }
@@ -1397,6 +1397,7 @@ private func setupDuccInTerminal() async throws -> URL {
     let archiveFormatStatus = directory.appendingPathComponent("archive-format.status")
     let downloadStatus = directory.appendingPathComponent("download.status")
     let installStatus = directory.appendingPathComponent("install.status")
+    let installErrorStatus = directory.appendingPathComponent("install.error")
     let loginStatus = directory.appendingPathComponent("login.status")
     let isolatedHome = managedDuccHome()
     let executable = managedDuccInstallRoot()
@@ -1436,6 +1437,7 @@ private func setupDuccInTerminal() async throws -> URL {
         archiveFormatStatus: archiveFormatStatus,
         downloadStatus: downloadStatus,
         installStatus: installStatus,
+        installErrorStatus: installErrorStatus,
         loginStatus: loginStatus,
         executable: executable,
         isolatedHome: isolatedHome,
@@ -1476,6 +1478,11 @@ private func setupDuccInTerminal() async throws -> URL {
             )
             try writeDucxStatus(0, to: installStatus)
         } catch {
+            try? String(describing: error).write(
+                to: installErrorStatus,
+                atomically: true,
+                encoding: .utf8
+            )
             try? writeDucxStatus(1, to: installStatus)
             throw error
         }
@@ -1515,6 +1522,7 @@ func duccTerminalSetupScript(
     archiveFormatStatus: URL,
     downloadStatus: URL,
     installStatus: URL,
+    installErrorStatus: URL,
     loginStatus: URL,
     executable: URL,
     isolatedHome: URL,
@@ -1579,6 +1587,12 @@ func duccTerminalSetupScript(
         install_result=$(/bin/cat \(shellQuoted(installStatus.path)))
         if [[ "$install_result" -ne 0 ]]; then
           echo 'DUCC 安装校验失败，请返回 Codex Mixin 查看错误。'
+          if [[ -s \(shellQuoted(installErrorStatus.path)) ]]; then
+            echo
+            echo '具体错误：'
+            /bin/cat \(shellQuoted(installErrorStatus.path))
+            echo
+          fi
           echo '按任意键关闭本窗口。'
           read -k 1
           exit "$install_result"
@@ -1651,13 +1665,15 @@ func duccTerminalSetupScript(
     """
 }
 
-private func installDuccArchive(
+func installDuccArchive(
     _ archive: URL,
     release: DuccRelease,
-    format: DuccArchiveFormat
+    format: DuccArchiveFormat,
+    root managedRoot: URL? = nil,
+    architecture: String? = nil
 ) async throws -> URL {
     let fileManager = FileManager.default
-    let root = managedDuccInstallRoot()
+    let root = managedRoot ?? managedDuccInstallRoot()
     try fileManager.createDirectory(
         at: root,
         withIntermediateDirectories: true,
@@ -1726,17 +1742,20 @@ private func installDuccArchive(
         withDestinationPath: "claude"
     )
 
-    let directoryName = "baidu-cc-darwin-\(ducxArchitecture())-\(release.version)"
+    let directoryName =
+        "baidu-cc-darwin-\(architecture ?? ducxArchitecture())-\(release.version)"
     let versionDirectory = root.appendingPathComponent(
         directoryName,
         isDirectory: true
     )
     if fileManager.fileExists(atPath: versionDirectory.path) {
         let existing = versionDirectory.appendingPathComponent("bin/ducc")
-        guard fileManager.isExecutableFile(atPath: existing.path) else {
-            throw GatewayError.command(
-                "DUCC 目标目录已存在但不完整：\(versionDirectory.path)"
-            )
+        if !fileManager.isExecutableFile(atPath: existing.path) {
+            // Version directories contain only the managed package. Login
+            // state lives at the parent `.baidu-cc`, so an interrupted package
+            // extraction can be replaced without touching authentication.
+            try fileManager.removeItem(at: versionDirectory)
+            try fileManager.moveItem(at: staging, to: versionDirectory)
         }
     } else {
         try fileManager.moveItem(at: staging, to: versionDirectory)

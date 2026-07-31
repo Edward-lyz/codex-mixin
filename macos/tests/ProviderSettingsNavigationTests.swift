@@ -44,6 +44,7 @@ struct ProviderSettingsNavigationTests {
             archiveFormatStatus: URL(fileURLWithPath: "/tmp/ducc-format.status"),
             downloadStatus: URL(fileURLWithPath: "/tmp/ducc-download.status"),
             installStatus: URL(fileURLWithPath: "/tmp/ducc-install.status"),
+            installErrorStatus: URL(fileURLWithPath: "/tmp/ducc-install.error"),
             loginStatus: URL(fileURLWithPath: "/tmp/ducc-login.status"),
             executable: URL(
                 fileURLWithPath: "/managed/ducc/home/.baidu-cc/baidu-cc/bin/ducc"
@@ -97,6 +98,11 @@ struct ProviderSettingsNavigationTests {
         precondition(
             duccSetupScript.contains("close candidateWindow"),
             "The dedicated DUCC setup terminal must close itself after success"
+        )
+        precondition(
+            duccSetupScript.contains("具体错误：")
+                && duccSetupScript.contains("'/tmp/ducc-install.error'"),
+            "DUCC setup failures must expose the original installer error in Terminal"
         )
         let managedRoot = FileManager.default.temporaryDirectory
             .appendingPathComponent("codex-mixin-ducx-layout-\(UUID().uuidString)")
