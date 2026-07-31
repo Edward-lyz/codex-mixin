@@ -29,10 +29,14 @@ where
 
         let mut decoder = SseDecoder::default();
         tokio::pin!(upstream);
+        let mut pending = Vec::new();
         while let Some(chunk) = upstream.next().await {
             let bytes = match chunk {
                 Ok(bytes) => bytes,
                 Err(err) => {
+                    if let Some(combined) = coalesce_events(&mut pending) {
+                        yield Ok(combined);
+                    }
                     yield Ok(state.failed_event(err.to_string()));
                     return;
                 }
@@ -40,26 +44,26 @@ where
             for event in decoder.push(&bytes) {
                 if event.data == "[DONE]" {
                     let phase = state.fallback_text_phase();
-                    for bytes in state.finish_text(phase) {
-                        yield Ok(bytes);
-                    }
+                    pending.extend(state.finish_text(phase));
                     match state.finish_tools(image_routes.as_ref()) {
-                        Ok(events) => {
-                            for bytes in events {
-                                yield Ok(bytes);
-                            }
-                        }
+                        Ok(events) => pending.extend(events),
                         Err(err) => {
+                            if let Some(combined) = coalesce_events(&mut pending) {
+                                yield Ok(combined);
+                            }
                             yield Ok(state.failed_event(err));
                             return;
                         }
                     }
                     let completed = state.completed_response();
-                    yield Ok(encode_event("response.completed", &json!({"type":"response.completed","response":completed})).unwrap());
+                    pending.push(encode_event("response.completed", &json!({"type":"response.completed","response":completed})).unwrap());
+                    if let Some(combined) = coalesce_events(&mut pending) {
+                        yield Ok(combined);
+                    }
                     return;
                 }
                 let Ok(data) = serde_json::from_str::<Value>(&event.data) else {
-                    yield Ok(encode_raw_event("response.warning", &json!({"type":"response.warning","warning":"invalid upstream SSE JSON"}).to_string()));
+                    pending.push(encode_raw_event("response.warning", &json!({"type":"response.warning","warning":"invalid upstream SSE JSON"}).to_string()));
                     continue;
                 };
                 if let Some(usage) = data.get("usage") {
@@ -73,9 +77,7 @@ where
                 if let Some(text) = delta.get("content").and_then(Value::as_str)
                     && !text.is_empty()
                 {
-                    for bytes in state.text_delta(text) {
-                        yield Ok(bytes);
-                    }
+                    pending.extend(state.text_delta(text));
                 }
                 if let Some(tool_calls) = delta.get("tool_calls").and_then(Value::as_array) {
                     for tool_call in tool_calls {
@@ -114,46 +116,44 @@ where
                 }
                 match choice.get("finish_reason").and_then(Value::as_str) {
                     Some("tool_calls") => {
-                        for bytes in state.finish_text(AssistantMessagePhase::Commentary) {
-                            yield Ok(bytes);
-                        }
+                        pending.extend(state.finish_text(AssistantMessagePhase::Commentary));
                         match state.finish_tools(image_routes.as_ref()) {
-                            Ok(events) => {
-                                for bytes in events {
-                                    yield Ok(bytes);
-                                }
-                            }
+                            Ok(events) => pending.extend(events),
                             Err(err) => {
+                                if let Some(combined) = coalesce_events(&mut pending) {
+                                    yield Ok(combined);
+                                }
                                 yield Ok(state.failed_event(err));
                                 return;
                             }
                         }
                     }
                     Some("stop") | Some("length") | Some("content_filter") => {
-                        for bytes in state.finish_text(AssistantMessagePhase::FinalAnswer) {
-                            yield Ok(bytes);
-                        }
+                        pending.extend(state.finish_text(AssistantMessagePhase::FinalAnswer));
                     }
                     _ => {}
                 }
             }
+            if let Some(combined) = coalesce_events(&mut pending) {
+                yield Ok(combined);
+            }
         }
         let phase = state.fallback_text_phase();
-        for bytes in state.finish_text(phase) {
-            yield Ok(bytes);
-        }
+        pending.extend(state.finish_text(phase));
         match state.finish_tools(image_routes.as_ref()) {
-            Ok(events) => {
-                for bytes in events {
-                    yield Ok(bytes);
-                }
-            }
+            Ok(events) => pending.extend(events),
             Err(err) => {
+                if let Some(combined) = coalesce_events(&mut pending) {
+                    yield Ok(combined);
+                }
                 yield Ok(state.failed_event(err));
                 return;
             }
         }
         let completed = state.completed_response();
-        yield Ok(encode_event("response.completed", &json!({"type":"response.completed","response":completed})).unwrap());
+        pending.push(encode_event("response.completed", &json!({"type":"response.completed","response":completed})).unwrap());
+        if let Some(combined) = coalesce_events(&mut pending) {
+            yield Ok(combined);
+        }
     }
 }

@@ -49,7 +49,7 @@ mod state;
 
 pub(crate) use responses_http::stream_official_response;
 pub use routes::{router, serve, serve_on_listener};
-pub use state::AppState;
+pub use state::{AnthropicByteStream, AppState};
 
 #[cfg(test)]
 mod tests;

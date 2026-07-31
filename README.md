@@ -196,7 +196,9 @@ Provider 可通过 `--header-env NAME=ENV_VAR` 转发用户自行提供的自定
 只保存 Header 名和环境变量名，不保存值；网关启动时读取一次，缺失或空值会阻止启动，
 更新值后需重启网关。`authorization`、`x-api-key`、`comate_custom_header` 和传输层
 Header 不允许覆盖；`comate_custom_header` 只允许由本次 DUCX 桥接请求产生。Codex Mixin
-不生成、校验或授权任何凭据，用户须自行确认对相关账号、凭据和服务有使用权。
+不生成、校验或授权任何凭据，用户须自行确认对相关账号、凭据和服务有使用权。DUCC 核心
+会把托管登录得到的 `Authorization: Bearer ...`、DUCC 生成的 `x-api-key` 以及
+`comate_custom_header` 原样转发给 OneAPI，不删除也不替换。
 新增或刷新 `custom` Provider 时会并发尝试 New API、Sub2API、OpenRouter
 等常见只读额度端点；只有返回可识别额度数据的端点才会保存，不会发起付费推理。
 
@@ -604,7 +606,9 @@ state only from that managed HOME and does not touch the user's existing `~/.cla
 `~/.baidu-cc`, or shell profile; DUCX keeps its managed binary and existing isolation checks.
 Repository probes verify the authentication header, multimodal payload, and configuration
 fingerprints. The bridge always replaces the complete core-generated request body with the caller
-payload before it reaches OneAPI.
+payload before it reaches OneAPI. For DUCC, the managed login's native `Authorization: Bearer ...`,
+the `x-api-key` value required to reach the local loopback, and `comate_custom_header` are all
+forwarded unchanged to the relay.
 
 The macOS App checks the Codex Mixin-managed version, `~/.baidu-cx/baidu-cx/bin/ducx`, and PATH,
 in that order. If DUCX is missing, the App first shows the official HTTP URL, version, approximate

@@ -11,7 +11,7 @@ use axum::body::{Body, Bytes};
 use axum::extract::{DefaultBodyLimit, OriginalUri, State};
 use axum::http::{HeaderMap, Method, Response, StatusCode, header};
 use axum::routing::any;
-use memchr::memchr;
+use memchr::memmem;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, Command};
@@ -20,7 +20,6 @@ use uuid::Uuid;
 
 const REQUEST_BODY_LIMIT: usize = 16 * 1024 * 1024;
 const DUCC_HEADER_NAME: &str = "comate_custom_header";
-const LOOPBACK_API_KEY: &str = "codex-mixin-loopback";
 
 pub(crate) fn default_ducc_executable() -> Option<PathBuf> {
     std::env::var_os("HOME")
@@ -245,11 +244,6 @@ async fn forward_post(
         native_headers.contains_key(DUCC_HEADER_NAME),
         "DUCC request is missing its native authentication header"
     );
-    // Claude Code requires an API key before it will send to a non-official
-    // loopback base URL. The placeholder exists only to unlock that local
-    // request and must never reach the real upstream.
-    native_headers.remove(header::AUTHORIZATION);
-    native_headers.remove("x-api-key");
     strip_hop_by_hop_headers(&mut native_headers);
     for (name, value) in policy.headers {
         if let Some(name) = name {
@@ -300,19 +294,7 @@ fn contains_string(value: &Value, needle: &str) -> bool {
 }
 
 fn bytes_contain(haystack: &[u8], needle: &[u8]) -> bool {
-    if needle.is_empty() {
-        return true;
-    }
-    let first = needle[0];
-    let mut search = haystack;
-    while let Some(offset) = memchr(first, search) {
-        let candidate = &search[offset..];
-        if candidate.len() >= needle.len() && candidate.starts_with(needle) {
-            return true;
-        }
-        search = &candidate[1..];
-    }
-    false
+    memmem::find(haystack, needle).is_some()
 }
 
 fn strip_hop_by_hop_headers(headers: &mut HeaderMap) {
@@ -380,11 +362,12 @@ impl DuccClient {
         cwd: &Path,
         model: &str,
         base_url: &str,
+        api_key: &str,
     ) -> anyhow::Result<Self> {
         let settings = serde_json::to_string(&json!({
             "env": {
                 "ANTHROPIC_BASE_URL": base_url,
-                "ANTHROPIC_API_KEY": LOOPBACK_API_KEY
+                "ANTHROPIC_API_KEY": api_key
             }
         }))
         .expect("static DUCC settings are serializable");
@@ -526,6 +509,7 @@ pub(crate) struct DuccRuntime {
     home: PathBuf,
     cwd: tempfile::TempDir,
     bridge: DuccBridge,
+    api_key: String,
     client: Mutex<Option<(String, Arc<DuccClient>)>>,
     dispatch: Arc<Mutex<()>>,
 }
@@ -533,6 +517,7 @@ pub(crate) struct DuccRuntime {
 impl DuccRuntime {
     pub(crate) async fn spawn(
         executable: PathBuf,
+        api_key: String,
         client: reqwest::Client,
     ) -> anyhow::Result<Self> {
         ensure!(
@@ -548,6 +533,7 @@ impl DuccRuntime {
             home,
             cwd,
             bridge,
+            api_key,
             client: Mutex::new(None),
             dispatch: Arc::new(Mutex::new(())),
         })
@@ -577,6 +563,7 @@ impl DuccRuntime {
                 self.cwd.path(),
                 model,
                 &base_url,
+                &self.api_key,
             )
             .await?,
         );
@@ -724,9 +711,13 @@ done
         let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
         permissions.set_mode(0o700);
         std::fs::set_permissions(&executable, permissions).unwrap();
-        let runtime = DuccRuntime::spawn(executable, reqwest::Client::new())
-            .await
-            .unwrap();
+        let runtime = DuccRuntime::spawn(
+            executable,
+            "test-api-key".to_owned(),
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
         let result = tokio::time::timeout(
             Duration::from_secs(1),
             runtime.send(
@@ -766,9 +757,13 @@ done
         let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
         permissions.set_mode(0o700);
         std::fs::set_permissions(&executable, permissions).unwrap();
-        let runtime = DuccRuntime::spawn(executable, reqwest::Client::new())
-            .await
-            .unwrap();
+        let runtime = DuccRuntime::spawn(
+            executable,
+            "test-api-key".to_owned(),
+            reqwest::Client::new(),
+        )
+        .await
+        .unwrap();
         let result = tokio::time::timeout(
             Duration::from_secs(1),
             runtime.send(
@@ -790,7 +785,9 @@ done
 
     #[tokio::test]
     async fn bridge_skips_auxiliary_and_replaces_the_entire_multimodal_body_once() {
-        let captured = Arc::new(Mutex::new(Vec::<(Value, bool, bool, Option<String>)>::new()));
+        let captured = Arc::new(Mutex::new(
+            Vec::<(Value, bool, bool, bool, Option<String>)>::new(),
+        ));
         let upstream_capture = Arc::clone(&captured);
         let app = Router::new().route(
             "/v1/messages",
@@ -800,8 +797,8 @@ done
                     upstream_capture.lock().await.push((
                         body,
                         headers.contains_key(DUCC_HEADER_NAME),
-                        headers.contains_key("x-api-key")
-                            || headers.contains_key(header::AUTHORIZATION),
+                        headers.contains_key("x-api-key"),
+                        headers.contains_key(header::AUTHORIZATION),
                         headers
                             .get("x-hash-key")
                             .and_then(|value| value.to_str().ok())
@@ -855,10 +852,12 @@ done
         let client = reqwest::Client::new();
         // The fresh-process helper call matches the same model and marker but
         // is locally satisfied without consuming the user policy.
+        let test_api_key = "codex-mixin-loopback";
         let auxiliary = client
             .post(&url)
             .header(DUCC_HEADER_NAME, "native-value")
-            .header("x-api-key", LOOPBACK_API_KEY)
+            .header(header::AUTHORIZATION, "Bearer native-ducc-token")
+            .header("x-api-key", test_api_key)
             .json(&trigger)
             .send()
             .await
@@ -869,7 +868,8 @@ done
         let main = client
             .post(&url)
             .header(DUCC_HEADER_NAME, "native-value")
-            .header("x-api-key", LOOPBACK_API_KEY)
+            .header(header::AUTHORIZATION, "Bearer native-ducc-token")
+            .header("x-api-key", test_api_key)
             .json(&trigger)
             .send()
             .await
@@ -887,8 +887,12 @@ done
         assert_eq!(snapshot.len(), 1);
         assert_eq!(snapshot[0].0, expected);
         assert!(snapshot[0].1);
-        assert!(!snapshot[0].2, "loopback placeholder auth must be removed");
-        assert_eq!(snapshot[0].3.as_deref(), Some("session-hash"));
+        assert!(snapshot[0].2, "DUCC x-api-key must be preserved");
+        assert!(
+            snapshot[0].3,
+            "DUCC native bearer authorization must be preserved"
+        );
+        assert_eq!(snapshot[0].4.as_deref(), Some("session-hash"));
         drop(snapshot);
 
         // Replaying the same DUCC request is answered locally and never opens

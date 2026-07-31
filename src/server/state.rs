@@ -1,6 +1,6 @@
 use super::*;
 
-type AnthropicByteStream = BoxStream<'static, Result<Bytes, reqwest::Error>>;
+pub type AnthropicByteStream = BoxStream<'static, Result<Bytes, reqwest::Error>>;
 const CATALOG_SOURCE_CACHE_TTL: Duration = Duration::from_secs(60);
 const CATALOG_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(30);
 const ANTHROPIC_FAST_BETA: &str = "fast-mode-2026-02-01";
@@ -194,6 +194,10 @@ impl AppState {
             .image_generation_url()
             .is_some()
             .then(|| self.image_routes.for_provider(provider.id()))
+    }
+
+    pub fn provider(&self, provider_id: &str) -> Option<&ProviderRuntime> {
+        self.providers.provider(provider_id)
     }
 
     pub async fn fetch_models(&self) -> Result<Vec<ModelInfo>, GatewayError> {
@@ -464,7 +468,7 @@ impl AppState {
             })
     }
 
-    async fn send_anthropic_request(
+    pub async fn send_anthropic_request(
         &self,
         provider: &ProviderRuntime,
         request: &MessageRequest,
@@ -501,7 +505,8 @@ impl AppState {
             let runtime = self
                 .ducc_runtime
                 .get_or_try_init(|| async {
-                    crate::ducc::DuccRuntime::spawn(executable, self.client.clone())
+                    let api_key = provider.definition().auth.api_key.clone();
+                    crate::ducc::DuccRuntime::spawn(executable, api_key, self.client.clone())
                         .await
                         .map(Arc::new)
                 })

@@ -1,5 +1,6 @@
 use super::auth::{FORWARDED_OFFICIAL_HEADERS, check_gateway_auth, stable_oneapi_routing};
 use super::*;
+use memchr::memmem;
 
 type OfficialWebSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
 
@@ -89,7 +90,7 @@ async fn route_responses_ws(
                 route = "official_ws",
                 "routing responses websocket request"
             );
-            let request_history =
+            let mut request_history =
                 match official_websocket_request_history(&body, official_state.take()) {
                     Ok(history) => history,
                     Err(err) => {
@@ -118,7 +119,11 @@ async fn route_responses_ws(
                         Ok(socket) => {
                             official_socket = Some(socket);
                             if body.get("previous_response_id").is_some() {
-                                body["input"] = Value::Array(request_history.clone());
+                                body["input"] = Value::Array(
+                                    request_history
+                                        .take()
+                                        .expect("previous response history is available"),
+                                );
                                 body.as_object_mut()
                                     .expect("responses request is an object")
                                     .remove("previous_response_id");
@@ -150,7 +155,10 @@ async fn route_responses_ws(
                         response_id,
                         items_added,
                     }) => {
-                        let mut history = request_history;
+                        let mut history = match request_history.take() {
+                            Some(history) => history,
+                            None => take_custom_request_input(&mut body)?,
+                        };
                         history.extend(items_added);
                         official_state = Some(OfficialWebSocketState {
                             response_id,
@@ -349,8 +357,12 @@ async fn proxy_official_responses_ws(
                 response_id: response_id.clone(),
             })?;
         let event = match &message {
-            TungsteniteMessage::Text(text) => serde_json::from_str::<Value>(text).ok(),
-            TungsteniteMessage::Binary(bytes) => serde_json::from_slice::<Value>(bytes).ok(),
+            TungsteniteMessage::Text(text) => {
+                parse_official_ws_event(text.as_bytes(), response_id.as_deref())
+            }
+            TungsteniteMessage::Binary(bytes) => {
+                parse_official_ws_event(bytes, response_id.as_deref())
+            }
             _ => None,
         };
         if response_id.is_none() {
@@ -460,17 +472,31 @@ async fn proxy_official_responses_ws(
     }
 }
 
+fn parse_official_ws_event(bytes: &[u8], response_id: Option<&str>) -> Option<Value> {
+    if response_id.is_some()
+        && memmem::find(bytes, b"response.output_item.done").is_none()
+        && memmem::find(bytes, b"response.completed").is_none()
+        && memmem::find(bytes, b"response.failed").is_none()
+        && memmem::find(bytes, b"response.incomplete").is_none()
+        && memmem::find(bytes, b"\"type\": \"error\"").is_none()
+        && memmem::find(bytes, b"\"type\":\"error\"").is_none()
+    {
+        return None;
+    }
+    serde_json::from_slice::<Value>(bytes).ok()
+}
+
 fn official_websocket_request_history(
     body: &Value,
     state: Option<OfficialWebSocketState>,
-) -> anyhow::Result<Vec<Value>> {
+) -> anyhow::Result<Option<Vec<Value>>> {
     let incremental_input = body
         .get("input")
         .and_then(Value::as_array)
         .ok_or_else(|| anyhow::anyhow!("official request input must be an array"))?;
     let Some(previous_response_id) = body.get("previous_response_id").and_then(Value::as_str)
     else {
-        return Ok(incremental_input.clone());
+        return Ok(None);
     };
     let state = state.ok_or_else(|| {
         anyhow::anyhow!("unknown official previous_response_id: {previous_response_id}")
@@ -490,7 +516,7 @@ fn official_websocket_request_history(
     }
     let mut history = state.history;
     history.extend(incremental_input.iter().cloned());
-    Ok(history)
+    Ok(Some(history))
 }
 
 async fn proxy_custom_responses_ws(

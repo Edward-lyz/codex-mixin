@@ -11,6 +11,10 @@ import { performance } from "node:perf_hooks";
 const ducc =
   process.env.DUCC_BIN ||
   path.join(os.homedir(), ".baidu-cc", "baidu-cc", "bin", "ducc");
+const loopbackApiKey =
+  process.env.DUCC_PROBE_API_KEY ||
+  process.env.ANTHROPIC_API_KEY ||
+  "codex-mixin-loopback";
 const timeoutMilliseconds = Number(process.env.DUCC_PROBE_TIMEOUT_MS || "30000");
 const turnCount = Number(process.env.DUCC_PROBE_TURNS || "1");
 const expectedModel = process.env.DUCC_PROBE_MODEL || "Claude Sonnet 5";
@@ -236,8 +240,10 @@ const upstreamServer = http.createServer((request, response) => {
         typeof request.headers.comate_custom_header === "string" &&
         request.headers.comate_custom_header.length > 0,
       placeholderAuthPresent:
-        typeof request.headers.authorization === "string" ||
         typeof request.headers["x-api-key"] === "string",
+      nativeAuthorizationPresent:
+        typeof request.headers.authorization === "string" &&
+        request.headers.authorization.startsWith("Bearer "),
       body: bodyShape(body),
       bodyMatchesRegistered: JSON.stringify(body) === JSON.stringify(registeredBody),
     });
@@ -302,8 +308,6 @@ const server = http.createServer((request, response) => {
     ]) {
       delete headers[name];
     }
-    delete headers.authorization;
-    delete headers["x-api-key"];
     try {
       const upstream = await fetch(`${upstreamBaseURL}${request.url}`, {
         method: "POST",
@@ -358,7 +362,7 @@ const child = spawn(
     JSON.stringify({
       env: {
         ANTHROPIC_BASE_URL: baseURL,
-        ANTHROPIC_API_KEY: "codex-mixin-loopback",
+        ANTHROPIC_API_KEY: loopbackApiKey,
       },
     }),
     "--print",
@@ -374,7 +378,7 @@ const child = spawn(
       ...process.env,
       ...proxyEnvironment,
       ANTHROPIC_BASE_URL: baseURL,
-      ANTHROPIC_API_KEY: "codex-mixin-loopback",
+      ANTHROPIC_API_KEY: loopbackApiKey,
       DISABLE_BAIDU_CLAUDE_UPDATE: "1",
       DISABLE_DUCC_CLI_UPDATE: "1",
     },
@@ -471,7 +475,8 @@ if (
   !forwarded.every(
     (request) =>
       request.duccHeaderPresent &&
-      !request.placeholderAuthPresent &&
+      request.nativeAuthorizationPresent &&
+      request.placeholderAuthPresent &&
       request.bodyMatchesRegistered &&
       request.body?.imageBlockCount === 1,
   ) ||
