@@ -13,6 +13,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var providerSettingsWindowController: ProviderSettingsWindowController?
     var modelBenchmarkWindowController: ModelBenchmarkWindowController?
     var fusionSettingsWindowController: FusionSettingsWindowController?
+    var aboutWindowController: AboutWindowController?
     let menuItemViewUpdater = MenuItemViewUpdater()
     var timer: Timer?
     var terminationInProgress = false
@@ -123,6 +124,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(actionItem("安装到 Claude Code...", #selector(installClaudeCode), "square.and.arrow.down"))
         menu.addItem(actionItem("从 Claude Code 恢复...", #selector(uninstallClaudeCode), "arrow.uturn.backward.circle"))
         menu.addItem(.separator())
+        menu.addItem(actionItem("关于 Codex Mixin...", #selector(showAbout), "info.circle"))
         menu.addItem(actionItem("检查更新...", #selector(checkForUpdatesFromMenu), "arrow.down.circle"))
         menu.addItem(.separator())
         menu.addItem(actionItem("复制本地接口地址", #selector(copyLocalEndpoint), "link"))

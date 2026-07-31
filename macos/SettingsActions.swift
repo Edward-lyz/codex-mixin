@@ -1,6 +1,13 @@
 import Cocoa
 
 extension AppDelegate {
+    @objc func showAbout() {
+        if aboutWindowController == nil {
+            aboutWindowController = AboutWindowController()
+        }
+        aboutWindowController?.present()
+    }
+
     @objc func runAutomaticDoctor() {
         guard !serviceBusy else { return }
         serviceBusy = true
