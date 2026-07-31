@@ -3,9 +3,18 @@ import Cocoa
 extension AppDelegate {
     @objc func showAbout() {
         if aboutWindowController == nil {
-            aboutWindowController = AboutWindowController()
+            aboutWindowController = AboutWindowController(showCard: { [weak self] in
+                self?.showInstallCard()
+            })
         }
         aboutWindowController?.present()
+    }
+
+    @objc func showInstallCard() {
+        if installCardWindowController == nil {
+            installCardWindowController = InstallCardWindowController()
+        }
+        installCardWindowController?.present()
     }
 
     @objc func runAutomaticDoctor() {

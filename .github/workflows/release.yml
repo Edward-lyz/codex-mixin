@@ -82,7 +82,8 @@ jobs:
         if: matrix.os == 'macos'
         env:
           CARGO_BUILD_TARGET: ${{ matrix.target }}
-          MACOSX_DEPLOYMENT_TARGET: "12.0"
+          MACOSX_DEPLOYMENT_TARGET: "13.1"
+          CODEX_MIXIN_REFRESH_NASA_WALLPAPERS: "1"
         run: ./macos/build_app.sh
       - name: Package CLI archive
         run: ./scripts/package-cli.sh "${{ matrix.target }}" "${{ steps.version.outputs.version }}" dist/release

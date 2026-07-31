@@ -1,0 +1,34 @@
+{
+  "schemaVersion": 1,
+  "issue": "2026-07",
+  "sourcePage": "https://www.nasa.gov/international-space-station/desktop-and-mobile-wallpapers/",
+  "images": [
+    {
+      "fileName": "over-the-horizon.png",
+      "title": "Over the Horizon",
+      "credit": "NASA",
+      "sourceURL": "https://www.nasa.gov/wp-content/uploads/2026/03/over-the-horizon-–-desktop-–-image-only.png",
+      "width": 1920,
+      "height": 1080,
+      "sha256": "70eb9ab23187484a5cd03e3825b9fad8edd3377724d82caadfff27805ad5c22f"
+    },
+    {
+      "fileName": "waning-crescent-moon.png",
+      "title": "Waning Crescent Moon",
+      "credit": "NASA",
+      "sourceURL": "https://www.nasa.gov/wp-content/uploads/2026/03/waning-crescent-moon-–-desktop-–-image-only.png",
+      "width": 1920,
+      "height": 1080,
+      "sha256": "8811a9d30fe4d65b72a3856d74fb06882d300b63d4e126b4966b3d6054d2ba2d"
+    },
+    {
+      "fileName": "crew-12-to-orbit.png",
+      "title": "Crew-12 to Orbit",
+      "credit": "NASA",
+      "sourceURL": "https://www.nasa.gov/wp-content/uploads/2026/03/crew-12-to-orbit-–-desktop-–-image-only.png",
+      "width": 1920,
+      "height": 1080,
+      "sha256": "2546942ee4be6b95c16523e879a11a4b98463cbb5c608ccc5a519af4f226e1a0"
+    }
+  ]
+}

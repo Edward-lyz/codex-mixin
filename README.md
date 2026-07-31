@@ -93,7 +93,7 @@ Codex Mixin 的解法是：Codex 连到本机自动分配的 loopback 端口，�
 | Apple Silicon | `codex-mixin-<version>-aarch64-apple-darwin.dmg` |
 | Intel | `codex-mixin-<version>-x86_64-apple-darwin.dmg` |
 
-菜单栏 App 支持 macOS 12 Monterey 及以上版本，包括 macOS 14 Sonoma。打开 DMG，把 `Codex Mixin.app` 拖到 `Applications`，然后启动菜单栏 App。
+菜单栏 App 支持 macOS 13.1 Ventura 及以上版本。打开 DMG，把 `Codex Mixin.app` 拖到 `Applications`，然后启动菜单栏 App。
 
 发布包带有有效的 ad-hoc bundle 签名，但尚未使用 Apple Developer ID 签名，也未 notarize。如果 Gatekeeper 拦截，执行下面命令后再打开：
 
@@ -323,7 +323,7 @@ codex-mixin uninstall-codex
 - `Fusion 设置...`：选择 1–8 个 Panel 模型以及 Judge、Final 模型，并控制是否在回答中展示中间结果。
 - `安装到 Codex...`：选择有账号或仅自定义模型模式；先确保网关已启动，再按实际动态端口生成模型目录并写入托管 Codex 配置。未检测到 `models_cache.json` 时默认选择仅自定义模型。
 - `从 Codex 恢复...`：恢复安装前备份并删除托管模型目录。
-- `关于 Codex Mixin...`：显示当前 App 版本、Build 号和 GitHub 仓库链接，可一键复制版本信息用于反馈问题。
+- `关于 Codex Mixin...`：显示当前 App 版本、Build 号和 GitHub 仓库链接，可一键复制版本信息；还可以打开只在本机生成的互动 Mixin 卡片并保存或分享 PNG。
 - `检查更新...`：查询 GitHub 最新 release，下载并打开当前架构对应的 DMG。
 - `复制本地接口地址`：复制当前实际监听的本地接口地址。
 - `打开运行日志`：打开当前日志 `~/.codex-mixin/gateway.log`；轮转前的日志保存在 `gateway.log.1`。
@@ -473,7 +473,7 @@ Codex Mixin 使用 [PolyForm Noncommercial License 1.0.0](LICENSE)。
 
 #### 为什么 macOS 14 Sonoma 提示 App 无法打开？
 
-旧版发布包的 Swift 菜单栏程序可能被编译为最低要求 macOS 15。这个要求写在 Mach-O 可执行文件中，修改 `Info.plist` 或执行 `xattr` 都不能降低它。请安装 Release 页面中的修复版本；修复后的菜单栏程序和 `Info.plist` 都以 macOS 12 为最低版本。若系统仅提示无法验证开发者，再执行快速安装中的 `xattr` 命令。
+旧版发布包的 Swift 菜单栏程序可能被编译为最低要求 macOS 15。这个要求写在 Mach-O 可执行文件中，修改 `Info.plist` 或执行 `xattr` 都不能降低它。请安装 Release 页面中的修复版本；当前菜单栏程序和 `Info.plist` 都以 macOS 13.1 为最低版本。若系统仅提示无法验证开发者，再执行快速安装中的 `xattr` 命令。
 
 #### 安装后为什么要重启 Codex App？
 
@@ -560,7 +560,7 @@ Download the DMG for your Mac from [GitHub Releases](https://github.com/Edward-l
 | Apple Silicon | `codex-mixin-<version>-aarch64-apple-darwin.dmg` |
 | Intel | `codex-mixin-<version>-x86_64-apple-darwin.dmg` |
 
-The menu bar app supports macOS 12 Monterey and later, including macOS 14 Sonoma. Open the DMG, drag `Codex Mixin.app` to `Applications`, then launch it.
+The menu bar app supports macOS 13.1 Ventura and later. Open the DMG, drag `Codex Mixin.app` to `Applications`, then launch it.
 
 Release bundles have a valid ad-hoc signature, but are not signed with an Apple Developer ID or notarized. If Gatekeeper blocks the app, run:
 

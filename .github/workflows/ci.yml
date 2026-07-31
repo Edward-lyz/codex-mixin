@@ -41,8 +41,13 @@ jobs:
       - name: Build macOS app
         if: runner.os == 'macOS'
         env:
-          MACOSX_DEPLOYMENT_TARGET: "12.0"
+          MACOSX_DEPLOYMENT_TARGET: "13.1"
         run: ./macos/build_app.sh
+      - name: Test macOS About window and install card
+        if: runner.os == 'macOS'
+        run: |
+          ./scripts/test_about_window.sh
+          ./scripts/test_install_card.sh
       - name: Test macOS DUCX setup flow
         if: runner.os == 'macOS'
         run: ./scripts/test_provider_settings_navigation.sh

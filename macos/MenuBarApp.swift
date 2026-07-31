@@ -14,6 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var modelBenchmarkWindowController: ModelBenchmarkWindowController?
     var fusionSettingsWindowController: FusionSettingsWindowController?
     var aboutWindowController: AboutWindowController?
+    var installCardWindowController: InstallCardWindowController?
     let menuItemViewUpdater = MenuItemViewUpdater()
     var timer: Timer?
     var terminationInProgress = false
@@ -36,6 +37,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        CardIdentityStore.standard.current()
         installApplicationMenu()
         installStatusItem()
         startGatewayAtLaunch()

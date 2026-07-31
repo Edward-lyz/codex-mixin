@@ -9,8 +9,12 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 CARGO_BUILD_ARGS=(--release)
 TARGET_DIR="$ROOT_DIR/target/release"
-MACOS_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-12.0}"
+MACOS_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.1}"
 export MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET"
+
+if [[ "${CODEX_MIXIN_REFRESH_NASA_WALLPAPERS:-0}" == "1" ]]; then
+  "$ROOT_DIR/scripts/sync_nasa_wallpapers.py"
+fi
 
 if [[ -n "${CARGO_BUILD_TARGET:-}" ]]; then
   CARGO_BUILD_ARGS+=(--target "$CARGO_BUILD_TARGET")
@@ -41,6 +45,10 @@ cp "$ROOT_DIR/macos/Info.plist" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_VERSION" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $MACOS_DEPLOYMENT_TARGET" "$CONTENTS_DIR/Info.plist"
 cp "$ROOT_DIR/macos/CodexMixin.icns" "$RESOURCES_DIR/CodexMixin.icns"
+mkdir -p "$RESOURCES_DIR/Wallpapers"
+cp "$ROOT_DIR/macos/assets/nasa-wallpapers/"*.png "$RESOURCES_DIR/Wallpapers/"
+cp "$ROOT_DIR/macos/assets/nasa-wallpapers/manifest.json" "$RESOURCES_DIR/Wallpapers/"
+cp "$ROOT_DIR/macos/assets/nasa-wallpapers/ATTRIBUTION.md" "$RESOURCES_DIR/Wallpapers/"
 cp "$TARGET_DIR/codex-mixin" "$RESOURCES_DIR/codex-mixin"
 chmod +x "$RESOURCES_DIR/codex-mixin"
 
@@ -60,6 +68,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/AppOperationLogging.swift" \
   "$ROOT_DIR/macos/MenuViews.swift" \
   "$ROOT_DIR/macos/AboutWindow.swift" \
+  "$ROOT_DIR/macos/InstallCard.swift" \
   "$ROOT_DIR/macos/InstallCodexPanel.swift" \
   "$ROOT_DIR/macos/QuotaSupport.swift" \
   "$ROOT_DIR/macos/AppSupport.swift" \
@@ -67,6 +76,8 @@ xcrun swiftc \
   "$ROOT_DIR/macos/FusionSettingsLogic.swift" \
   "$ROOT_DIR/macos/FusionSettingsWindow.swift" \
   -framework Cocoa \
+  -framework CryptoKit \
+  -framework SwiftUI \
   -o "$MACOS_DIR/CodexMixinMenu"
 chmod +x "$MACOS_DIR/CodexMixinMenu"
 
