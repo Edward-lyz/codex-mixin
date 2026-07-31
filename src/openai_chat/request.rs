@@ -20,10 +20,21 @@ pub fn responses_to_openai_chat(body: &Value) -> Result<ConvertedChatRequest, Ga
 pub(crate) fn responses_to_openai_chat_streaming(
     body: &Value,
 ) -> Result<ConvertedChatRequest, GatewayError> {
-    let model = body
-        .get("model")
-        .and_then(Value::as_str)
-        .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?;
+    responses_to_openai_chat_streaming_with_model(body, None)
+}
+
+pub(crate) fn responses_to_openai_chat_streaming_with_model(
+    body: &Value,
+    model_override: Option<&str>,
+) -> Result<ConvertedChatRequest, GatewayError> {
+    let model = match model_override {
+        Some(model) => model.to_owned(),
+        None => body
+            .get("model")
+            .and_then(Value::as_str)
+            .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?
+            .to_owned(),
+    };
     let mut messages = Vec::new();
     if let Some(instructions) = body
         .get("instructions")

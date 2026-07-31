@@ -6,11 +6,11 @@ use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
 use serde_json::{Value, json};
 
-use crate::convert::responses_to_anthropic_with_web_search_and_thinking_kind;
+use crate::convert::responses_to_anthropic_with_model_reasoning_and_thinking_kind;
 use crate::error::GatewayError;
 use crate::gateway::{RequestPlan, UpstreamExecutor};
 use crate::model_reasoning::{anthropic_thinking_kind_with_advertised, prepare_upstream_reasoning};
-use crate::openai_chat::responses_to_openai_chat_streaming;
+use crate::openai_chat::responses_to_openai_chat_streaming_with_model;
 use crate::openai_events::{
     map_anthropic_sse_with_image_routes, map_openai_chat_sse_with_image_routes,
 };
@@ -95,15 +95,15 @@ pub(crate) async fn stream_provider_response(
         provider.protocol_for_model(&upstream_model_id)
     };
     let advertised_thinking = provider.model_supports_thinking(&upstream_model_id);
-    let mut upstream_body = body.clone();
-    upstream_body["model"] = Value::String(upstream_model_id.clone());
-    prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
     let stream = match protocol {
         ProviderProtocol::AnthropicMessages => {
             let auto_thinking_kind =
                 anthropic_thinking_kind_with_advertised(&upstream_model_id, advertised_thinking);
-            let converted = responses_to_anthropic_with_web_search_and_thinking_kind(
-                &upstream_body,
+            let reasoning = upstream_reasoning(body, advertised_thinking);
+            let converted = responses_to_anthropic_with_model_reasoning_and_thinking_kind(
+                body,
+                Some(&upstream_model_id),
+                reasoning.as_ref(),
                 &state.config,
                 web_search_enabled,
                 provider.uses_mcp_bridge_names(&upstream_model_id),
@@ -131,7 +131,8 @@ pub(crate) async fn stream_provider_response(
             .boxed()
         }
         ProviderProtocol::OpenAiChat => {
-            let converted = responses_to_openai_chat_streaming(&upstream_body)?;
+            let converted =
+                responses_to_openai_chat_streaming_with_model(body, Some(&upstream_model_id))?;
             let upstream_request = provider.apply_auth_for_protocol(
                 state
                     .client
@@ -174,6 +175,9 @@ pub(crate) async fn stream_provider_response(
             .boxed()
         }
         ProviderProtocol::OpenAiResponses => {
+            let mut upstream_body = body.clone();
+            upstream_body["model"] = Value::String(upstream_model_id.clone());
+            prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
             let upstream_request = provider.apply_auth_for_protocol(
                 state
                     .client
@@ -210,13 +214,7 @@ pub(crate) async fn stream_provider_response(
             map_openai_responses_sse(upstream.bytes_stream(), upstream_model_id, downstream_model)
         }
     };
-    let stream = async_stream::stream! {
-        let mut stream = stream;
-        while let Some(chunk) = stream.next().await {
-            yield chunk;
-        }
-    };
-    Ok(stream.boxed())
+    Ok(stream)
 }
 
 fn response_metadata_request(body: &Value, downstream_model: &str) -> Value {
@@ -247,6 +245,17 @@ fn response_metadata_request(body: &Value, downstream_model: &str) -> Value {
         }
     }
     Value::Object(request)
+}
+
+fn upstream_reasoning(body: &Value, advertised_thinking: Option<bool>) -> Option<Value> {
+    if advertised_thinking == Some(false) {
+        return None;
+    }
+    let mut reasoning = body.get("reasoning")?.clone();
+    if reasoning.get("effort").and_then(Value::as_str) == Some("ultra") {
+        reasoning["effort"] = Value::String("max".to_owned());
+    }
+    Some(reasoning)
 }
 
 fn map_openai_responses_sse<S>(
@@ -442,5 +451,21 @@ mod tests {
         assert_eq!(payload["response"]["model"], "catalog");
         assert_eq!(payload["response"]["output"][0]["model"], "upstream");
         assert_eq!(payload["model"], "upstream");
+    }
+
+    #[test]
+    fn upstream_reasoning_drops_unsupported_and_normalizes_ultra() {
+        let supported = json!({"reasoning":{"effort":"ultra","summary":"auto"}});
+        assert_eq!(
+            upstream_reasoning(&supported, Some(true)).unwrap()["effort"],
+            "max"
+        );
+        assert_eq!(
+            upstream_reasoning(&supported, Some(true)).unwrap()["summary"],
+            "auto"
+        );
+
+        let unsupported = json!({"reasoning":{"effort":"ultra"}});
+        assert!(upstream_reasoning(&unsupported, Some(false)).is_none());
     }
 }

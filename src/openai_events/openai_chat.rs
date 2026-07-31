@@ -23,9 +23,9 @@ where
 {
     stream! {
         let mut state = MapperState::new(original_request, tool_names);
-        let created = state.response_base("in_progress");
+        let created = state.response_base_initial("in_progress");
         yield Ok(encode_event("response.created", &json!({"type":"response.created","response":created})).unwrap());
-        yield Ok(encode_event("response.in_progress", &json!({"type":"response.in_progress","response":state.response_base("in_progress")})).unwrap());
+        yield Ok(encode_event("response.in_progress", &json!({"type":"response.in_progress","response":state.response_base_initial("in_progress")})).unwrap());
 
         let mut decoder = SseDecoder::default();
         tokio::pin!(upstream);

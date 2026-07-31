@@ -47,7 +47,7 @@ pub(super) struct PendingWebSearch {
 pub(super) struct MapperState {
     pub(super) response_id: String,
     pub(super) created_at: u64,
-    pub(super) request: Value,
+    response_metadata: Value,
     pub(super) output: Vec<Value>,
     pub(super) current_text: Option<TextBlock>,
     pub(super) tools: HashMap<u64, ToolBlock>,
@@ -65,13 +65,14 @@ pub(super) struct Usage {
 
 impl MapperState {
     pub(super) fn new(request: Value, tool_names: ToolNameMap) -> Self {
+        let response_metadata = build_response_metadata(&request);
         Self {
             response_id: format!("resp_{}", Uuid::new_v4().simple()),
             created_at: std::time::SystemTime::now()
                 .duration_since(std::time::UNIX_EPOCH)
                 .unwrap_or_default()
                 .as_secs(),
-            request,
+            response_metadata,
             output: Vec::new(),
             current_text: None,
             tools: HashMap::new(),
@@ -83,31 +84,24 @@ impl MapperState {
     }
 
     pub(super) fn response_base(&self, status: &str) -> Value {
-        json!({
-            "id": self.response_id,
-            "object": "response",
-            "created_at": self.created_at,
-            "status": status,
-            "error": null,
-            "incomplete_details": null,
-            "instructions": self.request.get("instructions").cloned().unwrap_or(Value::Null),
-            "max_output_tokens": self.request.get("max_output_tokens").cloned().unwrap_or(Value::Null),
-            "model": self.request.get("model").cloned().unwrap_or(Value::Null),
-            "output": self.output.clone(),
-            "parallel_tool_calls": self.request.get("parallel_tool_calls").cloned().unwrap_or(json!(true)),
-            "previous_response_id": self.request.get("previous_response_id").cloned().unwrap_or(Value::Null),
-            "reasoning": self.request.get("reasoning").cloned().unwrap_or(Value::Null),
-            "store": self.request.get("store").cloned().unwrap_or(json!(false)),
-            "temperature": self.request.get("temperature").cloned().unwrap_or(Value::Null),
-            "text": self.request.get("text").cloned().unwrap_or_else(|| json!({"format": {"type": "text"}})),
-            "tool_choice": self.request.get("tool_choice").cloned().unwrap_or(json!("auto")),
-            "tools": self.request.get("tools").cloned().unwrap_or_else(|| json!([])),
-            "top_p": self.request.get("top_p").cloned().unwrap_or(Value::Null),
-            "truncation": self.request.get("truncation").cloned().unwrap_or(Value::Null),
-            "usage": Value::Null,
-            "user": self.request.get("user").cloned().unwrap_or(Value::Null),
-            "metadata": self.request.get("metadata").cloned().unwrap_or_else(|| json!({})),
-        })
+        self.response_base_with_output(status, &self.output)
+    }
+
+    pub(super) fn response_base_initial(&self, status: &str) -> Value {
+        self.response_base_with_output(status, &[])
+    }
+
+    fn response_base_with_output(&self, status: &str, output: &[Value]) -> Value {
+        let mut response = self.response_metadata.clone();
+        response["id"] = Value::String(self.response_id.clone());
+        response["object"] = Value::String("response".to_owned());
+        response["created_at"] = Value::from(self.created_at);
+        response["status"] = Value::String(status.to_owned());
+        response["error"] = Value::Null;
+        response["incomplete_details"] = Value::Null;
+        response["output"] = Value::Array(output.iter().cloned().collect());
+        response["usage"] = Value::Null;
+        response
     }
 
     pub(super) fn completed_response(&self) -> Value {
@@ -481,4 +475,47 @@ impl MapperState {
             ))
         }
     }
+}
+
+fn build_response_metadata(request: &Value) -> Value {
+    const RESPONSE_FIELDS: &[&str] = &[
+        "instructions",
+        "max_output_tokens",
+        "model",
+        "parallel_tool_calls",
+        "previous_response_id",
+        "reasoning",
+        "store",
+        "temperature",
+        "text",
+        "tool_choice",
+        "tools",
+        "top_p",
+        "truncation",
+        "user",
+        "metadata",
+    ];
+    let mut metadata = json!({
+        "instructions": Value::Null,
+        "max_output_tokens": Value::Null,
+        "model": Value::Null,
+        "parallel_tool_calls": json!(true),
+        "previous_response_id": Value::Null,
+        "reasoning": Value::Null,
+        "store": json!(false),
+        "temperature": Value::Null,
+        "text": json!({"format": {"type": "text"}}),
+        "tool_choice": json!("auto"),
+        "tools": json!([]),
+        "top_p": Value::Null,
+        "truncation": Value::Null,
+        "user": Value::Null,
+        "metadata": json!({}),
+    });
+    for field in RESPONSE_FIELDS {
+        if let Some(value) = request.get(field) {
+            metadata[field] = value.clone();
+        }
+    }
+    metadata
 }

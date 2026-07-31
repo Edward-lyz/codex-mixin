@@ -10,7 +10,7 @@ mod content;
 mod request;
 mod tools;
 
-pub(crate) use request::responses_to_openai_chat_streaming;
+pub(crate) use request::responses_to_openai_chat_streaming_with_model;
 pub use request::{ConvertedChatRequest, responses_to_openai_chat};
 
 #[cfg(test)]

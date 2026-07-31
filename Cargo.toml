@@ -7,6 +7,10 @@ license-file = "LICENSE"
 [lints.rust]
 unsafe_code = "forbid"
 
+[profile.release]
+codegen-units = 1
+lto = "thin"
+
 [dependencies]
 anyhow = "1.0"
 async-stream = "0.3"
@@ -15,6 +19,8 @@ bytes = "1.10"
 clap = { version = "4.5", features = ["derive"] }
 futures-util = "0.3"
 fs2 = "0.4"
+memchr = "2.8"
+percent-encoding = "2.3"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 regex = "1.12"
 serde = { version = "1.0", features = ["derive"] }
@@ -27,6 +33,7 @@ tokio-tungstenite = { version = "0.29", default-features = false, features = ["c
 toml_edit = "0.22"
 tower = "0.5"
 tower-http = { version = "0.6", features = ["decompression-zstd"] }
+url = "2.5"
 tracing = "0.1"
 tracing-subscriber = { version = "0.3", features = ["env-filter"] }
 uuid = { version = "1.18", features = ["v4", "v5"] }

@@ -11,6 +11,7 @@ use axum::body::{Body, Bytes};
 use axum::extract::{DefaultBodyLimit, OriginalUri, State};
 use axum::http::{HeaderMap, Method, Response, StatusCode, header};
 use axum::routing::any;
+use memchr::memchr;
 use serde_json::{Value, json};
 use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
 use tokio::process::{ChildStdin, Command};
@@ -181,7 +182,7 @@ async fn forward(
     if method != Method::POST {
         return static_response(StatusCode::METHOD_NOT_ALLOWED, Body::empty(), None);
     }
-    match forward_post(state, headers, body).await {
+    match forward_post(state, uri, headers, body).await {
         Ok(response) => response,
         Err(error) => {
             tracing::warn!(error = %format!("{error:#}"), "DUCC loopback bridge rejected request");
@@ -198,18 +199,25 @@ async fn forward(
 
 async fn forward_post(
     state: BridgeState,
+    uri: axum::http::Uri,
     mut native_headers: HeaderMap,
     body: Bytes,
 ) -> anyhow::Result<Response<Body>> {
-    let payload: Value = serde_json::from_slice(&body).context("decode DUCC Messages request")?;
-    let model = payload
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or_default();
+    let model = model_from_loopback_path(&uri, &state.route_token).unwrap_or_else(|| {
+        serde_json::from_slice::<Value>(&body)
+            .ok()
+            .and_then(|payload| {
+                payload
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned)
+            })
+            .unwrap_or_default()
+    });
 
     let marker = {
         let mut policies = state.policies.lock().await;
-        let Some(policy) = policies.get_mut(model) else {
+        let Some(policy) = policies.get_mut(&model) else {
             return Ok(synthetic_messages_response());
         };
         // A fresh DUCC process opens one internal DeepSeek helper request
@@ -221,7 +229,7 @@ async fn forward_post(
         }
         policy.marker.clone()
     };
-    if !contains_string(&payload, &marker) {
+    if !bytes_contain(&body, marker.as_bytes()) {
         return Ok(synthetic_messages_response());
     }
 
@@ -231,7 +239,7 @@ async fn forward_post(
         .policies
         .lock()
         .await
-        .remove(model)
+        .remove(&model)
         .context("DUCC loopback policy was already consumed")?;
     ensure!(
         native_headers.contains_key(DUCC_HEADER_NAME),
@@ -271,6 +279,17 @@ async fn forward_post(
     Ok(synthetic_messages_response())
 }
 
+fn model_from_loopback_path(uri: &axum::http::Uri, route_token: &str) -> Option<String> {
+    let path = uri.path();
+    let rest = path.strip_prefix(&format!("/{route_token}/model/"))?;
+    let encoded = rest.split('/').next()?;
+    percent_encoding::percent_decode_str(encoded)
+        .decode_utf8()
+        .ok()
+        .map(|model| model.into_owned())
+}
+
+#[cfg(test)]
 fn contains_string(value: &Value, needle: &str) -> bool {
     match value {
         Value::String(value) => value.contains(needle),
@@ -278,6 +297,22 @@ fn contains_string(value: &Value, needle: &str) -> bool {
         Value::Object(values) => values.values().any(|value| contains_string(value, needle)),
         _ => false,
     }
+}
+
+fn bytes_contain(haystack: &[u8], needle: &[u8]) -> bool {
+    if needle.is_empty() {
+        return true;
+    }
+    let first = needle[0];
+    let mut search = haystack;
+    while let Some(offset) = memchr(first, search) {
+        let candidate = &search[offset..];
+        if candidate.len() >= needle.len() && candidate.starts_with(needle) {
+            return true;
+        }
+        search = &candidate[1..];
+    }
+    false
 }
 
 fn strip_hop_by_hop_headers(headers: &mut HeaderMap) {
@@ -526,13 +561,22 @@ impl DuccRuntime {
         {
             return Ok((Arc::clone(client), false));
         }
+        let base_url = {
+            let mut url = reqwest::Url::parse(&self.bridge.base_url)
+                .context("parse DUCC loopback base URL")?;
+            url.path_segments_mut()
+                .map_err(|_| anyhow::anyhow!("DUCC loopback URL cannot carry a model path"))?
+                .push("model")
+                .push(model);
+            url.to_string()
+        };
         let client = Arc::new(
             DuccClient::spawn(
                 &self.executable,
                 &self.home,
                 self.cwd.path(),
                 model,
-                &self.bridge.base_url,
+                &base_url,
             )
             .await?,
         );
@@ -642,6 +686,24 @@ mod tests {
         });
         assert!(contains_string(&payload, "marker"));
         assert!(!contains_string(&payload, "missing"));
+    }
+
+    #[test]
+    fn raw_marker_search_matches_json_strings_without_full_parsing() {
+        let body = br#"{"model":"Claude Sonnet 5","messages":[{"role":"user","content":[{"type":"text","text":"prefix codex-mixin-loopback-marker suffix"}]}]}"#;
+        assert!(bytes_contain(body, b"codex-mixin-loopback-marker"));
+        assert!(!bytes_contain(body, b"missing-marker"));
+    }
+
+    #[test]
+    fn loopback_path_carries_model_without_body_parsing() {
+        let uri: axum::http::Uri = "/route-token/model/Claude%20Sonnet%205/v1/messages?beta=true"
+            .parse()
+            .unwrap();
+        assert_eq!(
+            model_from_loopback_path(&uri, "route-token").as_deref(),
+            Some("Claude Sonnet 5")
+        );
     }
 
     #[tokio::test]

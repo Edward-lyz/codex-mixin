@@ -10,7 +10,7 @@ where
 {
     stream! {
         let mut state = MapperState::new(original_request, ToolNameMap::default());
-        let created = state.response_base("in_progress");
+        let created = state.response_base_initial("in_progress");
         yield Ok(encode_event(
             "response.created",
             &json!({"type":"response.created","response":created}),
@@ -18,7 +18,7 @@ where
         .unwrap());
         yield Ok(encode_event(
             "response.in_progress",
-            &json!({"type":"response.in_progress","response":state.response_base("in_progress")}),
+            &json!({"type":"response.in_progress","response":state.response_base_initial("in_progress")}),
         )
         .unwrap());
 

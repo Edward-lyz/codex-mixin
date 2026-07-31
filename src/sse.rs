@@ -1,4 +1,5 @@
 use bytes::Bytes;
+use memchr::memchr;
 use serde::Serialize;
 use serde_json::{Value, json};
 
@@ -21,23 +22,25 @@ impl SseDecoder {
         let mut event_start = 0;
         let mut cursor = self.scan_from.min(self.buffer.len());
         while cursor < self.buffer.len() {
-            let Some(first_break_len) = line_break_len(&self.buffer, cursor) else {
-                cursor += 1;
-                continue;
+            let Some(relative_break) = memchr(b'\n', &self.buffer[cursor..]) else {
+                break;
             };
-            let second_break_start = cursor + first_break_len;
+            let first_break = cursor + relative_break;
+            let second_break_start = first_break + 1;
             let Some(second_break_len) = line_break_len(&self.buffer, second_break_start) else {
-                cursor += first_break_len;
+                cursor = second_break_start;
                 continue;
             };
-            if let Some(event) = parse_event(&self.buffer[event_start..cursor]) {
+            if let Some(event) = parse_event(&self.buffer[event_start..first_break]) {
                 events.push(event);
             }
-            event_start = second_break_start + second_break_len;
-            cursor = event_start;
+            let event_end = second_break_start + second_break_len;
+            event_start = event_end;
+            cursor = event_end;
         }
         if event_start > 0 {
-            self.buffer.drain(..event_start);
+            self.buffer.copy_within(event_start.., 0);
+            self.buffer.truncate(self.buffer.len() - event_start);
         }
         self.scan_from = self.buffer.len().saturating_sub(3);
         events
@@ -119,29 +122,49 @@ fn line_break_len(buffer: &[u8], index: usize) -> Option<usize> {
 }
 
 fn parse_event(raw: &[u8]) -> Option<SseEvent> {
-    let text = String::from_utf8_lossy(raw);
     let mut event = None;
     let mut data = String::new();
     let mut has_data = false;
-    for line in text.lines() {
-        let line = line.strip_suffix('\r').unwrap_or(line);
-        if line.is_empty() || line.starts_with(':') {
+    let mut rest = raw;
+    loop {
+        let (line, remainder) = match memchr(b'\n', rest) {
+            Some(offset) => (&rest[..offset], &rest[offset + 1..]),
+            None => (rest, &[][..]),
+        };
+        let line = line.strip_suffix(b"\r").unwrap_or(line);
+        if line.is_empty() || line.first() == Some(&b':') {
+            if remainder.is_empty() {
+                break;
+            }
+            rest = remainder;
             continue;
         }
-        if let Some(value) = line.strip_prefix("event:") {
-            event = Some(value.trim_start().to_owned());
-        } else if let Some(value) = line.strip_prefix("data:") {
+        if let Some(value) = line.strip_prefix(b"event:") {
+            event = Some(ascii_trim_start(value).to_owned());
+        } else if let Some(value) = line.strip_prefix(b"data:") {
             if has_data {
                 data.push('\n');
             }
-            data.push_str(value.trim_start());
+            data.push_str(ascii_trim_start(value));
             has_data = true;
         }
+        if remainder.is_empty() {
+            break;
+        }
+        rest = remainder;
     }
     if !has_data {
         return None;
     }
     Some(SseEvent { event, data })
+}
+
+fn ascii_trim_start(value: &[u8]) -> &str {
+    let mut value = value;
+    while value.first().is_some_and(u8::is_ascii_whitespace) {
+        value = &value[1..];
+    }
+    std::str::from_utf8(value).unwrap_or("")
 }
 
 #[cfg(test)]

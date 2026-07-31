@@ -13,9 +13,9 @@ mod tool_map;
 mod tools;
 
 pub(crate) use content::agent_message_text;
+pub(crate) use request::responses_to_anthropic_with_model_reasoning_and_thinking_kind;
 #[cfg(test)]
 pub(crate) use request::responses_to_anthropic_with_web_search;
-pub(crate) use request::responses_to_anthropic_with_web_search_and_thinking_kind;
 pub use request::{ConvertedRequest, responses_to_anthropic};
 pub use tool_map::ToolNameMap;
 pub use tools::sanitize_tool_name;
