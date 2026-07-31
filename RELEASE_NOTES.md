@@ -1,41 +1,38 @@
 <!-- codex-mixin:zh-Hans:start -->
-## v0.3.9
+## v0.3.10
 
-### DUCC 高性能纯净桥接
+### Claude Code 接入与全新 Mixin 卡片
 
-- **显著降低延迟：** 网关启动后在后台预热单一认证载体，不阻塞监听；GLM、Claude、Opus 可直接复用，切换模型无需重启 DUCX。
-- **解除并发阻塞：** 捕获认证后立即释放内部回合，真实上游请求并行继续，不再让并发请求串行等待首个 token。
-- **杜绝无关模型调用：** 关闭 DUCX 非必要流量，提示建议和辅助请求不会再触发其他模型；一次性 request ID 白名单同时阻止辅助请求和重放请求离开本机。
-- **强化认证隔离：** 每条 Responses 上游子请求都通过真实 DUCX turn 和一次性本机桥接转发；网关不提取、保存、重建或伪造 DUCX 认证 Header。
-- **统一执行路径：** Codex Mixin 自管并持续复用 DUCX app-server，覆盖 HTTP、WebSocket、Fusion 及高级功能子请求；桥接层会移除 DUCX 注入内容，并在 hooks 或配置污染时安全终止。
-- 网关新增 `/v1/messages` Anthropic Messages 兼容端点；Claude Code 和 Anthropic SDK 可直接复用本地网关与 DUCC 认证链路。
-- 新增 `install-claude` / `uninstall-claude` / `claude-status`，菜单栏 App 增加「安装到 Claude Code / 从 Claude Code 恢复」。
+- **支持 Claude Code：** 网关新增 Anthropic Messages 兼容的 `/v1/messages` 端点；新增 `install-claude`、`uninstall-claude` 和 `claude-status`，菜单栏 App 可直接安装或恢复 Claude Code 配置。
+- **全新关于页：** 新增原生 macOS 关于窗口，集中显示版本、Build 和 GitHub 仓库入口，并支持一键复制完整版本信息。
+- **个性化 Mixin 卡片：** 关于页左侧默认展示可互动纪念卡；卡片结合本机安装身份与使用天数，支持 hover、拖动、点击放大、保存 PNG 和系统分享。
+- **NASA 月度 4K 壁纸：** 构建流程自动同步并打包当月 NASA ISS 壁纸。每次打开关于页会选择一张与上次不同的背景，窗口打开期间保持不变。
+- **修复老用户天数：** 首次生成身份时会从 `~/.codex-mixin` 的历史创建时间做 best-effort 回迁，避免升级后错误显示为使用第 1 天。
+- macOS App 最低系统版本调整为 macOS 13.1。
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
-## v0.3.9
+## v0.3.10
 
-### DUCC 高效能純淨橋接
+### Claude Code 接入與全新 Mixin 卡片
 
-- **顯著降低延遲：** Gateway 啟動後在背景預熱單一認證載體，不阻塞監聽；GLM、Claude、Opus 可直接重用，切換模型無需重新啟動 DUCX。
-- **解除並行阻塞：** 擷取認證後立即釋放內部回合，真實上游請求可並行繼續，不再讓並行請求依序等待第一個 token。
-- **杜絕無關模型呼叫：** 關閉 DUCX 非必要流量，提示建議與輔助請求不再觸發其他模型；一次性 request ID 白名單同時阻止輔助與重放請求離開本機。
-- **強化認證隔離：** 每條 Responses 上游子請求皆透過真實 DUCX turn 與一次性本機橋接轉送；Gateway 不擷取、儲存、重建或偽造 DUCX 認證 Header。
-- **統一執行路徑：** Codex Mixin 自行管理並持續重用 DUCX app-server，涵蓋 HTTP、WebSocket、Fusion 與進階功能子請求；橋接層會移除 DUCX 注入內容，並在 hooks 或設定污染時安全終止。
-- Gateway 新增 `/v1/messages` Anthropic Messages 相容端點；Claude Code 和 Anthropic SDK 可直接重用本機 Gateway 與 DUCC 認證鏈路。
-- 新增 `install-claude` / `uninstall-claude` / `claude-status`，選單列 App 增加「安裝到 Claude Code / 從 Claude Code 還原」。
+- **支援 Claude Code：** Gateway 新增 Anthropic Messages 相容的 `/v1/messages` 端點；新增 `install-claude`、`uninstall-claude` 與 `claude-status`，選單列 App 可直接安裝或還原 Claude Code 設定。
+- **全新關於頁：** 新增原生 macOS 關於視窗，集中顯示版本、Build 與 GitHub 儲存庫入口，並支援一鍵複製完整版本資訊。
+- **個人化 Mixin 卡片：** 關於頁左側預設顯示可互動紀念卡；卡片結合本機安裝身分與使用天數，支援 hover、拖曳、點擊放大、儲存 PNG 與系統分享。
+- **NASA 每月 4K 桌布：** 建置流程自動同步並封裝當月 NASA ISS 桌布。每次開啟關於頁會選擇一張與上次不同的背景，視窗開啟期間保持不變。
+- **修正舊使用者天數：** 首次產生身分時會從 `~/.codex-mixin` 的歷史建立時間做 best-effort 回遷，避免升級後錯誤顯示為使用第 1 天。
+- macOS App 最低系統版本調整為 macOS 13.1。
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
-## v0.3.9
+## v0.3.10
 
-### High-performance, clean DUCC bridge
+### Claude Code integration and the new Mixin card
 
-- **Much lower latency:** The gateway prewarms one authentication carrier in the background without delaying the listener. GLM, Claude, and Opus reuse it directly, with no DUCX restart when switching models.
-- **No concurrency bottleneck:** The internal turn is released as soon as authentication is captured, allowing real upstream requests to continue concurrently instead of serializing on time to first token.
-- **No unrelated model calls:** DUCX nonessential traffic is disabled, so prompt suggestions and helper requests cannot invoke other models. A single-use request-ID allowlist also keeps helper and replay requests local.
-- **Stronger authentication isolation:** Every upstream Responses subrequest passes through a real DUCX turn and a single-use local bridge. The gateway never extracts, stores, reconstructs, or forges DUCX authentication headers.
-- **One execution path:** Codex Mixin manages and reuses the DUCX app-server across HTTP, WebSocket, Fusion, and advanced-feature subrequests. The bridge removes DUCX-injected content and fails closed on hook or configuration contamination.
-- The gateway now exposes an Anthropic Messages-compatible `/v1/messages` endpoint, so Claude Code and Anthropic SDKs can reuse the local gateway and DUCC authentication path.
-- Added `install-claude`, `uninstall-claude`, and `claude-status`, plus menu bar actions for installing to and restoring from Claude Code.
+- **Claude Code support:** The gateway now exposes an Anthropic Messages-compatible `/v1/messages` endpoint. New `install-claude`, `uninstall-claude`, and `claude-status` commands—and matching menu bar actions—install or restore Claude Code configuration.
+- **A new About window:** The native macOS About window shows the version, build, and GitHub repository entry point, with one-click copying of complete version information.
+- **A personalized Mixin card:** An interactive keepsake card now appears by default on the left side of the About window. It combines the local installation identity with usage history and supports hover, drag, click-to-enlarge, PNG export, and system sharing.
+- **Monthly NASA 4K wallpapers:** The build pipeline automatically syncs and bundles the current NASA ISS wallpaper set. Each About-window opening selects a background different from the previous one and keeps it fixed while the window remains open.
+- **Correct history for existing users:** Initial identity creation now performs a best-effort migration from historical creation dates under `~/.codex-mixin`, avoiding an incorrect “day 1” after upgrading.
+- The minimum macOS version is now macOS 13.1.
 <!-- codex-mixin:en:end -->
