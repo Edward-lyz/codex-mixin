@@ -988,7 +988,21 @@ private func ducxArchitecture() -> String {
 
 private func setupDucxInTerminal() async throws -> URL {
     let existingExecutable = ducxExecutableURL()
-    let release = existingExecutable == nil ? try await fetchLatestDucxRelease() : nil
+    let latestRelease: DucxRelease?
+    do {
+        latestRelease = try await fetchLatestDucxRelease()
+    } catch {
+        guard existingExecutable != nil else { throw error }
+        latestRelease = nil
+    }
+    let installedVersion = managedDucxInstalledVersion()
+    let release = latestRelease.flatMap {
+        guard let installedVersion else { return $0 }
+        return isManagedVersion($0.version, newerThan: installedVersion) ? $0 : nil
+    }
+    if release == nil, existingExecutable != nil {
+        try cleanupManagedDucxInstall()
+    }
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("codex-mixin-ducx-setup-\(UUID().uuidString)")
     let script = directory.appendingPathComponent("Configure DUCX.command")
@@ -1135,7 +1149,10 @@ func ducxTerminalSetupScript(
         login = """
         echo
         echo '请使用手机扫码登录 DUCX。'
-        \(shellQuoted(executable.path)) login
+        /usr/bin/env \
+          DISABLE_DUCX_CLI_UPDATE=1 \
+          DISABLE_BAIDU_CODEX_UPDATE=1 \
+          \(shellQuoted(executable.path)) login
         login_result=$?
         """
     } else {
@@ -1267,10 +1284,9 @@ private func installDucxArchive(
     )
     if fileManager.fileExists(atPath: versionDirectory.path) {
         let existing = versionDirectory.appendingPathComponent("bin/ducx")
-        guard fileManager.isExecutableFile(atPath: existing.path) else {
-            throw GatewayError.command(
-                "DUCX 目标目录已存在但不完整：\(versionDirectory.path)"
-            )
+        if !fileManager.isExecutableFile(atPath: existing.path) {
+            try fileManager.removeItem(at: versionDirectory)
+            try fileManager.moveItem(at: staging, to: versionDirectory)
         }
     } else {
         try fileManager.moveItem(at: staging, to: versionDirectory)
@@ -1294,6 +1310,7 @@ private func installDucxArchive(
     guard fileManager.isExecutableFile(atPath: executable.path) else {
         throw GatewayError.command("DUCX 下载完成，但入口不可执行。")
     }
+    try cleanupManagedDucxInstall(root: root, fileManager: fileManager)
     return executable
 }
 
@@ -1317,9 +1334,33 @@ func replaceManagedDucxLink(
             try? fileManager.removeItem(at: temporaryLink)
             throw GatewayError.command("DUCX \(name) 路径已存在且不是符号链接。")
         }
-        try fileManager.removeItem(at: link)
     }
-    try fileManager.moveItem(at: temporaryLink, to: link)
+    guard rename(temporaryLink.path, link.path) == 0 else {
+        let error = POSIXError(POSIXErrorCode(rawValue: errno) ?? .EIO)
+        try? fileManager.removeItem(at: temporaryLink)
+        throw error
+    }
+}
+
+func cleanupManagedDucxInstall(
+    root: URL = managedDucxRoot(),
+    fileManager: FileManager = .default
+) throws {
+    try cleanupManagedInstall(
+        root: root,
+        activeLink: "current",
+        aliasLink: "baidu-cx",
+        isPackageDirectory: isDucxVersionDirectory,
+        fileManager: fileManager
+    )
+}
+
+private func isDucxVersionDirectory(_ name: String) -> Bool {
+    let components = name.split(separator: ".", omittingEmptySubsequences: false)
+    return components.count >= 3
+        && components.allSatisfy({
+            !$0.isEmpty && $0.allSatisfy(\.isNumber)
+        })
 }
 
 private func ducxLoginRequired() -> Bool {
@@ -1389,7 +1430,21 @@ func duccArchiveURLs(
 
 private func setupDuccInTerminal() async throws -> URL {
     let existingExecutable = managedDuccExecutableURL()
-    let release = existingExecutable == nil ? try await fetchLatestDuccRelease() : nil
+    let latestRelease: DuccRelease?
+    do {
+        latestRelease = try await fetchLatestDuccRelease()
+    } catch {
+        guard existingExecutable != nil else { throw error }
+        latestRelease = nil
+    }
+    let installedVersion = managedDuccInstalledVersion()
+    let release = latestRelease.flatMap {
+        guard let installedVersion else { return $0 }
+        return isManagedVersion($0.version, newerThan: installedVersion) ? $0 : nil
+    }
+    if release == nil, existingExecutable != nil {
+        try cleanupManagedDuccInstall()
+    }
     let directory = FileManager.default.temporaryDirectory
         .appendingPathComponent("codex-mixin-ducc-setup-\(UUID().uuidString)")
     let script = directory.appendingPathComponent("Configure DUCC.command")
@@ -1778,7 +1833,77 @@ func installDuccArchive(
     guard fileManager.isExecutableFile(atPath: executable.path) else {
         throw GatewayError.command("DUCC 下载完成，但托管入口不可执行。")
     }
+    try cleanupManagedDuccInstall(root: root, fileManager: fileManager)
     return executable
+}
+
+func cleanupManagedDuccInstall(
+    root: URL = managedDuccInstallRoot(),
+    fileManager: FileManager = .default
+) throws {
+    try cleanupManagedInstall(
+        root: root,
+        activeLink: "baidu-cc",
+        aliasLink: "current",
+        isPackageDirectory: isDuccVersionDirectory,
+        fileManager: fileManager
+    )
+}
+
+private func isDuccVersionDirectory(_ name: String) -> Bool {
+    for prefix in [
+        "baidu-cc-darwin-arm64-",
+        "baidu-cc-darwin-amd64-",
+    ] where name.hasPrefix(prefix) {
+        return isDucxVersionDirectory(String(name.dropFirst(prefix.count)))
+    }
+    return false
+}
+
+private func cleanupManagedInstall(
+    root: URL,
+    activeLink: String,
+    aliasLink: String,
+    isPackageDirectory: (String) -> Bool,
+    fileManager: FileManager
+) throws {
+    guard fileManager.fileExists(atPath: root.path) else { return }
+    let activeDestination = try? fileManager.destinationOfSymbolicLink(
+        atPath: root.appendingPathComponent(activeLink).path
+    )
+    if let activeDestination {
+        try replaceManagedDucxLink(
+            named: aliasLink,
+            destination: activeDestination,
+            root: root,
+            fileManager: fileManager
+        )
+    }
+    let entries = try fileManager.contentsOfDirectory(
+        at: root,
+        includingPropertiesForKeys: [.isDirectoryKey, .isSymbolicLinkKey],
+        options: []
+    )
+    for entry in entries {
+        let name = entry.lastPathComponent
+        let values = try entry.resourceValues(
+            forKeys: [.isDirectoryKey, .isSymbolicLinkKey]
+        )
+        let isStaging = name.hasPrefix(".install-")
+            && values.isDirectory == true
+            && values.isSymbolicLink != true
+        let isTemporaryLink = (
+            name.hasPrefix(".current-")
+                || name.hasPrefix(".baidu-cx-")
+                || name.hasPrefix(".baidu-cc-")
+        ) && values.isSymbolicLink == true
+        let isStalePackage = isPackageDirectory(name)
+            && name != activeDestination
+            && values.isDirectory == true
+            && values.isSymbolicLink != true
+        guard isStaging || isTemporaryLink || isStalePackage else { continue }
+        try fileManager.removeItem(at: entry)
+    }
 }
 
 private func listDuccArchive(

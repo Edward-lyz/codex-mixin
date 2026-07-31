@@ -15,6 +15,23 @@ func managedDucxExecutableURL(
     return fileManager.isExecutableFile(atPath: executable.path) ? executable : nil
 }
 
+func managedDucxInstalledVersion(
+    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+    fileManager: FileManager = .default
+) -> String? {
+    guard managedDucxExecutableURL(
+        homeDirectory: homeDirectory,
+        fileManager: fileManager
+    ) != nil else {
+        return nil
+    }
+    return managedPackageVersion(
+        at: managedDucxRoot(homeDirectory: homeDirectory)
+            .appendingPathComponent("current/version"),
+        fileManager: fileManager
+    )
+}
+
 func managedDuccRoot(
     homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
 ) -> URL {
@@ -42,6 +59,71 @@ func managedDuccExecutableURL(
     let executable = managedDuccInstallRoot(homeDirectory: homeDirectory)
         .appendingPathComponent("baidu-cc/bin/ducc")
     return fileManager.isExecutableFile(atPath: executable.path) ? executable : nil
+}
+
+func managedDuccInstalledVersion(
+    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+    fileManager: FileManager = .default
+) -> String? {
+    guard managedDuccExecutableURL(
+        homeDirectory: homeDirectory,
+        fileManager: fileManager
+    ) != nil else {
+        return nil
+    }
+    return managedPackageVersion(
+        at: managedDuccInstallRoot(homeDirectory: homeDirectory)
+            .appendingPathComponent("baidu-cc/version"),
+        fileManager: fileManager
+    )
+}
+
+private func managedPackageVersion(
+    at versionFile: URL,
+    fileManager: FileManager
+) -> String? {
+    guard fileManager.isReadableFile(atPath: versionFile.path),
+          let contents = try? String(contentsOf: versionFile, encoding: .utf8)
+    else {
+        return nil
+    }
+    let version = contents.trimmingCharacters(in: .whitespacesAndNewlines)
+    let components = version.split(
+        separator: ".",
+        omittingEmptySubsequences: false
+    )
+    guard components.count >= 3,
+          components.allSatisfy({
+              !$0.isEmpty && $0.allSatisfy(\.isNumber)
+          })
+    else {
+        return nil
+    }
+    return version
+}
+
+func isManagedVersion(_ candidate: String, newerThan installed: String) -> Bool {
+    guard let candidateParts = managedVersionComponents(candidate),
+          let installedParts = managedVersionComponents(installed)
+    else {
+        return false
+    }
+    let count = max(candidateParts.count, installedParts.count)
+    for index in 0..<count {
+        let candidatePart = index < candidateParts.count ? candidateParts[index] : 0
+        let installedPart = index < installedParts.count ? installedParts[index] : 0
+        if candidatePart != installedPart {
+            return candidatePart > installedPart
+        }
+    }
+    return false
+}
+
+private func managedVersionComponents(_ version: String) -> [UInt64]? {
+    let parts = version.split(separator: ".", omittingEmptySubsequences: false)
+    guard parts.count >= 3 else { return nil }
+    let components = parts.compactMap { UInt64($0) }
+    return components.count == parts.count ? components : nil
 }
 
 enum BaiduAuthBridgeMode: String, Decodable, Equatable {

@@ -153,7 +153,10 @@ impl DucxProcessConfig {
             executable: executable.into(),
             args,
             cwd: cwd.into(),
-            env: Vec::new(),
+            env: vec![
+                ("DISABLE_DUCX_CLI_UPDATE".to_owned(), "1".to_owned()),
+                ("DISABLE_BAIDU_CODEX_UPDATE".to_owned(), "1".to_owned()),
+            ],
         }
     }
 
@@ -761,6 +764,21 @@ input.on("line", (line) => {
         std::fs::set_permissions(&executable, permissions).unwrap();
         let config = DucxProcessConfig::new(&executable, directory.path());
         (directory, config)
+    }
+
+    #[test]
+    fn managed_app_server_disables_client_self_updates() {
+        let config = DucxProcessConfig::app_server("/managed/ducx", "/tmp");
+        assert!(
+            config
+                .env
+                .contains(&("DISABLE_DUCX_CLI_UPDATE".to_owned(), "1".to_owned()))
+        );
+        assert!(
+            config
+                .env
+                .contains(&("DISABLE_BAIDU_CODEX_UPDATE".to_owned(), "1".to_owned()))
+        );
     }
 
     #[tokio::test]

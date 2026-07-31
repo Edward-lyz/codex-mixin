@@ -40,11 +40,26 @@ struct ProviderSupportTests {
             [.posixPermissions: 0o700],
             ofItemAtPath: managedDucx.path
         )
+        try "10.145.0.3\n".write(
+            to: managedDucx
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("version"),
+            atomically: true,
+            encoding: .utf8
+        )
         precondition(
             managedDucxExecutableURL(
                 homeDirectory: testHome,
                 fileManager: fileManager
             ) == managedDucx
+        )
+        precondition(
+            managedDucxInstalledVersion(
+                homeDirectory: testHome,
+                fileManager: fileManager
+            ) == "10.145.0.3",
+            "Managed DUCX version must come from the active package"
         )
         let systemDucc = testHome.appendingPathComponent(".baidu-cc/baidu-cc/bin/ducc")
         try fileManager.createDirectory(
@@ -74,6 +89,14 @@ struct ProviderSupportTests {
             [.posixPermissions: 0o700],
             ofItemAtPath: managedDucc.path
         )
+        try "2.1.218.3\n".write(
+            to: managedDucc
+                .deletingLastPathComponent()
+                .deletingLastPathComponent()
+                .appendingPathComponent("version"),
+            atomically: true,
+            encoding: .utf8
+        )
         precondition(
             managedDuccExecutableURL(
                 homeDirectory: testHome,
@@ -81,10 +104,20 @@ struct ProviderSupportTests {
             ) == managedDucc
         )
         precondition(
+            managedDuccInstalledVersion(
+                homeDirectory: testHome,
+                fileManager: fileManager
+            ) == "2.1.218.3",
+            "Managed DUCC version must come from the active package"
+        )
+        precondition(
             managedDuccHome(homeDirectory: testHome).path
                 .hasSuffix(".codex-mixin/ducc/home"),
             "Managed DUCC must use a dedicated HOME"
         )
+        precondition(isManagedVersion("10.145.0.4", newerThan: "10.145.0.3"))
+        precondition(!isManagedVersion("10.145.0.3", newerThan: "10.145.0.3"))
+        precondition(!isManagedVersion("10.144.9.9", newerThan: "10.145.0.3"))
 
         let response = try decodeProviderList(
             """

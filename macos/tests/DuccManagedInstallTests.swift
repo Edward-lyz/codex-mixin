@@ -44,6 +44,36 @@ struct DuccManagedInstallTests {
             isDirectory: true
         )
         if environment["DUCC_TEST_MANAGED_ROOT"] == nil {
+            try fileManager.createDirectory(
+                at: managedRoot,
+                withIntermediateDirectories: true
+            )
+            let loginState = managedRoot.appendingPathComponent("user.json")
+            let metadata = managedRoot.appendingPathComponent("meta.json")
+            try "login-state\n".write(
+                to: loginState,
+                atomically: true,
+                encoding: .utf8
+            )
+            try "metadata\n".write(
+                to: metadata,
+                atomically: true,
+                encoding: .utf8
+            )
+            try fileManager.createDirectory(
+                at: managedRoot.appendingPathComponent(
+                    "baidu-cc-darwin-arm64-0.9.0",
+                    isDirectory: true
+                ),
+                withIntermediateDirectories: true
+            )
+            try fileManager.createDirectory(
+                at: managedRoot.appendingPathComponent(
+                    ".install-interrupted",
+                    isDirectory: true
+                ),
+                withIntermediateDirectories: true
+            )
             let incompleteVersion = managedRoot.appendingPathComponent(
                 "baidu-cc-darwin-arm64-\(version)",
                 isDirectory: true
@@ -88,6 +118,37 @@ struct DuccManagedInstallTests {
             ),
             "Bundled DUCC settings must not enter the managed runtime"
         )
+        if environment["DUCC_TEST_MANAGED_ROOT"] == nil {
+            let loginStateContents = try String(
+                contentsOf: managedRoot.appendingPathComponent("user.json"),
+                encoding: .utf8
+            )
+            let metadataContents = try String(
+                contentsOf: managedRoot.appendingPathComponent("meta.json"),
+                encoding: .utf8
+            )
+            precondition(
+                loginStateContents == "login-state\n",
+                "DUCC cleanup must preserve login state"
+            )
+            precondition(
+                metadataContents == "metadata\n",
+                "DUCC cleanup must preserve metadata"
+            )
+            precondition(
+                !fileManager.fileExists(
+                    atPath: managedRoot
+                        .appendingPathComponent("baidu-cc-darwin-arm64-0.9.0")
+                        .path
+                )
+                    && !fileManager.fileExists(
+                        atPath: managedRoot.appendingPathComponent(
+                            ".install-interrupted"
+                        ).path
+                    ),
+                "DUCC cleanup must remove old versions and interrupted staging"
+            )
+        }
         print("Managed DUCC archive installation: passed")
     }
 

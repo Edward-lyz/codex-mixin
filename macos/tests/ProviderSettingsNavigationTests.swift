@@ -24,7 +24,9 @@ struct ProviderSettingsNavigationTests {
             "The setup terminal must display curl download progress"
         )
         precondition(
-            setupScript.contains("'/managed/ducx/current/bin/ducx' login"),
+            setupScript.contains("DISABLE_DUCX_CLI_UPDATE=1")
+                && setupScript.contains("DISABLE_BAIDU_CODEX_UPDATE=1")
+                && setupScript.contains("'/managed/ducx/current/bin/ducx' login"),
             "The same setup terminal must continue into DUCX login"
         )
         precondition(
@@ -136,6 +138,55 @@ struct ProviderSettingsNavigationTests {
         precondition(
             currentDestination == "10.145.0.3",
             "The managed install must retain Codex Mixin's stable current entry"
+        )
+        for name in ["10.145.0.3", "10.144.0.1", ".install-interrupted"] {
+            try FileManager.default.createDirectory(
+                at: managedRoot.appendingPathComponent(name),
+                withIntermediateDirectories: true
+            )
+        }
+        let preservedState = managedRoot.appendingPathComponent("user.json")
+        try "preserve me".write(
+            to: preservedState,
+            atomically: true,
+            encoding: .utf8
+        )
+        try replaceManagedDucxLink(
+            named: "baidu-cx",
+            destination: "10.144.0.1",
+            root: managedRoot,
+            fileManager: .default
+        )
+        try cleanupManagedDucxInstall(root: managedRoot)
+        precondition(
+            FileManager.default.fileExists(
+                atPath: managedRoot.appendingPathComponent("10.145.0.3").path
+            ),
+            "DUCX cleanup must retain the active version"
+        )
+        precondition(
+            !FileManager.default.fileExists(
+                atPath: managedRoot.appendingPathComponent("10.144.0.1").path
+            )
+                && !FileManager.default.fileExists(
+                    atPath: managedRoot.appendingPathComponent(".install-interrupted").path
+                ),
+            "DUCX cleanup must remove old versions and interrupted staging"
+        )
+        let repairedAlias = try FileManager.default.destinationOfSymbolicLink(
+            atPath: managedRoot.appendingPathComponent("baidu-cx").path
+        )
+        precondition(
+            repairedAlias == "10.145.0.3",
+            "DUCX cleanup must repair a partially switched runtime alias"
+        )
+        let preservedStateContents = try String(
+            contentsOf: preservedState,
+            encoding: .utf8
+        )
+        precondition(
+            preservedStateContents == "preserve me",
+            "DUCX cleanup must preserve non-package state"
         )
         let syntaxCheck = Process()
         syntaxCheck.executableURL = URL(fileURLWithPath: "/bin/zsh")
