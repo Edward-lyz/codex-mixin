@@ -22,6 +22,15 @@ pub enum ProviderAuthHeader {
     XApiKey,
 }
 
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub enum BaiduAuthBridge {
+    #[default]
+    Disabled,
+    DucxAppServer,
+    DuccLoopback,
+}
+
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ProviderAuthConfig {
     pub header: ProviderAuthHeader,
@@ -56,9 +65,26 @@ pub struct ProviderRequestPolicy {
     #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
     pub custom_headers_from_env: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub baidu_auth_bridge: Option<BaiduAuthBridge>,
+    // Compatibility with configs written before `baidu_auth_bridge`.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ducx_app_server: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ducx_executable: Option<PathBuf>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub ducc_executable: Option<PathBuf>,
+}
+
+impl ProviderRequestPolicy {
+    pub fn effective_baidu_auth_bridge(&self) -> BaiduAuthBridge {
+        self.baidu_auth_bridge.unwrap_or_else(|| {
+            if self.ducx_app_server == Some(true) {
+                BaiduAuthBridge::DucxAppServer
+            } else {
+                BaiduAuthBridge::Disabled
+            }
+        })
+    }
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -167,12 +193,14 @@ impl ProviderDefinition {
                 self.id,
             );
         }
-        if self.request_policy.ducx_app_server.is_some()
+        if self.request_policy.baidu_auth_bridge.is_some()
+            || self.request_policy.ducx_app_server.is_some()
             || self.request_policy.ducx_executable.is_some()
+            || self.request_policy.ducc_executable.is_some()
         {
             ensure!(
                 self.model_source == ProviderModelSource::BaiduOneApi,
-                "provider {} can configure DUCX app-server only for Baidu OneAPI",
+                "provider {} can configure a Baidu authentication bridge only for Baidu OneAPI",
                 self.id
             );
         }
@@ -180,6 +208,13 @@ impl ProviderDefinition {
             ensure!(
                 executable.is_absolute(),
                 "provider {} DUCX executable path must be absolute",
+                self.id
+            );
+        }
+        if let Some(executable) = &self.request_policy.ducc_executable {
+            ensure!(
+                executable.is_absolute(),
+                "provider {} DUCC executable path must be absolute",
                 self.id
             );
         }
@@ -531,7 +566,41 @@ mod tests {
                 .validate()
                 .unwrap_err()
                 .to_string()
-                .contains("can configure DUCX app-server only for Baidu OneAPI")
+                .contains("can configure a Baidu authentication bridge only for Baidu OneAPI")
+        );
+    }
+
+    #[test]
+    fn baidu_auth_bridge_prefers_new_mode_and_reads_legacy_ducx_flag() {
+        let mut policy = ProviderRequestPolicy::default();
+        assert_eq!(
+            policy.effective_baidu_auth_bridge(),
+            BaiduAuthBridge::Disabled
+        );
+
+        policy.ducx_app_server = Some(true);
+        assert_eq!(
+            policy.effective_baidu_auth_bridge(),
+            BaiduAuthBridge::DucxAppServer
+        );
+
+        policy.baidu_auth_bridge = Some(BaiduAuthBridge::DuccLoopback);
+        assert_eq!(
+            policy.effective_baidu_auth_bridge(),
+            BaiduAuthBridge::DuccLoopback
+        );
+    }
+
+    #[test]
+    fn ducc_loopback_is_limited_to_baidu_oneapi() {
+        let mut provider = crate::provider::open_code_go_provider("provider", "key");
+        provider.request_policy.baidu_auth_bridge = Some(BaiduAuthBridge::DuccLoopback);
+        assert!(
+            provider
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("Baidu authentication bridge only for Baidu OneAPI")
         );
     }
 

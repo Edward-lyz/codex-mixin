@@ -6,8 +6,8 @@ use reqwest::{RequestBuilder, Url};
 
 use super::external_auth::resolve_custom_headers_from_env;
 use super::types::{
-    ProviderAuthHeader, ProviderDefinition, ProviderModel, ProviderModelKey, ProviderModelSource,
-    ProviderProtocol, ProviderQuotaParser,
+    BaiduAuthBridge, ProviderAuthHeader, ProviderDefinition, ProviderModel, ProviderModelKey,
+    ProviderModelSource, ProviderProtocol, ProviderQuotaParser,
 };
 
 const FUSION_MODEL_PREFIX: &str = "mixin/fusion/";
@@ -229,11 +229,21 @@ impl ProviderRuntime {
     }
 
     pub fn uses_ducx_app_server(&self) -> bool {
-        self.definition.request_policy.ducx_app_server == Some(true)
+        self.definition.request_policy.effective_baidu_auth_bridge()
+            == BaiduAuthBridge::DucxAppServer
+    }
+
+    pub fn uses_ducc_loopback(&self) -> bool {
+        self.definition.request_policy.effective_baidu_auth_bridge()
+            == BaiduAuthBridge::DuccLoopback
     }
 
     pub fn ducx_executable(&self) -> Option<&std::path::Path> {
         self.definition.request_policy.ducx_executable.as_deref()
+    }
+
+    pub fn ducc_executable(&self) -> Option<&std::path::Path> {
+        self.definition.request_policy.ducc_executable.as_deref()
     }
 
     pub fn model_supports_thinking(&self, model: &str) -> Option<bool> {

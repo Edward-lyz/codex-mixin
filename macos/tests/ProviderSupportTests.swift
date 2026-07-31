@@ -46,6 +46,45 @@ struct ProviderSupportTests {
                 fileManager: fileManager
             ) == managedDucx
         )
+        let systemDucc = testHome.appendingPathComponent(".baidu-cc/baidu-cc/bin/ducc")
+        try fileManager.createDirectory(
+            at: systemDucc.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        precondition(fileManager.createFile(atPath: systemDucc.path, contents: Data()))
+        try fileManager.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: systemDucc.path
+        )
+        precondition(
+            managedDuccExecutableURL(
+                homeDirectory: testHome,
+                fileManager: fileManager
+            ) == nil,
+            "A system DUCC installation must not satisfy the managed DUCC requirement"
+        )
+        let managedDucc = managedDuccInstallRoot(homeDirectory: testHome)
+            .appendingPathComponent("baidu-cc/bin/ducc")
+        try fileManager.createDirectory(
+            at: managedDucc.deletingLastPathComponent(),
+            withIntermediateDirectories: true
+        )
+        precondition(fileManager.createFile(atPath: managedDucc.path, contents: Data()))
+        try fileManager.setAttributes(
+            [.posixPermissions: 0o700],
+            ofItemAtPath: managedDucc.path
+        )
+        precondition(
+            managedDuccExecutableURL(
+                homeDirectory: testHome,
+                fileManager: fileManager
+            ) == managedDucc
+        )
+        precondition(
+            managedDuccHome(homeDirectory: testHome).path
+                .hasSuffix(".codex-mixin/ducc/home"),
+            "Managed DUCC must use a dedicated HOME"
+        )
 
         let response = try decodeProviderList(
             """
@@ -143,7 +182,10 @@ struct ProviderSupportTests {
         let unsupported = response.providers[2]
         precondition(response.codexInstallMode == .customOnly)
         precondition(baidu.ducxAppServer == true)
+        precondition(baidu.baiduAuthBridge == nil)
+        precondition(baidu.effectiveBaiduAuthBridge == .ducxAppServer)
         precondition(autoReviewOnly.ducxAppServer == nil)
+        precondition(autoReviewOnly.effectiveBaiduAuthBridge == nil)
         precondition(baidu.auxiliaryModelUpstream)
         precondition(!autoReviewOnly.auxiliaryModelUpstream)
         precondition(baidu.auxiliaryModelSupport == .autoReviewAndVoice)

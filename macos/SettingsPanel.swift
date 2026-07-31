@@ -6,7 +6,7 @@ struct AddProviderFormValues {
     let baseURL: String
     let apiKey: String
     let quotaUsername: String
-    let ducxAppServer: Bool
+    let baiduAuthBridge: String
 }
 
 final class ModalActionTarget: NSObject {
@@ -72,21 +72,11 @@ func runAddProviderSheet(
         appText("API 地址", "API 位址", "API URL"),
         baseURLField
     )
-    let ducxAppServerButton = NSButton(
-        checkboxWithTitle: appText(
-            "通过 Codex Mixin 托管的持久 DUCX app-server 转发请求；首次启用会确认下载独立副本，不复用系统 DUCX。",
-            "透過 Codex Mixin 管理的持久 DUCX app-server 轉送請求；首次啟用會確認下載獨立副本，不重用系統 DUCX。",
-            "Route requests through a persistent DUCX app-server managed by Codex Mixin. First use confirms a separate download instead of reusing a system DUCX."
-        ),
-        target: nil,
-        action: nil
+    let baiduAuthBridgePopup = baiduAuthBridgePopUpButton()
+    let baiduAuthBridgeRow = labeledView(
+        appText("认证桥接", "認證橋接", "Auth bridge"),
+        baiduAuthBridgePopup
     )
-    ducxAppServerButton.state = .off
-    ducxAppServerButton.cell?.wraps = true
-    ducxAppServerButton.alignment = .left
-    ducxAppServerButton.translatesAutoresizingMaskIntoConstraints = false
-    ducxAppServerButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 88).isActive = true
-    let ducxAppServerRow = labeledView("DUCX", ducxAppServerButton)
 
     let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 650, height: 575))
     let panel = NSWindow(
@@ -138,7 +128,7 @@ func runAddProviderSheet(
         quotaUsernameRow.isHidden = provider != "baidu-oneapi"
         displayNameRow.isHidden = !isCustom
         baseURLRow.isHidden = !isCustom
-        ducxAppServerRow.isHidden = provider != "baidu-oneapi"
+        baiduAuthBridgeRow.isHidden = provider != "baidu-oneapi"
         tokenButton.isHidden = isCustom
     }
     providerPopup.target = providerTarget
@@ -151,7 +141,7 @@ func runAddProviderSheet(
         baseURLRow,
         labeledView("API Key", apiKeyField),
         quotaUsernameRow,
-        ducxAppServerRow,
+        baiduAuthBridgeRow,
     ])
     formStack.orientation = .vertical
     formStack.spacing = 10
@@ -241,7 +231,10 @@ func runAddProviderSheet(
             baseURL: baseURL,
             apiKey: apiKey,
             quotaUsername: username,
-            ducxAppServer: ducxAppServerButton.state == .on
+            baiduAuthBridge: selectedPopupValue(
+                baiduAuthBridgePopup,
+                fallback: "disabled"
+            )
         )
         parentWindow.endSheet(panel, returnCode: .OK)
     }
@@ -262,6 +255,42 @@ func runAddProviderSheet(
         _ = actionTargets
         completion(response == .OK ? values : nil)
     }
+}
+
+func baiduAuthBridgePopUpButton() -> NSPopUpButton {
+    let popup = NSPopUpButton()
+    let modes: [(String, String)] = [
+        (appText("不使用（默认）", "不使用（預設）", "Disabled (default)"), "disabled"),
+        (
+            appText(
+                "DUCX 核心（app-server）",
+                "DUCX 核心（app-server）",
+                "DUCX Core (app-server)"
+            ),
+            "ducx_app_server"
+        ),
+        (
+            appText(
+                "DUCC 核心（loopback）",
+                "DUCC 核心（loopback）",
+                "DUCC Core (loopback)"
+            ),
+            "ducc_loopback"
+        ),
+    ]
+    for (title, value) in modes {
+        popup.addItem(withTitle: title)
+        popup.lastItem?.representedObject = value
+    }
+    popup.toolTip = appText(
+        "DUCX 与 DUCC 均使用 Codex Mixin 管理的独立副本。DUCC 会在隔离 HOME 中下载、登录和运行，不修改系统配置或 hooks。",
+        "DUCX 與 DUCC 均使用 Codex Mixin 管理的獨立副本。DUCC 會在隔離 HOME 中下載、登入和執行，不修改系統設定或 hooks。",
+        "DUCX and DUCC use separate Codex Mixin-managed copies. DUCC downloads, signs in, and runs inside an isolated HOME without changing system config or hooks."
+    )
+    popup.translatesAutoresizingMaskIntoConstraints = false
+    popup.heightAnchor.constraint(equalToConstant: 28).isActive = true
+    selectPopupValue(popup, "disabled")
+    return popup
 }
 
 func configureTransientModalPanel(_ panel: NSPanel) {

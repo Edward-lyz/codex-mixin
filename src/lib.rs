@@ -5,6 +5,7 @@ pub mod benchmark;
 pub mod catalog;
 pub mod config;
 pub mod convert;
+pub(crate) mod ducc;
 #[allow(dead_code)]
 pub(crate) mod ducx;
 pub(crate) mod ducx_sanitizer;

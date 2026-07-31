@@ -35,16 +35,20 @@ struct SettingsPanelPresentationTests {
         precondition(!(sheet is NSPanel), "The add-provider form must be a regular NSWindow")
         precondition(sheet.level == .normal, "The add-provider sheet must use the normal window level")
         precondition(NSApp.modalWindow == nil, "The add-provider form must not start an app-modal loop")
-        let buttons = descendantViews(of: NSButton.self, in: sheet.contentView)
-        guard let ducxCheckbox = buttons.first(where: {
-            $0.title.contains("持久 DUCX app-server")
-                && $0.title.contains("不复用系统 DUCX")
+        let popups = descendantViews(of: NSPopUpButton.self, in: sheet.contentView)
+        guard let bridgePopup = popups.first(where: {
+            $0.itemTitles.contains("DUCX 核心（app-server）")
+                && $0.itemTitles.contains("DUCC 核心（loopback）")
         }) else {
-            preconditionFailure("The Baidu setup must offer DUCX app-server routing")
+            preconditionFailure("The Baidu setup must offer mutually exclusive auth bridges")
         }
         precondition(
-            ducxCheckbox.state == .off,
-            "DUCX app-server routing must be unchecked by default"
+            bridgePopup.numberOfItems == 3,
+            "The auth bridge selector must contain disabled, DUCX, and DUCC"
+        )
+        precondition(
+            bridgePopup.selectedItem?.representedObject as? String == "disabled",
+            "Auth bridging must be disabled by default"
         )
 
         parent.endSheet(sheet, returnCode: .cancel)

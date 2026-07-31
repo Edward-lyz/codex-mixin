@@ -11,7 +11,7 @@ pub use presets::{
 };
 pub use registry::{ProviderRegistry, ProviderRuntime, ResolvedProviderModel, catalog_model_slug};
 pub use types::{
-    CONFIG_VERSION, ProviderAuthConfig, ProviderAuthHeader, ProviderDefinition, ProviderModel,
-    ProviderModelKey, ProviderModelSource, ProviderProtocol, ProviderQuotaParser,
+    BaiduAuthBridge, CONFIG_VERSION, ProviderAuthConfig, ProviderAuthHeader, ProviderDefinition,
+    ProviderModel, ProviderModelKey, ProviderModelSource, ProviderProtocol, ProviderQuotaParser,
     ProviderReadiness, ProviderReadinessStatus, ProviderRequestPolicy,
 };

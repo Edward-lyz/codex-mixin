@@ -15,6 +15,41 @@ func managedDucxExecutableURL(
     return fileManager.isExecutableFile(atPath: executable.path) ? executable : nil
 }
 
+func managedDuccRoot(
+    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+) -> URL {
+    homeDirectory.appendingPathComponent(".codex-mixin/ducc", isDirectory: true)
+}
+
+func managedDuccHome(
+    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+) -> URL {
+    managedDuccRoot(homeDirectory: homeDirectory)
+        .appendingPathComponent("home", isDirectory: true)
+}
+
+func managedDuccInstallRoot(
+    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
+) -> URL {
+    managedDuccHome(homeDirectory: homeDirectory)
+        .appendingPathComponent(".baidu-cc", isDirectory: true)
+}
+
+func managedDuccExecutableURL(
+    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
+    fileManager: FileManager = .default
+) -> URL? {
+    let executable = managedDuccInstallRoot(homeDirectory: homeDirectory)
+        .appendingPathComponent("baidu-cc/bin/ducc")
+    return fileManager.isExecutableFile(atPath: executable.path) ? executable : nil
+}
+
+enum BaiduAuthBridgeMode: String, Decodable, Equatable {
+    case disabled
+    case ducxAppServer = "ducx_app_server"
+    case duccLoopback = "ducc_loopback"
+}
+
 enum ManagedCodexInstallMode: String, Decodable {
     case customOnly = "custom_only"
     case codexOAuthProxy = "codex_oauth_proxy"
@@ -59,6 +94,7 @@ struct ProviderView: Decodable {
     let quotaUsername: String?
     let quotaCurrency: String?
     let quotaParser: String
+    let baiduAuthBridge: BaiduAuthBridgeMode?
     let ducxAppServer: Bool?
     let selectedModels: [String]
     let newModels: [String]
@@ -86,6 +122,7 @@ struct ProviderView: Decodable {
         case quotaUsername = "quota_username"
         case quotaCurrency = "quota_currency"
         case quotaParser = "quota_parser"
+        case baiduAuthBridge = "baidu_auth_bridge"
         case ducxAppServer = "ducx_app_server"
         case selectedModels = "selected_models"
         case newModels = "new_models"
@@ -96,6 +133,13 @@ struct ProviderView: Decodable {
         case readiness
         case readinessIssues = "readiness_issues"
         case routableModelCount = "routable_model_count"
+    }
+
+    var effectiveBaiduAuthBridge: BaiduAuthBridgeMode? {
+        if let baiduAuthBridge {
+            return baiduAuthBridge
+        }
+        return ducxAppServer.map { $0 ? .ducxAppServer : .disabled }
     }
 
     var modelsPath: String? {

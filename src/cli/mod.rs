@@ -259,10 +259,14 @@ enum ProviderCommand {
         static_models: Vec<String>,
         #[arg(long = "header-env", value_name = "NAME=ENV_VAR")]
         header_env: Vec<String>,
+        #[arg(long, value_name = "disabled|ducx_app_server|ducc_loopback")]
+        baidu_auth_bridge: Option<String>,
         #[arg(long, value_name = "BOOL")]
         ducx_app_server: Option<bool>,
         #[arg(long, value_name = "PATH")]
         ducx_executable: Option<PathBuf>,
+        #[arg(long, value_name = "PATH")]
+        ducc_executable: Option<PathBuf>,
     },
     Update {
         id: String,
@@ -303,10 +307,14 @@ enum ProviderCommand {
         header_env: Vec<String>,
         #[arg(long, conflicts_with = "header_env")]
         clear_header_env: bool,
+        #[arg(long, value_name = "disabled|ducx_app_server|ducc_loopback")]
+        baidu_auth_bridge: Option<String>,
         #[arg(long, value_name = "BOOL")]
         ducx_app_server: Option<bool>,
         #[arg(long, value_name = "PATH")]
         ducx_executable: Option<PathBuf>,
+        #[arg(long, value_name = "PATH")]
+        ducc_executable: Option<PathBuf>,
     },
     Enable {
         id: String,
@@ -394,8 +402,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 gateway_key,
                 static_models,
                 header_env,
+                baidu_auth_bridge,
                 ducx_app_server,
                 ducx_executable,
+                ducc_executable,
             } => add_provider(AddProviderOptions {
                 preset,
                 id,
@@ -413,8 +423,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 gateway_key,
                 static_models,
                 header_env,
+                baidu_auth_bridge,
                 ducx_app_server,
                 ducx_executable,
+                ducc_executable,
             }),
             ProviderCommand::Update {
                 id,
@@ -435,8 +447,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 quota_parser,
                 header_env,
                 clear_header_env,
+                baidu_auth_bridge,
                 ducx_app_server,
                 ducx_executable,
+                ducc_executable,
             } => update_provider(UpdateProviderOptions {
                 id,
                 auxiliary_model_upstream,
@@ -456,8 +470,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 quota_parser,
                 header_env,
                 clear_header_env,
+                baidu_auth_bridge,
                 ducx_app_server,
                 ducx_executable,
+                ducc_executable,
             }),
             ProviderCommand::Enable { id } => set_provider_enabled(&id, true),
             ProviderCommand::Disable { id } => set_provider_enabled(&id, false),

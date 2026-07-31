@@ -49,6 +49,7 @@ pub struct AppState {
     catalog_response_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogResponse>>>,
     official_auth_cache: Arc<tokio::sync::Mutex<Option<CachedOfficialAuth>>>,
     ducx_runtime: Arc<tokio::sync::OnceCell<Arc<DucxRuntime>>>,
+    ducc_runtime: Arc<tokio::sync::OnceCell<Arc<crate::ducc::DuccRuntime>>>,
 }
 
 impl AppState {
@@ -100,6 +101,7 @@ impl AppState {
             catalog_response_cache: Arc::new(tokio::sync::Mutex::new(None)),
             official_auth_cache: Arc::new(tokio::sync::Mutex::new(None)),
             ducx_runtime: Arc::new(tokio::sync::OnceCell::new()),
+            ducc_runtime: Arc::new(tokio::sync::OnceCell::new()),
         })
     }
 
@@ -468,8 +470,6 @@ impl AppState {
         request: &MessageRequest,
         hash_key: Option<&str>,
     ) -> Result<AnthropicByteStream, GatewayError> {
-        let mut upstream_request =
-            provider.apply_auth(self.client.post(provider.api_url().clone()));
         let beta = if request.speed.as_deref() == Some("fast") {
             Some(match provider.definition().anthropic_beta.as_deref() {
                 Some(configured)
@@ -487,6 +487,70 @@ impl AppState {
         } else {
             provider.definition().anthropic_beta.clone()
         };
+        if provider.uses_ducc_loopback() {
+            let executable = provider
+                .ducc_executable()
+                .map(PathBuf::from)
+                .or_else(crate::ducc::default_ducc_executable)
+                .ok_or_else(|| {
+                    GatewayError::Upstream(
+                        "DUCC loopback is enabled but the managed ducc executable was not found"
+                            .to_owned(),
+                    )
+                })?;
+            let runtime = self
+                .ducc_runtime
+                .get_or_try_init(|| async {
+                    crate::ducc::DuccRuntime::spawn(executable, self.client.clone())
+                        .await
+                        .map(Arc::new)
+                })
+                .await
+                .map_err(GatewayError::Other)?;
+            // Build only the non-auth transport headers here. The bridge
+            // rejects attempts to replace DUCC's native auth headers.
+            let upstream_request = provider.apply_anthropic_beta(
+                self.client.post(provider.api_url().clone()),
+                beta.as_deref(),
+            );
+            let upstream_request = provider
+                .apply_session_affinity(upstream_request, hash_key)
+                .header(header::ACCEPT, "text/event-stream")
+                .header(
+                    "anthropic-version",
+                    provider
+                        .definition()
+                        .anthropic_version
+                        .as_deref()
+                        .unwrap_or("2023-06-01"),
+                );
+            let mut transport = upstream_request.build().map_err(GatewayError::Http)?;
+            provider.apply_custom_headers(transport.headers_mut());
+            let body = serde_json::to_value(request)
+                .map_err(anyhow::Error::from)
+                .map_err(GatewayError::Other)?;
+            let response = runtime
+                .send(
+                    &request.model,
+                    provider.api_url().clone(),
+                    body,
+                    transport.headers().clone(),
+                    self.config.request_timeout,
+                )
+                .await
+                .map_err(GatewayError::Other)?;
+            let status = response.status();
+            if !status.is_success() {
+                let body = response.text().await?;
+                return Err(GatewayError::Upstream(format!(
+                    "provider {} DUCC-authenticated messages endpoint returned {status}: {body}",
+                    provider.id()
+                )));
+            }
+            return Ok(response.bytes_stream().boxed());
+        }
+        let mut upstream_request =
+            provider.apply_auth(self.client.post(provider.api_url().clone()));
         upstream_request = provider.apply_anthropic_beta(upstream_request, beta.as_deref());
         let response = provider
             .apply_session_affinity(upstream_request, hash_key)

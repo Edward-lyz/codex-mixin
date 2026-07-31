@@ -4,19 +4,19 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     typealias LoadHandler = () async throws -> ProviderListResponse
     typealias RunHandler = ([String]) async throws -> String
     typealias ApplyHandler = () async throws -> Void
-    typealias DucxSetupHandler = () async throws -> URL
+    typealias BaiduBridgeSetupHandler = (BaiduAuthBridgeMode) async throws -> URL
     typealias CompletionHandler = (_ title: String, _ message: String) -> Void
 
     private let loadHandler: LoadHandler
     private let runHandler: RunHandler
     private let applyHandler: ApplyHandler
-    private let ducxSetupHandler: DucxSetupHandler?
+    private let baiduBridgeSetupHandler: BaiduBridgeSetupHandler?
     private let completionHandler: CompletionHandler
 
     private var providers: [ProviderView] = []
     private var codexInstallMode: ManagedCodexInstallMode?
     private var isBusy = false
-    private var remindedDucxProviderIDs = Set<String>()
+    private var remindedBaiduBridgeProviderIDs = Set<String>()
 
     private let providerTable = NSTableView()
     private let statusLabel = NSTextField(labelWithString: "正在读取供应商…")
@@ -37,19 +37,11 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         target: nil,
         action: nil
     )
-    private let ducxAppServerButton = NSButton(
-        checkboxWithTitle: appText(
-            "通过 Codex Mixin 托管的持久 DUCX app-server 转发请求；首次启用会确认下载独立副本，不复用系统 DUCX。",
-            "透過 Codex Mixin 管理的持久 DUCX app-server 轉送請求；首次啟用會確認下載獨立副本，不重用系統 DUCX。",
-            "Route requests through a persistent DUCX app-server managed by Codex Mixin. First use confirms a separate download instead of reusing a system DUCX."
-        ),
-        target: nil,
-        action: nil
-    )
+    private let baiduAuthBridgePopup = baiduAuthBridgePopUpButton()
     private var customDisplayNameRow: NSView?
     private var customBaseURLRow: NSView?
     private var quotaUsernameRow: NSView?
-    private var ducxAppServerRow: NSView?
+    private var baiduAuthBridgeRow: NSView?
 
     private let addButton = NSButton(title: "新增", target: nil, action: nil)
     private let removeButton = NSButton(title: "删除", target: nil, action: nil)
@@ -61,7 +53,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         loadHandler: @escaping LoadHandler,
         runHandler: @escaping RunHandler,
         applyHandler: @escaping ApplyHandler,
-        ducxSetupHandler: DucxSetupHandler? = nil,
+        baiduBridgeSetupHandler: BaiduBridgeSetupHandler? = nil,
         completionHandler: @escaping CompletionHandler = { title, message in
             showAlert(title: title, message: message)
         }
@@ -69,7 +61,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         self.loadHandler = loadHandler
         self.runHandler = runHandler
         self.applyHandler = applyHandler
-        self.ducxSetupHandler = ducxSetupHandler
+        self.baiduBridgeSetupHandler = baiduBridgeSetupHandler
         self.completionHandler = completionHandler
         let visibleFrame = NSScreen.main?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1_280, height: 800)
@@ -179,19 +171,18 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         managedConfigurationLabel.textColor = .secondaryLabelColor
         managedConfigurationLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         auxiliaryModelUpstreamButton.toolTip = auxiliaryModelDefaultTooltip()
-        ducxAppServerButton.cell?.wraps = true
-        ducxAppServerButton.alignment = .left
-        ducxAppServerButton.translatesAutoresizingMaskIntoConstraints = false
-        ducxAppServerButton.heightAnchor.constraint(greaterThanOrEqualToConstant: 88).isActive = true
-        let ducxAppServerRow = compactLabeledView("DUCX", ducxAppServerButton)
-        self.ducxAppServerRow = ducxAppServerRow
+        let baiduAuthBridgeRow = compactLabeledView(
+            appText("认证桥接", "認證橋接", "Auth bridge"),
+            baiduAuthBridgePopup
+        )
+        self.baiduAuthBridgeRow = baiduAuthBridgeRow
         let form = NSStackView(views: [
             compactLabeledView("Provider ID", idField),
             customDisplayNameRow,
             customBaseURLRow,
             compactLabeledView("API 密钥", apiKeyControls),
             quotaUsernameRow,
-            ducxAppServerRow,
+            baiduAuthBridgeRow,
             compactLabeledView("辅助模型", auxiliaryModelUpstreamButton),
             compactLabeledView("", managedConfigurationLabel),
         ])
@@ -348,7 +339,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                     loadSelectedProvider()
                 }
                 DispatchQueue.main.async { [weak self] in
-                    self?.showDucxReminderIfNeeded()
+                    self?.showBaiduBridgeReminderIfNeeded()
                 }
             } catch {
                 statusLabel.stringValue = "读取失败"
@@ -375,13 +366,16 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             : "尚未配置；启用前必须填写"
         quotaUsernameField.stringValue = provider.quotaUsername ?? ""
         auxiliaryModelUpstreamButton.state = provider.auxiliaryModelUpstream ? .on : .off
-        ducxAppServerButton.state = provider.ducxAppServer == true ? .on : .off
+        selectPopupValue(
+            baiduAuthBridgePopup,
+            provider.effectiveBaiduAuthBridge?.rawValue ?? BaiduAuthBridgeMode.disabled.rawValue
+        )
         auxiliaryModelUpstreamButton.toolTip = auxiliaryModelTooltip(for: provider)
         let isCustom = provider.presetID == "custom"
         customDisplayNameRow?.isHidden = !isCustom
         customBaseURLRow?.isHidden = !isCustom
         quotaUsernameRow?.isHidden = provider.presetID != "baidu-oneapi"
-        ducxAppServerRow?.isHidden = provider.presetID != "baidu-oneapi"
+        baiduAuthBridgeRow?.isHidden = provider.presetID != "baidu-oneapi"
         enableButton.title = provider.enabled ? "停用" : "启用"
         statusLabel.stringValue = selectedProviderStatus()
         statusLabel.toolTip = provider.lastModelRefreshError
@@ -398,7 +392,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             field.stringValue = ""
         }
         auxiliaryModelUpstreamButton.state = .off
-        ducxAppServerButton.state = .off
+        selectPopupValue(baiduAuthBridgePopup, BaiduAuthBridgeMode.disabled.rawValue)
         auxiliaryModelUpstreamButton.toolTip = auxiliaryModelDefaultTooltip()
         statusLabel.stringValue = providers.isEmpty ? "等待新增 Provider" : "请选择 Provider"
         statusLabel.toolTip = nil
@@ -419,7 +413,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             baseURLField,
             quotaUsernameField,
             auxiliaryModelUpstreamButton,
-            ducxAppServerButton,
+            baiduAuthBridgePopup,
             enableButton,
             testButton,
             saveButton,
@@ -588,18 +582,16 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             appendProviderArgument(&arguments, "--base-url", values.baseURL)
         }
         appendProviderArgument(&arguments, "--quota-username", values.quotaUsername)
+        let bridgeMode = BaiduAuthBridgeMode(rawValue: values.baiduAuthBridge) ?? .disabled
         if values.preset == "baidu-oneapi" {
-            arguments.append(contentsOf: [
-                "--ducx-app-server",
-                values.ducxAppServer ? "true" : "false",
-            ])
+            appendBaiduAuthBridgeArguments(&arguments, mode: bridgeMode)
         }
         performMutation(
             arguments,
             then: ["providers", "discover", id],
             status: "正在新增并发现模型 \(id)…",
             selecting: id,
-            requiresDucx: values.preset == "baidu-oneapi" && values.ducxAppServer
+            requiresBaiduBridge: values.preset == "baidu-oneapi" ? bridgeMode : nil
         )
     }
 
@@ -700,106 +692,114 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         }
         if provider.presetID == "baidu-oneapi" {
             appendProviderArgument(&update, "--quota-username", quotaUsername)
-            update.append(contentsOf: [
-                "--ducx-app-server",
-                ducxAppServerButton.state == .on ? "true" : "false",
-            ])
+            appendBaiduAuthBridgeArguments(&update, mode: selectedBaiduAuthBridgeMode())
         }
         performMutation(
             update,
             status: "正在保存 \(provider.id)…",
             selecting: provider.id,
-            requiresDucx: provider.presetID == "baidu-oneapi"
-                && ducxAppServerButton.state == .on
+            requiresBaiduBridge: provider.presetID == "baidu-oneapi"
+                ? selectedBaiduAuthBridgeMode()
+                : nil
         )
     }
 
-    private func showDucxReminderIfNeeded() {
+    private func showBaiduBridgeReminderIfNeeded() {
         guard !isBusy, let window else { return }
         guard let provider = providers.first(where: {
             $0.presetID == "baidu-oneapi"
-                && $0.ducxAppServer == nil
-                && !remindedDucxProviderIDs.contains($0.id)
+                && $0.effectiveBaiduAuthBridge == nil
+                && !remindedBaiduBridgeProviderIDs.contains($0.id)
         }) else { return }
-        remindedDucxProviderIDs.insert(provider.id)
+        remindedBaiduBridgeProviderIDs.insert(provider.id)
 
         let alert = NSAlert()
         alert.alertStyle = .informational
         alert.messageText = appText(
-            "是否通过 DUCX app-server 转发？",
-            "是否透過 DUCX app-server 轉送？",
-            "Route Through DUCX App Server?"
+            "选择百度认证桥接方式",
+            "選擇百度認證橋接方式",
+            "Choose a Baidu Auth Bridge"
         )
         alert.informativeText = appText(
-            "继续后会打开专用终端，显示 DUCX 下载进度并引导扫码登录。成功后终端自动关闭，Codex Mixin 会启用 DUCX、保存 Provider、重启网关并关闭本窗口。只使用 Codex Mixin 自己的 DUCX 副本，不复用或修改系统 DUCX。",
-            "繼續後會開啟專用終端，顯示 DUCX 下載進度並引導掃碼登入。成功後終端會自動關閉，Codex Mixin 會啟用 DUCX、儲存 Provider、重新啟動閘道並關閉本視窗。只使用 Codex Mixin 自己的 DUCX 副本，不重用或修改系統 DUCX。",
-            "Continuing opens a dedicated Terminal with DUCX download progress and QR-code login. On success, Terminal closes automatically; Codex Mixin enables DUCX, saves the provider, restarts the gateway, and closes this window. Only the Codex Mixin-managed DUCX copy is used."
+            "DUCX 与 DUCC 都会下载 Codex Mixin 管理的独立副本，并让每个请求经过所选客户端。DUCC 的下载、扫码登录和运行使用隔离 HOME，不读取或修改系统 DUCC、Claude 配置及 hooks。成功后会保存 Provider 并重启网关。",
+            "DUCX 與 DUCC 都會下載 Codex Mixin 管理的獨立副本，並讓每個請求經過所選用戶端。DUCC 的下載、掃碼登入和執行使用隔離 HOME，不讀取或修改系統 DUCC、Claude 設定及 hooks。成功後會儲存 Provider 並重新啟動閘道。",
+            "DUCX and DUCC use separate Codex Mixin-managed copies and route every request through the selected client. DUCC downloads, signs in, and runs inside an isolated HOME without reading or changing system DUCC, Claude config, or hooks. Success saves the provider and restarts the gateway."
         )
         alert.addButton(withTitle: appText(
-            "下载并配置 DUCX",
-            "下載並設定 DUCX",
-            "Download and Configure DUCX"
+            "配置 DUCX",
+            "設定 DUCX",
+            "Configure DUCX"
         ))
+        alert.addButton(withTitle: appText("配置 DUCC", "設定 DUCC", "Configure DUCC"))
         alert.addButton(withTitle: appText("保持关闭", "保持關閉", "Keep Disabled"))
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self else { return }
-            if response == .alertFirstButtonReturn {
-                configureDucxFromReminder(provider)
-            } else {
-                persistDucxDisabled(provider.id)
+            switch response {
+            case .alertFirstButtonReturn:
+                configureBaiduBridgeFromReminder(provider, mode: .ducxAppServer)
+            case .alertSecondButtonReturn:
+                configureBaiduBridgeFromReminder(provider, mode: .duccLoopback)
+            default:
+                persistBaiduBridgeDisabled(provider.id)
             }
         }
     }
 
-    private func configureDucxFromReminder(_ provider: ProviderView) {
+    private func configureBaiduBridgeFromReminder(
+        _ provider: ProviderView,
+        mode: BaiduAuthBridgeMode
+    ) {
         guard !isBusy else { return }
-        setBusy(true, status: "正在打开终端配置 DUCX…")
+        let name = baiduBridgeDisplayName(mode)
+        setBusy(true, status: "正在打开终端配置 \(name)…")
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let executable = try await ensureDucxAvailable()
-                _ = try await runHandler([
-                    "providers", "update", provider.id,
-                    "--ducx-app-server", "true",
-                    "--ducx-executable", executable.path,
-                ])
-                setBusy(true, status: "正在重启网关并应用 DUCX 配置…")
+                let executable = try await ensureBaiduBridgeAvailable(mode)
+                var arguments = ["providers", "update", provider.id]
+                appendBaiduAuthBridgeArguments(
+                    &arguments,
+                    mode: mode,
+                    executable: executable
+                )
+                _ = try await runHandler(arguments)
+                setBusy(true, status: "正在重启网关并应用 \(name) 配置…")
                 try await applyHandler()
-                ducxAppServerButton.state = .on
-                setBusy(false, status: "DUCX 已配置，网关已重启")
+                selectPopupValue(baiduAuthBridgePopup, mode.rawValue)
+                setBusy(false, status: "\(name) 已配置，网关已重启")
                 try await Task.sleep(nanoseconds: 350_000_000)
                 close()
                 completionHandler(
                     appText(
-                        "DUCX 已配置",
-                        "DUCX 已設定",
-                        "DUCX Configured"
+                        "\(name) 已配置",
+                        "\(name) 已設定",
+                        "\(name) Configured"
                     ),
                     appText(
-                        "DUCX 已完成下载与登录，Provider 已启用 DUCX app-server，本地网关已重启。",
-                        "DUCX 已完成下載與登入，Provider 已啟用 DUCX app-server，本機閘道已重新啟動。",
-                        "DUCX download and login are complete. The provider now uses DUCX app-server, and the local gateway has restarted."
+                        "\(name) 已完成下载与登录，Provider 已切换到 \(name)，本地网关已重启。",
+                        "\(name) 已完成下載與登入，Provider 已切換到 \(name)，本機閘道已重新啟動。",
+                        "\(name) download and login are complete. The provider now uses \(name), and the local gateway has restarted."
                     )
                 )
             } catch {
-                setBusy(false, status: "DUCX 配置失败")
+                setBusy(false, status: "\(name) 配置失败")
                 showAlert(title: "供应商操作失败", message: String(describing: error))
                 reloadProviders(selecting: provider.id)
             }
         }
     }
 
-    private func persistDucxDisabled(_ providerID: String) {
+    private func persistBaiduBridgeDisabled(_ providerID: String) {
         guard !isBusy else { return }
-        setBusy(true, status: "正在保持 DUCX app-server 关闭…")
+        setBusy(true, status: "正在保持认证桥接关闭…")
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                _ = try await runHandler([
-                    "providers", "update", providerID, "--ducx-app-server", "false",
-                ])
+                var arguments = ["providers", "update", providerID]
+                appendBaiduAuthBridgeArguments(&arguments, mode: .disabled)
+                _ = try await runHandler(arguments)
                 try await applyHandler()
-                setBusy(false, status: "DUCX app-server 保持关闭")
+                setBusy(false, status: "认证桥接保持关闭")
                 reloadProviders(selecting: providerID)
             } catch {
                 setBusy(false, status: "操作失败")
@@ -825,7 +825,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         then secondArguments: [String]? = nil,
         status: String,
         selecting providerID: String?,
-        requiresDucx: Bool = false
+        requiresBaiduBridge: BaiduAuthBridgeMode? = nil
     ) {
         guard !isBusy else { return }
         setBusy(true, status: status)
@@ -833,12 +833,13 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             guard let self else { return }
             do {
                 var arguments = initialArguments
-                if requiresDucx {
-                    let executable = try await ensureDucxAvailable()
-                    arguments.append(contentsOf: [
-                        "--ducx-executable",
-                        executable.path,
-                    ])
+                if let mode = requiresBaiduBridge, mode != .disabled {
+                    let executable = try await ensureBaiduBridgeAvailable(mode)
+                    appendBaiduAuthBridgeExecutable(
+                        &arguments,
+                        mode: mode,
+                        executable: executable
+                    )
                 }
                 _ = try await runHandler(arguments)
                 if let secondArguments {
@@ -867,12 +868,70 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         }
     }
 
-    private func ensureDucxAvailable() async throws -> URL {
-        if let ducxSetupHandler {
-            return try await ducxSetupHandler()
+    private func selectedBaiduAuthBridgeMode() -> BaiduAuthBridgeMode {
+        BaiduAuthBridgeMode(
+            rawValue: selectedPopupValue(
+                baiduAuthBridgePopup,
+                fallback: BaiduAuthBridgeMode.disabled.rawValue
+            )
+        ) ?? .disabled
+    }
+
+    private func appendBaiduAuthBridgeArguments(
+        _ arguments: inout [String],
+        mode: BaiduAuthBridgeMode,
+        executable: URL? = nil
+    ) {
+        arguments.append(contentsOf: [
+            "--baidu-auth-bridge", mode.rawValue,
+            "--ducx-app-server", mode == .ducxAppServer ? "true" : "false",
+        ])
+        if let executable {
+            appendBaiduAuthBridgeExecutable(
+                &arguments,
+                mode: mode,
+                executable: executable
+            )
         }
-        setBusy(true, status: "请在终端完成 DUCX 下载与扫码登录…")
-        return try await setupDucxInTerminal()
+    }
+
+    private func appendBaiduAuthBridgeExecutable(
+        _ arguments: inout [String],
+        mode: BaiduAuthBridgeMode,
+        executable: URL
+    ) {
+        switch mode {
+        case .ducxAppServer:
+            arguments.append(contentsOf: ["--ducx-executable", executable.path])
+        case .duccLoopback:
+            arguments.append(contentsOf: ["--ducc-executable", executable.path])
+        case .disabled:
+            break
+        }
+    }
+
+    private func ensureBaiduBridgeAvailable(_ mode: BaiduAuthBridgeMode) async throws -> URL {
+        if let baiduBridgeSetupHandler {
+            return try await baiduBridgeSetupHandler(mode)
+        }
+        switch mode {
+        case .ducxAppServer:
+            setBusy(true, status: "请在终端完成 DUCX 下载与扫码登录…")
+            return try await setupDucxInTerminal()
+        case .duccLoopback:
+            setBusy(true, status: "请在终端完成 DUCC 下载与扫码登录…")
+            return try await setupDuccInTerminal()
+        case .disabled:
+            throw GatewayError.command("关闭认证桥接不需要安装客户端。")
+        }
+    }
+}
+
+private func baiduBridgeDisplayName(_ mode: BaiduAuthBridgeMode) -> String {
+    switch mode {
+    case .disabled: return appText("认证桥接", "認證橋接", "Auth bridge")
+    case .ducxAppServer: return "DUCX"
+    case .duccLoopback: return "DUCC"
     }
 }
 
@@ -1266,6 +1325,468 @@ func replaceManagedDucxLink(
 private func ducxLoginRequired() -> Bool {
     let user = FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".baidu-cx/user.json")
+    return !FileManager.default.isReadableFile(atPath: user.path)
+}
+
+private struct DuccRelease {
+    let version: String
+    let zstdArchiveURL: URL
+    let bzip2ArchiveURL: URL
+}
+
+private enum DuccArchiveFormat: String {
+    case zstd
+    case bzip2
+}
+
+private let duccDownloadBaseURL = "http://baidu-cc-client.bj.bcebos.com/baidu-cc"
+
+private func fetchLatestDuccRelease() async throws -> DuccRelease {
+    let versionURL = URL(
+        string: "\(duccDownloadBaseURL)/baidu_cc_latest_version.txt"
+    )!
+    var request = URLRequest(url: versionURL)
+    request.setValue("Codex Mixin", forHTTPHeaderField: "User-Agent")
+    let (data, response) = try await URLSession.shared.data(for: request)
+    guard let httpResponse = response as? HTTPURLResponse,
+          httpResponse.statusCode == 200
+    else {
+        throw GatewayError.command("DUCC 版本清单下载失败。")
+    }
+    let version = String(decoding: data, as: UTF8.self)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    let versionParts = version.split(separator: ".", omittingEmptySubsequences: false)
+    guard versionParts.count >= 3,
+          versionParts.allSatisfy({
+              !$0.isEmpty && $0.allSatisfy(\.isNumber)
+          })
+    else {
+        throw GatewayError.command("DUCC 版本清单包含无效版本号。")
+    }
+    let archiveURLs = duccArchiveURLs(
+        version: version,
+        architecture: ducxArchitecture()
+    )
+    guard let zstdArchiveURL = URL(string: archiveURLs.zstd),
+          let bzip2ArchiveURL = URL(string: archiveURLs.bzip2)
+    else {
+        throw GatewayError.command("无法生成 DUCC 下载地址。")
+    }
+    return DuccRelease(
+        version: version,
+        zstdArchiveURL: zstdArchiveURL,
+        bzip2ArchiveURL: bzip2ArchiveURL
+    )
+}
+
+func duccArchiveURLs(
+    version: String,
+    architecture: String
+) -> (zstd: String, bzip2: String) {
+    let prefix = "\(duccDownloadBaseURL)/baidu-cc-darwin-\(architecture)-\(version)"
+    return ("\(prefix).tar.zst", "\(prefix).tar.bz2")
+}
+
+private func setupDuccInTerminal() async throws -> URL {
+    let existingExecutable = managedDuccExecutableURL()
+    let release = existingExecutable == nil ? try await fetchLatestDuccRelease() : nil
+    let directory = FileManager.default.temporaryDirectory
+        .appendingPathComponent("codex-mixin-ducc-setup-\(UUID().uuidString)")
+    let script = directory.appendingPathComponent("Configure DUCC.command")
+    let archive = directory.appendingPathComponent("ducc.archive")
+    let archiveFormatStatus = directory.appendingPathComponent("archive-format.status")
+    let downloadStatus = directory.appendingPathComponent("download.status")
+    let installStatus = directory.appendingPathComponent("install.status")
+    let loginStatus = directory.appendingPathComponent("login.status")
+    let isolatedHome = managedDuccHome()
+    let executable = managedDuccInstallRoot()
+        .appendingPathComponent("baidu-cc/bin/ducc")
+    let terminalTitle = "Codex Mixin DUCC \(UUID().uuidString)"
+    try FileManager.default.createDirectory(
+        at: isolatedHome,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+    )
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o700],
+        ofItemAtPath: isolatedHome.path
+    )
+    try FileManager.default.createDirectory(
+        at: directory,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+    )
+    var setupCompleted = false
+    defer {
+        if setupCompleted {
+            try? FileManager.default.removeItem(at: directory)
+        } else {
+            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 60) {
+                try? FileManager.default.removeItem(at: directory)
+            }
+        }
+    }
+
+    let contents = duccTerminalSetupScript(
+        terminalTitle: terminalTitle,
+        releaseVersion: release?.version,
+        zstdArchiveURL: release?.zstdArchiveURL,
+        bzip2ArchiveURL: release?.bzip2ArchiveURL,
+        archive: archive,
+        archiveFormatStatus: archiveFormatStatus,
+        downloadStatus: downloadStatus,
+        installStatus: installStatus,
+        loginStatus: loginStatus,
+        executable: executable,
+        isolatedHome: isolatedHome,
+        loginRequired: duccLoginRequired()
+    )
+    try contents.write(to: script, atomically: true, encoding: .utf8)
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o700],
+        ofItemAtPath: script.path
+    )
+    guard NSWorkspace.shared.open(script) else {
+        throw GatewayError.command("无法打开 Terminal 配置 DUCC。")
+    }
+
+    if let release {
+        let downloadResult = try await waitForDucxStatus(
+            at: downloadStatus,
+            stage: "DUCC 下载",
+            timeoutSeconds: 1_800
+        )
+        guard downloadResult == 0 else {
+            throw GatewayError.command(
+                "DUCC 安装包下载失败（退出码 \(downloadResult)）。"
+            )
+        }
+        do {
+            let archiveFormatValue = try String(
+                contentsOf: archiveFormatStatus,
+                encoding: .utf8
+            ).trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let archiveFormat = DuccArchiveFormat(rawValue: archiveFormatValue) else {
+                throw GatewayError.command("DUCC 安装包格式状态无效。")
+            }
+            _ = try await installDuccArchive(
+                archive,
+                release: release,
+                format: archiveFormat
+            )
+            try writeDucxStatus(0, to: installStatus)
+        } catch {
+            try? writeDucxStatus(1, to: installStatus)
+            throw error
+        }
+    }
+
+    let loginResult = try await waitForDucxStatus(
+        at: loginStatus,
+        stage: "DUCC 登录",
+        timeoutSeconds: 900
+    )
+    guard loginResult == 0 else {
+        throw GatewayError.command(
+            "ducc login 未成功完成（退出码 \(loginResult)）。"
+        )
+    }
+    guard FileManager.default.isExecutableFile(atPath: executable.path) else {
+        throw GatewayError.command("DUCC 配置完成，但托管入口不可执行。")
+    }
+    let loginFile = managedDuccInstallRoot().appendingPathComponent("user.json")
+    guard FileManager.default.isReadableFile(atPath: loginFile.path) else {
+        throw GatewayError.command("DUCC 登录完成，但托管登录状态不存在。")
+    }
+    try FileManager.default.setAttributes(
+        [.posixPermissions: 0o600],
+        ofItemAtPath: loginFile.path
+    )
+    setupCompleted = true
+    return executable
+}
+
+func duccTerminalSetupScript(
+    terminalTitle: String,
+    releaseVersion: String?,
+    zstdArchiveURL: URL?,
+    bzip2ArchiveURL: URL?,
+    archive: URL,
+    archiveFormatStatus: URL,
+    downloadStatus: URL,
+    installStatus: URL,
+    loginStatus: URL,
+    executable: URL,
+    isolatedHome: URL,
+    loginRequired: Bool
+) -> String {
+    let download: String
+    if let releaseVersion, let zstdArchiveURL, let bzip2ArchiveURL {
+        download = """
+        echo '准备下载 DUCC \(releaseVersion)'
+        echo \(shellQuoted("隔离位置：\(managedDuccRoot().path)"))
+        echo
+        echo \(shellQuoted("优先来源：\(zstdArchiveURL.absoluteString)"))
+        /usr/bin/curl --fail --location --progress-bar --show-error \
+          --user-agent 'Codex Mixin' \
+          --output \(shellQuoted(archive.path)) \
+          \(shellQuoted(zstdArchiveURL.absoluteString))
+        download_result=$?
+        archive_format='zstd'
+        if [[ "$download_result" -eq 0 ]]; then
+          /usr/bin/tar -tf \(shellQuoted(archive.path)) >/dev/null 2>&1
+          download_result=$?
+          if [[ "$download_result" -ne 0 ]]; then
+            echo
+            echo '本机无法读取 DUCC zstd 安装包，自动回退到 bzip2。'
+          fi
+        fi
+        if [[ "$download_result" -ne 0 ]]; then
+          echo
+          echo \(shellQuoted("回退来源：\(bzip2ArchiveURL.absoluteString)"))
+          /usr/bin/curl --fail --location --progress-bar --show-error \
+            --user-agent 'Codex Mixin' \
+            --output \(shellQuoted(archive.path)) \
+            \(shellQuoted(bzip2ArchiveURL.absoluteString))
+          download_result=$?
+          archive_format='bzip2'
+          if [[ "$download_result" -eq 0 ]]; then
+            /usr/bin/tar -tjf \(shellQuoted(archive.path)) >/dev/null 2>&1
+            download_result=$?
+          fi
+        fi
+        printf '%s' "$archive_format" > \(shellQuoted(archiveFormatStatus.path))
+        printf '%s' "$download_result" > \(shellQuoted(downloadStatus.path))
+        if [[ "$download_result" -ne 0 ]]; then
+          echo
+          echo "DUCC 下载失败（退出码 $download_result）。"
+          echo '按任意键关闭本窗口。'
+          read -k 1
+          exit "$download_result"
+        fi
+        echo
+        echo '下载完成，Codex Mixin 正在校验并安装到隔离 HOME...'
+        install_waits=0
+        while [[ ! -f \(shellQuoted(installStatus.path)) ]]; do
+          sleep 0.25
+          install_waits=$((install_waits + 1))
+          if [[ "$install_waits" -ge 2400 ]]; then
+            echo '等待 DUCC 安装超时。'
+            read -k 1
+            exit 1
+          fi
+        done
+        install_result=$(/bin/cat \(shellQuoted(installStatus.path)))
+        if [[ "$install_result" -ne 0 ]]; then
+          echo 'DUCC 安装校验失败，请返回 Codex Mixin 查看错误。'
+          echo '按任意键关闭本窗口。'
+          read -k 1
+          exit "$install_result"
+        fi
+        echo 'DUCC 安装完成。'
+        """
+    } else {
+        download = """
+        echo '已找到 Codex Mixin 托管的 DUCC，跳过下载。'
+        echo \(shellQuoted("位置：\(executable.path)"))
+        """
+    }
+    let login: String
+    if loginRequired {
+        login = """
+        echo
+        echo '请使用手机扫码登录隔离的 DUCC。'
+        /usr/bin/env \
+          HOME=\(shellQuoted(isolatedHome.path)) \
+          DISABLE_BAIDU_CLAUDE_UPDATE=1 \
+          DISABLE_DUCC_CLI_UPDATE=1 \
+          \(shellQuoted(executable.path)) login
+        login_result=$?
+        """
+    } else {
+        login = """
+        echo
+        echo '托管 DUCC 已登录，跳过扫码。'
+        login_result=0
+        """
+    }
+    return """
+    #!/bin/zsh
+    record_early_exit() {
+      exit_result=$?
+      if [[ ! -f \(shellQuoted(downloadStatus.path)) ]]; then
+        printf '%s' "${exit_result:-130}" > \(shellQuoted(downloadStatus.path))
+      fi
+      if [[ ! -f \(shellQuoted(loginStatus.path)) ]]; then
+        printf '%s' "${exit_result:-130}" > \(shellQuoted(loginStatus.path))
+      fi
+    }
+    trap record_early_exit EXIT
+    trap 'exit 130' HUP INT TERM
+    printf '\\033]0;\(terminalTitle)\\007'
+    echo 'Codex Mixin — DUCC 隔离配置'
+    echo '================================'
+    \(download)
+    \(login)
+    printf '%s' "$login_result" > \(shellQuoted(loginStatus.path))
+    if [[ "$login_result" -ne 0 ]]; then
+      echo
+      echo "DUCC 登录失败（退出码 $login_result）。"
+      echo '按任意键关闭本窗口。'
+      read -k 1
+      exit "$login_result"
+    fi
+    echo
+    echo 'DUCC 登录成功，正在返回 Codex Mixin 应用配置...'
+    (
+      sleep 1
+      /usr/bin/osascript \
+        -e 'tell application "Terminal"' \
+        -e 'repeat with candidateWindow in windows' \
+        -e 'if name of candidateWindow contains "\(terminalTitle)" then close candidateWindow' \
+        -e 'end repeat' \
+        -e 'end tell'
+    ) >/dev/null 2>&1 &!
+    exit 0
+    """
+}
+
+private func installDuccArchive(
+    _ archive: URL,
+    release: DuccRelease,
+    format: DuccArchiveFormat
+) async throws -> URL {
+    let fileManager = FileManager.default
+    let root = managedDuccInstallRoot()
+    try fileManager.createDirectory(
+        at: root,
+        withIntermediateDirectories: true,
+        attributes: [.posixPermissions: 0o700]
+    )
+    try fileManager.setAttributes(
+        [.posixPermissions: 0o700],
+        ofItemAtPath: root.path
+    )
+    let staging = root.appendingPathComponent(
+        ".install-\(UUID().uuidString)",
+        isDirectory: true
+    )
+    try fileManager.createDirectory(
+        at: staging,
+        withIntermediateDirectories: false,
+        attributes: [.posixPermissions: 0o700]
+    )
+    defer { try? fileManager.removeItem(at: staging) }
+
+    let entries = try await listDuccArchive(archive, format: format)
+    guard entries.allSatisfy(isSafeDucxArchiveEntry) else {
+        throw GatewayError.command("DUCC 安装包包含不安全的文件路径。")
+    }
+    let extractionArguments: [String]
+    switch format {
+    case .zstd:
+        extractionArguments = ["-xf", archive.path, "-C", staging.path]
+    case .bzip2:
+        extractionArguments = ["-xjf", archive.path, "-C", staging.path]
+    }
+    _ = try await runDucxSetupProcess(
+        "/usr/bin/tar",
+        extractionArguments
+    )
+    for name in [
+        "user.json",
+        "meta.json",
+        "settings.json",
+        "hooks.json",
+        "config.toml",
+        ".claude",
+        ".comate",
+    ] {
+        let bundledState = staging.appendingPathComponent(name)
+        if fileManager.fileExists(atPath: bundledState.path) {
+            try fileManager.removeItem(at: bundledState)
+        }
+    }
+    let launcher = staging.appendingPathComponent("bin/claude")
+    let packagedVersion = try String(
+        contentsOf: staging.appendingPathComponent("version"),
+        encoding: .utf8
+    ).trimmingCharacters(in: .whitespacesAndNewlines)
+    guard fileManager.isExecutableFile(atPath: launcher.path),
+          packagedVersion == release.version
+    else {
+        throw GatewayError.command("DUCC 安装包内容或版本不匹配。")
+    }
+    let ducc = staging.appendingPathComponent("bin/ducc")
+    if fileManager.fileExists(atPath: ducc.path) {
+        try fileManager.removeItem(at: ducc)
+    }
+    try fileManager.createSymbolicLink(
+        atPath: ducc.path,
+        withDestinationPath: "claude"
+    )
+
+    let directoryName = "baidu-cc-darwin-\(ducxArchitecture())-\(release.version)"
+    let versionDirectory = root.appendingPathComponent(
+        directoryName,
+        isDirectory: true
+    )
+    if fileManager.fileExists(atPath: versionDirectory.path) {
+        let existing = versionDirectory.appendingPathComponent("bin/ducc")
+        guard fileManager.isExecutableFile(atPath: existing.path) else {
+            throw GatewayError.command(
+                "DUCC 目标目录已存在但不完整：\(versionDirectory.path)"
+            )
+        }
+    } else {
+        try fileManager.moveItem(at: staging, to: versionDirectory)
+    }
+
+    try replaceManagedDucxLink(
+        named: "baidu-cc",
+        destination: directoryName,
+        root: root,
+        fileManager: fileManager
+    )
+    try replaceManagedDucxLink(
+        named: "current",
+        destination: directoryName,
+        root: root,
+        fileManager: fileManager
+    )
+
+    let executable = root.appendingPathComponent("baidu-cc/bin/ducc")
+    guard fileManager.isExecutableFile(atPath: executable.path) else {
+        throw GatewayError.command("DUCC 下载完成，但托管入口不可执行。")
+    }
+    return executable
+}
+
+private func listDuccArchive(
+    _ archive: URL,
+    format: DuccArchiveFormat
+) async throws -> [String] {
+    let arguments: [String]
+    switch format {
+    case .zstd:
+        arguments = ["-tf", archive.path]
+    case .bzip2:
+        arguments = ["-tjf", archive.path]
+    }
+    let output = try await runDucxSetupProcess(
+        "/usr/bin/tar",
+        arguments,
+        captureOutput: true
+    )
+    let entries = output.split(whereSeparator: \.isNewline).map(String.init)
+    guard !entries.isEmpty else {
+        throw GatewayError.command("DUCC 安装包为空。")
+    }
+    return entries
+}
+
+private func duccLoginRequired() -> Bool {
+    let user = managedDuccInstallRoot().appendingPathComponent("user.json")
     return !FileManager.default.isReadableFile(atPath: user.path)
 }
 
