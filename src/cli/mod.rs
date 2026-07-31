@@ -8,6 +8,7 @@ use codex_mixin::server::AppState;
 
 mod atomic_file;
 mod benchmark_proxy;
+mod claude;
 mod codex;
 mod config_input;
 mod doctor;
@@ -20,6 +21,7 @@ mod service;
 mod status;
 
 use benchmark_proxy::{benchmark_start, benchmark_status};
+use claude::{claude_status, install_claude, uninstall_claude};
 use codex::{
     InstallCodexOptions, install_codex, refresh_default_managed_codex_catalog, uninstall_codex,
 };
@@ -177,6 +179,23 @@ enum Command {
         config: Option<PathBuf>,
         #[arg(long)]
         catalog: Option<PathBuf>,
+    },
+    #[command(name = "install-claude")]
+    InstallClaude {
+        #[arg(long)]
+        settings: Option<PathBuf>,
+        #[arg(long)]
+        model: Option<String>,
+    },
+    #[command(name = "uninstall-claude")]
+    UninstallClaude {
+        #[arg(long)]
+        settings: Option<PathBuf>,
+    },
+    #[command(name = "claude-status")]
+    ClaudeStatus {
+        #[arg(long)]
+        settings: Option<PathBuf>,
     },
     #[command(name = "refresh-codex-catalog")]
     RefreshCodexCatalog,
@@ -563,6 +582,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             .await
         }
         Command::UninstallCodex { config, catalog } => uninstall_codex(config, catalog),
+        Command::InstallClaude { settings, model } => install_claude(settings, model),
+        Command::UninstallClaude { settings } => uninstall_claude(settings),
+        Command::ClaudeStatus { settings } => claude_status(settings),
         Command::RefreshCodexCatalog => refresh_default_managed_codex_catalog().await,
         Command::ProbeWebSearch { force, json } => probe_web_search(force, json).await,
     }

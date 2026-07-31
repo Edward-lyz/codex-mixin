@@ -24,6 +24,11 @@ pub fn router(state: AppState) -> Router {
                 .post(responses)
                 .layer(DefaultBodyLimit::max(RESPONSES_BODY_LIMIT_BYTES)),
         )
+        .route(
+            "/v1/messages",
+            post(super::messages_http::messages)
+                .layer(DefaultBodyLimit::max(RESPONSES_BODY_LIMIT_BYTES)),
+        )
         .route("/v1/realtime", get(realtime_ws))
         .route("/v1/realtime/calls", post(realtime_call))
         .route("/v1/live", get(live_ws).post(realtime_call))

@@ -510,6 +510,15 @@ impl AppState {
             })
     }
 
+    pub(crate) fn resolve_native_provider_model(
+        &self,
+        model: &str,
+    ) -> Result<ResolvedProviderModel<'_>, GatewayError> {
+        self.providers
+            .resolve_native_model(model)
+            .ok_or_else(|| GatewayError::BadRequest(format!("model is not routable: {model}")))
+    }
+
     pub async fn send_anthropic_request(
         &self,
         provider: &ProviderRuntime,

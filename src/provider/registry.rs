@@ -403,6 +403,44 @@ impl ProviderRegistry {
         fallback
     }
 
+    /// Resolve a bare upstream model name to the unique configured provider.
+    ///
+    /// Anthropic-native clients such as Claude Code use model IDs without the
+    /// Codex `-provider` suffix. This lookup first accepts the catalog slug and
+    /// then falls back to a case-insensitive match across selected models.
+    pub fn resolve_native_model(
+        &self,
+        model: &str,
+    ) -> Option<ResolvedProviderModel<'_>> {
+        if let Some(resolved) = self.resolve(model) {
+            return Some(resolved);
+        }
+        let mut matched: Option<(&ProviderRuntime, &ProviderModel)> = None;
+        for provider in &self.providers {
+            if !provider.definition.enabled {
+                continue;
+            }
+            for candidate in &provider.definition.cached_models {
+                if !provider
+                    .definition
+                    .selected_models
+                    .iter()
+                    .any(|selected| selected == &candidate.id)
+                    || !candidate.id.eq_ignore_ascii_case(model)
+                {
+                    continue;
+                }
+                if matched.is_some() {
+                    return None;
+                }
+                matched = Some((provider, candidate));
+            }
+        }
+        let (provider, candidate) = matched?;
+        let catalog_slug = catalog_model_slug(&candidate.id, provider.id());
+        self.resolve(&catalog_slug)
+    }
+
     pub fn routable_models(&self) -> impl Iterator<Item = ResolvedProviderModel<'_>> {
         self.routes
             .keys()

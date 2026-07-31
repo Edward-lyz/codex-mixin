@@ -37,6 +37,41 @@ extension AppDelegate {
         }
     }
 
+    @objc func installClaudeCode() {
+        Task { @MainActor in
+            serviceBusy = true
+            serviceStatus = "正在准备 Claude Code 配置..."
+            defer { serviceBusy = false }
+            do {
+                let status = try await ensureGatewayReady()
+                applyGatewayStatus(status)
+                _ = try await runGateway(["install-claude"])
+                showAlert(
+                    title: "Claude Code 配置已更新",
+                    message: "已把 ANTHROPIC_BASE_URL 指向本地网关。请重启 Claude Code；在模型设置中选择 codex-mixin 中已配置的模型，例如 Claude Sonnet 5。"
+                )
+                await refreshStatusNow()
+            } catch {
+                serviceStatus = "安装 Claude Code 配置失败"
+                showAlert(title: "安装到 Claude Code 失败", message: String(describing: error))
+            }
+        }
+    }
+
+    @objc func uninstallClaudeCode() {
+        guard confirm(title: "从 Claude Code 恢复配置", message: "会删除 ~/.claude/settings.json 中的 ANTHROPIC_BASE_URL 和 codex_mixin_managed 标记。其他 Claude Code 设置会保留。完成后需要重启 Claude Code。") else { return }
+        Task { @MainActor in
+            do {
+                let output = try await runGateway(["uninstall-claude"])
+                let message = output.isEmpty ? "已恢复 Claude Code 配置。请重启 Claude Code。" : "\(output)\n\n请重启 Claude Code。"
+                showAlert(title: "Claude Code 配置已恢复", message: message)
+                refreshStatus()
+            } catch {
+                showAlert(title: "从 Claude Code 恢复失败", message: String(describing: error))
+            }
+        }
+    }
+
     @objc func copyLocalEndpoint() {
         Task { @MainActor in
             do {

@@ -217,6 +217,29 @@ Header 不允许覆盖；`comate_custom_header` 只允许由本次 DUCX 桥接�
 
 ![Provider config](docs/assets/provider-config.png)
 
+### 安装到 Claude Code
+
+Codex Mixin 也提供一个 Anthropic Messages 兼容端点 `/v1/messages`，所以 Claude Code
+可以直接把本地网关当作上游使用。菜单栏 App 选择「安装到 Claude Code...」后，会：
+
+1. 备份并保留 `~/.claude/settings.json` 中已有的 `env` 配置。
+2. 在 `env` 中写入 `ANTHROPIC_BASE_URL=http://127.0.0.1:<端口>`。
+3. 自动选择一个已配置的 Claude/Anthropic Messages 模型，写入
+   `ANTHROPIC_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL`、`ANTHROPIC_DEFAULT_OPUS_MODEL`
+   和 `ANTHROPIC_DEFAULT_HAIKU_MODEL`。
+4. 写入 `codex_mixin_managed` 标记，卸载时恢复之前的值。
+
+CLI 等价命令：
+
+```bash
+codex-mixin install-claude --model "Claude Sonnet 5"
+codex-mixin uninstall-claude
+codex-mixin claude-status
+```
+
+注意：Claude Code 默认模型名可能不是本地 provider 的 catalog 名称；安装后建议使用
+`--model` 显式选择，或先执行 `codex-mixin models` 查看可用模型。
+
 ### 安装到 Codex 的行为
 
 安装面板和 CLI 都提供两种互斥模式：
@@ -517,6 +540,8 @@ Codex Mixin exposes a Responses-compatible endpoint on an automatically selected
 - Provides one model-selection and benchmark window for searching, enabling, and saving models, then recording sortable TTFT, TPS, actual usage tokens, total latency, timeout results, and estimated quota cost.
 - Orchestrates multiple Panel models in parallel, compares them with a Judge model, and streams a Final answer, with an optional native interactive `Fusion · Review` surface in Codex.
 - Provides a macOS menu bar control surface for service lifecycle, provider setup, Codex install, rollback, quota, logs, and updates.
+- Exposes an Anthropic Messages-compatible `/v1/messages` endpoint so Claude Code and Anthropic SDKs can reuse the same local gateway.
+- Provides one-click install/uninstall for Claude Code through `~/.claude/settings.json` env overrides.
 - Starts the background gateway when the menu bar app opens and prominently shows the active endpoint.
 - Reuses a persisted loopback port, automatically selects a free port on conflict, and synchronizes the managed Codex endpoint.
 - Opens both the menu bar app and gateway at login, while keeping their launchd jobs independent.

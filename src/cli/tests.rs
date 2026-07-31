@@ -17,6 +17,7 @@ use codex_mixin::server::AppState;
 
 use super::{Cli, Command, ProviderCommand};
 use super::{atomic_file::*, codex::*, runtime::*, service::*, status::*};
+use super::claude::*;
 
 #[test]
 fn managed_model_catalog_refreshes_promptly() {
@@ -28,6 +29,45 @@ fn managed_model_catalog_refreshes_promptly() {
         OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL,
         std::time::Duration::from_secs(60)
     );
+}
+
+#[test]
+fn claude_install_writes_base_url_and_uninstall_restores_settings() {
+    let directory = tempfile::tempdir().unwrap();
+    let settings = directory.path().join("settings.json");
+    fs::write(
+        &settings,
+        "{\"existing\": true, \"env\": {\"ANTHROPIC_BASE_URL\": \"https://old\"}}",
+    )
+    .unwrap();
+
+    install_claude(Some(settings.clone()), None).unwrap();
+    let installed: serde_json::Value =
+        serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert_eq!(installed["existing"], true);
+    assert_eq!(
+        installed["env"]["ANTHROPIC_BASE_URL"].as_str().unwrap(),
+        "http://127.0.0.1:8787"
+    );
+    assert_eq!(
+        installed["env"]["ANTHROPIC_MODEL"].as_str().unwrap(),
+        "Claude Sonnet 5"
+    );
+    assert_eq!(
+        installed["codex_mixin_managed"]["marker"]
+            .as_str()
+            .unwrap(),
+        MANAGED_CLAUDE_MARKER
+    );
+
+    uninstall_claude(Some(settings.clone())).unwrap();
+    let restored: serde_json::Value = serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert_eq!(restored["existing"], true);
+    assert_eq!(
+        restored["env"]["ANTHROPIC_BASE_URL"].as_str().unwrap(),
+        "https://old"
+    );
+    assert!(restored.get("codex_mixin_managed").is_none());
 }
 
 #[test]

@@ -120,6 +120,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(actionItem("Fusion 设置…", #selector(showFusionSettings), "rectangle.3.group"))
         menu.addItem(actionItem("安装到 Codex...", #selector(installCodexConfig), "square.and.arrow.down"))
         menu.addItem(actionItem("从 Codex 恢复...", #selector(uninstallCodexConfig), "arrow.uturn.backward.circle"))
+        menu.addItem(actionItem("安装到 Claude Code...", #selector(installClaudeCode), "square.and.arrow.down"))
+        menu.addItem(actionItem("从 Claude Code 恢复...", #selector(uninstallClaudeCode), "arrow.uturn.backward.circle"))
         menu.addItem(.separator())
         menu.addItem(actionItem("检查更新...", #selector(checkForUpdatesFromMenu), "arrow.down.circle"))
         menu.addItem(.separator())

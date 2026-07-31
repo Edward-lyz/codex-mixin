@@ -41,6 +41,7 @@ use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};
 
 mod auth;
 mod images;
+mod messages_http;
 mod realtime;
 mod responses_http;
 mod responses_ws;

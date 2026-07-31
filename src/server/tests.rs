@@ -12,6 +12,7 @@ use super::*;
 use crate::benchmark::ModelBenchmarkManager;
 use crate::config::ThinkingMode;
 use crate::provider::{ProviderModel, custom_provider};
+use crate::server::messages_http::normalize_message_request;
 
 fn test_provider(base_url: String, model: &str) -> crate::provider::ProviderDefinition {
     let mut provider = custom_provider("test-provider", "upstream-key");
@@ -34,6 +35,63 @@ fn provider_model_display_name_keeps_the_model_id_visible() {
         provider_model_display_name("gpt-5.6-sol", "AIHub"),
         "gpt-5.6-sol · AIHub"
     );
+}
+
+#[test]
+fn messages_endpoint_rejects_non_anthropic_provider_protocols() {
+    let mut provider = test_provider("https://example.invalid".to_owned(), "gpt-test");
+    provider.protocol = crate::provider::ProviderProtocol::OpenAiChat;
+    let state = AppState::new(GatewayConfig {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        providers: vec![provider],
+        official_responses_url: "https://example.invalid/responses".to_owned(),
+        codex_auth_path: tempfile::tempdir().unwrap().path().join("auth.json"),
+        gateway_api_key: None,
+        accept_codex_oauth: false,
+        default_max_tokens: 8192,
+        default_context_window: 1_000_000,
+        request_timeout: Duration::from_secs(2),
+        thinking_mode: ThinkingMode::Off,
+        enable_web_search_tool: false,
+        web_search_tool_type: "web_search_20250305".to_owned(),
+        web_search_max_uses: Some(3),
+        fusion_profiles: Vec::new(),
+    })
+    .unwrap();
+    let resolved = state
+        .resolve_native_provider_model("gpt-test")
+        .unwrap();
+    assert_eq!(resolved.provider.id(), "test-provider");
+    assert_ne!(
+        resolved.provider.protocol_for_model(resolved.upstream_model_id),
+        crate::provider::ProviderProtocol::AnthropicMessages
+    );
+}
+
+#[test]
+fn native_message_request_normalizes_anthropic_fields() {
+    let request = normalize_message_request(
+        &json!({
+            "model": "Claude Sonnet 5",
+            "max_tokens": 1024,
+            "stream": true,
+            "system": "Be concise",
+            "messages": [
+                {"role": "user", "content": "hi"}
+            ],
+            "tools": [{"name": "bash", "description": "Run shell", "input_schema": {"type": "object"}}],
+            "speed": "fast"
+        }),
+        "Claude Sonnet 5-baidu-oneapi",
+    )
+    .unwrap();
+    assert_eq!(request.model, "Claude Sonnet 5-baidu-oneapi");
+    assert_eq!(request.max_tokens, 1024);
+    assert!(request.stream);
+    assert_eq!(request.messages.len(), 1);
+    assert_eq!(request.messages[0].content[0], crate::anthropic::ContentBlock::Text { text: "hi".to_owned() });
+    assert_eq!(request.system.as_ref().unwrap().len(), 1);
+    assert_eq!(request.speed.as_deref(), Some("fast"));
 }
 
 #[tokio::test]

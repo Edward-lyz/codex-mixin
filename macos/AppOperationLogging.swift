@@ -159,6 +159,8 @@ private func shouldIncludeDiagnosticOutput(_ arguments: [String]) -> Bool {
     if [
         "install-codex",
         "uninstall-codex",
+        "install-claude",
+        "uninstall-claude",
         "refresh-codex-catalog",
         "doctor",
     ].contains(command) {
