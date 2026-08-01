@@ -34,8 +34,16 @@ pub(in crate::cli) fn install_claude(
     settings_path: Option<PathBuf>,
     requested_model: Option<String>,
 ) -> anyhow::Result<()> {
-    let settings_path = resolve_claude_settings_path(settings_path)?;
     let gateway_config = GatewayConfig::from_stored_config()?;
+    install_claude_with_config(settings_path, requested_model, &gateway_config)
+}
+
+pub(in crate::cli) fn install_claude_with_config(
+    settings_path: Option<PathBuf>,
+    requested_model: Option<String>,
+    gateway_config: &GatewayConfig,
+) -> anyhow::Result<()> {
+    let settings_path = resolve_claude_settings_path(settings_path)?;
     let model = select_claude_model(&gateway_config, requested_model.as_deref())?;
     let gateway_bind = match load_runtime_metadata()? {
         Some(runtime) if pid_is_running(runtime.pid)? => runtime.bind,

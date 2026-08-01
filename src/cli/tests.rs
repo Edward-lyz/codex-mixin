@@ -35,13 +35,36 @@ fn managed_model_catalog_refreshes_promptly() {
 fn claude_install_writes_base_url_and_uninstall_restores_settings() {
     let directory = tempfile::tempdir().unwrap();
     let settings = directory.path().join("settings.json");
+    let mut baidu = ProviderPreset::BaiduOneApi.create("baidu", "key");
+    baidu.selected_models.push("Claude Sonnet 5".to_owned());
+    let gateway_config = GatewayConfig {
+        bind: "127.0.0.1:8787".parse().unwrap(),
+        providers: vec![baidu],
+        official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
+        codex_auth_path: directory.path().join("auth.json"),
+        gateway_api_key: None,
+        accept_codex_oauth: false,
+        default_max_tokens: 4096,
+        default_context_window: 128_000,
+        request_timeout: std::time::Duration::from_secs(30),
+        thinking_mode: ThinkingMode::Auto,
+        enable_web_search_tool: false,
+        web_search_tool_type: "web_search".to_owned(),
+        web_search_max_uses: None,
+        fusion_profiles: Vec::new(),
+    };
     fs::write(
         &settings,
         "{\"existing\": true, \"env\": {\"ANTHROPIC_BASE_URL\": \"https://old\"}}",
     )
     .unwrap();
 
-    install_claude(Some(settings.clone()), None).unwrap();
+    install_claude_with_config(
+        Some(settings.clone()),
+        Some("Claude Sonnet 5".to_owned()),
+        &gateway_config,
+    )
+    .unwrap();
     let installed: serde_json::Value =
         serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
     assert_eq!(installed["existing"], true);
