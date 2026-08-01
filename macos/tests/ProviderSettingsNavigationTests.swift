@@ -169,7 +169,7 @@ struct ProviderSettingsNavigationTests {
 
         configureDucc.performClick(nil)
         waitUntil {
-            !window.isVisible
+            controller.window?.isVisible == false
         }
         precondition(
             requestedBridgeModes == [.duccLoopback],
@@ -194,7 +194,7 @@ struct ProviderSettingsNavigationTests {
             "Opening DUCC configuration must apply and restart the gateway"
         )
         precondition(
-            !window.isVisible,
+            controller.window?.isVisible == false,
             "The provider settings window must close after DUCC setup succeeds"
         )
         precondition(
