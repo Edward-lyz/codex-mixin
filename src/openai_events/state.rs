@@ -34,7 +34,7 @@ pub(super) struct ToolBlock {
 #[derive(Debug)]
 pub(super) enum ToolBlockKind {
     Function,
-    WebSearch { output_index: usize },
+    WebSearch,
 }
 
 #[derive(Debug)]
@@ -52,6 +52,8 @@ pub(super) struct MapperState {
     pub(super) current_text: Option<TextBlock>,
     pub(super) tools: HashMap<u64, ToolBlock>,
     pub(super) pending_web_searches: HashMap<String, PendingWebSearch>,
+    pub(super) ignored_web_searches: HashSet<String>,
+    pub(super) ignored_web_search_result_indexes: HashSet<u64>,
     pub(super) web_search_result_indexes: HashSet<u64>,
     pub(super) usage: Usage,
     pub(super) tool_names: ToolNameMap,
@@ -78,6 +80,8 @@ impl MapperState {
             current_text: None,
             tools: HashMap::new(),
             pending_web_searches: HashMap::new(),
+            ignored_web_searches: HashSet::new(),
+            ignored_web_search_result_indexes: HashSet::new(),
             web_search_result_indexes: HashSet::new(),
             usage: Usage::default(),
             tool_names,
@@ -239,12 +243,16 @@ impl MapperState {
         } else {
             block.delta_input_json.trim().to_owned()
         };
-        if let ToolBlockKind::WebSearch { output_index } = block.kind {
-            let query = web_search_query(&block.delta_input_json)
+        if let ToolBlockKind::WebSearch = block.kind {
+            let Some(query) = web_search_query(&block.delta_input_json)
                 .or_else(|| web_search_query(&block.start_input_json))
-                .ok_or_else(|| {
-                    format!("web_search call {id} arguments must contain a non-empty query")
-                })?;
+            else {
+                if !self.ignored_web_searches.insert(id.clone()) {
+                    return Err(format!("duplicate web_search tool_use id: {id}"));
+                }
+                return Ok(Vec::new());
+            };
+            let output_index = self.output.len();
             if self
                 .pending_web_searches
                 .insert(
@@ -258,7 +266,17 @@ impl MapperState {
             {
                 return Err(format!("duplicate web_search tool_use id: {id}"));
             }
-            return Ok(Vec::new());
+            let item = json!({
+                "type":"web_search_call",
+                "id":id,
+                "status":"in_progress"
+            });
+            self.output.push(item.clone());
+            return Ok(vec![encode_event(
+                "response.output_item.added",
+                &json!({"type":"response.output_item.added","output_index":output_index,"item":item}),
+            )
+            .unwrap()]);
         }
         if arguments.is_empty() {
             arguments = "{}".to_owned();
@@ -365,13 +383,6 @@ impl MapperState {
         if self.tools.contains_key(&index) {
             return Err(format!("duplicate tool call index: {index}"));
         }
-        let output_index = self.output.len();
-        let item = json!({
-            "type":"web_search_call",
-            "id":id,
-            "status":"in_progress"
-        });
-        self.output.push(item.clone());
         self.tools.insert(
             index,
             ToolBlock {
@@ -379,16 +390,10 @@ impl MapperState {
                 name,
                 start_input_json,
                 delta_input_json: String::new(),
-                kind: ToolBlockKind::WebSearch { output_index },
+                kind: ToolBlockKind::WebSearch,
             },
         );
-        Ok(vec![
-            encode_event(
-                "response.output_item.added",
-                &json!({"type":"response.output_item.added","output_index":output_index,"item":item}),
-            )
-            .unwrap(),
-        ])
+        Ok(Vec::new())
     }
 
     pub(super) fn finish_web_search_result(
@@ -422,6 +427,10 @@ impl MapperState {
                 ));
             }
         };
+        if self.ignored_web_searches.remove(&tool_use_id) {
+            self.ignored_web_search_result_indexes.insert(index);
+            return Ok(Vec::new());
+        }
         let pending = self
             .pending_web_searches
             .remove(&tool_use_id)

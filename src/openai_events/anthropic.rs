@@ -245,10 +245,13 @@ fn handle_anthropic_event(
                 .get("index")
                 .and_then(Value::as_u64)
                 .ok_or_else(|| "content_block_stop missing index".to_owned())?;
+            if state.ignored_web_search_result_indexes.remove(&index) {
+                return Ok(Vec::new());
+            }
             if state
                 .tools
                 .get(&index)
-                .is_some_and(|tool| matches!(&tool.kind, ToolBlockKind::WebSearch { .. }))
+                .is_some_and(|tool| matches!(&tool.kind, ToolBlockKind::WebSearch))
             {
                 state.finish_tool(index, None)
             } else {
