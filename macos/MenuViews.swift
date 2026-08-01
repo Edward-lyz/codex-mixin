@@ -1,5 +1,10 @@
 import Cocoa
 
+private let menuContentWidth: CGFloat = 336
+private let serviceMenuHeight: CGFloat = 56
+private let providerQuotaRowHeight: CGFloat = 54
+private let maximumVisibleProviderRows = 4
+
 func serviceMenuView(
     title: String,
     endpoint: String?,
@@ -7,7 +12,7 @@ func serviceMenuView(
     isRunning: Bool,
     isBusy: Bool
 ) -> NSView {
-    let view = NSView(frame: NSRect(x: 0, y: 0, width: 320, height: 68))
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: menuContentWidth, height: serviceMenuHeight))
     let statusColor: NSColor
     if title.contains("失败") {
         statusColor = .systemRed
@@ -23,9 +28,9 @@ func serviceMenuView(
 
     let statusDot = NSView()
     statusDot.wantsLayer = true
-    statusDot.layer?.cornerRadius = 9
+    statusDot.layer?.cornerRadius = 6
     statusDot.layer?.backgroundColor = statusColor.cgColor
-    statusDot.layer?.borderWidth = 3
+    statusDot.layer?.borderWidth = 2
     statusDot.layer?.borderColor = statusColor.withAlphaComponent(0.28).cgColor
     statusDot.layer?.shadowColor = statusColor.cgColor
     statusDot.layer?.shadowOpacity = isRunning ? 0.45 : 0
@@ -33,7 +38,7 @@ func serviceMenuView(
     statusDot.translatesAutoresizingMaskIntoConstraints = false
 
     let titleLabel = NSTextField(labelWithString: title)
-    titleLabel.font = .boldSystemFont(ofSize: 13)
+    titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
     titleLabel.textColor = .labelColor
     titleLabel.lineBreakMode = .byTruncatingTail
     titleLabel.maximumNumberOfLines = 1
@@ -74,12 +79,12 @@ func serviceMenuView(
     view.addSubview(statusDot)
     view.addSubview(textStack)
     NSLayoutConstraint.activate([
-        statusDot.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 12),
+        statusDot.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 14),
         statusDot.centerYAnchor.constraint(equalTo: view.centerYAnchor),
-        statusDot.widthAnchor.constraint(equalToConstant: 18),
-        statusDot.heightAnchor.constraint(equalToConstant: 18),
-        textStack.leadingAnchor.constraint(equalTo: statusDot.trailingAnchor, constant: 11),
-        textStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -12),
+        statusDot.widthAnchor.constraint(equalToConstant: 12),
+        statusDot.heightAnchor.constraint(equalToConstant: 12),
+        textStack.leadingAnchor.constraint(equalTo: statusDot.trailingAnchor, constant: 9),
+        textStack.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -14),
         textStack.topAnchor.constraint(equalTo: view.topAnchor, constant: 12),
         textStack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -12),
         titleLabel.widthAnchor.constraint(equalTo: textStack.widthAnchor),
@@ -150,11 +155,11 @@ func providerQuotaMenuView(_ usages: [ProviderQuotaUsage]) -> NSView {
             progress: nil
         )
     }
-    let rowHeight: CGFloat = 68
+    let rowHeight = providerQuotaRowHeight
     let view = NSView(frame: NSRect(
         x: 0,
         y: 0,
-        width: 320,
+        width: menuContentWidth,
         height: max(rowHeight * CGFloat(usages.count), rowHeight)
     ))
     let rows = usages.map(providerQuotaRow)
@@ -175,7 +180,19 @@ func providerQuotaMenuView(_ usages: [ProviderQuotaUsage]) -> NSView {
         $0.widthAnchor.constraint(equalTo: stack.widthAnchor)
     }
     NSLayoutConstraint.activate(containerConstraints + rowWidthConstraints)
-    return view
+    guard usages.count > maximumVisibleProviderRows else { return view }
+    let scrollView = NSScrollView(frame: NSRect(
+        x: 0, y: 0, width: menuContentWidth,
+        height: rowHeight * CGFloat(maximumVisibleProviderRows)
+    ))
+    scrollView.drawsBackground = false
+    scrollView.borderType = .noBorder
+    scrollView.hasHorizontalScroller = false
+    scrollView.hasVerticalScroller = true
+    scrollView.autohidesScrollers = true
+    scrollView.scrollerStyle = .overlay
+    scrollView.documentView = view
+    return scrollView
 }
 
 func providerQuotaRow(_ usage: ProviderQuotaUsage) -> NSView {
@@ -185,7 +202,7 @@ func providerQuotaRow(_ usage: ProviderQuotaUsage) -> NSView {
     icon.heightAnchor.constraint(equalToConstant: 16).isActive = true
 
     let providerLabel = NSTextField(labelWithString: usage.menuLabel)
-    providerLabel.font = .monospacedSystemFont(ofSize: 11, weight: .medium)
+    providerLabel.font = .systemFont(ofSize: 12, weight: .medium)
     providerLabel.lineBreakMode = .byTruncatingMiddle
 
     let value: String
