@@ -197,8 +197,9 @@ struct ProviderSettingsNavigationTests {
             controller.window?.isVisible == false,
             "The provider settings window must close after DUCC setup succeeds"
         )
+        let completionTitles = ["DUCC 已配置", "DUCC 已設定", "DUCC Configured"]
         precondition(
-            completionTitle == "DUCC 已配置",
+            completionTitle.map(completionTitles.contains) == true,
             "Successful DUCC setup must visibly confirm completion"
         )
 
