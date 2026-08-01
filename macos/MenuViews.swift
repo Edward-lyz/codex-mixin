@@ -34,7 +34,7 @@ final class GatewaySwitchControl: NSControl {
         }
 
         let knobSize: CGFloat = 24
-        let knobX = isOn ? bounds.maxX - knobSize - 4 : bounds.minX + 4
+        let knobX = isOn ? bounds.maxX - knobSize - 3 : bounds.minX + 3
         let knob = NSBezierPath(ovalIn: NSRect(
             x: knobX,
             y: (bounds.height - knobSize) / 2,
@@ -194,7 +194,7 @@ func serviceMenuView(
         textStack.bottomAnchor.constraint(equalTo: view.bottomAnchor, constant: -12),
         titleLabel.widthAnchor.constraint(equalTo: textStack.widthAnchor),
         detailLabel.widthAnchor.constraint(equalTo: textStack.widthAnchor),
-        toggle.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+        toggle.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -8),
         toggle.centerYAnchor.constraint(equalTo: view.centerYAnchor),
         toggle.widthAnchor.constraint(equalToConstant: 52),
         toggle.heightAnchor.constraint(equalToConstant: 30),

@@ -15,8 +15,8 @@ use codex_mixin::config::{GatewayConfig, ThinkingMode};
 use codex_mixin::provider::{ProviderPreset, ProviderRegistry};
 use codex_mixin::server::AppState;
 
-use super::claude::*;
 use super::Cli;
+use super::claude::*;
 use super::{atomic_file::*, codex::*, runtime::*, service::*, status::*};
 
 #[test]

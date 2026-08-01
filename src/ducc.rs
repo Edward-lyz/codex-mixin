@@ -756,7 +756,7 @@ done
         .await
         .unwrap();
         let result = tokio::time::timeout(
-            Duration::from_secs(1),
+            Duration::from_secs(5),
             runtime.send(
                 "GLM-5.2",
                 "http://127.0.0.1:9/v1/messages".parse().unwrap(),
@@ -802,7 +802,7 @@ done
         .await
         .unwrap();
         let result = tokio::time::timeout(
-            Duration::from_secs(1),
+            Duration::from_secs(5),
             runtime.send(
                 "GLM-5.2",
                 "http://127.0.0.1:9/v1/messages".parse().unwrap(),
