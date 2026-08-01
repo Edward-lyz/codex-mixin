@@ -7,6 +7,14 @@ pub(super) struct TextBlock {
     pub(super) text: String,
 }
 
+#[derive(Debug)]
+pub(super) struct ThinkingBlock {
+    pub(super) output_index: usize,
+    pub(super) item_id: String,
+    pub(super) thinking: String,
+    pub(super) signature: Option<String>,
+}
+
 #[derive(Clone, Copy, Debug)]
 pub(super) enum AssistantMessagePhase {
     Commentary,
@@ -50,6 +58,7 @@ pub(super) struct MapperState {
     response_metadata: Value,
     pub(super) output: Vec<Value>,
     pub(super) current_text: Option<TextBlock>,
+    pub(super) thinking: HashMap<u64, ThinkingBlock>,
     pub(super) tools: HashMap<u64, ToolBlock>,
     pub(super) pending_web_searches: HashMap<String, PendingWebSearch>,
     pub(super) ignored_web_searches: HashSet<String>,
@@ -78,6 +87,7 @@ impl MapperState {
             response_metadata,
             output: Vec::new(),
             current_text: None,
+            thinking: HashMap::new(),
             tools: HashMap::new(),
             pending_web_searches: HashMap::new(),
             ignored_web_searches: HashSet::new(),
@@ -104,7 +114,7 @@ impl MapperState {
         response["status"] = Value::String(status.to_owned());
         response["error"] = Value::Null;
         response["incomplete_details"] = Value::Null;
-        response["output"] = Value::Array(output.iter().cloned().collect());
+        response["output"] = Value::Array(output.to_vec());
         response["usage"] = Value::Null;
         response
     }

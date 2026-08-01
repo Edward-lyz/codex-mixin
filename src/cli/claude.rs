@@ -44,7 +44,7 @@ pub(in crate::cli) fn install_claude_with_config(
     gateway_config: &GatewayConfig,
 ) -> anyhow::Result<()> {
     let settings_path = resolve_claude_settings_path(settings_path)?;
-    let model = select_claude_model(&gateway_config, requested_model.as_deref())?;
+    let model = select_claude_model(gateway_config, requested_model.as_deref())?;
     let gateway_bind = match load_runtime_metadata()? {
         Some(runtime) if pid_is_running(runtime.pid)? => runtime.bind,
         _ => gateway_config.bind,

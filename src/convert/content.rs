@@ -1,11 +1,15 @@
 use super::tools::upstream_client_tool_name;
 use super::*;
 
+const ANTHROPIC_THINKING_PREFIX: &str = "codex-mixin:anthropic-thinking:v1:";
+const BAIDU_UNSIGNED_THINKING_PREFIX: &str = "codex-mixin:baidu-unsigned-thinking:v1:";
+
 pub(super) fn append_input_item(
     item: &Value,
     system: &mut Vec<ContentBlock>,
     messages: &mut Vec<Message>,
     use_mcp_bridge_names: bool,
+    replay_model: Option<&str>,
 ) -> Result<(), GatewayError> {
     let item_type = item
         .get("type")
@@ -168,7 +172,8 @@ pub(super) fn append_input_item(
                 }],
             });
         }
-        "reasoning" | "web_search_call" | "image_generation_call" | "additional_tools" => {}
+        "reasoning" => append_anthropic_reasoning(item, messages, replay_model)?,
+        "web_search_call" | "image_generation_call" | "additional_tools" => {}
         "agent_message" => messages.push(Message {
             role: "user".to_owned(),
             content: vec![ContentBlock::Text {
@@ -182,6 +187,81 @@ pub(super) fn append_input_item(
         }
     }
     Ok(())
+}
+
+fn append_anthropic_reasoning(
+    item: &Value,
+    messages: &mut Vec<Message>,
+    replay_model: Option<&str>,
+) -> Result<(), GatewayError> {
+    let Some(encrypted_content) = item.get("encrypted_content").and_then(Value::as_str) else {
+        return Ok(());
+    };
+    if let Some(payload) = encrypted_content.strip_prefix(ANTHROPIC_THINKING_PREFIX) {
+        let block: ContentBlock = serde_json::from_str(payload).map_err(|_| {
+            GatewayError::BadRequest("invalid Anthropic thinking payload".to_owned())
+        })?;
+        if !matches!(
+            block,
+            ContentBlock::Thinking {
+                signature: Some(_),
+                ..
+            } | ContentBlock::RedactedThinking { .. }
+        ) {
+            return Err(GatewayError::BadRequest(
+                "invalid Anthropic thinking payload".to_owned(),
+            ));
+        }
+        messages.push(Message {
+            role: "assistant".to_owned(),
+            content: vec![block],
+        });
+    } else if let (Some(payload), Some(model)) = (
+        encrypted_content.strip_prefix(BAIDU_UNSIGNED_THINKING_PREFIX),
+        replay_model.filter(|model| model.ends_with("-baidu-oneapi")),
+    ) {
+        let state: Value = serde_json::from_str(payload).map_err(|_| {
+            GatewayError::BadRequest("invalid Baidu unsigned thinking payload".to_owned())
+        })?;
+        if state.get("model").and_then(Value::as_str) == Some(model) {
+            let thinking = state
+                .get("thinking")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    GatewayError::BadRequest("invalid Baidu unsigned thinking payload".to_owned())
+                })?;
+            messages.push(Message {
+                role: "assistant".to_owned(),
+                content: vec![ContentBlock::Thinking {
+                    thinking: thinking.to_owned(),
+                    signature: None,
+                }],
+            });
+        }
+    }
+    Ok(())
+}
+
+pub(crate) fn encode_anthropic_thinking(thinking: &str, signature: &str) -> String {
+    let payload = serde_json::to_string(&ContentBlock::Thinking {
+        thinking: thinking.to_owned(),
+        signature: Some(signature.to_owned()),
+    })
+    .expect("Anthropic thinking block is serializable");
+    format!("{ANTHROPIC_THINKING_PREFIX}{payload}")
+}
+
+pub(crate) fn encode_baidu_unsigned_thinking(model: &str, thinking: &str) -> String {
+    let payload = json!({"model": model, "thinking": thinking});
+    format!("{BAIDU_UNSIGNED_THINKING_PREFIX}{payload}")
+}
+
+pub(crate) fn encode_anthropic_redacted_thinking(data: &str) -> String {
+    let block = ContentBlock::RedactedThinking {
+        data: data.to_owned(),
+    };
+    let payload = serde_json::to_string(&block).expect("redacted thinking block is serializable");
+    format!("{ANTHROPIC_THINKING_PREFIX}{payload}")
 }
 
 pub(crate) fn agent_message_text(item: &Value) -> Result<String, GatewayError> {

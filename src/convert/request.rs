@@ -118,8 +118,15 @@ pub(crate) fn responses_to_anthropic_with_model_reasoning_and_thinking_kind(
             content: vec![ContentBlock::Text { text: text.clone() }],
         }),
         Some(Value::Array(items)) => {
+            let replay_model = body.get("model").and_then(Value::as_str);
             for item in items {
-                append_input_item(item, &mut system, &mut messages, use_mcp_bridge_names)?;
+                append_input_item(
+                    item,
+                    &mut system,
+                    &mut messages,
+                    use_mcp_bridge_names,
+                    replay_model,
+                )?;
             }
         }
         Some(_) => {

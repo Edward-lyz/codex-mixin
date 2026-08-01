@@ -17,13 +17,13 @@ pub(super) async fn messages(
     let resolved = state.resolve_native_provider_model(requested_model)?;
     let provider = resolved.provider;
     let upstream_model_id = resolved.upstream_model_id;
-    if provider.protocol_for_model(&upstream_model_id) != ProviderProtocol::AnthropicMessages {
+    if provider.protocol_for_model(upstream_model_id) != ProviderProtocol::AnthropicMessages {
         return Err(GatewayError::BadRequest(format!(
             "provider {} does not expose model {upstream_model_id} over Anthropic Messages",
             provider.id()
         )));
     }
-    let request = normalize_message_request(&body, &upstream_model_id)?;
+    let request = normalize_message_request(&body, upstream_model_id)?;
     let hash_key = stable_oneapi_routing(&headers, &body)?.map(|routing| routing.hash_key);
     let stream_requested = body_stream_requested(&body);
     let upstream = state

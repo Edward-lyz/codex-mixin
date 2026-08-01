@@ -1,6 +1,27 @@
 use super::state::MapperState;
 use super::*;
+use crate::config::{GatewayConfig, ThinkingMode};
 use crate::sse::drain_events;
+use std::time::Duration;
+
+fn anthropic_config() -> GatewayConfig {
+    GatewayConfig {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        providers: vec![crate::provider::open_code_go_provider("test", "test")],
+        official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
+        codex_auth_path: std::path::PathBuf::from("/tmp/codex-auth.json"),
+        gateway_api_key: None,
+        accept_codex_oauth: true,
+        default_max_tokens: 8192,
+        default_context_window: 1_000_000,
+        request_timeout: Duration::from_secs(30),
+        thinking_mode: ThinkingMode::Off,
+        enable_web_search_tool: false,
+        web_search_tool_type: "web_search_20250305".to_owned(),
+        web_search_max_uses: Some(3),
+        fusion_profiles: Vec::new(),
+    }
+}
 
 async fn collect_events<S>(events: S) -> String
 where
@@ -93,6 +114,174 @@ async fn map_anthropic_events(events: &[Value]) -> String {
         ToolNameMap::default(),
     ))
     .await
+}
+
+#[tokio::test]
+async fn preserves_anthropic_signed_thinking_as_replayable_reasoning() {
+    let body = map_anthropic_events(&[
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"checked "}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"constraints"}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"signed-state"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}}),
+    ])
+    .await;
+
+    let mut encoded = body.as_bytes().to_vec();
+    let events = drain_events(&mut encoded);
+    let done: Value = serde_json::from_str(
+        &events
+            .iter()
+            .find(|event| event.event.as_deref() == Some("response.output_item.done"))
+            .expect("reasoning output item should complete")
+            .data,
+    )
+    .unwrap();
+    assert_eq!(done["item"]["type"], "reasoning");
+    assert_eq!(done["item"]["summary"][0]["text"], "checked constraints");
+
+    let request = json!({
+        "stream": true,
+        "model": "claude-test",
+        "input": [
+            done["item"].clone(),
+            {"type":"message","role":"user","content":"continue"}
+        ]
+    });
+    let converted = crate::convert::responses_to_anthropic(&request, &anthropic_config()).unwrap();
+    assert_eq!(
+        converted.request.messages[0].content[0],
+        crate::anthropic::ContentBlock::Thinking {
+            thinking: "checked constraints".to_owned(),
+            signature: Some("signed-state".to_owned()),
+        }
+    );
+}
+
+#[tokio::test]
+async fn preserves_baidu_unsigned_thinking_only_for_the_same_model() {
+    let events = [
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"unsigned thought"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}}),
+    ];
+    let stream = events
+        .iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect::<String>();
+    let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(stream))]);
+    let body = collect_events(map_anthropic_sse_with_image_routes(
+        upstream,
+        json!({"model":"Claude Sonnet 4.6-baidu-oneapi"}),
+        ToolNameMap::default(),
+        None,
+        true,
+    ))
+    .await;
+
+    let mut encoded = body.as_bytes().to_vec();
+    let done: Value = serde_json::from_str(
+        &drain_events(&mut encoded)
+            .into_iter()
+            .find(|event| event.event.as_deref() == Some("response.output_item.done"))
+            .expect("unsigned reasoning output item should complete")
+            .data,
+    )
+    .unwrap();
+    assert!(
+        done["item"]["encrypted_content"]
+            .as_str()
+            .unwrap()
+            .starts_with("codex-mixin:baidu-unsigned-thinking:v1:")
+    );
+
+    let same_model = json!({
+        "stream":true,
+        "model":"Claude Sonnet 4.6-baidu-oneapi",
+        "input":[done["item"].clone(),{"type":"message","role":"user","content":"continue"}]
+    });
+    let converted =
+        crate::convert::responses_to_anthropic(&same_model, &anthropic_config()).unwrap();
+    assert_eq!(
+        converted.request.messages[0].content[0],
+        crate::anthropic::ContentBlock::Thinking {
+            thinking: "unsigned thought".to_owned(),
+            signature: None,
+        }
+    );
+
+    let switched_model = json!({
+        "stream":true,
+        "model":"Claude Haiku 4.5-baidu-oneapi",
+        "input":[done["item"].clone(),{"type":"message","role":"user","content":"continue"}]
+    });
+    let converted =
+        crate::convert::responses_to_anthropic(&switched_model, &anthropic_config()).unwrap();
+    assert_eq!(converted.request.messages.len(), 1);
+    assert_eq!(converted.request.messages[0].role, "user");
+}
+
+#[tokio::test]
+async fn unsigned_thinking_without_baidu_scope_has_no_replay_state() {
+    let body = map_anthropic_events(&[
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"visible summary only"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}}),
+    ])
+    .await;
+    let mut encoded = body.as_bytes().to_vec();
+    let done: Value = serde_json::from_str(
+        &drain_events(&mut encoded)
+            .into_iter()
+            .find(|event| event.event.as_deref() == Some("response.output_item.done"))
+            .expect("reasoning summary should complete")
+            .data,
+    )
+    .unwrap();
+    assert!(done["item"]["encrypted_content"].is_null());
+    assert_eq!(done["item"]["summary"][0]["text"], "visible summary only");
+}
+
+#[tokio::test]
+async fn preserves_anthropic_redacted_thinking_as_replayable_reasoning() {
+    let body = map_anthropic_events(&[
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"redacted_thinking","data":"opaque-redacted-state"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"}}),
+    ])
+    .await;
+
+    let mut encoded = body.as_bytes().to_vec();
+    let events = drain_events(&mut encoded);
+    let done: Value = serde_json::from_str(
+        &events
+            .iter()
+            .find(|event| event.event.as_deref() == Some("response.output_item.done"))
+            .expect("redacted reasoning output item should complete")
+            .data,
+    )
+    .unwrap();
+    assert_eq!(done["item"]["type"], "reasoning");
+    assert_eq!(done["item"]["summary"], json!([]));
+
+    let request = json!({
+        "stream": true,
+        "model": "claude-test",
+        "input": [
+            done["item"].clone(),
+            {"type":"message","role":"user","content":"continue"}
+        ]
+    });
+    let converted = crate::convert::responses_to_anthropic(&request, &anthropic_config()).unwrap();
+    assert_eq!(
+        converted.request.messages[0].content[0],
+        crate::anthropic::ContentBlock::RedactedThinking {
+            data: "opaque-redacted-state".to_owned(),
+        }
+    );
 }
 
 #[tokio::test]

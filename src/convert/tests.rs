@@ -229,6 +229,45 @@ fn converts_plaintext_agent_message_for_subagents() {
 }
 
 #[test]
+fn ignores_foreign_reasoning_state_for_anthropic_upstreams() {
+    let converted = responses_to_anthropic(
+        &json!({
+            "model":"Claude Sonnet 5",
+            "stream":true,
+            "input":[
+                {"type":"reasoning","encrypted_content":"opaque-openai-state","summary":[]},
+                {"type":"message","role":"user","content":"continue"}
+            ]
+        }),
+        &config(),
+    )
+    .unwrap();
+    assert_eq!(converted.request.messages.len(), 1);
+    assert_eq!(converted.request.messages[0].role, "user");
+}
+
+#[test]
+fn rejects_corrupt_mixin_anthropic_thinking_state() {
+    let error = responses_to_anthropic(
+        &json!({
+            "model":"Claude Sonnet 5",
+            "stream":true,
+            "input":[
+                {"type":"reasoning","encrypted_content":"codex-mixin:anthropic-thinking:v1:not-json","summary":[]},
+                {"type":"message","role":"user","content":"continue"}
+            ]
+        }),
+        &config(),
+    )
+    .unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("invalid Anthropic thinking payload")
+    );
+}
+
+#[test]
 fn materializes_v2_agent_message_payload_for_custom_upstream() {
     let body = json!({
         "model": "DeepSeek-V4-Flash",

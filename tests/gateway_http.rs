@@ -29,6 +29,8 @@ use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 #[derive(Clone)]
 enum MockMode {
     Text,
+    Thinking,
+    UnsignedThinking,
     Tool,
     ToolThenText,
     FableMcpTool,
@@ -642,6 +644,8 @@ async fn mock_messages(
     let payload = match state.mode {
         MockMode::Text if is_fusion_panel => panel_report_sse(),
         MockMode::Text => text_sse(),
+        MockMode::Thinking => thinking_sse(),
+        MockMode::UnsignedThinking => unsigned_thinking_sse(),
         MockMode::Tool => tool_sse("exec_command", json!({"cmd":"pwd"})),
         MockMode::ToolThenText if has_tool_result => text_sse(),
         MockMode::ToolThenText => text_then_tool_sse("exec_command", json!({"cmd":"pwd"})),
@@ -1151,6 +1155,41 @@ async fn serve_mock_official_websocket(
 
 fn text_sse() -> String {
     text_sse_with_parts(&["hello", " codex"])
+}
+
+fn thinking_sse() -> String {
+    [
+        json!({"type":"message_start","message":{"id":"msg_thinking","type":"message","role":"assistant","content":[],"model":"Claude Sonnet 5","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"checked constraints"}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"signature_delta","signature":"signed-state"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"answer"}}),
+        json!({"type":"content_block_stop","index":1}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":8}}),
+        json!({"type":"message_stop"}),
+    ]
+    .into_iter()
+    .map(|event| format!("event: {}\ndata: {event}\n\n", event["type"].as_str().unwrap()))
+    .collect()
+}
+
+fn unsigned_thinking_sse() -> String {
+    [
+        json!({"type":"message_start","message":{"id":"msg_unsigned_thinking","type":"message","role":"assistant","content":[],"model":"Claude Haiku 4.5","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}),
+        json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),
+        json!({"type":"content_block_delta","index":0,"delta":{"type":"thinking_delta","thinking":"unsigned thought"}}),
+        json!({"type":"content_block_stop","index":0}),
+        json!({"type":"content_block_start","index":1,"content_block":{"type":"text","text":""}}),
+        json!({"type":"content_block_delta","index":1,"delta":{"type":"text_delta","text":"answer"}}),
+        json!({"type":"content_block_stop","index":1}),
+        json!({"type":"message_delta","delta":{"stop_reason":"end_turn"},"usage":{"output_tokens":8}}),
+        json!({"type":"message_stop"}),
+    ]
+    .into_iter()
+    .map(|event| format!("event: {}\ndata: {event}\n\n", event["type"].as_str().unwrap()))
+    .collect()
 }
 
 fn panel_report_sse() -> String {
@@ -1749,6 +1788,90 @@ async fn model_request_smoke_succeeds_end_to_end() {
             .as_str()
             .unwrap()
             .contains("You are Codex")
+    );
+}
+
+#[tokio::test]
+async fn unsigned_thinking_is_a_normal_baidu_fallback() {
+    let (upstream_url, _) = spawn_mock_upstream(MockMode::UnsignedThinking).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let client = reqwest::Client::new();
+    let mut request = responses_request();
+    request["model"] = json!("Claude Sonnet 5-custom");
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("response.reasoning_summary_text.delta"));
+    assert!(!body.contains("codex-mixin:baidu-unsigned-thinking:v1:"));
+    assert!(body.contains("response.completed"));
+    assert!(!body.contains("response.failed"));
+}
+
+#[tokio::test]
+async fn anthropic_signed_thinking_round_trips_across_http_turns() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Thinking).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let client = reqwest::Client::new();
+
+    let first = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model":"Claude Sonnet 5-custom",
+            "stream":true,
+            "input":"first turn"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(first.status(), StatusCode::OK);
+    let mut encoded = first.bytes().await.unwrap().to_vec();
+    let events = drain_events(&mut encoded);
+    let reasoning: Value = serde_json::from_str(
+        &events
+            .iter()
+            .find(|event| {
+                event.event.as_deref() == Some("response.output_item.done")
+                    && event.data.contains("\"type\":\"reasoning\"")
+            })
+            .expect("first turn should return a reasoning item")
+            .data,
+    )
+    .unwrap();
+
+    let second = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model":"Claude Sonnet 5-custom",
+            "stream":true,
+            "input":[
+                reasoning["item"].clone(),
+                {"type":"message","role":"assistant","content":[{"type":"output_text","text":"answer"}]},
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"second turn"}]}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(second.status(), StatusCode::OK);
+    let _ = second.bytes().await.unwrap();
+
+    let recorded = requests.lock().unwrap();
+    assert_eq!(recorded.len(), 2);
+    assert_eq!(
+        recorded[1]["messages"][0]["content"][0],
+        json!({
+            "type":"thinking",
+            "thinking":"checked constraints",
+            "signature":"signed-state"
+        })
     );
 }
 

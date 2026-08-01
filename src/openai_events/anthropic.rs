@@ -1,5 +1,8 @@
-use super::state::{AssistantMessagePhase, MapperState, ToolBlock, ToolBlockKind};
+use super::state::{AssistantMessagePhase, MapperState, ThinkingBlock, ToolBlock, ToolBlockKind};
 use super::*;
+use crate::convert::{
+    encode_anthropic_redacted_thinking, encode_anthropic_thinking, encode_baidu_unsigned_thinking,
+};
 
 pub fn map_anthropic_sse<S>(
     upstream: S,
@@ -23,6 +26,10 @@ where
     S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
 {
     stream! {
+        let replay_model = original_request
+            .get("model")
+            .and_then(Value::as_str)
+            .map(str::to_owned);
         let mut state = MapperState::new(original_request, tool_names);
         let created = state.response_base_initial("in_progress");
         yield Ok(encode_event("response.created", &json!({"type":"response.created","response":created})).unwrap());
@@ -50,7 +57,12 @@ where
                     pending.push(encode_raw_event("response.warning", &json!({"type":"response.warning","warning":"invalid upstream SSE JSON"}).to_string()));
                     continue;
                 };
-                match handle_anthropic_event(&mut state, &data, baidu_oneapi_usage) {
+                match handle_anthropic_event(
+                    &mut state,
+                    &data,
+                    baidu_oneapi_usage,
+                    replay_model.as_deref(),
+                ) {
                     Ok(events) => pending.extend(events),
                     Err(err) => {
                         if let Some(combined) = coalesce_events(&mut pending) {
@@ -127,6 +139,7 @@ fn handle_anthropic_event(
     state: &mut MapperState,
     data: &Value,
     baidu_oneapi_usage: bool,
+    replay_model: Option<&str>,
 ) -> Result<Vec<Bytes>, String> {
     match data.get("type").and_then(Value::as_str) {
         Some("message_start") => {
@@ -147,6 +160,67 @@ fn handle_anthropic_event(
                 .ok_or_else(|| "content_block_start missing index".to_owned())?;
             match data.pointer("/content_block/type").and_then(Value::as_str) {
                 Some("text") => Ok(state.start_text()),
+                Some("thinking") => {
+                    let output_index = state.output.len();
+                    let item_id = format!("rs_{}", Uuid::new_v4().simple());
+                    state.thinking.insert(
+                        index,
+                        ThinkingBlock {
+                            output_index,
+                            item_id: item_id.clone(),
+                            thinking: data
+                                .pointer("/content_block/thinking")
+                                .and_then(Value::as_str)
+                                .unwrap_or_default()
+                                .to_owned(),
+                            signature: data
+                                .pointer("/content_block/signature")
+                                .and_then(Value::as_str)
+                                .map(str::to_owned),
+                        },
+                    );
+                    Ok(vec![
+                        encode_event(
+                            "response.output_item.added",
+                            &json!({"type":"response.output_item.added","output_index":output_index,"item":{"id":item_id,"type":"reasoning","status":"in_progress","summary":[]}}),
+                        )
+                        .unwrap(),
+                        encode_event(
+                            "response.reasoning_summary_part.added",
+                            &json!({"type":"response.reasoning_summary_part.added","item_id":item_id,"output_index":output_index,"summary_index":0,"part":{"type":"summary_text","text":""}}),
+                        )
+                        .unwrap(),
+                    ])
+                }
+                Some("redacted_thinking") => {
+                    let output_index = state.output.len();
+                    let item_id = format!("rs_{}", Uuid::new_v4().simple());
+                    let data = data
+                        .pointer("/content_block/data")
+                        .and_then(Value::as_str)
+                        .ok_or_else(|| "redacted_thinking missing data".to_owned())?;
+                    let encrypted_content = encode_anthropic_redacted_thinking(data);
+                    let item = json!({
+                        "id": item_id,
+                        "type": "reasoning",
+                        "status": "completed",
+                        "summary": [],
+                        "encrypted_content": encrypted_content
+                    });
+                    state.output.push(item.clone());
+                    Ok(vec![
+                        encode_event(
+                            "response.output_item.added",
+                            &json!({"type":"response.output_item.added","output_index":output_index,"item":item}),
+                        )
+                        .unwrap(),
+                        encode_event(
+                            "response.output_item.done",
+                            &json!({"type":"response.output_item.done","output_index":output_index,"item":item}),
+                        )
+                        .unwrap(),
+                    ])
+                }
                 Some("tool_use") => {
                     let id = data
                         .pointer("/content_block/id")
@@ -236,7 +310,36 @@ fn handle_anthropic_event(
                     tool.delta_input_json.push_str(partial);
                     Ok(Vec::new())
                 }
-                Some("thinking_delta" | "signature_delta") => Ok(Vec::new()),
+                Some("thinking_delta") => {
+                    let delta = data
+                        .pointer("/delta/thinking")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let (item_id, output_index) = {
+                        let block = state
+                            .thinking
+                            .get_mut(&index)
+                            .ok_or_else(|| "thinking_delta without thinking block".to_owned())?;
+                        block.thinking.push_str(delta);
+                        (block.item_id.clone(), block.output_index)
+                    };
+                    Ok(vec![encode_event("response.reasoning_summary_text.delta", &json!({"type":"response.reasoning_summary_text.delta","item_id": item_id, "output_index": output_index, "summary_index": 0, "delta": delta})).unwrap()])
+                }
+                Some("signature_delta") => {
+                    let delta = data
+                        .pointer("/delta/signature")
+                        .and_then(Value::as_str)
+                        .unwrap_or_default();
+                    let block = state
+                        .thinking
+                        .get_mut(&index)
+                        .ok_or_else(|| "signature_delta without thinking block".to_owned())?;
+                    block
+                        .signature
+                        .get_or_insert_with(String::new)
+                        .push_str(delta);
+                    Ok(Vec::new())
+                }
                 _ => Ok(Vec::new()),
             }
         }
@@ -248,7 +351,51 @@ fn handle_anthropic_event(
             if state.ignored_web_search_result_indexes.remove(&index) {
                 return Ok(Vec::new());
             }
-            if state
+            if let Some(block) = state.thinking.remove(&index) {
+                let encrypted_content = block
+                    .signature
+                    .as_deref()
+                    .filter(|signature| !signature.is_empty())
+                    .map(|signature| encode_anthropic_thinking(&block.thinking, signature))
+                    .or_else(|| {
+                        replay_model
+                            .filter(|_| baidu_oneapi_usage)
+                            .map(|model| encode_baidu_unsigned_thinking(model, &block.thinking))
+                    });
+                let item = json!({
+                    "id": block.item_id,
+                    "type": "reasoning",
+                    "status": "completed",
+                    "summary": [{"type": "summary_text", "text": block.thinking}],
+                    "encrypted_content": encrypted_content
+                });
+                state.output.push(item.clone());
+                Ok(vec![
+                    encode_event(
+                        "response.reasoning_summary_text.done",
+                        &json!({"type":"response.reasoning_summary_text.done",
+                            "item_id": block.item_id,
+                            "output_index": block.output_index,
+                            "summary_index": 0,
+                            "text": block.thinking
+                        }),
+                    )
+                    .unwrap(),
+                    encode_event(
+                        "response.reasoning_summary_part.done",
+                        &json!({"type":"response.reasoning_summary_part.done","item_id":block.item_id,"output_index":block.output_index,"summary_index":0,"part":{"type":"summary_text","text":block.thinking}}),
+                    )
+                    .unwrap(),
+                    encode_event(
+                        "response.output_item.done",
+                        &json!({"type":"response.output_item.done",
+                            "output_index": block.output_index,
+                            "item": item
+                        }),
+                    )
+                    .unwrap(),
+                ])
+            } else if state
                 .tools
                 .get(&index)
                 .is_some_and(|tool| matches!(&tool.kind, ToolBlockKind::WebSearch))
