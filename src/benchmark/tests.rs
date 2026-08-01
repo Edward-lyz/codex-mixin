@@ -364,7 +364,8 @@ async fn persists_each_result_and_finishes_the_run() {
             BENCHMARK_TARGET_OUTPUT_TOKENS,
         )
         .unwrap();
-    for _ in 0..100 {
+    let deadline = Instant::now() + Duration::from_secs(5);
+    while Instant::now() < deadline {
         let snapshot = manager.snapshot().unwrap().unwrap();
         if snapshot.status == BenchmarkRunStatus::Completed {
             assert_eq!(snapshot.results.len(), 2);
