@@ -12,18 +12,24 @@ func appText(_ simplifiedChinese: String, _ traditionalChinese: String, _ englis
 struct MenuViewsLayoutTests {
     static func main() throws {
         _ = NSApplication.shared
-        let runningToggleView = gatewayToggleMenuView(
+        let runningToggleView = serviceMenuView(
+            title: "本地网关运行中",
+            endpoint: "http://127.0.0.1:8787",
+            statusDetail: nil,
             isRunning: true,
             isBusy: false,
             target: nil,
             action: #selector(NSApplication.terminate(_:))
         )
         let runningToggle = try requireSwitch(in: runningToggleView)
-        precondition(runningToggleView.frame.height == 44)
+        precondition(runningToggleView.frame.height == 56)
         precondition(runningToggle.state == .on)
         precondition(runningToggle.isEnabled)
 
-        let busyToggleView = gatewayToggleMenuView(
+        let busyToggleView = serviceMenuView(
+            title: "本地网关停止中...",
+            endpoint: nil,
+            statusDetail: nil,
             isRunning: false,
             isBusy: true,
             target: nil,
@@ -83,7 +89,9 @@ struct MenuViewsLayoutTests {
             endpoint: "http://127.0.0.1:8787/v1",
             statusDetail: providerIssue,
             isRunning: true,
-            isBusy: false
+            isBusy: false,
+            target: nil,
+            action: #selector(NSApplication.terminate(_:))
         )
         let labels = descendants(of: serviceView, matching: NSTextField.self)
         precondition(labels.contains { $0.stringValue == providerIssue })

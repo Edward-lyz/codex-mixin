@@ -7,7 +7,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var serviceStatusItem: NSMenuItem?
     var quotaStatusItem: NSMenuItem?
-    var gatewayToggleMenuItem: NSMenuItem?
     var launchAtLoginMenuItem: NSMenuItem?
     var providerSettingsWindowController: ProviderSettingsWindowController?
     var modelBenchmarkWindowController: ModelBenchmarkWindowController?
@@ -102,10 +101,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quotaItem)
         updateQuotaStatus(title: "额度：检查中...", detail: nil, progress: nil)
         menu.addItem(.separator())
-        let gatewayToggleItem = NSMenuItem(title: "本地网关", action: nil, keyEquivalent: "")
-        gatewayToggleMenuItem = gatewayToggleItem
-        menu.addItem(gatewayToggleItem)
-        updateGatewayToggleView()
         launchAtLoginMenuItem = actionItem("登录时启动并开启服务", #selector(toggleLaunchAtLogin), "poweron")
         menu.addItem(launchAtLoginMenuItem!)
         menu.addItem(actionItem("刷新状态与额度", #selector(refreshStatus), "arrow.clockwise"))
@@ -170,28 +165,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 endpoint: endpoint,
                 statusDetail: statusDetail,
                 isRunning: running,
-                isBusy: busy
-            )
-        }
-    }
-
-    func updateActionStates() {
-        updateGatewayToggleView()
-        launchAtLoginMenuItem?.state = FileManager.default.fileExists(atPath: launchAgentPath().path) ? .on : .off
-    }
-
-    func updateGatewayToggleView() {
-        guard let gatewayToggleMenuItem else { return }
-        let running = isRunning
-        let busy = serviceBusy
-        menuItemViewUpdater.setView(for: gatewayToggleMenuItem) { [weak self] in
-            gatewayToggleMenuView(
-                isRunning: running,
                 isBusy: busy,
                 target: self,
                 action: #selector(AppDelegate.toggleGateway(_:))
             )
         }
+    }
+
+    func updateActionStates() {
+        updateServiceStatusView()
+        launchAtLoginMenuItem?.state = FileManager.default.fileExists(atPath: launchAgentPath().path) ? .on : .off
     }
 
     @objc func toggleGateway(_ sender: NSSwitch) {
