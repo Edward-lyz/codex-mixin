@@ -466,6 +466,46 @@ async fn preserves_usage_from_anthropic_message_start() {
 }
 
 #[tokio::test]
+async fn updates_usage_from_anthropic_message_delta() {
+    let events = [
+        json!({"type":"message_start","message":{"usage":{"input_tokens":0,"output_tokens":0}}}),
+        json!({
+            "type":"message_delta",
+            "delta":{"stop_reason":"end_turn"},
+            "usage":{"input_tokens":552,"output_tokens":6,"cache_read_input_tokens":3840}
+        }),
+        json!({"type":"message_stop"}),
+    ];
+    let stream = events
+        .into_iter()
+        .map(|event| format!("data: {event}\n\n"))
+        .collect::<String>();
+    let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(stream))]);
+    let body = collect_events(map_anthropic_sse_with_image_routes(
+        upstream,
+        json!({"model":"gpt-5.6-sol"}),
+        ToolNameMap::default(),
+        None,
+        true,
+    ))
+    .await;
+    let mut encoded = body.into_bytes();
+    let completed = drain_events(&mut encoded)
+        .into_iter()
+        .find(|event| event.event.as_deref() == Some("response.completed"))
+        .unwrap();
+    let completed: Value = serde_json::from_str(&completed.data).unwrap();
+
+    assert_eq!(completed["response"]["usage"]["input_tokens"], 4392);
+    assert_eq!(
+        completed["response"]["usage"]["input_tokens_details"]["cached_tokens"],
+        3840
+    );
+    assert_eq!(completed["response"]["usage"]["output_tokens"], 6);
+    assert_eq!(completed["response"]["usage"]["total_tokens"], 4398);
+}
+
+#[tokio::test]
 async fn maps_anthropic_server_web_search_lifecycle() {
     let events = [
         json!({"type":"message_start","message":{"usage":{"input_tokens":10}}}),

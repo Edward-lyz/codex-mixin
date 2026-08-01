@@ -127,6 +127,7 @@ pub(crate) async fn stream_provider_response(
                 downstream_body,
                 converted.tool_names,
                 state.custom_image_routes(provider),
+                provider.definition().preset_id.as_deref() == Some("baidu-oneapi"),
             )
             .boxed()
         }

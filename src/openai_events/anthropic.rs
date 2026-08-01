@@ -9,7 +9,7 @@ pub fn map_anthropic_sse<S>(
 where
     S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
 {
-    map_anthropic_sse_with_image_routes(upstream, original_request, tool_names, None)
+    map_anthropic_sse_with_image_routes(upstream, original_request, tool_names, None, false)
 }
 
 pub(crate) fn map_anthropic_sse_with_image_routes<S>(
@@ -17,6 +17,7 @@ pub(crate) fn map_anthropic_sse_with_image_routes<S>(
     original_request: Value,
     tool_names: ToolNameMap,
     image_routes: Option<ImageRouteRegistry>,
+    baidu_oneapi_usage: bool,
 ) -> impl Stream<Item = Result<Bytes, Infallible>>
 where
     S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
@@ -49,7 +50,7 @@ where
                     pending.push(encode_raw_event("response.warning", &json!({"type":"response.warning","warning":"invalid upstream SSE JSON"}).to_string()));
                     continue;
                 };
-                match handle_anthropic_event(&mut state, &data) {
+                match handle_anthropic_event(&mut state, &data, baidu_oneapi_usage) {
                     Ok(events) => pending.extend(events),
                     Err(err) => {
                         if let Some(combined) = coalesce_events(&mut pending) {
@@ -122,11 +123,19 @@ where
     }
 }
 
-fn handle_anthropic_event(state: &mut MapperState, data: &Value) -> Result<Vec<Bytes>, String> {
+fn handle_anthropic_event(
+    state: &mut MapperState,
+    data: &Value,
+    baidu_oneapi_usage: bool,
+) -> Result<Vec<Bytes>, String> {
     match data.get("type").and_then(Value::as_str) {
         Some("message_start") => {
             if let Some(usage) = data.pointer("/message/usage") {
-                state.usage.input_tokens = usage.get("input_tokens").and_then(Value::as_u64);
+                if baidu_oneapi_usage {
+                    update_anthropic_input_usage(state, usage);
+                } else {
+                    state.usage.input_tokens = usage.get("input_tokens").and_then(Value::as_u64);
+                }
                 state.usage.output_tokens = usage.get("output_tokens").and_then(Value::as_u64);
             }
             Ok(Vec::new())
@@ -254,6 +263,9 @@ fn handle_anthropic_event(state: &mut MapperState, data: &Value) -> Result<Vec<B
                         .to_owned(),
                 );
             }
+            if baidu_oneapi_usage && let Some(usage) = data.get("usage") {
+                update_anthropic_input_usage(state, usage);
+            }
             if let Some(output_tokens) =
                 data.pointer("/usage/output_tokens").and_then(Value::as_u64)
             {
@@ -274,4 +286,22 @@ fn handle_anthropic_event(state: &mut MapperState, data: &Value) -> Result<Vec<B
         ]),
         _ => Ok(Vec::new()),
     }
+}
+
+fn update_anthropic_input_usage(state: &mut MapperState, usage: &Value) {
+    let input_tokens = usage.get("input_tokens").and_then(Value::as_u64);
+    let cache_read_tokens = usage.get("cache_read_input_tokens").and_then(Value::as_u64);
+    let cache_creation_tokens = usage
+        .get("cache_creation_input_tokens")
+        .and_then(Value::as_u64);
+    if input_tokens.is_none() && cache_read_tokens.is_none() && cache_creation_tokens.is_none() {
+        return;
+    }
+
+    state.usage.input_tokens = Some(
+        input_tokens.unwrap_or(0)
+            + cache_read_tokens.unwrap_or(0)
+            + cache_creation_tokens.unwrap_or(0),
+    );
+    state.usage.cached_tokens = cache_read_tokens;
 }

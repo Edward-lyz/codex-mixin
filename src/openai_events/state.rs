@@ -60,6 +60,7 @@ pub(super) struct MapperState {
 #[derive(Clone, Debug, Default)]
 pub(super) struct Usage {
     pub(super) input_tokens: Option<u64>,
+    pub(super) cached_tokens: Option<u64>,
     pub(super) output_tokens: Option<u64>,
 }
 
@@ -110,6 +111,7 @@ impl MapperState {
         let mut response = self.response_base("completed");
         response["usage"] = json!({
             "input_tokens": input_tokens,
+            "input_tokens_details": {"cached_tokens": self.usage.cached_tokens.unwrap_or(0)},
             "output_tokens": output_tokens,
             "output_tokens_details": {"reasoning_tokens": 0},
             "total_tokens": input_tokens + output_tokens
