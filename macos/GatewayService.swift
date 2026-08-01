@@ -42,6 +42,27 @@ extension AppDelegate {
         }
     }
 
+    @objc func stopService() {
+        serviceStatus = "本地网关停止中..."
+        serviceEndpoint = nil
+        serviceBusy = true
+        Task { @MainActor in
+            defer { serviceBusy = false }
+            do {
+                try await bootoutIfLoaded(launchDomainAndLabel())
+                _ = try? await runGateway(["stop"])
+                try await waitForGatewayStopped()
+                isRunning = false
+                providerStatusDetail = nil
+                serviceStatus = "本地网关已停止"
+                updateStatusTitle()
+            } catch {
+                await refreshStatusNow()
+                showAlert(title: "停止服务失败", message: String(describing: error))
+            }
+        }
+    }
+
     @objc func toggleLaunchAtLogin() {
         serviceBusy = true
         Task { @MainActor in

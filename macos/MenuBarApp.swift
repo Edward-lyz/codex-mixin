@@ -7,8 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var serviceStatusItem: NSMenuItem?
     var quotaStatusItem: NSMenuItem?
-    var startMenuItem: NSMenuItem?
-    var restartMenuItem: NSMenuItem?
+    var gatewayToggleMenuItem: NSMenuItem?
     var launchAtLoginMenuItem: NSMenuItem?
     var providerSettingsWindowController: ProviderSettingsWindowController?
     var modelBenchmarkWindowController: ModelBenchmarkWindowController?
@@ -103,10 +102,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(quotaItem)
         updateQuotaStatus(title: "额度：检查中...", detail: nil, progress: nil)
         menu.addItem(.separator())
-        startMenuItem = actionItem("启动本地网关", #selector(startService), "play.circle")
-        restartMenuItem = actionItem("重启本地网关", #selector(restartService), "arrow.clockwise.circle")
-        menu.addItem(startMenuItem!)
-        menu.addItem(restartMenuItem!)
+        let gatewayToggleItem = NSMenuItem(title: "本地网关", action: nil, keyEquivalent: "")
+        gatewayToggleMenuItem = gatewayToggleItem
+        menu.addItem(gatewayToggleItem)
+        updateGatewayToggleView()
         launchAtLoginMenuItem = actionItem("登录时启动并开启服务", #selector(toggleLaunchAtLogin), "poweron")
         menu.addItem(launchAtLoginMenuItem!)
         menu.addItem(actionItem("刷新状态与额度", #selector(refreshStatus), "arrow.clockwise"))
@@ -123,7 +122,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             actionItem("安装到 Claude Code...", #selector(installClaudeCode), "square.and.arrow.down"),
             actionItem("从 Claude Code 恢复...", #selector(uninstallClaudeCode), "arrow.uturn.backward.circle")
         ]))
-        menu.addItem(submenuItem("关于与诊断", symbolName: "info.circle", items: [
+        menu.addItem(submenuItem("关于", symbolName: "info.circle", items: [
             actionItem("关于 Codex Mixin...", #selector(showAbout), "info.circle"),
             actionItem("检查更新...", #selector(checkForUpdatesFromMenu), "arrow.down.circle"),
             actionItem("复制本地接口地址", #selector(copyLocalEndpoint), "link"),
@@ -177,9 +176,31 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
 
     func updateActionStates() {
-        startMenuItem?.isEnabled = !serviceBusy && !isRunning
-        restartMenuItem?.isEnabled = !serviceBusy
+        updateGatewayToggleView()
         launchAtLoginMenuItem?.state = FileManager.default.fileExists(atPath: launchAgentPath().path) ? .on : .off
+    }
+
+    func updateGatewayToggleView() {
+        guard let gatewayToggleMenuItem else { return }
+        let running = isRunning
+        let busy = serviceBusy
+        menuItemViewUpdater.setView(for: gatewayToggleMenuItem) { [weak self] in
+            gatewayToggleMenuView(
+                isRunning: running,
+                isBusy: busy,
+                target: self,
+                action: #selector(AppDelegate.toggleGateway(_:))
+            )
+        }
+    }
+
+    @objc func toggleGateway(_ sender: NSSwitch) {
+        sender.isEnabled = false
+        if sender.state == .on {
+            startService()
+        } else {
+            stopService()
+        }
     }
 
 }

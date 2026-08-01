@@ -2,8 +2,60 @@ import Cocoa
 
 private let menuContentWidth: CGFloat = 336
 private let serviceMenuHeight: CGFloat = 56
+private let gatewayToggleMenuHeight: CGFloat = 44
 private let providerQuotaRowHeight: CGFloat = 54
 private let maximumVisibleProviderRows = 4
+
+func gatewayToggleMenuView(
+    isRunning: Bool,
+    isBusy: Bool,
+    target: AnyObject?,
+    action: Selector
+) -> NSView {
+    let view = NSView(frame: NSRect(x: 0, y: 0, width: menuContentWidth, height: gatewayToggleMenuHeight))
+
+    let icon = NSImageView(image: menuItemImage(isRunning ? "bolt.fill" : "bolt.slash") ?? NSImage())
+    icon.contentTintColor = isRunning ? .systemGreen : .secondaryLabelColor
+    icon.translatesAutoresizingMaskIntoConstraints = false
+
+    let titleLabel = NSTextField(labelWithString: "本地网关")
+    titleLabel.font = .systemFont(ofSize: 13, weight: .medium)
+    titleLabel.translatesAutoresizingMaskIntoConstraints = false
+
+    let stateLabel = NSTextField(labelWithString: isBusy ? "切换中..." : (isRunning ? "已开启" : "已关闭"))
+    stateLabel.font = .systemFont(ofSize: 11)
+    stateLabel.textColor = isRunning ? .systemGreen : .secondaryLabelColor
+    stateLabel.translatesAutoresizingMaskIntoConstraints = false
+
+    let labels = NSStackView(views: [titleLabel, stateLabel])
+    labels.orientation = .vertical
+    labels.alignment = .leading
+    labels.spacing = 1
+    labels.translatesAutoresizingMaskIntoConstraints = false
+
+    let toggle = NSSwitch()
+    toggle.state = isRunning ? .on : .off
+    toggle.isEnabled = !isBusy
+    toggle.target = target
+    toggle.action = action
+    toggle.translatesAutoresizingMaskIntoConstraints = false
+
+    view.addSubview(icon)
+    view.addSubview(labels)
+    view.addSubview(toggle)
+    NSLayoutConstraint.activate([
+        icon.leadingAnchor.constraint(equalTo: view.leadingAnchor, constant: 16),
+        icon.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        icon.widthAnchor.constraint(equalToConstant: 16),
+        icon.heightAnchor.constraint(equalToConstant: 16),
+        labels.leadingAnchor.constraint(equalTo: icon.trailingAnchor, constant: 10),
+        labels.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        labels.trailingAnchor.constraint(lessThanOrEqualTo: toggle.leadingAnchor, constant: -12),
+        toggle.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
+        toggle.centerYAnchor.constraint(equalTo: view.centerYAnchor)
+    ])
+    return view
+}
 
 func serviceMenuView(
     title: String,

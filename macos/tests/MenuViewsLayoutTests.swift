@@ -12,6 +12,27 @@ func appText(_ simplifiedChinese: String, _ traditionalChinese: String, _ englis
 struct MenuViewsLayoutTests {
     static func main() throws {
         _ = NSApplication.shared
+        let runningToggleView = gatewayToggleMenuView(
+            isRunning: true,
+            isBusy: false,
+            target: nil,
+            action: #selector(NSApplication.terminate(_:))
+        )
+        let runningToggle = try requireSwitch(in: runningToggleView)
+        precondition(runningToggleView.frame.height == 44)
+        precondition(runningToggle.state == .on)
+        precondition(runningToggle.isEnabled)
+
+        let busyToggleView = gatewayToggleMenuView(
+            isRunning: false,
+            isBusy: true,
+            target: nil,
+            action: #selector(NSApplication.terminate(_:))
+        )
+        let busyToggle = try requireSwitch(in: busyToggleView)
+        precondition(busyToggle.state == .off)
+        precondition(!busyToggle.isEnabled)
+
         let usages = try parseProviderQuotaUsage(
             """
             [
@@ -68,6 +89,14 @@ struct MenuViewsLayoutTests {
         precondition(labels.contains { $0.stringValue == providerIssue })
         precondition(labels.contains { $0.toolTip == providerIssue })
         print("Provider quota track widths: passed")
+    }
+
+    static func requireSwitch(in view: NSView) throws -> NSSwitch {
+        if let toggle = view as? NSSwitch { return toggle }
+        for subview in view.subviews {
+            if let toggle = try? requireSwitch(in: subview) { return toggle }
+        }
+        throw GatewayError.command("missing gateway toggle")
     }
 }
 
