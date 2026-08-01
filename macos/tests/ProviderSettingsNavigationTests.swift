@@ -163,8 +163,9 @@ struct ProviderSettingsNavigationTests {
         guard let window = controller.window, let sheet = window.attachedSheet else {
             preconditionFailure("The auth bridge reminder must be presented")
         }
+        let configureTitles = ["配置 DUCC", "設定 DUCC", "Configure DUCC"]
         guard let configureDucc = descendantViews(of: NSButton.self, in: sheet.contentView)
-            .first(where: { $0.title == "配置 DUCC" }) else {
+            .first(where: { configureTitles.contains($0.title) }) else {
             preconditionFailure("The reminder must offer DUCC configuration")
         }
 
