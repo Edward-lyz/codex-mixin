@@ -17,6 +17,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private var codexInstallMode: ManagedCodexInstallMode?
     private var isBusy = false
     private var remindedBaiduBridgeProviderIDs = Set<String>()
+    private(set) var baiduBridgeReminderAlert: NSAlert?
 
     private let providerTable = NSTableView()
     private let statusLabel = NSTextField(labelWithString: "正在读取供应商…")
@@ -727,8 +728,10 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         )
         alert.addButton(withTitle: appText("配置 DUCC", "設定 DUCC", "Configure DUCC"))
         alert.addButton(withTitle: appText("保持关闭", "保持關閉", "Keep Disabled"))
+        baiduBridgeReminderAlert = alert
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self else { return }
+            baiduBridgeReminderAlert = nil
             switch response {
             case .alertFirstButtonReturn:
                 configureBaiduBridgeFromReminder(provider, mode: .duccLoopback)
