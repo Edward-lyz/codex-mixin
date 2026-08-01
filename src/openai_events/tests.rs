@@ -563,6 +563,61 @@ async fn maps_anthropic_server_web_search_lifecycle() {
 }
 
 #[tokio::test]
+async fn maps_anthropic_web_search_query_from_start_input_when_delta_is_empty() {
+    let events = [
+        json!({"type":"message_start","message":{"usage":{"input_tokens":10}}}),
+        json!({"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_123","name":"web_search","input":{"query":"weather seattle"}}}),
+        json!({"type":"content_block_delta","index":1,"delta":{"type":"input_json_delta","partial_json":"{}"}}),
+        json!({"type":"content_block_stop","index":1}),
+        json!({"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_123","content":[]}}),
+        json!({"type":"content_block_stop","index":2}),
+        json!({"type":"message_delta","usage":{"output_tokens":8}}),
+        json!({"type":"message_stop"}),
+    ];
+
+    let body = map_anthropic_events(&events).await;
+    assert!(!body.contains("response.failed"), "{body}");
+    let mut encoded = body.as_bytes().to_vec();
+    let events = drain_events(&mut encoded);
+    let done: Value = serde_json::from_str(
+        &events
+            .iter()
+            .find(|event| event.event.as_deref() == Some("response.output_item.done"))
+            .unwrap()
+            .data,
+    )
+    .unwrap();
+    assert_eq!(done["item"]["action"]["query"], "weather seattle");
+}
+
+#[tokio::test]
+async fn maps_anthropic_web_search_query_from_nested_action() {
+    let events = [
+        json!({"type":"message_start","message":{"usage":{"input_tokens":10}}}),
+        json!({"type":"content_block_start","index":1,"content_block":{"type":"server_tool_use","id":"srvtoolu_123","name":"web_search","input":{"action":{"type":"search","query":"weather seattle"}}}}),
+        json!({"type":"content_block_stop","index":1}),
+        json!({"type":"content_block_start","index":2,"content_block":{"type":"web_search_tool_result","tool_use_id":"srvtoolu_123","content":[]}}),
+        json!({"type":"content_block_stop","index":2}),
+        json!({"type":"message_delta","usage":{"output_tokens":8}}),
+        json!({"type":"message_stop"}),
+    ];
+
+    let body = map_anthropic_events(&events).await;
+    assert!(!body.contains("response.failed"), "{body}");
+    let mut encoded = body.as_bytes().to_vec();
+    let events = drain_events(&mut encoded);
+    let done: Value = serde_json::from_str(
+        &events
+            .iter()
+            .find(|event| event.event.as_deref() == Some("response.output_item.done"))
+            .unwrap()
+            .data,
+    )
+    .unwrap();
+    assert_eq!(done["item"]["action"]["query"], "weather seattle");
+}
+
+#[tokio::test]
 async fn rejects_reused_web_search_result_index_after_block_stop() {
     let result = json!({
         "type": "content_block_start",

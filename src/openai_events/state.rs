@@ -240,17 +240,11 @@ impl MapperState {
             block.delta_input_json.trim().to_owned()
         };
         if let ToolBlockKind::WebSearch { output_index } = block.kind {
-            let arguments = serde_json::from_str::<Value>(&arguments).map_err(|err| {
-                format!("web_search call {id} arguments are not valid JSON: {err}")
-            })?;
-            let query = arguments
-                .get("query")
-                .and_then(Value::as_str)
-                .filter(|query| !query.trim().is_empty())
+            let query = web_search_query(&block.delta_input_json)
+                .or_else(|| web_search_query(&block.start_input_json))
                 .ok_or_else(|| {
                     format!("web_search call {id} arguments must contain a non-empty query")
-                })?
-                .to_owned();
+                })?;
             if self
                 .pending_web_searches
                 .insert(
@@ -477,6 +471,17 @@ impl MapperState {
             ))
         }
     }
+}
+
+fn web_search_query(arguments: &str) -> Option<String> {
+    let arguments = serde_json::from_str::<Value>(arguments.trim()).ok()?;
+    arguments
+        .get("query")
+        .or_else(|| arguments.pointer("/action/query"))
+        .and_then(Value::as_str)
+        .map(str::trim)
+        .filter(|query| !query.is_empty())
+        .map(str::to_owned)
 }
 
 fn build_response_metadata(request: &Value) -> Value {
