@@ -4,6 +4,116 @@ private let menuContentWidth: CGFloat = 336
 private let serviceMenuHeight: CGFloat = 56
 private let providerQuotaRowHeight: CGFloat = 54
 private let maximumVisibleProviderRows = 4
+private let gatewayStatusDotIdentifier = NSUserInterfaceItemIdentifier("gateway-status-dot")
+private let gatewayTitleIdentifier = NSUserInterfaceItemIdentifier("gateway-title")
+private let gatewayDetailIdentifier = NSUserInterfaceItemIdentifier("gateway-detail")
+private let gatewaySwitchIdentifier = NSUserInterfaceItemIdentifier("gateway-switch")
+
+final class GatewaySwitchControl: NSControl {
+    var isOn = false { didSet { needsDisplay = true } }
+    var isBusy = false { didSet { needsDisplay = true } }
+
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled, !isBusy else { return }
+        isOn.toggle()
+        needsDisplay = true
+        sendAction(action, to: target)
+    }
+
+    override func draw(_ dirtyRect: NSRect) {
+        super.draw(dirtyRect)
+        let trackRect = bounds.insetBy(dx: 1, dy: 2)
+        let track = NSBezierPath(roundedRect: trackRect, xRadius: 13, yRadius: 13)
+        let onColor = isBusy ? NSColor.systemGreen.withAlphaComponent(0.65) : .systemGreen
+        (isOn ? onColor : NSColor.white.withAlphaComponent(isEnabled ? 0.96 : 0.7)).setFill()
+        track.fill()
+        if !isOn {
+            NSColor.separatorColor.setStroke()
+            track.lineWidth = 1
+            track.stroke()
+        }
+
+        let knobSize: CGFloat = 24
+        let knobX = isOn ? bounds.maxX - knobSize - 4 : bounds.minX + 4
+        let knob = NSBezierPath(ovalIn: NSRect(
+            x: knobX,
+            y: (bounds.height - knobSize) / 2,
+            width: knobSize,
+            height: knobSize
+        ))
+        NSColor.white.setFill()
+        knob.fill()
+        NSColor.black.withAlphaComponent(0.16).setStroke()
+        knob.lineWidth = 0.75
+        knob.stroke()
+    }
+}
+
+private func gatewayStatusColor(title: String, isRunning: Bool, isBusy: Bool) -> NSColor {
+    if title.contains("失败") { return .systemRed }
+    if title.contains("等待配置") || title.contains("降级") || title.contains("无启用") || isBusy {
+        return .systemOrange
+    }
+    return isRunning ? .systemGreen : .systemGray
+}
+
+private func gatewayStatusDetail(
+    title: String,
+    endpoint: String?,
+    statusDetail: String?,
+    isRunning: Bool,
+    isBusy: Bool
+) -> String {
+    if let statusDetail, !statusDetail.isEmpty { return statusDetail }
+    if let endpoint { return endpoint }
+    if title.contains("失败") { return "请查看运行日志" }
+    if title.contains("等待配置") { return "请先设置供应商与 API Key" }
+    if isBusy { return "正在切换本地网关" }
+    return isRunning ? "正在读取本地接口地址" : "网关当前未运行"
+}
+
+func updateServiceMenuView(
+    _ view: NSView,
+    title: String,
+    endpoint: String?,
+    statusDetail: String?,
+    isRunning: Bool,
+    isBusy: Bool
+) -> Bool {
+    guard
+        let statusDot = descendant(in: view, identifier: gatewayStatusDotIdentifier),
+        let titleLabel = descendant(in: view, identifier: gatewayTitleIdentifier) as? NSTextField,
+        let detailLabel = descendant(in: view, identifier: gatewayDetailIdentifier) as? NSTextField,
+        let toggle = descendant(in: view, identifier: gatewaySwitchIdentifier) as? GatewaySwitchControl
+    else { return false }
+
+    let statusColor = gatewayStatusColor(title: title, isRunning: isRunning, isBusy: isBusy)
+    statusDot.layer?.backgroundColor = statusColor.cgColor
+    statusDot.layer?.borderColor = statusColor.withAlphaComponent(0.28).cgColor
+    statusDot.layer?.shadowColor = statusColor.cgColor
+    statusDot.layer?.shadowOpacity = isRunning ? 0.45 : 0
+    titleLabel.stringValue = title
+    detailLabel.stringValue = gatewayStatusDetail(
+        title: title,
+        endpoint: endpoint,
+        statusDetail: statusDetail,
+        isRunning: isRunning,
+        isBusy: isBusy
+    )
+    detailLabel.toolTip = statusDetail
+    toggle.isOn = isRunning
+    toggle.isBusy = isBusy
+    toggle.isEnabled = !isBusy
+    return true
+}
+
+private func descendant(in view: NSView, identifier: NSUserInterfaceItemIdentifier) -> NSView? {
+    if view.identifier == identifier { return view }
+    for subview in view.subviews {
+        if let match = descendant(in: subview, identifier: identifier) { return match }
+    }
+    return nil
+}
 
 func serviceMenuView(
     title: String,
@@ -15,18 +125,7 @@ func serviceMenuView(
     action: Selector
 ) -> NSView {
     let view = NSView(frame: NSRect(x: 0, y: 0, width: menuContentWidth, height: serviceMenuHeight))
-    let statusColor: NSColor
-    if title.contains("失败") {
-        statusColor = .systemRed
-    } else if title.contains("等待配置") || title.contains("降级") || title.contains("无启用") {
-        statusColor = .systemOrange
-    } else if isBusy {
-        statusColor = .systemOrange
-    } else if isRunning {
-        statusColor = .systemGreen
-    } else {
-        statusColor = .systemGray
-    }
+    let statusColor = gatewayStatusColor(title: title, isRunning: isRunning, isBusy: isBusy)
 
     let statusDot = NSView()
     statusDot.wantsLayer = true
@@ -38,13 +137,16 @@ func serviceMenuView(
     statusDot.layer?.shadowOpacity = isRunning ? 0.45 : 0
     statusDot.layer?.shadowRadius = 3
     statusDot.translatesAutoresizingMaskIntoConstraints = false
+    statusDot.identifier = gatewayStatusDotIdentifier
 
-    let toggle = NSSwitch()
-    toggle.state = isRunning ? .on : .off
+    let toggle = GatewaySwitchControl()
+    toggle.isOn = isRunning
+    toggle.isBusy = isBusy
     toggle.isEnabled = !isBusy
     toggle.target = target
     toggle.action = action
     toggle.translatesAutoresizingMaskIntoConstraints = false
+    toggle.identifier = gatewaySwitchIdentifier
 
     let titleLabel = NSTextField(labelWithString: title)
     titleLabel.font = .systemFont(ofSize: 13, weight: .semibold)
@@ -53,23 +155,15 @@ func serviceMenuView(
     titleLabel.maximumNumberOfLines = 1
     titleLabel.cell?.usesSingleLineMode = true
     titleLabel.setContentCompressionResistancePriority(.required, for: .vertical)
+    titleLabel.identifier = gatewayTitleIdentifier
 
-    let detail: String
-    if let statusDetail, !statusDetail.isEmpty {
-        detail = statusDetail
-    } else if let endpoint {
-        detail = endpoint
-    } else if title.contains("失败") {
-        detail = "请查看运行日志"
-    } else if title.contains("等待配置") {
-        detail = "请先设置供应商与 API Key"
-    } else if isBusy {
-        detail = "正在分配本地端口"
-    } else if isRunning {
-        detail = "正在读取本地接口地址"
-    } else {
-        detail = "网关当前未运行"
-    }
+    let detail = gatewayStatusDetail(
+        title: title,
+        endpoint: endpoint,
+        statusDetail: statusDetail,
+        isRunning: isRunning,
+        isBusy: isBusy
+    )
     let detailLabel = NSTextField(labelWithString: detail)
     detailLabel.font = .monospacedSystemFont(ofSize: 11, weight: .regular)
     detailLabel.textColor = .secondaryLabelColor
@@ -78,6 +172,7 @@ func serviceMenuView(
     detailLabel.cell?.usesSingleLineMode = true
     detailLabel.setContentCompressionResistancePriority(.required, for: .vertical)
     detailLabel.toolTip = statusDetail
+    detailLabel.identifier = gatewayDetailIdentifier
 
     let textStack = NSStackView(views: [titleLabel, detailLabel])
     textStack.orientation = .vertical
@@ -101,6 +196,8 @@ func serviceMenuView(
         detailLabel.widthAnchor.constraint(equalTo: textStack.widthAnchor),
         toggle.trailingAnchor.constraint(equalTo: view.trailingAnchor, constant: -16),
         toggle.centerYAnchor.constraint(equalTo: view.centerYAnchor),
+        toggle.widthAnchor.constraint(equalToConstant: 52),
+        toggle.heightAnchor.constraint(equalToConstant: 30),
     ])
     return view
 }

@@ -90,7 +90,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.delegate = menuItemViewUpdater
         let serviceItem = NSMenuItem(title: serviceStatus, action: nil, keyEquivalent: "")
-        serviceItem.isEnabled = false
         let quotaItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         quotaItem.isEnabled = false
         quotaItem.image = menuItemImage("chart.bar")
@@ -159,6 +158,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let statusDetail = serviceStatus.contains("降级") ? providerStatusDetail : nil
         let running = isRunning
         let busy = serviceBusy
+        if let view = serviceStatusItem.view,
+           updateServiceMenuView(
+               view,
+               title: title,
+               endpoint: endpoint,
+               statusDetail: statusDetail,
+               isRunning: running,
+               isBusy: busy
+           ) {
+            return
+        }
         menuItemViewUpdater.setView(for: serviceStatusItem) {
             serviceMenuView(
                 title: title,
@@ -177,9 +187,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         launchAtLoginMenuItem?.state = FileManager.default.fileExists(atPath: launchAgentPath().path) ? .on : .off
     }
 
-    @objc func toggleGateway(_ sender: NSSwitch) {
+    @objc func toggleGateway(_ sender: GatewaySwitchControl) {
         sender.isEnabled = false
-        if sender.state == .on {
+        sender.isBusy = true
+        if sender.isOn {
             startService()
         } else {
             stopService()

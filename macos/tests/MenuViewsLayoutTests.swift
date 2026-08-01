@@ -23,7 +23,7 @@ struct MenuViewsLayoutTests {
         )
         let runningToggle = try requireSwitch(in: runningToggleView)
         precondition(runningToggleView.frame.height == 56)
-        precondition(runningToggle.state == .on)
+        precondition(runningToggle.isOn)
         precondition(runningToggle.isEnabled)
 
         let busyToggleView = serviceMenuView(
@@ -36,8 +36,32 @@ struct MenuViewsLayoutTests {
             action: #selector(NSApplication.terminate(_:))
         )
         let busyToggle = try requireSwitch(in: busyToggleView)
-        precondition(busyToggle.state == .off)
+        precondition(!busyToggle.isOn)
         precondition(!busyToggle.isEnabled)
+
+        precondition(updateServiceMenuView(
+            runningToggleView,
+            title: "本地网关停止中...",
+            endpoint: nil,
+            statusDetail: nil,
+            isRunning: false,
+            isBusy: true
+        ))
+        precondition(!runningToggle.isOn)
+        precondition(runningToggle.isBusy)
+        precondition(!runningToggle.isEnabled)
+
+        precondition(updateServiceMenuView(
+            runningToggleView,
+            title: "本地网关运行中",
+            endpoint: "http://127.0.0.1:8787",
+            statusDetail: nil,
+            isRunning: true,
+            isBusy: false
+        ))
+        precondition(runningToggle.isOn)
+        precondition(!runningToggle.isBusy)
+        precondition(runningToggle.isEnabled)
 
         let usages = try parseProviderQuotaUsage(
             """
@@ -99,8 +123,8 @@ struct MenuViewsLayoutTests {
         print("Provider quota track widths: passed")
     }
 
-    static func requireSwitch(in view: NSView) throws -> NSSwitch {
-        if let toggle = view as? NSSwitch { return toggle }
+    static func requireSwitch(in view: NSView) throws -> GatewaySwitchControl {
+        if let toggle = view as? GatewaySwitchControl { return toggle }
         for subview in view.subviews {
             if let toggle = try? requireSwitch(in: subview) { return toggle }
         }
