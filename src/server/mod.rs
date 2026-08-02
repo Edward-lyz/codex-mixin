@@ -29,7 +29,9 @@ use crate::catalog::{codex_catalog_from_models_with_metadata, load_template_cata
 use crate::config::GatewayConfig;
 use crate::error::GatewayError;
 use crate::fusion::{FusionEngine, should_fuse_turn, validate_fusion_profiles};
-use crate::gateway::{ModelRouter, RequestPlan, ResolvedModelRoute, UpstreamExecutor};
+use crate::gateway::{
+    CacheShapeTracker, ModelRouter, RequestPlan, ResolvedModelRoute, UpstreamExecutor,
+};
 use crate::image_generation::ImageRouteRegistry;
 use crate::model_metadata::ModelMetadataResolver;
 use crate::provider::{

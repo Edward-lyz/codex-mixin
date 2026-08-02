@@ -26,6 +26,47 @@ use tokio_tungstenite::connect_async;
 use tokio_tungstenite::tungstenite::Message as WsMessage;
 use tokio_tungstenite::tungstenite::client::IntoClientRequest;
 
+/// Marker the gateway leaves behind when it drops a tool-result image. Pinned
+/// here on purpose: the text is part of the provider-visible prompt, so changing
+/// it invalidates every cached prefix in flight.
+const TOOL_IMAGE_PLACEHOLDER: &str = "[tool image omitted from replay to preserve prompt cache]";
+
+fn png_data_url(width: u32, height: u32) -> String {
+    use base64::Engine;
+    use image::codecs::png::PngEncoder;
+    use image::{ColorType, ImageBuffer, ImageEncoder, Rgba};
+
+    let pixels = ImageBuffer::from_fn(width, height, |x, y| {
+        Rgba([x as u8, y as u8, (x ^ y) as u8, 255])
+    });
+    let mut bytes = Vec::new();
+    PngEncoder::new(&mut bytes)
+        .write_image(&pixels, width, height, ColorType::Rgba8.into())
+        .unwrap();
+    format!(
+        "data:image/png;base64,{}",
+        base64::engine::general_purpose::STANDARD.encode(bytes)
+    )
+}
+
+fn base64_png_dimensions(data: &str) -> (u32, u32) {
+    use base64::Engine;
+
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(data)
+        .unwrap();
+    image::ImageReader::new(std::io::Cursor::new(decoded))
+        .with_guessed_format()
+        .unwrap()
+        .into_dimensions()
+        .unwrap()
+}
+
+fn data_url_dimensions(image_url: &str) -> (u32, u32) {
+    let (_, data) = image_url.split_once(";base64,").unwrap();
+    base64_png_dimensions(data)
+}
+
 #[derive(Clone)]
 enum MockMode {
     Text,
@@ -1876,12 +1917,12 @@ async fn anthropic_signed_thinking_round_trips_across_http_turns() {
 }
 
 #[tokio::test]
-async fn omits_tool_result_images_before_forwarding_cache_stable_responses() {
+async fn replays_tool_images_as_markers_and_forwards_only_the_fresh_one() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let gateway_url = spawn_gateway(upstream_url).await;
     let client = reqwest::Client::new();
-    let old_image = format!("data:image/png;base64,{}", "AAAA".repeat(300_000));
-    let latest_image = format!("data:image/png;base64,{}", "BBBB".repeat(300_000));
+    let old_image = png_data_url(2000, 1000);
+    let latest_image = png_data_url(2000, 1000);
     let mut request = responses_request();
     request["input"].as_array_mut().unwrap().extend([
         json!({
@@ -1897,6 +1938,11 @@ async fn omits_tool_result_images_before_forwarding_cache_stable_responses() {
                 {"type":"input_text","text":"old screenshot"},
                 {"type":"input_image","image_url":old_image}
             ]
+        }),
+        json!({
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type":"output_text","text":"looked at it"}]
         }),
         json!({
             "type": "function_call",
@@ -1946,24 +1992,163 @@ async fn omits_tool_result_images_before_forwarding_cache_stable_responses() {
         .filter(|block| block["type"] == "tool_result")
         .collect::<Vec<_>>();
     assert_eq!(tool_results.len(), 2);
+    // The replayed result must stay byte-stable across turns, so its image is
+    // gone and replaced by a marker the model can see.
     assert_eq!(
         tool_results[0]["content"],
-        json!([{"type":"text","text":"old screenshot"}])
+        json!([
+            {"type":"text","text":"old screenshot"},
+            {"type":"text","text":TOOL_IMAGE_PLACEHOLDER}
+        ])
     );
+    // The fresh result is new in this request, so inlining it costs no cached
+    // prefix and the model can actually look at the screenshot.
     assert_eq!(
-        tool_results[1]["content"],
-        json!([{"type":"text","text":"latest screenshot"}])
+        tool_results[1]["content"][0],
+        json!({"type":"text","text":"latest screenshot"})
     );
+    let source = &tool_results[1]["content"][1]["source"];
+    assert_eq!(source["type"], "base64");
+    assert_eq!(source["media_type"], "image/png");
     assert!(
-        !upstream_request
-            .to_string()
-            .contains("data:image/png;base64,")
+        base64_png_dimensions(source["data"].as_str().unwrap()) == (1568, 784),
+        "fresh tool image was not downscaled to the vision budget"
     );
     assert!(
         !upstream_request
             .to_string()
             .contains("older tool image omitted")
     );
+}
+
+#[tokio::test]
+async fn replays_tool_images_as_markers_on_the_openai_chat_path() {
+    let (upstream_url, requests) = spawn_mock_openai_chat().await;
+    let mut config = test_config(upstream_url);
+    configure_openai_chat(&mut config, "/chat/completions");
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+    let image = png_data_url(2000, 1000);
+    let mut request = responses_request();
+    request["input"].as_array_mut().unwrap().extend([
+        json!({
+            "type": "function_call",
+            "call_id": "call_old_image",
+            "name": "view_image",
+            "arguments": "{}"
+        }),
+        json!({
+            "type": "function_call_output",
+            "call_id": "call_old_image",
+            "output": [
+                {"type":"input_text","text":"old screenshot"},
+                {"type":"input_image","image_url":image}
+            ]
+        }),
+        json!({
+            "type": "message",
+            "role": "assistant",
+            "content": [{"type":"output_text","text":"looked at it"}]
+        }),
+        json!({
+            "type": "function_call",
+            "call_id": "call_latest_image",
+            "name": "view_image",
+            "arguments": "{}"
+        }),
+        json!({
+            "type": "function_call_output",
+            "call_id": "call_latest_image",
+            "output": [
+                {"type":"input_text","text":"latest screenshot"},
+                {"type":"input_image","image_url":image}
+            ]
+        }),
+    ]);
+
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let _ = response.bytes().await.unwrap();
+
+    let upstream_request = requests.lock().unwrap()[0].clone();
+    let tool_messages = upstream_request["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .filter(|message| message["role"] == "tool")
+        .collect::<Vec<_>>();
+    assert_eq!(tool_messages.len(), 2);
+    let replayed = tool_messages[0]["content"].as_str().unwrap();
+    assert!(
+        replayed.contains("old screenshot"),
+        "tool text was dropped: {replayed}"
+    );
+    assert!(
+        replayed.contains(TOOL_IMAGE_PLACEHOLDER),
+        "omitted image was not marked: {replayed}"
+    );
+    let fresh = tool_messages[1]["content"].as_array().unwrap();
+    assert_eq!(fresh[0], json!({"type":"text","text":"latest screenshot"}));
+    assert_eq!(fresh[1]["type"], "image_url");
+    assert_eq!(
+        data_url_dimensions(fresh[1]["image_url"]["url"].as_str().unwrap()),
+        (1568, 784)
+    );
+}
+
+#[tokio::test]
+async fn keeps_the_provider_prompt_prefix_append_only_across_turns() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let client = reqwest::Client::new();
+    let mut first = responses_request();
+    first["prompt_cache_key"] = json!("prefix-cache-session");
+
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&first)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let _ = response.bytes().await.unwrap();
+
+    let mut second = first.clone();
+    second["input"].as_array_mut().unwrap().extend([
+        json!({"type":"message","role":"assistant","content":[{"type":"output_text","text":"hello openai"}]}),
+        json!({"type":"message","role":"user","content":[{"type":"input_text","text":"and again"}]}),
+    ]);
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&second)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let _ = response.bytes().await.unwrap();
+
+    let recorded = requests.lock().unwrap();
+    assert_eq!(recorded.len(), 2);
+    // The provider only reuses its cache while the earlier prompt is an exact
+    // prefix of the next one: same system and tool preamble, and every earlier
+    // message byte-identical in place.
+    assert_eq!(recorded[0]["system"], recorded[1]["system"]);
+    assert_eq!(recorded[0]["tools"], recorded[1]["tools"]);
+    let earlier = recorded[0]["messages"].as_array().unwrap();
+    let current = recorded[1]["messages"].as_array().unwrap();
+    assert!(
+        current.len() > earlier.len(),
+        "second turn did not append messages: {current:?}"
+    );
+    assert_eq!(&current[..earlier.len()], earlier.as_slice());
 }
 
 #[tokio::test]
@@ -3562,6 +3747,90 @@ async fn rebuilds_custom_history_from_previous_response_id() {
         requests[1]["messages"][2]["content"][0]["text"],
         "second turn"
     );
+}
+
+#[tokio::test]
+async fn websocket_history_replay_only_rewrites_the_previous_tail() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+
+    let mut first = responses_request();
+    first.as_object_mut().unwrap().remove("stream");
+    first["type"] = json!("response.create");
+    first["input"].as_array_mut().unwrap().extend([
+        json!({
+            "type":"function_call",
+            "call_id":"call_image",
+            "name":"view_image",
+            "arguments":"{}"
+        }),
+        json!({
+            "type":"function_call_output",
+            "call_id":"call_image",
+            "output":[
+                {"type":"input_text","text":"screenshot captured"},
+                {"type":"input_image","image_url":png_data_url(16, 16)}
+            ]
+        }),
+    ]);
+    socket
+        .send(WsMessage::Text(first.to_string().into()))
+        .await
+        .unwrap();
+    let completed = websocket_response_frames(&mut socket)
+        .await
+        .iter()
+        .filter_map(|frame| serde_json::from_str::<Value>(frame).ok())
+        .find(|event| event["type"] == "response.completed")
+        .unwrap();
+
+    // Same model, instructions and tools, with only a new user turn appended.
+    let mut second = responses_request();
+    second.as_object_mut().unwrap().remove("stream");
+    second["type"] = json!("response.create");
+    second["previous_response_id"] = completed["response"]["id"].clone();
+    second["input"] = json!([{
+        "type":"message",
+        "role":"user",
+        "content":[{"type":"input_text","text":"second turn"}]
+    }]);
+    socket
+        .send(WsMessage::Text(second.to_string().into()))
+        .await
+        .unwrap();
+    let second_frames = websocket_response_frames(&mut socket).await.join("\n");
+    assert!(second_frames.contains("\"type\":\"response.completed\""));
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["system"], requests[1]["system"]);
+    assert_eq!(requests[0]["tools"], requests[1]["tools"]);
+    let earlier = requests[0]["messages"].as_array().unwrap();
+    let current = requests[1]["messages"].as_array().unwrap();
+    assert!(
+        current.len() > earlier.len(),
+        "second turn did not append messages: {current:?}"
+    );
+    // Everything the provider cached before the previous tail is replayed
+    // byte-for-byte.
+    let stable = earlier.len() - 1;
+    assert_eq!(&current[..stable], &earlier[..stable]);
+    // The one rewritten message is what used to be the tail: the fresh tool
+    // result the model has now seen, replayed as the marker. That is the entire
+    // cost of not carrying screenshot bytes forever.
+    assert_ne!(current[stable], earlier[stable]);
+    assert!(requests[0].to_string().contains("\"type\":\"image\""));
+    assert!(!requests[1].to_string().contains("\"type\":\"image\""));
+    assert!(requests[1].to_string().contains(TOOL_IMAGE_PLACEHOLDER));
+    assert!(!requests[0].to_string().contains(TOOL_IMAGE_PLACEHOLDER));
 }
 
 #[tokio::test]

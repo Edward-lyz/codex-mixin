@@ -39,6 +39,9 @@ pub struct AppState {
     pub(crate) client: Client,
     pub(super) image_routes: ImageRouteRegistry,
     pub(super) benchmarks: ModelBenchmarkManager,
+    /// Per-session provider prompt-prefix shapes, used to report where the
+    /// upstream prefix cache was lost.
+    pub(crate) cache_shapes: Arc<CacheShapeTracker>,
     web_search_capabilities: WebSearchCapabilities,
     catalog_sources_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogSources>>>,
     catalog_response_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogResponse>>>,
@@ -90,6 +93,7 @@ impl AppState {
             client,
             image_routes: ImageRouteRegistry::default(),
             benchmarks: ModelBenchmarkManager::from_default_path(),
+            cache_shapes: Arc::new(CacheShapeTracker::default()),
             web_search_capabilities,
             catalog_sources_cache: Arc::new(tokio::sync::Mutex::new(None)),
             catalog_response_cache: Arc::new(tokio::sync::Mutex::new(None)),

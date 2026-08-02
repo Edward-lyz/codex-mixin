@@ -28,6 +28,14 @@ pub(super) const CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(
 pub(super) const OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 pub(super) const GATEWAY_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
 
+/// Log filter for the gateway. `RUST_LOG` raises it, which is how the
+/// per-request prompt-cache diagnostics (`prefix_state`, `reused_turns`) become
+/// visible: `RUST_LOG=codex_mixin=debug`.
+fn gateway_log_filter() -> tracing_subscriber::EnvFilter {
+    tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+}
+
 pub(super) fn init_tracing(log_file: Option<&Path>) -> anyhow::Result<()> {
     if let Some(log_file) = log_file {
         rotate_gateway_log_if_needed(log_file, GATEWAY_LOG_MAX_BYTES)?;
@@ -42,7 +50,7 @@ pub(super) fn init_tracing(log_file: Option<&Path>) -> anyhow::Result<()> {
         fs::set_permissions(log_file, fs::Permissions::from_mode(0o600))?;
         tracing_subscriber::fmt()
             .with_ansi(false)
-            .with_max_level(tracing::Level::INFO)
+            .with_env_filter(gateway_log_filter())
             .with_target(true)
             .with_file(true)
             .with_line_number(true)
@@ -53,7 +61,7 @@ pub(super) fn init_tracing(log_file: Option<&Path>) -> anyhow::Result<()> {
     } else {
         tracing_subscriber::fmt()
             .with_writer(io::stderr)
-            .with_max_level(tracing::Level::INFO)
+            .with_env_filter(gateway_log_filter())
             .with_target(true)
             .with_file(true)
             .with_line_number(true)
