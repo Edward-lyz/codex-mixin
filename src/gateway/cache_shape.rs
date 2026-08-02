@@ -570,14 +570,9 @@ pub(crate) fn record_provider_prefix(
     })
 }
 
-/// Average bytes per token across the prompt shapes Codex sends. Only used to
-/// turn a byte-level reuse measurement into a token-level expectation that can
-/// be compared against provider usage counters.
-const BYTES_PER_TOKEN_ESTIMATE: usize = 4;
-
-/// A stable prefix below this token estimate is too small for provider caches to
-/// act on, so a miss there says nothing about the request shape.
-const MIN_REUSED_TOKENS_FOR_VERDICT: usize = 8_192;
+/// Prompts below this size are too small for provider caches to act on, so a
+/// miss there says nothing about the request shape.
+const MIN_PROMPT_TOKENS_FOR_VERDICT: u64 = 8_192;
 
 /// What this gateway sent for one request, kept so the provider usage counters
 /// that arrive later can be judged against the prefix we know we preserved.
@@ -597,19 +592,31 @@ pub(crate) struct PrefixObservation {
 impl PrefixObservation {
     /// True when this gateway kept a substantial prefix byte-identical and the
     /// provider still recomputed most of it.
+    ///
+    /// The verdict uses the provider's own token counters rather than a
+    /// byte-to-token estimate: bytes per token swings by more than 3x between
+    /// ASCII code and CJK prose, which is enough to score a 98% cache hit as a
+    /// miss.
     fn discarded_by_provider(&self, usage: &UpstreamCacheUsage) -> bool {
         // A provider that never reports cache counters at all cannot be judged:
         // Baidu OneAPI's Opus route caches but omits the fields, so treating a
         // missing counter as a miss would report every turn as a finding.
-        let Some(cache_read_tokens) = usage.cache_read_tokens else {
+        let (Some(cache_read_tokens), Some(uncached_tokens)) =
+            (usage.cache_read_tokens, usage.input_tokens)
+        else {
             return false;
         };
-        let stable_tokens_estimate = self.stable_prefix_bytes / BYTES_PER_TOKEN_ESTIMATE;
-        if self.state.is_cache_loss() || stable_tokens_estimate < MIN_REUSED_TOKENS_FOR_VERDICT {
+        let prompt_tokens = cache_read_tokens.saturating_add(uncached_tokens);
+        // A cold start has no prefix to reuse, so an uncached prompt is expected.
+        if self.state.is_cache_loss()
+            || self.stable_prefix_bytes == 0
+            || prompt_tokens < MIN_PROMPT_TOKENS_FOR_VERDICT
+        {
             return false;
         }
-        let cache_read_tokens = usize::try_from(cache_read_tokens).unwrap_or(usize::MAX);
-        cache_read_tokens < stable_tokens_estimate / 2
+        // Less than half the prompt served from cache, on a prompt this gateway
+        // replayed byte-identically.
+        cache_read_tokens.saturating_mul(2) < prompt_tokens
     }
 
     /// Logs the provider cache counters next to the prefix this gateway
@@ -617,8 +624,9 @@ impl PrefixObservation {
     /// the only case that warrants a warning, because nothing on this side can
     /// fix it and it otherwise looks like a gateway bug.
     pub(crate) fn report_upstream_cache(&self, usage: &UpstreamCacheUsage) {
-        let stable_tokens_estimate = self.stable_prefix_bytes / BYTES_PER_TOKEN_ESTIMATE;
         let cache_read_tokens = usage.cache_read_tokens.unwrap_or(0);
+        let uncached_input_tokens = usage.input_tokens.unwrap_or(0);
+        let prompt_tokens = cache_read_tokens.saturating_add(uncached_input_tokens);
         if self.discarded_by_provider(usage) {
             tracing::warn!(
                 provider_id = self.provider_id,
@@ -628,9 +636,10 @@ impl PrefixObservation {
                 prefix_state = self.state.as_str(),
                 reused_turns = self.reused_turns,
                 total_turns = self.total_turns,
-                stable_prefix_tokens_estimate = stable_tokens_estimate,
+                stable_prefix_bytes = self.stable_prefix_bytes,
+                prompt_tokens,
                 cache_read_tokens,
-                uncached_input_tokens = usage.input_tokens.unwrap_or(0),
+                uncached_input_tokens,
                 cache_creation_tokens = usage.cache_creation_tokens.unwrap_or(0),
                 "provider recomputed a prompt prefix this gateway kept byte-identical"
             );
@@ -645,9 +654,10 @@ impl PrefixObservation {
             changed_regions = self.changed_regions.as_str(),
             reused_turns = self.reused_turns,
             total_turns = self.total_turns,
-            stable_prefix_tokens_estimate = stable_tokens_estimate,
+            stable_prefix_bytes = self.stable_prefix_bytes,
+            prompt_tokens,
             cache_read_tokens,
-            uncached_input_tokens = usage.input_tokens.unwrap_or(0),
+            uncached_input_tokens,
             cache_creation_tokens = usage.cache_creation_tokens.unwrap_or(0),
             "provider prompt cache usage"
         );
@@ -1245,7 +1255,7 @@ mod tests {
     #[test]
     fn a_provider_that_drops_a_preserved_prefix_is_separated_from_our_own_cache_loss() {
         let usage = UpstreamCacheUsage {
-            input_tokens: Some(240_000),
+            input_tokens: Some(95_744),
             cache_read_tokens: Some(3_456),
             cache_creation_tokens: None,
         };
@@ -1254,8 +1264,8 @@ mod tests {
         assert!(observation(PrefixState::AppendOnly, 960_000).discarded_by_provider(&usage));
         // Our own prefix loss already has its own warning, so this stays quiet.
         assert!(!observation(PrefixState::SystemChanged, 960_000).discarded_by_provider(&usage));
-        // Too little stable prefix for a provider cache to act on.
-        assert!(!observation(PrefixState::AppendOnly, 8_000).discarded_by_provider(&usage));
+        // A cold start had no prefix to reuse in the first place.
+        assert!(!observation(PrefixState::ColdStart, 0).discarded_by_provider(&usage));
         // A provider that omits the counters entirely cannot be judged.
         assert!(
             !observation(PrefixState::AppendOnly, 960_000).discarded_by_provider(
@@ -1266,12 +1276,13 @@ mod tests {
                 }
             )
         );
-        // A real hit is not a finding.
+        // A real hit is not a finding. This shape used to be reported as a miss
+        // because a bytes-per-token estimate inflated the expected prefix.
         assert!(
             !observation(PrefixState::AppendOnly, 960_000).discarded_by_provider(
                 &UpstreamCacheUsage {
-                    input_tokens: Some(1_800),
-                    cache_read_tokens: Some(238_000),
+                    input_tokens: Some(1_391),
+                    cache_read_tokens: Some(92_544),
                     cache_creation_tokens: None,
                 }
             )
@@ -1304,15 +1315,18 @@ mod tests {
 
     #[test]
     fn provider_cache_verdicts_ignore_prefixes_too_small_to_cache() {
-        let usage = UpstreamCacheUsage {
-            input_tokens: Some(240_000),
-            cache_read_tokens: Some(3_456),
+        let prompt_of = |prompt_tokens: u64| UpstreamCacheUsage {
+            input_tokens: Some(prompt_tokens - 16),
+            cache_read_tokens: Some(16),
             cache_creation_tokens: None,
         };
 
-        let boundary = MIN_REUSED_TOKENS_FOR_VERDICT * BYTES_PER_TOKEN_ESTIMATE;
-        assert!(!observation(PrefixState::AppendOnly, boundary - 4).discarded_by_provider(&usage));
-        assert!(observation(PrefixState::AppendOnly, boundary).discarded_by_provider(&usage));
+        let subject = observation(PrefixState::AppendOnly, 960_000);
+        assert!(
+            !subject.discarded_by_provider(&prompt_of(MIN_PROMPT_TOKENS_FOR_VERDICT - 1)),
+            "a prompt below the cacheable floor says nothing about the shape"
+        );
+        assert!(subject.discarded_by_provider(&prompt_of(MIN_PROMPT_TOKENS_FOR_VERDICT)));
     }
 
     #[tokio::test]

@@ -438,13 +438,17 @@ RUST_LOG=codex_mixin=debug codex-mixin serve
 
 ```text
 WARN provider recomputed a prompt prefix this gateway kept byte-identical
-     prefix_state="append_only" stable_prefix_tokens_estimate=61440 cache_read_tokens=3456
+     prefix_state="append_only" prompt_tokens=99200 cache_read_tokens=3456 uncached_input_tokens=95744
 ```
 
 这条区分很重要：`prefix_state` 不是 `append_only` 说明问题在请求形状，可以修；是 `append_only`
 而 `cache_read_tokens` 仍然很低，说明是上游缓存池驱逐或后端实例路由，本地无法修复，只能据此
 和 provider 对话。实测中 Baidu OneAPI 会周期性出现后者，并且忽略 Anthropic 的 `cache_control`
 断点 —— 加与不加，计费和 usage 完全一致。
+
+判定只用 provider 自己返回的 token 计数，不用字节换算：同一份 prompt 里 ASCII 代码和中文正文的
+每 token 字节数能差三倍以上，足以把 98% 的命中误判成未命中。provider 完全不返回缓存计数时
+（Baidu OneAPI 的 Opus 路由就是这样）不做判定，因为无法归因。
 
 图片走同一条契约。工具返回的截图只在模型尚未看过的那一轮内联，并压缩到最长边 1568px；之后
 每一轮都回放为固定占位符。所以截图和视觉工具继续可用，而历史不会永久携带图片字节，代价只是
