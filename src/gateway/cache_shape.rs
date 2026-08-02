@@ -598,12 +598,17 @@ impl PrefixObservation {
     /// True when this gateway kept a substantial prefix byte-identical and the
     /// provider still recomputed most of it.
     fn discarded_by_provider(&self, usage: &UpstreamCacheUsage) -> bool {
+        // A provider that never reports cache counters at all cannot be judged:
+        // Baidu OneAPI's Opus route caches but omits the fields, so treating a
+        // missing counter as a miss would report every turn as a finding.
+        let Some(cache_read_tokens) = usage.cache_read_tokens else {
+            return false;
+        };
         let stable_tokens_estimate = self.stable_prefix_bytes / BYTES_PER_TOKEN_ESTIMATE;
         if self.state.is_cache_loss() || stable_tokens_estimate < MIN_REUSED_TOKENS_FOR_VERDICT {
             return false;
         }
-        let cache_read_tokens =
-            usize::try_from(usage.cache_read_tokens.unwrap_or(0)).unwrap_or(usize::MAX);
+        let cache_read_tokens = usize::try_from(cache_read_tokens).unwrap_or(usize::MAX);
         cache_read_tokens < stable_tokens_estimate / 2
     }
 
@@ -693,10 +698,14 @@ impl UpstreamCacheUsage {
         }
     }
 
+    /// True once the prompt accounting is actually populated. Anthropic sends a
+    /// zeroed `usage` on `message_start` and the real counts on `message_delta`,
+    /// so reporting on the first `usage` seen would score every turn as a miss.
     fn observed(&self) -> bool {
-        self.input_tokens.is_some()
-            || self.cache_read_tokens.is_some()
-            || self.cache_creation_tokens.is_some()
+        [self.input_tokens, self.cache_read_tokens]
+            .into_iter()
+            .flatten()
+            .any(|value| value > 0)
     }
 }
 
@@ -1247,6 +1256,16 @@ mod tests {
         assert!(!observation(PrefixState::SystemChanged, 960_000).discarded_by_provider(&usage));
         // Too little stable prefix for a provider cache to act on.
         assert!(!observation(PrefixState::AppendOnly, 8_000).discarded_by_provider(&usage));
+        // A provider that omits the counters entirely cannot be judged.
+        assert!(
+            !observation(PrefixState::AppendOnly, 960_000).discarded_by_provider(
+                &UpstreamCacheUsage {
+                    input_tokens: Some(99_269),
+                    cache_read_tokens: None,
+                    cache_creation_tokens: None,
+                }
+            )
+        );
         // A real hit is not a finding.
         assert!(
             !observation(PrefixState::AppendOnly, 960_000).discarded_by_provider(
@@ -1322,6 +1341,10 @@ mod tests {
     #[test]
     fn usage_counters_are_absorbed_from_both_message_and_top_level_shapes() {
         let mut usage = UpstreamCacheUsage::default();
+        // Anthropic opens with a zeroed `usage`, which must not count as observed.
+        usage.absorb(&json!({"input_tokens": 0, "output_tokens": 0}));
+        assert!(!usage.observed());
+
         usage.absorb(&json!({"input_tokens": 100, "cache_read_input_tokens": 3456}));
         usage.absorb(&json!({"cache_creation_input_tokens": 7}));
 
