@@ -33,6 +33,11 @@ const TRACKED_SESSIONS: usize = 64;
 /// would report their interleaving as prefix loss.
 const TRACKED_SHAPES_PER_SESSION: usize = 4;
 
+/// History this long, replaced wholesale by a much shorter one, is compaction
+/// rather than prompt drift. Below this the two are indistinguishable from a
+/// short session that simply restarted.
+const MIN_TURNS_FOR_REPLACED_HISTORY: usize = 8;
+
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 
@@ -224,11 +229,22 @@ impl CacheShape {
         } else {
             message_prefix_turns
         };
+        // Compaction swaps the whole transcript for a summary and rewrites the
+        // system prompt on the way, so the region change is a symptom. Naming the
+        // replaced history as the headline keeps the cause readable instead of
+        // reporting it as instructions drifting.
+        let history_replaced = message_prefix_turns == 0
+            && previous.turns.len() >= MIN_TURNS_FOR_REPLACED_HISTORY
+            && self.turns.len().saturating_mul(4) <= previous.turns.len();
         PrefixReport {
-            state: changes
-                .state()
-                .or(turn_state)
-                .unwrap_or(PrefixState::AppendOnly),
+            state: if history_replaced {
+                PrefixState::HistoryTruncated
+            } else {
+                changes
+                    .state()
+                    .or(turn_state)
+                    .unwrap_or(PrefixState::AppendOnly)
+            },
             changes,
             reused_turns,
             reused_bytes: self.turns[..reused_turns]
@@ -877,6 +893,57 @@ mod tests {
             })
             .collect();
         request
+    }
+
+    /// Remote compaction replaces the transcript with a summary and rebuilds the
+    /// system prompt in the same request, so both regions change at once.
+    #[test]
+    fn compaction_is_named_as_replaced_history_rather_than_instruction_drift() {
+        let tracker = CacheShapeTracker::default();
+        tracker.record(
+            "session",
+            CacheShape::from_anthropic(&anthropic_turn(9, 40)),
+        );
+
+        let mut compacted = anthropic_turn(1, 1);
+        compacted.system = Some(vec![ContentBlock::Text {
+            text: "rebuilt system prompt".to_owned(),
+        }]);
+        compacted.messages = vec![Message {
+            role: "user".to_owned(),
+            content: vec![ContentBlock::Text {
+                text: "summary of the 40 earlier turns".to_owned(),
+            }],
+        }];
+        let report = tracker.record("session", CacheShape::from_anthropic(&compacted));
+
+        assert_eq!(report.state, PrefixState::HistoryTruncated);
+        assert_eq!(report.message_prefix_turns, 0);
+        assert_eq!(report.previous_turns, 40);
+        // The region changes are still reported, they are just not the headline.
+        assert!(report.changes.system);
+    }
+
+    /// A short session that restarts is not compaction, so it keeps the region
+    /// change as its headline.
+    #[test]
+    fn a_short_restarted_session_is_not_reported_as_compaction() {
+        let tracker = CacheShapeTracker::default();
+        tracker.record("session", CacheShape::from_anthropic(&anthropic_turn(2, 4)));
+
+        let mut restarted = anthropic_turn(1, 1);
+        restarted.system = Some(vec![ContentBlock::Text {
+            text: "another system prompt".to_owned(),
+        }]);
+        restarted.messages = vec![Message {
+            role: "user".to_owned(),
+            content: vec![ContentBlock::Text {
+                text: "unrelated opening turn".to_owned(),
+            }],
+        }];
+        let report = tracker.record("session", CacheShape::from_anthropic(&restarted));
+
+        assert_eq!(report.state, PrefixState::SystemChanged);
     }
 
     #[test]
