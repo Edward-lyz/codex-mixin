@@ -28,6 +28,8 @@ jobs:
         run: cargo fmt --all -- --check
       - name: Run unit and integration tests
         run: cargo test --locked --all-targets
+      - name: Run prompt cache prefix E2E
+        run: ./scripts/e2e_prompt_cache.sh
       - name: Build static Linux CLI
         if: runner.os == 'Linux'
         run: |
