@@ -1,5 +1,9 @@
 use super::*;
 
+/// Pointer left in a `tool` message once its images are relocated. The text is
+/// part of the provider-visible prompt, so it has to stay byte-stable.
+const RELOCATED_TOOL_IMAGE_NOTE: &str = "[tool images follow in the next user message]";
+
 pub(super) fn append_input_item(
     item: &Value,
     messages: &mut Vec<Value>,
@@ -179,6 +183,69 @@ pub(super) fn append_chat_tool_call(messages: &mut Vec<Value>, tool_call: Value)
         "content":null,
         "tool_calls":[tool_call]
     }));
+}
+
+/// Chat Completions only accepts text in `tool` messages, so images a tool
+/// returned move into a user message placed right after the tool run they belong
+/// to.
+///
+/// The run has to stay contiguous: providers validate that every `tool_calls`
+/// entry on an assistant message is answered by an adjacent `tool` message, and
+/// splitting the run with a user message breaks that pairing.
+pub(super) fn relocate_tool_message_images(messages: &mut Vec<Value>) {
+    let mut index = 0;
+    while index < messages.len() {
+        if message_role(&messages[index]) != Some("tool") {
+            index += 1;
+            continue;
+        }
+        let mut images = Vec::new();
+        while index < messages.len() && message_role(&messages[index]) == Some("tool") {
+            take_tool_message_images(&mut messages[index], &mut images);
+            index += 1;
+        }
+        if images.is_empty() {
+            continue;
+        }
+        messages.insert(index, json!({"role":"user","content":images}));
+        index += 1;
+    }
+}
+
+fn message_role(message: &Value) -> Option<&str> {
+    message.get("role").and_then(Value::as_str)
+}
+
+/// Rewrites one `tool` message to text and appends its images to `images`,
+/// preceded by a stable line naming the call they answer.
+fn take_tool_message_images(message: &mut Value, images: &mut Vec<Value>) {
+    let Some(parts) = message.get("content").and_then(Value::as_array) else {
+        return;
+    };
+    let mut text = Vec::new();
+    let mut extracted = Vec::new();
+    for part in parts {
+        if part.get("type").and_then(Value::as_str) == Some("image_url") {
+            extracted.push(part.clone());
+        } else if let Some(value) = part.get("text").and_then(Value::as_str) {
+            text.push(value.to_owned());
+        }
+    }
+    if extracted.is_empty() {
+        return;
+    }
+    let call_id = message
+        .get("tool_call_id")
+        .and_then(Value::as_str)
+        .unwrap_or("unknown")
+        .to_owned();
+    text.push(RELOCATED_TOOL_IMAGE_NOTE.to_owned());
+    message["content"] = Value::String(text.join("\n"));
+    images.push(json!({
+        "type":"text",
+        "text":format!("Images returned by tool call {call_id}:")
+    }));
+    images.append(&mut extracted);
 }
 
 pub(super) fn convert_content(content: Option<&Value>) -> Result<Value, GatewayError> {

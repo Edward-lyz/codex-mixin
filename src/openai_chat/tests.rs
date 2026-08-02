@@ -1,6 +1,76 @@
 use super::*;
 
 #[test]
+fn keeps_a_parallel_tool_run_contiguous_when_relocating_images() {
+    let converted = responses_to_openai_chat(&json!({
+        "model":"deepseek-chat",
+        "stream":true,
+        "input":[
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"look"}]},
+            {"type":"function_call","call_id":"call_1","name":"view_image","arguments":"{}"},
+            {"type":"function_call","call_id":"call_2","name":"view_image","arguments":"{}"},
+            {"type":"function_call_output","call_id":"call_1","output":[
+                {"type":"input_image","image_url":"data:image/png;base64,AAAA"}
+            ]},
+            {"type":"function_call_output","call_id":"call_2","output":[
+                {"type":"input_text","text":"second shot"},
+                {"type":"input_image","image_url":"data:image/png;base64,BBBB"}
+            ]}
+        ]
+    }))
+    .unwrap();
+
+    let messages = converted.request["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 5);
+    assert_eq!(messages[1]["tool_calls"].as_array().unwrap().len(), 2);
+    assert_eq!(messages[2]["role"], "tool");
+    assert_eq!(messages[3]["role"], "tool");
+    // Both tool results keep text-only content, and one user message carries the
+    // images of the whole run in order.
+    assert_eq!(
+        messages[2]["content"],
+        "[tool images follow in the next user message]"
+    );
+    assert_eq!(
+        messages[3]["content"],
+        "second shot\n[tool images follow in the next user message]"
+    );
+    assert_eq!(messages[4]["role"], "user");
+    let relocated = messages[4]["content"].as_array().unwrap();
+    assert_eq!(relocated.len(), 4);
+    assert_eq!(relocated[0]["text"], "Images returned by tool call call_1:");
+    assert_eq!(
+        relocated[1]["image_url"]["url"],
+        "data:image/png;base64,AAAA"
+    );
+    assert_eq!(relocated[2]["text"], "Images returned by tool call call_2:");
+    assert_eq!(
+        relocated[3]["image_url"]["url"],
+        "data:image/png;base64,BBBB"
+    );
+}
+
+#[test]
+fn leaves_text_only_tool_results_as_plain_strings() {
+    let converted = responses_to_openai_chat(&json!({
+        "model":"deepseek-chat",
+        "stream":true,
+        "input":[
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"look"}]},
+            {"type":"function_call","call_id":"call_1","name":"exec_command","arguments":"{}"},
+            {"type":"function_call_output","call_id":"call_1","output":[
+                {"type":"input_text","text":"exit 0"}
+            ]}
+        ]
+    }))
+    .unwrap();
+
+    let messages = converted.request["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[2]["content"], "exit 0");
+}
+
+#[test]
 fn maps_responses_json_schema_to_chat_response_format() {
     let converted = responses_to_openai_chat(&json!({
         "model":"deepseek-chat",
@@ -323,7 +393,7 @@ fn rejects_messages_without_content() {
 }
 
 #[test]
-fn preserves_multimodal_tool_outputs_for_chat_completions() {
+fn relocates_multimodal_tool_outputs_out_of_tool_messages() {
     let converted = responses_to_openai_chat(&json!({
         "model": "deepseek-chat",
         "stream": true,
@@ -336,10 +406,23 @@ fn preserves_multimodal_tool_outputs_for_chat_completions() {
         ]
     }))
     .unwrap();
+
+    let messages = converted.request["messages"].as_array().unwrap();
+    assert_eq!(messages.len(), 3);
+    // Chat Completions rejects images inside a `tool` message, and the tool
+    // result has to stay adjacent to the call it answers.
+    assert_eq!(messages[0]["tool_calls"][0]["id"], "call_1");
+    assert_eq!(messages[1]["role"], "tool");
+    assert_eq!(messages[1]["tool_call_id"], "call_1");
     assert_eq!(
-        converted.request["messages"][1]["content"],
+        messages[1]["content"],
+        "image loaded\n[tool images follow in the next user message]"
+    );
+    assert_eq!(messages[2]["role"], "user");
+    assert_eq!(
+        messages[2]["content"],
         json!([
-            {"type":"text","text":"image loaded"},
+            {"type":"text","text":"Images returned by tool call call_1:"},
             {"type":"image_url","image_url":{"url":"data:image/png;base64,AAAA"}}
         ])
     );

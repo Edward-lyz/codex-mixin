@@ -1,4 +1,4 @@
-use super::content::append_input_item;
+use super::content::{append_input_item, relocate_tool_message_images};
 use super::tools::convert_tools;
 use super::*;
 
@@ -62,6 +62,7 @@ pub(crate) fn responses_to_openai_chat_streaming_with_model(
             "request has no OpenAI-compatible messages".to_owned(),
         ));
     }
+    relocate_tool_message_images(&mut messages);
     let active_tools = collect_active_tools(body)?;
     let (tools, tool_names) = convert_tools(Some(&active_tools))?;
     let mut request = json!({

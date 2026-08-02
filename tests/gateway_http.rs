@@ -2077,14 +2077,24 @@ async fn replays_tool_images_as_markers_on_the_openai_chat_path() {
     let _ = response.bytes().await.unwrap();
 
     let upstream_request = requests.lock().unwrap()[0].clone();
-    let tool_messages = upstream_request["messages"]
-        .as_array()
-        .unwrap()
+    let messages = upstream_request["messages"].as_array().unwrap();
+    let tool_indexes = messages
         .iter()
-        .filter(|message| message["role"] == "tool")
+        .enumerate()
+        .filter(|(_, message)| message["role"] == "tool")
+        .map(|(index, _)| index)
         .collect::<Vec<_>>();
-    assert_eq!(tool_messages.len(), 2);
-    let replayed = tool_messages[0]["content"].as_str().unwrap();
+    assert_eq!(tool_indexes.len(), 2);
+    // Chat Completions rejects images inside `tool` messages, so every tool
+    // result must be plain text on this path.
+    assert!(
+        tool_indexes
+            .iter()
+            .all(|&index| messages[index]["content"].is_string()),
+        "a tool message still carries structured content: {messages:?}"
+    );
+
+    let replayed = messages[tool_indexes[0]]["content"].as_str().unwrap();
     assert!(
         replayed.contains("old screenshot"),
         "tool text was dropped: {replayed}"
@@ -2093,11 +2103,20 @@ async fn replays_tool_images_as_markers_on_the_openai_chat_path() {
         replayed.contains(TOOL_IMAGE_PLACEHOLDER),
         "omitted image was not marked: {replayed}"
     );
-    let fresh = tool_messages[1]["content"].as_array().unwrap();
-    assert_eq!(fresh[0], json!({"type":"text","text":"latest screenshot"}));
-    assert_eq!(fresh[1]["type"], "image_url");
+
+    let fresh_index = tool_indexes[1];
+    let fresh = messages[fresh_index]["content"].as_str().unwrap();
+    assert!(
+        fresh.contains("latest screenshot"),
+        "fresh tool text was dropped: {fresh}"
+    );
+    // The fresh image is handed over as the user message right after the tool run.
+    let relocated = &messages[fresh_index + 1];
+    assert_eq!(relocated["role"], "user");
+    let parts = relocated["content"].as_array().unwrap();
+    assert_eq!(parts[1]["type"], "image_url");
     assert_eq!(
-        data_url_dimensions(fresh[1]["image_url"]["url"].as_str().unwrap()),
+        data_url_dimensions(parts[1]["image_url"]["url"].as_str().unwrap()),
         (1568, 784)
     );
 }
