@@ -358,9 +358,10 @@ function verifyDiagnostics() {
   );
   // The provider counters have to be judged against the prefix we know we kept,
   // otherwise an upstream cache eviction is indistinguishable from a gateway bug.
+  // Both protocols report them, so every turn on both providers is accounted for.
   check(
     "diagnostics: provider cache counters were matched to the sent prefix",
-    usage.length === 2,
+    usage.length === 4,
     `${usage.length} usage line(s)`,
   );
   const dropped = usage.filter((line) =>

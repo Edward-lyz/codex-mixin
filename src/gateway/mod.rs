@@ -5,7 +5,7 @@ mod plan;
 mod router;
 
 pub(crate) use cache_shape::{
-    CacheShape, CacheShapeTracker, observe_anthropic_cache_usage, record_provider_prefix,
+    CacheShape, CacheShapeTracker, observe_upstream_cache_usage, record_provider_prefix,
 };
 pub(crate) use executor::UpstreamExecutor;
 pub(crate) use plan::{RequestPlan, UpstreamTarget};

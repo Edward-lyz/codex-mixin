@@ -9,8 +9,7 @@ use serde_json::{Value, json};
 use crate::convert::responses_to_anthropic_with_model_reasoning_and_thinking_kind;
 use crate::error::GatewayError;
 use crate::gateway::{
-    CacheShape, RequestPlan, UpstreamExecutor, observe_anthropic_cache_usage,
-    record_provider_prefix,
+    CacheShape, RequestPlan, UpstreamExecutor, observe_upstream_cache_usage, record_provider_prefix,
 };
 use crate::model_reasoning::{anthropic_thinking_kind_with_advertised, prepare_upstream_reasoning};
 use crate::openai_chat::responses_to_openai_chat_streaming_with_model;
@@ -133,7 +132,7 @@ pub(crate) async fn stream_provider_response(
                     routing.map(|routing| routing.hash_key.as_str()),
                 )
                 .await?;
-            let upstream = observe_anthropic_cache_usage(upstream, observation);
+            let upstream = observe_upstream_cache_usage(upstream, observation);
             map_anthropic_sse_with_image_routes(
                 upstream,
                 downstream_body,
@@ -146,7 +145,7 @@ pub(crate) async fn stream_provider_response(
         ProviderProtocol::OpenAiChat => {
             let converted =
                 responses_to_openai_chat_streaming_with_model(body, Some(&upstream_model_id))?;
-            let _ = record_provider_prefix(
+            let observation = record_provider_prefix(
                 &state.cache_shapes,
                 provider.id(),
                 catalog_slug,
@@ -188,7 +187,7 @@ pub(crate) async fn stream_provider_response(
                 )));
             }
             map_openai_chat_sse_with_image_routes(
-                upstream.bytes_stream(),
+                observe_upstream_cache_usage(upstream.bytes_stream(), observation),
                 downstream_body,
                 converted.tool_names,
                 state.custom_image_routes(provider),
@@ -199,7 +198,7 @@ pub(crate) async fn stream_provider_response(
             let mut upstream_body = body.clone();
             upstream_body["model"] = Value::String(upstream_model_id.clone());
             prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
-            let _ = record_provider_prefix(
+            let observation = record_provider_prefix(
                 &state.cache_shapes,
                 provider.id(),
                 catalog_slug,
@@ -240,7 +239,11 @@ pub(crate) async fn stream_provider_response(
                     provider.id()
                 )));
             }
-            map_openai_responses_sse(upstream.bytes_stream(), upstream_model_id, downstream_model)
+            map_openai_responses_sse(
+                observe_upstream_cache_usage(upstream.bytes_stream(), observation),
+                upstream_model_id,
+                downstream_model,
+            )
         }
     };
     Ok(stream)

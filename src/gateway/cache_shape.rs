@@ -649,7 +649,8 @@ impl PrefixObservation {
     }
 }
 
-/// Provider cache counters observed on an Anthropic Messages response.
+/// Provider cache counters observed on a streamed response. Each protocol names
+/// them differently, so they are normalised to uncached input plus cache reads.
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(crate) struct UpstreamCacheUsage {
     pub(crate) input_tokens: Option<u64>,
@@ -659,17 +660,36 @@ pub(crate) struct UpstreamCacheUsage {
 
 impl UpstreamCacheUsage {
     fn absorb(&mut self, usage: &Value) {
-        for (field, slot) in [
-            ("input_tokens", &mut self.input_tokens),
-            ("cache_read_input_tokens", &mut self.cache_read_tokens),
-            (
-                "cache_creation_input_tokens",
-                &mut self.cache_creation_tokens,
-            ),
-        ] {
-            if let Some(value) = usage.get(field).and_then(Value::as_u64) {
-                *slot = Some(value);
-            }
+        // Anthropic Messages reports uncached input directly; DeepSeek and other
+        // Chat Completions upstreams split it into hit and miss counters, and
+        // OpenAI Responses nests the hit inside `input_tokens_details`.
+        let nested_cached = |parent: &str| {
+            usage
+                .get(parent)
+                .and_then(|details| details.get("cached_tokens"))
+                .and_then(Value::as_u64)
+        };
+        let field = |name: &str| usage.get(name).and_then(Value::as_u64);
+        let cache_read = field("cache_read_input_tokens")
+            .or_else(|| field("prompt_cache_hit_tokens"))
+            .or_else(|| nested_cached("prompt_tokens_details"))
+            .or_else(|| nested_cached("input_tokens_details"));
+        if let Some(cache_read) = cache_read {
+            self.cache_read_tokens = Some(cache_read);
+        }
+        // `prompt_tokens` counts the whole prompt including cache reads, so the
+        // uncached part has to be derived to stay comparable across protocols.
+        let input = field("input_tokens")
+            .or_else(|| field("prompt_cache_miss_tokens"))
+            .or_else(|| {
+                field("prompt_tokens")
+                    .map(|prompt| prompt.saturating_sub(self.cache_read_tokens.unwrap_or(0)))
+            });
+        if let Some(input) = input {
+            self.input_tokens = Some(input);
+        }
+        if let Some(created) = field("cache_creation_input_tokens") {
+            self.cache_creation_tokens = Some(created);
         }
     }
 
@@ -680,11 +700,11 @@ impl UpstreamCacheUsage {
     }
 }
 
-/// Passes an Anthropic Messages byte stream through untouched while collecting
-/// the prompt cache counters, then reports them against the recorded prefix.
-/// Reading the counters here keeps the downstream event mappers unaware of
-/// diagnostics, and works for every route that speaks Messages upstream.
-pub(crate) fn observe_anthropic_cache_usage<S>(
+/// Passes an upstream SSE byte stream through untouched while collecting the
+/// prompt cache counters, then reports them against the recorded prefix. Reading
+/// the counters here keeps the downstream event mappers unaware of diagnostics
+/// and works for every protocol this gateway speaks upstream.
+pub(crate) fn observe_upstream_cache_usage<S>(
     upstream: S,
     observation: Option<PrefixObservation>,
 ) -> impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static
@@ -1288,7 +1308,7 @@ mod tests {
         ];
         let upstream = futures_util::stream::iter(events.clone().into_iter().map(Ok));
 
-        let relayed: Vec<Bytes> = observe_anthropic_cache_usage(
+        let relayed: Vec<Bytes> = observe_upstream_cache_usage(
             upstream,
             Some(observation(PrefixState::AppendOnly, 960_000)),
         )
@@ -1309,5 +1329,31 @@ mod tests {
         assert_eq!(usage.cache_read_tokens, Some(3456));
         assert_eq!(usage.cache_creation_tokens, Some(7));
         assert!(usage.observed());
+    }
+
+    /// Chat Completions upstreams report cache hits under their own names, and
+    /// `prompt_tokens` includes them, so the uncached part has to be derived.
+    #[test]
+    fn chat_and_responses_cache_counters_normalise_to_uncached_input() {
+        let mut deepseek = UpstreamCacheUsage::default();
+        deepseek.absorb(
+            &json!({"prompt_tokens": 12_000, "prompt_cache_hit_tokens": 11_500, "prompt_cache_miss_tokens": 500}),
+        );
+        assert_eq!(deepseek.cache_read_tokens, Some(11_500));
+        assert_eq!(deepseek.input_tokens, Some(500));
+
+        let mut chat = UpstreamCacheUsage::default();
+        chat.absorb(
+            &json!({"prompt_tokens": 12_000, "prompt_tokens_details": {"cached_tokens": 9_000}}),
+        );
+        assert_eq!(chat.cache_read_tokens, Some(9_000));
+        assert_eq!(chat.input_tokens, Some(3_000));
+
+        let mut responses = UpstreamCacheUsage::default();
+        responses.absorb(
+            &json!({"input_tokens": 4_000, "input_tokens_details": {"cached_tokens": 3_500}}),
+        );
+        assert_eq!(responses.cache_read_tokens, Some(3_500));
+        assert_eq!(responses.input_tokens, Some(4_000));
     }
 }
