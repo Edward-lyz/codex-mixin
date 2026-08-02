@@ -1,80 +1,95 @@
 <!-- codex-mixin:zh-Hans:start -->
-## v0.3.12
+## v0.3.13
 
-### 极致 prompt 前缀缓存
+### 修复每一轮都丢失 prompt 缓存
 
-- 新增 provider 请求的前缀缓存契约：从真正发往上游的字节推导 system、工具、reasoning 配置与逐条消息的形状，跨轮比对后报告缓存在哪里丢失（`cold_start`、`append_only`、`tail_rewritten`、`system_changed`、`tools_changed`、`config_changed`、`turn_rewritten`、`history_truncated`）。
-- 缓存丢失以 WARN 记录并附带 `reused_turns` 与 `reused_bytes`；每轮完整轨迹用 `RUST_LOG=codex_mixin=debug` 查看，网关日志级别现在可由 `RUST_LOG` 控制，默认仍为 info。
-- 网关日志重定向到文件时不再写入 ANSI 颜色码，只有交互式终端才着色。
-- 工具返回的图片只在模型尚未看过的那一轮内联（压缩到最长边 1568px），之后回放为稳定占位符。截图与视觉工具继续可用，而历史不再永久携带图片字节。
-- 图片被省略时一定留下可见标记，模型不会把残留文本误认为完整的工具结果。
-- 同一 session 下 fusion 各面板与并发子任务的不同 prompt 分别独立跟踪，不会互相误报缓存丢失。
-- 新增端到端回归，在真实网关上逐字校验上游请求，锁定以上行为。
+Codex 每轮都会往历史里追加一条 developer 消息，例如约 4.8 KiB 的 `<workspace_context>`（内含当前 git status 与目录树）；使用 steer 打断时还会额外追加一条 `<turn_aborted>`。此前网关会把历史里**所有** developer 消息抬进 Anthropic 的 `system` 字段，于是这些字节落在整部对话之前，导致每一轮的前缀缓存全部失效。
 
-### 上游兼容性修复
+用一段 785 项的真实会话重放两轮，代价一目了然。修复前：
 
-- OpenAI Chat 兼容 provider 不再收到内嵌在 `tool` 消息里的图片；图片改为紧随该批工具结果之后的一条 user 消息，assistant `tool_calls` 与对应 `tool` 结果保持相邻。
-- 修正 Baidu OneAPI 的 token 用量映射，`cache_read_input_tokens` 与 `cache_creation_input_tokens` 现在正确计入输入 token 与缓存命中数。
-- Anthropic 思考内容跨轮保留（含 signature），thinking 模型的多轮对话不再丢失推理上下文。
-- 修正 Anthropic web search 的查询提取，并跳过空的 web search 调用。
+```
+prefix_state=system_changed  changed_regions=system
+reused_turns=0  message_prefix_turns=521  system_blocks=22 -> 23
+```
 
-### macOS 菜单栏
+修复后：
 
-- 网关启停合并进状态标题里的开关，菜单更紧凑。
-- 打开菜单时刷新开关状态。
-- 支持 Cmd+W 关闭窗口。
+```
+prefix_state=tail_rewritten  changed_regions=""
+reused_turns=520  reused_bytes=1522360  system_blocks=9
+```
+
+- 现在只有请求开头连续的 developer/system 消息算系统提示；后面出现的留在原位映射成 user 消息（Anthropic 没有 developer role）。这也是工作区快照本该出现的位置，而不是把十几份互相矛盾的 git 状态堆在 prompt 顶部。
+- Fusion 同样受益：judge 分析此前以 developer 消息追加，每轮都会改写 final 模型的 system，而那段文本本身就标注为不可信的参考上下文，放在 system 并不合适。
+- 升级后现有会话会经历一次 cache reset，之后稳定命中。
+
+### 缓存诊断
+
+- 比对不再在第一个差异区域短路，改为报告全部变化区域：新增 `changed_regions` 与 `message_prefix_turns`，可区分「消息序列干净、只是 system 漂移」和「历史本身被改写」。
+- `system` 改为逐 block 摘要，日志用 `system_prefix_blocks` / `system_blocks` 直接指出是第几块发生变化。
+- 端到端回归新增「追加 developer 消息」场景，并断言四轮的 `changed_regions` 全为空。
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
-## v0.3.12
+## v0.3.13
 
-### 極致 prompt 前綴快取
+### 修正每一輪都遺失 prompt 快取
 
-- 新增 provider 請求的前綴快取契約：從真正送往上游的位元組推導 system、工具、reasoning 設定與逐條訊息的形狀，跨輪比對後回報快取在哪裡失效（`cold_start`、`append_only`、`tail_rewritten`、`system_changed`、`tools_changed`、`config_changed`、`turn_rewritten`、`history_truncated`）。
-- 快取失效以 WARN 記錄並附上 `reused_turns` 與 `reused_bytes`；每輪完整軌跡用 `RUST_LOG=codex_mixin=debug` 檢視，閘道日誌層級現在可由 `RUST_LOG` 控制，預設仍為 info。
-- 閘道日誌重新導向到檔案時不再寫入 ANSI 顏色碼，只有互動式終端才著色。
-- 工具回傳的圖片只在模型尚未看過的那一輪內嵌（壓縮到最長邊 1568px），之後回放為穩定佔位符。截圖與視覺工具仍然可用，而歷史不再永久攜帶圖片位元組。
-- 圖片被省略時一定留下可見標記，模型不會把殘留文字誤認為完整的工具結果。
-- 同一 session 下 fusion 各面板與並行子任務的不同 prompt 各自獨立追蹤，不會互相誤報快取失效。
-- 新增端到端回歸測試，在真實閘道上逐字驗證上游請求，鎖定以上行為。
+Codex 每輪都會往歷史追加一條 developer 訊息，例如約 4.8 KiB 的 `<workspace_context>`（內含目前 git status 與目錄樹）；使用 steer 打斷時還會額外追加一條 `<turn_aborted>`。此前閘道會把歷史裡**所有** developer 訊息抬進 Anthropic 的 `system` 欄位，於是這些位元組落在整段對話之前，導致每一輪的前綴快取全部失效。
 
-### 上游相容性修正
+用一段 785 項的真實會話重放兩輪，代價一目了然。修正前：
 
-- OpenAI Chat 相容 provider 不再收到內嵌在 `tool` 訊息裡的圖片；圖片改為緊接該批工具結果之後的一條 user 訊息，assistant `tool_calls` 與對應 `tool` 結果保持相鄰。
-- 修正 Baidu OneAPI 的 token 用量對應，`cache_read_input_tokens` 與 `cache_creation_input_tokens` 現在正確計入輸入 token 與快取命中數。
-- Anthropic 思考內容跨輪保留（含 signature），thinking 模型的多輪對話不再遺失推理脈絡。
-- 修正 Anthropic web search 的查詢擷取，並略過空的 web search 呼叫。
+```
+prefix_state=system_changed  changed_regions=system
+reused_turns=0  message_prefix_turns=521  system_blocks=22 -> 23
+```
 
-### macOS 選單列
+修正後：
 
-- 閘道啟停合併進狀態標題裡的開關，選單更精簡。
-- 開啟選單時刷新開關狀態。
-- 支援 Cmd+W 關閉視窗。
+```
+prefix_state=tail_rewritten  changed_regions=""
+reused_turns=520  reused_bytes=1522360  system_blocks=9
+```
+
+- 現在只有請求開頭連續的 developer/system 訊息算系統提示；後面出現的留在原位對應成 user 訊息（Anthropic 沒有 developer role）。這也是工作區快照本該出現的位置，而不是把十幾份互相矛盾的 git 狀態堆在 prompt 頂端。
+- Fusion 同樣受益：judge 分析此前以 developer 訊息追加，每輪都會改寫 final 模型的 system，而那段文字本身就標註為不可信的參考脈絡，放在 system 並不合適。
+- 升級後現有會話會經歷一次 cache reset，之後穩定命中。
+
+### 快取診斷
+
+- 比對不再於第一個差異區域短路，改為回報全部變化區域：新增 `changed_regions` 與 `message_prefix_turns`，可區分「訊息序列乾淨、只是 system 漂移」與「歷史本身被改寫」。
+- `system` 改為逐 block 摘要，日誌用 `system_prefix_blocks` / `system_blocks` 直接指出是第幾塊發生變化。
+- 端到端回歸測試新增「追加 developer 訊息」情境，並斷言四輪的 `changed_regions` 全為空。
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
-## v0.3.12
+## v0.3.13
 
-### Aggressive prompt prefix caching
+### Fixed losing the prompt cache on every turn
 
-- Added a prefix cache contract for provider requests. The cache-relevant shape of the system prompt, tool configuration, reasoning configuration and every message is derived from the bytes actually sent upstream, compared across turns, and reported when a session loses its prefix: `cold_start`, `append_only`, `tail_rewritten`, `system_changed`, `tools_changed`, `config_changed`, `turn_rewritten`, `history_truncated`.
-- Cache loss is logged at WARN with `reused_turns` and `reused_bytes`. The full per-turn trail is available with `RUST_LOG=codex_mixin=debug`; the gateway log level now honours `RUST_LOG` and still defaults to info.
-- A redirected gateway log no longer contains ANSI colour escapes; only an interactive terminal is coloured.
-- A tool image is inlined only on the turn the model has not answered yet, compressed to a 1568 px longest side, and replayed as a stable marker afterwards. Screenshots and vision tools keep working while history stops carrying image bytes forever.
-- An omitted image always leaves a visible marker, so the model cannot read the surrounding text as the complete tool result.
-- Fusion panels and concurrent subagents that share one session id are tracked as separate lineages, so their interleaved prompts no longer look like cache loss.
-- Added an end-to-end regression that checks the upstream request bytes through a real gateway to pin all of the above.
+Codex appends a developer message to the history every turn, such as a 4.8 KiB `<workspace_context>` carrying the current git status and directory tree, plus a `<turn_aborted>` block whenever a turn is steered. The gateway used to lift **every** developer message in the history into the Anthropic `system` field, so those bytes landed ahead of the entire transcript and invalidated the prefix cache on every single turn.
 
-### Upstream compatibility fixes
+Replaying two turns of a real 785-item session shows the cost. Before:
 
-- OpenAI Chat compatible providers no longer receive images inside `tool` messages. Images move into a user message placed right after the tool run, keeping assistant `tool_calls` adjacent to the `tool` results they pair with.
-- Fixed Baidu OneAPI token usage mapping so `cache_read_input_tokens` and `cache_creation_input_tokens` are counted in the input tokens and cached token totals.
-- Anthropic thinking content, including its signature, is preserved across turns, so multi-turn conversations with thinking models keep their reasoning context.
-- Fixed Anthropic web search query extraction and skipped empty web search calls.
+```
+prefix_state=system_changed  changed_regions=system
+reused_turns=0  message_prefix_turns=521  system_blocks=22 -> 23
+```
 
-### macOS menu bar
+After:
 
-- The gateway start and stop actions are merged into a switch in the status header, and the menu is more compact.
-- The switch state refreshes when the menu opens.
-- Cmd+W closes windows.
+```
+prefix_state=tail_rewritten  changed_regions=""
+reused_turns=520  reused_bytes=1522360  system_blocks=9
+```
+
+- Only the leading run of developer or system messages counts as a system prompt now. Later ones stay where they happened, as user turns, because Anthropic has no developer role. That is also the correct position for a workspace snapshot, rather than stacking a dozen contradictory git states at the top of the prompt.
+- Fusion benefits the same way: its judge analysis was appended as a developer message and rewrote the final model's system prompt every turn, even though the text explicitly labels itself untrusted advisory context.
+- Existing sessions take one cache reset on upgrade and hit consistently afterwards.
+
+### Cache diagnostics
+
+- The comparison no longer short-circuits on the first differing region. Reports now carry `changed_regions` and `message_prefix_turns`, which separates "the message sequence is clean and only the system prompt drifted" from "the history itself was rewritten".
+- `system` is digested per block, so `system_prefix_blocks` and `system_blocks` point straight at the block that moved.
+- The end-to-end regression gained an appended-developer-message case and asserts that `changed_regions` is empty on all four turns.
 <!-- codex-mixin:en:end -->
