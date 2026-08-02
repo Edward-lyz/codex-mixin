@@ -23,7 +23,51 @@ async fn spawn_benchmark_server(delay: Duration) -> ProviderRuntime {
     spawn_benchmark_server_for("benchmark-provider", delay).await
 }
 
+/// Highest number of requests a set of mock servers handled at the same time.
+///
+/// Concurrency has to be measured directly. Inferring it from total wall-clock
+/// time is unreliable on a shared CI runner, where timer and scheduling delays
+/// push a genuinely concurrent run past any threshold.
+#[derive(Default)]
+struct ConcurrencyProbe {
+    active: AtomicUsize,
+    peak: AtomicUsize,
+}
+
+impl ConcurrencyProbe {
+    fn peak(&self) -> usize {
+        self.peak.load(Ordering::SeqCst)
+    }
+}
+
+/// Counts one in-flight request for as long as it is alive. A guard is required
+/// because an abandoned response stream would otherwise leave the counter high
+/// and let a sequential run look concurrent.
+struct ProbeGuard(Arc<ConcurrencyProbe>);
+
+impl ProbeGuard {
+    fn new(probe: Arc<ConcurrencyProbe>) -> Self {
+        let active = probe.active.fetch_add(1, Ordering::SeqCst) + 1;
+        probe.peak.fetch_max(active, Ordering::SeqCst);
+        Self(probe)
+    }
+}
+
+impl Drop for ProbeGuard {
+    fn drop(&mut self) {
+        self.0.active.fetch_sub(1, Ordering::SeqCst);
+    }
+}
+
 async fn spawn_benchmark_server_for(id: &str, delay: Duration) -> ProviderRuntime {
+    spawn_benchmark_server_probing(id, delay, Arc::new(ConcurrencyProbe::default())).await
+}
+
+async fn spawn_benchmark_server_probing(
+    id: &str,
+    delay: Duration,
+    probe: Arc<ConcurrencyProbe>,
+) -> ProviderRuntime {
     let quota_calls = Arc::new(AtomicUsize::new(0));
     let quota_counter = Arc::clone(&quota_calls);
     let app = Router::new()
@@ -31,6 +75,7 @@ async fn spawn_benchmark_server_for(id: &str, delay: Duration) -> ProviderRuntim
             "/v1/messages",
             post(move || async move {
                 let stream = async_stream::stream! {
+                    let _in_flight = ProbeGuard::new(probe);
                     yield Ok::<_, Infallible>(Bytes::from(
                         "data: {\"type\":\"message_start\",\"message\":{\"usage\":{\"output_tokens\":0}}}\n\n"
                     ));
@@ -386,11 +431,20 @@ async fn persists_each_result_and_finishes_the_run() {
 
 #[tokio::test]
 async fn runs_different_provider_groups_concurrently() {
-    let first = spawn_benchmark_server_for("first-provider", Duration::from_millis(75)).await;
-    let second = spawn_benchmark_server_for("second-provider", Duration::from_millis(75)).await;
+    // One probe shared by both servers, so its peak is the cross-provider
+    // concurrency this test is about.
+    let probe = Arc::new(ConcurrencyProbe::default());
+    let first = spawn_benchmark_server_probing(
+        "first-provider",
+        Duration::from_millis(75),
+        Arc::clone(&probe),
+    )
+    .await;
+    let second =
+        spawn_benchmark_server_probing("second-provider", Duration::from_millis(75), probe.clone())
+            .await;
     let directory = tempfile::tempdir().unwrap();
     let manager = ModelBenchmarkManager::new(directory.path().join("model-benchmarks.json"));
-    let started = Instant::now();
 
     manager
         .start(
@@ -410,10 +464,10 @@ async fn runs_different_provider_groups_concurrently() {
                     .all(|result| result.status == BenchmarkResultStatus::Completed)
             );
             assert_eq!(snapshot.provider_costs.len(), 2);
-            assert!(
-                started.elapsed() < Duration::from_millis(400),
-                "provider groups ran sequentially: {:?}",
-                started.elapsed()
+            assert_eq!(
+                probe.peak(),
+                2,
+                "provider groups ran sequentially instead of overlapping"
             );
             return;
         }
