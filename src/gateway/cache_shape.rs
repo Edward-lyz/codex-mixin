@@ -98,9 +98,13 @@ impl RegionDigest {
 pub(crate) struct CacheShape {
     protocol: &'static str,
     model: String,
-    /// System prompt carrier: Anthropic `system`, Responses `instructions`, or
-    /// the leading `system` chat message.
-    system: RegionDigest,
+    /// System prompt carrier, one digest per block: Anthropic `system` blocks,
+    /// Responses `instructions`, or the leading `system` chat message.
+    ///
+    /// Kept per block because Codex appends a developer message such as
+    /// `<workspace_context>` every turn. A single digest would only say the
+    /// system prompt moved, not which block moved it.
+    system: Vec<RegionDigest>,
     /// Tool configuration, covering both the definitions and `tool_choice`,
     /// because either one shifts the cached tool preamble.
     tools: RegionDigest,
@@ -115,10 +119,9 @@ impl CacheShape {
         Self {
             protocol: ANTHROPIC_MESSAGES,
             model: request.model.clone(),
-            system: request
-                .system
-                .as_ref()
-                .map_or(RegionDigest::ABSENT, RegionDigest::of),
+            system: request.system.as_ref().map_or_else(Vec::new, |blocks| {
+                blocks.iter().map(RegionDigest::of).collect()
+            }),
             tools: RegionDigest::of(&(&request.tools, &request.tool_choice)),
             config: request
                 .thinking
@@ -136,7 +139,9 @@ impl CacheShape {
             system: messages
                 .and_then(|messages| messages.first())
                 .filter(|message| message.get("role").and_then(Value::as_str) == Some("system"))
-                .map_or(RegionDigest::ABSENT, RegionDigest::of),
+                .map(RegionDigest::of)
+                .into_iter()
+                .collect(),
             tools: RegionDigest::of(&(request.get("tools"), request.get("tool_choice"))),
             config: RegionDigest::ABSENT,
             turns: turn_digests(messages),
@@ -147,7 +152,11 @@ impl CacheShape {
         Self {
             protocol: OPENAI_RESPONSES,
             model: request_model(request),
-            system: RegionDigest::of_optional(request.get("instructions")),
+            system: request
+                .get("instructions")
+                .map(RegionDigest::of)
+                .into_iter()
+                .collect(),
             tools: RegionDigest::of(&(request.get("tools"), request.get("tool_choice"))),
             config: RegionDigest::of_optional(request.get("reasoning")),
             turns: turn_digests(request.get("input").and_then(Value::as_array)),
@@ -160,61 +169,85 @@ impl CacheShape {
         let mut hasher = ShapeHasher::new();
         let _ = write!(
             hasher,
-            "{}|{}|{}|{}|{}",
-            self.protocol, self.model, self.system.hash, self.tools.hash, self.config.hash
+            "{}|{}|{}|{}",
+            self.protocol, self.model, self.tools.hash, self.config.hash
         );
+        for block in &self.system {
+            let _ = write!(hasher, "|s{}", block.hash);
+        }
         for turn in &self.turns {
             let _ = write!(hasher, "|{}", turn.hash);
         }
         hasher.hash
     }
 
+    fn system_hash(&self) -> u64 {
+        let mut hasher = ShapeHasher::new();
+        for block in &self.system {
+            let _ = write!(hasher, "|{}", block.hash);
+        }
+        hasher.hash
+    }
+
+    /// Compares every region instead of returning on the first difference.
+    ///
+    /// A changed system prompt already costs the whole prefix, but stopping
+    /// there also hides an independent problem in the message sequence.
     fn compare(&self, previous: &Self) -> PrefixReport {
-        let report = |state, reused_turns: usize| PrefixReport {
-            state,
+        let changes = PrefixChanges {
+            protocol: previous.protocol != self.protocol,
+            model: previous.model != self.model,
+            system: previous.system != self.system,
+            tools: previous.tools != self.tools,
+            config: previous.config != self.config,
+        };
+        let message_prefix_turns = common_prefix_len(&self.turns, &previous.turns);
+        let turn_state = if message_prefix_turns == previous.turns.len() {
+            None
+        } else if message_prefix_turns == self.turns.len() {
+            Some(PrefixState::HistoryTruncated)
+        } else if message_prefix_turns + 1 == previous.turns.len() {
+            // Converters legitimately merge a freshly appended tool result into
+            // the previous trailing message, so only the final earlier turn
+            // moves. Every turn before it still caches.
+            Some(PrefixState::TailRewritten)
+        } else {
+            Some(PrefixState::TurnRewritten)
+        };
+        // A region change invalidates the prompt from its first token, so no
+        // message prefix survives however clean the message sequence is.
+        let reused_turns = if changes.any() {
+            0
+        } else {
+            message_prefix_turns
+        };
+        PrefixReport {
+            state: changes
+                .state()
+                .or(turn_state)
+                .unwrap_or(PrefixState::AppendOnly),
+            changes,
             reused_turns,
             reused_bytes: self.turns[..reused_turns]
                 .iter()
                 .map(|turn| turn.bytes)
                 .sum(),
+            message_prefix_turns,
             previous_turns: previous.turns.len(),
             total_turns: self.turns.len(),
-        };
-        if previous.protocol != self.protocol {
-            return report(PrefixState::ProtocolChanged, 0);
+            system_prefix_blocks: common_prefix_len(&self.system, &previous.system),
+            previous_system_blocks: previous.system.len(),
+            system_blocks: self.system.len(),
         }
-        if previous.model != self.model {
-            return report(PrefixState::ModelChanged, 0);
-        }
-        if previous.system != self.system {
-            return report(PrefixState::SystemChanged, 0);
-        }
-        if previous.tools != self.tools {
-            return report(PrefixState::ToolsChanged, 0);
-        }
-        if previous.config != self.config {
-            return report(PrefixState::ConfigChanged, 0);
-        }
-        let reused_turns = self
-            .turns
-            .iter()
-            .zip(&previous.turns)
-            .take_while(|(current, earlier)| current == earlier)
-            .count();
-        if reused_turns == previous.turns.len() {
-            return report(PrefixState::AppendOnly, reused_turns);
-        }
-        if reused_turns == self.turns.len() {
-            return report(PrefixState::HistoryTruncated, reused_turns);
-        }
-        // Converters legitimately merge a freshly appended tool result into the
-        // previous trailing message, so only the final earlier turn moves. Every
-        // turn before it still caches.
-        if reused_turns + 1 == previous.turns.len() {
-            return report(PrefixState::TailRewritten, reused_turns);
-        }
-        report(PrefixState::TurnRewritten, reused_turns)
     }
+}
+
+fn common_prefix_len(current: &[RegionDigest], earlier: &[RegionDigest]) -> usize {
+    current
+        .iter()
+        .zip(earlier)
+        .take_while(|(current, earlier)| current == earlier)
+        .count()
 }
 
 fn request_model(request: &Value) -> String {
@@ -235,10 +268,71 @@ fn turn_digests(turns: Option<&Vec<Value>>) -> Vec<RegionDigest> {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PrefixReport {
     pub(crate) state: PrefixState,
+    /// Every region that changed, not only the one that decided `state`.
+    pub(crate) changes: PrefixChanges,
+    /// Turns the provider can actually reuse. Zero whenever a region changed.
     pub(crate) reused_turns: usize,
     pub(crate) reused_bytes: usize,
+    /// Length of the byte-identical message prefix, regardless of regions. This
+    /// separates "the history is clean but the system prompt moved" from "the
+    /// history itself was rewritten".
+    pub(crate) message_prefix_turns: usize,
     pub(crate) previous_turns: usize,
     pub(crate) total_turns: usize,
+    /// Number of leading system blocks that survived byte-identical.
+    pub(crate) system_prefix_blocks: usize,
+    pub(crate) previous_system_blocks: usize,
+    pub(crate) system_blocks: usize,
+}
+
+/// Which cache-relevant regions differ from the previous request.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct PrefixChanges {
+    pub(crate) protocol: bool,
+    pub(crate) model: bool,
+    pub(crate) system: bool,
+    pub(crate) tools: bool,
+    pub(crate) config: bool,
+}
+
+impl PrefixChanges {
+    fn any(self) -> bool {
+        self.protocol || self.model || self.system || self.tools || self.config
+    }
+
+    /// The most fundamental change, used as the headline state.
+    fn state(self) -> Option<PrefixState> {
+        if self.protocol {
+            Some(PrefixState::ProtocolChanged)
+        } else if self.model {
+            Some(PrefixState::ModelChanged)
+        } else if self.system {
+            Some(PrefixState::SystemChanged)
+        } else if self.tools {
+            Some(PrefixState::ToolsChanged)
+        } else if self.config {
+            Some(PrefixState::ConfigChanged)
+        } else {
+            None
+        }
+    }
+
+    /// Comma-separated region names for logging, empty when nothing changed.
+    pub(crate) fn as_list(self) -> String {
+        let mut regions = Vec::new();
+        for (changed, name) in [
+            (self.protocol, "protocol"),
+            (self.model, "model"),
+            (self.system, "system"),
+            (self.tools, "tools"),
+            (self.config, "config"),
+        ] {
+            if changed {
+                regions.push(name);
+            }
+        }
+        regions.join(",")
+    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -326,10 +420,15 @@ impl CacheShapeTracker {
             .max_by_key(|report| (report.reused_turns, !report.state.is_cache_loss()))
             .unwrap_or(PrefixReport {
                 state: PrefixState::ColdStart,
+                changes: PrefixChanges::default(),
                 reused_turns: 0,
                 reused_bytes: 0,
+                message_prefix_turns: 0,
                 previous_turns: 0,
                 total_turns: shape.turns.len(),
+                system_prefix_blocks: 0,
+                previous_system_blocks: 0,
+                system_blocks: shape.system.len(),
             });
         tracked.shapes.retain(|earlier| earlier != &shape);
         tracked.shapes.push(shape);
@@ -379,9 +478,10 @@ pub(crate) fn record_provider_prefix(
     );
     let protocol = shape.protocol;
     let shape_hash = shape.shape_hash();
-    let system_hash = shape.system.hash;
+    let system_hash = shape.system_hash();
     let tools_hash = shape.tools.hash;
     let report = tracker.record(&session_key, shape);
+    let changed_regions = report.changes.as_list();
     if report.state.is_cache_loss() {
         tracing::warn!(
             provider_id,
@@ -389,10 +489,15 @@ pub(crate) fn record_provider_prefix(
             upstream_model_id,
             protocol,
             prefix_state = report.state.as_str(),
+            changed_regions = changed_regions.as_str(),
             reused_turns = report.reused_turns,
             reused_bytes = report.reused_bytes,
+            message_prefix_turns = report.message_prefix_turns,
             previous_turns = report.previous_turns,
             total_turns = report.total_turns,
+            system_prefix_blocks = report.system_prefix_blocks,
+            previous_system_blocks = report.previous_system_blocks,
+            system_blocks = report.system_blocks,
             shape_hash,
             system_hash,
             tools_hash,
@@ -405,10 +510,15 @@ pub(crate) fn record_provider_prefix(
             upstream_model_id,
             protocol,
             prefix_state = report.state.as_str(),
+            changed_regions = changed_regions.as_str(),
             reused_turns = report.reused_turns,
             reused_bytes = report.reused_bytes,
+            message_prefix_turns = report.message_prefix_turns,
             previous_turns = report.previous_turns,
             total_turns = report.total_turns,
+            system_prefix_blocks = report.system_prefix_blocks,
+            previous_system_blocks = report.previous_system_blocks,
+            system_blocks = report.system_blocks,
             shape_hash,
             system_hash,
             tools_hash,
@@ -484,9 +594,11 @@ mod tests {
         let shape = CacheShape::from_anthropic(&request);
         assert_eq!(shape.protocol, ANTHROPIC_MESSAGES);
         assert_eq!(shape.turns.len(), 1);
+        // One digest per system block, so a newly appended developer block is
+        // visible as a suffix instead of a whole-region change.
         assert_eq!(
             shape.system,
-            RegionDigest::of(request.system.as_ref().unwrap())
+            vec![RegionDigest::of(&request.system.as_ref().unwrap()[0])]
         );
         assert_eq!(shape.config, RegionDigest::ABSENT);
     }
@@ -506,6 +618,88 @@ mod tests {
         thinking.thinking = Some(json!({"type":"enabled","budget_tokens":1024}));
         let report = tracker.record("session", CacheShape::from_anthropic(&thinking));
         assert_eq!(report.state, PrefixState::ConfigChanged);
+    }
+
+    /// Codex appends a developer message such as `<workspace_context>` every
+    /// turn. The Anthropic converter lifts those into `system`, so the messages
+    /// stay append-only while the system prompt grows.
+    fn anthropic_turn(system_blocks: usize, messages: usize) -> MessageRequest {
+        let mut request = anthropic_request();
+        request.system = Some(
+            (0..system_blocks)
+                .map(|index| ContentBlock::Text {
+                    text: format!("system block {index}"),
+                })
+                .collect(),
+        );
+        request.messages = (0..messages)
+            .map(|index| Message {
+                role: if index % 2 == 0 { "user" } else { "assistant" }.to_owned(),
+                content: vec![ContentBlock::Text {
+                    text: format!("turn {index}"),
+                }],
+            })
+            .collect();
+        request
+    }
+
+    #[test]
+    fn a_growing_system_prompt_does_not_hide_a_clean_message_history() {
+        let tracker = CacheShapeTracker::default();
+        tracker.record("session", CacheShape::from_anthropic(&anthropic_turn(4, 6)));
+
+        // One more system block and two more messages: exactly what a normal
+        // Codex turn looks like today.
+        let report = tracker.record("session", CacheShape::from_anthropic(&anthropic_turn(5, 8)));
+
+        assert_eq!(report.state, PrefixState::SystemChanged);
+        assert!(report.changes.system);
+        assert!(!report.changes.tools && !report.changes.config && !report.changes.model);
+        assert_eq!(report.changes.as_list(), "system");
+        // The provider reuses nothing, because the prompt changed at its start.
+        assert_eq!(report.reused_turns, 0);
+        assert_eq!(report.reused_bytes, 0);
+        // The messages themselves were a clean extension, which is what tells us
+        // the system prompt is the culprit rather than the history.
+        assert_eq!(report.message_prefix_turns, 6);
+        assert_eq!(report.previous_turns, 6);
+        assert_eq!(report.total_turns, 8);
+        // The first four blocks survived; block five is the new one.
+        assert_eq!(report.system_prefix_blocks, 4);
+        assert_eq!(report.previous_system_blocks, 4);
+        assert_eq!(report.system_blocks, 5);
+    }
+
+    #[test]
+    fn a_changed_system_prompt_still_reports_a_rewritten_history() {
+        let tracker = CacheShapeTracker::default();
+        tracker.record("session", CacheShape::from_anthropic(&anthropic_turn(4, 6)));
+
+        let mut rewritten = anthropic_turn(5, 8);
+        rewritten.messages[1].content = vec![ContentBlock::Text {
+            text: "rewritten history".to_owned(),
+        }];
+        let report = tracker.record("session", CacheShape::from_anthropic(&rewritten));
+
+        // Two independent problems: the headline is the system prompt, but the
+        // message prefix shows the history was also rewritten at index 1.
+        assert_eq!(report.state, PrefixState::SystemChanged);
+        assert!(report.changes.system);
+        assert_eq!(report.message_prefix_turns, 1);
+    }
+
+    #[test]
+    fn a_stable_system_prompt_with_appended_turns_keeps_the_prefix() {
+        let tracker = CacheShapeTracker::default();
+        tracker.record("session", CacheShape::from_anthropic(&anthropic_turn(4, 6)));
+
+        let report = tracker.record("session", CacheShape::from_anthropic(&anthropic_turn(4, 8)));
+
+        assert_eq!(report.state, PrefixState::AppendOnly);
+        assert_eq!(report.changes.as_list(), "");
+        assert_eq!(report.reused_turns, 6);
+        assert_eq!(report.message_prefix_turns, 6);
+        assert_eq!(report.system_prefix_blocks, 4);
     }
 
     #[test]

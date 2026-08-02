@@ -113,6 +113,19 @@ function build() {
       role: "assistant",
       content: [{ type: "output_text", text: "alpha" }],
     },
+    // Codex appends one of these every turn. It must stay in the transcript:
+    // lifting it into the system prompt would prepend bytes ahead of the whole
+    // history and drop the prefix cache on every turn.
+    {
+      type: "message",
+      role: "developer",
+      content: [
+        {
+          type: "input_text",
+          text: "<workspace_context>git status: dirty</workspace_context>",
+        },
+      ],
+    },
     {
       type: "message",
       role: "user",
@@ -213,6 +226,17 @@ function verifyAnthropic() {
     "anthropic: system prompt byte-identical",
     JSON.stringify(first.system) === JSON.stringify(second.system),
   );
+  // A developer message that Codex appends mid-history must not be lifted into
+  // the system prompt, and must still reach the model.
+  check(
+    "anthropic: appended developer message stays out of the system prompt",
+    !JSON.stringify(second.system).includes("workspace_context"),
+    JSON.stringify(second.system).slice(0, 200),
+  );
+  check(
+    "anthropic: appended developer message stays in the transcript",
+    JSON.stringify(second.messages).includes("workspace_context"),
+  );
   check(
     "anthropic: tool preamble byte-identical",
     JSON.stringify(first.tools) === JSON.stringify(second.tools),
@@ -296,6 +320,7 @@ function verifyDiagnostics() {
     .replace(/\u001b\[[0-9;]*m/g, "");
   const states = [...log.matchAll(/prefix_state="(\w+)"/g)].map((match) => match[1]);
   const reused = [...log.matchAll(/reused_turns=(\d+)/g)].map((match) => Number(match[1]));
+  const changed = [...log.matchAll(/changed_regions="([^"]*)"/g)].map((match) => match[1]);
   check("diagnostics: a prefix state per turn", states.length === 4, states.join(","));
   check(
     "diagnostics: both sessions started cold",
@@ -307,6 +332,13 @@ function verifyDiagnostics() {
   check("diagnostics: anthropic reported a tail rewrite", states.includes("tail_rewritten"), states.join(","));
   check("diagnostics: chat reported the extra rewritten turn", states.includes("turn_rewritten"), states.join(","));
   check("diagnostics: prefix reuse was measured", reused.some((value) => value > 0), reused.join(","));
+  // Nothing outside the message list may drift between turns. This is the check
+  // that catches a system prompt growing every turn.
+  check(
+    "diagnostics: no cache region drifted between turns",
+    changed.length === 4 && changed.every((regions) => regions === ""),
+    changed.map((regions) => regions || "-").join(" | "),
+  );
   if (states.length !== 4) {
     console.log(`\ngateway.log tail:\n${log.trimEnd().split("\n").slice(-15).join("\n")}`);
   }

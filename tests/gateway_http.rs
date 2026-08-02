@@ -2353,12 +2353,30 @@ async fn fusion_runs_only_in_plan_mode_then_routes_execution_to_final() {
         .iter()
         .find(|request| request["model"] == "final")
         .unwrap();
+    // The advisory analysis is generated fresh every turn and is explicitly
+    // labelled untrusted, so it belongs at the tail of the transcript rather than
+    // in the system prompt. Putting it in `system` would also rewrite the cached
+    // prefix of the final model on every single turn.
     assert!(
-        final_request["system"]
+        !final_request["system"]
             .to_string()
-            .contains("JUDGE_ANALYSIS")
+            .contains("JUDGE_ANALYSIS"),
+        "advisory analysis must stay out of the system prompt"
     );
-    assert!(final_request["system"].to_string().contains("hello codex"));
+    let last_message = final_request["messages"]
+        .as_array()
+        .unwrap()
+        .last()
+        .unwrap();
+    assert_eq!(last_message["role"], "user");
+    assert!(
+        last_message.to_string().contains("JUDGE_ANALYSIS"),
+        "advisory analysis must reach the final model: {last_message}"
+    );
+    assert!(
+        last_message.to_string().contains("hello codex"),
+        "panel summaries must reach the final model: {last_message}"
+    );
     for panel_request in first_turn_requests
         .iter()
         .filter(|request| request["model"].as_str().unwrap().starts_with("panel-"))

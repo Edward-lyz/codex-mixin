@@ -23,7 +23,22 @@ pub(super) fn append_input_item(
                 .ok_or_else(|| GatewayError::BadRequest("message item missing role".to_owned()))?;
             let content = convert_content(item.get("content"), role)?;
             match role {
-                "developer" | "system" => system.extend(content),
+                // Only the leading run of developer messages is a system prompt.
+                // Codex appends one later in the history every turn, such as
+                // `<workspace_context>`, and lifting those into `system` would
+                // prepend new bytes ahead of the whole transcript and drop the
+                // provider's prefix cache on every single turn. They also belong
+                // at the point in time they describe, not at the top.
+                "developer" | "system" => {
+                    if messages.is_empty() {
+                        system.extend(content);
+                    } else {
+                        messages.push(Message {
+                            role: "user".to_owned(),
+                            content,
+                        });
+                    }
+                }
                 "user" | "assistant" => messages.push(Message {
                     role: role.to_owned(),
                     content,

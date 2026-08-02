@@ -53,8 +53,59 @@ fn maps_responses_json_schema_to_anthropic_output_config() {
     );
 }
 
+/// Codex appends a developer message such as `<workspace_context>` on every
+/// turn. Lifting those into `system` would prepend new bytes ahead of the whole
+/// transcript and drop the provider's prefix cache each turn, so only the
+/// leading run of developer messages is treated as a system prompt.
+#[test]
+fn keeps_later_developer_messages_in_the_transcript() {
+    let body = json!({
+        "model": "DeepSeek-V4-Flash",
+        "stream": true,
+        "instructions": "base",
+        "input": [
+            {"type":"message","role":"developer","content":[{"type":"input_text","text":"session rules"}]},
+            {"type":"message","role":"developer","content":[{"type":"input_text","text":"more rules"}]},
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"do it"}]},
+            {"type":"message","role":"assistant","content":[{"type":"output_text","text":"done"}]},
+            {"type":"message","role":"developer","content":[{"type":"input_text","text":"<workspace_context>turn 2</workspace_context>"}]},
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"again"}]}
+        ]
+    });
+
+    let converted = responses_to_anthropic(&body, &config()).unwrap();
+
+    // instructions plus the two leading developer messages, and nothing else.
+    let system = converted.request.system.as_ref().unwrap();
+    assert_eq!(system.len(), 3);
+    assert!(!format!("{system:?}").contains("workspace_context"));
+
+    // The mid-history developer message stays where it happened, as a user turn,
+    // because Anthropic has no developer role.
+    let messages = &converted.request.messages;
+    assert_eq!(messages.len(), 3);
+    assert_eq!(messages[0].role, "user");
+    assert_eq!(messages[1].role, "assistant");
+    assert_eq!(messages[2].role, "user");
+    assert_eq!(
+        messages[2].content[0],
+        ContentBlock::Text {
+            text: "<workspace_context>turn 2</workspace_context>".to_owned()
+        }
+    );
+    assert_eq!(
+        messages[2].content[1],
+        ContentBlock::Text {
+            text: "again".to_owned()
+        }
+    );
+}
+
 #[test]
 fn converts_codex_tool_loop_input() {
+    // The leading developer message is a session rule and belongs in `system`;
+    // see `keeps_later_developer_messages_in_the_transcript` for the ones Codex
+    // appends mid-history.
     let body = json!({
         "model": "DeepSeek-V4-Flash",
         "stream": true,
