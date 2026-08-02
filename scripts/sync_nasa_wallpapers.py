@@ -1,8 +1,11 @@
 #!/usr/bin/env python3
-"""Download the current month's NASA ISS desktop wallpapers.
+"""Download the latest available NASA ISS desktop wallpapers.
 
 The script intentionally uses only Python's standard library so release jobs
 can refresh the bundled card artwork without adding a package dependency.
+
+NASA publishes a month's wallpapers partway through that month, so the sync
+falls back to recent months instead of failing a release that runs on the 1st.
 """
 
 from __future__ import annotations
@@ -17,6 +20,7 @@ import os
 from pathlib import Path
 import re
 import struct
+import sys
 import tempfile
 import unicodedata
 import urllib.parse
@@ -28,6 +32,9 @@ DEFAULT_PAGE_URL = (
     "desktop-and-mobile-wallpapers/"
 )
 USER_AGENT = "codex-mixin-wallpaper-sync/1.0 (+https://github.com/Edward-lyz/codex-mixin)"
+
+# How many earlier months to accept when the requested month is not published.
+MONTH_FALLBACK = 3
 
 
 class WallpaperPageParser(html.parser.HTMLParser):
@@ -149,20 +156,48 @@ def atomic_write(path: Path, data: bytes) -> None:
         raise
 
 
-def main() -> None:
-    args = parse_args()
-    month_name = calendar.month_name[args.month]
-    parser = WallpaperPageParser(month_name)
-    parser.feed(fetch(args.page_url).decode("utf-8"))
+def shift_month(year: int, month: int, delta: int) -> tuple[int, int]:
+    index = year * 12 + (month - 1) + delta
+    return index // 12, index % 12 + 1
 
+
+def collect_month_images(page_html: str, month_name: str) -> list[dict[str, str]]:
+    """Deduplicated Desktop / Image Only links for one month section."""
+    parser = WallpaperPageParser(month_name)
+    parser.feed(page_html)
     unique_images: list[dict[str, str]] = []
     seen_urls: set[str] = set()
     for image in parser.images:
         if image["url"] not in seen_urls:
             unique_images.append(image)
             seen_urls.add(image["url"])
+    return unique_images
+
+
+def main() -> None:
+    args = parse_args()
+    page_html = fetch(args.page_url).decode("utf-8")
+    requested_name = calendar.month_name[args.month]
+    unique_images: list[dict[str, str]] = []
+    issue_year, issue_month = args.year, args.month
+    for offset in range(MONTH_FALLBACK + 1):
+        year, month = shift_month(args.year, args.month, -offset)
+        unique_images = collect_month_images(page_html, calendar.month_name[month])
+        if unique_images:
+            issue_year, issue_month = year, month
+            break
     if not unique_images:
-        raise SystemExit(f"no Desktop / Image Only wallpapers found for {month_name}")
+        raise SystemExit(
+            "no Desktop / Image Only wallpapers found for "
+            f"{requested_name} or the {MONTH_FALLBACK} months before it"
+        )
+    if (issue_year, issue_month) != (args.year, args.month):
+        print(
+            f"warning: {requested_name} {args.year} is not published yet; "
+            f"using {calendar.month_name[issue_month]} {issue_year}",
+            file=sys.stderr,
+        )
+    month_name = calendar.month_name[issue_month]
 
     args.output.mkdir(parents=True, exist_ok=True)
     manifest_images: list[dict[str, object]] = []
@@ -195,7 +230,7 @@ def main() -> None:
 
     manifest = {
         "schemaVersion": 1,
-        "issue": f"{args.year:04d}-{args.month:02d}",
+        "issue": f"{issue_year:04d}-{issue_month:02d}",
         "sourcePage": args.page_url,
         "images": manifest_images,
     }
@@ -205,7 +240,7 @@ def main() -> None:
     )
     print(
         f"Synced {len(manifest_images)} NASA wallpapers for "
-        f"{month_name} {args.year} to {args.output}"
+        f"{month_name} {issue_year} to {args.output}"
     )
     for image in manifest_images:
         print(f"- {image['title']}: {image['width']}x{image['height']}")

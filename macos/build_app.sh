@@ -13,7 +13,11 @@ MACOS_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.1}"
 export MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET"
 
 if [[ "${CODEX_MIXIN_REFRESH_NASA_WALLPAPERS:-0}" == "1" ]]; then
-  "$ROOT_DIR/scripts/sync_nasa_wallpapers.py"
+  # The wallpapers are decorative and a usable set is committed, so a refresh
+  # failure must not block a release build.
+  if ! "$ROOT_DIR/scripts/sync_nasa_wallpapers.py"; then
+    echo "warning: NASA wallpaper refresh failed; using the committed set" >&2
+  fi
 fi
 
 if [[ -n "${CARGO_BUILD_TARGET:-}" ]]; then
