@@ -8,7 +8,10 @@ use serde_json::{Value, json};
 
 use crate::convert::responses_to_anthropic_with_model_reasoning_and_thinking_kind;
 use crate::error::GatewayError;
-use crate::gateway::{CacheShape, RequestPlan, UpstreamExecutor, record_provider_prefix};
+use crate::gateway::{
+    CacheShape, RequestPlan, UpstreamExecutor, observe_anthropic_cache_usage,
+    record_provider_prefix,
+};
 use crate::model_reasoning::{anthropic_thinking_kind_with_advertised, prepare_upstream_reasoning};
 use crate::openai_chat::responses_to_openai_chat_streaming_with_model;
 use crate::openai_events::{
@@ -115,7 +118,7 @@ pub(crate) async fn stream_provider_response(
             {
                 converted.request.metadata = Some(json!({"session_id": routing.session_id}));
             }
-            record_provider_prefix(
+            let observation = record_provider_prefix(
                 &state.cache_shapes,
                 provider.id(),
                 catalog_slug,
@@ -130,6 +133,7 @@ pub(crate) async fn stream_provider_response(
                     routing.map(|routing| routing.hash_key.as_str()),
                 )
                 .await?;
+            let upstream = observe_anthropic_cache_usage(upstream, observation);
             map_anthropic_sse_with_image_routes(
                 upstream,
                 downstream_body,
@@ -142,7 +146,7 @@ pub(crate) async fn stream_provider_response(
         ProviderProtocol::OpenAiChat => {
             let converted =
                 responses_to_openai_chat_streaming_with_model(body, Some(&upstream_model_id))?;
-            record_provider_prefix(
+            let _ = record_provider_prefix(
                 &state.cache_shapes,
                 provider.id(),
                 catalog_slug,
@@ -195,7 +199,7 @@ pub(crate) async fn stream_provider_response(
             let mut upstream_body = body.clone();
             upstream_body["model"] = Value::String(upstream_model_id.clone());
             prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
-            record_provider_prefix(
+            let _ = record_provider_prefix(
                 &state.cache_shapes,
                 provider.id(),
                 catalog_slug,

@@ -11,10 +11,13 @@ use std::collections::HashMap;
 use std::io::Write;
 use std::sync::{Mutex, PoisonError};
 
+use bytes::Bytes;
+use futures_util::{Stream, StreamExt};
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::anthropic::MessageRequest;
+use crate::sse::SseDecoder;
 use crate::upstream::UpstreamRouting;
 
 pub(crate) const ANTHROPIC_MESSAGES: &str = "anthropic_messages";
@@ -232,6 +235,7 @@ impl CacheShape {
                 .iter()
                 .map(|turn| turn.bytes)
                 .sum(),
+            stable_prefix_bytes: self.stable_prefix_bytes(previous, &changes, reused_turns),
             message_prefix_turns,
             previous_turns: previous.turns.len(),
             total_turns: self.turns.len(),
@@ -239,6 +243,30 @@ impl CacheShape {
             previous_system_blocks: previous.system.len(),
             system_blocks: self.system.len(),
         }
+    }
+
+    /// Bytes a provider cache could have reused: the surviving system blocks,
+    /// the tool definitions when they did not move, and every replayed turn.
+    /// This is the baseline a provider cache hit is judged against, so it has to
+    /// span every region ahead of the new tail, not only the message list.
+    fn stable_prefix_bytes(
+        &self,
+        previous: &Self,
+        changes: &PrefixChanges,
+        reused_turns: usize,
+    ) -> usize {
+        if changes.any() {
+            return 0;
+        }
+        let system = self.system[..common_prefix_len(&self.system, &previous.system)]
+            .iter()
+            .map(|block| block.bytes)
+            .sum::<usize>();
+        let turns = self.turns[..reused_turns]
+            .iter()
+            .map(|turn| turn.bytes)
+            .sum::<usize>();
+        system + self.tools.bytes + turns
     }
 }
 
@@ -273,6 +301,9 @@ pub(crate) struct PrefixReport {
     /// Turns the provider can actually reuse. Zero whenever a region changed.
     pub(crate) reused_turns: usize,
     pub(crate) reused_bytes: usize,
+    /// Bytes of prompt ahead of the new tail that stayed byte-identical, across
+    /// system, tools and replayed turns.
+    pub(crate) stable_prefix_bytes: usize,
     /// Length of the byte-identical message prefix, regardless of regions. This
     /// separates "the history is clean but the system prompt moved" from "the
     /// history itself was rewritten".
@@ -423,6 +454,7 @@ impl CacheShapeTracker {
                 changes: PrefixChanges::default(),
                 reused_turns: 0,
                 reused_bytes: 0,
+                stable_prefix_bytes: 0,
                 message_prefix_turns: 0,
                 previous_turns: 0,
                 total_turns: shape.turns.len(),
@@ -459,7 +491,7 @@ pub(crate) fn record_provider_prefix(
     upstream_model_id: &str,
     routing: Option<&UpstreamRouting>,
     shape: CacheShape,
-) {
+) -> Option<PrefixObservation> {
     let Some(routing) = routing else {
         tracing::debug!(
             provider_id,
@@ -468,7 +500,7 @@ pub(crate) fn record_provider_prefix(
             protocol = shape.protocol,
             "provider request has no session key, so prefix cache tracking is unavailable"
         );
-        return;
+        return None;
     };
     // Fusion panels and judges share one Codex session while sending different
     // prompts, so the tracked key has to include the upstream model.
@@ -524,6 +556,171 @@ pub(crate) fn record_provider_prefix(
             tools_hash,
             "provider prompt prefix cache shape"
         );
+    }
+    Some(PrefixObservation {
+        provider_id: provider_id.to_owned(),
+        catalog_slug: catalog_slug.to_owned(),
+        upstream_model_id: upstream_model_id.to_owned(),
+        protocol,
+        state: report.state,
+        changed_regions,
+        stable_prefix_bytes: report.stable_prefix_bytes,
+        reused_turns: report.reused_turns,
+        total_turns: report.total_turns,
+    })
+}
+
+/// Average bytes per token across the prompt shapes Codex sends. Only used to
+/// turn a byte-level reuse measurement into a token-level expectation that can
+/// be compared against provider usage counters.
+const BYTES_PER_TOKEN_ESTIMATE: usize = 4;
+
+/// A stable prefix below this token estimate is too small for provider caches to
+/// act on, so a miss there says nothing about the request shape.
+const MIN_REUSED_TOKENS_FOR_VERDICT: usize = 8_192;
+
+/// What this gateway sent for one request, kept so the provider usage counters
+/// that arrive later can be judged against the prefix we know we preserved.
+#[derive(Clone, Debug)]
+pub(crate) struct PrefixObservation {
+    provider_id: String,
+    catalog_slug: String,
+    upstream_model_id: String,
+    protocol: &'static str,
+    state: PrefixState,
+    changed_regions: String,
+    stable_prefix_bytes: usize,
+    reused_turns: usize,
+    total_turns: usize,
+}
+
+impl PrefixObservation {
+    /// True when this gateway kept a substantial prefix byte-identical and the
+    /// provider still recomputed most of it.
+    fn discarded_by_provider(&self, usage: &UpstreamCacheUsage) -> bool {
+        let stable_tokens_estimate = self.stable_prefix_bytes / BYTES_PER_TOKEN_ESTIMATE;
+        if self.state.is_cache_loss() || stable_tokens_estimate < MIN_REUSED_TOKENS_FOR_VERDICT {
+            return false;
+        }
+        let cache_read_tokens =
+            usize::try_from(usage.cache_read_tokens.unwrap_or(0)).unwrap_or(usize::MAX);
+        cache_read_tokens < stable_tokens_estimate / 2
+    }
+
+    /// Logs the provider cache counters next to the prefix this gateway
+    /// preserved. A provider that recomputes a prefix we kept byte-identical is
+    /// the only case that warrants a warning, because nothing on this side can
+    /// fix it and it otherwise looks like a gateway bug.
+    pub(crate) fn report_upstream_cache(&self, usage: &UpstreamCacheUsage) {
+        let stable_tokens_estimate = self.stable_prefix_bytes / BYTES_PER_TOKEN_ESTIMATE;
+        let cache_read_tokens = usage.cache_read_tokens.unwrap_or(0);
+        if self.discarded_by_provider(usage) {
+            tracing::warn!(
+                provider_id = self.provider_id,
+                catalog_slug = self.catalog_slug,
+                upstream_model_id = self.upstream_model_id,
+                protocol = self.protocol,
+                prefix_state = self.state.as_str(),
+                reused_turns = self.reused_turns,
+                total_turns = self.total_turns,
+                stable_prefix_tokens_estimate = stable_tokens_estimate,
+                cache_read_tokens,
+                uncached_input_tokens = usage.input_tokens.unwrap_or(0),
+                cache_creation_tokens = usage.cache_creation_tokens.unwrap_or(0),
+                "provider recomputed a prompt prefix this gateway kept byte-identical"
+            );
+            return;
+        }
+        tracing::debug!(
+            provider_id = self.provider_id,
+            catalog_slug = self.catalog_slug,
+            upstream_model_id = self.upstream_model_id,
+            protocol = self.protocol,
+            prefix_state = self.state.as_str(),
+            changed_regions = self.changed_regions.as_str(),
+            reused_turns = self.reused_turns,
+            total_turns = self.total_turns,
+            stable_prefix_tokens_estimate = stable_tokens_estimate,
+            cache_read_tokens,
+            uncached_input_tokens = usage.input_tokens.unwrap_or(0),
+            cache_creation_tokens = usage.cache_creation_tokens.unwrap_or(0),
+            "provider prompt cache usage"
+        );
+    }
+}
+
+/// Provider cache counters observed on an Anthropic Messages response.
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
+pub(crate) struct UpstreamCacheUsage {
+    pub(crate) input_tokens: Option<u64>,
+    pub(crate) cache_read_tokens: Option<u64>,
+    pub(crate) cache_creation_tokens: Option<u64>,
+}
+
+impl UpstreamCacheUsage {
+    fn absorb(&mut self, usage: &Value) {
+        for (field, slot) in [
+            ("input_tokens", &mut self.input_tokens),
+            ("cache_read_input_tokens", &mut self.cache_read_tokens),
+            (
+                "cache_creation_input_tokens",
+                &mut self.cache_creation_tokens,
+            ),
+        ] {
+            if let Some(value) = usage.get(field).and_then(Value::as_u64) {
+                *slot = Some(value);
+            }
+        }
+    }
+
+    fn observed(&self) -> bool {
+        self.input_tokens.is_some()
+            || self.cache_read_tokens.is_some()
+            || self.cache_creation_tokens.is_some()
+    }
+}
+
+/// Passes an Anthropic Messages byte stream through untouched while collecting
+/// the prompt cache counters, then reports them against the recorded prefix.
+/// Reading the counters here keeps the downstream event mappers unaware of
+/// diagnostics, and works for every route that speaks Messages upstream.
+pub(crate) fn observe_anthropic_cache_usage<S>(
+    upstream: S,
+    observation: Option<PrefixObservation>,
+) -> impl Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static
+where
+    S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+{
+    async_stream::stream! {
+        let mut decoder = SseDecoder::default();
+        let mut usage = UpstreamCacheUsage::default();
+        // Reported as soon as the counters arrive, because a downstream mapper
+        // may stop reading once it sees `message_stop` and drop this stream
+        // before its tail runs.
+        let mut reported = false;
+        tokio::pin!(upstream);
+        while let Some(chunk) = upstream.next().await {
+            if let Ok(bytes) = &chunk
+                && let Some(observation) = observation.as_ref()
+                && !reported
+            {
+                for event in decoder.push(bytes) {
+                    let Ok(data) = serde_json::from_str::<Value>(&event.data) else {
+                        continue;
+                    };
+                    for path in [&data, data.get("message").unwrap_or(&Value::Null)] {
+                        if let Some(found) = path.get("usage") {
+                            usage.absorb(found);
+                        }
+                    }
+                }
+                if usage.observed() {
+                    observation.report_upstream_cache(&usage);
+                    reported = true;
+                }
+            }
+            yield chunk;
+        }
     }
 }
 
@@ -1000,5 +1197,117 @@ mod tests {
         let report = tracker.record("session", CacheShape::from_openai_chat(&second));
 
         assert_eq!(report.state, PrefixState::SystemChanged);
+    }
+
+    fn observation(state: PrefixState, stable_prefix_bytes: usize) -> PrefixObservation {
+        PrefixObservation {
+            provider_id: "baidu-oneapi".to_owned(),
+            catalog_slug: "gpt-5.6-sol-baidu-oneapi".to_owned(),
+            upstream_model_id: "gpt-5.6-sol".to_owned(),
+            protocol: ANTHROPIC_MESSAGES,
+            state,
+            changed_regions: String::new(),
+            stable_prefix_bytes,
+            reused_turns: 40,
+            total_turns: 41,
+        }
+    }
+
+    #[test]
+    fn a_provider_that_drops_a_preserved_prefix_is_separated_from_our_own_cache_loss() {
+        let usage = UpstreamCacheUsage {
+            input_tokens: Some(240_000),
+            cache_read_tokens: Some(3_456),
+            cache_creation_tokens: None,
+        };
+
+        // Prefix kept byte-identical, provider still recomputed it.
+        assert!(observation(PrefixState::AppendOnly, 960_000).discarded_by_provider(&usage));
+        // Our own prefix loss already has its own warning, so this stays quiet.
+        assert!(!observation(PrefixState::SystemChanged, 960_000).discarded_by_provider(&usage));
+        // Too little stable prefix for a provider cache to act on.
+        assert!(!observation(PrefixState::AppendOnly, 8_000).discarded_by_provider(&usage));
+        // A real hit is not a finding.
+        assert!(
+            !observation(PrefixState::AppendOnly, 960_000).discarded_by_provider(
+                &UpstreamCacheUsage {
+                    input_tokens: Some(1_800),
+                    cache_read_tokens: Some(238_000),
+                    cache_creation_tokens: None,
+                }
+            )
+        );
+    }
+
+    /// The system prompt and tool definitions sit ahead of the message list, so a
+    /// provider cache hit has to be judged against them too.
+    #[test]
+    fn the_stable_prefix_spans_system_and_tools_not_only_replayed_turns() {
+        let tracker = CacheShapeTracker::default();
+        let first = anthropic_turn(4, 6);
+        tracker.record("session", CacheShape::from_anthropic(&first));
+
+        let report = tracker.record("session", CacheShape::from_anthropic(&anthropic_turn(4, 8)));
+
+        assert_eq!(report.state, PrefixState::AppendOnly);
+        assert!(report.stable_prefix_bytes > report.reused_bytes);
+
+        // A changed region invalidates from the first token, so nothing is stable.
+        let mut different_system = anthropic_turn(4, 8);
+        different_system.system = Some(vec![ContentBlock::Text {
+            text: "another system prompt".to_owned(),
+        }]);
+        let report = tracker.record("session", CacheShape::from_anthropic(&different_system));
+
+        assert!(report.state.is_cache_loss());
+        assert_eq!(report.stable_prefix_bytes, 0);
+    }
+
+    #[test]
+    fn provider_cache_verdicts_ignore_prefixes_too_small_to_cache() {
+        let usage = UpstreamCacheUsage {
+            input_tokens: Some(240_000),
+            cache_read_tokens: Some(3_456),
+            cache_creation_tokens: None,
+        };
+
+        let boundary = MIN_REUSED_TOKENS_FOR_VERDICT * BYTES_PER_TOKEN_ESTIMATE;
+        assert!(!observation(PrefixState::AppendOnly, boundary - 4).discarded_by_provider(&usage));
+        assert!(observation(PrefixState::AppendOnly, boundary).discarded_by_provider(&usage));
+    }
+
+    #[tokio::test]
+    async fn cache_usage_observation_relays_bytes_untouched() {
+        let events = vec![
+            Bytes::from_static(
+                b"event: message_start\ndata: {\"type\":\"message_start\",\"message\":{\"usage\":{\"input_tokens\":240000,\"cache_read_input_tokens\":3456}}}\n\n",
+            ),
+            Bytes::from_static(
+                b"event: message_delta\ndata: {\"type\":\"message_delta\",\"usage\":{\"output_tokens\":46}}\n\n",
+            ),
+        ];
+        let upstream = futures_util::stream::iter(events.clone().into_iter().map(Ok));
+
+        let relayed: Vec<Bytes> = observe_anthropic_cache_usage(
+            upstream,
+            Some(observation(PrefixState::AppendOnly, 960_000)),
+        )
+        .map(Result::unwrap)
+        .collect()
+        .await;
+
+        assert_eq!(relayed, events);
+    }
+
+    #[test]
+    fn usage_counters_are_absorbed_from_both_message_and_top_level_shapes() {
+        let mut usage = UpstreamCacheUsage::default();
+        usage.absorb(&json!({"input_tokens": 100, "cache_read_input_tokens": 3456}));
+        usage.absorb(&json!({"cache_creation_input_tokens": 7}));
+
+        assert_eq!(usage.input_tokens, Some(100));
+        assert_eq!(usage.cache_read_tokens, Some(3456));
+        assert_eq!(usage.cache_creation_tokens, Some(7));
+        assert!(usage.observed());
     }
 }

@@ -433,6 +433,19 @@ App 或 CLI 显式保存，临时监听地址使用 `start/serve --bind`。
 RUST_LOG=codex_mixin=debug codex-mixin serve
 ```
 
+网关还会把 provider 返回的缓存计数与自己保住的前缀对账。如果本轮前缀逐字节不变、稳定前缀又
+足够大，而 provider 仍然重算了它，日志会明确写成上游行为，而不是让它看起来像网关的 bug：
+
+```text
+WARN provider recomputed a prompt prefix this gateway kept byte-identical
+     prefix_state="append_only" stable_prefix_tokens_estimate=61440 cache_read_tokens=3456
+```
+
+这条区分很重要：`prefix_state` 不是 `append_only` 说明问题在请求形状，可以修；是 `append_only`
+而 `cache_read_tokens` 仍然很低，说明是上游缓存池驱逐或后端实例路由，本地无法修复，只能据此
+和 provider 对话。实测中 Baidu OneAPI 会周期性出现后者，并且忽略 Anthropic 的 `cache_control`
+断点 —— 加与不加，计费和 usage 完全一致。
+
 图片走同一条契约。工具返回的截图只在模型尚未看过的那一轮内联，并压缩到最长边 1568px；之后
 每一轮都回放为固定占位符。所以截图和视觉工具继续可用，而历史不会永久携带图片字节，代价只是
 上一轮的最后一条消息被改写一次。

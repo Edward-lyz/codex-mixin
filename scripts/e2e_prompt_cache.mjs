@@ -19,6 +19,12 @@ const VISION_SIDE = 1568;
 const SOURCE_WIDTH = 2000;
 const SOURCE_HEIGHT = 1000;
 const PROBE_ANCHOR = "look at the screenshot";
+// A system prompt on the scale Codex actually sends. The provider cache
+// diagnostics only judge a cache hit once the stable prefix is large enough to
+// be worth caching, so a one-line system prompt would never exercise them.
+const BASE_INSTRUCTIONS = `You are Codex.\n${"Operating guidance that stays byte-identical across turns.\n".repeat(
+  700,
+)}`;
 
 function crc32(buffer) {
   let crc = 0xffffffff;
@@ -135,7 +141,7 @@ function build() {
   const request = (model, input) => ({
     model,
     stream: true,
-    instructions: "You are Codex.",
+    instructions: BASE_INSTRUCTIONS,
     prompt_cache_key: SESSION_KEY,
     tools,
     input,
@@ -318,9 +324,20 @@ function verifyDiagnostics() {
   const log = fs
     .readFileSync(`${dir}/gateway.log`, "utf8")
     .replace(/\u001b\[[0-9;]*m/g, "");
-  const states = [...log.matchAll(/prefix_state="(\w+)"/g)].map((match) => match[1]);
-  const reused = [...log.matchAll(/reused_turns=(\d+)/g)].map((match) => Number(match[1]));
-  const changed = [...log.matchAll(/changed_regions="([^"]*)"/g)].map((match) => match[1]);
+  // Shape lines and provider-usage lines share field names, so each assertion
+  // reads only the lines it is about.
+  const lines = log.split("\n");
+  const shape = lines
+    .filter((line) => line.includes("provider prompt prefix cache"))
+    .join("\n");
+  const usage = lines.filter(
+    (line) =>
+      line.includes("provider prompt cache usage") ||
+      line.includes("provider recomputed a prompt prefix"),
+  );
+  const states = [...shape.matchAll(/prefix_state="(\w+)"/g)].map((match) => match[1]);
+  const reused = [...shape.matchAll(/reused_turns=(\d+)/g)].map((match) => Number(match[1]));
+  const changed = [...shape.matchAll(/changed_regions="([^"]*)"/g)].map((match) => match[1]);
   check("diagnostics: a prefix state per turn", states.length === 4, states.join(","));
   check(
     "diagnostics: both sessions started cold",
@@ -338,6 +355,21 @@ function verifyDiagnostics() {
     "diagnostics: no cache region drifted between turns",
     changed.length === 4 && changed.every((regions) => regions === ""),
     changed.map((regions) => regions || "-").join(" | "),
+  );
+  // The provider counters have to be judged against the prefix we know we kept,
+  // otherwise an upstream cache eviction is indistinguishable from a gateway bug.
+  check(
+    "diagnostics: provider cache counters were matched to the sent prefix",
+    usage.length === 2,
+    `${usage.length} usage line(s)`,
+  );
+  const dropped = usage.filter((line) =>
+    line.includes("provider recomputed a prompt prefix"),
+  );
+  check(
+    "diagnostics: a provider dropping a preserved prefix is reported as upstream",
+    dropped.length === 1 && dropped[0].includes("cache_read_tokens=3456"),
+    dropped.join("\n") || "no upstream cache warning",
   );
   if (states.length !== 4) {
     console.log(`\ngateway.log tail:\n${log.trimEnd().split("\n").slice(-15).join("\n")}`);
