@@ -4,11 +4,14 @@ use axum::http::HeaderMap;
 use bytes::Bytes;
 use futures_util::StreamExt;
 use futures_util::stream::BoxStream;
+use serde::Serialize;
 use serde_json::{Value, json};
+use tracing::Level;
+use uuid::Uuid;
 
 use crate::convert::responses_to_anthropic_with_model_reasoning_and_thinking_kind;
 use crate::error::GatewayError;
-use crate::gateway::{RequestPlan, UpstreamExecutor};
+use crate::gateway::{RequestPlan, UpstreamExecutor, canonicalize_provider_json};
 use crate::model_reasoning::{anthropic_thinking_kind_with_advertised, prepare_upstream_reasoning};
 use crate::openai_chat::responses_to_openai_chat_streaming_with_model;
 use crate::openai_events::{
@@ -115,6 +118,13 @@ pub(crate) async fn stream_provider_response(
             {
                 converted.request.metadata = Some(json!({"session_id": routing.session_id}));
             }
+            trace_provider_request_shape(
+                provider.id(),
+                catalog_slug,
+                &upstream_model_id,
+                "anthropic_messages",
+                &converted.request,
+            );
             let upstream = state
                 .anthropic_stream_with_web_search_retry(
                     provider,
@@ -134,6 +144,13 @@ pub(crate) async fn stream_provider_response(
         ProviderProtocol::OpenAiChat => {
             let converted =
                 responses_to_openai_chat_streaming_with_model(body, Some(&upstream_model_id))?;
+            trace_provider_request_shape(
+                provider.id(),
+                catalog_slug,
+                &upstream_model_id,
+                "openai_chat",
+                &converted.request,
+            );
             let upstream_request = provider.apply_auth_for_protocol(
                 state
                     .client
@@ -179,6 +196,13 @@ pub(crate) async fn stream_provider_response(
             let mut upstream_body = body.clone();
             upstream_body["model"] = Value::String(upstream_model_id.clone());
             prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
+            trace_provider_request_shape(
+                provider.id(),
+                catalog_slug,
+                &upstream_model_id,
+                "openai_responses",
+                &upstream_body,
+            );
             let upstream_request = provider.apply_auth_for_protocol(
                 state
                     .client
@@ -216,6 +240,59 @@ pub(crate) async fn stream_provider_response(
         }
     };
     Ok(stream)
+}
+
+fn trace_provider_request_shape<T: Serialize>(
+    provider_id: &str,
+    catalog_slug: &str,
+    upstream_model_id: &str,
+    protocol: &str,
+    request: &T,
+) {
+    if !tracing::enabled!(Level::DEBUG) {
+        return;
+    }
+    let Ok(request) = serde_json::to_value(request) else {
+        return;
+    };
+    let mut request = request;
+    canonicalize_provider_json(&mut request);
+    let request_hash = cache_shape_hash(&request);
+    let messages_hash = request
+        .get("messages")
+        .or_else(|| request.get("input"))
+        .map(cache_shape_hash)
+        .unwrap_or_default();
+    let tools_hash = request
+        .get("tools")
+        .map(cache_shape_hash)
+        .unwrap_or_default();
+    let system_hash = request
+        .get("system")
+        .or_else(|| request.get("instructions"))
+        .map(cache_shape_hash)
+        .unwrap_or_default();
+    tracing::debug!(
+        provider_id,
+        catalog_slug,
+        upstream_model_id,
+        protocol,
+        request_hash,
+        messages_hash,
+        tools_hash,
+        system_hash,
+        "provider request cache shape"
+    );
+}
+
+fn cache_shape_hash(value: &Value) -> String {
+    serde_json::to_vec(value)
+        .map(|bytes| {
+            Uuid::new_v5(&Uuid::NAMESPACE_URL, &bytes)
+                .simple()
+                .to_string()
+        })
+        .unwrap_or_default()
 }
 
 fn response_metadata_request(body: &Value, downstream_model: &str) -> Value {

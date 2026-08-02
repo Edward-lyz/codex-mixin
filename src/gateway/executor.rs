@@ -4,7 +4,7 @@ use axum::http::HeaderMap;
 use bytes::Bytes;
 use futures_util::StreamExt;
 
-use super::compaction::compact_embedded_tool_images;
+use super::images::{canonicalize_provider_json, normalize_provider_images};
 use super::{RequestPlan, UpstreamTarget};
 use crate::error::GatewayError;
 use crate::server::{AppState, stream_official_response};
@@ -37,11 +37,14 @@ impl<'a> UpstreamExecutor<'a> {
         headers: &HeaderMap,
     ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
         if matches!(&plan.target, UpstreamTarget::Provider { .. }) {
-            let removed_images = compact_embedded_tool_images(&mut plan.body);
-            if removed_images > 0 {
+            canonicalize_provider_json(&mut plan.body);
+            let image_stats = normalize_provider_images(&mut plan.body)?;
+            if image_stats.normalized_images > 0 || image_stats.omitted_tool_images > 0 {
                 tracing::info!(
-                    removed_images,
-                    "pruned older embedded tool images from provider request"
+                    normalized_images = image_stats.normalized_images,
+                    omitted_tool_images = image_stats.omitted_tool_images,
+                    saved_image_bytes = image_stats.saved_bytes,
+                    "normalized provider image payloads for cache-stable replay"
                 );
             }
         }

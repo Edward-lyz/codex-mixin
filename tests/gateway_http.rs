@@ -1876,7 +1876,7 @@ async fn anthropic_signed_thinking_round_trips_across_http_turns() {
 }
 
 #[tokio::test]
-async fn prunes_old_embedded_tool_images_before_forwarding_oversized_responses() {
+async fn omits_tool_result_images_before_forwarding_cache_stable_responses() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let gateway_url = spawn_gateway(upstream_url).await;
     let client = reqwest::Client::new();
@@ -1913,7 +1913,7 @@ async fn prunes_old_embedded_tool_images_before_forwarding_oversized_responses()
             ]
         }),
     ]);
-    assert!(request.to_string().len() > 2 * 1024 * 1024);
+    assert!(request.to_string().contains("data:image/png;base64,"));
 
     let response = client
         .post(format!("{gateway_url}/v1/responses"))
@@ -1950,13 +1950,19 @@ async fn prunes_old_embedded_tool_images_before_forwarding_oversized_responses()
         tool_results[0]["content"],
         json!([{"type":"text","text":"old screenshot"}])
     );
-    assert_eq!(tool_results[1]["content"][0]["text"], "latest screenshot");
     assert_eq!(
-        tool_results[1]["content"][1]["source"]["data"]
-            .as_str()
-            .unwrap()
-            .len(),
-        1_200_000
+        tool_results[1]["content"],
+        json!([{"type":"text","text":"latest screenshot"}])
+    );
+    assert!(
+        !upstream_request
+            .to_string()
+            .contains("data:image/png;base64,")
+    );
+    assert!(
+        !upstream_request
+            .to_string()
+            .contains("older tool image omitted")
     );
 }
 
