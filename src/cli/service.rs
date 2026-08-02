@@ -1,6 +1,7 @@
 use std::fs;
 use std::fs::OpenOptions;
 use std::io;
+use std::io::IsTerminal;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
@@ -61,6 +62,9 @@ pub(super) fn init_tracing(log_file: Option<&Path>) -> anyhow::Result<()> {
     } else {
         tracing_subscriber::fmt()
             .with_writer(io::stderr)
+            // A redirected log is unreadable and unparseable with ANSI escapes
+            // in it, so colour only an interactive terminal.
+            .with_ansi(io::stderr().is_terminal())
             .with_env_filter(gateway_log_filter())
             .with_target(true)
             .with_file(true)

@@ -45,6 +45,7 @@ Codex Mixin 是一个 Rust 本地网关、CLI 和 macOS 菜单栏 App。它把 O
 - [模型目录和 metadata](#模型目录和-metadata)
 - [图片生成](#图片生成)
 - [Thinking 与 Web Search](#thinking-与-web-search)
+- [Prompt 缓存优化](#prompt-缓存优化)
 - [数据位置](#数据位置)
 - [开发与发布](#开发与发布)
 - [许可证](#许可证)
@@ -73,6 +74,7 @@ Codex Mixin 的解法是：Codex 连到本机自动分配的 loopback 端口，�
 - 可回滚配置：安装前备份 `~/.codex/config.toml`；卸载时恢复配置和原 provider，并删除托管模型目录。
 - 供应商预设：内置 `custom`、`baidu-oneapi`、`openrouter`、`deepseek`。
 - 协议转换：支持 Anthropic Messages 和 OpenAI Chat Completions 上游。
+- 极致 prompt 缓存：用逐字节的前缀契约驱动上游自动缓存命中，并在每一轮报告缓存是否失效、失效在哪里；工具截图只在首次进入上下文的那一轮内联，之后回放为固定占位符，历史不会永久携带图片字节。
 - 图片能力：官方 GPT 保留 Codex 原生生图；自定义模型可调用上游 OpenAI-compatible 生图接口。
 - 模型 metadata 补齐：结合 LiteLLM metadata 和内置正则规则补齐上下文窗口、能力和 instruction 字段。
 - 模型选择与测速：独立窗口统一完成模型搜索、勾选和保存，并对已选模型测试 TTFT、TPS、实际 usage tokens、总耗时和本次额度花费；结果可按列升降序排列并持续保存。
@@ -406,6 +408,40 @@ Web search 转发使用保存的 Provider 配置和内置默认策略。网关�
 `CODEX_GATEWAY_*` 环境变量进行覆盖；监听地址、网关密钥和 Provider 信息必须通过
 App 或 CLI 显式保存，临时监听地址使用 `start/serve --bind`。
 
+### Prompt 缓存优化
+
+上游 provider 的自动 prompt 缓存只在一个条件下命中：上一轮的 prompt 前缀逐字节不变，新内容
+只追加在尾部。网关把这一点当作可验证的契约来执行，而不是碰运气。
+
+每次发往 provider 的请求都会按真正发出的上游字节推导缓存形状 —— system prompt、工具定义与
+`tool_choice`、reasoning 配置，以及逐条消息的摘要。同一 session 的下一轮请求与上一轮比对后
+给出明确结论：
+
+| 状态 | 含义 |
+| --- | --- |
+| `cold_start` | 该 session 还没有可比对的历史请求 |
+| `append_only` | 旧内容逐字节不变，新内容只追加在尾部，缓存完全命中 |
+| `tail_rewritten` | 只有上一轮的最后一条消息被改写，它之前的前缀仍然命中 |
+| `system_changed` / `tools_changed` / `config_changed` | instructions、工具或 reasoning 配置发生漂移，整个前缀失效 |
+| `turn_rewritten` | 历史中间某条消息被改写，provider 需要从该条开始重算 |
+| `history_truncated` | 历史变短，通常是 compaction |
+
+缓存失效以 WARN 记录，并附带 `reused_turns` 和 `reused_bytes`，可以直接定位原因。每一轮的
+完整轨迹需要 debug 级别：
+
+```bash
+RUST_LOG=codex_mixin=debug codex-mixin serve
+```
+
+图片走同一条契约。工具返回的截图只在模型尚未看过的那一轮内联，并压缩到最长边 1568px；之后
+每一轮都回放为固定占位符。所以截图和视觉工具继续可用，而历史不会永久携带图片字节，代价只是
+上一轮的最后一条消息被改写一次。
+
+OpenAI Chat Completions 兼容上游不接受 `tool` 消息内嵌图片，网关会把图片改放到紧随该批工具
+结果之后的一条 user 消息，同时让 assistant 的 `tool_calls` 与对应的 `tool` 结果保持相邻。
+
+`scripts/e2e_prompt_cache.sh` 在真实网关上逐字校验以上全部行为，CI 每次提交都会运行。
+
 ### 数据位置
 
 | 内容 | 路径 |
@@ -524,6 +560,7 @@ Codex Mixin exposes a Responses-compatible endpoint on an automatically selected
 - Backs up `~/.codex/config.toml` before managed changes and restores both the config and original history provider on uninstall.
 - Includes provider presets for `custom`, `baidu-oneapi`, `openrouter`, and `deepseek`.
 - Supports Anthropic Messages and OpenAI Chat Completions upstreams.
+- Drives upstream automatic prompt caching with a byte-level prefix contract, reports per turn whether the cache survived and where it broke, and inlines a tool screenshot only on the turn it first enters the context so history never carries image bytes forever.
 - Keeps native Codex image generation for official GPT models and can route custom-model image calls to an OpenAI-compatible upstream image endpoint.
 - Completes model metadata using LiteLLM metadata plus built-in model-family rules.
 - Provides one model-selection and benchmark window for searching, enabling, and saving models, then recording sortable TTFT, TPS, actual usage tokens, total latency, timeout results, and estimated quota cost.
@@ -737,6 +774,44 @@ When disabled, Panel and Judge still run, but only the Final answer is added to 
 - Without an upstream image path, Codex Mixin preserves the tool call so the native Codex extension can use the official image backend.
 
 Custom upstreams currently support text-to-image generation only. Non-empty `referenced_image_paths` or a positive `num_last_images_to_include` fails explicitly instead of silently changing backends. Clear the image path in settings to disable custom upstream image generation.
+
+### Prompt Caching
+
+Upstream automatic prompt caching hits under one condition: the previous prompt prefix is
+byte-identical and new content is appended only at the tail. Codex Mixin enforces that as a
+verifiable contract instead of hoping for it.
+
+Every provider request derives its cache shape from the bytes actually sent upstream: the system
+prompt, the tool definitions and `tool_choice`, the reasoning configuration, and a digest of each
+message. The next turn in the same session is compared against the previous one and classified:
+
+| State | Meaning |
+| --- | --- |
+| `cold_start` | No earlier request recorded for this session |
+| `append_only` | Earlier content is byte-identical and new turns were appended, so the cache fully survives |
+| `tail_rewritten` | Only the previous last message changed; everything before it still caches |
+| `system_changed` / `tools_changed` / `config_changed` | Instructions, tools, or reasoning configuration drifted, invalidating the whole prefix |
+| `turn_rewritten` | An earlier message was rewritten, so the provider recomputes from there |
+| `history_truncated` | History shrank, which is what compaction looks like from upstream |
+
+Cache loss is logged at WARN with `reused_turns` and `reused_bytes`, so a miss has a concrete
+cause. The full per-turn trail needs debug level:
+
+```bash
+RUST_LOG=codex_mixin=debug codex-mixin serve
+```
+
+Images follow the same contract. A tool screenshot is inlined only on the turn the model has not
+answered yet, compressed to a 1568 px longest side, and replayed as a stable marker on every later
+turn. Screenshots and vision tools keep working while history stops carrying image bytes forever,
+and the only cost is rewriting what was previously the last message.
+
+OpenAI Chat Completions upstreams reject images inside `tool` messages, so those images move into a
+user message placed right after the tool run, keeping assistant `tool_calls` adjacent to the `tool`
+results they pair with.
+
+`scripts/e2e_prompt_cache.sh` checks all of this against the real upstream bytes through a live
+gateway, and CI runs it on every commit.
 
 ### CLI Reference
 

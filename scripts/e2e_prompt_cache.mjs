@@ -289,7 +289,11 @@ function verifyChat() {
 }
 
 function verifyDiagnostics() {
-  const log = fs.readFileSync(`${dir}/gateway.log`, "utf8");
+  // Strip ANSI so the assertions do not depend on how the gateway colours its
+  // log, and surface the tail on failure instead of an empty match list.
+  const log = fs
+    .readFileSync(`${dir}/gateway.log`, "utf8")
+    .replace(/\u001b\[[0-9;]*m/g, "");
   const states = [...log.matchAll(/prefix_state="(\w+)"/g)].map((match) => match[1]);
   const reused = [...log.matchAll(/reused_turns=(\d+)/g)].map((match) => Number(match[1]));
   check("diagnostics: a prefix state per turn", states.length === 4, states.join(","));
@@ -303,6 +307,9 @@ function verifyDiagnostics() {
   check("diagnostics: anthropic reported a tail rewrite", states.includes("tail_rewritten"), states.join(","));
   check("diagnostics: chat reported the extra rewritten turn", states.includes("turn_rewritten"), states.join(","));
   check("diagnostics: prefix reuse was measured", reused.some((value) => value > 0), reused.join(","));
+  if (states.length !== 4) {
+    console.log(`\ngateway.log tail:\n${log.trimEnd().split("\n").slice(-15).join("\n")}`);
+  }
   return { states, reused };
 }
 
