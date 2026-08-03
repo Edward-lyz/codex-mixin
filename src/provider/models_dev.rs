@@ -4,7 +4,7 @@ use anyhow::{Context, anyhow};
 use reqwest::Client;
 use serde::Deserialize;
 
-use super::{ProviderModel, OPEN_CODE_GO_PRESET_ID};
+use super::{OPEN_CODE_GO_PRESET_ID, ProviderModel};
 
 pub const MODELS_DEV_API_URL: &str = "https://models.dev/api.json";
 
@@ -190,7 +190,10 @@ mod tests {
 
         let models = parse_models_dev_provider_models("opencode-go", body).unwrap();
         let luna = models.get("gpt-5.6-luna").unwrap();
-        assert_eq!(luna.display_name.as_deref(), Some("GPT-5.6 Luna (2x usage)"));
+        assert_eq!(
+            luna.display_name.as_deref(),
+            Some("GPT-5.6 Luna (2x usage)")
+        );
         assert_eq!(luna.context_window, Some(1_050_000));
         assert_eq!(luna.supports_image, Some(true));
         assert_eq!(luna.supports_thinking, Some(true));

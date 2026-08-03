@@ -7,11 +7,11 @@ mod types;
 
 pub use discovery::{apply_discovered_models, discover_provider_models, redact_provider_error};
 pub use models_dev::{
-    enrich_models_with_models_dev, fetch_models_dev_provider_models, parse_models_dev_provider_models,
-    uses_models_dev_capabilities,
+    enrich_models_with_models_dev, fetch_models_dev_provider_models,
+    parse_models_dev_provider_models, uses_models_dev_capabilities,
 };
 pub use presets::{
-    ProviderPreset, OPEN_CODE_GO_PRESET_ID, baidu_oneapi_provider, custom_provider,
+    OPEN_CODE_GO_PRESET_ID, ProviderPreset, baidu_oneapi_provider, custom_provider,
     deepseek_provider, open_code_go_provider, openrouter_provider,
 };
 pub use registry::{ProviderRegistry, ProviderRuntime, ResolvedProviderModel, catalog_model_slug};

@@ -278,11 +278,7 @@ impl MapperState {
 
     fn allocate_openai_tool_key(&mut self, index: u64) -> u64 {
         let key = if self.tools.contains_key(&index) {
-            self.tools
-                .keys()
-                .copied()
-                .max()
-                .map_or(0, |max| max + 1)
+            self.tools.keys().copied().max().map_or(0, |max| max + 1)
         } else {
             index
         };

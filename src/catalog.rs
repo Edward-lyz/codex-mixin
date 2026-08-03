@@ -153,8 +153,7 @@ fn codex_catalog_from_models_with_options(
                 model.id.clone()
             };
             let display_name = model.display_name.clone().unwrap_or_else(|| {
-                if include_template_models
-                    && let Some(provider_suffix) = effective_provider_suffix
+                if include_template_models && let Some(provider_suffix) = effective_provider_suffix
                 {
                     let provider = if provider_suffix == "custom" {
                         "Custom"
@@ -924,7 +923,7 @@ mod tests {
     }
 
     #[test]
-        fn oauth_proxy_catalog_keeps_smaller_upstream_gpt_context() {
+    fn oauth_proxy_catalog_keeps_smaller_upstream_gpt_context() {
         let template = json!({"models":[{
             "slug":"gpt-5.5",
             "context_window":272000,
