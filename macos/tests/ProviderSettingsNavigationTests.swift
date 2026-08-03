@@ -78,6 +78,8 @@ struct ProviderSettingsNavigationTests {
             duccSetupScript.contains("close candidateWindow"),
             "The dedicated DUCC setup terminal must close itself after success"
         )
+        precondition(requiresOpenCodeGoQuotaCredentials("opencode-go"))
+        precondition(!requiresOpenCodeGoQuotaCredentials("baidu-oneapi"))
         precondition(
             duccSetupScript.contains("具体错误：")
                 && duccSetupScript.contains("'/tmp/ducc-install.error'"),

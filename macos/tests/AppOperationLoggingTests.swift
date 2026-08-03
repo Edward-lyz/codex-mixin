@@ -21,10 +21,23 @@ struct AppOperationLoggingTests {
         precondition(!command.contains("super-secret"))
         precondition(!command.contains("another-secret"))
 
+        let openCodeGoCommand = diagnosticCommandDescription([
+            "providers",
+            "update",
+            "opencode-go",
+            "--quota-workspace-id",
+            "wrk_abc",
+            "--quota-auth-cookie",
+            "cookie-secret",
+        ])
+        precondition(openCodeGoCommand.contains("--quota-auth-cookie=<redacted>"))
+        precondition(!openCodeGoCommand.contains("cookie-secret"))
+
         let safeError = diagnosticSafeText(
             """
             --api-key command-secret
             {"api_key":"json-secret","access_token":"token-secret"}
+            {"quota_auth_cookie":"quota-cookie-secret"}
             password = "config-secret"
             Authorization: Bearer bearer-secret
             """
@@ -33,6 +46,7 @@ struct AppOperationLoggingTests {
             "command-secret",
             "json-secret",
             "token-secret",
+            "quota-cookie-secret",
             "config-secret",
             "bearer-secret",
         ] {

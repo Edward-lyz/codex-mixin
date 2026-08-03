@@ -29,6 +29,8 @@ pub(super) struct AddProviderOptions {
     pub(super) image_generation_path: Option<String>,
     pub(super) quota_url: Option<String>,
     pub(super) quota_username: Option<String>,
+    pub(super) quota_workspace_id: Option<String>,
+    pub(super) quota_auth_cookie: Option<String>,
     pub(super) quota_currency: Option<String>,
     pub(super) quota_parser: Option<String>,
     pub(super) gateway_key: Option<String>,
@@ -54,6 +56,10 @@ pub(super) struct UpdateProviderOptions {
     pub(super) quota_url: Option<String>,
     pub(super) clear_quota: bool,
     pub(super) quota_username: Option<String>,
+    pub(super) quota_workspace_id: Option<String>,
+    pub(super) clear_quota_workspace_id: bool,
+    pub(super) quota_auth_cookie: Option<String>,
+    pub(super) clear_quota_auth_cookie: bool,
     pub(super) quota_currency: Option<String>,
     pub(super) quota_parser: Option<String>,
     pub(super) header_env: Vec<String>,
@@ -95,6 +101,11 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     "image_generation_path": provider.image_generation_path,
                     "quota_url": provider.quota_url,
                     "quota_username": provider.quota_username,
+                    "quota_workspace_id": provider.quota_workspace_id,
+                    "quota_auth_cookie_configured": provider
+                        .quota_auth_cookie
+                        .as_deref()
+                        .is_some_and(|cookie| !cookie.is_empty()),
                     "quota_currency": provider.quota_currency,
                     "quota_parser": provider.quota_parser,
                     "custom_headers_from_env": provider.request_policy.custom_headers_from_env,
@@ -201,14 +212,26 @@ pub(super) fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
     if let Some(quota_url) = options.quota_url {
         provider.quota_url = Some(normalize_base_url(quota_url)?);
     }
+    let has_opencode_go_quota_fields =
+        options.quota_workspace_id.is_some() || options.quota_auth_cookie.is_some();
     if let Some(username) = options.quota_username {
         provider.quota_username = Some(trim_required("quota username", username)?);
+    }
+    if let Some(workspace_id) = options.quota_workspace_id {
+        provider.quota_workspace_id = Some(trim_required("quota workspace ID", workspace_id)?);
+    }
+    if let Some(auth_cookie) = options.quota_auth_cookie {
+        provider.quota_auth_cookie = Some(trim_required("quota auth cookie", auth_cookie)?);
     }
     if let Some(currency) = options.quota_currency {
         provider.quota_currency = Some(normalize_currency(currency)?);
     }
     if let Some(parser) = options.quota_parser {
         provider.quota_parser = parse_quota_parser(&parser)?;
+    }
+    if provider.preset_id.as_deref() == Some("opencode-go") && has_opencode_go_quota_fields {
+        provider.quota_parser = ProviderQuotaParser::OpenCodeGo;
+        provider.quota_currency = Some("USD".to_owned());
     }
     provider.request_policy.custom_headers_from_env = parse_header_env(&options.header_env)?;
     apply_baidu_auth_options(
@@ -284,11 +307,13 @@ pub(super) fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<
         if options.clear_quota {
             provider.quota_url = None;
             provider.quota_username = None;
+            provider.quota_workspace_id = None;
+            provider.quota_auth_cookie = None;
             provider.quota_currency = None;
-            provider.quota_parser = if provider.preset_id.as_deref() == Some("deepseek") {
-                ProviderQuotaParser::DeepSeek
-            } else {
-                ProviderQuotaParser::Generic
+            provider.quota_parser = match provider.preset_id.as_deref() {
+                Some("deepseek") => ProviderQuotaParser::DeepSeek,
+                Some("opencode-go") => ProviderQuotaParser::OpenCodeGo,
+                _ => ProviderQuotaParser::Generic,
             };
         } else {
             if let Some(quota_url) = options.quota_url {
@@ -297,11 +322,29 @@ pub(super) fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<
             if let Some(username) = options.quota_username {
                 provider.quota_username = Some(trim_required("quota username", username)?);
             }
+            let has_opencode_go_quota_fields =
+                options.quota_workspace_id.is_some() || options.quota_auth_cookie.is_some();
+            if options.clear_quota_workspace_id {
+                provider.quota_workspace_id = None;
+            } else if let Some(workspace_id) = options.quota_workspace_id {
+                provider.quota_workspace_id =
+                    Some(trim_required("quota workspace ID", workspace_id)?);
+            }
+            if options.clear_quota_auth_cookie {
+                provider.quota_auth_cookie = None;
+            } else if let Some(auth_cookie) = options.quota_auth_cookie {
+                provider.quota_auth_cookie = Some(trim_required("quota auth cookie", auth_cookie)?);
+            }
             if let Some(currency) = options.quota_currency {
                 provider.quota_currency = Some(normalize_currency(currency)?);
             }
             if let Some(parser) = options.quota_parser {
                 provider.quota_parser = parse_quota_parser(&parser)?;
+            }
+            if provider.preset_id.as_deref() == Some("opencode-go") && has_opencode_go_quota_fields
+            {
+                provider.quota_parser = ProviderQuotaParser::OpenCodeGo;
+                provider.quota_currency = Some("USD".to_owned());
             }
         }
         if options.clear_header_env {
@@ -706,6 +749,7 @@ fn parse_quota_parser(value: &str) -> anyhow::Result<ProviderQuotaParser> {
         "baidu_oneapi" | "baidu-oneapi" => Ok(ProviderQuotaParser::BaiduOneApi),
         "openrouter" => Ok(ProviderQuotaParser::OpenRouter),
         "deepseek" => Ok(ProviderQuotaParser::DeepSeek),
+        "opencode_go" | "opencode-go" => Ok(ProviderQuotaParser::OpenCodeGo),
         other => anyhow::bail!("unsupported quota parser: {other}"),
     }
 }
@@ -1022,6 +1066,18 @@ mod tests {
         assert_eq!(mapping["x-example-auth"], "EXAMPLE_AUTH");
         assert_eq!(mapping["x-routing-token"], "ROUTING_TOKEN");
         assert!(parse_header_env(&["missing-separator".to_owned()]).is_err());
+    }
+
+    #[test]
+    fn parses_opencode_go_quota_parser() {
+        assert_eq!(
+            parse_quota_parser("opencode_go").unwrap(),
+            ProviderQuotaParser::OpenCodeGo
+        );
+        assert_eq!(
+            parse_quota_parser("opencode-go").unwrap(),
+            ProviderQuotaParser::OpenCodeGo
+        );
     }
 
     #[tokio::test]

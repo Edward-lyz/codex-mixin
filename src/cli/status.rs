@@ -1,11 +1,14 @@
 use std::collections::HashSet;
 use std::time::Duration;
+use std::time::{SystemTime, UNIX_EPOCH};
 
 use codex_mixin::config::{GatewayConfig, load_stored_config, stored_config_path};
 use codex_mixin::provider::{
     ProviderDefinition, ProviderQuotaParser, ProviderReadinessStatus, ProviderRegistry,
 };
 use codex_mixin::server::AppState;
+use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
+use regex::Regex;
 
 use super::ConfigScope;
 use super::runtime::*;
@@ -221,6 +224,161 @@ mod provider_readiness_tests {
     }
 }
 
+#[cfg(test)]
+mod opencode_go_quota_tests {
+    use std::sync::{Arc, Mutex};
+
+    use axum::Router;
+    use axum::extract::State;
+    use axum::http::{HeaderMap, header};
+    use axum::response::Html;
+    use axum::routing::get;
+    use codex_mixin::provider::open_code_go_provider;
+
+    use super::*;
+
+    #[test]
+    fn parses_opencode_go_dashboard_usage_in_ssr_and_data_slot_formats() {
+        let ssr = concat!(
+            "<script>",
+            "rollingUsage:$R[10]={usagePercent:7.5,resetInSec:18000}",
+            "weeklyUsage:$R[11]={resetInSec:540000,usagePercent:2.25}",
+            "monthlyUsage:$R[12]={usagePercent:16.75,resetInSec:2480000}",
+            "</script>",
+        );
+        let windows = parse_opencode_go_usage_html(ssr).unwrap();
+        assert_eq!(windows.len(), 3);
+        assert_eq!(windows[0].used_percent, 7.5);
+        assert_eq!(windows[0].reset_in_sec, 18_000.0);
+        assert_eq!(windows[1].used_percent, 2.25);
+        assert_eq!(windows[2].used_percent, 16.75);
+
+        let data_slot = r#"
+            <div data-slot="usage">
+              <div data-slot="usage-item">
+                <span data-slot="usage-label">Weekly Usage</span>
+                <span data-slot="usage-value"><!--$-->42.5<!--/-->%</span>
+                <span data-slot="reset-time"><!--$-->Resets in<!--/--> 1 hour 30 minutes</span>
+              </div>
+            </div>
+        "#;
+        let windows = parse_opencode_go_usage_html(data_slot).unwrap();
+        assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].used_percent, 42.5);
+        assert_eq!(windows[0].reset_in_sec, 5_400.0);
+        assert!(parse_opencode_go_usage_html("<html>empty</html>").is_none());
+    }
+
+    #[test]
+    fn parses_opencode_go_billing_in_ssr_and_data_slot_formats() {
+        let ssr = concat!(
+            "$R[1]={billing:{balance:4250000000,monthlyLimit:100,monthlyUsage:575000000}}",
+            "$R[\"payment.list\"]=[{\"amount\":2100000000}]",
+        );
+        let billing = parse_opencode_go_billing_html(ssr).unwrap();
+        assert_eq!(billing.balance_usd, 42.5);
+        assert_eq!(billing.monthly_limit_usd, Some(100.0));
+        assert_eq!(billing.monthly_usage_usd, Some(5.75));
+
+        let data_slot = r#"
+            <div data-slot="billing-item">
+              <span data-slot="billing-label">Balance</span>
+              <span data-slot="billing-value">$12.34</span>
+            </div>
+            <div data-slot="billing-item">
+              <span data-slot="billing-label">Monthly Limit</span>
+              <span data-slot="billing-value">$100.00</span>
+            </div>
+        "#;
+        let billing = parse_opencode_go_billing_html(data_slot).unwrap();
+        assert_eq!(billing.balance_usd, 12.34);
+        assert_eq!(billing.monthly_limit_usd, Some(100.0));
+        assert!(billing.monthly_usage_usd.is_none());
+    }
+
+    #[test]
+    fn redacted_provider_config_never_returns_the_opencode_go_auth_cookie() {
+        let mut provider = open_code_go_provider("opencode-go", "api-key");
+        provider.quota_workspace_id = Some("wrk_abc".to_owned());
+        provider.quota_auth_cookie = Some("cookie-secret".to_owned());
+
+        let serialized = serde_json::to_string(&redacted_providers(&[provider])).unwrap();
+
+        assert!(serialized.contains("\"quota_workspace_id\":\"wrk_abc\""));
+        assert!(serialized.contains("\"quota_auth_cookie\":\"<redacted>\""));
+        assert!(!serialized.contains("cookie-secret"));
+    }
+
+    #[tokio::test]
+    async fn fetches_opencode_go_usage_and_balance_with_auth_cookie_only() {
+        let requests = Arc::new(Mutex::new(Vec::<HeaderMap>::new()));
+        let captured_requests = Arc::clone(&requests);
+        let app = Router::new()
+            .route(
+                "/workspace/wrk_abc/go",
+                get(
+                    |State(requests): State<Arc<Mutex<Vec<HeaderMap>>>>,
+                     headers: HeaderMap| async move {
+                        requests.lock().unwrap().push(headers);
+                        Html(concat!(
+                            "rollingUsage:$R[1]={usagePercent:7,resetInSec:18000}",
+                            "weeklyUsage:$R[2]={usagePercent:2,resetInSec:540000}",
+                            "monthlyUsage:$R[3]={usagePercent:16,resetInSec:2480000}",
+                        ))
+                    },
+                ),
+            )
+            .route(
+                "/workspace/wrk_abc/billing",
+                get(
+                    |State(requests): State<Arc<Mutex<Vec<HeaderMap>>>>,
+                     headers: HeaderMap| async move {
+                        requests.lock().unwrap().push(headers);
+                        Html("$R[1]={billing:{balance:500000000,monthlyLimit:100}}")
+                    },
+                ),
+            )
+            .with_state(requests);
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut provider = open_code_go_provider("opencode-go", "api-key");
+        provider.quota_workspace_id = Some("wrk_abc".to_owned());
+        provider.quota_auth_cookie = Some("cookie-secret".to_owned());
+
+        let results = fetch_opencode_go_quota_results(
+            &reqwest::Client::new(),
+            &provider,
+            &format!("http://{address}"),
+        )
+        .await;
+
+        assert_eq!(results.len(), 4);
+        assert_eq!(results[0]["display_name"], "OpenCode Go 5h");
+        assert_eq!(results[0]["used"], 7.0);
+        assert_eq!(results[0]["remaining"], 93.0);
+        assert!(results[0]["reset_at"].as_str().unwrap().ends_with('Z'));
+        assert_eq!(results[1]["display_name"], "OpenCode Go Weekly");
+        assert_eq!(results[2]["display_name"], "OpenCode Go Monthly");
+        assert_eq!(results[3]["display_name"], "OpenCode Go Balance");
+        assert_eq!(results[3]["remaining"], 5.0);
+        assert_eq!(results[3]["currency"], "USD");
+        assert!(results.iter().all(|result| result["error"].is_null()));
+
+        let captured = captured_requests.lock().unwrap();
+        assert_eq!(captured.len(), 2);
+        for headers in captured.iter() {
+            assert_eq!(
+                headers.get(header::COOKIE).unwrap().to_str().unwrap(),
+                "auth=cookie-secret"
+            );
+            assert!(headers.get(header::AUTHORIZATION).is_none());
+        }
+    }
+}
+
 pub(super) async fn models(json_output: bool) -> anyhow::Result<()> {
     let config = GatewayConfig::from_stored_config()?;
     let state = AppState::new(config)?;
@@ -281,6 +439,17 @@ pub(super) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
         if provider_filter.is_some_and(|filter| filter != provider.id()) {
             continue;
         }
+        if provider.quota_parser() == ProviderQuotaParser::OpenCodeGo {
+            results.extend(
+                fetch_opencode_go_quota_results(
+                    &client,
+                    provider.definition(),
+                    OPENCODE_GO_DASHBOARD_BASE,
+                )
+                .await,
+            );
+            continue;
+        }
         let Some(url) = provider.quota_url() else {
             results.push(serde_json::json!({
                 "provider_id": provider.id(),
@@ -332,24 +501,455 @@ pub(super) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
         return Ok(());
     }
     for result in results {
-        let provider_id = result["provider_id"].as_str().unwrap_or("<unknown>");
+        let provider_label = result["display_name"]
+            .as_str()
+            .unwrap_or_else(|| result["provider_id"].as_str().unwrap_or("<unknown>"));
         if let Some(error) = result["error"].as_str() {
-            println!("{provider_id}: error: {error}");
+            println!("{provider_label}: error: {error}");
         } else {
             let used = &result["used"];
             let limit = &result["limit"];
             let remaining = &result["remaining"];
             let currency = result["currency"].as_str().unwrap_or("");
             if !used.is_null() && !limit.is_null() {
-                println!("{provider_id}: used {used} / {limit} {currency}, remaining {remaining}");
+                println!(
+                    "{provider_label}: used {used} / {limit} {currency}, remaining {remaining}"
+                );
             } else if !used.is_null() {
-                println!("{provider_id}: used {used} {currency}");
+                println!("{provider_label}: used {used} {currency}");
             } else {
-                println!("{provider_id}: remaining {remaining} {currency}");
+                println!("{provider_label}: remaining {remaining} {currency}");
             }
         }
     }
     Ok(())
+}
+
+const OPENCODE_GO_DASHBOARD_BASE: &str = "https://opencode.ai";
+const OPENCODE_GO_SCRAPE_TIMEOUT: Duration = Duration::from_secs(10);
+const OPENCODE_GO_UNITS_PER_USD: f64 = 100_000_000.0;
+const OPENCODE_GO_PATH_ENCODE: &AsciiSet =
+    &CONTROLS.add(b' ').add(b'/').add(b'?').add(b'#').add(b'%');
+
+#[derive(Clone, Debug)]
+struct OpenCodeGoWindowUsage {
+    used_percent: f64,
+    reset_in_sec: f64,
+}
+
+#[derive(Clone, Debug)]
+struct OpenCodeGoBilling {
+    balance_usd: f64,
+    monthly_limit_usd: Option<f64>,
+    monthly_usage_usd: Option<f64>,
+}
+
+async fn fetch_opencode_go_quota_results(
+    client: &reqwest::Client,
+    provider: &ProviderDefinition,
+    dashboard_base: &str,
+) -> Vec<serde_json::Value> {
+    let Some(workspace_id) = provider
+        .quota_workspace_id
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return vec![opencode_go_error_result(
+            provider,
+            provider.display_name.clone(),
+            "quota endpoint is not configured".to_owned(),
+        )];
+    };
+    let Some(auth_cookie) = provider
+        .quota_auth_cookie
+        .as_deref()
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+    else {
+        return vec![opencode_go_error_result(
+            provider,
+            provider.display_name.clone(),
+            "quota endpoint is not configured".to_owned(),
+        )];
+    };
+    let encoded_workspace_id =
+        utf8_percent_encode(workspace_id, OPENCODE_GO_PATH_ENCODE).to_string();
+    let usage_url = format!("{dashboard_base}/workspace/{encoded_workspace_id}/go");
+    let billing_url = format!("{dashboard_base}/workspace/{encoded_workspace_id}/billing");
+    let (usage_result, billing_result) = tokio::join!(
+        fetch_opencode_go_usage(client, &usage_url, auth_cookie),
+        fetch_opencode_go_billing(client, &billing_url, auth_cookie),
+    );
+    let mut results = Vec::new();
+    match usage_result {
+        Ok(windows) => {
+            for (label, window) in [
+                ("OpenCode Go 5h", 0),
+                ("OpenCode Go Weekly", 1),
+                ("OpenCode Go Monthly", 2),
+            ]
+            .into_iter()
+            .filter_map(|(label, index)| windows.get(index).map(|window| (label, window)))
+            {
+                let used = window.used_percent.clamp(0.0, 100.0);
+                results.push(serde_json::json!({
+                    "provider_id": provider.id,
+                    "display_name": label,
+                    "currency": null,
+                    "value": used,
+                    "used": used,
+                    "limit": 100.0,
+                    "remaining": (100.0 - used).max(0.0),
+                    "error": null,
+                    "stale_at": null,
+                    "reset_at": unix_time_plus_seconds(window.reset_in_sec),
+                }));
+            }
+        }
+        Err(error) => results.push(opencode_go_error_result(
+            provider,
+            "OpenCode Go".to_owned(),
+            error,
+        )),
+    }
+    match billing_result {
+        Ok(billing) => results.push(serde_json::json!({
+            "provider_id": provider.id,
+            "display_name": "OpenCode Go Balance",
+            "currency": "USD",
+            "value": null,
+            "used": null,
+            "limit": billing.monthly_limit_usd,
+            "remaining": billing.balance_usd,
+            "monthly_usage": billing.monthly_usage_usd,
+            "error": null,
+            "stale_at": null,
+        })),
+        Err(error) => results.push(opencode_go_error_result(
+            provider,
+            "OpenCode Go Balance".to_owned(),
+            error,
+        )),
+    }
+    results
+}
+
+fn opencode_go_error_result(
+    provider: &ProviderDefinition,
+    display_name: String,
+    error: String,
+) -> serde_json::Value {
+    serde_json::json!({
+        "provider_id": provider.id,
+        "display_name": display_name,
+        "currency": provider.quota_currency,
+        "value": null,
+        "error": error,
+        "stale_at": null,
+    })
+}
+
+async fn fetch_opencode_go_usage(
+    client: &reqwest::Client,
+    url: &str,
+    auth_cookie: &str,
+) -> Result<Vec<OpenCodeGoWindowUsage>, String> {
+    let html = fetch_opencode_go_html(client, url, auth_cookie).await?;
+    parse_opencode_go_usage_html(&html)
+        .ok_or_else(|| "could not parse OpenCode Go dashboard usage".to_owned())
+}
+
+async fn fetch_opencode_go_billing(
+    client: &reqwest::Client,
+    url: &str,
+    auth_cookie: &str,
+) -> Result<OpenCodeGoBilling, String> {
+    let html = fetch_opencode_go_html(client, url, auth_cookie).await?;
+    parse_opencode_go_billing_html(&html)
+        .ok_or_else(|| "could not parse OpenCode Go billing data".to_owned())
+}
+
+async fn fetch_opencode_go_html(
+    client: &reqwest::Client,
+    url: &str,
+    auth_cookie: &str,
+) -> Result<String, String> {
+    let response = client
+        .get(url)
+        .header(reqwest::header::ACCEPT, "text/html")
+        .header(
+            reqwest::header::USER_AGENT,
+            "Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) Gecko/20100101 Firefox/148.0",
+        )
+        .header(reqwest::header::COOKIE, format!("auth={auth_cookie}"))
+        .timeout(OPENCODE_GO_SCRAPE_TIMEOUT)
+        .send()
+        .await
+        .map_err(|error| redact_opencode_go_message(&error.to_string(), auth_cookie))?;
+    let status = response.status();
+    if !status.is_success() {
+        return Err(format!("OpenCode Go dashboard error {status}"));
+    }
+    response
+        .text()
+        .await
+        .map_err(|error| redact_opencode_go_message(&error.to_string(), auth_cookie))
+}
+
+fn redact_opencode_go_message(message: &str, auth_cookie: &str) -> String {
+    let mut sanitized = message.replace(auth_cookie, "<redacted>").replace(
+        |character: char| character == '\n' || character == '\r',
+        " ",
+    );
+    sanitized = sanitized.split_whitespace().collect::<Vec<_>>().join(" ");
+    if sanitized.len() > 240 {
+        sanitized.truncate(240);
+    }
+    sanitized
+}
+
+fn parse_opencode_go_usage_html(html: &str) -> Option<Vec<OpenCodeGoWindowUsage>> {
+    let ssr = [
+        ("rolling", "rollingUsage"),
+        ("weekly", "weeklyUsage"),
+        ("monthly", "monthlyUsage"),
+    ]
+    .into_iter()
+    .map(|(_, field)| parse_opencode_go_ssr_window(html, field))
+    .collect::<Vec<_>>();
+    if ssr.iter().any(Option::is_some) {
+        return Some(
+            ssr.into_iter()
+                .flatten()
+                .map(|(used_percent, reset_in_sec)| OpenCodeGoWindowUsage {
+                    used_percent,
+                    reset_in_sec,
+                })
+                .collect(),
+        );
+    }
+    let data_slot = parse_opencode_go_data_slot_windows(html);
+    if data_slot.is_empty() {
+        return None;
+    }
+    let mut windows = Vec::new();
+    for label in ["rolling", "weekly", "monthly"] {
+        if let Some(window) = data_slot.get(label) {
+            windows.push(OpenCodeGoWindowUsage {
+                used_percent: window.0,
+                reset_in_sec: window.1,
+            });
+        }
+    }
+    (!windows.is_empty()).then_some(windows)
+}
+
+fn parse_opencode_go_ssr_window(html: &str, field: &str) -> Option<(f64, f64)> {
+    let number = r"(-?\d+(?:\.\d+)?)";
+    let usage_first = Regex::new(&format!(
+        r"{field}:\$R\[\d+\]=\{{[^}}]*usagePercent:{number}[^}}]*resetInSec:{number}[^}}]*\}}"
+    ))
+    .ok()?;
+    if let Some(captures) = usage_first.captures(html) {
+        let usage = captures.get(1)?.as_str().parse::<f64>().ok()?;
+        let reset = captures.get(2)?.as_str().parse::<f64>().ok()?;
+        if usage.is_finite() && reset.is_finite() {
+            return Some((usage, reset));
+        }
+    }
+    let reset_first = Regex::new(&format!(
+        r"{field}:\$R\[\d+\]=\{{[^}}]*resetInSec:{number}[^}}]*usagePercent:{number}[^}}]*\}}"
+    ))
+    .ok()?;
+    let captures = reset_first.captures(html)?;
+    let reset = captures.get(1)?.as_str().parse::<f64>().ok()?;
+    let usage = captures.get(2)?.as_str().parse::<f64>().ok()?;
+    (usage.is_finite() && reset.is_finite()).then_some((usage, reset))
+}
+
+fn parse_opencode_go_data_slot_windows(
+    html: &str,
+) -> std::collections::HashMap<String, (f64, f64)> {
+    let mut windows = std::collections::HashMap::new();
+    for item in html.split("data-slot=\"usage-item\"") {
+        let label = item
+            .split("data-slot=\"usage-label\">")
+            .nth(1)
+            .and_then(|value| value.split('<').next())
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let usage = match item
+            .split("data-slot=\"usage-value\">")
+            .nth(1)
+            .and_then(|value| Regex::new(r"\d+(?:\.\d+)?").ok()?.find(value))
+            .and_then(|matched| matched.as_str().parse::<f64>().ok())
+            .filter(|value| value.is_finite())
+        {
+            Some(value) => value,
+            None => continue,
+        };
+        let reset = match item
+            .split("data-slot=\"reset-now\">")
+            .nth(1)
+            .map(|_| 0.0)
+            .or_else(|| {
+                item.split("data-slot=\"reset-time\">")
+                    .nth(1)
+                    .and_then(|value| value.split("</span>").next())
+                    .and_then(parse_opencode_go_reset_time)
+            }) {
+            Some(value) => value,
+            None => continue,
+        };
+        let key = if label.contains("rolling") {
+            "rolling"
+        } else if label.contains("weekly") {
+            "weekly"
+        } else if label.contains("monthly") {
+            "monthly"
+        } else {
+            continue;
+        };
+        windows.insert(key.to_owned(), (usage, reset));
+    }
+    windows
+}
+
+fn parse_opencode_go_reset_time(value: &str) -> Option<f64> {
+    let normalized = value
+        .to_ascii_lowercase()
+        .replace("resets in", "")
+        .replace("reset in", "")
+        .split_whitespace()
+        .collect::<Vec<_>>()
+        .join(" ");
+    if normalized.contains("now") {
+        return Some(0.0);
+    }
+    let mut total = 0.0;
+    let mut found = false;
+    for (multiplier, suffix) in [
+        (86400.0, r"days?"),
+        (3600.0, r"hours?"),
+        (60.0, r"minutes?"),
+        (1.0, r"seconds?"),
+    ] {
+        if let Some(captures) = Regex::new(&format!(r"(\d+(?:\.\d+)?)\s*{suffix}"))
+            .ok()?
+            .captures(&normalized)
+        {
+            let value = captures.get(1)?.as_str().parse::<f64>().ok()?;
+            total += value * multiplier;
+            found = true;
+        }
+    }
+    found.then_some(total)
+}
+
+fn parse_opencode_go_billing_html(html: &str) -> Option<OpenCodeGoBilling> {
+    let mut fields = std::collections::HashMap::new();
+    let field_re =
+        Regex::new(r"\b(balance|monthlyLimit|monthlyUsage)\s*:\s*(\d+(?:\.\d+)?)\b").ok()?;
+    for captures in field_re.captures_iter(html) {
+        fields.insert(
+            captures.get(1)?.as_str().to_owned(),
+            captures.get(2)?.as_str().parse::<f64>().ok()?,
+        );
+    }
+    if let Some(balance_units) = fields.get("balance").copied() {
+        let balance_usd = balance_units / OPENCODE_GO_UNITS_PER_USD;
+        let monthly_limit_usd = fields.get("monthlyLimit").copied();
+        let monthly_usage_usd = fields
+            .get("monthlyUsage")
+            .copied()
+            .map(|units| units / OPENCODE_GO_UNITS_PER_USD);
+        if balance_usd.is_finite() && balance_usd >= 0.0 {
+            return Some(OpenCodeGoBilling {
+                balance_usd,
+                monthly_limit_usd,
+                monthly_usage_usd,
+            });
+        }
+    }
+    parse_opencode_go_data_slot_billing(html)
+}
+
+fn parse_opencode_go_data_slot_billing(html: &str) -> Option<OpenCodeGoBilling> {
+    let mut balance_usd = None;
+    let mut monthly_limit_usd = None;
+    let mut monthly_usage_usd = None;
+    for item in html.split("data-slot=\"billing-item\"") {
+        let label = item
+            .split("data-slot=\"billing-label\">")
+            .nth(1)
+            .and_then(|value| value.split('<').next())
+            .map(str::trim)
+            .unwrap_or_default()
+            .to_ascii_lowercase();
+        let Some(value) = item
+            .split("data-slot=\"billing-value\">")
+            .nth(1)
+            .and_then(|value| {
+                Regex::new(r"\$?\s*(\d+(?:,\d{3})*(?:\.\d+)?)")
+                    .ok()?
+                    .captures(value)
+            })
+            .and_then(|captures| captures.get(1))
+            .and_then(|matched| matched.as_str().replace(',', "").parse::<f64>().ok())
+        else {
+            continue;
+        };
+        if !value.is_finite() || value < 0.0 {
+            continue;
+        }
+        if label.contains("balance") {
+            balance_usd = Some(value);
+        } else if label.contains("monthly") && label.contains("limit") {
+            monthly_limit_usd = Some(value);
+        } else if label.contains("monthly") && label.contains("usage") {
+            monthly_usage_usd = Some(value);
+        }
+    }
+    Some(OpenCodeGoBilling {
+        balance_usd: balance_usd?,
+        monthly_limit_usd,
+        monthly_usage_usd,
+    })
+}
+
+fn unix_time_plus_seconds(seconds: f64) -> String {
+    let now = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|duration| duration.as_secs())
+        .unwrap_or_default();
+    unix_seconds_to_rfc3339(now + seconds.max(0.0) as u64)
+}
+
+fn unix_seconds_to_rfc3339(seconds: u64) -> String {
+    let days = seconds / 86_400;
+    let seconds_of_day = seconds % 86_400;
+    let hour = seconds_of_day / 3_600;
+    let minute = (seconds_of_day % 3_600) / 60;
+    let second = seconds_of_day % 60;
+    let (year, month, day) = civil_from_days(days);
+    format!("{year:04}-{month:02}-{day:02}T{hour:02}:{minute:02}:{second:02}Z")
+}
+
+fn civil_from_days(days_since_epoch: u64) -> (u64, u64, u64) {
+    let z = days_since_epoch as i64 + 719_468;
+    let era = if z >= 0 { z } else { z - 146_096 } / 146_097;
+    let day_of_era = z - era * 146_097;
+    let year_of_era =
+        (day_of_era - day_of_era / 1_460 + day_of_era / 36_524 - day_of_era / 146_096) / 365;
+    let mut year = year_of_era + era * 400;
+    let day_of_year = day_of_era - (365 * year_of_era + year_of_era / 4 - year_of_era / 100);
+    let month_prime = (5 * day_of_year + 2) / 153;
+    let day = day_of_year - (153 * month_prime + 2) / 5 + 1;
+    let month = month_prime + if month_prime < 10 { 3 } else { -9 };
+    year += if month <= 2 { 1 } else { 0 };
+    (year as u64, month as u64, day as u64)
 }
 
 #[derive(Clone, Debug, PartialEq)]
@@ -415,6 +1015,9 @@ pub(super) fn quota_usage(
             ],
         ),
         ProviderQuotaParser::DeepSeek => unreachable!("DeepSeek quota handled above"),
+        ProviderQuotaParser::OpenCodeGo => {
+            unreachable!("OpenCode Go quota is fetched from the dashboard HTML")
+        }
     };
     let used = first_quota_value(value, used_fields)
         .ok_or_else(|| anyhow::anyhow!("quota response does not contain a valid used amount"))?;
@@ -656,6 +1259,11 @@ fn redacted_providers(
                 "image_generation_path": provider.image_generation_path,
                 "quota_url": provider.quota_url,
                 "quota_username": provider.quota_username,
+                "quota_workspace_id": provider.quota_workspace_id,
+                "quota_auth_cookie": provider
+                    .quota_auth_cookie
+                    .as_ref()
+                    .map(|_| "<redacted>"),
                 "quota_currency": provider.quota_currency,
                 "selected_models": provider.selected_models,
                 "new_models": provider.new_models,

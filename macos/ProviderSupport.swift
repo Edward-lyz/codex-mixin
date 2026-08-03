@@ -141,6 +141,8 @@ struct ProviderView: Decodable {
     let imageGenerationPath: String?
     let quotaURL: String?
     let quotaUsername: String?
+    let quotaWorkspaceID: String?
+    let quotaAuthCookieConfigured: Bool?
     let quotaCurrency: String?
     let quotaParser: String
     let baiduAuthBridge: BaiduAuthBridgeMode?
@@ -168,6 +170,8 @@ struct ProviderView: Decodable {
         case imageGenerationPath = "image_generation_path"
         case quotaURL = "quota_url"
         case quotaUsername = "quota_username"
+        case quotaWorkspaceID = "quota_workspace_id"
+        case quotaAuthCookieConfigured = "quota_auth_cookie_configured"
         case quotaCurrency = "quota_currency"
         case quotaParser = "quota_parser"
         case baiduAuthBridge = "baidu_auth_bridge"

@@ -29,6 +29,13 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private let apiKeyField = secureFormTextField()
     private let clearKeyButton = NSButton(title: "清除密钥", target: nil, action: nil)
     private let quotaUsernameField = formTextField()
+    private let quotaWorkspaceIDField = formTextField()
+    private let quotaAuthCookieField = secureFormTextField()
+    private let clearQuotaCredentialsButton = NSButton(
+        title: appText("清除额度凭据", "清除額度憑證", "Clear Quota Credentials"),
+        target: nil,
+        action: nil
+    )
     private let auxiliaryModelUpstreamButton = NSButton(
         checkboxWithTitle: appText(
             "用作语音、自动审查等辅助模型上游",
@@ -42,6 +49,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private var customDisplayNameRow: NSView?
     private var customBaseURLRow: NSView?
     private var quotaUsernameRow: NSView?
+    private var quotaWorkspaceIDRow: NSView?
+    private var quotaAuthCookieRow: NSView?
     private var baiduAuthBridgeRow: NSView?
 
     private let addButton = NSButton(title: "新增", target: nil, action: nil)
@@ -153,6 +162,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
         configureFields()
         configureButton(clearKeyButton, action: #selector(clearProviderKey))
+        configureButton(clearQuotaCredentialsButton, action: #selector(clearQuotaCredentials))
         let apiKeyControls = NSStackView(views: [apiKeyField, clearKeyButton])
         apiKeyControls.orientation = .horizontal
         apiKeyControls.alignment = .centerY
@@ -160,6 +170,28 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
         let quotaUsernameRow = compactLabeledView("额度用户名", quotaUsernameField)
         self.quotaUsernameRow = quotaUsernameRow
+        let quotaWorkspaceIDRow = compactLabeledView(
+            appText("工作区 ID", "工作區 ID", "Workspace ID"),
+            quotaWorkspaceIDField
+        )
+        self.quotaWorkspaceIDRow = quotaWorkspaceIDRow
+        quotaAuthCookieField.translatesAutoresizingMaskIntoConstraints = false
+        quotaAuthCookieField.widthAnchor.constraint(equalToConstant: 300).isActive = true
+        clearQuotaCredentialsButton.bezelStyle = .rounded
+        clearQuotaCredentialsButton.controlSize = .small
+        let quotaAuthCookieControls = NSStackView(views: [
+            quotaAuthCookieField,
+            clearQuotaCredentialsButton,
+        ])
+        quotaAuthCookieControls.orientation = .horizontal
+        quotaAuthCookieControls.alignment = .centerY
+        quotaAuthCookieControls.spacing = 8
+        quotaAuthCookieControls.translatesAutoresizingMaskIntoConstraints = false
+        let quotaAuthCookieRow = compactLabeledView(
+            appText("Auth Cookie", "Auth Cookie", "Auth Cookie"),
+            quotaAuthCookieControls
+        )
+        self.quotaAuthCookieRow = quotaAuthCookieRow
         let customDisplayNameRow = compactLabeledView("站点名称", displayNameField)
         self.customDisplayNameRow = customDisplayNameRow
         let customBaseURLRow = compactLabeledView("API 地址", baseURLField)
@@ -183,6 +215,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             customBaseURLRow,
             compactLabeledView("API 密钥", apiKeyControls),
             quotaUsernameRow,
+            quotaWorkspaceIDRow,
+            quotaAuthCookieRow,
             baiduAuthBridgeRow,
             compactLabeledView("辅助模型", auxiliaryModelUpstreamButton),
             compactLabeledView("", managedConfigurationLabel),
@@ -269,6 +303,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         idField.font = .monospacedSystemFont(ofSize: NSFont.systemFontSize, weight: .regular)
         apiKeyField.placeholderString = "留空保留已保存密钥"
         quotaUsernameField.placeholderString = "Baidu OneAPI 额度接口必填"
+        quotaWorkspaceIDField.placeholderString = "例如：wrk_abc123"
+        quotaAuthCookieField.placeholderString = "opencode.ai auth cookie"
     }
 
     private func configureButton(_ button: NSButton, action: Selector) {
@@ -366,6 +402,13 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             ? "已配置；留空保留"
             : "尚未配置；启用前必须填写"
         quotaUsernameField.stringValue = provider.quotaUsername ?? ""
+        quotaWorkspaceIDField.stringValue = provider.quotaWorkspaceID ?? ""
+        quotaAuthCookieField.stringValue = ""
+        let openCodeGoQuotaConfigured = provider.quotaAuthCookieConfigured == true
+        quotaAuthCookieField.placeholderString = openCodeGoQuotaConfigured
+            ? "已配置；留空保留"
+            : "opencode.ai auth cookie"
+        clearQuotaCredentialsButton.isEnabled = openCodeGoQuotaConfigured
         auxiliaryModelUpstreamButton.state = provider.auxiliaryModelUpstream ? .on : .off
         selectPopupValue(
             baiduAuthBridgePopup,
@@ -376,6 +419,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         customDisplayNameRow?.isHidden = !isCustom
         customBaseURLRow?.isHidden = !isCustom
         quotaUsernameRow?.isHidden = provider.presetID != "baidu-oneapi"
+        let openCodeGo = requiresOpenCodeGoQuotaCredentials(provider.presetID ?? "")
+        quotaWorkspaceIDRow?.isHidden = !openCodeGo
+        quotaAuthCookieRow?.isHidden = !openCodeGo
         baiduAuthBridgeRow?.isHidden = provider.presetID != "baidu-oneapi"
         enableButton.title = provider.enabled ? "停用" : "启用"
         statusLabel.stringValue = selectedProviderStatus()
@@ -389,9 +435,12 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             baseURLField,
             apiKeyField,
             quotaUsernameField,
+            quotaWorkspaceIDField,
+            quotaAuthCookieField,
         ] {
             field.stringValue = ""
         }
+        clearQuotaCredentialsButton.isEnabled = false
         auxiliaryModelUpstreamButton.state = .off
         selectPopupValue(baiduAuthBridgePopup, BaiduAuthBridgeMode.disabled.rawValue)
         auxiliaryModelUpstreamButton.toolTip = auxiliaryModelDefaultTooltip()
@@ -413,6 +462,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             displayNameField,
             baseURLField,
             quotaUsernameField,
+            quotaWorkspaceIDField,
+            quotaAuthCookieField,
+            clearQuotaCredentialsButton,
             auxiliaryModelUpstreamButton,
             baiduAuthBridgePopup,
             enableButton,
@@ -430,6 +482,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 )
             } == true
         clearKeyButton.isEnabled = enabled && selectedProvider?.apiKeyConfigured == true
+        clearQuotaCredentialsButton.isEnabled =
+            enabled && selectedProvider?.quotaAuthCookieConfigured == true
     }
 
     private func auxiliaryModelDefaultTooltip() -> String {
@@ -583,6 +637,18 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             appendProviderArgument(&arguments, "--base-url", values.baseURL)
         }
         appendProviderArgument(&arguments, "--quota-username", values.quotaUsername)
+        if requiresOpenCodeGoQuotaCredentials(values.preset) {
+            appendProviderArgument(
+                &arguments,
+                "--quota-workspace-id",
+                values.quotaWorkspaceID
+            )
+            appendProviderArgument(
+                &arguments,
+                "--quota-auth-cookie",
+                values.quotaAuthCookie
+            )
+        }
         let bridgeMode = BaiduAuthBridgeMode(rawValue: values.baiduAuthBridge) ?? .disabled
         if values.preset == "baidu-oneapi" {
             appendBaiduAuthBridgeArguments(&arguments, mode: bridgeMode)
@@ -659,6 +725,47 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         )
     }
 
+    @objc private func clearQuotaCredentials() {
+        guard let provider = selectedProvider, !isBusy else { return }
+        guard requiresOpenCodeGoQuotaCredentials(provider.presetID ?? ""),
+              provider.quotaAuthCookieConfigured == true
+        else {
+            return
+        }
+        guard confirm(
+            title: appText(
+                "清除 OpenCode Go 额度凭据？",
+                "清除 OpenCode Go 額度憑證？",
+                "Clear OpenCode Go quota credentials?"
+            ),
+            message: appText(
+                "将删除工作区 ID 和 auth cookie，菜单会停止显示 OpenCode Go 用量与余额。",
+                "將刪除工作區 ID 和 auth cookie，選單會停止顯示 OpenCode Go 用量與餘額。",
+                "This removes the workspace ID and auth cookie; OpenCode Go quota will stop being displayed."
+            )
+        ) else { return }
+        performMutation(
+            ["providers", "update", provider.id, "--clear-quota"],
+            status: "正在清除 \(provider.id) 的额度凭据…",
+            selecting: provider.id
+        )
+    }
+
+    private func showOpenCodeGoQuotaCredentialsAlert() {
+        showAlert(
+            title: appText(
+                "缺少 OpenCode Go 额度凭据",
+                "缺少 OpenCode Go 額度憑證",
+                "OpenCode Go Quota Credentials Required"
+            ),
+            message: appText(
+                "OpenCode Go 需要同时填写工作区 ID 和 auth cookie 才能查询用量与余额。",
+                "OpenCode Go 需要同時填寫工作區 ID 和 auth cookie 才能查詢用量與餘額。",
+                "OpenCode Go requires both the workspace ID and auth cookie to show usage and balance."
+            )
+        )
+    }
+
     @objc private func saveProvider() {
         guard let provider = selectedProvider, !isBusy else { return }
         var update = ["providers", "update", provider.id]
@@ -694,6 +801,22 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         if provider.presetID == "baidu-oneapi" {
             appendProviderArgument(&update, "--quota-username", quotaUsername)
             appendBaiduAuthBridgeArguments(&update, mode: selectedBaiduAuthBridgeMode())
+        }
+        if requiresOpenCodeGoQuotaCredentials(provider.presetID ?? "") {
+            let workspaceID = quotaWorkspaceIDField.stringValue
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let authCookie = quotaAuthCookieField.stringValue
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let credentialsUnchanged =
+                workspaceID == (provider.quotaWorkspaceID ?? "") && authCookie.isEmpty
+            if !credentialsUnchanged {
+                guard !workspaceID.isEmpty, !authCookie.isEmpty else {
+                    showOpenCodeGoQuotaCredentialsAlert()
+                    return
+                }
+                appendProviderArgument(&update, "--quota-workspace-id", workspaceID)
+                appendProviderArgument(&update, "--quota-auth-cookie", authCookie)
+            }
         }
         performMutation(
             update,

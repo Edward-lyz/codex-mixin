@@ -6,6 +6,8 @@ struct AddProviderFormValues {
     let baseURL: String
     let apiKey: String
     let quotaUsername: String
+    let quotaWorkspaceID: String
+    let quotaAuthCookie: String
     let baiduAuthBridge: String
 }
 
@@ -56,6 +58,26 @@ func runAddProviderSheet(
         appText("额度用户名", "額度使用者名稱", "Quota username"),
         quotaUsernameField
     )
+    let quotaWorkspaceIDField = formTextField()
+    quotaWorkspaceIDField.placeholderString = appText(
+        "例如：wrk_abc123",
+        "例如：wrk_abc123",
+        "For example: wrk_abc123"
+    )
+    let quotaWorkspaceIDRow = labeledView(
+        appText("工作区 ID", "工作區 ID", "Workspace ID"),
+        quotaWorkspaceIDField
+    )
+    let quotaAuthCookieField = secureFormTextField()
+    quotaAuthCookieField.placeholderString = appText(
+        "opencode.ai 的 auth cookie",
+        "opencode.ai 的 auth cookie",
+        "opencode.ai auth cookie"
+    )
+    let quotaAuthCookieRow = labeledView(
+        appText("Auth Cookie", "Auth Cookie", "Auth Cookie"),
+        quotaAuthCookieField
+    )
     let displayNameField = formTextField()
     displayNameField.placeholderString = appText(
         "例如：社区公益站",
@@ -78,7 +100,7 @@ func runAddProviderSheet(
         baiduAuthBridgePopup
     )
 
-    let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 650, height: 575))
+    let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 650, height: 700))
     let panel = NSWindow(
         contentRect: contentView.frame,
         styleMask: [.titled, .closable],
@@ -126,6 +148,8 @@ func runAddProviderSheet(
         let provider = selectedProviderID(providerPopup)
         let isCustom = provider == "custom"
         quotaUsernameRow.isHidden = provider != "baidu-oneapi"
+        quotaWorkspaceIDRow.isHidden = !requiresOpenCodeGoQuotaCredentials(provider)
+        quotaAuthCookieRow.isHidden = !requiresOpenCodeGoQuotaCredentials(provider)
         displayNameRow.isHidden = !isCustom
         baseURLRow.isHidden = !isCustom
         baiduAuthBridgeRow.isHidden = provider != "baidu-oneapi"
@@ -141,6 +165,8 @@ func runAddProviderSheet(
         baseURLRow,
         labeledView("API Key", apiKeyField),
         quotaUsernameRow,
+        quotaWorkspaceIDRow,
+        quotaAuthCookieRow,
         baiduAuthBridgeRow,
     ])
     formStack.orientation = .vertical
@@ -225,12 +251,33 @@ func runAddProviderSheet(
             )
             return
         }
+        let workspaceID = quotaWorkspaceIDField.stringValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        let authCookie = quotaAuthCookieField.stringValue
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if requiresOpenCodeGoQuotaCredentials(preset), workspaceID.isEmpty || authCookie.isEmpty {
+            showAlert(
+                title: appText(
+                    "缺少 OpenCode Go 额度凭据",
+                    "缺少 OpenCode Go 額度憑證",
+                    "OpenCode Go Quota Credentials Required"
+                ),
+                message: appText(
+                    "OpenCode Go 需要同时填写工作区 ID 和 auth cookie 才能查询用量与余额。",
+                    "OpenCode Go 需要同時填寫工作區 ID 和 auth cookie 才能查詢用量與餘額。",
+                    "OpenCode Go requires both the workspace ID and auth cookie to show usage and balance."
+                )
+            )
+            return
+        }
         values = AddProviderFormValues(
             preset: preset,
             displayName: displayName,
             baseURL: baseURL,
             apiKey: apiKey,
             quotaUsername: username,
+            quotaWorkspaceID: workspaceID,
+            quotaAuthCookie: authCookie,
             baiduAuthBridge: selectedPopupValue(
                 baiduAuthBridgePopup,
                 fallback: "disabled"
@@ -294,6 +341,10 @@ func configureTransientModalPanel(_ panel: NSPanel) {
 
 func selectedProviderID(_ popup: NSPopUpButton) -> String {
     popup.selectedItem?.representedObject as? String ?? "baidu-oneapi"
+}
+
+func requiresOpenCodeGoQuotaCredentials(_ provider: String) -> Bool {
+    provider == "opencode-go"
 }
 
 func providerCredentialURL(_ provider: String) -> String {

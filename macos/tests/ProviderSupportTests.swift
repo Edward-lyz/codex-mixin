@@ -155,6 +155,28 @@ struct ProviderSupportTests {
                   "readiness": "healthy",
                   "readiness_issues": [],
                   "routable_model_count": 0
+                },
+                {
+                  "id": "opencode-go",
+                  "display_name": "OpenCode Go",
+                  "enabled": true,
+                  "auxiliary_model_upstream": false,
+                  "preset_id": "opencode-go",
+                  "protocol": "open_ai_chat",
+                  "base_url": "https://opencode.ai/zen/go",
+                  "api_path": "/v1/chat/completions",
+                  "model_source": {"kind": "open_ai_compatible", "path": "/v1/models"},
+                  "api_key_configured": true,
+                  "quota_workspace_id": "wrk_abc",
+                  "quota_auth_cookie_configured": true,
+                  "quota_parser": "opencode_go",
+                  "selected_models": [],
+                  "new_models": [],
+                  "unavailable_selected_models": [],
+                  "cached_models": [],
+                  "readiness": "healthy",
+                  "readiness_issues": [],
+                  "routable_model_count": 0
                 }
               ]
             }
@@ -164,6 +186,7 @@ struct ProviderSupportTests {
         let baidu = response.providers[0]
         let autoReviewOnly = response.providers[1]
         let unsupported = response.providers[2]
+        let openCodeGo = response.providers[3]
         precondition(response.codexInstallMode == .customOnly)
         precondition(baidu.baiduAuthBridge == .duccLoopback)
         precondition(baidu.effectiveBaiduAuthBridge == .duccLoopback)
@@ -173,6 +196,8 @@ struct ProviderSupportTests {
         precondition(baidu.auxiliaryModelSupport == .autoReviewAndVoice)
         precondition(autoReviewOnly.auxiliaryModelSupport == .autoReviewOnly)
         precondition(unsupported.auxiliaryModelSupport == .none)
+        precondition(openCodeGo.quotaWorkspaceID == "wrk_abc")
+        precondition(openCodeGo.quotaAuthCookieConfigured == true)
         precondition(
             isAuxiliaryModelUpstreamSelectable(
                 for: baidu,

@@ -45,6 +45,10 @@ func localizedPrompt(_ text: String) -> String {
         "保存 Fusion 设置失败": ("儲存 Fusion 設定失敗", "Unable to Save Fusion Settings"),
         "缺少 API 密钥": ("缺少 API 金鑰", "API Key Required"),
         "缺少额度用户名": ("缺少額度使用者名稱", "Quota Username Required"),
+        "缺少 OpenCode Go 额度凭据": (
+            "缺少 OpenCode Go 額度憑證",
+            "OpenCode Go Quota Credentials Required"
+        ),
         "缺少 Provider ID": ("缺少 Provider ID", "Provider ID Required"),
         "缺少显示名称": ("缺少顯示名稱", "Display Name Required"),
         "缺少密钥页面": ("缺少金鑰頁面", "No API Key Page"),
@@ -96,6 +100,17 @@ func localizedGatewayMessage(_ rawMessage: String) -> String {
             "額度回應中沒有有效的已用額度"
         ),
         ("quota endpoint returned", "额度接口返回", "額度端點回傳"),
+        (
+            "could not parse OpenCode Go dashboard usage",
+            "OpenCode Go 用量页面解析失败",
+            "OpenCode Go 用量頁面解析失敗"
+        ),
+        (
+            "could not parse OpenCode Go billing data",
+            "OpenCode Go 余额页面解析失败",
+            "OpenCode Go 餘額頁面解析失敗"
+        ),
+        ("OpenCode Go dashboard error", "OpenCode Go 页面请求失败", "OpenCode Go 頁面請求失敗"),
         ("models endpoint returned", "模型接口返回", "模型端點回傳"),
         ("available-models endpoint returned", "可用模型接口返回", "可用模型端點回傳"),
         ("error sending request for url", "请求发送失败", "要求傳送失敗"),

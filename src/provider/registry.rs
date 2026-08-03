@@ -760,6 +760,8 @@ mod tests {
             image_generation_path: None,
             quota_url: None,
             quota_username: None,
+            quota_workspace_id: None,
+            quota_auth_cookie: None,
             quota_currency: None,
             quota_parser: ProviderQuotaParser::Generic,
             request_policy: ProviderRequestPolicy::default(),

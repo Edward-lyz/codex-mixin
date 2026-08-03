@@ -9,6 +9,7 @@ struct ProviderQuotaUsage: Decodable {
     let remaining: Double?
     let error: String?
     let staleAt: String?
+    let resetAt: String?
 
     enum CodingKeys: String, CodingKey {
         case providerID = "provider_id"
@@ -20,6 +21,7 @@ struct ProviderQuotaUsage: Decodable {
         case remaining
         case error
         case staleAt = "stale_at"
+        case resetAt = "reset_at"
     }
 
     init(from decoder: Decoder) throws {
@@ -33,6 +35,7 @@ struct ProviderQuotaUsage: Decodable {
         remaining = try values.decodeIfPresent(Double.self, forKey: .remaining)
         error = try values.decodeIfPresent(String.self, forKey: .error)
         staleAt = try values.decodeIfPresent(String.self, forKey: .staleAt)
+        resetAt = try values.decodeIfPresent(String.self, forKey: .resetAt)
     }
 
     var menuLabel: String {

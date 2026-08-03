@@ -233,6 +233,7 @@ fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConfig> {
         let mut parsed: StoredGatewayConfig = serde_json::from_value(document)?;
         ensure_config_version(u32::try_from(version).context("config_version is too large")?)?;
         upgrade_deepseek_quota_defaults(&mut parsed);
+        upgrade_opencode_go_quota_defaults(&mut parsed);
         bootstrap_unrefreshed_selected_models(&mut parsed);
         return Ok(parsed);
     } else if document.get("config_version").is_some() {
@@ -260,6 +261,7 @@ fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConfig> {
     }
     let mut migrated = migrate_legacy_config(serde_json::from_value(document)?)?;
     upgrade_deepseek_quota_defaults(&mut migrated);
+    upgrade_opencode_go_quota_defaults(&mut migrated);
     bootstrap_unrefreshed_selected_models(&mut migrated);
     Ok(migrated)
 }
@@ -273,6 +275,19 @@ fn upgrade_deepseek_quota_defaults(config: &mut StoredGatewayConfig) {
         {
             provider.quota_url = Some("https://api.deepseek.com/user/balance".to_owned());
             provider.quota_parser = ProviderQuotaParser::DeepSeek;
+        }
+    }
+}
+
+fn upgrade_opencode_go_quota_defaults(config: &mut StoredGatewayConfig) {
+    for provider in &mut config.providers {
+        if provider.preset_id.as_deref() == Some("opencode-go")
+            && provider.base_url == "https://opencode.ai/zen/go"
+            && provider.quota_url.is_none()
+            && provider.quota_parser == ProviderQuotaParser::Generic
+        {
+            provider.quota_parser = ProviderQuotaParser::OpenCodeGo;
+            provider.quota_currency = Some("USD".to_owned());
         }
     }
 }
@@ -633,6 +648,26 @@ mod tests {
             loaded.providers[0].quota_parser,
             ProviderQuotaParser::DeepSeek
         );
+    }
+
+    #[test]
+    fn upgrades_existing_opencode_go_provider_to_the_dashboard_parser() {
+        let mut provider = crate::provider::open_code_go_provider("opencode-go", "secret");
+        provider.quota_url = None;
+        provider.quota_currency = None;
+        provider.quota_parser = ProviderQuotaParser::Generic;
+        let stored = StoredGatewayConfig {
+            providers: vec![provider],
+            ..StoredGatewayConfig::default()
+        };
+
+        let loaded = parse_stored_config(&serde_json::to_string(&stored).unwrap()).unwrap();
+
+        assert_eq!(
+            loaded.providers[0].quota_parser,
+            ProviderQuotaParser::OpenCodeGo
+        );
+        assert_eq!(loaded.providers[0].quota_currency.as_deref(), Some("USD"));
     }
 
     #[test]

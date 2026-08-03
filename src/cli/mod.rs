@@ -268,6 +268,10 @@ enum ProviderCommand {
         quota_url: Option<String>,
         #[arg(long, help = "Quota username; required by the baidu-oneapi preset")]
         quota_username: Option<String>,
+        #[arg(long, help = "OpenCode Go dashboard workspace ID")]
+        quota_workspace_id: Option<String>,
+        #[arg(long, help = "OpenCode Go dashboard auth cookie")]
+        quota_auth_cookie: Option<String>,
         #[arg(long)]
         quota_currency: Option<String>,
         #[arg(long)]
@@ -314,6 +318,14 @@ enum ProviderCommand {
             help = "Quota username; required by the Baidu OneAPI quota parser"
         )]
         quota_username: Option<String>,
+        #[arg(long, conflicts_with = "clear_quota_workspace_id")]
+        quota_workspace_id: Option<String>,
+        #[arg(long, conflicts_with = "quota_workspace_id")]
+        clear_quota_workspace_id: bool,
+        #[arg(long, conflicts_with = "clear_quota_auth_cookie")]
+        quota_auth_cookie: Option<String>,
+        #[arg(long, conflicts_with = "quota_auth_cookie")]
+        clear_quota_auth_cookie: bool,
         #[arg(long)]
         quota_currency: Option<String>,
         #[arg(long)]
@@ -408,6 +420,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 image_generation_path,
                 quota_url,
                 quota_username,
+                quota_workspace_id,
+                quota_auth_cookie,
                 quota_currency,
                 quota_parser,
                 gateway_key,
@@ -427,6 +441,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 image_generation_path,
                 quota_url,
                 quota_username,
+                quota_workspace_id,
+                quota_auth_cookie,
                 quota_currency,
                 quota_parser,
                 gateway_key,
@@ -450,6 +466,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 quota_url,
                 clear_quota,
                 quota_username,
+                quota_workspace_id,
+                clear_quota_workspace_id,
+                quota_auth_cookie,
+                clear_quota_auth_cookie,
                 quota_currency,
                 quota_parser,
                 header_env,
@@ -471,6 +491,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 quota_url,
                 clear_quota,
                 quota_username,
+                quota_workspace_id,
+                clear_quota_workspace_id,
+                quota_auth_cookie,
+                clear_quota_auth_cookie,
                 quota_currency,
                 quota_parser,
                 header_env,

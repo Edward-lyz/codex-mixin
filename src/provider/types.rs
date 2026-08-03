@@ -54,6 +54,8 @@ pub enum ProviderQuotaParser {
     OpenRouter,
     #[serde(rename = "deepseek")]
     DeepSeek,
+    #[serde(rename = "opencode_go")]
+    OpenCodeGo,
 }
 
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
@@ -122,6 +124,10 @@ pub struct ProviderDefinition {
     pub quota_url: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_username: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_workspace_id: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub quota_auth_cookie: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub quota_currency: Option<String>,
     #[serde(default)]
@@ -204,6 +210,24 @@ impl ProviderDefinition {
                     .as_deref()
                     .is_some_and(|username| !username.trim().is_empty()),
                 "provider {} requires a quota username for Baidu OneAPI quota",
+                self.id
+            );
+        }
+        if self.quota_parser == ProviderQuotaParser::OpenCodeGo {
+            let workspace_id = self
+                .quota_workspace_id
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default();
+            let auth_cookie = self
+                .quota_auth_cookie
+                .as_deref()
+                .map(str::trim)
+                .unwrap_or_default();
+            ensure!(
+                (workspace_id.is_empty() && auth_cookie.is_empty())
+                    || (!workspace_id.is_empty() && !auth_cookie.is_empty()),
+                "provider {} requires both quota workspace ID and auth cookie for OpenCode Go quota",
                 self.id
             );
         }
@@ -516,6 +540,24 @@ mod tests {
         );
 
         provider.quota_username = Some("user@example.com".to_owned());
+        provider.validate().unwrap();
+    }
+
+    #[test]
+    fn opencode_go_quota_requires_both_workspace_id_and_auth_cookie() {
+        let mut provider = crate::provider::open_code_go_provider("opencode-go", "key");
+        provider.validate().unwrap();
+
+        provider.quota_workspace_id = Some("wrk_123".to_owned());
+        assert!(
+            provider
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("requires both quota workspace ID and auth cookie")
+        );
+
+        provider.quota_auth_cookie = Some("cookie".to_owned());
         provider.validate().unwrap();
     }
 

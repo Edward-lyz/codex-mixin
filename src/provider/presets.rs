@@ -98,8 +98,10 @@ pub fn open_code_go_provider(
         image_generation_path: None,
         quota_url: None,
         quota_username: None,
-        quota_currency: None,
-        quota_parser: ProviderQuotaParser::Generic,
+        quota_workspace_id: None,
+        quota_auth_cookie: None,
+        quota_currency: Some("USD".to_owned()),
+        quota_parser: ProviderQuotaParser::OpenCodeGo,
         request_policy: ProviderRequestPolicy::default(),
         selected_models,
         new_models: Vec::new(),
@@ -131,6 +133,8 @@ pub fn custom_provider(id: impl Into<String>, api_key: impl Into<String>) -> Pro
         image_generation_path: None,
         quota_url: None,
         quota_username: None,
+        quota_workspace_id: None,
+        quota_auth_cookie: None,
         quota_currency: None,
         quota_parser: ProviderQuotaParser::Generic,
         request_policy: ProviderRequestPolicy::default(),
@@ -230,6 +234,8 @@ fn openai_chat_provider(
         image_generation_path: None,
         quota_url: None,
         quota_username: None,
+        quota_workspace_id: None,
+        quota_auth_cookie: None,
         quota_currency: None,
         quota_parser: ProviderQuotaParser::Generic,
         request_policy: ProviderRequestPolicy::default(),
@@ -261,6 +267,10 @@ mod tests {
         assert_eq!(provider.protocol, ProviderProtocol::OpenAiChat);
         assert_eq!(provider.base_url, "https://opencode.ai/zen/go");
         assert_eq!(provider.api_path, "/v1/chat/completions");
+        assert_eq!(provider.quota_parser, ProviderQuotaParser::OpenCodeGo);
+        assert_eq!(provider.quota_currency.as_deref(), Some("USD"));
+        assert_eq!(provider.quota_workspace_id, None);
+        assert_eq!(provider.quota_auth_cookie, None);
         assert_eq!(
             provider.model_source,
             ProviderModelSource::OpenAiCompatible {
