@@ -176,7 +176,10 @@ impl AppState {
                 };
                 let model = resolved.model.expect("routable model has cached metadata");
                 models.push(ModelInfo {
-                    id: slug,
+                    // Keep the bare upstream model id here. Catalog generation owns
+                    // provider-suffixed slugs and needs the upstream id for capability
+                    // inheritance / official GPT clamping.
+                    id: upstream_model_id.clone(),
                     display_name: Some(provider_model_display_name(
                         upstream_model_id,
                         provider.display_name(),

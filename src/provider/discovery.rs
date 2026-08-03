@@ -7,6 +7,10 @@ use serde_json::json;
 
 use crate::anthropic::{BaiduAvailableModelsResponse, ModelsResponse};
 
+use super::models_dev::{
+    enrich_models_with_models_dev, fetch_models_dev_provider_models,
+    uses_models_dev_capabilities,
+};
 use super::{ProviderDefinition, ProviderModel, ProviderModelSource, ProviderRuntime};
 
 pub async fn discover_provider_models(
@@ -47,6 +51,21 @@ pub async fn discover_provider_models(
                     supports_web_search: model.supports_web_search,
                 })
                 .collect::<Vec<_>>();
+            if uses_models_dev_capabilities(
+                definition.preset_id.as_deref(),
+                definition.id.as_str(),
+            ) {
+                // OpenCode Go exposes membership via /v1/models, but capabilities live on
+                // models.dev. Prefer remote models.dev over local seed/cache guesses.
+                match fetch_models_dev_provider_models(client, "opencode-go").await {
+                    Ok(metadata) => enrich_models_with_models_dev(&mut models, &metadata),
+                    Err(error) => tracing::warn!(
+                        provider_id = %definition.id,
+                        error = %format!("{error:#}"),
+                        "failed to enrich OpenCode Go models from models.dev"
+                    ),
+                }
+            }
             normalize_models(&mut models);
             Ok(models)
         }

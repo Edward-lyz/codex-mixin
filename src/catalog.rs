@@ -137,18 +137,24 @@ fn codex_catalog_from_models_with_options(
                 .cloned()
                 .unwrap_or_else(|| fallback_template(default_context_window));
             let is_gpt = is_gpt_model(&model.id);
+            let owned_provider = model
+                .owned_by
+                .as_deref()
+                .map(str::trim)
+                .filter(|value| !value.is_empty() && *value != "codex-mixin");
+            let effective_provider_suffix = provider_suffix.or(owned_provider);
             let slug = if include_template_models
-                && is_gpt
-                && let Some(provider_suffix) = provider_suffix
+                && let Some(provider_suffix) = effective_provider_suffix
             {
+                // Always provider-suffix managed models so multi-provider catalogs stay
+                // collision-free and clamp/reasoning can still use the bare upstream id.
                 format!("{}-{provider_suffix}", model.id)
             } else {
                 model.id.clone()
             };
             let display_name = model.display_name.clone().unwrap_or_else(|| {
                 if include_template_models
-                    && is_gpt
-                    && let Some(provider_suffix) = provider_suffix
+                    && let Some(provider_suffix) = effective_provider_suffix
                 {
                     let provider = if provider_suffix == "custom" {
                         "Custom"
@@ -191,7 +197,11 @@ fn codex_catalog_from_models_with_options(
                     ModelMetadataResolver::empty().resolve(&model.id, default_context_window)
                 });
             let mut context_window = model.context_window.unwrap_or(metadata.context_window);
-            if include_template_models
+            // Only fall back to official GPT windows when the provider did not advertise one.
+            // Provider-specific SSOT (for example OpenCode Go via models.dev) may intentionally
+            // expose a larger context than the official Codex GPT entry.
+            if model.context_window.is_none()
+                && include_template_models
                 && is_gpt
                 && let Some(official_context_window) =
                     template_model_context_window(template_catalog, &model.id)
@@ -406,11 +416,13 @@ fn clamp_managed_gpt_context(
     else {
         return;
     };
-    let context_window = model_context_window(model)
-        .map(|context_window| context_window.min(official_context_window))
-        .unwrap_or(official_context_window);
-    model["context_window"] = json!(context_window);
-    model["max_context_window"] = json!(context_window);
+    // Preserve provider-advertised context windows. Only fill missing GPT windows from
+    // the official catalog entry with the same bare upstream id.
+    if model_context_window(model).is_some() {
+        return;
+    }
+    model["context_window"] = json!(official_context_window);
+    model["max_context_window"] = json!(official_context_window);
 }
 
 fn is_managed_custom_model(model: &Value) -> bool {
@@ -847,8 +859,9 @@ mod tests {
         assert_eq!(catalog["models"][0]["slug"], "gpt-5.5");
         assert_eq!(catalog["models"][1]["slug"], "gpt-5.5-baidu-oneapi");
         assert_eq!(catalog["models"][1][UPSTREAM_MODEL_MARKER], "gpt-5.5");
-        assert_eq!(catalog["models"][1]["context_window"], 272_000);
-        assert_eq!(catalog["models"][1]["max_context_window"], 272_000);
+        // Provider-advertised windows win over official GPT template inheritance.
+        assert_eq!(catalog["models"][1]["context_window"], 372_000);
+        assert_eq!(catalog["models"][1]["max_context_window"], 372_000);
     }
 
     #[test]
@@ -877,7 +890,41 @@ mod tests {
     }
 
     #[test]
-    fn oauth_proxy_catalog_keeps_smaller_upstream_gpt_context() {
+    fn aggregated_oauth_catalog_uses_owned_by_provider_suffix_and_keeps_provider_window() {
+        let template = json!({"models":[{
+            "slug":"gpt-5.6-luna",
+            "display_name":"GPT-5.6-Luna",
+            "context_window":272000,
+            "max_context_window":272000
+        }]});
+        let models = vec![ModelInfo {
+            id: "gpt-5.6-luna".to_owned(),
+            display_name: Some("gpt-5.6-luna · OpenCode Go".to_owned()),
+            owned_by: Some("opencode-go".to_owned()),
+            context_window: Some(1_050_000),
+            supports_image: Some(true),
+            supports_thinking: Some(true),
+            ..ModelInfo::default()
+        }];
+        let metadata = ModelMetadataResolver::empty();
+        let catalog = codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
+            &models,
+            1_000_000,
+            Some(&template),
+            &metadata,
+        );
+        assert_eq!(catalog["models"][1]["slug"], "gpt-5.6-luna-opencode-go");
+        assert_eq!(catalog["models"][1][UPSTREAM_MODEL_MARKER], "gpt-5.6-luna");
+        assert_eq!(catalog["models"][1]["context_window"], 1_050_000);
+        assert_eq!(catalog["models"][1]["max_context_window"], 1_050_000);
+        assert_eq!(
+            catalog["models"][1]["input_modalities"],
+            json!(["text", "image"])
+        );
+    }
+
+    #[test]
+        fn oauth_proxy_catalog_keeps_smaller_upstream_gpt_context() {
         let template = json!({"models":[{
             "slug":"gpt-5.5",
             "context_window":272000,
@@ -954,8 +1001,9 @@ mod tests {
             refreshed["models"][3]["additional_speed_tiers"],
             json!(["fast"])
         );
-        assert_eq!(refreshed["models"][3]["context_window"], 272_000);
-        assert_eq!(refreshed["models"][3]["max_context_window"], 272_000);
+        // Provider-advertised windows are preserved; official GPT entries only fill gaps.
+        assert_eq!(refreshed["models"][3]["context_window"], 372_000);
+        assert_eq!(refreshed["models"][3]["max_context_window"], 372_000);
         assert!(refreshed["models"][2].get("web_search_tool_type").is_none());
         for model in refreshed["models"].as_array().unwrap() {
             assert_eq!(model["base_instructions"], FALLBACK_BASE_INSTRUCTIONS);
