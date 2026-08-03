@@ -1,6 +1,9 @@
 use super::*;
 
 pub const BENCHMARK_TARGET_OUTPUT_TOKENS: u64 = 100;
+/// TTFT mode asks the upstream for a reasoning budget instead of a literal
+/// one-token cap so providers that emit reasoning before content can respond.
+pub(super) const BENCHMARK_TTFT_UPSTREAM_MAX_TOKENS: u64 = 256;
 pub(super) const BENCHMARK_FILE_VERSION: u64 = 2;
 pub(crate) const BENCHMARK_PROMPT: &str = "Generate an endless stream of unrelated lowercase English words separated by single spaces. Do not count, explain, punctuate, repeat a fixed pattern, or conclude. Continue until the server cuts off generation.";
 

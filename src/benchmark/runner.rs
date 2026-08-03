@@ -123,10 +123,15 @@ pub(super) async fn benchmark_request(
     let deadline = started + timeout;
     let provider = &target.provider;
     let protocol = provider.protocol_for_model(&target.upstream_model_id);
+    let upstream_output_budget = if target_output_tokens == 1 {
+        BENCHMARK_TTFT_UPSTREAM_MAX_TOKENS
+    } else {
+        target_output_tokens
+    };
     let mut body = match protocol {
         ProviderProtocol::AnthropicMessages => json!({
             "model": target.upstream_model_id,
-            "max_tokens": target_output_tokens,
+            "max_tokens": upstream_output_budget,
             "stream": true,
             "messages": [{
                 "role": "user",
@@ -135,14 +140,14 @@ pub(super) async fn benchmark_request(
         }),
         ProviderProtocol::OpenAiChat => json!({
             "model": target.upstream_model_id,
-            "max_tokens": target_output_tokens,
+            "max_tokens": upstream_output_budget,
             "stream": true,
             "stream_options": {"include_usage": true},
             "messages": [{"role": "user", "content": BENCHMARK_PROMPT}]
         }),
         ProviderProtocol::OpenAiResponses => json!({
             "model": target.upstream_model_id,
-            "max_output_tokens": target_output_tokens,
+            "max_output_tokens": upstream_output_budget,
             "stream": true,
             "input": BENCHMARK_PROMPT
         }),
@@ -324,6 +329,9 @@ pub(super) async fn benchmark_request(
                         && let Some(tokens) = usage.get("completion_tokens").and_then(Value::as_u64)
                     {
                         output_tokens = Some(tokens);
+                        if tokens > 0 {
+                            openai_finished = true;
+                        }
                     }
                     if let Some(choice) = payload
                         .get("choices")

@@ -12,7 +12,7 @@ use bytes::Bytes;
 
 use super::manager::{load_snapshot, save_snapshot};
 use super::runner::*;
-use super::types::BENCHMARK_FILE_VERSION;
+use super::types::{BENCHMARK_FILE_VERSION, BENCHMARK_TTFT_UPSTREAM_MAX_TOKENS};
 use super::*;
 use crate::provider::{
     ProviderModelSource, ProviderProtocol, ProviderQuotaParser, ProviderRegistry, ProviderRuntime,
@@ -354,6 +354,81 @@ async fn benchmarks_baidu_gpt_through_responses_protocol() {
     assert_eq!(request["body"]["input"], BENCHMARK_PROMPT);
     assert!(request["body"].get("messages").is_none());
     assert!(request["anthropic_version"].is_null());
+}
+
+#[tokio::test]
+async fn ttft_only_sends_a_reasoning_budget_upstream() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let app = Router::new()
+        .route(
+            "/chat/completions",
+            post(
+                |State(requests): State<Arc<Mutex<Vec<Value>>>>,
+                 Json(body): Json<Value>| async move {
+                    requests.lock().unwrap().push(body);
+                    Body::from(
+                        "data: {\"choices\":[{\"delta\":{\"reasoning_content\":\"x\"},\"finish_reason\":null}]}\n\n",
+                    )
+                },
+            ),
+        )
+        .with_state(requests.clone());
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut provider = test_provider(format!("http://{address}"), ProviderProtocol::OpenAiChat);
+    provider.api_path = "/chat/completions".to_owned();
+
+    let result = benchmark_model(
+        &Client::new(),
+        &target(&runtime(provider), "deepseek-reasoner"),
+        Duration::from_secs(1),
+        1,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.status, BenchmarkResultStatus::Completed);
+    assert_eq!(result.output_tokens, Some(1));
+    let request = requests.lock().unwrap()[0].clone();
+    assert_eq!(
+        request["max_tokens"],
+        serde_json::json!(BENCHMARK_TTFT_UPSTREAM_MAX_TOKENS)
+    );
+}
+
+#[tokio::test]
+async fn completes_openai_chat_without_done_when_usage_closes_stream() {
+    let app = Router::new().route(
+        "/chat/completions",
+        post(|| async {
+            Body::from(concat!(
+                ": keep-alive\n\n",
+                "data: {\"choices\":[]}\n\n",
+                "data: {\"choices\":[{\"delta\":{\"content\":\"hello\"},\"finish_reason\":null}]}\n\n",
+                "data: {\"choices\":[],\"usage\":{\"completion_tokens\":100}}\n\n"
+            ))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut provider = test_provider(format!("http://{address}"), ProviderProtocol::OpenAiChat);
+    provider.api_path = "/chat/completions".to_owned();
+
+    let result = benchmark_model(
+        &Client::new(),
+        &target(&runtime(provider), "opencode-go-model"),
+        Duration::from_secs(1),
+        BENCHMARK_TARGET_OUTPUT_TOKENS,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.status, BenchmarkResultStatus::Completed);
+    assert_eq!(result.output_tokens, Some(100));
+    assert!(result.ttft_ms.is_some());
+    assert!(result.error.is_none());
 }
 
 #[tokio::test]
