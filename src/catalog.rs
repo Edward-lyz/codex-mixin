@@ -136,19 +136,20 @@ fn codex_catalog_from_models_with_options(
             let mut item = template
                 .cloned()
                 .unwrap_or_else(|| fallback_template(default_context_window));
-            let is_gpt = is_gpt_model(&model.id);
             let owned_provider = model
                 .owned_by
                 .as_deref()
                 .map(str::trim)
                 .filter(|value| !value.is_empty() && *value != "codex-mixin");
             let effective_provider_suffix = provider_suffix.or(owned_provider);
+            // /v1/models may already return provider-qualified IDs. Strip that suffix so
+            // catalog markers, metadata lookup, and GPT clamping use the bare upstream id.
+            let upstream_model_id = bare_upstream_model_id(&model.id, effective_provider_suffix);
+            let is_gpt = is_gpt_model(&upstream_model_id);
             let slug = if include_template_models
                 && let Some(provider_suffix) = effective_provider_suffix
             {
-                // Always provider-suffix managed models so multi-provider catalogs stay
-                // collision-free and clamp/reasoning can still use the bare upstream id.
-                format!("{}-{provider_suffix}", model.id)
+                format!("{upstream_model_id}-{provider_suffix}")
             } else {
                 model.id.clone()
             };
@@ -160,7 +161,7 @@ fn codex_catalog_from_models_with_options(
                     } else {
                         provider_suffix
                     };
-                    format!("{} ({provider})", model.id)
+                    format!("{upstream_model_id} ({provider})")
                 } else {
                     model.id.clone()
                 }
@@ -181,7 +182,7 @@ fn codex_catalog_from_models_with_options(
             }
             item["description"] = json!(description);
             item[CUSTOM_MODEL_MARKER] = json!(true);
-            item[UPSTREAM_MODEL_MARKER] = json!(model.id);
+            item[UPSTREAM_MODEL_MARKER] = json!(upstream_model_id);
             if let Some(supports_thinking) = model.supports_thinking {
                 item[SUPPORTS_THINKING_MARKER] = json!(supports_thinking);
             } else if let Some(item) = item.as_object_mut() {
@@ -191,9 +192,10 @@ fn codex_catalog_from_models_with_options(
                 item["base_instructions"] = json!(FALLBACK_BASE_INSTRUCTIONS);
             }
             let metadata = metadata
-                .map(|resolver| resolver.resolve(&model.id, default_context_window))
+                .map(|resolver| resolver.resolve(&upstream_model_id, default_context_window))
                 .unwrap_or_else(|| {
-                    ModelMetadataResolver::empty().resolve(&model.id, default_context_window)
+                    ModelMetadataResolver::empty()
+                        .resolve(&upstream_model_id, default_context_window)
                 });
             let mut context_window = model.context_window.unwrap_or(metadata.context_window);
             // Only fall back to official GPT windows when the provider did not advertise one.
@@ -203,7 +205,7 @@ fn codex_catalog_from_models_with_options(
                 && include_template_models
                 && is_gpt
                 && let Some(official_context_window) =
-                    template_model_context_window(template_catalog, &model.id)
+                    template_model_context_window(template_catalog, &upstream_model_id)
             {
                 context_window = context_window.min(official_context_window);
             }
@@ -221,7 +223,11 @@ fn codex_catalog_from_models_with_options(
             item["supports_search_tool"] = json!(true);
             item["use_responses_lite"] = json!(false);
             enable_fast_service_tier(&mut item);
-            apply_model_reasoning_capabilities(&mut item, &model.id, model.supports_thinking);
+            apply_model_reasoning_capabilities(
+                &mut item,
+                &upstream_model_id,
+                model.supports_thinking,
+            );
             if model.supports_web_search == Some(true) {
                 item["web_search_tool_type"] = json!("text");
             } else if let Some(item) = item.as_object_mut() {
@@ -379,6 +385,17 @@ fn ensure_instruction_fields(model: &mut Value) {
 
 fn is_gpt_model(model: &str) -> bool {
     model.to_ascii_lowercase().starts_with("gpt-")
+}
+
+fn bare_upstream_model_id(model_id: &str, provider_suffix: Option<&str>) -> String {
+    let Some(provider_suffix) = provider_suffix else {
+        return model_id.to_owned();
+    };
+    let suffix = format!("-{provider_suffix}");
+    match model_id.strip_suffix(&suffix) {
+        Some(bare) if !bare.is_empty() => bare.to_owned(),
+        _ => model_id.to_owned(),
+    }
 }
 
 fn template_model_context_window(template_catalog: Option<&Value>, slug: &str) -> Option<u64> {
@@ -896,30 +913,32 @@ mod tests {
             "context_window":272000,
             "max_context_window":272000
         }]});
-        let models = vec![ModelInfo {
-            id: "gpt-5.6-luna".to_owned(),
-            display_name: Some("gpt-5.6-luna · OpenCode Go".to_owned()),
-            owned_by: Some("opencode-go".to_owned()),
-            context_window: Some(1_050_000),
-            supports_image: Some(true),
-            supports_thinking: Some(true),
-            ..ModelInfo::default()
-        }];
         let metadata = ModelMetadataResolver::empty();
-        let catalog = codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
-            &models,
-            1_000_000,
-            Some(&template),
-            &metadata,
-        );
-        assert_eq!(catalog["models"][1]["slug"], "gpt-5.6-luna-opencode-go");
-        assert_eq!(catalog["models"][1][UPSTREAM_MODEL_MARKER], "gpt-5.6-luna");
-        assert_eq!(catalog["models"][1]["context_window"], 1_050_000);
-        assert_eq!(catalog["models"][1]["max_context_window"], 1_050_000);
-        assert_eq!(
-            catalog["models"][1]["input_modalities"],
-            json!(["text", "image"])
-        );
+        for model_id in ["gpt-5.6-luna", "gpt-5.6-luna-opencode-go"] {
+            let models = vec![ModelInfo {
+                id: model_id.to_owned(),
+                display_name: Some("gpt-5.6-luna · OpenCode Go".to_owned()),
+                owned_by: Some("opencode-go".to_owned()),
+                context_window: Some(1_050_000),
+                supports_image: Some(true),
+                supports_thinking: Some(true),
+                ..ModelInfo::default()
+            }];
+            let catalog = codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
+                &models,
+                1_000_000,
+                Some(&template),
+                &metadata,
+            );
+            assert_eq!(catalog["models"][1]["slug"], "gpt-5.6-luna-opencode-go");
+            assert_eq!(catalog["models"][1][UPSTREAM_MODEL_MARKER], "gpt-5.6-luna");
+            assert_eq!(catalog["models"][1]["context_window"], 1_050_000);
+            assert_eq!(catalog["models"][1]["max_context_window"], 1_050_000);
+            assert_eq!(
+                catalog["models"][1]["input_modalities"],
+                json!(["text", "image"])
+            );
+        }
     }
 
     #[test]

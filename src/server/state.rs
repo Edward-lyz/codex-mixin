@@ -176,10 +176,10 @@ impl AppState {
                 };
                 let model = resolved.model.expect("routable model has cached metadata");
                 models.push(ModelInfo {
-                    // Keep the bare upstream model id here. Catalog generation owns
-                    // provider-suffixed slugs and needs the upstream id for capability
-                    // inheritance / official GPT clamping.
-                    id: upstream_model_id.clone(),
+                    // Public /v1/models IDs stay provider-qualified catalog slugs.
+                    // Catalog generation strips the provider suffix via owned_by when it
+                    // needs the bare upstream model id for markers/metadata.
+                    id: slug,
                     display_name: Some(provider_model_display_name(
                         upstream_model_id,
                         provider.display_name(),
