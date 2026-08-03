@@ -735,6 +735,24 @@ impl UpstreamCacheUsage {
     }
 }
 
+/// Holds the counters until the upstream stream is done with them. Anthropic
+/// upstreams send a partial `usage` frame before the final one, so a verdict
+/// taken on the first non-zero counter scores a cache hit as a miss. Reporting
+/// from `Drop` covers both endings that occur in practice: the stream running to
+/// completion, and a downstream mapper stopping once it sees the terminal event.
+struct CacheUsageReport {
+    observation: PrefixObservation,
+    usage: UpstreamCacheUsage,
+}
+
+impl Drop for CacheUsageReport {
+    fn drop(&mut self) {
+        if self.usage.observed() {
+            self.observation.report_upstream_cache(&self.usage);
+        }
+    }
+}
+
 /// Passes an upstream SSE byte stream through untouched while collecting the
 /// prompt cache counters, then reports them against the recorded prefix. Reading
 /// the counters here keeps the downstream event mappers unaware of diagnostics
@@ -748,16 +766,14 @@ where
 {
     async_stream::stream! {
         let mut decoder = SseDecoder::default();
-        let mut usage = UpstreamCacheUsage::default();
-        // Reported as soon as the counters arrive, because a downstream mapper
-        // may stop reading once it sees `message_stop` and drop this stream
-        // before its tail runs.
-        let mut reported = false;
+        let mut report = observation.map(|observation| CacheUsageReport {
+            observation,
+            usage: UpstreamCacheUsage::default(),
+        });
         tokio::pin!(upstream);
         while let Some(chunk) = upstream.next().await {
             if let Ok(bytes) = &chunk
-                && let Some(observation) = observation.as_ref()
-                && !reported
+                && let Some(report) = report.as_mut()
             {
                 for event in decoder.push(bytes) {
                     let Ok(data) = serde_json::from_str::<Value>(&event.data) else {
@@ -765,13 +781,9 @@ where
                     };
                     for path in [&data, data.get("message").unwrap_or(&Value::Null)] {
                         if let Some(found) = path.get("usage") {
-                            usage.absorb(found);
+                            report.usage.absorb(found);
                         }
                     }
-                }
-                if usage.observed() {
-                    observation.report_upstream_cache(&usage);
-                    reported = true;
                 }
             }
             yield chunk;
@@ -1433,6 +1445,28 @@ mod tests {
         assert_eq!(usage.cache_read_tokens, Some(3456));
         assert_eq!(usage.cache_creation_tokens, Some(7));
         assert!(usage.observed());
+    }
+
+    /// Baidu OneAPI reports an optimistic partial count on `message_start` and
+    /// the real one on `message_delta`. Only the last frame is the verdict.
+    #[test]
+    fn a_later_usage_frame_replaces_an_earlier_partial_one() {
+        let mut usage = UpstreamCacheUsage::default();
+        usage.absorb(&json!({"input_tokens": 15_744, "cache_read_input_tokens": 123_021}));
+        let subject = observation(PrefixState::AppendOnly, 960_000);
+        assert!(
+            !subject.discarded_by_provider(&usage),
+            "the partial frame looks like a hit"
+        );
+
+        usage.absorb(&json!({"input_tokens": 135_947, "cache_read_input_tokens": 3_456}));
+
+        assert_eq!(usage.cache_read_tokens, Some(3_456));
+        assert_eq!(usage.input_tokens, Some(135_947));
+        assert!(
+            subject.discarded_by_provider(&usage),
+            "the final frame is the verdict"
+        );
     }
 
     /// Chat Completions upstreams report cache hits under their own names, and

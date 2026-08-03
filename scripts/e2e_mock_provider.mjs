@@ -17,9 +17,11 @@ function sendJson(response, status, value) {
 function anthropicSse() {
   // A large prompt served almost entirely uncached stands in for the real Baidu
   // OneAPI behaviour of recomputing a prefix the gateway kept byte-identical,
-  // which is what the provider cache diagnostics have to surface.
+  // which is what the provider cache diagnostics have to surface. The opening
+  // frame carries a partial, far more optimistic count, exactly as that upstream
+  // does, so a verdict taken before the stream ends would miss the finding.
   return [
-    'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_mock","type":"message","role":"assistant","content":[],"model":"shared","stop_reason":null,"usage":{"input_tokens":0,"output_tokens":0}}}\n\n',
+    'event: message_start\ndata: {"type":"message_start","message":{"id":"msg_mock","type":"message","role":"assistant","content":[],"model":"shared","stop_reason":null,"usage":{"input_tokens":9216,"output_tokens":0,"cache_read_input_tokens":89984}}}\n\n',
     'event: content_block_start\ndata: {"type":"content_block_start","index":0,"content_block":{"type":"text","text":""}}\n\n',
     'event: content_block_delta\ndata: {"type":"content_block_delta","index":0,"delta":{"type":"text_delta","text":"alpha"}}\n\n',
     'event: content_block_stop\ndata: {"type":"content_block_stop","index":0}\n\n',
