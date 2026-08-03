@@ -12,11 +12,11 @@ enum GatewayError: Error, CustomStringConvertible {
 }
 
 func appText(_ simplifiedChinese: String, _ traditionalChinese: String, _ english: String) -> String {
-    switch UpdateLanguage.current {
-    case .simplifiedChinese: return simplifiedChinese
-    case .traditionalChinese: return traditionalChinese
-    case .english: return english
-    }
+    AppLocalization.text(
+        key: simplifiedChinese,
+        chinese: simplifiedChinese == traditionalChinese ? simplifiedChinese : traditionalChinese,
+        english: english
+    )
 }
 
 func localizedPrompt(_ text: String) -> String {

@@ -45,6 +45,10 @@ APP_VERSION="${APP_VERSION##*@}"
 rm -rf "$APP_DIR"
 mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
 cp "$ROOT_DIR/macos/Info.plist" "$CONTENTS_DIR/Info.plist"
+for localization_dir in "$ROOT_DIR"/macos/*.lproj; do
+  [[ -d "$localization_dir" ]] || continue
+  cp -R "$localization_dir" "$RESOURCES_DIR/"
+done
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_VERSION" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $MACOS_DEPLOYMENT_TARGET" "$CONTENTS_DIR/Info.plist"
@@ -76,6 +80,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/InstallCard.swift" \
   "$ROOT_DIR/macos/InstallCodexPanel.swift" \
   "$ROOT_DIR/macos/QuotaSupport.swift" \
+  "$ROOT_DIR/macos/Localization.swift" \
   "$ROOT_DIR/macos/AppSupport.swift" \
   "$ROOT_DIR/macos/ModelBenchmarkWindow.swift" \
   "$ROOT_DIR/macos/FusionSettingsLogic.swift" \

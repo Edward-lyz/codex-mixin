@@ -6,6 +6,7 @@ TEST_BINARY="$(mktemp -d)/provider-settings-navigation-tests"
 
 xcrun swiftc \
   "$ROOT_DIR/macos/UpdateSupport.swift" \
+  "$ROOT_DIR/macos/Localization.swift" \
   "$ROOT_DIR/macos/AppSupport.swift" \
   "$ROOT_DIR/macos/SettingsPanel.swift" \
   "$ROOT_DIR/macos/ProviderSupport.swift" \

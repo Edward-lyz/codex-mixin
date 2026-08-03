@@ -51,7 +51,7 @@ enum UpdateLanguage: Equatable {
     case english
 
     static var current: UpdateLanguage {
-        let preferred = Locale.preferredLanguages.first?.lowercased() ?? "en"
+        let preferred = AppLocalization.preferredLocalization
         if preferred.hasPrefix("zh-hant")
             || preferred.hasPrefix("zh-tw")
             || preferred.hasPrefix("zh-hk")

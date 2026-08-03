@@ -1,0 +1,8 @@
+/* English overrides for the native macOS localization system. */
+"关于 Codex Mixin" = "About Codex Mixin";
+"设置" = "Settings";
+"检查更新" = "Check for Updates";
+"退出 Codex Mixin" = "Quit Codex Mixin";
+"取消" = "Cancel";
+"保存" = "Save";
+"关闭" = "Close";
