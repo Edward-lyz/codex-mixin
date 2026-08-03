@@ -1,4 +1,5 @@
 use super::auth::{FORWARDED_OFFICIAL_HEADERS, check_gateway_auth, forward_official_headers};
+use super::websocket_proxy::connect_upstream_websocket;
 use super::*;
 use crate::provider::ProviderProtocol;
 
@@ -277,14 +278,17 @@ async fn connect_realtime_ws(
             }
         }
     }
-    let (upstream, _) = tokio::time::timeout(state.config.request_timeout, connect_async(request))
-        .await
-        .map_err(|_| {
-            anyhow::anyhow!(
-                "realtime websocket connect timed out after {:?}",
-                state.config.request_timeout
-            )
-        })??;
+    let upstream = tokio::time::timeout(
+        state.config.request_timeout,
+        connect_upstream_websocket(request, state.websocket_proxy_env()),
+    )
+    .await
+    .map_err(|_| {
+        anyhow::anyhow!(
+            "realtime websocket connect timed out after {:?}",
+            state.config.request_timeout
+        )
+    })??;
     Ok(upstream)
 }
 

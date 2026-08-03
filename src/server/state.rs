@@ -1,3 +1,4 @@
+use super::websocket_proxy::ProxyEnv;
 use super::*;
 
 pub type AnthropicByteStream = BoxStream<'static, Result<Bytes, reqwest::Error>>;
@@ -37,6 +38,7 @@ pub struct AppState {
     pub(crate) config: Arc<GatewayConfig>,
     pub(crate) providers: Arc<ProviderRegistry>,
     pub(crate) client: Client,
+    websocket_proxy_env: ProxyEnv,
     pub(super) image_routes: ImageRouteRegistry,
     pub(super) benchmarks: ModelBenchmarkManager,
     /// Per-session provider prompt-prefix shapes, used to report where the
@@ -78,6 +80,7 @@ impl AppState {
         env_lookup: impl Fn(&str) -> Option<String>,
     ) -> anyhow::Result<Self> {
         validate_fusion_profiles(&config.fusion_profiles)?;
+        let websocket_proxy_env = ProxyEnv::from_lookup(&env_lookup);
         let providers = Arc::new(ProviderRegistry::new_with_env(
             config.providers.clone(),
             env_lookup,
@@ -91,6 +94,7 @@ impl AppState {
             config: Arc::new(config),
             providers,
             client,
+            websocket_proxy_env,
             image_routes: ImageRouteRegistry::default(),
             benchmarks: ModelBenchmarkManager::from_default_path(),
             cache_shapes: Arc::new(CacheShapeTracker::default()),
@@ -100,6 +104,10 @@ impl AppState {
             official_auth_cache: Arc::new(tokio::sync::Mutex::new(None)),
             ducc_runtime: Arc::new(tokio::sync::OnceCell::new()),
         })
+    }
+
+    pub(super) fn websocket_proxy_env(&self) -> &ProxyEnv {
+        &self.websocket_proxy_env
     }
 
     pub(crate) fn custom_image_routes(

@@ -1,4 +1,5 @@
 use super::auth::{FORWARDED_OFFICIAL_HEADERS, check_gateway_auth, stable_oneapi_routing};
+use super::websocket_proxy::connect_upstream_websocket;
 use super::*;
 use memchr::memmem;
 
@@ -296,15 +297,17 @@ async fn connect_official_responses_ws(
             }
         }
     }
-    let (official_socket, _) =
-        tokio::time::timeout(state.config.request_timeout, connect_async(request))
-            .await
-            .map_err(|_| {
-                anyhow::anyhow!(
-                    "official websocket connect timed out after {:?}",
-                    state.config.request_timeout
-                )
-            })??;
+    let official_socket = tokio::time::timeout(
+        state.config.request_timeout,
+        connect_upstream_websocket(request, state.websocket_proxy_env()),
+    )
+    .await
+    .map_err(|_| {
+        anyhow::anyhow!(
+            "official websocket connect timed out after {:?}",
+            state.config.request_timeout
+        )
+    })??;
     Ok(official_socket)
 }
 

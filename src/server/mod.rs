@@ -15,9 +15,9 @@ use futures_util::stream::{self, BoxStream, SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde_json::{Value, json};
-use tokio_tungstenite::tungstenite::Message as TungsteniteMessage;
-use tokio_tungstenite::tungstenite::client::IntoClientRequest;
-use tokio_tungstenite::{MaybeTlsStream, WebSocketStream, connect_async};
+use tokio_tungstenite_proxy::tungstenite::Message as TungsteniteMessage;
+use tokio_tungstenite_proxy::tungstenite::client::IntoClientRequest;
+use tokio_tungstenite_proxy::{MaybeTlsStream, WebSocketStream};
 use tower_http::decompression::RequestDecompressionLayer;
 use uuid::Uuid;
 
@@ -49,6 +49,7 @@ mod responses_http;
 mod responses_ws;
 mod routes;
 mod state;
+mod websocket_proxy;
 
 pub(crate) use responses_http::stream_official_response;
 pub use routes::{router, serve, serve_on_listener};
