@@ -19,6 +19,10 @@ struct AboutWindowTests {
             build: "0.3.8",
             repositoryURL: "https://github.com/Edward-lyz/codex-mixin"
         )
+        precondition(
+            AppLocalization.string("installCard.codexMixinCardDayWithMixin", 42)
+                == "Codex Mixin card, day 42 with Mixin"
+        )
         let identity = CardIdentityV1(
             installationID: UUID(uuidString: "59B26835-9033-4B89-B8CC-57ACB42C8C9B")!,
             firstRecordedAt: Date(timeIntervalSince1970: 1_722_470_400),

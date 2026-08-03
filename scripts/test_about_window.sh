@@ -6,6 +6,7 @@ TEST_BINARY="$(mktemp -d)/about-window-tests"
 SWIFT_ARCH="$(uname -m)"
 
 "$ROOT_DIR/scripts/swiftgen.sh" config run --config "$ROOT_DIR/swiftgen.yml" >/dev/null
+LOCALIZATION_BUNDLE="$($ROOT_DIR/scripts/prepare_test_localization.sh)"
 
 xcrun swiftc \
   "$ROOT_DIR/macos/Generated/L10n.swift" \
@@ -18,4 +19,5 @@ xcrun swiftc \
   -framework CryptoKit \
   -framework SwiftUI \
   -o "$TEST_BINARY"
+CODEX_MIXIN_LOCALIZATION_DIR="$LOCALIZATION_BUNDLE" \
 CODEX_MIXIN_WALLPAPER_ASSET_DIR="$ROOT_DIR/macos/assets/nasa-wallpapers" "$TEST_BINARY"
