@@ -60,6 +60,7 @@ pub(super) struct MapperState {
     pub(super) current_text: Option<TextBlock>,
     pub(super) thinking: HashMap<u64, ThinkingBlock>,
     pub(super) tools: HashMap<u64, ToolBlock>,
+    pub(super) openai_tool_keys_by_index: HashMap<u64, u64>,
     pub(super) pending_web_searches: HashMap<String, PendingWebSearch>,
     pub(super) ignored_web_searches: HashSet<String>,
     pub(super) ignored_web_search_result_indexes: HashSet<u64>,
@@ -89,6 +90,7 @@ impl MapperState {
             current_text: None,
             thinking: HashMap::new(),
             tools: HashMap::new(),
+            openai_tool_keys_by_index: HashMap::new(),
             pending_web_searches: HashMap::new(),
             ignored_web_searches: HashSet::new(),
             ignored_web_search_result_indexes: HashSet::new(),
@@ -225,6 +227,67 @@ impl MapperState {
         } else {
             AssistantMessagePhase::Commentary
         }
+    }
+
+    /// OpenAI Chat streams key tool fragments by `index`, but some upstreams
+    /// reuse the same index for a later tool call (new `id`). Keep a stable
+    /// internal key so arguments from distinct calls are never concatenated.
+    pub(super) fn openai_tool_entry(&mut self, index: u64, id: Option<&str>) -> &mut ToolBlock {
+        let key = match id {
+            Some(id) => {
+                if let Some(&key) = self.openai_tool_keys_by_index.get(&index) {
+                    match self.tools.get(&key).and_then(|block| block.id.as_deref()) {
+                        Some(existing) if existing == id => key,
+                        // First fragment arrived without an id; adopt it.
+                        None => key,
+                        // A different tool is reusing this stream index.
+                        Some(_) => self.allocate_openai_tool_key(index),
+                    }
+                } else if let Some((&key, _)) = self
+                    .tools
+                    .iter()
+                    .find(|(_, block)| block.id.as_deref() == Some(id))
+                {
+                    self.openai_tool_keys_by_index.insert(index, key);
+                    key
+                } else {
+                    self.allocate_openai_tool_key(index)
+                }
+            }
+            None => {
+                if let Some(&key) = self.openai_tool_keys_by_index.get(&index) {
+                    key
+                } else {
+                    self.allocate_openai_tool_key(index)
+                }
+            }
+        };
+
+        let entry = self.tools.entry(key).or_insert_with(|| ToolBlock {
+            id: id.map(str::to_owned),
+            name: None,
+            start_input_json: String::new(),
+            delta_input_json: String::new(),
+            kind: ToolBlockKind::Function,
+        });
+        if let Some(id) = id {
+            entry.id = Some(id.to_owned());
+        }
+        entry
+    }
+
+    fn allocate_openai_tool_key(&mut self, index: u64) -> u64 {
+        let key = if self.tools.contains_key(&index) {
+            self.tools
+                .keys()
+                .copied()
+                .max()
+                .map_or(0, |max| max + 1)
+        } else {
+            index
+        };
+        self.openai_tool_keys_by_index.insert(index, key);
+        key
     }
 
     pub(super) fn finish_tool(

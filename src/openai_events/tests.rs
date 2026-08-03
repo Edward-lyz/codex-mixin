@@ -438,6 +438,86 @@ async fn preserves_tool_name_when_a_later_chunk_contains_an_empty_name() {
 }
 
 #[tokio::test]
+async fn separates_openai_tool_calls_that_reuse_the_same_index() {
+    // OpenCode-style Chat Completions streams may emit a second tool call on
+    // index 0 with a new id. Concatenating those arguments produces
+    // `{...}{...}` and the client rejects the function call.
+    let chunks = [
+        json!({
+            "choices":[{
+                "delta":{"tool_calls":[{
+                    "index":0,
+                    "id":"call_1",
+                    "type":"function",
+                    "function":{"name":"exec_command","arguments":""}
+                }]},
+                "finish_reason":null
+            }]
+        }),
+        json!({
+            "choices":[{
+                "delta":{"tool_calls":[{
+                    "index":0,
+                    "function":{"arguments":"{\"cmd\":\"pwd\"}"}
+                }]},
+                "finish_reason":null
+            }]
+        }),
+        json!({
+            "choices":[{
+                "delta":{"tool_calls":[{
+                    "index":0,
+                    "id":"call_2",
+                    "type":"function",
+                    "function":{"name":"exec_command","arguments":""}
+                }]},
+                "finish_reason":null
+            }]
+        }),
+        json!({
+            "choices":[{
+                "delta":{"tool_calls":[{
+                    "index":0,
+                    "function":{"arguments":"{\"cmd\":\"ls -la\"}"}
+                }]},
+                "finish_reason":null
+            }]
+        }),
+        json!({
+            "choices":[{"delta":{},"finish_reason":"tool_calls"}]
+        }),
+    ];
+
+    let body = map_openai_events(&chunks, true).await;
+    assert!(!body.contains("event: response.failed"), "{body}");
+    assert!(body.contains("event: response.completed"), "{body}");
+
+    let mut encoded = body.as_bytes().to_vec();
+    let events = drain_events(&mut encoded);
+    let arguments = events
+        .iter()
+        .filter_map(|event| {
+            if event.event.as_deref() != Some("response.output_item.added") {
+                return None;
+            }
+            let value: Value = serde_json::from_str(&event.data).ok()?;
+            value
+                .get("item")
+                .and_then(|item| item.get("arguments"))
+                .and_then(Value::as_str)
+                .map(str::to_owned)
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(
+        arguments,
+        vec![
+            r#"{"cmd":"pwd"}"#.to_owned(),
+            r#"{"cmd":"ls -la"}"#.to_owned()
+        ]
+    );
+}
+
+#[tokio::test]
 async fn maps_valid_special_and_namespaced_tool_calls() {
     let mut custom_names = ToolNameMap::default();
     custom_names

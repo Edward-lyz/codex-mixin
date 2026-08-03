@@ -1,4 +1,4 @@
-use super::state::{AssistantMessagePhase, MapperState, ToolBlock, ToolBlockKind};
+use super::state::{AssistantMessagePhase, MapperState};
 use super::*;
 
 pub fn map_openai_chat_sse<S>(
@@ -82,24 +82,11 @@ where
                 if let Some(tool_calls) = delta.get("tool_calls").and_then(Value::as_array) {
                     for tool_call in tool_calls {
                         let index = tool_call.get("index").and_then(Value::as_u64).unwrap_or(0);
-                        let entry = state.tools.entry(index).or_insert_with(|| ToolBlock {
-                            id: tool_call
-                                .get("id")
-                                .and_then(Value::as_str)
-                                .filter(|id| !id.trim().is_empty())
-                                .map(str::to_owned),
-                            name: None,
-                            start_input_json: String::new(),
-                            delta_input_json: String::new(),
-                            kind: ToolBlockKind::Function,
-                        });
-                        if let Some(id) = tool_call
+                        let id = tool_call
                             .get("id")
                             .and_then(Value::as_str)
-                            .filter(|id| !id.trim().is_empty())
-                        {
-                            entry.id = Some(id.to_owned());
-                        }
+                            .filter(|id| !id.trim().is_empty());
+                        let entry = state.openai_tool_entry(index, id);
                         if let Some(function) = tool_call.get("function") {
                             if let Some(name) = function
                                 .get("name")
