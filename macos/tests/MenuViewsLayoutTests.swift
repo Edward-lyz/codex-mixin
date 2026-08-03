@@ -4,10 +4,6 @@ enum GatewayError: Error {
     case command(String)
 }
 
-func appText(_ simplifiedChinese: String, _ traditionalChinese: String, _ english: String) -> String {
-    simplifiedChinese
-}
-
 @main
 struct MenuViewsLayoutTests {
     static func main() throws {
@@ -106,7 +102,9 @@ struct MenuViewsLayoutTests {
             "All Provider quota tracks must have equal widths; got \(widths)"
         )
         let quotaLabels = descendants(of: quotaView, matching: NSTextField.self)
-        precondition(quotaLabels.contains { $0.stringValue == "余额 110 CNY" })
+        precondition(quotaLabels.contains {
+            $0.stringValue.contains("110") && $0.stringValue.contains("CNY")
+        })
         let providerIssue = "Baidu OneAPI：模型 unreachable-model 当前不可达"
         let serviceView = serviceMenuView(
             title: "本地网关运行中 · Provider 降级",

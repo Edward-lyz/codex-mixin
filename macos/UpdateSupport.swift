@@ -52,13 +52,6 @@ enum UpdateLanguage: Equatable {
 
     static var current: UpdateLanguage {
         let preferred = AppLocalization.preferredLocalization
-        if preferred.hasPrefix("zh-hant")
-            || preferred.hasPrefix("zh-tw")
-            || preferred.hasPrefix("zh-hk")
-            || preferred.hasPrefix("zh-mo")
-        {
-            return .traditionalChinese
-        }
         return preferred.hasPrefix("zh") ? .simplifiedChinese : .english
     }
 

@@ -44,8 +44,8 @@ struct ApplicationMenuSupportTests {
         app.mainMenu = menu
 
         guard let windowMenu = menu.items.compactMap(\.submenu).first(where: {
-            $0.title == "窗口"
-        }), let closeItem = windowMenu.item(withTitle: "关闭窗口")
+            $0.title == L10n.Menu.window
+        }), let closeItem = windowMenu.item(withTitle: L10n.Menu.closeWindow)
         else {
             preconditionFailure("The application menu must include Window > Close Window")
         }

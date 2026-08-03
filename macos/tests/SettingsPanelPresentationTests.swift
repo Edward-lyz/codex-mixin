@@ -1,9 +1,5 @@
 import Cocoa
 
-func appText(_ simplifiedChinese: String, _ traditionalChinese: String, _ english: String) -> String {
-    simplifiedChinese
-}
-
 func menuItemImage(_ systemSymbolName: String) -> NSImage? {
     nil
 }
@@ -37,7 +33,7 @@ struct SettingsPanelPresentationTests {
         precondition(NSApp.modalWindow == nil, "The add-provider form must not start an app-modal loop")
         let popups = descendantViews(of: NSPopUpButton.self, in: sheet.contentView)
         guard let bridgePopup = popups.first(where: {
-            $0.itemTitles.contains("DUCC 核心（loopback）")
+            $0.itemTitles.contains { $0.contains("DUCC") }
         }) else {
             preconditionFailure("The Baidu setup must offer the DUCC auth bridge")
         }

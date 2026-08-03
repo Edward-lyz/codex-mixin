@@ -1,10 +1,6 @@
 import Cocoa
 import SwiftUI
 
-func appText(_ simplifiedChinese: String, _ traditionalChinese: String, _ english: String) -> String {
-    simplifiedChinese
-}
-
 func menuItemImage(_ systemSymbolName: String) -> NSImage? {
     nil
 }
@@ -43,7 +39,7 @@ struct AboutWindowTests {
         guard let window = controller.window else {
             preconditionFailure("About window must exist")
         }
-        precondition(window.title == "关于 Codex Mixin")
+        precondition(window.title == L10n.About.title)
         precondition(
             window.contentView != nil,
             "About window must have content"
@@ -52,12 +48,12 @@ struct AboutWindowTests {
 
         let labels = descendantViews(of: NSTextField.self, in: window.contentView)
         precondition(labels.contains { $0.stringValue == "Codex Mixin" })
-        precondition(labels.contains { $0.stringValue == "版本 0.3.8" })
+        precondition(labels.contains { $0.stringValue == L10n.About.version("0.3.8") })
         precondition(labels.contains { $0.stringValue == "Build 0.3.8" })
 
         let buttons = descendantViews(of: NSButton.self, in: window.contentView)
-        precondition(buttons.contains { $0.title == "打开 GitHub 仓库" })
-        precondition(buttons.contains { $0.title == "复制版本信息" })
+        precondition(buttons.contains { $0.title == L10n.About.openRepository })
+        precondition(buttons.contains { $0.title == L10n.About.copyVersion })
         precondition(buttons.contains { $0.toolTip == info.repositoryURL })
 
         guard
@@ -77,7 +73,7 @@ struct AboutWindowTests {
         copyButton.performClick(nil)
         precondition(openedURL?.absoluteString == info.repositoryURL)
         precondition(copiedText == info.versionSummary)
-        precondition(copyButton.title == "已复制")
+        precondition(copyButton.title == L10n.About.copied)
 
         let cardPreviews = descendantViews(
             of: NSHostingView<InstallCardThumbnailView>.self,

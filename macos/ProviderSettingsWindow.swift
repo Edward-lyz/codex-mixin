@@ -32,16 +32,12 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private let quotaWorkspaceIDField = formTextField()
     private let quotaAuthCookieField = secureFormTextField()
     private let clearQuotaCredentialsButton = NSButton(
-        title: appText("清除额度凭据", "清除額度憑證", "Clear Quota Credentials"),
+        title: AppLocalization.string("providerSettings.clearQuotaCredentials"),
         target: nil,
         action: nil
     )
     private let auxiliaryModelUpstreamButton = NSButton(
-        checkboxWithTitle: appText(
-            "用作语音、自动审查等辅助模型上游",
-            "用作語音、自動審查等輔助模型上游",
-            "Use for voice, auto review, and other auxiliary models"
-        ),
+        checkboxWithTitle: AppLocalization.string("providerSettings.useForVoiceAutoReviewAndOther"),
         target: nil,
         action: nil
     )
@@ -171,7 +167,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         let quotaUsernameRow = compactLabeledView("额度用户名", quotaUsernameField)
         self.quotaUsernameRow = quotaUsernameRow
         let quotaWorkspaceIDRow = compactLabeledView(
-            appText("工作区 ID", "工作區 ID", "Workspace ID"),
+            AppLocalization.string("providerSettings.workspaceID"),
             quotaWorkspaceIDField
         )
         self.quotaWorkspaceIDRow = quotaWorkspaceIDRow
@@ -188,7 +184,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         quotaAuthCookieControls.spacing = 8
         quotaAuthCookieControls.translatesAutoresizingMaskIntoConstraints = false
         let quotaAuthCookieRow = compactLabeledView(
-            appText("Auth Cookie", "Auth Cookie", "Auth Cookie"),
+            AppLocalization.string("providerSettings.authCookie"),
             quotaAuthCookieControls
         )
         self.quotaAuthCookieRow = quotaAuthCookieRow
@@ -196,16 +192,12 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         self.customDisplayNameRow = customDisplayNameRow
         let customBaseURLRow = compactLabeledView("API 地址", baseURLField)
         self.customBaseURLRow = customBaseURLRow
-        let managedConfigurationLabel = NSTextField(wrappingLabelWithString: appText(
-            "协议和接口路径会自动识别，不需要手动选择。",
-            "協議和端點路徑會自動識別，不需要手動選擇。",
-            "Protocols and endpoint paths are detected automatically."
-        ))
+        let managedConfigurationLabel = NSTextField(wrappingLabelWithString: AppLocalization.string("providerSettings.protocolsAndEndpointPathsAreDetectedAutomatically"))
         managedConfigurationLabel.textColor = .secondaryLabelColor
         managedConfigurationLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         auxiliaryModelUpstreamButton.toolTip = auxiliaryModelDefaultTooltip()
         let baiduAuthBridgeRow = compactLabeledView(
-            appText("认证桥接", "認證橋接", "Auth bridge"),
+            AppLocalization.string("providerSettings.authBridge"),
             baiduAuthBridgePopup
         )
         self.baiduAuthBridgeRow = baiduAuthBridgeRow
@@ -489,23 +481,11 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private func auxiliaryModelDefaultTooltip() -> String {
         switch codexInstallMode {
         case .customOnly:
-            return appText(
-                "同一时间只能指定一个辅助模型上游。custom-only 安装没有官方回落，供应商缺失的辅助能力将无法使用。",
-                "同一時間只能指定一個輔助模型上游。custom-only 安裝沒有官方回退，供應商缺少的輔助能力將無法使用。",
-                "Only one auxiliary-model provider can be selected. A custom-only installation has no official fallback, so missing capabilities remain unavailable."
-            )
+            return AppLocalization.string("providerSettings.onlyOneAuxiliaryModelProviderCanBe")
         case .codexOAuthProxy:
-            return appText(
-                "同一时间只能指定一个辅助模型上游。开启后会覆盖 OAuth 的官方辅助模型路由；该供应商没有对应模型时仍使用默认路由。",
-                "同一時間只能指定一個輔助模型上游。開啟後會覆蓋 OAuth 的官方輔助模型路由；該供應商沒有對應模型時仍使用預設路由。",
-                "Only one auxiliary-model provider can be selected. It overrides the official OAuth route when the model is available, otherwise the default route is used."
-            )
+            return AppLocalization.string("providerSettings.onlyOneAuxiliaryModelProviderCanBe2")
         case nil:
-            return appText(
-                "同一时间只能指定一个辅助模型上游。",
-                "同一時間只能指定一個輔助模型上游。",
-                "Only one auxiliary-model provider can be selected."
-            )
+            return AppLocalization.string("providerSettings.onlyOneAuxiliaryModelProviderCanBe3")
         }
     }
 
@@ -513,65 +493,25 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         let capability: String
         switch (codexInstallMode, provider.auxiliaryModelSupport) {
         case (.customOnly, .none):
-            capability = appText(
-                "该供应商既不支持自动审查，也不支持语音；custom-only 安装下无法设为辅助模型上游。",
-                "該供應商既不支援自動審查，也不支援語音；custom-only 安裝下無法設為輔助模型上游。",
-                "This provider supports neither auto review nor voice, so it cannot be used for auxiliary models in a custom-only installation."
-            )
+            capability = AppLocalization.string("providerSettings.thisProviderSupportsNeitherAutoReviewNor")
         case (.customOnly, .autoReviewOnly):
-            capability = appText(
-                "该供应商仅支持自动审查；语音不可用。",
-                "該供應商僅支援自動審查；語音無法使用。",
-                "This provider supports auto review only; voice is unavailable."
-            )
+            capability = AppLocalization.string("providerSettings.thisProviderSupportsAutoReviewOnlyVoice")
         case (.customOnly, .voiceOnly):
-            capability = appText(
-                "该供应商仅支持语音；自动审查不可用。",
-                "該供應商僅支援語音；自動審查無法使用。",
-                "This provider supports voice only; auto review is unavailable."
-            )
+            capability = AppLocalization.string("providerSettings.thisProviderSupportsVoiceOnlyAutoReview")
         case (.codexOAuthProxy, .none):
-            capability = appText(
-                "该供应商不提供自动审查或语音；两者将继续使用 OAuth 默认路由。",
-                "該供應商不提供自動審查或語音；兩者將繼續使用 OAuth 預設路由。",
-                "This provider offers neither auto review nor voice; both continue to use the default OAuth route."
-            )
+            capability = AppLocalization.string("providerSettings.thisProviderOffersNeitherAutoReviewNor")
         case (.codexOAuthProxy, .autoReviewOnly):
-            capability = appText(
-                "该供应商仅提供自动审查；语音将继续使用 OAuth 默认路由。",
-                "該供應商僅提供自動審查；語音將繼續使用 OAuth 預設路由。",
-                "This provider offers auto review only; voice continues to use the default OAuth route."
-            )
+            capability = AppLocalization.string("providerSettings.thisProviderOffersAutoReviewOnlyVoice")
         case (.codexOAuthProxy, .voiceOnly):
-            capability = appText(
-                "该供应商仅提供语音；自动审查将继续使用 OAuth 默认路由。",
-                "該供應商僅提供語音；自動審查將繼續使用 OAuth 預設路由。",
-                "This provider offers voice only; auto review continues to use the default OAuth route."
-            )
+            capability = AppLocalization.string("providerSettings.thisProviderOffersVoiceOnlyAutoReview")
         case (_, .none):
-            capability = appText(
-                "当前模型缓存未发现自动审查或语音模型。",
-                "目前模型快取未發現自動審查或語音模型。",
-                "The current model cache contains no auto-review or voice model."
-            )
+            capability = AppLocalization.string("providerSettings.theCurrentModelCacheContainsNoAuto")
         case (_, .autoReviewOnly):
-            capability = appText(
-                "该供应商仅支持自动审查。",
-                "該供應商僅支援自動審查。",
-                "This provider supports auto review only."
-            )
+            capability = AppLocalization.string("providerSettings.thisProviderSupportsAutoReviewOnly")
         case (_, .voiceOnly):
-            capability = appText(
-                "该供应商仅支持语音。",
-                "該供應商僅支援語音。",
-                "This provider supports voice only."
-            )
+            capability = AppLocalization.string("providerSettings.thisProviderSupportsVoiceOnly")
         case (_, .autoReviewAndVoice):
-            capability = appText(
-                "该供应商支持自动审查和语音。",
-                "該供應商支援自動審查和語音。",
-                "This provider supports both auto review and voice."
-            )
+            capability = AppLocalization.string("providerSettings.thisProviderSupportsBothAutoReviewAnd")
         }
         return "\(capability)\n\n\(auxiliaryModelDefaultTooltip())"
     }
@@ -733,16 +673,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             return
         }
         guard confirm(
-            title: appText(
-                "清除 OpenCode Go 额度凭据？",
-                "清除 OpenCode Go 額度憑證？",
-                "Clear OpenCode Go quota credentials?"
-            ),
-            message: appText(
-                "将删除工作区 ID 和 auth cookie，菜单会停止显示 OpenCode Go 用量与余额。",
-                "將刪除工作區 ID 和 auth cookie，選單會停止顯示 OpenCode Go 用量與餘額。",
-                "This removes the workspace ID and auth cookie; OpenCode Go quota will stop being displayed."
-            )
+            title: AppLocalization.string("providerSettings.clearOpenCodeGoQuotaCredentials"),
+            message: AppLocalization.string("providerSettings.thisRemovesTheWorkspaceIDAndAuth")
         ) else { return }
         performMutation(
             ["providers", "update", provider.id, "--clear-quota"],
@@ -753,16 +685,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
     private func showOpenCodeGoQuotaCredentialsAlert() {
         showAlert(
-            title: appText(
-                "缺少 OpenCode Go 额度凭据",
-                "缺少 OpenCode Go 額度憑證",
-                "OpenCode Go Quota Credentials Required"
-            ),
-            message: appText(
-                "OpenCode Go 需要同时填写工作区 ID 和 auth cookie 才能查询用量与余额。",
-                "OpenCode Go 需要同時填寫工作區 ID 和 auth cookie 才能查詢用量與餘額。",
-                "OpenCode Go requires both the workspace ID and auth cookie to show usage and balance."
-            )
+            title: AppLocalization.string("providerSettings.opencodeGoQuotaCredentialsRequired"),
+            message: AppLocalization.string("providerSettings.opencodeGoRequiresBothTheWorkspaceID")
         )
     }
 
@@ -777,12 +701,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             let baseURL = baseURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             guard !displayName.isEmpty, !baseURL.isEmpty else {
                 showAlert(
-                    title: appText("缺少自定义站点信息", "缺少自訂站點資訊", "Custom Site Information Required"),
-                    message: appText(
-                        "站点名称和 API 地址不能为空。",
-                        "站點名稱和 API 位址不能為空。",
-                        "Site name and API URL cannot be empty."
-                    )
+                    title: AppLocalization.string("providerSettings.customSiteInformationRequired"),
+                    message: AppLocalization.string("providerSettings.siteNameAndAPIURLCannotBe")
                 )
                 return
             }
@@ -839,18 +759,10 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
         let alert = NSAlert()
         alert.alertStyle = .informational
-        alert.messageText = appText(
-            "选择百度认证桥接方式",
-            "選擇百度認證橋接方式",
-            "Choose a Baidu Auth Bridge"
-        )
-        alert.informativeText = appText(
-            "DUCC 使用 Codex Mixin 管理的独立副本，在隔离 HOME 中下载、扫码登录和运行，不读取或修改系统 DUCC、Claude 配置及 hooks。成功后会保存 Provider 并重启网关。",
-            "DUCC 使用 Codex Mixin 管理的獨立副本，在隔離 HOME 中下載、掃碼登入和執行，不讀取或修改系統 DUCC、Claude 設定及 hooks。成功後會儲存 Provider 並重新啟動閘道。",
-            "DUCC uses a Codex Mixin-managed copy and downloads, signs in, and runs inside an isolated HOME without reading or changing system DUCC, Claude config, or hooks. Success saves the provider and restarts the gateway."
-        )
-        alert.addButton(withTitle: appText("配置 DUCC", "設定 DUCC", "Configure DUCC"))
-        alert.addButton(withTitle: appText("保持关闭", "保持關閉", "Keep Disabled"))
+        alert.messageText = AppLocalization.string("providerSettings.chooseABaiduAuthBridge")
+        alert.informativeText = AppLocalization.string("providerSettings.duccUsesACodexMixinManagedCopy")
+        alert.addButton(withTitle: AppLocalization.string("providerSettings.configureDUCC"))
+        alert.addButton(withTitle: AppLocalization.string("providerSettings.keepDisabled"))
         baiduBridgeReminderAlert = alert
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self else { return }
@@ -889,16 +801,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 try await Task.sleep(nanoseconds: 350_000_000)
                 close()
                 completionHandler(
-                    appText(
-                        "\(name) 已配置",
-                        "\(name) 已設定",
-                        "\(name) Configured"
-                    ),
-                    appText(
-                        "\(name) 已完成下载与登录，Provider 已切换到 \(name)，本地网关已重启。",
-                        "\(name) 已完成下載與登入，Provider 已切換到 \(name)，本機閘道已重新啟動。",
-                        "\(name) download and login are complete. The provider now uses \(name), and the local gateway has restarted."
-                    )
+                    AppLocalization.string("providerSettings.configured", name),
+                    AppLocalization.string("providerSettings.downloadAndLoginAreCompleteTheProvider", name, name)
                 )
             } catch {
                 setBusy(false, status: "\(name) 配置失败")
@@ -968,16 +872,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 setBusy(false, status: "配置已保存")
                 reloadProviders(selecting: providerID)
                 showAlert(
-                    title: appText(
-                        "供应商配置已更新",
-                        "供應商設定已更新",
-                        "Provider Configuration Updated"
-                    ),
-                    message: appText(
-                        "Codex 模型目录已重新生成。请完全退出并重新打开 Codex App；Codex CLI 请开启新会话。",
-                        "Codex 模型目錄已重新產生。請完全結束並重新開啟 Codex App；Codex CLI 請開啟新工作階段。",
-                        "The Codex model catalog has been regenerated. Fully quit and reopen the Codex App, and start a new Codex CLI session."
-                    )
+                    title: AppLocalization.string("providerSettings.providerConfigurationUpdated"),
+                    message: AppLocalization.string("providerSettings.theCodexModelCatalogHasBeenRegenerated")
                 )
             } catch {
                 setBusy(false, status: "操作失败")
@@ -1040,7 +936,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
 private func baiduBridgeDisplayName(_ mode: BaiduAuthBridgeMode) -> String {
     switch mode {
-    case .disabled: return appText("认证桥接", "認證橋接", "Auth bridge")
+    case .disabled: return AppLocalization.string("providerSettings.authBridge2")
     case .duccLoopback: return "DUCC"
     }
 }

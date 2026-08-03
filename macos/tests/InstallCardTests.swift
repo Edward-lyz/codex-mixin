@@ -2,10 +2,6 @@ import Cocoa
 import CryptoKit
 import SwiftUI
 
-func appText(_ simplifiedChinese: String, _ traditionalChinese: String, _ english: String) -> String {
-    simplifiedChinese
-}
-
 func showAlert(title: String, message: String) {
     preconditionFailure("Unexpected alert: \(title): \(message)")
 }

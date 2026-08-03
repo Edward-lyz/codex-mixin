@@ -67,7 +67,7 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = appText("关于 Codex Mixin", "關於 Codex Mixin", "About Codex Mixin")
+        window.title = L10n.About.title
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
@@ -97,7 +97,7 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
 
     @objc private func copyVersionInfo(_ sender: Any?) {
         copyText(info.versionSummary)
-        copyButton.title = appText("已复制", "已複製", "Copied")
+        copyButton.title = L10n.About.copied
         copyButton.image = menuItemImage("checkmark")
 
         DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
@@ -122,20 +122,12 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
         cardPreview.identifier = NSUserInterfaceItemIdentifier("about.card-preview")
         cardPreview.translatesAutoresizingMaskIntoConstraints = false
 
-        let cardHint = NSTextField(labelWithString: appText(
-            "移动查看细节 · 点击放大",
-            "移動查看細節 · 點擊放大",
-            "Move to explore · Click to enlarge"
-        ))
+        let cardHint = NSTextField(labelWithString: L10n.About.cardHint)
         cardHint.font = .systemFont(ofSize: 11, weight: .medium)
         cardHint.textColor = .secondaryLabelColor
         cardHint.alignment = .center
 
-        let versionLabel = NSTextField(labelWithString: appText(
-            "版本 \(info.version)",
-            "版本 \(info.version)",
-            "Version \(info.version)"
-        ))
+        let versionLabel = NSTextField(labelWithString: L10n.About.version(info.version))
         versionLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
         versionLabel.textColor = .secondaryLabelColor
         versionLabel.alignment = .center
@@ -162,26 +154,18 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
         nameLabel.font = .systemFont(ofSize: 30, weight: .bold)
         nameLabel.textColor = .labelColor
 
-        let sloganLabel = NSTextField(wrappingLabelWithString: appText(
-            "让官方 Codex 自由连接你的模型。",
-            "讓官方 Codex 自由連接你的模型。",
-            "Connect official Codex to the models you choose."
-        ))
+        let sloganLabel = NSTextField(wrappingLabelWithString: L10n.About.slogan)
         sloganLabel.font = .systemFont(ofSize: 17, weight: .medium)
         sloganLabel.textColor = .labelColor
 
-        let detailLabel = NSTextField(wrappingLabelWithString: appText(
-            "接入自定义模型供应商，同时保留 ChatGPT 账号、官方 GPT 模型和原生桌面体验。",
-            "接入自訂模型供應商，同時保留 ChatGPT 帳號、官方 GPT 模型和原生桌面體驗。",
-            "Bring custom model providers into Codex while keeping your ChatGPT account, official GPT models, and the native desktop experience."
-        ))
+        let detailLabel = NSTextField(wrappingLabelWithString: L10n.About.detail)
         detailLabel.font = .systemFont(ofSize: 13)
         detailLabel.textColor = .secondaryLabelColor
         detailLabel.maximumNumberOfLines = 3
         detailLabel.lineBreakMode = .byWordWrapping
 
         let repositoryButton = NSButton(
-            title: appText("打开 GitHub 仓库", "打開 GitHub 儲存庫", "Open GitHub Repository"),
+            title: L10n.About.openRepository,
             target: self,
             action: #selector(openRepository(_:))
         )
@@ -240,7 +224,7 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
     }
 
     private func configureCopyButton() {
-        copyButton.title = appText("复制版本信息", "複製版本資訊", "Copy Version Info")
+        copyButton.title = L10n.About.copyVersion
         copyButton.bezelStyle = .rounded
         copyButton.image = menuItemImage("doc.on.doc")
         copyButton.imagePosition = .imageLeading

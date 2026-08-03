@@ -1,4 +1,6 @@
 /target/
 /dist/
+.build/
+macos/Generated/
 *.log
 .DS_Store

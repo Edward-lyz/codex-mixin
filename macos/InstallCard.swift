@@ -312,11 +312,7 @@ struct InstallCardSurface: View {
         }
         .accessibilityElement(children: .combine)
         .accessibilityLabel(
-            appText(
-                "Codex Mixin 纪念卡，Mixin 认识你的第 \(cardDayCount(identity: identity, now: now)) 天",
-                "Codex Mixin 紀念卡，Mixin 認識你的第 \(cardDayCount(identity: identity, now: now)) 天",
-                "Codex Mixin card, day \(cardDayCount(identity: identity, now: now)) with Mixin"
-            )
+            AppLocalization.string("installCard.codexMixinCardDayWithMixin", cardDayCount(identity: identity, now: now))
         )
     }
 
@@ -431,8 +427,8 @@ struct InstallCardSurface: View {
                         .minimumScaleFactor(0.7)
 
                     Text(revealed
-                        ? appText("我们仍在轨道上", "我們仍在軌道上", "STILL IN ORBIT")
-                        : appText("与 MIXIN 相伴的日子", "與 MIXIN 相伴的日子", "DAYS WITH MIXIN")
+                        ? AppLocalization.string("installCard.stillINORBIT")
+                        : AppLocalization.string("installCard.daysWITHMIXIN")
                     )
                     .font(.system(
                         size: max(11, size.width * 0.017),
@@ -552,17 +548,13 @@ struct InstallCardExperienceView: View {
                         revealed.toggle()
                     }
                 }
-                .help(appText(
-                    "移动、拖动或点击卡片",
-                    "移動、拖動或點擊卡片",
-                    "Move, drag, or click the card"
-                ))
+                .help(AppLocalization.string("installCard.moveDragOrClickTheCard"))
             }
             .aspectRatio(1.6, contentMode: .fit)
 
             HStack(spacing: 10) {
                 Label(
-                    appText("移动、拖动、点击都有反应", "移動、拖動、點擊都有反應", "Move, drag, and click"),
+                    AppLocalization.string("installCard.moveDragAndClick"),
                     systemImage: "cursorarrow.motionlines"
                 )
                 .font(.system(size: 12))
@@ -573,13 +565,13 @@ struct InstallCardExperienceView: View {
                 Button {
                     onSave(revealed, wallpaperOffset)
                 } label: {
-                    Label(appText("保存 PNG", "儲存 PNG", "Save PNG"), systemImage: "square.and.arrow.down")
+                    Label(AppLocalization.string("installCard.savePNG"), systemImage: "square.and.arrow.down")
                 }
 
                 Button {
                     onShare(revealed, wallpaperOffset)
                 } label: {
-                    Label(appText("分享", "分享", "Share"), systemImage: "square.and.arrow.up")
+                    Label(AppLocalization.string("installCard.share"), systemImage: "square.and.arrow.up")
                 }
                 .buttonStyle(.borderedProminent)
             }
@@ -620,8 +612,8 @@ struct InstallCardThumbnailView: View {
         )
         .animation(.spring(response: 0.34, dampingFraction: 0.82), value: hovering)
         .onHover { hovering = $0 }
-        .help(appText("点击放大 Mixin 卡片", "點擊放大 Mixin 卡片", "Click to enlarge the Mixin card"))
-        .accessibilityLabel(appText("打开我的 Mixin 卡片", "打開我的 Mixin 卡片", "Open My Mixin Card"))
+        .help(AppLocalization.string("installCard.clickToEnlargeTheMixinCard"))
+        .accessibilityLabel(AppLocalization.string("installCard.openMyMixinCard"))
     }
 }
 
@@ -674,7 +666,7 @@ final class InstallCardWindowController: NSWindowController, NSWindowDelegate {
             backing: .buffered,
             defer: false
         )
-        window.title = appText("我的 Mixin 卡片", "我的 Mixin 卡片", "My Mixin Card")
+        window.title = AppLocalization.string("installCard.myMixinCard")
         window.minSize = NSSize(width: 720, height: 560)
         window.isReleasedWhenClosed = false
         window.center()
@@ -718,8 +710,8 @@ final class InstallCardWindowController: NSWindowController, NSWindowDelegate {
             )
         else {
             showAlert(
-                title: appText("无法生成卡片", "無法生成卡片", "Could Not Render Card"),
-                message: appText("请重试一次。", "請重試一次。", "Please try again.")
+                title: AppLocalization.string("installCard.couldNotRenderCard"),
+                message: AppLocalization.string("installCard.pleaseTryAgain")
             )
             return
         }
@@ -734,7 +726,7 @@ final class InstallCardWindowController: NSWindowController, NSWindowDelegate {
                 try data.write(to: url, options: .atomic)
             } catch {
                 showAlert(
-                    title: appText("保存失败", "儲存失敗", "Save Failed"),
+                    title: AppLocalization.string("installCard.saveFailed"),
                     message: String(describing: error)
                 )
             }
@@ -752,8 +744,8 @@ final class InstallCardWindowController: NSWindowController, NSWindowDelegate {
             )
         else {
             showAlert(
-                title: appText("无法生成卡片", "無法生成卡片", "Could Not Render Card"),
-                message: appText("请重试一次。", "請重試一次。", "Please try again.")
+                title: AppLocalization.string("installCard.couldNotRenderCard2"),
+                message: AppLocalization.string("installCard.pleaseTryAgain2")
             )
             return
         }
@@ -771,7 +763,7 @@ final class InstallCardWindowController: NSWindowController, NSWindowDelegate {
             )
         } catch {
             showAlert(
-                title: appText("分享失败", "分享失敗", "Share Failed"),
+                title: AppLocalization.string("installCard.shareFailed"),
                 message: String(describing: error)
             )
         }

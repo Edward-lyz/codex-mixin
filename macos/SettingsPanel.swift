@@ -33,7 +33,7 @@ func runAddProviderSheet(
         ("OpenRouter", "openrouter"),
         ("DeepSeek", "deepseek"),
         ("OpenCode Go", "opencode-go"),
-        (appText("自定义站点", "自訂站點", "Custom site"), "custom"),
+        (AppLocalization.string("settings.customSite"), "custom"),
     ]
     for provider in providers {
         providerPopup.addItem(withTitle: provider.title)
@@ -43,60 +43,40 @@ func runAddProviderSheet(
     providerPopup.heightAnchor.constraint(equalToConstant: 28).isActive = true
 
     let apiKeyField = secureFormTextField()
-    apiKeyField.placeholderString = appText(
-        "必填；密钥只交给本地 Rust CLI 保存",
-        "必填；金鑰只交給本機 Rust CLI 儲存",
-        "Required; stored only by the local Rust CLI"
-    )
+    apiKeyField.placeholderString = AppLocalization.string("settings.requiredStoredOnlyByTheLocalRust")
     let quotaUsernameField = formTextField()
-    quotaUsernameField.placeholderString = appText(
-        "Baidu OneAPI 额度查询用户名",
-        "Baidu OneAPI 額度查詢使用者名稱",
-        "Baidu OneAPI quota username"
-    )
+    quotaUsernameField.placeholderString = AppLocalization.string("settings.baiduOneAPIQuotaUsername")
     let quotaUsernameRow = labeledView(
-        appText("额度用户名", "額度使用者名稱", "Quota username"),
+        AppLocalization.string("settings.quotaUsername"),
         quotaUsernameField
     )
     let quotaWorkspaceIDField = formTextField()
-    quotaWorkspaceIDField.placeholderString = appText(
-        "例如：wrk_abc123",
-        "例如：wrk_abc123",
-        "For example: wrk_abc123"
-    )
+    quotaWorkspaceIDField.placeholderString = AppLocalization.string("settings.forExampleWrkAbc123")
     let quotaWorkspaceIDRow = labeledView(
-        appText("工作区 ID", "工作區 ID", "Workspace ID"),
+        AppLocalization.string("settings.workspaceID"),
         quotaWorkspaceIDField
     )
     let quotaAuthCookieField = secureFormTextField()
-    quotaAuthCookieField.placeholderString = appText(
-        "opencode.ai 的 auth cookie",
-        "opencode.ai 的 auth cookie",
-        "opencode.ai auth cookie"
-    )
+    quotaAuthCookieField.placeholderString = AppLocalization.string("settings.opencodeAiAuthCookie")
     let quotaAuthCookieRow = labeledView(
-        appText("Auth Cookie", "Auth Cookie", "Auth Cookie"),
+        AppLocalization.string("settings.authCookie"),
         quotaAuthCookieField
     )
     let displayNameField = formTextField()
-    displayNameField.placeholderString = appText(
-        "例如：社区公益站",
-        "例如：社群公益站",
-        "For example: Community API"
-    )
+    displayNameField.placeholderString = AppLocalization.string("settings.forExampleCommunityAPI")
     let displayNameRow = labeledView(
-        appText("站点名称", "站點名稱", "Site name"),
+        AppLocalization.string("settings.siteName"),
         displayNameField
     )
     let baseURLField = formTextField()
     baseURLField.placeholderString = "https://example.com/v1"
     let baseURLRow = labeledView(
-        appText("API 地址", "API 位址", "API URL"),
+        AppLocalization.string("settings.apiURL"),
         baseURLField
     )
     let baiduAuthBridgePopup = baiduAuthBridgePopUpButton()
     let baiduAuthBridgeRow = labeledView(
-        appText("认证桥接", "認證橋接", "Auth bridge"),
+        AppLocalization.string("settings.authBridge"),
         baiduAuthBridgePopup
     )
 
@@ -107,27 +87,23 @@ func runAddProviderSheet(
         backing: .buffered,
         defer: false
     )
-    panel.title = appText("新增供应商", "新增供應商", "Add Provider")
+    panel.title = AppLocalization.string("settings.addProvider")
     panel.contentView = contentView
     panel.isReleasedWhenClosed = false
 
     let titleLabel = NSTextField(
-        labelWithString: appText("新增供应商", "新增供應商", "Add Provider")
+        labelWithString: AppLocalization.string("settings.addProvider2")
     )
     titleLabel.font = .boldSystemFont(ofSize: 18)
 
-    let detailLabel = NSTextField(wrappingLabelWithString: appText(
-        "只需选择订阅并填写凭据。地址、协议、接口路径、额度规则和模型发现均由 Codex Mixin 自动配置。",
-        "只需選擇訂閱並填寫憑證。地址、協議、端點路徑、額度規則和模型探索均由 Codex Mixin 自動設定。",
-        "Choose a subscription and enter its credentials. Codex Mixin configures endpoints, protocols, quota rules, and model discovery automatically."
-    ))
+    let detailLabel = NSTextField(wrappingLabelWithString: AppLocalization.string("settings.chooseASubscriptionAndEnterItsCredentials"))
     detailLabel.textColor = .secondaryLabelColor
     detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
     detailLabel.translatesAutoresizingMaskIntoConstraints = false
     detailLabel.widthAnchor.constraint(equalToConstant: 550).isActive = true
 
     let tokenButton = NSButton(
-        title: appText("打开密钥页面", "開啟金鑰頁面", "Open API Key Page"),
+        title: AppLocalization.string("settings.openAPIKeyPage"),
         target: nil,
         action: nil
     )
@@ -160,7 +136,7 @@ func runAddProviderSheet(
     providerTarget.run(nil)
 
     let formStack = NSStackView(views: [
-        labeledView(appText("供应商", "供應商", "Provider"), providerPopup),
+        labeledView(AppLocalization.string("settings.provider"), providerPopup),
         displayNameRow,
         baseURLRow,
         labeledView("API Key", apiKeyField),
@@ -173,13 +149,13 @@ func runAddProviderSheet(
     formStack.spacing = 10
 
     let cancelButton = NSButton(
-        title: appText("取消", "取消", "Cancel"),
+        title: AppLocalization.string("settings.cancel"),
         target: nil,
         action: nil
     )
     cancelButton.bezelStyle = .rounded
     let saveButton = NSButton(
-        title: appText("添加", "新增", "Add"),
+        title: AppLocalization.string("settings.add"),
         target: nil,
         action: nil
     )
@@ -217,12 +193,8 @@ func runAddProviderSheet(
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if preset == "custom", displayName.isEmpty || baseURL.isEmpty {
             showAlert(
-                title: appText("缺少自定义站点信息", "缺少自訂站點資訊", "Custom Site Information Required"),
-                message: appText(
-                    "请填写站点名称和 API 地址。地址可粘贴站点根地址、/v1 或完整推理接口，Codex Mixin 会自动识别。",
-                    "請填寫站點名稱和 API 位址。可貼上站點根位址、/v1 或完整推理端點，Codex Mixin 會自動識別。",
-                    "Enter the site name and API URL. You can paste the root URL, /v1 URL, or a full inference endpoint; Codex Mixin detects it automatically."
-                )
+                title: AppLocalization.string("settings.customSiteInformationRequired"),
+                message: AppLocalization.string("settings.enterTheSiteNameAndAPIURL")
             )
             return
         }
@@ -230,11 +202,7 @@ func runAddProviderSheet(
         guard !apiKey.isEmpty else {
             showAlert(
                 title: "缺少 API 密钥",
-                message: appText(
-                    "请填写供应商 API Key。",
-                    "請填寫供應商 API Key。",
-                    "Enter the provider API key."
-                )
+                message: AppLocalization.string("settings.enterTheProviderAPIKey")
             )
             return
         }
@@ -243,11 +211,7 @@ func runAddProviderSheet(
         if preset == "baidu-oneapi", username.isEmpty {
             showAlert(
                 title: "缺少额度用户名",
-                message: appText(
-                    "请填写 Baidu OneAPI 额度用户名。",
-                    "請填寫 Baidu OneAPI 額度使用者名稱。",
-                    "Enter the Baidu OneAPI quota username."
-                )
+                message: AppLocalization.string("settings.enterTheBaiduOneAPIQuotaUsername")
             )
             return
         }
@@ -257,16 +221,8 @@ func runAddProviderSheet(
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if requiresOpenCodeGoQuotaCredentials(preset), workspaceID.isEmpty || authCookie.isEmpty {
             showAlert(
-                title: appText(
-                    "缺少 OpenCode Go 额度凭据",
-                    "缺少 OpenCode Go 額度憑證",
-                    "OpenCode Go Quota Credentials Required"
-                ),
-                message: appText(
-                    "OpenCode Go 需要同时填写工作区 ID 和 auth cookie 才能查询用量与余额。",
-                    "OpenCode Go 需要同時填寫工作區 ID 和 auth cookie 才能查詢用量與餘額。",
-                    "OpenCode Go requires both the workspace ID and auth cookie to show usage and balance."
-                )
+                title: AppLocalization.string("settings.opencodeGoQuotaCredentialsRequired"),
+                message: AppLocalization.string("settings.opencodeGoRequiresBothTheWorkspaceID")
             )
             return
         }
@@ -307,13 +263,9 @@ func runAddProviderSheet(
 func baiduAuthBridgePopUpButton() -> NSPopUpButton {
     let popup = NSPopUpButton()
     let modes: [(String, String)] = [
-        (appText("不使用（默认）", "不使用（預設）", "Disabled (default)"), "disabled"),
+        (AppLocalization.string("settings.disabledDefault"), "disabled"),
         (
-            appText(
-                "DUCC 核心（loopback）",
-                "DUCC 核心（loopback）",
-                "DUCC Core (loopback)"
-            ),
+            AppLocalization.string("settings.duccCoreLoopback"),
             "ducc_loopback"
         ),
     ]
@@ -321,11 +273,7 @@ func baiduAuthBridgePopUpButton() -> NSPopUpButton {
         popup.addItem(withTitle: title)
         popup.lastItem?.representedObject = value
     }
-    popup.toolTip = appText(
-        "DUCC 使用 Codex Mixin 管理的独立副本，在隔离 HOME 中下载、登录和运行，不修改系统配置或 hooks。",
-        "DUCC 使用 Codex Mixin 管理的獨立副本，在隔離 HOME 中下載、登入和執行，不修改系統設定或 hooks。",
-        "DUCC uses a Codex Mixin-managed copy and downloads, signs in, and runs inside an isolated HOME without changing system config or hooks."
-    )
+    popup.toolTip = AppLocalization.string("settings.duccUsesACodexMixinManagedCopy")
     popup.translatesAutoresizingMaskIntoConstraints = false
     popup.heightAnchor.constraint(equalToConstant: 28).isActive = true
     selectPopupValue(popup, "disabled")

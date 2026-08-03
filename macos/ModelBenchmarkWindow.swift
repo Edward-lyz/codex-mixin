@@ -1010,7 +1010,7 @@ private func presentBenchmarkError(title: String, message: String) {
     alert.messageText = localizedPrompt(title)
     alert.informativeText = localizedGatewayMessage(message)
     alert.alertStyle = .warning
-    alert.addButton(withTitle: appText("确定", "確定", "OK"))
+    alert.addButton(withTitle: AppLocalization.string("modelBenchmark.ok"))
     NSApp.activate(ignoringOtherApps: true)
     alert.runModal()
 }
@@ -1020,7 +1020,7 @@ private func presentBenchmarkMessage(title: String, message: String) {
     alert.messageText = localizedPrompt(title)
     alert.informativeText = localizedGatewayMessage(message)
     alert.alertStyle = .informational
-    alert.addButton(withTitle: appText("确定", "確定", "OK"))
+    alert.addButton(withTitle: AppLocalization.string("modelBenchmark.ok2"))
     NSApp.activate(ignoringOtherApps: true)
     alert.runModal()
 }

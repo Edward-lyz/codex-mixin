@@ -1,0 +1,8 @@
+strings:
+  inputs:
+    - macos/en.lproj/Localizable.strings
+  outputs:
+    - templateName: structured-swift5
+      output: macos/Generated/L10n.swift
+      params:
+        enumName: L10n

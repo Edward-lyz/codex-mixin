@@ -11,14 +11,6 @@ enum GatewayError: Error, CustomStringConvertible {
     }
 }
 
-func appText(_ simplifiedChinese: String, _ traditionalChinese: String, _ english: String) -> String {
-    AppLocalization.text(
-        key: simplifiedChinese,
-        chinese: simplifiedChinese == traditionalChinese ? simplifiedChinese : traditionalChinese,
-        english: english
-    )
-}
-
 func localizedPrompt(_ text: String) -> String {
     let translations: [String: (traditional: String, english: String)] = [
         "启动服务失败": ("啟動服務失敗", "Unable to Start Service"),
@@ -55,8 +47,7 @@ func localizedPrompt(_ text: String) -> String {
     ]
     guard let translation = translations[text] else { return text }
     switch UpdateLanguage.current {
-    case .simplifiedChinese: return text
-    case .traditionalChinese: return translation.traditional
+    case .simplifiedChinese, .traditionalChinese: return text
     case .english: return translation.english
     }
 }
@@ -146,7 +137,7 @@ func showAlert(title: String, message: String) {
         || localizedTitle.contains("Unable")
         ? .warning
         : .informational
-    alert.addButton(withTitle: appText("确定", "確定", "OK"))
+    alert.addButton(withTitle: AppLocalization.string("appSupport.ok"))
     NSApp.activate(ignoringOtherApps: true)
     alert.runModal()
 }
@@ -161,8 +152,8 @@ func confirm(title: String, message: String) -> Bool {
     alert.messageText = localizedPrompt(title)
     alert.informativeText = localizedGatewayMessage(message)
     alert.alertStyle = .warning
-    alert.addButton(withTitle: appText("继续", "繼續", "Continue"))
-    alert.addButton(withTitle: appText("取消", "取消", "Cancel"))
+    alert.addButton(withTitle: AppLocalization.string("appSupport.continue"))
+    alert.addButton(withTitle: AppLocalization.string("appSupport.cancel"))
     NSApp.activate(ignoringOtherApps: true)
     return alert.runModal() == .alertFirstButtonReturn
 }
@@ -191,20 +182,12 @@ func showDiagnosticReport(title: String, report: String) {
     let alert = NSAlert()
     alert.messageText = localizedPrompt(title)
     alert.informativeText = report.contains("[ERROR]")
-        ? appText(
-            "检测到需要处理的问题。完整错误链已包含在报告中。",
-            "檢測到需要處理的問題。完整錯誤鏈已包含在報告中。",
-            "Issues were detected. The report includes the complete error chain."
-        )
-        : appText(
-            "检测完成。可复制报告用于反馈问题。",
-            "檢測完成。可複製報告以回報問題。",
-            "Check completed. Copy the report when reporting an issue."
-        )
+        ? AppLocalization.string("appSupport.issuesWereDetectedTheReportIncludesThe")
+        : AppLocalization.string("appSupport.checkCompletedCopyTheReportWhenReporting")
     alert.alertStyle = report.contains("[ERROR]") ? .warning : .informational
     alert.accessoryView = scrollView
-    alert.addButton(withTitle: appText("关闭", "關閉", "Close"))
-    alert.addButton(withTitle: appText("复制报告", "複製報告", "Copy Report"))
+    alert.addButton(withTitle: AppLocalization.string("appSupport.close"))
+    alert.addButton(withTitle: AppLocalization.string("appSupport.copyReport"))
     NSApp.activate(ignoringOtherApps: true)
     if alert.runModal() == .alertSecondButtonReturn {
         NSPasteboard.general.clearContents()

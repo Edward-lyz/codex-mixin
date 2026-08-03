@@ -255,11 +255,7 @@ func quotaMenuView(title: String, detail: String?, progress: Double?) -> NSView 
 func providerQuotaMenuView(_ usages: [ProviderQuotaUsage]) -> NSView {
     if usages.isEmpty {
         return quotaMenuView(
-            title: appText(
-                "Provider 额度：无可查询项",
-                "Provider 額度：無可查詢項目",
-                "Provider quota: nothing to query"
-            ),
+            title: L10n.Provider.quotaEmpty,
             detail: nil,
             progress: nil
         )
@@ -323,15 +319,11 @@ func providerQuotaRow(_ usage: ProviderQuotaUsage) -> NSView {
         value = "\(formatQuotaAmount(amount))\(currency)"
     } else if let amount = usage.remaining {
         let currency = usage.currency.map { " \($0)" } ?? ""
-        value = appText(
-            "余额 \(formatQuotaAmount(amount))\(currency)",
-            "餘額 \(formatQuotaAmount(amount))\(currency)",
-            "Balance \(formatQuotaAmount(amount))\(currency)"
-        )
+        value = AppLocalization.string("menuViews.balance", formatQuotaAmount(amount), currency)
     } else if usage.error?.contains("not configured") == true {
-        value = appText("未配置额度接口", "未設定額度端點", "Quota endpoint not configured")
+        value = AppLocalization.string("menuViews.quotaEndpointNotConfigured")
     } else {
-        value = appText("查询失败", "查詢失敗", "Query failed")
+        value = AppLocalization.string("menuViews.queryFailed")
     }
     let valueLabel = NSTextField(labelWithString: value)
     valueLabel.font = .systemFont(ofSize: 11)
@@ -364,11 +356,7 @@ func providerQuotaRow(_ usage: ProviderQuotaUsage) -> NSView {
 
         if let remaining = usage.remaining {
             let currency = usage.currency.map { " \($0)" } ?? ""
-            let detail = NSTextField(labelWithString: appText(
-                "剩余 \(formatQuotaAmount(remaining))\(currency)",
-                "剩餘 \(formatQuotaAmount(remaining))\(currency)",
-                "Remaining \(formatQuotaAmount(remaining))\(currency)"
-            ))
+            let detail = NSTextField(labelWithString: AppLocalization.string("menuViews.remaining", formatQuotaAmount(remaining), currency))
             detail.font = .systemFont(ofSize: 10)
             detail.textColor = .secondaryLabelColor
             rows.append(detail)

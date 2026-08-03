@@ -167,7 +167,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
                 for id in loadedProfile.panelModels + [loadedProfile.judgeModel, loadedProfile.finalModel] where !id.isEmpty && !id.hasPrefix("mixin/fusion/") {
                     byId[id] = byId[id] ?? FusionModelOption(
                         id: id,
-                        displayName: appText("当前模型列表中不可用", "目前模型清單中不可用", "Unavailable in the current model list"),
+                        displayName: L10n.Fusion.unavailableModel,
                         isAvailable: false
                     )
                 }
@@ -325,14 +325,14 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
         }
         panelButtons.removeAll()
         if options.isEmpty {
-            let empty = NSTextField(labelWithString: "没有可用模型")
+            let empty = NSTextField(labelWithString: L10n.Fusion.noModels)
             empty.textColor = .secondaryLabelColor
             panelStack.addArrangedSubview(empty)
         } else {
             for option in options {
                 let buttonTitle = option.isAvailable
                     ? option.id
-                    : "\(option.id)  \(appText("（当前不可用）", "（目前不可用）", "(unavailable)"))"
+                    : "\(option.id)  \(L10n.Fusion.unavailable)"
                 let button = NSButton(checkboxWithTitle: buttonTitle, target: self, action: #selector(panelSelectionChanged(_:)))
                 button.state = selectedPanels.contains(option.id) ? .on : .off
                 button.identifier = NSUserInterfaceItemIdentifier(option.id)
@@ -364,7 +364,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
         for option in options {
             let title = option.isAvailable
                 ? option.id
-                : "\(option.id) \(appText("（当前不可用）", "（目前不可用）", "(unavailable)"))"
+                : "\(option.id) \(L10n.Fusion.unavailable)"
             popup.addItem(withTitle: title)
             popup.lastItem?.representedObject = option.id
             popup.lastItem?.toolTip = "\(option.id)\n\(option.displayName)"
@@ -459,19 +459,15 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
             do {
                 try await saveHandler(profile, replacedProfileID)
                 loadedProfile = profile
-                statusLabel.stringValue = "保存成功。虚拟模型 mixin/fusion/\(profile.id) 已写入 catalog。"
+                statusLabel.stringValue = L10n.Fusion.saveSuccess(profile.id)
                 statusLabel.textColor = .systemGreen
                 saveButton.isEnabled = true
             } catch {
-                statusLabel.stringValue = appText(
-                    "保存失败：\(localizedErrorDescription(error))",
-                    "儲存失敗：\(localizedErrorDescription(error))",
-                    "Save failed: \(localizedErrorDescription(error))"
-                )
+                statusLabel.stringValue = L10n.Fusion.saveFailed(localizedErrorDescription(error))
                 statusLabel.textColor = .systemRed
                 saveButton.isEnabled = true
                 presentFusionAlert(
-                    title: "保存 Fusion 设置失败",
+                    title: L10n.Fusion.saveAlertTitle,
                     message: localizedErrorDescription(error)
                 )
             }
@@ -530,7 +526,7 @@ private func presentFusionAlert(title: String, message: String) {
     alert.messageText = localizedPrompt(title)
     alert.informativeText = localizedGatewayMessage(message)
     alert.alertStyle = .warning
-    alert.addButton(withTitle: appText("确定", "確定", "OK"))
+    alert.addButton(withTitle: L10n.Common.ok)
     NSApp.activate(ignoringOtherApps: true)
     alert.runModal()
 }

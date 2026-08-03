@@ -37,6 +37,9 @@ esac
 
 cd "$ROOT_DIR"
 cargo build "${CARGO_BUILD_ARGS[@]}"
+mkdir -p "$ROOT_DIR/macos/Generated"
+"$ROOT_DIR/scripts/check_localizations.sh"
+"$ROOT_DIR/scripts/swiftgen.sh" config run --config "$ROOT_DIR/swiftgen.yml"
 "$ROOT_DIR/macos/make_icon.sh"
 PACKAGE_ID="$(cargo pkgid --package codex-mixin)"
 APP_VERSION="${PACKAGE_ID##*#}"
@@ -81,6 +84,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/InstallCodexPanel.swift" \
   "$ROOT_DIR/macos/QuotaSupport.swift" \
   "$ROOT_DIR/macos/Localization.swift" \
+  "$ROOT_DIR/macos/Generated/L10n.swift" \
   "$ROOT_DIR/macos/AppSupport.swift" \
   "$ROOT_DIR/macos/ModelBenchmarkWindow.swift" \
   "$ROOT_DIR/macos/FusionSettingsLogic.swift" \
