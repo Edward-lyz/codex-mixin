@@ -25,7 +25,13 @@ if ! diff -u "$TEMP_DIR/en.keys" "$TEMP_DIR/zh-Hans.keys"; then
   exit 1
 fi
 
-rg -o 'AppLocalization\.string\("[^"]+"' "$ROOT_DIR/macos" --glob '*.swift' \
+# Prefer rg when available, but keep CI runners that only ship stock tools working.
+if command -v rg >/dev/null 2>&1; then
+  rg -o 'AppLocalization\.string\("[^"]+"' "$ROOT_DIR/macos" --glob '*.swift'
+else
+  find "$ROOT_DIR/macos" -name '*.swift' -print0 \
+    | xargs -0 grep -oE 'AppLocalization\.string\("[^"]+"' || true
+fi \
   | sed -E 's/.*AppLocalization\.string\("([^"]+)"/\1/' \
   | LC_ALL=C sort -u > "$TEMP_DIR/used.keys"
 if ! comm -23 "$TEMP_DIR/used.keys" "$TEMP_DIR/en.keys" | diff -u /dev/null -; then
