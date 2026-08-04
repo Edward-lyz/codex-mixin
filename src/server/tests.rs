@@ -152,34 +152,66 @@ fn oneapi_routing_uses_stable_identifier_priority() {
     headers.insert("session-id", "session-value".parse().unwrap());
     headers.insert("thread-id", "thread-value".parse().unwrap());
     headers.insert("x-client-request-id", "request-value".parse().unwrap());
-    let body = json!({"prompt_cache_key":"cache-value"});
+    let body = json!({"prompt_cache_key":"session-value"});
 
     let routing = stable_oneapi_routing(&headers, &body).unwrap().unwrap();
-    assert_eq!(routing.session_id, "session-value");
+    assert_eq!(routing.session_id, "thread-value");
     assert_eq!(
         routing.hash_key,
-        Uuid::new_v5(&Uuid::NAMESPACE_URL, b"session-value").to_string()
+        Uuid::new_v5(&Uuid::NAMESPACE_URL, b"thread-id\0thread-value").to_string()
     );
 
-    headers.remove("session-id");
+    let override_routing =
+        stable_oneapi_routing(&headers, &json!({"prompt_cache_key":"review-cache-value"}))
+            .unwrap()
+            .unwrap();
+    assert_eq!(override_routing.session_id, "thread-value");
     assert_eq!(
-        stable_oneapi_routing(&headers, &body)
-            .unwrap()
-            .unwrap()
-            .session_id,
-        "thread-value"
+        override_routing.hash_key,
+        Uuid::new_v5(
+            &Uuid::NAMESPACE_URL,
+            b"thread-id\0thread-value\0prompt-cache-key\0review-cache-value",
+        )
+        .to_string()
     );
+
+    headers.insert("x-openai-subagent", "review".parse().unwrap());
+    let subagent_routing = stable_oneapi_routing(&headers, &body).unwrap().unwrap();
+    assert_ne!(subagent_routing.hash_key, routing.hash_key);
+
     headers.remove("thread-id");
+    headers.remove("x-openai-subagent");
+    headers.insert("x-session-id", "x-session-value".parse().unwrap());
     assert_eq!(
         stable_oneapi_routing(&headers, &body)
             .unwrap()
             .unwrap()
             .session_id,
-        "request-value"
+        "session-value"
     );
+
+    let body = json!({});
+    assert_eq!(
+        stable_oneapi_routing(&headers, &body)
+            .unwrap()
+            .unwrap()
+            .session_id,
+        "x-session-value"
+    );
+    headers.remove("x-session-id");
+    assert_eq!(
+        stable_oneapi_routing(&headers, &body)
+            .unwrap()
+            .unwrap()
+            .session_id,
+        "session-value"
+    );
+    headers.remove("session-id");
+    assert!(stable_oneapi_routing(&headers, &body).unwrap().is_none());
+
     headers.clear();
     assert_eq!(
-        stable_oneapi_routing(&headers, &body)
+        stable_oneapi_routing(&headers, &json!({"prompt_cache_key":"cache-value"}))
             .unwrap()
             .unwrap()
             .session_id,

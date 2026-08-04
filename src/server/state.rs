@@ -470,6 +470,12 @@ impl AppState {
             provider.definition().anthropic_beta.clone()
         };
         if provider.uses_ducc_loopback() {
+            let session_key = hash_key.ok_or_else(|| {
+                GatewayError::BadRequest(
+                    "DUCC-backed requests require thread-id, session-id, x-session-id, or prompt_cache_key"
+                        .to_owned(),
+                )
+            })?;
             let runtime = self.ducc_runtime_for(provider).await?;
             // Build only the non-auth transport headers here. The bridge
             // rejects attempts to replace DUCC's native auth headers.
@@ -495,7 +501,7 @@ impl AppState {
                 .map_err(GatewayError::Other)?;
             let response = runtime
                 .send(
-                    &request.model,
+                    session_key,
                     provider.api_url().clone(),
                     body,
                     transport.headers().clone(),

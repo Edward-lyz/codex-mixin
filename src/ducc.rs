@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{HashMap, VecDeque};
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::sync::Arc;
@@ -21,6 +21,8 @@ use uuid::Uuid;
 const REQUEST_BODY_LIMIT: usize = 16 * 1024 * 1024;
 const DUCC_HEADER_NAME: &str = "comate_custom_header";
 const DUCC_AUTH_CARRIER_MODEL: &str = "GLM-5.2";
+const DUCC_PREWARM_SESSION_KEY: &str = "__codex_mixin_prewarm__";
+const MAX_DUCC_SESSION_CLIENTS: usize = 4;
 
 pub(crate) fn default_ducc_executable() -> Option<PathBuf> {
     std::env::var_os("HOME")
@@ -518,13 +520,46 @@ impl Drop for DuccClient {
     }
 }
 
+#[derive(Default)]
+struct DuccClientPool {
+    clients: HashMap<String, Arc<DuccClient>>,
+    recency: VecDeque<String>,
+    prewarmed: Option<Arc<DuccClient>>,
+}
+
+impl DuccClientPool {
+    fn live_client(&mut self, session_key: &str) -> Option<Arc<DuccClient>> {
+        let client = self.clients.get(session_key).cloned();
+        if client.as_ref().is_some_and(|client| client.is_running()) {
+            self.recency.retain(|key| key != session_key);
+            self.recency.push_back(session_key.to_owned());
+            return client;
+        }
+        self.clients.remove(session_key);
+        self.recency.retain(|key| key != session_key);
+        None
+    }
+
+    fn insert(&mut self, session_key: String, client: Arc<DuccClient>) {
+        self.clients.insert(session_key.clone(), client);
+        self.recency.retain(|key| key != &session_key);
+        self.recency.push_back(session_key);
+        while self.clients.len() > MAX_DUCC_SESSION_CLIENTS {
+            let Some(evicted) = self.recency.pop_front() else {
+                break;
+            };
+            self.clients.remove(&evicted);
+        }
+    }
+}
+
 pub(crate) struct DuccRuntime {
     executable: PathBuf,
     home: PathBuf,
     cwd: tempfile::TempDir,
     bridge: DuccBridge,
     api_key: String,
-    client: Mutex<Option<Arc<DuccClient>>>,
+    clients: Mutex<DuccClientPool>,
     dispatch: Arc<Mutex<()>>,
 }
 
@@ -548,17 +583,31 @@ impl DuccRuntime {
             cwd,
             bridge,
             api_key,
-            client: Mutex::new(None),
+            clients: Mutex::new(DuccClientPool::default()),
             dispatch: Arc::new(Mutex::new(())),
         })
     }
 
-    async fn auth_carrier(&self, _target_model: &str) -> anyhow::Result<(Arc<DuccClient>, bool)> {
-        let mut slot = self.client.lock().await;
-        if let Some(client) = slot.as_ref()
-            && client.is_running()
-        {
-            return Ok((Arc::clone(client), false));
+    async fn auth_carrier(&self, session_key: &str) -> anyhow::Result<(Arc<DuccClient>, bool)> {
+        ensure!(!session_key.is_empty(), "DUCC session key is empty");
+        let mut pool = self.clients.lock().await;
+        if session_key == DUCC_PREWARM_SESSION_KEY {
+            if let Some(client) = pool.prewarmed.as_ref()
+                && client.is_running()
+            {
+                return Ok((Arc::clone(client), false));
+            }
+            pool.prewarmed = None;
+        } else {
+            if let Some(client) = pool.live_client(session_key) {
+                return Ok((client, false));
+            }
+            if let Some(client) = pool.prewarmed.take()
+                && client.is_running()
+            {
+                pool.insert(session_key.to_owned(), Arc::clone(&client));
+                return Ok((client, false));
+            }
         }
         let base_url = {
             let mut url = reqwest::Url::parse(&self.bridge.base_url)
@@ -580,12 +629,16 @@ impl DuccRuntime {
             )
             .await?,
         );
-        *slot = Some(Arc::clone(&client));
+        if session_key == DUCC_PREWARM_SESSION_KEY {
+            pool.prewarmed = Some(Arc::clone(&client));
+        } else {
+            pool.insert(session_key.to_owned(), Arc::clone(&client));
+        }
         Ok((client, true))
     }
 
     pub(crate) async fn warm(&self) -> anyhow::Result<()> {
-        let (client, _) = self.auth_carrier(DUCC_AUTH_CARRIER_MODEL).await?;
+        let (client, _) = self.auth_carrier(DUCC_PREWARM_SESSION_KEY).await?;
         ensure!(
             client.is_running(),
             "managed DUCC authentication carrier is not running"
@@ -595,18 +648,18 @@ impl DuccRuntime {
 
     pub(crate) async fn send(
         &self,
-        model: &str,
+        session_key: &str,
         target: reqwest::Url,
         body: Value,
         headers: HeaderMap,
         timeout: Duration,
     ) -> anyhow::Result<reqwest::Response> {
-        // DUCC is roughly 360 MiB per process. The worker only supplies native
-        // authentication headers; the bridge replaces its request body with
-        // the caller's target-model body. One carrier can therefore serve all
-        // models without paying another cold start after a model switch.
+        // DUCC is roughly 360 MiB per process. Each continuous Codex thread gets
+        // its own carrier so its native auth header cannot share an upstream
+        // cache namespace with another prompt branch. The bounded pool prevents
+        // abandoned threads from retaining an unbounded number of workers.
         let dispatch_guard = Arc::clone(&self.dispatch).lock_owned().await;
-        let (client, _) = self.auth_carrier(model).await?;
+        let (client, _) = self.auth_carrier(session_key).await?;
         ensure!(client.is_running(), "managed DUCC process is not running");
         let (marker, authenticated, response) = self
             .bridge
@@ -758,7 +811,7 @@ done
         let result = tokio::time::timeout(
             Duration::from_secs(5),
             runtime.send(
-                "GLM-5.2",
+                "session-a",
                 "http://127.0.0.1:9/v1/messages".parse().unwrap(),
                 json!({"model":"GLM-5.2","messages":[]}),
                 HeaderMap::new(),
@@ -804,7 +857,7 @@ done
         let result = tokio::time::timeout(
             Duration::from_secs(5),
             runtime.send(
-                "GLM-5.2",
+                "session-a",
                 "http://127.0.0.1:9/v1/messages".parse().unwrap(),
                 json!({"model":"GLM-5.2","messages":[]}),
                 HeaderMap::new(),
@@ -821,7 +874,7 @@ done
     }
 
     #[tokio::test]
-    async fn reuses_one_auth_carrier_across_target_models() {
+    async fn reuses_auth_carrier_within_a_session_and_isolates_sessions() {
         let root = tempfile::tempdir().unwrap();
         let executable = root.path().join("home/.baidu-cc/baidu-cc/bin/ducc");
         std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
@@ -846,15 +899,25 @@ done
         .unwrap();
 
         runtime.warm().await.unwrap();
-        let (glm, spawned) = runtime.auth_carrier("GLM-5.2").await.unwrap();
+        let (glm, spawned) = runtime.auth_carrier("session-a").await.unwrap();
         assert!(!spawned, "prewarm must create the authentication carrier");
-        let (claude, spawned) = runtime.auth_carrier("Claude Sonnet 5").await.unwrap();
+        let (same_session, spawned) = runtime.auth_carrier("session-a").await.unwrap();
 
         assert!(
-            Arc::ptr_eq(&glm, &claude),
-            "target-model changes must not restart the authentication carrier"
+            Arc::ptr_eq(&glm, &same_session),
+            "one continuous session must reuse its authentication carrier"
         );
-        assert!(!spawned, "the shared authentication carrier must be reused");
+        assert!(
+            !spawned,
+            "the session authentication carrier must be reused"
+        );
+
+        let (other_session, spawned) = runtime.auth_carrier("session-b").await.unwrap();
+        assert!(spawned, "a different session must start its own carrier");
+        assert!(
+            !Arc::ptr_eq(&glm, &other_session),
+            "different sessions must not share DUCC authentication headers"
+        );
     }
 
     #[tokio::test]

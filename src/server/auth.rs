@@ -82,33 +82,51 @@ pub(super) fn stable_oneapi_routing(
     headers: &HeaderMap,
     body: &Value,
 ) -> Result<Option<UpstreamRouting>, GatewayError> {
-    let mut route_key = None;
-    for header_name in ["session-id", "thread-id", "x-client-request-id"] {
-        if let Some(value) = headers.get(header_name) {
-            let value = value.to_str().map_err(|error| {
-                GatewayError::BadRequest(format!("invalid {header_name} header: {error}"))
-            })?;
-            if !value.is_empty() {
-                route_key = Some(value);
-                break;
-            }
+    let read_header = |header_name: &'static str| -> Result<Option<&str>, GatewayError> {
+        let Some(value) = headers.get(header_name) else {
+            return Ok(None);
+        };
+        let value = value.to_str().map_err(|error| {
+            GatewayError::BadRequest(format!("invalid {header_name} header: {error}"))
+        })?;
+        Ok((!value.is_empty()).then_some(value))
+    };
+    let thread_id = read_header("thread-id")?;
+    let x_session_id = read_header("x-session-id")?;
+    let session_id = read_header("session-id")?;
+    let subagent = read_header("x-openai-subagent")?;
+    let prompt_cache_key = match body.get("prompt_cache_key") {
+        None | Some(Value::Null) => None,
+        Some(Value::String(value)) if !value.is_empty() => Some(value.as_str()),
+        Some(Value::String(_)) => None,
+        Some(_) => {
+            return Err(GatewayError::BadRequest(
+                "prompt_cache_key must be a string".to_owned(),
+            ));
         }
-    }
-    if route_key.is_none() {
-        match body.get("prompt_cache_key") {
-            None | Some(Value::Null) => {}
-            Some(Value::String(prompt_cache_key)) if !prompt_cache_key.is_empty() => {
-                route_key = Some(prompt_cache_key);
-            }
-            Some(Value::String(_)) => {}
-            Some(_) => {
-                return Err(GatewayError::BadRequest(
-                    "prompt_cache_key must be a string".to_owned(),
-                ));
-            }
+    };
+
+    if let Some(thread_id) = thread_id {
+        let mut cache_namespace = format!("thread-id\0{thread_id}");
+        if let Some(prompt_cache_key) = prompt_cache_key
+            && Some(prompt_cache_key) != session_id
+            && Some(prompt_cache_key) != x_session_id
+        {
+            cache_namespace.push_str("\0prompt-cache-key\0");
+            cache_namespace.push_str(prompt_cache_key);
         }
+        if let Some(subagent) = subagent {
+            cache_namespace.push_str("\0subagent\0");
+            cache_namespace.push_str(subagent);
+        }
+        return Ok(Some(UpstreamRouting {
+            session_id: thread_id.to_owned(),
+            hash_key: Uuid::new_v5(&Uuid::NAMESPACE_URL, cache_namespace.as_bytes()).to_string(),
+        }));
     }
-    Ok(route_key.map(|session_id| UpstreamRouting {
+
+    let session_id = prompt_cache_key.or(x_session_id).or(session_id);
+    Ok(session_id.map(|session_id| UpstreamRouting {
         session_id: session_id.to_owned(),
         hash_key: Uuid::new_v5(&Uuid::NAMESPACE_URL, session_id.as_bytes()).to_string(),
     }))
