@@ -115,7 +115,7 @@ pub(crate) async fn stream_provider_response(
             if provider.uses_session_affinity()
                 && let Some(routing) = routing
             {
-                converted.request.metadata = Some(json!({"session_id": routing.session_id}));
+                converted.request.metadata = Some(json!({"session_id": routing.hash_key}));
             }
             let observation = record_provider_prefix(
                 &state.cache_shapes,

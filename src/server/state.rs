@@ -575,25 +575,18 @@ impl AppState {
                     "retrying client-style web_search call as an Anthropic server tool"
                 );
                 request.tool_choice = Some(json!({"type":"tool","name":"web_search"}));
-                let original_session_id = request
-                    .metadata
-                    .as_ref()
-                    .and_then(Value::as_object)
-                    .and_then(|metadata| metadata.get("session_id"))
-                    .and_then(Value::as_str)
-                    .map(str::to_owned);
-                if let Some(metadata) = request.metadata.as_mut().and_then(Value::as_object_mut) {
-                    metadata.insert(
-                        "session_id".to_owned(),
-                        json!(format!(
-                            "{}-web-search-retry-{}",
-                            original_session_id.as_deref().unwrap_or("codex-mixin"),
-                            Uuid::new_v4().simple()
-                        )),
-                    );
+                let retry_hash_key = hash_key.map(|_| Uuid::new_v4().to_string());
+                if let Some(retry_hash_key) = retry_hash_key.as_ref()
+                    && let Some(metadata) = request.metadata.as_mut().and_then(Value::as_object_mut)
+                {
+                    metadata.insert("session_id".to_owned(), json!(retry_hash_key));
                 }
                 let retry = self
-                    .send_anthropic_request(provider, &request, hash_key)
+                    .send_anthropic_request(
+                        provider,
+                        &request,
+                        retry_hash_key.as_deref().or(hash_key),
+                    )
                     .await?;
                 match inspect_anthropic_stream(retry).await? {
                     AnthropicStreamDisposition::Ready(retry) => Ok(retry),
