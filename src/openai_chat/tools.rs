@@ -109,7 +109,9 @@ pub(super) fn convert_function_tool(
         .unwrap_or_else(|| json!(""));
     let parameters = tool
         .get("parameters")
+        .filter(|schema| !schema.is_null())
         .or_else(|| tool.get("input_schema"))
+        .filter(|schema| !schema.is_null())
         .cloned()
         .unwrap_or_else(|| json!({"type":"object","properties":{}}));
     let mut converted = json!({

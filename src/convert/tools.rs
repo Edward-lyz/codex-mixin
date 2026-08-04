@@ -366,6 +366,7 @@ pub(super) fn convert_function_tool(
         .or_else(|| namespace.map(|namespace| format!("Tool {name} in namespace {namespace}.")));
     let input_schema = tool
         .get("parameters")
+        .filter(|schema| !schema.is_null())
         .cloned()
         .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
     let mut converted = match description {
