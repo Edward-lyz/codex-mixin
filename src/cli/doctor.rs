@@ -703,7 +703,7 @@ async fn check_gateway_runtime() -> (DoctorCheck, Option<LiveGateway>) {
         Ok(None) => {
             return (
                 DoctorCheck::new("gateway", "本地网关", DoctorStatus::Warning, "网关未启动")
-                    .hint("codex-mixin start --daemon")
+                    .hint("codex-mixin service start")
                     .fix(DoctorFix::StartGateway),
                 None,
             );
@@ -984,7 +984,7 @@ fn check_codex_integration(
                 "Codex 配置文件不存在，尚未安装到 Codex",
             )
             .detail(path.display().to_string())
-            .hint("codex-mixin install-codex --custom-only"),
+            .hint("codex-mixin connect codex --custom-only"),
         );
         return (checks, None);
     }
@@ -1012,7 +1012,7 @@ fn check_codex_integration(
                 "Codex 尚未安装 codex-mixin 配置",
             )
             .detail(path.display().to_string())
-            .hint("codex-mixin install-codex --custom-only"),
+            .hint("codex-mixin connect codex --custom-only"),
         );
         return (checks, None);
     }
@@ -1037,7 +1037,7 @@ fn check_codex_integration(
                     "托管配置无法解析为 TOML",
                 )
                 .detail(format!("{error:#}"))
-                .hint("重新执行 codex-mixin install-codex"),
+                .hint("重新执行 codex-mixin connect codex"),
             );
             return (checks, None);
         }
@@ -1056,7 +1056,7 @@ fn check_codex_integration(
                     effective_provider.unwrap_or("<unset>")
                 ),
             )
-            .hint("重新执行 codex-mixin install-codex"),
+            .hint("重新执行 codex-mixin connect codex"),
         );
     }
 
@@ -1119,7 +1119,7 @@ fn check_codex_integration(
                     DoctorStatus::Error,
                     "托管配置缺少当前 Provider 的 base_url",
                 )
-                .hint("重新执行 codex-mixin install-codex"),
+                .hint("重新执行 codex-mixin connect codex"),
             );
         }
     }
@@ -1159,7 +1159,7 @@ fn check_codex_integration(
                         DoctorStatus::Warning,
                         "网关启用了 API Key，但 Codex 配置没有 env_key，Codex 请求会被网关拒绝",
                     )
-                    .hint("重新执行 codex-mixin install-codex"),
+                    .hint("重新执行 codex-mixin connect codex"),
                 );
             }
             (None, None) => {}
@@ -1206,7 +1206,7 @@ fn check_codex_integration(
                     "托管配置缺少 model_catalog_json",
                 )
                 .detail(format!("{error:#}"))
-                .hint("重新执行 codex-mixin install-codex"),
+                .hint("重新执行 codex-mixin connect codex"),
             );
             return (checks, None);
         }

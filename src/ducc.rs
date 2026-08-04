@@ -25,10 +25,13 @@ const DUCC_PREWARM_SESSION_KEY: &str = "__codex_mixin_prewarm__";
 const MAX_DUCC_SESSION_CLIENTS: usize = 4;
 
 pub(crate) fn default_ducc_executable() -> Option<PathBuf> {
-    std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .map(|home| home.join(".codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin/ducc"))
-        .filter(|path| path.is_file())
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    [
+        home.join(".codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin/ducc"),
+        home.join(".codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin/claude"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
 }
 
 fn managed_home(executable: &Path) -> anyhow::Result<PathBuf> {

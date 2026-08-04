@@ -7,7 +7,7 @@ use std::time::Duration;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
-use clap::Parser;
+use clap::{CommandFactory, Parser};
 use toml_edit::DocumentMut;
 
 use codex_mixin::anthropic::ModelInfo;
@@ -151,6 +151,22 @@ fn install_command_accepts_explicit_custom_only_mode() {
 
 #[test]
 fn user_facing_command_groups_parse() {
+    assert!(
+        Cli::try_parse_from([
+            "codex-mixin",
+            "setup",
+            "--preset",
+            "baidu-oneapi",
+            "--key",
+            "test-key",
+            "--quota-username",
+            "test-user",
+            "--codex-mode",
+            "skip",
+            "--no-start"
+        ])
+        .is_ok()
+    );
     assert!(Cli::try_parse_from(["codex-mixin", "provider", "list"]).is_ok());
     assert!(Cli::try_parse_from(["codex-mixin", "service", "start", "--foreground"]).is_ok());
     assert!(Cli::try_parse_from(["codex-mixin", "connect", "codex", "--custom-only"]).is_ok());
@@ -165,6 +181,23 @@ fn user_facing_command_groups_parse() {
         .is_ok()
     );
     assert!(Cli::try_parse_from(["codex-mixin", "info", "--json"]).is_ok());
+}
+
+#[test]
+fn top_level_help_only_lists_user_facing_commands() {
+    let mut help = Vec::new();
+    Cli::command().write_long_help(&mut help).unwrap();
+    let help = String::from_utf8(help).unwrap();
+
+    for command in ["setup", "provider", "service", "connect", "info", "doctor"] {
+        assert!(help.contains(command), "missing {command} in help:\n{help}");
+    }
+    for legacy_command in ["install-codex", "serve", "migrate-history", "benchmark"] {
+        assert!(
+            !help.contains(legacy_command),
+            "legacy command {legacy_command} leaked into help:\n{help}"
+        );
+    }
 }
 
 #[test]

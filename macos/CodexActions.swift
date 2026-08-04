@@ -6,11 +6,16 @@ extension AppDelegate {
         Task { @MainActor in
             serviceBusy = true
             serviceStatus = "正在准备 Codex 配置..."
+            let progressWindow = InstallProgressWindowController()
+            progressWindow.present()
+            defer { progressWindow.finish() }
             defer { serviceBusy = false }
             do {
                 let status = try await ensureGatewayReady()
                 applyGatewayStatus(status)
-                _ = try await runGateway(installMode.commandArguments)
+                _ = try await runGatewayStreaming(installMode.commandArguments) { line in
+                    progressWindow.update(phase: line)
+                }
                 showAlert(
                     title: "Codex 配置已更新",
                     message: installMode.completionMessage
@@ -26,8 +31,13 @@ extension AppDelegate {
     @objc func uninstallCodexConfig() {
         guard confirm(title: "从 Codex 恢复安装前配置", message: "会恢复安装前备份的 ~/.codex/config.toml；如果使用过“仅自定义模型模式”，也会删除本地登录占位并恢复原 ~/.codex/auth.json。历史会话将迁回原 provider，托管模型目录会被删除。完成后需要重启 Codex App；CLI 需要开新会话。") else { return }
         Task { @MainActor in
+            let progressWindow = InstallProgressWindowController(title: "正在从 Codex 恢复")
+            progressWindow.present()
+            defer { progressWindow.finish() }
             do {
-                let output = try await runGateway(["uninstall-codex"])
+                let output = try await runGatewayStreaming(["uninstall-codex"]) { line in
+                    progressWindow.update(phase: line)
+                }
                 let message = output.isEmpty ? "已恢复安装前配置。请重启 Codex App；CLI 需要开新会话。" : "\(output)\n\n请重启 Codex App；CLI 需要开新会话。"
                 showAlert(title: "Codex 配置已恢复", message: message)
                 refreshStatus()

@@ -49,7 +49,7 @@ impl GatewayConfig {
     pub fn from_stored_config() -> anyhow::Result<Self> {
         let stored_config = load_stored_config()?.ok_or_else(|| {
             anyhow!(
-                "provider configuration is missing; run `codex-mixin providers add --preset <preset> --key <key>`"
+                "provider configuration is missing; run `codex-mixin provider add --preset <preset> --key <key>`"
             )
         })?;
         Self::from_stored_config_value(stored_config)
@@ -59,7 +59,7 @@ impl GatewayConfig {
         ensure_config_version(stored_config.config_version)?;
         if stored_config.providers.is_empty() {
             anyhow::bail!(
-                "provider configuration is empty; run `codex-mixin providers add --preset <preset> --key <key>`"
+                "provider configuration is empty; run `codex-mixin provider add --preset <preset> --key <key>`"
             );
         }
         ProviderRegistry::new(stored_config.providers.clone())?;

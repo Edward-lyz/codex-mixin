@@ -132,29 +132,45 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 #### 远端 Codex CLI 用户
 
 ```bash
-codex-mixin provider add --preset openrouter --key sk-or-v1-...
-codex-mixin doctor
+codex-mixin setup --preset openrouter
 # 官方账号模式：请先在 Codex 登录并打开一次
 codex-mixin connect codex --codex-oauth-proxy
 # 仅自定义模型模式：不依赖 models_cache.json
 codex-mixin connect codex --custom-only
-codex-mixin service start
+codex-mixin info
 ```
 
 上面两个安装命令二选一，不要同时执行。
 
-CLI 日常入口按用户任务收敛：`provider` 管理供应商，`service` 管理本地网关，`connect` 管理 Codex/Claude 集成，`info` 查看运行状态，`doctor` 负责诊断和修复。旧命令继续保留作为兼容入口。
+`setup` 会隐藏输入 API Key、添加或更新 provider、刷新模型、幂等启动网关，然后询问 Codex 集成方式：
+保留官方账号能力、仅使用自定义模型，或暂时跳过。Baidu OneAPI 还会询问额度查询用户名，自动下载
+官方 Linux DUCC 到 `~/.codex-mixin/ducc/home`，在当前终端完成二维码登录，并默认启用 DUCC loopback：
 
-然后重新打开 Codex CLI 会话，在模型选择器里选择接入后的模型。
+```bash
+codex-mixin setup --preset baidu-oneapi
+```
+
+脚本和 CI 可改用 `--key`、`--quota-username`、`--codex-mode official|custom|skip`，或设置
+`CODEX_MIXIN_API_KEY` 和 `CODEX_MIXIN_QUOTA_USERNAME`。只写配置、不启动网关时增加
+`--no-start`。
+
+CLI 日常入口按用户任务收敛：`setup` 负责首次配置，`provider` 管理供应商，`service` 管理本地网关，`connect` 管理 Codex/Claude 集成，`info` 查看运行状态，`doctor` 负责诊断和修复。旧命令继续保留作为兼容入口。
+
+然后重新打开 Codex CLI 会话，在模型选择器里选择接入后的模型。遇到问题时再运行
+`codex-mixin doctor --quick`；它会给出具体修复命令。
 
 常用检查命令：
 
 ```bash
-codex-mixin status
-codex-mixin models --json
-codex-mixin quota --json
-codex-mixin logs -n 200
+codex-mixin info
+codex-mixin info --json
+codex-mixin provider list --json
+codex-mixin service logs -n 200
 ```
+
+CLI 现在有一套更短的用户入口：`provider`、`service`、`connect`、`info` 和 `doctor`。
+旧的 `providers`、`start`、`status`、`install-codex` 等命令仍可执行，但只用于兼容旧脚本，
+新用户不需要记住它们。
 
 ### 供应商预设
 
@@ -226,13 +242,13 @@ Codex Mixin 也提供一个 Anthropic Messages 兼容端点 `/v1/messages`，所
 CLI 等价命令：
 
 ```bash
-codex-mixin install-claude --model "Claude Sonnet 5"
-codex-mixin uninstall-claude
-codex-mixin claude-status
+codex-mixin connect claude --model "Claude Sonnet 5"
+codex-mixin connect remove claude
+codex-mixin connect status
 ```
 
 注意：Claude Code 默认模型名可能不是本地 provider 的 catalog 名称；安装后建议使用
-`--model` 显式选择，或先执行 `codex-mixin models` 查看可用模型。
+`--model` 显式选择，或先执行 `codex-mixin info` 查看网关和 provider 状态。
 
 ### 安装到 Codex 的行为
 
@@ -240,8 +256,8 @@ codex-mixin claude-status
 
 | 模式 | CLI 命令 | `models_cache.json` | 安装结果 |
 | --- | --- | --- | --- |
-| 官方账号模式 | `codex-mixin install-codex --codex-oauth-proxy` | 必须存在；请先登录并打开一次 Codex | 合并官方 GPT 与自定义模型，保留官方 OAuth、插件、云任务和账户能力 |
-| 仅自定义模型模式 | `codex-mixin install-codex --custom-only` | 不依赖、不要求存在 | 备份并临时替换 Codex 登录，用本地登录占位开启模型选择器；官方插件、云任务和账户功能不可用 |
+| 官方账号模式 | `codex-mixin connect codex --codex-oauth-proxy` | 必须存在；请先登录并打开一次 Codex | 合并官方 GPT 与自定义模型，保留官方 OAuth、插件、云任务和账户能力 |
+| 仅自定义模型模式 | `codex-mixin connect codex --custom-only` | 不依赖、不要求存在 | 备份并临时替换 Codex 登录，用本地登录占位开启模型选择器；官方插件、云任务和账户功能不可用 |
 
 CLI 不会根据 `auth.json` 或 `models_cache.json` 猜测模式，也不允许省略模式参数。即使你有官方账号，也可以明确选择仅自定义模型模式；如果想使用官方能力，请先取消安装，在 Codex 中登录并打开一次，然后选择官方账号模式。
 
@@ -288,7 +304,7 @@ base_url = "http://127.0.0.1:<自动分配端口>/v1"
 默认不会改顶层 `model`。如果确实要顺手设置默认模型，可以显式传入：
 
 ```bash
-codex-mixin install-codex --codex-oauth-proxy --model deepseek-chat --set-default
+codex-mixin connect codex --codex-oauth-proxy --model deepseek-chat --set-default
 ```
 
 卸载并恢复安装前配置：
@@ -346,27 +362,24 @@ Fusion 只在 Plan 模式的新用户轮次运行 Panel 和 Judge。切换到 De
 ### CLI
 
 ```bash
-codex-mixin providers list
-codex-mixin providers add --preset <preset> --key <key>
+codex-mixin setup --preset <preset>
+codex-mixin provider list
+codex-mixin provider add --preset <preset> --key <key>
 codex-mixin doctor
 codex-mixin doctor --fix               # 自动修复权限、失效状态、网关启动、base_url、模型目录
 codex-mixin doctor --fix --restart-apps # 额外允许重启 ChatGPT/Codex App（会中断进行中的会话）
-codex-mixin status
-codex-mixin models --json
-codex-mixin quota --json
-codex-mixin config --json
-codex-mixin start --daemon
-codex-mixin stop
-codex-mixin restart
-codex-mixin logs -n 200
-codex-mixin catalog
-codex-mixin refresh-metadata
-codex-mixin install-codex --codex-oauth-proxy
-codex-mixin uninstall-codex
-codex-mixin migrate-history
+codex-mixin info
+codex-mixin info --json
+codex-mixin service start
+codex-mixin service status
+codex-mixin service logs -n 200
+codex-mixin connect codex --codex-oauth-proxy
+codex-mixin connect codex --custom-only
+codex-mixin connect claude --model "Claude Sonnet 5"
 ```
 
-`serve` 仍保留为前台 `start` 的兼容别名。新文档和菜单栏 App 统一使用 `start`。
+新用户从 `setup` 开始，日常只需要 `provider`、`service`、`connect`、`info` 和 `doctor`。`fusion`、
+`benchmark`、catalog 刷新和历史迁移仍可用，但属于高级维护命令；旧的顶层命令继续作为兼容入口。
 
 ### 模型目录和 metadata
 
@@ -482,7 +495,7 @@ OpenAI Chat Completions 兼容上游不接受 `tool` 消息内嵌图片，网关
 做 Codex 配置实验时不要直接碰真实配置，可以使用隔离目录：
 
 ```bash
-CODEX_HOME=/tmp/codex-mixin-home codex-mixin install-codex --codex-oauth-proxy
+CODEX_HOME=/tmp/codex-mixin-home codex-mixin connect codex --codex-oauth-proxy
 ```
 
 ### 开发与发布
@@ -550,7 +563,7 @@ Codex App 读取配置有自己的生命周期。安装或恢复 Codex 配置后
 - provider 类型。
 - 问题截图。
 - `codex-mixin doctor` 输出。
-- `codex-mixin logs -n 200` 输出。
+- `codex-mixin service logs -n 200` 输出。
 
 ## English
 
@@ -641,13 +654,13 @@ After launch, follow the menu bar actions to configure a provider and install it
 #### For Codex CLI
 
 ```bash
-codex-mixin providers add --preset openrouter --key sk-or-v1-...
+codex-mixin setup --preset openrouter
 codex-mixin doctor
 # Official account mode: sign in to Codex and open it once first
-codex-mixin install-codex --codex-oauth-proxy
+codex-mixin connect codex --codex-oauth-proxy
 # Custom-only mode: does not require models_cache.json
-codex-mixin install-codex --custom-only
-codex-mixin start --daemon
+codex-mixin connect codex --custom-only
+codex-mixin service start
 ```
 
 Choose one install command; do not run both.
@@ -715,8 +728,8 @@ The install panel and CLI expose two mutually exclusive modes:
 
 | Mode | CLI command | `models_cache.json` | Result |
 | --- | --- | --- | --- |
-| Official account mode | `codex-mixin install-codex --codex-oauth-proxy` | Required; sign in and open Codex once first | Merges official GPT and custom models while preserving official OAuth, plugins, cloud tasks, and account features |
-| Custom models only | `codex-mixin install-codex --custom-only` | Never read or required | Backs up and temporarily replaces Codex auth, then uses a local login placeholder to enable the model picker; official plugins, cloud tasks, and account features are unavailable |
+| Official account mode | `codex-mixin connect codex --codex-oauth-proxy` | Required; sign in and open Codex once first | Merges official GPT and custom models while preserving official OAuth, plugins, cloud tasks, and account features |
+| Custom models only | `codex-mixin connect codex --custom-only` | Never read or required | Backs up and temporarily replaces Codex auth, then uses a local login placeholder to enable the model picker; official plugins, cloud tasks, and account features are unavailable |
 
 The CLI never guesses a mode from `auth.json` or `models_cache.json`, and the mode flag is required. Even if you have an official account, you may explicitly choose custom-only mode. To use official features, cancel installation, sign in to Codex and open it once, then select official account mode.
 
@@ -839,24 +852,20 @@ gateway, and CI runs it on every commit.
 ### CLI Reference
 
 ```bash
-codex-mixin providers list
-codex-mixin providers add --preset <preset> --key <key>
+codex-mixin setup --preset <preset>
+codex-mixin provider list
+codex-mixin provider add --preset <preset> --key <key>
 codex-mixin doctor
 codex-mixin doctor --fix               # auto-repair permissions, stale state, gateway startup, base_url, model catalog
 codex-mixin doctor --fix --restart-apps # additionally allow restarting the ChatGPT/Codex app (interrupts active sessions)
-codex-mixin status
-codex-mixin models --json
-codex-mixin quota --json
-codex-mixin config --json
-codex-mixin start --daemon
-codex-mixin stop
-codex-mixin restart
-codex-mixin logs -n 200
-codex-mixin catalog
-codex-mixin refresh-metadata
-codex-mixin install-codex --codex-oauth-proxy
-codex-mixin uninstall-codex
-codex-mixin migrate-history
+codex-mixin info
+codex-mixin info --json
+codex-mixin service start
+codex-mixin service status
+codex-mixin service logs -n 200
+codex-mixin connect codex --codex-oauth-proxy
+codex-mixin connect codex --custom-only
+codex-mixin connect claude --model "Claude Sonnet 5"
 ```
 
 ### Files
@@ -877,7 +886,7 @@ codex-mixin migrate-history
 Use an isolated Codex home for experiments:
 
 ```bash
-CODEX_HOME=/tmp/codex-mixin-home codex-mixin install-codex --codex-oauth-proxy
+CODEX_HOME=/tmp/codex-mixin-home codex-mixin connect codex --codex-oauth-proxy
 ```
 
 ### Development
@@ -910,4 +919,4 @@ Open an issue at [GitHub Issues](https://github.com/Edward-lyz/codex-mixin/issue
 - Provider type.
 - Screenshot if applicable.
 - `codex-mixin doctor`.
-- `codex-mixin logs -n 200`.
+- `codex-mixin service logs -n 200`.

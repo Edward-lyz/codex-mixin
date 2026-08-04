@@ -525,6 +525,11 @@ extension AppDelegate {
         }
     }
 
+    func runGatewayStreaming(_ arguments: [String], onProgress: @escaping (String) -> Void) async throws -> String {
+        let executable = try gatewayExecutableURL().path
+        return try await runProcessStreaming(executable, arguments, onProgress: onProgress)
+    }
+
     func bootoutIfLoaded(_ domainAndLabel: String) async throws {
         do {
             _ = try await runProcess("/bin/launchctl", ["bootout", domainAndLabel])
@@ -597,6 +602,42 @@ extension AppDelegate {
                     )
                     continuation.resume(throwing: error)
                 }
+            }
+        }
+    }
+
+    func runProcessStreaming(_ executable: String, _ arguments: [String], onProgress: @escaping (String) -> Void) async throws -> String {
+        try await withCheckedThrowingContinuation { continuation in
+            DispatchQueue.global(qos: .userInitiated).async {
+                let process = Process()
+                let outputPipe = Pipe()
+                let errorPipe = Pipe()
+                process.executableURL = URL(fileURLWithPath: executable)
+                process.arguments = arguments
+                process.standardOutput = outputPipe
+                process.standardError = errorPipe
+                var output = Data()
+                let lock = NSLock()
+                func consume(_ data: Data) {
+                    guard !data.isEmpty else { return }
+                    lock.lock(); output.append(data); lock.unlock()
+                    for line in (String(data: data, encoding: .utf8) ?? "").split(whereSeparator: \.isNewline) {
+                        let text = String(line)
+                        if text.hasPrefix("MIXIN_PROGRESS ") { onProgress(String(text.dropFirst(15))) }
+                    }
+                }
+                outputPipe.fileHandleForReading.readabilityHandler = { consume($0.availableData) }
+                errorPipe.fileHandleForReading.readabilityHandler = { consume($0.availableData) }
+                do {
+                    try process.run(); process.waitUntilExit()
+                    outputPipe.fileHandleForReading.readabilityHandler = nil
+                    errorPipe.fileHandleForReading.readabilityHandler = nil
+                    consume(outputPipe.fileHandleForReading.readDataToEndOfFile())
+                    consume(errorPipe.fileHandleForReading.readDataToEndOfFile())
+                    let text = String(data: output, encoding: .utf8) ?? ""
+                    if process.terminationStatus == 0 { continuation.resume(returning: text.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                    else { continuation.resume(throwing: GatewayError.command(text.isEmpty ? "exit \(process.terminationStatus)" : text)) }
+                } catch { continuation.resume(throwing: error) }
             }
         }
     }

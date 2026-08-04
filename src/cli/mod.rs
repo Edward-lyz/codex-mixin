@@ -1,9 +1,14 @@
+use std::fs;
+use std::io::{self, IsTerminal, Write};
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::process::Command as ProcessCommand;
+use std::time::Instant;
 
+use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use codex_mixin::catalog::{codex_catalog_from_models_with_metadata, load_template_catalog};
-use codex_mixin::config::GatewayConfig;
+use codex_mixin::config::{GatewayConfig, load_stored_config};
 use codex_mixin::server::AppState;
 
 mod atomic_file;
@@ -12,6 +17,7 @@ mod claude;
 mod codex;
 mod config_input;
 mod doctor;
+mod ducc_setup;
 mod fusion_config;
 mod maintenance;
 mod metadata;
@@ -23,9 +29,11 @@ mod status;
 use benchmark_proxy::{benchmark_start, benchmark_status};
 use claude::{claude_status, install_claude, uninstall_claude};
 use codex::{
-    InstallCodexOptions, install_codex, refresh_default_managed_codex_catalog, uninstall_codex,
+    InstallCodexOptions, install_codex, refresh_default_managed_codex_catalog,
+    resolve_codex_install_paths, uninstall_codex,
 };
 use doctor::doctor;
+use ducc_setup::ensure_managed_ducc;
 use fusion_config::{get_fusion_profile, set_fusion_profile};
 use maintenance::migrate_history;
 use metadata::{load_model_metadata_resolver, refresh_metadata};
@@ -36,8 +44,137 @@ use providers::{
 use service::{init_tracing, logs, restart, start, stop};
 use status::{models, probe_web_search, quota, show_config, status};
 
+async fn stage<T>(
+    label: &str,
+    future: impl std::future::Future<Output = anyhow::Result<T>>,
+) -> anyhow::Result<T> {
+    let interactive = io::stdout().is_terminal();
+    let started = Instant::now();
+    if interactive {
+        print!("{label} ...");
+        io::stdout().flush()?;
+    } else {
+        println!("{label} ...");
+    }
+    let result = future.await;
+    match &result {
+        Ok(_) if interactive => println!(" done ({:.1}s)", started.elapsed().as_secs_f32()),
+        Err(_) if interactive => println!(" failed"),
+        _ => {}
+    }
+    result
+}
+
+fn install_cli_command() -> anyhow::Result<()> {
+    let Some(home) = std::env::var_os("HOME") else {
+        return Ok(());
+    };
+    let bin = PathBuf::from(home).join(".local/bin");
+    fs::create_dir_all(&bin)?;
+    let target = bin.join("codex-mixin");
+    let source = std::env::current_exe()?;
+    if source != target {
+        fs::copy(source, &target)?;
+    }
+    println!("CLI command installed: {}", target.display());
+    println!(
+        "Add {} to PATH if `codex-mixin` is not found.",
+        bin.display()
+    );
+    Ok(())
+}
+
+async fn update_cli() -> anyhow::Result<()> {
+    let current = env!("CARGO_PKG_VERSION");
+    let response = ProcessCommand::new("curl")
+        .args([
+            "--fail",
+            "--location",
+            "--silent",
+            "--show-error",
+            "--output",
+            "/dev/null",
+            "--write-out",
+            "%{url_effective}",
+            "https://github.com/Edward-lyz/codex-mixin/releases/latest",
+        ])
+        .output()
+        .context("cannot query GitHub releases; check HTTP_PROXY/HTTPS_PROXY")?;
+    anyhow::ensure!(
+        response.status.success(),
+        "cannot query GitHub releases; curl exited with {}",
+        response.status
+    );
+    let effective_url = String::from_utf8(response.stdout)?;
+    let latest = effective_url
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|segment| *segment != "latest")
+        .ok_or_else(|| {
+            anyhow::anyhow!("GitHub did not redirect to a release; proxy or rate limit response")
+        })?
+        .trim_start_matches('v')
+        .to_owned();
+    if latest == current {
+        println!("codex-mixin {current} is already up to date.");
+        return Ok(());
+    }
+    let asset = match std::env::consts::ARCH {
+        "x86_64" => "x86_64-unknown-linux-musl",
+        "aarch64" => "aarch64-unknown-linux-musl",
+        arch => anyhow::bail!("automatic update is not available for Linux architecture {arch}"),
+    };
+    let url = format!(
+        "https://github.com/Edward-lyz/codex-mixin/releases/download/v{latest}/codex-mixin-cli-{asset}.tar.gz"
+    );
+    let temp = tempfile::tempdir()?;
+    let archive = temp.path().join("codex-mixin.tar.gz");
+    println!("Downloading codex-mixin {latest}...");
+    let status = ProcessCommand::new("curl")
+        .args([
+            "--fail",
+            "--location",
+            "--silent",
+            "--show-error",
+            "--output",
+        ])
+        .arg(&archive)
+        .arg(&url)
+        .status()?;
+    anyhow::ensure!(
+        status.success(),
+        "download failed for {url}; download the asset manually"
+    );
+    let status = ProcessCommand::new("tar")
+        .args(["-xzf"])
+        .arg(&archive)
+        .arg("-C")
+        .arg(temp.path())
+        .status()?;
+    anyhow::ensure!(status.success(), "failed to unpack downloaded release");
+    let downloaded = temp.path().join("codex-mixin");
+    anyhow::ensure!(
+        downloaded.is_file(),
+        "release archive did not contain codex-mixin"
+    );
+    let target = std::env::current_exe()?;
+    let backup = target.with_extension("backup");
+    fs::copy(&target, &backup)?;
+    fs::rename(downloaded, &target).or_else(|error| {
+        let _ = fs::copy(&backup, &target);
+        Err(error)
+    })?;
+    println!("Updated codex-mixin to {latest}; restarting gateway...");
+    restart(None, None).await
+}
+
 #[derive(Debug, Parser)]
-#[command(author, version, about)]
+#[command(
+    author,
+    version,
+    about = "Connect custom model providers to Codex and Claude"
+)]
 struct Cli {
     #[command(subcommand)]
     command: Option<Command>,
@@ -45,31 +182,60 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    #[command(visible_alias = "provider")]
+    /// Add a provider, start the gateway, and print the next step.
+    Setup {
+        #[arg(long, help = "Provider preset, for example openrouter or baidu-oneapi")]
+        preset: String,
+        #[arg(long, help = "API key; omit for an interactive prompt")]
+        key: Option<String>,
+        #[arg(
+            long,
+            help = "Baidu OneAPI quota username; omit for an interactive prompt"
+        )]
+        quota_username: Option<String>,
+        #[arg(
+            long,
+            value_enum,
+            help = "Codex integration mode; omit for an interactive choice"
+        )]
+        codex_mode: Option<SetupCodexMode>,
+        #[arg(long, help = "Configure the provider without starting the gateway")]
+        no_start: bool,
+    },
+    /// Update this CLI from the latest GitHub release and restart the gateway.
+    Update,
+    /// Configure model providers and select their models.
+    #[command(name = "provider", visible_alias = "providers")]
     Providers {
         #[command(subcommand)]
         command: Box<ProviderCommand>,
     },
+    /// Start, stop, inspect, and follow the local gateway.
     Service {
         #[command(subcommand)]
         command: ServiceCommand,
     },
+    /// Install Codex or Claude integration.
     Connect {
         #[command(subcommand)]
         command: ConnectCommand,
     },
+    /// Show the current setup and gateway state.
     Info {
         #[arg(long)]
         json: bool,
     },
+    #[command(hide = true)]
     Fusion {
         #[command(subcommand)]
         command: FusionCommand,
     },
+    #[command(hide = true)]
     Benchmark {
         #[command(subcommand)]
         command: BenchmarkCommand,
     },
+    /// Diagnose the current setup and optionally repair it.
     #[command(visible_alias = "check")]
     Doctor {
         #[arg(long)]
@@ -91,26 +257,31 @@ enum Command {
         )]
         quick: bool,
     },
+    #[command(hide = true)]
     Status {
         #[arg(long)]
         json: bool,
     },
+    #[command(hide = true)]
     Models {
         #[arg(long)]
         json: bool,
     },
+    #[command(hide = true)]
     Quota {
         #[arg(long)]
         json: bool,
         #[arg(long)]
         provider: Option<String>,
     },
+    #[command(hide = true)]
     Config {
         #[arg(long)]
         json: bool,
         #[arg(long, value_enum, default_value_t = ConfigScope::Effective)]
         scope: ConfigScope,
     },
+    #[command(hide = true)]
     Start {
         #[arg(long)]
         bind: Option<SocketAddr>,
@@ -119,41 +290,48 @@ enum Command {
         #[arg(long)]
         log_file: Option<PathBuf>,
     },
+    #[command(hide = true)]
     Stop {
         #[arg(long)]
         force: bool,
     },
+    #[command(hide = true)]
     Restart {
         #[arg(long)]
         bind: Option<SocketAddr>,
         #[arg(long)]
         log_file: Option<PathBuf>,
     },
+    #[command(hide = true)]
     Logs {
         #[arg(short = 'n', long, default_value_t = 100)]
         lines: usize,
         #[arg(short, long)]
         follow: bool,
     },
+    #[command(hide = true)]
     Serve {
         #[arg(long)]
         bind: Option<SocketAddr>,
     },
+    #[command(hide = true)]
     Catalog {
         #[arg(long)]
         template_catalog: Option<PathBuf>,
     },
     #[command(name = "refresh-metadata")]
+    #[command(hide = true)]
     RefreshMetadata {
         #[arg(long)]
         output: Option<PathBuf>,
     },
     #[command(name = "migrate-history")]
+    #[command(hide = true)]
     MigrateHistory {
         #[arg(long)]
         codex_home: Option<PathBuf>,
     },
-    #[command(name = "install-codex", visible_alias = "codex-config")]
+    #[command(name = "install-codex", visible_alias = "codex-config", hide = true)]
     InstallCodex {
         #[arg(long)]
         model: Option<String>,
@@ -186,33 +364,34 @@ enum Command {
         #[arg(long)]
         no_env_key: bool,
     },
-    #[command(name = "uninstall-codex")]
+    #[command(name = "uninstall-codex", hide = true)]
     UninstallCodex {
         #[arg(long)]
         config: Option<PathBuf>,
         #[arg(long)]
         catalog: Option<PathBuf>,
     },
-    #[command(name = "install-claude")]
+    #[command(name = "install-claude", hide = true)]
     InstallClaude {
         #[arg(long)]
         settings: Option<PathBuf>,
         #[arg(long)]
         model: Option<String>,
     },
-    #[command(name = "uninstall-claude")]
+    #[command(name = "uninstall-claude", hide = true)]
     UninstallClaude {
         #[arg(long)]
         settings: Option<PathBuf>,
     },
-    #[command(name = "claude-status")]
+    #[command(name = "claude-status", hide = true)]
     ClaudeStatus {
         #[arg(long)]
         settings: Option<PathBuf>,
     },
-    #[command(name = "refresh-codex-catalog")]
+    #[command(name = "refresh-codex-catalog", hide = true)]
     RefreshCodexCatalog,
     #[command(name = "probe-web-search")]
+    #[command(hide = true)]
     ProbeWebSearch {
         #[arg(long)]
         force: bool,
@@ -223,6 +402,7 @@ enum Command {
 
 #[derive(Debug, Subcommand)]
 enum ServiceCommand {
+    /// Start the gateway in the background by default.
     Start {
         #[arg(long)]
         bind: Option<SocketAddr>,
@@ -231,22 +411,26 @@ enum ServiceCommand {
         #[arg(long)]
         log_file: Option<PathBuf>,
     },
+    /// Stop the background gateway.
     Stop {
         #[arg(long)]
         force: bool,
     },
+    /// Restart the background gateway.
     Restart {
         #[arg(long)]
         bind: Option<SocketAddr>,
         #[arg(long)]
         log_file: Option<PathBuf>,
     },
+    /// Print or follow gateway logs.
     Logs {
         #[arg(short = 'n', long, default_value_t = 100)]
         lines: usize,
         #[arg(short, long)]
         follow: bool,
     },
+    /// Show gateway and provider status.
     Status {
         #[arg(long)]
         json: bool,
@@ -255,17 +439,21 @@ enum ServiceCommand {
 
 #[derive(Debug, Subcommand)]
 enum ConnectCommand {
+    /// Install Codex integration.
     Codex(InstallCodexOptions),
+    /// Install Claude Code integration.
     Claude {
         #[arg(long)]
         settings_path: Option<PathBuf>,
         #[arg(long)]
         model: Option<String>,
     },
+    /// Show Claude Code integration status.
     Status {
         #[arg(long)]
         settings_path: Option<PathBuf>,
     },
+    /// Remove Codex or Claude integration.
     Remove {
         #[arg(value_parser = ["codex", "claude"])]
         target: String,
@@ -307,10 +495,12 @@ enum BenchmarkCommand {
 
 #[derive(Debug, Subcommand)]
 enum ProviderCommand {
+    /// List configured providers.
     List {
         #[arg(long)]
         json: bool,
     },
+    /// Add a provider from a preset.
     Add {
         #[arg(long)]
         preset: String,
@@ -353,6 +543,7 @@ enum ProviderCommand {
         #[arg(long, value_name = "PATH")]
         ducc_executable: Option<PathBuf>,
     },
+    /// Update an existing provider.
     Update {
         id: String,
         #[arg(long, value_name = "BOOL")]
@@ -405,23 +596,21 @@ enum ProviderCommand {
         #[arg(long, value_name = "PATH")]
         ducc_executable: Option<PathBuf>,
     },
-    Enable {
-        id: String,
-    },
-    Disable {
-        id: String,
-    },
-    Remove {
-        id: String,
-    },
-    Discover {
-        id: String,
-    },
+    /// Enable a provider.
+    Enable { id: String },
+    /// Disable a provider.
+    Disable { id: String },
+    /// Remove a provider.
+    Remove { id: String },
+    /// Refresh the provider model catalog.
+    Discover { id: String },
+    /// Test provider authentication and model access.
     Test {
         id: String,
         #[arg(long)]
         json: bool,
     },
+    /// Select models exposed by a provider.
     Select {
         id: String,
         #[arg(long = "model")]
@@ -435,6 +624,13 @@ enum ConfigScope {
     Effective,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum SetupCodexMode {
+    Official,
+    Custom,
+    Skip,
+}
+
 pub(crate) async fn entrypoint() {
     let cli = Cli::parse();
     let foreground_log_file = match &cli.command {
@@ -442,6 +638,14 @@ pub(crate) async fn entrypoint() {
             daemon: false,
             log_file: Some(path),
             ..
+        }) => Some(path.clone()),
+        Some(Command::Service {
+            command:
+                ServiceCommand::Start {
+                    foreground: true,
+                    log_file: Some(path),
+                    ..
+                },
         }) => Some(path.clone()),
         _ => None,
     };
@@ -466,12 +670,230 @@ pub(crate) async fn entrypoint() {
     }
 }
 
+fn read_secret(prompt: &str) -> anyhow::Result<String> {
+    print!("{prompt}");
+    io::stdout().flush()?;
+    #[cfg(unix)]
+    if !ProcessCommand::new("stty").arg("-echo").status()?.success() {
+        anyhow::bail!("failed to disable terminal echo for secret input")
+    }
+    let mut value = String::new();
+    let read_result = io::stdin().read_line(&mut value);
+    #[cfg(unix)]
+    if !ProcessCommand::new("stty").arg("echo").status()?.success() {
+        anyhow::bail!("failed to restore terminal echo after secret input")
+    }
+    println!();
+    read_result?;
+    let value = value.trim().to_owned();
+    if value.is_empty() {
+        anyhow::bail!("API key cannot be empty")
+    }
+    Ok(value)
+}
+
+fn choose_setup_codex_mode(mode: Option<SetupCodexMode>) -> anyhow::Result<SetupCodexMode> {
+    if let Some(mode) = mode {
+        return Ok(mode);
+    }
+    if !io::stdin().is_terminal() {
+        return Ok(SetupCodexMode::Skip);
+    }
+    println!("\nConnect Codex:");
+    println!("  1. Official account mode - keep ChatGPT login, plugins, and cloud features");
+    println!("  2. Custom models only - no official account required");
+    println!("  3. Skip for now");
+    print!("Choose [1-3]: ");
+    io::stdout().flush()?;
+    let mut choice = String::new();
+    io::stdin().read_line(&mut choice)?;
+    match choice.trim() {
+        "1" => Ok(SetupCodexMode::Official),
+        "2" => Ok(SetupCodexMode::Custom),
+        "3" => Ok(SetupCodexMode::Skip),
+        _ => anyhow::bail!("invalid Codex mode; choose 1, 2, or 3"),
+    }
+}
+
+async fn setup(
+    preset: &str,
+    key: Option<String>,
+    quota_username: Option<String>,
+    codex_mode: Option<SetupCodexMode>,
+    no_start: bool,
+) -> anyhow::Result<()> {
+    install_cli_command()?;
+    let key = match key.or_else(|| std::env::var("CODEX_MIXIN_API_KEY").ok()) {
+        Some(key) if !key.trim().is_empty() => key,
+        _ if io::stdin().is_terminal() => read_secret(&format!("API key for {preset}: "))?,
+        _ => anyhow::bail!(
+            "API key is required; pass --key or set CODEX_MIXIN_API_KEY in non-interactive mode"
+        ),
+    };
+
+    let quota_username = if preset == "baidu-oneapi" {
+        match quota_username.or_else(|| std::env::var("CODEX_MIXIN_QUOTA_USERNAME").ok()) {
+            Some(username) if !username.trim().is_empty() => Some(username),
+            _ if io::stdin().is_terminal() => {
+                print!("Baidu OneAPI quota username: ");
+                io::stdout().flush()?;
+                let mut username = String::new();
+                io::stdin().read_line(&mut username)?;
+                let username = username.trim().to_owned();
+                if username.is_empty() {
+                    anyhow::bail!("Baidu OneAPI quota username cannot be empty")
+                }
+                Some(username)
+            }
+            _ => anyhow::bail!(
+                "Baidu OneAPI quota username is required; pass --quota-username or set CODEX_MIXIN_QUOTA_USERNAME in non-interactive mode"
+            ),
+        }
+    } else {
+        quota_username
+    };
+
+    let ducc_executable = if preset == "baidu-oneapi" {
+        Some(
+            stage(
+                "Preparing managed DUCC authentication",
+                ensure_managed_ducc(),
+            )
+            .await?,
+        )
+    } else {
+        None
+    };
+    let existing_provider = load_stored_config()?.and_then(|config| {
+        config
+            .providers
+            .into_iter()
+            .find(|provider| provider.id == preset)
+    });
+    if let Some(existing_provider) = existing_provider {
+        println!("Updating provider configuration: {preset}");
+        if existing_provider.preset_id.as_deref() != Some(preset) {
+            anyhow::bail!(
+                "provider {preset} already exists with preset {}; choose another provider id",
+                existing_provider.preset_id.as_deref().unwrap_or("custom")
+            )
+        }
+        update_provider(UpdateProviderOptions {
+            id: preset.to_owned(),
+            key: Some(key),
+            quota_username,
+            baidu_auth_bridge: (preset == "baidu-oneapi").then(|| "ducc_loopback".to_owned()),
+            ducc_executable,
+            ..UpdateProviderOptions::default()
+        })?;
+    } else {
+        println!("Adding provider configuration: {preset}");
+        add_provider(AddProviderOptions {
+            preset: preset.to_owned(),
+            id: None,
+            key,
+            display_name: None,
+            base_url: None,
+            protocol: None,
+            api_path: None,
+            models_path: None,
+            image_generation_path: None,
+            quota_url: None,
+            quota_username,
+            quota_workspace_id: None,
+            quota_auth_cookie: None,
+            quota_currency: None,
+            quota_parser: None,
+            gateway_key: None,
+            static_models: Vec::new(),
+            header_env: Vec::new(),
+            baidu_auth_bridge: (preset == "baidu-oneapi").then(|| "ducc_loopback".to_owned()),
+            ducc_executable,
+        })?;
+    }
+    stage(
+        &format!("Refreshing provider models for {preset}"),
+        discover_models(preset),
+    )
+    .await?;
+    println!("Provider models refreshed.");
+
+    let executable = std::env::current_exe()?.display().to_string();
+    if no_start {
+        if matches!(
+            codex_mode,
+            Some(SetupCodexMode::Official | SetupCodexMode::Custom)
+        ) {
+            anyhow::bail!("--no-start cannot be combined with Codex installation")
+        }
+        println!("Provider configured. Next: {executable} service start");
+        return Ok(());
+    }
+
+    stage(
+        "Restarting gateway with the new provider configuration",
+        restart(None, None),
+    )
+    .await?;
+    println!("Gateway is ready.");
+    let codex_mode = choose_setup_codex_mode(codex_mode)?;
+    match codex_mode {
+        SetupCodexMode::Official => {
+            let paths = resolve_codex_install_paths(None, None)?;
+            if !paths.models_cache.exists() {
+                anyhow::bail!(
+                    "official Codex catalog is missing at {}; sign in and open Codex once, then run `{executable} connect codex --codex-oauth-proxy`",
+                    paths.models_cache.display()
+                )
+            }
+            install_codex(InstallCodexOptions {
+                requested_model: None,
+                set_default: false,
+                codex_oauth_proxy: true,
+                custom_only: false,
+                config_path: None,
+                catalog_path: None,
+                base_url: None,
+                web_search: "live".to_owned(),
+                env_key: None,
+                no_env_key: false,
+            })
+            .await?;
+        }
+        SetupCodexMode::Custom => {
+            install_codex(InstallCodexOptions {
+                requested_model: None,
+                set_default: true,
+                codex_oauth_proxy: false,
+                custom_only: true,
+                config_path: None,
+                catalog_path: None,
+                base_url: None,
+                web_search: "live".to_owned(),
+                env_key: None,
+                no_env_key: false,
+            })
+            .await?;
+        }
+        SetupCodexMode::Skip => {
+            println!("Gateway started.");
+            println!("Connect Codex later: {executable} connect codex --codex-oauth-proxy");
+        }
+    }
+    println!("Setup complete. Check status: {executable} info");
+    Ok(())
+}
+
 async fn run(cli: Cli) -> anyhow::Result<()> {
-    match cli.command.unwrap_or(Command::Start {
-        bind: None,
-        daemon: false,
-        log_file: None,
-    }) {
+    match cli.command.unwrap_or(Command::Info { json: false }) {
+        Command::Setup {
+            preset,
+            key,
+            quota_username,
+            codex_mode,
+            no_start,
+        } => setup(&preset, key, quota_username, codex_mode, no_start).await,
+        Command::Update => update_cli().await,
         Command::Providers { command } => match *command {
             ProviderCommand::List { json } => list_providers(json),
             ProviderCommand::Add {

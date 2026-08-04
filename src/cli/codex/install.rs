@@ -24,7 +24,7 @@ use crate::cli::runtime::{load_runtime_metadata, pid_is_running};
 
 #[derive(Debug, Args)]
 pub(in crate::cli) struct InstallCodexOptions {
-    #[arg(long)]
+    #[arg(long = "model")]
     pub(in crate::cli) requested_model: Option<String>,
     #[arg(long)]
     pub(in crate::cli) set_default: bool,
@@ -40,9 +40,9 @@ pub(in crate::cli) struct InstallCodexOptions {
         conflicts_with = "codex_oauth_proxy"
     )]
     pub(in crate::cli) custom_only: bool,
-    #[arg(long)]
+    #[arg(long = "config")]
     pub(in crate::cli) config_path: Option<PathBuf>,
-    #[arg(long)]
+    #[arg(long = "catalog")]
     pub(in crate::cli) catalog_path: Option<PathBuf>,
     #[arg(long)]
     pub(in crate::cli) base_url: Option<String>,
@@ -103,13 +103,17 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
         paths.config.display(),
         paths.catalog.display()
     );
+    eprintln!("MIXIN_PROGRESS 检查本地配置与网关状态");
     let gateway_config = GatewayConfig::from_stored_config()?;
     let state = AppState::new(gateway_config.clone())?;
+    eprintln!("MIXIN_PROGRESS 获取 Codex 配置模板");
     let template = load_codex_install_template_online(&paths, codex_oauth_proxy, &state).await?;
+    eprintln!("MIXIN_PROGRESS 获取可用模型列表");
     let models = state.fetch_models().await?;
     if models.is_empty() {
         anyhow::bail!("upstream /v1/models returned no models");
     }
+    eprintln!("MIXIN_PROGRESS 加载模型元数据");
     let metadata = load_model_metadata_resolver().await?;
     let catalog = if codex_oauth_proxy {
         codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
@@ -187,6 +191,7 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
         .config
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?;
+    eprintln!("MIXIN_PROGRESS 写入 Codex 配置和模型目录");
     write_managed_codex_files(
         &paths,
         &raw_config,
@@ -195,7 +200,15 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
         || validate_codex_install(codex_home, provider_id, &expected_model_slugs),
     )?;
 
-    let history = migrate_history_to_provider(codex_home, provider_id)?;
+    eprintln!("MIXIN_PROGRESS 同步历史会话与 SQLite 状态");
+    let history = match migrate_history_to_provider(codex_home, provider_id) {
+        Ok(history) => history,
+        Err(error) => {
+            eprintln!("warning: history migration skipped: {error:#}");
+            Default::default()
+        }
+    };
+    eprintln!("MIXIN_PROGRESS 校验安装结果");
     println!("codex config updated: {}", paths.config.display());
     println!(
         "codex config backup: {}",
@@ -237,6 +250,7 @@ pub(in crate::cli) fn uninstall_codex(
     config_path: Option<PathBuf>,
     catalog_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
+    eprintln!("MIXIN_PROGRESS 读取并锁定 Codex 配置");
     let config_path = resolve_codex_config_path(config_path)?;
     let _config_lock = ManagedConfigLock::acquire(&config_path)?;
     let raw_config = if config_path.exists() {
@@ -281,6 +295,7 @@ pub(in crate::cli) fn uninstall_codex(
             backup_path.display()
         );
     };
+    eprintln!("MIXIN_PROGRESS 恢复安装前配置与登录状态");
     if backup_path.exists() {
         fs::copy(&backup_path, &config_path)?;
         fs::remove_file(&backup_path)?;
@@ -310,6 +325,7 @@ pub(in crate::cli) fn uninstall_codex(
     let codex_home = config_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?;
+    eprintln!("MIXIN_PROGRESS 恢复历史会话与 SQLite 状态");
     let history = migrate_history_from_provider(codex_home, &managed_provider, &restored_provider)?;
     println!("history provider restored: {restored_provider}");
     println!(

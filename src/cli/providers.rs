@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
 use std::time::Duration;
 
+use anyhow::Context;
 use codex_mixin::config::{StoredGatewayConfig, load_stored_config, mutate_stored_config};
 use codex_mixin::provider::{
     BaiduAuthBridge, ProviderDefinition, ProviderModel, ProviderModelSource, ProviderPreset,
@@ -40,7 +41,7 @@ pub(super) struct AddProviderOptions {
     pub(super) ducc_executable: Option<PathBuf>,
 }
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Default)]
 pub(super) struct UpdateProviderOptions {
     pub(super) id: String,
     pub(super) auxiliary_model_upstream: Option<bool>,
@@ -372,6 +373,9 @@ fn apply_baidu_auth_options(
     bridge: Option<&str>,
     ducc_executable: Option<PathBuf>,
 ) -> anyhow::Result<()> {
+    let bridge = bridge.or_else(|| {
+        (provider.preset_id.as_deref() == Some("baidu-oneapi")).then_some("ducc_loopback")
+    });
     if let Some(bridge) = bridge {
         provider.request_policy.baidu_auth_bridge = Some(match bridge {
             "disabled" => BaiduAuthBridge::Disabled,
@@ -624,9 +628,15 @@ pub(super) async fn test_provider(id: &str, json_output: bool) -> anyhow::Result
         ProviderModelSource::Static => ("configuration", provider.cached_models.len()),
         _ => {
             let client = reqwest::Client::builder()
-                .timeout(std::time::Duration::from_secs(30))
+                .timeout(std::time::Duration::from_secs(10))
                 .build()?;
-            let models = discover_provider_models(&client, provider).await?;
+            let models = discover_provider_models(&client, provider)
+                .await
+                .with_context(|| {
+                    format!(
+                        "provider test failed for {id}; check the API key, base URL, and network"
+                    )
+                })?;
             ("models_endpoint", models.len())
         }
     };
@@ -1032,6 +1042,18 @@ mod tests {
     use codex_mixin::fusion::{FusionProfile, PanelToolsConfig};
 
     use super::*;
+
+    #[test]
+    fn baidu_oneapi_defaults_to_ducc_loopback_for_cli_configuration() {
+        let mut provider = codex_mixin::provider::baidu_oneapi_provider("baidu-oneapi", "key");
+
+        apply_baidu_auth_options(&mut provider, None, None).unwrap();
+
+        assert_eq!(
+            provider.request_policy.baidu_auth_bridge,
+            Some(BaiduAuthBridge::DuccLoopback)
+        );
+    }
 
     #[test]
     fn provider_mutations_persist_managed_ducc_options() {

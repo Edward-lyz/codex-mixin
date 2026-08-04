@@ -427,17 +427,17 @@ pub(super) fn start_daemon(
                 bind = Some(existing_bind);
             }
         } else if daemon_running {
-            anyhow::bail!(
+            println!(
                 "gateway daemon already running: pid {}, bind {}",
-                runtime.pid,
-                runtime.bind
+                runtime.pid, runtime.bind
             );
+            return Ok(());
         } else {
-            anyhow::bail!(
+            println!(
                 "gateway already running: pid {}, bind {}",
-                runtime.pid,
-                runtime.bind
+                runtime.pid, runtime.bind
             );
+            return Ok(());
         }
     } else if daemon_running {
         let daemon = daemon.as_ref().expect("live daemon metadata");
@@ -502,7 +502,7 @@ pub(super) fn start_daemon(
         log_file: log_file.clone(),
         started_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
     })?;
-    println!("gateway daemon started");
+    println!("gateway daemon started in background; terminal can be closed safely");
     println!("pid: {pid}");
     println!("bind: {bind}");
     println!("log: {}", log_file.display());

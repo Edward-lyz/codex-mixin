@@ -14,6 +14,23 @@ use super::ConfigScope;
 use super::runtime::*;
 
 pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
+    if load_stored_config()?.is_none() {
+        if json_output {
+            println!(
+                "{}",
+                serde_json::json!({
+                    "configured": false,
+                    "config_path": stored_config_path(),
+                    "next_command": "codex-mixin provider add --preset <preset> --key <key>"
+                })
+            );
+        } else {
+            println!("Codex Mixin is not configured yet.");
+            println!("Next: codex-mixin provider add --preset <preset> --key <key>");
+            println!("Then: codex-mixin doctor");
+        }
+        return Ok(());
+    }
     let config = GatewayConfig::from_stored_config()?;
     let metadata = load_daemon_metadata()?;
     let runtime = load_runtime_metadata()?;
@@ -108,9 +125,71 @@ pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
             }
             Ok(())
         }
-        Ok(response) => anyhow::bail!("gateway unhealthy: {} returned {}", url, response.status()),
-        Err(err) => anyhow::bail!("gateway not running at {url}: {err}"),
+        Ok(response) => print_gateway_unavailable(
+            json_output,
+            daemon_status,
+            metadata.as_ref(),
+            &url,
+            &config,
+            Some(format!(
+                "gateway unhealthy: {url} returned {}",
+                response.status()
+            )),
+        ),
+        Err(err) => print_gateway_unavailable(
+            json_output,
+            daemon_status,
+            metadata.as_ref(),
+            &url,
+            &config,
+            Some(format!("gateway not running at {url}: {err}")),
+        ),
     }
+}
+
+fn print_gateway_unavailable(
+    json_output: bool,
+    daemon_status: &str,
+    metadata: Option<&DaemonMetadata>,
+    healthz: &str,
+    config: &GatewayConfig,
+    error: Option<String>,
+) -> anyhow::Result<()> {
+    let readiness = provider_readiness_summary(&config.providers);
+    let total = config.providers.len();
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "configured": true,
+                "daemon": daemon_status,
+                "pid": metadata.map(|metadata| metadata.pid),
+                "log": metadata.map(|metadata| metadata.log_file.clone()),
+                "gateway": "stopped",
+                "healthz": healthz,
+                "providers": {
+                    "total": total,
+                    "healthy": readiness.1,
+                    "degraded": readiness.2,
+                    "disabled": readiness.3,
+                },
+                "next_command": "codex-mixin service start",
+                "error": error,
+            }))?
+        );
+    } else {
+        println!("gateway: stopped");
+        println!("healthz: {healthz}");
+        println!(
+            "providers: {} total, {} healthy, {} degraded, {} disabled",
+            total, readiness.1, readiness.2, readiness.3
+        );
+        println!("next: codex-mixin service start");
+        if let Some(error) = error {
+            println!("detail: {error}");
+        }
+    }
+    Ok(())
 }
 
 fn provider_readiness_summary(
