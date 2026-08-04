@@ -45,9 +45,22 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    #[command(visible_alias = "provider")]
     Providers {
         #[command(subcommand)]
         command: Box<ProviderCommand>,
+    },
+    Service {
+        #[command(subcommand)]
+        command: ServiceCommand,
+    },
+    Connect {
+        #[command(subcommand)]
+        command: ConnectCommand,
+    },
+    Info {
+        #[arg(long)]
+        json: bool,
     },
     Fusion {
         #[command(subcommand)]
@@ -205,6 +218,59 @@ enum Command {
         force: bool,
         #[arg(long)]
         json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ServiceCommand {
+    Start {
+        #[arg(long)]
+        bind: Option<SocketAddr>,
+        #[arg(long)]
+        foreground: bool,
+        #[arg(long)]
+        log_file: Option<PathBuf>,
+    },
+    Stop {
+        #[arg(long)]
+        force: bool,
+    },
+    Restart {
+        #[arg(long)]
+        bind: Option<SocketAddr>,
+        #[arg(long)]
+        log_file: Option<PathBuf>,
+    },
+    Logs {
+        #[arg(short = 'n', long, default_value_t = 100)]
+        lines: usize,
+        #[arg(short, long)]
+        follow: bool,
+    },
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+enum ConnectCommand {
+    Codex(InstallCodexOptions),
+    Claude {
+        #[arg(long)]
+        settings_path: Option<PathBuf>,
+        #[arg(long)]
+        model: Option<String>,
+    },
+    Status {
+        #[arg(long)]
+        settings_path: Option<PathBuf>,
+    },
+    Remove {
+        #[arg(value_parser = ["codex", "claude"])]
+        target: String,
+        #[arg(long)]
+        settings_path: Option<PathBuf>,
     },
 }
 
@@ -509,6 +575,34 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             ProviderCommand::Test { id, json } => test_provider(&id, json).await,
             ProviderCommand::Select { id, models } => select_models(&id, models),
         },
+        Command::Service { command } => match command {
+            ServiceCommand::Start {
+                bind,
+                foreground,
+                log_file,
+            } => start(bind, !foreground, log_file).await,
+            ServiceCommand::Stop { force } => stop(force),
+            ServiceCommand::Restart { bind, log_file } => restart(bind, log_file).await,
+            ServiceCommand::Logs { lines, follow } => logs(lines, follow),
+            ServiceCommand::Status { json } => status(json).await,
+        },
+        Command::Connect { command } => match command {
+            ConnectCommand::Codex(options) => install_codex(options).await,
+            ConnectCommand::Claude {
+                settings_path,
+                model,
+            } => install_claude(settings_path, model),
+            ConnectCommand::Status { settings_path } => claude_status(settings_path),
+            ConnectCommand::Remove {
+                target,
+                settings_path,
+            } => match target.as_str() {
+                "codex" => uninstall_codex(None, None),
+                "claude" => uninstall_claude(settings_path),
+                _ => unreachable!("clap validates connect target"),
+            },
+        },
+        Command::Info { json } => status(json).await,
         Command::Fusion { command } => match command {
             FusionCommand::Get { id, json } => get_fusion_profile(id.as_deref(), json),
             FusionCommand::Set {
@@ -580,6 +674,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 requested_model: model,
                 set_default: set_default || custom_only,
                 codex_oauth_proxy,
+                custom_only,
                 config_path: config,
                 catalog_path: catalog,
                 base_url,

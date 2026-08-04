@@ -150,6 +150,24 @@ fn install_command_accepts_explicit_custom_only_mode() {
 }
 
 #[test]
+fn user_facing_command_groups_parse() {
+    assert!(Cli::try_parse_from(["codex-mixin", "provider", "list"]).is_ok());
+    assert!(Cli::try_parse_from(["codex-mixin", "service", "start", "--foreground"]).is_ok());
+    assert!(Cli::try_parse_from(["codex-mixin", "connect", "codex", "--custom-only"]).is_ok());
+    assert!(
+        Cli::try_parse_from([
+            "codex-mixin",
+            "connect",
+            "claude",
+            "--model",
+            "claude-3-7-sonnet"
+        ])
+        .is_ok()
+    );
+    assert!(Cli::try_parse_from(["codex-mixin", "info", "--json"]).is_ok());
+}
+
+#[test]
 fn provider_select_accepts_an_empty_allowlist() {
     assert!(Cli::try_parse_from(["codex-mixin", "providers", "select", "provider-a"]).is_ok());
 }

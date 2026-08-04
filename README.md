@@ -132,16 +132,18 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 #### 远端 Codex CLI 用户
 
 ```bash
-codex-mixin providers add --preset openrouter --key sk-or-v1-...
+codex-mixin provider add --preset openrouter --key sk-or-v1-...
 codex-mixin doctor
 # 官方账号模式：请先在 Codex 登录并打开一次
-codex-mixin install-codex --codex-oauth-proxy
+codex-mixin connect codex --codex-oauth-proxy
 # 仅自定义模型模式：不依赖 models_cache.json
-codex-mixin install-codex --custom-only
-codex-mixin start --daemon
+codex-mixin connect codex --custom-only
+codex-mixin service start
 ```
 
 上面两个安装命令二选一，不要同时执行。
+
+CLI 日常入口按用户任务收敛：`provider` 管理供应商，`service` 管理本地网关，`connect` 管理 Codex/Claude 集成，`info` 查看运行状态，`doctor` 负责诊断和修复。旧命令继续保留作为兼容入口。
 
 然后重新打开 Codex CLI 会话，在模型选择器里选择接入后的模型。
 

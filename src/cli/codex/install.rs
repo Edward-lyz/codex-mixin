@@ -3,6 +3,7 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
+use clap::Args;
 use toml_edit::{DocumentMut, Item};
 
 use codex_mixin::catalog::{
@@ -21,15 +22,35 @@ use crate::cli::config_input::normalize_base_url;
 use crate::cli::metadata::load_model_metadata_resolver;
 use crate::cli::runtime::{load_runtime_metadata, pid_is_running};
 
+#[derive(Debug, Args)]
 pub(in crate::cli) struct InstallCodexOptions {
+    #[arg(long)]
     pub(in crate::cli) requested_model: Option<String>,
+    #[arg(long)]
     pub(in crate::cli) set_default: bool,
+    #[arg(
+        long,
+        required_unless_present = "custom_only",
+        conflicts_with = "custom_only"
+    )]
     pub(in crate::cli) codex_oauth_proxy: bool,
+    #[arg(
+        long,
+        required_unless_present = "codex_oauth_proxy",
+        conflicts_with = "codex_oauth_proxy"
+    )]
+    pub(in crate::cli) custom_only: bool,
+    #[arg(long)]
     pub(in crate::cli) config_path: Option<PathBuf>,
+    #[arg(long)]
     pub(in crate::cli) catalog_path: Option<PathBuf>,
+    #[arg(long)]
     pub(in crate::cli) base_url: Option<String>,
+    #[arg(long, default_value = "live")]
     pub(in crate::cli) web_search: String,
+    #[arg(long)]
     pub(in crate::cli) env_key: Option<String>,
+    #[arg(long)]
     pub(in crate::cli) no_env_key: bool,
 }
 
@@ -58,6 +79,7 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
         requested_model,
         set_default,
         codex_oauth_proxy,
+        custom_only: _,
         config_path,
         catalog_path,
         base_url,
