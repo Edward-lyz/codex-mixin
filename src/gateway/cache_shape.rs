@@ -116,6 +116,8 @@ pub(crate) struct CacheShape {
     /// Tool configuration, covering both the definitions and `tool_choice`,
     /// because either one shifts the cached tool preamble.
     tools: RegionDigest,
+    /// How many tool definitions the digest covers.
+    tools_count: usize,
     /// Reasoning configuration, which providers fold into the cached prefix.
     config: RegionDigest,
     /// One digest per message, in wire order.
@@ -131,6 +133,7 @@ impl CacheShape {
                 blocks.iter().map(RegionDigest::of).collect()
             }),
             tools: RegionDigest::of(&(&request.tools, &request.tool_choice)),
+            tools_count: request.tools.len(),
             config: request
                 .thinking
                 .as_ref()
@@ -151,6 +154,7 @@ impl CacheShape {
                 .into_iter()
                 .collect(),
             tools: RegionDigest::of(&(request.get("tools"), request.get("tool_choice"))),
+            tools_count: value_len(request.get("tools")),
             config: RegionDigest::ABSENT,
             turns: turn_digests(messages),
         }
@@ -166,6 +170,7 @@ impl CacheShape {
                 .into_iter()
                 .collect(),
             tools: RegionDigest::of(&(request.get("tools"), request.get("tool_choice"))),
+            tools_count: value_len(request.get("tools")),
             config: RegionDigest::of_optional(request.get("reasoning")),
             turns: turn_digests(request.get("input").and_then(Value::as_array)),
         }
@@ -195,6 +200,25 @@ impl CacheShape {
             let _ = write!(hasher, "|{}", block.hash);
         }
         hasher.hash
+    }
+
+    /// Total bytes of every cache-relevant region. Used with
+    /// `stable_prefix_bytes` to express prefix reuse as a ratio, which is the
+    /// only way to compare it against provider token counters without guessing
+    /// a bytes-per-token rate.
+    fn total_bytes(&self) -> usize {
+        self.system.iter().map(|block| block.bytes).sum::<usize>()
+            + self.tools.bytes
+            + self.config.bytes
+            + self.turns.iter().map(|turn| turn.bytes).sum::<usize>()
+    }
+
+    /// Number of tool definitions is not recoverable from a digest, so it is
+    /// tracked separately: a tool set that changes hash while keeping its size
+    /// points at ordering or field drift, which is fixable here, while a changed
+    /// size means the client really added or removed tools.
+    fn tools_count(&self) -> usize {
+        self.tools_count
     }
 
     /// Compares every region instead of returning on the first difference.
@@ -252,12 +276,15 @@ impl CacheShape {
                 .map(|turn| turn.bytes)
                 .sum(),
             stable_prefix_bytes: self.stable_prefix_bytes(previous, &changes, reused_turns),
+            total_bytes: self.total_bytes(),
             message_prefix_turns,
             previous_turns: previous.turns.len(),
             total_turns: self.turns.len(),
             system_prefix_blocks: common_prefix_len(&self.system, &previous.system),
             previous_system_blocks: previous.system.len(),
             system_blocks: self.system.len(),
+            tools_count: self.tools_count,
+            previous_tools_count: previous.tools_count,
         }
     }
 
@@ -308,6 +335,10 @@ fn turn_digests(turns: Option<&Vec<Value>>) -> Vec<RegionDigest> {
         .unwrap_or_default()
 }
 
+fn value_len(value: Option<&Value>) -> usize {
+    value.and_then(Value::as_array).map_or(0, Vec::len)
+}
+
 /// How much of the previous provider prompt this request can still reuse.
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) struct PrefixReport {
@@ -320,6 +351,8 @@ pub(crate) struct PrefixReport {
     /// Bytes of prompt ahead of the new tail that stayed byte-identical, across
     /// system, tools and replayed turns.
     pub(crate) stable_prefix_bytes: usize,
+    /// Bytes of every cache-relevant region in this request.
+    pub(crate) total_bytes: usize,
     /// Length of the byte-identical message prefix, regardless of regions. This
     /// separates "the history is clean but the system prompt moved" from "the
     /// history itself was rewritten".
@@ -330,6 +363,8 @@ pub(crate) struct PrefixReport {
     pub(crate) system_prefix_blocks: usize,
     pub(crate) previous_system_blocks: usize,
     pub(crate) system_blocks: usize,
+    pub(crate) tools_count: usize,
+    pub(crate) previous_tools_count: usize,
 }
 
 /// Which cache-relevant regions differ from the previous request.
@@ -460,23 +495,36 @@ impl CacheShapeTracker {
         tracked.seq = seq;
         // Compare against every remembered lineage and keep the best match, so an
         // unrelated prompt sharing the session cannot look like prefix loss.
+        // Matching tools and system come first: a subagent or second window in the
+        // same session carries its own tool set, and comparing across those two
+        // would report a tool drift that never happened.
         let report = tracked
             .shapes
             .iter()
             .map(|earlier| shape.compare(earlier))
-            .max_by_key(|report| (report.reused_turns, !report.state.is_cache_loss()))
+            .max_by_key(|report| {
+                (
+                    !report.changes.tools,
+                    !report.changes.system,
+                    report.reused_turns,
+                    !report.state.is_cache_loss(),
+                )
+            })
             .unwrap_or(PrefixReport {
                 state: PrefixState::ColdStart,
                 changes: PrefixChanges::default(),
                 reused_turns: 0,
                 reused_bytes: 0,
                 stable_prefix_bytes: 0,
+                total_bytes: shape.total_bytes(),
                 message_prefix_turns: 0,
                 previous_turns: 0,
                 total_turns: shape.turns.len(),
                 system_prefix_blocks: 0,
                 previous_system_blocks: 0,
                 system_blocks: shape.system.len(),
+                tools_count: shape.tools_count(),
+                previous_tools_count: 0,
             });
         tracked.shapes.retain(|earlier| earlier != &shape);
         tracked.shapes.push(shape);
@@ -546,6 +594,8 @@ pub(crate) fn record_provider_prefix(
             system_prefix_blocks = report.system_prefix_blocks,
             previous_system_blocks = report.previous_system_blocks,
             system_blocks = report.system_blocks,
+            tools_count = report.tools_count,
+            previous_tools_count = report.previous_tools_count,
             shape_hash,
             system_hash,
             tools_hash,
@@ -581,6 +631,7 @@ pub(crate) fn record_provider_prefix(
         state: report.state,
         changed_regions,
         stable_prefix_bytes: report.stable_prefix_bytes,
+        total_bytes: report.total_bytes,
         reused_turns: report.reused_turns,
         total_turns: report.total_turns,
     })
@@ -589,6 +640,11 @@ pub(crate) fn record_provider_prefix(
 /// Prompts below this size are too small for provider caches to act on, so a
 /// miss there says nothing about the request shape.
 const MIN_PROMPT_TOKENS_FOR_VERDICT: u64 = 8_192;
+
+/// Fraction of the reusable prefix a provider has to serve from cache before the
+/// turn counts as healthy. Well below 1.0 because the byte ratio and the tokenizer
+/// never line up exactly, and because providers round cache hits down to a block.
+const MIN_SERVED_FRACTION_OF_REUSABLE: f64 = 0.5;
 
 /// What this gateway sent for one request, kept so the provider usage counters
 /// that arrive later can be judged against the prefix we know we preserved.
@@ -601,11 +657,27 @@ pub(crate) struct PrefixObservation {
     state: PrefixState,
     changed_regions: String,
     stable_prefix_bytes: usize,
+    total_bytes: usize,
     reused_turns: usize,
     total_turns: usize,
 }
 
 impl PrefixObservation {
+    /// Tokens the provider could have served from cache on this request.
+    ///
+    /// Derived as the byte share of the stable prefix applied to the token count
+    /// the provider itself reported, so the bytes-per-token rate cancels out. A
+    /// fixed share of the whole prompt cannot work here: a turn that appends a
+    /// large tool result legitimately reuses only half its prompt, while a turn
+    /// that appends one line should reuse nearly all of it.
+    fn reusable_tokens(&self, prompt_tokens: u64) -> u64 {
+        if self.total_bytes == 0 {
+            return 0;
+        }
+        let share = self.stable_prefix_bytes as f64 / self.total_bytes as f64;
+        (prompt_tokens as f64 * share) as u64
+    }
+
     /// True when this gateway kept a substantial prefix byte-identical and the
     /// provider still recomputed most of it.
     ///
@@ -630,9 +702,11 @@ impl PrefixObservation {
         {
             return false;
         }
-        // Less than half the prompt served from cache, on a prompt this gateway
-        // replayed byte-identically.
-        cache_read_tokens.saturating_mul(2) < prompt_tokens
+        let reusable = self.reusable_tokens(prompt_tokens);
+        if reusable < MIN_PROMPT_TOKENS_FOR_VERDICT {
+            return false;
+        }
+        (cache_read_tokens as f64) < reusable as f64 * MIN_SERVED_FRACTION_OF_REUSABLE
     }
 
     /// Logs the provider cache counters next to the prefix this gateway
@@ -643,6 +717,7 @@ impl PrefixObservation {
         let cache_read_tokens = usage.cache_read_tokens.unwrap_or(0);
         let uncached_input_tokens = usage.input_tokens.unwrap_or(0);
         let prompt_tokens = cache_read_tokens.saturating_add(uncached_input_tokens);
+        let reusable_tokens = self.reusable_tokens(prompt_tokens);
         if self.discarded_by_provider(usage) {
             tracing::warn!(
                 provider_id = self.provider_id,
@@ -653,6 +728,7 @@ impl PrefixObservation {
                 reused_turns = self.reused_turns,
                 total_turns = self.total_turns,
                 stable_prefix_bytes = self.stable_prefix_bytes,
+                reusable_tokens,
                 prompt_tokens,
                 cache_read_tokens,
                 uncached_input_tokens,
@@ -671,6 +747,7 @@ impl PrefixObservation {
             reused_turns = self.reused_turns,
             total_turns = self.total_turns,
             stable_prefix_bytes = self.stable_prefix_bytes,
+            reusable_tokens,
             prompt_tokens,
             cache_read_tokens,
             uncached_input_tokens,
@@ -1318,6 +1395,15 @@ mod tests {
     }
 
     fn observation(state: PrefixState, stable_prefix_bytes: usize) -> PrefixObservation {
+        // Whole request reusable, which is what a normal appended turn looks like.
+        observation_with_total(state, stable_prefix_bytes, stable_prefix_bytes.max(1))
+    }
+
+    fn observation_with_total(
+        state: PrefixState,
+        stable_prefix_bytes: usize,
+        total_bytes: usize,
+    ) -> PrefixObservation {
         PrefixObservation {
             provider_id: "baidu-oneapi".to_owned(),
             catalog_slug: "gpt-5.6-sol-baidu-oneapi".to_owned(),
@@ -1326,9 +1412,35 @@ mod tests {
             state,
             changed_regions: String::new(),
             stable_prefix_bytes,
+            total_bytes,
             reused_turns: 40,
             total_turns: 41,
         }
+    }
+
+    /// A turn that appends a large tool result can only reuse part of its prompt,
+    /// so the verdict has to compare against the reusable part rather than the
+    /// whole prompt. This is the shape that produced 182 false findings on a
+    /// grok-4.5 session.
+    #[test]
+    fn a_turn_with_a_large_appended_tail_is_judged_against_its_reusable_prefix() {
+        // Roughly half the request is the freshly appended tail.
+        let subject = observation_with_total(PrefixState::AppendOnly, 74_817, 159_000);
+        let healthy = UpstreamCacheUsage {
+            input_tokens: Some(21_815),
+            cache_read_tokens: Some(17_792),
+            cache_creation_tokens: None,
+        };
+
+        // 45% of the prompt, but essentially all of what could be reused.
+        assert!(!subject.discarded_by_provider(&healthy));
+
+        let dropped = UpstreamCacheUsage {
+            input_tokens: Some(39_479),
+            cache_read_tokens: Some(128),
+            cache_creation_tokens: None,
+        };
+        assert!(subject.discarded_by_provider(&dropped));
     }
 
     #[test]
