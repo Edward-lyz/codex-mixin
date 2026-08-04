@@ -341,6 +341,13 @@ impl ProviderRegistry {
             .and_then(|index| self.providers.get(*index))
     }
 
+    pub fn auxiliary_image_provider(&self) -> Option<&ProviderRuntime> {
+        self.providers.iter().find(|provider| {
+            provider.definition().auxiliary_model_upstream
+                && provider.image_generation_url().is_some()
+        })
+    }
+
     pub fn catalog_slugs(&self) -> impl Iterator<Item = &str> {
         self.routes.keys().map(String::as_str)
     }

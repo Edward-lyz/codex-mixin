@@ -26,6 +26,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private let idField = copyableTextField("")
     private let displayNameField = formTextField()
     private let baseURLField = formTextField()
+    private let imageGenerationPathField = formTextField()
     private let apiKeyField = secureFormTextField()
     private let clearKeyButton = NSButton(title: "清除密钥", target: nil, action: nil)
     private let quotaUsernameField = formTextField()
@@ -192,6 +193,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         self.customDisplayNameRow = customDisplayNameRow
         let customBaseURLRow = compactLabeledView("API 地址", baseURLField)
         self.customBaseURLRow = customBaseURLRow
+        imageGenerationPathField.placeholderString = "/v1/images/generations"
         let managedConfigurationLabel = NSTextField(wrappingLabelWithString: AppLocalization.string("providerSettings.protocolsAndEndpointPathsAreDetectedAutomatically"))
         managedConfigurationLabel.textColor = .secondaryLabelColor
         managedConfigurationLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
@@ -205,6 +207,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             compactLabeledView("Provider ID", idField),
             customDisplayNameRow,
             customBaseURLRow,
+            compactLabeledView("绘图接口路径", imageGenerationPathField),
             compactLabeledView("API 密钥", apiKeyControls),
             quotaUsernameRow,
             quotaWorkspaceIDRow,
@@ -389,6 +392,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         idField.stringValue = provider.id
         displayNameField.stringValue = provider.displayName
         baseURLField.stringValue = provider.baseURL
+        imageGenerationPathField.stringValue = provider.imageGenerationPath ?? ""
         apiKeyField.stringValue = ""
         apiKeyField.placeholderString = provider.apiKeyConfigured
             ? "已配置；留空保留"
@@ -453,6 +457,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             apiKeyField,
             displayNameField,
             baseURLField,
+            imageGenerationPathField,
             quotaUsernameField,
             quotaWorkspaceIDField,
             quotaAuthCookieField,
@@ -696,6 +701,15 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         update.append("--auxiliary-model-upstream")
         update.append(auxiliaryModelUpstreamButton.state == .on ? "true" : "false")
         appendProviderArgument(&update, "--key", apiKeyField.stringValue)
+        let imageGenerationPath = imageGenerationPathField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
+        if imageGenerationPath.isEmpty {
+            if provider.imageGenerationPath != nil {
+                update.append("--clear-image-generation")
+            }
+        } else {
+            update.append("--image-generation-path")
+            update.append(imageGenerationPath)
+        }
         if provider.presetID == "custom" {
             let displayName = displayNameField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
             let baseURL = baseURLField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)

@@ -1,6 +1,6 @@
 use super::probe::*;
-use super::storage::unix_seconds;
-use super::types::{CAPABILITY_FILE_VERSION, CapabilitySnapshot, UpstreamIdentity};
+use super::storage::{capability_is_fresh, unix_seconds};
+use super::types::{CAPABILITY_FILE_VERSION, CAPABILITY_TTL, CapabilitySnapshot, UpstreamIdentity};
 use super::*;
 
 fn test_config(upstream_base_url: &str) -> GatewayConfig {
@@ -27,6 +27,29 @@ fn test_config(upstream_base_url: &str) -> GatewayConfig {
         web_search_max_uses: Some(3),
         fusion_profiles: Vec::new(),
     }
+}
+
+#[test]
+fn caches_failed_probes_until_the_capability_ttl_expires() {
+    let probed_at = 1_000_000;
+    let capability = ModelWebSearchCapability {
+        model: "Claude Haiku 4.5-test-provider".to_owned(),
+        provider_id: "test-provider".to_owned(),
+        upstream_model: "Claude Haiku 4.5".to_owned(),
+        supported: false,
+        evidence: "probe failed".to_owned(),
+        error: Some("request timed out".to_owned()),
+        probed_at,
+    };
+
+    assert!(capability_is_fresh(
+        &capability,
+        probed_at + CAPABILITY_TTL.as_secs() - 1
+    ));
+    assert!(!capability_is_fresh(
+        &capability,
+        probed_at + CAPABILITY_TTL.as_secs()
+    ));
 }
 
 #[test]

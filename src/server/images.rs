@@ -43,6 +43,22 @@ pub(super) async fn image_generations(
         let upstream = request.json(&body).send().await?;
         return proxy_image_response(upstream, &format!("provider {provider_id}")).await;
     }
+
+    if let Some(provider) = state.providers.auxiliary_image_provider() {
+        let url = provider
+            .image_generation_url()
+            .expect("checked above")
+            .clone();
+        let request = provider.apply_auth(
+            state
+                .client
+                .post(url)
+                .header(header::ACCEPT, "application/json"),
+        );
+        let upstream = request.json(&body).send().await?;
+        return proxy_image_response(upstream, &format!("provider {}", provider.id())).await;
+    }
+
     let url = state
         .config
         .official_image_generation_url()

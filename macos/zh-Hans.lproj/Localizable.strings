@@ -56,7 +56,7 @@
 "modelBenchmark.ok" = "确定";
 "modelBenchmark.ok2" = "确定";
 "providerSettings.clearQuotaCredentials" = "清除额度凭据";
-"providerSettings.useForVoiceAutoReviewAndOther" = "用作语音、自动审查等辅助模型上游";
+"providerSettings.useForVoiceAutoReviewAndOther" = "用于绘图、自动审批等辅助模型上游";
 "providerSettings.workspaceID" = "工作区 ID";
 "providerSettings.authCookie" = "Auth Cookie";
 "providerSettings.protocolsAndEndpointPathsAreDetectedAutomatically" = "协议和接口路径会自动识别，不需要手动选择。";

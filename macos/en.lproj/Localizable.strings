@@ -56,7 +56,7 @@
 "modelBenchmark.ok" = "OK";
 "modelBenchmark.ok2" = "OK";
 "providerSettings.clearQuotaCredentials" = "Clear Quota Credentials";
-"providerSettings.useForVoiceAutoReviewAndOther" = "Use for voice, auto review, and other auxiliary models";
+"providerSettings.useForVoiceAutoReviewAndOther" = "Use for image generation, auto review, and other auxiliary models";
 "providerSettings.workspaceID" = "Workspace ID";
 "providerSettings.authCookie" = "Auth Cookie";
 "providerSettings.protocolsAndEndpointPathsAreDetectedAutomatically" = "Protocols and endpoint paths are detected automatically.";
