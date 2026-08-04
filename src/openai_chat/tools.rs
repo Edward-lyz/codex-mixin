@@ -107,13 +107,18 @@ pub(super) fn convert_function_tool(
         .get("description")
         .cloned()
         .unwrap_or_else(|| json!(""));
-    let parameters = tool
+    let mut parameters = tool
         .get("parameters")
         .filter(|schema| !schema.is_null())
         .or_else(|| tool.get("input_schema"))
         .filter(|schema| !schema.is_null())
+        .or_else(|| tool.get("inputSchema"))
+        .filter(|schema| !schema.is_null())
         .cloned()
         .unwrap_or_else(|| json!({"type":"object","properties":{}}));
+    if parameters.get("type").is_none() && parameters.get("oneOf").is_some() {
+        parameters["type"] = json!("object");
+    }
     let mut converted = json!({
         "type": "function",
         "function": {
