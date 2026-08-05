@@ -472,7 +472,8 @@ async fn apply_doctor_fix(fix: DoctorFix) -> anyhow::Result<String> {
             }
         }
         DoctorFix::StartGateway => {
-            tokio::task::spawn_blocking(|| start_daemon(None, None)).await??;
+            let config = GatewayConfig::from_stored_config()?;
+            tokio::task::spawn_blocking(move || start_daemon(None, None, &config)).await??;
             let bind = load_runtime_metadata()?
                 .map(|runtime| runtime.bind.to_string())
                 .unwrap_or_else(|| "unknown".to_owned());

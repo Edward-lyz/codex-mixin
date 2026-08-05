@@ -1,9 +1,11 @@
 use std::fs;
 use std::io::{self, IsTerminal, Write};
 use std::net::SocketAddr;
-use std::path::PathBuf;
+#[cfg(unix)]
+use std::os::unix::fs::PermissionsExt;
+use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
-use std::time::Instant;
+use std::time::{Instant, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
@@ -84,6 +86,78 @@ fn install_cli_command() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn cli_release_target() -> anyhow::Result<&'static str> {
+    match (std::env::consts::OS, std::env::consts::ARCH) {
+        ("linux", "x86_64") => Ok("x86_64-unknown-linux-musl"),
+        ("linux", "aarch64") => Ok("aarch64-unknown-linux-musl"),
+        ("macos", "x86_64") => Ok("x86_64-apple-darwin"),
+        ("macos", "aarch64") => Ok("aarch64-apple-darwin"),
+        (os, arch) => anyhow::bail!("automatic update is not available for {os}/{arch}"),
+    }
+}
+
+fn release_version_from_redirect(effective_url: &str) -> anyhow::Result<String> {
+    let segment = effective_url
+        .trim_end_matches('/')
+        .rsplit('/')
+        .next()
+        .filter(|segment| !segment.is_empty() && *segment != "latest")
+        .ok_or_else(|| {
+            anyhow::anyhow!("GitHub did not redirect to a release; proxy or rate limit response")
+        })?;
+    let version = segment.trim_start_matches('v');
+    ensure_version_chars(version)?;
+    Ok(version.to_owned())
+}
+
+fn ensure_version_chars(version: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !version.is_empty()
+            && version
+                .chars()
+                .all(|character| character.is_ascii_alphanumeric()
+                    || character == '.'
+                    || character == '-'),
+        "GitHub returned an invalid release version: {version}"
+    );
+    Ok(())
+}
+
+fn replace_executable(target: &Path, downloaded: &Path) -> anyhow::Result<()> {
+    let parent = target
+        .parent()
+        .context("current executable has no parent directory")?;
+    let token = SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .context("system clock is before the Unix epoch")?
+        .as_nanos();
+    let staged = parent.join(format!(".codex-mixin-update-{token}.new"));
+    let backup = parent.join(format!(".codex-mixin-update-{token}.old"));
+    fs::copy(downloaded, &staged)?;
+    #[cfg(unix)]
+    fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))?;
+    let replace_result: anyhow::Result<()> = (|| -> anyhow::Result<()> {
+        fs::rename(target, &backup).with_context(|| {
+            format!("failed to move current executable to {}", backup.display())
+        })?;
+        if let Err(error) = fs::rename(&staged, target) {
+            fs::rename(&backup, target).with_context(|| {
+                format!(
+                    "failed to restore {} after update failure: {error}",
+                    target.display()
+                )
+            })?;
+            return Err(error.into());
+        }
+        let _ = fs::remove_file(&backup);
+        Ok(())
+    })();
+    if replace_result.is_err() {
+        let _ = fs::remove_file(&staged);
+    }
+    replace_result
+}
+
 async fn update_cli() -> anyhow::Result<()> {
     let current = env!("CARGO_PKG_VERSION");
     let response = ProcessCommand::new("curl")
@@ -96,6 +170,8 @@ async fn update_cli() -> anyhow::Result<()> {
             "/dev/null",
             "--write-out",
             "%{url_effective}",
+            "--max-time",
+            "60",
             "https://github.com/Edward-lyz/codex-mixin/releases/latest",
         ])
         .output()
@@ -105,26 +181,13 @@ async fn update_cli() -> anyhow::Result<()> {
         "cannot query GitHub releases; curl exited with {}",
         response.status
     );
-    let effective_url = String::from_utf8(response.stdout)?;
-    let latest = effective_url
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .filter(|segment| *segment != "latest")
-        .ok_or_else(|| {
-            anyhow::anyhow!("GitHub did not redirect to a release; proxy or rate limit response")
-        })?
-        .trim_start_matches('v')
-        .to_owned();
+    let effective_url = String::from_utf8(response.stdout)?.trim().to_owned();
+    let latest = release_version_from_redirect(&effective_url)?;
     if latest == current {
         println!("codex-mixin {current} is already up to date.");
         return Ok(());
     }
-    let asset = match std::env::consts::ARCH {
-        "x86_64" => "x86_64-unknown-linux-musl",
-        "aarch64" => "aarch64-unknown-linux-musl",
-        arch => anyhow::bail!("automatic update is not available for Linux architecture {arch}"),
-    };
+    let asset = cli_release_target()?;
     let url = format!(
         "https://github.com/Edward-lyz/codex-mixin/releases/download/v{latest}/codex-mixin-cli-{asset}.tar.gz"
     );
@@ -137,6 +200,8 @@ async fn update_cli() -> anyhow::Result<()> {
             "--location",
             "--silent",
             "--show-error",
+            "--max-time",
+            "600",
             "--output",
         ])
         .arg(&archive)
@@ -151,6 +216,7 @@ async fn update_cli() -> anyhow::Result<()> {
         .arg(&archive)
         .arg("-C")
         .arg(temp.path())
+        .arg("--strip-components=1")
         .status()?;
     anyhow::ensure!(status.success(), "failed to unpack downloaded release");
     let downloaded = temp.path().join("codex-mixin");
@@ -158,13 +224,12 @@ async fn update_cli() -> anyhow::Result<()> {
         downloaded.is_file(),
         "release archive did not contain codex-mixin"
     );
-    let target = std::env::current_exe()?;
-    let backup = target.with_extension("backup");
-    fs::copy(&target, &backup)?;
-    fs::rename(downloaded, &target).or_else(|error| {
-        let _ = fs::copy(&backup, &target);
-        Err(error)
-    })?;
+    anyhow::ensure!(
+        fs::metadata(&downloaded)?.len() > 1024 * 1024,
+        "downloaded release is unexpectedly small: {}",
+        downloaded.display()
+    );
+    replace_executable(&std::env::current_exe()?, &downloaded)?;
     println!("Updated codex-mixin to {latest}; restarting gateway...");
     restart(None, None).await
 }
@@ -722,6 +787,14 @@ async fn setup(
     codex_mode: Option<SetupCodexMode>,
     no_start: bool,
 ) -> anyhow::Result<()> {
+    if no_start
+        && matches!(
+            codex_mode,
+            Some(SetupCodexMode::Official | SetupCodexMode::Custom)
+        )
+    {
+        anyhow::bail!("--no-start cannot be combined with Codex installation");
+    }
     install_cli_command()?;
     let key = match key.or_else(|| std::env::var("CODEX_MIXIN_API_KEY").ok()) {
         Some(key) if !key.trim().is_empty() => key,
@@ -820,12 +893,6 @@ async fn setup(
 
     let executable = std::env::current_exe()?.display().to_string();
     if no_start {
-        if matches!(
-            codex_mode,
-            Some(SetupCodexMode::Official | SetupCodexMode::Custom)
-        ) {
-            anyhow::bail!("--no-start cannot be combined with Codex installation")
-        }
         println!("Provider configured. Next: {executable} service start");
         return Ok(());
     }

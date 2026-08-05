@@ -2,6 +2,7 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::process::{Command as ProcessCommand, Stdio};
+use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
 
@@ -15,6 +16,8 @@ pub(super) struct DaemonMetadata {
     pub(super) bind: SocketAddr,
     pub(super) log_file: PathBuf,
     pub(super) started_at: u64,
+    #[serde(default)]
+    pub(super) config_fingerprint: Option<u64>,
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -24,6 +27,8 @@ pub(super) struct RuntimeMetadata {
     pub(super) started_at: u64,
     #[serde(default)]
     pub(super) version: Option<String>,
+    #[serde(default)]
+    pub(super) config_fingerprint: Option<u64>,
 }
 
 pub(super) struct RuntimeMetadataGuard {
@@ -96,6 +101,18 @@ pub(super) fn replacement_bind_for_outdated_runtime(
     current_version: &str,
 ) -> Option<SocketAddr> {
     (runtime.version.as_deref() != Some(current_version)).then_some(runtime.bind)
+}
+
+pub(super) fn config_fingerprint() -> anyhow::Result<Option<u64>> {
+    let path = stored_config_path();
+    if !path.exists() {
+        return Ok(None);
+    }
+    let modified = fs::metadata(&path)?.modified()?;
+    let nanos = modified.duration_since(UNIX_EPOCH)?.as_nanos();
+    let nanos = u64::try_from(nanos)
+        .map_err(|_| anyhow::anyhow!("config modification time is outside the supported range"))?;
+    Ok(Some(nanos))
 }
 
 pub(super) fn save_daemon_metadata(metadata: &DaemonMetadata) -> anyhow::Result<()> {

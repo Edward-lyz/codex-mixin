@@ -373,9 +373,6 @@ fn apply_baidu_auth_options(
     bridge: Option<&str>,
     ducc_executable: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    let bridge = bridge.or_else(|| {
-        (provider.preset_id.as_deref() == Some("baidu-oneapi")).then_some("ducc_loopback")
-    });
     if let Some(bridge) = bridge {
         provider.request_policy.baidu_auth_bridge = Some(match bridge {
             "disabled" => BaiduAuthBridge::Disabled,
@@ -1044,15 +1041,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn baidu_oneapi_defaults_to_ducc_loopback_for_cli_configuration() {
+    fn baidu_oneapi_add_without_bridge_leaves_loopback_unset() {
         let mut provider = codex_mixin::provider::baidu_oneapi_provider("baidu-oneapi", "key");
 
         apply_baidu_auth_options(&mut provider, None, None).unwrap();
 
-        assert_eq!(
-            provider.request_policy.baidu_auth_bridge,
-            Some(BaiduAuthBridge::DuccLoopback)
-        );
+        assert_eq!(provider.request_policy.baidu_auth_bridge, None);
     }
 
     #[test]

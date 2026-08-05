@@ -134,7 +134,7 @@ pub(super) async fn start(
     }
     log_gateway_configuration(&config);
     if daemon {
-        return start_daemon(bind, log_file);
+        return start_daemon(bind, log_file, &config);
     }
     if let Some(runtime) = load_runtime_metadata()? {
         if pid_is_running(runtime.pid)? {
@@ -276,6 +276,7 @@ pub(super) async fn start(
         bind: actual_bind,
         started_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         version: Some(env!("CARGO_PKG_VERSION").to_owned()),
+        config_fingerprint: config_fingerprint()?,
     })?;
     let _runtime_guard = RuntimeMetadataGuard { pid };
     let result = serve_on_listener(config, listener).await;
@@ -387,6 +388,7 @@ fn sanitized_url(raw: &str) -> String {
 pub(super) fn start_daemon(
     mut bind: Option<SocketAddr>,
     log_file: Option<PathBuf>,
+    config: &GatewayConfig,
 ) -> anyhow::Result<()> {
     let daemon = load_daemon_metadata()?;
     let runtime = load_runtime_metadata()?;
@@ -411,6 +413,8 @@ pub(super) fn start_daemon(
             runtime.as_ref().expect("live runtime metadata").pid
         );
     }
+    let initial_config_fingerprint = config_fingerprint()?;
+    let requested_log_file = log_file.clone().unwrap_or_else(default_log_file_path);
     if runtime_running {
         let runtime = runtime.as_ref().expect("live runtime metadata");
         if let Some(existing_bind) =
@@ -426,18 +430,53 @@ pub(super) fn start_daemon(
             if bind.is_none() {
                 bind = Some(existing_bind);
             }
-        } else if daemon_running {
-            println!(
-                "gateway daemon already running: pid {}, bind {}",
-                runtime.pid, runtime.bind
-            );
-            return Ok(());
+        } else if let Some(daemon) = &daemon {
+            let requested_bind = bind.unwrap_or(config.bind);
+            if running_daemon_needs_replacement(
+                runtime,
+                daemon,
+                requested_bind,
+                &requested_log_file,
+                initial_config_fingerprint,
+            ) {
+                println!(
+                    "restarting gateway to apply current configuration on {}",
+                    runtime.bind
+                );
+                if bind.is_none() {
+                    bind = Some(requested_bind);
+                }
+                stop(false)?;
+            } else {
+                println!(
+                    "gateway daemon already running: pid {}, bind {}",
+                    runtime.pid, runtime.bind
+                );
+                return Ok(());
+            }
         } else {
-            println!(
-                "gateway already running: pid {}, bind {}",
-                runtime.pid, runtime.bind
-            );
-            return Ok(());
+            let requested_bind = bind.unwrap_or(config.bind);
+            let needs_replacement =
+                replacement_bind_for_outdated_runtime(runtime, env!("CARGO_PKG_VERSION")).is_some()
+                    || requested_bind != runtime.bind
+                    || log_file.is_some()
+                    || runtime.config_fingerprint != initial_config_fingerprint;
+            if needs_replacement {
+                println!(
+                    "restarting gateway to apply current configuration on {}",
+                    runtime.bind
+                );
+                if bind.is_none() {
+                    bind = Some(requested_bind);
+                }
+                stop(false)?;
+            } else {
+                println!(
+                    "gateway already running: pid {}, bind {}",
+                    runtime.pid, runtime.bind
+                );
+                return Ok(());
+            }
         }
     } else if daemon_running {
         let daemon = daemon.as_ref().expect("live daemon metadata");
@@ -496,17 +535,32 @@ pub(super) fn start_daemon(
             log_file.display()
         )
     })?;
+    let config_fingerprint = config_fingerprint()?;
     save_daemon_metadata(&DaemonMetadata {
         pid,
         bind,
         log_file: log_file.clone(),
         started_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
+        config_fingerprint,
     })?;
     println!("gateway daemon started in background; terminal can be closed safely");
     println!("pid: {pid}");
     println!("bind: {bind}");
     println!("log: {}", log_file.display());
     Ok(())
+}
+
+pub(super) fn running_daemon_needs_replacement(
+    runtime: &RuntimeMetadata,
+    daemon: &DaemonMetadata,
+    requested_bind: SocketAddr,
+    requested_log_file: &Path,
+    config_fingerprint: Option<u64>,
+) -> bool {
+    replacement_bind_for_outdated_runtime(runtime, env!("CARGO_PKG_VERSION")).is_some()
+        || requested_bind != runtime.bind
+        || requested_log_file != daemon.log_file
+        || daemon.config_fingerprint != config_fingerprint
 }
 
 pub(super) fn stop(force: bool) -> anyhow::Result<()> {
