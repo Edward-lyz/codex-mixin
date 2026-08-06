@@ -581,7 +581,7 @@ Codex App 读取配置有自己的生命周期。安装或恢复 Codex 配置后
 
 #### 反馈问题时应该带什么？
 
-请在 [GitHub Issues](https://github.com/Edward-lyz/codex-mixin/issues) 提供：
+请在 [GitHub Issues](https://github.com/Edward-lyz/codex-mixin/issues/new/choose) 新建 issue，选择 Bug report 或 Question 模板；Bug report 模板会要求版本、平台、复现步骤和诊断信息。手动反馈时请提供：
 
 - Codex Mixin 版本。
 - Codex App / Codex CLI 版本。
@@ -964,7 +964,7 @@ Keep both `LICENSE` and `NOTICE` when distributing copies or modified versions.
 
 ### Support
 
-Open an issue at [GitHub Issues](https://github.com/Edward-lyz/codex-mixin/issues) and include:
+Open a new issue at [GitHub Issues](https://github.com/Edward-lyz/codex-mixin/issues/new/choose) and use the Bug report or Question template; the Bug report template asks for version, platform, reproduction steps, and diagnostics. Manually include:
 
 - Codex Mixin version.
 - Codex Desktop / Codex CLI version.

@@ -1,0 +1,41 @@
+name: Question / 使用咨询
+description: Ask about installation, configuration, or usage / 提交使用、配置与安装疑问。
+title: "[Question] "
+labels:
+  - question
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先阅读 [README](https://github.com/Edward-lyz/codex-mixin/blob/main/README.md) 并搜索 [existing issues](https://github.com/Edward-lyz/codex-mixin/issues?q=is%3Aissue)。
+  - type: textarea
+    id: question
+    attributes:
+      label: 问题 (Question)
+      description: 描述你尝试完成的目标和卡住的点。
+    validations:
+      required: true
+  - type: textarea
+    id: context
+    attributes:
+      label: 环境信息 (Environment)
+      description: 填写 Codex Mixin 版本、平台、使用形态和 provider；不确定时写“不确定”。
+      placeholder: |
+        Codex Mixin: v0.3.14
+        OS: macOS 15.5 / Ubuntu 24.04
+        Interface: 菜单栏 App / CLI
+        Provider: baidu-oneapi
+  - type: textarea
+    id: attempted
+    attributes:
+      label: 已尝试的方法 (What I Tried)
+      description: 说明已经尝试过的命令、配置或排查步骤。
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前确认 (Checklist)
+      options:
+        - label: 我已阅读 README 并搜索现有 issue
+          required: true
+        - label: 我已提供可帮助判断的环境信息
+          required: true

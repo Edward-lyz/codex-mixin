@@ -1,0 +1,60 @@
+name: Feature request / 功能建议
+description: Suggest a feature, improvement, or compatibility target / 提交功能建议或兼容性需求。
+title: "[Feature] "
+labels:
+  - enhancement
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先搜索 [existing issues](https://github.com/Edward-lyz/codex-mixin/issues?q=is%3Aissue)，避免重复提交。
+  - type: input
+    id: summary
+    attributes:
+      label: 功能概述 (Summary)
+      description: 用一句话说明希望获得的能力。
+    validations:
+      required: true
+  - type: textarea
+    id: problem
+    attributes:
+      label: 要解决的问题 (Problem)
+      description: 说明当前场景、使用痛点，以及现在采用的临时方案。
+    validations:
+      required: true
+  - type: textarea
+    id: proposed
+    attributes:
+      label: 期望行为 (Proposed Behavior)
+      description: 描述功能应该怎样工作，包括适用界面（菜单栏 App、CLI）和平台。
+    validations:
+      required: true
+  - type: textarea
+    id: alternatives
+    attributes:
+      label: 备选方案 (Alternatives)
+      description: 其他可以接受的实现方式、配置开关或兼容策略。
+  - type: dropdown
+    id: scope
+    attributes:
+      label: 影响范围 (Scope)
+      options:
+        - 菜单栏 App
+        - CLI
+        - 两者
+        - 不确定
+  - type: input
+    id: provider
+    attributes:
+      label: 相关 Provider (Provider)
+      description: 如果只和某个上游有关，填写 preset 名称或自定义端点。
+      placeholder: openrouter / deepseek / baidu-oneapi
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前确认 (Checklist)
+      options:
+        - label: 我已搜索现有 issue，确认这不是重复请求
+          required: true
+        - label: 我已说明功能的使用场景，而不只是给出实现方式
+          required: true

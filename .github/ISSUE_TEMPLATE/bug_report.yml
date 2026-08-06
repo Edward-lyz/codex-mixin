@@ -1,0 +1,133 @@
+name: Bug report / 提交 Bug
+description: Report a bug with version, platform, and reproduction details / 按规范提交行为异常。
+title: "[Bug] "
+labels:
+  - bug
+body:
+  - type: markdown
+    attributes:
+      value: |
+        请先搜索 [existing issues](https://github.com/Edward-lyz/codex-mixin/issues?q=is%3Aissue)，并确认问题在最新 Release 上仍存在。
+        缺少版本、平台、复现步骤或诊断信息的报告，可能需要补充后才能处理。
+  - type: input
+    id: codex_mixin_version
+    attributes:
+      label: Codex Mixin 版本 (Version)
+      description: 菜单栏 App 在“关于 Codex Mixin”窗口查看；CLI 执行 `codex-mixin --version`。
+      placeholder: v0.3.14
+    validations:
+      required: true
+  - type: input
+    id: codex_version
+    attributes:
+      label: Codex App / Codex CLI 版本 (Codex Version)
+      description: Codex Desktop 的版本号，或 `codex --version` 的输出。
+      placeholder: 例如 0.45.0
+    validations:
+      required: true
+  - type: dropdown
+    id: interface
+    attributes:
+      label: 使用形态 (Interface)
+      description: 问题出现在菜单栏 App、CLI，还是两者共同使用时。
+      options:
+        - 菜单栏 App
+        - CLI
+        - 两者都用
+        - 不确定
+      default: 0
+    validations:
+      required: true
+  - type: input
+    id: os_version
+    attributes:
+      label: 操作系统版本 (OS Version)
+      description: macOS 写版本号；Linux 写发行版和版本，例如 Ubuntu 24.04。
+      placeholder: macOS 15.5 / Ubuntu 24.04
+    validations:
+      required: true
+  - type: dropdown
+    id: architecture
+    attributes:
+      label: 系统架构 (Architecture)
+      options:
+        - macOS Apple Silicon (arm64)
+        - macOS Intel (x86_64)
+        - Linux x86_64
+        - Linux ARM64 (aarch64)
+        - 其他
+    validations:
+      required: true
+  - type: dropdown
+    id: install_method
+    attributes:
+      label: 安装方式 (Install Method)
+      description: 从 Release 下载的包，还是本地构建。
+      options:
+        - DMG
+        - .deb
+        - CLI tar.gz
+        - cargo / 本地构建
+        - 其他
+    validations:
+      required: true
+  - type: input
+    id: provider
+    attributes:
+      label: Provider / 上游 (Provider)
+      description: preset 名称或自定义端点，例如 baidu-oneapi、openrouter、deepseek、opencode-go。
+      placeholder: baidu-oneapi
+  - type: textarea
+    id: summary
+    attributes:
+      label: 问题描述 (Summary)
+      description: 用一两句话说明现象，以及它对使用的影响。
+    validations:
+      required: true
+  - type: textarea
+    id: reproduction
+    attributes:
+      label: 复现步骤 (Reproduction Steps)
+      description: 从启动服务开始逐步描述，并注明使用的模型名、界面和请求方式。
+      value: |
+        1.
+        2.
+        3.
+    validations:
+      required: true
+  - type: textarea
+    id: expected
+    attributes:
+      label: 预期行为 (Expected Behavior)
+    validations:
+      required: true
+  - type: textarea
+    id: actual
+    attributes:
+      label: 实际行为 (Actual Behavior)
+    validations:
+      required: true
+  - type: textarea
+    id: diagnostics
+    attributes:
+      label: 诊断信息 (Diagnostics)
+      description: 先执行 `codex-mixin doctor` 和 `codex-mixin service logs -n 200`，再粘贴输出。移除 API Key、Token、Cookie 等敏感内容。
+      render: shell
+    validations:
+      required: true
+  - type: textarea
+    id: attachments
+    attributes:
+      label: 截图或附件 (Screenshots / Attachments)
+      description: 可粘贴截图，或提供可访问链接。只放与问题相关的内容。
+  - type: checkboxes
+    id: checklist
+    attributes:
+      label: 提交前确认 (Checklist)
+      options:
+        - label: 我已搜索现有 issue，确认这不是重复报告
+          required: true
+        - label: 我已升级到最新 Release 并确认问题仍存在（无法升级时请在问题描述中说明原因）
+          required: true
+        - label: 我已移除诊断信息中的 API Key、Token、Cookie 等敏感内容
+          required: true
