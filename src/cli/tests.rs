@@ -1394,10 +1394,10 @@ fn legacy_daemon_metadata_without_config_fingerprint_still_loads() {
 fn release_version_parser_and_cli_target_are_available() {
     assert_eq!(
         release_version_from_redirect(
-            "https://github.com/Edward-lyz/codex-mixin/releases/tag/v0.3.13"
+            "https://github.com/Edward-lyz/codex-mixin/releases/tag/v0.3.14"
         )
         .unwrap(),
-        "0.3.13"
+        "0.3.14"
     );
     assert!(
         release_version_from_redirect("https://github.com/Edward-lyz/codex-mixin/releases/latest")
