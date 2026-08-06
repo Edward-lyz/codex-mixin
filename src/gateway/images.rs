@@ -7,19 +7,52 @@ use serde_json::{Value, json};
 use std::io::Cursor;
 use std::ops::Range;
 use std::sync::OnceLock;
+use tokio::sync::Semaphore;
 
 use crate::error::GatewayError;
 
 const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_VISION_DIM: u32 = 1568;
 const MAX_DECODE_PIXELS: u64 = 50_000_000;
+const MAX_CONCURRENT_IMAGE_NORMALIZATIONS: usize = 2;
 const TOOL_IMAGE_PLACEHOLDER: &str = "[tool image omitted from replay to preserve prompt cache]";
+
+static IMAGE_NORMALIZATION_PERMITS: Semaphore =
+    Semaphore::const_new(MAX_CONCURRENT_IMAGE_NORMALIZATIONS);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
 pub(super) struct ImageNormalizationStats {
     pub normalized_images: usize,
     pub omitted_tool_images: usize,
     pub saved_bytes: usize,
+}
+
+pub(super) async fn normalize_provider_images_blocking(
+    mut value: Value,
+) -> Result<(Value, ImageNormalizationStats), GatewayError> {
+    run_image_work(move || {
+        let stats = normalize_provider_images(&mut value)?;
+        Ok((value, stats))
+    })
+    .await
+}
+
+async fn run_image_work<T, F>(work: F) -> Result<T, GatewayError>
+where
+    T: Send + 'static,
+    F: FnOnce() -> Result<T, GatewayError> + Send + 'static,
+{
+    let permit = IMAGE_NORMALIZATION_PERMITS
+        .acquire()
+        .await
+        .map_err(|error| GatewayError::Other(anyhow::Error::new(error)))?;
+
+    tokio::task::spawn_blocking(move || {
+        let _permit = permit;
+        work()
+    })
+    .await
+    .map_err(|error| GatewayError::Other(anyhow::Error::new(error)))?
 }
 
 pub(super) fn normalize_provider_images(
@@ -358,6 +391,9 @@ fn scaled_dims(width: u32, height: u32, max_side: u32) -> (u32, u32) {
 mod tests {
     use super::*;
     use image::{DynamicImage, ImageBuffer, Rgb, Rgba};
+    use std::sync::Arc;
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    use std::time::Duration;
 
     fn png_data_url(width: u32, height: u32) -> String {
         let img = ImageBuffer::from_fn(width, height, |x, y| {
@@ -707,6 +743,37 @@ mod tests {
                 {"type":"input_text","text":"latest screenshot"},
                 {"type":"input_text","text":TOOL_IMAGE_PLACEHOLDER}
             ])
+        );
+    }
+
+    #[tokio::test(flavor = "multi_thread", worker_threads = 4)]
+    async fn image_work_is_limited_to_two_concurrent_tasks() {
+        let active = Arc::new(AtomicUsize::new(0));
+        let peak = Arc::new(AtomicUsize::new(0));
+        let mut tasks = Vec::new();
+
+        for _ in 0..8 {
+            let active = Arc::clone(&active);
+            let peak = Arc::clone(&peak);
+            tasks.push(tokio::spawn(async move {
+                run_image_work(move || {
+                    let current = active.fetch_add(1, Ordering::SeqCst) + 1;
+                    peak.fetch_max(current, Ordering::SeqCst);
+                    std::thread::sleep(Duration::from_millis(20));
+                    active.fetch_sub(1, Ordering::SeqCst);
+                    Ok(())
+                })
+                .await
+            }));
+        }
+
+        for task in tasks {
+            task.await.unwrap().unwrap();
+        }
+
+        assert_eq!(
+            peak.load(Ordering::SeqCst),
+            MAX_CONCURRENT_IMAGE_NORMALIZATIONS
         );
     }
 }

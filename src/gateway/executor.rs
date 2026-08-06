@@ -4,7 +4,7 @@ use axum::http::HeaderMap;
 use bytes::Bytes;
 use futures_util::StreamExt;
 
-use super::images::{canonicalize_provider_json, normalize_provider_images};
+use super::images::{canonicalize_provider_json, normalize_provider_images_blocking};
 use super::{RequestPlan, UpstreamTarget};
 use crate::error::GatewayError;
 use crate::server::{AppState, stream_official_response};
@@ -38,7 +38,8 @@ impl<'a> UpstreamExecutor<'a> {
     ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
         if matches!(&plan.target, UpstreamTarget::Provider { .. }) {
             canonicalize_provider_json(&mut plan.body);
-            let image_stats = normalize_provider_images(&mut plan.body)?;
+            let (body, image_stats) = normalize_provider_images_blocking(plan.body).await?;
+            plan.body = body;
             if image_stats.normalized_images > 0 || image_stats.omitted_tool_images > 0 {
                 tracing::info!(
                     normalized_images = image_stats.normalized_images,

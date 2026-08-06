@@ -8,6 +8,7 @@ final class MenuItemViewUpdater: NSObject, NSMenuDelegate {
 
     private var isMenuTracking = false
     private var pendingUpdates: [ObjectIdentifier: PendingUpdate] = [:]
+    var onMenuWillOpen: (() -> Void)?
 
     func setView(for item: NSMenuItem, build: @escaping () -> NSView) {
         guard Thread.isMainThread else {
@@ -30,6 +31,7 @@ final class MenuItemViewUpdater: NSObject, NSMenuDelegate {
 
     func menuWillOpen(_ menu: NSMenu) {
         isMenuTracking = true
+        onMenuWillOpen?()
     }
 
     func menuDidClose(_ menu: NSMenu) {

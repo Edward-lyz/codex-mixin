@@ -9,10 +9,15 @@ struct MenuViewUpdateSupportTests {
         let originalView = NSView()
         let supersededView = NSView()
         let latestView = NSView()
+        var willOpenCount = 0
+        updater.onMenuWillOpen = {
+            willOpenCount += 1
+        }
 
         item.view = originalView
         menu.addItem(item)
         updater.menuWillOpen(menu)
+        precondition(willOpenCount == 1)
         updater.setView(for: item) { supersededView }
         updater.setView(for: item) { latestView }
 

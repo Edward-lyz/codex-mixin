@@ -1,5 +1,34 @@
 import Foundation
 
+enum StatusRefreshScope: Int {
+    case health
+    case status
+    case full
+
+    func merged(with other: Self) -> Self {
+        rawValue >= other.rawValue ? self : other
+    }
+}
+
+struct QuotaRefreshPolicy {
+    let ttl: TimeInterval
+    private(set) var lastAttemptAt: Date?
+
+    init(ttl: TimeInterval = 5 * 60, lastAttemptAt: Date? = nil) {
+        self.ttl = ttl
+        self.lastAttemptAt = lastAttemptAt
+    }
+
+    func isDue(at now: Date = Date()) -> Bool {
+        guard let lastAttemptAt else { return true }
+        return now.timeIntervalSince(lastAttemptAt) >= ttl
+    }
+
+    mutating func markAttempt(at now: Date = Date()) {
+        lastAttemptAt = now
+    }
+}
+
 final class StatusRefreshCoordinator {
     typealias IsCurrent = @MainActor () -> Bool
     typealias Operation = @MainActor (_ isCurrent: @escaping IsCurrent) async -> Void

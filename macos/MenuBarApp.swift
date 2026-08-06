@@ -27,6 +27,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     lazy var statusRefreshCoordinator = StatusRefreshCoordinator { [weak self] isCurrent in
         await self?.performStatusRefresh(isCurrent: isCurrent)
     }
+    var pendingStatusRefreshScope: StatusRefreshScope?
+    var quotaRefreshPolicy = QuotaRefreshPolicy()
     var serviceStatus = "本地网关检查中..." {
         didSet { updateServiceStatusView() }
     }
@@ -42,10 +44,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         CardIdentityStore.standard.current()
         installApplicationMenu()
         installStatusItem()
+        menuItemViewUpdater.onMenuWillOpen = { [weak self] in
+            Task { @MainActor in
+                await self?.refreshMenuStatus()
+            }
+        }
         startGatewayAtLaunch()
         timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
             Task { @MainActor in
-                self?.refreshStatus()
+                await self?.refreshScheduledStatus()
             }
         }
         if !CommandLine.arguments.contains("--check-updates") {

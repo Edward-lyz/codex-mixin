@@ -63,5 +63,17 @@ struct StatusRefreshCoordinatorTests {
         await fourth.value
         precondition(controlled.runCount == 3, "A later request must start a fresh refresh")
         precondition(controlled.appliedCount == 2)
+
+        let baseline = Date(timeIntervalSince1970: 10_000)
+        var quotaPolicy = QuotaRefreshPolicy(ttl: 300)
+        precondition(quotaPolicy.isDue(at: baseline))
+        quotaPolicy.markAttempt(at: baseline)
+        precondition(!quotaPolicy.isDue(at: baseline.addingTimeInterval(299)))
+        precondition(quotaPolicy.isDue(at: baseline.addingTimeInterval(300)))
+
+        precondition(StatusRefreshScope.health.merged(with: .full) == .full)
+        precondition(StatusRefreshScope.health.merged(with: .status) == .status)
+        precondition(StatusRefreshScope.status.merged(with: .full) == .full)
+        precondition(StatusRefreshScope.full.merged(with: .health) == .full)
     }
 }
