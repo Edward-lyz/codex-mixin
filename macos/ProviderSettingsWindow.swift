@@ -3,7 +3,7 @@ import Cocoa
 final class ProviderSettingsWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
     typealias LoadHandler = () async throws -> ProviderListResponse
     typealias RunHandler = ([String]) async throws -> String
-    typealias ApplyHandler = () async throws -> Void
+    typealias ApplyHandler = (_ progress: OperationProgress?) async throws -> Void
     typealias BaiduBridgeSetupHandler = (BaiduAuthBridgeMode) async throws -> URL
     typealias CompletionHandler = (_ title: String, _ message: String) -> Void
 
@@ -858,17 +858,35 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let executable = try await ensureBaiduBridgeAvailable(mode)
-                var arguments = ["providers", "update", provider.id]
-                appendBaiduAuthBridgeArguments(
-                    &arguments,
-                    mode: mode,
-                    executable: executable
-                )
-                _ = try await runHandler(arguments)
-                setBusy(true, status: "正在重启网关并应用 \(name) 配置…")
-                try await applyHandler()
-                selectPopupValue(baiduAuthBridgePopup, mode.rawValue)
+                try await runOperationProgress(
+                    title: "正在配置 \(name)",
+                    phases: [
+                        "打开终端完成登录",
+                        "写入认证桥接",
+                        "重启本地网关",
+                        "完成",
+                    ],
+                    successTitle: "✓ \(name) 已配置",
+                    failureTitle: "✗ 配置失败",
+                    showFailureAlert: true,
+                    failureAlertTitle: "供应商操作失败"
+                ) { progress in
+                    progress.advance(to: 0)
+                    let executable = try await self.ensureBaiduBridgeAvailable(mode)
+                    progress.advance(to: 1)
+                    var arguments = ["providers", "update", provider.id]
+                    self.appendBaiduAuthBridgeArguments(
+                        &arguments,
+                        mode: mode,
+                        executable: executable
+                    )
+                    _ = try await self.runHandler(arguments)
+                    progress.advance(to: 2)
+                    self.setBusy(true, status: "正在重启网关并应用 \(name) 配置…")
+                    try await self.applyHandler(progress)
+                    progress.advance(to: 3)
+                    selectPopupValue(self.baiduAuthBridgePopup, mode.rawValue)
+                }
                 setBusy(false, status: "\(name) 已配置，网关已重启")
                 try await Task.sleep(nanoseconds: 350_000_000)
                 close()
@@ -887,7 +905,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 }
             } catch {
                 setBusy(false, status: "\(name) 配置失败")
-                showAlert(title: "供应商操作失败", message: String(describing: error))
                 reloadProviders(selecting: provider.id)
             }
         }
@@ -899,15 +916,29 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                var arguments = ["providers", "update", providerID]
-                appendBaiduAuthBridgeArguments(&arguments, mode: .disabled)
-                _ = try await runHandler(arguments)
-                try await applyHandler()
+                try await runOperationProgress(
+                    title: "正在更新认证桥接",
+                    phases: [
+                        "写入供应商配置",
+                        "重启本地网关",
+                        "刷新 Codex 模型目录",
+                        "完成",
+                    ],
+                    successTitle: "✓ 认证桥接已关闭",
+                    failureTitle: "✗ 操作失败",
+                    showFailureAlert: true,
+                    failureAlertTitle: "供应商操作失败"
+                ) { progress in
+                    progress.advance(to: 0)
+                    var arguments = ["providers", "update", providerID]
+                    self.appendBaiduAuthBridgeArguments(&arguments, mode: .disabled)
+                    _ = try await self.runHandler(arguments)
+                    try await self.applyHandler(progress)
+                }
                 setBusy(false, status: "认证桥接保持关闭")
                 reloadProviders(selecting: providerID)
             } catch {
                 setBusy(false, status: "操作失败")
-                showAlert(title: "供应商操作失败", message: String(describing: error))
             }
         }
     }
@@ -936,20 +967,36 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                var arguments = initialArguments
-                if let mode = requiresBaiduBridge, mode != .disabled {
-                    let executable = try await ensureBaiduBridgeAvailable(mode)
-                    appendBaiduAuthBridgeExecutable(
-                        &arguments,
-                        mode: mode,
-                        executable: executable
-                    )
+                try await runOperationProgress(
+                    title: "正在更新供应商配置",
+                    phases: [
+                        "写入供应商配置",
+                        "重启本地网关",
+                        "刷新 Codex 模型目录",
+                        "完成",
+                    ],
+                    detail: status,
+                    successTitle: "✓ 配置已保存",
+                    failureTitle: "✗ 操作失败",
+                    showFailureAlert: true,
+                    failureAlertTitle: "供应商操作失败"
+                ) { progress in
+                    progress.advance(to: 0)
+                    var arguments = initialArguments
+                    if let mode = requiresBaiduBridge, mode != .disabled {
+                        let executable = try await self.ensureBaiduBridgeAvailable(mode)
+                        self.appendBaiduAuthBridgeExecutable(
+                            &arguments,
+                            mode: mode,
+                            executable: executable
+                        )
+                    }
+                    _ = try await self.runHandler(arguments)
+                    if let secondArguments {
+                        _ = try await self.runHandler(secondArguments)
+                    }
+                    try await self.applyHandler(progress)
                 }
-                _ = try await runHandler(arguments)
-                if let secondArguments {
-                    _ = try await runHandler(secondArguments)
-                }
-                try await applyHandler()
                 setBusy(false, status: "配置已保存")
                 reloadProviders(selecting: providerID)
                 showAlert(
@@ -958,7 +1005,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 )
             } catch {
                 setBusy(false, status: "操作失败")
-                showAlert(title: "供应商操作失败", message: String(describing: error))
                 reloadProviders(selecting: providerID)
             }
         }

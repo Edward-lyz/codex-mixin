@@ -144,7 +144,7 @@ struct ProviderSettingsNavigationTests {
                 receivedArguments.append(arguments)
                 return ""
             },
-            applyHandler: {
+            applyHandler: { _ in
                 applyCount += 1
             },
             baiduBridgeSetupHandler: { mode in

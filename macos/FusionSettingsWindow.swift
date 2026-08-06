@@ -98,7 +98,7 @@ struct FusionSettingsProfile {
 final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate, NSTextFieldDelegate {
     typealias LoadHandler = () async throws -> FusionSettingsProfile
     typealias FetchModelsHandler = () async throws -> [FusionModelOption]
-    typealias SaveHandler = (FusionSettingsProfile, String) async throws -> Void
+    typealias SaveHandler = (FusionSettingsProfile, String, OperationProgress) async throws -> Void
 
     private let loadHandler: LoadHandler
     private let fetchModelsHandler: FetchModelsHandler
@@ -457,7 +457,20 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                try await saveHandler(profile, replacedProfileID)
+                try await runOperationProgress(
+                    title: "正在保存 Fusion 配置",
+                    phases: [
+                        "写入 Fusion 配置",
+                        "重启本地网关",
+                        "刷新 Codex 模型目录",
+                        "完成",
+                    ],
+                    successTitle: "✓ Fusion 配置已保存",
+                    failureTitle: "✗ 保存失败",
+                    showFailureAlert: false
+                ) { progress in
+                    try await self.saveHandler(profile, replacedProfileID, progress)
+                }
                 loadedProfile = profile
                 statusLabel.stringValue = L10n.Fusion.saveSuccess(profile.id)
                 statusLabel.textColor = .mixinHealthy

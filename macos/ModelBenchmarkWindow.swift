@@ -98,7 +98,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
     typealias StartHandler = (Int, String, Int) async throws -> ModelBenchmarkSnapshot
     typealias FetchHandler = () async throws -> ModelBenchmarkSnapshot?
     typealias LoadProvidersHandler = () async throws -> ProviderListResponse
-    typealias SaveSelectionsHandler = ([String: [String]]) async throws -> Void
+    typealias SaveSelectionsHandler = ([String: [String]], OperationProgress) async throws -> Void
     typealias DiscoverHandler = (String) async throws -> Void
 
     private let snapshotURL: URL
@@ -786,7 +786,20 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         }
         statusLabel.stringValue = "正在保存模型选择并更新 Codex 目录…"
         let selections = providerModelSelections(providers, selectedKeys: selectedModelKeys)
-        try await saveSelectionsHandler(selections)
+        try await runOperationProgress(
+            title: "正在保存模型选择",
+            phases: [
+                "写入模型选择",
+                "重启本地网关",
+                "刷新 Codex 模型目录",
+                "完成",
+            ],
+            successTitle: "✓ 模型选择已保存",
+            failureTitle: "✗ 保存失败",
+            showFailureAlert: false
+        ) { progress in
+            try await self.saveSelectionsHandler(selections, progress)
+        }
         savedModelKeys = selectedModelKeys
     }
 

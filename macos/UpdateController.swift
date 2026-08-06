@@ -46,10 +46,28 @@ extension AppDelegate {
                 return
             }
             do {
-                let dmgURL = try await downloadUpdate(asset: asset, version: release.version)
-                NSWorkspace.shared.open(dmgURL)
+                try await runOperationProgress(
+                    title: "正在下载更新",
+                    phases: [
+                        "下载更新包",
+                        "打开安装包",
+                    ],
+                    detail: asset.name,
+                    successTitle: "✓ 下载完成",
+                    failureTitle: "✗ 下载失败",
+                    showFailureAlert: true,
+                    failureAlertTitle: strings.downloadFailedTitle
+                ) { progress in
+                    progress.advance(to: 0)
+                    let dmgURL = try await downloadUpdate(
+                        asset: asset,
+                        version: release.version
+                    )
+                    progress.advance(to: 1)
+                    NSWorkspace.shared.open(dmgURL)
+                }
             } catch {
-                showAlert(title: strings.downloadFailedTitle, message: String(describing: error))
+                // Failure already shown by the progress window + alert.
             }
         case .releasePage:
             NSWorkspace.shared.open(release.htmlURL)
@@ -112,7 +130,8 @@ extension AppDelegate {
     }
 
     func downloadUpdate(asset: GitHubRelease.Asset, version: String) async throws -> URL {
-        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first ?? FileManager.default.homeDirectoryForCurrentUser
+        let downloads = FileManager.default.urls(for: .downloadsDirectory, in: .userDomainMask).first
+            ?? FileManager.default.homeDirectoryForCurrentUser
         let destination = downloads.appendingPathComponent(asset.name)
         if FileManager.default.fileExists(atPath: destination.path) {
             try FileManager.default.removeItem(at: destination)

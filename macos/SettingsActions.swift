@@ -20,26 +20,37 @@ extension AppDelegate {
     @objc func runAutomaticDoctor() {
         guard !serviceBusy, !automaticDoctorBusy else { return }
         automaticDoctorBusy = true
+        serviceBusy = true
         serviceStatus = "正在健康检测和修复..."
-        Task.detached(priority: .userInitiated) { [weak self] in
-            guard let self else { return }
+        Task { @MainActor in
+            defer {
+                automaticDoctorBusy = false
+                serviceBusy = false
+            }
             do {
-                let report = try await self.runGateway(["doctor", "--fix", "--quick"])
-                await MainActor.run {
-                    self.appendDiagnosticLog("Health check and repair report\n\(report)")
+                try await runOperationProgress(
+                    title: "正在健康检测和修复",
+                    phases: [
+                        "运行 doctor --fix --quick",
+                        "刷新状态",
+                        "完成",
+                    ],
+                    successTitle: "✓ 检测完成",
+                    failureTitle: "✗ 检测失败",
+                    showFailureAlert: true,
+                    failureAlertTitle: "健康检测和修复失败"
+                ) { progress in
+                    progress.advance(to: 0)
+                    let report = try await runGateway(["doctor", "--fix", "--quick"])
+                    appendDiagnosticLog("Health check and repair report\n\(report)")
+                    progress.advance(to: 1)
+                    await refreshStatusNow()
+                    progress.advance(to: 2)
                     showDiagnosticReport(title: "Codex Mixin 健康检测和修复", report: report)
                 }
             } catch {
-                await MainActor.run {
-                    showAlert(title: "健康检测和修复失败", message: String(describing: error))
-                }
+                // Failure already shown by the progress window + alert.
             }
-            await MainActor.run {
-                self.automaticDoctorBusy = false
-            }
-            await Task { @MainActor in
-                await self.refreshStatusNow()
-            }.value
         }
     }
 
@@ -60,7 +71,7 @@ extension AppDelegate {
                     }
                     return try await self.runGateway(arguments)
                 },
-                applyHandler: { [weak self] in
+                applyHandler: { [weak self] progress in
                     guard let self else {
                         throw GatewayError.command("Codex Mixin 已退出")
                     }
@@ -72,6 +83,7 @@ extension AppDelegate {
                         try await self.runGateway(["providers", "list", "--json"])
                     )
                     if providers.providers.isEmpty {
+                        progress?.advance(to: 1)
                         if FileManager.default.fileExists(atPath: self.launchAgentPath().path) {
                             try await self.bootoutIfLoaded(self.launchDomainAndLabel())
                         }
@@ -87,13 +99,17 @@ extension AppDelegate {
                         )
                         self.updateStatusTitle()
                         self.updateActionStates()
+                        progress?.advance(to: 3)
                         return
                     }
+                    progress?.advance(to: 1)
                     try await self.restartGatewayProcess()
                     let status = try await self.waitForGatewayStatus()
                     self.applyGatewayStatus(status)
+                    progress?.advance(to: 2)
                     _ = try await self.runGateway(["refresh-codex-catalog"])
                     await self.refreshStatusNow()
+                    progress?.advance(to: 3)
                 }
             )
         }
@@ -144,10 +160,11 @@ extension AppDelegate {
                         try await self.runGateway(["providers", "list", "--json"])
                     )
                 },
-                saveSelectionsHandler: { [weak self] selections in
+                saveSelectionsHandler: { [weak self] selections, progress in
                     guard let self else {
                         throw GatewayError.command("Codex Mixin 已退出")
                     }
+                    progress.advance(to: 0)
                     for providerID in selections.keys.sorted() {
                         var arguments = ["providers", "select", providerID]
                         for modelID in selections[providerID] ?? [] {
@@ -159,11 +176,14 @@ extension AppDelegate {
                     self.serviceStatus = "正在应用模型选择..."
                     self.serviceEndpoint = nil
                     defer { self.serviceBusy = false }
+                    progress.advance(to: 1)
                     try await self.restartGatewayProcess()
                     let status = try await self.waitForGatewayStatus()
                     self.applyGatewayStatus(status)
+                    progress.advance(to: 2)
                     _ = try await self.runGateway(["refresh-codex-catalog"])
                     await self.refreshStatusNow()
+                    progress.advance(to: 3)
                 },
                 discoverHandler: { [weak self] providerID in
                     guard let self else {
@@ -195,10 +215,11 @@ extension AppDelegate {
                     }
                     return try await self.fetchFusionModelOptions()
                 },
-                saveHandler: { [weak self] profile, replacedProfileID in
+                saveHandler: { [weak self] profile, replacedProfileID, progress in
                     guard let self else {
                         throw FusionSettingsError.message("Codex Mixin 已退出")
                     }
+                    progress.advance(to: 0)
                     var arguments = [
                         "fusion",
                         "set",
@@ -211,11 +232,14 @@ extension AppDelegate {
                     self.serviceStatus = "正在应用 Fusion 配置..."
                     self.serviceEndpoint = nil
                     defer { self.serviceBusy = false }
+                    progress.advance(to: 1)
                     try await self.restartGatewayProcess()
                     let status = try await self.waitForGatewayStatus()
                     self.applyGatewayStatus(status)
+                    progress.advance(to: 2)
                     _ = try await self.runGateway(["refresh-codex-catalog"])
                     await self.refreshStatusNow()
+                    progress.advance(to: 3)
                 }
             )
         }

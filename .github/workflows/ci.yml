@@ -66,6 +66,9 @@ jobs:
       - name: Test macOS process output collection
         if: runner.os == 'macOS'
         run: ./scripts/test_process_output_collector.sh
+      - name: Test macOS operation progress window
+        if: runner.os == 'macOS'
+        run: ./scripts/test_install_progress_window.sh
       - name: Test macOS status refresh coordination
         if: runner.os == 'macOS'
         run: ./scripts/test_status_refresh_coordinator.sh
