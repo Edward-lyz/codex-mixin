@@ -10,42 +10,177 @@ private let gatewayDetailIdentifier = NSUserInterfaceItemIdentifier("gateway-det
 private let gatewaySwitchIdentifier = NSUserInterfaceItemIdentifier("gateway-switch")
 
 final class GatewaySwitchControl: NSControl {
-    var isOn = false { didSet { needsDisplay = true } }
-    var isBusy = false { didSet { needsDisplay = true } }
+    private let trackLayer = CALayer()
+    private let knobLayer = CALayer()
+    private var busySpinner: CAShapeLayer?
 
-    override func mouseDown(with event: NSEvent) {
-        guard isEnabled, !isBusy else { return }
-        isOn.toggle()
-        needsDisplay = true
-        sendAction(action, to: target)
+    var isOn = false {
+        didSet {
+            guard isOn != oldValue else { return }
+            animateSwitchTransition()
+        }
+    }
+    var isBusy = false {
+        didSet {
+            guard isBusy != oldValue else { return }
+            updateTrackColor(animated: true)
+            if isBusy {
+                showBusySpinner()
+            } else {
+                hideBusySpinner()
+            }
+        }
     }
 
-    override func draw(_ dirtyRect: NSRect) {
-        super.draw(dirtyRect)
+    override init(frame frameRect: NSRect) {
+        super.init(frame: frameRect)
+        wantsLayer = true
+        setupLayers()
+    }
+
+    required init?(coder: NSCoder) {
+        super.init(coder: coder)
+        wantsLayer = true
+        setupLayers()
+    }
+
+    private func setupLayers() {
+        guard let layer else { return }
+        trackLayer.cornerRadius = 13
+        layer.addSublayer(trackLayer)
+
+        knobLayer.cornerRadius = 12
+        knobLayer.backgroundColor = NSColor.white.cgColor
+        knobLayer.borderColor = NSColor.black.withAlphaComponent(0.16).cgColor
+        knobLayer.borderWidth = 0.75
+        knobLayer.shadowColor = NSColor.black.cgColor
+        knobLayer.shadowOpacity = 0.12
+        knobLayer.shadowRadius = 2
+        knobLayer.shadowOffset = CGSize(width: 0, height: -1)
+        layer.addSublayer(knobLayer)
+    }
+
+    override func layout() {
+        super.layout()
+        CATransaction.begin()
+        CATransaction.setDisableActions(true)
+        layoutLayers()
+        CATransaction.commit()
+        updateTrackColor(animated: false)
+    }
+
+    private func layoutLayers() {
         let trackRect = bounds.insetBy(dx: 1, dy: 2)
-        let track = NSBezierPath(roundedRect: trackRect, xRadius: 13, yRadius: 13)
-        let onColor = isBusy ? NSColor.systemGreen.withAlphaComponent(0.65) : .systemGreen
-        (isOn ? onColor : NSColor.white.withAlphaComponent(isEnabled ? 0.96 : 0.7)).setFill()
-        track.fill()
-        if !isOn {
-            NSColor.separatorColor.setStroke()
-            track.lineWidth = 1
-            track.stroke()
-        }
+        trackLayer.frame = trackRect
 
         let knobSize: CGFloat = 24
         let knobX = isOn ? bounds.maxX - knobSize - 3 : bounds.minX + 3
-        let knob = NSBezierPath(ovalIn: NSRect(
+        knobLayer.frame = NSRect(
             x: knobX,
             y: (bounds.height - knobSize) / 2,
             width: knobSize,
             height: knobSize
-        ))
-        NSColor.white.setFill()
-        knob.fill()
-        NSColor.black.withAlphaComponent(0.16).setStroke()
-        knob.lineWidth = 0.75
-        knob.stroke()
+        )
+
+        if let spinner = busySpinner {
+            let spinnerSize: CGFloat = 12
+            spinner.frame = NSRect(
+                x: knobLayer.frame.midX - spinnerSize / 2,
+                y: knobLayer.frame.midY - spinnerSize / 2,
+                width: spinnerSize,
+                height: spinnerSize
+            )
+        }
+    }
+
+    private func currentTrackColor() -> NSColor {
+        if isOn {
+            return isBusy ? .systemGreen.withAlphaComponent(0.65) : .systemGreen
+        }
+        return .white.withAlphaComponent(isEnabled ? 0.96 : 0.7)
+    }
+
+    private func updateTrackColor(animated: Bool) {
+        let color = currentTrackColor().cgColor
+        let borderColor: CGColor? = isOn ? nil : NSColor.separatorColor.cgColor
+        if animated {
+            let anim = CABasicAnimation(keyPath: "backgroundColor")
+            anim.fromValue = trackLayer.backgroundColor
+            anim.toValue = color
+            anim.duration = 0.22
+            anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            trackLayer.add(anim, forKey: "trackColor")
+        }
+        trackLayer.backgroundColor = color
+        trackLayer.borderColor = borderColor
+        trackLayer.borderWidth = isOn ? 0 : 1
+    }
+
+    private func animateSwitchTransition() {
+        let knobSize: CGFloat = 24
+        let targetX = isOn ? bounds.maxX - knobSize - 3 : bounds.minX + 3
+        let targetFrame = NSRect(
+            x: targetX,
+            y: (bounds.height - knobSize) / 2,
+            width: knobSize,
+            height: knobSize
+        )
+
+        let anim = CABasicAnimation(keyPath: "position")
+        anim.fromValue = NSValue(point: NSPoint(x: knobLayer.frame.midX, y: knobLayer.frame.midY))
+        anim.toValue = NSValue(point: NSPoint(x: targetFrame.midX, y: targetFrame.midY))
+        anim.duration = 0.22
+        anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+        knobLayer.add(anim, forKey: "knobSlide")
+        knobLayer.frame = targetFrame
+
+        updateTrackColor(animated: true)
+    }
+
+    private func showBusySpinner() {
+        guard busySpinner == nil else { return }
+        let spinnerSize: CGFloat = 12
+        let spinner = CAShapeLayer()
+        let path = CGPath(
+            ellipseIn: CGRect(x: 1, y: 1, width: spinnerSize - 2, height: spinnerSize - 2),
+            transform: nil
+        )
+        spinner.path = path
+        spinner.fillColor = nil
+        spinner.strokeColor = NSColor.white.cgColor
+        spinner.lineWidth = 1.5
+        spinner.lineCap = .round
+        spinner.strokeStart = 0
+        spinner.strokeEnd = 0.75
+
+        let rotation = CABasicAnimation(keyPath: "transform.rotation.z")
+        rotation.fromValue = 0
+        rotation.toValue = CGFloat.pi * 2
+        rotation.duration = 0.8
+        rotation.repeatCount = .infinity
+        spinner.add(rotation, forKey: "spinnerRotation")
+
+        knobLayer.addSublayer(spinner)
+        busySpinner = spinner
+
+        let spinnerFrame = NSRect(
+            x: (knobLayer.bounds.width - spinnerSize) / 2,
+            y: (knobLayer.bounds.height - spinnerSize) / 2,
+            width: spinnerSize,
+            height: spinnerSize
+        )
+        spinner.frame = spinnerFrame
+    }
+
+    private func hideBusySpinner() {
+        busySpinner?.removeFromSuperlayer()
+        busySpinner = nil
+    }
+
+    override func mouseDown(with event: NSEvent) {
+        guard isEnabled, !isBusy else { return }
+        isOn.toggle()
+        sendAction(action, to: target)
     }
 }
 
@@ -72,6 +207,23 @@ private func gatewayStatusDetail(
     return isRunning ? "正在读取本地接口地址" : "网关当前未运行"
 }
 
+private let statusDotPulseAnimationKey = "statusDotPulse"
+
+private func animateLayerProperty(
+    _ layer: CALayer,
+    keyPath: String,
+    toValue: Any,
+    duration: CFTimeInterval = 0.3
+) {
+    let anim = CABasicAnimation(keyPath: keyPath)
+    anim.fromValue = layer.value(forKeyPath: keyPath)
+    anim.toValue = toValue
+    anim.duration = duration
+    anim.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+    layer.add(anim, forKey: keyPath)
+    layer.setValue(toValue, forKeyPath: keyPath)
+}
+
 func updateServiceMenuView(
     _ view: NSView,
     title: String,
@@ -88,10 +240,31 @@ func updateServiceMenuView(
     else { return false }
 
     let statusColor = gatewayStatusColor(title: title, isRunning: isRunning, isBusy: isBusy)
-    statusDot.layer?.backgroundColor = statusColor.cgColor
-    statusDot.layer?.borderColor = statusColor.withAlphaComponent(0.28).cgColor
-    statusDot.layer?.shadowColor = statusColor.cgColor
-    statusDot.layer?.shadowOpacity = isRunning ? 0.45 : 0
+    if let dotLayer = statusDot.layer {
+        let isFailure = title.contains("失败")
+        let isDegraded = title.contains("等待配置") || title.contains("降级") || title.contains("无启用") || isBusy
+        let shouldPulse = isRunning && !isFailure && !isDegraded
+            && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
+
+        animateLayerProperty(dotLayer, keyPath: "backgroundColor", toValue: statusColor.cgColor)
+        animateLayerProperty(dotLayer, keyPath: "borderColor", toValue: statusColor.withAlphaComponent(0.28).cgColor)
+        dotLayer.shadowColor = statusColor.cgColor
+
+        dotLayer.removeAnimation(forKey: statusDotPulseAnimationKey)
+        if shouldPulse {
+            let pulse = CABasicAnimation(keyPath: "shadowOpacity")
+            pulse.fromValue = 0.25
+            pulse.toValue = 0.55
+            pulse.duration = 1.6
+            pulse.autoreverses = true
+            pulse.repeatCount = .infinity
+            pulse.timingFunction = CAMediaTimingFunction(name: .easeInEaseOut)
+            dotLayer.add(pulse, forKey: statusDotPulseAnimationKey)
+        } else {
+            let targetShadow: Float = isRunning ? 0.45 : 0
+            animateLayerProperty(dotLayer, keyPath: "shadowOpacity", toValue: targetShadow)
+        }
+    }
     titleLabel.stringValue = title
     detailLabel.stringValue = gatewayStatusDetail(
         title: title,
@@ -415,7 +588,11 @@ func codexStatusImage(isRunning: Bool) -> NSImage {
     shadow.shadowColor = NSColor.black.withAlphaComponent(0.22)
     shadow.set()
 
-    let body = NSBezierPath(roundedRect: NSRect(x: 2.2, y: 2.0, width: 17.8, height: 17.8), xRadius: 6.0, yRadius: 6.0)
+    let body = NSBezierPath(
+        roundedRect: NSRect(x: 2.2, y: 2.0, width: 17.8, height: 17.8),
+        xRadius: 6.0,
+        yRadius: 6.0
+    )
     let startColor = NSColor(calibratedRed: 0.20, green: 0.53, blue: 1.00, alpha: 1.0)
     let endColor = NSColor(calibratedRed: 0.54, green: 0.32, blue: 0.98, alpha: 1.0)
     NSGradient(starting: startColor, ending: endColor)?.draw(in: body, angle: 35)

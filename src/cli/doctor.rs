@@ -11,6 +11,7 @@ use codex_mixin::config::{GatewayConfig, load_stored_config, stored_config_path}
 use codex_mixin::provider::{
     ProviderDefinition, ProviderModelSource, discover_provider_models, redact_provider_error,
 };
+use console::style;
 use futures_util::future::join_all;
 use serde::Serialize;
 use toml_edit::{DocumentMut, Item};
@@ -32,11 +33,11 @@ enum DoctorStatus {
 }
 
 impl DoctorStatus {
-    fn label(self) -> &'static str {
+    fn icon(self) -> console::StyledObject<&'static str> {
         match self {
-            Self::Ok => "OK",
-            Self::Warning => "WARN",
-            Self::Error => "ERROR",
+            Self::Ok => style("✓").green().bold(),
+            Self::Warning => style("⚠").yellow().bold(),
+            Self::Error => style("✗").red().bold(),
         }
     }
 }
@@ -1847,24 +1848,25 @@ fn truncated(raw: &str, max_chars: usize) -> String {
 }
 
 fn print_doctor_report(report: &DoctorReport, fix_mode: bool) {
-    println!("Codex Mixin 健康检测");
-    println!("config: {}", report.config_path);
+    println!("{}", style("Codex Mixin 健康检测").bold());
+    println!("{} {}", style("config:").dim(), report.config_path);
     for check in &report.checks {
         println!(
-            "[{}] {}: {}",
-            check.status.label(),
-            check.name,
+            "{} {}: {}",
+            check.status.icon(),
+            style(&check.name).bold(),
             check.message
         );
         if let Some(detail) = &check.detail {
-            println!("  {detail}");
+            println!("  {}", style(detail).dim());
         }
         if let Some(hint) = &check.fix_hint {
-            println!("  建议: {hint}");
+            println!("  {} {hint}", style("建议:").cyan());
         }
         if !check.auto_fixes.is_empty() {
             println!(
-                "  可自动修复: {}",
+                "  {} {}",
+                style("可自动修复:").cyan(),
                 check
                     .auto_fixes
                     .iter()
@@ -1876,29 +1878,37 @@ fn print_doctor_report(report: &DoctorReport, fix_mode: bool) {
     }
     for provider in &report.providers {
         println!(
-            "[{}] Provider {}: {}",
-            provider.status.label(),
-            provider.provider_id,
+            "{} {} {}: {}",
+            provider.status.icon(),
+            style("Provider").dim(),
+            style(&provider.provider_id).bold(),
             provider.message
         );
         if let Some(detail) = &provider.detail {
-            println!("  {detail}");
+            println!("  {}", style(detail).dim());
         }
     }
     if !report.repairs.is_empty() {
-        println!("repairs:");
+        println!("{}", style("repairs:").bold());
         for repair in &report.repairs {
-            println!(
-                "[{}] {}: {}",
-                if repair.ok { "OK" } else { "ERROR" },
-                repair.description,
-                repair.message
-            );
+            let icon = if repair.ok {
+                style("✓").green().bold()
+            } else {
+                style("✗").red().bold()
+            };
+            println!("{} {}: {}", icon, repair.description, repair.message);
         }
     }
+    let summary_style = if report.summary.errors > 0 {
+        style("summary:").red().bold()
+    } else if report.summary.warnings > 0 {
+        style("summary:").yellow().bold()
+    } else {
+        style("summary:").green().bold()
+    };
     println!(
-        "summary: {} ok, {} warnings, {} errors",
-        report.summary.ok, report.summary.warnings, report.summary.errors
+        "{} {} ok, {} warnings, {} errors",
+        summary_style, report.summary.ok, report.summary.warnings, report.summary.errors
     );
     let available = planned_fixes(&report.checks);
     if !fix_mode && !available.is_empty() {
@@ -1908,15 +1918,23 @@ fn print_doctor_report(report: &DoctorReport, fix_mode: bool) {
             .count();
         let plain_count = available.len() - restart_count;
         if plain_count > 0 {
-            println!("auto-fix: 运行 `codex-mixin doctor --fix` 可自动修复 {plain_count} 项");
+            println!(
+                "{} 运行 `codex-mixin doctor --fix` 可自动修复 {plain_count} 项",
+                style("→").cyan()
+            );
         }
         if restart_count > 0 {
             println!(
-                "auto-fix: App 重启需要显式确认，运行 `codex-mixin doctor --fix --restart-apps`（会中断正在进行的会话）"
+                "{} App 重启需要显式确认，运行 `codex-mixin doctor --fix --restart-apps`（会中断正在进行的会话）",
+                style("→").cyan()
             );
         }
     }
-    println!("doctor: {}", if report.ok { "ok" } else { "issues found" });
+    if report.ok {
+        println!("{} doctor: ok", style("✓").green().bold());
+    } else {
+        println!("{} doctor: issues found", style("✗").red().bold());
+    }
 }
 
 #[cfg(test)]

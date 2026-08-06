@@ -11,7 +11,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private let runHandler: RunHandler
     private let applyHandler: ApplyHandler
     private let baiduBridgeSetupHandler: BaiduBridgeSetupHandler?
-    private let completionHandler: CompletionHandler
+    private let completionHandler: CompletionHandler?
 
     private var providers: [ProviderView] = []
     private var codexInstallMode: ManagedCodexInstallMode?
@@ -22,6 +22,12 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private let providerTable = NSTableView()
     private let statusLabel = NSTextField(labelWithString: "正在读取供应商…")
     private let emptyLabel = NSTextField(labelWithString: "还没有供应商，点击“新增”开始配置。")
+    private let emptyIconView = NSImageView()
+
+    private let bannerView = NSView()
+    private let bannerLabel = NSTextField(labelWithString: "")
+    private var bannerHeightConstraint: NSLayoutConstraint?
+    private var bannerHideWorkItem: DispatchWorkItem?
 
     private let idField = copyableTextField("")
     private let displayNameField = formTextField()
@@ -61,9 +67,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         runHandler: @escaping RunHandler,
         applyHandler: @escaping ApplyHandler,
         baiduBridgeSetupHandler: BaiduBridgeSetupHandler? = nil,
-        completionHandler: @escaping CompletionHandler = { title, message in
-            showAlert(title: title, message: message)
-        }
+        completionHandler: CompletionHandler? = nil
     ) {
         self.loadHandler = loadHandler
         self.runHandler = runHandler
@@ -134,6 +138,17 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         header.alignment = .leading
         header.spacing = 5
         header.translatesAutoresizingMaskIntoConstraints = false
+
+        bannerView.wantsLayer = true
+        bannerView.layer?.cornerRadius = 6
+        bannerView.alphaValue = 0
+        bannerView.isHidden = true
+        bannerView.translatesAutoresizingMaskIntoConstraints = false
+        bannerLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
+        bannerLabel.lineBreakMode = .byTruncatingTail
+        bannerLabel.translatesAutoresizingMaskIntoConstraints = false
+        bannerView.addSubview(bannerLabel)
+        bannerHeightConstraint = bannerView.heightAnchor.constraint(equalToConstant: 0)
 
         configureProviderTable()
         let providerScroll = NSScrollView()
@@ -259,6 +274,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         body.translatesAutoresizingMaskIntoConstraints = false
 
         contentView.addSubview(header)
+        contentView.addSubview(bannerView)
         contentView.addSubview(body)
         contentView.addSubview(emptyLabel)
         NSLayoutConstraint.activate([
@@ -266,9 +282,17 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             header.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
             header.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 20),
 
+            bannerView.leadingAnchor.constraint(equalTo: header.leadingAnchor),
+            bannerView.trailingAnchor.constraint(equalTo: header.trailingAnchor),
+            bannerView.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 10),
+            bannerHeightConstraint!,
+            bannerLabel.leadingAnchor.constraint(equalTo: bannerView.leadingAnchor, constant: 12),
+            bannerLabel.trailingAnchor.constraint(equalTo: bannerView.trailingAnchor, constant: -12),
+            bannerLabel.centerYAnchor.constraint(equalTo: bannerView.centerYAnchor),
+
             body.leadingAnchor.constraint(equalTo: header.leadingAnchor),
             body.trailingAnchor.constraint(equalTo: header.trailingAnchor),
-            body.topAnchor.constraint(equalTo: header.bottomAnchor, constant: 16),
+            body.topAnchor.constraint(equalTo: bannerView.bottomAnchor, constant: 6),
             body.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -20),
             detailsPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 476),
             form.widthAnchor.constraint(equalTo: detailsPane.widthAnchor),
@@ -279,6 +303,40 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             emptyLabel.centerYAnchor.constraint(equalTo: detailsPane.centerYAnchor),
         ])
         setDetailControlsEnabled(false)
+    }
+
+    private func showBanner(title: String, message: String, isError: Bool) {
+        bannerHideWorkItem?.cancel()
+        bannerLabel.stringValue = message.isEmpty ? title : "\(title)：\(message)"
+        bannerLabel.textColor = isError ? .mixinError : .labelColor
+        let color = isError ? NSColor.mixinError : NSColor.mixinHealthy
+        bannerView.layer?.backgroundColor = color.withAlphaComponent(0.12).cgColor
+        bannerView.isHidden = false
+        bannerHeightConstraint?.constant = 34
+        NSAnimationContext.runAnimationGroup { context in
+            context.duration = 0.2
+            bannerView.animator().alphaValue = 1
+            window?.contentView?.layoutSubtreeIfNeeded()
+        }
+
+        let workItem = DispatchWorkItem { [weak self] in
+            self?.hideBanner()
+        }
+        bannerHideWorkItem = workItem
+        DispatchQueue.main.asyncAfter(deadline: .now() + 5, execute: workItem)
+    }
+
+    private func hideBanner() {
+        bannerHideWorkItem?.cancel()
+        bannerHideWorkItem = nil
+        bannerHeightConstraint?.constant = 0
+        NSAnimationContext.runAnimationGroup({ context in
+            context.duration = 0.2
+            bannerView.animator().alphaValue = 0
+            window?.contentView?.layoutSubtreeIfNeeded()
+        }, completionHandler: { [weak self] in
+            self?.bannerView.isHidden = true
+        })
     }
 
     private func configureProviderTable() {
@@ -814,10 +872,19 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 setBusy(false, status: "\(name) 已配置，网关已重启")
                 try await Task.sleep(nanoseconds: 350_000_000)
                 close()
-                completionHandler(
-                    AppLocalization.string("providerSettings.configured", name),
-                    AppLocalization.string("providerSettings.downloadAndLoginAreCompleteTheProvider", name, name)
+                let title = AppLocalization.string("providerSettings.configured", name)
+                let message = AppLocalization.string(
+                    "providerSettings.downloadAndLoginAreCompleteTheProvider",
+                    name,
+                    name
                 )
+                if let completionHandler {
+                    completionHandler(title, message)
+                } else if window != nil {
+                    showBanner(title: title, message: message, isError: false)
+                } else {
+                    showAlert(title: title, message: message)
+                }
             } catch {
                 setBusy(false, status: "\(name) 配置失败")
                 showAlert(title: "供应商操作失败", message: String(describing: error))
@@ -1794,6 +1861,7 @@ private func appendDuccSetupDiagnostic(_ message: String) {
 }
 
 func compactLabeledView(_ title: String, _ field: NSView) -> NSView {
+    // 78pt label 宽度，用于供应商设置主窗口中的紧凑表单。
     let label = NSTextField(labelWithString: title)
     label.alignment = .right
     label.textColor = .secondaryLabelColor
@@ -1804,7 +1872,7 @@ func compactLabeledView(_ title: String, _ field: NSView) -> NSView {
     let row = NSStackView(views: [label, field])
     row.orientation = .horizontal
     row.alignment = .centerY
-    row.spacing = 8
+    row.spacing = 10
     return row
 }
 

@@ -192,7 +192,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
                 options = []
                 rebuildModelControls()
                 statusLabel.stringValue = localizedErrorDescription(error)
-                statusLabel.textColor = .systemOrange
+                statusLabel.textColor = .mixinDegraded
                 saveButton.isEnabled = false
             }
         }
@@ -341,7 +341,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
                 panelButtons[option.id] = button
 
                 let detail = NSTextField(labelWithString: option.displayName)
-                detail.textColor = option.isAvailable ? .secondaryLabelColor : .systemOrange
+                detail.textColor = option.isAvailable ? .secondaryLabelColor : .mixinDegraded
                 detail.font = .systemFont(ofSize: 11)
                 detail.lineBreakMode = .byTruncatingTail
                 detail.toolTip = option.displayName
@@ -382,7 +382,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
             if selectedPanels.count >= 8 {
                 sender.state = .off
                 statusLabel.stringValue = "Panel 最多选择 8 个模型。"
-                statusLabel.textColor = .systemOrange
+                statusLabel.textColor = .mixinDegraded
             } else {
                 selectedPanels.insert(id)
             }
@@ -428,7 +428,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
         if let error = validationError() {
             saveButton.isEnabled = false
             statusLabel.stringValue = error
-            statusLabel.textColor = .systemOrange
+            statusLabel.textColor = .mixinDegraded
         } else {
             saveButton.isEnabled = !options.isEmpty
             statusLabel.stringValue = "配置有效：已选择 \(selectedPanels.count) 个 Panel 模型。"
@@ -460,11 +460,11 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
                 try await saveHandler(profile, replacedProfileID)
                 loadedProfile = profile
                 statusLabel.stringValue = L10n.Fusion.saveSuccess(profile.id)
-                statusLabel.textColor = .systemGreen
+                statusLabel.textColor = .mixinHealthy
                 saveButton.isEnabled = true
             } catch {
                 statusLabel.stringValue = L10n.Fusion.saveFailed(localizedErrorDescription(error))
-                statusLabel.textColor = .systemRed
+                statusLabel.textColor = .mixinError
                 saveButton.isEnabled = true
                 presentFusionAlert(
                     title: L10n.Fusion.saveAlertTitle,

@@ -7,6 +7,11 @@ extension AppDelegate {
             serviceBusy = true
             serviceStatus = "正在准备 Codex 配置..."
             let progressWindow = InstallProgressWindowController()
+            progressWindow.setPhases([
+                "正在准备 Codex 配置...",
+                "正在配置 Codex...",
+                "完成安装",
+            ])
             progressWindow.present()
             defer { progressWindow.finish() }
             defer { serviceBusy = false }
@@ -32,6 +37,11 @@ extension AppDelegate {
         guard confirm(title: "从 Codex 恢复安装前配置", message: "会恢复安装前备份的 ~/.codex/config.toml；如果使用过“仅自定义模型模式”，也会删除本地登录占位并恢复原 ~/.codex/auth.json。历史会话将迁回原 provider，托管模型目录会被删除。完成后需要重启 Codex App；CLI 需要开新会话。") else { return }
         Task { @MainActor in
             let progressWindow = InstallProgressWindowController(title: "正在从 Codex 恢复")
+            progressWindow.setPhases([
+                "正在准备恢复...",
+                "正在恢复官方配置...",
+                "完成恢复",
+            ])
             progressWindow.present()
             defer { progressWindow.finish() }
             do {

@@ -316,6 +316,7 @@ func selectPopupValue(_ popup: NSPopUpButton, _ value: String) {
 }
 
 func labeledView(_ title: String, _ field: NSView) -> NSView {
+    // 110pt label 宽度，用于设置 sheet / 独立 modal 面板中的宽松表单。
     let label = NSTextField(labelWithString: title)
     label.alignment = .right
     label.textColor = .secondaryLabelColor

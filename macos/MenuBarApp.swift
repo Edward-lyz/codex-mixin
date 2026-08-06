@@ -23,6 +23,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             updateServiceStatusView()
         }
     }
+    var automaticDoctorBusy = false
     var serviceStatus = "本地网关检查中..." {
         didSet { updateServiceStatusView() }
     }

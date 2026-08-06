@@ -7,6 +7,7 @@ use codex_mixin::provider::{
     ProviderDefinition, ProviderQuotaParser, ProviderReadinessStatus, ProviderRegistry,
 };
 use codex_mixin::server::AppState;
+use console::style;
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use regex::Regex;
 
@@ -98,7 +99,8 @@ pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
                     println!("log: {}", metadata.log_file.display());
                 }
                 println!(
-                    "gateway-version: {}",
+                    "{} {}",
+                    style("gateway-version:").dim(),
                     if runtime_running {
                         runtime
                             .as_ref()
@@ -108,19 +110,33 @@ pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
                         "unknown"
                     }
                 );
-                println!("gateway: running");
-                println!("healthz: {url}");
-                println!("endpoint: {endpoint}");
-                println!("provider-readiness: {}", readiness.0);
+                println!("{} {}", style("gateway:").dim(), style("running").green());
+                println!("{} {url}", style("healthz:").dim());
+                println!("{} {endpoint}", style("endpoint:").dim());
+                let readiness_styled = match readiness.0 {
+                    "healthy" => style("healthy").green(),
+                    "degraded" => style("degraded").yellow(),
+                    _ => style("disabled").red(),
+                };
+                println!("{} {readiness_styled}", style("provider-readiness:").dim());
                 println!(
-                    "providers: {} total, {} healthy, {} degraded, {} disabled",
+                    "{} {} total, {} healthy, {} degraded, {} disabled",
+                    style("providers:").dim(),
                     config.providers.len(),
-                    readiness.1,
-                    readiness.2,
-                    readiness.3,
+                    style(readiness.1).green(),
+                    if readiness.2 > 0 {
+                        style(readiness.2).yellow()
+                    } else {
+                        style(readiness.2).dim()
+                    },
+                    if readiness.3 > 0 {
+                        style(readiness.3).red()
+                    } else {
+                        style(readiness.3).dim()
+                    },
                 );
                 for issue in provider_readiness_issue_descriptions(&config.providers) {
-                    println!("provider-issue: {issue}");
+                    println!("{} {issue}", style("⚠").yellow());
                 }
             }
             Ok(())
@@ -178,15 +194,19 @@ fn print_gateway_unavailable(
             }))?
         );
     } else {
-        println!("gateway: stopped");
-        println!("healthz: {healthz}");
+        println!("{} {}", style("gateway:").dim(), style("stopped").red());
+        println!("{} {healthz}", style("healthz:").dim());
         println!(
-            "providers: {} total, {} healthy, {} degraded, {} disabled",
-            total, readiness.1, readiness.2, readiness.3
+            "{} {} total, {} healthy, {} degraded, {} disabled",
+            style("providers:").dim(),
+            total,
+            readiness.1,
+            readiness.2,
+            readiness.3
         );
-        println!("next: codex-mixin service start");
+        println!("{} codex-mixin service start", style("→").cyan());
         if let Some(error) = error {
-            println!("detail: {error}");
+            println!("{} {error}", style("detail:").dim());
         }
     }
     Ok(())

@@ -70,7 +70,7 @@ Codex Mixin 的解法是：Codex 连到本机自动分配的 loopback 端口，�
 - 保留官方路径：官方 GPT 模型继续走 Codex 官方认证、官方后端和远程控制路径。
 - 接入自定义模型：自定义模型进入 Codex 模型选择器，和官方模型一起使用。
 - 避免模型冲突：上游返回的 `gpt-*` 与官方模型重名时会附加 provider 后缀（例如 `gpt-...-baidu-oneapi`），不顶掉官方 GPT；旧的 `-custom` 别名仍兼容。
-- 保护历史会话：安装时注册独立的 `codex-mixin` provider，并把现有会话统一迁移到该 provider。
+- 保护历史会话：安装时按官方/自定义模式注册托管 provider，并把现有会话统一迁移到该 provider。
 - 可回滚配置：安装前备份 `~/.codex/config.toml`；卸载时恢复配置和原 provider，并删除托管模型目录。
 - 供应商预设：内置 `custom`、`baidu-oneapi`、`openrouter`、`deepseek`。
 - 协议转换：支持 Anthropic Messages 和 OpenAI Chat Completions 上游。
@@ -133,28 +133,31 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 
 ```bash
 codex-mixin setup --preset openrouter
-# 官方账号模式：请先在 Codex 登录并打开一次
-codex-mixin connect codex --codex-oauth-proxy
-# 仅自定义模型模式：不依赖 models_cache.json
-codex-mixin connect codex --custom-only
 codex-mixin info
 ```
 
-上面两个安装命令二选一，不要同时执行。
+`setup` 是 CLI 的首次配置入口：隐藏输入 API Key、添加或更新 provider、刷新模型、启动或按需重启网关，
+然后询问 Codex 集成方式，选择保留官方账号能力、仅使用自定义模型或暂时跳过。选择后可以直接完成
+Codex 安装，不需要再单独执行 `connect codex`；跳过时可以用 `connect codex` 以后再装。
 
-`setup` 会隐藏输入 API Key、添加或更新 provider、刷新模型、幂等启动网关，然后询问 Codex 集成方式：
-保留官方账号能力、仅使用自定义模型，或暂时跳过。Baidu OneAPI 还会询问额度查询用户名，自动下载
-官方 Linux DUCC 到 `~/.codex-mixin/ducc/home`，在当前终端完成二维码登录，并默认启用 DUCC loopback：
+Baidu OneAPI 还会询问额度查询用户名，自动下载官方 Linux DUCC 到 `~/.codex-mixin/ducc/home`，
+在当前终端完成二维码登录，并默认启用 DUCC loopback：
 
 ```bash
 codex-mixin setup --preset baidu-oneapi
 ```
 
-脚本和 CI 可改用 `--key`、`--quota-username`、`--codex-mode official|custom|skip`，或设置
-`CODEX_MIXIN_API_KEY` 和 `CODEX_MIXIN_QUOTA_USERNAME`。只写配置、不启动网关时增加
-`--no-start`。
+脚本和 CI 用 `--key`、`--quota-username`、`--codex-mode official|custom|skip` 跳过交互，或设置
+`CODEX_MIXIN_API_KEY` 和 `CODEX_MIXIN_QUOTA_USERNAME`：
 
-CLI 日常入口按用户任务收敛：`setup` 负责首次配置，`provider` 管理供应商，`service` 管理本地网关，`connect` 管理 Codex/Claude 集成，`info` 查看运行状态，`doctor` 负责诊断和修复。旧命令继续保留作为兼容入口。
+```bash
+codex-mixin setup --preset openrouter --key <key> --codex-mode custom
+codex-mixin setup --preset baidu-oneapi --key <key> --quota-username <username> --codex-mode skip
+```
+
+只写配置、不启动网关时增加 `--no-start`。日常入口按任务收敛：`setup` 负责首次配置，`update` 负责从
+GitHub Release 更新 CLI 并重启网关，`provider` 管理供应商，`service` 管理本地网关，`connect` 管理
+Codex/Claude 集成，`info` 查看运行状态，`doctor` 负责诊断和修复。
 
 然后重新打开 Codex CLI 会话，在模型选择器里选择接入后的模型。遇到问题时再运行
 `codex-mixin doctor --quick`；它会给出具体修复命令。
@@ -167,10 +170,6 @@ codex-mixin info --json
 codex-mixin provider list --json
 codex-mixin service logs -n 200
 ```
-
-CLI 现在有一套更短的用户入口：`provider`、`service`、`connect`、`info` 和 `doctor`。
-旧的 `providers`、`start`、`status`、`install-codex` 等命令仍可执行，但只用于兼容旧脚本，
-新用户不需要记住它们。
 
 ### 供应商预设
 
@@ -310,7 +309,7 @@ codex-mixin connect codex --codex-oauth-proxy --model deepseek-chat --set-defaul
 卸载并恢复安装前配置：
 
 ```bash
-codex-mixin uninstall-codex
+codex-mixin connect remove codex
 ```
 
 卸载会从备份配置读取原 provider；原配置没有显式 provider 时使用 Codex 默认的 `openai`。当前托管 provider 的历史会同步迁回该 provider，避免恢复配置后会话消失。仅自定义模型模式创建的本地登录占位会被删除，并恢复安装前的 `auth.json`；如果用户安装后自行改过登录，卸载会保留当前登录且不会用旧备份覆盖它。
@@ -362,24 +361,50 @@ Fusion 只在 Plan 模式的新用户轮次运行 Panel 和 Judge。切换到 De
 ### CLI
 
 ```bash
+# 首次配置，交互式输入 API Key 并选择 Codex 集成方式
 codex-mixin setup --preset <preset>
+
+# 脚本或 CI：显式传参，跳过所有交互
+codex-mixin setup --preset openrouter --key <key> --codex-mode custom
+codex-mixin setup --preset baidu-oneapi --key <key> --quota-username <username> --codex-mode skip
+codex-mixin setup --preset <preset> --no-start
+
+# 从 GitHub Release 更新 CLI 并重启网关
+codex-mixin update
+
+# Provider 管理
 codex-mixin provider list
 codex-mixin provider add --preset <preset> --key <key>
-codex-mixin doctor
-codex-mixin doctor --fix               # 自动修复权限、失效状态、网关启动、base_url、模型目录
-codex-mixin doctor --fix --restart-apps # 额外允许重启 ChatGPT/Codex App（会中断进行中的会话）
-codex-mixin info
-codex-mixin info --json
+codex-mixin provider update <id> --key <key>
+codex-mixin provider discover <id>
+codex-mixin provider test <id>
+codex-mixin provider select <id> --model <model>...
+
+# 本地网关；service start 在配置或参数变化时会自动重启
 codex-mixin service start
 codex-mixin service status
+codex-mixin service restart
 codex-mixin service logs -n 200
+codex-mixin service start --foreground
+
+# Codex / Claude 集成
 codex-mixin connect codex --codex-oauth-proxy
 codex-mixin connect codex --custom-only
 codex-mixin connect claude --model "Claude Sonnet 5"
+codex-mixin connect remove codex
+codex-mixin connect status
+
+# 状态与诊断
+codex-mixin info
+codex-mixin info --json
+codex-mixin doctor
+codex-mixin doctor --quick
+codex-mixin doctor --fix               # 自动修复权限、失效状态、网关启动、base_url、模型目录
+codex-mixin doctor --fix --restart-apps # 额外允许重启 ChatGPT/Codex App（会中断进行中的会话）
 ```
 
-新用户从 `setup` 开始，日常只需要 `provider`、`service`、`connect`、`info` 和 `doctor`。`fusion`、
-`benchmark`、catalog 刷新和历史迁移仍可用，但属于高级维护命令；旧的顶层命令继续作为兼容入口。
+新用户从 `setup` 开始，日常只需要 `update`、`provider`、`service`、`connect`、`info` 和 `doctor`。
+`fusion`、`benchmark`、catalog 刷新和历史迁移仍可用，但属于高级维护命令。
 
 ### 模型目录和 metadata
 
@@ -423,7 +448,8 @@ Anthropic 风格上游支持 Codex reasoning effort 到 thinking 的映射：
 
 Web search 转发使用保存的 Provider 配置和内置默认策略。网关运行行为不再读取
 `CODEX_GATEWAY_*` 环境变量进行覆盖；监听地址、网关密钥和 Provider 信息必须通过
-App 或 CLI 显式保存，临时监听地址使用 `start/serve --bind`。
+App 或 CLI 显式保存，临时监听地址使用 `service start --bind`，前台调试使用
+`service start --foreground`。
 
 ### Prompt 缓存优化
 
@@ -447,7 +473,7 @@ App 或 CLI 显式保存，临时监听地址使用 `start/serve --bind`。
 完整轨迹需要 debug 级别：
 
 ```bash
-RUST_LOG=codex_mixin=debug codex-mixin serve
+RUST_LOG=codex_mixin=debug codex-mixin service start --foreground
 ```
 
 网关还会把 provider 返回的缓存计数与自己保住的前缀对账。如果本轮前缀逐字节不变、稳定前缀又
@@ -590,7 +616,7 @@ Codex Mixin exposes a Responses-compatible endpoint on an automatically selected
 - Keeps official Codex/OpenAI account path for official GPT models.
 - Adds custom upstream models to the Codex model picker.
 - Avoids GPT name collisions by suffixing upstream `gpt-*` models with their provider (for example, `gpt-...-baidu-oneapi`); legacy `-custom` aliases remain compatible.
-- Registers a dedicated `codex-mixin` provider and migrates existing sessions to it during installation.
+- Registers the managed provider for the selected mode and migrates existing sessions to it during installation.
 - Backs up `~/.codex/config.toml` before managed changes and restores both the config and original history provider on uninstall.
 - Includes provider presets for `custom`, `baidu-oneapi`, `openrouter`, and `deepseek`.
 - Supports Anthropic Messages and OpenAI Chat Completions upstreams.
@@ -655,17 +681,18 @@ After launch, follow the menu bar actions to configure a provider and install it
 
 ```bash
 codex-mixin setup --preset openrouter
-codex-mixin doctor
-# Official account mode: sign in to Codex and open it once first
-codex-mixin connect codex --codex-oauth-proxy
-# Custom-only mode: does not require models_cache.json
-codex-mixin connect codex --custom-only
-codex-mixin service start
+codex-mixin info
 ```
 
-Choose one install command; do not run both.
+`setup` is the first-run entry point: it prompts for the API key, adds or updates the provider,
+refreshes models, starts or restarts the gateway as needed, then asks whether to keep official
+Codex account features, use custom models only, or skip Codex installation. When you choose an
+installation mode, `setup` finishes the Codex install itself. Scripts and CI can pass
+`--key`, `--quota-username`, and `--codex-mode official|custom|skip` to skip all prompts.
 
-Then start a new Codex CLI session.
+For later management, use `provider` for providers, `service` for the gateway, `connect` for
+Codex/Claude integration, `update` to update the CLI from the latest GitHub Release, `info` for
+state, and `doctor` for diagnosis. Then start a new Codex CLI session.
 
 ### Provider Presets
 
@@ -774,7 +801,7 @@ In account mode, you can switch from an official GPT model to a custom model and
 Rollback:
 
 ```bash
-codex-mixin uninstall-codex
+codex-mixin connect remove codex
 ```
 
 Uninstall reads the original provider from the config backup, or uses Codex's default `openai` provider when none was configured. Sessions using the managed provider are migrated back so they remain visible after rollback. It also removes the custom-only login placeholder and restores the pre-install `auth.json`. If the user changed auth after installation, uninstall preserves the current login instead of overwriting it with the old backup.
@@ -834,7 +861,7 @@ Cache loss is logged at WARN with `reused_turns` and `reused_bytes`, so a miss h
 cause. The full per-turn trail needs debug level:
 
 ```bash
-RUST_LOG=codex_mixin=debug codex-mixin serve
+RUST_LOG=codex_mixin=debug codex-mixin service start --foreground
 ```
 
 Images follow the same contract. A tool screenshot is inlined only on the turn the model has not
@@ -852,20 +879,46 @@ gateway, and CI runs it on every commit.
 ### CLI Reference
 
 ```bash
+# First-run setup; prompts for the API key and Codex mode
 codex-mixin setup --preset <preset>
+
+# Scripts and CI: pass everything explicitly
+codex-mixin setup --preset openrouter --key <key> --codex-mode custom
+codex-mixin setup --preset baidu-oneapi --key <key> --quota-username <username> --codex-mode skip
+codex-mixin setup --preset <preset> --no-start
+
+# Update the CLI from the latest GitHub Release and restart the gateway
+codex-mixin update
+
+# Provider management
 codex-mixin provider list
 codex-mixin provider add --preset <preset> --key <key>
-codex-mixin doctor
-codex-mixin doctor --fix               # auto-repair permissions, stale state, gateway startup, base_url, model catalog
-codex-mixin doctor --fix --restart-apps # additionally allow restarting the ChatGPT/Codex app (interrupts active sessions)
-codex-mixin info
-codex-mixin info --json
+codex-mixin provider update <id> --key <key>
+codex-mixin provider discover <id>
+codex-mixin provider test <id>
+codex-mixin provider select <id> --model <model>...
+
+# Local gateway; service start restarts it when config or arguments change
 codex-mixin service start
 codex-mixin service status
+codex-mixin service restart
 codex-mixin service logs -n 200
+codex-mixin service start --foreground
+
+# Codex / Claude integration
 codex-mixin connect codex --codex-oauth-proxy
 codex-mixin connect codex --custom-only
 codex-mixin connect claude --model "Claude Sonnet 5"
+codex-mixin connect remove codex
+codex-mixin connect status
+
+# State and diagnosis
+codex-mixin info
+codex-mixin info --json
+codex-mixin doctor
+codex-mixin doctor --quick
+codex-mixin doctor --fix               # auto-repair permissions, stale state, gateway startup, base_url, model catalog
+codex-mixin doctor --fix --restart-apps # additionally allow restarting the ChatGPT/Codex app (interrupts active sessions)
 ```
 
 ### Files

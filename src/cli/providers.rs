@@ -10,6 +10,7 @@ use codex_mixin::provider::{
     catalog_model_slug, discover_provider_models, redact_provider_error,
 };
 use codex_mixin::web_search::WebSearchCapabilities;
+use console::style;
 use futures_util::{StreamExt, stream};
 use serde_json::json;
 
@@ -139,22 +140,65 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
         println!("no providers configured");
         return Ok(());
     }
-    for provider in config.providers {
-        let readiness = provider.readiness();
+    let table_rows: Vec<_> = config
+        .providers
+        .iter()
+        .map(|provider| {
+            let readiness = provider.readiness();
+            (
+                provider.id.clone(),
+                provider.display_name.clone(),
+                if provider.enabled {
+                    "enabled"
+                } else {
+                    "disabled"
+                },
+                protocol_name(provider.protocol),
+                format!(
+                    "{}/{}",
+                    provider.selected_models.len(),
+                    provider.cached_models.len()
+                ),
+                readiness.routable_model_count.to_string(),
+                readiness.status.as_str().to_owned(),
+            )
+        })
+        .collect();
+    let id_width = table_rows.iter().map(|row| row.0.len()).max().unwrap_or(2);
+    let name_width = table_rows.iter().map(|row| row.1.len()).max().unwrap_or(4);
+    println!(
+        "  {:<id_width$}  {:<name_width$}  {:<9}  {:<10}  {:<9}  {:<8}  STATUS",
+        style("ID").bold(),
+        style("NAME").bold(),
+        style("STATE").bold(),
+        style("PROTOCOL").bold(),
+        style("SELECTED").bold(),
+        style("ROUTABLE").bold(),
+        id_width = id_width,
+        name_width = name_width,
+    );
+    for (id, name, state, protocol, selected, routable, status) in &table_rows {
+        let state_styled = if *state == "enabled" {
+            style(*state).green()
+        } else {
+            style(*state).dim()
+        };
+        let status_styled = match status.as_str() {
+            "healthy" => style(status).green(),
+            "degraded" => style(status).yellow(),
+            _ => style(status).red(),
+        };
         println!(
-            "{}\t{}\t{}\t{}\t{}/{} selected\t{} routable\t{}",
-            provider.id,
-            provider.display_name,
-            if provider.enabled {
-                "enabled"
-            } else {
-                "disabled"
-            },
-            protocol_name(provider.protocol),
-            provider.selected_models.len(),
-            provider.cached_models.len(),
-            readiness.routable_model_count,
-            readiness.status.as_str(),
+            "  {:<id_width$}  {:<name_width$}  {:<9}  {:<10}  {:<9}  {:<8}  {}",
+            id,
+            name,
+            state_styled,
+            protocol,
+            selected,
+            routable,
+            status_styled,
+            id_width = id_width,
+            name_width = name_width,
         );
     }
     Ok(())

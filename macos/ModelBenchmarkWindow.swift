@@ -596,7 +596,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
                 try await discoverHandler(providerID)
                 reloadProviderModels()
                 statusLabel.stringValue = "已刷新 \(providerName) 的模型"
-                statusLabel.textColor = .systemGreen
+                statusLabel.textColor = .mixinHealthy
             } catch {
                 presentBenchmarkError(
                     title: "刷新模型失败",
@@ -813,7 +813,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
             loadPersistedSnapshot()
             if snapshot?.status == "running" {
                 statusLabel.stringValue = "网关状态暂不可用，显示已保存进度"
-                statusLabel.textColor = .systemOrange
+                statusLabel.textColor = .mixinDegraded
             }
         }
     }
@@ -829,7 +829,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         } catch {
             snapshot = nil
             statusLabel.stringValue = "测速结果文件无法读取"
-            statusLabel.textColor = .systemRed
+            statusLabel.textColor = .mixinError
             summaryLabel.stringValue = snapshotURL.path
             progressIndicator.doubleValue = 0
             updateActionState()
@@ -891,16 +891,16 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
                 statusLabel.stringValue =
                     "测速完成：成功 \(completed)，超时 \(timedOut)，失败 \(failed)"
                 statusLabel.textColor = failed == 0 && timedOut == 0
-                    ? .systemGreen
-                    : .systemOrange
+                    ? .mixinHealthy
+                    : .mixinDegraded
             }
         case "interrupted":
             statusLabel.stringValue =
                 "上次测速已中断，已保存 \(snapshot.results.count) / \(snapshot.totalModels) 个结果"
-            statusLabel.textColor = .systemOrange
+            statusLabel.textColor = .mixinDegraded
         case "failed":
             statusLabel.stringValue = "测速任务失败：\(snapshot.error ?? "未知错误")"
-            statusLabel.textColor = .systemRed
+            statusLabel.textColor = .mixinError
         default:
             statusLabel.stringValue = snapshot.status
             statusLabel.textColor = .secondaryLabelColor
@@ -974,9 +974,9 @@ private func formatMilliseconds(_ milliseconds: UInt64) -> String {
 
 private func latencyColor(_ milliseconds: UInt64) -> NSColor {
     switch milliseconds {
-    case ..<1_000: return .systemGreen
-    case ..<3_000: return .systemOrange
-    default: return .systemRed
+    case ..<1_000: return .mixinHealthy
+    case ..<3_000: return .mixinDegraded
+    default: return .mixinError
     }
 }
 
@@ -991,9 +991,9 @@ private func resultStatusTitle(_ status: String) -> String {
 
 private func resultStatusColor(_ status: String) -> NSColor {
     switch status {
-    case "completed": return .systemGreen
-    case "timed_out": return .systemOrange
-    case "failed": return .systemRed
+    case "completed": return .mixinHealthy
+    case "timed_out": return .mixinDegraded
+    case "failed": return .mixinError
     default: return .secondaryLabelColor
     }
 }

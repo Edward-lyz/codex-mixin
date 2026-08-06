@@ -1,5 +1,6 @@
 use std::fs;
-use std::io::{self, IsTerminal, Write};
+use std::io::Write;
+use std::io::{self, IsTerminal};
 use std::net::SocketAddr;
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -12,6 +13,8 @@ use clap::{Parser, Subcommand, ValueEnum};
 use codex_mixin::catalog::{codex_catalog_from_models_with_metadata, load_template_catalog};
 use codex_mixin::config::{GatewayConfig, load_stored_config};
 use codex_mixin::server::AppState;
+use console::style;
+use indicatif::{ProgressBar, ProgressStyle};
 
 mod atomic_file;
 mod benchmark_proxy;
@@ -52,16 +55,36 @@ async fn stage<T>(
 ) -> anyhow::Result<T> {
     let interactive = io::stdout().is_terminal();
     let started = Instant::now();
-    if interactive {
-        print!("{label} ...");
-        io::stdout().flush()?;
+    let spinner = if interactive {
+        let bar = ProgressBar::new_spinner();
+        bar.set_style(
+            ProgressStyle::with_template("{spinner:.cyan} {msg}")
+                .expect("spinner template is valid")
+                .tick_strings(&["⠋", "⠙", "⠹", "⠸", "⠼", "⠴", "⠦", "⠧", "⠇", "⠏", ""]),
+        );
+        bar.set_message(label.to_owned());
+        bar.enable_steady_tick(std::time::Duration::from_millis(80));
+        Some(bar)
     } else {
         println!("{label} ...");
-    }
+        None
+    };
     let result = future.await;
+    if let Some(bar) = spinner {
+        bar.finish_and_clear();
+    }
     match &result {
-        Ok(_) if interactive => println!(" done ({:.1}s)", started.elapsed().as_secs_f32()),
-        Err(_) if interactive => println!(" failed"),
+        Ok(_) if interactive => {
+            println!(
+                "{} {} ({:.1}s)",
+                style("✓").green().bold(),
+                label,
+                started.elapsed().as_secs_f32()
+            );
+        }
+        Err(_) if interactive => {
+            println!("{} {}", style("✗").red().bold(), label);
+        }
         _ => {}
     }
     result

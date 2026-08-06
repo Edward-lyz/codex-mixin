@@ -203,3 +203,11 @@ func xmlEscape(_ value: String) -> String {
         .replacingOccurrences(of: "<", with: "&lt;")
         .replacingOccurrences(of: ">", with: "&gt;")
 }
+
+extension NSColor {
+    static let mixinHealthy = NSColor.systemGreen
+    static let mixinDegraded = NSColor.systemOrange
+    static let mixinError = NSColor.systemRed
+    static let mixinIdle = NSColor.systemGray
+    static let mixinAccent = NSColor.controlAccentColor
+}

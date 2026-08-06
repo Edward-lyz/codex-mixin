@@ -18,23 +18,28 @@ extension AppDelegate {
     }
 
     @objc func runAutomaticDoctor() {
-        guard !serviceBusy else { return }
-        serviceBusy = true
+        guard !serviceBusy, !automaticDoctorBusy else { return }
+        automaticDoctorBusy = true
         serviceStatus = "正在健康检测和修复..."
-        Task { @MainActor in
-            defer {
-                serviceBusy = false
-                Task { @MainActor in
-                    await self.refreshStatusNow()
+        Task.detached(priority: .userInitiated) { [weak self] in
+            guard let self else { return }
+            do {
+                let report = try await self.runGateway(["doctor", "--fix", "--quick"])
+                await MainActor.run {
+                    self.appendDiagnosticLog("Health check and repair report\n\(report)")
+                    showDiagnosticReport(title: "Codex Mixin 健康检测和修复", report: report)
+                }
+            } catch {
+                await MainActor.run {
+                    showAlert(title: "健康检测和修复失败", message: String(describing: error))
                 }
             }
-            do {
-                let report = try await runGateway(["doctor", "--fix", "--quick"])
-                appendDiagnosticLog("Health check and repair report\n\(report)")
-                showDiagnosticReport(title: "Codex Mixin 健康检测和修复", report: report)
-            } catch {
-                showAlert(title: "健康检测和修复失败", message: String(describing: error))
+            await MainActor.run {
+                self.automaticDoctorBusy = false
             }
+            await Task { @MainActor in
+                await self.refreshStatusNow()
+            }.value
         }
     }
 
