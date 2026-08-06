@@ -259,7 +259,7 @@ fn provider_readiness_issue_descriptions(providers: &[ProviderDefinition]) -> Ve
         }
         let provider_name = single_line(&provider.display_name);
         if provider.auth.api_key.trim().is_empty() {
-            descriptions.push(format!("{provider_name}：未配置 API Key"));
+            descriptions.push(format!("{provider_name}: API key is not configured"));
         }
         let available_models = provider
             .cached_models
@@ -274,17 +274,17 @@ fn provider_readiness_issue_descriptions(providers: &[ProviderDefinition]) -> Ve
             .collect::<Vec<_>>();
         if unavailable_models.is_empty() {
             if readiness.routable_model_count == 0 {
-                descriptions.push(format!("{provider_name}：没有已启用的可用模型"));
+                descriptions.push(format!("{provider_name}: no enabled models are available"));
             }
         } else {
             descriptions.push(format!(
-                "{provider_name}：模型 {} 当前不可达",
-                unavailable_models.join("、")
+                "{provider_name}: model(s) currently unreachable: {}",
+                unavailable_models.join(", ")
             ));
         }
         if let Some(error) = provider.models_refresh_error.as_deref() {
             descriptions.push(format!(
-                "{provider_name}：模型列表刷新失败：{}",
+                "{provider_name}: model list refresh failed: {}",
                 single_line(error)
             ));
         }
@@ -316,8 +316,8 @@ mod provider_readiness_tests {
         assert_eq!(
             provider_readiness_issue_descriptions(&[provider]),
             vec![
-                "Baidu OneAPI：模型 unreachable-model 当前不可达",
-                "Baidu OneAPI：模型列表刷新失败：request failed upstream returned 503",
+                "Baidu OneAPI: model(s) currently unreachable: unreachable-model",
+                "Baidu OneAPI: model list refresh failed: request failed upstream returned 503",
             ]
         );
     }

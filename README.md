@@ -132,11 +132,11 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 #### 远端 Codex CLI 用户
 
 ```bash
-codex-mixin setup --preset openrouter
+codex-mixin setup
 codex-mixin info
 ```
 
-`setup` 是 CLI 的首次配置入口：隐藏输入 API Key、添加或更新 provider、刷新模型、启动或按需重启网关，
+`setup` 是 CLI 的首次配置入口：交互终端可直接运行并选择 preset，隐藏输入 API Key、添加或更新 provider、刷新模型、启动或按需重启网关，
 然后询问 Codex 集成方式，选择保留官方账号能力、仅使用自定义模型或暂时跳过。选择后可以直接完成
 Codex 安装，不需要再单独执行 `connect codex`；跳过时可以用 `connect codex` 以后再装。
 
@@ -361,8 +361,8 @@ Fusion 只在 Plan 模式的新用户轮次运行 Panel 和 Judge。切换到 De
 ### CLI
 
 ```bash
-# 首次配置，交互式输入 API Key 并选择 Codex 集成方式
-codex-mixin setup --preset <preset>
+# 首次配置：交互终端可直接运行并选择 preset / API Key / Codex 集成方式
+codex-mixin setup
 
 # 脚本或 CI：显式传参，跳过所有交互
 codex-mixin setup --preset openrouter --key <key> --codex-mode custom
@@ -680,11 +680,11 @@ After launch, follow the menu bar actions to configure a provider and install it
 #### For Codex CLI
 
 ```bash
-codex-mixin setup --preset openrouter
+codex-mixin setup
 codex-mixin info
 ```
 
-`setup` is the first-run entry point: it prompts for the API key, adds or updates the provider,
+`setup` is the first-run entry point: in a TTY it can prompt for the provider preset and API key, adds or updates the provider,
 refreshes models, starts or restarts the gateway as needed, then asks whether to keep official
 Codex account features, use custom models only, or skip Codex installation. When you choose an
 installation mode, `setup` finishes the Codex install itself. Scripts and CI can pass
@@ -879,8 +879,8 @@ gateway, and CI runs it on every commit.
 ### CLI Reference
 
 ```bash
-# First-run setup; prompts for the API key and Codex mode
-codex-mixin setup --preset <preset>
+# First-run setup; prompts for the preset, API key, and Codex mode
+codex-mixin setup
 
 # Scripts and CI: pass everything explicitly
 codex-mixin setup --preset openrouter --key <key> --codex-mode custom

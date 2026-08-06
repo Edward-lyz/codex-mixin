@@ -65,13 +65,13 @@ impl DoctorFix {
 
     fn description(self) -> &'static str {
         match self {
-            Self::CleanStaleGatewayMetadata => "清理失效的网关运行状态文件",
-            Self::StartGateway => "启动网关守护进程",
-            Self::FixConfigPermissions => "将配置文件权限收紧为 600",
-            Self::SyncGatewayBaseUrl => "同步 Codex 配置中的网关 base_url",
-            Self::RefreshCodexCatalog => "重新生成托管模型目录",
-            Self::RestartChatGptApp => "重启 ChatGPT App 以加载新配置",
-            Self::RestartCodexApp => "重启 Codex App 以加载新配置",
+            Self::CleanStaleGatewayMetadata => "Remove stale gateway runtime metadata",
+            Self::StartGateway => "Start the gateway daemon",
+            Self::FixConfigPermissions => "Tighten config file permissions to 600",
+            Self::SyncGatewayBaseUrl => "Sync the managed Codex gateway base_url",
+            Self::RefreshCodexCatalog => "Regenerate the managed model catalog",
+            Self::RestartChatGptApp => "Restart the ChatGPT app to load the new config",
+            Self::RestartCodexApp => "Restart the Codex app to load the new config",
         }
     }
 }
@@ -224,13 +224,13 @@ pub(super) async fn doctor(
             .partition(|fix| fix.requires_restart_opt_in() && !restart_apps);
         if !skipped.is_empty() && !json_output {
             println!(
-                "auto-fix: 跳过 {} 项 App 重启（会中断正在进行的会话，如需执行请使用 --fix --restart-apps）",
+                "auto-fix: skipped {} app restart(s); they interrupt live sessions (pass --fix --restart-apps to apply)",
                 skipped.len()
             );
         }
         if applicable.is_empty() {
             if !json_output {
-                println!("auto-fix: 没有可自动修复的问题");
+                println!("auto-fix: nothing safe to repair");
             }
         } else {
             repairs = apply_doctor_fixes(&applicable).await;
@@ -254,9 +254,9 @@ async fn run_doctor_checks(options: DoctorCheckOptions) -> anyhow::Result<Doctor
             checks.push(
                 DoctorCheck::new(
                     "stored_config",
-                    "Provider 配置文件",
+                    "Provider config",
                     DoctorStatus::Ok,
-                    format!("已读取 {} 个 Provider", config.providers.len()),
+                    format!("loaded {} provider(s)", config.providers.len()),
                 )
                 .detail(path.display().to_string()),
             );
@@ -266,9 +266,9 @@ async fn run_doctor_checks(options: DoctorCheckOptions) -> anyhow::Result<Doctor
             checks.push(
                 DoctorCheck::new(
                     "stored_config",
-                    "Provider 配置文件",
+                    "Provider config",
                     DoctorStatus::Error,
-                    "配置文件不存在，请先新增 Provider",
+                    "config file is missing; add a provider first",
                 )
                 .detail(path.display().to_string()),
             );
@@ -278,9 +278,9 @@ async fn run_doctor_checks(options: DoctorCheckOptions) -> anyhow::Result<Doctor
             checks.push(
                 DoctorCheck::new(
                     "stored_config",
-                    "Provider 配置文件",
+                    "Provider config",
                     DoctorStatus::Error,
-                    "配置文件无法读取或解析",
+                    "config file could not be read or parsed",
                 )
                 .detail(format!("{error:#}")),
             );
@@ -296,10 +296,10 @@ async fn run_doctor_checks(options: DoctorCheckOptions) -> anyhow::Result<Doctor
         match GatewayConfig::from_stored_config() {
             Ok(config) => checks.push(DoctorCheck::new(
                 "runtime_config",
-                "运行配置",
+                "Runtime config",
                 DoctorStatus::Ok,
                 format!(
-                    "{} 个 Provider，监听地址 {}，环境变量不会覆盖运行配置",
+                    "{} provider(s), bind {}, runtime env overrides disabled",
                     config.providers.len(),
                     config.bind
                 ),
@@ -307,9 +307,9 @@ async fn run_doctor_checks(options: DoctorCheckOptions) -> anyhow::Result<Doctor
             Err(error) => checks.push(
                 DoctorCheck::new(
                     "runtime_config",
-                    "运行配置",
+                    "Runtime config",
                     DoctorStatus::Error,
-                    "配置结构、Provider 路由或 Fusion 引用校验失败",
+                    "config structure, provider routing, or fusion references failed validation",
                 )
                 .detail(format!("{error:#}")),
             ),
@@ -438,7 +438,7 @@ async fn apply_doctor_fixes(fixes: &[DoctorFix]) -> Vec<RepairOutcome> {
         println!(
             "auto-fix: {} => {}",
             fix.description(),
-            if ok { &message } else { "失败" }
+            if ok { &message } else { "failed" }
         );
         outcomes.push(RepairOutcome {
             fix,
@@ -467,18 +467,18 @@ async fn apply_doctor_fix(fix: DoctorFix) -> anyhow::Result<String> {
                 removed.push("daemon.json");
             }
             if removed.is_empty() {
-                Ok("没有需要清理的状态文件".to_owned())
+                Ok("no stale runtime metadata to remove".to_owned())
             } else {
-                Ok(format!("已清理 {}", removed.join(", ")))
+                Ok(format!("removed {}", removed.join(", ")))
             }
         }
         DoctorFix::StartGateway => {
             let config = GatewayConfig::from_stored_config()?;
-            tokio::task::spawn_blocking(move || start_daemon(None, None, &config)).await??;
+            tokio::task::spawn_blocking(move || start_daemon(None, None, &config, false)).await??;
             let bind = load_runtime_metadata()?
                 .map(|runtime| runtime.bind.to_string())
                 .unwrap_or_else(|| "unknown".to_owned());
-            Ok(format!("网关已启动，地址 {bind}"))
+            Ok(format!("gateway started on {bind}"))
         }
         DoctorFix::FixConfigPermissions => {
             #[cfg(unix)]
@@ -486,28 +486,28 @@ async fn apply_doctor_fix(fix: DoctorFix) -> anyhow::Result<String> {
                 use std::os::unix::fs::PermissionsExt;
                 let path = stored_config_path();
                 fs::set_permissions(&path, fs::Permissions::from_mode(0o600))?;
-                Ok(format!("已执行 chmod 600 {}", path.display()))
+                Ok(format!("chmod 600 applied to {}", path.display()))
             }
             #[cfg(not(unix))]
             {
-                anyhow::bail!("当前平台不支持自动修复文件权限")
+                anyhow::bail!("automatic permission repair is not supported on this platform")
             }
         }
         DoctorFix::SyncGatewayBaseUrl => {
             let config_path = resolve_codex_config_path(None)?;
             let runtime = load_runtime_metadata()?
                 .filter(|runtime| pid_is_running(runtime.pid).unwrap_or(false))
-                .ok_or_else(|| anyhow::anyhow!("网关未运行，无法同步 base_url"))?;
+                .ok_or_else(|| anyhow::anyhow!("gateway is not running; cannot sync base_url"))?;
             let changed = sync_managed_codex_gateway_base_url(&config_path, runtime.bind)?;
             Ok(if changed {
-                format!("base_url 已更新为 http://{}/v1", runtime.bind)
+                format!("base_url updated to http://{}/v1", runtime.bind)
             } else {
-                "base_url 已是最新".to_owned()
+                "base_url is already current".to_owned()
             })
         }
         DoctorFix::RefreshCodexCatalog => {
             refresh_default_managed_codex_catalog().await?;
-            Ok("托管模型目录已刷新".to_owned())
+            Ok("managed model catalog refreshed".to_owned())
         }
         DoctorFix::RestartChatGptApp => restart_app_fix("ChatGPT").await,
         DoctorFix::RestartCodexApp => restart_app_fix("Codex").await,
@@ -525,14 +525,16 @@ fn restart_macos_app(app: &str) -> anyhow::Result<String> {
         .args(["-e", &format!("quit app \"{app}\"")])
         .status()?;
     if !quit.success() {
-        anyhow::bail!("退出 {app} 失败");
+        anyhow::bail!("failed to quit {app}");
     }
     match previous_pid {
         Some(pid) => {
             let deadline = Instant::now() + Duration::from_secs(15);
             while pid_is_running(pid).unwrap_or(false) {
                 if Instant::now() >= deadline {
-                    anyhow::bail!("{app} 未在 15 秒内退出（可能有窗口阻止退出），请手动重启");
+                    anyhow::bail!(
+                        "{app} did not exit within 15s (a window may be blocking quit); restart it manually"
+                    );
                 }
                 std::thread::sleep(Duration::from_millis(500));
             }
@@ -541,14 +543,14 @@ fn restart_macos_app(app: &str) -> anyhow::Result<String> {
     }
     let open = ProcessCommand::new("open").args(["-a", app]).status()?;
     if !open.success() {
-        anyhow::bail!("重新打开 {app} 失败");
+        anyhow::bail!("failed to reopen {app}");
     }
-    Ok(format!("{app} 已重启"))
+    Ok(format!("{app} restarted"))
 }
 
 #[cfg(not(target_os = "macos"))]
 fn restart_macos_app(app: &str) -> anyhow::Result<String> {
-    anyhow::bail!("当前平台不支持自动重启 {app}")
+    anyhow::bail!("automatic app restart is not supported on this platform for {app}")
 }
 
 fn check_config_permissions(path: &Path) -> DoctorCheck {
@@ -558,27 +560,27 @@ fn check_config_permissions(path: &Path) -> DoctorCheck {
         match fs::metadata(path) {
             Ok(metadata) if metadata.permissions().mode() & 0o077 == 0 => DoctorCheck::new(
                 "config_permissions",
-                "配置文件权限",
+                "Config permissions",
                 DoctorStatus::Ok,
                 format!("{:o}", metadata.permissions().mode() & 0o777),
             ),
             Ok(metadata) => DoctorCheck::new(
                 "config_permissions",
-                "配置文件权限",
+                "Config permissions",
                 DoctorStatus::Warning,
-                "配置文件可被当前用户以外的账号读取",
+                "config file is readable by accounts other than the current user",
             )
             .detail(format!(
-                "当前权限 {:o}，建议 chmod 600 {}",
+                "current mode {:o}; recommend chmod 600 {}",
                 metadata.permissions().mode() & 0o777,
                 path.display()
             ))
             .fix(DoctorFix::FixConfigPermissions),
             Err(error) => DoctorCheck::new(
                 "config_permissions",
-                "配置文件权限",
+                "Config permissions",
                 DoctorStatus::Error,
-                "无法读取配置文件权限",
+                "could not read config file permissions",
             )
             .detail(error.to_string()),
         }
@@ -587,9 +589,9 @@ fn check_config_permissions(path: &Path) -> DoctorCheck {
     {
         DoctorCheck::new(
             "config_permissions",
-            "配置文件权限",
+            "Config permissions",
             DoctorStatus::Ok,
-            "当前平台不使用 Unix 权限检查",
+            "this platform does not use Unix permission checks",
         )
     }
 }
@@ -615,7 +617,7 @@ async fn check_doctor_provider(
     if let Err(error) = provider.validate() {
         return DoctorProviderCheck {
             status: DoctorStatus::Error,
-            message: "Provider 配置校验失败".to_owned(),
+            message: "provider configuration failed validation".to_owned(),
             detail: Some(format!("{error:#}")),
             ..base
         };
@@ -623,14 +625,14 @@ async fn check_doctor_provider(
     if !provider.enabled {
         return DoctorProviderCheck {
             status: DoctorStatus::Warning,
-            message: "Provider 已停用，跳过网络检查".to_owned(),
+            message: "provider is disabled; skipped network checks".to_owned(),
             ..base
         };
     }
     if readiness.routable_model_count == 0 {
         return DoctorProviderCheck {
             status: DoctorStatus::Error,
-            message: "没有已选择且当前可用的模型".to_owned(),
+            message: "no selected models are currently available".to_owned(),
             detail: Some(readiness.issues.join(", ")),
             ..base
         };
@@ -638,7 +640,7 @@ async fn check_doctor_provider(
     if provider.model_source == ProviderModelSource::Static {
         return DoctorProviderCheck {
             message: format!(
-                "静态模型配置正常，{} 个模型可路由；未发起付费推理",
+                "static model source is healthy with {} routable model(s); no paid inference was performed",
                 readiness.routable_model_count
             ),
             ..base
@@ -648,7 +650,7 @@ async fn check_doctor_provider(
         let cached_model_count = provider.cached_models.len();
         let refreshed = provider
             .models_refreshed_at_ms
-            .map(|timestamp| format!("；缓存时间戳 {timestamp}"))
+            .map(|timestamp| format!("; cache timestamp {timestamp}"))
             .unwrap_or_default();
         return DoctorProviderCheck {
             status: if provider.models_refresh_error.is_some() {
@@ -657,7 +659,7 @@ async fn check_doctor_provider(
                 DoctorStatus::Ok
             },
             message: format!(
-                "快速检测使用 {} 个缓存模型，未访问上游{refreshed}",
+                "quick check used {} cached model(s) without contacting upstream{refreshed}",
                 cached_model_count
             ),
             detail: provider.models_refresh_error.clone(),
@@ -668,14 +670,15 @@ async fn check_doctor_provider(
     match discover_provider_models(&client, &provider).await {
         Ok(models) => DoctorProviderCheck {
             message: format!(
-                "模型接口正常，返回 {} 个模型，耗时 {} ms；未发起付费推理",
+                "models endpoint healthy; returned {} model(s) in {} ms; no paid inference was performed",
                 models.len(),
                 started.elapsed().as_millis()
             ),
-            detail: provider
-                .models_refresh_error
-                .as_ref()
-                .map(|error| format!("历史刷新错误仍在缓存中，当前检查已恢复：{error}")),
+            detail: provider.models_refresh_error.as_ref().map(|error| {
+                format!(
+                    "a previous refresh error is still cached, but this check recovered: {error}"
+                )
+            }),
             ..base
         },
         Err(error) => {
@@ -687,7 +690,7 @@ async fn check_doctor_provider(
             );
             DoctorProviderCheck {
                 status: DoctorStatus::Error,
-                message: "模型接口连接或响应检查失败".to_owned(),
+                message: "models endpoint connection or response check failed".to_owned(),
                 detail: Some(error),
                 ..base
             }
@@ -704,9 +707,14 @@ async fn check_gateway_runtime() -> (DoctorCheck, Option<LiveGateway>) {
         Ok(Some(runtime)) => runtime,
         Ok(None) => {
             return (
-                DoctorCheck::new("gateway", "本地网关", DoctorStatus::Warning, "网关未启动")
-                    .hint("codex-mixin service start")
-                    .fix(DoctorFix::StartGateway),
+                DoctorCheck::new(
+                    "gateway",
+                    "Local gateway",
+                    DoctorStatus::Warning,
+                    "gateway is not running",
+                )
+                .hint("codex-mixin service start")
+                .fix(DoctorFix::StartGateway),
                 None,
             );
         }
@@ -714,9 +722,9 @@ async fn check_gateway_runtime() -> (DoctorCheck, Option<LiveGateway>) {
             return (
                 DoctorCheck::new(
                     "gateway",
-                    "本地网关",
+                    "Local gateway",
                     DoctorStatus::Error,
-                    "运行状态文件无法读取",
+                    "runtime metadata could not be read",
                 )
                 .detail(format!("{error:#}")),
                 None,
@@ -727,11 +735,14 @@ async fn check_gateway_runtime() -> (DoctorCheck, Option<LiveGateway>) {
         Ok(false) => (
             DoctorCheck::new(
                 "gateway",
-                "本地网关",
+                "Local gateway",
                 DoctorStatus::Warning,
-                format!("发现失效的运行状态：PID {} 已不存在", runtime.pid),
+                format!(
+                    "stale runtime metadata found: pid {} is not running",
+                    runtime.pid
+                ),
             )
-            .detail(format!("绑定地址 {}", runtime.bind))
+            .detail(format!("bind {}", runtime.bind))
             .fix(DoctorFix::CleanStaleGatewayMetadata)
             .fix(DoctorFix::StartGateway),
             None,
@@ -739,9 +750,9 @@ async fn check_gateway_runtime() -> (DoctorCheck, Option<LiveGateway>) {
         Err(error) => (
             DoctorCheck::new(
                 "gateway",
-                "本地网关",
+                "Local gateway",
                 DoctorStatus::Error,
-                format!("无法检查网关 PID {}", runtime.pid),
+                format!("could not inspect gateway pid {}", runtime.pid),
             )
             .detail(format!("{error:#}")),
             None,
@@ -757,9 +768,9 @@ async fn check_gateway_runtime() -> (DoctorCheck, Option<LiveGateway>) {
                     return (
                         DoctorCheck::new(
                             "gateway",
-                            "本地网关",
+                            "Local gateway",
                             DoctorStatus::Error,
-                            "无法创建本地网关检查请求",
+                            "could not build the local gateway health request",
                         )
                         .detail(format!("{error:#}")),
                         None,
@@ -774,10 +785,10 @@ async fn check_gateway_runtime() -> (DoctorCheck, Option<LiveGateway>) {
                         Some(version) if version != current_version => (
                             DoctorCheck::new(
                                 "gateway",
-                                "本地网关",
+                                "Local gateway",
                                 DoctorStatus::Warning,
                                 format!(
-                                    "运行中，PID {}，地址 {}，但网关版本 {} 与 CLI 版本 {} 不一致",
+                                    "running as pid {} on {}, but gateway version {} does not match CLI version {}",
                                     runtime.pid, runtime.bind, version, current_version
                                 ),
                             )
@@ -788,12 +799,12 @@ async fn check_gateway_runtime() -> (DoctorCheck, Option<LiveGateway>) {
                         version => {
                             let mut check = DoctorCheck::new(
                                 "gateway",
-                                "本地网关",
+                                "Local gateway",
                                 DoctorStatus::Ok,
-                                format!("运行中，PID {}，地址 {}", runtime.pid, runtime.bind),
+                                format!("running as pid {} on {}", runtime.pid, runtime.bind),
                             );
                             if let Some(version) = version {
-                                check = check.detail(format!("版本 {version}"));
+                                check = check.detail(format!("version {version}"));
                             }
                             (check, live)
                         }
@@ -802,9 +813,9 @@ async fn check_gateway_runtime() -> (DoctorCheck, Option<LiveGateway>) {
                 Ok(response) => (
                     DoctorCheck::new(
                         "gateway",
-                        "本地网关",
+                        "Local gateway",
                         DoctorStatus::Error,
-                        format!("healthz 返回 {}", response.status()),
+                        format!("healthz returned {}", response.status()),
                     )
                     .detail(url)
                     .hint("codex-mixin restart"),
@@ -813,9 +824,9 @@ async fn check_gateway_runtime() -> (DoctorCheck, Option<LiveGateway>) {
                 Err(error) => (
                     DoctorCheck::new(
                         "gateway",
-                        "本地网关",
+                        "Local gateway",
                         DoctorStatus::Error,
-                        "进程存在但 healthz 无法访问",
+                        "process is alive but healthz is unreachable",
                     )
                     .detail(format!("{error:#}"))
                     .hint("codex-mixin restart"),
@@ -840,9 +851,9 @@ async fn check_gateway_models(
             return (
                 DoctorCheck::new(
                     "gateway_models",
-                    "网关模型列表",
+                    "Gateway models",
                     DoctorStatus::Error,
-                    "无法创建模型列表请求",
+                    "could not build the models list request",
                 )
                 .detail(format!("{error:#}")),
                 None,
@@ -861,9 +872,9 @@ async fn check_gateway_models(
                     return (
                         DoctorCheck::new(
                             "gateway_models",
-                            "网关模型列表",
+                            "Gateway models",
                             DoctorStatus::Error,
-                            "模型列表响应不是有效 JSON",
+                            "models list response is not valid JSON",
                         )
                         .detail(format!("{error:#}")),
                         None,
@@ -885,9 +896,9 @@ async fn check_gateway_models(
                 (
                     DoctorCheck::new(
                         "gateway_models",
-                        "网关模型列表",
+                        "Gateway models",
                         DoctorStatus::Error,
-                        "网关 /v1/models 返回空列表，Codex 将没有可用模型",
+                        "gateway /v1/models returned an empty list; Codex will have no models",
                     )
                     .detail(url),
                     Some(ids),
@@ -896,9 +907,9 @@ async fn check_gateway_models(
                 (
                     DoctorCheck::new(
                         "gateway_models",
-                        "网关模型列表",
+                        "Gateway models",
                         DoctorStatus::Ok,
-                        format!("网关 /v1/models 返回 {} 个模型", ids.len()),
+                        format!("gateway /v1/models returned {} model(s)", ids.len()),
                     )
                     .detail(url),
                     Some(ids),
@@ -912,10 +923,10 @@ async fn check_gateway_models(
             (
                 DoctorCheck::new(
                     "gateway_models",
-                    "网关模型列表",
+                    "Gateway models",
                     DoctorStatus::Error,
                     format!(
-                        "网关拒绝了模型列表请求（{}），API Key 校验失败",
+                        "gateway rejected the models list request ({}); API key validation failed",
                         response.status()
                     ),
                 )
@@ -926,9 +937,9 @@ async fn check_gateway_models(
         Ok(response) => (
             DoctorCheck::new(
                 "gateway_models",
-                "网关模型列表",
+                "Gateway models",
                 DoctorStatus::Error,
-                format!("网关 /v1/models 返回 {}", response.status()),
+                format!("gateway /v1/models returned {}", response.status()),
             )
             .detail(url),
             None,
@@ -936,9 +947,9 @@ async fn check_gateway_models(
         Err(error) => (
             DoctorCheck::new(
                 "gateway_models",
-                "网关模型列表",
+                "Gateway models",
                 DoctorStatus::Error,
-                "无法请求网关模型列表",
+                "could not request the gateway models list",
             )
             .detail(format!("{url}: {error:#}")),
             None,
@@ -968,9 +979,9 @@ fn check_codex_integration(
             checks.push(
                 DoctorCheck::new(
                     "codex_config",
-                    "Codex 集成",
+                    "Codex integration",
                     DoctorStatus::Error,
-                    "无法定位 Codex 配置文件",
+                    "could not resolve the Codex config path",
                 )
                 .detail(format!("{error:#}")),
             );
@@ -981,9 +992,9 @@ fn check_codex_integration(
         checks.push(
             DoctorCheck::new(
                 "codex_config",
-                "Codex 集成",
+                "Codex integration",
                 DoctorStatus::Warning,
-                "Codex 配置文件不存在，尚未安装到 Codex",
+                "Codex config file is missing; codex-mixin is not installed into Codex yet",
             )
             .detail(path.display().to_string())
             .hint("codex-mixin connect codex --custom-only"),
@@ -996,9 +1007,9 @@ fn check_codex_integration(
             checks.push(
                 DoctorCheck::new(
                     "codex_config",
-                    "Codex 集成",
+                    "Codex integration",
                     DoctorStatus::Error,
-                    "Codex 配置文件无法读取",
+                    "Codex config file could not be read",
                 )
                 .detail(format!("{}: {error}", path.display())),
             );
@@ -1009,9 +1020,9 @@ fn check_codex_integration(
         checks.push(
             DoctorCheck::new(
                 "codex_config",
-                "Codex 集成",
+                "Codex integration",
                 DoctorStatus::Warning,
-                "Codex 尚未安装 codex-mixin 配置",
+                "Codex is not using a codex-mixin managed config",
             )
             .detail(path.display().to_string())
             .hint("codex-mixin connect codex --custom-only"),
@@ -1021,9 +1032,9 @@ fn check_codex_integration(
     checks.push(
         DoctorCheck::new(
             "codex_config",
-            "Codex 集成",
+            "Codex integration",
             DoctorStatus::Ok,
-            "Codex 当前由 codex-mixin 管理",
+            "Codex is currently managed by codex-mixin",
         )
         .detail(path.display().to_string()),
     );
@@ -1034,12 +1045,12 @@ fn check_codex_integration(
             checks.push(
                 DoctorCheck::new(
                     "codex_managed_config",
-                    "Codex 托管配置",
+                    "Managed Codex config",
                     DoctorStatus::Error,
-                    "托管配置无法解析为 TOML",
+                    "managed config could not be parsed as TOML",
                 )
                 .detail(format!("{error:#}"))
-                .hint("重新执行 codex-mixin connect codex"),
+                .hint("rerun codex-mixin connect codex"),
             );
             return (checks, None);
         }
@@ -1051,14 +1062,14 @@ fn check_codex_integration(
         checks.push(
             DoctorCheck::new(
                 "codex_model_provider",
-                "Codex 默认 Provider",
+                "Codex default provider",
                 DoctorStatus::Error,
                 format!(
-                    "model_provider {:?} 不是 codex-mixin 支持的托管 Provider",
+                    "model_provider {:?} is not a codex-mixin managed provider",
                     effective_provider.unwrap_or("<unset>")
                 ),
             )
-            .hint("重新执行 codex-mixin connect codex"),
+            .hint("rerun codex-mixin connect codex"),
         );
     }
 
@@ -1084,18 +1095,18 @@ fn check_codex_integration(
             if base_url == expected {
                 checks.push(DoctorCheck::new(
                     "codex_base_url",
-                    "Codex 网关地址",
+                    "Codex gateway URL",
                     DoctorStatus::Ok,
-                    format!("base_url 指向当前网关 {expected}"),
+                    format!("base_url points at the current gateway {expected}"),
                 ));
             } else {
                 checks.push(
                     DoctorCheck::new(
                         "codex_base_url",
-                        "Codex 网关地址",
+                        "Codex gateway URL",
                         DoctorStatus::Error,
                         format!(
-                            "base_url {base_url} 与运行中的网关 {expected} 不一致，Codex 将无法连接网关"
+                            "base_url {base_url} does not match the running gateway {expected}; Codex will not reach the gateway"
                         ),
                     )
                     .fix(DoctorFix::SyncGatewayBaseUrl),
@@ -1106,22 +1117,22 @@ fn check_codex_integration(
             checks.push(
                 DoctorCheck::new(
                     "codex_base_url",
-                    "Codex 网关地址",
+                    "Codex gateway URL",
                     DoctorStatus::Warning,
-                    "网关未运行，无法核对 base_url 是否可达",
+                    "gateway is not running; cannot verify whether base_url is reachable",
                 )
-                .detail(format!("配置中的 base_url: {base_url}")),
+                .detail(format!("configured base_url: {base_url}")),
             );
         }
         (None, _) => {
             checks.push(
                 DoctorCheck::new(
                     "codex_base_url",
-                    "Codex 网关地址",
+                    "Codex gateway URL",
                     DoctorStatus::Error,
-                    "托管配置缺少当前 Provider 的 base_url",
+                    "managed config is missing base_url for the current provider",
                 )
-                .hint("重新执行 codex-mixin connect codex"),
+                .hint("rerun codex-mixin connect codex"),
             );
         }
     }
@@ -1136,20 +1147,20 @@ fn check_codex_integration(
                     checks.push(
                         DoctorCheck::new(
                             "codex_env_key",
-                            "Codex API Key 环境变量",
+                            "Codex API key environment variable",
                             DoctorStatus::Warning,
-                            format!("已配置 env_key={key}，但当前环境未设置该变量"),
+                            format!("env_key={key} is configured, but the variable is not set in the current environment"),
                         )
                         .detail(
-                            "Codex Desktop 的环境变量需要通过 launchctl setenv 注入；若网关未启用 API Key 可忽略",
+                            "Codex Desktop environment variables need launchctl setenv; ignore this if gateway auth is disabled",
                         ),
                     );
                 } else {
                     checks.push(DoctorCheck::new(
                         "codex_env_key",
-                        "Codex API Key 环境变量",
+                        "Codex API key environment variable",
                         DoctorStatus::Ok,
-                        format!("env_key={key} 已在当前环境可用"),
+                        format!("env_key={key} is available in the current environment"),
                     ));
                 }
             }
@@ -1157,11 +1168,11 @@ fn check_codex_integration(
                 checks.push(
                     DoctorCheck::new(
                         "codex_env_key",
-                        "Codex API Key 环境变量",
+                        "Codex API key environment variable",
                         DoctorStatus::Warning,
-                        "网关启用了 API Key，但 Codex 配置没有 env_key，Codex 请求会被网关拒绝",
+                        "gateway auth is enabled, but Codex config has no env_key; Codex requests will be rejected",
                     )
-                    .hint("重新执行 codex-mixin connect codex"),
+                    .hint("rerun codex-mixin connect codex"),
                 );
             }
             (None, None) => {}
@@ -1173,9 +1184,9 @@ fn check_codex_integration(
         None => {
             checks.push(DoctorCheck::new(
                 "codex_catalog",
-                "Codex 模型目录",
+                "Codex model catalog",
                 DoctorStatus::Error,
-                "Codex 配置路径没有父目录",
+                "Codex config path has no parent directory",
             ));
             return (checks, None);
         }
@@ -1187,12 +1198,12 @@ fn check_codex_integration(
             checks.push(
                 DoctorCheck::new(
                     "codex_models_cache",
-                    "官方模型缓存",
+                    "Official model cache",
                     DoctorStatus::Error,
-                    "codex_oauth_proxy 模式需要 models_cache.json，但文件不存在",
+                    "codex_oauth_proxy mode requires models_cache.json, but the file is missing",
                 )
                 .detail(models_cache.display().to_string())
-                .hint("先用官方账号打开一次 Codex，生成缓存后重新安装"),
+                .hint("sign in with the official account, open Codex once to create the cache, then reinstall"),
             );
         }
     }
@@ -1203,12 +1214,12 @@ fn check_codex_integration(
             checks.push(
                 DoctorCheck::new(
                     "codex_catalog",
-                    "Codex 模型目录",
+                    "Codex model catalog",
                     DoctorStatus::Error,
-                    "托管配置缺少 model_catalog_json",
+                    "managed config is missing model_catalog_json",
                 )
                 .detail(format!("{error:#}"))
-                .hint("重新执行 codex-mixin connect codex"),
+                .hint("rerun codex-mixin connect codex"),
             );
             return (checks, None);
         }
@@ -1219,9 +1230,9 @@ fn check_codex_integration(
             checks.push(
                 DoctorCheck::new(
                     "codex_catalog",
-                    "Codex 模型目录",
+                    "Codex model catalog",
                     DoctorStatus::Error,
-                    "托管模型目录文件无法读取",
+                    "managed model catalog file could not be read",
                 )
                 .detail(format!("{}: {error}", catalog_path.display()))
                 .fix(DoctorFix::RefreshCodexCatalog),
@@ -1248,9 +1259,9 @@ fn check_codex_integration(
         checks.push(
             DoctorCheck::new(
                 "codex_catalog",
-                "Codex 模型目录",
+                "Codex model catalog",
                 DoctorStatus::Error,
-                "托管模型目录不是有效的 catalog JSON",
+                "managed model catalog is not valid catalog JSON",
             )
             .detail(catalog_path.display().to_string())
             .fix(DoctorFix::RefreshCodexCatalog),
@@ -1284,9 +1295,9 @@ fn check_codex_integration(
         checks.push(
             DoctorCheck::new(
                 "codex_catalog",
-                "Codex 模型目录",
+                "Codex model catalog",
                 DoctorStatus::Error,
-                "托管模型目录为空，Codex 模型选择器将没有模型",
+                "managed model catalog is empty; the Codex model picker will have no models",
             )
             .detail(catalog_path.display().to_string())
             .fix(DoctorFix::RefreshCodexCatalog),
@@ -1295,10 +1306,10 @@ fn check_codex_integration(
         checks.push(
             DoctorCheck::new(
                 "codex_catalog",
-                "Codex 模型目录",
+                "Codex model catalog",
                 DoctorStatus::Ok,
                 format!(
-                    "模型目录包含 {} 个模型，其中 {} 个由 codex-mixin 托管",
+                    "catalog contains {} model(s), {} of which are managed by codex-mixin",
                     catalog_models.len(),
                     managed_slugs.len()
                 ),
@@ -1314,22 +1325,22 @@ fn check_codex_integration(
         if missing.is_empty() && extra.is_empty() {
             checks.push(DoctorCheck::new(
                 "codex_catalog_sync",
-                "模型目录同步",
+                "Model catalog sync",
                 DoctorStatus::Ok,
-                "模型目录与网关当前模型一致",
+                "model catalog matches the current gateway models",
             ));
         } else {
             let mut detail = Vec::new();
             if !missing.is_empty() {
                 detail.push(format!(
-                    "目录缺少 {} 个网关模型: {}",
+                    "catalog is missing {} gateway model(s): {}",
                     missing.len(),
                     preview_list(&missing)
                 ));
             }
             if !extra.is_empty() {
                 detail.push(format!(
-                    "目录包含 {} 个网关已不存在的模型: {}",
+                    "catalog contains {} model(s) no longer present on the gateway: {}",
                     extra.len(),
                     preview_list(&extra)
                 ));
@@ -1337,9 +1348,9 @@ fn check_codex_integration(
             checks.push(
                 DoctorCheck::new(
                     "codex_catalog_sync",
-                    "模型目录同步",
+                    "Model catalog sync",
                     DoctorStatus::Warning,
-                    "模型目录与网关当前模型不一致",
+                    "model catalog does not match the current gateway models",
                 )
                 .detail(detail.join("；"))
                 .fix(DoctorFix::RefreshCodexCatalog),
@@ -1376,20 +1387,20 @@ struct AppServerProbe {
     model_ids: Vec<String>,
 }
 
-/// 直接向 Codex 内核发起 `app-server` 会话并调用 `model/list`，验证 Desktop
-/// 模型选择器真正能看到的模型，而不是只校验 catalog 文件本身。
+/// Open an `app-server` session against the Codex engine and call `model/list`
+/// so doctor verifies what the Desktop picker actually sees, not only the catalog file.
 async fn check_codex_engine(managed: &ManagedIntegration, timeout: Duration) -> DoctorCheck {
     let cli = match resolve_codex_cli() {
         Ok(cli) => cli,
         Err(error) => {
             return DoctorCheck::new(
                 "codex_engine",
-                "Codex 内核实测",
+                "Codex engine probe",
                 DoctorStatus::Warning,
-                "未找到 Codex CLI，跳过内核 model/list 实测",
+                "Codex CLI was not found; skipped engine model/list probe",
             )
             .detail(format!("{error:#}"))
-            .hint("设置 CODEX_CLI_PATH 或安装 Codex/ChatGPT App");
+            .hint("set CODEX_CLI_PATH or install the Codex/ChatGPT app");
         }
     };
     let codex_home = managed.codex_home.clone();
@@ -1403,18 +1414,18 @@ async fn check_codex_engine(managed: &ManagedIntegration, timeout: Duration) -> 
         Ok(Err(error)) => {
             return DoctorCheck::new(
                 "codex_engine",
-                "Codex 内核实测",
+                "Codex engine probe",
                 DoctorStatus::Warning,
-                "无法启动 codex app-server 进行实测",
+                "could not start codex app-server for the engine probe",
             )
             .detail(format!("{}: {error:#}", cli.display()));
         }
         Err(error) => {
             return DoctorCheck::new(
                 "codex_engine",
-                "Codex 内核实测",
+                "Codex engine probe",
                 DoctorStatus::Warning,
-                "内核实测任务执行失败",
+                "engine probe task failed",
             )
             .detail(format!("{error:#}"));
         }
@@ -1426,9 +1437,9 @@ async fn check_codex_engine(managed: &ManagedIntegration, timeout: Duration) -> 
     if !probe.initialize_ok {
         return DoctorCheck::new(
             "codex_engine",
-            "Codex 内核实测",
+            "Codex engine probe",
             DoctorStatus::Warning,
-            "Codex 内核未响应 initialize，无法确认选择器可见模型",
+            "Codex engine did not answer initialize; cannot confirm picker-visible models",
         )
         .detail(format!("cli: {}", cli.display()));
     }
@@ -1438,22 +1449,22 @@ async fn check_codex_engine(managed: &ManagedIntegration, timeout: Duration) -> 
         if expected != reported_canonical {
             return DoctorCheck::new(
                 "codex_engine",
-                "Codex 内核实测",
+                "Codex engine probe",
                 DoctorStatus::Error,
-                "Codex 内核实际使用的 CODEX_HOME 与安装目录不一致",
+                "Codex engine CODEX_HOME does not match the install target",
             )
             .detail(format!(
-                "内核: {reported_canonical}；安装目标: {expected}；engine: {engine}"
+                "engine: {reported_canonical}; install target: {expected}; user-agent: {engine}"
             ))
-            .hint("检查 Desktop App 的 CODEX_HOME 环境变量");
+            .hint("check the Desktop app CODEX_HOME environment variable");
         }
     }
     if !probe.model_list_ok {
         return DoctorCheck::new(
             "codex_engine",
-            "Codex 内核实测",
+            "Codex engine probe",
             DoctorStatus::Warning,
-            "Codex 内核不支持 model/list 或未在超时内响应，无法确认选择器可见模型",
+            "Codex engine does not support model/list or timed out; cannot confirm picker-visible models",
         )
         .detail(format!("engine: {engine}"));
     }
@@ -1467,15 +1478,15 @@ async fn check_codex_engine(managed: &ManagedIntegration, timeout: Duration) -> 
     if visible.is_empty() && expected > 0 {
         return DoctorCheck::new(
             "codex_engine",
-            "Codex 内核实测",
+            "Codex engine probe",
             DoctorStatus::Error,
             format!(
-                "内核 model/list 可见 {} 个模型，但没有任何托管模型：Desktop 模型选择器将是空的",
+                "engine model/list returned {} model(s), but none are managed; the Desktop picker will be empty",
                 probe.model_ids.len()
             ),
         )
         .detail(format!("engine: {engine}"))
-        .hint("确认 Desktop 与 CLI 使用同一 CODEX_HOME，然后彻底退出并重新打开 App");
+        .hint("confirm Desktop and CLI share the same CODEX_HOME, then fully quit and reopen the app");
     }
     if visible.len() < expected {
         let missing: Vec<&String> = managed
@@ -1490,21 +1501,24 @@ async fn check_codex_engine(managed: &ManagedIntegration, timeout: Duration) -> 
             .collect();
         return DoctorCheck::new(
             "codex_engine",
-            "Codex 内核实测",
+            "Codex engine probe",
             DoctorStatus::Warning,
-            format!("内核仅可见 {}/{expected} 个托管模型", visible.len()),
+            format!(
+                "engine can see only {}/{expected} managed model(s)",
+                visible.len()
+            ),
         )
         .detail(format!(
-            "缺少: {}；engine: {engine}",
+            "missing: {}; engine: {engine}",
             preview_list(&missing)
         ));
     }
     DoctorCheck::new(
         "codex_engine",
-        "Codex 内核实测",
+        "Codex engine probe",
         DoctorStatus::Ok,
         format!(
-            "内核实测可见 {}/{expected} 个托管模型（app-server model/list 共 {} 个模型）",
+            "engine probe can see {}/{expected} managed model(s) (app-server model/list returned {} model(s))",
             visible.len(),
             probe.model_ids.len()
         ),
@@ -1646,9 +1660,9 @@ fn check_desktop_apps(managed_config_path: &Path) -> Vec<DoctorCheck> {
                         id,
                         name,
                         DoctorStatus::Warning,
-                        format!("{app} 在配置更新之前启动，仍在使用旧配置，需要重启"),
+                        format!("{app} started before the config update and is still using the old config; restart required"),
                     )
-                    .detail(format!("PID {pid}；重启后才会加载最新的模型目录"))
+                    .detail(format!("pid {pid}; restart to load the latest model catalog"))
                     .hint(format!(
                         "osascript -e 'quit app \"{app}\"' && sleep 2 && open -a {app}"
                     ))
@@ -1660,7 +1674,7 @@ fn check_desktop_apps(managed_config_path: &Path) -> Vec<DoctorCheck> {
                     id,
                     name,
                     DoctorStatus::Ok,
-                    format!("{app} 在配置更新之后启动，使用的是最新配置"),
+                    format!("{app} started after the config update and is using the latest config"),
                 ));
             }
             (None, _) => {
@@ -1669,7 +1683,7 @@ fn check_desktop_apps(managed_config_path: &Path) -> Vec<DoctorCheck> {
                         id,
                         name,
                         DoctorStatus::Warning,
-                        format!("{app} 正在运行，但无法确定启动时间"),
+                        format!("{app} is running, but its start time could not be determined"),
                     )
                     .detail(format!("PID {pid}")),
                 );
@@ -1681,7 +1695,7 @@ fn check_desktop_apps(managed_config_path: &Path) -> Vec<DoctorCheck> {
             "desktop_app",
             "Desktop App",
             DoctorStatus::Ok,
-            "未检测到运行中的 ChatGPT/Codex App，下次启动会加载最新配置",
+            "no running ChatGPT/Codex app detected; the next launch will load the latest config",
         ));
     }
     checks
@@ -1753,47 +1767,47 @@ fn check_gateway_log() -> DoctorCheck {
             if error_count > 0 {
                 let mut check = DoctorCheck::new(
                     "gateway_log",
-                    "运行日志",
+                    "Runtime log",
                     DoctorStatus::Warning,
                     format!(
-                        "日志可用，{} bytes；本次网关运行期间记录了 {error_count} 条错误",
+                        "log available, {} bytes; this gateway run recorded {error_count} error line(s)",
                         metadata.len()
                     ),
                 )
-                .hint("codex-mixin logs -n 200 查看完整上下文");
+                .hint("run codex-mixin logs -n 200 for full context");
                 if let Some(last_error) = last_error {
-                    check = check.detail(format!("最近错误: {last_error}"));
+                    check = check.detail(format!("latest error: {last_error}"));
                 }
                 check
             } else {
                 DoctorCheck::new(
                     "gateway_log",
-                    "运行日志",
+                    "Runtime log",
                     DoctorStatus::Ok,
-                    format!("日志可用，{} bytes", metadata.len()),
+                    format!("log available, {} bytes", metadata.len()),
                 )
                 .detail(path.display().to_string())
             }
         }
         Ok(_) => DoctorCheck::new(
             "gateway_log",
-            "运行日志",
+            "Runtime log",
             DoctorStatus::Warning,
-            "日志文件为空",
+            "log file is empty",
         )
         .detail(path.display().to_string()),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => DoctorCheck::new(
             "gateway_log",
-            "运行日志",
+            "Runtime log",
             DoctorStatus::Warning,
-            "日志文件尚未创建",
+            "log file has not been created yet",
         )
         .detail(path.display().to_string()),
         Err(error) => DoctorCheck::new(
             "gateway_log",
-            "运行日志",
+            "Runtime log",
             DoctorStatus::Error,
-            "日志文件无法读取",
+            "log file could not be read",
         )
         .detail(format!("{}: {error}", path.display())),
     }
@@ -1848,7 +1862,7 @@ fn truncated(raw: &str, max_chars: usize) -> String {
 }
 
 fn print_doctor_report(report: &DoctorReport, fix_mode: bool) {
-    println!("{}", style("Codex Mixin 健康检测").bold());
+    println!("{}", style("Codex Mixin health check").bold());
     println!("{} {}", style("config:").dim(), report.config_path);
     for check in &report.checks {
         println!(
@@ -1861,12 +1875,12 @@ fn print_doctor_report(report: &DoctorReport, fix_mode: bool) {
             println!("  {}", style(detail).dim());
         }
         if let Some(hint) = &check.fix_hint {
-            println!("  {} {hint}", style("建议:").cyan());
+            println!("  {} {hint}", style("hint:").cyan());
         }
         if !check.auto_fixes.is_empty() {
             println!(
                 "  {} {}",
-                style("可自动修复:").cyan(),
+                style("auto-fix:").cyan(),
                 check
                     .auto_fixes
                     .iter()
@@ -1919,13 +1933,13 @@ fn print_doctor_report(report: &DoctorReport, fix_mode: bool) {
         let plain_count = available.len() - restart_count;
         if plain_count > 0 {
             println!(
-                "{} 运行 `codex-mixin doctor --fix` 可自动修复 {plain_count} 项",
+                "{} run `codex-mixin doctor --fix` to repair {plain_count} item(s)",
                 style("→").cyan()
             );
         }
         if restart_count > 0 {
             println!(
-                "{} App 重启需要显式确认，运行 `codex-mixin doctor --fix --restart-apps`（会中断正在进行的会话）",
+                "{} app restarts need explicit confirmation; run `codex-mixin doctor --fix --restart-apps` (this interrupts live sessions)",
                 style("→").cyan()
             );
         }
@@ -1977,7 +1991,7 @@ mod tests {
 
         assert!(started.elapsed() < Duration::from_millis(100));
         assert_eq!(check.status, DoctorStatus::Ok);
-        assert!(check.message.contains("未访问上游"));
+        assert!(check.message.contains("without contacting upstream"));
     }
 
     #[test]

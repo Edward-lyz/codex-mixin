@@ -52,9 +52,11 @@ pub(super) async fn ensure_managed_ducc() -> anyhow::Result<PathBuf> {
         )
     }
     println!("\nDUCC login is required.");
-    println!("托管 HOME: {}", isolated_home.display());
-    println!("登录程序: {}", executable.display());
-    println!("请在当前终端完成二维码登录；如果 10 秒内没有二维码，请检查终端是否支持交互输入。");
+    println!("Managed HOME: {}", isolated_home.display());
+    println!("Login executable: {}", executable.display());
+    println!(
+        "Complete QR-code login in this terminal; if no QR code appears within 10s, check that the terminal supports interactive input."
+    );
     let mut child = Command::new(&login_executable)
         .arg("login")
         .env("HOME", &isolated_home)
@@ -73,7 +75,9 @@ pub(super) async fn ensure_managed_ducc() -> anyhow::Result<PathBuf> {
         }
         thread::sleep(Duration::from_secs(5));
         waited += 5;
-        println!("仍在等待 DUCC 登录（已等待 {waited}s）；扫码完成后会自动继续，Ctrl-C 可取消。 ");
+        println!(
+            "Still waiting for DUCC login ({waited}s elapsed); continue after scanning, or press Ctrl-C to cancel."
+        );
     };
     ensure!(status.success(), "DUCC login failed with {status}");
     ensure!(

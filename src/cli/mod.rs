@@ -12,6 +12,7 @@ use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use codex_mixin::catalog::{codex_catalog_from_models_with_metadata, load_template_catalog};
 use codex_mixin::config::{GatewayConfig, load_stored_config};
+use codex_mixin::provider::ProviderPreset;
 use codex_mixin::server::AppState;
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
@@ -43,17 +44,35 @@ use fusion_config::{get_fusion_profile, set_fusion_profile};
 use maintenance::migrate_history;
 use metadata::{load_model_metadata_resolver, refresh_metadata};
 use providers::{
-    AddProviderOptions, UpdateProviderOptions, add_provider, discover_models, list_providers,
-    remove_provider, select_models, set_provider_enabled, test_provider, update_provider,
+    AddProviderOptions, UpdateProviderOptions, add_provider, discover_models,
+    discover_models_with_output, list_providers, remove_provider, select_models,
+    set_provider_enabled, test_provider, update_provider,
 };
 use service::{init_tracing, logs, restart, start, stop};
 use status::{models, probe_web_search, quota, show_config, status};
 
-async fn stage<T>(
+fn progress_is_interactive() -> bool {
+    io::stdout().is_terminal()
+}
+
+pub(super) fn progress_step(message: &str) {
+    // macOS App streaming collector only watches stderr lines with this prefix.
+    eprintln!("MIXIN_PROGRESS {message}");
+}
+
+pub(super) fn next_step_line(message: &str) {
+    if progress_is_interactive() {
+        println!("{} {message}", style("→").cyan().bold());
+    } else {
+        println!("next: {message}");
+    }
+}
+
+pub(super) async fn stage<T>(
     label: &str,
     future: impl std::future::Future<Output = anyhow::Result<T>>,
 ) -> anyhow::Result<T> {
-    let interactive = io::stdout().is_terminal();
+    let interactive = progress_is_interactive();
     let started = Instant::now();
     let spinner = if interactive {
         let bar = ProgressBar::new_spinner();
@@ -82,10 +101,15 @@ async fn stage<T>(
                 started.elapsed().as_secs_f32()
             );
         }
+        Ok(_) => {
+            println!("ok: {label} ({:.1}s)", started.elapsed().as_secs_f32());
+        }
         Err(_) if interactive => {
             println!("{} {}", style("✗").red().bold(), label);
         }
-        _ => {}
+        Err(_) => {
+            println!("failed: {label}");
+        }
     }
     result
 }
@@ -254,7 +278,7 @@ async fn update_cli() -> anyhow::Result<()> {
     );
     replace_executable(&std::env::current_exe()?, &downloaded)?;
     println!("Updated codex-mixin to {latest}; restarting gateway...");
-    restart(None, None).await
+    restart(None, None, false).await
 }
 
 #[derive(Debug, Parser)]
@@ -272,8 +296,12 @@ struct Cli {
 enum Command {
     /// Add a provider, start the gateway, and print the next step.
     Setup {
-        #[arg(long, help = "Provider preset, for example openrouter or baidu-oneapi")]
-        preset: String,
+        #[arg(
+            long,
+            value_enum,
+            help = "Provider preset; omit in a TTY to choose interactively"
+        )]
+        preset: Option<CliProviderPreset>,
         #[arg(long, help = "API key; omit for an interactive prompt")]
         key: Option<String>,
         #[arg(
@@ -330,18 +358,18 @@ enum Command {
         json: bool,
         #[arg(
             long,
-            help = "自动修复可以安全修复的问题（权限、失效状态、网关启动、base_url、模型目录）"
+            help = "Automatically repair safe issues (permissions, stale state, gateway start, base_url, model catalog)"
         )]
         fix: bool,
         #[arg(
             long = "restart-apps",
             requires = "fix",
-            help = "允许 --fix 重启 ChatGPT/Codex App（会中断正在进行的会话）"
+            help = "Allow --fix to restart the ChatGPT/Codex apps (interrupts live sessions)"
         )]
         restart_apps: bool,
         #[arg(
             long,
-            help = "使用 GUI 友好的缓存检查并跳过 Codex 内核实测；普通 doctor 保持深度检查"
+            help = "Use cache-only checks and skip the Codex engine probe; plain doctor stays deep"
         )]
         quick: bool,
     },
@@ -590,8 +618,8 @@ enum ProviderCommand {
     },
     /// Add a provider from a preset.
     Add {
-        #[arg(long)]
-        preset: String,
+        #[arg(long, value_enum)]
+        preset: CliProviderPreset,
         #[arg(long)]
         id: Option<String>,
         #[arg(long)]
@@ -719,6 +747,48 @@ enum SetupCodexMode {
     Skip,
 }
 
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+enum CliProviderPreset {
+    #[value(name = "custom")]
+    Custom,
+    #[value(name = "baidu-oneapi")]
+    BaiduOneApi,
+    #[value(name = "openrouter")]
+    OpenRouter,
+    #[value(name = "deepseek")]
+    DeepSeek,
+    #[value(name = "opencode-go", alias = "opencode_go")]
+    OpenCodeGo,
+}
+
+impl CliProviderPreset {
+    fn as_provider_preset(self) -> ProviderPreset {
+        match self {
+            Self::Custom => ProviderPreset::Custom,
+            Self::BaiduOneApi => ProviderPreset::BaiduOneApi,
+            Self::OpenRouter => ProviderPreset::OpenRouter,
+            Self::DeepSeek => ProviderPreset::DeepSeek,
+            Self::OpenCodeGo => ProviderPreset::OpenCodeGo,
+        }
+    }
+
+    fn as_str(self) -> &'static str {
+        self.as_provider_preset().as_str()
+    }
+}
+
+impl From<ProviderPreset> for CliProviderPreset {
+    fn from(value: ProviderPreset) -> Self {
+        match value {
+            ProviderPreset::Custom => Self::Custom,
+            ProviderPreset::BaiduOneApi => Self::BaiduOneApi,
+            ProviderPreset::OpenRouter => Self::OpenRouter,
+            ProviderPreset::DeepSeek => Self::DeepSeek,
+            ProviderPreset::OpenCodeGo => Self::OpenCodeGo,
+        }
+    }
+}
+
 pub(crate) async fn entrypoint() {
     let cli = Cli::parse();
     let foreground_log_file = match &cli.command {
@@ -737,7 +807,21 @@ pub(crate) async fn entrypoint() {
         }) => Some(path.clone()),
         _ => None,
     };
-    if let Err(error) = init_tracing(foreground_log_file.as_deref()) {
+    let quiet_parent_logs = foreground_log_file.is_none()
+        && !matches!(
+            &cli.command,
+            Some(
+                Command::Start { daemon: false, .. }
+                    | Command::Serve { .. }
+                    | Command::Service {
+                        command: ServiceCommand::Start {
+                            foreground: true,
+                            ..
+                        }
+                    }
+            )
+        );
+    if let Err(error) = init_tracing(foreground_log_file.as_deref(), quiet_parent_logs) {
         eprintln!("Error: failed to initialize logging: {error:#}");
         std::process::exit(1);
     }
@@ -803,13 +887,54 @@ fn choose_setup_codex_mode(mode: Option<SetupCodexMode>) -> anyhow::Result<Setup
     }
 }
 
+fn choose_setup_preset(preset: Option<CliProviderPreset>) -> anyhow::Result<CliProviderPreset> {
+    if let Some(preset) = preset {
+        return Ok(preset);
+    }
+    if !io::stdin().is_terminal() {
+        anyhow::bail!(
+            "provider preset is required in non-interactive mode; pass --preset <preset>\navailable presets: {}\nexample: codex-mixin setup --preset baidu-oneapi",
+            ProviderPreset::available_presets_csv()
+        );
+    }
+    println!("Choose a provider preset:");
+    for (index, preset) in ProviderPreset::ALL.iter().enumerate() {
+        println!(
+            "  {}. {} - {}",
+            index + 1,
+            preset.as_str(),
+            preset.description()
+        );
+    }
+    print!("Choose [1-{}]: ", ProviderPreset::ALL.len());
+    io::stdout().flush()?;
+    let mut choice = String::new();
+    io::stdin().read_line(&mut choice)?;
+    let index = choice
+        .trim()
+        .parse::<usize>()
+        .map_err(|_| anyhow::anyhow!("invalid preset choice; enter a number"))?;
+    ProviderPreset::ALL
+        .get(index.saturating_sub(1))
+        .copied()
+        .filter(|_| index >= 1)
+        .map(CliProviderPreset::from)
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "invalid preset choice; choose a number between 1 and {}",
+                ProviderPreset::ALL.len()
+            )
+        })
+}
+
 async fn setup(
-    preset: &str,
+    preset: Option<CliProviderPreset>,
     key: Option<String>,
     quota_username: Option<String>,
     codex_mode: Option<SetupCodexMode>,
     no_start: bool,
 ) -> anyhow::Result<()> {
+    let preset = choose_setup_preset(preset)?.as_str();
     if no_start
         && matches!(
             codex_mode,
@@ -909,7 +1034,7 @@ async fn setup(
     }
     stage(
         &format!("Refreshing provider models for {preset}"),
-        discover_models(preset),
+        discover_models_with_output(preset, true),
     )
     .await?;
     println!("Provider models refreshed.");
@@ -922,7 +1047,7 @@ async fn setup(
 
     stage(
         "Restarting gateway with the new provider configuration",
-        restart(None, None),
+        restart(None, None, true),
     )
     .await?;
     println!("Gateway is ready.");
@@ -967,10 +1092,20 @@ async fn setup(
         }
         SetupCodexMode::Skip => {
             println!("Gateway started.");
-            println!("Connect Codex later: {executable} connect codex --codex-oauth-proxy");
+            next_step_line(&format!(
+                "Connect Codex later: {executable} connect codex --codex-oauth-proxy"
+            ));
         }
     }
-    println!("Setup complete. Check status: {executable} info");
+    println!();
+    if progress_is_interactive() {
+        println!("{}", style("Setup complete").green().bold());
+    } else {
+        println!("Setup complete.");
+    }
+    next_step_line("Restart the Codex app, or start a new Codex CLI session");
+    next_step_line(&format!("Check status: {executable} info"));
+    next_step_line(&format!("Diagnose issues: {executable} doctor"));
     Ok(())
 }
 
@@ -982,7 +1117,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             quota_username,
             codex_mode,
             no_start,
-        } => setup(&preset, key, quota_username, codex_mode, no_start).await,
+        } => setup(preset, key, quota_username, codex_mode, no_start).await,
         Command::Update => update_cli().await,
         Command::Providers { command } => match *command {
             ProviderCommand::List { json } => list_providers(json),
@@ -1008,7 +1143,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 baidu_auth_bridge,
                 ducc_executable,
             } => add_provider(AddProviderOptions {
-                preset,
+                preset: preset.as_str().to_owned(),
                 id,
                 key,
                 display_name,
@@ -1094,7 +1229,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 log_file,
             } => start(bind, !foreground, log_file).await,
             ServiceCommand::Stop { force } => stop(force),
-            ServiceCommand::Restart { bind, log_file } => restart(bind, log_file).await,
+            ServiceCommand::Restart { bind, log_file } => restart(bind, log_file, false).await,
             ServiceCommand::Logs { lines, follow } => logs(lines, follow),
             ServiceCommand::Status { json } => status(json).await,
         },
@@ -1147,7 +1282,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             log_file,
         } => start(bind, daemon, log_file).await,
         Command::Stop { force } => stop(force),
-        Command::Restart { bind, log_file } => restart(bind, log_file).await,
+        Command::Restart { bind, log_file } => restart(bind, log_file, false).await,
         Command::Logs { lines, follow } => logs(lines, follow),
         Command::Serve { bind } => start(bind, false, None).await,
         Command::Catalog { template_catalog } => {

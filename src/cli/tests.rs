@@ -151,6 +151,7 @@ fn install_command_accepts_explicit_custom_only_mode() {
 
 #[test]
 fn user_facing_command_groups_parse() {
+    assert!(Cli::try_parse_from(["codex-mixin", "setup"]).is_ok());
     assert!(
         Cli::try_parse_from([
             "codex-mixin",
@@ -181,6 +182,40 @@ fn user_facing_command_groups_parse() {
         .is_ok()
     );
     assert!(Cli::try_parse_from(["codex-mixin", "info", "--json"]).is_ok());
+}
+
+#[test]
+fn setup_help_lists_provider_presets() {
+    let mut help = Vec::new();
+    Cli::command()
+        .find_subcommand_mut("setup")
+        .expect("setup command")
+        .write_long_help(&mut help)
+        .unwrap();
+    let help = String::from_utf8(help).unwrap();
+    for preset in [
+        "custom",
+        "baidu-oneapi",
+        "openrouter",
+        "deepseek",
+        "opencode-go",
+    ] {
+        assert!(
+            help.contains(preset),
+            "missing preset {preset} in setup help:\n{help}"
+        );
+    }
+}
+
+#[test]
+fn setup_rejects_unknown_preset_values() {
+    let error = Cli::try_parse_from(["codex-mixin", "setup", "--preset", "not-a-preset"])
+        .expect_err("unknown preset must fail parse");
+    let message = error.to_string();
+    assert!(
+        message.contains("baidu-oneapi") || message.contains("possible values"),
+        "unexpected error: {message}"
+    );
 }
 
 #[test]

@@ -586,6 +586,10 @@ fn generated_provider_ordinal(id: &str, base_id: &str) -> Option<usize> {
 }
 
 pub(super) async fn discover_models(id: &str) -> anyhow::Result<()> {
+    discover_models_with_output(id, false).await
+}
+
+pub(super) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow::Result<()> {
     let config = required_config()?;
     let provider = config
         .providers
@@ -647,12 +651,14 @@ pub(super) async fn discover_models(id: &str) -> anyhow::Result<()> {
         }
         apply_discovered_models(current, models)
     })?;
-    println!("provider models refreshed: {id} ({count} available)");
-    if let Some(discovered_quota) = discovered_quota {
-        println!(
-            "provider quota endpoint detected: {id} ({})",
-            discovered_quota.url
-        );
+    if !quiet {
+        println!("provider models refreshed: {id} ({count} available)");
+        if let Some(discovered_quota) = discovered_quota {
+            println!(
+                "provider quota endpoint detected: {id} ({})",
+                discovered_quota.url
+            );
+        }
     }
     Ok(())
 }

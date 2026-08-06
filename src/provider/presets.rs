@@ -30,7 +30,10 @@ impl ProviderPreset {
             "openrouter" => Ok(Self::OpenRouter),
             "deepseek" => Ok(Self::DeepSeek),
             "opencode-go" | "opencode_go" => Ok(Self::OpenCodeGo),
-            _ => anyhow::bail!("unsupported provider preset: {value}"),
+            _ => anyhow::bail!(
+                "unsupported provider preset: {value}; available presets: {}",
+                Self::available_presets_csv()
+            ),
         }
     }
 
@@ -42,6 +45,24 @@ impl ProviderPreset {
             Self::DeepSeek => "deepseek",
             Self::OpenCodeGo => OPEN_CODE_GO_PRESET_ID,
         }
+    }
+
+    pub fn description(self) -> &'static str {
+        match self {
+            Self::Custom => "Any OpenAI Chat Completions or Anthropic Messages compatible endpoint",
+            Self::BaiduOneApi => "Baidu internal OneAPI with managed DUCC authentication",
+            Self::OpenRouter => "OpenRouter multi-model router",
+            Self::DeepSeek => "DeepSeek official API",
+            Self::OpenCodeGo => "OpenCode Go subscription models",
+        }
+    }
+
+    pub fn available_presets_csv() -> String {
+        Self::ALL
+            .iter()
+            .map(|preset| preset.as_str())
+            .collect::<Vec<_>>()
+            .join(", ")
     }
 
     pub fn default_id(self) -> &'static str {

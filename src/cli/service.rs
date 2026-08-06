@@ -29,7 +29,7 @@ pub(super) const CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(
 pub(super) const OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 pub(super) const GATEWAY_LOG_MAX_BYTES: u64 = 5 * 1024 * 1024;
 
-/// Log filter for the gateway. `RUST_LOG` raises it, which is how the
+/// Log filter for the gateway process. `RUST_LOG` raises it, which is how the
 /// per-request prompt-cache diagnostics (`prefix_state`, `reused_turns`) become
 /// visible: `RUST_LOG=codex_mixin=debug`.
 fn gateway_log_filter() -> tracing_subscriber::EnvFilter {
@@ -37,7 +37,14 @@ fn gateway_log_filter() -> tracing_subscriber::EnvFilter {
         .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
 }
 
-pub(super) fn init_tracing(log_file: Option<&Path>) -> anyhow::Result<()> {
+/// Parent CLI commands keep stderr clean so spinners and stage lines stay readable.
+/// Explicit `RUST_LOG` still wins for debugging.
+fn parent_cli_log_filter() -> tracing_subscriber::EnvFilter {
+    tracing_subscriber::EnvFilter::try_from_default_env()
+        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"))
+}
+
+pub(super) fn init_tracing(log_file: Option<&Path>, quiet_parent_logs: bool) -> anyhow::Result<()> {
     if let Some(log_file) = log_file {
         rotate_gateway_log_if_needed(log_file, GATEWAY_LOG_MAX_BYTES)?;
         if let Some(parent) = log_file.parent() {
@@ -60,12 +67,17 @@ pub(super) fn init_tracing(log_file: Option<&Path>) -> anyhow::Result<()> {
             .try_init()
             .map_err(|error| anyhow::anyhow!("failed to install tracing subscriber: {error}"))?;
     } else {
+        let filter = if quiet_parent_logs {
+            parent_cli_log_filter()
+        } else {
+            gateway_log_filter()
+        };
         tracing_subscriber::fmt()
             .with_writer(io::stderr)
             // A redirected log is unreadable and unparseable with ANSI escapes
             // in it, so colour only an interactive terminal.
             .with_ansi(io::stderr().is_terminal())
-            .with_env_filter(gateway_log_filter())
+            .with_env_filter(filter)
             .with_target(true)
             .with_file(true)
             .with_line_number(true)
@@ -134,7 +146,7 @@ pub(super) async fn start(
     }
     log_gateway_configuration(&config);
     if daemon {
-        return start_daemon(bind, log_file, &config);
+        return start_daemon(bind, log_file, &config, false);
     }
     if let Some(runtime) = load_runtime_metadata()? {
         if pid_is_running(runtime.pid)? {
@@ -389,6 +401,7 @@ pub(super) fn start_daemon(
     mut bind: Option<SocketAddr>,
     log_file: Option<PathBuf>,
     config: &GatewayConfig,
+    quiet: bool,
 ) -> anyhow::Result<()> {
     let daemon = load_daemon_metadata()?;
     let runtime = load_runtime_metadata()?;
@@ -420,13 +433,15 @@ pub(super) fn start_daemon(
         if let Some(existing_bind) =
             replacement_bind_for_outdated_runtime(runtime, env!("CARGO_PKG_VERSION"))
         {
-            println!(
-                "replacing gateway version {} with {} on {}",
-                runtime.version.as_deref().unwrap_or("unknown"),
-                env!("CARGO_PKG_VERSION"),
-                existing_bind
-            );
-            stop(false)?;
+            if !quiet {
+                println!(
+                    "replacing gateway version {} with {} on {}",
+                    runtime.version.as_deref().unwrap_or("unknown"),
+                    env!("CARGO_PKG_VERSION"),
+                    existing_bind
+                );
+            }
+            stop_with_output(false, quiet)?;
             if bind.is_none() {
                 bind = Some(existing_bind);
             }
@@ -439,19 +454,23 @@ pub(super) fn start_daemon(
                 &requested_log_file,
                 initial_config_fingerprint,
             ) {
-                println!(
-                    "restarting gateway to apply current configuration on {}",
-                    runtime.bind
-                );
+                if !quiet {
+                    println!(
+                        "restarting gateway to apply current configuration on {}",
+                        runtime.bind
+                    );
+                }
                 if bind.is_none() {
                     bind = Some(requested_bind);
                 }
-                stop(false)?;
+                stop_with_output(false, quiet)?;
             } else {
-                println!(
-                    "gateway daemon already running: pid {}, bind {}",
-                    runtime.pid, runtime.bind
-                );
+                if !quiet {
+                    println!(
+                        "gateway daemon already running: pid {}, bind {}",
+                        runtime.pid, runtime.bind
+                    );
+                }
                 return Ok(());
             }
         } else {
@@ -462,30 +481,36 @@ pub(super) fn start_daemon(
                     || log_file.is_some()
                     || runtime.config_fingerprint != initial_config_fingerprint;
             if needs_replacement {
-                println!(
-                    "restarting gateway to apply current configuration on {}",
-                    runtime.bind
-                );
+                if !quiet {
+                    println!(
+                        "restarting gateway to apply current configuration on {}",
+                        runtime.bind
+                    );
+                }
                 if bind.is_none() {
                     bind = Some(requested_bind);
                 }
-                stop(false)?;
+                stop_with_output(false, quiet)?;
             } else {
-                println!(
-                    "gateway already running: pid {}, bind {}",
-                    runtime.pid, runtime.bind
-                );
+                if !quiet {
+                    println!(
+                        "gateway already running: pid {}, bind {}",
+                        runtime.pid, runtime.bind
+                    );
+                }
                 return Ok(());
             }
         }
     } else if daemon_running {
         let daemon = daemon.as_ref().expect("live daemon metadata");
-        println!(
-            "replacing gateway with missing runtime metadata on {}",
-            daemon.bind
-        );
+        if !quiet {
+            println!(
+                "replacing gateway with missing runtime metadata on {}",
+                daemon.bind
+            );
+        }
         let existing_bind = daemon.bind;
-        stop(false)?;
+        stop_with_output(false, quiet)?;
         if bind.is_none() {
             bind = Some(existing_bind);
         }
@@ -543,10 +568,12 @@ pub(super) fn start_daemon(
         started_at: SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs(),
         config_fingerprint,
     })?;
-    println!("gateway daemon started in background; terminal can be closed safely");
-    println!("pid: {pid}");
-    println!("bind: {bind}");
-    println!("log: {}", log_file.display());
+    if !quiet {
+        println!("gateway daemon started in background; terminal can be closed safely");
+        println!("pid: {pid}");
+        println!("bind: {bind}");
+        println!("log: {}", log_file.display());
+    }
     Ok(())
 }
 
@@ -564,6 +591,10 @@ pub(super) fn running_daemon_needs_replacement(
 }
 
 pub(super) fn stop(force: bool) -> anyhow::Result<()> {
+    stop_with_output(force, false)
+}
+
+pub(super) fn stop_with_output(force: bool, quiet: bool) -> anyhow::Result<()> {
     let daemon = load_daemon_metadata()?;
     let runtime = load_runtime_metadata()?;
     let daemon_running = daemon
@@ -601,10 +632,12 @@ pub(super) fn stop(force: bool) -> anyhow::Result<()> {
             .or_else(|| runtime.as_ref().map(|metadata| metadata.pid));
         delete_daemon_metadata()?;
         delete_runtime_metadata()?;
-        if let Some(pid) = stale_pid {
-            println!("removed stale gateway metadata for pid {pid}");
-        } else {
-            println!("gateway is not recorded");
+        if !quiet {
+            if let Some(pid) = stale_pid {
+                println!("removed stale gateway metadata for pid {pid}");
+            } else {
+                println!("gateway is not recorded");
+            }
         }
         return Ok(());
     };
@@ -613,7 +646,9 @@ pub(super) fn stop(force: bool) -> anyhow::Result<()> {
         if !pid_is_running(pid)? {
             delete_daemon_metadata()?;
             delete_runtime_metadata()?;
-            println!("gateway {process_kind} stopped: pid {pid}");
+            if !quiet {
+                println!("gateway {process_kind} stopped: pid {pid}");
+            }
             return Ok(());
         }
         thread::sleep(Duration::from_millis(100));
@@ -622,7 +657,9 @@ pub(super) fn stop(force: bool) -> anyhow::Result<()> {
         send_signal(pid, "KILL")?;
         delete_daemon_metadata()?;
         delete_runtime_metadata()?;
-        println!("gateway {process_kind} killed: pid {pid}");
+        if !quiet {
+            println!("gateway {process_kind} killed: pid {pid}");
+        }
         return Ok(());
     }
     anyhow::bail!(
@@ -633,8 +670,16 @@ pub(super) fn stop(force: bool) -> anyhow::Result<()> {
 pub(super) async fn restart(
     bind: Option<SocketAddr>,
     log_file: Option<PathBuf>,
+    quiet: bool,
 ) -> anyhow::Result<()> {
-    stop(false)?;
+    stop_with_output(false, quiet)?;
+    if quiet {
+        let mut config = GatewayConfig::from_stored_config()?;
+        if let Some(bind) = bind {
+            config.bind = bind;
+        }
+        return start_daemon(bind, log_file, &config, true);
+    }
     start(bind, true, log_file).await
 }
 
