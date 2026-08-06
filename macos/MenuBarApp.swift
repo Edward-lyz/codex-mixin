@@ -24,6 +24,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
     }
     var automaticDoctorBusy = false
+    lazy var statusRefreshCoordinator = StatusRefreshCoordinator { [weak self] isCurrent in
+        await self?.performStatusRefresh(isCurrent: isCurrent)
+    }
     var serviceStatus = "本地网关检查中..." {
         didSet { updateServiceStatusView() }
     }

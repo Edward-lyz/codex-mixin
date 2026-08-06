@@ -63,3 +63,9 @@ jobs:
       - name: Test macOS DUCC managed installation
         if: runner.os == 'macOS'
         run: ./scripts/test_ducc_managed_install.sh
+      - name: Test macOS process output collection
+        if: runner.os == 'macOS'
+        run: ./scripts/test_process_output_collector.sh
+      - name: Test macOS status refresh coordination
+        if: runner.os == 'macOS'
+        run: ./scripts/test_status_refresh_coordinator.sh

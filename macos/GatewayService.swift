@@ -307,9 +307,18 @@ extension AppDelegate {
     }
 
     func refreshStatusNow() async {
+        await statusRefreshCoordinator.refresh()
+    }
+
+    func performStatusRefresh(
+        isCurrent: @escaping StatusRefreshCoordinator.IsCurrent
+    ) async {
         do {
-            applyGatewayStatus(try await runGateway(["status"]))
+            let status = try await runGateway(["status"])
+            guard await isCurrent() else { return }
+            applyGatewayStatus(status)
         } catch {
+            guard await isCurrent() else { return }
             let message = String(describing: error)
             let missingConfiguration = isMissingGatewayConfiguration(error)
             isRunning = false
@@ -330,8 +339,10 @@ extension AppDelegate {
         }
         do {
             let quota = try await runGateway(["quota", "--json"])
+            guard await isCurrent() else { return }
             updateProviderQuotaStatus(try parseProviderQuotaUsage(quota))
         } catch {
+            guard await isCurrent() else { return }
             updateQuotaStatus(
                 title: "Provider 额度：不可用",
                 detail: localizedErrorDescription(error),
@@ -616,27 +627,20 @@ extension AppDelegate {
                 process.arguments = arguments
                 process.standardOutput = outputPipe
                 process.standardError = errorPipe
-                var output = Data()
-                let lock = NSLock()
-                func consume(_ data: Data) {
-                    guard !data.isEmpty else { return }
-                    lock.lock(); output.append(data); lock.unlock()
-                    for line in (String(data: data, encoding: .utf8) ?? "").split(whereSeparator: \.isNewline) {
-                        let text = String(line)
-                        if text.hasPrefix("MIXIN_PROGRESS ") { onProgress(String(text.dropFirst(15))) }
-                    }
-                }
-                outputPipe.fileHandleForReading.readabilityHandler = { consume($0.availableData) }
-                errorPipe.fileHandleForReading.readabilityHandler = { consume($0.availableData) }
+                let collector = StreamingProcessOutputCollector(
+                    progressPrefix: "MIXIN_PROGRESS ",
+                    onProgress: onProgress
+                )
                 do {
-                    try process.run(); process.waitUntilExit()
-                    outputPipe.fileHandleForReading.readabilityHandler = nil
-                    errorPipe.fileHandleForReading.readabilityHandler = nil
-                    consume(outputPipe.fileHandleForReading.readDataToEndOfFile())
-                    consume(errorPipe.fileHandleForReading.readDataToEndOfFile())
-                    let text = String(data: output, encoding: .utf8) ?? ""
-                    if process.terminationStatus == 0 { continuation.resume(returning: text.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                    else { continuation.resume(throwing: GatewayError.command(text.isEmpty ? "exit \(process.terminationStatus)" : text)) }
+                    let result = try runProcessCollectingStreamingOutput(
+                        process,
+                        outputPipe: outputPipe,
+                        errorPipe: errorPipe,
+                        collector: collector
+                    )
+                    let text = String(decoding: result.data, as: UTF8.self)
+                    if result.terminationStatus == 0 { continuation.resume(returning: text.trimmingCharacters(in: .whitespacesAndNewlines)) }
+                    else { continuation.resume(throwing: GatewayError.command(text.isEmpty ? "exit \(result.terminationStatus)" : text)) }
                 } catch { continuation.resume(throwing: error) }
             }
         }

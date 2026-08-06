@@ -67,6 +67,8 @@ xcrun swiftc \
   -target "$SWIFT_ARCH-apple-macosx$MACOS_DEPLOYMENT_TARGET" \
   "$ROOT_DIR/macos/ApplicationMenuSupport.swift" \
   "$ROOT_DIR/macos/MenuBarApp.swift" \
+  "$ROOT_DIR/macos/StatusRefreshCoordinator.swift" \
+  "$ROOT_DIR/macos/ProcessOutputCollector.swift" \
   "$ROOT_DIR/macos/GatewayService.swift" \
   "$ROOT_DIR/macos/SettingsActions.swift" \
   "$ROOT_DIR/macos/CodexActions.swift" \
