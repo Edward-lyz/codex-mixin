@@ -20,7 +20,7 @@ Use the built-in `image_gen` tool when it is available. If it is unavailable for
 
 The CLI uses only the Python standard library and sends image requests through the local Codex Mixin gateway. Image generation uses the enabled provider marked for voice, automatic review, and other auxiliary tasks when that provider configures an image generation path. With no auxiliary provider selected, the gateway uses the official Codex image backend.
 
-Run `python3 scripts/image_gen.py generate --prompt <prompt> --out <path>`. Optional arguments include `--model`, `--n`, `--size`, `--quality`, `--background`, `--output-format`, `--force`, and `--dry-run`. Put final assets in the user's requested location, or in the current project when no location is specified. Report the generated file paths.
+Run `python3 scripts/image_gen.py generate --prompt <prompt> --out <path>`. For normal requests, do not pass `--model`; the workflow default is `gpt-image-2`. Only pass `--model` when the user explicitly names a model, and never guess or probe another image model after an upstream failure. Optional arguments include `--n`, `--size`, `--quality`, `--background`, `--output-format`, `--force`, and `--dry-run`. Put final assets in the user's requested location, or in the current project when no location is specified. Report the generated file paths.
 
 Image editing requires the built-in `image_gen` tool. If it is unavailable, report that the managed bridge does not support editing instead of approximating the edit with a new generation.
 
@@ -53,7 +53,11 @@ def _parse_args() -> argparse.Namespace:
     prompt = generate.add_mutually_exclusive_group(required=True)
     prompt.add_argument("--prompt")
     prompt.add_argument("--prompt-file", type=Path)
-    generate.add_argument("--model", default="gpt-image-2")
+    generate.add_argument(
+        "--model",
+        default="gpt-image-2",
+        help="Override only when the user explicitly names an image model",
+    )
     generate.add_argument("--n", type=int, default=1)
     generate.add_argument("--size", default="auto")
     generate.add_argument("--quality", default="medium")
@@ -305,6 +309,8 @@ mod tests {
         assert!(installed_skill.contains(&script_path.display().to_string()));
         assert!(!installed_skill.contains("__SKILL_PATH__"));
         assert!(!installed_skill.contains("__SCRIPT_PATH__"));
+        assert!(installed_skill.contains("do not pass `--model`"));
+        assert!(installed_skill.contains("default is `gpt-image-2`"));
         assert_eq!(fs::read_to_string(&script_path).unwrap(), MANAGED_WRAPPER);
         assert!(!MANAGED_WRAPPER.contains("import openai"));
         assert_eq!(
