@@ -195,7 +195,14 @@ struct ProviderView: Decodable {
     }
 
     var supportsAutoReview: Bool {
-        cachedModels.contains { $0.id == "codex-auto-review" }
+        cachedModels.contains { model in
+            switch model.id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
+            case "codex-auto-review", "auto", "auto-baidu-oneapi":
+                true
+            default:
+                false
+            }
+        }
     }
 
     var supportsVoice: Bool {

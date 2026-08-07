@@ -7,7 +7,7 @@ use reqwest::{RequestBuilder, Url};
 use super::external_auth::resolve_custom_headers_from_env;
 use super::types::{
     BaiduAuthBridge, ProviderAuthHeader, ProviderDefinition, ProviderModel, ProviderModelKey,
-    ProviderModelSource, ProviderProtocol, ProviderQuotaParser,
+    ProviderModelSource, ProviderProtocol, ProviderQuotaParser, is_auto_review_model_id,
 };
 
 const FUSION_MODEL_PREFIX: &str = "mixin/fusion/";
@@ -395,7 +395,12 @@ impl ProviderRegistry {
         let provider = self.providers.iter().find(|provider| {
             provider.definition.enabled && provider.definition.auxiliary_model_upstream
         })?;
-        let catalog_slug = catalog_model_slug(upstream_model_id, provider.id());
+        let model = provider.definition.cached_models.iter().find(|candidate| {
+            candidate.id.eq_ignore_ascii_case(upstream_model_id)
+                || (is_auto_review_model_id(upstream_model_id)
+                    && is_auto_review_model_id(&candidate.id))
+        })?;
+        let catalog_slug = catalog_model_slug(&model.id, provider.id());
         self.resolve_known(&catalog_slug)
             .filter(|resolved| resolved.model.is_some())
     }
@@ -602,6 +607,22 @@ mod tests {
             runtime.protocol_for_model("claude-opus"),
             ProviderProtocol::AnthropicMessages
         );
+    }
+
+    #[test]
+    fn auxiliary_auto_review_alias_resolves_baidu_default_model() {
+        let mut provider = baidu_oneapi_provider("baidu", "test-key");
+        provider.quota_username = Some("quota-user".to_owned());
+        provider.auxiliary_model_upstream = true;
+        provider.cached_models = vec![ProviderModel {
+            id: "auto".to_owned(),
+            ..ProviderModel::default()
+        }];
+        let registry = ProviderRegistry::new(vec![provider]).unwrap();
+
+        let resolved = registry.resolve_auxiliary_model("codex-auto-review");
+
+        assert_eq!(resolved.unwrap().upstream_model_id, "auto");
     }
 
     #[test]

@@ -307,3 +307,59 @@ async fn baidu_reasoning_profiles_reach_real_upstream() {
         }
     }
 }
+
+#[tokio::test]
+#[ignore = "requires local Baidu OneAPI credentials and makes a real model request"]
+async fn baidu_auxiliary_auto_review_alias_reaches_real_upstream() {
+    let mut config =
+        GatewayConfig::from_stored_config().expect("load local Codex Mixin configuration");
+    let gateway_api_key = config.gateway_api_key.clone();
+    let provider_index = config
+        .providers
+        .iter()
+        .position(|provider| provider.model_source == ProviderModelSource::BaiduOneApi)
+        .expect("Baidu OneAPI provider is not configured");
+    let provider = config.providers.remove(provider_index);
+    assert!(provider.auxiliary_model_upstream);
+    assert!(
+        provider
+            .cached_models
+            .iter()
+            .any(|model| model.id == "auto"),
+        "Baidu OneAPI cache does not contain the auto model"
+    );
+    config.providers = vec![provider];
+    config.fusion_profiles.clear();
+    config.accept_codex_oauth = false;
+
+    let gateway_url = spawn_gateway(router(AppState::new(config).unwrap())).await;
+    let mut request = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .header("session-id", "codex-mixin-real-auto-review")
+        .json(&json!({
+            "model": "codex-auto-review",
+            "store": false,
+            "stream": true,
+            "max_output_tokens": 1,
+            "input": [{
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "Reply OK only."}]
+            }]
+        }));
+    if let Some(api_key) = gateway_api_key {
+        request = request.bearer_auth(api_key);
+    }
+
+    let response = request
+        .send()
+        .await
+        .expect("send real auxiliary auto-review request");
+    let status = response.status();
+    let body = response.text().await.unwrap_or_default();
+    assert!(
+        status.is_success(),
+        "Baidu auxiliary auto-review request failed with {status}: {}",
+        body.chars().take(1000).collect::<String>()
+    );
+}

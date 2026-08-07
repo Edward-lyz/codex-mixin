@@ -18,5 +18,5 @@ pub use registry::{ProviderRegistry, ProviderRuntime, ResolvedProviderModel, cat
 pub use types::{
     BaiduAuthBridge, CONFIG_VERSION, ProviderAuthConfig, ProviderAuthHeader, ProviderDefinition,
     ProviderModel, ProviderModelKey, ProviderModelSource, ProviderProtocol, ProviderQuotaParser,
-    ProviderReadiness, ProviderReadinessStatus, ProviderRequestPolicy,
+    ProviderReadiness, ProviderReadinessStatus, ProviderRequestPolicy, is_auto_review_model_id,
 };

@@ -7,6 +7,13 @@ use serde::{Deserialize, Serialize};
 
 pub const CONFIG_VERSION: u32 = 2;
 
+pub fn is_auto_review_model_id(model_id: &str) -> bool {
+    matches!(
+        model_id.trim().to_ascii_lowercase().as_str(),
+        "codex-auto-review" | "auto" | "auto-baidu-oneapi"
+    )
+}
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum ProviderProtocol {

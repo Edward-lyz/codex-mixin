@@ -49,7 +49,9 @@ impl ProviderPreset {
 
     pub fn description(self) -> &'static str {
         match self {
-            Self::Custom => "Any OpenAI Responses, Anthropic Messages, or Chat Completions compatible endpoint",
+            Self::Custom => {
+                "Any OpenAI Responses, Anthropic Messages, or Chat Completions compatible endpoint"
+            }
             Self::BaiduOneApi => "Baidu internal OneAPI with managed DUCC authentication",
             Self::OpenRouter => "OpenRouter multi-model router",
             Self::DeepSeek => "DeepSeek official API",
