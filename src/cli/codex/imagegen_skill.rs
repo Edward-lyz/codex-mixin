@@ -9,12 +9,14 @@ const BACKUP_SUFFIX: &str = ".codex-mixin.bak";
 
 const MANAGED_SKILL: &str = r#"---
 name: "imagegen"
-description: "Generate raster images through Codex Mixin. Use for photos, illustrations, textures, sprites, mockups, and transparent-background cutouts."
+description: __DESCRIPTION__
 ---
 
 # Codex Mixin Image Generation
 
-Use the built-in `image_gen` tool when it is available. If it is unavailable for a generation request, run the managed CLI at `scripts/image_gen.py`; do not stop to ask for `OPENAI_API_KEY` or install Python packages.
+Read this file at `__SKILL_PATH__` before acting. Do not search for another imagegen Skill or inspect unrelated imagegen directories.
+
+Use the built-in `image_gen` tool when it is available. If it is unavailable for a generation request, run `python3 '__SCRIPT_PATH__'`; do not stop to ask for `OPENAI_API_KEY` or install Python packages.
 
 The CLI uses only the Python standard library and sends image requests through the local Codex Mixin gateway. Image generation uses the enabled provider marked for voice, automatic review, and other auxiliary tasks when that provider configures an image generation path. With no auxiliary provider selected, the gateway uses the official Codex image backend.
 
@@ -192,6 +194,14 @@ fn install_imagegen_skill(codex_home: &Path) -> anyhow::Result<bool> {
     let skill_dir = codex_home.join("skills/.system/imagegen");
     let skill_path = skill_dir.join("SKILL.md");
     let script_path = skill_dir.join("scripts/image_gen.py");
+    let description = serde_json::to_string(&format!(
+        "Read {}, then generate raster images through Codex Mixin.",
+        skill_path.display()
+    ))?;
+    let managed_skill = MANAGED_SKILL
+        .replace("__DESCRIPTION__", &description)
+        .replace("__SKILL_PATH__", &skill_path.to_string_lossy())
+        .replace("__SCRIPT_PATH__", &script_path.to_string_lossy());
     if !skill_path.exists() && !script_path.exists() {
         return Ok(false);
     }
@@ -202,7 +212,7 @@ fn install_imagegen_skill(codex_home: &Path) -> anyhow::Result<bool> {
     );
 
     let script_changed = install_managed_file(&script_path, MANAGED_WRAPPER)?;
-    let skill_changed = match install_managed_file(&skill_path, MANAGED_SKILL) {
+    let skill_changed = match install_managed_file(&skill_path, &managed_skill) {
         Ok(changed) => changed,
         Err(error) => {
             if script_changed {
@@ -290,7 +300,11 @@ mod tests {
 
         assert!(reconcile_imagegen_skill(&root, true).unwrap());
         assert!(!reconcile_imagegen_skill(&root, true).unwrap());
-        assert_eq!(fs::read_to_string(&skill_path).unwrap(), MANAGED_SKILL);
+        let installed_skill = fs::read_to_string(&skill_path).unwrap();
+        assert!(installed_skill.contains(&skill_path.display().to_string()));
+        assert!(installed_skill.contains(&script_path.display().to_string()));
+        assert!(!installed_skill.contains("__SKILL_PATH__"));
+        assert!(!installed_skill.contains("__SCRIPT_PATH__"));
         assert_eq!(fs::read_to_string(&script_path).unwrap(), MANAGED_WRAPPER);
         assert!(!MANAGED_WRAPPER.contains("import openai"));
         assert_eq!(
@@ -300,7 +314,7 @@ mod tests {
 
         fs::write(
             &skill_path,
-            MANAGED_SKILL.replace(MANAGED_MARKER, "codex-mixin managed imagegen skill v1"),
+            installed_skill.replace(MANAGED_MARKER, "codex-mixin managed imagegen skill v1"),
         )
         .unwrap();
         fs::write(
