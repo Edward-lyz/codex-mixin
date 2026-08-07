@@ -160,8 +160,10 @@ pub(super) fn convert_tools(
                     && web_search_enabled
                     && !web_search_added =>
             {
-                result.push(web_search_server_tool(config, tool)?);
-                web_search_added = true;
+                if let Some(server_tool) = web_search_server_tool(config, tool)? {
+                    result.push(server_tool);
+                    web_search_added = true;
+                }
             }
             Some("function") if is_codex_web_search_function(tool) && web_search_enabled => {}
             Some("function") if is_codex_web_search_function(tool) => {
@@ -236,8 +238,10 @@ pub(super) fn convert_tools(
             Some("web_search" | "web_search_preview")
                 if web_search_enabled && !web_search_added =>
             {
-                result.push(web_search_server_tool(config, tool)?);
-                web_search_added = true;
+                if let Some(server_tool) = web_search_server_tool(config, tool)? {
+                    result.push(server_tool);
+                    web_search_added = true;
+                }
             }
             Some("web_search" | "web_search_preview") if web_search_enabled => {}
             Some("web_search" | "web_search_preview") => {
@@ -271,15 +275,13 @@ pub(super) fn is_codex_web_search_function(tool: &Value) -> bool {
 pub(super) fn web_search_server_tool(
     config: &GatewayConfig,
     codex_tool: &Value,
-) -> Result<Tool, GatewayError> {
+) -> Result<Option<Tool>, GatewayError> {
     if codex_tool
         .get("external_web_access")
         .and_then(Value::as_bool)
         == Some(false)
     {
-        return Err(GatewayError::BadRequest(
-            "Anthropic web_search cannot preserve Codex cached-search semantics".to_owned(),
-        ));
+        return Ok(None);
     }
     if codex_tool
         .get("indexed_web_access")
@@ -340,7 +342,7 @@ pub(super) fn web_search_server_tool(
         }
         web_search_tool["user_location"] = user_location.clone();
     }
-    Ok(web_search_tool)
+    Ok(Some(web_search_tool))
 }
 
 pub(super) fn convert_function_tool(

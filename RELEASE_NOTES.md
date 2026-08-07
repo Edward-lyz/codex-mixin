@@ -9,6 +9,7 @@
 
 ### 修复
 
+- 修复 Anthropic 协议 Provider 因 Codex 自动注入 cached web search 而拒绝普通对话
 - 修复 Codex 运行期间切换生图上游后 Skill 缓存未刷新的提示缺失
 - 仅在 DUCC 认证模式实际变化时执行安装和登录，普通 Provider 保存不再重复登录
 - 修复自定义 Provider 协议探测，并固定 OpenCode Go 使用 Responses 协议
@@ -25,6 +26,7 @@
 
 ### 修正
 
+- 修正 Anthropic 協議 Provider 因 Codex 自動注入 cached web search 而拒絕一般對話
 - 修正 Codex 執行期間切換生圖上游後缺少 Skill 快取重新載入提示
 - 僅在 DUCC 認證模式實際變更時執行安裝和登入，一般 Provider 儲存不再重複登入
 - 修正自訂 Provider 協議探測，並固定 OpenCode Go 使用 Responses 協議
@@ -41,6 +43,7 @@
 
 ### Fixes
 
+- Fix normal chats failing on Anthropic providers when Codex injects cached web search
 - Explain that Codex must restart to reload its skill cache after the image provider selection changes
 - Run DUCC installation and login only when the authentication mode changes
 - Fix custom provider protocol detection and pin OpenCode Go to the Responses protocol

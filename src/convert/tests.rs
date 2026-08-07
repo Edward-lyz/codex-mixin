@@ -883,11 +883,24 @@ fn web_search_becomes_anthropic_server_tool_when_enabled() {
 }
 
 #[test]
+fn omits_codex_cached_web_search_without_external_access() {
+    let mut config = config();
+    config.enable_web_search_tool = true;
+    let body = json!({
+        "model": "Claude Sonnet 5",
+        "stream": true,
+        "input": "hi",
+        "tools": [{"type": "web_search", "external_web_access": false}],
+    });
+    let converted = responses_to_anthropic(&body, &config).unwrap();
+    assert!(converted.request.tools.is_empty());
+}
+
+#[test]
 fn rejects_codex_web_search_modes_without_anthropic_equivalents() {
     let mut config = config();
     config.enable_web_search_tool = true;
     for unsupported in [
-        json!({"external_web_access": false}),
         json!({"external_web_access": true, "indexed_web_access": true}),
         json!({"external_web_access": true, "search_context_size": "high"}),
         json!({"external_web_access": true, "search_content_types": ["text", "image"]}),
