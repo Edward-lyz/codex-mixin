@@ -37,6 +37,7 @@ use crate::model_metadata::ModelMetadataResolver;
 use crate::provider::{
     ProviderRegistry, ProviderRuntime, ResolvedProviderModel, catalog_model_slug,
 };
+use crate::provider_capabilities::ProviderCapabilities;
 use crate::sse::{SseDecoder, encode_event};
 use crate::upstream::{ResponseStream, UpstreamRouting};
 use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};

@@ -196,6 +196,12 @@ fn test_provider(
     let mut provider = custom_provider("benchmark-provider", "upstream-key");
     provider.base_url = upstream_base_url;
     provider.protocol = protocol;
+    provider.api_path = match protocol {
+        ProviderProtocol::AnthropicMessages => "/v1/messages",
+        ProviderProtocol::OpenAiChat => "/chat/completions",
+        ProviderProtocol::OpenAiResponses => "/v1/responses",
+    }
+    .to_owned();
     provider
 }
 
@@ -267,7 +273,12 @@ async fn measures_ttft_and_generation_tps() {
     .await
     .unwrap();
 
-    assert_eq!(result.status, BenchmarkResultStatus::Completed);
+    assert_eq!(
+        result.status,
+        BenchmarkResultStatus::Completed,
+        "benchmark failed: {:?}",
+        result.error
+    );
     assert_eq!(result.output_tokens, Some(100));
     assert!(result.ttft_ms.unwrap() >= 15);
     assert!(result.generation_ms.unwrap() >= 15);

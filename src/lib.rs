@@ -17,6 +17,7 @@ pub mod model_reasoning;
 pub mod openai_chat;
 pub mod openai_events;
 pub mod provider;
+pub mod provider_capabilities;
 pub mod server;
 pub mod sse;
 pub mod upstream;

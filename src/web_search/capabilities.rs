@@ -71,6 +71,9 @@ impl WebSearchCapabilities {
             .read()
             .expect("web search capability lock poisoned");
         for model in models {
+            if model.capabilities_probed_at_ms.is_some() {
+                continue;
+            }
             if let Some(supported) = capabilities
                 .get(&model.id)
                 .filter(|capability| capability_is_fresh(capability, now))

@@ -3,12 +3,15 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
-use codex_mixin::config::{StoredGatewayConfig, load_stored_config, mutate_stored_config};
+use codex_mixin::config::{
+    GatewayConfig, StoredGatewayConfig, load_stored_config, mutate_stored_config,
+};
 use codex_mixin::provider::{
     BaiduAuthBridge, ProviderDefinition, ProviderModel, ProviderModelSource, ProviderPreset,
     ProviderProtocol, ProviderQuotaParser, ProviderRegistry, apply_discovered_models,
     catalog_model_slug, discover_provider_models, redact_provider_error,
 };
+use codex_mixin::provider_capabilities::ProviderCapabilities;
 use codex_mixin::web_search::WebSearchCapabilities;
 use console::style;
 use futures_util::{StreamExt, stream};
@@ -71,7 +74,12 @@ pub(super) struct UpdateProviderOptions {
 }
 
 pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
-    let config = load_stored_config()?.unwrap_or_default();
+    let mut config = load_stored_config()?.unwrap_or_default();
+    let runtime_config = GatewayConfig::from_stored_config()?;
+    let capabilities = ProviderCapabilities::from_default_path(&runtime_config)?;
+    for provider in &mut config.providers {
+        capabilities.annotate_provider(provider);
+    }
     if json_output {
         let codex_install_mode = managed_codex_install_mode(&resolve_codex_config_path(None)?)?;
         let providers = config
@@ -292,7 +300,10 @@ pub(super) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
     let mut detected_protocol = None;
     // Baidu is fixed to DUCC/messages routing. Other presets are curated offline.
     // Custom sites get a live protocol probe so users do not have to know the path.
-    if preset == ProviderPreset::Custom && !user_set_protocol && !user_set_api_path && !path_explicit
+    if preset == ProviderPreset::Custom
+        && !user_set_protocol
+        && !user_set_api_path
+        && !path_explicit
     {
         if let Some(endpoint) = detect_custom_provider_protocol(&provider).await? {
             detected_protocol = Some(protocol_name(endpoint.protocol).to_owned());
@@ -304,7 +315,7 @@ pub(super) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
         .gateway_key
         .map(|key| trim_required("gateway key", key))
         .transpose()?;
-    mutate_and_invalidate(|config| {
+    mutate_and_invalidate_provider_capabilities(|config| {
         if config.providers.iter().any(|provider| provider.id == id) {
             anyhow::bail!("provider already exists: {id}");
         }
@@ -318,17 +329,24 @@ pub(super) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
     if let Some(protocol) = detected_protocol {
         println!("provider protocol detected: {id} ({protocol})");
     }
+    discover_models_with_output(&id, false).await?;
     Ok(())
 }
 
 pub(super) async fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<()> {
     let id = options.id.clone();
+    let should_refresh_capabilities = options.key.is_some()
+        || options.base_url.is_some()
+        || options.protocol.is_some()
+        || options.api_path.is_some()
+        || options.models_path.is_some()
+        || !options.header_env.is_empty();
     let header_env = parse_header_env(&options.header_env)?;
     let user_set_protocol = options.protocol.is_some();
     let user_set_api_path = options.api_path.is_some();
     let base_url_updated = options.base_url.is_some();
     let mut should_probe_protocol = false;
-    mutate_and_invalidate(|config| {
+    mutate_and_invalidate_provider_capabilities(|config| {
         if let Some(enabled) = options.auxiliary_model_upstream {
             set_auxiliary_model_upstream(config, &id, enabled)?;
         }
@@ -447,7 +465,7 @@ pub(super) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
             .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?;
         if let Some(endpoint) = detect_custom_provider_protocol(&provider).await? {
             detected_protocol = Some(protocol_name(endpoint.protocol).to_owned());
-            mutate_and_invalidate(|config| {
+            mutate_and_invalidate_provider_capabilities(|config| {
                 let current = find_provider_mut(config, &id)?;
                 apply_inferred_custom_endpoint(current, endpoint);
                 current.validate()
@@ -457,6 +475,16 @@ pub(super) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
     println!("provider updated: {id}");
     if let Some(protocol) = detected_protocol {
         println!("provider protocol detected: {id} ({protocol})");
+    }
+    if should_refresh_capabilities {
+        let provider = required_config()?
+            .providers
+            .into_iter()
+            .find(|provider| provider.id == id)
+            .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?;
+        if provider.model_source != ProviderModelSource::BaiduOneApi {
+            discover_models_with_output(&id, false).await?;
+        }
     }
     Ok(())
 }
@@ -527,7 +555,7 @@ pub(super) fn set_provider_enabled(id: &str, enabled: bool) -> anyhow::Result<()
 }
 
 pub(super) fn remove_provider(id: &str) -> anyhow::Result<()> {
-    let renames = mutate_and_invalidate(|config| {
+    let renames = mutate_and_invalidate_provider_capabilities(|config| {
         ensure_has_providers(config)?;
         remove_provider_from_config(config, id)
     })?;
@@ -669,7 +697,7 @@ pub(super) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow
             None
         }
     };
-    let models = match models {
+    let mut models = match models {
         Ok(models) => models,
         Err(error) => {
             let stored_error = redact_provider_error(&provider, &format!("{error:#}"));
@@ -688,6 +716,21 @@ pub(super) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow
             return Err(error);
         }
     };
+    let capability_summary =
+        ProviderCapabilities::probe_provider(client.clone(), &provider, &models).await?;
+    if provider.model_source != ProviderModelSource::BaiduOneApi {
+        let current_runtime_config = GatewayConfig::from_stored_config()?;
+        let mut capabilities = ProviderCapabilities::from_default_path(&current_runtime_config)?;
+        capabilities.replace_provider_results(
+            &provider,
+            &current_runtime_config,
+            &capability_summary.results,
+        )?;
+        let mut annotated_provider = provider.clone();
+        annotated_provider.cached_models = models;
+        capabilities.annotate_provider(&mut annotated_provider);
+        models = annotated_provider.cached_models;
+    }
     let count = models.len();
     mutate_and_invalidate(|config| {
         let current = find_provider_mut(config, id)?;
@@ -702,6 +745,12 @@ pub(super) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow
     })?;
     if !quiet {
         println!("provider models refreshed: {id} ({count} available)");
+        if capability_summary.attempted > 0 {
+            println!(
+                "provider capabilities probed: {id} ({} routed, {} indeterminate)",
+                capability_summary.supported, capability_summary.indeterminate
+            );
+        }
         if let Some(discovered_quota) = discovered_quota {
             println!(
                 "provider quota endpoint detected: {id} ({})",
@@ -818,6 +867,14 @@ fn mutate_and_invalidate<T>(
 ) -> anyhow::Result<T> {
     let result = mutate_stored_config(mutation)?;
     WebSearchCapabilities::clear_default_cache()?;
+    Ok(result)
+}
+
+fn mutate_and_invalidate_provider_capabilities<T>(
+    mutation: impl FnOnce(&mut StoredGatewayConfig) -> anyhow::Result<T>,
+) -> anyhow::Result<T> {
+    let result = mutate_and_invalidate(mutation)?;
+    ProviderCapabilities::clear_default_cache()?;
     Ok(result)
 }
 
@@ -1080,29 +1137,32 @@ fn infer_custom_provider_endpoint(raw_url: &str) -> anyhow::Result<InferredCusto
             "/models",
         ),
     ];
-    let matched = candidates.iter().find_map(|(suffix, protocol, api_path, models_path)| {
-        path.strip_suffix(suffix).map(|base_path| {
+    let matched = candidates
+        .iter()
+        .find_map(|(suffix, protocol, api_path, models_path)| {
+            path.strip_suffix(suffix).map(|base_path| {
+                (
+                    base_path.to_owned(),
+                    *protocol,
+                    (*api_path).to_owned(),
+                    (*models_path).to_owned(),
+                    true,
+                )
+            })
+        });
+    let (base_path, protocol, api_path, models_path, path_explicit) =
+        matched.unwrap_or_else(|| {
+            let base_path = path.strip_suffix("/v1").unwrap_or(&path).to_owned();
             (
-                base_path.to_owned(),
-                *protocol,
-                (*api_path).to_owned(),
-                (*models_path).to_owned(),
-                true,
+                base_path,
+                // Prefer the native Responses API when the URL does not name a path.
+                // Live probing may still replace this after add/update.
+                ProviderProtocol::OpenAiResponses,
+                "/v1/responses".to_owned(),
+                "/v1/models".to_owned(),
+                false,
             )
-        })
-    });
-    let (base_path, protocol, api_path, models_path, path_explicit) = matched.unwrap_or_else(|| {
-        let base_path = path.strip_suffix("/v1").unwrap_or(&path).to_owned();
-        (
-            base_path,
-            // Prefer the native Responses API when the URL does not name a path.
-            // Live probing may still replace this after add/update.
-            ProviderProtocol::OpenAiResponses,
-            "/v1/responses".to_owned(),
-            "/v1/models".to_owned(),
-            false,
-        )
-    });
+        });
     url.set_path(if base_path.is_empty() {
         "/"
     } else {

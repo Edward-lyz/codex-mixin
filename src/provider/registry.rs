@@ -25,6 +25,7 @@ pub struct ProviderRuntime {
     definition: ProviderDefinition,
     api_url: Url,
     openai_responses_url: Option<Url>,
+    model_api_urls: HashMap<String, Url>,
     models_url: Option<Url>,
     image_generation_url: Option<Url>,
     quota_url: Option<Url>,
@@ -46,6 +47,19 @@ impl ProviderRuntime {
             ),
             _ => None,
         };
+        let model_api_urls = definition
+            .cached_models
+            .iter()
+            .filter_map(|model| {
+                model.api_path.as_deref().map(|path| {
+                    endpoint_url(&definition.base_url, path)
+                        .with_context(|| {
+                            format!("provider {} model {} API URL", definition.id, model.id)
+                        })
+                        .map(|url| (model.id.clone(), url))
+                })
+            })
+            .collect::<anyhow::Result<HashMap<_, _>>>()?;
         let models_url = match &definition.model_source {
             ProviderModelSource::OpenAiCompatible { path } => Some(
                 endpoint_url(&definition.base_url, path)
@@ -82,6 +96,7 @@ impl ProviderRuntime {
             definition,
             api_url,
             openai_responses_url,
+            model_api_urls,
             models_url,
             image_generation_url,
             quota_url,
@@ -108,6 +123,15 @@ impl ProviderRuntime {
     pub fn protocol_for_model(&self, model: &str) -> ProviderProtocol {
         if self.is_baidu_model_source() && model.trim().to_ascii_lowercase().starts_with("gpt-") {
             ProviderProtocol::OpenAiResponses
+        } else if !self.is_baidu_model_source()
+            && let Some(protocol) = self
+                .definition
+                .cached_models
+                .iter()
+                .find(|candidate| candidate.id == model)
+                .and_then(|candidate| candidate.protocol)
+        {
+            protocol
         } else {
             self.protocol()
         }
@@ -118,7 +142,11 @@ impl ProviderRuntime {
     }
 
     pub fn api_url_for_model(&self, model: &str) -> &Url {
-        if self.protocol_for_model(model) == ProviderProtocol::OpenAiResponses
+        if !self.is_baidu_model_source()
+            && let Some(url) = self.model_api_urls.get(model)
+        {
+            url
+        } else if self.protocol_for_model(model) == ProviderProtocol::OpenAiResponses
             && let Some(url) = &self.openai_responses_url
         {
             url
@@ -530,9 +558,51 @@ mod tests {
     use super::*;
     use crate::provider::{
         ProviderAuthConfig, ProviderModelSource, ProviderProtocol, baidu_oneapi_provider,
-        open_code_go_provider,
+        custom_provider, open_code_go_provider,
     };
     use crate::provider::{ProviderQuotaParser, ProviderRequestPolicy};
+
+    #[test]
+    fn routes_non_baidu_models_with_probed_protocol_and_path() {
+        let mut provider = custom_provider("custom", "test-key");
+        provider.base_url = "https://example.com/api".to_owned();
+        provider.cached_models = vec![ProviderModel {
+            id: "model-a".to_owned(),
+            protocol: Some(ProviderProtocol::OpenAiChat),
+            api_path: Some("/v2/chat/completions".to_owned()),
+            ..ProviderModel::default()
+        }];
+        let registry = ProviderRegistry::new(vec![provider]).unwrap();
+        let runtime = registry.provider("custom").unwrap();
+
+        assert_eq!(
+            runtime.protocol_for_model("model-a"),
+            ProviderProtocol::OpenAiChat
+        );
+        assert_eq!(
+            runtime.api_url_for_model("model-a").as_str(),
+            "https://example.com/api/v2/chat/completions"
+        );
+    }
+
+    #[test]
+    fn baidu_ignores_generic_model_protocol_overrides() {
+        let mut provider = baidu_oneapi_provider("baidu", "test-key");
+        provider.quota_username = Some("quota-user".to_owned());
+        provider.cached_models = vec![ProviderModel {
+            id: "claude-opus".to_owned(),
+            protocol: Some(ProviderProtocol::OpenAiChat),
+            api_path: Some("/v1/chat/completions".to_owned()),
+            ..ProviderModel::default()
+        }];
+        let registry = ProviderRegistry::new(vec![provider]).unwrap();
+        let runtime = registry.provider("baidu").unwrap();
+
+        assert_eq!(
+            runtime.protocol_for_model("claude-opus"),
+            ProviderProtocol::AnthropicMessages
+        );
+    }
 
     #[test]
     fn resolves_exact_suffix_slug_to_provider_and_upstream_model() {

@@ -298,6 +298,23 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
             field?.alignment = .right
             field?.stringValue = row.model.ratio ?? "-"
             cell.toolTip = row.model.priceType
+        case "protocol":
+            field?.stringValue = protocolTitle(row.model.protocolID)
+            cell.toolTip = row.model.capabilityProbeError
+        case "image":
+            field?.stringValue = capabilityTitle(row.model.supportsImage)
+            cell.toolTip = row.model.capabilityProbeError
+        case "tool-search":
+            field?.stringValue = capabilityTitle(row.model.supportsToolSearch)
+            cell.toolTip = row.model.capabilityProbeError
+        case "web-search":
+            field?.stringValue = capabilityTitle(row.model.supportsWebSearch)
+            cell.toolTip = row.model.capabilityProbeError
+        case "function-tools":
+            field?.stringValue = capabilityTitle(row.model.supportsFunctionTools)
+            cell.toolTip = row.model.capabilityProbeError
+        case "thinking":
+            field?.stringValue = capabilityTitle(row.model.supportsThinking)
         default:
             field?.stringValue = ""
         }
@@ -741,6 +758,35 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
                 benchmarkRatioValue(left.model.ratio),
                 benchmarkRatioValue(right.model.ratio)
             )
+        case "protocol":
+            return (left.model.protocolID ?? "~").localizedStandardCompare(
+                right.model.protocolID ?? "~"
+            )
+        case "image":
+            return compareOptionalNumbers(
+                left.model.supportsImage.map { $0 ? 1 : 0 },
+                right.model.supportsImage.map { $0 ? 1 : 0 }
+            )
+        case "tool-search":
+            return compareOptionalNumbers(
+                left.model.supportsToolSearch.map { $0 ? 1 : 0 },
+                right.model.supportsToolSearch.map { $0 ? 1 : 0 }
+            )
+        case "web-search":
+            return compareOptionalNumbers(
+                left.model.supportsWebSearch.map { $0 ? 1 : 0 },
+                right.model.supportsWebSearch.map { $0 ? 1 : 0 }
+            )
+        case "function-tools":
+            return compareOptionalNumbers(
+                left.model.supportsFunctionTools.map { $0 ? 1 : 0 },
+                right.model.supportsFunctionTools.map { $0 ? 1 : 0 }
+            )
+        case "thinking":
+            return compareOptionalNumbers(
+                left.model.supportsThinking.map { $0 ? 1 : 0 },
+                right.model.supportsThinking.map { $0 ? 1 : 0 }
+            )
         default:
             return left.model.id.localizedStandardCompare(right.model.id)
         }
@@ -957,6 +1003,20 @@ private func compareOptionalNumbers<T: BinaryInteger>(
     _ right: T?
 ) -> ComparisonResult {
     compareOptionalNumbers(left.map(Double.init), right.map(Double.init))
+}
+
+private func capabilityTitle(_ supported: Bool?) -> String {
+    guard let supported else { return "-" }
+    return supported ? "支持" : "不支持"
+}
+
+private func protocolTitle(_ protocolID: String?) -> String {
+    switch protocolID {
+    case "open_ai_responses": return "Responses"
+    case "open_ai_chat": return "Chat"
+    case "anthropic_messages": return "Messages"
+    default: return "-"
+    }
 }
 
 private func compareOptionalNumbers(

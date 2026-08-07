@@ -231,7 +231,14 @@ struct ProviderView: Decodable {
                     description: "该模型仍保留在 allowlist，但本次模型发现未返回它。",
                     ratio: nil,
                     priceType: nil,
-                    contextWindow: nil
+                    contextWindow: nil,
+                    protocolID: nil,
+                    supportsImage: nil,
+                    supportsThinking: nil,
+                    supportsWebSearch: nil,
+                    supportsToolSearch: nil,
+                    supportsFunctionTools: nil,
+                    capabilityProbeError: nil
                 ),
                 isAvailable: false,
                 isNew: false
@@ -259,6 +266,13 @@ struct ProviderModelView: Decodable {
     let ratio: String?
     let priceType: String?
     let contextWindow: UInt64?
+    let protocolID: String?
+    let supportsImage: Bool?
+    let supportsThinking: Bool?
+    let supportsWebSearch: Bool?
+    let supportsToolSearch: Bool?
+    let supportsFunctionTools: Bool?
+    let capabilityProbeError: String?
 
     enum CodingKeys: String, CodingKey {
         case id
@@ -267,6 +281,13 @@ struct ProviderModelView: Decodable {
         case ratio
         case priceType = "price_type"
         case contextWindow = "context_window"
+        case protocolID = "protocol"
+        case supportsImage = "supports_image"
+        case supportsThinking = "supports_thinking"
+        case supportsWebSearch = "supports_web_search"
+        case supportsToolSearch = "supports_tool_search"
+        case supportsFunctionTools = "supports_function_tools"
+        case capabilityProbeError = "capability_probe_error"
     }
 }
 
@@ -281,6 +302,13 @@ struct ProviderModelListItem {
     var ratio: String? { model.ratio }
     var priceType: String? { model.priceType }
     var contextWindow: UInt64? { model.contextWindow }
+    var protocolID: String? { model.protocolID }
+    var supportsImage: Bool? { model.supportsImage }
+    var supportsThinking: Bool? { model.supportsThinking }
+    var supportsWebSearch: Bool? { model.supportsWebSearch }
+    var supportsToolSearch: Bool? { model.supportsToolSearch }
+    var supportsFunctionTools: Bool? { model.supportsFunctionTools }
+    var capabilityProbeError: String? { model.capabilityProbeError }
 }
 
 struct ProviderPickerOption {
@@ -304,6 +332,12 @@ func modelBenchmarkColumnDefinitions() -> [ModelBenchmarkColumnDefinition] {
         .init(id: "tps", title: "吞吐", width: 112, minimumWidth: 88, defaultAscending: false),
         .init(id: "context", title: "上下文", width: 104, minimumWidth: 84, defaultAscending: false),
         .init(id: "ratio", title: "倍率", width: 86, minimumWidth: 70, defaultAscending: true),
+        .init(id: "protocol", title: "协议", width: 108, minimumWidth: 90, defaultAscending: true),
+        .init(id: "image", title: "图片", width: 72, minimumWidth: 62, defaultAscending: false),
+        .init(id: "tool-search", title: "Tool Search", width: 104, minimumWidth: 92, defaultAscending: false),
+        .init(id: "web-search", title: "Web Search", width: 104, minimumWidth: 92, defaultAscending: false),
+        .init(id: "function-tools", title: "Function Tools", width: 116, minimumWidth: 104, defaultAscending: false),
+        .init(id: "thinking", title: "Thinking", width: 88, minimumWidth: 78, defaultAscending: false),
     ]
 }
 

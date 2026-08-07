@@ -658,7 +658,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         }
         performMutation(
             arguments,
-            then: ["providers", "discover", id],
             status: "正在新增并发现模型 \(id)…",
             selecting: id,
             requiresBaiduBridge: values.preset == "baidu-oneapi" ? bridgeMode : nil

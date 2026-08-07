@@ -81,11 +81,23 @@ pub struct ModelInfo {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub protocol: Option<crate::provider::ProviderProtocol>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub api_path: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_image: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_thinking: Option<bool>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub supports_web_search: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_tool_search: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub supports_function_tools: Option<bool>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capability_probe_error: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub capabilities_probed_at_ms: Option<u64>,
 }
 
 #[derive(Debug, Deserialize)]

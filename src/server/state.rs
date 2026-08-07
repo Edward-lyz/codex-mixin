@@ -52,15 +52,17 @@ pub struct AppState {
 }
 
 impl AppState {
-    pub fn new(config: GatewayConfig) -> anyhow::Result<Self> {
+    pub fn new(mut config: GatewayConfig) -> anyhow::Result<Self> {
+        ProviderCapabilities::from_default_path(&config)?.annotate_config(&mut config);
         let web_search_capabilities = WebSearchCapabilities::from_default_path(&config)?;
         Self::with_web_search_capabilities(config, web_search_capabilities)
     }
 
     pub fn with_env_lookup(
-        config: GatewayConfig,
+        mut config: GatewayConfig,
         env_lookup: impl Fn(&str) -> Option<String>,
     ) -> anyhow::Result<Self> {
+        ProviderCapabilities::from_default_path(&config)?.annotate_config(&mut config);
         let web_search_capabilities = WebSearchCapabilities::from_default_path(&config)?;
         Self::with_web_search_capabilities_and_env(config, web_search_capabilities, env_lookup)
     }
@@ -197,9 +199,15 @@ impl AppState {
                     ratio: model.ratio.clone(),
                     price_type: model.price_type.clone(),
                     context_window: model.context_window,
+                    protocol: model.protocol,
+                    api_path: model.api_path.clone(),
                     supports_image: model.supports_image,
                     supports_thinking: model.supports_thinking,
                     supports_web_search: model.supports_web_search,
+                    supports_tool_search: model.supports_tool_search,
+                    supports_function_tools: model.supports_function_tools,
+                    capability_probe_error: model.capability_probe_error.clone(),
+                    capabilities_probed_at_ms: model.capabilities_probed_at_ms,
                 });
             }
         }
@@ -282,6 +290,7 @@ impl AppState {
             supports_image: Some(false),
             supports_thinking: Some(true),
             supports_web_search: Some(false),
+            ..ModelInfo::default()
         }));
     }
 

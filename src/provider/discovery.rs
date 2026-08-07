@@ -45,9 +45,15 @@ pub async fn discover_provider_models(
                     ratio: model.ratio,
                     price_type: model.price_type,
                     context_window: model.context_window,
+                    protocol: model.protocol,
+                    api_path: model.api_path,
                     supports_image: model.supports_image,
                     supports_thinking: model.supports_thinking,
                     supports_web_search: model.supports_web_search,
+                    supports_tool_search: model.supports_tool_search,
+                    supports_function_tools: model.supports_function_tools,
+                    capability_probe_error: model.capability_probe_error,
+                    capabilities_probed_at_ms: model.capabilities_probed_at_ms,
                 })
                 .collect::<Vec<_>>();
             if uses_models_dev_capabilities(definition.preset_id.as_deref(), definition.id.as_str())
@@ -119,6 +125,7 @@ pub async fn discover_provider_models(
                     supports_image: Some(capability.supports_image),
                     supports_thinking: Some(capability.supports_thinking),
                     supports_web_search: None,
+                    ..ProviderModel::default()
                 };
                 if let Some(&index) = model_indices.get(&id) {
                     if !is_internal {

@@ -220,7 +220,7 @@ fn codex_catalog_from_models_with_options(
             item["priority"] = json!(100 + index as u64);
             item["visibility"] = json!("list");
             item["supported_in_api"] = json!(true);
-            item["supports_search_tool"] = json!(true);
+            item["supports_search_tool"] = json!(model.supports_tool_search.unwrap_or(false));
             item["use_responses_lite"] = json!(false);
             enable_fast_service_tier(&mut item);
             apply_model_reasoning_capabilities(
@@ -586,7 +586,7 @@ mod tests {
             FALLBACK_BASE_INSTRUCTIONS
         );
         assert_eq!(catalog["models"][0]["context_window"], 1_000_000);
-        assert_eq!(catalog["models"][0]["supports_search_tool"], true);
+        assert_eq!(catalog["models"][0]["supports_search_tool"], false);
         assert!(catalog["models"][0].get("web_search_tool_type").is_none());
         assert_eq!(
             reasoning_efforts(&catalog["models"][0]),
@@ -770,7 +770,7 @@ mod tests {
             ..ModelInfo::default()
         }];
         let catalog = codex_catalog_from_models(&models, 1_000_000, None);
-        assert_eq!(catalog["models"][0]["supports_search_tool"], true);
+        assert_eq!(catalog["models"][0]["supports_search_tool"], false);
         assert_eq!(catalog["models"][0]["web_search_tool_type"], "text");
     }
 
@@ -794,7 +794,7 @@ mod tests {
 
         let catalog = codex_catalog_from_models(&models, 1_000_000, Some(&template));
 
-        assert_eq!(catalog["models"][0]["supports_search_tool"], true);
+        assert_eq!(catalog["models"][0]["supports_search_tool"], false);
         assert!(catalog["models"][0].get("web_search_tool_type").is_none());
     }
 
