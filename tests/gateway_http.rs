@@ -127,6 +127,10 @@ enum OfficialWebSocketBehavior {
 fn test_config(upstream_base_url: String) -> GatewayConfig {
     let mut provider = custom_provider("custom", "upstream-key");
     provider.base_url = upstream_base_url;
+    // Most gateway fixtures still exercise the Anthropic Messages path.
+    provider.protocol = ProviderProtocol::AnthropicMessages;
+    provider.api_path = "/v1/messages".to_owned();
+    provider.anthropic_version = Some("2023-06-01".to_owned());
     provider.cached_models = [
         "DeepSeek-V4-Flash",
         "Claude Sonnet 5",
@@ -1632,6 +1636,9 @@ async fn isolates_http_and_websocket_routes_across_two_providers() {
 
     let mut alpha = custom_provider("alpha", "alpha-key");
     alpha.base_url = alpha_url;
+    alpha.protocol = ProviderProtocol::AnthropicMessages;
+    alpha.api_path = "/v1/messages".to_owned();
+    alpha.anthropic_version = Some("2023-06-01".to_owned());
     alpha.cached_models = ["shared", "hidden", "broken"]
         .into_iter()
         .map(|id| ProviderModel {

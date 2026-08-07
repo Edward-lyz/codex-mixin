@@ -1006,7 +1006,8 @@ async fn setup(
             baidu_auth_bridge: (preset == "baidu-oneapi").then(|| "ducc_loopback".to_owned()),
             ducc_executable,
             ..UpdateProviderOptions::default()
-        })?;
+        })
+        .await?;
     } else {
         println!("Adding provider configuration: {preset}");
         add_provider(AddProviderOptions {
@@ -1030,7 +1031,8 @@ async fn setup(
             header_env: Vec::new(),
             baidu_auth_bridge: (preset == "baidu-oneapi").then(|| "ducc_loopback".to_owned()),
             ducc_executable,
-        })?;
+        })
+        .await?;
     }
     stage(
         &format!("Refreshing provider models for {preset}"),
@@ -1163,7 +1165,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 header_env,
                 baidu_auth_bridge,
                 ducc_executable,
-            }),
+            })
+            .await,
             ProviderCommand::Update {
                 id,
                 auxiliary_model_upstream,
@@ -1214,7 +1217,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 clear_header_env,
                 baidu_auth_bridge,
                 ducc_executable,
-            }),
+            })
+            .await,
             ProviderCommand::Enable { id } => set_provider_enabled(&id, true),
             ProviderCommand::Disable { id } => set_provider_enabled(&id, false),
             ProviderCommand::Remove { id } => remove_provider(&id),

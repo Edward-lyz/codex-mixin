@@ -6,6 +6,9 @@ use super::*;
 fn test_config(upstream_base_url: &str) -> GatewayConfig {
     let mut provider = crate::provider::custom_provider("test-provider", "test-key");
     provider.base_url = upstream_base_url.to_owned();
+    provider.protocol = crate::provider::ProviderProtocol::AnthropicMessages;
+    provider.api_path = "/v1/messages".to_owned();
+    provider.anthropic_version = Some("2023-06-01".to_owned());
     provider.selected_models = vec!["Claude Haiku 4.5".to_owned()];
     provider.cached_models = vec![crate::provider::ProviderModel {
         id: "Claude Haiku 4.5".to_owned(),

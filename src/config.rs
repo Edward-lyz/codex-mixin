@@ -234,6 +234,7 @@ fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConfig> {
         ensure_config_version(u32::try_from(version).context("config_version is too large")?)?;
         upgrade_deepseek_quota_defaults(&mut parsed);
         upgrade_opencode_go_quota_defaults(&mut parsed);
+        upgrade_opencode_go_responses_endpoint(&mut parsed);
         bootstrap_unrefreshed_selected_models(&mut parsed);
         return Ok(parsed);
     } else if document.get("config_version").is_some() {
@@ -262,6 +263,7 @@ fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConfig> {
     let mut migrated = migrate_legacy_config(serde_json::from_value(document)?)?;
     upgrade_deepseek_quota_defaults(&mut migrated);
     upgrade_opencode_go_quota_defaults(&mut migrated);
+    upgrade_opencode_go_responses_endpoint(&mut migrated);
     bootstrap_unrefreshed_selected_models(&mut migrated);
     Ok(migrated)
 }
@@ -288,6 +290,19 @@ fn upgrade_opencode_go_quota_defaults(config: &mut StoredGatewayConfig) {
         {
             provider.quota_parser = ProviderQuotaParser::OpenCodeGo;
             provider.quota_currency = Some("USD".to_owned());
+        }
+    }
+}
+
+fn upgrade_opencode_go_responses_endpoint(config: &mut StoredGatewayConfig) {
+    for provider in &mut config.providers {
+        if provider.preset_id.as_deref() == Some("opencode-go")
+            && provider.base_url == "https://opencode.ai/zen/go"
+            && provider.protocol == ProviderProtocol::OpenAiChat
+            && provider.api_path == "/v1/chat/completions"
+        {
+            provider.protocol = ProviderProtocol::OpenAiResponses;
+            provider.api_path = "/v1/responses".to_owned();
         }
     }
 }
@@ -651,11 +666,13 @@ mod tests {
     }
 
     #[test]
-    fn upgrades_existing_opencode_go_provider_to_the_dashboard_parser() {
+    fn upgrades_existing_opencode_go_provider_to_dashboard_parser_and_responses_endpoint() {
         let mut provider = crate::provider::open_code_go_provider("opencode-go", "secret");
         provider.quota_url = None;
         provider.quota_currency = None;
         provider.quota_parser = ProviderQuotaParser::Generic;
+        provider.protocol = ProviderProtocol::OpenAiChat;
+        provider.api_path = "/v1/chat/completions".to_owned();
         let stored = StoredGatewayConfig {
             providers: vec![provider],
             ..StoredGatewayConfig::default()
@@ -668,6 +685,11 @@ mod tests {
             ProviderQuotaParser::OpenCodeGo
         );
         assert_eq!(loaded.providers[0].quota_currency.as_deref(), Some("USD"));
+        assert_eq!(
+            loaded.providers[0].protocol,
+            ProviderProtocol::OpenAiResponses
+        );
+        assert_eq!(loaded.providers[0].api_path, "/v1/responses");
     }
 
     #[test]

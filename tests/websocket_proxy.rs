@@ -10,7 +10,7 @@ use axum::http::header;
 use axum::response::{IntoResponse, Response};
 use axum::routing::get;
 use codex_mixin::config::{GatewayConfig, ThinkingMode};
-use codex_mixin::provider::{ProviderModel, custom_provider};
+use codex_mixin::provider::{ProviderModel, ProviderProtocol, custom_provider};
 use codex_mixin::server::{AppState, router};
 use futures_util::{SinkExt, StreamExt};
 use serde_json::{Value, json};
@@ -198,6 +198,9 @@ async fn spawn_gateway_with_env(
 fn test_config(official_responses_url: String, codex_auth_path: PathBuf) -> GatewayConfig {
     let mut provider = custom_provider("custom", "upstream-key");
     provider.base_url = "http://127.0.0.1:1".to_owned();
+    provider.protocol = ProviderProtocol::AnthropicMessages;
+    provider.api_path = "/v1/messages".to_owned();
+    provider.anthropic_version = Some("2023-06-01".to_owned());
     provider.cached_models = vec![ProviderModel {
         id: "custom-model".to_owned(),
         ..ProviderModel::default()

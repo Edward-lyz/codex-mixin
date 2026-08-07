@@ -175,16 +175,19 @@ codex-mixin service logs -n 200
 
 | Provider | 上游协议 | 上游根地址 | 对话接口 | 生图接口 | 模型接口 | 额度接口 |
 | --- | --- | --- | --- | --- | --- | --- |
-| `custom` | Anthropic Messages 默认 | 用户填写 | `/v1/messages` | 可选，用户填写 | `/v1/models` | 自动探测常见只读端点 |
+| `custom` | OpenAI Responses 默认 | 用户填写 | `/v1/responses` | 可选，用户填写 | `/v1/models` | 自动探测常见只读端点 |
 | `baidu-oneapi` | Anthropic Messages | `https://oneapi-comate.baidu-int.com` | `/v1/messages` | `/v1/images/generations` | `POST /openapi/v2/available_models` | `/openapi/v3/user/quota` |
 | `openrouter` | OpenAI Chat Completions | `https://openrouter.ai/api` | `/v1/chat/completions` | 可选，用户填写 | `/v1/models` | `/v1/credits` |
 | `deepseek` | OpenAI Chat Completions | `https://api.deepseek.com` | `/chat/completions` | 可选，用户填写 | `/models` | 无默认值 |
-| `opencode-go` | OpenAI Chat Completions | `https://opencode.ai/zen/go` | `/v1/chat/completions` | 无 | `/v1/models` | dashboard `/workspace/{id}/go` + `/billing` |
+| `opencode-go` | OpenAI Responses | `https://opencode.ai/zen/go` | `/v1/responses` | 无 | `/v1/models` | dashboard `/workspace/{id}/go` + `/billing` |
 
 设置窗口里的上游地址只填根地址。路径由 provider preset 补齐。
 Baidu OneAPI 的额度接口必须同时填写额度用户名；CLI 和 App 都会在保存时校验。
 OpenCode Go 的额度显示需要额外填写工作区 ID 和 `opencode.ai` 的 `auth` cookie；
 这两个值可以在浏览器控制台里从 OpenCode Go dashboard 页面取得，cookie 过期后需要重新填写。
+新增或更新 `custom` 供应商时，会按 `/v1/responses` → `/v1/messages` → Chat Completions
+顺序探测上游接口，并把第一个可用协议写入配置。Baidu OneAPI 不参与该探测，固定走 DUCC/messages 路由。
+预设供应商的协议在离线验证后写死，例如 OpenCode Go 使用 `/v1/responses`。
 启用 Baidu OneAPI 时可以选择「DUCC 核心」。每一条 Responses 上游子请求都会投递给
 长驻的 DUCC stream-json worker。DUCC 把它认证的 HTTP 请求发到仅监听 `127.0.0.1`
 的本机桥；桥使用一次性 request id
@@ -698,16 +701,20 @@ state, and `doctor` for diagnosis. Then start a new Codex CLI session.
 
 | Provider | Upstream protocol | Base URL | Chat path | Image path | Models path | Quota path |
 | --- | --- | --- | --- | --- | --- | --- |
-| `custom` | Anthropic Messages by default | User provided | `/v1/messages` | Optional, user provided | `/v1/models` | Auto-detected from common read-only endpoints |
+| `custom` | OpenAI Responses by default | User provided | `/v1/responses` | Optional, user provided | `/v1/models` | Auto-detected from common read-only endpoints |
 | `baidu-oneapi` | Anthropic Messages | `https://oneapi-comate.baidu-int.com` | `/v1/messages` | `/v1/images/generations` | `POST /openapi/v2/available_models` | `/openapi/v3/user/quota` |
 | `openrouter` | OpenAI Chat Completions | `https://openrouter.ai/api` | `/v1/chat/completions` | Optional, user provided | `/v1/models` | `/v1/credits` |
 | `deepseek` | OpenAI Chat Completions | `https://api.deepseek.com` | `/chat/completions` | Optional, user provided | `/models` | None |
-| `opencode-go` | OpenAI Chat Completions | `https://opencode.ai/zen/go` | `/v1/chat/completions` | None | `/v1/models` | Dashboard `/workspace/{id}/go` + `/billing` |
+| `opencode-go` | OpenAI Responses | `https://opencode.ai/zen/go` | `/v1/responses` | None | `/v1/models` | Dashboard `/workspace/{id}/go` + `/billing` |
 
 Only enter the upstream root URL in the settings window. Codex Mixin adds provider-specific paths.
 The Baidu OneAPI quota endpoint also requires a quota username; both the CLI and app validate it before saving.
 OpenCode Go quota display also requires a workspace ID and the `opencode.ai` `auth` cookie.
 Take both values from the OpenCode Go dashboard in a signed-in browser; refresh the cookie when it expires.
+When a `custom` provider is added or updated, Codex Mixin probes `/v1/responses`, then
+`/v1/messages`, then Chat Completions, and stores the first working protocol. Baidu OneAPI is
+excluded and keeps its fixed DUCC/messages routing. Curated presets keep offline-verified
+protocols, for example OpenCode Go uses `/v1/responses`.
 For Baidu OneAPI, users can select the “DUCC core”. Every upstream Responses subrequest is
 submitted to a persistent DUCC stream-json worker. DUCC sends its authenticated HTTP request to a loopback-only
 bridge. The bridge binds that request to the caller payload with a single-use request ID, removes
@@ -748,6 +755,8 @@ confirm that they are entitled to use the relevant account, credential, and serv
 When a `custom` provider is added or refreshed, Codex Mixin concurrently probes common
 read-only quota endpoints used by New API, Sub2API, OpenRouter, and similar gateways.
 It stores an endpoint only after receiving recognizable quota data and never runs paid inference.
+Separately, adding or updating a custom base URL without an explicit protocol or API path
+probes conversation endpoints in the order Responses, Messages, then Chat Completions.
 
 ### Codex Install Behavior
 

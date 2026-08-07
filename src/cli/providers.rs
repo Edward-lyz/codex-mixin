@@ -204,13 +204,15 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-pub(super) fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
+pub(super) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
     let preset = ProviderPreset::parse(options.preset.trim())?;
     let id = options.id.unwrap_or_else(|| preset.default_id().to_owned());
     let mut provider = preset.create(id.clone(), trim_required("key", options.key)?);
     if let Some(display_name) = options.display_name {
         provider.display_name = trim_required("display name", display_name)?;
     }
+    let user_set_protocol = options.protocol.is_some();
+    let user_set_api_path = options.api_path.is_some();
     let inferred_endpoint = if preset == ProviderPreset::Custom {
         options
             .base_url
@@ -220,6 +222,9 @@ pub(super) fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
     } else {
         None
     };
+    let path_explicit = inferred_endpoint
+        .as_ref()
+        .is_some_and(|endpoint| endpoint.path_explicit);
     if let Some(endpoint) = inferred_endpoint {
         apply_inferred_custom_endpoint(&mut provider, endpoint);
     } else if let Some(base_url) = options.base_url {
@@ -284,6 +289,16 @@ pub(super) fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
         options.baidu_auth_bridge.as_deref(),
         options.ducc_executable,
     )?;
+    let mut detected_protocol = None;
+    // Baidu is fixed to DUCC/messages routing. Other presets are curated offline.
+    // Custom sites get a live protocol probe so users do not have to know the path.
+    if preset == ProviderPreset::Custom && !user_set_protocol && !user_set_api_path && !path_explicit
+    {
+        if let Some(endpoint) = detect_custom_provider_protocol(&provider).await? {
+            detected_protocol = Some(protocol_name(endpoint.protocol).to_owned());
+            apply_inferred_custom_endpoint(&mut provider, endpoint);
+        }
+    }
     provider.validate()?;
     let gateway_api_key = options
         .gateway_key
@@ -300,12 +315,19 @@ pub(super) fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
         Ok(())
     })?;
     println!("provider added: {id}");
+    if let Some(protocol) = detected_protocol {
+        println!("provider protocol detected: {id} ({protocol})");
+    }
     Ok(())
 }
 
-pub(super) fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<()> {
+pub(super) async fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<()> {
     let id = options.id.clone();
     let header_env = parse_header_env(&options.header_env)?;
+    let user_set_protocol = options.protocol.is_some();
+    let user_set_api_path = options.api_path.is_some();
+    let base_url_updated = options.base_url.is_some();
+    let mut should_probe_protocol = false;
     mutate_and_invalidate(|config| {
         if let Some(enabled) = options.auxiliary_model_upstream {
             set_auxiliary_model_upstream(config, &id, enabled)?;
@@ -328,6 +350,9 @@ pub(super) fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<
         } else {
             None
         };
+        let path_explicit = inferred_endpoint
+            .as_ref()
+            .is_some_and(|endpoint| endpoint.path_explicit);
         if let Some(endpoint) = inferred_endpoint {
             apply_inferred_custom_endpoint(provider, endpoint);
         } else if let Some(base_url) = options.base_url {
@@ -339,6 +364,11 @@ pub(super) fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<
         if let Some(api_path) = options.api_path {
             provider.api_path = normalize_path("API path", api_path)?;
         }
+        should_probe_protocol = provider.preset_id.as_deref() == Some("custom")
+            && base_url_updated
+            && !user_set_protocol
+            && !user_set_api_path
+            && !path_explicit;
         if let Some(models_path) = options.models_path {
             provider.model_source = ProviderModelSource::OpenAiCompatible {
                 path: normalize_path("models path", models_path)?,
@@ -408,7 +438,26 @@ pub(super) fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<
         )?;
         provider.validate()
     })?;
+    let mut detected_protocol = None;
+    if should_probe_protocol {
+        let provider = required_config()?
+            .providers
+            .into_iter()
+            .find(|provider| provider.id == id)
+            .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?;
+        if let Some(endpoint) = detect_custom_provider_protocol(&provider).await? {
+            detected_protocol = Some(protocol_name(endpoint.protocol).to_owned());
+            mutate_and_invalidate(|config| {
+                let current = find_provider_mut(config, &id)?;
+                apply_inferred_custom_endpoint(current, endpoint);
+                current.validate()
+            })?;
+        }
+    }
     println!("provider updated: {id}");
+    if let Some(protocol) = detected_protocol {
+        println!("provider protocol detected: {id} ({protocol})");
+    }
     Ok(())
 }
 
@@ -976,12 +1025,13 @@ fn apply_discovered_quota(
     provider.quota_currency = discovered.currency.clone();
 }
 
-#[derive(Debug, Eq, PartialEq)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 struct InferredCustomProviderEndpoint {
     base_url: String,
     protocol: ProviderProtocol,
     api_path: String,
     models_path: String,
+    path_explicit: bool,
 }
 
 fn infer_custom_provider_endpoint(raw_url: &str) -> anyhow::Result<InferredCustomProviderEndpoint> {
@@ -1030,27 +1080,29 @@ fn infer_custom_provider_endpoint(raw_url: &str) -> anyhow::Result<InferredCusto
             "/models",
         ),
     ];
-    let (base_path, protocol, api_path, models_path) = candidates
-        .iter()
-        .find_map(|(suffix, protocol, api_path, models_path)| {
-            path.strip_suffix(suffix).map(|base_path| {
-                (
-                    base_path.to_owned(),
-                    *protocol,
-                    (*api_path).to_owned(),
-                    (*models_path).to_owned(),
-                )
-            })
-        })
-        .unwrap_or_else(|| {
-            let base_path = path.strip_suffix("/v1").unwrap_or(&path).to_owned();
+    let matched = candidates.iter().find_map(|(suffix, protocol, api_path, models_path)| {
+        path.strip_suffix(suffix).map(|base_path| {
             (
-                base_path,
-                ProviderProtocol::OpenAiChat,
-                "/v1/chat/completions".to_owned(),
-                "/v1/models".to_owned(),
+                base_path.to_owned(),
+                *protocol,
+                (*api_path).to_owned(),
+                (*models_path).to_owned(),
+                true,
             )
-        });
+        })
+    });
+    let (base_path, protocol, api_path, models_path, path_explicit) = matched.unwrap_or_else(|| {
+        let base_path = path.strip_suffix("/v1").unwrap_or(&path).to_owned();
+        (
+            base_path,
+            // Prefer the native Responses API when the URL does not name a path.
+            // Live probing may still replace this after add/update.
+            ProviderProtocol::OpenAiResponses,
+            "/v1/responses".to_owned(),
+            "/v1/models".to_owned(),
+            false,
+        )
+    });
     url.set_path(if base_path.is_empty() {
         "/"
     } else {
@@ -1062,7 +1114,131 @@ fn infer_custom_provider_endpoint(raw_url: &str) -> anyhow::Result<InferredCusto
         protocol,
         api_path,
         models_path,
+        path_explicit,
     })
+}
+
+async fn detect_custom_provider_protocol(
+    provider: &codex_mixin::provider::ProviderDefinition,
+) -> anyhow::Result<Option<InferredCustomProviderEndpoint>> {
+    let registry = ProviderRegistry::new(vec![provider.clone()])?;
+    let runtime = registry
+        .provider(&provider.id)
+        .expect("newly constructed provider registry contains the custom provider");
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(5))
+        .build()?;
+    let candidates = [
+        (
+            ProviderProtocol::OpenAiResponses,
+            "/v1/responses",
+            "/v1/models",
+            protocol_probe_body(ProviderProtocol::OpenAiResponses),
+        ),
+        (
+            ProviderProtocol::OpenAiResponses,
+            "/responses",
+            "/models",
+            protocol_probe_body(ProviderProtocol::OpenAiResponses),
+        ),
+        (
+            ProviderProtocol::AnthropicMessages,
+            "/v1/messages",
+            "/v1/models",
+            protocol_probe_body(ProviderProtocol::AnthropicMessages),
+        ),
+        (
+            ProviderProtocol::AnthropicMessages,
+            "/messages",
+            "/models",
+            protocol_probe_body(ProviderProtocol::AnthropicMessages),
+        ),
+        (
+            ProviderProtocol::OpenAiChat,
+            "/v1/chat/completions",
+            "/v1/models",
+            protocol_probe_body(ProviderProtocol::OpenAiChat),
+        ),
+        (
+            ProviderProtocol::OpenAiChat,
+            "/chat/completions",
+            "/models",
+            protocol_probe_body(ProviderProtocol::OpenAiChat),
+        ),
+    ];
+    for (protocol, api_path, models_path, body) in candidates {
+        let url = match endpoint_join(&provider.base_url, api_path) {
+            Ok(url) => url,
+            Err(_) => continue,
+        };
+        if protocol_endpoint_available(&client, runtime, protocol, url, &body).await {
+            return Ok(Some(InferredCustomProviderEndpoint {
+                base_url: provider.base_url.clone(),
+                protocol,
+                api_path: api_path.to_owned(),
+                models_path: models_path.to_owned(),
+                path_explicit: false,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+fn protocol_probe_body(protocol: ProviderProtocol) -> serde_json::Value {
+    // Incomplete bodies intentionally avoid paid generation. A real endpoint
+    // still answers with 4xx validation or auth errors; missing routes 404.
+    match protocol {
+        ProviderProtocol::OpenAiResponses => json!({
+            "model": "codex-mixin-protocol-probe",
+            "stream": true
+        }),
+        ProviderProtocol::AnthropicMessages => json!({
+            "model": "codex-mixin-protocol-probe",
+            "max_tokens": 1
+        }),
+        ProviderProtocol::OpenAiChat => json!({
+            "model": "codex-mixin-protocol-probe",
+            "stream": true
+        }),
+    }
+}
+
+async fn protocol_endpoint_available(
+    client: &reqwest::Client,
+    runtime: &codex_mixin::provider::ProviderRuntime,
+    protocol: ProviderProtocol,
+    url: reqwest::Url,
+    body: &serde_json::Value,
+) -> bool {
+    let request = runtime
+        .apply_auth_for_protocol(client.post(url), protocol)
+        .header(reqwest::header::ACCEPT, "application/json")
+        .timeout(Duration::from_secs(5))
+        .json(body);
+    let response = match request.send().await {
+        Ok(response) => response,
+        Err(_) => return false,
+    };
+    let status = response.status().as_u16();
+    match status {
+        // Endpoint exists: auth, validation, rate limit, or accidental success.
+        200 | 201 | 400 | 401 | 403 | 408 | 409 | 413 | 415 | 422 | 429 => true,
+        // Path exists but rejects the method; still better than a missing route.
+        405 => true,
+        // Missing route or gateway that never mounted the API.
+        404 | 501 | 502 | 503 | 504 => false,
+        _ => false,
+    }
+}
+
+fn endpoint_join(base_url: &str, path: &str) -> anyhow::Result<reqwest::Url> {
+    let base_url = base_url.trim_end_matches('/');
+    let path = if path.starts_with('/') {
+        path.to_owned()
+    } else {
+        format!("/{path}")
+    };
+    Ok(reqwest::Url::parse(&format!("{base_url}{path}"))?)
 }
 
 fn apply_inferred_custom_endpoint(
@@ -1364,9 +1540,10 @@ mod tests {
     fn infers_custom_provider_endpoints_without_exposing_protocol_fields() {
         let openai = infer_custom_provider_endpoint("https://public.example/v1").unwrap();
         assert_eq!(openai.base_url, "https://public.example");
-        assert_eq!(openai.protocol, ProviderProtocol::OpenAiChat);
-        assert_eq!(openai.api_path, "/v1/chat/completions");
+        assert_eq!(openai.protocol, ProviderProtocol::OpenAiResponses);
+        assert_eq!(openai.api_path, "/v1/responses");
         assert_eq!(openai.models_path, "/v1/models");
+        assert!(!openai.path_explicit);
 
         let anthropic =
             infer_custom_provider_endpoint("https://public.example/api/v1/messages").unwrap();
@@ -1374,6 +1551,7 @@ mod tests {
         assert_eq!(anthropic.protocol, ProviderProtocol::AnthropicMessages);
         assert_eq!(anthropic.api_path, "/v1/messages");
         assert_eq!(anthropic.models_path, "/v1/models");
+        assert!(anthropic.path_explicit);
 
         let responses =
             infer_custom_provider_endpoint("https://public.example/v1/responses").unwrap();
@@ -1381,6 +1559,115 @@ mod tests {
         assert_eq!(responses.protocol, ProviderProtocol::OpenAiResponses);
         assert_eq!(responses.api_path, "/v1/responses");
         assert_eq!(responses.models_path, "/v1/models");
+        assert!(responses.path_explicit);
+    }
+
+    #[tokio::test]
+    async fn detects_responses_before_chat_completions_for_custom_providers() {
+        use axum::routing::post;
+        let app = Router::new()
+            .route(
+                "/v1/responses",
+                post(|| async {
+                    (
+                        axum::http::StatusCode::BAD_REQUEST,
+                        axum::Json(serde_json::json!({"error":{"message":"missing input"}})),
+                    )
+                }),
+            )
+            .route(
+                "/v1/chat/completions",
+                post(|| async {
+                    (
+                        axum::http::StatusCode::OK,
+                        axum::Json(serde_json::json!({"id":"should-not-win"})),
+                    )
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut provider = codex_mixin::provider::custom_provider("community", "secret");
+        provider.base_url = format!("http://{address}");
+
+        let detected = detect_custom_provider_protocol(&provider)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(detected.protocol, ProviderProtocol::OpenAiResponses);
+        assert_eq!(detected.api_path, "/v1/responses");
+        assert_eq!(detected.models_path, "/v1/models");
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_messages_when_responses_is_missing() {
+        use axum::routing::post;
+        let app = Router::new()
+            .route(
+                "/v1/messages",
+                post(|| async {
+                    (
+                        axum::http::StatusCode::UNAUTHORIZED,
+                        axum::Json(serde_json::json!({"error":{"type":"authentication_error"}})),
+                    )
+                }),
+            )
+            .route(
+                "/v1/chat/completions",
+                post(|| async {
+                    (
+                        axum::http::StatusCode::OK,
+                        axum::Json(serde_json::json!({"id":"chat"})),
+                    )
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut provider = codex_mixin::provider::custom_provider("community", "secret");
+        provider.base_url = format!("http://{address}");
+
+        let detected = detect_custom_provider_protocol(&provider)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(detected.protocol, ProviderProtocol::AnthropicMessages);
+        assert_eq!(detected.api_path, "/v1/messages");
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_chat_when_native_apis_are_missing() {
+        use axum::routing::post;
+        let app = Router::new().route(
+            "/v1/chat/completions",
+            post(|| async {
+                (
+                    axum::http::StatusCode::BAD_REQUEST,
+                    axum::Json(serde_json::json!({"error":{"message":"missing messages"}})),
+                )
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut provider = codex_mixin::provider::custom_provider("community", "secret");
+        provider.base_url = format!("http://{address}");
+
+        let detected = detect_custom_provider_protocol(&provider)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(detected.protocol, ProviderProtocol::OpenAiChat);
+        assert_eq!(detected.api_path, "/v1/chat/completions");
     }
 
     #[test]

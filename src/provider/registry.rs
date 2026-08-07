@@ -623,7 +623,7 @@ mod tests {
         let runtime = registry.provider("opencode-go").unwrap();
         assert_eq!(
             runtime.api_url().as_str(),
-            "https://opencode.ai/zen/go/v1/chat/completions"
+            "https://opencode.ai/zen/go/v1/responses"
         );
         assert_eq!(
             runtime.models_url().unwrap().as_str(),

@@ -49,7 +49,7 @@ impl ProviderPreset {
 
     pub fn description(self) -> &'static str {
         match self {
-            Self::Custom => "Any OpenAI Chat Completions or Anthropic Messages compatible endpoint",
+            Self::Custom => "Any OpenAI Responses, Anthropic Messages, or Chat Completions compatible endpoint",
             Self::BaiduOneApi => "Baidu internal OneAPI with managed DUCC authentication",
             Self::OpenRouter => "OpenRouter multi-model router",
             Self::DeepSeek => "DeepSeek official API",
@@ -104,9 +104,11 @@ pub fn open_code_go_provider(
         enabled: true,
         auxiliary_model_upstream: false,
         preset_id: Some(OPEN_CODE_GO_PRESET_ID.to_owned()),
-        protocol: ProviderProtocol::OpenAiChat,
+        // OpenCode Go's chat-completions compatibility endpoint rejects image
+        // inputs; the native Responses endpoint is required for vision models.
+        protocol: ProviderProtocol::OpenAiResponses,
         base_url: "https://opencode.ai/zen/go".to_owned(),
-        api_path: "/v1/chat/completions".to_owned(),
+        api_path: "/v1/responses".to_owned(),
         model_source: ProviderModelSource::OpenAiCompatible {
             path: "/v1/models".to_owned(),
         },
@@ -139,9 +141,11 @@ pub fn custom_provider(id: impl Into<String>, api_key: impl Into<String>) -> Pro
         enabled: true,
         auxiliary_model_upstream: false,
         preset_id: Some("custom".to_owned()),
-        protocol: ProviderProtocol::AnthropicMessages,
+        // Prefer native Responses. Live probing may replace this when the site
+        // only exposes Messages or Chat Completions.
+        protocol: ProviderProtocol::OpenAiResponses,
         base_url: String::new(),
-        api_path: "/v1/messages".to_owned(),
+        api_path: "/v1/responses".to_owned(),
         model_source: ProviderModelSource::OpenAiCompatible {
             path: "/v1/models".to_owned(),
         },
@@ -149,7 +153,7 @@ pub fn custom_provider(id: impl Into<String>, api_key: impl Into<String>) -> Pro
             header: ProviderAuthHeader::AuthorizationBearer,
             api_key: api_key.into(),
         },
-        anthropic_version: Some("2023-06-01".to_owned()),
+        anthropic_version: None,
         anthropic_beta: None,
         image_generation_path: None,
         quota_url: None,
@@ -174,6 +178,11 @@ pub fn baidu_oneapi_provider(
     let mut provider = custom_provider(id, api_key);
     provider.display_name = "Baidu OneAPI".to_owned();
     provider.preset_id = Some("baidu-oneapi".to_owned());
+    // Baidu keeps Messages as the default transport; GPT models switch to
+    // Responses at request time, and DUCC stays on the messages path.
+    provider.protocol = ProviderProtocol::AnthropicMessages;
+    provider.api_path = "/v1/messages".to_owned();
+    provider.anthropic_version = Some("2023-06-01".to_owned());
     provider.base_url = "https://oneapi-comate.baidu-int.com".to_owned();
     provider.model_source = ProviderModelSource::BaiduOneApi;
     provider.image_generation_path = Some("/v1/images/generations".to_owned());
@@ -282,12 +291,12 @@ mod tests {
     use super::*;
 
     #[test]
-    fn open_code_go_uses_chat_and_models_compatible_paths() {
+    fn open_code_go_uses_responses_and_models_compatible_paths() {
         let provider = open_code_go_provider("opencode-go", "secret");
         provider.validate().unwrap();
-        assert_eq!(provider.protocol, ProviderProtocol::OpenAiChat);
+        assert_eq!(provider.protocol, ProviderProtocol::OpenAiResponses);
         assert_eq!(provider.base_url, "https://opencode.ai/zen/go");
-        assert_eq!(provider.api_path, "/v1/chat/completions");
+        assert_eq!(provider.api_path, "/v1/responses");
         assert_eq!(provider.quota_parser, ProviderQuotaParser::OpenCodeGo);
         assert_eq!(provider.quota_currency.as_deref(), Some("USD"));
         assert_eq!(provider.quota_workspace_id, None);

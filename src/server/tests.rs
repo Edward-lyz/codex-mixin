@@ -17,6 +17,9 @@ use crate::server::messages_http::normalize_message_request;
 fn test_provider(base_url: String, model: &str) -> crate::provider::ProviderDefinition {
     let mut provider = custom_provider("test-provider", "upstream-key");
     provider.base_url = base_url;
+    provider.protocol = crate::provider::ProviderProtocol::AnthropicMessages;
+    provider.api_path = "/v1/messages".to_owned();
+    provider.anthropic_version = Some("2023-06-01".to_owned());
     provider.selected_models = vec![model.to_owned()];
     provider.cached_models = vec![ProviderModel {
         id: model.to_owned(),
