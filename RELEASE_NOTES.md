@@ -1,5 +1,5 @@
 <!-- codex-mixin:zh-Hans:start -->
-## v0.3.14
+## v0.3.15
 
 ### 功能
 
@@ -15,7 +15,7 @@
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
-## v0.3.14
+## v0.3.15
 
 ### 功能
 
@@ -31,7 +31,7 @@
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
-## v0.3.14
+## v0.3.15
 
 ### Features
 
