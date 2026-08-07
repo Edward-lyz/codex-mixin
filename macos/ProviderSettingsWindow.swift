@@ -1445,8 +1445,6 @@ func duccTerminalSetupScript(
         echo '请使用手机扫码登录隔离的 DUCC。'
         /usr/bin/env \
           HOME=\(shellQuoted(isolatedHome.path)) \
-          DISABLE_BAIDU_CLAUDE_UPDATE=1 \
-          DISABLE_DUCC_CLI_UPDATE=1 \
           \(shellQuoted(executable.path)) login
         login_result=$?
         """
