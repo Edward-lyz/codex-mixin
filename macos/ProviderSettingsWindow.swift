@@ -754,9 +754,10 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
     @objc private func saveProvider() {
         guard let provider = selectedProvider, !isBusy else { return }
+        let auxiliaryModelUpstream = auxiliaryModelUpstreamButton.state == .on
         var update = ["providers", "update", provider.id]
         update.append("--auxiliary-model-upstream")
-        update.append(auxiliaryModelUpstreamButton.state == .on ? "true" : "false")
+        update.append(auxiliaryModelUpstream ? "true" : "false")
         appendProviderArgument(&update, "--key", apiKeyField.stringValue)
         let imageGenerationPath = imageGenerationPathField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
         if imageGenerationPath.isEmpty {
@@ -789,9 +790,10 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             )
             return
         }
+        let selectedBaiduBridge = selectedBaiduAuthBridgeMode()
         if provider.presetID == "baidu-oneapi" {
             appendProviderArgument(&update, "--quota-username", quotaUsername)
-            appendBaiduAuthBridgeArguments(&update, mode: selectedBaiduAuthBridgeMode())
+            appendBaiduAuthBridgeArguments(&update, mode: selectedBaiduBridge)
         }
         if requiresOpenCodeGoQuotaCredentials(provider.presetID ?? "") {
             let workspaceID = quotaWorkspaceIDField.stringValue
@@ -814,8 +816,11 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             status: "正在保存 \(provider.id)…",
             selecting: provider.id,
             requiresBaiduBridge: provider.presetID == "baidu-oneapi"
-                ? selectedBaiduAuthBridgeMode()
-                : nil
+                && baiduBridgeNeedsSetup(
+                    current: provider.effectiveBaiduAuthBridge,
+                    selected: selectedBaiduBridge
+                ) ? selectedBaiduBridge : nil,
+            codexSkillChanged: auxiliaryModelUpstream != provider.auxiliaryModelUpstream
         )
     }
 
@@ -959,7 +964,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         then secondArguments: [String]? = nil,
         status: String,
         selecting providerID: String?,
-        requiresBaiduBridge: BaiduAuthBridgeMode? = nil
+        requiresBaiduBridge: BaiduAuthBridgeMode? = nil,
+        codexSkillChanged: Bool = false
     ) {
         guard !isBusy else { return }
         setBusy(true, status: status)
@@ -1000,7 +1006,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 reloadProviders(selecting: providerID)
                 showAlert(
                     title: AppLocalization.string("providerSettings.providerConfigurationUpdated"),
-                    message: AppLocalization.string("providerSettings.theCodexModelCatalogHasBeenRegenerated")
+                    message: codexSkillChanged
+                        ? "生图 Skill 已更新。请重启 Codex 后新建线程，使 Codex 重新加载 Skill。"
+                        : AppLocalization.string("providerSettings.theCodexModelCatalogHasBeenRegenerated")
                 )
             } catch {
                 setBusy(false, status: "操作失败")

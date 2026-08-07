@@ -7,6 +7,11 @@ enum GatewayError: Error {
 @main
 struct ProviderSupportTests {
     static func main() throws {
+        precondition(!baiduBridgeNeedsSetup(current: .duccLoopback, selected: .duccLoopback))
+        precondition(!baiduBridgeNeedsSetup(current: .duccLoopback, selected: .disabled))
+        precondition(baiduBridgeNeedsSetup(current: nil, selected: .duccLoopback))
+        precondition(baiduBridgeNeedsSetup(current: .disabled, selected: .duccLoopback))
+
         let fileManager = FileManager.default
         let testHome = fileManager.temporaryDirectory
             .appendingPathComponent("codex-mixin-managed-ducc-\(UUID().uuidString)")
@@ -241,7 +246,10 @@ struct ProviderSupportTests {
         let benchmarkColumns = modelBenchmarkColumnDefinitions()
         precondition(
             benchmarkColumns.map(\.title)
-                == ["加入 Codex", "上游模型", "TTFT", "吞吐", "上下文", "倍率"]
+                == [
+                    "加入 Codex", "上游模型", "TTFT", "吞吐", "上下文", "倍率", "协议",
+                    "图片", "Tool Search", "Web Search", "Function Tools", "Thinking",
+                ]
         )
         precondition(Set(benchmarkColumns.map(\.id)).count == benchmarkColumns.count)
         precondition(benchmarkRatioValue("0.5x") == 0.5)

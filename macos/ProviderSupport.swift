@@ -99,6 +99,13 @@ enum BaiduAuthBridgeMode: String, Decodable, Equatable {
     case duccLoopback = "ducc_loopback"
 }
 
+func baiduBridgeNeedsSetup(
+    current: BaiduAuthBridgeMode?,
+    selected: BaiduAuthBridgeMode
+) -> Bool {
+    selected != .disabled && current != selected
+}
+
 enum ManagedCodexInstallMode: String, Decodable {
     case customOnly = "custom_only"
     case codexOAuthProxy = "codex_oauth_proxy"

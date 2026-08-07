@@ -3284,6 +3284,29 @@ async fn openai_chat_image_tool_calls_configured_upstream_generation_endpoint() 
 }
 
 #[tokio::test]
+async fn auxiliary_provider_receives_unmarked_image_generation_requests() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::ImageTool).await;
+    let mut config = test_config(upstream_url);
+    config.providers[0].auxiliary_model_upstream = true;
+    config.providers[0].image_generation_path = Some("/v1/images/generations".to_owned());
+    let gateway_url = spawn_gateway_with_config(config).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/images/generations"))
+        .bearer_auth("gateway-key")
+        .json(&json!({"prompt":"draw a green square","model":"gpt-image-2"}))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["prompt"], "draw a green square");
+    assert_eq!(requests[0]["model"], "gpt-image-2");
+}
+
+#[tokio::test]
 async fn custom_image_tool_uses_official_backend_without_upstream_image_endpoint() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::ImageTool).await;
     let (official_url, official_requests, auth_headers, account_headers, _, _) =

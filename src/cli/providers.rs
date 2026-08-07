@@ -17,7 +17,10 @@ use console::style;
 use futures_util::{StreamExt, stream};
 use serde_json::json;
 
-use super::codex::{managed_codex_install_mode, resolve_codex_config_path};
+use super::codex::{
+    codex_home_path, managed_codex_install_mode, reconcile_imagegen_skill,
+    resolve_codex_config_path,
+};
 use super::config_input::{normalize_base_url, trim_required};
 use super::status::{QuotaUsageSummary, quota_usage};
 
@@ -325,6 +328,7 @@ pub(super) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
         config.providers.push(provider);
         Ok(())
     })?;
+    sync_imagegen_skill()?;
     println!("provider added: {id}");
     if let Some(protocol) = detected_protocol {
         println!("provider protocol detected: {id} ({protocol})");
@@ -472,6 +476,7 @@ pub(super) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
             })?;
         }
     }
+    sync_imagegen_skill()?;
     println!("provider updated: {id}");
     if let Some(protocol) = detected_protocol {
         println!("provider protocol detected: {id} ({protocol})");
@@ -547,6 +552,7 @@ pub(super) fn set_provider_enabled(id: &str, enabled: bool) -> anyhow::Result<()
         find_provider_mut(config, id)?.enabled = enabled;
         Ok(())
     })?;
+    sync_imagegen_skill()?;
     println!(
         "provider {}: {id}",
         if enabled { "enabled" } else { "disabled" }
@@ -559,6 +565,7 @@ pub(super) fn remove_provider(id: &str) -> anyhow::Result<()> {
         ensure_has_providers(config)?;
         remove_provider_from_config(config, id)
     })?;
+    sync_imagegen_skill()?;
     println!("provider removed: {id}");
     for (old_id, new_id) in renames {
         println!("provider renumbered: {old_id} -> {new_id}");
@@ -868,6 +875,25 @@ fn mutate_and_invalidate<T>(
     let result = mutate_stored_config(mutation)?;
     WebSearchCapabilities::clear_default_cache()?;
     Ok(result)
+}
+
+fn sync_imagegen_skill() -> anyhow::Result<()> {
+    let config = required_config()?;
+    let auxiliary_provider_enabled = config
+        .providers
+        .iter()
+        .any(|provider| provider.enabled && provider.auxiliary_model_upstream);
+    if reconcile_imagegen_skill(&codex_home_path(), auxiliary_provider_enabled)? {
+        println!(
+            "codex imagegen skill: {}; restart Codex Desktop to reload skills",
+            if auxiliary_provider_enabled {
+                "installed"
+            } else {
+                "restored official skill"
+            }
+        );
+    }
+    Ok(())
 }
 
 fn mutate_and_invalidate_provider_capabilities<T>(

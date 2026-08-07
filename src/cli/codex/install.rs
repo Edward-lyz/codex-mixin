@@ -15,6 +15,7 @@ use codex_mixin::history::{migrate_history_from_provider, migrate_history_to_pro
 use codex_mixin::server::AppState;
 
 use super::catalog::*;
+use super::imagegen_skill::{reconcile_imagegen_skill, restore_imagegen_skill};
 use super::managed_auth::*;
 use super::managed_config::*;
 use crate::cli::atomic_file::write_atomic_if_changed;
@@ -199,6 +200,20 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
         serialized_config.as_bytes(),
         || validate_codex_install(codex_home, provider_id, &expected_model_slugs),
     )?;
+    let auxiliary_provider_enabled = gateway_config
+        .providers
+        .iter()
+        .any(|provider| provider.enabled && provider.auxiliary_model_upstream);
+    if reconcile_imagegen_skill(codex_home, auxiliary_provider_enabled)? {
+        println!(
+            "codex imagegen skill: {}",
+            if auxiliary_provider_enabled {
+                "installed"
+            } else {
+                "restored official skill"
+            }
+        );
+    }
 
     super::super::progress_step("Syncing history sessions and SQLite state");
     let history = match migrate_history_to_provider(codex_home, provider_id) {
@@ -250,6 +265,9 @@ pub(in crate::cli) fn uninstall_codex(
     config_path: Option<PathBuf>,
     catalog_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
+    if restore_imagegen_skill(&codex_home_path())? {
+        println!("codex imagegen skill: restored official skill");
+    }
     super::super::progress_step("Reading and locking Codex config");
     let config_path = resolve_codex_config_path(config_path)?;
     let _config_lock = ManagedConfigLock::acquire(&config_path)?;
