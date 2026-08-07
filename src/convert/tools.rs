@@ -65,12 +65,6 @@ pub(crate) fn collect_active_tools(body: &Value) -> Result<Value, GatewayError> 
                     GatewayError::BadRequest("namespace tool missing name".to_owned())
                 })?;
                 if let Some(&existing_index) = namespace_indexes.get(namespace) {
-                    if !namespace_metadata_matches(&active_tools[existing_index], tool) {
-                        return Err(GatewayError::BadRequest(format!(
-                            "conflicting namespace definitions across tool search history: {namespace}"
-                        )));
-                    }
-
                     let discovered_nested =
                         tool.get("tools").and_then(Value::as_array).ok_or_else(|| {
                             GatewayError::BadRequest("namespace tool missing tools".to_owned())
@@ -91,13 +85,7 @@ pub(crate) fn collect_active_tools(body: &Value) -> Result<Value, GatewayError> 
                                     "namespace function tool missing name".to_owned(),
                                 )
                             })?;
-                        if let Some(&nested_index) = nested_indexes.get(nested_name) {
-                            if existing_nested[nested_index] != *nested {
-                                return Err(GatewayError::BadRequest(format!(
-                                    "conflicting definitions for discovered tool: {namespace}.{nested_name}"
-                                )));
-                            }
-                        } else {
+                        if !nested_indexes.contains_key(nested_name) {
                             nested_indexes.insert(nested_name.to_owned(), existing_nested.len());
                             existing_nested.push(nested.clone());
                         }
@@ -126,19 +114,6 @@ pub(crate) fn collect_active_tools(body: &Value) -> Result<Value, GatewayError> 
         }
     }
     Ok(Value::Array(active_tools))
-}
-
-fn namespace_metadata_matches(existing: &Value, discovered: &Value) -> bool {
-    let Some(existing) = existing.as_object() else {
-        return false;
-    };
-    let Some(discovered) = discovered.as_object() else {
-        return false;
-    };
-    existing
-        .iter()
-        .filter(|(key, _)| key.as_str() != "tools")
-        .eq(discovered.iter().filter(|(key, _)| key.as_str() != "tools"))
 }
 
 pub(super) fn convert_tools(

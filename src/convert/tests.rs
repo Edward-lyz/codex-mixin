@@ -618,7 +618,7 @@ fn rejects_messages_without_content() {
 }
 
 #[test]
-fn rejects_conflicting_namespace_tools_across_search_history() {
+fn keeps_first_namespace_tool_definition_across_search_history() {
     let body = json!({
         "input": [
             {
@@ -650,12 +650,56 @@ fn rejects_conflicting_namespace_tools_across_search_history() {
         ]
     });
 
-    let error = collect_active_tools(&body).unwrap_err();
-    assert!(
-        error
-            .to_string()
-            .contains("conflicting definitions for discovered tool")
+    let active_tools = collect_active_tools(&body).unwrap();
+    assert_eq!(
+        active_tools[0]["tools"][0]["parameters"],
+        json!({"type": "object"})
     );
+}
+
+#[test]
+fn current_namespace_definition_wins_over_search_history() {
+    let body = json!({
+        "tools": [{
+            "type": "namespace",
+            "name": "mcp__calendar",
+            "description": "current namespace",
+            "tools": [{
+                "type": "function",
+                "name": "create_event",
+                "parameters": {"type": "object", "required": ["current"]}
+            }]
+        }],
+        "input": [{
+            "type": "tool_search_output",
+            "execution": "client",
+            "tools": [{
+                "type": "namespace",
+                "name": "mcp__calendar",
+                "description": "historical namespace",
+                "tools": [
+                    {
+                        "type": "function",
+                        "name": "create_event",
+                        "parameters": {"type": "object", "required": ["historical"]}
+                    },
+                    {
+                        "type": "function",
+                        "name": "delete_event",
+                        "parameters": {"type": "object"}
+                    }
+                ]
+            }]
+        }]
+    });
+
+    let active_tools = collect_active_tools(&body).unwrap();
+    assert_eq!(active_tools[0]["description"], "current namespace");
+    assert_eq!(
+        active_tools[0]["tools"][0]["parameters"]["required"],
+        json!(["current"])
+    );
+    assert_eq!(active_tools[0]["tools"][1]["name"], "delete_event");
 }
 
 #[test]
