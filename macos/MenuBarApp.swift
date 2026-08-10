@@ -7,6 +7,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var serviceStatusItem: NSMenuItem?
     var quotaStatusItem: NSMenuItem?
+    var usageStatusItem: NSMenuItem?
     var launchAtLoginMenuItem: NSMenuItem?
     var providerSettingsWindowController: ProviderSettingsWindowController?
     var modelBenchmarkWindowController: ModelBenchmarkWindowController?
@@ -104,12 +105,18 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let quotaItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         quotaItem.isEnabled = false
         quotaItem.image = menuItemImage("chart.bar")
+        let usageItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        usageItem.isEnabled = false
+        usageItem.image = menuItemImage("number")
         serviceStatusItem = serviceItem
         quotaStatusItem = quotaItem
+        usageStatusItem = usageItem
         menu.addItem(serviceItem)
         updateServiceStatusView()
         menu.addItem(quotaItem)
         updateQuotaStatus(title: "额度：检查中...", detail: nil, progress: nil)
+        menu.addItem(usageItem)
+        updateTokenUsageStatus(title: "Token 使用：检查中...", detail: nil, progress: nil)
         menu.addItem(.separator())
         launchAtLoginMenuItem = actionItem("登录时启动并开启服务", #selector(toggleLaunchAtLogin), "poweron")
         menu.addItem(launchAtLoginMenuItem!)

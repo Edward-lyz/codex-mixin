@@ -3,7 +3,9 @@ import Cocoa
 private let menuContentWidth: CGFloat = 336
 private let serviceMenuHeight: CGFloat = 56
 private let providerQuotaRowHeight: CGFloat = 54
+private let providerTokenUsageRowHeight: CGFloat = 58
 private let maximumVisibleProviderRows = 4
+private let maximumVisibleTokenUsageRows = 4
 private let gatewayStatusDotIdentifier = NSUserInterfaceItemIdentifier("gateway-status-dot")
 private let gatewayTitleIdentifier = NSUserInterfaceItemIdentifier("gateway-title")
 private let gatewayDetailIdentifier = NSUserInterfaceItemIdentifier("gateway-detail")
@@ -552,6 +554,122 @@ func providerQuotaRow(_ usage: ProviderQuotaUsage) -> NSView {
         row.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -3),
     ])
     return container
+}
+
+func providerTokenUsageMenuView(_ usages: [ProviderTokenUsage]) -> NSView {
+    if usages.isEmpty {
+        return quotaMenuView(
+            title: "Token 使用：暂无数据",
+            detail: nil,
+            progress: nil
+        )
+    }
+    let rowHeight = providerTokenUsageRowHeight
+    let view = NSView(frame: NSRect(
+        x: 0,
+        y: 0,
+        width: menuContentWidth,
+        height: max(rowHeight * CGFloat(usages.count), rowHeight)
+    ))
+    let rows = usages.map(providerTokenUsageRow)
+    let stack = NSStackView(views: rows)
+    stack.orientation = .vertical
+    stack.alignment = .leading
+    stack.distribution = .fillEqually
+    stack.spacing = 0
+    stack.translatesAutoresizingMaskIntoConstraints = false
+    view.addSubview(stack)
+    let containerConstraints = [
+        stack.leadingAnchor.constraint(equalTo: view.leadingAnchor),
+        stack.trailingAnchor.constraint(equalTo: view.trailingAnchor),
+        stack.topAnchor.constraint(equalTo: view.topAnchor),
+        stack.bottomAnchor.constraint(equalTo: view.bottomAnchor),
+    ]
+    let rowWidthConstraints = rows.map {
+        $0.widthAnchor.constraint(equalTo: stack.widthAnchor)
+    }
+    NSLayoutConstraint.activate(containerConstraints + rowWidthConstraints)
+    guard usages.count > maximumVisibleTokenUsageRows else { return view }
+    let scrollView = NSScrollView(frame: NSRect(
+        x: 0, y: 0, width: menuContentWidth,
+        height: rowHeight * CGFloat(maximumVisibleTokenUsageRows)
+    ))
+    scrollView.drawsBackground = false
+    scrollView.borderType = .noBorder
+    scrollView.hasHorizontalScroller = false
+    scrollView.hasVerticalScroller = true
+    scrollView.autohidesScrollers = true
+    scrollView.scrollerStyle = .overlay
+    scrollView.documentView = view
+    return scrollView
+}
+
+func providerTokenUsageRow(_ usage: ProviderTokenUsage) -> NSView {
+    let icon = NSImageView(image: menuItemImage("number") ?? NSImage())
+    icon.translatesAutoresizingMaskIntoConstraints = false
+    icon.widthAnchor.constraint(equalToConstant: 16).isActive = true
+    icon.heightAnchor.constraint(equalToConstant: 16).isActive = true
+
+    let providerLabel = NSTextField(labelWithString: usage.providerID)
+    providerLabel.font = .systemFont(ofSize: 12, weight: .medium)
+    providerLabel.lineBreakMode = .byTruncatingMiddle
+
+    let valueLabel = NSTextField(labelWithString:
+        "\(formatTokenCount(usage.inputTokens)) 新输入 / \(formatTokenCount(usage.outputTokens)) 输出")
+    valueLabel.font = .systemFont(ofSize: 11)
+    valueLabel.alignment = .right
+    valueLabel.lineBreakMode = .byTruncatingTail
+
+    let heading = NSStackView(views: [icon, providerLabel, NSView(), valueLabel])
+    heading.orientation = .horizontal
+    heading.alignment = .centerY
+    heading.spacing = 8
+    providerLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 100).isActive = true
+    valueLabel.widthAnchor.constraint(greaterThanOrEqualToConstant: 110).isActive = true
+
+    let cacheHit = usage.cacheHitPercent.map {
+        String(format: "缓存命中 %.1f%%", $0)
+    } ?? "缓存命中未上报"
+    let detail = NSTextField(labelWithString:
+        "\(cacheHit) · \(usage.requestCount) 次请求 · 写入 \(formatTokenCount(usage.cacheCreationTokens))")
+    detail.font = .systemFont(ofSize: 10)
+    detail.textColor = .secondaryLabelColor
+
+    let progress = NSProgressIndicator()
+    progress.isIndeterminate = false
+    progress.style = .bar
+    progress.minValue = 0
+    progress.maxValue = 1
+    progress.doubleValue = min(max((usage.cacheHitPercent ?? 0) / 100, 0), 1)
+    progress.heightAnchor.constraint(equalToConstant: 8).isActive = true
+
+    let row = NSStackView(views: [heading, progress, detail])
+    row.orientation = .vertical
+    row.alignment = .leading
+    row.spacing = 4
+    row.translatesAutoresizingMaskIntoConstraints = false
+    heading.widthAnchor.constraint(equalTo: row.widthAnchor).isActive = true
+    progress.widthAnchor.constraint(equalTo: row.widthAnchor).isActive = true
+
+    let container = NSView()
+    container.addSubview(row)
+    NSLayoutConstraint.activate([
+        row.leadingAnchor.constraint(equalTo: container.leadingAnchor, constant: 10),
+        row.trailingAnchor.constraint(equalTo: container.trailingAnchor, constant: -10),
+        row.topAnchor.constraint(equalTo: container.topAnchor, constant: 3),
+        row.bottomAnchor.constraint(equalTo: container.bottomAnchor, constant: -3),
+    ])
+    return container
+}
+
+func formatTokenCount(_ count: UInt64) -> String {
+    if count >= 1_000_000 {
+        return String(format: "%.1fM", Double(count) / 1_000_000)
+    }
+    if count >= 1_000 {
+        return String(format: "%.1fk", Double(count) / 1_000)
+    }
+    return "\(count)"
 }
 
 

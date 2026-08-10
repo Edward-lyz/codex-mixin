@@ -188,6 +188,7 @@ extension AppDelegate {
                     serviceStatus = "等待配置上游 API"
                     serviceEndpoint = nil
                     updateQuotaStatus(title: "额度：等待配置", detail: nil, progress: nil)
+                    updateTokenUsageStatus(title: "Token 使用：等待配置", detail: nil, progress: nil)
                     updateStatusTitle()
                     updateActionStates()
                     if !CommandLine.arguments.contains("--show-settings")
@@ -440,6 +441,18 @@ extension AppDelegate {
                 progress: nil
             )
         }
+        do {
+            let usage = try await runGateway(["usage", "--json"])
+            guard await isCurrent() else { return }
+            updateProviderTokenUsageStatus(try parseProviderTokenUsage(usage))
+        } catch {
+            guard await isCurrent() else { return }
+            updateTokenUsageStatus(
+                title: "Token 使用：不可用",
+                detail: localizedErrorDescription(error),
+                progress: nil
+            )
+        }
     }
 
     private func checkGatewayHealth() async throws {
@@ -508,6 +521,20 @@ extension AppDelegate {
         guard let quotaStatusItem else { return }
         menuItemViewUpdater.setView(for: quotaStatusItem) {
             providerQuotaMenuView(usages)
+        }
+    }
+
+    func updateTokenUsageStatus(title: String, detail: String?, progress: Double?) {
+        guard let usageStatusItem else { return }
+        menuItemViewUpdater.setView(for: usageStatusItem) {
+            quotaMenuView(title: title, detail: detail, progress: progress)
+        }
+    }
+
+    func updateProviderTokenUsageStatus(_ usages: [ProviderTokenUsage]) {
+        guard let usageStatusItem else { return }
+        menuItemViewUpdater.setView(for: usageStatusItem) {
+            providerTokenUsageMenuView(usages)
         }
     }
     @objc func openLogs() {

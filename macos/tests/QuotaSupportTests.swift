@@ -38,5 +38,25 @@ struct QuotaSupportTests {
         precondition(usages[2].remaining == 110)
         precondition(usages[2].currency == "CNY")
         print("Provider quota labels: passed")
+
+        let tokenUsages = try parseProviderTokenUsage(
+            """
+            [
+              {
+                "provider_id": "baidu-oneapi",
+                "request_count": 2,
+                "input_tokens": 1500,
+                "cache_read_tokens": 4500,
+                "cache_creation_tokens": 500,
+                "output_tokens": 300,
+                "cache_hit_percent": 75.0
+              }
+            ]
+            """
+        )
+        precondition(tokenUsages[0].providerID == "baidu-oneapi")
+        precondition(tokenUsages[0].requestCount == 2)
+        precondition(tokenUsages[0].cacheHitPercent == 75.0)
+        print("Provider token usage parsing: passed")
     }
 }

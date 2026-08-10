@@ -105,6 +105,30 @@ struct MenuViewsLayoutTests {
         precondition(quotaLabels.contains {
             $0.stringValue.contains("110") && $0.stringValue.contains("CNY")
         })
+        let tokenUsages = try parseProviderTokenUsage(
+            """
+            [
+              {
+                "provider_id": "baidu-oneapi",
+                "request_count": 6,
+                "input_tokens": 1500,
+                "cache_read_tokens": 4500,
+                "cache_creation_tokens": 500,
+                "output_tokens": 300,
+                "cache_hit_percent": 75.0
+              }
+            ]
+            """
+        )
+        let tokenView = providerTokenUsageMenuView(tokenUsages)
+        tokenView.layoutSubtreeIfNeeded()
+        let tokenLabels = descendants(of: tokenView, matching: NSTextField.self)
+        precondition(tokenLabels.contains {
+            $0.stringValue.contains("缓存命中 75.0%")
+        })
+        precondition(tokenLabels.contains {
+            $0.stringValue.contains("6 次请求")
+        })
         let providerIssue = "Baidu OneAPI：模型 unreachable-model 当前不可达"
         let serviceView = serviceMenuView(
             title: "本地网关运行中 · Provider 降级",

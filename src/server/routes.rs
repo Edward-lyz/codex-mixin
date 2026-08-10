@@ -18,6 +18,7 @@ pub fn router(state: AppState) -> Router {
             "/v1/model-benchmarks",
             get(model_benchmarks).post(start_model_benchmarks),
         )
+        .route("/v1/usage", get(token_usage))
         .route(
             "/v1/responses",
             get(responses_ws)
@@ -165,4 +166,12 @@ async fn start_model_benchmarks(
         }),
     )
         .into_response())
+}
+
+async fn token_usage(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Json<Vec<ProviderTokenUsage>>, GatewayError> {
+    check_gateway_auth(&state, &headers).await?;
+    Ok(Json(state.cache_shapes.usage_snapshot()))
 }

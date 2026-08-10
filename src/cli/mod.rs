@@ -49,7 +49,7 @@ use providers::{
     set_provider_enabled, test_provider, update_provider,
 };
 use service::{init_tracing, logs, restart, start, stop};
-use status::{models, probe_web_search, quota, show_config, status};
+use status::{models, probe_web_search, quota, show_config, status, usage};
 
 fn progress_is_interactive() -> bool {
     io::stdout().is_terminal()
@@ -389,6 +389,11 @@ enum Command {
         json: bool,
         #[arg(long)]
         provider: Option<String>,
+    },
+    #[command(hide = true)]
+    Usage {
+        #[arg(long)]
+        json: bool,
     },
     #[command(hide = true)]
     Config {
@@ -1283,6 +1288,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Status { json } => status(json).await,
         Command::Models { json } => models(json).await,
         Command::Quota { json, provider } => quota(json, provider.as_deref()).await,
+        Command::Usage { json } => usage(json).await,
         Command::Config { json, scope } => show_config(json, scope),
         Command::Start {
             bind,

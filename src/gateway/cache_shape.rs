@@ -9,7 +9,7 @@
 
 use std::collections::HashMap;
 use std::io::Write;
-use std::sync::{Mutex, PoisonError};
+use std::sync::{Arc, Mutex, PoisonError};
 
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
@@ -40,6 +40,84 @@ const MIN_TURNS_FOR_REPLACED_HISTORY: usize = 8;
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
+
+/// Provider-level token and prompt cache counters observed on upstream
+/// responses, kept compact so the menu can visualize usage without retaining
+/// request bodies or history.
+#[derive(Clone, Debug, Default, Serialize)]
+pub(crate) struct ProviderTokenUsage {
+    pub(crate) provider_id: String,
+    pub(crate) request_count: u64,
+    pub(crate) input_tokens: u64,
+    pub(crate) cache_read_tokens: u64,
+    pub(crate) cache_creation_tokens: u64,
+    pub(crate) output_tokens: u64,
+    pub(crate) cache_hit_percent: Option<f64>,
+    #[serde(skip)]
+    pub(crate) observed_cache_read_tokens: u64,
+    #[serde(skip)]
+    pub(crate) observed_uncached_input_tokens: u64,
+}
+
+#[derive(Debug, Default)]
+struct TokenUsageState {
+    entries: HashMap<String, ProviderTokenUsage>,
+}
+
+/// In-memory aggregate of the counters seen on streamed provider responses.
+#[derive(Debug, Default)]
+pub(crate) struct TokenUsageAggregator {
+    state: Mutex<TokenUsageState>,
+}
+
+impl TokenUsageAggregator {
+    fn record(&self, provider_id: &str, usage: &UpstreamCacheUsage) {
+        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let entry = state.entries.entry(provider_id.to_owned()).or_default();
+        entry.provider_id = provider_id.to_owned();
+        entry.request_count = entry.request_count.saturating_add(1);
+        entry.input_tokens = entry
+            .input_tokens
+            .saturating_add(usage.input_tokens.unwrap_or(0));
+        entry.cache_read_tokens = entry
+            .cache_read_tokens
+            .saturating_add(usage.cache_read_tokens.unwrap_or(0));
+        entry.cache_creation_tokens = entry
+            .cache_creation_tokens
+            .saturating_add(usage.cache_creation_tokens.unwrap_or(0));
+        entry.output_tokens = entry
+            .output_tokens
+            .saturating_add(usage.output_tokens.unwrap_or(0));
+        if let (Some(cache_read), Some(uncached)) = (usage.cache_read_tokens, usage.input_tokens) {
+            entry.observed_cache_read_tokens =
+                entry.observed_cache_read_tokens.saturating_add(cache_read);
+            entry.observed_uncached_input_tokens = entry
+                .observed_uncached_input_tokens
+                .saturating_add(uncached)
+                .saturating_add(usage.cache_creation_tokens.unwrap_or(0));
+        }
+    }
+
+    pub(crate) fn snapshot(&self) -> Vec<ProviderTokenUsage> {
+        let mut entries = self
+            .state
+            .lock()
+            .unwrap_or_else(PoisonError::into_inner)
+            .entries
+            .values()
+            .cloned()
+            .collect::<Vec<_>>();
+        for entry in &mut entries {
+            let observed = entry
+                .observed_cache_read_tokens
+                .saturating_add(entry.observed_uncached_input_tokens);
+            entry.cache_hit_percent = (observed > 0)
+                .then(|| entry.observed_cache_read_tokens as f64 / observed as f64 * 100.0);
+        }
+        entries.sort_by(|left, right| left.provider_id.cmp(&right.provider_id));
+        entries
+    }
+}
 
 /// Streaming FNV-1a sink. Serializing straight into the hasher keeps the digest
 /// over the same bytes `reqwest` sends without buffering a second copy of the
@@ -478,9 +556,18 @@ struct TrackedSessions {
 #[derive(Default)]
 pub(crate) struct CacheShapeTracker {
     sessions: Mutex<TrackedSessions>,
+    usage: Arc<TokenUsageAggregator>,
 }
 
 impl CacheShapeTracker {
+    pub(crate) fn usage(&self) -> Arc<TokenUsageAggregator> {
+        self.usage.clone()
+    }
+
+    pub(crate) fn usage_snapshot(&self) -> Vec<ProviderTokenUsage> {
+        self.usage.snapshot()
+    }
+
     pub(crate) fn record(&self, session_key: &str, shape: CacheShape) -> PrefixReport {
         let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
         let seq = sessions.next_seq;
@@ -634,6 +721,7 @@ pub(crate) fn record_provider_prefix(
         total_bytes: report.total_bytes,
         reused_turns: report.reused_turns,
         total_turns: report.total_turns,
+        usage: tracker.usage(),
     })
 }
 
@@ -660,6 +748,7 @@ pub(crate) struct PrefixObservation {
     total_bytes: usize,
     reused_turns: usize,
     total_turns: usize,
+    usage: Arc<TokenUsageAggregator>,
 }
 
 impl PrefixObservation {
@@ -714,6 +803,7 @@ impl PrefixObservation {
     /// the only case that warrants a warning, because nothing on this side can
     /// fix it and it otherwise looks like a gateway bug.
     pub(crate) fn report_upstream_cache(&self, usage: &UpstreamCacheUsage) {
+        self.usage.record(&self.provider_id, usage);
         let cache_read_tokens = usage.cache_read_tokens.unwrap_or(0);
         let uncached_input_tokens = usage.input_tokens.unwrap_or(0);
         let prompt_tokens = cache_read_tokens.saturating_add(uncached_input_tokens);
@@ -764,6 +854,7 @@ pub(crate) struct UpstreamCacheUsage {
     pub(crate) input_tokens: Option<u64>,
     pub(crate) cache_read_tokens: Option<u64>,
     pub(crate) cache_creation_tokens: Option<u64>,
+    pub(crate) output_tokens: Option<u64>,
 }
 
 impl UpstreamCacheUsage {
@@ -787,17 +878,28 @@ impl UpstreamCacheUsage {
         }
         // `prompt_tokens` counts the whole prompt including cache reads, so the
         // uncached part has to be derived to stay comparable across protocols.
-        let input = field("input_tokens")
-            .or_else(|| field("prompt_cache_miss_tokens"))
+        let input = field("prompt_cache_miss_tokens")
             .or_else(|| {
                 field("prompt_tokens")
                     .map(|prompt| prompt.saturating_sub(self.cache_read_tokens.unwrap_or(0)))
+            })
+            .or_else(|| {
+                field("input_tokens").map(|input| {
+                    if usage.get("input_tokens_details").is_some() {
+                        input.saturating_sub(self.cache_read_tokens.unwrap_or(0))
+                    } else {
+                        input
+                    }
+                })
             });
         if let Some(input) = input {
             self.input_tokens = Some(input);
         }
         if let Some(created) = field("cache_creation_input_tokens") {
             self.cache_creation_tokens = Some(created);
+        }
+        if let Some(output) = field("output_tokens").or_else(|| field("completion_tokens")) {
+            self.output_tokens = Some(output);
         }
     }
 
@@ -856,7 +958,11 @@ where
                     let Ok(data) = serde_json::from_str::<Value>(&event.data) else {
                         continue;
                     };
-                    for path in [&data, data.get("message").unwrap_or(&Value::Null)] {
+                    for path in [
+                        &data,
+                        data.get("message").unwrap_or(&Value::Null),
+                        data.get("response").unwrap_or(&Value::Null),
+                    ] {
                         if let Some(found) = path.get("usage") {
                             report.usage.absorb(found);
                         }
@@ -1415,6 +1521,7 @@ mod tests {
             total_bytes,
             reused_turns: 40,
             total_turns: 41,
+            usage: Arc::new(TokenUsageAggregator::default()),
         }
     }
 
@@ -1430,6 +1537,7 @@ mod tests {
             input_tokens: Some(21_815),
             cache_read_tokens: Some(17_792),
             cache_creation_tokens: None,
+            output_tokens: None,
         };
 
         // 45% of the prompt, but essentially all of what could be reused.
@@ -1439,6 +1547,7 @@ mod tests {
             input_tokens: Some(39_479),
             cache_read_tokens: Some(128),
             cache_creation_tokens: None,
+            output_tokens: None,
         };
         assert!(subject.discarded_by_provider(&dropped));
     }
@@ -1449,6 +1558,7 @@ mod tests {
             input_tokens: Some(95_744),
             cache_read_tokens: Some(3_456),
             cache_creation_tokens: None,
+            output_tokens: None,
         };
 
         // Prefix kept byte-identical, provider still recomputed it.
@@ -1464,6 +1574,7 @@ mod tests {
                     input_tokens: Some(99_269),
                     cache_read_tokens: None,
                     cache_creation_tokens: None,
+                    output_tokens: None,
                 }
             )
         );
@@ -1475,6 +1586,7 @@ mod tests {
                     input_tokens: Some(1_391),
                     cache_read_tokens: Some(92_544),
                     cache_creation_tokens: None,
+                    output_tokens: None,
                 }
             )
         );
@@ -1510,6 +1622,7 @@ mod tests {
             input_tokens: Some(prompt_tokens - 16),
             cache_read_tokens: Some(16),
             cache_creation_tokens: None,
+            output_tokens: None,
         };
 
         let subject = observation(PrefixState::AppendOnly, 960_000);
@@ -1543,6 +1656,30 @@ mod tests {
         assert_eq!(relayed, events);
     }
 
+    #[tokio::test]
+    async fn cache_usage_observation_reads_responses_completed_usage() {
+        let events = vec![
+            Bytes::from_static(
+                b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":4,\"input_tokens_details\":{\"cached_tokens\":3},\"output_tokens\":2}}}\n\n",
+            ),
+        ];
+        let usage = Arc::new(TokenUsageAggregator::default());
+        let upstream = futures_util::stream::iter(events.clone().into_iter().map(Ok));
+        let mut observation = observation(PrefixState::AppendOnly, 960_000);
+        observation.usage = usage.clone();
+
+        let relayed: Vec<Bytes> = observe_upstream_cache_usage(upstream, Some(observation))
+            .map(Result::unwrap)
+            .collect()
+            .await;
+
+        assert_eq!(relayed, events);
+        let snapshot = usage.snapshot();
+        assert_eq!(snapshot[0].input_tokens, 1);
+        assert_eq!(snapshot[0].cache_read_tokens, 3);
+        assert_eq!(snapshot[0].output_tokens, 2);
+    }
+
     #[test]
     fn usage_counters_are_absorbed_from_both_message_and_top_level_shapes() {
         let mut usage = UpstreamCacheUsage::default();
@@ -1552,10 +1689,12 @@ mod tests {
 
         usage.absorb(&json!({"input_tokens": 100, "cache_read_input_tokens": 3456}));
         usage.absorb(&json!({"cache_creation_input_tokens": 7}));
+        usage.absorb(&json!({"output_tokens": 42}));
 
         assert_eq!(usage.input_tokens, Some(100));
         assert_eq!(usage.cache_read_tokens, Some(3456));
         assert_eq!(usage.cache_creation_tokens, Some(7));
+        assert_eq!(usage.output_tokens, Some(42));
         assert!(usage.observed());
     }
 
@@ -1578,6 +1717,42 @@ mod tests {
         assert!(
             subject.discarded_by_provider(&usage),
             "the final frame is the verdict"
+        );
+    }
+
+    #[test]
+    fn token_usage_aggregator_sums_provider_counters_and_cache_hit_rate() {
+        let aggregator = TokenUsageAggregator::default();
+        aggregator.record(
+            "baidu-oneapi",
+            &UpstreamCacheUsage {
+                input_tokens: Some(1_000),
+                cache_read_tokens: Some(3_000),
+                cache_creation_tokens: Some(500),
+                output_tokens: Some(200),
+            },
+        );
+        aggregator.record(
+            "baidu-oneapi",
+            &UpstreamCacheUsage {
+                input_tokens: Some(500),
+                cache_read_tokens: Some(1_500),
+                cache_creation_tokens: None,
+                output_tokens: Some(100),
+            },
+        );
+
+        let snapshot = aggregator.snapshot();
+        assert_eq!(snapshot.len(), 1);
+        assert_eq!(snapshot[0].provider_id, "baidu-oneapi");
+        assert_eq!(snapshot[0].request_count, 2);
+        assert_eq!(snapshot[0].input_tokens, 1_500);
+        assert_eq!(snapshot[0].cache_read_tokens, 4_500);
+        assert_eq!(snapshot[0].cache_creation_tokens, 500);
+        assert_eq!(snapshot[0].output_tokens, 300);
+        assert_eq!(
+            snapshot[0].cache_hit_percent,
+            Some(4_500.0 / 6_500.0 * 100.0)
         );
     }
 
@@ -1604,6 +1779,6 @@ mod tests {
             &json!({"input_tokens": 4_000, "input_tokens_details": {"cached_tokens": 3_500}}),
         );
         assert_eq!(responses.cache_read_tokens, Some(3_500));
-        assert_eq!(responses.input_tokens, Some(4_000));
+        assert_eq!(responses.input_tokens, Some(500));
     }
 }

@@ -30,7 +30,8 @@ use crate::config::GatewayConfig;
 use crate::error::GatewayError;
 use crate::fusion::{FusionEngine, should_fuse_turn, validate_fusion_profiles};
 use crate::gateway::{
-    CacheShapeTracker, ModelRouter, RequestPlan, ResolvedModelRoute, UpstreamExecutor,
+    CacheShapeTracker, ModelRouter, ProviderTokenUsage, RequestPlan, ResolvedModelRoute,
+    UpstreamExecutor,
 };
 use crate::image_generation::ImageRouteRegistry;
 use crate::model_metadata::ModelMetadataResolver;
