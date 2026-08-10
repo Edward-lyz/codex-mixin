@@ -158,6 +158,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         providerScroll.borderType = .bezelBorder
         providerScroll.translatesAutoresizingMaskIntoConstraints = false
         providerScroll.heightAnchor.constraint(equalToConstant: 238).isActive = true
+        providerTable.frame = NSRect(x: 0, y: 0, width: 230, height: 238)
+        providerTable.autoresizingMask = [.width]
 
         configureButton(addButton, action: #selector(addProvider))
         configureButton(removeButton, action: #selector(removeProvider))
@@ -418,6 +420,10 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 let loaded = try await loadHandler()
                 codexInstallMode = loaded.codexInstallMode
                 providers = loaded.providers
+                providerTable.frame.size.height = max(
+                    238,
+                    CGFloat(providers.count) * providerTable.rowHeight
+                )
                 providerTable.reloadData()
                 emptyLabel.isHidden = !providers.isEmpty
                 if let previousID, let row = providers.firstIndex(where: { $0.id == previousID }) {

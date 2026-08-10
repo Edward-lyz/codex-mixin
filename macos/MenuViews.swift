@@ -710,7 +710,6 @@ final class ProviderUsageDashboardView: FlippedMenuView {
     }
 
     func updateQuotaStatus(title: String, detail: String?) {
-        quotaUsages = []
         quotaStatusTitle = title
         quotaStatusDetail = detail
         render()
@@ -724,7 +723,6 @@ final class ProviderUsageDashboardView: FlippedMenuView {
     }
 
     func updateTokenStatus(title: String, detail: String?) {
-        tokenUsages = []
         tokenStatusTitle = title
         tokenStatusDetail = detail
         render()
@@ -811,9 +809,10 @@ final class ProviderUsageDashboardView: FlippedMenuView {
         scroll.identifier = NSUserInterfaceItemIdentifier("provider-tab-scroll")
         scroll.drawsBackground = false
         scroll.borderType = .noBorder
-        scroll.hasHorizontalScroller = false
+        scroll.hasHorizontalScroller = groups.count * Int(providerTabWidth) > Int(scroll.frame.width)
         scroll.hasVerticalScroller = false
-        scroll.horizontalScrollElasticity = .automatic
+        scroll.autohidesScrollers = true
+        scroll.scrollerStyle = .overlay
 
         let documentWidth = max(scroll.frame.width, CGFloat(groups.count) * providerTabWidth)
         let document = FlippedMenuView(frame: NSRect(
