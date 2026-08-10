@@ -4,3 +4,5 @@
 provider logo assets in CodexBar, licensed under the MIT License.
 
 `baidu.svg` is adapted from Simple Icons, released under CC0 1.0.
+
+`custom.svg` is an original Codex Mixin asset.
