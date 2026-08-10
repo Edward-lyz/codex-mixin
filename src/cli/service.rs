@@ -58,11 +58,11 @@ pub(super) fn init_tracing(log_file: Option<&Path>, quiet_parent_logs: bool) -> 
         fs::set_permissions(log_file, fs::Permissions::from_mode(0o600))?;
         tracing_subscriber::fmt()
             .with_ansi(false)
+            .without_time()
+            .without_thread_ids()
+            .without_thread_names()
             .with_env_filter(gateway_log_filter())
             .with_target(true)
-            .with_file(true)
-            .with_line_number(true)
-            .with_thread_ids(true)
             .with_writer(Mutex::new(file))
             .try_init()
             .map_err(|error| anyhow::anyhow!("failed to install tracing subscriber: {error}"))?;

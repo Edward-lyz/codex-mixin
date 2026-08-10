@@ -14,7 +14,8 @@ use std::sync::{Arc, Mutex, PoisonError};
 
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
-use serde::{Deserialize, Serialize};
+use rusqlite::{Connection, params};
+use serde::Serialize;
 use serde_json::Value;
 
 use crate::anthropic::MessageRequest;
@@ -61,25 +62,111 @@ pub(crate) struct ProviderTokenUsage {
     pub(crate) observed_uncached_input_tokens: u64,
 }
 
-#[derive(Clone, Debug, Deserialize, Serialize)]
-struct PersistedTokenUsage {
-    provider_id: String,
-    model_id: String,
-    request_count: u64,
-    input_tokens: u64,
-    cache_read_tokens: u64,
-    cache_creation_tokens: u64,
-    output_tokens: u64,
-    cache_hit_percent: Option<f64>,
-    #[serde(default)]
-    observed_cache_read_tokens: u64,
-    #[serde(default)]
-    observed_uncached_input_tokens: u64,
-}
-
 #[derive(Debug, Default)]
 struct TokenUsageState {
     entries: HashMap<(String, String), ProviderTokenUsage>,
+}
+
+fn load_persisted_usage(
+    path: &std::path::Path,
+) -> anyhow::Result<HashMap<(String, String), ProviderTokenUsage>> {
+    let connection = Connection::open(path)?;
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS token_usage (
+            provider_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            request_count INTEGER NOT NULL,
+            input_tokens INTEGER NOT NULL,
+            cache_read_tokens INTEGER NOT NULL,
+            cache_creation_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            observed_cache_read_tokens INTEGER NOT NULL,
+            observed_uncached_input_tokens INTEGER NOT NULL,
+            PRIMARY KEY (provider_id, model_id)
+        )",
+    )?;
+    let mut statement = connection.prepare(
+        "SELECT provider_id, model_id, request_count, input_tokens, cache_read_tokens,
+                cache_creation_tokens, output_tokens, observed_cache_read_tokens,
+                observed_uncached_input_tokens
+         FROM token_usage",
+    )?;
+    let rows = statement.query_map([], |row| {
+        let provider_id = row.get::<_, String>(0)?;
+        let model_id = row.get::<_, String>(1)?;
+        Ok((
+            (provider_id.clone(), model_id.clone()),
+            ProviderTokenUsage {
+                provider_id,
+                model_id,
+                request_count: row.get(2)?,
+                input_tokens: row.get(3)?,
+                cache_read_tokens: row.get(4)?,
+                cache_creation_tokens: row.get(5)?,
+                output_tokens: row.get(6)?,
+                cache_hit_percent: None,
+                observed_cache_read_tokens: row.get(7)?,
+                observed_uncached_input_tokens: row.get(8)?,
+            },
+        ))
+    })?;
+    Ok(rows.collect::<Result<HashMap<_, _>, _>>()?)
+}
+
+fn persist_usage_delta(
+    path: &std::path::Path,
+    provider_id: &str,
+    model_id: &str,
+    usage: &UpstreamCacheUsage,
+) -> anyhow::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let connection = Connection::open(path)?;
+    connection.execute_batch(
+        "PRAGMA journal_mode = WAL;
+         PRAGMA synchronous = NORMAL;
+         CREATE TABLE IF NOT EXISTS token_usage (
+            provider_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            request_count INTEGER NOT NULL,
+            input_tokens INTEGER NOT NULL,
+            cache_read_tokens INTEGER NOT NULL,
+            cache_creation_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            observed_cache_read_tokens INTEGER NOT NULL,
+            observed_uncached_input_tokens INTEGER NOT NULL,
+            PRIMARY KEY (provider_id, model_id)
+         )",
+    )?;
+    connection.execute(
+        "INSERT INTO token_usage (
+            provider_id, model_id, request_count, input_tokens, cache_read_tokens,
+            cache_creation_tokens, output_tokens, observed_cache_read_tokens,
+            observed_uncached_input_tokens
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+         ON CONFLICT(provider_id, model_id) DO UPDATE SET
+            request_count = token_usage.request_count + excluded.request_count,
+            input_tokens = token_usage.input_tokens + excluded.input_tokens,
+            cache_read_tokens = token_usage.cache_read_tokens + excluded.cache_read_tokens,
+            cache_creation_tokens = token_usage.cache_creation_tokens + excluded.cache_creation_tokens,
+            output_tokens = token_usage.output_tokens + excluded.output_tokens,
+            observed_cache_read_tokens = token_usage.observed_cache_read_tokens + excluded.observed_cache_read_tokens,
+            observed_uncached_input_tokens = token_usage.observed_uncached_input_tokens + excluded.observed_uncached_input_tokens",
+        params![
+            provider_id,
+            model_id,
+            1_u64,
+            usage.input_tokens.unwrap_or(0),
+            usage.cache_read_tokens.unwrap_or(0),
+            usage.cache_creation_tokens.unwrap_or(0),
+            usage.output_tokens.unwrap_or(0),
+            usage.cache_read_tokens.unwrap_or(0),
+            usage.input_tokens.unwrap_or(0)
+                .saturating_add(usage.cache_creation_tokens.unwrap_or(0)),
+        ],
+    )?;
+    Ok(())
 }
 
 /// In-memory aggregate of the counters seen on streamed provider responses.
@@ -93,29 +180,11 @@ impl TokenUsageAggregator {
     pub(crate) fn from_default_path() -> Self {
         let path = crate::config::stored_config_path()
             .parent()
-            .map(|parent| parent.join("token-usage.json"));
+            .map(|parent| parent.join("usage.sqlite3"));
         let entries = path
             .as_deref()
-            .and_then(|path| std::fs::read_to_string(path).ok())
-            .and_then(|raw| serde_json::from_str::<Vec<PersistedTokenUsage>>(&raw).ok())
-            .unwrap_or_default()
-            .into_iter()
-            .map(|entry| {
-                let usage = ProviderTokenUsage {
-                    provider_id: entry.provider_id.clone(),
-                    model_id: entry.model_id.clone(),
-                    request_count: entry.request_count,
-                    input_tokens: entry.input_tokens,
-                    cache_read_tokens: entry.cache_read_tokens,
-                    cache_creation_tokens: entry.cache_creation_tokens,
-                    output_tokens: entry.output_tokens,
-                    cache_hit_percent: entry.cache_hit_percent,
-                    observed_cache_read_tokens: entry.observed_cache_read_tokens,
-                    observed_uncached_input_tokens: entry.observed_uncached_input_tokens,
-                };
-                ((entry.provider_id, entry.model_id), usage)
-            })
-            .collect();
+            .and_then(|path| load_persisted_usage(path).ok())
+            .unwrap_or_default();
         Self {
             state: Mutex::new(TokenUsageState { entries }),
             persist_path: path,
@@ -152,31 +221,12 @@ impl TokenUsageAggregator {
                 .saturating_add(usage.cache_creation_tokens.unwrap_or(0));
         }
         if let Some(path) = self.persist_path.clone() {
-            let entries = state.entries.values().cloned().collect::<Vec<_>>();
+            let provider_id = provider_id.to_owned();
+            let model_id = model_id.to_owned();
+            let usage = *usage;
             tokio::task::spawn_blocking(move || {
-                let persisted = entries
-                    .into_iter()
-                    .map(|entry| PersistedTokenUsage {
-                        provider_id: entry.provider_id,
-                        model_id: entry.model_id,
-                        request_count: entry.request_count,
-                        input_tokens: entry.input_tokens,
-                        cache_read_tokens: entry.cache_read_tokens,
-                        cache_creation_tokens: entry.cache_creation_tokens,
-                        output_tokens: entry.output_tokens,
-                        cache_hit_percent: entry.cache_hit_percent,
-                        observed_cache_read_tokens: entry.observed_cache_read_tokens,
-                        observed_uncached_input_tokens: entry.observed_uncached_input_tokens,
-                    })
-                    .collect::<Vec<_>>();
-                if let Ok(raw) = serde_json::to_vec_pretty(&persisted) {
-                    if let Some(parent) = path.parent() {
-                        let _ = std::fs::create_dir_all(parent);
-                    }
-                    let temporary = path.with_extension("json.tmp");
-                    if std::fs::write(&temporary, raw).is_ok() {
-                        let _ = std::fs::rename(temporary, path);
-                    }
+                if let Err(error) = persist_usage_delta(&path, &provider_id, &model_id, &usage) {
+                    tracing::warn!(error = %error, "failed to persist token usage");
                 }
             });
         }
