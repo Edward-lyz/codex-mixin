@@ -177,18 +177,18 @@ pub(crate) struct TokenUsageAggregator {
 }
 
 impl TokenUsageAggregator {
-    pub(crate) fn from_default_path() -> Self {
+    pub(crate) fn try_from_default_path() -> anyhow::Result<Self> {
         let path = crate::config::stored_config_path()
             .parent()
             .map(|parent| parent.join("usage.sqlite3"));
-        let entries = path
-            .as_deref()
-            .and_then(|path| load_persisted_usage(path).ok())
-            .unwrap_or_default();
-        Self {
+        let entries = match path.as_deref() {
+            Some(path) if path.exists() => load_persisted_usage(path)?,
+            _ => HashMap::new(),
+        };
+        Ok(Self {
             state: Mutex::new(TokenUsageState { entries }),
             persist_path: path,
-        }
+        })
     }
 
     fn record(&self, provider_id: &str, model_id: &str, usage: &UpstreamCacheUsage) {

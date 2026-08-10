@@ -100,7 +100,7 @@ impl AppState {
             image_routes: ImageRouteRegistry::default(),
             benchmarks: ModelBenchmarkManager::from_default_path(),
             cache_shapes: Arc::new(CacheShapeTracker::with_usage(
-                crate::gateway::TokenUsageAggregator::from_default_path(),
+                crate::gateway::TokenUsageAggregator::try_from_default_path()?,
             )),
             web_search_capabilities,
             catalog_sources_cache: Arc::new(tokio::sync::Mutex::new(None)),
