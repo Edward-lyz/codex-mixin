@@ -429,26 +429,31 @@ extension AppDelegate {
         }
         guard scope == .full || quotaRefreshPolicy.isDue() else { return }
         quotaRefreshPolicy.markAttempt()
+        // Quota pages can involve several remote providers and browser-backed
+        // dashboards. Start both subprocesses together so a slow quota probe
+        // cannot hide the local token history on a fresh app launch.
+        let quotaTask = Task { try await runGateway(["quota", "--json"]) }
+        let usageTask = Task { try await runGateway(["usage", "--json"]) }
         do {
-            let quota = try await runGateway(["quota", "--json"])
-            guard await isCurrent() else { return }
-            updateProviderQuotaStatus(try parseProviderQuotaUsage(quota))
-        } catch {
-            guard await isCurrent() else { return }
-            updateQuotaStatus(
-                title: "Provider 额度：不可用",
-                detail: localizedErrorDescription(error),
-                progress: nil
-            )
-        }
-        do {
-            let usage = try await runGateway(["usage", "--json"])
+            let usage = try await usageTask.value
             guard await isCurrent() else { return }
             updateProviderTokenUsageStatus(try parseProviderTokenUsage(usage))
         } catch {
             guard await isCurrent() else { return }
             updateTokenUsageStatus(
                 title: "Token 使用：不可用",
+                detail: localizedErrorDescription(error),
+                progress: nil
+            )
+        }
+        do {
+            let quota = try await quotaTask.value
+            guard await isCurrent() else { return }
+            updateProviderQuotaStatus(try parseProviderQuotaUsage(quota))
+        } catch {
+            guard await isCurrent() else { return }
+            updateQuotaStatus(
+                title: "Provider 额度：不可用",
                 detail: localizedErrorDescription(error),
                 progress: nil
             )
