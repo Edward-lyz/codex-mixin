@@ -31,6 +31,7 @@ pub(super) struct AddProviderOptions {
     pub(super) key: String,
     pub(super) display_name: Option<String>,
     pub(super) base_url: Option<String>,
+    pub(super) website_url: Option<String>,
     pub(super) protocol: Option<String>,
     pub(super) api_path: Option<String>,
     pub(super) models_path: Option<String>,
@@ -56,6 +57,7 @@ pub(super) struct UpdateProviderOptions {
     pub(super) clear_key: bool,
     pub(super) display_name: Option<String>,
     pub(super) base_url: Option<String>,
+    pub(super) website_url: Option<String>,
     pub(super) protocol: Option<String>,
     pub(super) api_path: Option<String>,
     pub(super) models_path: Option<String>,
@@ -108,6 +110,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     "preset_id": provider.preset_id,
                     "protocol": provider.protocol,
                     "base_url": provider.base_url,
+                    "website_url": provider.website_url,
                     "api_path": provider.api_path,
                     "model_source": provider.model_source,
                     "api_key_configured": !provider.auth.api_key.is_empty(),
@@ -241,6 +244,7 @@ pub(super) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
     } else if let Some(base_url) = options.base_url {
         provider.base_url = normalize_base_url(base_url)?;
     }
+    provider.website_url = options.website_url.map(normalize_base_url).transpose()?;
     if preset == ProviderPreset::Custom && provider.base_url.is_empty() {
         anyhow::bail!("custom provider requires --base-url");
     }
@@ -379,6 +383,13 @@ pub(super) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
             apply_inferred_custom_endpoint(provider, endpoint);
         } else if let Some(base_url) = options.base_url {
             provider.base_url = normalize_base_url(base_url)?;
+        }
+        if let Some(website_url) = options.website_url {
+            provider.website_url = if website_url.trim().is_empty() {
+                None
+            } else {
+                Some(normalize_base_url(website_url)?)
+            };
         }
         if let Some(protocol) = options.protocol {
             provider.protocol = parse_protocol(&protocol)?;

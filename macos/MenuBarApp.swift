@@ -50,7 +50,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         startGatewayAtLaunch()
-        timer = Timer.scheduledTimer(withTimeInterval: 15, repeats: true) { [weak self] _ in
+        timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
             Task { @MainActor in
                 await self?.refreshScheduledStatus()
             }

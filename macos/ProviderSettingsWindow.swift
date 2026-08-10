@@ -32,6 +32,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private let idField = copyableTextField("")
     private let displayNameField = formTextField()
     private let baseURLField = formTextField()
+    private let websiteURLField = formTextField()
     private let imageGenerationPathField = formTextField()
     private let apiKeyField = secureFormTextField()
     private let clearKeyButton = NSButton(title: "清除密钥", target: nil, action: nil)
@@ -51,6 +52,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private let baiduAuthBridgePopup = baiduAuthBridgePopUpButton()
     private var customDisplayNameRow: NSView?
     private var customBaseURLRow: NSView?
+    private var customWebsiteURLRow: NSView?
     private var quotaUsernameRow: NSView?
     private var quotaWorkspaceIDRow: NSView?
     private var quotaAuthCookieRow: NSView?
@@ -210,6 +212,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         self.customDisplayNameRow = customDisplayNameRow
         let customBaseURLRow = compactLabeledView("API 地址", baseURLField)
         self.customBaseURLRow = customBaseURLRow
+        let customWebsiteURLRow = compactLabeledView("官网地址", websiteURLField)
+        self.customWebsiteURLRow = customWebsiteURLRow
         imageGenerationPathField.placeholderString = "/v1/images/generations"
         let managedConfigurationLabel = NSTextField(wrappingLabelWithString: AppLocalization.string("providerSettings.protocolsAndEndpointPathsAreDetectedAutomatically"))
         managedConfigurationLabel.textColor = .secondaryLabelColor
@@ -224,6 +228,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             compactLabeledView("Provider ID", idField),
             customDisplayNameRow,
             customBaseURLRow,
+            customWebsiteURLRow,
             compactLabeledView("绘图接口路径", imageGenerationPathField),
             compactLabeledView("API 密钥", apiKeyControls),
             quotaUsernameRow,
@@ -456,6 +461,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         idField.stringValue = provider.id
         displayNameField.stringValue = provider.displayName
         baseURLField.stringValue = provider.baseURL
+        websiteURLField.stringValue = provider.websiteURL ?? ""
         imageGenerationPathField.stringValue = provider.imageGenerationPath ?? ""
         apiKeyField.stringValue = ""
         apiKeyField.placeholderString = provider.apiKeyConfigured
@@ -478,6 +484,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         let isCustom = provider.presetID == "custom"
         customDisplayNameRow?.isHidden = !isCustom
         customBaseURLRow?.isHidden = !isCustom
+        customWebsiteURLRow?.isHidden = !isCustom
         quotaUsernameRow?.isHidden = provider.presetID != "baidu-oneapi"
         let openCodeGo = requiresOpenCodeGoQuotaCredentials(provider.presetID ?? "")
         quotaWorkspaceIDRow?.isHidden = !openCodeGo
@@ -493,6 +500,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             idField,
             displayNameField,
             baseURLField,
+            websiteURLField,
             apiKeyField,
             quotaUsernameField,
             quotaWorkspaceIDField,
@@ -521,6 +529,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             apiKeyField,
             displayNameField,
             baseURLField,
+            websiteURLField,
             imageGenerationPathField,
             quotaUsernameField,
             quotaWorkspaceIDField,
@@ -644,6 +653,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         if values.preset == "custom" {
             appendProviderArgument(&arguments, "--display-name", values.displayName)
             appendProviderArgument(&arguments, "--base-url", values.baseURL)
+            appendProviderArgument(&arguments, "--website-url", values.websiteURL)
         }
         appendProviderArgument(&arguments, "--quota-username", values.quotaUsername)
         if requiresOpenCodeGoQuotaCredentials(values.preset) {
@@ -786,6 +796,11 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             }
             appendProviderArgument(&update, "--display-name", displayName)
             appendProviderArgument(&update, "--base-url", baseURL)
+            let websiteURL = websiteURLField.stringValue
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            if !websiteURL.isEmpty || provider.websiteURL != nil {
+                update.append(contentsOf: ["--website-url", websiteURL])
+            }
         }
         let quotaUsername = quotaUsernameField.stringValue
             .trimmingCharacters(in: .whitespacesAndNewlines)

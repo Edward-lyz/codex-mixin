@@ -142,6 +142,7 @@ struct ProviderView: Decodable {
     let presetID: String?
     let protocolID: String
     let baseURL: String
+    let websiteURL: String?
     let apiPath: String
     let modelSource: ProviderModelSourceView
     let apiKeyConfigured: Bool
@@ -171,6 +172,7 @@ struct ProviderView: Decodable {
         case presetID = "preset_id"
         case protocolID = "protocol"
         case baseURL = "base_url"
+        case websiteURL = "website_url"
         case apiPath = "api_path"
         case modelSource = "model_source"
         case apiKeyConfigured = "api_key_configured"

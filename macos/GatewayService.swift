@@ -180,6 +180,7 @@ extension AppDelegate {
         Task { @MainActor in
             defer { serviceBusy = false }
             do {
+                loadCachedProviderQuota()
                 do {
                     _ = try await runGateway(["config", "--json", "--scope", "effective"])
                 } catch {
@@ -205,12 +206,14 @@ extension AppDelegate {
                 }
                 let status = try await ensureGatewayReady()
                 applyGatewayStatus(status)
-                do {
-                    _ = try await runGateway(["refresh-codex-catalog"])
-                } catch {
-                    showAlert(title: "刷新 Codex 模型失败", message: String(describing: error))
-                }
                 await refreshStatusNow()
+                Task { @MainActor in
+                    do {
+                        _ = try await runGateway(["refresh-codex-catalog"])
+                    } catch {
+                        showAlert(title: "刷新 Codex 模型失败", message: String(describing: error))
+                    }
+                }
             } catch {
                 isRunning = false
                 serviceStatus = "本地网关启动失败"
@@ -438,11 +441,37 @@ extension AppDelegate {
         do {
             let providerList = try decodeProviderList(await providersTask.value)
             guard await isCurrent() else { return }
-            let dashboardProviders = providerList.providers
-                .filter(\.enabled)
-                .map { ProviderDashboardProvider(id: $0.id, displayName: $0.displayName) }
+            let dashboardProviders = providerList.providers.map {
+                ProviderDashboardProvider(
+                    id: $0.id,
+                    displayName: $0.displayName,
+                    isEnabled: $0.enabled,
+                    websiteURL: $0.websiteURL
+                )
+            }
             await MainActor.run {
                 providerUsageDashboardView?.updateConfiguredProviders(dashboardProviders)
+            }
+            Task { [weak self] in
+                guard let self else { return }
+                for provider in dashboardProviders {
+                    guard let websiteURL = provider.websiteURL else { continue }
+                    do {
+                        if try await refreshProviderLogoIfNeeded(
+                            providerID: provider.id,
+                            websiteURL: websiteURL
+                        ) {
+                            await MainActor.run {
+                                self.providerUsageDashboardView?.refreshProviderIcons()
+                            }
+                        }
+                    } catch {
+                        appendAppDiagnosticLog(
+                            "provider icon refresh failed for \(provider.id): \(diagnosticErrorDescription(error))",
+                            directory: self.stateDir()
+                        )
+                    }
+                }
             }
         } catch {
             guard await isCurrent() else { return }
@@ -467,6 +496,7 @@ extension AppDelegate {
         do {
             let quota = try await quotaTask.value
             guard await isCurrent() else { return }
+            saveProviderQuotaCache(quota)
             updateProviderQuotaStatus(try parseProviderQuotaUsage(quota))
         } catch {
             guard await isCurrent() else { return }
@@ -539,6 +569,34 @@ extension AppDelegate {
 
     func updateProviderQuotaStatus(_ usages: [ProviderQuotaUsage]) {
         providerUsageDashboardView?.updateQuotaUsages(usages)
+    }
+
+    func loadCachedProviderQuota() {
+        let url = stateDir().appendingPathComponent("quota-cache.json")
+        guard FileManager.default.fileExists(atPath: url.path) else { return }
+        do {
+            let rawJSON = try String(contentsOf: url, encoding: .utf8)
+            updateProviderQuotaStatus(try parseProviderQuotaUsage(rawJSON))
+        } catch {
+            appendDiagnosticLog(
+                "Failed to load cached provider quota: \(localizedErrorDescription(error))"
+            )
+        }
+    }
+
+    private func saveProviderQuotaCache(_ rawJSON: String) {
+        let url = stateDir().appendingPathComponent("quota-cache.json")
+        do {
+            try FileManager.default.createDirectory(
+                at: stateDir(),
+                withIntermediateDirectories: true
+            )
+            try rawJSON.write(to: url, atomically: true, encoding: .utf8)
+        } catch {
+            appendDiagnosticLog(
+                "Failed to save provider quota cache: \(localizedErrorDescription(error))"
+            )
+        }
     }
 
     func updateTokenUsageStatus(title: String, detail: String?, progress: Double?) {

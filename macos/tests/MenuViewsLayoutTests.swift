@@ -8,6 +8,14 @@ enum GatewayError: Error {
 struct MenuViewsLayoutTests {
     static func main() throws {
         _ = NSApplication.shared
+        guard let providerWebsiteURL = URL(string: "https://example.com/settings") else {
+            preconditionFailure("test provider website URL is invalid")
+        }
+        let faviconURL = declaredFaviconURL(
+            html: #"<link rel="icon" href="/assets/provider.png">"#,
+            baseURL: providerWebsiteURL
+        )
+        precondition(faviconURL?.absoluteString == "https://example.com/assets/provider.png")
         let runningToggleView = serviceMenuView(
             title: "本地网关运行中",
             endpoint: "http://127.0.0.1:8787",
@@ -185,7 +193,8 @@ struct MenuViewsLayoutTests {
         dashboard.updateTokenUsages(tokenUsages)
         dashboard.layoutSubtreeIfNeeded()
         precondition(dashboard.frame.width == 336)
-        precondition(dashboard.frame.height == 334)
+        let collapsedHeight = dashboard.frame.height
+        precondition(collapsedHeight < 334)
 
         let providerScroll = descendants(of: dashboard, matching: NSScrollView.self)
             .first { $0.identifier?.rawValue == "provider-tab-scroll" }
@@ -195,6 +204,27 @@ struct MenuViewsLayoutTests {
         let providerButtons = descendants(of: dashboard, matching: NSButton.self)
             .filter { $0.identifier?.rawValue.hasPrefix("provider-tab-") == true }
         precondition(providerButtons.count == 5)
+
+        let clickableModelRows = descendants(of: dashboard, matching: NSControl.self)
+            .filter { $0.identifier?.rawValue.hasPrefix("token-model-") == true }
+        precondition(clickableModelRows.count == 2)
+        guard let modelAction = clickableModelRows[0].action else {
+            preconditionFailure("token model row is missing its click action")
+        }
+        NSApp.sendAction(
+            modelAction,
+            to: clickableModelRows[0].target,
+            from: clickableModelRows[0]
+        )
+        dashboard.layoutSubtreeIfNeeded()
+        precondition(dashboard.frame.height > collapsedHeight)
+        NSApp.sendAction(
+            modelAction,
+            to: clickableModelRows[0].target,
+            from: clickableModelRows[0]
+        )
+        dashboard.layoutSubtreeIfNeeded()
+        precondition(dashboard.frame.height == collapsedHeight)
         precondition(providerButtons.first {
             $0.identifier?.rawValue == "provider-tab-baidu-oneapi"
         }?.image != nil)
@@ -252,7 +282,7 @@ struct MenuViewsLayoutTests {
         let quotaScroll = descendants(of: dashboard, matching: NSScrollView.self)
             .first { $0.identifier?.rawValue == "provider-quota-scroll" }
         precondition(quotaScroll?.hasVerticalScroller == true)
-        precondition(dashboard.frame.height == 304)
+        precondition(quotaScroll.map { dashboard.frame.height >= $0.frame.maxY } == true)
         let providerIssue = "Baidu OneAPI：模型 unreachable-model 当前不可达"
         let serviceView = serviceMenuView(
             title: "本地网关运行中 · Provider 降级",

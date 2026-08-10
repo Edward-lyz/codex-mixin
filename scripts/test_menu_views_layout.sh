@@ -13,6 +13,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/Generated/L10n.swift" \
   "$ROOT_DIR/macos/Localization.swift" \
   "$ROOT_DIR/macos/QuotaSupport.swift" \
+  "$ROOT_DIR/macos/ProviderIconCache.swift" \
   "$ROOT_DIR/macos/MenuViews.swift" \
   "$ROOT_DIR/macos/tests/MenuViewsLayoutTests.swift" \
   -framework Cocoa \

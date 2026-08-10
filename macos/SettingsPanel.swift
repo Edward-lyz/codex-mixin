@@ -4,6 +4,7 @@ struct AddProviderFormValues {
     let preset: String
     let displayName: String
     let baseURL: String
+    let websiteURL: String
     let apiKey: String
     let quotaUsername: String
     let quotaWorkspaceID: String
@@ -74,6 +75,9 @@ func runAddProviderSheet(
         AppLocalization.string("settings.apiURL"),
         baseURLField
     )
+    let websiteURLField = formTextField()
+    websiteURLField.placeholderString = "https://example.com"
+    let websiteURLRow = labeledView("官网地址", websiteURLField)
     let baiduAuthBridgePopup = baiduAuthBridgePopUpButton()
     let baiduAuthBridgeRow = labeledView(
         AppLocalization.string("settings.authBridge"),
@@ -128,6 +132,7 @@ func runAddProviderSheet(
         quotaAuthCookieRow.isHidden = !requiresOpenCodeGoQuotaCredentials(provider)
         displayNameRow.isHidden = !isCustom
         baseURLRow.isHidden = !isCustom
+        websiteURLRow.isHidden = !isCustom
         baiduAuthBridgeRow.isHidden = provider != "baidu-oneapi"
         tokenButton.isHidden = isCustom
     }
@@ -139,6 +144,7 @@ func runAddProviderSheet(
         labeledView(AppLocalization.string("settings.provider"), providerPopup),
         displayNameRow,
         baseURLRow,
+        websiteURLRow,
         labeledView("API Key", apiKeyField),
         quotaUsernameRow,
         quotaWorkspaceIDRow,
@@ -230,6 +236,8 @@ func runAddProviderSheet(
             preset: preset,
             displayName: displayName,
             baseURL: baseURL,
+            websiteURL: websiteURLField.stringValue
+                .trimmingCharacters(in: .whitespacesAndNewlines),
             apiKey: apiKey,
             quotaUsername: username,
             quotaWorkspaceID: workspaceID,

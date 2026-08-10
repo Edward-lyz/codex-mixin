@@ -634,6 +634,8 @@ enum ProviderCommand {
         #[arg(long)]
         base_url: Option<String>,
         #[arg(long)]
+        website_url: Option<String>,
+        #[arg(long)]
         protocol: Option<String>,
         #[arg(long)]
         api_path: Option<String>,
@@ -677,6 +679,8 @@ enum ProviderCommand {
         display_name: Option<String>,
         #[arg(long)]
         base_url: Option<String>,
+        #[arg(long)]
+        website_url: Option<String>,
         #[arg(long)]
         protocol: Option<String>,
         #[arg(long)]
@@ -1021,6 +1025,7 @@ async fn setup(
             key,
             display_name: None,
             base_url: None,
+            website_url: None,
             protocol: None,
             api_path: None,
             models_path: None,
@@ -1134,6 +1139,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 key,
                 display_name,
                 base_url,
+                website_url,
                 protocol,
                 api_path,
                 models_path,
@@ -1156,6 +1162,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     key,
                     display_name,
                     base_url,
+                    website_url,
                     protocol,
                     api_path,
                     models_path,
@@ -1181,6 +1188,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 clear_key,
                 display_name,
                 base_url,
+                website_url,
                 protocol,
                 api_path,
                 models_path,
@@ -1207,6 +1215,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     clear_key,
                     display_name,
                     base_url,
+                    website_url,
                     protocol,
                     api_path,
                     models_path,

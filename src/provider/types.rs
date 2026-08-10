@@ -130,6 +130,8 @@ pub struct ProviderDefinition {
     pub preset_id: Option<String>,
     pub protocol: ProviderProtocol,
     pub base_url: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub website_url: Option<String>,
     pub api_path: String,
     pub model_source: ProviderModelSource,
     pub auth: ProviderAuthConfig,
@@ -639,5 +641,17 @@ mod tests {
             provider.base_url = base_url.to_owned();
             assert!(provider.validate().is_err(), "{base_url}");
         }
+    }
+
+    #[test]
+    fn provider_website_url_round_trips_through_config_json() {
+        let mut provider = crate::provider::custom_provider("custom", "key");
+        provider.base_url = "https://api.example.com".to_owned();
+        provider.website_url = Some("https://example.com".to_owned());
+
+        let encoded = serde_json::to_string(&provider).unwrap();
+        let decoded: ProviderDefinition = serde_json::from_str(&encoded).unwrap();
+
+        assert_eq!(decoded.website_url.as_deref(), Some("https://example.com"));
     }
 }

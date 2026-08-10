@@ -14,7 +14,7 @@ struct QuotaRefreshPolicy {
     let ttl: TimeInterval
     private(set) var lastAttemptAt: Date?
 
-    init(ttl: TimeInterval = 5 * 60, lastAttemptAt: Date? = nil) {
+    init(ttl: TimeInterval = 10, lastAttemptAt: Date? = nil) {
         self.ttl = ttl
         self.lastAttemptAt = lastAttemptAt
     }

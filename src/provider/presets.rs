@@ -110,6 +110,7 @@ pub fn open_code_go_provider(
         // inputs; the native Responses endpoint is required for vision models.
         protocol: ProviderProtocol::OpenAiResponses,
         base_url: "https://opencode.ai/zen/go".to_owned(),
+        website_url: None,
         api_path: "/v1/responses".to_owned(),
         model_source: ProviderModelSource::OpenAiCompatible {
             path: "/v1/models".to_owned(),
@@ -147,6 +148,7 @@ pub fn custom_provider(id: impl Into<String>, api_key: impl Into<String>) -> Pro
         // only exposes Messages or Chat Completions.
         protocol: ProviderProtocol::OpenAiResponses,
         base_url: String::new(),
+        website_url: None,
         api_path: "/v1/responses".to_owned(),
         model_source: ProviderModelSource::OpenAiCompatible {
             path: "/v1/models".to_owned(),
@@ -253,6 +255,7 @@ fn openai_chat_provider(
         preset_id: Some(preset_id.to_owned()),
         protocol: ProviderProtocol::OpenAiChat,
         base_url: base_url.to_owned(),
+        website_url: None,
         api_path: api_path.to_owned(),
         model_source: ProviderModelSource::OpenAiCompatible {
             path: models_path.to_owned(),

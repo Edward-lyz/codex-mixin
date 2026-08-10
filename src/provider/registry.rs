@@ -845,6 +845,7 @@ mod tests {
             preset_id: None,
             protocol: ProviderProtocol::OpenAiChat,
             base_url: "https://example.test".to_owned(),
+            website_url: None,
             api_path: "/v1/chat/completions".to_owned(),
             model_source: ProviderModelSource::OpenAiCompatible {
                 path: "/v1/models".to_owned(),

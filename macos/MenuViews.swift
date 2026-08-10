@@ -3,10 +3,10 @@ import Cocoa
 private let menuContentWidth: CGFloat = 336
 private let serviceMenuHeight: CGFloat = 56
 private let providerDashboardMinimumHeight: CGFloat = 168
-private let providerTabWidth: CGFloat = 40
-private let providerQuotaRowHeight: CGFloat = 50
+private let providerTabWidth: CGFloat = 36
+private let providerQuotaRowHeight: CGFloat = 42
 private let visibleProviderQuotaRows = 3
-private let tokenModelRowHeight: CGFloat = 32
+private let tokenModelRowHeight: CGFloat = 30
 private let visibleTokenModelRows = 3
 private let gatewayStatusDotIdentifier = NSUserInterfaceItemIdentifier("gateway-status-dot")
 private let gatewayTitleIdentifier = NSUserInterfaceItemIdentifier("gateway-title")
@@ -386,6 +386,8 @@ class FlippedMenuView: NSView {
 private struct ProviderUsageGroup {
     let providerID: String
     let displayName: String
+    let isEnabled: Bool
+    let websiteURL: String?
     let quotas: [ProviderQuotaUsage]
     let models: [ProviderTokenUsage]
 }
@@ -393,6 +395,15 @@ private struct ProviderUsageGroup {
 struct ProviderDashboardProvider: Equatable {
     let id: String
     let displayName: String
+    let isEnabled: Bool
+    let websiteURL: String?
+
+    init(id: String, displayName: String, isEnabled: Bool = true, websiteURL: String? = nil) {
+        self.id = id
+        self.displayName = displayName
+        self.isEnabled = isEnabled
+        self.websiteURL = websiteURL
+    }
 }
 
 private func providerLogoAssetName(_ providerID: String) -> String? {
@@ -401,6 +412,7 @@ private func providerLogoAssetName(_ providerID: String) -> String? {
     if normalized.contains("deepseek") { return "deepseek" }
     if normalized.contains("opencode") { return "opencode" }
     if normalized.contains("openrouter") { return "openrouter" }
+    if normalized.contains("openai") || normalized.contains("chatgpt") { return "openai" }
     return "custom"
 }
 
@@ -416,10 +428,16 @@ private func providerBrandColor(_ providerID: String) -> NSColor {
     if normalized.contains("openrouter") {
         return NSColor(calibratedRed: 0.42, green: 0.44, blue: 0.95, alpha: 1)
     }
+    if normalized.contains("openai") || normalized.contains("chatgpt") {
+        return NSColor(calibratedRed: 0.10, green: 0.68, blue: 0.56, alpha: 1)
+    }
     return .secondaryLabelColor
 }
 
-private func providerLogoImage(_ providerID: String) -> NSImage? {
+private func providerLogoImage(_ providerID: String, websiteURL: String?) -> NSImage? {
+    if let cached = cachedProviderLogoImage(providerID: providerID, websiteURL: websiteURL) {
+        return cached
+    }
     guard let assetName = providerLogoAssetName(providerID) else { return nil }
     let directories = [
         Bundle.main.resourceURL?.appendingPathComponent("ProviderLogos", isDirectory: true),
@@ -505,13 +523,13 @@ private final class ProviderQuotaRowView: FlippedMenuView {
         toolTip = usage.error
 
         let label = NSTextField(labelWithString: providerQuotaLabel(usage, multiple: multiple))
-        label.frame = NSRect(x: 2, y: 2, width: 118, height: 17)
-        label.font = .systemFont(ofSize: 10, weight: .medium)
+        label.frame = NSRect(x: 2, y: 2, width: 118, height: 15)
+        label.font = .systemFont(ofSize: 10, weight: .semibold)
         label.lineBreakMode = .byTruncatingTail
         addSubview(label)
 
         let value = NSTextField(labelWithString: providerQuotaText(usage))
-        value.frame = NSRect(x: 122, y: 2, width: frame.width - 124, height: 17)
+        value.frame = NSRect(x: 122, y: 2, width: frame.width - 124, height: 15)
         value.font = .monospacedDigitSystemFont(ofSize: 10, weight: .medium)
         value.textColor = usage.used == nil && usage.remaining == nil
             ? .secondaryLabelColor
@@ -524,9 +542,9 @@ private final class ProviderQuotaRowView: FlippedMenuView {
         if let used = usage.used, let limit = usage.limit, limit > 0 {
             let progress = NSProgressIndicator(frame: NSRect(
                 x: 2,
-                y: 23,
+                y: 19,
                 width: frame.width - 4,
-                height: 8
+                height: 6
             ))
             progress.identifier = NSUserInterfaceItemIdentifier("provider-quota-progress")
             progress.isIndeterminate = false
@@ -551,7 +569,7 @@ private final class ProviderQuotaRowView: FlippedMenuView {
             }
             if !detailText.isEmpty {
                 let detail = NSTextField(labelWithString: detailText)
-                detail.frame = NSRect(x: 2, y: 34, width: frame.width - 4, height: 13)
+                detail.frame = NSRect(x: 2, y: 27, width: frame.width - 4, height: 12)
                 detail.font = .systemFont(ofSize: 8)
                 detail.textColor = .tertiaryLabelColor
                 detail.lineBreakMode = .byTruncatingTail
@@ -726,6 +744,10 @@ final class ProviderUsageDashboardView: FlippedMenuView {
         render()
     }
 
+    func refreshProviderIcons() {
+        render()
+    }
+
     func updateQuotaUsages(_ usages: [ProviderQuotaUsage]) {
         quotaUsages = usages
         quotaStatusTitle = L10n.Provider.quotaEmpty
@@ -773,6 +795,8 @@ final class ProviderUsageDashboardView: FlippedMenuView {
                 displayName: configuredProvider?.displayName
                     ?? quotas.first?.providerLabel
                     ?? providerID,
+                isEnabled: configuredProvider?.isEnabled ?? true,
+                websiteURL: configuredProvider?.websiteURL,
                 quotas: quotas,
                 models: models
             )
@@ -814,12 +838,16 @@ final class ProviderUsageDashboardView: FlippedMenuView {
         }
         let legendBottom = renderLegend(at: quotaBottom + 8)
         let chartBottom = renderModelChart(group.models, at: legendBottom + 4)
-        renderModelDetail(group.models, at: chartBottom + 6)
-        frame.size.height = chartBottom + 74
+        if selectedModelID != nil {
+            renderModelDetail(group.models, at: chartBottom + 6)
+            frame.size.height = chartBottom + 74
+        } else {
+            frame.size.height = chartBottom + 8
+        }
     }
 
     private func renderProviderTabs(_ groups: [ProviderUsageGroup]) {
-        let scroll = NSScrollView(frame: NSRect(x: 10, y: 32, width: 316, height: 40))
+        let scroll = NSScrollView(frame: NSRect(x: 10, y: 28, width: 316, height: 36))
         scroll.identifier = NSUserInterfaceItemIdentifier("provider-tab-scroll")
         scroll.drawsBackground = false
         scroll.borderType = .noBorder
@@ -838,7 +866,8 @@ final class ProviderUsageDashboardView: FlippedMenuView {
         for (index, group) in groups.enumerated() {
             let selected = group.providerID == selectedProviderID
             let brandColor = providerBrandColor(group.providerID)
-            let logo = providerLogoImage(group.providerID) ?? providerFallbackImage(group.providerID)
+            let logo = providerLogoImage(group.providerID, websiteURL: group.websiteURL)
+                ?? providerFallbackImage(group.providerID)
             let button = NSButton(
                 title: "",
                 target: self,
@@ -847,8 +876,8 @@ final class ProviderUsageDashboardView: FlippedMenuView {
             button.frame = NSRect(
                 x: CGFloat(index) * providerTabWidth + 3,
                 y: 3,
-                width: 34,
-                height: 34
+                width: 30,
+                height: 30
             )
             button.tag = index
             button.identifier = NSUserInterfaceItemIdentifier("provider-tab-\(group.providerID)")
@@ -859,6 +888,7 @@ final class ProviderUsageDashboardView: FlippedMenuView {
             button.isBordered = false
             button.contentTintColor = brandColor
             button.toolTip = group.displayName
+            button.alphaValue = group.isEnabled ? 1 : 0.42
             button.setAccessibilityLabel(group.displayName)
             button.wantsLayer = true
             button.layer?.cornerRadius = 9
@@ -874,25 +904,33 @@ final class ProviderUsageDashboardView: FlippedMenuView {
     }
 
     private func renderProviderSummary(_ group: ProviderUsageGroup) -> CGFloat {
-        let divider = NSBox(frame: NSRect(x: 12, y: 76, width: 312, height: 1))
+        let divider = NSBox(frame: NSRect(x: 12, y: 70, width: 312, height: 1))
         divider.boxType = .separator
         addSubview(divider)
 
-        let icon = NSImageView(frame: NSRect(x: 12, y: 86, width: 24, height: 24))
-        icon.image = providerLogoImage(group.providerID) ?? providerFallbackImage(group.providerID)
+        let icon = NSImageView(frame: NSRect(x: 12, y: 80, width: 22, height: 22))
+        icon.image = providerLogoImage(group.providerID, websiteURL: group.websiteURL)
+            ?? providerFallbackImage(group.providerID)
         icon.imageScaling = .scaleProportionallyDown
         icon.contentTintColor = providerBrandColor(group.providerID)
+        icon.alphaValue = group.isEnabled ? 1 : 0.42
         addSubview(icon)
 
-        let name = NSTextField(labelWithString: group.displayName)
-        name.frame = NSRect(x: 44, y: 87, width: 280, height: 20)
+        let displayName = group.isEnabled
+            ? group.displayName
+            : "\(group.displayName)（已停用）"
+        let name = NSTextField(labelWithString: displayName)
+        name.frame = NSRect(x: 42, y: 81, width: 282, height: 20)
         name.font = .systemFont(ofSize: 13, weight: .semibold)
         name.lineBreakMode = .byTruncatingMiddle
+        name.textColor = group.isEnabled ? .labelColor : .tertiaryLabelColor
         addSubview(name)
 
-        let quotaTop: CGFloat = 116
+        let quotaTop: CGFloat = 106
         guard !group.quotas.isEmpty else {
-            let status = NSTextField(labelWithString: quotaStatusTitle)
+            let status = NSTextField(
+                labelWithString: group.isEnabled ? quotaStatusTitle : "额度：已停用"
+            )
             status.frame = NSRect(x: 12, y: quotaTop, width: 312, height: 18)
             status.font = .systemFont(ofSize: 10)
             status.textColor = .secondaryLabelColor
@@ -974,10 +1012,10 @@ final class ProviderUsageDashboardView: FlippedMenuView {
 
     private func renderModelChart(_ models: [ProviderTokenUsage], at y: CGFloat) -> CGFloat {
         visibleModels = models
-        if selectedModelID == nil
-            || !models.contains(where: { $0.modelID == selectedModelID })
+        if let selectedModelID,
+           !models.contains(where: { $0.modelID == selectedModelID })
         {
-            selectedModelID = models.first?.modelID
+            self.selectedModelID = nil
         }
 
         let visibleRows = min(models.count, visibleTokenModelRows)
@@ -1090,7 +1128,8 @@ final class ProviderUsageDashboardView: FlippedMenuView {
 
     @objc private func selectModel(_ sender: TokenModelRowView) {
         guard visibleModels.indices.contains(sender.tag) else { return }
-        selectedModelID = visibleModels[sender.tag].modelID
+        let modelID = visibleModels[sender.tag].modelID
+        selectedModelID = selectedModelID == modelID ? nil : modelID
         render()
     }
 }
