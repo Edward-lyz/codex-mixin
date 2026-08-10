@@ -5,6 +5,7 @@ use crate::provider::ProviderProtocol;
 
 const REALTIME_CALL_BODY_LIMIT: usize = 4 * 1024 * 1024;
 const CUSTOM_CALL_ID_PREFIX: &str = "codex-mixin";
+const OPENAI_LIVE_BASE_URL: &str = "https://api.openai.com/v1";
 
 enum RealtimeRoute<'a> {
     Official {
@@ -213,16 +214,18 @@ async fn connect_realtime_ws(
             authorization,
             account_id,
         } => {
-            let mut url = official_codex_base_url(state)?;
-            if is_live
-                && uri.path() != "/v1/live"
-                && let Some(call_id) = upstream_call_id
-            {
+            let url = if is_live {
+                let call_id = upstream_call_id
+                    .ok_or_else(|| anyhow::anyhow!("official live websocket requires a call id"))?;
+                official_live_sideband_url(call_id)?
+            } else {
+                let mut url = official_codex_base_url(state)?;
                 url.path_segments_mut()
                     .map_err(|_| anyhow::anyhow!("official realtime URL cannot be a base URL"))?
-                    .push(call_id);
-            }
-            url.set_query(uri.query());
+                    .push("realtime");
+                url.set_query(uri.query());
+                url
+            };
             (
                 url,
                 RealtimeWebsocketAuth::Official {
@@ -306,6 +309,16 @@ fn official_codex_base_url(state: &AppState) -> anyhow::Result<reqwest::Url> {
             })?,
     )
     .map_err(Into::into)
+}
+
+fn official_live_sideband_url(call_id: &str) -> anyhow::Result<reqwest::Url> {
+    // ChatGPT creates the call, but the live sideband websocket is hosted by
+    // the OpenAI API rather than the ChatGPT backend.
+    let mut url = reqwest::Url::parse(OPENAI_LIVE_BASE_URL)?;
+    url.path_segments_mut()
+        .map_err(|_| anyhow::anyhow!("official live URL cannot be a base URL"))?
+        .extend(["live", call_id]);
+    Ok(url)
 }
 
 async fn resolve_realtime_route<'a>(
@@ -668,5 +681,17 @@ async fn bridge_realtime_websockets(
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn official_live_sideband_uses_openai_api_url() {
+        let url = official_live_sideband_url("call-123").unwrap();
+
+        assert_eq!(url.as_str(), "https://api.openai.com/v1/live/call-123");
     }
 }

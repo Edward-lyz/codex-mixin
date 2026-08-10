@@ -439,8 +439,12 @@ async fn spawn_mock_official(
     let forwarded_headers = Arc::new(Mutex::new(Vec::new()));
     let websocket_connections = Arc::new(AtomicUsize::new(0));
     let app = Router::new()
-        .route("/v1", get(mock_official_realtime_ws))
-        .route("/v1/{call_id}", get(mock_official_realtime_ws))
+        .route("/v1/realtime", get(mock_official_realtime_ws))
+        .route(
+            "/v1/live",
+            get(mock_official_realtime_ws).post(mock_official_realtime_call),
+        )
+        .route("/v1/live/{call_id}", get(mock_official_realtime_ws))
         .route("/v1/realtime/calls", post(mock_official_realtime_call))
         .route(
             "/v1/responses",
@@ -542,6 +546,7 @@ async fn mock_official_realtime_call(
     );
     state.requests.lock().unwrap().push(json!({
         "body": body,
+        "path": uri.path(),
         "query": uri.query().unwrap_or_default(),
     }));
     Response::builder()
@@ -4223,7 +4228,7 @@ async fn proxies_realtime_voice_websocket_to_official_backend() {
     };
 
     assert_eq!(response["type"], "session.updated");
-    assert_eq!(response["upstream_path"], "/v1");
+    assert_eq!(response["upstream_path"], "/v1/realtime");
     assert_eq!(
         response["upstream_query"],
         "intent=quicksilver&model=gpt-realtime-1.5"
@@ -4247,46 +4252,6 @@ async fn proxies_realtime_voice_websocket_to_official_backend() {
         "voice-session"
     );
     assert_eq!(official_websocket_connections.load(Ordering::SeqCst), 1);
-}
-
-#[tokio::test]
-async fn maps_live_voice_sideband_to_official_call_path() {
-    let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
-    let (official_url, _, _, _, _, _) =
-        spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
-    let mut config = test_config(upstream_url);
-    config.official_responses_url = format!("{official_url}/v1/responses");
-    let codex_home = tempfile::tempdir().unwrap();
-    config.codex_auth_path = codex_home.path().join("auth.json");
-    std::fs::write(
-        &config.codex_auth_path,
-        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
-    )
-    .unwrap();
-    let gateway_url = spawn_gateway_with_config(config).await;
-    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
-    let mut request = format!("{websocket_url}/v1/live/call-123?model=gpt-live-1-boulder-alpha")
-        .into_client_request()
-        .unwrap();
-    request
-        .headers_mut()
-        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
-    let (mut socket, _) = connect_async(request).await.unwrap();
-
-    socket
-        .send(WsMessage::Text(
-            json!({"type": "session.update"}).to_string().into(),
-        ))
-        .await
-        .unwrap();
-    let response = socket.next().await.unwrap().unwrap();
-    let response: Value = match response {
-        WsMessage::Text(text) => serde_json::from_str(&text).unwrap(),
-        other => panic!("expected text response, got {other:?}"),
-    };
-
-    assert_eq!(response["upstream_path"], "/v1/call-123");
-    assert_eq!(response["upstream_query"], "model=gpt-live-1-boulder-alpha");
 }
 
 #[tokio::test]
@@ -4358,6 +4323,7 @@ async fn maps_realtime_webrtc_call_to_official_backend_shape() {
                 "sdp": "offer-sdp",
                 "session": {"model": "gpt-realtime-1.5", "voice": "verse"}
             },
+            "path": "/v1/realtime/calls",
             "query": "intent=quicksilver&architecture=avas"
         })]
     );
@@ -4368,6 +4334,52 @@ async fn maps_realtime_webrtc_call_to_official_backend_shape() {
     assert_eq!(
         official_account_headers.lock().unwrap().as_slice(),
         &[Some("account-1".to_owned())]
+    );
+}
+
+#[tokio::test]
+async fn maps_official_live_call_to_official_backend_shape() {
+    let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
+    let (official_url, official_requests, _, _, _, _) =
+        spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
+    let mut config = test_config(upstream_url);
+    config.official_responses_url = format!("{official_url}/v1/responses");
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let boundary = "codex-realtime-call-boundary";
+    let multipart = format!(
+        "--{boundary}\r\nContent-Disposition: form-data; name=\"sdp\"\r\nContent-Type: application/sdp\r\n\r\noffer-sdp\r\n--{boundary}\r\nContent-Disposition: form-data; name=\"session\"\r\nContent-Type: application/json\r\n\r\n{{\"model\":\"gpt-live-1-boulder-alpha\",\"voice\":\"verse\"}}\r\n--{boundary}--\r\n"
+    );
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/live"))
+        .bearer_auth("gateway-key")
+        .header(
+            header::CONTENT_TYPE,
+            format!("multipart/form-data; boundary={boundary}"),
+        )
+        .body(multipart)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(
+        official_requests.lock().unwrap().as_slice(),
+        &[json!({
+            "body": {
+                "sdp": "offer-sdp",
+                "session": {"model": "gpt-live-1-boulder-alpha", "voice": "verse"}
+            },
+            "path": "/v1/realtime/calls",
+            "query": "intent=quicksilver&architecture=avas"
+        })]
     );
 }
 
