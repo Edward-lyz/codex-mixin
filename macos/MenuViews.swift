@@ -401,7 +401,7 @@ private func providerLogoAssetName(_ providerID: String) -> String? {
     if normalized.contains("deepseek") { return "deepseek" }
     if normalized.contains("opencode") { return "opencode" }
     if normalized.contains("openrouter") { return "openrouter" }
-    return nil
+    return "custom"
 }
 
 private func providerBrandColor(_ providerID: String) -> NSColor {
