@@ -392,6 +392,7 @@ impl DuccClient {
         let mut child = Command::new(executable)
             .args([
                 "--bare",
+                "--app-source=one-api-token",
                 "--no-ducc-system-prompt",
                 "--disable-slash-commands",
                 "--no-session-persistence",
@@ -880,14 +881,19 @@ done
     async fn reuses_auth_carrier_within_a_session_and_isolates_sessions() {
         let root = tempfile::tempdir().unwrap();
         let executable = root.path().join("home/.baidu-cc/baidu-cc/bin/ducc");
+        let arguments_log = root.path().join("arguments.log");
         std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
         std::fs::write(
             &executable,
-            r#"#!/bin/sh
+            format!(
+                r#"#!/bin/sh
+printf '%s\n' "$@" > '{}'
 while IFS= read -r line; do
-  printf '%s\n' '{"type":"result","is_error":false,"result":"ok"}'
+  printf '%s\n' '{{"type":"result","is_error":false,"result":"ok"}}'
 done
 "#,
+                arguments_log.display()
+            ),
         )
         .unwrap();
         let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
@@ -920,6 +926,22 @@ done
         assert!(
             !Arc::ptr_eq(&glm, &other_session),
             "different sessions must not share DUCC authentication headers"
+        );
+        let arguments = tokio::time::timeout(Duration::from_secs(5), async {
+            loop {
+                if let Ok(arguments) = std::fs::read_to_string(&arguments_log) {
+                    break arguments;
+                }
+                tokio::time::sleep(Duration::from_millis(10)).await;
+            }
+        })
+        .await
+        .expect("managed DUCC did not start");
+        assert!(
+            arguments
+                .lines()
+                .any(|argument| argument == "--app-source=one-api-token"),
+            "managed DUCC must tag native usage reports as Baidu OneAPI token traffic"
         );
     }
 
