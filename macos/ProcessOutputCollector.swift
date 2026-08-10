@@ -1,15 +1,53 @@
 import Foundation
+import Darwin
 
 struct ProcessOutputResult {
     let terminationStatus: Int32
     let data: Data
 }
 
+private final class ProcessTimeout {
+    private let terminateWork: DispatchWorkItem
+    private let killWork: DispatchWorkItem
+
+    init(process: Process, timeout: TimeInterval, killGrace: TimeInterval) {
+        let queue = DispatchQueue(label: "local.codex-mixin.process-timeout")
+        let terminateWork = DispatchWorkItem { [process] in
+            if process.isRunning {
+                process.terminate()
+            }
+        }
+        let killWork = DispatchWorkItem { [process] in
+            if process.isRunning {
+                kill(process.processIdentifier, SIGKILL)
+            }
+        }
+        self.terminateWork = terminateWork
+        self.killWork = killWork
+        guard timeout > 0 else { return }
+        queue.asyncAfter(deadline: .now() + timeout, execute: terminateWork)
+        queue.asyncAfter(deadline: .now() + timeout + killGrace, execute: killWork)
+    }
+
+    func cancel() {
+        terminateWork.cancel()
+        killWork.cancel()
+    }
+}
+
 func runProcessCollectingMergedOutput(
     _ process: Process,
-    outputPipe: Pipe
+    outputPipe: Pipe,
+    timeout: TimeInterval = 0,
+    killGrace: TimeInterval = 10
 ) throws -> ProcessOutputResult {
     try process.run()
+    let timeout = ProcessTimeout(
+        process: process,
+        timeout: timeout,
+        killGrace: killGrace
+    )
+    defer { timeout.cancel() }
 
     // Drain the pipe before waiting so a verbose child cannot block on a full buffer.
     let data = outputPipe.fileHandleForReading.readDataToEndOfFile()

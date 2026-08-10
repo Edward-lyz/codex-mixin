@@ -25,6 +25,24 @@ struct ProcessOutputCollectorTests {
             "collector should return complete stdout and stderr output"
         )
 
+        let hangingProcess = Process()
+        let hangingPipe = Pipe()
+        hangingProcess.executableURL = URL(fileURLWithPath: "/usr/bin/yes")
+        hangingProcess.standardOutput = FileHandle.nullDevice
+        hangingProcess.standardError = hangingPipe
+        let timeoutStarted = Date()
+        let timedOutResult = try runProcessCollectingMergedOutput(
+            hangingProcess,
+            outputPipe: hangingPipe,
+            timeout: 1,
+            killGrace: 1
+        )
+        precondition(timedOutResult.terminationStatus != 0)
+        precondition(
+            Date().timeIntervalSince(timeoutStarted) < 20,
+            "hard timeout should stop a hung child process"
+        )
+
         let progressQueue = DispatchQueue(label: "process-output-progress-test")
         var progressLines: [String] = []
         let streamingCollector = StreamingProcessOutputCollector(

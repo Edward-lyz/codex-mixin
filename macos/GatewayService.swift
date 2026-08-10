@@ -725,13 +725,15 @@ extension AppDelegate {
                 }
                 process.environment = environment
                 do {
-                    try process.run()
-                    process.waitUntilExit()
-                    let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
-                    let output = String(data: data, encoding: .utf8) ?? ""
+                    let result = try runProcessCollectingMergedOutput(
+                        process,
+                        outputPipe: outputPipe,
+                        timeout: 600
+                    )
+                    let output = String(data: result.data, encoding: .utf8) ?? ""
                     let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
                     let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
-                    if process.terminationStatus == 0 {
+                    if result.terminationStatus == 0 {
                         appendAppDiagnosticLog(
                             """
                             APP_PROCESS completed id=\(operationID) duration_ms=\(durationMilliseconds) exit=0 executable=\(executable) arguments=\(command) output_bytes=\(output.lengthOfBytes(using: .utf8))
@@ -742,11 +744,11 @@ extension AppDelegate {
                     } else {
                         appendAppDiagnosticLog(
                             """
-                            APP_PROCESS failed id=\(operationID) duration_ms=\(durationMilliseconds) exit=\(process.terminationStatus) executable=\(executable) arguments=\(command) output_bytes=\(output.lengthOfBytes(using: .utf8))
+                            APP_PROCESS failed id=\(operationID) duration_ms=\(durationMilliseconds) exit=\(result.terminationStatus) executable=\(executable) arguments=\(command) output_bytes=\(output.lengthOfBytes(using: .utf8))
                             """,
                             directory: diagnosticDirectory
                         )
-                        continuation.resume(throwing: GatewayError.command(trimmed.isEmpty ? "exit \(process.terminationStatus)" : trimmed))
+                        continuation.resume(throwing: GatewayError.command(trimmed.isEmpty ? "exit \(result.terminationStatus)" : trimmed))
                     }
                 } catch {
                     let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
