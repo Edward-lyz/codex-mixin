@@ -348,9 +348,13 @@ mod opencode_go_quota_tests {
         );
         let windows = parse_opencode_go_usage_html(ssr).unwrap();
         assert_eq!(windows.len(), 3);
+        assert_eq!(windows[0].quota_id, "five_hour");
+        assert_eq!(windows[0].label, "5h");
         assert_eq!(windows[0].used_percent, 7.5);
         assert_eq!(windows[0].reset_in_sec, 18_000.0);
+        assert_eq!(windows[1].quota_id, "weekly");
         assert_eq!(windows[1].used_percent, 2.25);
+        assert_eq!(windows[2].quota_id, "monthly");
         assert_eq!(windows[2].used_percent, 16.75);
 
         let data_slot = r#"
@@ -364,6 +368,8 @@ mod opencode_go_quota_tests {
         "#;
         let windows = parse_opencode_go_usage_html(data_slot).unwrap();
         assert_eq!(windows.len(), 1);
+        assert_eq!(windows[0].quota_id, "weekly");
+        assert_eq!(windows[0].label, "Weekly");
         assert_eq!(windows[0].used_percent, 42.5);
         assert_eq!(windows[0].reset_in_sec, 5_400.0);
         assert!(parse_opencode_go_usage_html("<html>empty</html>").is_none());
@@ -456,13 +462,19 @@ mod opencode_go_quota_tests {
         .await;
 
         assert_eq!(results.len(), 4);
+        assert_eq!(results[0]["provider_display_name"], "OpenCode Go");
         assert_eq!(results[0]["display_name"], "OpenCode Go 5h");
+        assert_eq!(results[0]["quota_id"], "five_hour");
+        assert_eq!(results[0]["label"], "5h");
         assert_eq!(results[0]["used"], 7.0);
         assert_eq!(results[0]["remaining"], 93.0);
         assert!(results[0]["reset_at"].as_str().unwrap().ends_with('Z'));
         assert_eq!(results[1]["display_name"], "OpenCode Go Weekly");
+        assert_eq!(results[1]["quota_id"], "weekly");
         assert_eq!(results[2]["display_name"], "OpenCode Go Monthly");
+        assert_eq!(results[2]["quota_id"], "monthly");
         assert_eq!(results[3]["display_name"], "OpenCode Go Balance");
+        assert_eq!(results[3]["quota_id"], "balance");
         assert_eq!(results[3]["remaining"], 5.0);
         assert_eq!(results[3]["currency"], "USD");
         assert!(results.iter().all(|result| result["error"].is_null()));
@@ -553,7 +565,10 @@ pub(super) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
         let Some(url) = provider.quota_url() else {
             results.push(serde_json::json!({
                 "provider_id": provider.id(),
+                "provider_display_name": provider.display_name(),
                 "display_name": provider.display_name(),
+                "quota_id": "quota",
+                "label": "Quota",
                 "currency": provider.quota_currency(),
                 "value": null,
                 "error": "quota endpoint is not configured",
@@ -576,7 +591,10 @@ pub(super) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
         match result {
             Ok((usage, raw)) => results.push(serde_json::json!({
                 "provider_id": provider.id(),
+                "provider_display_name": provider.display_name(),
                 "display_name": provider.display_name(),
+                "quota_id": "quota",
+                "label": "Quota",
                 "currency": usage.currency.as_deref().or(provider.quota_currency()),
                 "value": usage.used,
                 "used": usage.used,
@@ -588,7 +606,10 @@ pub(super) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
             })),
             Err(error) => results.push(serde_json::json!({
                 "provider_id": provider.id(),
+                "provider_display_name": provider.display_name(),
                 "display_name": provider.display_name(),
+                "quota_id": "quota",
+                "label": "Quota",
                 "currency": provider.quota_currency(),
                 "value": null,
                 "error": error.to_string(),
@@ -694,6 +715,8 @@ const OPENCODE_GO_PATH_ENCODE: &AsciiSet =
 
 #[derive(Clone, Debug)]
 struct OpenCodeGoWindowUsage {
+    quota_id: &'static str,
+    label: &'static str,
     used_percent: f64,
     reset_in_sec: f64,
 }
@@ -745,18 +768,14 @@ async fn fetch_opencode_go_quota_results(
     let mut results = Vec::new();
     match usage_result {
         Ok(windows) => {
-            for (label, window) in [
-                ("OpenCode Go 5h", 0),
-                ("OpenCode Go Weekly", 1),
-                ("OpenCode Go Monthly", 2),
-            ]
-            .into_iter()
-            .filter_map(|(label, index)| windows.get(index).map(|window| (label, window)))
-            {
+            for window in windows {
                 let used = window.used_percent.clamp(0.0, 100.0);
                 results.push(serde_json::json!({
                     "provider_id": provider.id,
-                    "display_name": label,
+                    "provider_display_name": provider.display_name,
+                    "display_name": format!("{} {}", provider.display_name, window.label),
+                    "quota_id": window.quota_id,
+                    "label": window.label,
                     "currency": null,
                     "value": used,
                     "used": used,
@@ -777,7 +796,10 @@ async fn fetch_opencode_go_quota_results(
     match billing_result {
         Ok(billing) => results.push(serde_json::json!({
             "provider_id": provider.id,
-            "display_name": "OpenCode Go Balance",
+            "provider_display_name": provider.display_name,
+            "display_name": format!("{} Balance", provider.display_name),
+            "quota_id": "balance",
+            "label": "Balance",
             "currency": "USD",
             "value": null,
             "used": null,
@@ -803,7 +825,10 @@ fn opencode_go_error_result(
 ) -> serde_json::Value {
     serde_json::json!({
         "provider_id": provider.id,
+        "provider_display_name": provider.display_name,
         "display_name": display_name,
+        "quota_id": "quota",
+        "label": "Quota",
         "currency": provider.quota_currency,
         "value": null,
         "error": error,
@@ -872,32 +897,39 @@ fn redact_opencode_go_message(message: &str, auth_cookie: &str) -> String {
 
 fn parse_opencode_go_usage_html(html: &str) -> Option<Vec<OpenCodeGoWindowUsage>> {
     let ssr = [
-        ("rolling", "rollingUsage"),
-        ("weekly", "weeklyUsage"),
-        ("monthly", "monthlyUsage"),
+        ("five_hour", "5h", "rollingUsage"),
+        ("weekly", "Weekly", "weeklyUsage"),
+        ("monthly", "Monthly", "monthlyUsage"),
     ]
     .into_iter()
-    .map(|(_, field)| parse_opencode_go_ssr_window(html, field))
+    .filter_map(|(quota_id, label, field)| {
+        parse_opencode_go_ssr_window(html, field).map(|(used_percent, reset_in_sec)| {
+            OpenCodeGoWindowUsage {
+                quota_id,
+                label,
+                used_percent,
+                reset_in_sec,
+            }
+        })
+    })
     .collect::<Vec<_>>();
-    if ssr.iter().any(Option::is_some) {
-        return Some(
-            ssr.into_iter()
-                .flatten()
-                .map(|(used_percent, reset_in_sec)| OpenCodeGoWindowUsage {
-                    used_percent,
-                    reset_in_sec,
-                })
-                .collect(),
-        );
+    if !ssr.is_empty() {
+        return Some(ssr);
     }
     let data_slot = parse_opencode_go_data_slot_windows(html);
     if data_slot.is_empty() {
         return None;
     }
     let mut windows = Vec::new();
-    for label in ["rolling", "weekly", "monthly"] {
-        if let Some(window) = data_slot.get(label) {
+    for (key, quota_id, label) in [
+        ("rolling", "five_hour", "5h"),
+        ("weekly", "weekly", "Weekly"),
+        ("monthly", "monthly", "Monthly"),
+    ] {
+        if let Some(window) = data_slot.get(key) {
             windows.push(OpenCodeGoWindowUsage {
+                quota_id,
+                label,
                 used_percent: window.0,
                 reset_in_sec: window.1,
             });
