@@ -9,11 +9,12 @@
 
 use std::collections::HashMap;
 use std::io::Write;
+use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
-use serde::Serialize;
+use serde::{Deserialize, Serialize};
 use serde_json::Value;
 
 use crate::anthropic::MessageRequest;
@@ -60,6 +61,22 @@ pub(crate) struct ProviderTokenUsage {
     pub(crate) observed_uncached_input_tokens: u64,
 }
 
+#[derive(Clone, Debug, Deserialize, Serialize)]
+struct PersistedTokenUsage {
+    provider_id: String,
+    model_id: String,
+    request_count: u64,
+    input_tokens: u64,
+    cache_read_tokens: u64,
+    cache_creation_tokens: u64,
+    output_tokens: u64,
+    cache_hit_percent: Option<f64>,
+    #[serde(default)]
+    observed_cache_read_tokens: u64,
+    #[serde(default)]
+    observed_uncached_input_tokens: u64,
+}
+
 #[derive(Debug, Default)]
 struct TokenUsageState {
     entries: HashMap<(String, String), ProviderTokenUsage>,
@@ -69,9 +86,42 @@ struct TokenUsageState {
 #[derive(Debug, Default)]
 pub(crate) struct TokenUsageAggregator {
     state: Mutex<TokenUsageState>,
+    persist_path: Option<PathBuf>,
 }
 
 impl TokenUsageAggregator {
+    pub(crate) fn from_default_path() -> Self {
+        let path = crate::config::stored_config_path()
+            .parent()
+            .map(|parent| parent.join("token-usage.json"));
+        let entries = path
+            .as_deref()
+            .and_then(|path| std::fs::read_to_string(path).ok())
+            .and_then(|raw| serde_json::from_str::<Vec<PersistedTokenUsage>>(&raw).ok())
+            .unwrap_or_default()
+            .into_iter()
+            .map(|entry| {
+                let usage = ProviderTokenUsage {
+                    provider_id: entry.provider_id.clone(),
+                    model_id: entry.model_id.clone(),
+                    request_count: entry.request_count,
+                    input_tokens: entry.input_tokens,
+                    cache_read_tokens: entry.cache_read_tokens,
+                    cache_creation_tokens: entry.cache_creation_tokens,
+                    output_tokens: entry.output_tokens,
+                    cache_hit_percent: entry.cache_hit_percent,
+                    observed_cache_read_tokens: entry.observed_cache_read_tokens,
+                    observed_uncached_input_tokens: entry.observed_uncached_input_tokens,
+                };
+                ((entry.provider_id, entry.model_id), usage)
+            })
+            .collect();
+        Self {
+            state: Mutex::new(TokenUsageState { entries }),
+            persist_path: path,
+        }
+    }
+
     fn record(&self, provider_id: &str, model_id: &str, usage: &UpstreamCacheUsage) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let entry = state
@@ -100,6 +150,35 @@ impl TokenUsageAggregator {
                 .observed_uncached_input_tokens
                 .saturating_add(uncached)
                 .saturating_add(usage.cache_creation_tokens.unwrap_or(0));
+        }
+        if let Some(path) = self.persist_path.clone() {
+            let entries = state.entries.values().cloned().collect::<Vec<_>>();
+            tokio::task::spawn_blocking(move || {
+                let persisted = entries
+                    .into_iter()
+                    .map(|entry| PersistedTokenUsage {
+                        provider_id: entry.provider_id,
+                        model_id: entry.model_id,
+                        request_count: entry.request_count,
+                        input_tokens: entry.input_tokens,
+                        cache_read_tokens: entry.cache_read_tokens,
+                        cache_creation_tokens: entry.cache_creation_tokens,
+                        output_tokens: entry.output_tokens,
+                        cache_hit_percent: entry.cache_hit_percent,
+                        observed_cache_read_tokens: entry.observed_cache_read_tokens,
+                        observed_uncached_input_tokens: entry.observed_uncached_input_tokens,
+                    })
+                    .collect::<Vec<_>>();
+                if let Ok(raw) = serde_json::to_vec_pretty(&persisted) {
+                    if let Some(parent) = path.parent() {
+                        let _ = std::fs::create_dir_all(parent);
+                    }
+                    let temporary = path.with_extension("json.tmp");
+                    if std::fs::write(&temporary, raw).is_ok() {
+                        let _ = std::fs::rename(temporary, path);
+                    }
+                }
+            });
         }
     }
 
@@ -569,6 +648,13 @@ pub(crate) struct CacheShapeTracker {
 }
 
 impl CacheShapeTracker {
+    pub(crate) fn with_usage(usage: TokenUsageAggregator) -> Self {
+        Self {
+            sessions: Mutex::new(TrackedSessions::default()),
+            usage: Arc::new(usage),
+        }
+    }
+
     pub(crate) fn usage(&self) -> Arc<TokenUsageAggregator> {
         self.usage.clone()
     }

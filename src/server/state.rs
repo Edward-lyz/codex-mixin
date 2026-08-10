@@ -99,7 +99,9 @@ impl AppState {
             websocket_proxy_env,
             image_routes: ImageRouteRegistry::default(),
             benchmarks: ModelBenchmarkManager::from_default_path(),
-            cache_shapes: Arc::new(CacheShapeTracker::default()),
+            cache_shapes: Arc::new(CacheShapeTracker::with_usage(
+                crate::gateway::TokenUsageAggregator::from_default_path(),
+            )),
             web_search_capabilities,
             catalog_sources_cache: Arc::new(tokio::sync::Mutex::new(None)),
             catalog_response_cache: Arc::new(tokio::sync::Mutex::new(None)),

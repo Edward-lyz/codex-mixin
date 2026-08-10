@@ -84,7 +84,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             defer: false
         )
         window.title = "供应商设置"
-        window.minSize = NSSize(width: 720, height: 400)
+        window.minSize = NSSize(width: 820, height: 580)
         window.isReleasedWhenClosed = false
         window.center()
         super.init(window: window)
@@ -170,7 +170,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         providerPane.orientation = .vertical
         providerPane.spacing = 10
         providerPane.translatesAutoresizingMaskIntoConstraints = false
-        providerPane.widthAnchor.constraint(equalToConstant: 220).isActive = true
+        providerPane.widthAnchor.constraint(equalToConstant: 230).isActive = true
 
         configureFields()
         configureButton(clearKeyButton, action: #selector(clearProviderKey))
@@ -294,7 +294,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             body.trailingAnchor.constraint(equalTo: header.trailingAnchor),
             body.topAnchor.constraint(equalTo: bannerView.bottomAnchor, constant: 6),
             body.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -20),
-            detailsPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 476),
+            detailsPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 520),
             form.widthAnchor.constraint(equalTo: detailsPane.widthAnchor),
             actionRow.widthAnchor.constraint(equalTo: detailsPane.widthAnchor),
             statusLabel.widthAnchor.constraint(equalTo: detailsPane.widthAnchor),

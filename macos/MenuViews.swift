@@ -430,6 +430,24 @@ private func providerLogoImage(_ providerID: String) -> NSImage? {
     return nil
 }
 
+private func providerFallbackImage(_ providerID: String) -> NSImage {
+    let color = providerBrandColor(providerID)
+    let image = NSImage(size: NSSize(width: 24, height: 24))
+    image.lockFocus()
+    let body = NSBezierPath(roundedRect: NSRect(x: 1, y: 1, width: 22, height: 22), xRadius: 7, yRadius: 7)
+    color.withAlphaComponent(0.16).setFill()
+    body.fill()
+    let ring = NSBezierPath(ovalIn: NSRect(x: 6, y: 6, width: 12, height: 12))
+    color.withAlphaComponent(0.8).setStroke()
+    ring.lineWidth = 1.5
+    ring.stroke()
+    let center = NSBezierPath(ovalIn: NSRect(x: 10, y: 10, width: 4, height: 4))
+    color.setFill()
+    center.fill()
+    image.unlockFocus()
+    return image
+}
+
 private func providerMonogram(_ providerID: String) -> String {
     let letters = providerID
         .split(separator: "-")
@@ -807,11 +825,9 @@ final class ProviderUsageDashboardView: FlippedMenuView {
         for (index, group) in groups.enumerated() {
             let selected = group.providerID == selectedProviderID
             let brandColor = providerBrandColor(group.providerID)
-            let logo = providerLogoImage(group.providerID)
+            let logo = providerLogoImage(group.providerID) ?? providerFallbackImage(group.providerID)
             let button = NSButton(
-                title: logo == nil
-                    ? providerMonogram(group.providerID)
-                    : "",
+                title: "",
                 target: self,
                 action: #selector(selectProvider(_:))
             )
@@ -849,20 +865,11 @@ final class ProviderUsageDashboardView: FlippedMenuView {
         divider.boxType = .separator
         addSubview(divider)
 
-        if let logo = providerLogoImage(group.providerID) {
-            let icon = NSImageView(frame: NSRect(x: 12, y: 86, width: 24, height: 24))
-            icon.image = logo
-            icon.imageScaling = .scaleProportionallyDown
-            icon.contentTintColor = providerBrandColor(group.providerID)
-            addSubview(icon)
-        } else {
-            let monogram = NSTextField(labelWithString: providerMonogram(group.providerID))
-            monogram.frame = NSRect(x: 12, y: 89, width: 24, height: 17)
-            monogram.font = .systemFont(ofSize: 9, weight: .bold)
-            monogram.textColor = providerBrandColor(group.providerID)
-            monogram.alignment = .center
-            addSubview(monogram)
-        }
+        let icon = NSImageView(frame: NSRect(x: 12, y: 86, width: 24, height: 24))
+        icon.image = providerLogoImage(group.providerID) ?? providerFallbackImage(group.providerID)
+        icon.imageScaling = .scaleProportionallyDown
+        icon.contentTintColor = providerBrandColor(group.providerID)
+        addSubview(icon)
 
         let name = NSTextField(labelWithString: group.displayName)
         name.frame = NSRect(x: 44, y: 87, width: 280, height: 20)
