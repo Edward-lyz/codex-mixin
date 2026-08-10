@@ -181,24 +181,6 @@ pub(super) async fn start(
         ),
     }
     let official_catalog_state = AppState::new(config.clone())?;
-    log_codex_catalog_refresh_started(&config_path, "gateway_start", "official_remote");
-    match refresh_managed_official_codex_catalog(
-        &config_path,
-        &official_catalog_state,
-        Some(&supported_models),
-    )
-    .await
-    {
-        Ok(changed) => {
-            log_codex_catalog_refresh(&config_path, "gateway_start", "official_remote", changed)
-        }
-        Err(err) => tracing::warn!(
-            trigger = "gateway_start",
-            source = "official_remote",
-            error = %format!("{err:#}"),
-            "failed to refresh official Codex model catalog"
-        ),
-    }
     let refresh_config = config.clone();
     let capabilities_config_path = config_path.clone();
     let refresh_task = tokio::spawn(async move {
@@ -238,48 +220,24 @@ pub(super) async fn start(
     let official_refresh_config = config.clone();
     let official_refresh_config_path = config_path.clone();
     let official_refresh_task = tokio::spawn(async move {
+        refresh_official_codex_catalog(
+            &official_refresh_config_path,
+            &official_refresh_config,
+            &official_catalog_state,
+            "gateway_start",
+        )
+        .await;
         let mut interval = tokio::time::interval(OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL);
         interval.tick().await;
         loop {
             interval.tick().await;
-            log_codex_catalog_refresh_started(
+            refresh_official_codex_catalog(
                 &official_refresh_config_path,
-                "periodic",
-                "official_remote",
-            );
-            let supported_models =
-                match WebSearchCapabilities::from_default_path(&official_refresh_config) {
-                    Ok(capabilities) => Some(capabilities.supported_model_ids()),
-                    Err(err) => {
-                        tracing::warn!(
-                            error = %format!("{err:#}"),
-                            "failed to load web search capabilities"
-                        );
-                        None
-                    }
-                };
-            match refresh_managed_official_codex_catalog(
-                &official_refresh_config_path,
+                &official_refresh_config,
                 &official_catalog_state,
-                supported_models.as_ref(),
+                "periodic",
             )
-            .await
-            {
-                Ok(changed) => log_codex_catalog_refresh(
-                    &official_refresh_config_path,
-                    "periodic",
-                    "official_remote",
-                    changed,
-                ),
-                Err(err) => {
-                    tracing::warn!(
-                        trigger = "periodic",
-                        source = "official_remote",
-                        error = %format!("{err:#}"),
-                        "failed to refresh official Codex model catalog"
-                    )
-                }
-            }
+            .await;
         }
     });
     let pid = std::process::id();
@@ -303,6 +261,36 @@ pub(super) async fn start(
         ),
     }
     result
+}
+
+async fn refresh_official_codex_catalog(
+    config_path: &Path,
+    config: &GatewayConfig,
+    state: &AppState,
+    trigger: &'static str,
+) {
+    log_codex_catalog_refresh_started(config_path, trigger, "official_remote");
+    let supported_models = match WebSearchCapabilities::from_default_path(config) {
+        Ok(capabilities) => Some(capabilities.supported_model_ids()),
+        Err(err) => {
+            tracing::warn!(
+                error = %format!("{err:#}"),
+                "failed to load web search capabilities"
+            );
+            None
+        }
+    };
+    match refresh_managed_official_codex_catalog(config_path, state, supported_models.as_ref())
+        .await
+    {
+        Ok(changed) => log_codex_catalog_refresh(config_path, trigger, "official_remote", changed),
+        Err(err) => tracing::warn!(
+            trigger,
+            source = "official_remote",
+            error = %format!("{err:#}"),
+            "failed to refresh official Codex model catalog"
+        ),
+    }
 }
 
 fn log_codex_catalog_refresh_started(config_path: &Path, trigger: &str, source: &str) {
