@@ -47,6 +47,7 @@ const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
 #[derive(Clone, Debug, Default, Serialize)]
 pub(crate) struct ProviderTokenUsage {
     pub(crate) provider_id: String,
+    pub(crate) model_id: String,
     pub(crate) request_count: u64,
     pub(crate) input_tokens: u64,
     pub(crate) cache_read_tokens: u64,
@@ -61,7 +62,7 @@ pub(crate) struct ProviderTokenUsage {
 
 #[derive(Debug, Default)]
 struct TokenUsageState {
-    entries: HashMap<String, ProviderTokenUsage>,
+    entries: HashMap<(String, String), ProviderTokenUsage>,
 }
 
 /// In-memory aggregate of the counters seen on streamed provider responses.
@@ -71,10 +72,14 @@ pub(crate) struct TokenUsageAggregator {
 }
 
 impl TokenUsageAggregator {
-    fn record(&self, provider_id: &str, usage: &UpstreamCacheUsage) {
+    fn record(&self, provider_id: &str, model_id: &str, usage: &UpstreamCacheUsage) {
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let entry = state.entries.entry(provider_id.to_owned()).or_default();
+        let entry = state
+            .entries
+            .entry((provider_id.to_owned(), model_id.to_owned()))
+            .or_default();
         entry.provider_id = provider_id.to_owned();
+        entry.model_id = model_id.to_owned();
         entry.request_count = entry.request_count.saturating_add(1);
         entry.input_tokens = entry
             .input_tokens
@@ -114,7 +119,11 @@ impl TokenUsageAggregator {
             entry.cache_hit_percent = (observed > 0)
                 .then(|| entry.observed_cache_read_tokens as f64 / observed as f64 * 100.0);
         }
-        entries.sort_by(|left, right| left.provider_id.cmp(&right.provider_id));
+        entries.sort_by(|left, right| {
+            left.provider_id
+                .cmp(&right.provider_id)
+                .then_with(|| left.model_id.cmp(&right.model_id))
+        });
         entries
     }
 }
@@ -803,7 +812,8 @@ impl PrefixObservation {
     /// the only case that warrants a warning, because nothing on this side can
     /// fix it and it otherwise looks like a gateway bug.
     pub(crate) fn report_upstream_cache(&self, usage: &UpstreamCacheUsage) {
-        self.usage.record(&self.provider_id, usage);
+        self.usage
+            .record(&self.provider_id, &self.upstream_model_id, usage);
         let cache_read_tokens = usage.cache_read_tokens.unwrap_or(0);
         let uncached_input_tokens = usage.input_tokens.unwrap_or(0);
         let prompt_tokens = cache_read_tokens.saturating_add(uncached_input_tokens);
@@ -1725,6 +1735,7 @@ mod tests {
         let aggregator = TokenUsageAggregator::default();
         aggregator.record(
             "baidu-oneapi",
+            "gpt-5.6-sol",
             &UpstreamCacheUsage {
                 input_tokens: Some(1_000),
                 cache_read_tokens: Some(3_000),
@@ -1734,6 +1745,7 @@ mod tests {
         );
         aggregator.record(
             "baidu-oneapi",
+            "gpt-5.6-sol",
             &UpstreamCacheUsage {
                 input_tokens: Some(500),
                 cache_read_tokens: Some(1_500),
@@ -1745,6 +1757,7 @@ mod tests {
         let snapshot = aggregator.snapshot();
         assert_eq!(snapshot.len(), 1);
         assert_eq!(snapshot[0].provider_id, "baidu-oneapi");
+        assert_eq!(snapshot[0].model_id, "gpt-5.6-sol");
         assert_eq!(snapshot[0].request_count, 2);
         assert_eq!(snapshot[0].input_tokens, 1_500);
         assert_eq!(snapshot[0].cache_read_tokens, 4_500);
@@ -1754,6 +1767,23 @@ mod tests {
             snapshot[0].cache_hit_percent,
             Some(4_500.0 / 6_500.0 * 100.0)
         );
+
+        aggregator.record(
+            "baidu-oneapi",
+            "DeepSeek-V4-Flash",
+            &UpstreamCacheUsage {
+                input_tokens: Some(50),
+                cache_read_tokens: Some(150),
+                cache_creation_tokens: None,
+                output_tokens: Some(25),
+            },
+        );
+        let snapshot = aggregator.snapshot();
+        assert_eq!(snapshot.len(), 2);
+        assert_eq!(snapshot[0].model_id, "DeepSeek-V4-Flash");
+        assert_eq!(snapshot[0].request_count, 1);
+        assert_eq!(snapshot[1].model_id, "gpt-5.6-sol");
+        assert_eq!(snapshot[1].request_count, 2);
     }
 
     /// Chat Completions upstreams report cache hits under their own names, and

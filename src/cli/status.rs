@@ -661,8 +661,9 @@ pub(super) async fn usage(json_output: bool) -> anyhow::Result<()> {
             .map(|percent| format!(", cache hit {percent:.1}%"))
             .unwrap_or_default();
         println!(
-            "{}: {} requests, {} uncached input tokens, {} cached tokens, {} cache creation tokens, {} output tokens{cache_hit}",
+            "{}/{}: {} requests, {} uncached input tokens, {} cached tokens, {} cache creation tokens, {} output tokens{cache_hit}",
             row.provider_id,
+            row.model_id,
             row.request_count,
             row.input_tokens,
             row.cache_read_tokens,
@@ -676,6 +677,7 @@ pub(super) async fn usage(json_output: bool) -> anyhow::Result<()> {
 #[derive(Deserialize, Serialize)]
 struct ProviderTokenUsageRow {
     provider_id: String,
+    model_id: String,
     request_count: u64,
     input_tokens: u64,
     cache_read_tokens: u64,
