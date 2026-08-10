@@ -3,6 +3,8 @@ set -euo pipefail
 
 ROOT_DIR="$(cd "$(dirname "$0")/.." && pwd)"
 TEST_BINARY="$(mktemp -d)/menu-views-layout-tests"
+mkdir -p "$(dirname "$TEST_BINARY")/ProviderLogos"
+cp "$ROOT_DIR/macos/assets/providers/"*.svg "$(dirname "$TEST_BINARY")/ProviderLogos/"
 
 "$ROOT_DIR/scripts/swiftgen.sh" config run --config "$ROOT_DIR/swiftgen.yml" >/dev/null
 LOCALIZATION_BUNDLE="$($ROOT_DIR/scripts/prepare_test_localization.sh)"

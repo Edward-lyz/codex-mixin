@@ -64,7 +64,10 @@ struct MenuViewsLayoutTests {
             [
               {
                 "provider_id": "baidu-oneapi",
+                "provider_display_name": "Baidu OneAPI",
                 "display_name": "Baidu OneAPI",
+                "quota_id": "quota",
+                "label": "Quota",
                 "currency": "CNY",
                 "used": 929.1,
                 "limit": 1500,
@@ -72,7 +75,10 @@ struct MenuViewsLayoutTests {
               },
               {
                 "provider_id": "custom-2",
+                "provider_display_name": "AIHub",
                 "display_name": "AIHub",
+                "quota_id": "quota",
+                "label": "Quota",
                 "currency": "USD",
                 "used": 2.21,
                 "limit": 12.01,
@@ -80,10 +86,53 @@ struct MenuViewsLayoutTests {
               },
               {
                 "provider_id": "deepseek",
+                "provider_display_name": "DeepSeek",
                 "display_name": "DeepSeek",
+                "quota_id": "balance",
+                "label": "Balance",
                 "currency": "CNY",
                 "used": null,
                 "remaining": 110
+              },
+              {
+                "provider_id": "opencode-go",
+                "provider_display_name": "OpenCode Go",
+                "display_name": "OpenCode Go 5h",
+                "quota_id": "five_hour",
+                "label": "5h",
+                "used": 7,
+                "limit": 100,
+                "remaining": 93
+              },
+              {
+                "provider_id": "opencode-go",
+                "provider_display_name": "OpenCode Go",
+                "display_name": "OpenCode Go Weekly",
+                "quota_id": "weekly",
+                "label": "Weekly",
+                "used": 12,
+                "limit": 100,
+                "remaining": 88
+              },
+              {
+                "provider_id": "opencode-go",
+                "provider_display_name": "OpenCode Go",
+                "display_name": "OpenCode Go Monthly",
+                "quota_id": "monthly",
+                "label": "Monthly",
+                "used": 31,
+                "limit": 100,
+                "remaining": 69
+              },
+              {
+                "provider_id": "opencode-go",
+                "provider_display_name": "OpenCode Go",
+                "display_name": "OpenCode Go Balance",
+                "quota_id": "balance",
+                "label": "Balance",
+                "currency": "USD",
+                "used": null,
+                "remaining": 42.5
               }
             ]
             """
@@ -128,13 +177,23 @@ struct MenuViewsLayoutTests {
         dashboard.updateQuotaUsages(usages)
         dashboard.updateTokenUsages(tokenUsages)
         dashboard.layoutSubtreeIfNeeded()
-        precondition(dashboard.frame.width == 392)
-        precondition(dashboard.frame.height == 354)
+        precondition(dashboard.frame.width == 336)
+        precondition(dashboard.frame.height == 334)
 
         let providerScroll = descendants(of: dashboard, matching: NSScrollView.self)
             .first { $0.identifier?.rawValue == "provider-tab-scroll" }
         precondition(providerScroll != nil)
         precondition(providerScroll?.hasVerticalScroller == false)
+        precondition(providerScroll?.frame.width == 316)
+        let providerButtons = descendants(of: dashboard, matching: NSButton.self)
+            .filter { $0.identifier?.rawValue.hasPrefix("provider-tab-") == true }
+        precondition(providerButtons.count == 4)
+        precondition(providerButtons.first {
+            $0.identifier?.rawValue == "provider-tab-baidu-oneapi"
+        }?.image != nil)
+        precondition(providerButtons.first {
+            $0.identifier?.rawValue == "provider-tab-opencode-go"
+        }?.image != nil)
 
         let tokenLabels = descendants(of: dashboard, matching: NSTextField.self)
         precondition(tokenLabels.contains {
@@ -146,6 +205,7 @@ struct MenuViewsLayoutTests {
         precondition(tokenLabels.contains {
             $0.stringValue == "缓存输出"
         })
+        precondition(!tokenLabels.contains { $0.stringValue == "baidu-oneapi" })
         precondition(!tokenLabels.contains { $0.stringValue.contains("other-model") })
         let modelRows = descendants(of: dashboard, matching: NSControl.self)
         precondition(modelRows.contains {
@@ -165,6 +225,24 @@ struct MenuViewsLayoutTests {
             .contains { $0.stringValue.contains("other-model") })
         precondition(!descendants(of: dashboard, matching: NSTextField.self)
             .contains { $0.stringValue.contains("gpt-5.6-sol") })
+
+        let openCodeButton = descendants(of: dashboard, matching: NSButton.self)
+            .first { $0.identifier?.rawValue == "provider-tab-opencode-go" }
+        precondition(openCodeButton != nil)
+        openCodeButton?.performClick(nil)
+        dashboard.layoutSubtreeIfNeeded()
+        let openCodeLabels = descendants(of: dashboard, matching: NSTextField.self)
+        precondition(openCodeLabels.contains { $0.stringValue == "OpenCode Go" })
+        precondition(openCodeLabels.contains { $0.stringValue == "5h" })
+        precondition(openCodeLabels.contains { $0.stringValue == "1 周" })
+        precondition(openCodeLabels.contains { $0.stringValue == "月度" })
+        precondition(
+            descendants(of: dashboard, matching: NSProgressIndicator.self).count == 3
+        )
+        let quotaScroll = descendants(of: dashboard, matching: NSScrollView.self)
+            .first { $0.identifier?.rawValue == "provider-quota-scroll" }
+        precondition(quotaScroll?.hasVerticalScroller == true)
+        precondition(dashboard.frame.height == 304)
         let providerIssue = "Baidu OneAPI：模型 unreachable-model 当前不可达"
         let serviceView = serviceMenuView(
             title: "本地网关运行中 · Provider 降级",
