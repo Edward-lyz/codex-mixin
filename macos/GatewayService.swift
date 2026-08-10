@@ -432,8 +432,26 @@ extension AppDelegate {
         // Quota pages can involve several remote providers and browser-backed
         // dashboards. Start both subprocesses together so a slow quota probe
         // cannot hide the local token history on a fresh app launch.
+        let providersTask = Task { try await runGateway(["providers", "list", "--json"]) }
         let quotaTask = Task { try await runGateway(["quota", "--json"]) }
         let usageTask = Task { try await runGateway(["usage", "--json"]) }
+        do {
+            let providerList = try decodeProviderList(await providersTask.value)
+            guard await isCurrent() else { return }
+            let dashboardProviders = providerList.providers
+                .filter(\.enabled)
+                .map { ProviderDashboardProvider(id: $0.id, displayName: $0.displayName) }
+            await MainActor.run {
+                providerUsageDashboardView?.updateConfiguredProviders(dashboardProviders)
+            }
+        } catch {
+            guard await isCurrent() else { return }
+            updateQuotaStatus(
+                title: "Provider 列表：不可用",
+                detail: localizedErrorDescription(error),
+                progress: nil
+            )
+        }
         do {
             let usage = try await usageTask.value
             guard await isCurrent() else { return }

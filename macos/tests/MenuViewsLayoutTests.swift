@@ -174,6 +174,13 @@ struct MenuViewsLayoutTests {
             """
         )
         let dashboard = ProviderUsageDashboardView()
+        dashboard.updateConfiguredProviders([
+            ProviderDashboardProvider(id: "baidu-oneapi", displayName: "Baidu OneAPI"),
+            ProviderDashboardProvider(id: "opencode-go", displayName: "OpenCode Go"),
+            ProviderDashboardProvider(id: "deepseek", displayName: "DeepSeek"),
+            ProviderDashboardProvider(id: "custom-2", displayName: "AIHub"),
+            ProviderDashboardProvider(id: "idle-provider", displayName: "Idle Provider"),
+        ])
         dashboard.updateQuotaUsages(usages)
         dashboard.updateTokenUsages(tokenUsages)
         dashboard.layoutSubtreeIfNeeded()
@@ -187,12 +194,15 @@ struct MenuViewsLayoutTests {
         precondition(providerScroll?.frame.width == 316)
         let providerButtons = descendants(of: dashboard, matching: NSButton.self)
             .filter { $0.identifier?.rawValue.hasPrefix("provider-tab-") == true }
-        precondition(providerButtons.count == 4)
+        precondition(providerButtons.count == 5)
         precondition(providerButtons.first {
             $0.identifier?.rawValue == "provider-tab-baidu-oneapi"
         }?.image != nil)
         precondition(providerButtons.first {
             $0.identifier?.rawValue == "provider-tab-opencode-go"
+        }?.image != nil)
+        precondition(providerButtons.first {
+            $0.identifier?.rawValue == "provider-tab-idle-provider"
         }?.image != nil)
 
         let tokenLabels = descendants(of: dashboard, matching: NSTextField.self)

@@ -390,6 +390,11 @@ private struct ProviderUsageGroup {
     let models: [ProviderTokenUsage]
 }
 
+struct ProviderDashboardProvider: Equatable {
+    let id: String
+    let displayName: String
+}
+
 private func providerLogoAssetName(_ providerID: String) -> String? {
     let normalized = providerID.lowercased()
     if normalized.contains("baidu") { return "baidu" }
@@ -678,6 +683,7 @@ private final class TokenModelRowView: NSControl {
 }
 
 final class ProviderUsageDashboardView: FlippedMenuView {
+    private var configuredProviders: [ProviderDashboardProvider] = []
     private var quotaUsages: [ProviderQuotaUsage] = []
     private var tokenUsages: [ProviderTokenUsage] = []
     private var quotaStatusTitle = "额度：检查中..."
@@ -715,6 +721,11 @@ final class ProviderUsageDashboardView: FlippedMenuView {
         render()
     }
 
+    func updateConfiguredProviders(_ providers: [ProviderDashboardProvider]) {
+        configuredProviders = providers
+        render()
+    }
+
     func updateQuotaUsages(_ usages: [ProviderQuotaUsage]) {
         quotaUsages = usages
         quotaStatusTitle = L10n.Provider.quotaEmpty
@@ -736,7 +747,7 @@ final class ProviderUsageDashboardView: FlippedMenuView {
     }
 
     private func usageGroups() -> [ProviderUsageGroup] {
-        var providerIDs: [String] = []
+        var providerIDs = configuredProviders.map(\.id)
         for providerID in quotaUsages.map(\.providerID)
             where !providerIDs.contains(providerID)
         {
@@ -748,6 +759,7 @@ final class ProviderUsageDashboardView: FlippedMenuView {
             providerIDs.append(providerID)
         }
         return providerIDs.map { providerID in
+            let configuredProvider = configuredProviders.first { $0.id == providerID }
             let quotas = quotaUsages.filter { $0.providerID == providerID }
             let models = tokenUsages
                 .filter { $0.providerID == providerID }
@@ -758,7 +770,9 @@ final class ProviderUsageDashboardView: FlippedMenuView {
                 }
             return ProviderUsageGroup(
                 providerID: providerID,
-                displayName: quotas.first?.providerLabel ?? providerID,
+                displayName: configuredProvider?.displayName
+                    ?? quotas.first?.providerLabel
+                    ?? providerID,
                 quotas: quotas,
                 models: models
             )
