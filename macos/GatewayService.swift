@@ -511,31 +511,19 @@ extension AppDelegate {
     }
 
     func updateQuotaStatus(title: String, detail: String?, progress: Double?) {
-        guard let quotaStatusItem else { return }
-        menuItemViewUpdater.setView(for: quotaStatusItem) {
-            quotaMenuView(title: title, detail: detail, progress: progress)
-        }
+        providerUsageDashboardView?.updateQuotaStatus(title: title, detail: detail)
     }
 
     func updateProviderQuotaStatus(_ usages: [ProviderQuotaUsage]) {
-        guard let quotaStatusItem else { return }
-        menuItemViewUpdater.setView(for: quotaStatusItem) {
-            providerQuotaMenuView(usages)
-        }
+        providerUsageDashboardView?.updateQuotaUsages(usages)
     }
 
     func updateTokenUsageStatus(title: String, detail: String?, progress: Double?) {
-        guard let usageStatusItem else { return }
-        menuItemViewUpdater.setView(for: usageStatusItem) {
-            quotaMenuView(title: title, detail: detail, progress: progress)
-        }
+        providerUsageDashboardView?.updateTokenStatus(title: title, detail: detail)
     }
 
     func updateProviderTokenUsageStatus(_ usages: [ProviderTokenUsage]) {
-        guard let usageStatusItem else { return }
-        menuItemViewUpdater.setView(for: usageStatusItem) {
-            providerTokenUsageMenuView(usages)
-        }
+        providerUsageDashboardView?.updateTokenUsages(usages)
     }
     @objc func openLogs() {
         let logURL = stateDir().appendingPathComponent("gateway.log")

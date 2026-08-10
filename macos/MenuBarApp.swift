@@ -6,8 +6,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let menuLaunchLabel = "local.codex-mixin.menu-launch"
     var statusItem: NSStatusItem?
     var serviceStatusItem: NSMenuItem?
-    var quotaStatusItem: NSMenuItem?
-    var usageStatusItem: NSMenuItem?
+    var providerUsageDashboardView: ProviderUsageDashboardView?
     var launchAtLoginMenuItem: NSMenuItem?
     var providerSettingsWindowController: ProviderSettingsWindowController?
     var modelBenchmarkWindowController: ModelBenchmarkWindowController?
@@ -102,20 +101,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.delegate = menuItemViewUpdater
         let serviceItem = NSMenuItem(title: serviceStatus, action: nil, keyEquivalent: "")
-        let quotaItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        quotaItem.isEnabled = false
-        quotaItem.image = menuItemImage("chart.bar")
-        let usageItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        usageItem.isEnabled = false
-        usageItem.image = menuItemImage("number")
+        let providerUsageItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        let providerUsageView = ProviderUsageDashboardView()
+        providerUsageItem.view = providerUsageView
         serviceStatusItem = serviceItem
-        quotaStatusItem = quotaItem
-        usageStatusItem = usageItem
+        providerUsageDashboardView = providerUsageView
         menu.addItem(serviceItem)
         updateServiceStatusView()
-        menu.addItem(quotaItem)
+        menu.addItem(providerUsageItem)
         updateQuotaStatus(title: "额度：检查中...", detail: nil, progress: nil)
-        menu.addItem(usageItem)
         updateTokenUsageStatus(title: "Token 使用：检查中...", detail: nil, progress: nil)
         menu.addItem(.separator())
         launchAtLoginMenuItem = actionItem("登录时启动并开启服务", #selector(toggleLaunchAtLogin), "poweron")

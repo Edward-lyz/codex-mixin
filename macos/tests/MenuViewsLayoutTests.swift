@@ -88,47 +88,83 @@ struct MenuViewsLayoutTests {
             ]
             """
         )
-        let quotaView = providerQuotaMenuView(usages)
-        quotaView.layoutSubtreeIfNeeded()
-        let progressIndicators = descendants(
-            of: quotaView,
-            matching: NSProgressIndicator.self
-        )
-
-        precondition(progressIndicators.count == 2)
-        let widths = progressIndicators.map(\.frame.width)
-        precondition(
-            abs(widths[0] - widths[1]) < 0.5,
-            "All Provider quota tracks must have equal widths; got \(widths)"
-        )
-        let quotaLabels = descendants(of: quotaView, matching: NSTextField.self)
-        precondition(quotaLabels.contains {
-            $0.stringValue.contains("110") && $0.stringValue.contains("CNY")
-        })
         let tokenUsages = try parseProviderTokenUsage(
             """
             [
               {
                 "provider_id": "baidu-oneapi",
+                "model_id": "gpt-5.6-sol",
                 "request_count": 6,
                 "input_tokens": 1500,
                 "cache_read_tokens": 4500,
                 "cache_creation_tokens": 500,
                 "output_tokens": 300,
                 "cache_hit_percent": 75.0
+              },
+              {
+                "provider_id": "baidu-oneapi",
+                "model_id": "DeepSeek-V4-Flash",
+                "request_count": 3,
+                "input_tokens": 200,
+                "cache_read_tokens": 600,
+                "cache_creation_tokens": 100,
+                "output_tokens": 80,
+                "cache_hit_percent": 66.7
+              },
+              {
+                "provider_id": "custom-2",
+                "model_id": "other-model",
+                "request_count": 1,
+                "input_tokens": 10,
+                "cache_read_tokens": 0,
+                "cache_creation_tokens": 0,
+                "output_tokens": 5,
+                "cache_hit_percent": null
               }
             ]
             """
         )
-        let tokenView = providerTokenUsageMenuView(tokenUsages)
-        tokenView.layoutSubtreeIfNeeded()
-        let tokenLabels = descendants(of: tokenView, matching: NSTextField.self)
+        let dashboard = ProviderUsageDashboardView()
+        dashboard.updateQuotaUsages(usages)
+        dashboard.updateTokenUsages(tokenUsages)
+        dashboard.layoutSubtreeIfNeeded()
+        precondition(dashboard.frame.width == 392)
+        precondition(dashboard.frame.height == 354)
+
+        let providerScroll = descendants(of: dashboard, matching: NSScrollView.self)
+            .first { $0.identifier?.rawValue == "provider-tab-scroll" }
+        precondition(providerScroll != nil)
+        precondition(providerScroll?.hasVerticalScroller == false)
+
+        let tokenLabels = descendants(of: dashboard, matching: NSTextField.self)
         precondition(tokenLabels.contains {
-            $0.stringValue.contains("缓存命中 75.0%")
+            $0.stringValue.contains("gpt-5.6-sol")
         })
         precondition(tokenLabels.contains {
-            $0.stringValue.contains("6 次请求")
+            $0.stringValue.contains("DeepSeek-V4-Flash")
         })
+        precondition(tokenLabels.contains {
+            $0.stringValue == "缓存输出"
+        })
+        precondition(!tokenLabels.contains { $0.stringValue.contains("other-model") })
+        let modelRows = descendants(of: dashboard, matching: NSControl.self)
+        precondition(modelRows.contains {
+            $0.toolTip?.contains("输入 1.5k") == true
+                && $0.toolTip?.contains("缓存输入 4.5k") == true
+                && $0.toolTip?.contains("输出 300") == true
+                && $0.toolTip?.contains("缓存输出 500") == true
+                && $0.toolTip?.contains("整体缓存比例 75.0%") == true
+        })
+
+        let customProviderButton = descendants(of: dashboard, matching: NSButton.self)
+            .first { $0.identifier?.rawValue == "provider-tab-custom-2" }
+        precondition(customProviderButton != nil)
+        customProviderButton?.performClick(nil)
+        dashboard.layoutSubtreeIfNeeded()
+        precondition(descendants(of: dashboard, matching: NSTextField.self)
+            .contains { $0.stringValue.contains("other-model") })
+        precondition(!descendants(of: dashboard, matching: NSTextField.self)
+            .contains { $0.stringValue.contains("gpt-5.6-sol") })
         let providerIssue = "Baidu OneAPI：模型 unreachable-model 当前不可达"
         let serviceView = serviceMenuView(
             title: "本地网关运行中 · Provider 降级",
@@ -142,7 +178,7 @@ struct MenuViewsLayoutTests {
         let labels = descendants(of: serviceView, matching: NSTextField.self)
         precondition(labels.contains { $0.stringValue == providerIssue })
         precondition(labels.contains { $0.toolTip == providerIssue })
-        print("Provider quota track widths: passed")
+        print("Provider dashboard layout and switching: passed")
     }
 
     static func requireSwitch(in view: NSView) throws -> GatewaySwitchControl {

@@ -58,6 +58,7 @@ func parseProviderQuotaUsage(_ rawJSON: String) throws -> [ProviderQuotaUsage] {
 
 struct ProviderTokenUsage: Decodable {
     let providerID: String
+    let modelID: String
     let requestCount: UInt64
     let inputTokens: UInt64
     let cacheReadTokens: UInt64
@@ -67,12 +68,20 @@ struct ProviderTokenUsage: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case providerID = "provider_id"
+        case modelID = "model_id"
         case requestCount = "request_count"
         case inputTokens = "input_tokens"
         case cacheReadTokens = "cache_read_tokens"
         case cacheCreationTokens = "cache_creation_tokens"
         case outputTokens = "output_tokens"
         case cacheHitPercent = "cache_hit_percent"
+    }
+
+    var totalTokens: UInt64 {
+        [inputTokens, cacheReadTokens, outputTokens, cacheCreationTokens].reduce(0) {
+            let (sum, overflow) = $0.addingReportingOverflow($1)
+            return overflow ? UInt64.max : sum
+        }
     }
 }
 

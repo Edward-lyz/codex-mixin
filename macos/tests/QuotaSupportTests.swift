@@ -44,6 +44,7 @@ struct QuotaSupportTests {
             [
               {
                 "provider_id": "baidu-oneapi",
+                "model_id": "gpt-5.6-sol",
                 "request_count": 2,
                 "input_tokens": 1500,
                 "cache_read_tokens": 4500,
@@ -55,7 +56,9 @@ struct QuotaSupportTests {
             """
         )
         precondition(tokenUsages[0].providerID == "baidu-oneapi")
+        precondition(tokenUsages[0].modelID == "gpt-5.6-sol")
         precondition(tokenUsages[0].requestCount == 2)
+        precondition(tokenUsages[0].totalTokens == 6800)
         precondition(tokenUsages[0].cacheHitPercent == 75.0)
         print("Provider token usage parsing: passed")
     }
