@@ -8,6 +8,7 @@ use codex_mixin::provider::{
 };
 use codex_mixin::server::AppState;
 use console::style;
+use futures_util::stream::{self, StreamExt};
 use percent_encoding::{AsciiSet, CONTROLS, utf8_percent_encode};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -546,77 +547,92 @@ pub(super) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()?;
-    let mut results = Vec::new();
-    for provider in registry.providers() {
-        if provider_filter.is_some_and(|filter| filter != provider.id()) {
-            continue;
-        }
-        if provider.quota_parser() == ProviderQuotaParser::OpenCodeGo {
-            results.extend(
-                fetch_opencode_go_quota_results(
-                    &client,
-                    provider.definition(),
-                    OPENCODE_GO_DASHBOARD_BASE,
-                )
-                .await,
-            );
-            continue;
-        }
-        let Some(url) = provider.quota_url() else {
-            results.push(serde_json::json!({
-                "provider_id": provider.id(),
-                "provider_display_name": provider.display_name(),
-                "display_name": provider.display_name(),
-                "quota_id": "quota",
-                "label": "Quota",
-                "currency": provider.quota_currency(),
-                "value": null,
-                "error": "quota endpoint is not configured",
-                "stale_at": null,
-            }));
-            continue;
-        };
-        let result = async {
-            let response = provider.apply_auth(client.get(url)).send().await?;
-            let status = response.status();
-            let body = response.text().await?;
-            if !status.is_success() {
-                anyhow::bail!("quota endpoint returned {status}: {body}");
+    let provider_jobs = registry
+        .providers()
+        .iter()
+        .enumerate()
+        .filter(|(_, provider)| provider_filter.is_none_or(|filter| filter == provider.id()))
+        .map(|(index, provider)| {
+            let client = client.clone();
+            async move {
+                let mut provider_results = Vec::new();
+                if provider.quota_parser() == ProviderQuotaParser::OpenCodeGo {
+                    provider_results.extend(
+                        fetch_opencode_go_quota_results(
+                            &client,
+                            provider.definition(),
+                            OPENCODE_GO_DASHBOARD_BASE,
+                        )
+                        .await,
+                    );
+                    return (index, provider_results);
+                }
+                let Some(url) = provider.quota_url() else {
+                    provider_results.push(serde_json::json!({
+                        "provider_id": provider.id(),
+                        "provider_display_name": provider.display_name(),
+                        "display_name": provider.display_name(),
+                        "quota_id": "quota",
+                        "label": "Quota",
+                        "currency": provider.quota_currency(),
+                        "value": null,
+                        "error": "quota endpoint is not configured",
+                        "stale_at": null,
+                    }));
+                    return (index, provider_results);
+                };
+                let result = async {
+                    let response = provider.apply_auth(client.get(url)).send().await?;
+                    let status = response.status();
+                    let body = response.text().await?;
+                    if !status.is_success() {
+                        anyhow::bail!("quota endpoint returned {status}: {body}");
+                    }
+                    let value: serde_json::Value = serde_json::from_str(&body)?;
+                    let usage = quota_usage(provider.quota_parser(), &value)?;
+                    Ok::<_, anyhow::Error>((usage, value))
+                }
+                .await;
+                match result {
+                    Ok((usage, raw)) => provider_results.push(serde_json::json!({
+                        "provider_id": provider.id(),
+                        "provider_display_name": provider.display_name(),
+                        "display_name": provider.display_name(),
+                        "quota_id": "quota",
+                        "label": "Quota",
+                        "currency": usage.currency.as_deref().or(provider.quota_currency()),
+                        "value": usage.used,
+                        "used": usage.used,
+                        "limit": usage.limit,
+                        "remaining": usage.remaining,
+                        "error": null,
+                        "stale_at": null,
+                        "raw": raw,
+                    })),
+                    Err(error) => provider_results.push(serde_json::json!({
+                        "provider_id": provider.id(),
+                        "provider_display_name": provider.display_name(),
+                        "display_name": provider.display_name(),
+                        "quota_id": "quota",
+                        "label": "Quota",
+                        "currency": provider.quota_currency(),
+                        "value": null,
+                        "error": error.to_string(),
+                        "stale_at": null,
+                    })),
+                }
+                (index, provider_results)
             }
-            let value: serde_json::Value = serde_json::from_str(&body)?;
-            let usage = quota_usage(provider.quota_parser(), &value)?;
-            Ok::<_, anyhow::Error>((usage, value))
-        }
+        });
+    let mut completed_jobs = stream::iter(provider_jobs)
+        .buffer_unordered(4)
+        .collect::<Vec<_>>()
         .await;
-        match result {
-            Ok((usage, raw)) => results.push(serde_json::json!({
-                "provider_id": provider.id(),
-                "provider_display_name": provider.display_name(),
-                "display_name": provider.display_name(),
-                "quota_id": "quota",
-                "label": "Quota",
-                "currency": usage.currency.as_deref().or(provider.quota_currency()),
-                "value": usage.used,
-                "used": usage.used,
-                "limit": usage.limit,
-                "remaining": usage.remaining,
-                "error": null,
-                "stale_at": null,
-                "raw": raw,
-            })),
-            Err(error) => results.push(serde_json::json!({
-                "provider_id": provider.id(),
-                "provider_display_name": provider.display_name(),
-                "display_name": provider.display_name(),
-                "quota_id": "quota",
-                "label": "Quota",
-                "currency": provider.quota_currency(),
-                "value": null,
-                "error": error.to_string(),
-                "stale_at": null,
-            })),
-        }
-    }
+    completed_jobs.sort_by_key(|(index, _)| *index);
+    let results = completed_jobs
+        .into_iter()
+        .flat_map(|(_, provider_results)| provider_results)
+        .collect::<Vec<_>>();
     if json_output {
         println!("{}", serde_json::to_string_pretty(&results)?);
         return Ok(());
