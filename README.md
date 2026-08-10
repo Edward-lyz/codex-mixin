@@ -79,7 +79,7 @@ Codex Mixin 的解法是：Codex 连到本机自动分配的 loopback 端口，�
 - 模型 metadata 补齐：结合 LiteLLM metadata 和内置正则规则补齐上下文窗口、能力和 instruction 字段。
 - 模型选择与测速：独立窗口统一完成模型搜索、勾选和保存，并对已选模型测试 TTFT、TPS、实际 usage tokens、总耗时和本次额度花费；结果可按列升降序排列并持续保存。
 - Fusion 多模型编排：多个 Panel 并行分析，经 Judge 汇总后由 Final 模型流式回答；中间结果可使用 Codex 原生交互式 `Fusion · Review` 展示。
-- 菜单栏产品化：启动、暂停、重启、配置密钥、安装到 Codex、恢复、查看额度和日志都在菜单栏完成。
+- 菜单栏产品化：启动、暂停、重启、配置密钥、安装到 Codex、恢复、查看额度、Token/缓存使用和日志都在菜单栏完成。
 - App 启动即用：打开菜单栏 App 后自动启动后台网关，并在菜单顶部显示实际 endpoint。
 - 自动端口管理：优先复用上次端口，冲突时由系统分配空闲端口，并同步受管 Codex 配置。
 - 常驻服务：后台 daemon 在退出菜单栏 App 后仍可运行；启用登录自启时会切换为 launchd 托管，异常退出后由 launchd 节流重启。
@@ -215,7 +215,10 @@ Provider 可通过 `--header-env NAME=ENV_VAR` 转发用户自行提供的自定
 Header 不允许覆盖；`comate_custom_header` 只允许由本次 DUCC 桥接请求产生。Codex Mixin
 不生成、校验或授权任何凭据，用户须自行确认对相关账号、凭据和服务有使用权。DUCC 核心
 会把托管登录得到的 `Authorization: Bearer ...`、DUCC 生成的 `x-api-key` 以及
-`comate_custom_header` 原样转发给 OneAPI，不删除也不替换。
+`comate_custom_header` 原样转发给 OneAPI，不删除也不替换。托管 DUCC 会继续执行
+managed settings 中的 SessionStart、UserPromptSubmit、Stop、SessionEnd
+`data-report` hooks；Codex Mixin 通过 `--app-source=one-api-token` 把这些使用次数
+标记为百度 OneAPI Token 流量。
 新增或刷新 `custom` Provider 时会并发尝试 New API、Sub2API、OpenRouter
 等常见只读额度端点；只有返回可识别额度数据的端点才会保存，不会发起付费推理。
 
@@ -628,7 +631,7 @@ Codex Mixin exposes a Responses-compatible endpoint on an automatically selected
 - Completes model metadata using LiteLLM metadata plus built-in model-family rules.
 - Provides one model-selection and benchmark window for searching, enabling, and saving models, then recording sortable TTFT, TPS, actual usage tokens, total latency, timeout results, and estimated quota cost.
 - Orchestrates multiple Panel models in parallel, compares them with a Judge model, and streams a Final answer, with an optional native interactive `Fusion · Review` surface in Codex.
-- Provides a macOS menu bar control surface for service lifecycle, provider setup, Codex install, rollback, quota, logs, and updates.
+- Provides a macOS menu bar control surface for service lifecycle, provider setup, Codex install, rollback, quota, token/cache usage, logs, and updates.
 - Exposes an Anthropic Messages-compatible `/v1/messages` endpoint so Claude Code and Anthropic SDKs can reuse the same local gateway.
 - Provides one-click install/uninstall for Claude Code through `~/.claude/settings.json` env overrides.
 - Starts the background gateway when the menu bar app opens and prominently shows the active endpoint.
@@ -752,6 +755,9 @@ missing or empty; restart it after changing a value. Primary authentication and 
 cannot be overridden, and `comate_custom_header` is reserved exclusively for the current DUCC
 bridge request. Codex Mixin does not generate, validate, or authorize credentials; users must
 confirm that they are entitled to use the relevant account, credential, and service.
+Managed DUCC continues to run the SessionStart, UserPromptSubmit, Stop, and SessionEnd
+`data-report` hooks from its managed settings. Codex Mixin passes
+`--app-source=one-api-token` so those usage counts are attributed to Baidu OneAPI token traffic.
 When a `custom` provider is added or refreshed, Codex Mixin concurrently probes common
 read-only quota endpoints used by New API, Sub2API, OpenRouter, and similar gateways.
 It stores an endpoint only after receiving recognizable quota data and never runs paid inference.
