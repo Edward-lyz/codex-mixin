@@ -159,32 +159,33 @@ pub(crate) async fn stream_provider_response(
                     .post(provider.api_url_for_model(&upstream_model_id).clone()),
                 protocol,
             );
-            let upstream = provider
+            let request = provider
                 .apply_session_affinity(
                     upstream_request,
                     routing.map(|routing| routing.hash_key.as_str()),
                 )
-                .header(reqwest::header::ACCEPT, "text/event-stream")
-                .json(&converted.request)
-                .send()
+                .header(reqwest::header::ACCEPT, "text/event-stream");
+            let upstream = crate::request_body::send_json(request, converted.request.clone())
                 .await
-                .map_err(|error| {
+                .inspect_err(|error| {
                     tracing::error!(
                         provider_id = provider.id(),
                         catalog_slug = %catalog_slug,
                         upstream_model_id = %upstream_model_id,
-                        error = %crate::error::format_error_chain(&error),
+                        error = %crate::error::format_error_chain(error),
                         "provider chat completions request failed before receiving a response"
                     );
-                    GatewayError::Http(error)
                 })?;
             let status = upstream.status();
             if !status.is_success() {
-                let body = upstream.text().await.unwrap_or_default();
-                return Err(GatewayError::Upstream(format!(
-                    "provider {} chat completions endpoint returned {status}: {body}",
-                    provider.id()
-                )));
+                let body = crate::request_body::read_error_text(upstream).await?;
+                return Err(GatewayError::UpstreamStatus {
+                    status,
+                    message: format!(
+                        "provider {} chat completions endpoint returned {status}: {body}",
+                        provider.id()
+                    ),
+                });
             }
             map_openai_chat_sse_with_image_routes(
                 observe_upstream_cache_usage(upstream.bytes_stream(), observation),
@@ -212,32 +213,32 @@ pub(crate) async fn stream_provider_response(
                     .post(provider.api_url_for_model(&upstream_model_id).clone()),
                 protocol,
             );
-            let upstream = provider
+            let request = provider
                 .apply_session_affinity(
                     upstream_request,
                     routing.map(|routing| routing.hash_key.as_str()),
                 )
-                .header(reqwest::header::ACCEPT, "text/event-stream")
-                .json(&upstream_body)
-                .send()
-                .await;
-            let upstream = upstream.map_err(|error| {
+                .header(reqwest::header::ACCEPT, "text/event-stream");
+            let upstream = crate::request_body::send_json(request, upstream_body.clone()).await;
+            let upstream = upstream.inspect_err(|error| {
                 tracing::error!(
                     provider_id = provider.id(),
                     catalog_slug = %catalog_slug,
                     upstream_model_id = %upstream_model_id,
-                    error = %crate::error::format_error_chain(&error),
+                    error = %crate::error::format_error_chain(error),
                     "provider responses request failed before receiving a response"
                 );
-                GatewayError::Http(error)
             })?;
             let status = upstream.status();
             if !status.is_success() {
-                let body = upstream.text().await.unwrap_or_default();
-                return Err(GatewayError::Upstream(format!(
-                    "provider {} responses endpoint returned {status}: {body}",
-                    provider.id()
-                )));
+                let body = crate::request_body::read_error_text(upstream).await?;
+                return Err(GatewayError::UpstreamStatus {
+                    status,
+                    message: format!(
+                        "provider {} responses endpoint returned {status}: {body}",
+                        provider.id()
+                    ),
+                });
             }
             map_openai_responses_sse(
                 observe_upstream_cache_usage(upstream.bytes_stream(), observation),

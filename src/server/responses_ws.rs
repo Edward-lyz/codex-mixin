@@ -43,6 +43,7 @@ pub(super) async fn responses_ws(
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
     Ok(ws
+        .max_message_size(usize::MAX)
         .on_upgrade(move |socket| handle_responses_ws(state, headers, socket))
         .into_response())
 }
@@ -72,6 +73,8 @@ async fn route_responses_ws(
         else {
             return Ok(());
         };
+        let (normalized, _) = crate::gateway::normalize_provider_images_blocking(body).await?;
+        body = normalized;
         if body.get("stream").is_none() {
             body["stream"] = Value::Bool(true);
         }

@@ -4,7 +4,10 @@ use axum::http::HeaderMap;
 use bytes::Bytes;
 use futures_util::StreamExt;
 
-use super::images::{canonicalize_provider_json, normalize_provider_images_blocking};
+use super::images::{
+    canonicalize_provider_json, normalize_provider_images_blocking,
+    normalize_provider_images_for_fallback,
+};
 use super::{RequestPlan, UpstreamTarget};
 use crate::error::GatewayError;
 use crate::server::{AppState, stream_official_response};
@@ -63,17 +66,49 @@ impl<'a> UpstreamExecutor<'a> {
                 provider_id,
                 upstream_model_id,
                 routing,
-            } => stream_provider_response(
-                self.state,
-                &plan.body,
-                &catalog_slug,
-                &provider_id,
-                &upstream_model_id,
-                routing.as_ref(),
-                plan.downstream_model.as_deref(),
-            )
-            .await
-            .map(|stream| (stream, plan.body)),
+            } => {
+                let first = stream_provider_response(
+                    self.state,
+                    &plan.body,
+                    &catalog_slug,
+                    &provider_id,
+                    &upstream_model_id,
+                    routing.as_ref(),
+                    plan.downstream_model.as_deref(),
+                )
+                .await;
+                match first {
+                    Ok(stream) => Ok((stream, plan.body)),
+                    Err(error @ GatewayError::UpstreamStatus { status, .. })
+                        if status == reqwest::StatusCode::PAYLOAD_TOO_LARGE =>
+                    {
+                        let (fallback_body, stats) =
+                            normalize_provider_images_for_fallback(plan.body).await?;
+                        if stats.normalized_images == 0 || stats.saved_bytes == 0 {
+                            return Err(error);
+                        }
+                        tracing::warn!(
+                            provider_id,
+                            upstream_model_id,
+                            normalized_images = stats.normalized_images,
+                            saved_image_bytes = stats.saved_bytes,
+                            "retrying provider request after 413 with aggressively compressed images"
+                        );
+                        stream_provider_response(
+                            self.state,
+                            &fallback_body,
+                            &catalog_slug,
+                            &provider_id,
+                            &upstream_model_id,
+                            routing.as_ref(),
+                            plan.downstream_model.as_deref(),
+                        )
+                        .await
+                        .map(|stream| (stream, fallback_body))
+                    }
+                    Err(error) => Err(error),
+                }
+            }
         }
     }
 }

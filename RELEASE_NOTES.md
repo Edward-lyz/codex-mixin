@@ -14,6 +14,7 @@
 - 修复 Codex 运行期间切换生图上游后 Skill 缓存未刷新的提示缺失
 - 仅在 DUCC 认证模式实际变化时执行安装和登录，普通 Provider 保存不再重复登录
 - 修复自定义 Provider 协议探测，并固定 OpenCode Go 使用 Responses 协议
+- 移除对话图片请求的本地 16 MiB 限制，并在上游返回 413 时压缩图片后重试一次
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
@@ -32,6 +33,7 @@
 - 修正 Codex 執行期間切換生圖上游後缺少 Skill 快取重新載入提示
 - 僅在 DUCC 認證模式實際變更時執行安裝和登入，一般 Provider 儲存不再重複登入
 - 修正自訂 Provider 協議探測，並固定 OpenCode Go 使用 Responses 協議
+- 移除對話圖片請求的本機 16 MiB 限制，並在上游回傳 413 時壓縮圖片後重試一次
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
@@ -50,4 +52,5 @@
 - Explain that Codex must restart to reload its skill cache after the image provider selection changes
 - Run DUCC installation and login only when the authentication mode changes
 - Fix custom provider protocol detection and pin OpenCode Go to the Responses protocol
+- Remove the local 16 MiB conversation image limit and retry one upstream 413 with compressed images
 <!-- codex-mixin:en:end -->

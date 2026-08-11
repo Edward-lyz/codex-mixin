@@ -7,9 +7,15 @@ use async_stream::stream;
 pub(super) async fn messages(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(body): Json<Value>,
+    body: Body,
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
+    let body = crate::request_body::parse_json(body).await?;
+    let (body, _) = crate::gateway::normalize_anthropic_images_blocking(
+        body,
+        crate::gateway::ImageCompressionProfile::Primary,
+    )
+    .await?;
     let requested_model = body
         .get("model")
         .and_then(Value::as_str)
@@ -26,9 +32,40 @@ pub(super) async fn messages(
     let request = normalize_message_request(&body, upstream_model_id)?;
     let hash_key = stable_oneapi_routing(&headers, &body)?.map(|routing| routing.hash_key);
     let stream_requested = body_stream_requested(&body);
-    let upstream = state
+    let first = state
         .anthropic_stream_with_web_search_retry(provider, request, hash_key.as_deref())
-        .await?;
+        .await;
+    let upstream = match first {
+        Ok(upstream) => upstream,
+        Err(error @ GatewayError::UpstreamStatus { status, .. })
+            if status == StatusCode::PAYLOAD_TOO_LARGE =>
+        {
+            let (fallback_body, stats) = crate::gateway::normalize_anthropic_images_blocking(
+                body,
+                crate::gateway::ImageCompressionProfile::PayloadFallback,
+            )
+            .await?;
+            if stats.normalized_images == 0 || stats.saved_bytes == 0 {
+                return Err(error);
+            }
+            tracing::warn!(
+                provider_id = provider.id(),
+                upstream_model_id,
+                normalized_images = stats.normalized_images,
+                saved_image_bytes = stats.saved_bytes,
+                "retrying Anthropic Messages request after 413 with aggressively compressed images"
+            );
+            let fallback_request = normalize_message_request(&fallback_body, upstream_model_id)?;
+            state
+                .anthropic_stream_with_web_search_retry(
+                    provider,
+                    fallback_request,
+                    hash_key.as_deref(),
+                )
+                .await?
+        }
+        Err(error) => return Err(error),
+    };
     let stream = relay_anthropic_stream(upstream);
     let body = Body::from_stream(stream);
     Response::builder()

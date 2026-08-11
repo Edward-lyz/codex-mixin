@@ -2,7 +2,7 @@ use base64::Engine;
 use base64::engine::general_purpose::STANDARD;
 use image::codecs::jpeg::JpegEncoder;
 use image::codecs::png::PngEncoder;
-use image::{ColorType, ImageEncoder, ImageReader};
+use image::{ColorType, DynamicImage, ImageEncoder, ImageReader, Rgb, RgbImage};
 use serde_json::{Value, json};
 use std::io::Cursor;
 use std::ops::Range;
@@ -11,8 +11,8 @@ use tokio::sync::Semaphore;
 
 use crate::error::GatewayError;
 
-const MAX_IMAGE_BYTES: usize = 10 * 1024 * 1024;
 const MAX_VISION_DIM: u32 = 1568;
+const FALLBACK_VISION_DIM: u32 = 768;
 const MAX_DECODE_PIXELS: u64 = 50_000_000;
 const MAX_CONCURRENT_IMAGE_NORMALIZATIONS: usize = 2;
 const TOOL_IMAGE_PLACEHOLDER: &str = "[tool image omitted from replay to preserve prompt cache]";
@@ -21,17 +21,49 @@ static IMAGE_NORMALIZATION_PERMITS: Semaphore =
     Semaphore::const_new(MAX_CONCURRENT_IMAGE_NORMALIZATIONS);
 
 #[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(super) struct ImageNormalizationStats {
+pub(crate) struct ImageNormalizationStats {
     pub normalized_images: usize,
     pub omitted_tool_images: usize,
     pub saved_bytes: usize,
 }
 
-pub(super) async fn normalize_provider_images_blocking(
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum ImageCompressionProfile {
+    Primary,
+    PayloadFallback,
+}
+
+pub(crate) async fn normalize_provider_images_blocking(
     mut value: Value,
 ) -> Result<(Value, ImageNormalizationStats), GatewayError> {
     run_image_work(move || {
-        let stats = normalize_provider_images(&mut value)?;
+        let stats =
+            normalize_provider_images_with_profile(&mut value, ImageCompressionProfile::Primary)?;
+        Ok((value, stats))
+    })
+    .await
+}
+
+pub(crate) async fn normalize_provider_images_for_fallback(
+    mut value: Value,
+) -> Result<(Value, ImageNormalizationStats), GatewayError> {
+    run_image_work(move || {
+        let stats = normalize_provider_images_with_profile(
+            &mut value,
+            ImageCompressionProfile::PayloadFallback,
+        )?;
+        Ok((value, stats))
+    })
+    .await
+}
+
+pub(crate) async fn normalize_anthropic_images_blocking(
+    mut value: Value,
+    profile: ImageCompressionProfile,
+) -> Result<(Value, ImageNormalizationStats), GatewayError> {
+    run_image_work(move || {
+        let mut stats = ImageNormalizationStats::default();
+        normalize_anthropic_images(&mut value, profile, &mut stats)?;
         Ok((value, stats))
     })
     .await
@@ -55,8 +87,14 @@ where
     .map_err(|error| GatewayError::Other(anyhow::Error::new(error)))?
 }
 
-pub(super) fn normalize_provider_images(
+#[cfg(test)]
+fn normalize_provider_images(body: &mut Value) -> Result<ImageNormalizationStats, GatewayError> {
+    normalize_provider_images_with_profile(body, ImageCompressionProfile::Primary)
+}
+
+fn normalize_provider_images_with_profile(
     body: &mut Value,
+    profile: ImageCompressionProfile,
 ) -> Result<ImageNormalizationStats, GatewayError> {
     let mut stats = ImageNormalizationStats::default();
     let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) else {
@@ -64,7 +102,7 @@ pub(super) fn normalize_provider_images(
     };
     let fresh_outputs = trailing_tool_output_run(input);
     for (index, item) in input.iter_mut().enumerate() {
-        normalize_input_item_images(item, fresh_outputs.contains(&index), &mut stats)?;
+        normalize_input_item_images(item, fresh_outputs.contains(&index), profile, &mut stats)?;
     }
     Ok(stats)
 }
@@ -134,7 +172,8 @@ fn json_object_order_is_stable() -> bool {
         let mut probe = serde_json::Map::new();
         probe.insert("b".to_owned(), Value::Bool(true));
         probe.insert("a".to_owned(), Value::Bool(false));
-        Value::Object(probe).to_string() == r#"{"a":false,"b":true}"#
+        serde_json::to_vec(&Value::Object(probe))
+            .is_ok_and(|encoded| encoded.as_slice() == br#"{"a":false,"b":true}"#)
     })
 }
 
@@ -160,13 +199,14 @@ fn sort_object_keys(value: &mut Value) {
 fn normalize_input_item_images(
     item: &mut Value,
     is_fresh_tool_output: bool,
+    profile: ImageCompressionProfile,
     stats: &mut ImageNormalizationStats,
 ) -> Result<(), GatewayError> {
     match item.get("type").and_then(Value::as_str) {
         Some("message") => {
             if let Some(parts) = item.get_mut("content").and_then(Value::as_array_mut) {
                 for part in parts {
-                    normalize_image_part(part, stats)?;
+                    normalize_image_part(part, profile, stats)?;
                 }
             }
         }
@@ -178,7 +218,7 @@ fn normalize_input_item_images(
             // A fresh observation still has to fit the payload budget. Failing the
             // whole turn over one screenshot is worse than sending the marker, so
             // degrade instead of erroring.
-            if let Err(error) = normalize_tool_output_images(item, stats) {
+            if let Err(error) = normalize_tool_output_images(item, profile, stats) {
                 tracing::warn!(
                     error = %error,
                     "tool image could not be normalized, sending the cache-stable marker instead"
@@ -195,6 +235,7 @@ fn normalize_input_item_images(
 /// normalizes, so a failure cannot leave a half-rewritten history item.
 fn normalize_tool_output_images(
     item: &mut Value,
+    profile: ImageCompressionProfile,
     stats: &mut ImageNormalizationStats,
 ) -> Result<(), GatewayError> {
     let Some(parts) = item.get("output").and_then(Value::as_array) else {
@@ -203,7 +244,7 @@ fn normalize_tool_output_images(
     let mut normalized = parts.clone();
     let mut fresh = ImageNormalizationStats::default();
     for part in &mut normalized {
-        normalize_image_part(part, &mut fresh)?;
+        normalize_image_part(part, profile, &mut fresh)?;
     }
     if fresh.normalized_images > 0 {
         item["output"] = Value::Array(normalized);
@@ -248,6 +289,7 @@ fn replace_tool_output_images(item: &mut Value, stats: &mut ImageNormalizationSt
 
 fn normalize_image_part(
     part: &mut Value,
+    profile: ImageCompressionProfile,
     stats: &mut ImageNormalizationStats,
 ) -> Result<(), GatewayError> {
     if part.get("type").and_then(Value::as_str) != Some("input_image") {
@@ -262,19 +304,81 @@ fn normalize_image_part(
     let Some((media_type, data)) = data_image_url_parts(&original_url) else {
         return Ok(());
     };
-    let raw = STANDARD.decode(data).map_err(|error| {
-        GatewayError::BadRequest(format!("input_image data URL is not valid base64: {error}"))
-    })?;
-    let normalized = normalize_image_bytes(media_type, &raw)?;
-    if normalized == original_url {
+    let raw = match STANDARD.decode(data) {
+        Ok(raw) => raw,
+        Err(error) => {
+            tracing::warn!(%error, "input image is not valid base64; forwarding it unchanged");
+            return Ok(());
+        }
+    };
+    let Some(normalized) = normalize_image_bytes(media_type, &raw, profile)? else {
         return Ok(());
-    }
+    };
     stats.normalized_images += 1;
     stats.saved_bytes += original_url.len().saturating_sub(normalized.len());
     match image_url {
         Value::String(url) => *url = normalized,
         Value::Object(object) => {
             object.insert("url".to_owned(), Value::String(normalized));
+        }
+        _ => {}
+    }
+    Ok(())
+}
+
+fn normalize_anthropic_images(
+    value: &mut Value,
+    profile: ImageCompressionProfile,
+    stats: &mut ImageNormalizationStats,
+) -> Result<(), GatewayError> {
+    match value {
+        Value::Array(items) => {
+            for item in items {
+                normalize_anthropic_images(item, profile, stats)?;
+            }
+        }
+        Value::Object(object) => {
+            if object.get("type").and_then(Value::as_str) == Some("image")
+                && let Some(source) = object.get_mut("source").and_then(Value::as_object_mut)
+                && source.get("type").and_then(Value::as_str) == Some("base64")
+            {
+                let media_type = source
+                    .get("media_type")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let data = source
+                    .get("data")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                if let (Some(media_type), Some(data)) = (media_type, data) {
+                    let raw = match STANDARD.decode(&data) {
+                        Ok(raw) => raw,
+                        Err(error) => {
+                            tracing::warn!(
+                                %error,
+                                "Anthropic image is not valid base64; forwarding it unchanged"
+                            );
+                            return Ok(());
+                        }
+                    };
+                    if let Some(normalized) = normalize_image_bytes(&media_type, &raw, profile)?
+                        && let Some((normalized_media_type, normalized_data)) =
+                            data_image_url_parts(&normalized)
+                    {
+                        stats.normalized_images += 1;
+                        stats.saved_bytes += data.len().saturating_sub(normalized_data.len());
+                        source.insert(
+                            "media_type".to_owned(),
+                            Value::String(normalized_media_type.to_owned()),
+                        );
+                        source.insert("data".to_owned(), Value::String(normalized_data.to_owned()));
+                    }
+                }
+                return Ok(());
+            }
+            for nested in object.values_mut() {
+                normalize_anthropic_images(nested, profile, stats)?;
+            }
         }
         _ => {}
     }
@@ -297,30 +401,25 @@ fn data_image_url_parts(url: &str) -> Option<(&str, &str)> {
     }
 }
 
-fn normalize_image_bytes(media_type: &str, raw: &[u8]) -> Result<String, GatewayError> {
-    if raw.is_empty() || raw.len() > MAX_IMAGE_BYTES {
-        return Err(GatewayError::BadRequest(format!(
-            "input_image must be between 1 byte and {} MB",
-            MAX_IMAGE_BYTES / 1024 / 1024
-        )));
+fn normalize_image_bytes(
+    media_type: &str,
+    raw: &[u8],
+    profile: ImageCompressionProfile,
+) -> Result<Option<String>, GatewayError> {
+    if raw.is_empty() {
+        return Ok(None);
     }
-    let (raw, media_type) = compress_for_vision(raw, media_type)?;
-    if raw.len() > MAX_IMAGE_BYTES {
-        return Err(GatewayError::BadRequest(format!(
-            "input_image remains larger than {} MB after compression",
-            MAX_IMAGE_BYTES / 1024 / 1024
-        )));
+    let Some((compressed, compressed_media_type)) = compress_for_vision(raw, media_type, profile)?
+    else {
+        return Ok(None);
+    };
+    if compressed.len() >= raw.len() {
+        return Ok(None);
     }
-    Ok(format!("data:{media_type};base64,{}", STANDARD.encode(raw)))
-}
-
-/// Encoding used once an image has to be re-encoded for the vision budget. PNG
-/// keeps screenshot alpha intact; everything else is cheaper as JPEG.
-fn vision_output_media_type(media_type: &str) -> &'static str {
-    match media_type {
-        "image/png" | "image/gif" => "image/png",
-        _ => "image/jpeg",
-    }
+    Ok(Some(format!(
+        "data:{compressed_media_type};base64,{}",
+        STANDARD.encode(compressed)
+    )))
 }
 
 /// Guards against decompression bombs by refusing to decode images whose
@@ -332,49 +431,120 @@ fn exceeds_decode_budget(width: u32, height: u32) -> bool {
 fn compress_for_vision<'a>(
     raw: &'a [u8],
     media_type: &'a str,
-) -> Result<(Vec<u8>, &'a str), GatewayError> {
+    profile: ImageCompressionProfile,
+) -> Result<Option<(Vec<u8>, &'a str)>, GatewayError> {
     if !matches!(
         media_type,
         "image/png" | "image/jpeg" | "image/gif" | "image/webp"
     ) {
-        return Ok((raw.to_vec(), media_type));
+        return Ok(None);
     }
-    let reader = ImageReader::new(Cursor::new(raw)).with_guessed_format()?;
-    let Some(format) = reader.format() else {
-        return Ok((raw.to_vec(), media_type));
+    let reader = match ImageReader::new(Cursor::new(raw)).with_guessed_format() {
+        Ok(reader) => reader,
+        Err(error) => {
+            tracing::warn!(%error, "input image format could not be detected; forwarding unchanged");
+            return Ok(None);
+        }
     };
-    let (width, height) = reader
-        .into_dimensions()
-        .map_err(|error| GatewayError::BadRequest(format!("decode input_image: {error}")))?;
+    let Some(format) = reader.format() else {
+        return Ok(None);
+    };
+    let (width, height) = match reader.into_dimensions() {
+        Ok(dimensions) => dimensions,
+        Err(error) => {
+            tracing::warn!(%error, "input image dimensions could not be read; forwarding unchanged");
+            return Ok(None);
+        }
+    };
     if exceeds_decode_budget(width, height) {
-        return Ok((raw.to_vec(), media_type));
+        tracing::warn!(
+            width,
+            height,
+            "input image exceeds the safe decode pixel budget; forwarding unchanged"
+        );
+        return Ok(None);
     }
-    if width <= MAX_VISION_DIM && height <= MAX_VISION_DIM {
-        return Ok((raw.to_vec(), media_type));
+    if profile == ImageCompressionProfile::Primary
+        && media_type == "image/gif"
+        && width <= MAX_VISION_DIM
+        && height <= MAX_VISION_DIM
+    {
+        return Ok(None);
     }
 
-    let decoded = ImageReader::with_format(Cursor::new(raw), format)
-        .decode()
-        .map_err(|error| GatewayError::BadRequest(format!("decode input_image: {error}")))?;
-    let (target_width, target_height) = scaled_dims(width, height, MAX_VISION_DIM);
-    let resized = decoded.resize_exact(
-        target_width,
-        target_height,
-        image::imageops::FilterType::CatmullRom,
-    );
-    let mut out = Vec::new();
-    let output_media_type = vision_output_media_type(media_type);
-    if output_media_type == "image/png" {
-        let rgba = resized.to_rgba8();
-        PngEncoder::new(&mut out)
-            .write_image(&rgba, target_width, target_height, ColorType::Rgba8.into())
-            .map_err(|error| GatewayError::BadRequest(format!("encode input_image: {error}")))?;
+    let decoded = match ImageReader::with_format(Cursor::new(raw), format).decode() {
+        Ok(decoded) => decoded,
+        Err(error) => {
+            tracing::warn!(%error, "input image could not be decoded; forwarding unchanged");
+            return Ok(None);
+        }
+    };
+    let max_side = match profile {
+        ImageCompressionProfile::Primary => MAX_VISION_DIM,
+        ImageCompressionProfile::PayloadFallback => FALLBACK_VISION_DIM,
+    };
+    let (target_width, target_height) = if width > max_side || height > max_side {
+        scaled_dims(width, height, max_side)
     } else {
-        JpegEncoder::new_with_quality(&mut out, 85)
-            .encode_image(&resized)
-            .map_err(|error| GatewayError::BadRequest(format!("encode input_image: {error}")))?;
+        (width, height)
+    };
+    let resized = if (target_width, target_height) == (width, height) {
+        decoded
+    } else {
+        decoded.resize_exact(
+            target_width,
+            target_height,
+            image::imageops::FilterType::CatmullRom,
+        )
+    };
+    let mut out = Vec::new();
+    let preserve_alpha = profile == ImageCompressionProfile::Primary
+        && media_type == "image/png"
+        && image_has_transparency(&resized);
+    let output_media_type = if preserve_alpha {
+        "image/png"
+    } else {
+        "image/jpeg"
+    };
+    if preserve_alpha {
+        let rgba = resized.to_rgba8();
+        if let Err(error) = PngEncoder::new(&mut out).write_image(
+            &rgba,
+            target_width,
+            target_height,
+            ColorType::Rgba8.into(),
+        ) {
+            tracing::warn!(%error, "input image could not be encoded; forwarding unchanged");
+            return Ok(None);
+        }
+    } else {
+        let quality = match profile {
+            ImageCompressionProfile::Primary => 85,
+            ImageCompressionProfile::PayloadFallback => 65,
+        };
+        if let Err(error) = JpegEncoder::new_with_quality(&mut out, quality)
+            .encode_image(&DynamicImage::ImageRgb8(flatten_onto_white(&resized)))
+        {
+            tracing::warn!(%error, "input image could not be encoded; forwarding unchanged");
+            return Ok(None);
+        }
     }
-    Ok((out, output_media_type))
+    Ok(Some((out, output_media_type)))
+}
+
+fn image_has_transparency(image: &DynamicImage) -> bool {
+    image.to_rgba8().pixels().any(|pixel| pixel[3] != u8::MAX)
+}
+
+fn flatten_onto_white(image: &DynamicImage) -> RgbImage {
+    let rgba = image.to_rgba8();
+    RgbImage::from_fn(rgba.width(), rgba.height(), |x, y| {
+        let pixel = rgba.get_pixel(x, y);
+        let alpha = u16::from(pixel[3]);
+        let blend =
+            |channel: u8| ((u16::from(channel) * alpha + 255 * (255 - alpha) + 127) / 255) as u8;
+        Rgb([blend(pixel[0]), blend(pixel[1]), blend(pixel[2])])
+    })
 }
 
 fn scaled_dims(width: u32, height: u32, max_side: u32) -> (u32, u32) {
@@ -497,7 +667,7 @@ mod tests {
                 .as_str()
                 .unwrap(),
         );
-        assert_eq!(media_type, "image/png");
+        assert_eq!(media_type, "image/jpeg");
         assert_eq!((width, height), (MAX_VISION_DIM, 784));
         assert!(first_stats.saved_bytes > 0);
     }
@@ -519,11 +689,23 @@ mod tests {
     }
 
     #[test]
-    fn re_encodes_gif_and_webp_into_supported_vision_formats() {
-        assert_eq!(vision_output_media_type("image/png"), "image/png");
-        assert_eq!(vision_output_media_type("image/gif"), "image/png");
-        assert_eq!(vision_output_media_type("image/jpeg"), "image/jpeg");
-        assert_eq!(vision_output_media_type("image/webp"), "image/jpeg");
+    fn fallback_uses_the_smaller_lossy_profile() {
+        let mut body = user_image_body(Value::String(png_data_url(3000, 1500)));
+
+        let stats = normalize_provider_images_with_profile(
+            &mut body,
+            ImageCompressionProfile::PayloadFallback,
+        )
+        .unwrap();
+
+        assert_eq!(stats.normalized_images, 1);
+        let (media_type, width, height) = normalized_dimensions(
+            body["input"][0]["content"][0]["image_url"]
+                .as_str()
+                .unwrap(),
+        );
+        assert_eq!(media_type, "image/jpeg");
+        assert_eq!((width, height), (FALLBACK_VISION_DIM, 384));
     }
 
     #[test]
@@ -562,33 +744,34 @@ mod tests {
     }
 
     #[test]
-    fn rejects_image_data_urls_that_are_not_base64() {
+    fn leaves_invalid_base64_for_the_upstream_to_validate() {
         let mut body = user_image_body(Value::String(
             "data:image/png;base64,not-base64!!".to_owned(),
         ));
+        let original = body.clone();
 
-        let error = normalize_provider_images(&mut body).unwrap_err();
+        let stats = normalize_provider_images(&mut body).unwrap();
 
-        assert!(
-            error.to_string().contains("not valid base64"),
-            "unexpected error: {error}"
-        );
+        assert_eq!(stats, ImageNormalizationStats::default());
+        assert_eq!(body, original);
     }
 
     #[test]
-    fn rejects_images_above_the_hard_byte_cap() {
-        let oversized = vec![0u8; MAX_IMAGE_BYTES + 1];
+    fn has_no_encoded_image_byte_cap() {
+        let large_unknown_image = vec![0u8; 12 * 1024 * 1024];
 
-        let error = normalize_image_bytes("image/png", &oversized).unwrap_err();
-        assert!(
-            error.to_string().contains("must be between"),
-            "unexpected error: {error}"
+        assert_eq!(
+            normalize_image_bytes(
+                "image/unknown",
+                &large_unknown_image,
+                ImageCompressionProfile::Primary
+            )
+            .unwrap(),
+            None
         );
-
-        let empty = normalize_image_bytes("image/png", &[]).unwrap_err();
-        assert!(
-            empty.to_string().contains("must be between"),
-            "unexpected error: {empty}"
+        assert_eq!(
+            normalize_image_bytes("image/png", &[], ImageCompressionProfile::Primary).unwrap(),
+            None
         );
     }
 
@@ -718,12 +901,12 @@ mod tests {
         assert_eq!(stats.normalized_images, 1);
         let (media_type, width, height) =
             normalized_dimensions(body["input"][4]["output"][0]["image_url"].as_str().unwrap());
-        assert_eq!(media_type, "image/png");
+        assert_eq!(media_type, "image/jpeg");
         assert_eq!((width, height), (MAX_VISION_DIM, 784));
     }
 
     #[test]
-    fn marks_fresh_tool_images_that_cannot_be_normalized() {
+    fn forwards_fresh_tool_images_that_cannot_be_normalized() {
         let mut body = tool_history(
             json!([{"type":"input_text","text":"old"}]),
             json!([
@@ -732,16 +915,14 @@ mod tests {
             ]),
         );
 
-        // A user-attached image fails loudly; a tool observation degrades to the
-        // marker so one screenshot cannot break the turn.
         let stats = normalize_provider_images(&mut body).unwrap();
 
-        assert_eq!(stats.omitted_tool_images, 1);
+        assert_eq!(stats, ImageNormalizationStats::default());
         assert_eq!(
             body["input"][4]["output"],
             json!([
                 {"type":"input_text","text":"latest screenshot"},
-                {"type":"input_text","text":TOOL_IMAGE_PLACEHOLDER}
+                {"type":"input_image","image_url":"data:image/png;base64,not-base64!!"}
             ])
         );
     }

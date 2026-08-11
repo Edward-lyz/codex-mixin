@@ -27,7 +27,7 @@ private func providerIconCacheURL(providerID: String, websiteURL: URL) -> URL {
         .joined()
     return FileManager.default.homeDirectoryForCurrentUser
         .appendingPathComponent(".codex-mixin/provider-icons", isDirectory: true)
-        .appendingPathComponent("\(providerComponent)-\(hostComponent).png")
+        .appendingPathComponent("v2-\(providerComponent)-\(hostComponent).png")
 }
 
 func cachedProviderLogoImage(providerID: String, websiteURL: String?) -> NSImage? {
@@ -59,6 +59,23 @@ func declaredFaviconURL(html: String, baseURL: URL) -> URL? {
         return URL(string: String(link[hrefRange]), relativeTo: baseURL)?.absoluteURL
     }
     return nil
+}
+
+func embeddedProviderIconData(from url: URL?) -> Data? {
+    guard
+        let url,
+        url.scheme?.lowercased() == "data",
+        let commaIndex = url.absoluteString.firstIndex(of: ",")
+    else {
+        return nil
+    }
+    let metadata = url.absoluteString[..<commaIndex].lowercased()
+    guard metadata.hasPrefix("data:image/"), metadata.hasSuffix(";base64") else {
+        return nil
+    }
+    let encodedData = String(url.absoluteString[url.absoluteString.index(after: commaIndex)...])
+    guard let base64 = encodedData.removingPercentEncoding else { return nil }
+    return Data(base64Encoded: base64, options: .ignoreUnknownCharacters)
 }
 
 private func providerIconPNG(from data: Data) -> Data? {
@@ -119,7 +136,7 @@ func refreshProviderLogoIfNeeded(providerID: String, websiteURL: String) async t
         candidates.append(fallbackURL)
     }
     if let host = siteURL.host,
-       let proxyURL = URL(string: "https://icon.horse/icon/\(host)")
+       let proxyURL = URL(string: "https://favicon.im/\(host)")
     {
         candidates.append(proxyURL)
     }
@@ -128,12 +145,18 @@ func refreshProviderLogoIfNeeded(providerID: String, websiteURL: String) async t
     var png: Data?
     for candidate in candidates {
         do {
-            let (data, response) = try await session.data(from: candidate)
-            if let response = response as? HTTPURLResponse,
-               !(200 ..< 300).contains(response.statusCode)
-            {
-                lastHTTPStatus = response.statusCode
-                continue
+            let data: Data
+            if let embeddedData = embeddedProviderIconData(from: candidate) {
+                data = embeddedData
+            } else {
+                let (downloadedData, response) = try await session.data(from: candidate)
+                if let response = response as? HTTPURLResponse,
+                   !(200 ..< 300).contains(response.statusCode)
+                {
+                    lastHTTPStatus = response.statusCode
+                    continue
+                }
+                data = downloadedData
             }
             if let candidatePNG = providerIconPNG(from: data) {
                 png = candidatePNG
