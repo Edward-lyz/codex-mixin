@@ -11,6 +11,8 @@ pub enum GatewayError {
     Unauthorized,
     #[error("upstream error: {0}")]
     Upstream(String),
+    #[error("upstream returned {status}: {message}")]
+    UpstreamStatus { status: StatusCode, message: String },
     #[error(transparent)]
     Http(#[from] reqwest::Error),
     #[error(transparent)]
@@ -29,7 +31,9 @@ impl IntoResponse for GatewayError {
             GatewayError::BadRequest(_) | GatewayError::Json(_) => {
                 tracing::warn!(error = %error_chain, "gateway request rejected");
             }
-            GatewayError::Upstream(_) | GatewayError::Http(_) => {
+            GatewayError::Upstream(_)
+            | GatewayError::UpstreamStatus { .. }
+            | GatewayError::Http(_) => {
                 tracing::error!(error = %error_chain, "gateway upstream request failed");
             }
             GatewayError::Io(_) | GatewayError::Other(_) => {
@@ -40,6 +44,7 @@ impl IntoResponse for GatewayError {
             GatewayError::BadRequest(message) => (StatusCode::BAD_REQUEST, message.clone()),
             GatewayError::Unauthorized => (StatusCode::UNAUTHORIZED, self.to_string()),
             GatewayError::Upstream(message) => (StatusCode::BAD_GATEWAY, message.clone()),
+            GatewayError::UpstreamStatus { status, message } => (*status, message.clone()),
             GatewayError::Http(err) => (StatusCode::BAD_GATEWAY, err.to_string()),
             GatewayError::Io(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,

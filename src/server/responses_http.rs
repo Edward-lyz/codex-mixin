@@ -4,9 +4,11 @@ use super::*;
 pub(super) async fn responses(
     State(state): State<AppState>,
     headers: HeaderMap,
-    Json(mut body): Json<Value>,
+    body: Body,
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
+    let body = crate::request_body::parse_json(body).await?;
+    let (mut body, _) = crate::gateway::normalize_provider_images_blocking(body).await?;
     let requested_model = body
         .get("model")
         .and_then(Value::as_str)
@@ -87,18 +89,28 @@ async fn forward_official_responses(
     body: Value,
 ) -> Result<Response, GatewayError> {
     let (authorization, account_id) = state.official_auth().await.map_err(GatewayError::Other)?;
-    let upstream = forward_official_headers(
-        state
-            .client
-            .post(&state.config.official_responses_url)
-            .header(header::AUTHORIZATION, authorization)
-            .header("chatgpt-account-id", account_id)
-            .header(header::ACCEPT, "text/event-stream"),
+    let mut upstream = send_official_responses(
+        state,
         headers,
+        body.clone(),
+        authorization.clone(),
+        account_id.clone(),
     )
-    .json(&body)
-    .send()
     .await?;
+    if upstream.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        let (fallback_body, stats) =
+            crate::gateway::normalize_provider_images_for_fallback(body).await?;
+        if stats.normalized_images > 0 && stats.saved_bytes > 0 {
+            tracing::warn!(
+                normalized_images = stats.normalized_images,
+                saved_image_bytes = stats.saved_bytes,
+                "retrying official responses request after 413 with aggressively compressed images"
+            );
+            upstream =
+                send_official_responses(state, headers, fallback_body, authorization, account_id)
+                    .await?;
+        }
+    }
     let status = upstream.status();
     let content_type = upstream
         .headers()
@@ -107,10 +119,11 @@ async fn forward_official_responses(
         .unwrap_or("text/event-stream")
         .to_owned();
     if !status.is_success() {
-        let body = upstream.text().await.unwrap_or_default();
-        return Err(GatewayError::Upstream(format!(
-            "official responses endpoint returned {status}: {body}"
-        )));
+        let body = crate::request_body::read_error_text(upstream).await?;
+        return Err(GatewayError::UpstreamStatus {
+            status,
+            message: format!("official responses endpoint returned {status}: {body}"),
+        });
     }
     Response::builder()
         .status(status)
@@ -118,6 +131,25 @@ async fn forward_official_responses(
         .header(header::CACHE_CONTROL, "no-cache")
         .body(Body::from_stream(upstream.bytes_stream()))
         .map_err(|err| GatewayError::Other(err.into()))
+}
+
+async fn send_official_responses(
+    state: &AppState,
+    headers: &HeaderMap,
+    body: Value,
+    authorization: axum::http::HeaderValue,
+    account_id: axum::http::HeaderValue,
+) -> Result<reqwest::Response, GatewayError> {
+    let request = forward_official_headers(
+        state
+            .client
+            .post(&state.config.official_responses_url)
+            .header(header::AUTHORIZATION, authorization)
+            .header("chatgpt-account-id", account_id)
+            .header(header::ACCEPT, "text/event-stream"),
+        headers,
+    );
+    crate::request_body::send_json(request, body).await
 }
 
 pub(crate) async fn stream_official_response(
@@ -131,24 +163,35 @@ pub(crate) async fn stream_official_response(
         .unwrap_or("official")
         .to_owned();
     let (authorization, account_id) = state.official_auth().await.map_err(GatewayError::Other)?;
-    let upstream = forward_official_headers(
-        state
-            .client
-            .post(&state.config.official_responses_url)
-            .header(header::AUTHORIZATION, authorization)
-            .header("chatgpt-account-id", account_id)
-            .header(header::ACCEPT, "text/event-stream"),
+    let mut upstream = send_official_responses(
+        state,
         headers,
+        body.clone(),
+        authorization.clone(),
+        account_id.clone(),
     )
-    .json(&body)
-    .send()
     .await?;
+    if upstream.status() == StatusCode::PAYLOAD_TOO_LARGE {
+        let (fallback_body, stats) =
+            crate::gateway::normalize_provider_images_for_fallback(body.clone()).await?;
+        if stats.normalized_images > 0 && stats.saved_bytes > 0 {
+            tracing::warn!(
+                normalized_images = stats.normalized_images,
+                saved_image_bytes = stats.saved_bytes,
+                "retrying official responses stream after 413 with aggressively compressed images"
+            );
+            upstream =
+                send_official_responses(state, headers, fallback_body, authorization, account_id)
+                    .await?;
+        }
+    }
     let status = upstream.status();
     if !status.is_success() {
-        let body = upstream.text().await.unwrap_or_default();
-        return Err(GatewayError::Upstream(format!(
-            "official responses endpoint returned {status}: {body}"
-        )));
+        let body = crate::request_body::read_error_text(upstream).await?;
+        return Err(GatewayError::UpstreamStatus {
+            status,
+            message: format!("official responses endpoint returned {status}: {body}"),
+        });
     }
     let stream = async_stream::stream! {
         let mut upstream = upstream.bytes_stream();

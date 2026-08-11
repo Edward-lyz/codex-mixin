@@ -16,6 +16,11 @@ struct MenuViewsLayoutTests {
             baseURL: providerWebsiteURL
         )
         precondition(faviconURL?.absoluteString == "https://example.com/assets/provider.png")
+        let embeddedFaviconURL = declaredFaviconURL(
+            html: #"<link rel="icon" href="data:image/png;base64,iVBORw0KGgo=">"#,
+            baseURL: providerWebsiteURL
+        )
+        precondition(embeddedProviderIconData(from: embeddedFaviconURL)?.count == 8)
         let runningToggleView = serviceMenuView(
             title: "本地网关运行中",
             endpoint: "http://127.0.0.1:8787",

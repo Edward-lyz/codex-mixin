@@ -8,7 +8,7 @@ use std::time::Duration;
 use anyhow::{Context, ensure};
 use axum::Router;
 use axum::body::{Body, Bytes};
-use axum::extract::{DefaultBodyLimit, OriginalUri, State};
+use axum::extract::{OriginalUri, State};
 use axum::http::{HeaderMap, Method, Response, StatusCode, header};
 use axum::routing::any;
 use memchr::memmem;
@@ -18,7 +18,6 @@ use tokio::process::{ChildStdin, Command};
 use tokio::sync::{Mutex, mpsc, oneshot, watch};
 use uuid::Uuid;
 
-const REQUEST_BODY_LIMIT: usize = 16 * 1024 * 1024;
 const DUCC_HEADER_NAME: &str = "comate_custom_header";
 const DUCC_AUTH_CARRIER_MODEL: &str = "GLM-5.2";
 const DUCC_PREWARM_SESSION_KEY: &str = "__codex_mixin_prewarm__";
@@ -93,10 +92,7 @@ impl DuccBridge {
             policies: Arc::new(Mutex::new(HashMap::new())),
         };
         let app = Router::new()
-            .route(
-                "/{*path}",
-                any(forward).layer(DefaultBodyLimit::max(REQUEST_BODY_LIMIT)),
-            )
+            .route("/{*path}", any(forward))
             .with_state(state.clone());
         let (shutdown, mut shutdown_rx) = watch::channel(false);
         tokio::spawn(async move {
@@ -176,7 +172,7 @@ async fn forward(
     OriginalUri(uri): OriginalUri,
     method: Method,
     headers: HeaderMap,
-    body: Bytes,
+    body: Body,
 ) -> Response<Body> {
     if !uri
         .path()
@@ -191,6 +187,13 @@ async fn forward(
     if method != Method::POST {
         return static_response(StatusCode::METHOD_NOT_ALLOWED, Body::empty(), None);
     }
+    let body = match axum::body::to_bytes(body, usize::MAX).await {
+        Ok(body) => body,
+        Err(error) => {
+            tracing::warn!(%error, "DUCC loopback bridge could not read request body");
+            return static_response(StatusCode::BAD_REQUEST, Body::empty(), None);
+        }
+    };
     match forward_post(state, uri, headers, body).await {
         Ok(response) => response,
         Err(error) => {
@@ -268,17 +271,21 @@ async fn forward_post(
         }
     }
     strip_hop_by_hop_headers(&mut native_headers);
-    let encoded = serde_json::to_vec(&upstream_body).context("encode sanitized DUCC relay body")?;
     authenticated
         .send(())
         .map_err(|_| anyhow::anyhow!("DUCC authentication receiver closed"))?;
     let client = state.client.clone();
     tokio::spawn(async move {
-        let upstream = client.post(target).headers(native_headers).body(encoded);
+        let upstream = crate::request_body::send_json(
+            client.post(target).headers(native_headers),
+            upstream_body,
+        );
         let mut response = response;
         tokio::select! {
-            upstream = upstream.send() => {
-                let upstream = upstream.context("forward DUCC-authenticated request");
+            upstream = upstream => {
+                let upstream = upstream
+                    .map_err(anyhow::Error::from)
+                    .context("forward DUCC-authenticated request");
                 if response.send(upstream).is_err() {
                     tracing::debug!("DUCC gateway response receiver closed");
                 }

@@ -18,6 +18,7 @@ pub mod openai_chat;
 pub mod openai_events;
 pub mod provider;
 pub mod provider_capabilities;
+pub(crate) mod request_body;
 pub mod server;
 pub mod sse;
 pub mod upstream;

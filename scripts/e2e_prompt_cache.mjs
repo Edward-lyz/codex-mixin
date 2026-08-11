@@ -73,10 +73,31 @@ function png(width, height) {
   ]);
 }
 
-function pngDimensions(dataUrl) {
+function imageDimensions(dataUrl) {
   const base64 = dataUrl.split(";base64,")[1];
   const buffer = Buffer.from(base64, "base64");
-  return [buffer.readUInt32BE(16), buffer.readUInt32BE(20)];
+  if (buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]))) {
+    return [buffer.readUInt32BE(16), buffer.readUInt32BE(20)];
+  }
+  if (buffer[0] === 0xff && buffer[1] === 0xd8) {
+    let offset = 2;
+    while (offset + 8 < buffer.length) {
+      if (buffer[offset] !== 0xff) {
+        offset += 1;
+        continue;
+      }
+      const marker = buffer[offset + 1];
+      if ([0xc0, 0xc1, 0xc2, 0xc3, 0xc5, 0xc6, 0xc7, 0xc9, 0xca, 0xcb, 0xcd, 0xce, 0xcf].includes(marker)) {
+        return [buffer.readUInt16BE(offset + 7), buffer.readUInt16BE(offset + 5)];
+      }
+      if (marker === 0xd8 || marker === 0xd9) {
+        offset += 2;
+        continue;
+      }
+      offset += 2 + buffer.readUInt16BE(offset + 2);
+    }
+  }
+  throw new Error("unsupported image format in prompt-cache fixture");
 }
 
 function build() {
@@ -200,7 +221,7 @@ function verifyAnthropic() {
   const image = fresh.content.find((block) => block.type === "image");
   check("anthropic turn 1: fresh tool result keeps the screenshot", Boolean(image));
   if (image) {
-    const [width, height] = pngDimensions(
+    const [width, height] = imageDimensions(
       `data:${image.source.media_type};base64,${image.source.data}`,
     );
     check(
@@ -292,7 +313,7 @@ function verifyChat() {
   const imagePart = (relocated?.content ?? []).find((part) => part.type === "image_url");
   check("chat turn 1: relocated message carries the image", Boolean(imagePart));
   if (imagePart) {
-    const [width, height] = pngDimensions(imagePart.image_url.url);
+    const [width, height] = imageDimensions(imagePart.image_url.url);
     check(
       "chat turn 1: screenshot fits the vision budget",
       Math.max(width, height) === VISION_SIDE,

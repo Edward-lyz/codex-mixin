@@ -501,7 +501,8 @@ WARN provider recomputed a prompt prefix this gateway kept byte-identical
 
 图片走同一条契约。工具返回的截图只在模型尚未看过的那一轮内联，并压缩到最长边 1568px；之后
 每一轮都回放为固定占位符。所以截图和视觉工具继续可用，而历史不会永久携带图片字节，代价只是
-上一轮的最后一条消息被改写一次。
+上一轮的最后一条消息被改写一次。对话入口不再设置固定 body 大小上限；请求会先落盘再解析，
+上游返回 413 时，网关会把内嵌图片压缩到最长边 768px、JPEG quality 65，并且只重试一次。
 
 OpenAI Chat Completions 兼容上游不接受 `tool` 消息内嵌图片，网关会把图片改放到紧随该批工具
 结果之后的一条 user 消息，同时让 assistant 的 `tool_calls` 与对应的 `tool` 结果保持相邻。
@@ -882,7 +883,9 @@ RUST_LOG=codex_mixin=debug codex-mixin service start --foreground
 Images follow the same contract. A tool screenshot is inlined only on the turn the model has not
 answered yet, compressed to a 1568 px longest side, and replayed as a stable marker on every later
 turn. Screenshots and vision tools keep working while history stops carrying image bytes forever,
-and the only cost is rewriting what was previously the last message.
+and the only cost is rewriting what was previously the last message. Conversation routes no longer
+apply a fixed body-size limit: requests are spooled before parsing, and an upstream 413 triggers one
+retry with embedded images reduced to a 768 px longest side at JPEG quality 65.
 
 OpenAI Chat Completions upstreams reject images inside `tool` messages, so those images move into a
 user message placed right after the tool run, keeping assistant `tool_calls` adjacent to the `tool`

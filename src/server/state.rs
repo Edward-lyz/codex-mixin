@@ -522,39 +522,43 @@ impl AppState {
                 .map_err(GatewayError::Other)?;
             let status = response.status();
             if !status.is_success() {
-                let body = response.text().await?;
-                return Err(GatewayError::Upstream(format!(
-                    "provider {} DUCC-authenticated messages endpoint returned {status}: {body}",
-                    provider.id()
-                )));
+                let body = crate::request_body::read_error_text(response).await?;
+                return Err(GatewayError::UpstreamStatus {
+                    status,
+                    message: format!(
+                        "provider {} DUCC-authenticated messages endpoint returned {status}: {body}",
+                        provider.id()
+                    ),
+                });
             }
             return Ok(response.bytes_stream().boxed());
         }
         let mut upstream_request =
             provider.apply_auth(self.client.post(provider.api_url().clone()));
         upstream_request = provider.apply_anthropic_beta(upstream_request, beta.as_deref());
-        let response = provider
+        let upstream_request = provider
             .apply_session_affinity(upstream_request, hash_key)
-            .header(header::ACCEPT, "text/event-stream")
-            .json(request)
-            .send()
+            .header(header::ACCEPT, "text/event-stream");
+        let response = crate::request_body::send_json(upstream_request, request.clone())
             .await
-            .map_err(|error| {
+            .inspect_err(|error| {
                 tracing::error!(
                     provider_id = provider.id(),
                     upstream_model_id = %request.model,
-                    error = %crate::error::format_error_chain(&error),
+                    error = %crate::error::format_error_chain(error),
                     "provider messages request failed before receiving a response"
                 );
-                GatewayError::Http(error)
             })?;
         let status = response.status();
         if !status.is_success() {
-            let body = response.text().await?;
-            return Err(GatewayError::Upstream(format!(
-                "provider {} messages endpoint returned {status}: {body}",
-                provider.id()
-            )));
+            let body = crate::request_body::read_error_text(response).await?;
+            return Err(GatewayError::UpstreamStatus {
+                status,
+                message: format!(
+                    "provider {} messages endpoint returned {status}: {body}",
+                    provider.id()
+                ),
+            });
         }
         Ok(response.bytes_stream().boxed())
     }
