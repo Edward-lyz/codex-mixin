@@ -1225,7 +1225,31 @@ async fn detect_custom_provider_protocol(
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()?;
-    let candidates = [
+    for (protocol, api_path, models_path, body) in custom_protocol_probe_candidates() {
+        let url = match endpoint_join(&provider.base_url, api_path) {
+            Ok(url) => url,
+            Err(_) => continue,
+        };
+        if protocol_endpoint_available(&client, runtime, protocol, url, &body).await {
+            return Ok(Some(InferredCustomProviderEndpoint {
+                base_url: provider.base_url.clone(),
+                protocol,
+                api_path: api_path.to_owned(),
+                models_path: models_path.to_owned(),
+                path_explicit: false,
+            }));
+        }
+    }
+    Ok(None)
+}
+
+fn custom_protocol_probe_candidates() -> [(
+    ProviderProtocol,
+    &'static str,
+    &'static str,
+    serde_json::Value,
+); 6] {
+    [
         (
             ProviderProtocol::OpenAiResponses,
             "/v1/responses",
@@ -1262,23 +1286,7 @@ async fn detect_custom_provider_protocol(
             "/models",
             protocol_probe_body(ProviderProtocol::OpenAiChat),
         ),
-    ];
-    for (protocol, api_path, models_path, body) in candidates {
-        let url = match endpoint_join(&provider.base_url, api_path) {
-            Ok(url) => url,
-            Err(_) => continue,
-        };
-        if protocol_endpoint_available(&client, runtime, protocol, url, &body).await {
-            return Ok(Some(InferredCustomProviderEndpoint {
-                base_url: provider.base_url.clone(),
-                protocol,
-                api_path: api_path.to_owned(),
-                models_path: models_path.to_owned(),
-                path_explicit: false,
-            }));
-        }
-    }
-    Ok(None)
+    ]
 }
 
 fn protocol_probe_body(protocol: ProviderProtocol) -> serde_json::Value {
@@ -1319,7 +1327,10 @@ async fn protocol_endpoint_available(
     let status = response.status().as_u16();
     match status {
         // Endpoint exists: auth, validation, rate limit, or accidental success.
-        200 | 201 | 400 | 401 | 403 | 408 | 409 | 413 | 415 | 422 | 429 => true,
+        // A 403 is inconclusive because multi-protocol gateways also use it to
+        // reject a protocol that the current account or group does not allow.
+        200 | 201 | 400 | 401 | 408 | 409 | 413 | 415 | 422 | 429 => true,
+        403 => false,
         // Path exists but rejects the method; still better than a missing route.
         405 => true,
         // Missing route or gateway that never mounted the API.
@@ -1660,7 +1671,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn detects_responses_before_chat_completions_for_custom_providers() {
+    async fn detects_responses_before_messages_and_chat_for_custom_providers() {
         use axum::routing::post;
         let app = Router::new()
             .route(
@@ -1669,6 +1680,15 @@ mod tests {
                     (
                         axum::http::StatusCode::BAD_REQUEST,
                         axum::Json(serde_json::json!({"error":{"message":"missing input"}})),
+                    )
+                }),
+            )
+            .route(
+                "/v1/messages",
+                post(|| async {
+                    (
+                        axum::http::StatusCode::OK,
+                        axum::Json(serde_json::json!({"id":"messages-should-not-win"})),
                     )
                 }),
             )
@@ -1697,6 +1717,34 @@ mod tests {
         assert_eq!(detected.protocol, ProviderProtocol::OpenAiResponses);
         assert_eq!(detected.api_path, "/v1/responses");
         assert_eq!(detected.models_path, "/v1/models");
+    }
+
+    #[tokio::test]
+    async fn forbidden_protocol_probes_do_not_switch_custom_providers_to_messages() {
+        let app = Router::new().fallback(|| async {
+            (
+                axum::http::StatusCode::FORBIDDEN,
+                axum::Json(serde_json::json!({
+                    "error": {"message": "This group does not allow this protocol dispatch"}
+                })),
+            )
+        });
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut provider = codex_mixin::provider::custom_provider("community", "secret");
+        provider.base_url = format!("http://{address}");
+
+        assert!(
+            detect_custom_provider_protocol(&provider)
+                .await
+                .unwrap()
+                .is_none()
+        );
+        assert_eq!(provider.protocol, ProviderProtocol::OpenAiResponses);
+        assert_eq!(provider.api_path, "/v1/responses");
     }
 
     #[tokio::test]

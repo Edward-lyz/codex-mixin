@@ -46,10 +46,7 @@ pub(super) async fn probe_model(
     );
     let protocols = vec![responses, messages, chat];
 
-    let selected = protocols
-        .iter()
-        .filter(|candidate| candidate.baseline == CapabilityStatus::Supported)
-        .max_by_key(|candidate| protocol_score(candidate));
+    let selected = select_protocol_override(&protocols);
     ModelCapabilities {
         model: model.to_owned(),
         selected_protocol: selected.map(|candidate| candidate.protocol),
@@ -58,6 +55,17 @@ pub(super) async fn probe_model(
         probed_at_ms,
         last_probe_error: None,
     }
+}
+
+fn select_protocol_override(protocols: &[ProtocolCapabilities]) -> Option<&ProtocolCapabilities> {
+    for candidate in protocols {
+        match candidate.baseline {
+            CapabilityStatus::Supported => return Some(candidate),
+            CapabilityStatus::Unsupported => continue,
+            CapabilityStatus::Indeterminate => return None,
+        }
+    }
+    None
 }
 
 async fn probe_protocol_candidates(
@@ -81,20 +89,6 @@ async fn probe_protocol_candidates(
     indeterminate
         .or(unsupported)
         .expect("every protocol has at least one endpoint candidate")
-}
-
-fn protocol_score(candidate: &ProtocolCapabilities) -> (u8, u8, u8, u8, u8) {
-    (
-        u8::from(candidate.tool_search == CapabilityStatus::Supported),
-        u8::from(candidate.function_tools == CapabilityStatus::Supported),
-        u8::from(candidate.image_input == CapabilityStatus::Supported),
-        u8::from(candidate.web_search == CapabilityStatus::Supported),
-        match candidate.protocol {
-            ProviderProtocol::OpenAiResponses => 3,
-            ProviderProtocol::AnthropicMessages => 2,
-            ProviderProtocol::OpenAiChat => 1,
-        },
-    )
 }
 
 async fn probe_protocol(
@@ -437,6 +431,27 @@ fn truncate(value: &str) -> String {
 mod tests {
     use super::*;
 
+    fn protocol_capability(
+        protocol: ProviderProtocol,
+        baseline: CapabilityStatus,
+    ) -> ProtocolCapabilities {
+        let api_path = match protocol {
+            ProviderProtocol::OpenAiResponses => "/v1/responses",
+            ProviderProtocol::AnthropicMessages => "/v1/messages",
+            ProviderProtocol::OpenAiChat => "/v1/chat/completions",
+        };
+        ProtocolCapabilities {
+            protocol,
+            api_path: api_path.to_owned(),
+            baseline,
+            image_input: CapabilityStatus::Indeterminate,
+            function_tools: CapabilityStatus::Indeterminate,
+            tool_search: CapabilityStatus::Indeterminate,
+            web_search: CapabilityStatus::Indeterminate,
+            error: None,
+        }
+    }
+
     #[test]
     fn derives_sibling_protocol_paths_from_configured_endpoint() {
         let mut provider = crate::provider::open_code_go_provider("opencode-go", "test-key");
@@ -469,6 +484,38 @@ mod tests {
         assert_eq!(
             classify_status(StatusCode::UNPROCESSABLE_ENTITY),
             CapabilityStatus::Unsupported
+        );
+    }
+
+    #[test]
+    fn protocol_override_requires_higher_priority_protocols_to_be_unsupported() {
+        let protocols = vec![
+            protocol_capability(
+                ProviderProtocol::OpenAiResponses,
+                CapabilityStatus::Indeterminate,
+            ),
+            protocol_capability(
+                ProviderProtocol::AnthropicMessages,
+                CapabilityStatus::Supported,
+            ),
+            protocol_capability(ProviderProtocol::OpenAiChat, CapabilityStatus::Supported),
+        ];
+        assert!(select_protocol_override(&protocols).is_none());
+
+        let protocols = vec![
+            protocol_capability(
+                ProviderProtocol::OpenAiResponses,
+                CapabilityStatus::Unsupported,
+            ),
+            protocol_capability(
+                ProviderProtocol::AnthropicMessages,
+                CapabilityStatus::Supported,
+            ),
+            protocol_capability(ProviderProtocol::OpenAiChat, CapabilityStatus::Supported),
+        ];
+        assert_eq!(
+            select_protocol_override(&protocols).map(|candidate| candidate.protocol),
+            Some(ProviderProtocol::AnthropicMessages)
         );
     }
 }
