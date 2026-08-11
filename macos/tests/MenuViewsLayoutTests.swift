@@ -242,9 +242,7 @@ struct MenuViewsLayoutTests {
         precondition(tokenLabels.contains {
             $0.stringValue.contains("DeepSeek-V4-Flash")
         })
-        precondition(tokenLabels.contains {
-            $0.stringValue == "缓存输出"
-        })
+        precondition(!tokenLabels.contains { $0.stringValue == "缓存输出" })
         precondition(!tokenLabels.contains { $0.stringValue == "baidu-oneapi" })
         precondition(!tokenLabels.contains { $0.stringValue.contains("other-model") })
         let modelRows = descendants(of: dashboard, matching: NSControl.self)

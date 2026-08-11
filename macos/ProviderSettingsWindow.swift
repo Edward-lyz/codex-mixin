@@ -1,5 +1,9 @@
 import Cocoa
 
+private final class FlippedProviderSettingsView: NSView {
+    override var isFlipped: Bool { true }
+}
+
 final class ProviderSettingsWindowController: NSWindowController, NSWindowDelegate, NSTableViewDataSource, NSTableViewDelegate {
     typealias LoadHandler = () async throws -> ProviderListResponse
     typealias RunHandler = ([String]) async throws -> String
@@ -19,6 +23,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private var remindedBaiduBridgeProviderIDs = Set<String>()
     private(set) var baiduBridgeReminderAlert: NSAlert?
 
+    private let providerScrollView = NSScrollView()
     private let providerTable = NSTableView()
     private let statusLabel = NSTextField(labelWithString: "正在读取供应商…")
     private let emptyLabel = NSTextField(labelWithString: "还没有供应商，点击“新增”开始配置。")
@@ -153,14 +158,12 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         bannerHeightConstraint = bannerView.heightAnchor.constraint(equalToConstant: 0)
 
         configureProviderTable()
-        let providerScroll = NSScrollView()
-        providerScroll.documentView = providerTable
-        providerScroll.hasVerticalScroller = true
-        providerScroll.autohidesScrollers = true
-        providerScroll.borderType = .bezelBorder
-        providerScroll.translatesAutoresizingMaskIntoConstraints = false
-        providerScroll.heightAnchor.constraint(equalToConstant: 238).isActive = true
-        providerTable.frame = NSRect(x: 0, y: 0, width: 230, height: 238)
+        providerScrollView.documentView = providerTable
+        providerScrollView.hasVerticalScroller = true
+        providerScrollView.autohidesScrollers = true
+        providerScrollView.borderType = .bezelBorder
+        providerScrollView.translatesAutoresizingMaskIntoConstraints = false
+        providerTable.frame = NSRect(x: 0, y: 0, width: 230, height: 1)
         providerTable.autoresizingMask = [.width]
 
         configureButton(addButton, action: #selector(addProvider))
@@ -170,7 +173,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         providerButtons.distribution = .fillEqually
         providerButtons.spacing = 8
 
-        let providerPane = NSStackView(views: [providerScroll, providerButtons])
+        let providerPane = NSStackView(views: [providerScrollView, providerButtons])
         providerPane.orientation = .vertical
         providerPane.spacing = 10
         providerPane.translatesAutoresizingMaskIntoConstraints = false
@@ -274,16 +277,29 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         emptyLabel.alignment = .center
         emptyLabel.translatesAutoresizingMaskIntoConstraints = false
 
-        let body = NSStackView(views: [providerPane, detailsPane])
-        body.orientation = .horizontal
-        body.alignment = .top
-        body.spacing = 16
+        let detailsDocument = FlippedProviderSettingsView()
+        detailsDocument.translatesAutoresizingMaskIntoConstraints = false
+        detailsDocument.addSubview(detailsPane)
+        detailsDocument.addSubview(emptyLabel)
+
+        let detailsScroll = NSScrollView()
+        detailsScroll.documentView = detailsDocument
+        detailsScroll.hasVerticalScroller = true
+        detailsScroll.autohidesScrollers = true
+        detailsScroll.drawsBackground = false
+        detailsScroll.borderType = .noBorder
+        detailsScroll.translatesAutoresizingMaskIntoConstraints = false
+
+        let body = NSSplitView()
+        body.isVertical = true
+        body.dividerStyle = .thin
         body.translatesAutoresizingMaskIntoConstraints = false
+        body.addArrangedSubview(providerPane)
+        body.addArrangedSubview(detailsScroll)
 
         contentView.addSubview(header)
         contentView.addSubview(bannerView)
         contentView.addSubview(body)
-        contentView.addSubview(emptyLabel)
         NSLayoutConstraint.activate([
             header.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 24),
             header.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -24),
@@ -300,14 +316,21 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             body.leadingAnchor.constraint(equalTo: header.leadingAnchor),
             body.trailingAnchor.constraint(equalTo: header.trailingAnchor),
             body.topAnchor.constraint(equalTo: bannerView.bottomAnchor, constant: 6),
-            body.bottomAnchor.constraint(lessThanOrEqualTo: contentView.bottomAnchor, constant: -20),
-            detailsPane.widthAnchor.constraint(greaterThanOrEqualToConstant: 520),
+            body.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
+            detailsScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 520),
+
+            detailsDocument.widthAnchor.constraint(equalTo: detailsScroll.contentView.widthAnchor),
+            detailsDocument.heightAnchor.constraint(greaterThanOrEqualTo: detailsScroll.contentView.heightAnchor),
+            detailsPane.leadingAnchor.constraint(equalTo: detailsDocument.leadingAnchor, constant: 18),
+            detailsPane.trailingAnchor.constraint(equalTo: detailsDocument.trailingAnchor, constant: -18),
+            detailsPane.topAnchor.constraint(equalTo: detailsDocument.topAnchor, constant: 12),
+            detailsPane.bottomAnchor.constraint(lessThanOrEqualTo: detailsDocument.bottomAnchor, constant: -18),
             form.widthAnchor.constraint(equalTo: detailsPane.widthAnchor),
             actionRow.widthAnchor.constraint(equalTo: detailsPane.widthAnchor),
             statusLabel.widthAnchor.constraint(equalTo: detailsPane.widthAnchor),
 
-            emptyLabel.centerXAnchor.constraint(equalTo: detailsPane.centerXAnchor),
-            emptyLabel.centerYAnchor.constraint(equalTo: detailsPane.centerYAnchor),
+            emptyLabel.centerXAnchor.constraint(equalTo: detailsDocument.centerXAnchor),
+            emptyLabel.centerYAnchor.constraint(equalTo: detailsDocument.centerYAnchor),
         ])
         setDetailControlsEnabled(false)
     }
@@ -425,9 +448,14 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 let loaded = try await loadHandler()
                 codexInstallMode = loaded.codexInstallMode
                 providers = loaded.providers
-                providerTable.frame.size.height = max(
-                    238,
-                    CGFloat(providers.count) * providerTable.rowHeight
+                providerTable.frame = NSRect(
+                    x: 0,
+                    y: 0,
+                    width: providerScrollView.contentSize.width,
+                    height: max(
+                        providerScrollView.contentSize.height,
+                        CGFloat(providers.count) * providerTable.rowHeight
+                    )
                 )
                 providerTable.reloadData()
                 emptyLabel.isHidden = !providers.isEmpty

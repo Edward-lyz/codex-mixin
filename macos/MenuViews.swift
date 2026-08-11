@@ -628,10 +628,10 @@ private final class TokenFlowBarView: NSView {
             usage.cacheCreationTokens,
         ]
         let colors: [NSColor] = [
+            .systemBlue.withAlphaComponent(0.45),
             .systemBlue,
-            .systemGreen,
-            .systemOrange,
-            .systemYellow,
+            .secondaryLabelColor.withAlphaComponent(0.38),
+            .secondaryLabelColor.withAlphaComponent(0.18),
         ]
         NSGraphicsContext.saveGraphicsState()
         track.addClip()
@@ -836,8 +836,7 @@ final class ProviderUsageDashboardView: FlippedMenuView {
             frame.size.height = max(providerDashboardMinimumHeight, quotaBottom + 38)
             return
         }
-        let legendBottom = renderLegend(at: quotaBottom + 8)
-        let chartBottom = renderModelChart(group.models, at: legendBottom + 4)
+        let chartBottom = renderModelChart(group.models, at: quotaBottom + 8)
         if selectedModelID != nil {
             renderModelDetail(group.models, at: chartBottom + 6)
             frame.size.height = chartBottom + 74
@@ -978,36 +977,6 @@ final class ProviderUsageDashboardView: FlippedMenuView {
         scroll.documentView = document
         addSubview(scroll)
         return quotaTop + quotaHeight
-    }
-
-    private func renderLegend(at y: CGFloat) -> CGFloat {
-        let entries: [(String, NSColor)] = [
-            ("输入", .systemBlue),
-            ("缓存输入", .systemGreen),
-            ("输出", .systemOrange),
-            ("缓存输出", .systemYellow),
-        ]
-        var x: CGFloat = 12
-        for (label, color) in entries {
-            let dot = NSView(frame: NSRect(x: x, y: y + 5, width: 7, height: 7))
-            dot.wantsLayer = true
-            dot.layer?.cornerRadius = 3.5
-            dot.layer?.backgroundColor = color.cgColor
-            dot.toolTip = label == "缓存输出"
-                ? "缓存输出对应上游 cache_creation_tokens"
-                : nil
-            addSubview(dot)
-
-            let text = NSTextField(labelWithString: label)
-            let width = label == "输入" || label == "输出" ? 28.0 : 52.0
-            text.frame = NSRect(x: x + 11, y: y, width: width, height: 16)
-            text.font = .systemFont(ofSize: 9)
-            text.textColor = .secondaryLabelColor
-            text.toolTip = dot.toolTip
-            addSubview(text)
-            x += width + 20
-        }
-        return y + 18
     }
 
     private func renderModelChart(_ models: [ProviderTokenUsage], at y: CGFloat) -> CGFloat {
