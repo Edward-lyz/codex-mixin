@@ -118,6 +118,11 @@ func refreshProviderLogoIfNeeded(providerID: String, websiteURL: String) async t
     if !candidates.contains(fallbackURL) {
         candidates.append(fallbackURL)
     }
+    if let host = siteURL.host,
+       let proxyURL = URL(string: "https://icon.horse/icon/\(host)")
+    {
+        candidates.append(proxyURL)
+    }
 
     var lastHTTPStatus: Int?
     var png: Data?

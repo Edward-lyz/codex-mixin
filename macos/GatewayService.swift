@@ -397,6 +397,7 @@ extension AppDelegate {
         await statusRefreshCoordinator.refresh()
     }
 
+    @MainActor
     func performStatusRefresh(
         isCurrent: @escaping StatusRefreshCoordinator.IsCurrent
     ) async {
@@ -405,15 +406,15 @@ extension AppDelegate {
         if scope == .health {
             do {
                 try await checkGatewayHealth()
-                guard await isCurrent() else { return }
+                guard isCurrent() else { return }
                 applyHealthyGatewaySnapshot()
             } catch {
                 do {
                     let status = try await runGateway(["status"])
-                    guard await isCurrent() else { return }
+                    guard isCurrent() else { return }
                     applyGatewayStatus(status)
                 } catch {
-                    guard await isCurrent() else { return }
+                    guard isCurrent() else { return }
                     _ = applyGatewayStatusFailure(error)
                 }
             }
@@ -422,10 +423,10 @@ extension AppDelegate {
 
         do {
             let status = try await runGateway(["status"])
-            guard await isCurrent() else { return }
+            guard isCurrent() else { return }
             applyGatewayStatus(status)
         } catch {
-            guard await isCurrent() else { return }
+            guard isCurrent() else { return }
             if applyGatewayStatusFailure(error) {
                 return
             }
@@ -440,7 +441,7 @@ extension AppDelegate {
         let usageTask = Task { try await runGateway(["usage", "--json"]) }
         do {
             let providerList = try decodeProviderList(await providersTask.value)
-            guard await isCurrent() else { return }
+            guard isCurrent() else { return }
             let dashboardProviders = providerList.providers.map {
                 ProviderDashboardProvider(
                     id: $0.id,
@@ -474,7 +475,7 @@ extension AppDelegate {
                 }
             }
         } catch {
-            guard await isCurrent() else { return }
+            guard isCurrent() else { return }
             updateQuotaStatus(
                 title: "Provider 列表：不可用",
                 detail: localizedErrorDescription(error),
@@ -483,10 +484,10 @@ extension AppDelegate {
         }
         do {
             let usage = try await usageTask.value
-            guard await isCurrent() else { return }
+            guard isCurrent() else { return }
             updateProviderTokenUsageStatus(try parseProviderTokenUsage(usage))
         } catch {
-            guard await isCurrent() else { return }
+            guard isCurrent() else { return }
             updateTokenUsageStatus(
                 title: "Token 使用：不可用",
                 detail: localizedErrorDescription(error),
@@ -495,11 +496,11 @@ extension AppDelegate {
         }
         do {
             let quota = try await quotaTask.value
-            guard await isCurrent() else { return }
+            guard isCurrent() else { return }
             saveProviderQuotaCache(quota)
             updateProviderQuotaStatus(try parseProviderQuotaUsage(quota))
         } catch {
-            guard await isCurrent() else { return }
+            guard isCurrent() else { return }
             updateQuotaStatus(
                 title: "Provider 额度：不可用",
                 detail: localizedErrorDescription(error),
