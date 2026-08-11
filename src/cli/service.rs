@@ -19,9 +19,9 @@ use codex_mixin::server::{AppState, serve_on_listener};
 use codex_mixin::web_search::WebSearchCapabilities;
 
 use super::codex::{
-    managed_catalog_summary, refresh_managed_codex_catalog_with_capabilities,
-    refresh_managed_official_codex_catalog, resolve_codex_config_path,
-    sync_managed_codex_gateway_base_url,
+    codex_home_path, managed_catalog_summary, reconcile_managed_skills,
+    refresh_managed_codex_catalog_with_capabilities, refresh_managed_official_codex_catalog,
+    resolve_codex_config_path, sync_managed_codex_gateway_base_url,
 };
 use super::runtime::*;
 
@@ -140,6 +140,15 @@ pub(super) async fn start(
     log_file: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let mut config = GatewayConfig::from_stored_config()?;
+    let auxiliary_provider_enabled = config
+        .providers
+        .iter()
+        .any(|provider| provider.enabled && provider.auxiliary_model_upstream);
+    if let Err(error) = reconcile_managed_skills(&codex_home_path(), auxiliary_provider_enabled) {
+        eprintln!(
+            "warning: Codex Mixin skill guardian could not reconcile managed skills: {error:#}"
+        );
+    }
     let automatic_bind = bind.is_none();
     if let Some(bind) = bind {
         config.bind = bind;

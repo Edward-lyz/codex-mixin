@@ -18,7 +18,7 @@ use futures_util::{StreamExt, stream};
 use serde_json::json;
 
 use super::codex::{
-    codex_home_path, managed_codex_install_mode, reconcile_imagegen_skill,
+    codex_home_path, managed_codex_install_mode, reconcile_managed_skills,
     resolve_codex_config_path,
 };
 use super::config_input::{normalize_base_url, trim_required};
@@ -894,7 +894,7 @@ fn sync_imagegen_skill() -> anyhow::Result<()> {
         .providers
         .iter()
         .any(|provider| provider.enabled && provider.auxiliary_model_upstream);
-    if reconcile_imagegen_skill(&codex_home_path(), auxiliary_provider_enabled)? {
+    if reconcile_managed_skills(&codex_home_path(), auxiliary_provider_enabled)? {
         println!(
             "codex imagegen skill: {}; restart Codex Desktop to reload skills",
             if auxiliary_provider_enabled {
