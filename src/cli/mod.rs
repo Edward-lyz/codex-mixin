@@ -24,6 +24,7 @@ mod codex;
 mod config_input;
 mod doctor;
 mod ducc_setup;
+mod ducx_setup;
 mod fusion_config;
 mod maintenance;
 mod metadata;
@@ -40,6 +41,7 @@ use codex::{
 };
 use doctor::doctor;
 use ducc_setup::ensure_managed_ducc;
+use ducx_setup::ensure_managed_ducx;
 use fusion_config::{get_fusion_profile, set_fusion_profile};
 use maintenance::migrate_history;
 use metadata::{load_model_metadata_resolver, refresh_metadata};
@@ -661,7 +663,7 @@ enum ProviderCommand {
         static_models: Vec<String>,
         #[arg(long = "header-env", value_name = "NAME=ENV_VAR")]
         header_env: Vec<String>,
-        #[arg(long, value_name = "disabled|ducc_loopback")]
+        #[arg(long, value_name = "disabled|ducc_loopback|ducx_loopback")]
         baidu_auth_bridge: Option<String>,
         #[arg(long, value_name = "PATH")]
         ducc_executable: Option<PathBuf>,
@@ -716,7 +718,7 @@ enum ProviderCommand {
         header_env: Vec<String>,
         #[arg(long, conflicts_with = "header_env")]
         clear_header_env: bool,
-        #[arg(long, value_name = "disabled|ducc_loopback")]
+        #[arg(long, value_name = "disabled|ducc_loopback|ducx_loopback")]
         baidu_auth_bridge: Option<String>,
         #[arg(long, value_name = "PATH")]
         ducc_executable: Option<PathBuf>,
@@ -1156,6 +1158,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 baidu_auth_bridge,
                 ducc_executable,
             } => {
+                // Auto-provision the managed DUCX install when the DUCX bridge is
+                // selected without an explicit executable.
+                let ducc_executable = match (baidu_auth_bridge.as_deref(), &ducc_executable) {
+                    (Some("ducx_loopback"), None) => Some(ensure_managed_ducx().await?),
+                    _ => ducc_executable,
+                };
                 add_provider(AddProviderOptions {
                     preset: preset.as_str().to_owned(),
                     id,
@@ -1208,6 +1216,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 baidu_auth_bridge,
                 ducc_executable,
             } => {
+                let ducc_executable = match (baidu_auth_bridge.as_deref(), &ducc_executable) {
+                    (Some("ducx_loopback"), None) => Some(ensure_managed_ducx().await?),
+                    _ => ducc_executable,
+                };
                 update_provider(UpdateProviderOptions {
                     id,
                     auxiliary_model_upstream,

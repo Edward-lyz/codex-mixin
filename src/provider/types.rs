@@ -36,6 +36,7 @@ pub enum BaiduAuthBridge {
     #[serde(alias = "ducx_app_server")]
     Disabled,
     DuccLoopback,
+    DucxLoopback,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]

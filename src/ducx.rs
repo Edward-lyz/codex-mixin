@@ -310,14 +310,6 @@ fn managed_home(executable: &Path) -> anyhow::Result<PathBuf> {
         .to_owned())
 }
 
-/// Inject the captured DUCX-native headers into Mixin's own outbound header map,
-/// overwriting any placeholder Mixin auth so the login-derived credentials win.
-pub(crate) fn inject_native_headers(target: &mut HeaderMap, native: &HeaderMap) {
-    for (name, value) in native {
-        target.insert(name.clone(), value.clone());
-    }
-}
-
 /// Default managed DUCX executable location under the Mixin-managed home.
 pub(crate) fn default_ducx_executable() -> Option<PathBuf> {
     let home = std::env::var_os("HOME").map(PathBuf::from)?;

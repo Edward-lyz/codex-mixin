@@ -49,6 +49,7 @@ pub struct AppState {
     catalog_response_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogResponse>>>,
     official_auth_cache: Arc<tokio::sync::Mutex<Option<CachedOfficialAuth>>>,
     ducc_runtime: Arc<tokio::sync::OnceCell<Arc<crate::ducc::DuccRuntime>>>,
+    ducx_runtime: Arc<tokio::sync::OnceCell<Arc<crate::ducx::DucxRuntime>>>,
 }
 
 impl AppState {
@@ -107,6 +108,7 @@ impl AppState {
             catalog_response_cache: Arc::new(tokio::sync::Mutex::new(None)),
             official_auth_cache: Arc::new(tokio::sync::Mutex::new(None)),
             ducc_runtime: Arc::new(tokio::sync::OnceCell::new()),
+            ducx_runtime: Arc::new(tokio::sync::OnceCell::new()),
         })
     }
 
@@ -166,6 +168,43 @@ impl AppState {
         self.ducc_runtime_for(provider)
             .await?
             .warm()
+            .await
+            .map_err(GatewayError::Other)
+    }
+
+    async fn ducx_runtime_for(
+        &self,
+        provider: &ProviderRuntime,
+    ) -> Result<Arc<crate::ducx::DucxRuntime>, GatewayError> {
+        let executable = provider
+            .ducc_executable()
+            .map(PathBuf::from)
+            .or_else(crate::ducx::default_ducx_executable)
+            .ok_or_else(|| {
+                GatewayError::Upstream(
+                    "DUCX loopback is enabled but the managed ducx executable was not found"
+                        .to_owned(),
+                )
+            })?;
+        self.ducx_runtime
+            .get_or_try_init(|| async {
+                crate::ducx::DucxRuntime::spawn(executable)
+                    .await
+                    .map(Arc::new)
+            })
+            .await
+            .cloned()
+            .map_err(GatewayError::Other)
+    }
+
+    /// Fetch the DUCX-native authentication headers (cached, minted on demand).
+    pub(crate) async fn ducx_native_headers(
+        &self,
+        provider: &ProviderRuntime,
+    ) -> Result<axum::http::HeaderMap, GatewayError> {
+        self.ducx_runtime_for(provider)
+            .await?
+            .native_headers(self.config.request_timeout)
             .await
             .map_err(GatewayError::Other)
     }
@@ -533,8 +572,18 @@ impl AppState {
             }
             return Ok(response.bytes_stream().boxed());
         }
-        let mut upstream_request =
-            provider.apply_auth(self.client.post(provider.api_url().clone()));
+        // DUCX loopback injects login-derived auth headers instead of the stored
+        // placeholder key, so skip provider auth and merge the native headers.
+        let ducx_native = if provider.uses_ducx_loopback() {
+            Some(self.ducx_native_headers(provider).await?)
+        } else {
+            None
+        };
+        let base_request = self.client.post(provider.api_url().clone());
+        let mut upstream_request = match &ducx_native {
+            Some(native) => base_request.headers(native.clone()),
+            None => provider.apply_auth(base_request),
+        };
         upstream_request = provider.apply_anthropic_beta(upstream_request, beta.as_deref());
         let upstream_request = provider
             .apply_session_affinity(upstream_request, hash_key)
