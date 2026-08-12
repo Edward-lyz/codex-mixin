@@ -31,7 +31,7 @@ pub(super) async fn ensure_managed_ducx() -> anyhow::Result<PathBuf> {
     if !executable.is_file() || !active_is_symlink {
         install_managed_ducx(&home, &codex_home, &executable).await?;
     }
-    if ducx_is_logged_in(&codex_home) {
+    if ducx_is_logged_in(&isolated_home) {
         println!(
             "Managed DUCX authentication is ready: {}",
             executable.display()
@@ -68,7 +68,7 @@ pub(super) async fn ensure_managed_ducx() -> anyhow::Result<PathBuf> {
     };
     ensure!(status.success(), "DUCX login failed with {status}");
     ensure!(
-        ducx_is_logged_in(&codex_home),
+        ducx_is_logged_in(&isolated_home),
         "DUCX login completed without a valid authenticated session"
     );
     println!("DUCX authentication completed.");
@@ -182,8 +182,12 @@ async fn install_managed_ducx(
     Ok(())
 }
 
-fn ducx_is_logged_in(codex_home: &Path) -> bool {
-    codex_home.join("user.json").is_file() || codex_home.join("auth.json").is_file()
+fn ducx_is_logged_in(isolated_home: &Path) -> bool {
+    // DUCX writes the signed-in identity under HOME/.comate/login-user/<username>.
+    let login_dir = isolated_home.join(".comate/login-user");
+    fs::read_dir(&login_dir)
+        .map(|mut entries| entries.any(|entry| entry.is_ok()))
+        .unwrap_or(false)
 }
 
 #[cfg(test)]
@@ -192,10 +196,12 @@ mod tests {
     use std::fs;
 
     #[test]
-    fn login_state_is_scoped_to_isolated_codex_home() {
+    fn login_state_is_scoped_to_isolated_home() {
         let root = tempfile::tempdir().unwrap();
         assert!(!ducx_is_logged_in(root.path()));
-        fs::write(root.path().join("user.json"), b"{}").unwrap();
+        let login_dir = root.path().join(".comate/login-user");
+        fs::create_dir_all(&login_dir).unwrap();
+        fs::write(login_dir.join("liyanzhen01"), b"{}").unwrap();
         assert!(ducx_is_logged_in(root.path()));
     }
 }
