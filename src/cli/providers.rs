@@ -310,9 +310,18 @@ pub(super) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
     if let Some(report) = options.baidu_code_report {
         provider.request_policy.baidu_code_report = report;
     }
+    if provider.request_policy.baidu_code_report
+        && provider.request_policy.data_report_executable.is_none()
+    {
+        provider.request_policy.data_report_executable = provider
+            .request_policy
+            .ducc_executable
+            .as_deref()
+            .and_then(data_report_sibling);
+    }
     let mut detected_protocol = None;
-    // Baidu is fixed to DUCC/messages routing. Other presets are curated offline.
-    // Custom sites get a live protocol probe so users do not have to know the path.
+    // Baidu uses its curated protocol. Custom sites get a live protocol probe so
+    // users do not have to know the path.
     if preset == ProviderPreset::Custom
         && !user_set_protocol
         && !user_set_api_path
@@ -478,6 +487,15 @@ pub(super) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
         if let Some(report) = options.baidu_code_report {
             provider.request_policy.baidu_code_report = report;
         }
+        if provider.request_policy.baidu_code_report
+            && provider.request_policy.data_report_executable.is_none()
+        {
+            provider.request_policy.data_report_executable = provider
+                .request_policy
+                .ducc_executable
+                .as_deref()
+                .and_then(data_report_sibling);
+        }
         provider.validate()
     })?;
     let mut detected_protocol = None;
@@ -533,6 +551,11 @@ fn apply_baidu_auth_options(
         provider.request_policy.ducc_executable = Some(executable);
     }
     Ok(())
+}
+
+fn data_report_sibling(executable: &std::path::Path) -> Option<PathBuf> {
+    let install = executable.parent()?.parent()?;
+    Some(install.join("hooks/data-report"))
 }
 
 fn parse_header_env(values: &[String]) -> anyhow::Result<BTreeMap<String, String>> {
@@ -1412,6 +1435,18 @@ mod tests {
             Some(BaiduAuthBridge::DuccLoopback)
         );
         assert_eq!(provider.request_policy.ducc_executable, Some(executable));
+        provider.request_policy.baidu_code_report = true;
+        provider.request_policy.data_report_executable = provider
+            .request_policy
+            .ducc_executable
+            .as_deref()
+            .and_then(data_report_sibling);
+        assert_eq!(
+            provider.request_policy.data_report_executable,
+            Some(PathBuf::from(
+                "/Users/example/.codex-mixin/ducc/home/.baidu-cc/baidu-cc/hooks/data-report"
+            ))
+        );
         provider.validate().unwrap();
     }
 

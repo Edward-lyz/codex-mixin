@@ -78,7 +78,10 @@ pub struct ProviderRequestPolicy {
     pub baidu_auth_bridge: Option<BaiduAuthBridge>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ducc_executable: Option<PathBuf>,
-    /// Report Baidu AI code-usage events through the managed DUCX data-report hook.
+    /// Dedicated Baidu data-report binary, independent of the auth core.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_report_executable: Option<PathBuf>,
+    /// Report Baidu AI code-usage events through the managed data-report hook.
     #[serde(default)]
     pub baidu_code_report: bool,
 }
@@ -215,6 +218,7 @@ impl ProviderDefinition {
         }
         if self.request_policy.baidu_auth_bridge.is_some()
             || self.request_policy.ducc_executable.is_some()
+            || self.request_policy.data_report_executable.is_some()
             || self.request_policy.baidu_code_report
         {
             ensure!(
@@ -227,6 +231,13 @@ impl ProviderDefinition {
             ensure!(
                 executable.is_absolute(),
                 "provider {} DUCC executable path must be absolute",
+                self.id
+            );
+        }
+        if let Some(executable) = &self.request_policy.data_report_executable {
+            ensure!(
+                executable.is_absolute(),
+                "provider {} data-report executable path must be absolute",
                 self.id
             );
         }

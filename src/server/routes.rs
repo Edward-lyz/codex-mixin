@@ -45,7 +45,7 @@ pub async fn serve_on_listener(
         if let Err(error) = ducc_prewarm_state.prewarm_ducc().await {
             tracing::warn!(
                 error = %format!("{error:#}"),
-                "managed DUCC authentication carrier prewarm failed"
+                "managed DUCC authentication header prewarm failed"
             );
         }
     });

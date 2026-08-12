@@ -52,7 +52,7 @@ impl ProviderPreset {
             Self::Custom => {
                 "Any OpenAI Responses, Anthropic Messages, or Chat Completions compatible endpoint"
             }
-            Self::BaiduOneApi => "Baidu internal OneAPI with managed DUCC authentication",
+            Self::BaiduOneApi => "Baidu internal OneAPI with managed DUCC/DUCX authentication",
             Self::OpenRouter => "OpenRouter multi-model router",
             Self::DeepSeek => "DeepSeek official API",
             Self::OpenCodeGo => "OpenCode Go subscription models",
@@ -183,7 +183,7 @@ pub fn baidu_oneapi_provider(
     provider.display_name = "Baidu OneAPI".to_owned();
     provider.preset_id = Some("baidu-oneapi".to_owned());
     // Baidu keeps Messages as the default transport; GPT models switch to
-    // Responses at request time, and DUCC stays on the messages path.
+    // Responses at request time.
     provider.protocol = ProviderProtocol::AnthropicMessages;
     provider.api_path = "/v1/messages".to_owned();
     provider.anthropic_version = Some("2023-06-01".to_owned());
@@ -200,6 +200,7 @@ pub fn baidu_oneapi_provider(
         custom_headers_from_env: Default::default(),
         baidu_auth_bridge: None,
         ducc_executable: None,
+        data_report_executable: None,
         baidu_code_report: false,
     };
     provider

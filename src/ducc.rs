@@ -1,402 +1,82 @@
-use std::collections::{HashMap, VecDeque};
+//! Managed DUCC authentication capture.
+//!
+//! DUCC is Baidu's Claude Code fork. It is used exactly like DUCX: run one short
+//! `--print` turn through a loopback HTTP proxy, capture the native
+//! `comate_custom_header` and bearer token, then stop before the warmup request
+//! reaches OneAPI.
+
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
-use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, Ordering};
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
-use axum::Router;
-use axum::body::{Body, Bytes};
-use axum::extract::{OriginalUri, State};
-use axum::http::{HeaderMap, Method, Response, StatusCode, header};
-use axum::routing::any;
-use memchr::memmem;
-use serde_json::{Value, json};
-use tokio::io::{AsyncBufReadExt, AsyncWriteExt, BufReader};
-use tokio::process::{ChildStdin, Command};
-use tokio::sync::{Mutex, mpsc, oneshot, watch};
-use uuid::Uuid;
+use reqwest::header::HeaderMap;
+use serde_json::json;
+use tokio::process::Command;
+use tokio::sync::Mutex;
 
-const DUCC_HEADER_NAME: &str = "comate_custom_header";
+use crate::auth_capture::CaptureProxy;
+
+/// Auth handshake hosts DUCC must reach directly. Only the OneAPI inference host
+/// is routed through our capture proxy.
+const DIRECT_HOSTS: &str = "baidu-int.com,bcebos.com,baidu.com,openai.com,chatgpt.com";
+const DUCC_PLATFORM: &str = "AIIDE-terminal";
 const DUCC_AUTH_CARRIER_MODEL: &str = "GLM-5.2";
-const DUCC_PREWARM_SESSION_KEY: &str = "__codex_mixin_prewarm__";
-const MAX_DUCC_SESSION_CLIENTS: usize = 4;
+const HEADER_TTL: Duration = Duration::from_secs(600);
 
-pub(crate) fn default_ducc_executable() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    [
-        home.join(".codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin/ducc"),
-        home.join(".codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin/claude"),
-    ]
-    .into_iter()
-    .find(|path| path.is_file())
-}
-
-fn managed_home(executable: &Path) -> anyhow::Result<PathBuf> {
-    let bin = executable
-        .parent()
-        .context("DUCC executable has no bin directory")?;
-    let install = bin
-        .parent()
-        .context("DUCC executable has no install directory")?;
-    let dot_baidu = install
-        .parent()
-        .context("DUCC executable has no .baidu-cc directory")?;
-    let home = dot_baidu
-        .parent()
-        .context("DUCC executable has no managed HOME")?;
-    ensure!(
-        bin.file_name().and_then(|value| value.to_str()) == Some("bin")
-            && install.file_name().and_then(|value| value.to_str()) == Some("baidu-cc")
-            && dot_baidu.file_name().and_then(|value| value.to_str()) == Some(".baidu-cc"),
-        "DUCC executable must use the managed HOME/.baidu-cc/baidu-cc/bin layout"
-    );
-    Ok(home.to_owned())
-}
-
-struct RelayPolicy {
-    marker: String,
-    target: reqwest::Url,
-    body: Value,
+struct CapturedHeaders {
     headers: HeaderMap,
-    authenticated: oneshot::Sender<()>,
-    response: oneshot::Sender<anyhow::Result<reqwest::Response>>,
+    at: Instant,
 }
 
-#[derive(Clone)]
-struct BridgeState {
-    route_token: Arc<str>,
-    client: reqwest::Client,
-    policies: Arc<Mutex<HashMap<String, RelayPolicy>>>,
+pub(crate) struct DuccRuntime {
+    executable: PathBuf,
+    home: PathBuf,
+    api_key: String,
+    cached: Mutex<Option<CapturedHeaders>>,
 }
 
-struct DuccBridge {
-    base_url: String,
-    state: BridgeState,
-    shutdown: watch::Sender<bool>,
-}
-
-impl DuccBridge {
-    async fn spawn(client: reqwest::Client) -> anyhow::Result<Self> {
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0")
-            .await
-            .context("bind DUCC loopback bridge")?;
-        let address = listener
-            .local_addr()
-            .context("read DUCC loopback bridge address")?;
-        let route_token = format!("{}{}", Uuid::new_v4().simple(), Uuid::new_v4().simple());
-        let state = BridgeState {
-            route_token: Arc::from(route_token.as_str()),
-            client,
-            policies: Arc::new(Mutex::new(HashMap::new())),
-        };
-        let app = Router::new()
-            .route("/{*path}", any(forward))
-            .with_state(state.clone());
-        let (shutdown, mut shutdown_rx) = watch::channel(false);
-        tokio::spawn(async move {
-            let result = axum::serve(listener, app)
-                .with_graceful_shutdown(async move {
-                    let _ = shutdown_rx.changed().await;
-                })
-                .await;
-            if let Err(error) = result {
-                tracing::warn!(%error, "DUCC loopback bridge stopped unexpectedly");
-            }
-        });
+impl DuccRuntime {
+    pub(crate) async fn spawn(executable: PathBuf, api_key: String) -> anyhow::Result<Self> {
+        ensure!(
+            executable.is_file(),
+            "DUCC executable does not exist: {}",
+            executable.display()
+        );
+        let home = managed_home(&executable)?;
         Ok(Self {
-            base_url: format!("http://{address}/{route_token}"),
-            state,
-            shutdown,
+            executable,
+            home,
+            api_key,
+            cached: Mutex::new(None),
         })
     }
 
-    async fn register(
-        &self,
-        model: &str,
-        target: reqwest::Url,
-        body: Value,
-        headers: HeaderMap,
-    ) -> anyhow::Result<(
-        String,
-        oneshot::Receiver<()>,
-        oneshot::Receiver<anyhow::Result<reqwest::Response>>,
-    )> {
-        ensure!(body.is_object(), "DUCC relay body must be an object");
-        let marker = format!(
-            "codex-mixin-loopback-{}{}",
-            Uuid::new_v4().simple(),
-            Uuid::new_v4().simple()
-        );
-        let (authenticated_sender, authenticated_receiver) = oneshot::channel();
-        let (response_sender, response_receiver) = oneshot::channel();
-        let mut policies = self.state.policies.lock().await;
-        ensure!(
-            !policies.contains_key(model),
-            "DUCC model {model} already has an active loopback request"
-        );
-        policies.insert(
-            model.to_owned(),
-            RelayPolicy {
-                marker: marker.clone(),
-                target,
-                body,
-                headers,
-                authenticated: authenticated_sender,
-                response: response_sender,
-            },
-        );
-        Ok((marker, authenticated_receiver, response_receiver))
-    }
-
-    async fn cancel(&self, model: &str, marker: &str) {
-        let mut policies = self.state.policies.lock().await;
-        if policies
-            .get(model)
-            .is_some_and(|policy| policy.marker == marker)
+    pub(crate) async fn native_headers(&self, timeout: Duration) -> anyhow::Result<HeaderMap> {
+        let mut cached = self.cached.lock().await;
+        if let Some(entry) = cached.as_ref()
+            && entry.at.elapsed() < HEADER_TTL
         {
-            policies.remove(model);
+            return Ok(entry.headers.clone());
         }
-    }
-}
-
-impl Drop for DuccBridge {
-    fn drop(&mut self) {
-        let _ = self.shutdown.send(true);
-    }
-}
-
-async fn forward(
-    State(state): State<BridgeState>,
-    OriginalUri(uri): OriginalUri,
-    method: Method,
-    headers: HeaderMap,
-    body: Body,
-) -> Response<Body> {
-    if !uri
-        .path()
-        .strip_prefix('/')
-        .is_some_and(|path| path.starts_with(state.route_token.as_ref()))
-    {
-        return static_response(StatusCode::NOT_FOUND, Body::empty(), None);
-    }
-    if method == Method::HEAD {
-        return static_response(StatusCode::OK, Body::empty(), None);
-    }
-    if method != Method::POST {
-        return static_response(StatusCode::METHOD_NOT_ALLOWED, Body::empty(), None);
-    }
-    let body = match axum::body::to_bytes(body, usize::MAX).await {
-        Ok(body) => body,
-        Err(error) => {
-            tracing::warn!(%error, "DUCC loopback bridge could not read request body");
-            return static_response(StatusCode::BAD_REQUEST, Body::empty(), None);
-        }
-    };
-    match forward_post(state, uri, headers, body).await {
-        Ok(response) => response,
-        Err(error) => {
-            tracing::warn!(error = %format!("{error:#}"), "DUCC loopback bridge rejected request");
-            static_response(
-                StatusCode::BAD_GATEWAY,
-                Body::from(
-                    r#"{"type":"error","error":{"message":"DUCC loopback rejected request"}}"#,
-                ),
-                Some("application/json"),
-            )
-        }
-    }
-}
-
-async fn forward_post(
-    state: BridgeState,
-    uri: axum::http::Uri,
-    mut native_headers: HeaderMap,
-    body: Bytes,
-) -> anyhow::Result<Response<Body>> {
-    let model = model_from_loopback_path(&uri, &state.route_token).unwrap_or_else(|| {
-        serde_json::from_slice::<Value>(&body)
-            .ok()
-            .and_then(|payload| {
-                payload
-                    .get("model")
-                    .and_then(Value::as_str)
-                    .map(str::to_owned)
-            })
-            .unwrap_or_default()
-    });
-
-    let marker = {
-        let mut policies = state.policies.lock().await;
-        let Some(policy) = policies.get_mut(&model) else {
-            return Ok(synthetic_messages_response());
-        };
-        policy.marker.clone()
-    };
-    if !bytes_contain(&body, marker.as_bytes()) {
-        return Ok(synthetic_messages_response());
+        let headers = self.mint_headers(timeout).await?;
+        *cached = Some(CapturedHeaders {
+            headers: headers.clone(),
+            at: Instant::now(),
+        });
+        Ok(headers)
     }
 
-    // The policy is consumed before network I/O. A retry or replay therefore
-    // cannot create a second upstream inference request.
-    let policy = state
-        .policies
-        .lock()
-        .await
-        .remove(&model)
-        .context("DUCC loopback policy was already consumed")?;
-    let RelayPolicy {
-        target,
-        body: upstream_body,
-        headers: policy_headers,
-        authenticated,
-        response,
-        ..
-    } = policy;
-    ensure!(
-        native_headers.contains_key(DUCC_HEADER_NAME),
-        "DUCC request is missing its native authentication header"
-    );
-    strip_hop_by_hop_headers(&mut native_headers);
-    for (name, value) in policy_headers {
-        if let Some(name) = name {
-            ensure!(
-                name != header::AUTHORIZATION
-                    && name.as_str() != "x-api-key"
-                    && name.as_str() != DUCC_HEADER_NAME,
-                "gateway headers cannot replace DUCC authentication"
-            );
-            native_headers.insert(name, value);
-        }
-    }
-    strip_hop_by_hop_headers(&mut native_headers);
-    authenticated
-        .send(())
-        .map_err(|_| anyhow::anyhow!("DUCC authentication receiver closed"))?;
-    let client = state.client.clone();
-    tokio::spawn(async move {
-        let upstream = crate::request_body::send_json(
-            client.post(target).headers(native_headers),
-            upstream_body,
-        );
-        let mut response = response;
-        tokio::select! {
-            upstream = upstream => {
-                let upstream = upstream
-                    .map_err(anyhow::Error::from)
-                    .context("forward DUCC-authenticated request");
-                if response.send(upstream).is_err() {
-                    tracing::debug!("DUCC gateway response receiver closed");
-                }
-            }
-            _ = response.closed() => {
-                tracing::debug!("cancelled DUCC-authenticated upstream request");
-            }
-        }
-    });
-    Ok(synthetic_messages_response())
-}
-
-fn model_from_loopback_path(uri: &axum::http::Uri, route_token: &str) -> Option<String> {
-    let path = uri.path();
-    let rest = path.strip_prefix(&format!("/{route_token}/model/"))?;
-    let encoded = rest.split('/').next()?;
-    percent_encoding::percent_decode_str(encoded)
-        .decode_utf8()
-        .ok()
-        .map(|model| model.into_owned())
-}
-
-#[cfg(test)]
-fn contains_string(value: &Value, needle: &str) -> bool {
-    match value {
-        Value::String(value) => value.contains(needle),
-        Value::Array(values) => values.iter().any(|value| contains_string(value, needle)),
-        Value::Object(values) => values.values().any(|value| contains_string(value, needle)),
-        _ => false,
-    }
-}
-
-fn bytes_contain(haystack: &[u8], needle: &[u8]) -> bool {
-    memmem::find(haystack, needle).is_some()
-}
-
-fn strip_hop_by_hop_headers(headers: &mut HeaderMap) {
-    for name in [
-        header::HOST,
-        header::CONTENT_LENGTH,
-        header::CONNECTION,
-        header::TRANSFER_ENCODING,
-        header::TE,
-        header::TRAILER,
-        header::UPGRADE,
-        header::PROXY_AUTHENTICATE,
-        header::PROXY_AUTHORIZATION,
-    ] {
-        headers.remove(name);
-    }
-}
-
-fn synthetic_messages_response() -> Response<Body> {
-    let body = concat!(
-        "event: message_start\n",
-        "data: {\"type\":\"message_start\",\"message\":{\"id\":\"msg_codex_mixin_loopback\",",
-        "\"type\":\"message\",\"role\":\"assistant\",\"model\":\"ducc-loopback\",",
-        "\"content\":[],\"stop_reason\":null,\"stop_sequence\":null,",
-        "\"usage\":{\"input_tokens\":1,\"output_tokens\":0}}}\n\n",
-        "event: content_block_start\n",
-        "data: {\"type\":\"content_block_start\",\"index\":0,",
-        "\"content_block\":{\"type\":\"text\",\"text\":\"\"}}\n\n",
-        "event: content_block_delta\n",
-        "data: {\"type\":\"content_block_delta\",\"index\":0,",
-        "\"delta\":{\"type\":\"text_delta\",\"text\":\"ok\"}}\n\n",
-        "event: content_block_stop\n",
-        "data: {\"type\":\"content_block_stop\",\"index\":0}\n\n",
-        "event: message_delta\n",
-        "data: {\"type\":\"message_delta\",\"delta\":{\"stop_reason\":\"end_turn\",",
-        "\"stop_sequence\":null},\"usage\":{\"output_tokens\":1}}\n\n",
-        "event: message_stop\n",
-        "data: {\"type\":\"message_stop\"}\n\n",
-    );
-    static_response(StatusCode::OK, Body::from(body), Some("text/event-stream"))
-}
-
-fn static_response(status: StatusCode, body: Body, content_type: Option<&str>) -> Response<Body> {
-    let mut builder = Response::builder().status(status);
-    if let Some(content_type) = content_type {
-        builder = builder.header(header::CONTENT_TYPE, content_type);
-    }
-    builder
-        .body(body)
-        .expect("static DUCC loopback response is valid")
-}
-
-struct DuccClient {
-    stdin: Mutex<ChildStdin>,
-    output: Mutex<mpsc::Receiver<Value>>,
-    session_id: String,
-    running: Arc<AtomicBool>,
-    shutdown: watch::Sender<bool>,
-}
-
-impl DuccClient {
-    async fn spawn(
-        executable: &Path,
-        home: &Path,
-        cwd: &Path,
-        model: &str,
-        base_url: &str,
-        api_key: &str,
-    ) -> anyhow::Result<Self> {
+    async fn mint_headers(&self, timeout: Duration) -> anyhow::Result<HeaderMap> {
+        let proxy = CaptureProxy::start().await?;
+        let proxy_url = format!("http://{}", proxy.addr);
         let settings = serde_json::to_string(&json!({
             "env": {
-                "ANTHROPIC_BASE_URL": base_url,
-                "ANTHROPIC_API_KEY": api_key
+                "ANTHROPIC_API_KEY": self.api_key
             }
         }))
-        .expect("static DUCC settings are serializable");
-        let mut child = Command::new(executable)
+        .context("serialize DUCC warmup settings")?;
+        let mut child = Command::new(&self.executable)
             .args([
                 "--bare",
                 "--app-source=one-api-token",
@@ -410,769 +90,91 @@ impl DuccClient {
                 "--tools",
                 "",
                 "--model",
-                model,
+                DUCC_AUTH_CARRIER_MODEL,
                 "--settings",
                 &settings,
                 "--print",
                 "--input-format",
-                "stream-json",
+                "text",
                 "--output-format",
                 "stream-json",
                 "--verbose",
+                "codex-mixin auth warmup, reply ok",
             ])
-            .env("HOME", home)
-            .env("BAIDU_CC_PLATFORM", "AIIDE-terminal")
+            .current_dir(&self.home)
+            .env("HOME", &self.home)
+            .env("HTTP_PROXY", &proxy_url)
+            .env("http_proxy", &proxy_url)
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("https_proxy", &proxy_url)
+            .env("NO_PROXY", DIRECT_HOSTS)
+            .env("no_proxy", DIRECT_HOSTS)
+            .env("BAIDU_CC_PLATFORM", DUCC_PLATFORM)
             .env("CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC", "1")
             .env("DISABLE_BAIDU_CLAUDE_UPDATE", "1")
             .env("DISABLE_DUCC_CLI_UPDATE", "1")
-            .current_dir(cwd)
-            .stdin(Stdio::piped())
-            .stdout(Stdio::piped())
-            .stderr(Stdio::piped())
+            .stdin(Stdio::null())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
-            .with_context(|| format!("start managed DUCC {}", executable.display()))?;
-        let stdin = child.stdin.take().context("capture DUCC stdin")?;
-        let stdout = child.stdout.take().context("capture DUCC stdout")?;
-        let stderr = child.stderr.take().context("capture DUCC stderr")?;
-        let (sender, receiver) = mpsc::channel(256);
-        let running = Arc::new(AtomicBool::new(true));
-        let reader_running = Arc::clone(&running);
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stdout).lines();
-            while let Ok(Some(line)) = lines.next_line().await {
-                if let Ok(message) = serde_json::from_str::<Value>(&line)
-                    && sender.send(message).await.is_err()
-                {
-                    break;
-                }
-            }
-            reader_running.store(false, Ordering::Release);
-        });
-        tokio::spawn(async move {
-            let mut lines = BufReader::new(stderr).lines();
-            while let Ok(Some(_)) = lines.next_line().await {
-                tracing::debug!("managed DUCC emitted a stderr line");
-            }
-        });
-        let waiter_running = Arc::clone(&running);
-        let (shutdown, mut shutdown_rx) = watch::channel(false);
-        tokio::spawn(async move {
-            tokio::select! {
-                _ = child.wait() => {}
-                changed = shutdown_rx.changed() => {
-                    if changed.is_ok() && *shutdown_rx.borrow() {
-                        let _ = child.kill().await;
-                        let _ = child.wait().await;
-                    }
-                }
-            }
-            waiter_running.store(false, Ordering::Release);
-        });
-        Ok(Self {
-            stdin: Mutex::new(stdin),
-            output: Mutex::new(receiver),
-            session_id: Uuid::new_v4().to_string(),
-            running,
-            shutdown,
-        })
-    }
-
-    fn is_running(&self) -> bool {
-        self.running.load(Ordering::Acquire)
-    }
-
-    fn shutdown(&self) {
-        self.running.store(false, Ordering::Release);
-        let _ = self.shutdown.send(true);
-    }
-
-    async fn trigger(&self, marker: &str) -> anyhow::Result<()> {
-        let message = json!({
-            "type": "user",
-            "session_id": self.session_id,
-            "parent_tool_use_id": null,
-            "message": {
-                "role": "user",
-                "content": [{"type":"text","text":marker}]
-            }
-        });
-        let mut encoded = serde_json::to_vec(&message).context("encode DUCC stream input")?;
-        encoded.push(b'\n');
-        let mut stdin = self.stdin.lock().await;
-        stdin
-            .write_all(&encoded)
+            .with_context(|| format!("start managed DUCC {}", self.executable.display()))?;
+        let captured = tokio::time::timeout(timeout, proxy.captured)
             .await
-            .context("write DUCC stream input")?;
-        stdin.flush().await.context("flush DUCC stream input")
-    }
-
-    async fn wait_for_result(&self) -> anyhow::Result<()> {
-        let mut output = self.output.lock().await;
-        while let Some(message) = output.recv().await {
-            if message.get("type").and_then(Value::as_str) == Some("result") {
-                if message.get("is_error").and_then(Value::as_bool) == Some(true) {
-                    let detail = message
-                        .get("result")
-                        .and_then(Value::as_str)
-                        .unwrap_or("unknown DUCC error");
-                    anyhow::bail!("managed DUCC turn failed: {detail}");
-                }
-                return Ok(());
-            }
-        }
-        anyhow::bail!("managed DUCC output closed before turn result")
+            .context("DUCC did not emit an authenticated request in time")?
+            .context("DUCC capture proxy closed before capturing native headers")?;
+        let _ = child.start_kill();
+        Ok(captured)
     }
 }
 
-impl Drop for DuccClient {
-    fn drop(&mut self) {
-        let _ = self.shutdown.send(true);
-    }
+fn managed_home(executable: &Path) -> anyhow::Result<PathBuf> {
+    let bin = executable
+        .parent()
+        .context("DUCC executable has no bin directory")?;
+    let install = bin
+        .parent()
+        .context("DUCC executable has no install directory")?;
+    let root = install
+        .parent()
+        .context("DUCC executable has no .baidu-cc directory")?;
+    ensure!(
+        install.file_name().and_then(|value| value.to_str()) == Some("baidu-cc")
+            && root.file_name().and_then(|value| value.to_str()) == Some(".baidu-cc"),
+        "DUCC executable must use the managed HOME/.baidu-cc/baidu-cc/bin layout"
+    );
+    Ok(root
+        .parent()
+        .context("DUCC executable has no managed HOME")?
+        .to_owned())
 }
 
-#[derive(Default)]
-struct DuccClientPool {
-    clients: HashMap<String, Arc<DuccClient>>,
-    recency: VecDeque<String>,
-    prewarmed: Option<Arc<DuccClient>>,
-}
-
-impl DuccClientPool {
-    fn live_client(&mut self, session_key: &str) -> Option<Arc<DuccClient>> {
-        let client = self.clients.get(session_key).cloned();
-        if client.as_ref().is_some_and(|client| client.is_running()) {
-            self.recency.retain(|key| key != session_key);
-            self.recency.push_back(session_key.to_owned());
-            return client;
-        }
-        self.clients.remove(session_key);
-        self.recency.retain(|key| key != session_key);
-        None
-    }
-
-    fn insert(&mut self, session_key: String, client: Arc<DuccClient>) {
-        self.clients.insert(session_key.clone(), client);
-        self.recency.retain(|key| key != &session_key);
-        self.recency.push_back(session_key);
-        while self.clients.len() > MAX_DUCC_SESSION_CLIENTS {
-            let Some(evicted) = self.recency.pop_front() else {
-                break;
-            };
-            self.clients.remove(&evicted);
-        }
-    }
-}
-
-pub(crate) struct DuccRuntime {
-    executable: PathBuf,
-    home: PathBuf,
-    cwd: tempfile::TempDir,
-    bridge: DuccBridge,
-    api_key: String,
-    clients: Mutex<DuccClientPool>,
-    dispatch: Arc<Mutex<()>>,
-}
-
-impl DuccRuntime {
-    pub(crate) async fn spawn(
-        executable: PathBuf,
-        api_key: String,
-        client: reqwest::Client,
-    ) -> anyhow::Result<Self> {
-        ensure!(
-            executable.is_file(),
-            "DUCC executable does not exist: {}",
-            executable.display()
-        );
-        let home = managed_home(&executable)?;
-        let cwd = tempfile::tempdir().context("create isolated DUCC working directory")?;
-        let bridge = DuccBridge::spawn(client).await?;
-        Ok(Self {
-            executable,
-            home,
-            cwd,
-            bridge,
-            api_key,
-            clients: Mutex::new(DuccClientPool::default()),
-            dispatch: Arc::new(Mutex::new(())),
-        })
-    }
-
-    async fn auth_carrier(&self, session_key: &str) -> anyhow::Result<(Arc<DuccClient>, bool)> {
-        ensure!(!session_key.is_empty(), "DUCC session key is empty");
-        let mut pool = self.clients.lock().await;
-        if session_key == DUCC_PREWARM_SESSION_KEY {
-            if let Some(client) = pool.prewarmed.as_ref()
-                && client.is_running()
-            {
-                return Ok((Arc::clone(client), false));
-            }
-            pool.prewarmed = None;
-        } else {
-            if let Some(client) = pool.live_client(session_key) {
-                return Ok((client, false));
-            }
-            if let Some(client) = pool.prewarmed.take()
-                && client.is_running()
-            {
-                pool.insert(session_key.to_owned(), Arc::clone(&client));
-                return Ok((client, false));
-            }
-        }
-        let base_url = {
-            let mut url = reqwest::Url::parse(&self.bridge.base_url)
-                .context("parse DUCC loopback base URL")?;
-            url.path_segments_mut()
-                .map_err(|_| anyhow::anyhow!("DUCC loopback URL cannot carry a model path"))?
-                .push("model")
-                .push(DUCC_AUTH_CARRIER_MODEL);
-            url.to_string()
-        };
-        let client = Arc::new(
-            DuccClient::spawn(
-                &self.executable,
-                &self.home,
-                self.cwd.path(),
-                DUCC_AUTH_CARRIER_MODEL,
-                &base_url,
-                &self.api_key,
-            )
-            .await?,
-        );
-        if session_key == DUCC_PREWARM_SESSION_KEY {
-            pool.prewarmed = Some(Arc::clone(&client));
-        } else {
-            pool.insert(session_key.to_owned(), Arc::clone(&client));
-        }
-        Ok((client, true))
-    }
-
-    pub(crate) async fn warm(&self) -> anyhow::Result<()> {
-        let (client, _) = self.auth_carrier(DUCC_PREWARM_SESSION_KEY).await?;
-        ensure!(
-            client.is_running(),
-            "managed DUCC authentication carrier is not running"
-        );
-        Ok(())
-    }
-
-    pub(crate) async fn send(
-        &self,
-        session_key: &str,
-        target: reqwest::Url,
-        body: Value,
-        headers: HeaderMap,
-        timeout: Duration,
-    ) -> anyhow::Result<reqwest::Response> {
-        // DUCC is roughly 360 MiB per process. Each continuous Codex thread gets
-        // its own carrier so its native auth header cannot share an upstream
-        // cache namespace with another prompt branch. The bounded pool prevents
-        // abandoned threads from retaining an unbounded number of workers.
-        let dispatch_guard = Arc::clone(&self.dispatch).lock_owned().await;
-        let (client, _) = self.auth_carrier(session_key).await?;
-        ensure!(client.is_running(), "managed DUCC process is not running");
-        let (marker, authenticated, response) = self
-            .bridge
-            .register(DUCC_AUTH_CARRIER_MODEL, target, body, headers)
-            .await?;
-        if let Err(error) = client.trigger(&marker).await {
-            self.bridge.cancel(DUCC_AUTH_CARRIER_MODEL, &marker).await;
-            client.shutdown();
-            return Err(error);
-        }
-        tokio::pin!(authenticated);
-        let mut turn_completed = false;
-        let mut request_authenticated = false;
-        let response_result = {
-            tokio::pin!(response);
-            let deadline = tokio::time::sleep(timeout);
-            tokio::pin!(deadline);
-            loop {
-                tokio::select! {
-                    biased;
-                    accepted = &mut authenticated, if !request_authenticated => {
-                        accepted.map_err(|_| {
-                            anyhow::anyhow!("DUCC loopback authentication channel closed")
-                        })?;
-                        request_authenticated = true;
-                    },
-                    response = &mut response => break match response {
-                        Ok(Ok(response)) => Ok(response),
-                        Ok(Err(error)) => {
-                            Err(anyhow::anyhow!("DUCC-authenticated upstream request failed: {error:#}"))
-                        }
-                        Err(_) => {
-                            Err(anyhow::anyhow!("DUCC loopback response channel closed"))
-                        }
-                    },
-                    result = client.wait_for_result(), if !turn_completed => {
-                        if let Err(error) = result {
-                            self.bridge.cancel(DUCC_AUTH_CARRIER_MODEL, &marker).await;
-                            client.shutdown();
-                            return Err(error);
-                        }
-                        if request_authenticated {
-                            turn_completed = true;
-                        }
-                        // DUCC can complete an internal helper request before
-                        // it opens the marker-bearing authenticated request.
-                        // Only a result observed after the bridge accepts the
-                        // marker can complete the gateway turn.
-                    },
-                    _ = &mut deadline => {
-                        self.bridge.cancel(DUCC_AUTH_CARRIER_MODEL, &marker).await;
-                        client.shutdown();
-                        anyhow::bail!("DUCC did not open its authenticated request in time")
-                    }
-                }
-            }
-        };
-        if turn_completed {
-            drop(dispatch_guard);
-        } else {
-            tokio::spawn(async move {
-                let _dispatch_guard = dispatch_guard;
-                match tokio::time::timeout(timeout, client.wait_for_result()).await {
-                    Ok(Ok(())) => {}
-                    Ok(Err(error)) => {
-                        client.shutdown();
-                        tracing::warn!(error = %format!("{error:#}"), "managed DUCC turn did not complete");
-                    }
-                    Err(_) => {
-                        client.shutdown();
-                        tracing::warn!("managed DUCC turn result timed out");
-                    }
-                }
-            });
-        }
-        response_result
-    }
+/// Default managed DUCC executable location under the Mixin-managed home.
+pub(crate) fn default_ducc_executable() -> Option<PathBuf> {
+    let home = std::env::var_os("HOME").map(PathBuf::from)?;
+    [
+        home.join(".codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin/ducc"),
+        home.join(".codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin/claude"),
+    ]
+    .into_iter()
+    .find(|path| path.is_file())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use axum::Json;
-    use axum::routing::post;
-    use std::os::unix::fs::PermissionsExt;
-    use std::time::Instant;
 
     #[test]
-    fn derives_managed_home_without_reading_auth_files() {
+    fn derives_managed_home_for_ducc_layout() {
         let executable = Path::new("/tmp/codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin/ducc");
         assert_eq!(
             managed_home(executable).unwrap(),
-            Path::new("/tmp/codex-mixin/ducc/home")
+            PathBuf::from("/tmp/codex-mixin/ducc/home")
         );
     }
 
     #[test]
-    fn marker_search_handles_nested_message_content() {
-        let payload = json!({
-            "messages": [{"role":"user","content":[{"type":"text","text":"prefix marker suffix"}]}]
-        });
-        assert!(contains_string(&payload, "marker"));
-        assert!(!contains_string(&payload, "missing"));
-    }
-
-    #[test]
-    fn raw_marker_search_matches_json_strings_without_full_parsing() {
-        let body = br#"{"model":"Claude Sonnet 5","messages":[{"role":"user","content":[{"type":"text","text":"prefix codex-mixin-loopback-marker suffix"}]}]}"#;
-        assert!(bytes_contain(body, b"codex-mixin-loopback-marker"));
-        assert!(!bytes_contain(body, b"missing-marker"));
-    }
-
-    #[test]
-    fn loopback_path_carries_model_without_body_parsing() {
-        let uri: axum::http::Uri = "/route-token/model/Claude%20Sonnet%205/v1/messages?beta=true"
-            .parse()
-            .unwrap();
-        assert_eq!(
-            model_from_loopback_path(&uri, "route-token").as_deref(),
-            Some("Claude Sonnet 5")
-        );
-    }
-
-    #[tokio::test]
-    async fn reports_ducc_failure_before_loopback_timeout() {
-        let root = tempfile::tempdir().unwrap();
-        let executable = root.path().join("home/.baidu-cc/baidu-cc/bin/ducc");
-        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
-        std::fs::write(
-            &executable,
-            r#"#!/bin/sh
-while IFS= read -r line; do
-  printf '%s\n' '{"type":"result","is_error":true,"result":"Not logged in"}'
-  exit 0
-done
-"#,
-        )
-        .unwrap();
-        let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
-        permissions.set_mode(0o700);
-        std::fs::set_permissions(&executable, permissions).unwrap();
-        let runtime = DuccRuntime::spawn(
-            executable,
-            "test-api-key".to_owned(),
-            reqwest::Client::new(),
-        )
-        .await
-        .unwrap();
-        let result = tokio::time::timeout(
-            Duration::from_secs(5),
-            runtime.send(
-                "session-a",
-                "http://127.0.0.1:9/v1/messages".parse().unwrap(),
-                json!({"model":"GLM-5.2","messages":[]}),
-                HeaderMap::new(),
-                Duration::from_secs(30),
-            ),
-        )
-        .await
-        .expect("DUCC failure must beat the loopback timeout")
-        .unwrap_err();
-        assert!(
-            format!("{result:#}").contains("Not logged in"),
-            "unexpected DUCC error: {result:#}"
-        );
-    }
-
-    #[tokio::test]
-    async fn ignores_early_success_while_waiting_for_authenticated_request() {
-        let root = tempfile::tempdir().unwrap();
-        let executable = root.path().join("home/.baidu-cc/baidu-cc/bin/ducc");
-        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
-        std::fs::write(
-            &executable,
-            r#"#!/bin/sh
-while IFS= read -r line; do
-  printf '%s\n' '{"type":"result","is_error":false,"result":"auxiliary request completed"}'
-  sleep 0.05
-  printf '%s\n' '{"type":"result","is_error":true,"result":"later authenticated request failed"}'
-  exit 0
-done
-"#,
-        )
-        .unwrap();
-        let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
-        permissions.set_mode(0o700);
-        std::fs::set_permissions(&executable, permissions).unwrap();
-        let runtime = DuccRuntime::spawn(
-            executable,
-            "test-api-key".to_owned(),
-            reqwest::Client::new(),
-        )
-        .await
-        .unwrap();
-        let result = tokio::time::timeout(
-            Duration::from_secs(5),
-            runtime.send(
-                "session-a",
-                "http://127.0.0.1:9/v1/messages".parse().unwrap(),
-                json!({"model":"GLM-5.2","messages":[]}),
-                HeaderMap::new(),
-                Duration::from_secs(30),
-            ),
-        )
-        .await
-        .expect("the later DUCC failure must beat the loopback timeout")
-        .unwrap_err();
-        assert!(
-            format!("{result:#}").contains("later authenticated request failed"),
-            "an auxiliary success must not cancel the authenticated request: {result:#}"
-        );
-    }
-
-    #[tokio::test]
-    async fn reuses_auth_carrier_within_a_session_and_isolates_sessions() {
-        let root = tempfile::tempdir().unwrap();
-        let executable = root.path().join("home/.baidu-cc/baidu-cc/bin/ducc");
-        let arguments_log = root.path().join("arguments.log");
-        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
-        std::fs::write(
-            &executable,
-            format!(
-                r#"#!/bin/sh
-printf '%s\n' "$@" > '{}'
-while IFS= read -r line; do
-  printf '%s\n' '{{"type":"result","is_error":false,"result":"ok"}}'
-done
-"#,
-                arguments_log.display()
-            ),
-        )
-        .unwrap();
-        let mut permissions = std::fs::metadata(&executable).unwrap().permissions();
-        permissions.set_mode(0o700);
-        std::fs::set_permissions(&executable, permissions).unwrap();
-        let runtime = DuccRuntime::spawn(
-            executable,
-            "test-api-key".to_owned(),
-            reqwest::Client::new(),
-        )
-        .await
-        .unwrap();
-
-        runtime.warm().await.unwrap();
-        let (glm, spawned) = runtime.auth_carrier("session-a").await.unwrap();
-        assert!(!spawned, "prewarm must create the authentication carrier");
-        let (same_session, spawned) = runtime.auth_carrier("session-a").await.unwrap();
-
-        assert!(
-            Arc::ptr_eq(&glm, &same_session),
-            "one continuous session must reuse its authentication carrier"
-        );
-        assert!(
-            !spawned,
-            "the session authentication carrier must be reused"
-        );
-
-        let (other_session, spawned) = runtime.auth_carrier("session-b").await.unwrap();
-        assert!(spawned, "a different session must start its own carrier");
-        assert!(
-            !Arc::ptr_eq(&glm, &other_session),
-            "different sessions must not share DUCC authentication headers"
-        );
-        let arguments = tokio::time::timeout(Duration::from_secs(5), async {
-            loop {
-                if let Ok(arguments) = std::fs::read_to_string(&arguments_log) {
-                    break arguments;
-                }
-                tokio::time::sleep(Duration::from_millis(10)).await;
-            }
-        })
-        .await
-        .expect("managed DUCC did not start");
-        assert!(
-            arguments
-                .lines()
-                .any(|argument| argument == "--app-source=one-api-token"),
-            "managed DUCC must tag native usage reports as Baidu OneAPI token traffic"
-        );
-    }
-
-    #[tokio::test]
-    async fn bridge_releases_ducc_before_upstream_response_headers() {
-        let app = Router::new().route(
-            "/v1/messages",
-            post(|| async {
-                tokio::time::sleep(Duration::from_millis(300)).await;
-                Json(json!({"ok":true}))
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        let bridge = DuccBridge::spawn(reqwest::Client::new()).await.unwrap();
-        let (marker, authenticated, response) = bridge
-            .register(
-                "GLM-5.2",
-                format!("http://{address}/v1/messages").parse().unwrap(),
-                json!({"model":"GLM-5.2","stream":true,"messages":[]}),
-                HeaderMap::new(),
-            )
-            .await
-            .unwrap();
-        let started = Instant::now();
-        let synthetic = reqwest::Client::new()
-            .post(format!("{}/v1/messages", bridge.base_url))
-            .header(DUCC_HEADER_NAME, "native-value")
-            .json(&json!({
-                "model":"GLM-5.2",
-                "messages":[{"role":"user","content":marker}]
-            }))
-            .send()
-            .await
-            .unwrap();
-
-        assert!(synthetic.status().is_success());
-        authenticated.await.unwrap();
-        assert!(
-            started.elapsed() < Duration::from_millis(150),
-            "DUCC should receive its synthetic result without waiting for upstream headers"
-        );
-        assert!(
-            tokio::time::timeout(Duration::from_secs(1), response)
-                .await
-                .unwrap()
-                .unwrap()
-                .unwrap()
-                .status()
-                .is_success()
-        );
-    }
-
-    #[tokio::test]
-    async fn bridge_rejects_unmarked_auxiliary_and_replaces_multimodal_body_once() {
-        let captured = Arc::new(Mutex::new(
-            Vec::<(Value, bool, bool, bool, Option<String>)>::new(),
-        ));
-        let upstream_capture = Arc::clone(&captured);
-        let app = Router::new().route(
-            "/v1/messages",
-            post(move |headers: HeaderMap, Json(body): Json<Value>| {
-                let upstream_capture = Arc::clone(&upstream_capture);
-                async move {
-                    upstream_capture.lock().await.push((
-                        body,
-                        headers.contains_key(DUCC_HEADER_NAME),
-                        headers.contains_key("x-api-key"),
-                        headers.contains_key(header::AUTHORIZATION),
-                        headers
-                            .get("x-hash-key")
-                            .and_then(|value| value.to_str().ok())
-                            .map(str::to_owned),
-                    ));
-                    Json(json!({"ok":true}))
-                }
-            }),
-        );
-        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
-        let address = listener.local_addr().unwrap();
-        tokio::spawn(async move {
-            axum::serve(listener, app).await.unwrap();
-        });
-
-        let bridge = DuccBridge::spawn(reqwest::Client::new()).await.unwrap();
-        let expected = json!({
-            "model":"DeepSeek-V4-Flash",
-            "stream":true,
-            "system":[{"type":"text","text":"only caller instructions"}],
-            "messages":[{
-                "role":"user",
-                "content":[
-                    {"type":"text","text":"inspect image"},
-                    {"type":"image","source":{"type":"base64","media_type":"image/png","data":"AA=="}}
-                ]
-            }],
-            "tools":[{"name":"declared_tool","description":"declared","input_schema":{"type":"object"}}]
-        });
-        let mut extra = HeaderMap::new();
-        extra.insert("x-hash-key", "session-hash".parse().unwrap());
-        // This must not survive into the forwarded request.
-        extra.insert(header::CONTENT_LENGTH, "0".parse().unwrap());
-        let (marker, authenticated, response) = bridge
-            .register(
-                DUCC_AUTH_CARRIER_MODEL,
-                format!("http://{address}/v1/messages").parse().unwrap(),
-                expected.clone(),
-                extra,
-            )
-            .await
-            .unwrap();
-        let trigger = json!({
-            "model":DUCC_AUTH_CARRIER_MODEL,
-            "system":"DUCC additions",
-            "messages":[{"role":"user","content":marker}],
-            "tools":[{"name":"DUCC_only_tool"}]
-        });
-        let url = format!(
-            "{}/model/{}/v1/messages?beta=true",
-            bridge.base_url, DUCC_AUTH_CARRIER_MODEL
-        );
-        let client = reqwest::Client::new();
-        // An auxiliary request without the one-time marker is locally
-        // satisfied even while the real policy is pending.
-        let test_api_key = "codex-mixin-loopback";
-        let auxiliary = client
-            .post(&url)
-            .header(DUCC_HEADER_NAME, "native-value")
-            .header(header::AUTHORIZATION, "Bearer native-ducc-token")
-            .header("x-api-key", test_api_key)
-            .json(&json!({
-                "model":"DeepSeek-V4-Flash",
-                "messages":[{"role":"user","content":"unrelated helper request"}]
-            }))
-            .send()
-            .await
-            .unwrap();
-        assert!(auxiliary.status().is_success());
-        assert!(captured.lock().await.is_empty());
-
-        let main = client
-            .post(&url)
-            .header(DUCC_HEADER_NAME, "native-value")
-            .header(header::AUTHORIZATION, "Bearer native-ducc-token")
-            .header("x-api-key", test_api_key)
-            .json(&trigger)
-            .send()
-            .await
-            .unwrap();
-        assert!(main.status().is_success());
-        authenticated.await.unwrap();
-        assert!(
-            tokio::time::timeout(Duration::from_secs(1), response)
-                .await
-                .unwrap()
-                .unwrap()
-                .unwrap()
-                .status()
-                .is_success()
-        );
-        let snapshot = captured.lock().await;
-        assert_eq!(snapshot.len(), 1);
-        assert_eq!(snapshot[0].0, expected);
-        assert!(snapshot[0].1);
-        assert!(snapshot[0].2, "DUCC x-api-key must be preserved");
-        assert!(
-            snapshot[0].3,
-            "DUCC native bearer authorization must be preserved"
-        );
-        assert_eq!(snapshot[0].4.as_deref(), Some("session-hash"));
-        drop(snapshot);
-
-        // Replaying the same DUCC request is answered locally and never opens
-        // a second upstream inference.
-        let replay = client
-            .post(&url)
-            .header(DUCC_HEADER_NAME, "native-value")
-            .json(&trigger)
-            .send()
-            .await
-            .unwrap();
-        assert!(replay.status().is_success());
-        assert_eq!(captured.lock().await.len(), 1);
-    }
-
-    #[tokio::test]
-    async fn missing_native_ducc_header_consumes_policy_and_fails_closed() {
-        let bridge = DuccBridge::spawn(reqwest::Client::new()).await.unwrap();
-        let expected = json!({"model":"Claude Sonnet 5","stream":true,"messages":[]});
-        let (marker, authenticated, response) = bridge
-            .register(
-                "Claude Sonnet 5",
-                "http://127.0.0.1:9/v1/messages".parse().unwrap(),
-                expected,
-                HeaderMap::new(),
-            )
-            .await
-            .unwrap();
-        let trigger = json!({
-            "model":"Claude Sonnet 5",
-            "messages":[{"role":"user","content":marker}]
-        });
-        let client = reqwest::Client::new();
-        let rejected = client
-            .post(format!("{}/v1/messages", bridge.base_url))
-            .json(&trigger)
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(rejected.status(), StatusCode::BAD_GATEWAY);
-        assert!(authenticated.await.is_err());
-        assert!(response.await.is_err());
-
-        let replay = client
-            .post(format!("{}/v1/messages", bridge.base_url))
-            .header(DUCC_HEADER_NAME, "late-native-value")
-            .json(&trigger)
-            .send()
-            .await
-            .unwrap();
-        assert!(replay.status().is_success());
+    fn native_header_is_captured_from_shared_proxy() {
+        assert_eq!(crate::auth_capture::NATIVE_HEADER, "comate_custom_header");
     }
 }

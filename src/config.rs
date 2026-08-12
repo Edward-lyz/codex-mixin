@@ -236,6 +236,7 @@ fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConfig> {
         upgrade_opencode_go_quota_defaults(&mut parsed);
         upgrade_opencode_go_responses_endpoint(&mut parsed);
         bootstrap_unrefreshed_selected_models(&mut parsed);
+        backfill_data_report_executable(&mut parsed);
         return Ok(parsed);
     } else if document.get("config_version").is_some() {
         anyhow::bail!("config_version must be an unsigned integer");
@@ -265,7 +266,26 @@ fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConfig> {
     upgrade_opencode_go_quota_defaults(&mut migrated);
     upgrade_opencode_go_responses_endpoint(&mut migrated);
     bootstrap_unrefreshed_selected_models(&mut migrated);
+    backfill_data_report_executable(&mut migrated);
     Ok(migrated)
+}
+
+fn backfill_data_report_executable(config: &mut StoredGatewayConfig) {
+    for provider in &mut config.providers {
+        if !provider.request_policy.baidu_code_report
+            || provider.request_policy.data_report_executable.is_some()
+        {
+            continue;
+        }
+        provider.request_policy.data_report_executable = provider
+            .request_policy
+            .ducc_executable
+            .as_ref()
+            .and_then(|executable| {
+                let install = executable.parent()?.parent()?;
+                Some(install.join("hooks/data-report"))
+            });
+    }
 }
 
 fn upgrade_deepseek_quota_defaults(config: &mut StoredGatewayConfig) {
@@ -662,6 +682,28 @@ mod tests {
         assert_eq!(
             loaded.providers[0].quota_parser,
             ProviderQuotaParser::DeepSeek
+        );
+    }
+
+    #[test]
+    fn backfills_report_executable_for_existing_baidu_reporting() {
+        let mut provider = crate::provider::baidu_oneapi_provider("baidu-oneapi", "secret");
+        provider.quota_username = Some("user@example.com".to_owned());
+        provider.request_policy.baidu_code_report = true;
+        provider.request_policy.ducc_executable =
+            Some("/Users/example/.codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin/ducc".into());
+        let stored = StoredGatewayConfig {
+            providers: vec![provider],
+            ..StoredGatewayConfig::default()
+        };
+
+        let loaded = parse_stored_config(&serde_json::to_string(&stored).unwrap()).unwrap();
+
+        assert_eq!(
+            loaded.providers[0].request_policy.data_report_executable,
+            Some(
+                "/Users/example/.codex-mixin/ducc/home/.baidu-cc/baidu-cc/hooks/data-report".into()
+            )
         );
     }
 

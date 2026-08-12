@@ -88,14 +88,7 @@ pub(crate) async fn stream_provider_response(
     let downstream_model = downstream_model.unwrap_or(catalog_slug).to_owned();
     let downstream_body = response_metadata_request(body, &downstream_model);
     let web_search_enabled = state.web_search_enabled_for_custom_request(body);
-    // DUCC is an Anthropic Messages client. Every selected Baidu model,
-    // including GPT/DeepSeek routes, is converted to Messages before the
-    // native DUCC request reaches the loopback relay.
-    let protocol = if provider.uses_ducc_loopback() {
-        ProviderProtocol::AnthropicMessages
-    } else {
-        provider.protocol_for_model(&upstream_model_id)
-    };
+    let protocol = provider.protocol_for_model(&upstream_model_id);
     let advertised_thinking = provider.model_supports_thinking(&upstream_model_id);
     // DUCX loopback mints login-derived auth headers; fetch once and inject at the
     // send sites instead of the stored placeholder key.

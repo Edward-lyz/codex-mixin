@@ -3,7 +3,7 @@
 //! When a Baidu OneAPI provider opts into reporting, Mixin installs a hook block
 //! into the user's real Codex `~/.codex/hooks.json`. Each event invokes
 //! `codex-mixin report-hook --event <event>`, which forwards the hook payload to
-//! the managed DUCX `data-report` binary with the login-derived username. This
+//! the managed Baidu `data-report` binary with the login-derived username. This
 //! reuses DUCX's own reporting mechanism without touching the user's `~/.baidu-cx`.
 
 use std::fs;
@@ -93,7 +93,7 @@ struct ManagedReport {
     home: PathBuf,
 }
 
-/// Resolve the managed DUCX `data-report` binary for the enabled Baidu provider
+/// Resolve the managed Baidu `data-report` binary for the enabled Baidu provider
 /// that owns `model` and opted into reporting, or `None` when reporting is off
 /// or the model does not belong to such a provider. This keeps reporting scoped
 /// to actual Baidu usage even though Codex fires hooks for every session.
@@ -109,11 +109,16 @@ fn enabled_report_executable(model: &str) -> anyhow::Result<Option<ManagedReport
     }) else {
         return Ok(None);
     };
-    let executable =
-        provider.request_policy.ducc_executable.clone().context(
-            "Baidu code reporting is enabled but no managed DUCX executable is configured",
-        )?;
-    managed_report_from_executable(&executable).map(Some)
+    let managed = if let Some(data_report) = &provider.request_policy.data_report_executable {
+        managed_report_from_data_report(data_report)?
+    } else if let Some(executable) = &provider.request_policy.ducc_executable {
+        managed_report_from_executable(executable)?
+    } else {
+        anyhow::bail!(
+            "Baidu code reporting is enabled but no data-report executable is configured"
+        );
+    };
+    Ok(Some(managed))
 }
 
 /// True when `model` (as Codex sees it) maps to one of the provider's models,
@@ -125,8 +130,8 @@ fn provider_owns_model(provider: &codex_mixin::provider::ProviderDefinition, mod
         .any(|candidate| catalog_model_slug(candidate, &provider.id) == model)
 }
 
-/// Given `<home>/.baidu-cx/baidu-cx/bin/ducx`, resolve the sibling data-report
-/// binary and the isolated HOME that carries the login state.
+/// Given an auth-carrier executable, resolve the sibling data-report binary and
+/// the isolated HOME that carries the login state.
 fn managed_report_from_executable(executable: &Path) -> anyhow::Result<ManagedReport> {
     let install = executable
         .parent()
@@ -135,15 +140,34 @@ fn managed_report_from_executable(executable: &Path) -> anyhow::Result<ManagedRe
     let data_report = install.join("hooks/data-report");
     ensure!(
         data_report.is_file(),
-        "managed DUCX data-report is missing: {}",
+        "managed data-report is missing: {}",
         data_report.display()
     );
     let home = install
         .parent()
         .and_then(Path::parent)
-        .context("managed DUCX executable has no isolated HOME")?
+        .context("managed executable has no isolated HOME")?
         .to_owned();
     Ok(ManagedReport { data_report, home })
+}
+
+fn managed_report_from_data_report(data_report: &Path) -> anyhow::Result<ManagedReport> {
+    ensure!(
+        data_report.is_file(),
+        "managed data-report is missing: {}",
+        data_report.display()
+    );
+    let home = data_report
+        .parent()
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .and_then(Path::parent)
+        .context("managed data-report has no isolated HOME")?
+        .to_owned();
+    Ok(ManagedReport {
+        data_report: data_report.to_owned(),
+        home,
+    })
 }
 
 fn managed_username(home: &Path) -> anyhow::Result<String> {
@@ -369,5 +393,19 @@ mod tests {
             &catalog_model_slug("Opus 5", "baidu-oneapi")
         ));
         assert!(!provider_owns_model(&provider, "gpt-4o"));
+    }
+
+    #[test]
+    fn derives_report_home_from_data_report_path() {
+        let directory = tempfile::tempdir().unwrap();
+        let data_report = directory
+            .path()
+            .join(".baidu-cx/baidu-cx/hooks/data-report");
+        std::fs::create_dir_all(data_report.parent().unwrap()).unwrap();
+        std::fs::write(&data_report, b"binary").unwrap();
+
+        let managed = managed_report_from_data_report(&data_report).unwrap();
+        assert_eq!(managed.data_report, data_report);
+        assert_eq!(managed.home, directory.path());
     }
 }

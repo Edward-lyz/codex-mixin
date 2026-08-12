@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod anthropic;
+pub(crate) mod auth_capture;
 pub mod benchmark;
 pub mod catalog;
 pub mod config;

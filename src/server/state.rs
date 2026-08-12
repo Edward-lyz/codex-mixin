@@ -175,7 +175,7 @@ impl AppState {
         self.ducc_runtime
             .get_or_try_init(|| async {
                 let api_key = provider.definition().auth.api_key.clone();
-                crate::ducc::DuccRuntime::spawn(executable, api_key, self.client.clone())
+                crate::ducc::DuccRuntime::spawn(executable, api_key)
                     .await
                     .map(Arc::new)
             })
@@ -193,11 +193,8 @@ impl AppState {
         else {
             return Ok(());
         };
-        self.ducc_runtime_for(provider)
-            .await?
-            .warm()
-            .await
-            .map_err(GatewayError::Other)
+        self.ducc_native_headers(provider).await?;
+        Ok(())
     }
 
     pub(crate) async fn prewarm_ducx(&self) -> Result<(), GatewayError> {
@@ -244,6 +241,17 @@ impl AppState {
         provider: &ProviderRuntime,
     ) -> Result<axum::http::HeaderMap, GatewayError> {
         self.ducx_runtime_for(provider)
+            .await?
+            .native_headers(self.config.request_timeout)
+            .await
+            .map_err(GatewayError::Other)
+    }
+
+    pub(crate) async fn ducc_native_headers(
+        &self,
+        provider: &ProviderRuntime,
+    ) -> Result<axum::http::HeaderMap, GatewayError> {
+        self.ducc_runtime_for(provider)
             .await?
             .native_headers(self.config.request_timeout)
             .await
@@ -560,68 +568,17 @@ impl AppState {
         } else {
             provider.definition().anthropic_beta.clone()
         };
-        if provider.uses_ducc_loopback() {
-            let session_key = hash_key.ok_or_else(|| {
-                GatewayError::BadRequest(
-                    "DUCC-backed requests require thread-id, session-id, x-session-id, or prompt_cache_key"
-                        .to_owned(),
-                )
-            })?;
-            let runtime = self.ducc_runtime_for(provider).await?;
-            // Build only the non-auth transport headers here. The bridge
-            // rejects attempts to replace DUCC's native auth headers.
-            let upstream_request = provider.apply_anthropic_beta(
-                self.client.post(provider.api_url().clone()),
-                beta.as_deref(),
-            );
-            let upstream_request = provider
-                .apply_session_affinity(upstream_request, hash_key)
-                .header(header::ACCEPT, "text/event-stream")
-                .header(
-                    "anthropic-version",
-                    provider
-                        .definition()
-                        .anthropic_version
-                        .as_deref()
-                        .unwrap_or("2023-06-01"),
-                );
-            let mut transport = upstream_request.build().map_err(GatewayError::Http)?;
-            provider.apply_custom_headers(transport.headers_mut());
-            let body = serde_json::to_value(request)
-                .map_err(anyhow::Error::from)
-                .map_err(GatewayError::Other)?;
-            let response = runtime
-                .send(
-                    session_key,
-                    provider.api_url().clone(),
-                    body,
-                    transport.headers().clone(),
-                    self.config.request_timeout,
-                )
-                .await
-                .map_err(GatewayError::Other)?;
-            let status = response.status();
-            if !status.is_success() {
-                let body = crate::request_body::read_error_text(response).await?;
-                return Err(GatewayError::UpstreamStatus {
-                    status,
-                    message: format!(
-                        "provider {} DUCC-authenticated messages endpoint returned {status}: {body}",
-                        provider.id()
-                    ),
-                });
-            }
-            return Ok(response.bytes_stream().boxed());
-        }
-        // DUCX loopback injects login-derived auth headers instead of the stored
-        // placeholder key, so skip provider auth and merge the native headers.
-        let ducx_native = if provider.uses_ducx_loopback() {
+        // DUCC and DUCX both act as header generators. Merge whichever native
+        // headers the selected auth core produced instead of the stored key.
+        let native = if provider.uses_ducc_loopback() {
+            Some(self.ducc_native_headers(provider).await?)
+        } else if provider.uses_ducx_loopback() {
             Some(self.ducx_native_headers(provider).await?)
         } else {
             None
         };
         let base_request = self.client.post(provider.api_url().clone());
-        let mut upstream_request = match &ducx_native {
+        let mut upstream_request = match &native {
             Some(native) => base_request.headers(native.clone()),
             None => provider.apply_auth(base_request),
         };
