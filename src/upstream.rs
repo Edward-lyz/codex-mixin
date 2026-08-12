@@ -97,6 +97,13 @@ pub(crate) async fn stream_provider_response(
         provider.protocol_for_model(&upstream_model_id)
     };
     let advertised_thinking = provider.model_supports_thinking(&upstream_model_id);
+    // DUCX loopback mints login-derived auth headers; fetch once and inject at the
+    // send sites instead of the stored placeholder key.
+    let ducx_native = if provider.uses_ducx_loopback() {
+        Some(state.ducx_native_headers(provider).await?)
+    } else {
+        None
+    };
     let stream = match protocol {
         ProviderProtocol::AnthropicMessages => {
             let auto_thinking_kind =
@@ -153,12 +160,13 @@ pub(crate) async fn stream_provider_response(
                 routing,
                 CacheShape::from_openai_chat(&converted.request),
             );
-            let upstream_request = provider.apply_auth_for_protocol(
-                state
-                    .client
-                    .post(provider.api_url_for_model(&upstream_model_id).clone()),
-                protocol,
-            );
+            let base_request = state
+                .client
+                .post(provider.api_url_for_model(&upstream_model_id).clone());
+            let upstream_request = match &ducx_native {
+                Some(native) => base_request.headers(native.clone()),
+                None => provider.apply_auth_for_protocol(base_request, protocol),
+            };
             let request = provider
                 .apply_session_affinity(
                     upstream_request,
@@ -207,12 +215,13 @@ pub(crate) async fn stream_provider_response(
                 routing,
                 CacheShape::from_openai_responses(&upstream_body),
             );
-            let upstream_request = provider.apply_auth_for_protocol(
-                state
-                    .client
-                    .post(provider.api_url_for_model(&upstream_model_id).clone()),
-                protocol,
-            );
+            let base_request = state
+                .client
+                .post(provider.api_url_for_model(&upstream_model_id).clone());
+            let upstream_request = match &ducx_native {
+                Some(native) => base_request.headers(native.clone()),
+                None => provider.apply_auth_for_protocol(base_request, protocol),
+            };
             let request = provider
                 .apply_session_affinity(
                     upstream_request,

@@ -514,8 +514,9 @@ fn apply_baidu_auth_options(
         provider.request_policy.baidu_auth_bridge = Some(match bridge {
             "disabled" => BaiduAuthBridge::Disabled,
             "ducc_loopback" => BaiduAuthBridge::DuccLoopback,
+            "ducx_loopback" => BaiduAuthBridge::DucxLoopback,
             other => anyhow::bail!(
-                "invalid Baidu auth bridge {other}; expected disabled or ducc_loopback"
+                "invalid Baidu auth bridge {other}; expected disabled, ducc_loopback, or ducx_loopback"
             ),
         });
     }

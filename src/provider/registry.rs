@@ -261,6 +261,11 @@ impl ProviderRuntime {
             == BaiduAuthBridge::DuccLoopback
     }
 
+    pub fn uses_ducx_loopback(&self) -> bool {
+        self.definition.request_policy.effective_baidu_auth_bridge()
+            == BaiduAuthBridge::DucxLoopback
+    }
+
     pub fn ducc_executable(&self) -> Option<&std::path::Path> {
         self.definition.request_policy.ducc_executable.as_deref()
     }
