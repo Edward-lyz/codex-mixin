@@ -148,6 +148,21 @@ async fn install_managed_ducx(
         .status()
         .context("failed to extract managed DUCX archive with tar")?;
     ensure!(status.success(), "failed to extract managed DUCX archive");
+    // The archive ships `bin/codex`; the official installer creates the `ducx`
+    // entry as a symlink to it. Mirror that so `bin/ducx` exists.
+    let bin_dir = version_dir.join("bin");
+    let codex_bin = bin_dir.join("codex");
+    ensure!(
+        codex_bin.is_file(),
+        "managed DUCX archive is missing bin/codex at {}",
+        codex_bin.display()
+    );
+    fs::set_permissions(&codex_bin, fs::Permissions::from_mode(0o755))?;
+    let ducx_bin = bin_dir.join("ducx");
+    if ducx_bin.symlink_metadata().is_ok() {
+        fs::remove_file(&ducx_bin).ok();
+    }
+    symlink("codex", &ducx_bin)?;
     // Drop any bundled config/auth/hooks so the isolated install starts clean.
     for name in ["config.toml", "auth.json", "hooks.json", "user.json"] {
         let _ = fs::remove_file(version_dir.join(name));
@@ -163,7 +178,6 @@ async fn install_managed_ducx(
         "managed DUCX archive is missing bin/ducx at {}",
         executable.display()
     );
-    fs::set_permissions(executable, fs::Permissions::from_mode(0o755))?;
     println!("Managed DUCX installed: {}", executable.display());
     Ok(())
 }
