@@ -200,6 +200,7 @@ pub fn baidu_oneapi_provider(
         custom_headers_from_env: Default::default(),
         baidu_auth_bridge: None,
         ducc_executable: None,
+        baidu_code_report: false,
     };
     provider
 }

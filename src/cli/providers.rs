@@ -47,6 +47,7 @@ pub(super) struct AddProviderOptions {
     pub(super) header_env: Vec<String>,
     pub(super) baidu_auth_bridge: Option<String>,
     pub(super) ducc_executable: Option<PathBuf>,
+    pub(super) baidu_code_report: Option<bool>,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -76,6 +77,7 @@ pub(super) struct UpdateProviderOptions {
     pub(super) clear_header_env: bool,
     pub(super) baidu_auth_bridge: Option<String>,
     pub(super) ducc_executable: Option<PathBuf>,
+    pub(super) baidu_code_report: Option<bool>,
 }
 
 pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
@@ -126,6 +128,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     "quota_parser": provider.quota_parser,
                     "custom_headers_from_env": provider.request_policy.custom_headers_from_env,
                     "baidu_auth_bridge": provider.request_policy.baidu_auth_bridge,
+                    "baidu_code_report": provider.request_policy.baidu_code_report,
                     "selected_models": provider.selected_models,
                     "new_models": provider.new_models,
                     "unavailable_selected_models": unavailable_selected_models,
@@ -304,6 +307,9 @@ pub(super) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
         options.baidu_auth_bridge.as_deref(),
         options.ducc_executable,
     )?;
+    if let Some(report) = options.baidu_code_report {
+        provider.request_policy.baidu_code_report = report;
+    }
     let mut detected_protocol = None;
     // Baidu is fixed to DUCC/messages routing. Other presets are curated offline.
     // Custom sites get a live protocol probe so users do not have to know the path.
@@ -469,6 +475,9 @@ pub(super) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
             options.baidu_auth_bridge.as_deref(),
             options.ducc_executable,
         )?;
+        if let Some(report) = options.baidu_code_report {
+            provider.request_policy.baidu_code_report = report;
+        }
         provider.validate()
     })?;
     let mut detected_protocol = None;

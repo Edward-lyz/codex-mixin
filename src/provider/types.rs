@@ -78,6 +78,9 @@ pub struct ProviderRequestPolicy {
     pub baidu_auth_bridge: Option<BaiduAuthBridge>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub ducc_executable: Option<PathBuf>,
+    /// Report Baidu AI code-usage events through the managed DUCX data-report hook.
+    #[serde(default)]
+    pub baidu_code_report: bool,
 }
 
 impl ProviderRequestPolicy {
@@ -212,6 +215,7 @@ impl ProviderDefinition {
         }
         if self.request_policy.baidu_auth_bridge.is_some()
             || self.request_policy.ducc_executable.is_some()
+            || self.request_policy.baidu_code_report
         {
             ensure!(
                 self.model_source == ProviderModelSource::BaiduOneApi,

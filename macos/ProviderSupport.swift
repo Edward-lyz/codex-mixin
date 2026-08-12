@@ -154,6 +154,7 @@ struct ProviderView: Decodable {
     let quotaCurrency: String?
     let quotaParser: String
     let baiduAuthBridge: BaiduAuthBridgeMode?
+    let baiduCodeReport: Bool?
     let selectedModels: [String]
     let newModels: [String]
     let unavailableSelectedModels: [String]
@@ -184,6 +185,7 @@ struct ProviderView: Decodable {
         case quotaCurrency = "quota_currency"
         case quotaParser = "quota_parser"
         case baiduAuthBridge = "baidu_auth_bridge"
+        case baiduCodeReport = "baidu_code_report"
         case selectedModels = "selected_models"
         case newModels = "new_models"
         case unavailableSelectedModels = "unavailable_selected_models"
