@@ -96,11 +96,16 @@ impl DucxRuntime {
         let codex_home = self.home.join(".baidu-cx");
         let mut child = Command::new(&self.executable)
             .args([
+                "--disable",
+                "hooks",
+                "--disable",
+                "plugins",
                 "exec",
                 "--skip-git-repo-check",
                 "--dangerously-bypass-approvals-and-sandbox",
                 "codex-mixin auth warmup, reply ok",
             ])
+            .current_dir(&self.home)
             .env("HOME", &self.home)
             .env("CODEX_HOME", &codex_home)
             .env("HTTP_PROXY", &proxy_url)
@@ -195,10 +200,18 @@ async fn proxy_connection(
             header_map.insert(name, value);
         }
     }
-    if header_map.contains_key(NATIVE_HEADER)
-        && let Some(sender) = sender.lock().await.take()
-    {
-        let _ = sender.send(header_map);
+    if header_map.contains_key(NATIVE_HEADER) {
+        let mut slot = sender.lock().await;
+        if let Some(sender) = slot.take() {
+            let _ = sender.send(header_map);
+        }
+        // DUCX is only used as a header generator. Stop the warmup turn before
+        // it can reach the real OneAPI and consume quota.
+        return Ok(());
+    }
+    if sender.lock().await.is_none() {
+        // Already captured by an earlier request; do not forward retries.
+        return Ok(());
     }
 
     // Transparent forward: replay the request in origin-form, then splice both ways.
@@ -359,7 +372,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proxy_captures_native_header_and_forwards_traffic() {
+    async fn proxy_forwards_non_native_traffic() {
         // Origin echoes a fixed body so we can assert the proxy relayed the request.
         let origin = TcpListener::bind("127.0.0.1:0").await.unwrap();
         let origin_addr = origin.local_addr().unwrap();
@@ -377,14 +390,24 @@ mod tests {
 
         let proxy = CaptureProxy::start().await.unwrap();
         let request = format!(
-            "POST http://{origin_addr}/v1/responses HTTP/1.1\r\nHost: {origin_addr}\r\ncomate_custom_header: native-value\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
+            "POST http://{origin_addr}/v1/responses HTTP/1.1\r\nHost: {origin_addr}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         );
         let mut client = TcpStream::connect(proxy.addr).await.unwrap();
         client.write_all(request.as_bytes()).await.unwrap();
         let mut response = Vec::new();
         client.read_to_end(&mut response).await.unwrap();
         assert!(String::from_utf8_lossy(&response).contains("ok"));
+    }
 
+    #[tokio::test]
+    async fn proxy_captures_native_header_without_forwarding() {
+        let proxy = CaptureProxy::start().await.unwrap();
+        let request = "POST http://oneapi.invalid/v1/responses HTTP/1.1\r\nHost: oneapi.invalid\r\ncomate_custom_header: native-value\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        let mut client = TcpStream::connect(proxy.addr).await.unwrap();
+        client.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        assert!(response.is_empty());
         let captured = proxy.captured.await.unwrap();
         assert_eq!(captured.get(NATIVE_HEADER).unwrap(), "native-value");
     }

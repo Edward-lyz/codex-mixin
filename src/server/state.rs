@@ -77,10 +77,40 @@ impl AppState {
         })
     }
 
+    #[cfg(test)]
+    pub(crate) fn with_usage_aggregator(
+        config: GatewayConfig,
+        usage: crate::gateway::TokenUsageAggregator,
+    ) -> anyhow::Result<Self> {
+        let mut config = config;
+        ProviderCapabilities::from_default_path(&config)?.annotate_config(&mut config);
+        let web_search_capabilities = WebSearchCapabilities::from_default_path(&config)?;
+        Self::with_web_search_capabilities_and_env_and_usage(
+            config,
+            web_search_capabilities,
+            |name| std::env::var(name).ok(),
+            usage,
+        )
+    }
+
     fn with_web_search_capabilities_and_env(
         config: GatewayConfig,
         web_search_capabilities: WebSearchCapabilities,
         env_lookup: impl Fn(&str) -> Option<String>,
+    ) -> anyhow::Result<Self> {
+        Self::with_web_search_capabilities_and_env_and_usage(
+            config,
+            web_search_capabilities,
+            env_lookup,
+            crate::gateway::TokenUsageAggregator::try_from_default_path()?,
+        )
+    }
+
+    fn with_web_search_capabilities_and_env_and_usage(
+        config: GatewayConfig,
+        web_search_capabilities: WebSearchCapabilities,
+        env_lookup: impl Fn(&str) -> Option<String>,
+        usage: crate::gateway::TokenUsageAggregator,
     ) -> anyhow::Result<Self> {
         validate_fusion_profiles(&config.fusion_profiles)?;
         let websocket_proxy_env = ProxyEnv::from_lookup(&env_lookup);
@@ -100,9 +130,7 @@ impl AppState {
             websocket_proxy_env,
             image_routes: ImageRouteRegistry::default(),
             benchmarks: ModelBenchmarkManager::from_default_path(),
-            cache_shapes: Arc::new(CacheShapeTracker::with_usage(
-                crate::gateway::TokenUsageAggregator::try_from_default_path()?,
-            )),
+            cache_shapes: Arc::new(CacheShapeTracker::with_usage(usage)),
             web_search_capabilities,
             catalog_sources_cache: Arc::new(tokio::sync::Mutex::new(None)),
             catalog_response_cache: Arc::new(tokio::sync::Mutex::new(None)),
@@ -170,6 +198,19 @@ impl AppState {
             .warm()
             .await
             .map_err(GatewayError::Other)
+    }
+
+    pub(crate) async fn prewarm_ducx(&self) -> Result<(), GatewayError> {
+        let Some(provider) = self
+            .providers
+            .providers()
+            .iter()
+            .find(|provider| provider.uses_ducx_loopback())
+        else {
+            return Ok(());
+        };
+        self.ducx_native_headers(provider).await?;
+        Ok(())
     }
 
     async fn ducx_runtime_for(

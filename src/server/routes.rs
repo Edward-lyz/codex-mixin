@@ -49,6 +49,15 @@ pub async fn serve_on_listener(
             );
         }
     });
+    let ducx_prewarm_state = state.clone();
+    let ducx_prewarm_task = tokio::spawn(async move {
+        if let Err(error) = ducx_prewarm_state.prewarm_ducx().await {
+            tracing::warn!(
+                error = %format!("{error:#}"),
+                "managed DUCX authentication header prewarm failed"
+            );
+        }
+    });
     let probe_state = state.clone();
     let probe_task = state.config.enable_web_search_tool.then(|| {
         tokio::spawn(async move {
@@ -91,6 +100,7 @@ pub async fn serve_on_listener(
         probe_task.abort();
     }
     ducc_prewarm_task.abort();
+    ducx_prewarm_task.abort();
     result?;
     Ok(())
 }

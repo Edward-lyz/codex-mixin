@@ -152,22 +152,25 @@ async fn gateway_auth_accepts_only_the_configured_key_or_actual_codex_oauth_toke
 #[tokio::test]
 async fn usage_endpoint_requires_auth_and_returns_recorded_provider_usage() {
     let directory = tempfile::tempdir().unwrap();
-    let state = AppState::new(GatewayConfig {
-        bind: "127.0.0.1:0".parse().unwrap(),
-        providers: Vec::new(),
-        official_responses_url: "https://example.invalid/responses".to_owned(),
-        codex_auth_path: directory.path().join("auth.json"),
-        gateway_api_key: Some("gateway-key".to_owned()),
-        accept_codex_oauth: false,
-        default_max_tokens: 8192,
-        default_context_window: 1_000_000,
-        request_timeout: Duration::from_secs(2),
-        thinking_mode: ThinkingMode::Off,
-        enable_web_search_tool: false,
-        web_search_tool_type: "web_search_20250305".to_owned(),
-        web_search_max_uses: Some(3),
-        fusion_profiles: Vec::new(),
-    })
+    let state = AppState::with_usage_aggregator(
+        GatewayConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            providers: Vec::new(),
+            official_responses_url: "https://example.invalid/responses".to_owned(),
+            codex_auth_path: directory.path().join("auth.json"),
+            gateway_api_key: Some("gateway-key".to_owned()),
+            accept_codex_oauth: false,
+            default_max_tokens: 8192,
+            default_context_window: 1_000_000,
+            request_timeout: Duration::from_secs(2),
+            thinking_mode: ThinkingMode::Off,
+            enable_web_search_tool: false,
+            web_search_tool_type: "web_search_20250305".to_owned(),
+            web_search_max_uses: Some(3),
+            fusion_profiles: Vec::new(),
+        },
+        crate::gateway::TokenUsageAggregator::default(),
+    )
     .unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();

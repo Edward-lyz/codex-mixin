@@ -104,6 +104,7 @@ fn enabled_report_executable(model: &str) -> anyhow::Result<Option<ManagedReport
     let Some(provider) = config.providers.iter().find(|provider| {
         provider.enabled
             && provider.request_policy.baidu_code_report
+            && provider.model_source == codex_mixin::provider::ProviderModelSource::BaiduOneApi
             && provider_owns_model(provider, model)
     }) else {
         return Ok(None);
@@ -116,15 +117,12 @@ fn enabled_report_executable(model: &str) -> anyhow::Result<Option<ManagedReport
 }
 
 /// True when `model` (as Codex sees it) maps to one of the provider's models,
-/// matching either the upstream id or the provider-qualified catalog slug.
+/// matching the provider-qualified catalog slug for a selected model.
 fn provider_owns_model(provider: &codex_mixin::provider::ProviderDefinition, model: &str) -> bool {
     provider
         .selected_models
         .iter()
-        .chain(provider.cached_models.iter().map(|candidate| &candidate.id))
-        .any(|candidate| {
-            candidate.as_str() == model || catalog_model_slug(candidate, &provider.id) == model
-        })
+        .any(|candidate| catalog_model_slug(candidate, &provider.id) == model)
 }
 
 /// Given `<home>/.baidu-cx/baidu-cx/bin/ducx`, resolve the sibling data-report
@@ -274,7 +272,17 @@ pub(super) fn sync_installation() -> anyhow::Result<()> {
     }
 
     if enabled {
-        let executable = std::env::current_exe().context("resolve codex-mixin executable")?;
+        let executable = if cfg!(target_os = "macos") {
+            let default_app =
+                PathBuf::from("/Applications/Codex Mixin.app/Contents/Resources/codex-mixin");
+            if default_app.is_file() {
+                default_app
+            } else {
+                std::env::current_exe().context("resolve codex-mixin executable")?
+            }
+        } else {
+            std::env::current_exe().context("resolve codex-mixin executable")?
+        };
         let executable = shell_quote(&executable.to_string_lossy());
         for (event_name, event_argument) in REPORT_EVENTS {
             let group = serde_json::json!({
@@ -350,11 +358,15 @@ mod tests {
             id: "Opus 5".to_owned(),
             ..Default::default()
         }];
-        assert!(provider_owns_model(&provider, "GLM-5.2"));
-        assert!(provider_owns_model(&provider, "Opus 5"));
+        assert!(!provider_owns_model(&provider, "GLM-5.2"));
+        assert!(!provider_owns_model(&provider, "Opus 5"));
         assert!(provider_owns_model(
             &provider,
             &catalog_model_slug("GLM-5.2", "baidu-oneapi")
+        ));
+        assert!(!provider_owns_model(
+            &provider,
+            &catalog_model_slug("Opus 5", "baidu-oneapi")
         ));
         assert!(!provider_owns_model(&provider, "gpt-4o"));
     }
