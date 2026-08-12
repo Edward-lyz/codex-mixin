@@ -276,6 +276,7 @@ func baiduAuthBridgePopUpButton() -> NSPopUpButton {
             AppLocalization.string("settings.duccCoreLoopback"),
             "ducc_loopback"
         ),
+        ("DUCX 核心（loopback）", "ducx_loopback"),
     ]
     for (title, value) in modes {
         popup.addItem(withTitle: title)

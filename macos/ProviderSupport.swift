@@ -97,6 +97,7 @@ private func managedVersionComponents(_ version: String) -> [UInt64]? {
 enum BaiduAuthBridgeMode: String, Decodable, Equatable {
     case disabled
     case duccLoopback = "ducc_loopback"
+    case ducxLoopback = "ducx_loopback"
 }
 
 func baiduBridgeNeedsSetup(

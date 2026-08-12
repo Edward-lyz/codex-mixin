@@ -571,6 +571,8 @@ enum ServiceCommand {
 enum ConnectCommand {
     /// Install Codex integration.
     Codex(InstallCodexOptions),
+    /// Install and sign in to the managed DUCX authentication carrier.
+    Ducx,
     /// Install Claude Code integration.
     Claude {
         #[arg(long)]
@@ -1297,6 +1299,11 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         },
         Command::Connect { command } => match command {
             ConnectCommand::Codex(options) => install_codex(options).await,
+            ConnectCommand::Ducx => {
+                let executable = ensure_managed_ducx().await?;
+                println!("managed ducx ready: {}", executable.display());
+                Ok(())
+            }
             ConnectCommand::Claude {
                 settings_path,
                 model,
