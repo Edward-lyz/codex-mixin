@@ -55,6 +55,11 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         action: nil
     )
     private let baiduAuthBridgePopup = baiduAuthBridgePopUpButton()
+    private let baiduCodeReportButton = NSButton(
+        checkboxWithTitle: "上报 AI 代码使用数据",
+        target: nil,
+        action: nil
+    )
     private var customDisplayNameRow: NSView?
     private var customBaseURLRow: NSView?
     private var customWebsiteURLRow: NSView?
@@ -62,6 +67,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private var quotaWorkspaceIDRow: NSView?
     private var quotaAuthCookieRow: NSView?
     private var baiduAuthBridgeRow: NSView?
+    private var baiduCodeReportRow: NSView?
 
     private let addButton = NSButton(title: "新增", target: nil, action: nil)
     private let removeButton = NSButton(title: "删除", target: nil, action: nil)
@@ -227,6 +233,10 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             baiduAuthBridgePopup
         )
         self.baiduAuthBridgeRow = baiduAuthBridgeRow
+        baiduCodeReportButton.toolTip =
+            "仅对该百度 provider 的会话启用 Mixin 级别的代码使用上报（复用托管 DUCX 的 data-report）。"
+        let baiduCodeReportRow = compactLabeledView("", baiduCodeReportButton)
+        self.baiduCodeReportRow = baiduCodeReportRow
         let form = NSStackView(views: [
             compactLabeledView("Provider ID", idField),
             customDisplayNameRow,
@@ -238,6 +248,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             quotaWorkspaceIDRow,
             quotaAuthCookieRow,
             baiduAuthBridgeRow,
+            baiduCodeReportRow,
             compactLabeledView("辅助模型", auxiliaryModelUpstreamButton),
             compactLabeledView("", managedConfigurationLabel),
         ])
@@ -509,6 +520,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             provider.effectiveBaiduAuthBridge?.rawValue ?? BaiduAuthBridgeMode.disabled.rawValue
         )
         auxiliaryModelUpstreamButton.toolTip = auxiliaryModelTooltip(for: provider)
+        baiduCodeReportButton.state = provider.baiduCodeReport == true ? .on : .off
         let isCustom = provider.presetID == "custom"
         customDisplayNameRow?.isHidden = !isCustom
         customBaseURLRow?.isHidden = !isCustom
@@ -518,6 +530,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         quotaWorkspaceIDRow?.isHidden = !openCodeGo
         quotaAuthCookieRow?.isHidden = !openCodeGo
         baiduAuthBridgeRow?.isHidden = provider.presetID != "baidu-oneapi"
+        baiduCodeReportRow?.isHidden = provider.presetID != "baidu-oneapi"
         enableButton.title = provider.enabled ? "停用" : "启用"
         statusLabel.stringValue = selectedProviderStatus()
         statusLabel.toolTip = provider.lastModelRefreshError
@@ -539,6 +552,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         clearQuotaCredentialsButton.isEnabled = false
         auxiliaryModelUpstreamButton.state = .off
         selectPopupValue(baiduAuthBridgePopup, BaiduAuthBridgeMode.disabled.rawValue)
+        baiduCodeReportButton.state = .off
         auxiliaryModelUpstreamButton.toolTip = auxiliaryModelDefaultTooltip()
         statusLabel.stringValue = providers.isEmpty ? "等待新增 Provider" : "请选择 Provider"
         statusLabel.toolTip = nil
@@ -843,6 +857,10 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         if provider.presetID == "baidu-oneapi" {
             appendProviderArgument(&update, "--quota-username", quotaUsername)
             appendBaiduAuthBridgeArguments(&update, mode: selectedBaiduBridge)
+            update.append(contentsOf: [
+                "--baidu-code-report",
+                baiduCodeReportButton.state == .on ? "true" : "false",
+            ])
         }
         if requiresOpenCodeGoQuotaCredentials(provider.presetID ?? "") {
             let workspaceID = quotaWorkspaceIDField.stringValue

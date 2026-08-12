@@ -270,6 +270,10 @@ impl ProviderRuntime {
         self.definition.request_policy.ducc_executable.as_deref()
     }
 
+    pub fn baidu_code_report(&self) -> bool {
+        self.definition.request_policy.baidu_code_report
+    }
+
     pub fn model_supports_thinking(&self, model: &str) -> Option<bool> {
         self.definition
             .cached_models

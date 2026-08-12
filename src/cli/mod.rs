@@ -29,6 +29,7 @@ mod fusion_config;
 mod maintenance;
 mod metadata;
 mod providers;
+mod report_hook;
 mod runtime;
 mod service;
 mod status;
@@ -296,6 +297,12 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
+    /// Internal: forward a Codex hook event to the managed DUCX data-report.
+    #[command(hide = true)]
+    ReportHook {
+        #[arg(long)]
+        event: String,
+    },
     /// Add a provider, start the gateway, and print the next step.
     Setup {
         #[arg(
@@ -667,6 +674,8 @@ enum ProviderCommand {
         baidu_auth_bridge: Option<String>,
         #[arg(long, value_name = "PATH")]
         ducc_executable: Option<PathBuf>,
+        #[arg(long, value_name = "BOOL")]
+        baidu_code_report: Option<bool>,
     },
     /// Update an existing provider.
     Update {
@@ -722,6 +731,8 @@ enum ProviderCommand {
         baidu_auth_bridge: Option<String>,
         #[arg(long, value_name = "PATH")]
         ducc_executable: Option<PathBuf>,
+        #[arg(long, value_name = "BOOL")]
+        baidu_code_report: Option<bool>,
     },
     /// Enable a provider.
     Enable { id: String },
@@ -1043,6 +1054,7 @@ async fn setup(
             header_env: Vec::new(),
             baidu_auth_bridge: (preset == "baidu-oneapi").then(|| "ducc_loopback".to_owned()),
             ducc_executable,
+            baidu_code_report: None,
         })
         .await?;
     }
@@ -1125,6 +1137,7 @@ async fn setup(
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command.unwrap_or(Command::Info { json: false }) {
+        Command::ReportHook { event } => report_hook::run(&event),
         Command::Setup {
             preset,
             key,
@@ -1157,6 +1170,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 header_env,
                 baidu_auth_bridge,
                 ducc_executable,
+                baidu_code_report,
             } => {
                 // Auto-provision the managed DUCX install when the DUCX bridge is
                 // selected without an explicit executable.
@@ -1186,8 +1200,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     header_env,
                     baidu_auth_bridge,
                     ducc_executable,
+                    baidu_code_report,
                 })
-                .await
+                .await?;
+                report_hook::sync_installation()
             }
             ProviderCommand::Update {
                 id,
@@ -1215,6 +1231,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 clear_header_env,
                 baidu_auth_bridge,
                 ducc_executable,
+                baidu_code_report,
             } => {
                 let ducc_executable = match (baidu_auth_bridge.as_deref(), &ducc_executable) {
                     (Some("ducx_loopback"), None) => Some(ensure_managed_ducx().await?),
@@ -1246,12 +1263,23 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     clear_header_env,
                     baidu_auth_bridge,
                     ducc_executable,
+                    baidu_code_report,
                 })
-                .await
+                .await?;
+                report_hook::sync_installation()
             }
-            ProviderCommand::Enable { id } => set_provider_enabled(&id, true),
-            ProviderCommand::Disable { id } => set_provider_enabled(&id, false),
-            ProviderCommand::Remove { id } => remove_provider(&id),
+            ProviderCommand::Enable { id } => {
+                set_provider_enabled(&id, true)?;
+                report_hook::sync_installation()
+            }
+            ProviderCommand::Disable { id } => {
+                set_provider_enabled(&id, false)?;
+                report_hook::sync_installation()
+            }
+            ProviderCommand::Remove { id } => {
+                remove_provider(&id)?;
+                report_hook::sync_installation()
+            }
             ProviderCommand::Discover { id } => discover_models(&id).await,
             ProviderCommand::Test { id, json } => test_provider(&id, json).await,
             ProviderCommand::Select { id, models } => select_models(&id, models),
