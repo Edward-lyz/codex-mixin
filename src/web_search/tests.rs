@@ -60,9 +60,10 @@ fn recognizes_server_and_client_web_search_blocks() {
     let mut server = ProbeObservation::default();
     server.observe(&json!({
         "type": "content_block_start",
-        "content_block": {"type":"server_tool_use","name":"web_search"}
+        "content_block": {"type":"server_tool_use","name":"web_search","id":"srvtoolu_1"}
     }));
     assert!(server.server_tool_started);
+    assert_eq!(server.server_tool_id.as_deref(), Some("srvtoolu_1"));
     assert!(!server.server_search_result);
     assert!(!server.ordinary_tool_call);
 
@@ -71,6 +72,10 @@ fn recognizes_server_and_client_web_search_blocks() {
         "content_block": {"type":"web_search_tool_result","tool_use_id":"srvtoolu_1"}
     }));
     assert!(server.server_search_result);
+    assert!(!server.message_stop);
+
+    server.observe(&json!({"type": "message_stop"}));
+    assert!(server.message_stop);
 
     let mut client = ProbeObservation::default();
     client.observe(&json!({
@@ -80,6 +85,20 @@ fn recognizes_server_and_client_web_search_blocks() {
     assert!(!client.server_tool_started);
     assert!(!client.server_search_result);
     assert!(client.ordinary_tool_call);
+}
+
+#[test]
+fn rejects_server_tool_use_without_id() {
+    let mut observation = ProbeObservation::default();
+    observation.observe(&json!({
+        "type": "content_block_start",
+        "content_block": {"type":"server_tool_use","name":"web_search"}
+    }));
+    assert!(!observation.server_tool_started);
+    assert_eq!(
+        observation.error.as_deref(),
+        Some("server tool use missing id")
+    );
 }
 
 #[test]

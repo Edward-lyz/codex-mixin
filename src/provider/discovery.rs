@@ -17,6 +17,11 @@ pub async fn discover_provider_models(
     definition: &ProviderDefinition,
 ) -> anyhow::Result<Vec<ProviderModel>> {
     let provider = ProviderRuntime::new(definition.clone(), &|name| std::env::var(name).ok())?;
+    let native_headers = if definition.model_source == ProviderModelSource::BaiduOneApi {
+        Some(super::native_baidu_headers(&provider).await?)
+    } else {
+        None
+    };
     match &definition.model_source {
         ProviderModelSource::Static => Ok(definition.cached_models.clone()),
         ProviderModelSource::OpenAiCompatible { .. } => {
@@ -77,11 +82,11 @@ pub async fn discover_provider_models(
                 .models_url()
                 .context("provider available-models URL is not configured")?
                 .clone();
-            let response = provider
-                .apply_auth(client.post(url))
-                .json(&json!({}))
-                .send()
-                .await?;
+            let request = match &native_headers {
+                Some(headers) => client.post(url).headers(headers.clone()),
+                None => provider.apply_auth(client.post(url)),
+            };
+            let response = request.json(&json!({})).send().await?;
             let status = response.status();
             let body = response.text().await?;
             if !status.is_success() {

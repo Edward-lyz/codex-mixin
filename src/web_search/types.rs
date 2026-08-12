@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) const CAPABILITY_FILE_VERSION: u64 = 3;
+pub(super) const CAPABILITY_FILE_VERSION: u64 = 4;
 pub(super) const CAPABILITY_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 pub(super) const PROBE_CONCURRENCY: usize = 4;
 pub(super) const NO_EVIDENCE_PROBE_ATTEMPTS: usize = 3;

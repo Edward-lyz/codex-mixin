@@ -5,6 +5,12 @@ mod presets;
 mod registry;
 mod types;
 
+use std::path::PathBuf;
+use std::time::Duration;
+
+use anyhow::{Context, bail};
+use reqwest::header::HeaderMap;
+
 pub use discovery::{apply_discovered_models, discover_provider_models, redact_provider_error};
 pub use models_dev::{
     enrich_models_with_models_dev, fetch_models_dev_provider_models,
@@ -20,3 +26,37 @@ pub use types::{
     ProviderModel, ProviderModelKey, ProviderModelSource, ProviderProtocol, ProviderQuotaParser,
     ProviderReadiness, ProviderReadinessStatus, ProviderRequestPolicy, is_auto_review_model_id,
 };
+
+/// Mint the native auth headers for the selected Baidu auth core.
+///
+/// Both DUCC and DUCX are lightweight header generators, so this returns cached
+/// headers without keeping a carrier process alive.
+pub(crate) async fn native_baidu_headers(provider: &ProviderRuntime) -> anyhow::Result<HeaderMap> {
+    let executable = provider
+        .ducc_executable()
+        .map(PathBuf::from)
+        .or_else(|| {
+            if provider.uses_ducc_loopback() {
+                crate::ducc::default_ducc_executable()
+            } else if provider.uses_ducx_loopback() {
+                crate::ducx::default_ducx_executable()
+            } else {
+                None
+            }
+        })
+        .context("Baidu auth bridge is enabled but no managed executable is configured")?;
+    if provider.uses_ducc_loopback() {
+        let api_key = provider.definition().auth.api_key.clone();
+        crate::ducc::DuccRuntime::spawn(executable, api_key)
+            .await?
+            .native_headers(Duration::from_secs(30))
+            .await
+    } else if provider.uses_ducx_loopback() {
+        crate::ducx::DucxRuntime::spawn(executable)
+            .await?
+            .native_headers(Duration::from_secs(30))
+            .await
+    } else {
+        bail!("Baidu provider has no native auth bridge configured")
+    }
+}

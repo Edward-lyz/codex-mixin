@@ -234,8 +234,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         )
         self.baiduAuthBridgeRow = baiduAuthBridgeRow
         baiduCodeReportButton.toolTip =
-            "仅对该百度 provider 的会话启用 Mixin 级别的代码使用上报（复用托管 DUCX 的 data-report）。"
-        let baiduCodeReportRow = compactLabeledView("", baiduCodeReportButton)
+            "仅对该百度 provider 的会话启用代码使用上报，复用托管 DUCC/DUCX 的 data-report。"
+        let baiduCodeReportRow = compactLabeledView("上报数据", baiduCodeReportButton)
         self.baiduCodeReportRow = baiduCodeReportRow
         let form = NSStackView(views: [
             compactLabeledView("Provider ID", idField),

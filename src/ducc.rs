@@ -123,7 +123,8 @@ impl DuccRuntime {
             .await
             .context("DUCC did not emit an authenticated request in time")?
             .context("DUCC capture proxy closed before capturing native headers")?;
-        let _ = child.start_kill();
+        let _ = child.kill().await;
+        let _ = child.wait().await;
         Ok(captured)
     }
 }

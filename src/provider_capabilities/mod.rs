@@ -79,9 +79,6 @@ impl ProviderCapabilities {
         provider: &ProviderDefinition,
         models: &[ProviderModel],
     ) -> anyhow::Result<ProviderProbeSummary> {
-        if provider.model_source == ProviderModelSource::BaiduOneApi {
-            return Ok(ProviderProbeSummary::default());
-        }
         let mut definition = provider.clone();
         definition.cached_models = models.to_vec();
         let registry = ProviderRegistry::new(vec![definition])?;
@@ -91,15 +88,29 @@ impl ProviderCapabilities {
                 .context("capability probe provider is missing from registry")?
                 .clone(),
         );
+        let native_headers = if provider.model_source == ProviderModelSource::BaiduOneApi {
+            Some(crate::provider::native_baidu_headers(&runtime).await?)
+        } else {
+            None
+        };
         let probed_at_ms = unix_milliseconds()?;
         let request_limit = Arc::new(tokio::sync::Semaphore::new(PROBE_REQUEST_CONCURRENCY));
         let mut results = stream::iter(models.iter().map(|model| {
             let client = client.clone();
             let runtime = Arc::clone(&runtime);
+            let native_headers = native_headers.clone();
             let request_limit = Arc::clone(&request_limit);
             let model_id = model.id.clone();
             async move {
-                probe::probe_model(&client, &runtime, &model_id, probed_at_ms, &request_limit).await
+                probe::probe_model(
+                    &client,
+                    &runtime,
+                    &model_id,
+                    probed_at_ms,
+                    &request_limit,
+                    native_headers.as_ref(),
+                )
+                .await
             }
         }))
         .buffer_unordered(PROBE_CONCURRENCY)

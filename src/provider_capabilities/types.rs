@@ -4,7 +4,7 @@ use serde::{Deserialize, Serialize};
 
 use crate::provider::{ProviderAuthHeader, ProviderDefinition, ProviderProtocol};
 
-pub(super) const CAPABILITY_FILE_VERSION: u64 = 1;
+pub(super) const CAPABILITY_FILE_VERSION: u64 = 2;
 pub(super) const PROBE_CONCURRENCY: usize = 4;
 pub(super) const PROBE_REQUEST_CONCURRENCY: usize = 8;
 

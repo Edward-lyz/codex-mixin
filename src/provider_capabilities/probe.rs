@@ -2,11 +2,13 @@ use std::collections::HashSet;
 use std::time::Duration;
 
 use anyhow::Context;
-use reqwest::{Client, StatusCode, Url};
+use futures_util::StreamExt;
+use reqwest::{Client, StatusCode, Url, header::HeaderMap};
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
 
 use crate::provider::{ProviderProtocol, ProviderRuntime};
+use crate::sse::SseDecoder;
 
 use super::types::{CapabilityStatus, ModelCapabilities, ProtocolCapabilities};
 
@@ -20,6 +22,7 @@ pub(super) async fn probe_model(
     model: &str,
     probed_at_ms: u64,
     request_limit: &Semaphore,
+    native_headers: Option<&HeaderMap>,
 ) -> ModelCapabilities {
     let (responses, messages, chat) = tokio::join!(
         probe_protocol_candidates(
@@ -27,21 +30,24 @@ pub(super) async fn probe_model(
             provider,
             model,
             ProviderProtocol::OpenAiResponses,
-            request_limit
+            request_limit,
+            native_headers,
         ),
         probe_protocol_candidates(
             client,
             provider,
             model,
             ProviderProtocol::AnthropicMessages,
-            request_limit
+            request_limit,
+            native_headers,
         ),
         probe_protocol_candidates(
             client,
             provider,
             model,
             ProviderProtocol::OpenAiChat,
-            request_limit
+            request_limit,
+            native_headers,
         ),
     );
     let protocols = vec![responses, messages, chat];
@@ -74,12 +80,21 @@ async fn probe_protocol_candidates(
     model: &str,
     protocol: ProviderProtocol,
     request_limit: &Semaphore,
+    native_headers: Option<&HeaderMap>,
 ) -> ProtocolCapabilities {
     let mut unsupported = None;
     let mut indeterminate = None;
     for api_path in candidate_paths(provider, protocol) {
-        let candidate =
-            probe_protocol(client, provider, model, protocol, &api_path, request_limit).await;
+        let candidate = probe_protocol(
+            client,
+            provider,
+            model,
+            protocol,
+            &api_path,
+            request_limit,
+            native_headers,
+        )
+        .await;
         match candidate.baseline {
             CapabilityStatus::Supported => return candidate,
             CapabilityStatus::Indeterminate => indeterminate = Some(candidate),
@@ -98,6 +113,7 @@ async fn probe_protocol(
     protocol: ProviderProtocol,
     api_path: &str,
     request_limit: &Semaphore,
+    native_headers: Option<&HeaderMap>,
 ) -> ProtocolCapabilities {
     let url = match endpoint_url(&provider.definition().base_url, api_path) {
         Ok(url) => url,
@@ -121,6 +137,7 @@ async fn probe_protocol(
         &url,
         probe_body(protocol, model, None),
         request_limit,
+        native_headers,
     )
     .await;
     if baseline.status != CapabilityStatus::Supported {
@@ -143,6 +160,7 @@ async fn probe_protocol(
             &url,
             probe_body(protocol, model, Some(ProbeFeature::Image)),
             request_limit,
+            native_headers,
         ),
         send_probe(
             client,
@@ -151,6 +169,7 @@ async fn probe_protocol(
             &url,
             probe_body(protocol, model, Some(ProbeFeature::FunctionTools)),
             request_limit,
+            native_headers,
         ),
         send_probe(
             client,
@@ -159,6 +178,7 @@ async fn probe_protocol(
             &url,
             probe_body(protocol, model, Some(ProbeFeature::ToolSearch)),
             request_limit,
+            native_headers,
         ),
         send_probe(
             client,
@@ -167,6 +187,7 @@ async fn probe_protocol(
             &url,
             probe_body(protocol, model, Some(ProbeFeature::WebSearch)),
             request_limit,
+            native_headers,
         ),
     );
     let errors = [
@@ -337,20 +358,20 @@ async fn send_probe(
     url: &Url,
     body: Value,
     request_limit: &Semaphore,
+    native_headers: Option<&HeaderMap>,
 ) -> ProbeOutcome {
     let permit = request_limit
         .acquire()
         .await
         .expect("provider capability semaphore was closed");
-    let request = provider
-        .apply_auth_for_protocol(client.post(url.clone()), protocol)
-        .json(&body)
-        .timeout(PROBE_TIMEOUT);
+    let request = match native_headers {
+        Some(headers) => client.post(url.clone()).headers(headers.clone()),
+        None => provider.apply_auth_for_protocol(client.post(url.clone()), protocol),
+    }
+    .json(&body)
+    .timeout(PROBE_TIMEOUT);
     let outcome = match request.send().await {
-        Ok(response) if response.status().is_success() => ProbeOutcome {
-            status: CapabilityStatus::Supported,
-            error: None,
-        },
+        Ok(response) if response.status().is_success() => validate_probe_stream(response).await,
         Ok(response) => {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
@@ -371,6 +392,53 @@ async fn send_probe(
     };
     drop(permit);
     outcome
+}
+
+async fn validate_probe_stream(response: reqwest::Response) -> ProbeOutcome {
+    let mut decoder = SseDecoder::default();
+    let mut stream = response.bytes_stream();
+    let mut saw_event = false;
+    let mut saw_error = false;
+    while let Some(chunk) = stream.next().await {
+        let chunk = match chunk {
+            Ok(chunk) => chunk,
+            Err(error) => {
+                return ProbeOutcome::indeterminate(format!(
+                    "provider capability probe stream failed: {error}"
+                ));
+            }
+        };
+        for event in decoder.push(&chunk) {
+            saw_event = true;
+            let Ok(payload) = serde_json::from_str::<Value>(&event.data) else {
+                continue;
+            };
+            if payload.get("type").and_then(Value::as_str) == Some("error")
+                || payload.get("object").and_then(Value::as_str) == Some("error")
+            {
+                saw_error = true;
+            }
+        }
+    }
+    if !decoder.remaining().is_empty() {
+        saw_event = true;
+        if serde_json::from_slice::<Value>(decoder.remaining()).is_ok_and(|payload| {
+            payload.get("type").and_then(Value::as_str) == Some("error")
+                || payload.get("object").and_then(Value::as_str) == Some("error")
+        }) {
+            saw_error = true;
+        }
+    }
+    if saw_error {
+        ProbeOutcome::indeterminate("provider capability probe returned an error event".to_owned())
+    } else if saw_event {
+        ProbeOutcome {
+            status: CapabilityStatus::Supported,
+            error: None,
+        }
+    } else {
+        ProbeOutcome::indeterminate("provider capability probe returned no SSE events".to_owned())
+    }
 }
 
 fn classify_status(status: StatusCode) -> CapabilityStatus {

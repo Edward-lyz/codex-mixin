@@ -112,11 +112,18 @@ pub(super) async fn probe_model_once(
             "session_id": format!("web-search-probe-{}", uuid::Uuid::new_v4().simple())
         });
     }
-    let request = provider.apply_auth(
-        client
-            .post(provider.api_url().clone())
-            .header("accept", "text/event-stream"),
-    );
+    let native_headers = if provider.is_baidu_model_source() {
+        Some(crate::provider::native_baidu_headers(provider).await?)
+    } else {
+        None
+    };
+    let base = client
+        .post(provider.api_url().clone())
+        .header("accept", "text/event-stream");
+    let request = match &native_headers {
+        Some(headers) => base.headers(headers.clone()),
+        None => provider.apply_auth(base),
+    };
     let request =
         provider.apply_anthropic_beta(request, provider.definition().anthropic_beta.as_deref());
     let response = request.json(&body).send().await?;
@@ -138,14 +145,14 @@ pub(super) async fn probe_model_once(
     let mut observation = ProbeObservation::default();
     let mut decoder = SseDecoder::default();
     let mut response_stream = response.bytes_stream();
+    let mut raw_response = Vec::new();
     while let Some(chunk) = response_stream.next().await {
-        for event in decoder.push(&chunk?) {
+        let chunk = chunk?;
+        raw_response.extend_from_slice(&chunk);
+        for event in decoder.push(&chunk) {
             let payload: Value = serde_json::from_str(&event.data)
                 .context("web search probe returned invalid SSE JSON")?;
             observation.observe(&payload);
-            if observation.server_search_result {
-                return Ok(ProbeVerdict::Supported("server_tool_result"));
-            }
             if observation.ordinary_tool_call {
                 return Ok(ProbeVerdict::Unsupported("ordinary_client_tool_call"));
             }
@@ -159,16 +166,43 @@ pub(super) async fn probe_model_once(
             .context("web search probe returned neither valid SSE nor JSON")?;
         observation.observe(&payload);
     }
-    if observation.server_search_result {
-        return Ok(ProbeVerdict::Supported("server_tool_result"));
+    if let Some(error) = observation.error {
+        anyhow::bail!("web search probe failed: {error}");
+    }
+
+    // Run the same mapper used for real requests. The shallow type check alone
+    // is not enough: an upstream that omits `server_tool_use.id` or `tool_use_id`
+    // must be rejected here instead of being cached as supported.
+    let upstream =
+        futures_util::stream::iter([Ok::<_, reqwest::Error>(bytes::Bytes::from(raw_response))]);
+    let mapped = crate::openai_events::map_anthropic_sse(
+        upstream,
+        json!({"model": upstream_model}),
+        crate::convert::ToolNameMap::default(),
+    );
+    tokio::pin!(mapped);
+    let mut mapped_decoder = SseDecoder::default();
+    let mut mapped_completed = false;
+    let mut mapped_failed = false;
+    while let Some(chunk) = mapped.next().await {
+        for event in mapped_decoder.push(&chunk.expect("infallible mapper")) {
+            match event.event.as_deref() {
+                Some("response.completed") => mapped_completed = true,
+                Some("response.failed") => mapped_failed = true,
+                _ => {}
+            }
+        }
+    }
+    if mapped_failed {
+        anyhow::bail!("web search probe failed inside the response mapper");
     }
     if observation.ordinary_tool_call {
         return Ok(ProbeVerdict::Unsupported("ordinary_client_tool_call"));
     }
-    if let Some(error) = observation.error {
-        anyhow::bail!("web search probe failed: {error}");
+    if observation.server_search_result && observation.message_stop && mapped_completed {
+        return Ok(ProbeVerdict::Supported("complete_server_tool_lifecycle"));
     }
-    if observation.server_tool_started {
+    if observation.server_tool_started && !observation.server_search_result {
         anyhow::bail!("web search server tool started without returning a result");
     }
     if !upstream_model.to_ascii_lowercase().starts_with("gpt-") {
@@ -195,6 +229,8 @@ pub(super) enum ProbeVerdict {
 pub(super) struct ProbeObservation {
     pub(super) server_tool_started: bool,
     pub(super) server_search_result: bool,
+    pub(super) server_tool_id: Option<String>,
+    pub(super) message_stop: bool,
     pub(super) ordinary_tool_call: bool,
     pub(super) text: String,
     pub(super) error: Option<String>,
@@ -229,6 +265,7 @@ impl ProbeObservation {
                     self.error = Some(error.to_owned());
                 }
             }
+            Some("message_stop") => self.message_stop = true,
             _ => {}
         }
     }
@@ -238,9 +275,26 @@ impl ProbeObservation {
             Some("server_tool_use")
                 if block.get("name").and_then(Value::as_str) == Some("web_search") =>
             {
-                self.server_tool_started = true;
+                match block.get("id").and_then(Value::as_str) {
+                    Some(id) if !id.is_empty() => {
+                        self.server_tool_started = true;
+                        self.server_tool_id = Some(id.to_owned());
+                    }
+                    _ => self.error = Some("server tool use missing id".to_owned()),
+                }
             }
-            Some("web_search_tool_result") => self.server_search_result = true,
+            Some("web_search_tool_result") => {
+                match block.get("tool_use_id").and_then(Value::as_str) {
+                    Some(id) if self.server_tool_id.as_deref() == Some(id) => {
+                        self.server_search_result = true;
+                    }
+                    Some(_) => {
+                        self.error =
+                            Some("server tool result tool_use_id does not match".to_owned());
+                    }
+                    _ => self.error = Some("server tool result missing tool_use_id".to_owned()),
+                }
+            }
             Some("tool_use") if block.get("name").and_then(Value::as_str) == Some("web_search") => {
                 self.ordinary_tool_call = true;
             }
