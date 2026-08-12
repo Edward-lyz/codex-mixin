@@ -270,11 +270,15 @@ pub(in crate::cli) fn uninstall_codex(
     config_path: Option<PathBuf>,
     catalog_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
-    if restore_imagegen_skill(&codex_home_path())? {
-        println!("codex imagegen skill: restored official skill");
-    }
     super::super::progress_step("Reading and locking Codex config");
     let config_path = resolve_codex_config_path(config_path)?;
+    let codex_home = config_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?
+        .to_path_buf();
+    if restore_imagegen_skill(&codex_home)? {
+        println!("codex imagegen skill: restored official skill");
+    }
     let _config_lock = ManagedConfigLock::acquire(&config_path)?;
     let raw_config = if config_path.exists() {
         fs::read_to_string(&config_path)?
@@ -345,11 +349,9 @@ pub(in crate::cli) fn uninstall_codex(
             }
         }
     }
-    let codex_home = config_path
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?;
     super::super::progress_step("Restoring history sessions and SQLite state");
-    let history = migrate_history_from_provider(codex_home, &managed_provider, &restored_provider)?;
+    let history =
+        migrate_history_from_provider(&codex_home, &managed_provider, &restored_provider)?;
     println!("history provider restored: {restored_provider}");
     println!(
         "history restored: {} JSONL files, {} SQLite rows",

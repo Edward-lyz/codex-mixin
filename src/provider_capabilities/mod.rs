@@ -88,7 +88,9 @@ impl ProviderCapabilities {
                 .context("capability probe provider is missing from registry")?
                 .clone(),
         );
-        let native_headers = if provider.model_source == ProviderModelSource::BaiduOneApi {
+        let native_headers = if provider.model_source == ProviderModelSource::BaiduOneApi
+            && (runtime.uses_ducc_loopback() || runtime.uses_ducx_loopback())
+        {
             Some(crate::provider::native_baidu_headers(&runtime).await?)
         } else {
             None
