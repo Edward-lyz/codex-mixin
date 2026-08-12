@@ -15,6 +15,7 @@ use anyhow::{Context, ensure};
 use serde_json::Value;
 
 use codex_mixin::config::load_stored_config;
+use codex_mixin::provider::catalog_model_slug;
 
 const MANAGED_HOOK_MARKER: &str = " report-hook --event ";
 /// (Codex hooks.json event name, our `--event` argument value).
@@ -31,8 +32,18 @@ pub(super) fn run(event: &str) -> anyhow::Result<()> {
     std::io::stdin()
         .read_to_end(&mut hook_body)
         .context("read Codex report hook input")?;
-    let Some(managed) = enabled_report_executable()? else {
-        // Reporting disabled or unconfigured: no-op so the hook never blocks Codex.
+    // Scope reporting to turns that actually use a reporting-enabled Baidu model.
+    // Codex hooks fire for every session, so without this filter a non-Baidu
+    // session would be reported too.
+    let model = hook_body_model(&hook_body);
+    let Some(managed) = model
+        .as_deref()
+        .map(enabled_report_executable)
+        .transpose()?
+        .flatten()
+    else {
+        // Reporting disabled, unconfigured, or this turn is not a Baidu model:
+        // no-op so the hook never blocks Codex and never over-reports.
         return Ok(());
     };
     let event_argument = match event {
@@ -82,17 +93,19 @@ struct ManagedReport {
     home: PathBuf,
 }
 
-/// Resolve the managed DUCX `data-report` binary for the first enabled Baidu
-/// provider that opted into reporting, or `None` when reporting is off.
-fn enabled_report_executable() -> anyhow::Result<Option<ManagedReport>> {
+/// Resolve the managed DUCX `data-report` binary for the enabled Baidu provider
+/// that owns `model` and opted into reporting, or `None` when reporting is off
+/// or the model does not belong to such a provider. This keeps reporting scoped
+/// to actual Baidu usage even though Codex fires hooks for every session.
+fn enabled_report_executable(model: &str) -> anyhow::Result<Option<ManagedReport>> {
     let Some(config) = load_stored_config()? else {
         return Ok(None);
     };
-    let Some(provider) = config
-        .providers
-        .iter()
-        .find(|provider| provider.enabled && provider.request_policy.baidu_code_report)
-    else {
+    let Some(provider) = config.providers.iter().find(|provider| {
+        provider.enabled
+            && provider.request_policy.baidu_code_report
+            && provider_owns_model(provider, model)
+    }) else {
         return Ok(None);
     };
     let executable =
@@ -100,6 +113,18 @@ fn enabled_report_executable() -> anyhow::Result<Option<ManagedReport>> {
             "Baidu code reporting is enabled but no managed DUCX executable is configured",
         )?;
     managed_report_from_executable(&executable).map(Some)
+}
+
+/// True when `model` (as Codex sees it) maps to one of the provider's models,
+/// matching either the upstream id or the provider-qualified catalog slug.
+fn provider_owns_model(provider: &codex_mixin::provider::ProviderDefinition, model: &str) -> bool {
+    provider
+        .selected_models
+        .iter()
+        .chain(provider.cached_models.iter().map(|candidate| &candidate.id))
+        .any(|candidate| {
+            candidate.as_str() == model || catalog_model_slug(candidate, &provider.id) == model
+        })
 }
 
 /// Given `<home>/.baidu-cx/baidu-cx/bin/ducx`, resolve the sibling data-report
@@ -146,6 +171,14 @@ fn hook_body_cwd(hook_body: &[u8]) -> Option<PathBuf> {
         .get("cwd")
         .and_then(Value::as_str)
         .map(PathBuf::from)
+}
+
+fn hook_body_model(hook_body: &[u8]) -> Option<String> {
+    serde_json::from_slice::<Value>(hook_body)
+        .ok()?
+        .get("model")
+        .and_then(Value::as_str)
+        .map(str::to_owned)
 }
 
 fn git_repo_and_branch(cwd: &Path) -> (Option<String>, Option<String>) {
@@ -300,5 +333,29 @@ mod tests {
         let body = br#"{"cwd":"/tmp/project","event":"stop"}"#;
         assert_eq!(hook_body_cwd(body), Some(PathBuf::from("/tmp/project")));
         assert_eq!(hook_body_cwd(b"not json"), None);
+    }
+
+    #[test]
+    fn reads_model_from_hook_body() {
+        let body = br#"{"model":"gpt-5.6-luna","cwd":"/tmp"}"#;
+        assert_eq!(hook_body_model(body), Some("gpt-5.6-luna".to_owned()));
+        assert_eq!(hook_body_model(br#"{"cwd":"/tmp"}"#), None);
+    }
+
+    #[test]
+    fn scopes_reporting_to_provider_models() {
+        let mut provider = codex_mixin::provider::baidu_oneapi_provider("baidu-oneapi", "key");
+        provider.selected_models = vec!["GLM-5.2".to_owned()];
+        provider.cached_models = vec![codex_mixin::provider::ProviderModel {
+            id: "Opus 5".to_owned(),
+            ..Default::default()
+        }];
+        assert!(provider_owns_model(&provider, "GLM-5.2"));
+        assert!(provider_owns_model(&provider, "Opus 5"));
+        assert!(provider_owns_model(
+            &provider,
+            &catalog_model_slug("GLM-5.2", "baidu-oneapi")
+        ));
+        assert!(!provider_owns_model(&provider, "gpt-4o"));
     }
 }
