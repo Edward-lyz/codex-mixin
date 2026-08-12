@@ -272,6 +272,8 @@ func localizedProgressLabel(_ raw: String) -> String {
         "Fetching available models": "获取可用模型列表",
         "加载模型元数据": "加载模型元数据",
         "Loading model metadata": "加载模型元数据",
+        "准备或安装 Codex CLI": "准备或安装 Codex CLI",
+        "Preparing or installing Codex CLI": "准备或安装 Codex CLI",
         "写入 Codex 配置和模型目录": "写入 Codex 配置和模型目录",
         "Writing Codex config and model catalog": "写入 Codex 配置和模型目录",
         "同步历史会话与 SQLite 状态": "同步历史会话与 SQLite 状态",

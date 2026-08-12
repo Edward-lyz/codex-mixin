@@ -15,6 +15,7 @@ extension AppDelegate {
                         "获取 Codex 配置模板",
                         "获取可用模型列表",
                         "加载模型元数据",
+                        "准备或安装 Codex CLI",
                         "写入 Codex 配置和模型目录",
                         "同步历史会话与 SQLite 状态",
                         "校验安装结果",

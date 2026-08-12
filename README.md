@@ -758,6 +758,8 @@ The install panel and CLI expose two mutually exclusive modes:
 
 The CLI never guesses a mode from `auth.json` or `models_cache.json`, and the mode flag is required. Even if you have an official account, you may explicitly choose custom-only mode. To use official features, cancel installation, sign in to Codex and open it once, then select official account mode.
 
+Installation needs a local `codex` binary to validate the managed config with `codex doctor` and `codex debug models`. Codex Mixin first uses `CODEX_CLI_PATH`, the bundled CLI inside `/Applications/ChatGPT.app` or `/Applications/Codex.app`, then `~/.local/bin/codex`, then `PATH`. If none is found, it runs the official Codex installer in non-interactive mode and installs the standalone CLI under `~/.local/bin`.
+
 Installation:
 
 1. Fetches upstream models.
