@@ -1,5 +1,5 @@
 use std::collections::{BTreeMap, HashSet};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 
 use anyhow::ensure;
 use reqwest::header::HeaderName;
@@ -233,6 +233,28 @@ impl ProviderDefinition {
                 "provider {} DUCC executable path must be absolute",
                 self.id
             );
+            let expected_layout = match self.request_policy.effective_baidu_auth_bridge() {
+                BaiduAuthBridge::DuccLoopback => Some((".baidu-cc", "baidu-cc")),
+                BaiduAuthBridge::DucxLoopback => Some((".baidu-cx", "baidu-cx")),
+                BaiduAuthBridge::Disabled => None,
+            };
+            if let Some((root_name, install_name)) = expected_layout {
+                let install = executable.parent().and_then(Path::parent);
+                let root = install.and_then(Path::parent);
+                ensure!(
+                    install
+                        .and_then(Path::file_name)
+                        .and_then(|name| name.to_str())
+                        == Some(install_name)
+                        && root
+                            .and_then(Path::file_name)
+                            .and_then(|name| name.to_str())
+                            == Some(root_name),
+                    "provider {} {:?} executable path does not match the managed {root_name}/{install_name}/bin layout",
+                    self.id,
+                    self.request_policy.effective_baidu_auth_bridge()
+                );
+            }
         }
         if let Some(executable) = &self.request_policy.data_report_executable {
             ensure!(
@@ -635,6 +657,23 @@ mod tests {
                 .unwrap_err()
                 .to_string()
                 .contains("Baidu authentication bridge only for Baidu OneAPI")
+        );
+    }
+
+    #[test]
+    fn baidu_auth_bridge_rejects_the_other_core_executable() {
+        let mut provider = crate::provider::baidu_oneapi_provider("baidu-oneapi", "key");
+        provider.quota_username = Some("user".to_owned());
+        provider.request_policy.baidu_auth_bridge = Some(BaiduAuthBridge::DucxLoopback);
+        provider.request_policy.ducc_executable =
+            Some("/Users/example/.codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin/ducc".into());
+
+        assert!(
+            provider
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("does not match the managed .baidu-cx/baidu-cx/bin layout")
         );
     }
 

@@ -105,8 +105,27 @@ pub async fn serve_on_listener(
     Ok(())
 }
 
-async fn healthz() -> impl IntoResponse {
-    Json(json!({"ok": true}))
+async fn healthz(State(state): State<AppState>) -> impl IntoResponse {
+    let mut healthy = 0;
+    let mut degraded = 0;
+    for provider in state.providers.providers() {
+        match provider.definition().readiness().status {
+            crate::provider::ProviderReadinessStatus::Healthy => healthy += 1,
+            crate::provider::ProviderReadinessStatus::Degraded => degraded += 1,
+            crate::provider::ProviderReadinessStatus::Disabled => {}
+        }
+    }
+    let provider_readiness = if degraded > 0 {
+        "degraded"
+    } else if healthy > 0 {
+        "healthy"
+    } else {
+        "disabled"
+    };
+    Json(json!({
+        "ok": true,
+        "provider_readiness": provider_readiness,
+    }))
 }
 
 async fn models(

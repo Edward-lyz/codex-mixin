@@ -90,13 +90,9 @@ pub(crate) async fn stream_provider_response(
     let web_search_enabled = state.web_search_enabled_for_custom_request(body);
     let protocol = provider.protocol_for_model(&upstream_model_id);
     let advertised_thinking = provider.model_supports_thinking(&upstream_model_id);
-    // DUCX loopback mints login-derived auth headers; fetch once and inject at the
+    // Both managed auth cores mint native headers. Fetch once and inject at the
     // send sites instead of the stored placeholder key.
-    let ducx_native = if provider.uses_ducx_loopback() {
-        Some(state.ducx_native_headers(provider).await?)
-    } else {
-        None
-    };
+    let baidu_native = state.baidu_native_headers(provider).await?;
     let stream = match protocol {
         ProviderProtocol::AnthropicMessages => {
             let auto_thinking_kind =
@@ -156,7 +152,7 @@ pub(crate) async fn stream_provider_response(
             let base_request = state
                 .client
                 .post(provider.api_url_for_model(&upstream_model_id).clone());
-            let upstream_request = match &ducx_native {
+            let upstream_request = match &baidu_native {
                 Some(native) => base_request.headers(native.clone()),
                 None => provider.apply_auth_for_protocol(base_request, protocol),
             };
@@ -211,7 +207,7 @@ pub(crate) async fn stream_provider_response(
             let base_request = state
                 .client
                 .post(provider.api_url_for_model(&upstream_model_id).clone());
-            let upstream_request = match &ducx_native {
+            let upstream_request = match &baidu_native {
                 Some(native) => base_request.headers(native.clone()),
                 None => provider.apply_auth_for_protocol(base_request, protocol),
             };

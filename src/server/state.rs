@@ -263,6 +263,19 @@ impl AppState {
             .map_err(GatewayError::Other)
     }
 
+    pub(crate) async fn baidu_native_headers(
+        &self,
+        provider: &ProviderRuntime,
+    ) -> Result<Option<axum::http::HeaderMap>, GatewayError> {
+        if provider.uses_ducc_loopback() {
+            Ok(Some(self.ducc_native_headers(provider).await?))
+        } else if provider.uses_ducx_loopback() {
+            Ok(Some(self.ducx_native_headers(provider).await?))
+        } else {
+            Ok(None)
+        }
+    }
+
     pub async fn fetch_models(&self) -> Result<Vec<ModelInfo>, GatewayError> {
         let mut models = Vec::new();
         for provider in self.providers.providers() {
@@ -575,13 +588,7 @@ impl AppState {
         };
         // DUCC and DUCX both act as header generators. Merge whichever native
         // headers the selected auth core produced instead of the stored key.
-        let native = if provider.uses_ducc_loopback() {
-            Some(self.ducc_native_headers(provider).await?)
-        } else if provider.uses_ducx_loopback() {
-            Some(self.ducx_native_headers(provider).await?)
-        } else {
-            None
-        };
+        let native = self.baidu_native_headers(provider).await?;
         let base_request = self.client.post(provider.api_url().clone());
         let mut upstream_request = match &native {
             Some(native) => base_request.headers(native.clone()),

@@ -100,6 +100,9 @@ async fn startup_does_not_wait_for_official_catalog_network() {
         .unwrap();
 
     assert!(response.status().is_success());
+    let health: serde_json::Value = response.json().await.unwrap();
+    assert_eq!(health["ok"], true);
+    assert_eq!(health["provider_readiness"], "healthy");
     assert!(child.try_wait().unwrap().is_none());
     child.kill().await.unwrap();
     child.wait().await.unwrap();

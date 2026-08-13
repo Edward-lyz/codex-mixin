@@ -2,6 +2,12 @@ import Cocoa
 
 private struct GatewayHealthResponse: Decodable {
     let ok: Bool
+    let providerReadiness: String?
+
+    enum CodingKeys: String, CodingKey {
+        case ok
+        case providerReadiness = "provider_readiness"
+    }
 }
 
 extension AppDelegate {
@@ -405,9 +411,9 @@ extension AppDelegate {
         pendingStatusRefreshScope = nil
         if scope == .health {
             do {
-                try await checkGatewayHealth()
+                let health = try await checkGatewayHealth()
                 guard isCurrent() else { return }
-                applyHealthyGatewaySnapshot()
+                applyHealthyGatewaySnapshot(health)
             } catch {
                 do {
                     let status = try await runGateway(["status"])
@@ -509,7 +515,7 @@ extension AppDelegate {
         }
     }
 
-    private func checkGatewayHealth() async throws {
+    private func checkGatewayHealth() async throws -> GatewayHealthResponse {
         guard
             let serviceEndpoint,
             var healthURL = URL(string: serviceEndpoint)
@@ -523,20 +529,30 @@ extension AppDelegate {
         var request = URLRequest(url: healthURL)
         request.timeoutInterval = 2
         let (data, response) = try await URLSession.shared.data(for: request)
-        guard
-            let httpResponse = response as? HTTPURLResponse,
-            (200 ... 299).contains(httpResponse.statusCode),
-            try JSONDecoder().decode(GatewayHealthResponse.self, from: data).ok
+        guard let httpResponse = response as? HTTPURLResponse,
+              (200 ... 299).contains(httpResponse.statusCode)
         else {
             throw GatewayError.command("gateway health check failed")
         }
+        let health = try JSONDecoder().decode(GatewayHealthResponse.self, from: data)
+        guard health.ok else {
+            throw GatewayError.command("gateway health check failed")
+        }
+        return health
     }
 
-    private func applyHealthyGatewaySnapshot() {
+    private func applyHealthyGatewaySnapshot(_ health: GatewayHealthResponse) {
         isRunning = true
-        if providerStatusDetail != nil {
+        if health.providerReadiness == "degraded" {
             serviceStatus = "本地网关运行中 · Provider 降级"
-        } else if !serviceStatus.contains("无启用 Provider") {
+            if providerStatusDetail == nil {
+                providerStatusDetail = "Provider 配置或模型缓存需要处理"
+            }
+        } else if health.providerReadiness == "disabled" {
+            providerStatusDetail = nil
+            serviceStatus = "本地网关运行中 · 无启用 Provider"
+        } else {
+            providerStatusDetail = nil
             serviceStatus = "本地网关运行中"
         }
         updateStatusTitle()

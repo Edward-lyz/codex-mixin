@@ -263,6 +263,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         configureButton(enableButton, action: #selector(toggleProvider))
         configureButton(testButton, action: #selector(testProvider))
         configureButton(saveButton, action: #selector(saveProvider))
+        baiduAuthBridgePopup.target = self
+        baiduAuthBridgePopup.action = #selector(baiduAuthBridgeChanged)
         saveButton.keyEquivalent = "\r"
         let actionRow = NSStackView(views: [
             enableButton,
@@ -747,6 +749,13 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
     @objc private func testProvider() {
         guard let provider = selectedProvider, !isBusy else { return }
+        guard selectedBaiduAuthBridgeMode() == (provider.effectiveBaiduAuthBridge ?? .disabled) else {
+            showAlert(
+                title: "认证方式尚未应用",
+                message: "先保存认证方式，再测试连接或刷新模型。未保存的下拉框选择不会改变网关配置。"
+            )
+            return
+        }
         setBusy(true, status: "正在测试 \(provider.id)…")
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -762,6 +771,18 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             } catch {
                 showAlert(title: "连接测试失败", message: String(describing: error))
             }
+        }
+    }
+
+    @objc private func baiduAuthBridgeChanged() {
+        guard let provider = selectedProvider, provider.presetID == "baidu-oneapi" else { return }
+        let saved = provider.effectiveBaiduAuthBridge ?? .disabled
+        if selectedBaiduAuthBridgeMode() == saved {
+            statusLabel.stringValue = selectedProviderStatus()
+            testButton.isEnabled = !isBusy
+        } else {
+            statusLabel.stringValue = "认证方式尚未保存；保存后测试连接或刷新模型"
+            testButton.isEnabled = false
         }
     }
 

@@ -1177,6 +1177,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 // Auto-provision the managed DUCX install when the DUCX bridge is
                 // selected without an explicit executable.
                 let ducc_executable = match (baidu_auth_bridge.as_deref(), &ducc_executable) {
+                    (Some("ducc_loopback"), None) => Some(ensure_managed_ducc().await?),
                     (Some("ducx_loopback"), None) => Some(ensure_managed_ducx().await?),
                     _ => ducc_executable,
                 };
@@ -1236,6 +1237,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 baidu_code_report,
             } => {
                 let ducc_executable = match (baidu_auth_bridge.as_deref(), &ducc_executable) {
+                    (Some("ducc_loopback"), None) => Some(ensure_managed_ducc().await?),
                     (Some("ducx_loopback"), None) => Some(ensure_managed_ducx().await?),
                     _ => ducc_executable,
                 };
