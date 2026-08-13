@@ -16,6 +16,21 @@ use tokio::task::JoinHandle;
 pub(crate) const NATIVE_HEADER: &str = "comate_custom_header";
 const MAX_PROXY_HEAD: usize = 64 * 1024;
 
+#[derive(Clone, Copy)]
+pub(crate) enum CaptureTrigger {
+    Authorization,
+    NativeHeader,
+}
+
+impl CaptureTrigger {
+    fn is_present(self, headers: &HeaderMap) -> bool {
+        match self {
+            Self::Authorization => headers.contains_key(reqwest::header::AUTHORIZATION),
+            Self::NativeHeader => headers.contains_key(NATIVE_HEADER),
+        }
+    }
+}
+
 /// Headers worth forwarding from the carrier request onto Mixin's own request.
 /// Everything else (transport, host, content-length) is rebuilt by Mixin.
 fn is_capturable_header(name: &str) -> bool {
@@ -34,7 +49,7 @@ pub(crate) struct CaptureProxy {
 }
 
 impl CaptureProxy {
-    pub(crate) async fn start() -> anyhow::Result<Self> {
+    pub(crate) async fn start(trigger: CaptureTrigger) -> anyhow::Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .context("bind auth header capture proxy")?;
@@ -50,7 +65,7 @@ impl CaptureProxy {
                 };
                 let sender = Arc::clone(&sender);
                 tokio::spawn(async move {
-                    if let Err(error) = proxy_connection(client, sender).await {
+                    if let Err(error) = proxy_connection(client, sender, trigger).await {
                         tracing::debug!(error = %format!("{error:#}"), "auth header proxy connection ended");
                     }
                 });
@@ -86,6 +101,7 @@ impl Drop for CaptureProxy {
 async fn proxy_connection(
     mut client: TcpStream,
     sender: Arc<Mutex<Option<oneshot::Sender<HeaderMap>>>>,
+    trigger: CaptureTrigger,
 ) -> anyhow::Result<()> {
     let (head, leftover) = read_head(&mut client).await?;
     let head_text = String::from_utf8_lossy(&head);
@@ -115,7 +131,7 @@ async fn proxy_connection(
             header_map.insert(name, value);
         }
     }
-    if header_map.contains_key(NATIVE_HEADER) {
+    if trigger.is_present(&header_map) {
         let mut slot = sender.lock().await;
         if let Some(sender) = slot.take() {
             let _ = sender.send(header_map);
@@ -267,7 +283,9 @@ mod tests {
             }
         });
 
-        let proxy = CaptureProxy::start().await.unwrap();
+        let proxy = CaptureProxy::start(CaptureTrigger::NativeHeader)
+            .await
+            .unwrap();
         let request = format!(
             "POST http://{origin_addr}/v1/responses HTTP/1.1\r\nHost: {origin_addr}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         );
@@ -280,7 +298,9 @@ mod tests {
 
     #[tokio::test]
     async fn proxy_captures_native_header_without_forwarding() {
-        let proxy = CaptureProxy::start().await.unwrap();
+        let proxy = CaptureProxy::start(CaptureTrigger::NativeHeader)
+            .await
+            .unwrap();
         let addr = proxy.addr;
         let request = "POST http://oneapi.invalid/v1/responses HTTP/1.1\r\nHost: oneapi.invalid\r\ncomate_custom_header: native-value\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
         let mut client = TcpStream::connect(proxy.addr).await.unwrap();
@@ -294,5 +314,27 @@ mod tests {
             .unwrap();
         assert_eq!(captured.get(NATIVE_HEADER).unwrap(), "native-value");
         assert!(TcpStream::connect(addr).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn proxy_can_capture_ducc_authorization_without_native_header() {
+        let proxy = CaptureProxy::start(CaptureTrigger::Authorization)
+            .await
+            .unwrap();
+        let request = "POST http://oneapi.invalid/openapi/v2/available_models HTTP/1.1\r\nHost: oneapi.invalid\r\nAuthorization: Bearer ducc-token\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        let mut client = TcpStream::connect(proxy.addr).await.unwrap();
+        client.write_all(request.as_bytes()).await.unwrap();
+        let mut response = Vec::new();
+        client.read_to_end(&mut response).await.unwrap();
+        assert!(response.is_empty());
+        let captured = proxy
+            .capture(std::time::Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert_eq!(
+            captured.get(reqwest::header::AUTHORIZATION).unwrap(),
+            "Bearer ducc-token"
+        );
+        assert!(!captured.contains_key(NATIVE_HEADER));
     }
 }

@@ -16,7 +16,7 @@ use reqwest::header::HeaderMap;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
-use crate::auth_capture::CaptureProxy;
+use crate::auth_capture::{CaptureProxy, CaptureTrigger};
 
 /// Auth handshake hosts DUCX must reach directly. Only the OneAPI inference host
 /// is routed through our capture proxy; proxying the source-auth handshake makes
@@ -70,7 +70,7 @@ impl DucxRuntime {
     }
 
     async fn mint_headers(&self, timeout: Duration) -> anyhow::Result<HeaderMap> {
-        let proxy = CaptureProxy::start().await?;
+        let proxy = CaptureProxy::start(CaptureTrigger::NativeHeader).await?;
         let proxy_url = format!("http://{}", proxy.addr);
         let codex_home = self.home.join(".baidu-cx");
         let mut child = Command::new(&self.executable)

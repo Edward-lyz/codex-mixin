@@ -1,9 +1,8 @@
 //! Managed DUCC authentication capture.
 //!
-//! DUCC is Baidu's Claude Code fork. It is used exactly like DUCX: run one short
-//! `--print` turn through a loopback HTTP proxy, capture the native
-//! `comate_custom_header` and bearer token, then stop before the warmup request
-//! reaches OneAPI.
+//! DUCC is Baidu's Claude Code fork. Run one short `--print` turn through a
+//! loopback HTTP proxy, capture its bearer authorization, then stop before the
+//! warmup request reaches OneAPI.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -15,7 +14,7 @@ use serde_json::json;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
-use crate::auth_capture::CaptureProxy;
+use crate::auth_capture::{CaptureProxy, CaptureTrigger};
 
 /// Auth handshake hosts DUCC must reach directly. Only the OneAPI inference host
 /// is routed through our capture proxy.
@@ -68,7 +67,7 @@ impl DuccRuntime {
     }
 
     async fn mint_headers(&self, timeout: Duration) -> anyhow::Result<HeaderMap> {
-        let proxy = CaptureProxy::start().await?;
+        let proxy = CaptureProxy::start(CaptureTrigger::Authorization).await?;
         let proxy_url = format!("http://{}", proxy.addr);
         let settings = serde_json::to_string(&json!({
             "env": {
@@ -171,10 +170,5 @@ mod tests {
             managed_home(executable).unwrap(),
             PathBuf::from("/tmp/codex-mixin/ducc/home")
         );
-    }
-
-    #[test]
-    fn native_header_is_captured_from_shared_proxy() {
-        assert_eq!(crate::auth_capture::NATIVE_HEADER, "comate_custom_header");
     }
 }
