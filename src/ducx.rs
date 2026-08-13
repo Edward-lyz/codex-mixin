@@ -100,10 +100,9 @@ impl DucxRuntime {
             .kill_on_drop(true)
             .spawn()
             .with_context(|| format!("start managed DUCX {}", self.executable.display()))?;
-        let captured = tokio::time::timeout(timeout, proxy.captured)
-            .await
-            .context("DUCX did not emit an authenticated request in time")?
-            .context("DUCX capture proxy closed before capturing native headers")?;
+        let captured = proxy.capture(timeout).await.context(
+            "DUCX did not emit an authenticated request before the capture proxy closed",
+        )?;
         let _ = child.kill().await;
         let _ = child.wait().await;
         Ok(captured)

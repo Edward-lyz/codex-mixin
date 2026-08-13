@@ -119,10 +119,9 @@ impl DuccRuntime {
             .kill_on_drop(true)
             .spawn()
             .with_context(|| format!("start managed DUCC {}", self.executable.display()))?;
-        let captured = tokio::time::timeout(timeout, proxy.captured)
-            .await
-            .context("DUCC did not emit an authenticated request in time")?
-            .context("DUCC capture proxy closed before capturing native headers")?;
+        let captured = proxy.capture(timeout).await.context(
+            "DUCC did not emit an authenticated request before the capture proxy closed",
+        )?;
         let _ = child.kill().await;
         let _ = child.wait().await;
         Ok(captured)

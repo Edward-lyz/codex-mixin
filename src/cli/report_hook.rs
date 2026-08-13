@@ -12,8 +12,10 @@ use std::path::{Path, PathBuf};
 use std::process::{Command, Stdio};
 
 use anyhow::{Context, ensure};
+use fs2::FileExt;
 use serde_json::Value;
 
+use super::atomic_file::write_atomic_if_changed;
 use codex_mixin::config::load_stored_config;
 use codex_mixin::provider::catalog_model_slug;
 
@@ -252,6 +254,19 @@ pub(super) fn sync_installation() -> anyhow::Result<()> {
     if !enabled && !hooks_path.exists() {
         return Ok(());
     }
+    if let Some(parent) = hooks_path.parent() {
+        fs::create_dir_all(parent)?;
+    }
+    let lock_path = hooks_path.with_file_name("hooks.json.lock");
+    let lock = fs::OpenOptions::new()
+        .create(true)
+        .truncate(false)
+        .read(true)
+        .write(true)
+        .open(&lock_path)
+        .with_context(|| format!("open Codex hooks lock {}", lock_path.display()))?;
+    lock.lock_exclusive()
+        .with_context(|| format!("lock Codex hooks configuration {}", hooks_path.display()))?;
     let mut document = if hooks_path.exists() {
         serde_json::from_slice::<Value>(&fs::read(&hooks_path)?)
             .with_context(|| format!("parse Codex hooks configuration {}", hooks_path.display()))?
@@ -326,12 +341,9 @@ pub(super) fn sync_installation() -> anyhow::Result<()> {
         }
     }
 
-    if let Some(parent) = hooks_path.parent() {
-        fs::create_dir_all(parent)?;
-    }
     let mut encoded = serde_json::to_vec_pretty(&document)?;
     encoded.push(b'\n');
-    fs::write(&hooks_path, &encoded)
+    write_atomic_if_changed(&hooks_path, &encoded)
         .with_context(|| format!("write Codex hooks configuration {}", hooks_path.display()))?;
     Ok(())
 }

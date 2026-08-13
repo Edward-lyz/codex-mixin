@@ -7,8 +7,7 @@ pub(super) async fn responses(
     body: Body,
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
-    let body = crate::request_body::parse_json(body).await?;
-    let (mut body, _) = crate::gateway::normalize_provider_images_blocking(body).await?;
+    let mut body = crate::request_body::parse_json(body).await?;
     let requested_model = body
         .get("model")
         .and_then(Value::as_str)
@@ -42,6 +41,7 @@ pub(super) async fn responses(
         }
     }
     if route == ResolvedModelRoute::Official {
+        let (body, _) = crate::gateway::normalize_provider_images_blocking(body).await?;
         return forward_official_responses(&state, &headers, body).await;
     }
     let provider_routing = stable_oneapi_routing(&headers, &body)?;

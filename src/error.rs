@@ -9,6 +9,8 @@ pub enum GatewayError {
     BadRequest(String),
     #[error("unauthorized")]
     Unauthorized,
+    #[error("request body is too large")]
+    PayloadTooLarge,
     #[error("upstream error: {0}")]
     Upstream(String),
     #[error("upstream returned {status}: {message}")]
@@ -28,7 +30,7 @@ impl IntoResponse for GatewayError {
         let error_chain = format_error_chain(&self);
         match &self {
             GatewayError::Unauthorized => {}
-            GatewayError::BadRequest(_) | GatewayError::Json(_) => {
+            GatewayError::BadRequest(_) | GatewayError::PayloadTooLarge | GatewayError::Json(_) => {
                 tracing::warn!(error = %error_chain, "gateway request rejected");
             }
             GatewayError::Upstream(_)
@@ -43,8 +45,23 @@ impl IntoResponse for GatewayError {
         let (status, message) = match &self {
             GatewayError::BadRequest(message) => (StatusCode::BAD_REQUEST, message.clone()),
             GatewayError::Unauthorized => (StatusCode::UNAUTHORIZED, self.to_string()),
+            GatewayError::PayloadTooLarge => (
+                StatusCode::PAYLOAD_TOO_LARGE,
+                "request body is too large".to_owned(),
+            ),
             GatewayError::Upstream(message) => (StatusCode::BAD_GATEWAY, message.clone()),
-            GatewayError::UpstreamStatus { status, message } => (*status, message.clone()),
+            GatewayError::UpstreamStatus { status, .. }
+                if *status == StatusCode::PAYLOAD_TOO_LARGE =>
+            {
+                (
+                    StatusCode::PAYLOAD_TOO_LARGE,
+                    "upstream request is too large".to_owned(),
+                )
+            }
+            GatewayError::UpstreamStatus { .. } => (
+                StatusCode::BAD_GATEWAY,
+                "upstream request failed".to_owned(),
+            ),
             GatewayError::Http(err) => (StatusCode::BAD_GATEWAY, err.to_string()),
             GatewayError::Io(_) => (
                 StatusCode::INTERNAL_SERVER_ERROR,
@@ -90,6 +107,33 @@ mod tests {
                 json!({"error":{"message":"internal server error"}})
             );
         }
+    }
+
+    #[tokio::test]
+    async fn upstream_errors_only_preserve_payload_too_large_status() {
+        let response = GatewayError::UpstreamStatus {
+            status: StatusCode::UNAUTHORIZED,
+            message: "secret provider account detail".to_owned(),
+        }
+        .into_response();
+        assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            json!({"error":{"message":"upstream request failed"}})
+        );
+
+        let response = GatewayError::UpstreamStatus {
+            status: StatusCode::PAYLOAD_TOO_LARGE,
+            message: "provider topology".to_owned(),
+        }
+        .into_response();
+        assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
+        let body = response.into_body().collect().await.unwrap().to_bytes();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&body).unwrap(),
+            json!({"error":{"message":"upstream request is too large"}})
+        );
     }
 
     #[test]

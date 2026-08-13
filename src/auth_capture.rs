@@ -11,6 +11,7 @@ use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, oneshot};
+use tokio::task::JoinHandle;
 
 pub(crate) const NATIVE_HEADER: &str = "comate_custom_header";
 const MAX_PROXY_HEAD: usize = 64 * 1024;
@@ -28,7 +29,8 @@ fn is_capturable_header(name: &str) -> bool {
 
 pub(crate) struct CaptureProxy {
     pub(crate) addr: std::net::SocketAddr,
-    pub(crate) captured: oneshot::Receiver<HeaderMap>,
+    captured: oneshot::Receiver<HeaderMap>,
+    accept_task: JoinHandle<()>,
 }
 
 impl CaptureProxy {
@@ -41,7 +43,7 @@ impl CaptureProxy {
             .context("read capture proxy address")?;
         let (sender, receiver) = oneshot::channel();
         let sender = Arc::new(Mutex::new(Some(sender)));
-        tokio::spawn(async move {
+        let accept_task = tokio::spawn(async move {
             loop {
                 let Ok((client, _)) = listener.accept().await else {
                     break;
@@ -57,7 +59,27 @@ impl CaptureProxy {
         Ok(Self {
             addr,
             captured: receiver,
+            accept_task,
         })
+    }
+
+    pub(crate) async fn capture(
+        mut self,
+        timeout: std::time::Duration,
+    ) -> anyhow::Result<HeaderMap> {
+        let captured = tokio::time::timeout(timeout, &mut self.captured)
+            .await
+            .context("auth carrier did not emit an authenticated request in time")?
+            .context("auth capture proxy closed before capturing native headers")?;
+        self.accept_task.abort();
+        let _ = (&mut self.accept_task).await;
+        Ok(captured)
+    }
+}
+
+impl Drop for CaptureProxy {
+    fn drop(&mut self) {
+        self.accept_task.abort();
     }
 }
 
@@ -259,13 +281,18 @@ mod tests {
     #[tokio::test]
     async fn proxy_captures_native_header_without_forwarding() {
         let proxy = CaptureProxy::start().await.unwrap();
+        let addr = proxy.addr;
         let request = "POST http://oneapi.invalid/v1/responses HTTP/1.1\r\nHost: oneapi.invalid\r\ncomate_custom_header: native-value\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
         let mut client = TcpStream::connect(proxy.addr).await.unwrap();
         client.write_all(request.as_bytes()).await.unwrap();
         let mut response = Vec::new();
         client.read_to_end(&mut response).await.unwrap();
         assert!(response.is_empty());
-        let captured = proxy.captured.await.unwrap();
+        let captured = proxy
+            .capture(std::time::Duration::from_secs(1))
+            .await
+            .unwrap();
         assert_eq!(captured.get(NATIVE_HEADER).unwrap(), "native-value");
+        assert!(TcpStream::connect(addr).await.is_err());
     }
 }

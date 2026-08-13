@@ -1,5 +1,6 @@
 use super::websocket_proxy::ProxyEnv;
 use super::*;
+use std::collections::HashMap;
 
 pub type AnthropicByteStream = BoxStream<'static, Result<Bytes, reqwest::Error>>;
 const CATALOG_SOURCE_CACHE_TTL: Duration = Duration::from_secs(60);
@@ -48,8 +49,8 @@ pub struct AppState {
     catalog_sources_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogSources>>>,
     catalog_response_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogResponse>>>,
     official_auth_cache: Arc<tokio::sync::Mutex<Option<CachedOfficialAuth>>>,
-    ducc_runtime: Arc<tokio::sync::OnceCell<Arc<crate::ducc::DuccRuntime>>>,
-    ducx_runtime: Arc<tokio::sync::OnceCell<Arc<crate::ducx::DucxRuntime>>>,
+    ducc_runtimes: Arc<tokio::sync::Mutex<HashMap<String, Arc<crate::ducc::DuccRuntime>>>>,
+    ducx_runtimes: Arc<tokio::sync::Mutex<HashMap<String, Arc<crate::ducx::DucxRuntime>>>>,
 }
 
 impl AppState {
@@ -135,8 +136,8 @@ impl AppState {
             catalog_sources_cache: Arc::new(tokio::sync::Mutex::new(None)),
             catalog_response_cache: Arc::new(tokio::sync::Mutex::new(None)),
             official_auth_cache: Arc::new(tokio::sync::Mutex::new(None)),
-            ducc_runtime: Arc::new(tokio::sync::OnceCell::new()),
-            ducx_runtime: Arc::new(tokio::sync::OnceCell::new()),
+            ducc_runtimes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            ducx_runtimes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         })
     }
 
@@ -172,16 +173,18 @@ impl AppState {
                         .to_owned(),
                 )
             })?;
-        self.ducc_runtime
-            .get_or_try_init(|| async {
-                let api_key = provider.definition().auth.api_key.clone();
-                crate::ducc::DuccRuntime::spawn(executable, api_key)
-                    .await
-                    .map(Arc::new)
-            })
-            .await
-            .cloned()
-            .map_err(GatewayError::Other)
+        let mut runtimes = self.ducc_runtimes.lock().await;
+        if let Some(runtime) = runtimes.get(provider.id()) {
+            return Ok(Arc::clone(runtime));
+        }
+        let api_key = provider.definition().auth.api_key.clone();
+        let runtime = Arc::new(
+            crate::ducc::DuccRuntime::spawn(executable, api_key)
+                .await
+                .map_err(GatewayError::Other)?,
+        );
+        runtimes.insert(provider.id().to_owned(), Arc::clone(&runtime));
+        Ok(runtime)
     }
 
     pub(crate) async fn prewarm_ducc(&self) -> Result<(), GatewayError> {
@@ -224,15 +227,17 @@ impl AppState {
                         .to_owned(),
                 )
             })?;
-        self.ducx_runtime
-            .get_or_try_init(|| async {
-                crate::ducx::DucxRuntime::spawn(executable)
-                    .await
-                    .map(Arc::new)
-            })
-            .await
-            .cloned()
-            .map_err(GatewayError::Other)
+        let mut runtimes = self.ducx_runtimes.lock().await;
+        if let Some(runtime) = runtimes.get(provider.id()) {
+            return Ok(Arc::clone(runtime));
+        }
+        let runtime = Arc::new(
+            crate::ducx::DucxRuntime::spawn(executable)
+                .await
+                .map_err(GatewayError::Other)?,
+        );
+        runtimes.insert(provider.id().to_owned(), Arc::clone(&runtime));
+        Ok(runtime)
     }
 
     /// Fetch the DUCX-native authentication headers (cached, minted on demand).

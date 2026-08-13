@@ -8,11 +8,11 @@ use std::fs;
 use std::io::IsTerminal;
 use std::os::unix::fs::{PermissionsExt, symlink};
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
-use std::thread;
+use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context, ensure};
+use tokio::process::Command;
 
 const DUCX_DOWNLOAD_BASE_URL: &str = "http://baidu-cc-client.bj.bcebos.com/baidu-cx";
 
@@ -62,7 +62,7 @@ pub(super) async fn ensure_managed_ducx() -> anyhow::Result<PathBuf> {
         if let Some(status) = child.try_wait().context("failed to monitor DUCX login")? {
             break status;
         }
-        thread::sleep(Duration::from_secs(5));
+        tokio::time::sleep(Duration::from_secs(5)).await;
         waited += 5;
         println!("Still waiting for DUCX login ({waited}s elapsed); continue after scanning.");
     };
@@ -125,6 +125,7 @@ async fn install_managed_ducx(
         .arg(&archive_path)
         .arg(&archive_url)
         .status()
+        .await
         .context("failed to download the managed DUCX archive with curl")?;
     ensure!(
         status.success(),
@@ -146,6 +147,7 @@ async fn install_managed_ducx(
         .arg("-C")
         .arg(&version_dir)
         .status()
+        .await
         .context("failed to extract managed DUCX archive with tar")?;
     ensure!(status.success(), "failed to extract managed DUCX archive");
     // The archive ships `bin/codex`; the official installer creates the `ducx`
@@ -186,7 +188,14 @@ fn ducx_is_logged_in(isolated_home: &Path) -> bool {
     // DUCX writes the signed-in identity under HOME/.comate/login-user/<username>.
     let login_dir = isolated_home.join(".comate/login-user");
     fs::read_dir(&login_dir)
-        .map(|mut entries| entries.any(|entry| entry.is_ok()))
+        .map(|entries| {
+            entries
+                .filter_map(Result::ok)
+                .filter(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
+                .take(2)
+                .count()
+                == 1
+        })
         .unwrap_or(false)
 }
 
@@ -203,5 +212,7 @@ mod tests {
         fs::create_dir_all(&login_dir).unwrap();
         fs::write(login_dir.join("liyanzhen01"), b"{}").unwrap();
         assert!(ducx_is_logged_in(root.path()));
+        fs::write(login_dir.join("another-user"), b"{}").unwrap();
+        assert!(!ducx_is_logged_in(root.path()));
     }
 }

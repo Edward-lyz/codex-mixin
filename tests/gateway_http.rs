@@ -2191,7 +2191,10 @@ async fn returns_the_second_provider_413_without_a_third_attempt() {
 
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     assert_eq!(attempts.load(Ordering::SeqCst), 2);
-    assert!(response.text().await.unwrap().contains("still too large"));
+    assert_eq!(
+        response.json::<Value>().await.unwrap(),
+        json!({"error":{"message":"upstream request is too large"}})
+    );
 }
 
 #[tokio::test]

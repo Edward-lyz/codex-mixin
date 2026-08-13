@@ -10,13 +10,25 @@ use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 use crate::error::GatewayError;
 
 const MAX_UPSTREAM_ERROR_BYTES: usize = 64 * 1024;
+pub(crate) const MAX_REQUEST_BYTES: usize = 256 * 1024 * 1024;
 
 pub(crate) async fn parse_json(body: Body) -> Result<Value, GatewayError> {
+    parse_json_with_limit(body, MAX_REQUEST_BYTES).await
+}
+
+async fn parse_json_with_limit(body: Body, max_bytes: usize) -> Result<Value, GatewayError> {
     let file = tempfile::tempfile().map_err(GatewayError::Io)?;
     let mut file = tokio::fs::File::from_std(file);
     let mut stream = body.into_data_stream();
+    let mut received = 0usize;
     while let Some(chunk) = stream.next().await {
         let chunk = chunk.map_err(|error| GatewayError::Other(error.into()))?;
+        received = received
+            .checked_add(chunk.len())
+            .ok_or(GatewayError::PayloadTooLarge)?;
+        if received > max_bytes {
+            return Err(GatewayError::PayloadTooLarge);
+        }
         file.write_all(&chunk).await?;
     }
     file.flush().await?;
@@ -79,4 +91,18 @@ pub(crate) async fn read_error_text(response: reqwest::Response) -> Result<Strin
         text.push_str(" [truncated]");
     }
     Ok(text)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn rejects_request_bodies_above_the_explicit_limit() {
+        let body = Body::from("12345");
+        assert!(matches!(
+            parse_json_with_limit(body, 4).await,
+            Err(GatewayError::PayloadTooLarge)
+        ));
+    }
 }
