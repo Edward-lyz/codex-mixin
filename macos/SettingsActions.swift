@@ -228,22 +228,34 @@ extension AppDelegate {
                     ]
                     arguments.append(contentsOf: ["--replace-id", replacedProfileID])
                     _ = try await self.runGateway(arguments)
-                    self.serviceBusy = true
-                    self.serviceStatus = "正在应用 Fusion 配置..."
-                    self.serviceEndpoint = nil
-                    defer { self.serviceBusy = false }
-                    progress.advance(to: 1)
-                    try await self.restartGatewayProcess()
-                    let status = try await self.waitForGatewayStatus()
-                    self.applyGatewayStatus(status)
-                    progress.advance(to: 2)
-                    _ = try await self.runGateway(["refresh-codex-catalog"])
-                    await self.refreshStatusNow()
-                    progress.advance(to: 3)
+                    try await self.applyFusionCatalogChange(progress: progress)
+                },
+                deleteHandler: { [weak self] profileID, progress in
+                    guard let self else {
+                        throw FusionSettingsError.message("Codex Mixin 已退出")
+                    }
+                    progress.advance(to: 0)
+                    _ = try await self.runGateway(["fusion", "delete", "--id", profileID])
+                    try await self.applyFusionCatalogChange(progress: progress)
                 }
             )
         }
         fusionSettingsWindowController?.present()
+    }
+
+    func applyFusionCatalogChange(progress: OperationProgress) async throws {
+        serviceBusy = true
+        serviceStatus = "正在应用 Fusion 配置..."
+        serviceEndpoint = nil
+        defer { serviceBusy = false }
+        progress.advance(to: 1)
+        try await restartGatewayProcess()
+        let status = try await waitForGatewayStatus()
+        applyGatewayStatus(status)
+        progress.advance(to: 2)
+        _ = try await runGateway(["refresh-codex-catalog"])
+        await refreshStatusNow()
+        progress.advance(to: 3)
     }
 
     func fetchFusionModelOptions() async throws -> [FusionModelOption] {

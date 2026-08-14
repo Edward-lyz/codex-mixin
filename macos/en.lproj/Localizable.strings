@@ -32,6 +32,12 @@
 "fusion.saveSuccess" = "Saved. Virtual model mixin/fusion/%@ was written to catalog.";
 "fusion.saveFailed" = "Save failed: %@";
 "fusion.saveAlertTitle" = "Failed to Save Fusion Settings";
+"fusion.disableButton" = "Disable Fusion";
+"fusion.disableConfirmTitle" = "Disable Fusion?";
+"fusion.disableConfirmMessage" = "This deletes profile %@ and removes the matching mixin/fusion virtual model from the Codex model picker.";
+"fusion.disableSuccess" = "Disabled. Virtual model mixin/fusion/%@ was removed from the catalog.";
+"fusion.disableFailed" = "Disable failed: %@";
+"fusion.disableAlertTitle" = "Failed to Disable Fusion";
 
 "installCard.codexMixinCardDayWithMixin" = "Codex Mixin card, day %@ with Mixin";
 "installCard.stillINORBIT" = "STILL IN ORBIT";

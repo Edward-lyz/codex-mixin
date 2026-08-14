@@ -288,6 +288,7 @@ fn macos_bridge_commands_accept_multi_provider_arguments() {
         ])
         .is_ok()
     );
+    assert!(Cli::try_parse_from(["codex-mixin", "fusion", "delete", "--id", "default"]).is_ok());
 }
 
 #[test]

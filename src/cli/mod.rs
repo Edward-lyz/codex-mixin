@@ -43,7 +43,7 @@ use codex::{
 use doctor::doctor;
 use dsh::{install_dsh, uninstall_dsh};
 use ducx_setup::ensure_managed_ducx;
-use fusion_config::{get_fusion_profile, set_fusion_profile};
+use fusion_config::{delete_fusion_profile, get_fusion_profile, set_fusion_profile};
 use maintenance::migrate_history;
 use metadata::{load_model_metadata_resolver, refresh_metadata};
 use providers::{
@@ -614,6 +614,10 @@ enum FusionCommand {
         profile_json: String,
         #[arg(long)]
         replace_id: Option<String>,
+    },
+    Delete {
+        #[arg(long)]
+        id: Option<String>,
     },
 }
 
@@ -1336,6 +1340,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 profile_json,
                 replace_id,
             } => set_fusion_profile(&profile_json, replace_id.as_deref()),
+            FusionCommand::Delete { id } => delete_fusion_profile(id.as_deref()),
         },
         Command::Benchmark { command } => match command {
             BenchmarkCommand::Status => benchmark_status().await,

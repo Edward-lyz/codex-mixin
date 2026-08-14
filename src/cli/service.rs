@@ -33,15 +33,31 @@ pub(super) const GATEWAY_LOG_MAX_BYTES: u64 = 50 * 1024 * 1024;
 /// per-request prompt-cache diagnostics (`prefix_state`, `reused_turns`) become
 /// visible: `RUST_LOG=codex_mixin=debug`.
 fn gateway_log_filter() -> tracing_subscriber::EnvFilter {
-    tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("info"))
+    env_filter_or_default("info")
 }
 
 /// Parent CLI commands keep stderr clean so spinners and stage lines stay readable.
 /// Explicit `RUST_LOG` still wins for debugging.
 fn parent_cli_log_filter() -> tracing_subscriber::EnvFilter {
-    tracing_subscriber::EnvFilter::try_from_default_env()
-        .unwrap_or_else(|_| tracing_subscriber::EnvFilter::new("warn"))
+    env_filter_or_default("warn")
+}
+
+fn env_filter_or_default(default: &str) -> tracing_subscriber::EnvFilter {
+    match std::env::var("RUST_LOG") {
+        Ok(value) if !value.trim().is_empty() => {
+            let lower = value.to_ascii_lowercase();
+            if default == "info"
+                && !["info", "debug", "trace"]
+                    .iter()
+                    .any(|level| lower.contains(level))
+            {
+                tracing_subscriber::EnvFilter::new(default)
+            } else {
+                tracing_subscriber::EnvFilter::new(value)
+            }
+        }
+        _ => tracing_subscriber::EnvFilter::new(default),
+    }
 }
 
 pub(super) fn init_tracing(log_file: Option<&Path>, quiet_parent_logs: bool) -> anyhow::Result<()> {
@@ -58,9 +74,10 @@ pub(super) fn init_tracing(log_file: Option<&Path>, quiet_parent_logs: bool) -> 
         fs::set_permissions(log_file, fs::Permissions::from_mode(0o600))?;
         tracing_subscriber::fmt()
             .with_ansi(false)
-            .without_time()
             .with_thread_ids(false)
             .with_thread_names(false)
+            .with_file(true)
+            .with_line_number(true)
             .with_env_filter(gateway_log_filter())
             .with_target(true)
             .with_writer(Mutex::new(file))

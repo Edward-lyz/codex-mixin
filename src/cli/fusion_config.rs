@@ -44,6 +44,31 @@ pub(super) fn set_fusion_profile(
     Ok(())
 }
 
+pub(super) fn delete_fusion_profile(id: Option<&str>) -> anyhow::Result<()> {
+    let removed_id = mutate_stored_config(|config| remove_fusion_profile(config, id))?;
+    WebSearchCapabilities::clear_default_cache()?;
+    println!("fusion profile deleted: {removed_id}");
+    Ok(())
+}
+
+fn remove_fusion_profile(
+    config: &mut StoredGatewayConfig,
+    id: Option<&str>,
+) -> anyhow::Result<String> {
+    if config.fusion_profiles.is_empty() {
+        anyhow::bail!("no fusion profile configured");
+    }
+    let index = match id {
+        Some(id) => config
+            .fusion_profiles
+            .iter()
+            .position(|profile| profile.id == id)
+            .ok_or_else(|| anyhow::anyhow!("fusion profile not found: {id}"))?,
+        None => 0,
+    };
+    Ok(config.fusion_profiles.remove(index).id)
+}
+
 fn upsert_fusion_profile(
     config: &mut StoredGatewayConfig,
     profile: FusionProfile,
@@ -105,5 +130,53 @@ mod tests {
                 .collect::<Vec<_>>(),
             ["renamed", "other"]
         );
+    }
+
+    #[test]
+    fn removes_the_requested_profile_and_keeps_the_rest() {
+        let mut config = StoredGatewayConfig {
+            fusion_profiles: vec![profile("old"), profile("other")],
+            ..StoredGatewayConfig::default()
+        };
+
+        assert_eq!(
+            remove_fusion_profile(&mut config, Some("old")).unwrap(),
+            "old"
+        );
+        assert_eq!(
+            config
+                .fusion_profiles
+                .iter()
+                .map(|profile| profile.id.as_str())
+                .collect::<Vec<_>>(),
+            ["other"]
+        );
+    }
+
+    #[test]
+    fn delete_without_id_removes_the_first_profile() {
+        let mut config = StoredGatewayConfig {
+            fusion_profiles: vec![profile("first"), profile("second")],
+            ..StoredGatewayConfig::default()
+        };
+
+        assert_eq!(remove_fusion_profile(&mut config, None).unwrap(), "first");
+        assert_eq!(config.fusion_profiles[0].id, "second");
+    }
+
+    #[test]
+    fn delete_missing_profile_fails() {
+        let mut config = StoredGatewayConfig {
+            fusion_profiles: vec![profile("default")],
+            ..StoredGatewayConfig::default()
+        };
+
+        let error = remove_fusion_profile(&mut config, Some("missing")).unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("fusion profile not found: missing")
+        );
+        assert_eq!(config.fusion_profiles.len(), 1);
     }
 }

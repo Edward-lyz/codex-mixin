@@ -99,10 +99,12 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
     typealias LoadHandler = () async throws -> FusionSettingsProfile
     typealias FetchModelsHandler = () async throws -> [FusionModelOption]
     typealias SaveHandler = (FusionSettingsProfile, String, OperationProgress) async throws -> Void
+    typealias DeleteHandler = (String, OperationProgress) async throws -> Void
 
     private let loadHandler: LoadHandler
     private let fetchModelsHandler: FetchModelsHandler
     private let saveHandler: SaveHandler
+    private let deleteHandler: DeleteHandler
     private var loadedProfile = FusionSettingsProfile()
     private var options: [FusionModelOption] = []
     private var panelButtons: [String: NSButton] = [:]
@@ -118,15 +120,18 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
     private let toolsCheckbox = NSButton(checkboxWithTitle: "允许 Panel 使用进程内只读工具", target: nil, action: nil)
     private let statusLabel = NSTextField(wrappingLabelWithString: "正在读取配置...")
     private let saveButton = NSButton(title: "保存并重启网关", target: nil, action: nil)
+    private let disableButton = NSButton(title: L10n.Fusion.disableButton, target: nil, action: nil)
 
     init(
         loadHandler: @escaping LoadHandler,
         fetchModelsHandler: @escaping FetchModelsHandler,
-        saveHandler: @escaping SaveHandler
+        saveHandler: @escaping SaveHandler,
+        deleteHandler: @escaping DeleteHandler
     ) {
         self.loadHandler = loadHandler
         self.fetchModelsHandler = fetchModelsHandler
         self.saveHandler = saveHandler
+        self.deleteHandler = deleteHandler
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 820, height: 700),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
@@ -155,6 +160,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
 
     private func reload() {
         saveButton.isEnabled = false
+        disableButton.isEnabled = false
         statusLabel.textColor = .secondaryLabelColor
         statusLabel.stringValue = "正在从本地网关读取模型列表..."
         Task { @MainActor [weak self] in
@@ -188,12 +194,14 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
                 statusLabel.stringValue = "已加载 \(options.count) 个跨 Provider 模型。Panel 可选择 1–8 个。"
                 statusLabel.textColor = .secondaryLabelColor
                 updateValidation()
+                updateDisableButton()
             } catch {
                 options = []
                 rebuildModelControls()
                 statusLabel.stringValue = localizedErrorDescription(error)
                 statusLabel.textColor = .mixinDegraded
                 saveButton.isEnabled = false
+                disableButton.isEnabled = false
             }
         }
     }
@@ -203,7 +211,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
 
         let title = NSTextField(labelWithString: "Fusion 模型编排")
         title.font = .boldSystemFont(ofSize: 20)
-        let detail = NSTextField(wrappingLabelWithString: "多个 Panel 模型并行分析，由 Judge 结构化对比，再由 Final 模型流式回答。保存后虚拟模型会出现在 Codex 模型目录中。")
+        let detail = NSTextField(wrappingLabelWithString: "多个 Panel 模型并行分析，由 Judge 结构化对比，再由 Final 模型流式回答。保存后虚拟模型会出现在 Codex 模型目录中。关闭 Fusion 会删除当前 profile，并从模型选择器中移除 mixin/fusion/<id>。")
         detail.textColor = .secondaryLabelColor
 
         configureTextField(profileIdField, value: "default")
@@ -275,9 +283,12 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
         saveButton.keyEquivalent = "\r"
         saveButton.target = self
         saveButton.action = #selector(save)
+        disableButton.bezelStyle = .rounded
+        disableButton.target = self
+        disableButton.action = #selector(disableFusion)
         let cancelButton = NSButton(title: "关闭", target: self, action: #selector(closeWindow))
         cancelButton.bezelStyle = .rounded
-        let buttonRow = NSStackView(views: [NSView(), cancelButton, saveButton])
+        let buttonRow = NSStackView(views: [disableButton, NSView(), cancelButton, saveButton])
         buttonRow.orientation = .horizontal
         buttonRow.spacing = 10
 
@@ -451,6 +462,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
         profile.showIntermediateResults = resultsCheckbox.state == .on
         profile.panelToolsEnabled = toolsCheckbox.state == .on
         saveButton.isEnabled = false
+        disableButton.isEnabled = false
         statusLabel.stringValue = "正在保存并重启本地网关..."
         statusLabel.textColor = .controlAccentColor
         let replacedProfileID = loadedProfile.id
@@ -475,16 +487,79 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
                 statusLabel.stringValue = L10n.Fusion.saveSuccess(profile.id)
                 statusLabel.textColor = .mixinHealthy
                 saveButton.isEnabled = true
+                updateDisableButton()
             } catch {
                 statusLabel.stringValue = L10n.Fusion.saveFailed(localizedErrorDescription(error))
                 statusLabel.textColor = .mixinError
                 saveButton.isEnabled = true
+                updateDisableButton()
                 presentFusionAlert(
                     title: L10n.Fusion.saveAlertTitle,
                     message: localizedErrorDescription(error)
                 )
             }
         }
+    }
+
+    @objc private func disableFusion() {
+        let profileID = loadedProfile.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard hasConfiguredProfile() else { return }
+        guard confirm(
+            title: L10n.Fusion.disableConfirmTitle,
+            message: L10n.Fusion.disableConfirmMessage(profileID)
+        ) else { return }
+        saveButton.isEnabled = false
+        disableButton.isEnabled = false
+        statusLabel.stringValue = "正在关闭 Fusion 并从模型目录移除..."
+        statusLabel.textColor = .controlAccentColor
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                try await runOperationProgress(
+                    title: "正在关闭 Fusion",
+                    phases: [
+                        "删除 Fusion 配置",
+                        "重启本地网关",
+                        "刷新 Codex 模型目录",
+                        "完成",
+                    ],
+                    successTitle: "✓ Fusion 已关闭",
+                    failureTitle: "✗ 关闭失败",
+                    showFailureAlert: false
+                ) { progress in
+                    try await self.deleteHandler(profileID, progress)
+                }
+                loadedProfile = FusionSettingsProfile()
+                applyProfileFields()
+                selectedPanels.removeAll()
+                rebuildModelControls()
+                statusLabel.stringValue = L10n.Fusion.disableSuccess(profileID)
+                statusLabel.textColor = .mixinHealthy
+                updateValidation()
+                updateDisableButton()
+            } catch {
+                statusLabel.stringValue = L10n.Fusion.disableFailed(localizedErrorDescription(error))
+                statusLabel.textColor = .mixinError
+                updateValidation()
+                updateDisableButton()
+                presentFusionAlert(
+                    title: L10n.Fusion.disableAlertTitle,
+                    message: localizedErrorDescription(error)
+                )
+            }
+        }
+    }
+
+    private func hasConfiguredProfile() -> Bool {
+        let profileID = loadedProfile.id.trimmingCharacters(in: .whitespacesAndNewlines)
+        return !profileID.isEmpty
+            && !(loadedProfile.panelModels.isEmpty
+                && loadedProfile.judgeModel.isEmpty
+                && loadedProfile.finalModel.isEmpty)
+    }
+
+    private func updateDisableButton() {
+        disableButton.isEnabled = hasConfiguredProfile()
     }
 
     private func selectedModel(_ popup: NSPopUpButton) -> String? {

@@ -351,7 +351,7 @@ codex-mixin connect remove codex
 - `刷新状态与额度`：刷新服务状态和额度进度条。
 - `供应商设置...`：新增、删除和启停 provider，填写 API Key、上游根地址和额度信息，并刷新上游模型缓存。
 - `模型选择与测速...`：搜索、筛选和勾选要加入 Codex 的模型；未保存的选择会在测速前自动保存。下方结果表按模型显示 TTFT、TPS、usage、总耗时和状态，可点击表头切换升降序。关闭窗口或退出 App 不会停止后台测速，重开 App 会从 `~/.codex-mixin/model-benchmarks.json` 恢复上次结果。
-- `Fusion 设置...`：选择 1–8 个 Panel 模型以及 Judge、Final 模型，并控制是否在回答中展示中间结果。
+- `Fusion 设置...`：选择 1–8 个 Panel 模型以及 Judge、Final 模型，并控制是否在回答中展示中间结果；也可以关闭 Fusion，从 Codex 模型选择器中移除对应虚拟模型。
 - `安装到 Codex...`：选择有账号或仅自定义模型模式；先确保网关已启动，再按实际动态端口生成模型目录并写入托管 Codex 配置。未检测到 `models_cache.json` 时默认选择仅自定义模型。
 - `从 Codex 恢复...`：恢复安装前备份并删除托管模型目录。
 - `关于 Codex Mixin...`：显示当前 App 版本、Build 号和 GitHub 仓库链接，可一键复制版本信息；还可以打开只在本机生成的互动 Mixin 卡片并保存或分享 PNG。每次打开关于页时会随机选择一张与上次不同的当月 NASA 背景，窗口打开期间保持不变；老用户的天数会从 `~/.codex-mixin` 最早的创建时间回迁，全新安装则从第一次记录开始。
@@ -364,7 +364,7 @@ codex-mixin connect remove codex
 
 ### Fusion 多模型编排
 
-Fusion 虚拟模型使用 `Panel → Judge → Final` 三段式管线。打开菜单栏的 `Fusion 设置...`，选择 1–8 个并行 Panel 模型、一个 Judge 模型和一个 Final 模型；保存并重启网关后，`mixin/fusion/<profile-id>` 会出现在 Codex 模型选择器中。
+Fusion 虚拟模型使用 `Panel → Judge → Final` 三段式管线。打开菜单栏的 `Fusion 设置...`，选择 1–8 个并行 Panel 模型、一个 Judge 模型和一个 Final 模型；保存并重启网关后，`mixin/fusion/<profile-id>` 会出现在 Codex 模型选择器中。不再使用时，在同一窗口点击 `关闭 Fusion`，或运行 `codex-mixin fusion delete --id <profile-id>`，网关会删除该 profile 并在刷新 catalog 后把它从模型选择器中移除。
 
 Fusion 只在 Plan 模式的新用户轮次运行 Panel 和 Judge。切换到 Default 模式执行计划后，所有后续用户轮次与工具结果续跑都直接交给该 profile 的 Final 模型，避免在编码阶段重复分析。
 
@@ -835,7 +835,7 @@ Restart Codex Desktop after install or uninstall. Start a new session for Codex 
 
 ### Model Fusion
 
-Fusion virtual models run a `Panel → Judge → Final` pipeline. Open `Fusion Settings...` from the menu bar, select 1–8 Panel models plus one Judge and one Final model, then save and restart the gateway. The virtual model appears in Codex as `mixin/fusion/<profile-id>`.
+Fusion virtual models run a `Panel → Judge → Final` pipeline. Open `Fusion Settings...` from the menu bar, select 1–8 Panel models plus one Judge and one Final model, then save and restart the gateway. The virtual model appears in Codex as `mixin/fusion/<profile-id>`. To turn it off, click `Disable Fusion` in the same window or run `codex-mixin fusion delete --id <profile-id>`; the gateway deletes that profile and removes it from the model picker after the catalog refresh.
 
 Fusion runs Panel and Judge only for new user turns in Plan mode. After switching to Default mode to execute the plan, all later user turns and tool-result continuations go directly to the profile's Final model, avoiding repeated analysis during implementation.
 

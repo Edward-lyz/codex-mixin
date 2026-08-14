@@ -32,6 +32,12 @@
 "fusion.saveSuccess" = "保存成功。虚拟模型 mixin/fusion/%@ 已写入 catalog。";
 "fusion.saveFailed" = "保存失败：%@";
 "fusion.saveAlertTitle" = "保存 Fusion 设置失败";
+"fusion.disableButton" = "关闭 Fusion";
+"fusion.disableConfirmTitle" = "关闭 Fusion？";
+"fusion.disableConfirmMessage" = "将删除 profile %@，并从 Codex 模型选择器中移除对应的 mixin/fusion 虚拟模型。";
+"fusion.disableSuccess" = "已关闭。虚拟模型 mixin/fusion/%@ 已从 catalog 移除。";
+"fusion.disableFailed" = "关闭失败：%@";
+"fusion.disableAlertTitle" = "关闭 Fusion 失败";
 
 "installCard.codexMixinCardDayWithMixin" = "Codex Mixin 纪念卡，Mixin 认识你的第 %@ 天";
 "installCard.stillINORBIT" = "我们仍在轨道上";

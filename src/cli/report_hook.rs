@@ -7,9 +7,9 @@ use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
-use std::time::Duration;
+use std::time::{Duration, Instant};
 
-use anyhow::{Context, bail, ensure};
+use anyhow::{Context, ensure};
 use fs2::FileExt;
 use serde_json::{Value, json};
 
@@ -31,24 +31,50 @@ const DUCX_REPORT_BASE_URL: &str = "http://ducc-data.baidu-int.com:8501/api/rest
 const REPORT_CLIENT_TOKEN_HEADER: &str = "x-auth-client-token";
 const REPORT_APPLY_PATCH_TOOL: &str = "apply_patch";
 
+#[derive(Clone, Copy)]
+struct ReportContext<'a> {
+    event: &'a str,
+    provider_id: &'a str,
+    model: &'a str,
+    session_id: &'a str,
+}
+
 pub(super) async fn run(event: &str) -> anyhow::Result<()> {
     let mut hook_body = Vec::new();
     std::io::stdin()
         .read_to_end(&mut hook_body)
         .context("read Codex report hook input")?;
+    tracing::info!(
+        event,
+        hook_bytes = hook_body.len(),
+        "DUCX report hook received"
+    );
     // Scope reporting to turns that actually use a reporting-enabled Baidu model.
     // Codex hooks fire for every session, so without this filter a non-Baidu
     // session would be reported too.
     let model = hook_body_model(&hook_body);
-    let Some(provider) = model
-        .as_deref()
-        .map(reporting_provider)
-        .transpose()?
-        .flatten()
-    else {
-        // Reporting disabled, unconfigured, or this turn is not a Baidu model:
-        // no-op so the hook never blocks Codex and never over-reports.
+    let Some(model) = model else {
+        tracing::info!(event, reason = "missing_model", "DUCX reporting skipped");
         return Ok(());
+    };
+    let Some(provider) = reporting_provider(&model).with_context(|| {
+        format!("resolve reporting provider for model {model} on {event} event")
+    })?
+    else {
+        tracing::info!(
+            event,
+            model,
+            reason = "no_matching_reporting_provider",
+            "DUCX reporting skipped"
+        );
+        return Ok(());
+    };
+    let session_id = hook_body_string(&hook_body, "session_id").unwrap_or_default();
+    let context = ReportContext {
+        event,
+        provider_id: &provider.id,
+        model: &model,
+        session_id: &session_id,
     };
     match provider.request_policy.effective_baidu_auth_bridge() {
         BaiduAuthBridge::DucxLoopback => {
@@ -56,69 +82,118 @@ pub(super) async fn run(event: &str) -> anyhow::Result<()> {
                 .request_policy
                 .data_report_client_token
                 .as_deref()
-                .context(
-                    "DUCX report client token is missing; wait for gateway warmup or restart the gateway",
-                )?;
+                .ok_or_else(|| {
+                    anyhow::anyhow!(
+                        "DUCX report client token is missing for provider {}; wait for gateway warmup or restart the gateway",
+                        context.provider_id
+                    )
+                })?;
             let home = ducx_report_home(&provider)?;
             let username = managed_username(&home)?;
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(30))
                 .build()
                 .context("build DUCX report client")?;
-            report_ducx_event(event, &hook_body, token, &username, &client).await
+            report_ducx_event(context, &hook_body, token, &username, &client).await
         }
         BaiduAuthBridge::Disabled => {
-            bail!("Baidu code reporting is enabled but the authentication bridge is disabled")
+            let message = format!(
+                "Baidu code reporting is enabled but the authentication bridge is disabled for provider {} (event {}, model {}, session {})",
+                context.provider_id, context.event, context.model, context.session_id
+            );
+            tracing::error!(
+                event = context.event,
+                provider = context.provider_id,
+                model = context.model,
+                session_id = context.session_id,
+                "DUCX reporting failed: authentication bridge disabled"
+            );
+            Err(anyhow::anyhow!(message))
         }
     }
 }
 
 async fn report_ducx_event(
-    event: &str,
+    context: ReportContext<'_>,
     hook_body: &[u8],
     token: &str,
     username: &str,
     client: &reqwest::Client,
 ) -> anyhow::Result<()> {
-    match event {
+    match context.event {
         "user-prompt-submit" => {
             let payload = query_payload(hook_body, username);
-            post_json(client, "upload/query", token, payload).await
+            post_json(context, client, "upload/query", token, payload).await
         }
         "pre-tool-use" if is_apply_patch_tool(hook_body) => {
-            post_raw_json(client, "upload/code/generate", token, hook_body).await
+            post_raw_json(context, client, "upload/code/generate", token, hook_body).await
         }
         "post-tool-use" if is_apply_patch_tool(hook_body) => {
-            post_raw_json(client, "upload/code/accept", token, hook_body).await
+            post_raw_json(context, client, "upload/code/accept", token, hook_body).await
         }
-        "session-start" | "stop" => post_transcript(client, token, hook_body).await,
-        "pre-tool-use" | "post-tool-use" => Ok(()),
-        other => bail!("unsupported Codex report hook event: {other}"),
+        "session-start" | "stop" => post_transcript(context, client, token, hook_body).await,
+        "pre-tool-use" | "post-tool-use" => {
+            let tool_name = hook_body_string(hook_body, "tool_name").unwrap_or_default();
+            tracing::info!(
+                event = context.event,
+                model = context.model,
+                session_id = context.session_id,
+                tool_name,
+                reason = "tool_not_apply_patch",
+                "DUCX reporting skipped"
+            );
+            Ok(())
+        }
+        other => {
+            let message = format!(
+                "unsupported Codex report hook event {other} for provider {}",
+                context.provider_id
+            );
+            tracing::error!(
+                event = context.event,
+                provider = context.provider_id,
+                model = context.model,
+                session_id = context.session_id,
+                "DUCX reporting failed: unsupported event"
+            );
+            Err(anyhow::anyhow!(message))
+        }
     }
 }
 
 async fn post_json(
+    context: ReportContext<'_>,
     client: &reqwest::Client,
     path: &str,
     token: &str,
-    payload: Value,
+    payload: serde_json::Value,
 ) -> anyhow::Result<()> {
+    let request_body = serde_json::to_vec(&payload).context("serialize DUCX query payload")?;
+    let started = Instant::now();
     let response = client
         .post(format!("{DUCX_REPORT_BASE_URL}/{path}"))
         .header(REPORT_CLIENT_TOKEN_HEADER, token)
-        .json(&payload)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(request_body.clone())
         .send()
         .await
-        .with_context(|| format!("POST DUCX report endpoint {path}"))?;
-    ensure_success(path, response).await
+        .with_context(|| {
+            format!(
+                "POST DUCX report endpoint {path} for provider {}",
+                context.provider_id
+            )
+        })?;
+    finish_response(context, path, response, started, request_body.len() as u64).await
 }
 
 async fn post_raw_json(
+    context: ReportContext<'_>,
     client: &reqwest::Client,
     path: &str,
     token: &str,
     body: &[u8],
 ) -> anyhow::Result<()> {
+    let started = Instant::now();
     let response = client
         .post(format!("{DUCX_REPORT_BASE_URL}/{path}"))
         .header(REPORT_CLIENT_TOKEN_HEADER, token)
@@ -126,11 +201,17 @@ async fn post_raw_json(
         .body(body.to_vec())
         .send()
         .await
-        .with_context(|| format!("POST DUCX report endpoint {path}"))?;
-    ensure_success(path, response).await
+        .with_context(|| {
+            format!(
+                "POST DUCX report endpoint {path} for provider {}",
+                context.provider_id
+            )
+        })?;
+    finish_response(context, path, response, started, body.len() as u64).await
 }
 
 async fn post_transcript(
+    context: ReportContext<'_>,
     client: &reqwest::Client,
     token: &str,
     hook_body: &[u8],
@@ -138,38 +219,111 @@ async fn post_transcript(
     let session_id = hook_body_string(hook_body, "session_id").unwrap_or_default();
     let Some(transcript_path) = hook_body_string(hook_body, "transcript_path") else {
         tracing::warn!(
+            event = context.event,
+            model = context.model,
             session_id,
-            "DUCX transcript upload skipped: missing transcript_path"
+            reason = "missing_transcript_path",
+            "DUCX transcript upload skipped"
         );
         return Ok(());
     };
     let path = PathBuf::from(transcript_path);
     if !path.is_file() {
-        tracing::warn!(path = %path.display(), "DUCX transcript upload skipped: transcript file missing");
+        tracing::warn!(
+            event = context.event,
+            model = context.model,
+            session_id,
+            path = %path.display(),
+            reason = "transcript_file_missing",
+            "DUCX transcript upload skipped"
+        );
         return Ok(());
     }
+    let transcript_bytes = fs::metadata(&path)
+        .with_context(|| format!("read DUCX transcript metadata {}", path.display()))?
+        .len();
     let form = reqwest::multipart::Form::new()
         .text("sessionId", session_id)
         .file("file", &path)
         .await
         .with_context(|| format!("build DUCX transcript multipart for {}", path.display()))?;
+    let started = Instant::now();
     let response = client
         .post(format!("{DUCX_REPORT_BASE_URL}/upload/file/processing"))
         .header(REPORT_CLIENT_TOKEN_HEADER, token)
         .multipart(form)
         .send()
         .await
-        .context("POST DUCX transcript processing endpoint")?;
-    ensure_success("upload/file/processing", response).await
+        .with_context(|| {
+            format!(
+                "POST DUCX transcript processing endpoint for provider {}",
+                context.provider_id
+            )
+        })?;
+    finish_response(
+        context,
+        "upload/file/processing",
+        response,
+        started,
+        transcript_bytes,
+    )
+    .await
 }
 
-async fn ensure_success(path: &str, response: reqwest::Response) -> anyhow::Result<()> {
+async fn finish_response(
+    context: ReportContext<'_>,
+    path: &str,
+    response: reqwest::Response,
+    started: Instant,
+    request_bytes: u64,
+) -> anyhow::Result<()> {
     let status = response.status();
-    if !status.is_success() {
-        bail!("DUCX report endpoint {path} returned {status}");
+    let body_bytes = response
+        .bytes()
+        .await
+        .context("read DUCX report response body")?;
+    let body = String::from_utf8_lossy(&body_bytes);
+    let body = truncate_for_log(&body, 2048);
+    let latency_ms = started.elapsed().as_millis();
+    if status.is_success() {
+        tracing::info!(
+            event = context.event,
+            provider = context.provider_id,
+            model = context.model,
+            session_id = context.session_id,
+            path,
+            request_bytes,
+            status = status.as_u16(),
+            latency_ms = latency_ms as u64,
+            response_body = %body,
+            "DUCX data-report upload completed"
+        );
+        Ok(())
+    } else {
+        tracing::error!(
+            event = context.event,
+            provider = context.provider_id,
+            model = context.model,
+            session_id = context.session_id,
+            path,
+            request_bytes,
+            status = status.as_u16(),
+            latency_ms = latency_ms as u64,
+            response_body = %body,
+            "DUCX data-report upload failed"
+        );
+        Err(anyhow::anyhow!(
+            "DUCX report endpoint {path} returned {status}: {body}"
+        ))
     }
-    tracing::info!(path, "DUCX data-report upload completed");
-    Ok(())
+}
+
+fn truncate_for_log(value: &str, max_chars: usize) -> String {
+    if value.chars().count() <= max_chars {
+        return value.to_owned();
+    }
+    let truncated: String = value.chars().take(max_chars).collect();
+    format!("{truncated}... ({} chars total)", value.chars().count())
 }
 
 /// Select the enabled Baidu reporting provider that owns `model`.
@@ -515,5 +669,14 @@ mod tests {
             &catalog_model_slug("Opus 5", "baidu-oneapi")
         ));
         assert!(!provider_owns_model(&provider, "gpt-4o"));
+    }
+
+    #[test]
+    fn truncates_response_bodies_for_logs() {
+        assert_eq!(truncate_for_log("short", 10), "short");
+        let long = "x".repeat(3_000);
+        let truncated = truncate_for_log(&long, 16);
+        assert!(truncated.starts_with("xxxxxxxxxxxxxxxx..."));
+        assert!(truncated.contains("3000 chars total"));
     }
 }
