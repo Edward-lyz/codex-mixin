@@ -323,7 +323,29 @@ where
                                 yield Ok(encode_event(event_name, &payload)
                                     .expect("rewritten responses event is serializable"));
                             }
-                            Err(_) => yield Ok(encode_raw_event(event_name, &event.data)),
+                            Err(_) => {
+                                for (recovered_name, recovered_data) in
+                                    split_malformed_metadata_events(event_name, &event.data)
+                                {
+                                    match serde_json::from_str::<Value>(&recovered_data) {
+                                        Ok(mut payload) => {
+                                            rewrite_response_model_field(
+                                                &mut payload,
+                                                &upstream_model,
+                                                &downstream_model,
+                                            );
+                                            yield Ok(encode_event(&recovered_name, &payload)
+                                                .expect("recovered responses event is serializable"));
+                                        }
+                                        Err(_) => {
+                                            yield Ok(encode_raw_event(
+                                                &recovered_name,
+                                                &recovered_data,
+                                            ));
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                 }
@@ -346,6 +368,39 @@ where
         }
     }
     .boxed()
+}
+
+fn split_malformed_metadata_events(event_name: &str, data: &str) -> Vec<(String, String)> {
+    let mut events = Vec::new();
+    let mut remaining = data;
+    let mut current_event = event_name.to_owned();
+    loop {
+        if serde_json::from_str::<Value>(remaining).is_ok() {
+            events.push((current_event, remaining.to_owned()));
+            return events;
+        }
+        let Some(marker) = remaining.find("event: ") else {
+            events.push((current_event, remaining.to_owned()));
+            return events;
+        };
+        let (prefix, suffix) = remaining.split_at(marker);
+        if serde_json::from_str::<Value>(prefix).is_err() {
+            events.push((current_event, remaining.to_owned()));
+            return events;
+        }
+        let after_marker = &suffix["event: ".len()..];
+        let Some(newline) = after_marker.find('\n') else {
+            events.push((current_event, remaining.to_owned()));
+            return events;
+        };
+        events.push((current_event, prefix.to_owned()));
+        current_event = after_marker[..newline].trim().to_owned();
+        let mut next = &after_marker[newline + 1..];
+        if let Some(stripped) = next.strip_prefix("data:") {
+            next = stripped.trim_start();
+        }
+        remaining = next;
+    }
 }
 
 fn rewrite_response_model_field(payload: &mut Value, upstream_model: &str, downstream_model: &str) {
@@ -498,5 +553,41 @@ mod tests {
 
         let unsupported = json!({"reasoning":{"effort":"ultra"}});
         assert!(upstream_reasoning(&unsupported, Some(false)).is_none());
+    }
+
+    #[test]
+    fn splits_concatenated_upstream_metadata_events() {
+        let first = json!({
+            "type": "response.in_progress",
+            "response": {"id": "resp-first"}
+        })
+        .to_string();
+        let second = json!({
+            "type": "response.created",
+            "response": {"id": "resp-second"}
+        })
+        .to_string();
+        let malformed = format!("{first}event: response.created\n{second}");
+
+        let events = split_malformed_metadata_events("response.in_progress", &malformed);
+
+        assert_eq!(events.len(), 2);
+        assert_eq!(events[0].0, "response.in_progress");
+        assert_eq!(events[0].1, first);
+        assert_eq!(events[1].0, "response.created");
+        assert_eq!(events[1].1, second);
+    }
+
+    #[test]
+    fn leaves_valid_metadata_events_unchanged() {
+        let valid = json!({
+            "type": "response.completed",
+            "response": {"id": "resp-valid"}
+        })
+        .to_string();
+
+        let events = split_malformed_metadata_events("response.completed", &valid);
+
+        assert_eq!(events, vec![("response.completed".to_owned(), valid)]);
     }
 }
