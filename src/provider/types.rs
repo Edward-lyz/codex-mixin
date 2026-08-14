@@ -81,6 +81,10 @@ pub struct ProviderRequestPolicy {
     /// Dedicated Baidu data-report binary, independent of the auth core.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_report_executable: Option<PathBuf>,
+    /// Client token captured from a managed data-report warmup and reused by
+    /// the native DUCX reporter.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub data_report_client_token: Option<String>,
     /// Report Baidu AI code-usage events through the managed data-report hook.
     #[serde(default)]
     pub baidu_code_report: bool,
@@ -219,6 +223,7 @@ impl ProviderDefinition {
         if self.request_policy.baidu_auth_bridge.is_some()
             || self.request_policy.ducc_executable.is_some()
             || self.request_policy.data_report_executable.is_some()
+            || self.request_policy.data_report_client_token.is_some()
             || self.request_policy.baidu_code_report
         {
             ensure!(

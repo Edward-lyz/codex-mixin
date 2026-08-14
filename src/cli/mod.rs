@@ -829,6 +829,7 @@ pub(crate) async fn entrypoint() {
                     ..
                 },
         }) => Some(path.clone()),
+        Some(Command::ReportHook { .. }) => Some(runtime::default_report_hook_log_path()),
         _ => None,
     };
     let quiet_parent_logs = foreground_log_file.is_none()
@@ -1139,7 +1140,7 @@ async fn setup(
 
 async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command.unwrap_or(Command::Info { json: false }) {
-        Command::ReportHook { event } => report_hook::run(&event),
+        Command::ReportHook { event } => report_hook::run(&event).await,
         Command::Setup {
             preset,
             key,

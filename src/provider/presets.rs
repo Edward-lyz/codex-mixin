@@ -201,6 +201,7 @@ pub fn baidu_oneapi_provider(
         baidu_auth_bridge: None,
         ducc_executable: None,
         data_report_executable: None,
+        data_report_client_token: None,
         baidu_code_report: false,
     };
     provider

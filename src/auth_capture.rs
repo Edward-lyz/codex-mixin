@@ -14,12 +14,14 @@ use tokio::sync::{Mutex, oneshot};
 use tokio::task::JoinHandle;
 
 pub(crate) const NATIVE_HEADER: &str = "comate_custom_header";
+pub(crate) const REPORT_CLIENT_TOKEN_HEADER: &str = "x-auth-client-token";
 const MAX_PROXY_HEAD: usize = 64 * 1024;
 
 #[derive(Clone, Copy)]
 pub(crate) enum CaptureTrigger {
     Authorization,
     NativeHeader,
+    ReportClientToken,
 }
 
 impl CaptureTrigger {
@@ -27,6 +29,7 @@ impl CaptureTrigger {
         match self {
             Self::Authorization => headers.contains_key(reqwest::header::AUTHORIZATION),
             Self::NativeHeader => headers.contains_key(NATIVE_HEADER),
+            Self::ReportClientToken => headers.contains_key(REPORT_CLIENT_TOKEN_HEADER),
         }
     }
 }
@@ -36,6 +39,7 @@ impl CaptureTrigger {
 fn is_capturable_header(name: &str) -> bool {
     let lower = name.to_ascii_lowercase();
     lower == NATIVE_HEADER
+        || lower == REPORT_CLIENT_TOKEN_HEADER
         || lower == "authorization"
         || lower == "x-api-key"
         || lower.starts_with("x-baidu")
@@ -261,10 +265,22 @@ mod tests {
     #[test]
     fn only_login_derived_headers_are_capturable() {
         assert!(is_capturable_header("comate_custom_header"));
+        assert!(is_capturable_header("x-auth-client-token"));
         assert!(is_capturable_header("Authorization"));
         assert!(is_capturable_header("x-api-key"));
         assert!(!is_capturable_header("content-length"));
         assert!(!is_capturable_header("host"));
+    }
+
+    #[test]
+    fn report_client_token_trigger_requires_the_report_header() {
+        let mut headers = HeaderMap::new();
+        assert!(!CaptureTrigger::ReportClientToken.is_present(&headers));
+        headers.insert(
+            REPORT_CLIENT_TOKEN_HEADER,
+            HeaderValue::from_static("token"),
+        );
+        assert!(CaptureTrigger::ReportClientToken.is_present(&headers));
     }
 
     #[tokio::test]

@@ -1,5 +1,6 @@
 use super::websocket_proxy::ProxyEnv;
 use super::*;
+use anyhow::Context;
 use std::collections::HashMap;
 
 pub type AnthropicByteStream = BoxStream<'static, Result<Bytes, reqwest::Error>>;
@@ -210,6 +211,58 @@ impl AppState {
             return Ok(());
         };
         self.ducx_native_headers(provider).await?;
+        if provider.baidu_code_report()
+            && provider
+                .definition()
+                .request_policy
+                .data_report_client_token
+                .is_none()
+        {
+            let provider_id = provider.id().to_owned();
+            let runtime = self.ducx_runtime_for(provider).await?;
+            match runtime
+                .report_client_token(self.config.request_timeout)
+                .await
+            {
+                Ok(token) => {
+                    let result = tokio::task::spawn_blocking(move || {
+                        crate::config::mutate_stored_config(|config| {
+                            let stored_provider = config
+                                .providers
+                                .iter_mut()
+                                .find(|candidate| candidate.id == provider_id)
+                                .with_context(|| {
+                                    format!("DUCX reporting provider disappeared: {provider_id}")
+                                })?;
+                            if stored_provider.request_policy.baidu_code_report
+                                && stored_provider
+                                    .request_policy
+                                    .data_report_client_token
+                                    .is_none()
+                            {
+                                stored_provider.request_policy.data_report_client_token =
+                                    Some(token);
+                            }
+                            Ok(())
+                        })
+                    })
+                    .await
+                    .context("join DUCX report token persistence task");
+                    if let Err(error) = result.and_then(|inner| inner) {
+                        tracing::error!(
+                            error = %format!("{error:#}"),
+                            "failed to persist DUCX data-report client token"
+                        );
+                    }
+                }
+                Err(error) => {
+                    tracing::error!(
+                        error = %format!("{error:#}"),
+                        "failed to warm up DUCX data-report client token"
+                    );
+                }
+            }
+        }
         Ok(())
     }
 

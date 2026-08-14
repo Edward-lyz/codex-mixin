@@ -1,23 +1,24 @@
 //! Mixin-level Baidu code-usage reporting.
 //!
-//! When a Baidu OneAPI provider opts into reporting, Mixin installs a hook block
-//! into the user's real Codex `~/.codex/hooks.json`. Each event invokes
-//! `codex-mixin report-hook --event <event>`, which forwards the hook payload to
-//! the managed Baidu `data-report` binary with the login-derived username. This
-//! reuses DUCX's own reporting mechanism without touching the user's `~/.baidu-cx`.
+//! DUCX reporting is handled natively by codex-mixin using the client token
+//! captured during DUCX warmup. DUCC continues to use its managed `data-report`
+//! binary until a later migration.
 
 use std::fs;
-use std::io::{Read, Write};
+use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command, Stdio};
+use std::process::{Command as StdCommand, Stdio};
+use std::time::Duration;
 
-use anyhow::{Context, ensure};
+use anyhow::{Context, bail, ensure};
 use fs2::FileExt;
-use serde_json::Value;
+use serde_json::{Value, json};
+use tokio::io::AsyncWriteExt;
+use tokio::process::Command;
 
 use super::atomic_file::write_atomic_if_changed;
 use codex_mixin::config::load_stored_config;
-use codex_mixin::provider::catalog_model_slug;
+use codex_mixin::provider::{BaiduAuthBridge, ProviderDefinition, catalog_model_slug};
 
 const MANAGED_HOOK_MARKER: &str = " report-hook --event ";
 /// (Codex hooks.json event name, our `--event` argument value).
@@ -29,7 +30,11 @@ const REPORT_EVENTS: [(&str, &str); 5] = [
     ("Stop", "stop"),
 ];
 
-pub(super) fn run(event: &str) -> anyhow::Result<()> {
+const DUCX_REPORT_BASE_URL: &str = "http://ducc-data.baidu-int.com:8501/api/rest/v1/ducx";
+const REPORT_CLIENT_TOKEN_HEADER: &str = "x-auth-client-token";
+const REPORT_APPLY_PATCH_TOOL: &str = "apply_patch";
+
+pub(super) async fn run(event: &str) -> anyhow::Result<()> {
     let mut hook_body = Vec::new();
     std::io::stdin()
         .read_to_end(&mut hook_body)
@@ -38,9 +43,9 @@ pub(super) fn run(event: &str) -> anyhow::Result<()> {
     // Codex hooks fire for every session, so without this filter a non-Baidu
     // session would be reported too.
     let model = hook_body_model(&hook_body);
-    let Some(managed) = model
+    let Some(provider) = model
         .as_deref()
-        .map(enabled_report_executable)
+        .map(reporting_provider)
         .transpose()?
         .flatten()
     else {
@@ -48,16 +53,48 @@ pub(super) fn run(event: &str) -> anyhow::Result<()> {
         // no-op so the hook never blocks Codex and never over-reports.
         return Ok(());
     };
+    match provider.request_policy.effective_baidu_auth_bridge() {
+        BaiduAuthBridge::DucxLoopback => {
+            let token = provider
+                .request_policy
+                .data_report_client_token
+                .as_deref()
+                .context(
+                    "DUCX report client token is missing; wait for gateway warmup or restart the gateway",
+                )?;
+            let home = ducx_report_home(&provider)?;
+            let username = managed_username(&home)?;
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()
+                .context("build DUCX report client")?;
+            report_ducx_event(event, &hook_body, token, &username, &client).await
+        }
+        BaiduAuthBridge::DuccLoopback => {
+            let managed = managed_report_for_provider(&provider)?;
+            run_ducc_report(event, &hook_body, &managed).await
+        }
+        BaiduAuthBridge::Disabled => {
+            bail!("Baidu code reporting is enabled but the authentication bridge is disabled")
+        }
+    }
+}
+
+async fn run_ducc_report(
+    event: &str,
+    hook_body: &[u8],
+    managed: &ManagedReport,
+) -> anyhow::Result<()> {
     let event_argument = match event {
         "session-start" => "--session-start",
         "user-prompt-submit" => "--user-prompt-submit",
         "pre-tool-use" => "--pre-tool-use",
         "post-tool-use" => "--post-tool-use",
         "stop" => "--stop",
-        other => anyhow::bail!("unsupported Codex report hook event: {other}"),
+        other => bail!("unsupported Codex report hook event: {other}"),
     };
     let username = managed_username(&managed.home)?;
-    let cwd = hook_body_cwd(&hook_body);
+    let cwd = hook_body_cwd(hook_body);
     let (repo, branch) = cwd
         .as_deref()
         .map(git_repo_and_branch)
@@ -78,15 +115,115 @@ pub(super) fn run(event: &str) -> anyhow::Result<()> {
     }
     let mut child = command
         .spawn()
-        .with_context(|| format!("start DUCX data-report {}", managed.data_report.display()))?;
+        .with_context(|| format!("start DUCC data-report {}", managed.data_report.display()))?;
     child
         .stdin
         .take()
-        .context("capture DUCX data-report stdin")?
-        .write_all(&hook_body)
-        .context("write DUCX data-report input")?;
-    let status = child.wait().context("wait for DUCX data-report")?;
-    ensure!(status.success(), "DUCX data-report exited with {status}");
+        .context("capture DUCC data-report stdin")?
+        .write_all(hook_body)
+        .await
+        .context("write DUCC data-report input")?;
+    let status = child.wait().await.context("wait for DUCC data-report")?;
+    ensure!(status.success(), "DUCC data-report exited with {status}");
+    Ok(())
+}
+
+async fn report_ducx_event(
+    event: &str,
+    hook_body: &[u8],
+    token: &str,
+    username: &str,
+    client: &reqwest::Client,
+) -> anyhow::Result<()> {
+    match event {
+        "user-prompt-submit" => {
+            let payload = query_payload(hook_body, username);
+            post_json(client, "upload/query", token, payload).await
+        }
+        "pre-tool-use" if is_apply_patch_tool(hook_body) => {
+            post_raw_json(client, "upload/code/generate", token, hook_body).await
+        }
+        "post-tool-use" if is_apply_patch_tool(hook_body) => {
+            post_raw_json(client, "upload/code/accept", token, hook_body).await
+        }
+        "session-start" | "stop" => post_transcript(client, token, hook_body).await,
+        "pre-tool-use" | "post-tool-use" => Ok(()),
+        other => bail!("unsupported Codex report hook event: {other}"),
+    }
+}
+
+async fn post_json(
+    client: &reqwest::Client,
+    path: &str,
+    token: &str,
+    payload: Value,
+) -> anyhow::Result<()> {
+    let response = client
+        .post(format!("{DUCX_REPORT_BASE_URL}/{path}"))
+        .header(REPORT_CLIENT_TOKEN_HEADER, token)
+        .json(&payload)
+        .send()
+        .await
+        .with_context(|| format!("POST DUCX report endpoint {path}"))?;
+    ensure_success(path, response).await
+}
+
+async fn post_raw_json(
+    client: &reqwest::Client,
+    path: &str,
+    token: &str,
+    body: &[u8],
+) -> anyhow::Result<()> {
+    let response = client
+        .post(format!("{DUCX_REPORT_BASE_URL}/{path}"))
+        .header(REPORT_CLIENT_TOKEN_HEADER, token)
+        .header(reqwest::header::CONTENT_TYPE, "application/json")
+        .body(body.to_vec())
+        .send()
+        .await
+        .with_context(|| format!("POST DUCX report endpoint {path}"))?;
+    ensure_success(path, response).await
+}
+
+async fn post_transcript(
+    client: &reqwest::Client,
+    token: &str,
+    hook_body: &[u8],
+) -> anyhow::Result<()> {
+    let session_id = hook_body_string(hook_body, "session_id").unwrap_or_default();
+    let Some(transcript_path) = hook_body_string(hook_body, "transcript_path") else {
+        tracing::warn!(
+            session_id,
+            "DUCX transcript upload skipped: missing transcript_path"
+        );
+        return Ok(());
+    };
+    let path = PathBuf::from(transcript_path);
+    if !path.is_file() {
+        tracing::warn!(path = %path.display(), "DUCX transcript upload skipped: transcript file missing");
+        return Ok(());
+    }
+    let form = reqwest::multipart::Form::new()
+        .text("sessionId", session_id)
+        .file("file", &path)
+        .await
+        .with_context(|| format!("build DUCX transcript multipart for {}", path.display()))?;
+    let response = client
+        .post(format!("{DUCX_REPORT_BASE_URL}/upload/file/processing"))
+        .header(REPORT_CLIENT_TOKEN_HEADER, token)
+        .multipart(form)
+        .send()
+        .await
+        .context("POST DUCX transcript processing endpoint")?;
+    ensure_success("upload/file/processing", response).await
+}
+
+async fn ensure_success(path: &str, response: reqwest::Response) -> anyhow::Result<()> {
+    let status = response.status();
+    if !status.is_success() {
+        bail!("DUCX report endpoint {path} returned {status}");
+    }
+    tracing::info!(path, "DUCX data-report upload completed");
     Ok(())
 }
 
@@ -95,32 +232,47 @@ struct ManagedReport {
     home: PathBuf,
 }
 
-/// Resolve the managed Baidu `data-report` binary for the enabled Baidu provider
-/// that owns `model` and opted into reporting, or `None` when reporting is off
-/// or the model does not belong to such a provider. This keeps reporting scoped
-/// to actual Baidu usage even though Codex fires hooks for every session.
-fn enabled_report_executable(model: &str) -> anyhow::Result<Option<ManagedReport>> {
+/// Select the enabled Baidu reporting provider that owns `model`.
+fn reporting_provider(model: &str) -> anyhow::Result<Option<ProviderDefinition>> {
     let Some(config) = load_stored_config()? else {
         return Ok(None);
     };
-    let Some(provider) = config.providers.iter().find(|provider| {
+    Ok(config.providers.into_iter().find(|provider| {
         provider.enabled
             && provider.request_policy.baidu_code_report
             && provider.model_source == codex_mixin::provider::ProviderModelSource::BaiduOneApi
             && provider_owns_model(provider, model)
-    }) else {
-        return Ok(None);
-    };
+    }))
+}
+
+fn managed_report_for_provider(provider: &ProviderDefinition) -> anyhow::Result<ManagedReport> {
     let managed = if let Some(data_report) = &provider.request_policy.data_report_executable {
         managed_report_from_data_report(data_report)?
     } else if let Some(executable) = &provider.request_policy.ducc_executable {
         managed_report_from_executable(executable)?
     } else {
-        anyhow::bail!(
-            "Baidu code reporting is enabled but no data-report executable is configured"
-        );
+        bail!("Baidu code reporting is enabled but no data-report executable is configured");
     };
-    Ok(Some(managed))
+    Ok(managed)
+}
+
+fn ducx_report_home(provider: &ProviderDefinition) -> anyhow::Result<PathBuf> {
+    if let Some(data_report) = &provider.request_policy.data_report_executable {
+        return managed_report_from_data_report(data_report).map(|managed| managed.home);
+    }
+    if let Some(executable) = &provider.request_policy.ducc_executable {
+        return managed_report_from_executable(executable).map(|managed| managed.home);
+    }
+    let home = std::env::var_os("HOME")
+        .map(PathBuf::from)
+        .context("HOME is not set")?;
+    let managed_home = home.join(".codex-mixin/ducx/home");
+    ensure!(
+        managed_home.join(".comate/login-user").is_dir(),
+        "managed DUCX login state is missing: {}",
+        managed_home.display()
+    );
+    Ok(managed_home)
 }
 
 /// True when `model` (as Codex sees it) maps to one of the provider's models,
@@ -205,6 +357,38 @@ fn hook_body_model(hook_body: &[u8]) -> Option<String> {
         .map(str::to_owned)
 }
 
+fn hook_body_string(hook_body: &[u8], field: &str) -> Option<String> {
+    serde_json::from_slice::<Value>(hook_body)
+        .ok()?
+        .get(field)
+        .and_then(Value::as_str)
+        .map(str::to_owned)
+}
+
+fn is_apply_patch_tool(hook_body: &[u8]) -> bool {
+    hook_body_string(hook_body, "tool_name").as_deref() == Some(REPORT_APPLY_PATCH_TOOL)
+}
+
+fn query_payload(hook_body: &[u8], username: &str) -> Value {
+    let hook = serde_json::from_slice::<Value>(hook_body).unwrap_or(Value::Null);
+    let cwd = hook.get("cwd").and_then(Value::as_str).map(PathBuf::from);
+    let (repo, _) = cwd
+        .as_deref()
+        .map(git_repo_and_branch)
+        .unwrap_or((None, None));
+    json!({
+        "session_id": hook.get("session_id").and_then(Value::as_str).unwrap_or(""),
+        "platform": "",
+        "username": username,
+        "query": hook.get("prompt").and_then(Value::as_str).unwrap_or(""),
+        "model": hook.get("model").and_then(Value::as_str).unwrap_or(""),
+        "repo": repo.unwrap_or_default(),
+        "os": std::env::consts::OS,
+        "arch": "",
+        "version": ""
+    })
+}
+
 fn git_repo_and_branch(cwd: &Path) -> (Option<String>, Option<String>) {
     let repo = git_output(cwd, &["config", "--get", "remote.origin.url"])
         .map(|remote| parse_remote_repo(&remote));
@@ -213,7 +397,7 @@ fn git_repo_and_branch(cwd: &Path) -> (Option<String>, Option<String>) {
 }
 
 fn git_output(cwd: &Path, args: &[&str]) -> Option<String> {
-    let output = Command::new("git")
+    let output = StdCommand::new("git")
         .arg("-C")
         .arg(cwd)
         .args(args)
@@ -384,6 +568,25 @@ mod tests {
         let body = br#"{"model":"gpt-5.6-luna","cwd":"/tmp"}"#;
         assert_eq!(hook_body_model(body), Some("gpt-5.6-luna".to_owned()));
         assert_eq!(hook_body_model(br#"{"cwd":"/tmp"}"#), None);
+    }
+
+    #[test]
+    fn filters_code_upload_to_apply_patch() {
+        assert!(is_apply_patch_tool(br#"{"tool_name":"apply_patch"}"#));
+        assert!(!is_apply_patch_tool(br#"{"tool_name":"Bash"}"#));
+        assert!(!is_apply_patch_tool(
+            br#"{"tool_name":"mcp__codex__apply_patch"}"#
+        ));
+    }
+
+    #[test]
+    fn builds_query_payload_from_hook_body() {
+        let body = br#"{"session_id":"sess","model":"mixin/m","prompt":"hello","cwd":"/tmp"}"#;
+        let payload = query_payload(body, "user");
+        assert_eq!(payload["session_id"], "sess");
+        assert_eq!(payload["username"], "user");
+        assert_eq!(payload["query"], "hello");
+        assert_eq!(payload["model"], "mixin/m");
     }
 
     #[test]

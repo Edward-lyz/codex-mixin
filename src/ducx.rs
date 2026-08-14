@@ -13,10 +13,12 @@ use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
 use reqwest::header::HeaderMap;
+use serde_json::json;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
-use crate::auth_capture::{CaptureProxy, CaptureTrigger};
+use crate::auth_capture::{CaptureProxy, CaptureTrigger, REPORT_CLIENT_TOKEN_HEADER};
 
 /// Auth handshake hosts DUCX must reach directly. Only the OneAPI inference host
 /// is routed through our capture proxy; proxying the source-auth handshake makes
@@ -69,6 +71,69 @@ impl DucxRuntime {
         Ok(headers)
     }
 
+    pub(crate) async fn report_client_token(&self, timeout: Duration) -> anyhow::Result<String> {
+        let data_report = self.data_report_path()?;
+        ensure!(
+            data_report.is_file(),
+            "managed DUCX data-report is missing: {}",
+            data_report.display()
+        );
+        let username = managed_username(&self.home)?;
+        let proxy = CaptureProxy::start(CaptureTrigger::ReportClientToken).await?;
+        let proxy_url = format!("http://{}", proxy.addr);
+        let codex_home = self.home.join(".baidu-cx");
+        let body = serde_json::to_vec(&json!({
+            "session_id": "codex-mixin-report-warmup",
+            "model": "mixin/report-warmup",
+            "cwd": ".",
+            "prompt": "codex-mixin report warmup"
+        }))?;
+        let mut child = Command::new(&data_report)
+            .arg("--user-prompt-submit")
+            .env("HOME", &self.home)
+            .env("CODEX_HOME", &codex_home)
+            .env("DUCX_USERNAME", &username)
+            .env("HTTP_PROXY", &proxy_url)
+            .env("http_proxy", &proxy_url)
+            .env("HTTPS_PROXY", &proxy_url)
+            .env("https_proxy", &proxy_url)
+            .stdin(Stdio::piped())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .kill_on_drop(true)
+            .spawn()
+            .with_context(|| format!("start managed DUCX data-report {}", data_report.display()))?;
+        child
+            .stdin
+            .take()
+            .context("capture DUCX data-report stdin")?
+            .write_all(&body)
+            .await
+            .context("write DUCX data-report input")?;
+        let captured = proxy.capture(timeout).await.context(
+            "DUCX data-report did not emit a report client token before the capture proxy closed",
+        )?;
+        let token = captured
+            .get(REPORT_CLIENT_TOKEN_HEADER)
+            .context("DUCX data-report warmup response is missing its client token")?
+            .to_str()
+            .context("DUCX data-report client token is not valid UTF-8")?
+            .to_owned();
+        let _ = child.kill().await;
+        let _ = child.wait().await;
+        Ok(token)
+    }
+
+    fn data_report_path(&self) -> anyhow::Result<PathBuf> {
+        let install = self
+            .executable
+            .parent()
+            .context("DUCX executable has no bin directory")?
+            .parent()
+            .context("DUCX executable has no install directory")?;
+        Ok(install.join("hooks/data-report"))
+    }
+
     async fn mint_headers(&self, timeout: Duration) -> anyhow::Result<HeaderMap> {
         let proxy = CaptureProxy::start(CaptureTrigger::NativeHeader).await?;
         let proxy_url = format!("http://{}", proxy.addr);
@@ -107,6 +172,28 @@ impl DucxRuntime {
         let _ = child.wait().await;
         Ok(captured)
     }
+}
+
+fn managed_username(home: &Path) -> anyhow::Result<String> {
+    let login_dir = home.join(".comate/login-user");
+    let mut usernames = std::fs::read_dir(&login_dir)
+        .with_context(|| format!("read DUCX login directory {}", login_dir.display()))?
+        .filter_map(|entry| entry.ok())
+        .filter(|entry| {
+            entry
+                .file_type()
+                .map(|kind| kind.is_file())
+                .unwrap_or(false)
+        })
+        .filter_map(|entry| entry.file_name().into_string().ok());
+    let username = usernames
+        .next()
+        .context("DUCX login directory contains no signed-in user")?;
+    ensure!(
+        usernames.next().is_none(),
+        "DUCX login directory contains multiple users; cannot disambiguate reporting identity"
+    );
+    Ok(username)
 }
 
 fn managed_home(executable: &Path) -> anyhow::Result<PathBuf> {

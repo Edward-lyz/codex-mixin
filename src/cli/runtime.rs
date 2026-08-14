@@ -78,6 +78,14 @@ pub(super) fn default_log_file_path() -> PathBuf {
         .unwrap_or_else(|| state_dir().join("gateway.log"))
 }
 
+pub(super) fn default_report_hook_log_path() -> PathBuf {
+    std::env::var("CODEX_REPORT_HOOK_LOG_FILE")
+        .ok()
+        .filter(|path| !path.is_empty())
+        .map(PathBuf::from)
+        .unwrap_or_else(|| state_dir().join("report-hook.log"))
+}
+
 pub(super) fn load_daemon_metadata() -> anyhow::Result<Option<DaemonMetadata>> {
     let path = daemon_metadata_path();
     if !path.exists() {
