@@ -1,4 +1,88 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.4.2
+
+本版本聚焦于更新体验、跨客户端安装和数据上报 hook。
+
+### 更新与安装
+
+- macOS App 更新现在会自动下载、挂载 DMG，并替换当前 App，不再要求用户手动拖入 Applications
+- 替换前会优雅停止本地网关，替换完成后自动重新启动 App 和网关
+- 使用 staging bundle 完成替换，避免旧版本残留文件混入新版本
+- 安装到 Claude Code 或 DSH 时，如果启用了百度代码使用上报，会自动安装对应客户端的全局 reporting hook
+- 卸载 Claude Code 或 DSH 时会清理 Codex Mixin 管理的 hook，同时保留用户自己的配置
+
+### 平台与能力
+
+- 增加 DSH（DeepSeek Harness）provider 集成
+- 增加 Fusion provider 的禁用和删除命令
+- 修复 DSH Responses SSE relay 的 malformed event 处理
+- 改进 gateway 配置更新、provider readiness 和 native reporting 生命周期
+
+### 验证
+
+- `cargo fmt --all -- --check`
+- `cargo check --locked`
+- report hook 单元测试
+- macOS App 构建、签名和 bundle 校验
+<!-- codex-mixin:zh-Hans:end -->
+
+<!-- codex-mixin:zh-Hant:start -->
+## v0.4.2
+
+本版本聚焦於更新體驗、跨客戶端安裝和資料上報 hook。
+
+### 更新與安裝
+
+- macOS App 更新現在會自動下載、掛載 DMG 並替換目前 App，不再要求使用者手動拖入 Applications
+- 替換前會優雅停止本機閘道，替換完成後自動重新啟動 App 和閘道
+- 使用 staging bundle 完成替換，避免舊版本殘留檔案混入新版本
+- 安裝到 Claude Code 或 DSH 時，如果啟用百度程式碼使用上報，會自動安裝對應客戶端的全域 reporting hook
+- 卸載 Claude Code 或 DSH 時會清理 Codex Mixin 管理的 hook，同時保留使用者自己的設定
+
+### 平台與能力
+
+- 增加 DSH（DeepSeek Harness）provider 整合
+- 增加 Fusion provider 的停用和刪除命令
+- 修正 DSH Responses SSE relay 的 malformed event 處理
+- 改進 gateway 設定更新、provider readiness 和 native reporting 生命週期
+
+### 驗證
+
+- `cargo fmt --all -- --check`
+- `cargo check --locked`
+- report hook 單元測試
+- macOS App 建置、簽名和 bundle 驗證
+<!-- codex-mixin:zh-Hant:end -->
+
+<!-- codex-mixin:en:start -->
+## v0.4.2
+
+This release focuses on seamless updates, cross-client installation, and reporting hooks.
+
+### Updates and installation
+
+- macOS app updates now download, mount, and replace the current app without requiring a manual drag into Applications
+- The running gateway is stopped gracefully before replacement, then the app and gateway restart automatically
+- Replacement uses a staging bundle so stale files from the previous app are not merged into the new version
+- Installing into Claude Code or DSH now installs a client-specific global reporting hook when Baidu code-usage reporting is enabled
+- Uninstalling Claude Code or DSH removes only Codex Mixin managed hooks and preserves user configuration
+
+### Platform and capabilities
+
+- Add DSH (DeepSeek Harness) provider integration
+- Add Fusion provider disable and delete commands
+- Fix malformed Responses SSE relay events for DSH
+- Improve gateway configuration updates, provider readiness, and native reporting lifecycle handling
+
+### Validation
+
+- `cargo fmt --all -- --check`
+- `cargo check --locked`
+- report hook unit tests
+- macOS app build, signing, and bundle verification
+<!-- codex-mixin:en:end -->
+
+<!-- codex-mixin:zh-Hans:start -->
 ## v0.4.1
 
 这是一个 DUCX 原生认证紧急修复版本。建议所有使用百度 OneAPI 认证桥的 v0.4.0 用户立即升级。
