@@ -167,6 +167,10 @@ private func shouldIncludeDiagnosticOutput(_ arguments: [String]) -> Bool {
     ].contains(command) {
         return true
     }
+    if command == "connect", arguments.count > 1 {
+        return arguments[1] == "dsh"
+            || (arguments[1] == "remove" && arguments.count > 2 && arguments[2] == "dsh")
+    }
     if command == "providers", arguments.count > 1 {
         return arguments[1] != "list"
     }

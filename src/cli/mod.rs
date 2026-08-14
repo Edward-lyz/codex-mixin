@@ -23,6 +23,7 @@ mod claude;
 mod codex;
 mod config_input;
 mod doctor;
+mod dsh;
 mod ducx_setup;
 mod fusion_config;
 mod maintenance;
@@ -40,6 +41,7 @@ use codex::{
     resolve_codex_install_paths, uninstall_codex,
 };
 use doctor::doctor;
+use dsh::{install_dsh, uninstall_dsh};
 use ducx_setup::ensure_managed_ducx;
 use fusion_config::{get_fusion_profile, set_fusion_profile};
 use maintenance::migrate_history;
@@ -286,7 +288,7 @@ async fn update_cli() -> anyhow::Result<()> {
 #[command(
     author,
     version,
-    about = "Connect custom model providers to Codex and Claude"
+    about = "Connect custom model providers to Codex, Claude, and DSH"
 )]
 struct Cli {
     #[command(subcommand)]
@@ -578,17 +580,24 @@ enum ConnectCommand {
         #[arg(long)]
         model: Option<String>,
     },
+    /// Install the Codex Mixin gateway as a DeepSeek Harness provider.
+    Dsh {
+        #[arg(long)]
+        dsh_home: Option<PathBuf>,
+    },
     /// Show Claude Code integration status.
     Status {
         #[arg(long)]
         settings_path: Option<PathBuf>,
     },
-    /// Remove Codex or Claude integration.
+    /// Remove Codex, Claude, or DSH integration.
     Remove {
-        #[arg(value_parser = ["codex", "claude"])]
+        #[arg(value_parser = ["codex", "claude", "dsh"])]
         target: String,
         #[arg(long)]
         settings_path: Option<PathBuf>,
+        #[arg(long)]
+        dsh_home: Option<PathBuf>,
     },
 }
 
@@ -1307,13 +1316,16 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 settings_path,
                 model,
             } => install_claude(settings_path, model),
+            ConnectCommand::Dsh { dsh_home } => install_dsh(dsh_home),
             ConnectCommand::Status { settings_path } => claude_status(settings_path),
             ConnectCommand::Remove {
                 target,
                 settings_path,
+                dsh_home,
             } => match target.as_str() {
                 "codex" => uninstall_codex(None, None),
                 "claude" => uninstall_claude(settings_path),
+                "dsh" => uninstall_dsh(dsh_home),
                 _ => unreachable!("clap validates connect target"),
             },
         },

@@ -181,6 +181,18 @@ fn user_facing_command_groups_parse() {
         ])
         .is_ok()
     );
+    assert!(Cli::try_parse_from(["codex-mixin", "connect", "dsh"]).is_ok());
+    assert!(
+        Cli::try_parse_from([
+            "codex-mixin",
+            "connect",
+            "remove",
+            "dsh",
+            "--dsh-home",
+            "/tmp/dsh-home",
+        ])
+        .is_ok()
+    );
     assert!(Cli::try_parse_from(["codex-mixin", "info", "--json"]).is_ok());
 }
 

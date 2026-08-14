@@ -153,6 +153,83 @@ extension AppDelegate {
         }
     }
 
+    @objc func installDsh() {
+        Task { @MainActor in
+            serviceBusy = true
+            serviceStatus = "正在准备 DSH 配置..."
+            defer { serviceBusy = false }
+            do {
+                try await runOperationProgress(
+                    title: "正在安装到 DSH",
+                    phases: [
+                        "准备网关",
+                        "写入 DSH settings",
+                        "写入 DSH credentials",
+                        "完成",
+                    ],
+                    successTitle: "✓ 安装完成",
+                    failureTitle: "✗ 安装失败",
+                    showFailureAlert: true,
+                    failureAlertTitle: "安装到 DSH 失败"
+                ) { progress in
+                    progress.advance(to: 0)
+                    let status = try await ensureGatewayReady()
+                    applyGatewayStatus(status)
+                    progress.advance(to: 1)
+                    _ = try await runGateway(["connect", "dsh"])
+                    progress.advance(to: 2)
+                    progress.advance(to: 3)
+                    showAlert(
+                        title: "DSH 配置已更新",
+                        message: "已把本地网关注册为 DSH 的 codex-mixin provider。请重启 DSH 或开新会话，然后在模型选择器中选择 Codex Mixin 模型。"
+                    )
+                    await refreshStatusNow()
+                }
+            } catch {
+                serviceStatus = "安装 DSH 配置失败"
+            }
+        }
+    }
+
+    @objc func uninstallDsh() {
+        guard confirm(
+            title: "从 DSH 卸载",
+            message: "会从 DSH settings.yaml 删除 llm-pi-ai.providers.codex-mixin，并从 .credentials.yaml 删除 CODEX_MIXIN_GATEWAY_API_KEY。其他 DSH 配置会保留。完成后需要重启 DSH。"
+        ) else { return }
+        Task { @MainActor in
+            serviceBusy = true
+            defer { serviceBusy = false }
+            do {
+                try await runOperationProgress(
+                    title: "正在从 DSH 卸载",
+                    phases: [
+                        "读取 DSH 配置",
+                        "移除 codex-mixin provider",
+                        "清理 DSH credentials",
+                        "完成",
+                    ],
+                    successTitle: "✓ 卸载完成",
+                    failureTitle: "✗ 卸载失败",
+                    showFailureAlert: true,
+                    failureAlertTitle: "从 DSH 卸载失败"
+                ) { progress in
+                    progress.advance(to: 0)
+                    progress.advance(to: 1)
+                    let output = try await runGateway(["connect", "remove", "dsh"])
+                    progress.advance(to: 2)
+                    progress.advance(to: 3)
+                    let message = output.isEmpty
+                        ? "已从 DSH 移除 codex-mixin provider。请重启 DSH。"
+                        : "\(output)\n\n请重启 DSH。"
+                    showAlert(title: "DSH 配置已恢复", message: message)
+                    refreshStatus()
+                }
+            } catch {
+                // Failure already shown by the progress window + alert.
+            }
+        }
+    }
+
     @objc func copyLocalEndpoint() {
         Task { @MainActor in
             do {

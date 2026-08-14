@@ -157,7 +157,7 @@ codex-mixin setup --preset baidu-oneapi --key <key> --quota-username <username> 
 
 只写配置、不启动网关时增加 `--no-start`。日常入口按任务收敛：`setup` 负责首次配置，`update` 负责从
 GitHub Release 更新 CLI 并重启网关，`provider` 管理供应商，`service` 管理本地网关，`connect` 管理
-Codex/Claude 集成，`info` 查看运行状态，`doctor` 负责诊断和修复。
+Codex、Claude 和 DSH 集成，`info` 查看运行状态，`doctor` 负责诊断和修复。
 
 然后重新打开 Codex CLI 会话，在模型选择器里选择接入后的模型。遇到问题时再运行
 `codex-mixin doctor --quick`；它会给出具体修复命令。
@@ -246,6 +246,30 @@ codex-mixin connect status
 
 注意：Claude Code 默认模型名可能不是本地 provider 的 catalog 名称；安装后建议使用
 `--model` 显式选择，或先执行 `codex-mixin info` 查看网关和 provider 状态。
+
+### 安装到 DSH
+
+DeepSeek Harness（DSH）可以通过 pi-ai adapter 使用本地网关。菜单栏 App 选择
+「安装到 DSH...」后，会：
+
+1. 在 `$DSH_HOME/settings.yaml` 的 `llm-pi-ai.providers.codex-mixin` 写入
+   `openai-responses` 路由，`baseURL` 指向本地网关的 `/v1`。
+2. 把当前已启用 provider 的已选模型和 Fusion 虚拟模型写入该路由的 `models`，
+   使用网关公开的 provider-qualified catalog slug。
+3. 在 `$DSH_HOME/.credentials.yaml` 写入 `CODEX_MIXIN_GATEWAY_API_KEY`。网关配置了
+   `gateway_api_key` 时写入该值；未配置时写入本地占位值，DSH 仍能通过无鉴权网关。
+4. 卸载时删除 `llm-pi-ai.providers.codex-mixin` 和
+   `CODEX_MIXIN_GATEWAY_API_KEY`，保留 DSH 的其他配置。
+
+CLI 等价命令：
+
+```bash
+codex-mixin connect dsh
+codex-mixin connect remove dsh
+```
+
+DSH 目录默认使用 `$DSH_HOME`，未设置时使用 `~/.dsh`。自定义目录可以传
+`--dsh-home`。安装或卸载后需要重启 DSH 或开启新会话。
 
 ### 安装到 Codex 的行为
 
@@ -385,11 +409,13 @@ codex-mixin service restart
 codex-mixin service logs -n 200
 codex-mixin service start --foreground
 
-# Codex / Claude 集成
+# Codex / Claude / DSH 集成
 codex-mixin connect codex --codex-oauth-proxy
 codex-mixin connect codex --custom-only
 codex-mixin connect claude --model "Claude Sonnet 5"
+codex-mixin connect dsh
 codex-mixin connect remove codex
+codex-mixin connect remove dsh
 codex-mixin connect status
 
 # 状态与诊断
@@ -691,8 +717,8 @@ installation mode, `setup` finishes the Codex install itself. Scripts and CI can
 `--key`, `--quota-username`, and `--codex-mode official|custom|skip` to skip all prompts.
 
 For later management, use `provider` for providers, `service` for the gateway, `connect` for
-Codex/Claude integration, `update` to update the CLI from the latest GitHub Release, `info` for
-state, and `doctor` for diagnosis. Then start a new Codex CLI session.
+Codex, Claude, and DeepSeek Harness (DSH) integration, `update` to update the CLI from the latest
+GitHub Release, `info` for state, and `doctor` for diagnosis. Then start a new Codex CLI session.
 
 ### Provider Presets
 
@@ -905,11 +931,13 @@ codex-mixin service restart
 codex-mixin service logs -n 200
 codex-mixin service start --foreground
 
-# Codex / Claude integration
+# Codex / Claude / DSH integration
 codex-mixin connect codex --codex-oauth-proxy
 codex-mixin connect codex --custom-only
 codex-mixin connect claude --model "Claude Sonnet 5"
+codex-mixin connect dsh
 codex-mixin connect remove codex
+codex-mixin connect remove dsh
 codex-mixin connect status
 
 # State and diagnosis
@@ -935,6 +963,10 @@ codex-mixin doctor --fix --restart-apps # additionally allow restarting the Chat
 | Custom-only auth backup | `~/.codex/auth.json.codex-mixin.backup` |
 | Pre-install auth-absent marker | `~/.codex/auth.json.codex-mixin.absent` |
 | Codex model catalog | `~/.codex/model-catalogs/mixin-models.json` |
+| DSH settings | `$DSH_HOME/settings.yaml` or `~/.dsh/settings.yaml` |
+| DSH credentials | `$DSH_HOME/.credentials.yaml` or `~/.dsh/.credentials.yaml` |
+| DSH settings | `$DSH_HOME/settings.yaml` or `~/.dsh/settings.yaml` |
+| DSH credentials | `$DSH_HOME/.credentials.yaml` or `~/.dsh/.credentials.yaml` |
 
 Use an isolated Codex home for experiments:
 
