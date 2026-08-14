@@ -113,6 +113,17 @@ pub(super) async fn run(event: &str) -> anyhow::Result<()> {
     }
 }
 
+pub(super) fn reporting_enabled() -> anyhow::Result<bool> {
+    Ok(load_stored_config()?
+        .map(|config| {
+            config
+                .providers
+                .iter()
+                .any(|provider| provider.enabled && provider.request_policy.baidu_code_report)
+        })
+        .unwrap_or(false))
+}
+
 async fn report_ducx_event(
     context: ReportContext<'_>,
     hook_body: &[u8],
@@ -493,16 +504,13 @@ fn parse_remote_repo(remote: &str) -> String {
 /// Install or remove the managed reporting hook block in `~/.codex/hooks.json`
 /// to match whether any enabled Baidu provider opted into reporting.
 pub(super) fn sync_installation() -> anyhow::Result<()> {
-    let enabled = load_stored_config()?
-        .map(|config| {
-            config
-                .providers
-                .iter()
-                .any(|provider| provider.enabled && provider.request_policy.baidu_code_report)
-        })
-        .unwrap_or(false);
+    let enabled = reporting_enabled()?;
     let home = std::env::var_os("HOME").context("HOME is not set")?;
     let hooks_path = PathBuf::from(home).join(".codex/hooks.json");
+    sync_installation_at(&hooks_path, enabled)
+}
+
+pub(super) fn sync_installation_at(hooks_path: &Path, enabled: bool) -> anyhow::Result<()> {
     if !enabled && !hooks_path.exists() {
         return Ok(());
     }

@@ -35,7 +35,7 @@ mod service;
 mod status;
 
 use benchmark_proxy::{benchmark_start, benchmark_status};
-use claude::{claude_status, install_claude, uninstall_claude};
+use claude::{claude_status, install_claude, sync_claude_hooks, uninstall_claude};
 use codex::{
     InstallCodexOptions, install_codex, refresh_default_managed_codex_catalog,
     resolve_codex_install_paths, uninstall_codex,
@@ -1319,8 +1319,21 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             ConnectCommand::Claude {
                 settings_path,
                 model,
-            } => install_claude(settings_path, model),
-            ConnectCommand::Dsh { dsh_home } => install_dsh(dsh_home),
+            } => {
+                let hook_settings_path = settings_path.clone();
+                install_claude(settings_path, model)?;
+                sync_claude_hooks(hook_settings_path)?;
+                report_hook::sync_installation()
+            }
+            ConnectCommand::Dsh { dsh_home } => {
+                let hooks_path = dsh_home
+                    .clone()
+                    .unwrap_or_else(dsh::default_dsh_home)
+                    .join("hooks.json");
+                install_dsh(dsh_home)?;
+                report_hook::sync_installation_at(&hooks_path, report_hook::reporting_enabled()?)?;
+                report_hook::sync_installation()
+            }
             ConnectCommand::Status { settings_path } => claude_status(settings_path),
             ConnectCommand::Remove {
                 target,
@@ -1328,8 +1341,24 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 dsh_home,
             } => match target.as_str() {
                 "codex" => uninstall_codex(None, None),
-                "claude" => uninstall_claude(settings_path),
-                "dsh" => uninstall_dsh(dsh_home),
+                "claude" => {
+                    let hook_settings_path = settings_path.clone();
+                    uninstall_claude(settings_path)?;
+                    sync_claude_hooks(hook_settings_path)?;
+                    report_hook::sync_installation()
+                }
+                "dsh" => {
+                    let hooks_path = dsh_home
+                        .clone()
+                        .unwrap_or_else(dsh::default_dsh_home)
+                        .join("hooks.json");
+                    uninstall_dsh(dsh_home)?;
+                    report_hook::sync_installation_at(
+                        &hooks_path,
+                        report_hook::reporting_enabled()?,
+                    )?;
+                    report_hook::sync_installation()
+                }
                 _ => unreachable!("clap validates connect target"),
             },
         },
@@ -1418,8 +1447,18 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             .await
         }
         Command::UninstallCodex { config, catalog } => uninstall_codex(config, catalog),
-        Command::InstallClaude { settings, model } => install_claude(settings, model),
-        Command::UninstallClaude { settings } => uninstall_claude(settings),
+        Command::InstallClaude { settings, model } => {
+            let hook_settings_path = settings.clone();
+            install_claude(settings, model)?;
+            sync_claude_hooks(hook_settings_path)?;
+            report_hook::sync_installation()
+        }
+        Command::UninstallClaude { settings } => {
+            let hook_settings_path = settings.clone();
+            uninstall_claude(settings)?;
+            sync_claude_hooks(hook_settings_path)?;
+            report_hook::sync_installation()
+        }
         Command::ClaudeStatus { settings } => claude_status(settings),
         Command::RefreshCodexCatalog => refresh_default_managed_codex_catalog().await,
         Command::ProbeWebSearch { force, json } => probe_web_search(force, json).await,

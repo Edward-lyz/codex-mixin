@@ -50,7 +50,9 @@ extension AppDelegate {
                     title: "正在下载更新",
                     phases: [
                         "下载更新包",
-                        "打开安装包",
+                        "停止本地网关",
+                        "替换应用",
+                        "重新启动",
                     ],
                     detail: asset.name,
                     successTitle: "✓ 下载完成",
@@ -64,7 +66,10 @@ extension AppDelegate {
                         version: release.version
                     )
                     progress.advance(to: 1)
-                    NSWorkspace.shared.open(dmgURL)
+                    _ = try await runGateway(["stop"])
+                    progress.advance(to: 2)
+                    try await installDownloadedUpdate(dmgURL)
+                    progress.advance(to: 3)
                 }
             } catch {
                 // Failure already shown by the progress window + alert.
@@ -144,6 +149,52 @@ extension AppDelegate {
         }
         try FileManager.default.moveItem(at: temporaryURL, to: destination)
         return destination
+    }
+
+    @MainActor
+    func installDownloadedUpdate(_ dmgURL: URL) async throws {
+        let mountPoint = FileManager.default.temporaryDirectory
+            .appendingPathComponent("codex-mixin-update-\(UUID().uuidString)", isDirectory: true)
+        try FileManager.default.createDirectory(at: mountPoint, withIntermediateDirectories: true)
+        defer {
+            try? FileManager.default.removeItem(at: mountPoint)
+            try? FileManager.default.removeItem(at: dmgURL)
+        }
+
+        _ = try await runProcess(
+            "/usr/bin/hdiutil",
+            ["attach", dmgURL.path, "-nobrowse", "-readonly", "-mountpoint", mountPoint.path]
+        )
+        defer {
+            Task {
+                _ = try? await runProcess("/usr/bin/hdiutil", ["detach", mountPoint.path, "-force"])
+            }
+        }
+
+        guard let appURL = FileManager.default.enumerator(
+            at: mountPoint,
+            includingPropertiesForKeys: [.isDirectoryKey],
+            options: [.skipsHiddenFiles]
+        )?.compactMap({ $0 as? URL }).first(where: {
+            $0.pathExtension == "app" && $0.lastPathComponent == "Codex Mixin.app"
+        }) else {
+            throw GatewayError.command("update image does not contain Codex Mixin.app")
+        }
+
+        let destination = Bundle.main.bundleURL
+        guard destination.pathExtension == "app" else {
+            throw GatewayError.command("current application bundle path is invalid")
+        }
+        let stagingURL = destination.deletingLastPathComponent()
+            .appendingPathComponent(".Codex Mixin.update-\(UUID().uuidString).app")
+        defer { try? FileManager.default.removeItem(at: stagingURL) }
+        _ = try await runProcess("/usr/bin/ditto", ["--rsrc", appURL.path, stagingURL.path])
+        _ = try FileManager.default.replaceItemAt(destination, withItemAt: stagingURL)
+        guard FileManager.default.fileExists(atPath: destination.path) else {
+            throw GatewayError.command("updated application bundle is missing after replacement")
+        }
+        NSWorkspace.shared.open(destination)
+        NSApp.terminate(nil)
     }
 
     func appVersion() -> String {

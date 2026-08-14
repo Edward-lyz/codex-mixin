@@ -4,11 +4,13 @@ use std::path::PathBuf;
 use serde_json::{Value, json};
 
 use crate::cli::atomic_file::write_atomic_if_changed;
+use crate::cli::report_hook::reporting_enabled;
 use crate::cli::runtime::{load_runtime_metadata, pid_is_running};
 use codex_mixin::config::GatewayConfig;
 use codex_mixin::provider::ProviderProtocol;
 
 pub(in crate::cli) const MANAGED_CLAUDE_MARKER: &str = "codex-mixin managed Claude Code";
+const MANAGED_CLAUDE_HOOK_MARKER: &str = " report-hook --event ";
 const MANAGED_CLAUDE_ENV_KEYS: &[&str] = &[
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_MODEL",
@@ -131,6 +133,73 @@ pub(in crate::cli) fn install_claude_with_config(
     println!("ANTHROPIC_BASE_URL: {base_url}");
     println!("claude code model: {model}");
     println!("reload required: restart Claude Code or start a new session");
+    Ok(())
+}
+
+pub(in crate::cli) fn sync_claude_hooks(settings_path: Option<PathBuf>) -> anyhow::Result<()> {
+    let settings_path = resolve_claude_settings_path(settings_path)?;
+    let enabled = reporting_enabled()?;
+    if !enabled && !settings_path.exists() {
+        return Ok(());
+    }
+    let mut settings: Value = if settings_path.exists() {
+        serde_json::from_slice(&fs::read(&settings_path)?).map_err(|error| {
+            anyhow::anyhow!(
+                "invalid Claude Code settings {}: {error}",
+                settings_path.display()
+            )
+        })?
+    } else {
+        json!({})
+    };
+    let object = settings.as_object_mut().ok_or_else(|| {
+        anyhow::anyhow!(
+            "Claude Code settings must be a JSON object: {}",
+            settings_path.display()
+        )
+    })?;
+    let hooks = object
+        .entry("hooks")
+        .or_insert_with(|| json!({}))
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("Claude Code settings hooks must be an object"))?;
+    for (event_name, event_argument) in [
+        ("SessionStart", "session-start"),
+        ("UserPromptSubmit", "user-prompt-submit"),
+        ("PreToolUse", "pre-tool-use"),
+        ("PostToolUse", "post-tool-use"),
+        ("Stop", "stop"),
+    ] {
+        if let Some(groups) = hooks.get_mut(event_name).and_then(Value::as_array_mut) {
+            for group in groups {
+                if let Some(commands) = group.get_mut("hooks").and_then(Value::as_array_mut) {
+                    commands.retain(|command| {
+                        !command
+                            .get("command")
+                            .and_then(Value::as_str)
+                            .is_some_and(|value| value.contains(MANAGED_CLAUDE_HOOK_MARKER))
+                    });
+                }
+            }
+        }
+        if enabled {
+            let executable = std::env::current_exe()?;
+            hooks
+                .entry(event_name.to_owned())
+                .or_insert_with(|| json!([]))
+                .as_array_mut()
+                .ok_or_else(|| anyhow::anyhow!("Claude Code hook event must be an array"))?
+                .push(json!({
+                    "hooks": [{
+                        "type": "command",
+                        "command": format!("'{}' report-hook --event {event_argument}", executable.to_string_lossy().replace('\'', "'\\''")),
+                        "timeout": 30,
+                        "statusMessage": "Reporting Baidu AI code usage"
+                    }]
+                }));
+        }
+    }
+    write_atomic_if_changed(&settings_path, &serde_json::to_vec_pretty(&settings)?)?;
     Ok(())
 }
 
