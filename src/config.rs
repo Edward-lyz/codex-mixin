@@ -225,7 +225,8 @@ pub fn load_stored_config_from_path(
 }
 
 fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConfig> {
-    let document: serde_json::Value = serde_json::from_str(raw)?;
+    let mut document: serde_json::Value = serde_json::from_str(raw)?;
+    migrate_legacy_ducc_config(&mut document);
     if let Some(version) = document
         .get("config_version")
         .and_then(serde_json::Value::as_u64)
@@ -268,6 +269,40 @@ fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConfig> {
     bootstrap_unrefreshed_selected_models(&mut migrated);
     backfill_data_report_executable(&mut migrated);
     Ok(migrated)
+}
+
+fn migrate_legacy_ducc_config(document: &mut serde_json::Value) {
+    let Some(providers) = document
+        .get_mut("providers")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return;
+    };
+    for provider in providers {
+        let Some(request_policy) = provider
+            .get_mut("request_policy")
+            .and_then(serde_json::Value::as_object_mut)
+        else {
+            continue;
+        };
+        let legacy_bridge = request_policy
+            .get("baidu_auth_bridge")
+            .and_then(serde_json::Value::as_str)
+            .map(str::to_owned);
+        if matches!(legacy_bridge.as_deref(), Some("ducc_loopback")) {
+            request_policy.insert(
+                "baidu_auth_bridge".to_owned(),
+                serde_json::Value::String("disabled".to_owned()),
+            );
+            request_policy.insert(
+                "baidu_code_report".to_owned(),
+                serde_json::Value::Bool(false),
+            );
+            request_policy.remove("ducc_executable");
+            request_policy.remove("data_report_executable");
+            request_policy.remove("data_report_client_token");
+        }
+    }
 }
 
 fn backfill_data_report_executable(config: &mut StoredGatewayConfig) {
@@ -656,6 +691,41 @@ mod tests {
         assert_eq!(provider.models_refreshed_at_ms, None);
         assert!(provider.selected_models.is_empty());
         assert_eq!(fs::read_to_string(&path).unwrap(), legacy);
+    }
+
+    #[test]
+    fn migrates_legacy_ducc_config_to_disabled_reporting() {
+        let raw = r#"{
+          "config_version": 2,
+          "providers": [{
+            "id": "baidu-oneapi",
+            "display_name": "Baidu OneAPI",
+            "enabled": true,
+            "preset_id": "baidu-oneapi",
+            "protocol": "anthropic_messages",
+            "base_url": "https://oneapi.example",
+            "api_path": "/v1/messages",
+            "model_source": {"kind": "baidu_one_api"},
+            "auth": {"header": "authorization_bearer", "api_key": "key"},
+            "quota_parser": "baidu_one_api",
+            "request_policy": {
+              "baidu_auth_bridge": "ducc_loopback",
+              "ducc_executable": "/old/ducc",
+              "data_report_executable": "/old/data-report",
+              "baidu_code_report": true
+            }
+          }]
+        }"#;
+        let parsed = parse_stored_config(raw).unwrap();
+        let policy = &parsed.providers[0].request_policy;
+        assert_eq!(
+            policy.effective_baidu_auth_bridge(),
+            crate::provider::BaiduAuthBridge::Disabled
+        );
+        assert!(!policy.baidu_code_report);
+        assert!(policy.ducx_executable.is_none());
+        assert!(policy.data_report_executable.is_none());
+        assert!(policy.data_report_client_token.is_none());
     }
 
     #[test]
