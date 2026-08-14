@@ -1,8 +1,8 @@
 //! Managed DUCX install + login, isolated under `~/.codex-mixin/ducx`.
 //!
-//! Mirrors the managed DUCC flow but tracks Baidu's `baidu-cx` package. DUCX is
-//! only used to mint the native `comate_custom_header`; it never touches the
-//! user's own `~/.baidu-cx` install, config, or hooks.
+//! Tracks Baidu's `baidu-cx` package. DUCX is only used to mint the native
+//! `comate_custom_header`; it never touches the user's own `~/.baidu-cx`
+//! install, config, or hooks.
 
 use std::fs;
 use std::io::IsTerminal;

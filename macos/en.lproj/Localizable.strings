@@ -81,8 +81,8 @@
 "providerSettings.customSiteInformationRequired" = "Custom Site Information Required";
 "providerSettings.siteNameAndAPIURLCannotBe" = "Site name and API URL cannot be empty.";
 "providerSettings.chooseABaiduAuthBridge" = "Choose a Baidu Auth Bridge";
-"providerSettings.duccUsesACodexMixinManagedCopy" = "DUCC uses a Codex Mixin-managed copy and downloads, signs in, and runs inside an isolated HOME without reading or changing system DUCC, Claude config, or hooks. Success saves the provider and restarts the gateway.";
-"providerSettings.configureDUCC" = "Configure DUCC";
+"providerSettings.ducxUsesACodexMixinManagedCopy" = "DUCX uses a Codex Mixin-managed copy and downloads, signs in, and runs inside an isolated HOME without reading or changing the system DUCX config or hooks. Success saves the provider and restarts the gateway.";
+"providerSettings.configureDUCX" = "Configure DUCX";
 "providerSettings.keepDisabled" = "Keep Disabled";
 "providerSettings.configured" = "%@ Configured";
 "providerSettings.downloadAndLoginAreCompleteTheProvider" = "%@ download and login are complete. The provider now uses %@, and the local gateway has restarted.";
@@ -115,8 +115,7 @@
 "settings.opencodeGoQuotaCredentialsRequired" = "OpenCode Go Quota Credentials Required";
 "settings.opencodeGoRequiresBothTheWorkspaceID" = "OpenCode Go requires both the workspace ID and auth cookie to show usage and balance.";
 "settings.disabledDefault" = "Disabled (default)";
-"settings.duccCoreLoopback" = "DUCC Core (loopback)";
-"settings.duccUsesACodexMixinManagedCopy" = "DUCC uses a Codex Mixin-managed copy and downloads, signs in, and runs inside an isolated HOME without changing system config or hooks.";
+"settings.ducxUsesACodexMixinManagedCopy" = "DUCX uses a Codex Mixin-managed copy and downloads, signs in, and runs inside an isolated HOME without changing system config or hooks.";
 "appSupport.ok" = "OK";
 "appSupport.continue" = "Continue";
 "appSupport.cancel" = "Cancel";

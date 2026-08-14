@@ -50,7 +50,6 @@ pub struct AppState {
     catalog_sources_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogSources>>>,
     catalog_response_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogResponse>>>,
     official_auth_cache: Arc<tokio::sync::Mutex<Option<CachedOfficialAuth>>>,
-    ducc_runtimes: Arc<tokio::sync::Mutex<HashMap<String, Arc<crate::ducc::DuccRuntime>>>>,
     ducx_runtimes: Arc<tokio::sync::Mutex<HashMap<String, Arc<crate::ducx::DucxRuntime>>>>,
 }
 
@@ -137,7 +136,6 @@ impl AppState {
             catalog_sources_cache: Arc::new(tokio::sync::Mutex::new(None)),
             catalog_response_cache: Arc::new(tokio::sync::Mutex::new(None)),
             official_auth_cache: Arc::new(tokio::sync::Mutex::new(None)),
-            ducc_runtimes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
             ducx_runtimes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         })
     }
@@ -158,47 +156,6 @@ impl AppState {
 
     pub fn provider(&self, provider_id: &str) -> Option<&ProviderRuntime> {
         self.providers.provider(provider_id)
-    }
-
-    async fn ducc_runtime_for(
-        &self,
-        provider: &ProviderRuntime,
-    ) -> Result<Arc<crate::ducc::DuccRuntime>, GatewayError> {
-        let executable = provider
-            .ducc_executable()
-            .map(PathBuf::from)
-            .or_else(crate::ducc::default_ducc_executable)
-            .ok_or_else(|| {
-                GatewayError::Upstream(
-                    "DUCC loopback is enabled but the managed ducc executable was not found"
-                        .to_owned(),
-                )
-            })?;
-        let mut runtimes = self.ducc_runtimes.lock().await;
-        if let Some(runtime) = runtimes.get(provider.id()) {
-            return Ok(Arc::clone(runtime));
-        }
-        let api_key = provider.definition().auth.api_key.clone();
-        let runtime = Arc::new(
-            crate::ducc::DuccRuntime::spawn(executable, api_key)
-                .await
-                .map_err(GatewayError::Other)?,
-        );
-        runtimes.insert(provider.id().to_owned(), Arc::clone(&runtime));
-        Ok(runtime)
-    }
-
-    pub(crate) async fn prewarm_ducc(&self) -> Result<(), GatewayError> {
-        let Some(provider) = self
-            .providers
-            .providers()
-            .iter()
-            .find(|provider| provider.uses_ducc_loopback())
-        else {
-            return Ok(());
-        };
-        self.ducc_native_headers(provider).await?;
-        Ok(())
     }
 
     pub(crate) async fn prewarm_ducx(&self) -> Result<(), GatewayError> {
@@ -271,7 +228,7 @@ impl AppState {
         provider: &ProviderRuntime,
     ) -> Result<Arc<crate::ducx::DucxRuntime>, GatewayError> {
         let executable = provider
-            .ducc_executable()
+            .ducx_executable()
             .map(PathBuf::from)
             .or_else(crate::ducx::default_ducx_executable)
             .ok_or_else(|| {
@@ -305,24 +262,11 @@ impl AppState {
             .map_err(GatewayError::Other)
     }
 
-    pub(crate) async fn ducc_native_headers(
-        &self,
-        provider: &ProviderRuntime,
-    ) -> Result<axum::http::HeaderMap, GatewayError> {
-        self.ducc_runtime_for(provider)
-            .await?
-            .native_headers(self.config.request_timeout)
-            .await
-            .map_err(GatewayError::Other)
-    }
-
     pub(crate) async fn baidu_native_headers(
         &self,
         provider: &ProviderRuntime,
     ) -> Result<Option<axum::http::HeaderMap>, GatewayError> {
-        if provider.uses_ducc_loopback() {
-            Ok(Some(self.ducc_native_headers(provider).await?))
-        } else if provider.uses_ducx_loopback() {
+        if provider.uses_ducx_loopback() {
             Ok(Some(self.ducx_native_headers(provider).await?))
         } else {
             Ok(None)
@@ -639,8 +583,8 @@ impl AppState {
         } else {
             provider.definition().anthropic_beta.clone()
         };
-        // DUCC and DUCX both act as header generators. Merge whichever native
-        // headers the selected auth core produced instead of the stored key.
+        // DUCX acts as a header generator. Merge its native headers instead of
+        // the stored key.
         let native = self.baidu_native_headers(provider).await?;
         let base_request = self.client.post(provider.api_url().clone());
         let mut upstream_request = match &native {

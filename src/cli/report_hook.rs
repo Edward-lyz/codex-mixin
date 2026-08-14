@@ -1,20 +1,17 @@
 //! Mixin-level Baidu code-usage reporting.
 //!
 //! DUCX reporting is handled natively by codex-mixin using the client token
-//! captured during DUCX warmup. DUCC continues to use its managed `data-report`
-//! binary until a later migration.
+//! captured during DUCX warmup.
 
 use std::fs;
 use std::io::Read;
 use std::path::{Path, PathBuf};
-use std::process::{Command as StdCommand, Stdio};
+use std::process::Command as StdCommand;
 use std::time::Duration;
 
 use anyhow::{Context, bail, ensure};
 use fs2::FileExt;
 use serde_json::{Value, json};
-use tokio::io::AsyncWriteExt;
-use tokio::process::Command;
 
 use super::atomic_file::write_atomic_if_changed;
 use codex_mixin::config::load_stored_config;
@@ -70,62 +67,10 @@ pub(super) async fn run(event: &str) -> anyhow::Result<()> {
                 .context("build DUCX report client")?;
             report_ducx_event(event, &hook_body, token, &username, &client).await
         }
-        BaiduAuthBridge::DuccLoopback => {
-            let managed = managed_report_for_provider(&provider)?;
-            run_ducc_report(event, &hook_body, &managed).await
-        }
         BaiduAuthBridge::Disabled => {
             bail!("Baidu code reporting is enabled but the authentication bridge is disabled")
         }
     }
-}
-
-async fn run_ducc_report(
-    event: &str,
-    hook_body: &[u8],
-    managed: &ManagedReport,
-) -> anyhow::Result<()> {
-    let event_argument = match event {
-        "session-start" => "--session-start",
-        "user-prompt-submit" => "--user-prompt-submit",
-        "pre-tool-use" => "--pre-tool-use",
-        "post-tool-use" => "--post-tool-use",
-        "stop" => "--stop",
-        other => bail!("unsupported Codex report hook event: {other}"),
-    };
-    let username = managed_username(&managed.home)?;
-    let cwd = hook_body_cwd(hook_body);
-    let (repo, branch) = cwd
-        .as_deref()
-        .map(git_repo_and_branch)
-        .unwrap_or((None, None));
-    let mut command = Command::new(&managed.data_report);
-    command
-        .arg(event_argument)
-        .env("HOME", &managed.home)
-        .env("DUCX_USERNAME", username)
-        .stdin(Stdio::piped())
-        .stdout(Stdio::inherit())
-        .stderr(Stdio::inherit());
-    if let Some(repo) = repo {
-        command.env("DUCX_REPO", repo);
-    }
-    if let Some(branch) = branch {
-        command.env("DUCX_BRANCH", branch);
-    }
-    let mut child = command
-        .spawn()
-        .with_context(|| format!("start DUCC data-report {}", managed.data_report.display()))?;
-    child
-        .stdin
-        .take()
-        .context("capture DUCC data-report stdin")?
-        .write_all(hook_body)
-        .await
-        .context("write DUCC data-report input")?;
-    let status = child.wait().await.context("wait for DUCC data-report")?;
-    ensure!(status.success(), "DUCC data-report exited with {status}");
-    Ok(())
 }
 
 async fn report_ducx_event(
@@ -227,11 +172,6 @@ async fn ensure_success(path: &str, response: reqwest::Response) -> anyhow::Resu
     Ok(())
 }
 
-struct ManagedReport {
-    data_report: PathBuf,
-    home: PathBuf,
-}
-
 /// Select the enabled Baidu reporting provider that owns `model`.
 fn reporting_provider(model: &str) -> anyhow::Result<Option<ProviderDefinition>> {
     let Some(config) = load_stored_config()? else {
@@ -245,23 +185,12 @@ fn reporting_provider(model: &str) -> anyhow::Result<Option<ProviderDefinition>>
     }))
 }
 
-fn managed_report_for_provider(provider: &ProviderDefinition) -> anyhow::Result<ManagedReport> {
-    let managed = if let Some(data_report) = &provider.request_policy.data_report_executable {
-        managed_report_from_data_report(data_report)?
-    } else if let Some(executable) = &provider.request_policy.ducc_executable {
-        managed_report_from_executable(executable)?
-    } else {
-        bail!("Baidu code reporting is enabled but no data-report executable is configured");
-    };
-    Ok(managed)
-}
-
 fn ducx_report_home(provider: &ProviderDefinition) -> anyhow::Result<PathBuf> {
     if let Some(data_report) = &provider.request_policy.data_report_executable {
-        return managed_report_from_data_report(data_report).map(|managed| managed.home);
+        return ducx_home_from_data_report(data_report);
     }
-    if let Some(executable) = &provider.request_policy.ducc_executable {
-        return managed_report_from_executable(executable).map(|managed| managed.home);
+    if let Some(executable) = &provider.request_policy.ducx_executable {
+        return ducx_home_from_executable(executable);
     }
     let home = std::env::var_os("HOME")
         .map(PathBuf::from)
@@ -284,33 +213,19 @@ fn provider_owns_model(provider: &codex_mixin::provider::ProviderDefinition, mod
         .any(|candidate| catalog_model_slug(candidate, &provider.id) == model)
 }
 
-/// Given an auth-carrier executable, resolve the sibling data-report binary and
-/// the isolated HOME that carries the login state.
-fn managed_report_from_executable(executable: &Path) -> anyhow::Result<ManagedReport> {
-    let install = executable
+fn ducx_home_from_executable(executable: &Path) -> anyhow::Result<PathBuf> {
+    let home = executable
         .parent()
         .and_then(Path::parent)
-        .context("managed DUCX executable has no install directory")?;
-    let data_report = install.join("hooks/data-report");
-    ensure!(
-        data_report.is_file(),
-        "managed data-report is missing: {}",
-        data_report.display()
-    );
-    let home = install
-        .parent()
+        .and_then(Path::parent)
         .and_then(Path::parent)
         .context("managed executable has no isolated HOME")?
         .to_owned();
-    Ok(ManagedReport { data_report, home })
+    ensure_login_state(&home)?;
+    Ok(home)
 }
 
-fn managed_report_from_data_report(data_report: &Path) -> anyhow::Result<ManagedReport> {
-    ensure!(
-        data_report.is_file(),
-        "managed data-report is missing: {}",
-        data_report.display()
-    );
+fn ducx_home_from_data_report(data_report: &Path) -> anyhow::Result<PathBuf> {
     let home = data_report
         .parent()
         .and_then(Path::parent)
@@ -318,10 +233,17 @@ fn managed_report_from_data_report(data_report: &Path) -> anyhow::Result<Managed
         .and_then(Path::parent)
         .context("managed data-report has no isolated HOME")?
         .to_owned();
-    Ok(ManagedReport {
-        data_report: data_report.to_owned(),
-        home,
-    })
+    ensure_login_state(&home)?;
+    Ok(home)
+}
+
+fn ensure_login_state(home: &Path) -> anyhow::Result<()> {
+    ensure!(
+        home.join(".comate/login-user").is_dir(),
+        "managed DUCX login state is missing: {}",
+        home.display()
+    );
+    Ok(())
 }
 
 fn managed_username(home: &Path) -> anyhow::Result<String> {
@@ -339,14 +261,6 @@ fn managed_username(home: &Path) -> anyhow::Result<String> {
         "DUCX login directory contains multiple users; cannot disambiguate reporting identity"
     );
     Ok(username)
-}
-
-fn hook_body_cwd(hook_body: &[u8]) -> Option<PathBuf> {
-    serde_json::from_slice::<Value>(hook_body)
-        .ok()?
-        .get("cwd")
-        .and_then(Value::as_str)
-        .map(PathBuf::from)
 }
 
 fn hook_body_model(hook_body: &[u8]) -> Option<String> {
@@ -557,13 +471,6 @@ mod tests {
     }
 
     #[test]
-    fn reads_cwd_from_hook_body() {
-        let body = br#"{"cwd":"/tmp/project","event":"stop"}"#;
-        assert_eq!(hook_body_cwd(body), Some(PathBuf::from("/tmp/project")));
-        assert_eq!(hook_body_cwd(b"not json"), None);
-    }
-
-    #[test]
     fn reads_model_from_hook_body() {
         let body = br#"{"model":"gpt-5.6-luna","cwd":"/tmp"}"#;
         assert_eq!(hook_body_model(body), Some("gpt-5.6-luna".to_owned()));
@@ -608,19 +515,5 @@ mod tests {
             &catalog_model_slug("Opus 5", "baidu-oneapi")
         ));
         assert!(!provider_owns_model(&provider, "gpt-4o"));
-    }
-
-    #[test]
-    fn derives_report_home_from_data_report_path() {
-        let directory = tempfile::tempdir().unwrap();
-        let data_report = directory
-            .path()
-            .join(".baidu-cx/baidu-cx/hooks/data-report");
-        std::fs::create_dir_all(data_report.parent().unwrap()).unwrap();
-        std::fs::write(&data_report, b"binary").unwrap();
-
-        let managed = managed_report_from_data_report(&data_report).unwrap();
-        assert_eq!(managed.data_report, data_report);
-        assert_eq!(managed.home, directory.path());
     }
 }

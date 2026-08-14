@@ -29,29 +29,14 @@ pub use types::{
 
 /// Mint the native auth headers for the selected Baidu auth core.
 ///
-/// Both DUCC and DUCX are lightweight header generators, so this returns cached
-/// headers without keeping a carrier process alive.
+/// Mint the DUCX native auth headers without keeping a carrier process alive.
 pub(crate) async fn native_baidu_headers(provider: &ProviderRuntime) -> anyhow::Result<HeaderMap> {
     let executable = provider
-        .ducc_executable()
+        .ducx_executable()
         .map(PathBuf::from)
-        .or_else(|| {
-            if provider.uses_ducc_loopback() {
-                crate::ducc::default_ducc_executable()
-            } else if provider.uses_ducx_loopback() {
-                crate::ducx::default_ducx_executable()
-            } else {
-                None
-            }
-        })
+        .or_else(crate::ducx::default_ducx_executable)
         .context("Baidu auth bridge is enabled but no managed executable is configured")?;
-    if provider.uses_ducc_loopback() {
-        let api_key = provider.definition().auth.api_key.clone();
-        crate::ducc::DuccRuntime::spawn(executable, api_key)
-            .await?
-            .native_headers(Duration::from_secs(30))
-            .await
-    } else if provider.uses_ducx_loopback() {
+    if provider.uses_ducx_loopback() {
         crate::ducx::DucxRuntime::spawn(executable)
             .await?
             .native_headers(Duration::from_secs(30))

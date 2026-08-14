@@ -1,8 +1,8 @@
 //! Shared one-shot header capture for Baidu auth-carrier CLIs.
 //!
-//! Both DUCC and DUCX are treated as header generators: run a short carrier
-//! process through a loopback HTTP proxy, capture the native authentication
-//! headers it emits, and stop before the warmup request reaches OneAPI.
+//! Auth carriers are treated as header generators: run a short carrier process
+//! through a loopback HTTP proxy, capture the native authentication headers it
+//! emits, and stop before the warmup request reaches OneAPI.
 
 use std::sync::Arc;
 
@@ -19,7 +19,6 @@ const MAX_PROXY_HEAD: usize = 64 * 1024;
 
 #[derive(Clone, Copy)]
 pub(crate) enum CaptureTrigger {
-    Authorization,
     NativeHeader,
     ReportClientToken,
 }
@@ -27,7 +26,6 @@ pub(crate) enum CaptureTrigger {
 impl CaptureTrigger {
     fn is_present(self, headers: &HeaderMap) -> bool {
         match self {
-            Self::Authorization => headers.contains_key(reqwest::header::AUTHORIZATION),
             Self::NativeHeader => headers.contains_key(NATIVE_HEADER),
             Self::ReportClientToken => headers.contains_key(REPORT_CLIENT_TOKEN_HEADER),
         }
@@ -256,8 +254,8 @@ mod tests {
 
     #[test]
     fn defaults_origin_port_to_80() {
-        let (host, port, path) = split_absolute_target("http://ducc-auth.baidu-int.com/x").unwrap();
-        assert_eq!(host, "ducc-auth.baidu-int.com");
+        let (host, port, path) = split_absolute_target("http://auth.baidu-int.com/x").unwrap();
+        assert_eq!(host, "auth.baidu-int.com");
         assert_eq!(port, 80);
         assert_eq!(path, "/x");
     }
@@ -330,27 +328,5 @@ mod tests {
             .unwrap();
         assert_eq!(captured.get(NATIVE_HEADER).unwrap(), "native-value");
         assert!(TcpStream::connect(addr).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn proxy_can_capture_ducc_authorization_without_native_header() {
-        let proxy = CaptureProxy::start(CaptureTrigger::Authorization)
-            .await
-            .unwrap();
-        let request = "POST http://oneapi.invalid/openapi/v2/available_models HTTP/1.1\r\nHost: oneapi.invalid\r\nAuthorization: Bearer ducc-token\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-        let mut client = TcpStream::connect(proxy.addr).await.unwrap();
-        client.write_all(request.as_bytes()).await.unwrap();
-        let mut response = Vec::new();
-        client.read_to_end(&mut response).await.unwrap();
-        assert!(response.is_empty());
-        let captured = proxy
-            .capture(std::time::Duration::from_secs(1))
-            .await
-            .unwrap();
-        assert_eq!(
-            captured.get(reqwest::header::AUTHORIZATION).unwrap(),
-            "Bearer ducc-token"
-        );
-        assert!(!captured.contains_key(NATIVE_HEADER));
     }
 }

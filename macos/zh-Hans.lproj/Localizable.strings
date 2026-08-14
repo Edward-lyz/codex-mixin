@@ -81,8 +81,8 @@
 "providerSettings.customSiteInformationRequired" = "缺少自定义站点信息";
 "providerSettings.siteNameAndAPIURLCannotBe" = "站点名称和 API 地址不能为空。";
 "providerSettings.chooseABaiduAuthBridge" = "选择百度认证桥接方式";
-"providerSettings.duccUsesACodexMixinManagedCopy" = "DUCC 使用 Codex Mixin 管理的独立副本，在隔离 HOME 中下载、扫码登录和运行，不读取或修改系统 DUCC、Claude 配置及 hooks。成功后会保存 Provider 并重启网关。";
-"providerSettings.configureDUCC" = "配置 DUCC";
+"providerSettings.ducxUsesACodexMixinManagedCopy" = "DUCX 使用 Codex Mixin 管理的独立副本，在隔离 HOME 中下载、扫码登录和运行，不读取或修改系统 DUCX 配置及 hooks。成功后会保存 Provider 并重启网关。";
+"providerSettings.configureDUCX" = "配置 DUCX";
 "providerSettings.keepDisabled" = "保持关闭";
 "providerSettings.configured" = "%@ 已配置";
 "providerSettings.downloadAndLoginAreCompleteTheProvider" = "%@ 已完成下载与登录，Provider 已切换到 %@，本地网关已重启。";
@@ -115,8 +115,7 @@
 "settings.opencodeGoQuotaCredentialsRequired" = "缺少 OpenCode Go 额度凭据";
 "settings.opencodeGoRequiresBothTheWorkspaceID" = "OpenCode Go 需要同时填写工作区 ID 和 auth cookie 才能查询用量与余额。";
 "settings.disabledDefault" = "不使用（默认）";
-"settings.duccCoreLoopback" = "DUCC 核心（loopback）";
-"settings.duccUsesACodexMixinManagedCopy" = "DUCC 使用 Codex Mixin 管理的独立副本，在隔离 HOME 中下载、登录和运行，不修改系统配置或 hooks。";
+"settings.ducxUsesACodexMixinManagedCopy" = "DUCX 使用 Codex Mixin 管理的独立副本，在隔离 HOME 中下载、登录和运行，不修改系统配置或 hooks。";
 "appSupport.ok" = "确定";
 "appSupport.continue" = "继续";
 "appSupport.cancel" = "取消";

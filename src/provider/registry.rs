@@ -256,18 +256,13 @@ impl ProviderRuntime {
             && model.to_ascii_lowercase().contains("fable")
     }
 
-    pub fn uses_ducc_loopback(&self) -> bool {
-        self.definition.request_policy.effective_baidu_auth_bridge()
-            == BaiduAuthBridge::DuccLoopback
-    }
-
     pub fn uses_ducx_loopback(&self) -> bool {
         self.definition.request_policy.effective_baidu_auth_bridge()
             == BaiduAuthBridge::DucxLoopback
     }
 
-    pub fn ducc_executable(&self) -> Option<&std::path::Path> {
-        self.definition.request_policy.ducc_executable.as_deref()
+    pub fn ducx_executable(&self) -> Option<&std::path::Path> {
+        self.definition.request_policy.ducx_executable.as_deref()
     }
 
     pub fn baidu_code_report(&self) -> bool {

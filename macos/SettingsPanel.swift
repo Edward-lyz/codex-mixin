@@ -272,17 +272,13 @@ func baiduAuthBridgePopUpButton() -> NSPopUpButton {
     let popup = NSPopUpButton()
     let modes: [(String, String)] = [
         (AppLocalization.string("settings.disabledDefault"), "disabled"),
-        (
-            AppLocalization.string("settings.duccCoreLoopback"),
-            "ducc_loopback"
-        ),
         ("DUCX 核心（loopback）", "ducx_loopback"),
     ]
     for (title, value) in modes {
         popup.addItem(withTitle: title)
         popup.lastItem?.representedObject = value
     }
-    popup.toolTip = AppLocalization.string("settings.duccUsesACodexMixinManagedCopy")
+    popup.toolTip = AppLocalization.string("settings.ducxUsesACodexMixinManagedCopy")
     popup.translatesAutoresizingMaskIntoConstraints = false
     popup.heightAnchor.constraint(equalToConstant: 28).isActive = true
     selectPopupValue(popup, "disabled")

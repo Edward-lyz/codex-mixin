@@ -18,7 +18,7 @@ pub async fn discover_provider_models(
 ) -> anyhow::Result<Vec<ProviderModel>> {
     let provider = ProviderRuntime::new(definition.clone(), &|name| std::env::var(name).ok())?;
     let native_headers = if definition.model_source == ProviderModelSource::BaiduOneApi
-        && (provider.uses_ducc_loopback() || provider.uses_ducx_loopback())
+        && provider.uses_ducx_loopback()
     {
         Some(super::native_baidu_headers(&provider).await?)
     } else {

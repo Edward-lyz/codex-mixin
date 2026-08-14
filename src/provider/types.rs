@@ -35,7 +35,6 @@ pub enum BaiduAuthBridge {
     #[default]
     #[serde(alias = "ducx_app_server")]
     Disabled,
-    DuccLoopback,
     DucxLoopback,
 }
 
@@ -76,8 +75,12 @@ pub struct ProviderRequestPolicy {
     pub custom_headers_from_env: BTreeMap<String, String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub baidu_auth_bridge: Option<BaiduAuthBridge>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    pub ducc_executable: Option<PathBuf>,
+    #[serde(
+        default,
+        alias = "ducc_executable",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub ducx_executable: Option<PathBuf>,
     /// Dedicated Baidu data-report binary, independent of the auth core.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_report_executable: Option<PathBuf>,
@@ -221,7 +224,7 @@ impl ProviderDefinition {
             );
         }
         if self.request_policy.baidu_auth_bridge.is_some()
-            || self.request_policy.ducc_executable.is_some()
+            || self.request_policy.ducx_executable.is_some()
             || self.request_policy.data_report_executable.is_some()
             || self.request_policy.data_report_client_token.is_some()
             || self.request_policy.baidu_code_report
@@ -232,14 +235,13 @@ impl ProviderDefinition {
                 self.id
             );
         }
-        if let Some(executable) = &self.request_policy.ducc_executable {
+        if let Some(executable) = &self.request_policy.ducx_executable {
             ensure!(
                 executable.is_absolute(),
-                "provider {} DUCC executable path must be absolute",
+                "provider {} DUCX executable path must be absolute",
                 self.id
             );
             let expected_layout = match self.request_policy.effective_baidu_auth_bridge() {
-                BaiduAuthBridge::DuccLoopback => Some((".baidu-cc", "baidu-cc")),
                 BaiduAuthBridge::DucxLoopback => Some((".baidu-cx", "baidu-cx")),
                 BaiduAuthBridge::Disabled => None,
             };
@@ -653,9 +655,9 @@ mod tests {
     }
 
     #[test]
-    fn ducc_loopback_is_limited_to_baidu_oneapi() {
+    fn ducx_loopback_is_limited_to_baidu_oneapi() {
         let mut provider = crate::provider::open_code_go_provider("provider", "key");
-        provider.request_policy.baidu_auth_bridge = Some(BaiduAuthBridge::DuccLoopback);
+        provider.request_policy.baidu_auth_bridge = Some(BaiduAuthBridge::DucxLoopback);
         assert!(
             provider
                 .validate()
@@ -666,11 +668,11 @@ mod tests {
     }
 
     #[test]
-    fn baidu_auth_bridge_rejects_the_other_core_executable() {
+    fn baidu_auth_bridge_rejects_the_wrong_executable_layout() {
         let mut provider = crate::provider::baidu_oneapi_provider("baidu-oneapi", "key");
         provider.quota_username = Some("user".to_owned());
         provider.request_policy.baidu_auth_bridge = Some(BaiduAuthBridge::DucxLoopback);
-        provider.request_policy.ducc_executable =
+        provider.request_policy.ducx_executable =
             Some("/Users/example/.codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin/ducc".into());
 
         assert!(

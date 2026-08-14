@@ -23,7 +23,6 @@ mod claude;
 mod codex;
 mod config_input;
 mod doctor;
-mod ducc_setup;
 mod ducx_setup;
 mod fusion_config;
 mod maintenance;
@@ -41,7 +40,6 @@ use codex::{
     resolve_codex_install_paths, uninstall_codex,
 };
 use doctor::doctor;
-use ducc_setup::ensure_managed_ducc;
 use ducx_setup::ensure_managed_ducx;
 use fusion_config::{get_fusion_profile, set_fusion_profile};
 use maintenance::migrate_history;
@@ -672,10 +670,10 @@ enum ProviderCommand {
         static_models: Vec<String>,
         #[arg(long = "header-env", value_name = "NAME=ENV_VAR")]
         header_env: Vec<String>,
-        #[arg(long, value_name = "disabled|ducc_loopback|ducx_loopback")]
+        #[arg(long, value_name = "disabled|ducx_loopback")]
         baidu_auth_bridge: Option<String>,
         #[arg(long, value_name = "PATH")]
-        ducc_executable: Option<PathBuf>,
+        ducx_executable: Option<PathBuf>,
         #[arg(long, value_name = "BOOL")]
         baidu_code_report: Option<bool>,
     },
@@ -729,10 +727,10 @@ enum ProviderCommand {
         header_env: Vec<String>,
         #[arg(long, conflicts_with = "header_env")]
         clear_header_env: bool,
-        #[arg(long, value_name = "disabled|ducc_loopback|ducx_loopback")]
+        #[arg(long, value_name = "disabled|ducx_loopback")]
         baidu_auth_bridge: Option<String>,
         #[arg(long, value_name = "PATH")]
-        ducc_executable: Option<PathBuf>,
+        ducx_executable: Option<PathBuf>,
         #[arg(long, value_name = "BOOL")]
         baidu_code_report: Option<bool>,
     },
@@ -999,11 +997,11 @@ async fn setup(
         quota_username
     };
 
-    let ducc_executable = if preset == "baidu-oneapi" {
+    let ducx_executable = if preset == "baidu-oneapi" {
         Some(
             stage(
-                "Preparing managed DUCC authentication",
-                ensure_managed_ducc(),
+                "Preparing managed DUCX authentication",
+                ensure_managed_ducx(),
             )
             .await?,
         )
@@ -1028,8 +1026,8 @@ async fn setup(
             id: preset.to_owned(),
             key: Some(key),
             quota_username,
-            baidu_auth_bridge: (preset == "baidu-oneapi").then(|| "ducc_loopback".to_owned()),
-            ducc_executable,
+            baidu_auth_bridge: (preset == "baidu-oneapi").then(|| "ducx_loopback".to_owned()),
+            ducx_executable,
             ..UpdateProviderOptions::default()
         })
         .await?;
@@ -1055,8 +1053,8 @@ async fn setup(
             gateway_key: None,
             static_models: Vec::new(),
             header_env: Vec::new(),
-            baidu_auth_bridge: (preset == "baidu-oneapi").then(|| "ducc_loopback".to_owned()),
-            ducc_executable,
+            baidu_auth_bridge: (preset == "baidu-oneapi").then(|| "ducx_loopback".to_owned()),
+            ducx_executable,
             baidu_code_report: None,
         })
         .await?;
@@ -1172,15 +1170,14 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 static_models,
                 header_env,
                 baidu_auth_bridge,
-                ducc_executable,
+                ducx_executable,
                 baidu_code_report,
             } => {
                 // Auto-provision the managed DUCX install when the DUCX bridge is
                 // selected without an explicit executable.
-                let ducc_executable = match (baidu_auth_bridge.as_deref(), &ducc_executable) {
-                    (Some("ducc_loopback"), None) => Some(ensure_managed_ducc().await?),
+                let ducx_executable = match (baidu_auth_bridge.as_deref(), &ducx_executable) {
                     (Some("ducx_loopback"), None) => Some(ensure_managed_ducx().await?),
-                    _ => ducc_executable,
+                    _ => ducx_executable,
                 };
                 add_provider(AddProviderOptions {
                     preset: preset.as_str().to_owned(),
@@ -1203,7 +1200,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     static_models,
                     header_env,
                     baidu_auth_bridge,
-                    ducc_executable,
+                    ducx_executable,
                     baidu_code_report,
                 })
                 .await?;
@@ -1234,13 +1231,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 header_env,
                 clear_header_env,
                 baidu_auth_bridge,
-                ducc_executable,
+                ducx_executable,
                 baidu_code_report,
             } => {
-                let ducc_executable = match (baidu_auth_bridge.as_deref(), &ducc_executable) {
-                    (Some("ducc_loopback"), None) => Some(ensure_managed_ducc().await?),
+                let ducx_executable = match (baidu_auth_bridge.as_deref(), &ducx_executable) {
                     (Some("ducx_loopback"), None) => Some(ensure_managed_ducx().await?),
-                    _ => ducc_executable,
+                    _ => ducx_executable,
                 };
                 update_provider(UpdateProviderOptions {
                     id,
@@ -1267,7 +1263,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     header_env,
                     clear_header_env,
                     baidu_auth_bridge,
-                    ducc_executable,
+                    ducx_executable,
                     baidu_code_report,
                 })
                 .await?;

@@ -6,7 +6,6 @@ pub mod benchmark;
 pub mod catalog;
 pub mod config;
 pub mod convert;
-pub(crate) mod ducc;
 pub(crate) mod ducx;
 pub mod error;
 pub mod fusion;

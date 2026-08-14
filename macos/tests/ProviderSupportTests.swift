@@ -7,70 +7,11 @@ enum GatewayError: Error {
 @main
 struct ProviderSupportTests {
     static func main() throws {
-        precondition(!baiduBridgeNeedsSetup(current: .duccLoopback, selected: .duccLoopback))
-        precondition(!baiduBridgeNeedsSetup(current: .duccLoopback, selected: .disabled))
-        precondition(baiduBridgeNeedsSetup(current: nil, selected: .duccLoopback))
-        precondition(baiduBridgeNeedsSetup(current: .disabled, selected: .duccLoopback))
+        precondition(!baiduBridgeNeedsSetup(current: .ducxLoopback, selected: .ducxLoopback))
+        precondition(!baiduBridgeNeedsSetup(current: .ducxLoopback, selected: .disabled))
+        precondition(baiduBridgeNeedsSetup(current: nil, selected: .ducxLoopback))
+        precondition(baiduBridgeNeedsSetup(current: .disabled, selected: .ducxLoopback))
 
-        let fileManager = FileManager.default
-        let testHome = fileManager.temporaryDirectory
-            .appendingPathComponent("codex-mixin-managed-ducc-\(UUID().uuidString)")
-        try fileManager.createDirectory(at: testHome, withIntermediateDirectories: true)
-        defer { try? fileManager.removeItem(at: testHome) }
-        let systemDucc = testHome.appendingPathComponent(".baidu-cc/baidu-cc/bin/ducc")
-        try fileManager.createDirectory(
-            at: systemDucc.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        precondition(fileManager.createFile(atPath: systemDucc.path, contents: Data()))
-        try fileManager.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: systemDucc.path
-        )
-        precondition(
-            managedDuccExecutableURL(
-                homeDirectory: testHome,
-                fileManager: fileManager
-            ) == nil,
-            "A system DUCC installation must not satisfy the managed DUCC requirement"
-        )
-        let managedDucc = managedDuccInstallRoot(homeDirectory: testHome)
-            .appendingPathComponent("baidu-cc/bin/ducc")
-        try fileManager.createDirectory(
-            at: managedDucc.deletingLastPathComponent(),
-            withIntermediateDirectories: true
-        )
-        precondition(fileManager.createFile(atPath: managedDucc.path, contents: Data()))
-        try fileManager.setAttributes(
-            [.posixPermissions: 0o700],
-            ofItemAtPath: managedDucc.path
-        )
-        try "2.1.218.3\n".write(
-            to: managedDucc
-                .deletingLastPathComponent()
-                .deletingLastPathComponent()
-                .appendingPathComponent("version"),
-            atomically: true,
-            encoding: .utf8
-        )
-        precondition(
-            managedDuccExecutableURL(
-                homeDirectory: testHome,
-                fileManager: fileManager
-            ) == managedDucc
-        )
-        precondition(
-            managedDuccInstalledVersion(
-                homeDirectory: testHome,
-                fileManager: fileManager
-            ) == "2.1.218.3",
-            "Managed DUCC version must come from the active package"
-        )
-        precondition(
-            managedDuccHome(homeDirectory: testHome).path
-                .hasSuffix(".codex-mixin/ducc/home"),
-            "Managed DUCC must use a dedicated HOME"
-        )
         precondition(isManagedVersion("10.145.0.4", newerThan: "10.145.0.3"))
         precondition(!isManagedVersion("10.145.0.3", newerThan: "10.145.0.3"))
         precondition(!isManagedVersion("10.144.9.9", newerThan: "10.145.0.3"))
@@ -94,7 +35,7 @@ struct ProviderSupportTests {
                   "model_source": {"kind": "baidu_oneapi", "path": "/v1/models"},
                   "api_key_configured": true,
                   "quota_parser": "baidu_one_api",
-                  "baidu_auth_bridge": "ducc_loopback",
+                  "baidu_auth_bridge": "ducx_loopback",
                   "selected_models": ["Claude Opus 4.6"],
                   "new_models": [],
                   "unavailable_selected_models": [],
@@ -193,8 +134,8 @@ struct ProviderSupportTests {
         let unsupported = response.providers[2]
         let openCodeGo = response.providers[3]
         precondition(response.codexInstallMode == .customOnly)
-        precondition(baidu.baiduAuthBridge == .duccLoopback)
-        precondition(baidu.effectiveBaiduAuthBridge == .duccLoopback)
+        precondition(baidu.baiduAuthBridge == .ducxLoopback)
+        precondition(baidu.effectiveBaiduAuthBridge == .ducxLoopback)
         precondition(autoReviewOnly.effectiveBaiduAuthBridge == nil)
         precondition(baidu.auxiliaryModelUpstream)
         precondition(!autoReviewOnly.auxiliaryModelUpstream)

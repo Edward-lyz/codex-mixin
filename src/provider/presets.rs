@@ -52,7 +52,7 @@ impl ProviderPreset {
             Self::Custom => {
                 "Any OpenAI Responses, Anthropic Messages, or Chat Completions compatible endpoint"
             }
-            Self::BaiduOneApi => "Baidu internal OneAPI with managed DUCC/DUCX authentication",
+            Self::BaiduOneApi => "Baidu internal OneAPI with managed DUCX authentication",
             Self::OpenRouter => "OpenRouter multi-model router",
             Self::DeepSeek => "DeepSeek official API",
             Self::OpenCodeGo => "OpenCode Go subscription models",
@@ -199,7 +199,7 @@ pub fn baidu_oneapi_provider(
         mcp_bridge_for_fable: true,
         custom_headers_from_env: Default::default(),
         baidu_auth_bridge: None,
-        ducc_executable: None,
+        ducx_executable: None,
         data_report_executable: None,
         data_report_client_token: None,
         baidu_code_report: false,

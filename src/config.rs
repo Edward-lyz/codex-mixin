@@ -279,7 +279,7 @@ fn backfill_data_report_executable(config: &mut StoredGatewayConfig) {
         }
         provider.request_policy.data_report_executable = provider
             .request_policy
-            .ducc_executable
+            .ducx_executable
             .as_ref()
             .and_then(|executable| {
                 let install = executable.parent()?.parent()?;
@@ -690,8 +690,8 @@ mod tests {
         let mut provider = crate::provider::baidu_oneapi_provider("baidu-oneapi", "secret");
         provider.quota_username = Some("user@example.com".to_owned());
         provider.request_policy.baidu_code_report = true;
-        provider.request_policy.ducc_executable =
-            Some("/Users/example/.codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin/ducc".into());
+        provider.request_policy.ducx_executable =
+            Some("/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx/bin/ducx".into());
         let stored = StoredGatewayConfig {
             providers: vec![provider],
             ..StoredGatewayConfig::default()
@@ -702,7 +702,7 @@ mod tests {
         assert_eq!(
             loaded.providers[0].request_policy.data_report_executable,
             Some(
-                "/Users/example/.codex-mixin/ducc/home/.baidu-cc/baidu-cc/hooks/data-report".into()
+                "/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx/hooks/data-report".into()
             )
         );
     }

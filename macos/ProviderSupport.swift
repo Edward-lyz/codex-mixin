@@ -1,51 +1,5 @@
 import Foundation
 
-func managedDuccRoot(
-    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
-) -> URL {
-    homeDirectory.appendingPathComponent(".codex-mixin/ducc", isDirectory: true)
-}
-
-func managedDuccHome(
-    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
-) -> URL {
-    managedDuccRoot(homeDirectory: homeDirectory)
-        .appendingPathComponent("home", isDirectory: true)
-}
-
-func managedDuccInstallRoot(
-    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
-) -> URL {
-    managedDuccHome(homeDirectory: homeDirectory)
-        .appendingPathComponent(".baidu-cc", isDirectory: true)
-}
-
-func managedDuccExecutableURL(
-    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
-    fileManager: FileManager = .default
-) -> URL? {
-    let executable = managedDuccInstallRoot(homeDirectory: homeDirectory)
-        .appendingPathComponent("baidu-cc/bin/ducc")
-    return fileManager.isExecutableFile(atPath: executable.path) ? executable : nil
-}
-
-func managedDuccInstalledVersion(
-    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser,
-    fileManager: FileManager = .default
-) -> String? {
-    guard managedDuccExecutableURL(
-        homeDirectory: homeDirectory,
-        fileManager: fileManager
-    ) != nil else {
-        return nil
-    }
-    return managedPackageVersion(
-        at: managedDuccInstallRoot(homeDirectory: homeDirectory)
-            .appendingPathComponent("baidu-cc/version"),
-        fileManager: fileManager
-    )
-}
-
 private func managedPackageVersion(
     at versionFile: URL,
     fileManager: FileManager
@@ -96,7 +50,6 @@ private func managedVersionComponents(_ version: String) -> [UInt64]? {
 
 enum BaiduAuthBridgeMode: String, Decodable, Equatable {
     case disabled
-    case duccLoopback = "ducc_loopback"
     case ducxLoopback = "ducx_loopback"
 }
 

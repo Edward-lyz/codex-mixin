@@ -140,8 +140,8 @@ codex-mixin info
 然后询问 Codex 集成方式，选择保留官方账号能力、仅使用自定义模型或暂时跳过。选择后可以直接完成
 Codex 安装，不需要再单独执行 `connect codex`；跳过时可以用 `connect codex` 以后再装。
 
-Baidu OneAPI 还会询问额度查询用户名，自动下载并登录托管认证核心。当前默认使用 DUCC，
-也可以选择 DUCX；两者都作为 header 产生器使用，不转发 warmup 请求到 OneAPI：
+Baidu OneAPI 还会询问额度查询用户名，自动下载并登录托管 DUCX 认证核心。DUCX
+作为 header 产生器使用，不转发 warmup 请求到 OneAPI：
 
 ```bash
 codex-mixin setup --preset baidu-oneapi
@@ -188,28 +188,26 @@ OpenCode Go 的额度显示需要额外填写工作区 ID 和 `opencode.ai` 的 
 新增或更新 `custom` 供应商时，会按 `/v1/responses` → `/v1/messages` → Chat Completions
 顺序探测上游接口，并把第一个可用协议写入配置。Baidu OneAPI 不参与该探测，使用预设协议。
 预设供应商的协议在离线验证后写死，例如 OpenCode Go 使用 `/v1/responses`。
-启用 Baidu OneAPI 时可以选择「DUCC 核心」或「DUCX 核心」。两者都是 header 产生器：
+启用 Baidu OneAPI 时可以选择「DUCX 核心」。DUCX 是 header 产生器：
 网关启动后在后台预热一次，运行一个短命认证回合，从该回合发出的 OneAPI 请求中抓取
 `comate_custom_header`、`Authorization` 等原生 Header，然后缓存复用；抓取后立即终止
-warmup 回合，不会把它转发到真实 OneAPI，也不会消耗推理额度。DUCC 使用
-`--bare --print` 短命进程，DUCX 使用 `--disable hooks/plugins exec` 短命进程，两者都不
-维护长驻的 350 MiB worker。
+warmup 回合，不会把它转发到真实 OneAPI，也不会消耗推理额度。DUCX 使用
+`--disable hooks/plugins exec` 短命进程，不维护长驻的 350 MiB worker。
 
 真实模型请求始终由调用方决定，Header 由所选认证核心产生并注入到 Mixin 自己的上游请求。
 Fusion、Web Search、画图和 Auto Review 产生的子请求走同一个统一执行层，不会绕过用户
 选择的核心。上报 hook 与认证核心解耦：配置里单独保存 data-report 二进制路径，运行时
-不再读取 DUCC/DUCX 的认证路径。
+不再读取 DUCX 的认证路径。
 
-选择 DUCC 核心时，macOS App 会先确认，再按百度 `baidu-cc/install.sh` 的版本和包规则把
-独立副本下载到 `~/.codex-mixin/ducc/home/`；选择 DUCX 核心时下载到
-`~/.codex-mixin/ducx/home/`。两者都不会直接执行官方安装脚本；下载完成后，
+选择 DUCX 核心时，macOS App 会把独立副本下载到
+`~/.codex-mixin/ducx/home/`，不会直接执行官方安装脚本；下载完成后，
 独立 Terminal 会显示进度并执行托管副本的登录，扫码成功后自动关闭并继续保存。
 Provider 可通过 `--header-env NAME=ENV_VAR` 转发用户自行提供的自定义请求头。配置文件
 只保存 Header 名和环境变量名，不保存值；网关启动时读取一次，缺失或空值会阻止启动，
 更新值后需重启网关。`authorization`、`x-api-key`、`comate_custom_header` 和传输层
 Header 不允许覆盖；`comate_custom_header` 只允许由当前认证核心产生。Codex Mixin
-不生成、校验或授权任何凭据，用户须自行确认对相关账号、凭据和服务有使用权。DUCC/DUCX
-会把托管登录得到的 `Authorization: Bearer ...`、DUCC 生成的 `x-api-key` 以及
+不生成、校验或授权任何凭据，用户须自行确认对相关账号、凭据和服务有使用权。DUCX
+会把托管登录得到的 `Authorization: Bearer ...` 以及
 `comate_custom_header` 注入到 Mixin 的上游请求，不删除也不替换。data-report 会继续执行
 managed settings 中的 SessionStart、UserPromptSubmit、Stop、SessionEnd
 `data-report` hooks，把这些使用次数标记为百度 OneAPI Token 流量。
@@ -714,25 +712,23 @@ When a `custom` provider is added or updated, Codex Mixin probes `/v1/responses`
 `/v1/messages`, then Chat Completions, and stores the first working protocol. Baidu OneAPI is
 excluded and keeps its curated protocol. Curated presets keep offline-verified
 protocols, for example OpenCode Go uses `/v1/responses`.
-For Baidu OneAPI, users can select either the “DUCC core” or “DUCX core”. Both are
-header generators: the gateway prewarms one short auth turn in the background, captures the
+For Baidu OneAPI, users can select the “DUCX core”. It is a header generator: the
+gateway prewarms one short auth turn in the background, captures the
 native `comate_custom_header`, `Authorization`, and related headers, then caches them. The
 warmup turn is stopped before it reaches the real OneAPI, so it does not consume inference
-quota. DUCC runs as a short-lived `--bare --print` process; DUCX runs as a short-lived
-`--disable hooks/plugins exec` process. Neither maintains a persistent 350 MiB worker.
+quota. DUCX runs as a short-lived `--disable hooks/plugins exec` process and does not
+maintain a persistent 350 MiB worker.
 
 The caller request always determines the real model and body. The selected auth core only
 produces native headers, which Mixin injects into its own upstream request. Responses
 subrequests created by Fusion, Web Search, image generation, and Auto Review use the same
 executor and cannot bypass the selected core. The reporting hook is decoupled from the auth
 core: the provider config stores a dedicated data-report executable path, and the hook no
-longer reads the DUCC/DUCX auth path.
+longer reads the DUCX auth path.
 
-For the DUCC core, the macOS App asks for confirmation, follows the package rules from Baidu's
-`baidu-cc/install.sh`, and downloads an isolated copy under
-`~/.codex-mixin/ducc/home/` without executing the installer. For the DUCX core, the managed
-copy lives under `~/.codex-mixin/ducx/home/`. A dedicated Terminal displays download
-progress and runs the managed copy's login; it closes after QR-code login succeeds.
+The macOS App downloads an isolated DUCX copy under `~/.codex-mixin/ducx/home/` without
+executing the installer. A dedicated Terminal displays download progress and runs the
+managed copy's login; it closes after QR-code login succeeds.
 Providers can forward user-supplied custom request headers with
 `--header-env NAME=ENV_VAR`. The configuration stores only the header and environment-variable
 names, never the value. The gateway reads values once at startup and fails closed when a value is
@@ -740,7 +736,7 @@ missing or empty; restart it after changing a value. Primary authentication and 
 cannot be overridden, and `comate_custom_header` is reserved for the selected auth core.
 Codex Mixin does not generate, validate, or authorize credentials; users must
 confirm that they are entitled to use the relevant account, credential, and service.
-Managed DUCC/DUCX data-report continues to run the SessionStart, UserPromptSubmit, Stop, and
+Managed DUCX data-report continues to run the SessionStart, UserPromptSubmit, Stop, and
 SessionEnd hooks from its managed settings, attributing usage to Baidu OneAPI token traffic.
 When a `custom` provider is added or refreshed, Codex Mixin concurrently probes common
 read-only quota endpoints used by New API, Sub2API, OpenRouter, and similar gateways.
