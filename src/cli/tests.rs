@@ -150,6 +150,14 @@ fn install_command_accepts_explicit_custom_only_mode() {
 }
 
 #[test]
+fn codex_config_load_warning_is_acceptable_during_install_validation() {
+    assert!(codex_config_load_status_is_acceptable(Some("ok")));
+    assert!(codex_config_load_status_is_acceptable(Some("warning")));
+    assert!(!codex_config_load_status_is_acceptable(Some("error")));
+    assert!(!codex_config_load_status_is_acceptable(None));
+}
+
+#[test]
 fn user_facing_command_groups_parse() {
     assert!(Cli::try_parse_from(["codex-mixin", "setup"]).is_ok());
     assert!(

@@ -485,12 +485,22 @@ pub(in crate::cli) fn validate_codex_install(
     let config_check = doctor_report
         .pointer("/checks/config.load")
         .ok_or_else(|| anyhow::anyhow!("Codex doctor report has no config.load check"))?;
-    if config_check
+    let config_status = config_check
         .get("status")
         .and_then(serde_json::Value::as_str)
-        != Some("ok")
-    {
+        .ok_or_else(|| anyhow::anyhow!("Codex config.load check has no status: {config_check}"))?;
+    if !codex_config_load_status_is_acceptable(Some(config_status)) {
         anyhow::bail!("Codex config.load check failed: {config_check}");
+    }
+    if config_status == "warning" {
+        let warning_count = config_check
+            .get("details")
+            .and_then(|details| details.get("startup warnings"))
+            .and_then(serde_json::Value::as_str)
+            .unwrap_or("unknown");
+        println!(
+            "codex validation: doctor config.load warning accepted; startup_warnings={warning_count}"
+        );
     }
     let effective_provider = config_check
         .pointer("/details/model provider")
@@ -501,7 +511,7 @@ pub(in crate::cli) fn validate_codex_install(
             effective_provider
         );
     }
-    println!("codex validation: doctor config.load ok; provider={expected_provider}");
+    println!("codex validation: doctor config.load {config_status}; provider={expected_provider}");
 
     let models = ProcessCommand::new(&codex_cli)
         .args(["debug", "models"])
@@ -544,6 +554,10 @@ pub(in crate::cli) fn validate_codex_install(
         );
     }
     Ok(())
+}
+
+pub(in crate::cli) fn codex_config_load_status_is_acceptable(status: Option<&str>) -> bool {
+    matches!(status, Some("ok" | "warning"))
 }
 
 fn ensure_codex_cli_for_install() -> anyhow::Result<PathBuf> {
