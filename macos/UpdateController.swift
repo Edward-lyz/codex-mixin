@@ -1,4 +1,117 @@
 import Cocoa
+import Darwin
+
+enum UpdateHelper {
+    fileprivate static let command = "--perform-update"
+    fileprivate static let stagingArgument = "--staging"
+    fileprivate static let destinationArgument = "--destination"
+    fileprivate static let parentPIDArgument = "--parent-pid"
+    private static let waitTimeout: TimeInterval = 30
+
+    static func runIfRequested(arguments: [String]) -> Bool {
+        guard arguments.contains(command) else { return false }
+        run(arguments: arguments)
+        return true
+    }
+
+    private static func run(arguments: [String]) {
+        do {
+            let stagingURL = try requiredURL(
+                argument: stagingArgument,
+                in: arguments
+            )
+            let destinationURL = try requiredURL(
+                argument: destinationArgument,
+                in: arguments
+            )
+            let parentPID = try requiredPID(in: arguments)
+            let logDirectory = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".codex-mixin")
+            appendAppDiagnosticLog(
+                "APP_UPDATE_HELPER started parent_pid=\(parentPID) staging=\(stagingURL.path) destination=\(destinationURL.path)",
+                directory: logDirectory
+            )
+            try waitForProcessExit(parentPID, logDirectory: logDirectory)
+            appendAppDiagnosticLog(
+                "APP_UPDATE_HELPER replacing application",
+                directory: logDirectory
+            )
+            _ = try FileManager.default.replaceItemAt(
+                destinationURL,
+                withItemAt: stagingURL
+            )
+            guard FileManager.default.fileExists(atPath: destinationURL.path) else {
+                throw GatewayError.command("updated application bundle is missing after replacement")
+            }
+            appendAppDiagnosticLog(
+                "APP_UPDATE_HELPER replacement completed",
+                directory: logDirectory
+            )
+            try? FileManager.default.removeItem(at: stagingURL)
+            NSWorkspace.shared.open(destinationURL)
+            appendAppDiagnosticLog(
+                "APP_UPDATE_HELPER restart requested",
+                directory: logDirectory
+            )
+        } catch {
+            let logDirectory = FileManager.default.homeDirectoryForCurrentUser
+                .appendingPathComponent(".codex-mixin")
+            appendAppDiagnosticLog(
+                "APP_UPDATE_HELPER failed \(diagnosticErrorDescription(error))",
+                directory: logDirectory
+            )
+            if let stagingURL = try? requiredURL(argument: stagingArgument, in: arguments) {
+                try? FileManager.default.removeItem(at: stagingURL)
+            }
+            exit(EXIT_FAILURE)
+        }
+    }
+
+    private static func requiredURL(argument: String, in arguments: [String]) throws -> URL {
+        guard let value = argumentValue(argument, in: arguments), !value.isEmpty else {
+            throw GatewayError.command("missing \(argument)")
+        }
+        return URL(fileURLWithPath: value)
+    }
+
+    private static func requiredPID(in arguments: [String]) throws -> pid_t {
+        guard let value = argumentValue(parentPIDArgument, in: arguments),
+              let pid = pid_t(value),
+              pid > 0 else {
+            throw GatewayError.command("missing or invalid \(parentPIDArgument)")
+        }
+        return pid
+    }
+
+    private static func argumentValue(_ argument: String, in arguments: [String]) -> String? {
+        guard let index = arguments.firstIndex(of: argument), index + 1 < arguments.count else {
+            return nil
+        }
+        return arguments[index + 1]
+    }
+
+    private static func waitForProcessExit(_ pid: pid_t, logDirectory: URL) throws {
+        let deadline = Date().addingTimeInterval(waitTimeout)
+        while processIsRunning(pid) {
+            guard Date() < deadline else {
+                appendAppDiagnosticLog(
+                    "APP_UPDATE_HELPER parent exit wait timed out parent_pid=\(pid)",
+                    directory: logDirectory
+                )
+                throw GatewayError.command("timed out waiting for previous application to exit")
+            }
+            usleep(100_000)
+        }
+        appendAppDiagnosticLog(
+            "APP_UPDATE_HELPER parent exited parent_pid=\(pid)",
+            directory: logDirectory
+        )
+    }
+
+    private static func processIsRunning(_ pid: pid_t) -> Bool {
+        kill(pid, 0) == 0 || errno == EPERM
+    }
+}
 
 extension AppDelegate {
     @MainActor
@@ -61,12 +174,19 @@ extension AppDelegate {
                     failureAlertTitle: strings.downloadFailedTitle
                 ) { progress in
                     progress.advance(to: 0)
+                    appendDiagnosticLog(
+                        "APP_UPDATE stage=download-started asset=\(asset.name)"
+                    )
                     let dmgURL = try await downloadUpdate(
                         asset: asset,
                         version: release.version
                     )
+                    appendDiagnosticLog(
+                        "APP_UPDATE stage=download-completed path=\(dmgURL.path)"
+                    )
                     progress.advance(to: 1)
                     _ = try await runGateway(["stop"])
+                    appendDiagnosticLog("APP_UPDATE stage=gateway-stopped")
                     progress.advance(to: 2)
                     try await installDownloadedUpdate(dmgURL)
                     progress.advance(to: 3)
@@ -153,6 +273,7 @@ extension AppDelegate {
 
     @MainActor
     func installDownloadedUpdate(_ dmgURL: URL) async throws {
+        appendDiagnosticLog("APP_UPDATE stage=mounting dmg=\(dmgURL.lastPathComponent)")
         let mountPoint = FileManager.default.temporaryDirectory
             .appendingPathComponent("codex-mixin-update-\(UUID().uuidString)", isDirectory: true)
         try FileManager.default.createDirectory(at: mountPoint, withIntermediateDirectories: true)
@@ -165,6 +286,7 @@ extension AppDelegate {
             "/usr/bin/hdiutil",
             ["attach", dmgURL.path, "-nobrowse", "-readonly", "-mountpoint", mountPoint.path]
         )
+        appendDiagnosticLog("APP_UPDATE stage=mounted mount=\(mountPoint.path)")
         defer {
             Task {
                 _ = try? await runProcess("/usr/bin/hdiutil", ["detach", mountPoint.path, "-force"])
@@ -187,13 +309,25 @@ extension AppDelegate {
         }
         let stagingURL = destination.deletingLastPathComponent()
             .appendingPathComponent(".Codex Mixin.update-\(UUID().uuidString).app")
-        defer { try? FileManager.default.removeItem(at: stagingURL) }
         _ = try await runProcess("/usr/bin/ditto", ["--rsrc", appURL.path, stagingURL.path])
-        _ = try FileManager.default.replaceItemAt(destination, withItemAt: stagingURL)
-        guard FileManager.default.fileExists(atPath: destination.path) else {
-            throw GatewayError.command("updated application bundle is missing after replacement")
-        }
-        NSWorkspace.shared.open(destination)
+        appendDiagnosticLog("APP_UPDATE stage=staged path=\(stagingURL.path)")
+        let updater = Process()
+        updater.executableURL = Bundle.main.executableURL
+        updater.arguments = [
+            UpdateHelper.command,
+            UpdateHelper.stagingArgument,
+            stagingURL.path,
+            UpdateHelper.destinationArgument,
+            destination.path,
+            UpdateHelper.parentPIDArgument,
+            String(ProcessInfo.processInfo.processIdentifier),
+        ]
+        updater.standardOutput = FileHandle.nullDevice
+        updater.standardError = FileHandle.nullDevice
+        try updater.run()
+        appendDiagnosticLog(
+            "APP_UPDATE stage=helper-started pid=\(updater.processIdentifier) destination=\(destination.path)"
+        )
         NSApp.terminate(nil)
     }
 

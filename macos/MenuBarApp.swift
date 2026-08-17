@@ -218,6 +218,9 @@ struct CodexMixinApplication {
     static let delegate = AppDelegate()
 
     static func main() {
+        if UpdateHelper.runIfRequested(arguments: CommandLine.arguments) {
+            return
+        }
         let app = NSApplication.shared
         app.delegate = delegate
         app.run()
