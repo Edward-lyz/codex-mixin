@@ -1,5 +1,28 @@
 import Foundation
 
+func modelCapabilityProbeCounts(_ progress: String) -> (completed: Int, total: Int)? {
+    guard
+        progress.hasPrefix("Probing capabilities for "),
+        let counterStart = progress.range(of: ": ", options: .backwards)?.upperBound,
+        let counterEnd = progress.range(of: " complete", range: counterStart..<progress.endIndex)?
+            .lowerBound
+    else {
+        return nil
+    }
+    let counts = progress[counterStart..<counterEnd].split(separator: "/", maxSplits: 1)
+    guard
+        counts.count == 2,
+        let completed = Int(counts[0]),
+        let total = Int(counts[1]),
+        completed >= 0,
+        total > 0,
+        completed <= total
+    else {
+        return nil
+    }
+    return (completed, total)
+}
+
 private func managedPackageVersion(
     at versionFile: URL,
     fileManager: FileManager

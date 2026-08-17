@@ -99,7 +99,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
     typealias FetchHandler = () async throws -> ModelBenchmarkSnapshot?
     typealias LoadProvidersHandler = () async throws -> ProviderListResponse
     typealias SaveSelectionsHandler = ([String: [String]], OperationProgress) async throws -> Void
-    typealias DiscoverHandler = (String) async throws -> Void
+    typealias DiscoverHandler = (String, @escaping (String) -> Void) async throws -> Void
 
     private let snapshotURL: URL
     private let startHandler: StartHandler
@@ -603,6 +603,8 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         updateActionState()
         statusLabel.stringValue = "正在刷新 \(providerName) 的模型…"
         statusLabel.textColor = .secondaryLabelColor
+        progressIndicator.isIndeterminate = true
+        progressIndicator.startAnimation(nil)
         Task { @MainActor [weak self] in
             guard let self else { return }
             defer {
@@ -610,11 +612,29 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
                 updateActionState()
             }
             do {
-                try await discoverHandler(providerID)
+                try await discoverHandler(providerID) { [weak self] progress in
+                    guard let self else { return }
+                    self.statusLabel.stringValue = localizedProgressLabel(progress)
+                    self.statusLabel.textColor = .secondaryLabelColor
+                    if let counts = modelCapabilityProbeCounts(progress) {
+                        self.progressIndicator.stopAnimation(nil)
+                        self.progressIndicator.isIndeterminate = false
+                        self.progressIndicator.maxValue = Double(counts.total)
+                        self.progressIndicator.doubleValue = Double(counts.completed)
+                    }
+                }
                 reloadProviderModels()
+                progressIndicator.stopAnimation(nil)
+                progressIndicator.isIndeterminate = false
+                progressIndicator.maxValue = 1
+                progressIndicator.doubleValue = 1
                 statusLabel.stringValue = "已刷新 \(providerName) 的模型"
                 statusLabel.textColor = .mixinHealthy
             } catch {
+                progressIndicator.stopAnimation(nil)
+                progressIndicator.isIndeterminate = false
+                progressIndicator.maxValue = 1
+                progressIndicator.doubleValue = 0
                 presentBenchmarkError(
                     title: "刷新模型失败",
                     message: localizedErrorDescription(error)
@@ -916,6 +936,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
     }
 
     private func applySnapshotStatus() {
+        guard !isDiscoveringModels else { return }
         guard let snapshot else {
             statusLabel.stringValue = "尚无测速结果"
             statusLabel.textColor = .secondaryLabelColor

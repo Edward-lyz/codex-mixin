@@ -185,13 +185,14 @@ extension AppDelegate {
                     await self.refreshStatusNow()
                     progress.advance(to: 3)
                 },
-                discoverHandler: { [weak self] providerID in
+                discoverHandler: { [weak self] providerID, onProgress in
                     guard let self else {
                         throw GatewayError.command("Codex Mixin 已退出")
                     }
-                    _ = try await self.runGateway([
-                        "providers", "discover", providerID,
-                    ])
+                    _ = try await self.runGatewayStreaming(
+                        ["providers", "discover", providerID],
+                        onProgress: onProgress
+                    )
                 }
             )
         }

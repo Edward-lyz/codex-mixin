@@ -15,6 +15,22 @@ struct ProviderSupportTests {
         precondition(isManagedVersion("10.145.0.4", newerThan: "10.145.0.3"))
         precondition(!isManagedVersion("10.145.0.3", newerThan: "10.145.0.3"))
         precondition(!isManagedVersion("10.144.9.9", newerThan: "10.145.0.3"))
+        precondition(
+            modelCapabilityProbeCounts(
+                "Probing capabilities for baidu-oneapi: 3/12 complete (2 routed, 1 indeterminate)"
+            )?.completed == 3
+        )
+        precondition(
+            modelCapabilityProbeCounts(
+                "Probing capabilities for baidu-oneapi: 3/12 complete (2 routed, 1 indeterminate)"
+            )?.total == 12
+        )
+        precondition(
+            modelCapabilityProbeCounts(
+                "Probing capabilities for baidu-oneapi: 13/12 complete (2 routed, 1 indeterminate)"
+            ) == nil
+        )
+        precondition(modelCapabilityProbeCounts("Discovered 12 models for provider baidu-oneapi") == nil)
 
         let response = try decodeProviderList(
             """
