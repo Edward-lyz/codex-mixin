@@ -22,6 +22,8 @@ pub use types::{
     ProviderProbeSummary,
 };
 
+type ProbeProgress = Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync>;
+
 #[derive(Clone, Debug)]
 pub struct ProviderCapabilities {
     path: PathBuf,
@@ -79,6 +81,15 @@ impl ProviderCapabilities {
         provider: &ProviderDefinition,
         models: &[ProviderModel],
     ) -> anyhow::Result<ProviderProbeSummary> {
+        Self::probe_provider_with_progress(client, provider, models, None).await
+    }
+
+    pub async fn probe_provider_with_progress(
+        client: Client,
+        provider: &ProviderDefinition,
+        models: &[ProviderModel],
+        progress: Option<ProbeProgress>,
+    ) -> anyhow::Result<ProviderProbeSummary> {
         let mut definition = provider.clone();
         definition.cached_models = models.to_vec();
         let registry = ProviderRegistry::new(vec![definition])?;
@@ -97,14 +108,22 @@ impl ProviderCapabilities {
         };
         let probed_at_ms = unix_milliseconds()?;
         let request_limit = Arc::new(tokio::sync::Semaphore::new(PROBE_REQUEST_CONCURRENCY));
+        let completed = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let supported = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let indeterminate = Arc::new(std::sync::atomic::AtomicUsize::new(0));
+        let total = models.len();
         let mut results = stream::iter(models.iter().map(|model| {
             let client = client.clone();
             let runtime = Arc::clone(&runtime);
             let native_headers = native_headers.clone();
             let request_limit = Arc::clone(&request_limit);
+            let completed = Arc::clone(&completed);
+            let supported = Arc::clone(&supported);
+            let indeterminate = Arc::clone(&indeterminate);
+            let progress = progress.clone();
             let model_id = model.id.clone();
             async move {
-                probe::probe_model(
+                let result = probe::probe_model(
                     &client,
                     &runtime,
                     &model_id,
@@ -112,7 +131,22 @@ impl ProviderCapabilities {
                     &request_limit,
                     native_headers.as_ref(),
                 )
-                .await
+                .await;
+                let done = completed.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
+                if result.selected().is_some() {
+                    supported.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                } else {
+                    indeterminate.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+                }
+                if let Some(progress) = progress {
+                    progress(
+                        done,
+                        total,
+                        supported.load(std::sync::atomic::Ordering::Relaxed),
+                        indeterminate.load(std::sync::atomic::Ordering::Relaxed),
+                    );
+                }
+                result
             }
         }))
         .buffer_unordered(PROBE_CONCURRENCY)

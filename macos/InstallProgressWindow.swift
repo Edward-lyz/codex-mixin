@@ -270,6 +270,12 @@ func localizedProgressLabel(_ raw: String) -> String {
         "Fetching Codex config template": "获取 Codex 配置模板",
         "获取可用模型列表": "获取可用模型列表",
         "Fetching available models": "获取可用模型列表",
+        "Refreshing model list for provider": "刷新 provider 模型列表",
+        "Discovered": "已发现模型",
+        "Probing capabilities for": "探测模型能力",
+        "Model refresh complete for": "模型刷新完成",
+        "Model refresh failed for": "模型刷新失败",
+        "Capability probing failed for": "模型能力探测失败",
         "加载模型元数据": "加载模型元数据",
         "Loading model metadata": "加载模型元数据",
         "准备或安装 Codex CLI": "准备或安装 Codex CLI",
@@ -287,7 +293,13 @@ func localizedProgressLabel(_ raw: String) -> String {
         "恢复历史会话与 SQLite 状态": "恢复历史会话与 SQLite 状态",
         "Restoring history sessions and SQLite state": "恢复历史会话与 SQLite 状态",
     ]
-    return mapping[trimmed] ?? trimmed
+    if let exact = mapping[trimmed] {
+        return exact
+    }
+    for (prefix, localized) in mapping where trimmed.hasPrefix(prefix) {
+        return localized + trimmed.dropFirst(prefix.count)
+    }
+    return trimmed
 }
 
 final class OperationProgress {

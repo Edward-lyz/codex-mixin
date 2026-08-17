@@ -727,6 +727,7 @@ pub(super) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(30))
         .build()?;
+    super::progress_step(&format!("Refreshing model list for provider {id}"));
     let quota_probe = async {
         if provider.preset_id.as_deref() == Some("custom") && provider.quota_url.is_none() {
             discover_custom_quota(&client, &provider).await
@@ -751,6 +752,13 @@ pub(super) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow
         Ok(models) => models,
         Err(error) => {
             let stored_error = redact_provider_error(&provider, &format!("{error:#}"));
+            super::progress_step(&format!(
+                "Model refresh failed for {id}: {}",
+                stored_error
+                    .lines()
+                    .next()
+                    .unwrap_or("model discovery failed")
+            ));
             mutate_and_invalidate(|config| {
                 let current = find_provider_mut(config, id)?;
                 anyhow::ensure!(
@@ -766,8 +774,34 @@ pub(super) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow
             return Err(error);
         }
     };
-    let capability_summary =
-        ProviderCapabilities::probe_provider(client.clone(), &provider, &models).await?;
+    super::progress_step(&format!(
+        "Discovered {} models for provider {id}",
+        models.len()
+    ));
+    let provider_id = provider.id.clone();
+    let capability_summary = match ProviderCapabilities::probe_provider_with_progress(
+        client.clone(),
+        &provider,
+        &models,
+        Some(std::sync::Arc::new(
+            move |done, total, supported, indeterminate| {
+                super::progress_step(&format!(
+                    "Probing capabilities for {provider_id}: {done}/{total} complete ({supported} routed, {indeterminate} indeterminate)"
+                ));
+            },
+        )),
+    )
+    .await
+    {
+        Ok(summary) => summary,
+        Err(error) => {
+            super::progress_step(&format!(
+                "Capability probing failed for {id}: {}",
+                format!("{error:#}").lines().next().unwrap_or("probe failed")
+            ));
+            return Err(error);
+        }
+    };
     if provider.model_source != ProviderModelSource::BaiduOneApi {
         let current_runtime_config = GatewayConfig::from_stored_config()?;
         let mut capabilities = ProviderCapabilities::from_default_path(&current_runtime_config)?;
@@ -793,6 +827,10 @@ pub(super) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow
         }
         apply_discovered_models(current, models)
     })?;
+    super::progress_step(&format!(
+        "Model refresh complete for {id}: {count} available, {} routed, {} indeterminate",
+        capability_summary.supported, capability_summary.indeterminate
+    ));
     if !quiet {
         println!("provider models refreshed: {id} ({count} available)");
         if capability_summary.attempted > 0 {
