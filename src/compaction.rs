@@ -69,6 +69,15 @@ fn encode_with_secret(
     Ok(format!("{TOKEN_PREFIX}{}", URL_SAFE_NO_PAD.encode(token)))
 }
 
+#[cfg(test)]
+pub(crate) fn encode_for_test(
+    model: &str,
+    summary: CompactionSummary,
+    secret: &str,
+) -> Result<String, GatewayError> {
+    encode_with_secret(model, summary, secret)
+}
+
 pub(crate) fn decode(token: &str, expected_model: &str) -> Result<CompactionSummary, GatewayError> {
     let secret = ensure_compaction_secret().map_err(GatewayError::Other)?;
     decode_with_secret(token, expected_model, &secret)

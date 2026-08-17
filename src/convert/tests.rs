@@ -75,6 +75,47 @@ fn accepts_dsh_message_items_without_responses_type() {
     );
 }
 
+#[test]
+fn compaction_metadata_does_not_change_anthropic_request() {
+    let summary = crate::compaction::CompactionSummary {
+        goal: "Continue the task".to_owned(),
+        constraints: Vec::new(),
+        decisions: Vec::new(),
+        files: Vec::new(),
+        tool_results: Vec::new(),
+        pending_work: vec!["Reply with CONTINUED".to_owned()],
+    };
+    let token = crate::compaction::encode_for_test(
+        "gpt-5.6-sol-baidu-oneapi",
+        summary,
+        &crate::config::ensure_compaction_secret().unwrap(),
+    )
+    .unwrap();
+    let basic = json!({
+        "model": "gpt-5.6-sol-baidu-oneapi",
+        "stream": true,
+        "input": [
+            {"type": "compaction", "encrypted_content": token},
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Reply with CONTINUED."}]}
+        ]
+    });
+    let metadata = json!({
+        "model": "gpt-5.6-sol-baidu-oneapi",
+        "stream": true,
+        "input": [
+            {"type": "compaction", "id": "cmp_replay", "created_by": "codex-mixin", "encrypted_content": token},
+            {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "Reply with CONTINUED."}]}
+        ]
+    });
+
+    let basic = responses_to_anthropic(&basic, &config()).unwrap();
+    let metadata = responses_to_anthropic(&metadata, &config()).unwrap();
+    assert_eq!(
+        serde_json::to_value(basic.request).unwrap(),
+        serde_json::to_value(metadata.request).unwrap()
+    );
+}
+
 /// Codex appends a developer message such as `<workspace_context>` on every
 /// turn. Lifting those into `system` would prepend new bytes ahead of the whole
 /// transcript and drop the provider's prefix cache each turn, so only the

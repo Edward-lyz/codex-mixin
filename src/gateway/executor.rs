@@ -9,6 +9,7 @@ use super::images::{
     normalize_provider_images_for_fallback,
 };
 use super::{RequestPlan, UpstreamTarget};
+use crate::compaction::TOKEN_PREFIX;
 use crate::error::GatewayError;
 use crate::server::{AppState, stream_official_response};
 use crate::sse::{SseDecoder, encode_event, encode_raw_event, event_contains_response_metadata};
@@ -133,6 +134,25 @@ impl<'a> UpstreamExecutor<'a> {
 async fn prepare_provider_body(
     mut body: serde_json::Value,
 ) -> Result<serde_json::Value, GatewayError> {
+    // Provider converters need only the authenticated token. Response item metadata is
+    // meaningful to Codex but must not affect a custom provider continuation.
+    if let Some(items) = body
+        .get_mut("input")
+        .and_then(serde_json::Value::as_array_mut)
+    {
+        for item in items {
+            if item.get("type").and_then(serde_json::Value::as_str) == Some("compaction")
+                && item
+                    .get("encrypted_content")
+                    .and_then(serde_json::Value::as_str)
+                    .is_some_and(|token| token.starts_with(TOKEN_PREFIX))
+                && let Some(item) = item.as_object_mut()
+            {
+                item.remove("id");
+                item.remove("created_by");
+            }
+        }
+    }
     canonicalize_provider_json(&mut body);
     let (body, image_stats) = normalize_provider_images_blocking(body).await?;
     if image_stats.normalized_images > 0 || image_stats.omitted_tool_images > 0 {

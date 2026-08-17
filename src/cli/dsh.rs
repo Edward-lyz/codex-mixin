@@ -172,13 +172,12 @@ fn collect_dsh_models(config: &GatewayConfig) -> Vec<Value> {
                 Value::String(format!("{upstream_model_id} · {}", provider.display_name)),
             );
             if cached.supports_thinking != Some(false) {
-                entry.insert(Value::String("reasoning".to_owned()), Value::Bool(true));
                 entry.insert(
-                    Value::String("thinkingLevelMap".to_owned()),
+                    Value::String("reasoningEfforts".to_owned()),
                     serde_yaml::from_str(
                         r#"{off: null, minimal: low, low: low, medium: medium, high: high, xhigh: max, max: max}"#,
                     )
-                    .expect("static DSH thinking level map is valid YAML"),
+                    .expect("static DSH reasoning effort map is valid YAML"),
                 );
             }
             if let Some(context_window) = cached.context_window {
@@ -375,9 +374,9 @@ mod tests {
         let model = &provider["models"][0];
         assert_eq!(model["id"].as_str().unwrap(), "vision-model-custom");
         assert_eq!(model["contextWindow"].as_u64().unwrap(), 128_000);
-        assert_eq!(model["reasoning"].as_bool(), Some(true));
-        assert_eq!(model["thinkingLevelMap"]["medium"].as_str(), Some("medium"));
-        assert_eq!(model["thinkingLevelMap"]["xhigh"].as_str(), Some("max"));
+        assert_eq!(model["reasoningEfforts"]["off"].as_null(), Some(()));
+        assert_eq!(model["reasoningEfforts"]["medium"].as_str(), Some("medium"));
+        assert_eq!(model["reasoningEfforts"]["xhigh"].as_str(), Some("max"));
         assert_eq!(
             model["input"],
             Value::Sequence(vec![
