@@ -4,6 +4,7 @@ pub mod anthropic;
 pub(crate) mod auth_capture;
 pub mod benchmark;
 pub mod catalog;
+pub(crate) mod compaction;
 pub mod config;
 pub mod convert;
 pub(crate) mod ducx;

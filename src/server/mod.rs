@@ -44,6 +44,7 @@ use crate::upstream::{ResponseStream, UpstreamRouting};
 use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};
 
 mod auth;
+mod compact;
 mod images;
 mod messages_http;
 mod realtime;

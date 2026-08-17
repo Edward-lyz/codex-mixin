@@ -1,4 +1,5 @@
 use super::auth::check_gateway_auth;
+use super::compact::compact;
 use super::images::{image_edits, image_generations};
 use super::realtime::{live_sideband_ws, live_ws, realtime_call, realtime_ws};
 use super::responses_http::responses;
@@ -16,6 +17,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/usage", get(token_usage))
         .route("/v1/responses", get(responses_ws).post(responses))
+        .route("/v1/responses/compact", post(compact))
         .route("/v1/messages", post(super::messages_http::messages))
         .route("/v1/realtime", get(realtime_ws))
         .route("/v1/realtime/calls", post(realtime_call))

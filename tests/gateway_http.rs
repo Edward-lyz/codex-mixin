@@ -71,6 +71,7 @@ fn data_url_dimensions(image_url: &str) -> (u32, u32) {
 #[derive(Clone)]
 enum MockMode {
     Text,
+    Compact,
     Thinking,
     UnsignedThinking,
     Tool,
@@ -451,6 +452,7 @@ async fn spawn_mock_official(
             "/v1/responses",
             get(mock_official_responses_ws).post(mock_official_responses),
         )
+        .route("/v1/responses/compact", post(mock_official_responses))
         .route("/v1/images/generations", post(mock_official_images))
         .route("/v1/images/edits", post(mock_official_images))
         .with_state(OfficialState {
@@ -691,10 +693,13 @@ async fn mock_messages(
         .get("anthropic-beta")
         .and_then(|value| value.to_str().ok())
         .map_or(Value::Null, |value| json!(value));
-    state.requests.lock().unwrap().push(body);
+    state.requests.lock().unwrap().push(body.clone());
     let payload = match state.mode {
         MockMode::Text if is_fusion_panel => panel_report_sse(),
         MockMode::Text => text_sse(),
+        MockMode::Compact => text_sse_with(
+            r#"{"goal":"continue task","constraints":["no tools"],"decisions":["use compact"],"files":["src/server/compact.rs"],"tool_results":["tests passed"],"pending_work":["run e2e"]}"#,
+        ),
         MockMode::Thinking => thinking_sse(),
         MockMode::UnsignedThinking => unsigned_thinking_sse(),
         MockMode::Tool => tool_sse("exec_command", json!({"cmd":"pwd"})),
@@ -812,7 +817,7 @@ async fn mock_image_generations(
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok());
     assert_eq!(auth, Some("Bearer upstream-key"));
-    state.requests.lock().unwrap().push(body);
+    state.requests.lock().unwrap().push(body.clone());
     if matches!(state.mode, MockMode::ImageToolFailure) {
         return (
             StatusCode::BAD_REQUEST,
@@ -870,10 +875,11 @@ async fn mock_openai_image_chat_completions(
 
 async fn mock_official_responses(
     State(state): State<OfficialState>,
+    OriginalUri(uri): OriginalUri,
     headers: HeaderMap,
     Json(body): Json<Value>,
 ) -> Response {
-    state.requests.lock().unwrap().push(body);
+    state.requests.lock().unwrap().push(body.clone());
     state
         .forwarded_headers
         .lock()
@@ -891,6 +897,21 @@ async fn mock_official_responses(
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned),
     );
+    if uri.path().ends_with("/responses/compact") {
+        return Json(json!({
+            "id": "resp_official_compact",
+            "object": "response",
+            "status": "completed",
+            "model": body["model"],
+            "output": [{
+                "type": "compaction",
+                "id": "cmp_official",
+                "created_by": "official",
+                "encrypted_content": "official-opaque-token"
+            }]
+        }))
+        .into_response();
+    }
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")
@@ -3401,6 +3422,98 @@ async fn maps_compaction_style_request_without_tools() {
     assert_eq!(upstream_request["messages"].as_array().unwrap().len(), 3);
     assert_eq!(upstream_request["messages"][1]["role"], "assistant");
     assert!(upstream_request.get("tools").is_none());
+}
+
+#[tokio::test]
+async fn compacts_custom_provider_into_mixin_token() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Compact).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses/compact"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model": "Claude Sonnet 5-custom",
+            "input": [
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body_text = response.text().await.unwrap();
+    assert_eq!(status, StatusCode::OK);
+    let body: Value = serde_json::from_str(&body_text).unwrap();
+    assert_eq!(body["status"], "completed");
+    assert_eq!(body["output"][0]["type"], "compaction");
+    assert!(
+        body["output"][0]["encrypted_content"]
+            .as_str()
+            .unwrap()
+            .starts_with("codex-mixin:compaction:v1:")
+    );
+    let request = requests.lock().unwrap()[0].clone();
+    assert!(request.get("tools").is_none());
+    assert_eq!(
+        request["system"][0]["text"],
+        "Summarize this conversation for continuation by another coding agent.\nReturn only a JSON object with exactly these fields:\ngoal (string), constraints (array of strings), decisions (array of strings),\nfiles (array of strings), tool_results (array of strings), pending_work (array of strings).\nDo not call tools. Do not include markdown fences. Preserve concrete commands,\nfile paths, unresolved errors, and decisions needed to continue the work."
+    );
+}
+
+#[tokio::test]
+async fn forwards_official_compact_request_and_opaque_token() {
+    let (official_url, requests, auth_headers, account_headers, _, forwarded_headers) =
+        spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
+    let codex_home = tempfile::tempdir().unwrap();
+    let auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    let mut config = test_config("http://127.0.0.1:1".to_owned());
+    config.providers[0].cached_models.clear();
+    config.providers[0].selected_models.clear();
+    config.official_responses_url = format!("{official_url}/v1/responses");
+    config.codex_auth_path = auth_path;
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let request_body = json!({
+        "model": "gpt-5.5",
+        "input": "summarize",
+        "stream": false,
+        "previous_response_id": "resp_123",
+        "unknown_future_field": {"preserve": true}
+    });
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses/compact"))
+        .bearer_auth("gateway-key")
+        .header("x-request-id", "request-123")
+        .json(&request_body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(
+        body["output"][0]["encrypted_content"],
+        "official-opaque-token"
+    );
+    assert_eq!(requests.lock().unwrap().as_slice(), &[request_body]);
+    assert_eq!(
+        auth_headers.lock().unwrap().as_slice(),
+        &[Some("Bearer codex-oauth-token".to_owned())]
+    );
+    assert_eq!(
+        account_headers.lock().unwrap().as_slice(),
+        &[Some("account-1".to_owned())]
+    );
+    let forwarded = forwarded_headers.lock().unwrap();
+    assert_eq!(
+        forwarded[0]
+            .get("x-request-id")
+            .and_then(|value| value.to_str().ok()),
+        Some("request-123")
+    );
 }
 
 #[tokio::test]

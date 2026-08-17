@@ -46,8 +46,9 @@ pub(crate) fn responses_to_openai_chat_streaming_with_model(
     match body.get("input") {
         Some(Value::String(text)) => messages.push(json!({"role":"user","content":text})),
         Some(Value::Array(items)) => {
+            let replay_model = body.get("model").and_then(Value::as_str);
             for item in items {
-                append_input_item(item, &mut messages)?;
+                append_input_item(item, &mut messages, replay_model)?;
             }
         }
         Some(_) => {

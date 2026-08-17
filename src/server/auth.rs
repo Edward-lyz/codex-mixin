@@ -22,6 +22,7 @@ pub(super) const FORWARDED_OFFICIAL_HEADERS: &[&str] = &[
     "x-session-id",
     "thread-id",
     "x-client-request-id",
+    "x-request-id",
     "x-codex-window-id",
 ];
 

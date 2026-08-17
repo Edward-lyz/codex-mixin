@@ -1,5 +1,6 @@
 use super::tools::upstream_client_tool_name;
 use super::*;
+use crate::compaction;
 
 const ANTHROPIC_THINKING_PREFIX: &str = "codex-mixin:anthropic-thinking:v1:";
 const BAIDU_UNSIGNED_THINKING_PREFIX: &str = "codex-mixin:baidu-unsigned-thinking:v1:";
@@ -22,6 +23,21 @@ pub(super) fn append_input_item(
         })
         .ok_or_else(|| GatewayError::BadRequest("input item missing type".to_owned()))?;
     match item_type {
+        "compaction" => {
+            let token = item
+                .get("encrypted_content")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    GatewayError::BadRequest("compaction item missing encrypted_content".to_owned())
+                })?;
+            let model = replay_model.ok_or_else(|| {
+                GatewayError::BadRequest("compaction item missing replay model".to_owned())
+            })?;
+            let summary = compaction::decode(token, model)?;
+            system.push(ContentBlock::Text {
+                text: compaction::summary_text(&summary),
+            });
+        }
         "message" => {
             let role = item
                 .get("role")

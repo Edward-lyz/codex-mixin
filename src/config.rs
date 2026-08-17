@@ -6,6 +6,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::{Context, anyhow};
+use base64::Engine;
 use fs2::FileExt;
 use serde::{Deserialize, Serialize};
 
@@ -143,6 +144,8 @@ pub struct StoredGatewayConfig {
     pub gateway_bind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gateway_api_key: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub compaction_secret: Option<String>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fusion_profiles: Vec<FusionProfile>,
     pub providers: Vec<ProviderDefinition>,
@@ -182,10 +185,27 @@ impl Default for StoredGatewayConfig {
             config_version: CONFIG_VERSION,
             gateway_bind: None,
             gateway_api_key: None,
+            compaction_secret: None,
             fusion_profiles: Vec::new(),
             providers: Vec::new(),
         }
     }
+}
+
+pub fn ensure_compaction_secret() -> anyhow::Result<String> {
+    let mut secret = None;
+    mutate_stored_config(|config| {
+        if config.compaction_secret.is_none() {
+            let mut bytes = [0_u8; 32];
+            ring::rand::SecureRandom::fill(&ring::rand::SystemRandom::new(), &mut bytes)
+                .map_err(|_| anyhow!("generate compaction secret"))?;
+            config.compaction_secret =
+                Some(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes));
+        }
+        secret = config.compaction_secret.clone();
+        Ok(())
+    })?;
+    secret.ok_or_else(|| anyhow!("compaction secret was not persisted"))
 }
 
 pub fn ensure_config_version(version: u32) -> anyhow::Result<()> {
@@ -436,6 +456,7 @@ fn migrate_legacy_config(legacy: LegacyStoredGatewayConfig) -> anyhow::Result<St
         config_version: CONFIG_VERSION,
         gateway_bind: legacy.gateway_bind,
         gateway_api_key: legacy.gateway_api_key,
+        compaction_secret: None,
         fusion_profiles: legacy.fusion_profiles,
         providers: vec![provider],
     })
@@ -616,6 +637,7 @@ mod tests {
             config_version: CONFIG_VERSION,
             gateway_bind: Some("127.0.0.1:18787".to_owned()),
             gateway_api_key: Some("local-key".to_owned()),
+            compaction_secret: None,
             fusion_profiles: Vec::new(),
             providers: vec![crate::provider::open_code_go_provider(
                 "opencode-go",

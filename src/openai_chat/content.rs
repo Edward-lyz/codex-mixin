@@ -1,4 +1,5 @@
 use super::*;
+use crate::compaction;
 
 /// Pointer left in a `tool` message once its images are relocated. The text is
 /// part of the provider-visible prompt, so it has to stay byte-stable.
@@ -7,12 +8,31 @@ const RELOCATED_TOOL_IMAGE_NOTE: &str = "[tool images follow in the next user me
 pub(super) fn append_input_item(
     item: &Value,
     messages: &mut Vec<Value>,
+    replay_model: Option<&str>,
 ) -> Result<(), GatewayError> {
     let item_type = item
         .get("type")
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("input item missing type".to_owned()))?;
     match item_type {
+        "compaction" => {
+            let token = item
+                .get("encrypted_content")
+                .and_then(Value::as_str)
+                .ok_or_else(|| {
+                    GatewayError::BadRequest("compaction item missing encrypted_content".to_owned())
+                })?;
+            let summary = compaction::decode(
+                token,
+                replay_model.ok_or_else(|| {
+                    GatewayError::BadRequest("compaction item missing model".to_owned())
+                })?,
+            )?;
+            messages.push(json!({
+                "role": "system",
+                "content": compaction::summary_text(&summary)
+            }));
+        }
         "message" => {
             let role = item
                 .get("role")
