@@ -205,10 +205,7 @@ pub(in crate::cli) fn upsert_codex_config(
         doc["model"] = value(model);
     }
 
-    if !doc
-        .get("model_providers")
-        .is_some_and(|item| item.is_table())
-    {
+    if !doc.get("model_providers").is_some_and(Item::is_table) {
         doc["model_providers"] = Item::Table(Table::new());
     }
     let providers = doc["model_providers"]

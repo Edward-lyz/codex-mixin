@@ -62,7 +62,7 @@ fn find_thread_visualization_dir(
         .find(|entry| {
             entry.file_type().is_dir() && entry.file_name() == std::ffi::OsStr::new(&thread_id)
         })
-        .map(|entry| entry.into_path())
+        .map(walkdir::DirEntry::into_path)
 }
 
 fn request_thread_id(headers: &HeaderMap) -> Option<String> {

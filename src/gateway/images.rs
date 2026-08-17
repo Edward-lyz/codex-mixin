@@ -439,22 +439,8 @@ fn compress_for_vision<'a>(
     ) {
         return Ok(None);
     }
-    let reader = match ImageReader::new(Cursor::new(raw)).with_guessed_format() {
-        Ok(reader) => reader,
-        Err(error) => {
-            tracing::warn!(%error, "input image format could not be detected; forwarding unchanged");
-            return Ok(None);
-        }
-    };
-    let Some(format) = reader.format() else {
+    let Some((format, width, height)) = inspect_image(raw) else {
         return Ok(None);
-    };
-    let (width, height) = match reader.into_dimensions() {
-        Ok(dimensions) => dimensions,
-        Err(error) => {
-            tracing::warn!(%error, "input image dimensions could not be read; forwarding unchanged");
-            return Ok(None);
-        }
     };
     if exceeds_decode_budget(width, height) {
         tracing::warn!(
@@ -464,11 +450,7 @@ fn compress_for_vision<'a>(
         );
         return Ok(None);
     }
-    if profile == ImageCompressionProfile::Primary
-        && media_type == "image/gif"
-        && width <= MAX_VISION_DIM
-        && height <= MAX_VISION_DIM
-    {
+    if should_forward_gif_unchanged(media_type, profile, width, height) {
         return Ok(None);
     }
 
@@ -479,6 +461,46 @@ fn compress_for_vision<'a>(
             return Ok(None);
         }
     };
+    let (resized, target_width, target_height) = resize_for_vision(decoded, width, height, profile);
+    encode_for_vision(resized, media_type, profile, target_width, target_height)
+}
+
+fn inspect_image(raw: &[u8]) -> Option<(image::ImageFormat, u32, u32)> {
+    let reader = match ImageReader::new(Cursor::new(raw)).with_guessed_format() {
+        Ok(reader) => reader,
+        Err(error) => {
+            tracing::warn!(%error, "input image format could not be detected; forwarding unchanged");
+            return None;
+        }
+    };
+    let format = reader.format()?;
+    match reader.into_dimensions() {
+        Ok((width, height)) => Some((format, width, height)),
+        Err(error) => {
+            tracing::warn!(%error, "input image dimensions could not be read; forwarding unchanged");
+            None
+        }
+    }
+}
+
+fn should_forward_gif_unchanged(
+    media_type: &str,
+    profile: ImageCompressionProfile,
+    width: u32,
+    height: u32,
+) -> bool {
+    profile == ImageCompressionProfile::Primary
+        && media_type == "image/gif"
+        && width <= MAX_VISION_DIM
+        && height <= MAX_VISION_DIM
+}
+
+fn resize_for_vision(
+    decoded: DynamicImage,
+    width: u32,
+    height: u32,
+    profile: ImageCompressionProfile,
+) -> (DynamicImage, u32, u32) {
     let max_side = match profile {
         ImageCompressionProfile::Primary => MAX_VISION_DIM,
         ImageCompressionProfile::PayloadFallback => FALLBACK_VISION_DIM,
@@ -497,6 +519,16 @@ fn compress_for_vision<'a>(
             image::imageops::FilterType::CatmullRom,
         )
     };
+    (resized, target_width, target_height)
+}
+
+fn encode_for_vision(
+    resized: DynamicImage,
+    media_type: &str,
+    profile: ImageCompressionProfile,
+    target_width: u32,
+    target_height: u32,
+) -> Result<Option<(Vec<u8>, &str)>, GatewayError> {
     let mut out = Vec::new();
     let preserve_alpha = profile == ImageCompressionProfile::Primary
         && media_type == "image/png"

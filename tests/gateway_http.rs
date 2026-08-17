@@ -962,6 +962,7 @@ async fn mock_official_responses_ws(
         .into_response()
 }
 
+#[allow(clippy::cognitive_complexity)]
 async fn serve_mock_official_websocket(
     mut socket: WebSocket,
     state: OfficialState,

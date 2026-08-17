@@ -468,7 +468,7 @@ pub(in crate::cli) fn validate_codex_install(
         codex_home.display(),
         expected_model_slugs.len()
     );
-    let doctor = ProcessCommand::new(&codex_cli)
+    let doctor = ProcessCommand::new(codex_cli)
         .args(["doctor", "--json"])
         .env("CODEX_HOME", codex_home)
         .output()?;
@@ -513,7 +513,7 @@ pub(in crate::cli) fn validate_codex_install(
     }
     println!("codex validation: doctor config.load {config_status}; provider={expected_provider}");
 
-    let models = ProcessCommand::new(&codex_cli)
+    let models = ProcessCommand::new(codex_cli)
         .args(["debug", "models"])
         .env("CODEX_HOME", codex_home)
         .output()?;

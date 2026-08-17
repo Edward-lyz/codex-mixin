@@ -11,9 +11,15 @@ pub(super) fn append_input_item(
     use_mcp_bridge_names: bool,
     replay_model: Option<&str>,
 ) -> Result<(), GatewayError> {
+    // DSH sends OpenAI-compatible message items without the Responses envelope type.
+    // Accept only that unambiguous shape; all other missing-type items still fail fast.
     let item_type = item
         .get("type")
         .and_then(Value::as_str)
+        .or_else(|| {
+            (item.get("role").and_then(Value::as_str).is_some() && item.get("content").is_some())
+                .then_some("message")
+        })
         .ok_or_else(|| GatewayError::BadRequest("input item missing type".to_owned()))?;
     match item_type {
         "message" => {

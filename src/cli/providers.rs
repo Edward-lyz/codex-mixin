@@ -326,11 +326,10 @@ pub(super) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
         && !user_set_protocol
         && !user_set_api_path
         && !path_explicit
+        && let Some(endpoint) = detect_custom_provider_protocol(&provider).await?
     {
-        if let Some(endpoint) = detect_custom_provider_protocol(&provider).await? {
-            detected_protocol = Some(protocol_name(endpoint.protocol).to_owned());
-            apply_inferred_custom_endpoint(&mut provider, endpoint);
-        }
+        detected_protocol = Some(protocol_name(endpoint.protocol).to_owned());
+        apply_inferred_custom_endpoint(&mut provider, endpoint);
     }
     provider.validate()?;
     let gateway_api_key = options
@@ -356,6 +355,7 @@ pub(super) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
     Ok(())
 }
 
+#[allow(clippy::cognitive_complexity)]
 pub(super) async fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<()> {
     let id = options.id.clone();
     let should_refresh_capabilities = options.key.is_some()

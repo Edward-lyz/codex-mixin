@@ -178,7 +178,7 @@ fn managed_username(home: &Path) -> anyhow::Result<String> {
     let login_dir = home.join(".comate/login-user");
     let mut usernames = std::fs::read_dir(&login_dir)
         .with_context(|| format!("read DUCX login directory {}", login_dir.display()))?
-        .filter_map(|entry| entry.ok())
+        .filter_map(Result::ok)
         .filter(|entry| {
             entry
                 .file_type()

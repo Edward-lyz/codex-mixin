@@ -4,6 +4,7 @@ use super::*;
 use memchr::memmem;
 
 type OfficialWebSocket = WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>;
+type ResponsesClientSender = SplitSink<WebSocket, AxumWsMessage>;
 
 #[derive(Debug)]
 struct OfficialWebSocketRequestError {
@@ -34,6 +35,15 @@ struct CustomWebSocketState {
     model: String,
     route: ResolvedModelRoute,
     history: Vec<Value>,
+}
+
+struct ResponsesWsContext<'a> {
+    state: &'a AppState,
+    headers: &'a HeaderMap,
+    client_sender: &'a mut ResponsesClientSender,
+    official_socket: &'a mut Option<OfficialWebSocket>,
+    official_state: &'a mut Option<OfficialWebSocketState>,
+    custom_state: &'a mut Option<CustomWebSocketState>,
 }
 
 pub(super) async fn responses_ws(
@@ -82,189 +92,232 @@ async fn route_responses_ws(
             .unwrap_or("<missing>")
             .to_owned();
 
+        let mut context = ResponsesWsContext {
+            state: &state,
+            headers: &headers,
+            client_sender: &mut client_sender,
+            official_socket: &mut official_socket,
+            official_state: &mut official_state,
+            custom_state: &mut custom_state,
+        };
         if matches!(
             state.resolve_model_route(&model).await,
             Ok(ResolvedModelRoute::Official)
         ) {
-            let (normalized, _) = crate::gateway::normalize_provider_images_blocking(body).await?;
-            body = normalized;
-            custom_state = None;
-            tracing::debug!(
-                model = model.as_str(),
-                route = "official_ws",
-                "routing responses websocket request"
-            );
-            let mut request_history =
-                match official_websocket_request_history(&body, official_state.take()) {
-                    Ok(history) => history,
-                    Err(err) => {
-                        official_socket = None;
-                        official_state = None;
-                        let message = err.to_string();
-                        client_sender
-                            .send(AxumWsMessage::Text(
-                                crate::sse::response_failed_payload(
-                                    None,
-                                    None,
-                                    message,
-                                    "invalid_request_error",
-                                )
-                                .to_string()
-                                .into(),
-                            ))
-                            .await?;
-                        continue;
-                    }
-                };
-            let mut retry_available = true;
-            let request_error = loop {
-                if official_socket.is_none() {
-                    match connect_official_responses_ws(&state, &headers).await {
-                        Ok(socket) => {
-                            official_socket = Some(socket);
-                            if body.get("previous_response_id").is_some() {
-                                body["input"] = Value::Array(
-                                    request_history
-                                        .take()
-                                        .expect("previous response history is available"),
-                                );
-                                body.as_object_mut()
-                                    .expect("responses request is an object")
-                                    .remove("previous_response_id");
-                            }
-                        }
-                        Err(err) if retry_available => {
-                            retry_available = false;
-                            tracing::warn!(
-                                model = model.as_str(),
-                                error = %err,
-                                "retrying official responses websocket connection"
-                            );
-                            continue;
-                        }
-                        Err(err) => break Some((err, None)),
-                    }
-                }
-                match proxy_official_responses_ws(
-                    official_socket
-                        .as_mut()
-                        .expect("official websocket connected"),
-                    &mut client_sender,
-                    &body,
-                    state.config.request_timeout,
-                )
-                .await
-                {
-                    Ok(OfficialWebSocketResponse::Completed {
-                        response_id,
-                        items_added,
-                    }) => {
-                        let mut history = match request_history.take() {
-                            Some(history) => history,
-                            None => take_custom_request_input(&mut body)?,
-                        };
-                        history.extend(items_added);
-                        official_state = Some(OfficialWebSocketState {
-                            response_id,
-                            model: model.clone(),
-                            history,
-                        });
-                        break None;
-                    }
-                    Ok(OfficialWebSocketResponse::Failed) => {
-                        official_socket = None;
-                        official_state = None;
-                        break None;
-                    }
-                    Err(err) if !err.response_started && retry_available => {
-                        retry_available = false;
-                        official_socket = None;
-                        tracing::warn!(
-                            model = model.as_str(),
-                            error = %err.source,
-                            "reconnecting stale official responses websocket"
-                        );
-                    }
-                    Err(err) => {
-                        official_socket = None;
-                        break Some((err.source, err.response_id));
-                    }
-                }
-            };
-            if let Some((err, response_id)) = request_error {
-                official_state = None;
-                tracing::warn!(
-                    model = model.as_str(),
-                    error = %err,
-                    "official responses websocket request failed"
-                );
-                let message = err.to_string();
-                client_sender
-                    .send(AxumWsMessage::Text(
-                        crate::sse::response_failed_payload(
-                            response_id,
-                            None,
-                            message,
-                            "server_error",
-                        )
-                        .to_string()
-                        .into(),
-                    ))
-                    .await?;
-            }
+            handle_official_ws_request(&mut context, body, &model).await?;
             continue;
         }
 
-        if official_socket.take().is_some() {
-            tracing::debug!(
+        handle_custom_ws_request(&mut context, body, &model).await?;
+    }
+}
+
+async fn handle_official_ws_request(
+    context: &mut ResponsesWsContext<'_>,
+    body: Value,
+    model: &str,
+) -> anyhow::Result<()> {
+    let (mut body, _) = crate::gateway::normalize_provider_images_blocking(body).await?;
+    *context.custom_state = None;
+    tracing::debug!(
+        model,
+        route = "official_ws",
+        "routing responses websocket request"
+    );
+    let mut request_history =
+        match official_websocket_request_history(&body, context.official_state.take()) {
+            Ok(history) => history,
+            Err(error) => {
+                *context.official_socket = None;
+                *context.official_state = None;
+                send_responses_ws_failure(
+                    context.client_sender,
+                    None,
+                    error,
+                    "invalid_request_error",
+                )
+                .await?;
+                return Ok(());
+            }
+        };
+    let request_error =
+        proxy_official_ws_request(context, &mut body, model, &mut request_history).await?;
+    if let Some((error, response_id)) = request_error {
+        *context.official_state = None;
+        tracing::warn!(model, error = %error, "official responses websocket request failed");
+        send_responses_ws_failure(context.client_sender, response_id, error, "server_error")
+            .await?;
+    }
+    Ok(())
+}
+
+async fn handle_custom_ws_request(
+    context: &mut ResponsesWsContext<'_>,
+    mut body: Value,
+    model: &str,
+) -> anyhow::Result<()> {
+    disconnect_official_ws_for_custom_request(context, model);
+    tracing::debug!(
+        model,
+        route = "custom_ws",
+        "routing responses websocket request"
+    );
+    let next_state = run_custom_ws_request(context, &mut body).await;
+    match next_state {
+        Ok(state) => *context.custom_state = state,
+        Err(error) => {
+            *context.custom_state = None;
+            tracing::warn!(
                 model,
-                "closing official websocket before custom model request"
+                error = %format!("{error:#}"),
+                "custom responses websocket request failed"
             );
+            send_responses_ws_failure(context.client_sender, None, error, "invalid_request_error")
+                .await?;
         }
-        official_state = None;
+    }
+    Ok(())
+}
+
+fn disconnect_official_ws_for_custom_request(context: &mut ResponsesWsContext<'_>, model: &str) {
+    if context.official_socket.take().is_some() {
         tracing::debug!(
             model,
-            route = "custom_ws",
-            "routing responses websocket request"
+            "closing official websocket before custom model request"
         );
-        let next_state =
-            match expand_custom_websocket_history(&state, &mut body, custom_state.take()).await {
-                Ok(()) if is_noop_responses_ws_request(&body) => {
-                    complete_custom_noop(&state, &mut client_sender, body)
-                        .await
-                        .map(Some)
-                }
-                Ok(()) => {
-                    strip_custom_websocket_envelope(&mut body);
-                    proxy_custom_responses_ws(&state, &headers, &mut client_sender, body).await
-                }
-                Err(err) => Err(err),
-            };
-        match next_state {
-            Ok(next_state) => custom_state = next_state,
-            Err(err) => {
-                custom_state = None;
+    }
+    *context.official_state = None;
+}
+
+async fn send_responses_ws_failure(
+    client_sender: &mut ResponsesClientSender,
+    response_id: Option<String>,
+    error: impl std::fmt::Display,
+    code: &str,
+) -> anyhow::Result<()> {
+    client_sender
+        .send(AxumWsMessage::Text(
+            crate::sse::response_failed_payload(response_id, None, error.to_string(), code)
+                .to_string()
+                .into(),
+        ))
+        .await?;
+    Ok(())
+}
+
+async fn run_custom_ws_request(
+    context: &mut ResponsesWsContext<'_>,
+    body: &mut Value,
+) -> anyhow::Result<Option<CustomWebSocketState>> {
+    expand_custom_websocket_history(context.state, body, context.custom_state.take()).await?;
+    if is_noop_responses_ws_request(body) {
+        return complete_custom_noop(context.state, context.client_sender, body.take())
+            .await
+            .map(Some);
+    }
+    strip_custom_websocket_envelope(body);
+    proxy_custom_responses_ws(
+        context.state,
+        context.headers,
+        context.client_sender,
+        body.take(),
+    )
+    .await
+}
+
+async fn proxy_official_ws_request(
+    context: &mut ResponsesWsContext<'_>,
+    body: &mut Value,
+    model: &str,
+    request_history: &mut Option<Vec<Value>>,
+) -> anyhow::Result<Option<(anyhow::Error, Option<String>)>> {
+    let mut retry_available = true;
+    loop {
+        if context.official_socket.is_none()
+            && let Err(error) = connect_and_expand_official_request(
+                context.state,
+                context.headers,
+                context.official_socket,
+                body,
+                request_history,
+            )
+            .await
+        {
+            if retry_available {
+                retry_available = false;
+                tracing::warn!(model, error = %error, "retrying official responses websocket connection");
+                continue;
+            }
+            return Ok(Some((error, None)));
+        }
+        match proxy_official_responses_ws(
+            context
+                .official_socket
+                .as_mut()
+                .expect("official websocket connected"),
+            context.client_sender,
+            body,
+            context.state.config.request_timeout,
+        )
+        .await
+        {
+            Ok(OfficialWebSocketResponse::Completed {
+                response_id,
+                items_added,
+            }) => {
+                let mut history = match request_history.take() {
+                    Some(history) => history,
+                    None => take_custom_request_input(body)?,
+                };
+                history.extend(items_added);
+                *context.official_state = Some(OfficialWebSocketState {
+                    response_id,
+                    model: model.to_owned(),
+                    history,
+                });
+                return Ok(None);
+            }
+            Ok(OfficialWebSocketResponse::Failed) => {
+                *context.official_socket = None;
+                *context.official_state = None;
+                return Ok(None);
+            }
+            Err(error) if !error.response_started && retry_available => {
+                retry_available = false;
+                *context.official_socket = None;
                 tracing::warn!(
-                    model = model.as_str(),
-                    error = %format!("{err:#}"),
-                    "custom responses websocket request failed"
+                    model,
+                    error = %error.source,
+                    "reconnecting stale official responses websocket"
                 );
-                let message = err.to_string();
-                client_sender
-                    .send(AxumWsMessage::Text(
-                        crate::sse::response_failed_payload(
-                            None,
-                            None,
-                            message,
-                            "invalid_request_error",
-                        )
-                        .to_string()
-                        .into(),
-                    ))
-                    .await?;
+            }
+            Err(error) => {
+                *context.official_socket = None;
+                return Ok(Some((error.source, error.response_id)));
             }
         }
     }
+}
+
+async fn connect_and_expand_official_request(
+    state: &AppState,
+    headers: &HeaderMap,
+    official_socket: &mut Option<OfficialWebSocket>,
+    body: &mut Value,
+    request_history: &mut Option<Vec<Value>>,
+) -> anyhow::Result<()> {
+    *official_socket = Some(connect_official_responses_ws(state, headers).await?);
+    if body.get("previous_response_id").is_some() {
+        body["input"] = Value::Array(
+            request_history
+                .take()
+                .expect("previous response history is available"),
+        );
+        body.as_object_mut()
+            .expect("responses request is an object")
+            .remove("previous_response_id");
+    }
+    Ok(())
 }
 
 fn is_noop_responses_ws_request(body: &Value) -> bool {

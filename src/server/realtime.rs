@@ -622,65 +622,95 @@ async fn bridge_realtime_websockets(
 ) {
     let (mut client_sender, mut client_receiver) = client.split();
     let (mut upstream_sender, mut upstream_receiver) = upstream.split();
-    loop {
-        tokio::select! {
-            client_message = client_receiver.next() => {
-                let Some(client_message) = client_message else {
-                    let _ = upstream_sender.send(TungsteniteMessage::Close(None)).await;
-                    return;
-                };
-                let message = match client_message {
-                    Ok(AxumWsMessage::Text(text)) => {
-                        TungsteniteMessage::Text(text.to_string().into())
-                    }
-                    Ok(AxumWsMessage::Binary(bytes)) => TungsteniteMessage::Binary(bytes),
-                    Ok(AxumWsMessage::Ping(bytes)) => TungsteniteMessage::Ping(bytes),
-                    Ok(AxumWsMessage::Pong(bytes)) => TungsteniteMessage::Pong(bytes),
-                    Ok(AxumWsMessage::Close(_)) => {
-                        let _ = upstream_sender.send(TungsteniteMessage::Close(None)).await;
-                        return;
-                    }
-                    Err(error) => {
-                        tracing::warn!(%error, "realtime client websocket read failed");
-                        let _ = upstream_sender.send(TungsteniteMessage::Close(None)).await;
-                        return;
-                    }
-                };
-                if let Err(error) = upstream_sender.send(message).await {
-                    tracing::warn!(%error, "upstream realtime websocket write failed");
-                    return;
-                }
-            }
-            upstream_message = upstream_receiver.next() => {
-                let Some(upstream_message) = upstream_message else {
-                    let _ = client_sender.send(AxumWsMessage::Close(None)).await;
-                    return;
-                };
-                let message = match upstream_message {
-                    Ok(TungsteniteMessage::Text(text)) => {
-                        Some(AxumWsMessage::Text(text.to_string().into()))
-                    }
-                    Ok(TungsteniteMessage::Binary(bytes)) => {
-                        Some(AxumWsMessage::Binary(bytes))
-                    }
-                    Ok(TungsteniteMessage::Ping(bytes)) => Some(AxumWsMessage::Ping(bytes)),
-                    Ok(TungsteniteMessage::Pong(bytes)) => Some(AxumWsMessage::Pong(bytes)),
-                    Ok(TungsteniteMessage::Close(_)) => Some(AxumWsMessage::Close(None)),
-                    Ok(TungsteniteMessage::Frame(_)) => None,
-                    Err(error) => {
-                        tracing::warn!(%error, "upstream realtime websocket read failed");
-                        let _ = client_sender.send(AxumWsMessage::Close(None)).await;
-                        return;
-                    }
-                };
-                if let Some(message) = message
-                    && let Err(error) = client_sender.send(message).await
-                {
-                    tracing::warn!(%error, "realtime client websocket write failed");
-                    return;
-                }
-            }
+    tokio::select! {
+        () = forward_realtime_client_messages(&mut client_receiver, &mut upstream_sender) => {}
+        () = forward_realtime_upstream_messages(&mut upstream_receiver, &mut client_sender) => {}
+    }
+}
+
+async fn forward_realtime_client_messages(
+    client_receiver: &mut SplitStream<WebSocket>,
+    upstream_sender: &mut SplitSink<
+        WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+        TungsteniteMessage,
+    >,
+) {
+    while let Some(message) = client_receiver.next().await {
+        let Some(message) = client_realtime_message(message) else {
+            close_upstream_realtime(upstream_sender).await;
+            return;
+        };
+        if let Err(error) = upstream_sender.send(message).await {
+            tracing::warn!(%error, "upstream realtime websocket write failed");
+            return;
         }
+    }
+    close_upstream_realtime(upstream_sender).await;
+}
+
+fn client_realtime_message(
+    message: Result<AxumWsMessage, axum::Error>,
+) -> Option<TungsteniteMessage> {
+    match message {
+        Ok(AxumWsMessage::Text(text)) => Some(TungsteniteMessage::Text(text.to_string().into())),
+        Ok(AxumWsMessage::Binary(bytes)) => Some(TungsteniteMessage::Binary(bytes)),
+        Ok(AxumWsMessage::Ping(bytes)) => Some(TungsteniteMessage::Ping(bytes)),
+        Ok(AxumWsMessage::Pong(bytes)) => Some(TungsteniteMessage::Pong(bytes)),
+        Ok(AxumWsMessage::Close(_)) => None,
+        Err(error) => {
+            tracing::warn!(%error, "realtime client websocket read failed");
+            None
+        }
+    }
+}
+
+async fn close_upstream_realtime(
+    upstream_sender: &mut SplitSink<
+        WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>,
+        TungsteniteMessage,
+    >,
+) {
+    if let Err(error) = upstream_sender.send(TungsteniteMessage::Close(None)).await {
+        tracing::warn!(%error, "upstream realtime websocket close failed");
+    }
+}
+
+async fn forward_realtime_upstream_messages(
+    upstream_receiver: &mut SplitStream<WebSocketStream<MaybeTlsStream<tokio::net::TcpStream>>>,
+    client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
+) {
+    while let Some(message) = upstream_receiver.next().await {
+        let message = upstream_realtime_message(message);
+        if let Some(message) = message
+            && let Err(error) = client_sender.send(message).await
+        {
+            tracing::warn!(%error, "realtime client websocket write failed");
+            return;
+        }
+    }
+    close_realtime_client(client_sender).await;
+}
+
+fn upstream_realtime_message(
+    message: Result<TungsteniteMessage, impl std::fmt::Display>,
+) -> Option<AxumWsMessage> {
+    match message {
+        Ok(TungsteniteMessage::Text(text)) => Some(AxumWsMessage::Text(text.to_string().into())),
+        Ok(TungsteniteMessage::Binary(bytes)) => Some(AxumWsMessage::Binary(bytes)),
+        Ok(TungsteniteMessage::Ping(bytes)) => Some(AxumWsMessage::Ping(bytes)),
+        Ok(TungsteniteMessage::Pong(bytes)) => Some(AxumWsMessage::Pong(bytes)),
+        Ok(TungsteniteMessage::Close(_)) => Some(AxumWsMessage::Close(None)),
+        Ok(TungsteniteMessage::Frame(_)) => None,
+        Err(error) => {
+            tracing::warn!(%error, "upstream realtime websocket read failed");
+            Some(AxumWsMessage::Close(None))
+        }
+    }
+}
+
+async fn close_realtime_client(client_sender: &mut SplitSink<WebSocket, AxumWsMessage>) {
+    if let Err(error) = client_sender.send(AxumWsMessage::Close(None)).await {
+        tracing::warn!(%error, "realtime client websocket close failed");
     }
 }
 

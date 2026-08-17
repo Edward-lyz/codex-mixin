@@ -39,6 +39,7 @@ struct ReportContext<'a> {
     session_id: &'a str,
 }
 
+#[allow(clippy::cognitive_complexity)]
 pub(super) async fn run(event: &str) -> anyhow::Result<()> {
     let mut hook_body = Vec::new();
     std::io::stdin()
@@ -49,13 +50,26 @@ pub(super) async fn run(event: &str) -> anyhow::Result<()> {
         hook_bytes = hook_body.len(),
         "DUCX report hook received"
     );
-    // Scope reporting to turns that actually use a reporting-enabled Baidu model.
-    // Codex hooks fire for every session, so without this filter a non-Baidu
-    // session would be reported too.
-    let model = hook_body_model(&hook_body);
-    let Some(model) = model else {
-        tracing::info!(event, reason = "missing_model", "DUCX reporting skipped");
+    let Some((model, provider)) = reporting_model_and_provider(event, &hook_body)? else {
         return Ok(());
+    };
+    let session_id = hook_body_string(&hook_body, "session_id").unwrap_or_default();
+    let context = ReportContext {
+        event,
+        provider_id: &provider.id,
+        model: &model,
+        session_id: &session_id,
+    };
+    report_with_provider(context, &hook_body, &provider).await
+}
+
+fn reporting_model_and_provider(
+    event: &str,
+    hook_body: &[u8],
+) -> anyhow::Result<Option<(String, ProviderDefinition)>> {
+    let Some(model) = hook_body_model(hook_body) else {
+        tracing::info!(event, reason = "missing_model", "DUCX reporting skipped");
+        return Ok(None);
     };
     let Some(provider) = reporting_provider(&model).with_context(|| {
         format!("resolve reporting provider for model {model} on {event} event")
@@ -67,50 +81,47 @@ pub(super) async fn run(event: &str) -> anyhow::Result<()> {
             reason = "no_matching_reporting_provider",
             "DUCX reporting skipped"
         );
-        return Ok(());
+        return Ok(None);
     };
-    let session_id = hook_body_string(&hook_body, "session_id").unwrap_or_default();
-    let context = ReportContext {
-        event,
-        provider_id: &provider.id,
-        model: &model,
-        session_id: &session_id,
-    };
-    match provider.request_policy.effective_baidu_auth_bridge() {
-        BaiduAuthBridge::DucxLoopback => {
-            let token = provider
-                .request_policy
-                .data_report_client_token
-                .as_deref()
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "DUCX report client token is missing for provider {}; wait for gateway warmup or restart the gateway",
-                        context.provider_id
-                    )
-                })?;
-            let home = ducx_report_home(&provider)?;
-            let username = managed_username(&home)?;
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(30))
-                .build()
-                .context("build DUCX report client")?;
-            report_ducx_event(context, &hook_body, token, &username, &client).await
-        }
-        BaiduAuthBridge::Disabled => {
-            let message = format!(
-                "Baidu code reporting is enabled but the authentication bridge is disabled for provider {} (event {}, model {}, session {})",
-                context.provider_id, context.event, context.model, context.session_id
-            );
-            tracing::error!(
-                event = context.event,
-                provider = context.provider_id,
-                model = context.model,
-                session_id = context.session_id,
-                "DUCX reporting failed: authentication bridge disabled"
-            );
-            Err(anyhow::anyhow!(message))
-        }
+    Ok(Some((model, provider)))
+}
+
+async fn report_with_provider(
+    context: ReportContext<'_>,
+    hook_body: &[u8],
+    provider: &ProviderDefinition,
+) -> anyhow::Result<()> {
+    if provider.request_policy.effective_baidu_auth_bridge() == BaiduAuthBridge::Disabled {
+        let message = format!(
+            "Baidu code reporting is enabled but the authentication bridge is disabled for provider {} (event {}, model {}, session {})",
+            context.provider_id, context.event, context.model, context.session_id
+        );
+        tracing::error!(
+            event = context.event,
+            provider = context.provider_id,
+            model = context.model,
+            session_id = context.session_id,
+            "DUCX reporting failed: authentication bridge disabled"
+        );
+        anyhow::bail!(message);
     }
+    let token = provider
+        .request_policy
+        .data_report_client_token
+        .as_deref()
+        .ok_or_else(|| {
+            anyhow::anyhow!(
+                "DUCX report client token is missing for provider {}; wait for gateway warmup or restart the gateway",
+                context.provider_id
+            )
+        })?;
+    let home = ducx_report_home(provider)?;
+    let username = managed_username(&home)?;
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()
+        .context("build DUCX report client")?;
+    report_ducx_event(context, hook_body, token, &username, &client).await
 }
 
 pub(super) fn reporting_enabled() -> anyhow::Result<bool> {
@@ -415,7 +426,7 @@ fn managed_username(home: &Path) -> anyhow::Result<String> {
     let login_dir = home.join(".comate/login-user");
     let mut usernames = fs::read_dir(&login_dir)
         .with_context(|| format!("read DUCX login directory {}", login_dir.display()))?
-        .filter_map(|entry| entry.ok())
+        .filter_map(Result::ok)
         .filter(|entry| entry.file_type().map(|t| t.is_file()).unwrap_or(false))
         .filter_map(|entry| entry.file_name().into_string().ok());
     let username = usernames
@@ -528,7 +539,7 @@ pub(super) fn sync_installation_at(hooks_path: &Path, enabled: bool) -> anyhow::
     lock.lock_exclusive()
         .with_context(|| format!("lock Codex hooks configuration {}", hooks_path.display()))?;
     let mut document = if hooks_path.exists() {
-        serde_json::from_slice::<Value>(&fs::read(&hooks_path)?)
+        serde_json::from_slice::<Value>(&fs::read(hooks_path)?)
             .with_context(|| format!("parse Codex hooks configuration {}", hooks_path.display()))?
     } else {
         serde_json::json!({ "hooks": {} })
@@ -564,7 +575,7 @@ pub(super) fn sync_installation_at(hooks_path: &Path, enabled: bool) -> anyhow::
         if hooks
             .get(event_name)
             .and_then(Value::as_array)
-            .is_some_and(|g| g.is_empty())
+            .is_some_and(Vec::is_empty)
         {
             hooks.remove(event_name);
         }
@@ -603,7 +614,7 @@ pub(super) fn sync_installation_at(hooks_path: &Path, enabled: bool) -> anyhow::
 
     let mut encoded = serde_json::to_vec_pretty(&document)?;
     encoded.push(b'\n');
-    write_atomic_if_changed(&hooks_path, &encoded)
+    write_atomic_if_changed(hooks_path, &encoded)
         .with_context(|| format!("write Codex hooks configuration {}", hooks_path.display()))?;
     Ok(())
 }

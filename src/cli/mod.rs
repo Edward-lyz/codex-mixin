@@ -1149,6 +1149,7 @@ async fn setup(
     Ok(())
 }
 
+#[allow(clippy::cognitive_complexity)]
 async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command.unwrap_or(Command::Info { json: false }) {
         Command::ReportHook { event } => report_hook::run(&event).await,

@@ -53,6 +53,28 @@ fn maps_responses_json_schema_to_anthropic_output_config() {
     );
 }
 
+#[test]
+fn accepts_dsh_message_items_without_responses_type() {
+    let body = json!({
+        "model": "DeepSeek-V4-Flash",
+        "stream": true,
+        "input": [
+            {"role": "user", "content": "Generate the session title"}
+        ]
+    });
+
+    let converted = responses_to_anthropic(&body, &config()).unwrap();
+
+    assert_eq!(converted.request.messages.len(), 1);
+    assert_eq!(converted.request.messages[0].role, "user");
+    assert_eq!(
+        converted.request.messages[0].content[0],
+        ContentBlock::Text {
+            text: "Generate the session title".to_owned()
+        }
+    );
+}
+
 /// Codex appends a developer message such as `<workspace_context>` on every
 /// turn. Lifting those into `system` would prepend new bytes ahead of the whole
 /// transcript and drop the provider's prefix cache each turn, so only the

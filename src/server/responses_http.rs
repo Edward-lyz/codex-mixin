@@ -7,13 +7,23 @@ pub(super) async fn responses(
     body: Body,
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
-    let mut body = crate::request_body::parse_json(body).await?;
+    let body = crate::request_body::parse_json(body).await?;
     let requested_model = body
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?
         .to_owned();
     let route = state.resolve_model_route(&requested_model).await?;
+    log_responses_route(&requested_model, &route);
+    if route == ResolvedModelRoute::Official {
+        let (body, _) = crate::gateway::normalize_provider_images_blocking(body).await?;
+        return forward_official_responses(&state, &headers, body).await;
+    }
+    let stream = stream_custom_responses(&state, &headers, body, route).await?;
+    sse_response(stream)
+}
+
+fn log_responses_route(requested_model: &str, route: &ResolvedModelRoute) {
     match &route {
         ResolvedModelRoute::Official => {
             tracing::info!(catalog_slug = %requested_model, route = "official", "routing responses request");
@@ -40,46 +50,60 @@ pub(super) async fn responses(
             );
         }
     }
-    if route == ResolvedModelRoute::Official {
-        let (body, _) = crate::gateway::normalize_provider_images_blocking(body).await?;
-        return forward_official_responses(&state, &headers, body).await;
-    }
-    let provider_routing = stable_oneapi_routing(&headers, &body)?;
-    let stream = match route {
+}
+
+async fn stream_custom_responses(
+    state: &AppState,
+    headers: &HeaderMap,
+    body: Value,
+    route: ResolvedModelRoute,
+) -> Result<ResponseStream, GatewayError> {
+    let provider_routing = stable_oneapi_routing(headers, &body)?;
+    match route {
         ResolvedModelRoute::Official => unreachable!("official route returned above"),
         provider_route @ ResolvedModelRoute::Provider { .. } => {
             let plan = RequestPlan::from_route(provider_route, body, provider_routing, None)?;
-            UpstreamExecutor::new(&state).stream(plan, &headers).await?
+            UpstreamExecutor::new(state).stream(plan, headers).await
         }
         ResolvedModelRoute::Fusion { profile_id } => {
-            let profile = state
-                .config
-                .fusion_profiles
-                .iter()
-                .find(|profile| profile.id == profile_id)
-                .ok_or_else(|| {
-                    GatewayError::BadRequest(format!("unknown fusion profile: {profile_id}"))
-                })?
-                .clone();
-            if should_fuse_turn(&body) {
-                FusionEngine::new(&state, &profile)
-                    .with_headers(headers.clone())
-                    .stream_with_routing(body, provider_routing)
-            } else {
-                body["stream"] = Value::Bool(true);
-                FusionEngine::new(&state, &profile)
-                    .with_headers(headers.clone())
-                    .stream_final_continuation(body, provider_routing.as_ref())
-                    .await?
-            }
+            stream_fusion_responses(state, headers, body, provider_routing, profile_id).await
         }
-    };
-    let stream = Body::from_stream(stream);
+    }
+}
+
+async fn stream_fusion_responses(
+    state: &AppState,
+    headers: &HeaderMap,
+    mut body: Value,
+    provider_routing: Option<crate::upstream::UpstreamRouting>,
+    profile_id: String,
+) -> Result<ResponseStream, GatewayError> {
+    let profile = state
+        .config
+        .fusion_profiles
+        .iter()
+        .find(|profile| profile.id == profile_id)
+        .ok_or_else(|| GatewayError::BadRequest(format!("unknown fusion profile: {profile_id}")))?
+        .clone();
+    if should_fuse_turn(&body) {
+        Ok(FusionEngine::new(state, &profile)
+            .with_headers(headers.clone())
+            .stream_with_routing(body, provider_routing))
+    } else {
+        body["stream"] = Value::Bool(true);
+        FusionEngine::new(state, &profile)
+            .with_headers(headers.clone())
+            .stream_final_continuation(body, provider_routing.as_ref())
+            .await
+    }
+}
+
+fn sse_response(stream: ResponseStream) -> Result<Response, GatewayError> {
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")
         .header(header::CACHE_CONTROL, "no-cache")
-        .body(stream)
+        .body(Body::from_stream(stream))
         .map_err(|err| GatewayError::Other(err.into()))
 }
 

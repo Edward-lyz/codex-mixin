@@ -1443,7 +1443,7 @@ fn replace_executable_swaps_the_target_without_leaving_backup_files() {
     assert_eq!(fs::read_to_string(&target).unwrap(), "new");
     let leftover = fs::read_dir(directory.path())
         .unwrap()
-        .filter_map(|entry| entry.ok())
+        .filter_map(Result::ok)
         .any(|entry| {
             entry
                 .file_name()

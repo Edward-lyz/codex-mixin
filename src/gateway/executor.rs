@@ -12,7 +12,7 @@ use super::{RequestPlan, UpstreamTarget};
 use crate::error::GatewayError;
 use crate::server::{AppState, stream_official_response};
 use crate::sse::{SseDecoder, encode_event, encode_raw_event, event_contains_response_metadata};
-use crate::upstream::{ResponseStream, stream_provider_response};
+use crate::upstream::{ResponseStream, UpstreamRouting, stream_provider_response};
 
 #[derive(Clone, Copy)]
 pub(crate) struct UpstreamExecutor<'a> {
@@ -40,26 +40,12 @@ impl<'a> UpstreamExecutor<'a> {
         headers: &HeaderMap,
     ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
         if matches!(&plan.target, UpstreamTarget::Provider { .. }) {
-            canonicalize_provider_json(&mut plan.body);
-            let (body, image_stats) = normalize_provider_images_blocking(plan.body).await?;
-            plan.body = body;
-            if image_stats.normalized_images > 0 || image_stats.omitted_tool_images > 0 {
-                tracing::info!(
-                    normalized_images = image_stats.normalized_images,
-                    omitted_tool_images = image_stats.omitted_tool_images,
-                    saved_image_bytes = image_stats.saved_bytes,
-                    "normalized provider image payloads for cache-stable replay"
-                );
-            }
+            plan.body = prepare_provider_body(plan.body).await?;
         }
         match plan.target {
             UpstreamTarget::Official => {
-                let stream = stream_official_response(self.state, headers, &plan.body).await?;
-                let stream = match plan.downstream_model {
-                    Some(downstream_model) => rewrite_response_model(stream, downstream_model),
-                    None => stream,
-                };
-                Ok((stream, plan.body))
+                self.stream_official(plan.body, plan.downstream_model, headers)
+                    .await
             }
             UpstreamTarget::Provider {
                 catalog_slug,
@@ -67,50 +53,97 @@ impl<'a> UpstreamExecutor<'a> {
                 upstream_model_id,
                 routing,
             } => {
-                let first = stream_provider_response(
-                    self.state,
-                    &plan.body,
-                    &catalog_slug,
-                    &provider_id,
-                    &upstream_model_id,
-                    routing.as_ref(),
-                    plan.downstream_model.as_deref(),
+                self.stream_provider(
+                    plan.body,
+                    plan.downstream_model,
+                    catalog_slug,
+                    provider_id,
+                    upstream_model_id,
+                    routing,
                 )
-                .await;
-                match first {
-                    Ok(stream) => Ok((stream, plan.body)),
-                    Err(error @ GatewayError::UpstreamStatus { status, .. })
-                        if status == reqwest::StatusCode::PAYLOAD_TOO_LARGE =>
-                    {
-                        let (fallback_body, stats) =
-                            normalize_provider_images_for_fallback(plan.body).await?;
-                        if stats.normalized_images == 0 || stats.saved_bytes == 0 {
-                            return Err(error);
-                        }
-                        tracing::warn!(
-                            provider_id,
-                            upstream_model_id,
-                            normalized_images = stats.normalized_images,
-                            saved_image_bytes = stats.saved_bytes,
-                            "retrying provider request after 413 with aggressively compressed images"
-                        );
-                        stream_provider_response(
-                            self.state,
-                            &fallback_body,
-                            &catalog_slug,
-                            &provider_id,
-                            &upstream_model_id,
-                            routing.as_ref(),
-                            plan.downstream_model.as_deref(),
-                        )
-                        .await
-                        .map(|stream| (stream, fallback_body))
-                    }
-                    Err(error) => Err(error),
-                }
+                .await
             }
         }
     }
+
+    async fn stream_official(
+        self,
+        body: serde_json::Value,
+        downstream_model: Option<String>,
+        headers: &HeaderMap,
+    ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
+        let stream = stream_official_response(self.state, headers, &body).await?;
+        let stream = match downstream_model {
+            Some(model) => rewrite_response_model(stream, model),
+            None => stream,
+        };
+        Ok((stream, body))
+    }
+
+    async fn stream_provider(
+        self,
+        body: serde_json::Value,
+        downstream_model: Option<String>,
+        catalog_slug: String,
+        provider_id: String,
+        upstream_model_id: String,
+        routing: Option<UpstreamRouting>,
+    ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
+        let first = stream_provider_response(
+            self.state,
+            &body,
+            &catalog_slug,
+            &provider_id,
+            &upstream_model_id,
+            routing.as_ref(),
+            downstream_model.as_deref(),
+        )
+        .await;
+        let Err(error @ GatewayError::UpstreamStatus { status, .. }) = first else {
+            return first.map(|stream| (stream, body));
+        };
+        if status != reqwest::StatusCode::PAYLOAD_TOO_LARGE {
+            return Err(error);
+        }
+        let (fallback_body, stats) = normalize_provider_images_for_fallback(body).await?;
+        if stats.normalized_images == 0 || stats.saved_bytes == 0 {
+            return Err(error);
+        }
+        tracing::warn!(
+            provider_id,
+            upstream_model_id,
+            normalized_images = stats.normalized_images,
+            saved_image_bytes = stats.saved_bytes,
+            "retrying provider request after 413 with aggressively compressed images"
+        );
+        stream_provider_response(
+            self.state,
+            &fallback_body,
+            &catalog_slug,
+            &provider_id,
+            &upstream_model_id,
+            routing.as_ref(),
+            downstream_model.as_deref(),
+        )
+        .await
+        .map(|stream| (stream, fallback_body))
+    }
+}
+
+async fn prepare_provider_body(
+    mut body: serde_json::Value,
+) -> Result<serde_json::Value, GatewayError> {
+    canonicalize_provider_json(&mut body);
+    let (body, image_stats) = normalize_provider_images_blocking(body).await?;
+    if image_stats.normalized_images > 0 || image_stats.omitted_tool_images > 0 {
+        tracing::info!(
+            normalized_images = image_stats.normalized_images,
+            omitted_tool_images = image_stats.omitted_tool_images,
+            saved_image_bytes = image_stats.saved_bytes,
+            "normalized provider image payloads for cache-stable replay"
+        );
+    }
+    Ok(body)
 }
 
 fn rewrite_response_model(mut stream: ResponseStream, downstream_model: String) -> ResponseStream {

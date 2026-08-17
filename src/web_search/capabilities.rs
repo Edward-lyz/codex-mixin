@@ -112,20 +112,7 @@ impl WebSearchCapabilities {
         force: bool,
     ) -> anyhow::Result<WebSearchProbeSummary> {
         let now = unix_seconds()?;
-        let mut model_targets = models
-            .iter()
-            .filter_map(|model| {
-                providers.resolve(&model.id).map(|resolved| {
-                    (
-                        model.id.clone(),
-                        resolved.provider.clone(),
-                        resolved.upstream_model_id.to_owned(),
-                    )
-                })
-            })
-            .collect::<Vec<_>>();
-        model_targets.sort_by_key(|(model, _, _)| model.to_ascii_lowercase());
-        model_targets.dedup_by(|left, right| left.0 == right.0);
+        let model_targets = probe_model_targets(models, providers);
         let current_models = model_targets
             .iter()
             .map(|(model, _, _)| model.clone())
@@ -159,66 +146,7 @@ impl WebSearchCapabilities {
         };
         let attempted = candidates.len();
         if !candidates.is_empty() {
-            let client = Client::builder().build()?;
-            let release_reference = if candidates
-                .iter()
-                .any(|(_, _, model)| model.to_ascii_lowercase().starts_with("gpt-"))
-            {
-                match fetch_release_reference(&client).await {
-                    Ok(reference) => Some(reference),
-                    Err(error) => {
-                        tracing::warn!(
-                            error = %error,
-                            "flattened GPT web search results cannot be verified"
-                        );
-                        None
-                    }
-                }
-            } else {
-                None
-            };
-            let web_search_tool_type = Arc::new(config.web_search_tool_type.clone());
-            let client = Arc::new(client);
-            let probe_results = stream::iter(candidates.into_iter().map(
-                |(model, provider, upstream_model)| {
-                    let client = Arc::clone(&client);
-                    let web_search_tool_type = Arc::clone(&web_search_tool_type);
-                    let release_reference = release_reference.clone();
-                    async move {
-                        let result = probe_model(
-                            &client,
-                            &provider,
-                            &upstream_model,
-                            &web_search_tool_type,
-                            release_reference.as_deref(),
-                        )
-                        .await;
-                        match result {
-                            Ok((supported, evidence)) => ModelWebSearchCapability {
-                                model,
-                                provider_id: provider.id().to_owned(),
-                                upstream_model,
-                                supported,
-                                evidence,
-                                error: None,
-                                probed_at: now,
-                            },
-                            Err(error) => ModelWebSearchCapability {
-                                model,
-                                provider_id: provider.id().to_owned(),
-                                upstream_model,
-                                supported: false,
-                                evidence: "probe_failed".to_owned(),
-                                error: Some(error.to_string()),
-                                probed_at: now,
-                            },
-                        }
-                    }
-                },
-            ))
-            .buffer_unordered(PROBE_CONCURRENCY)
-            .collect::<Vec<_>>()
-            .await;
+            let probe_results = run_model_probes(candidates, config, now).await?;
 
             for capability in &probe_results {
                 if let Some(error) = &capability.error {
@@ -313,4 +241,93 @@ impl WebSearchCapabilities {
         fs::rename(&temporary_path, self.path.as_ref())
             .with_context(|| format!("replace {}", self.path.display()))
     }
+}
+
+type ProbeTarget = (String, Arc<ProviderRuntime>, String);
+
+fn probe_model_targets(models: &[ModelInfo], providers: &ProviderRegistry) -> Vec<ProbeTarget> {
+    let mut targets = models
+        .iter()
+        .filter_map(|model| {
+            providers.resolve(&model.id).map(|resolved| {
+                (
+                    model.id.clone(),
+                    Arc::new(resolved.provider.clone()),
+                    resolved.upstream_model_id.to_owned(),
+                )
+            })
+        })
+        .collect::<Vec<_>>();
+    targets.sort_by_key(|(model, _, _)| model.to_ascii_lowercase());
+    targets.dedup_by(|left, right| left.0 == right.0);
+    targets
+}
+
+async fn run_model_probes(
+    candidates: Vec<ProbeTarget>,
+    config: &GatewayConfig,
+    now: u64,
+) -> anyhow::Result<Vec<ModelWebSearchCapability>> {
+    let client = Client::builder().build()?;
+    let release_reference = if candidates
+        .iter()
+        .any(|(_, _, model)| model.to_ascii_lowercase().starts_with("gpt-"))
+    {
+        match fetch_release_reference(&client).await {
+            Ok(reference) => Some(reference),
+            Err(error) => {
+                tracing::warn!(
+                    error = %error,
+                    "flattened GPT web search results cannot be verified"
+                );
+                None
+            }
+        }
+    } else {
+        None
+    };
+    let web_search_tool_type = Arc::new(config.web_search_tool_type.clone());
+    let client = Arc::new(client);
+    Ok(stream::iter(
+        candidates
+            .into_iter()
+            .map(|(model, provider, upstream_model)| {
+                let client = Arc::clone(&client);
+                let web_search_tool_type = Arc::clone(&web_search_tool_type);
+                let release_reference = release_reference.clone();
+                async move {
+                    match probe_model(
+                        &client,
+                        &provider,
+                        &upstream_model,
+                        &web_search_tool_type,
+                        release_reference.as_deref(),
+                    )
+                    .await
+                    {
+                        Ok((supported, evidence)) => ModelWebSearchCapability {
+                            model,
+                            provider_id: provider.id().to_owned(),
+                            upstream_model,
+                            supported,
+                            evidence,
+                            error: None,
+                            probed_at: now,
+                        },
+                        Err(error) => ModelWebSearchCapability {
+                            model,
+                            provider_id: provider.id().to_owned(),
+                            upstream_model,
+                            supported: false,
+                            evidence: "probe_failed".to_owned(),
+                            error: Some(error.to_string()),
+                            probed_at: now,
+                        },
+                    }
+                }
+            }),
+    )
+    .buffer_unordered(PROBE_CONCURRENCY)
+    .collect::<Vec<_>>()
+    .await)
 }

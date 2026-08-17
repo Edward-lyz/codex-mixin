@@ -900,10 +900,9 @@ async fn fetch_opencode_go_html(
 }
 
 fn redact_opencode_go_message(message: &str, auth_cookie: &str) -> String {
-    let mut sanitized = message.replace(auth_cookie, "<redacted>").replace(
-        |character: char| character == '\n' || character == '\r',
-        " ",
-    );
+    let mut sanitized = message
+        .replace(auth_cookie, "<redacted>")
+        .replace(['\n', '\r'], " ");
     sanitized = sanitized.split_whitespace().collect::<Vec<_>>().join(" ");
     if sanitized.len() > 240 {
         sanitized.truncate(240);
@@ -981,6 +980,7 @@ fn parse_opencode_go_data_slot_windows(
     html: &str,
 ) -> std::collections::HashMap<String, (f64, f64)> {
     let mut windows = std::collections::HashMap::new();
+    let usage_number = Regex::new(r"\d+(?:\.\d+)?").ok();
     for item in html.split("data-slot=\"usage-item\"") {
         let label = item
             .split("data-slot=\"usage-label\">")
@@ -992,7 +992,7 @@ fn parse_opencode_go_data_slot_windows(
         let usage = match item
             .split("data-slot=\"usage-value\">")
             .nth(1)
-            .and_then(|value| Regex::new(r"\d+(?:\.\d+)?").ok()?.find(value))
+            .and_then(|value| usage_number.as_ref()?.find(value))
             .and_then(|matched| matched.as_str().parse::<f64>().ok())
             .filter(|value| value.is_finite())
         {
@@ -1089,6 +1089,7 @@ fn parse_opencode_go_data_slot_billing(html: &str) -> Option<OpenCodeGoBilling> 
     let mut balance_usd = None;
     let mut monthly_limit_usd = None;
     let mut monthly_usage_usd = None;
+    let dollar_amount = Regex::new(r"\$?\s*(\d+(?:,\d{3})*(?:\.\d+)?)").ok()?;
     for item in html.split("data-slot=\"billing-item\"") {
         let label = item
             .split("data-slot=\"billing-label\">")
@@ -1100,11 +1101,7 @@ fn parse_opencode_go_data_slot_billing(html: &str) -> Option<OpenCodeGoBilling> 
         let Some(value) = item
             .split("data-slot=\"billing-value\">")
             .nth(1)
-            .and_then(|value| {
-                Regex::new(r"\$?\s*(\d+(?:,\d{3})*(?:\.\d+)?)")
-                    .ok()?
-                    .captures(value)
-            })
+            .and_then(|value| dollar_amount.captures(value))
             .and_then(|captures| captures.get(1))
             .and_then(|matched| matched.as_str().replace(',', "").parse::<f64>().ok())
         else {

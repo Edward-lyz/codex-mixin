@@ -429,13 +429,8 @@ pub(crate) fn validate_provider_id(id: &str) -> anyhow::Result<()> {
         "provider id {id} may only contain lowercase letters, numbers, '.', '_' and '-'"
     );
     ensure!(
-        id.as_bytes()
-            .first()
-            .is_some_and(|byte| byte.is_ascii_alphanumeric())
-            && id
-                .as_bytes()
-                .last()
-                .is_some_and(|byte| byte.is_ascii_alphanumeric()),
+        id.as_bytes().first().is_some_and(u8::is_ascii_alphanumeric)
+            && id.as_bytes().last().is_some_and(u8::is_ascii_alphanumeric),
         "provider id {id} must start and end with a letter or number"
     );
     Ok(())

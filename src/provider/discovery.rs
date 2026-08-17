@@ -17,135 +17,163 @@ pub async fn discover_provider_models(
     definition: &ProviderDefinition,
 ) -> anyhow::Result<Vec<ProviderModel>> {
     let provider = ProviderRuntime::new(definition.clone(), &|name| std::env::var(name).ok())?;
-    let native_headers = if definition.model_source == ProviderModelSource::BaiduOneApi
-        && provider.uses_ducx_loopback()
-    {
-        Some(super::native_baidu_headers(&provider).await?)
-    } else {
-        None
-    };
+    let native_headers = native_baidu_headers_if_needed(definition, &provider).await?;
     match &definition.model_source {
         ProviderModelSource::Static => Ok(definition.cached_models.clone()),
         ProviderModelSource::OpenAiCompatible { .. } => {
-            let url = provider
-                .models_url()
-                .context("provider models URL is not configured")?
-                .clone();
-            let response = provider.apply_auth(client.get(url)).send().await?;
-            let status = response.status();
-            let body = response.text().await?;
-            if !status.is_success() {
-                anyhow::bail!(
-                    "provider {} models endpoint returned {status}: {body}",
-                    provider.id()
-                );
-            }
-            let models: ModelsResponse = serde_json::from_str(&body)
-                .context("provider models endpoint returned invalid JSON")?;
-            let mut models = models
-                .data
-                .into_iter()
-                .map(|model| ProviderModel {
-                    id: model.id,
-                    display_name: model.display_name,
-                    description: model.description,
-                    ratio: model.ratio,
-                    price_type: model.price_type,
-                    context_window: model.context_window,
-                    protocol: model.protocol,
-                    api_path: model.api_path,
-                    supports_image: model.supports_image,
-                    supports_thinking: model.supports_thinking,
-                    supports_web_search: model.supports_web_search,
-                    supports_tool_search: model.supports_tool_search,
-                    supports_function_tools: model.supports_function_tools,
-                    capability_probe_error: model.capability_probe_error,
-                    capabilities_probed_at_ms: model.capabilities_probed_at_ms,
-                })
-                .collect::<Vec<_>>();
-            if uses_models_dev_capabilities(definition.preset_id.as_deref(), definition.id.as_str())
-            {
-                // OpenCode Go exposes membership via /v1/models, but capabilities live on
-                // models.dev. Prefer remote models.dev over local seed/cache guesses.
-                match fetch_models_dev_provider_models(client, "opencode-go").await {
-                    Ok(metadata) => enrich_models_with_models_dev(&mut models, &metadata),
-                    Err(error) => tracing::warn!(
-                        provider_id = %definition.id,
-                        error = %format!("{error:#}"),
-                        "failed to enrich OpenCode Go models from models.dev"
-                    ),
-                }
-            }
-            normalize_models(&mut models);
-            Ok(models)
+            discover_openai_models(client, definition, &provider).await
         }
         ProviderModelSource::BaiduOneApi => {
-            let url = provider
-                .models_url()
-                .context("provider available-models URL is not configured")?
-                .clone();
-            let request = match &native_headers {
-                Some(headers) => client.post(url).headers(headers.clone()),
-                None => provider.apply_auth(client.post(url)),
-            };
-            let response = request.json(&json!({})).send().await?;
-            let status = response.status();
-            let body = response.text().await?;
-            if !status.is_success() {
-                anyhow::bail!(
-                    "provider {} available-models endpoint returned {status}: {body}",
-                    provider.id()
-                );
-            }
-            let available: BaiduAvailableModelsResponse = serde_json::from_str(&body)
-                .context("provider available-models endpoint returned invalid JSON")?;
-            if !available.success {
-                anyhow::bail!(
-                    "provider {} available-models endpoint failed: {}",
-                    provider.id(),
-                    available.message
-                );
-            }
-            let mut models = Vec::with_capacity(available.data.len());
-            let mut model_indices = HashMap::with_capacity(available.data.len());
-            for model in available.data {
-                let (id, is_internal) = match model.model.strip_suffix("-内部") {
-                    Some(canonical) => (canonical.to_owned(), true),
-                    None => (model.model.clone(), false),
-                };
-                let Some(capability) = model.capability else {
-                    tracing::warn!(
-                        provider_id = provider.id(),
-                        model = %model.model,
-                        "excluding available-models entry without capability metadata"
-                    );
-                    continue;
-                };
-                let description = capability.model_description;
-                let converted = ProviderModel {
-                    id: id.clone(),
-                    display_name: Some(description.clone()),
-                    description: Some(description),
-                    ratio: Some(capability.ratio),
-                    price_type: Some(model.price_type),
-                    context_window: Some(capability.context_window),
-                    supports_image: Some(capability.supports_image),
-                    supports_thinking: Some(capability.supports_thinking),
-                    supports_web_search: None,
-                    ..ProviderModel::default()
-                };
-                if let Some(&index) = model_indices.get(&id) {
-                    if !is_internal {
-                        models[index] = converted;
-                    }
-                } else {
-                    model_indices.insert(id, models.len());
-                    models.push(converted);
-                }
-            }
-            normalize_models(&mut models);
-            Ok(models)
+            discover_baidu_models(client, &provider, native_headers.as_ref()).await
         }
+    }
+}
+
+async fn native_baidu_headers_if_needed(
+    definition: &ProviderDefinition,
+    provider: &ProviderRuntime,
+) -> anyhow::Result<Option<reqwest::header::HeaderMap>> {
+    if definition.model_source == ProviderModelSource::BaiduOneApi && provider.uses_ducx_loopback()
+    {
+        Ok(Some(super::native_baidu_headers(provider).await?))
+    } else {
+        Ok(None)
+    }
+}
+
+async fn discover_openai_models(
+    client: &Client,
+    definition: &ProviderDefinition,
+    provider: &ProviderRuntime,
+) -> anyhow::Result<Vec<ProviderModel>> {
+    let url = provider
+        .models_url()
+        .context("provider models URL is not configured")?
+        .clone();
+    let response = provider.apply_auth(client.get(url)).send().await?;
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        anyhow::bail!(
+            "provider {} models endpoint returned {status}: {body}",
+            provider.id()
+        );
+    }
+    let models: ModelsResponse =
+        serde_json::from_str(&body).context("provider models endpoint returned invalid JSON")?;
+    let mut models = models
+        .data
+        .into_iter()
+        .map(|model| ProviderModel {
+            id: model.id,
+            display_name: model.display_name,
+            description: model.description,
+            ratio: model.ratio,
+            price_type: model.price_type,
+            context_window: model.context_window,
+            protocol: model.protocol,
+            api_path: model.api_path,
+            supports_image: model.supports_image,
+            supports_thinking: model.supports_thinking,
+            supports_web_search: model.supports_web_search,
+            supports_tool_search: model.supports_tool_search,
+            supports_function_tools: model.supports_function_tools,
+            capability_probe_error: model.capability_probe_error,
+            capabilities_probed_at_ms: model.capabilities_probed_at_ms,
+        })
+        .collect::<Vec<_>>();
+    if uses_models_dev_capabilities(definition.preset_id.as_deref(), definition.id.as_str()) {
+        match fetch_models_dev_provider_models(client, "opencode-go").await {
+            Ok(metadata) => enrich_models_with_models_dev(&mut models, &metadata),
+            Err(error) => tracing::warn!(
+                provider_id = %definition.id,
+                error = %format!("{error:#}"),
+                "failed to enrich OpenCode Go models from models.dev"
+            ),
+        }
+    }
+    normalize_models(&mut models);
+    Ok(models)
+}
+
+async fn discover_baidu_models(
+    client: &Client,
+    provider: &ProviderRuntime,
+    native_headers: Option<&reqwest::header::HeaderMap>,
+) -> anyhow::Result<Vec<ProviderModel>> {
+    let url = provider
+        .models_url()
+        .context("provider available-models URL is not configured")?
+        .clone();
+    let request = match native_headers {
+        Some(headers) => client.post(url).headers(headers.clone()),
+        None => provider.apply_auth(client.post(url)),
+    };
+    let response = request.json(&json!({})).send().await?;
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        anyhow::bail!(
+            "provider {} available-models endpoint returned {status}: {body}",
+            provider.id()
+        );
+    }
+    let available: BaiduAvailableModelsResponse = serde_json::from_str(&body)
+        .context("provider available-models endpoint returned invalid JSON")?;
+    if !available.success {
+        anyhow::bail!(
+            "provider {} available-models endpoint failed: {}",
+            provider.id(),
+            available.message
+        );
+    }
+    let mut models = Vec::with_capacity(available.data.len());
+    let mut model_indices = HashMap::with_capacity(available.data.len());
+    for model in available.data {
+        add_baidu_model(provider, model, &mut models, &mut model_indices);
+    }
+    normalize_models(&mut models);
+    Ok(models)
+}
+
+fn add_baidu_model(
+    provider: &ProviderRuntime,
+    model: crate::anthropic::BaiduAvailableModel,
+    models: &mut Vec<ProviderModel>,
+    model_indices: &mut HashMap<String, usize>,
+) {
+    let (id, is_internal) = match model.model.strip_suffix("-内部") {
+        Some(canonical) => (canonical.to_owned(), true),
+        None => (model.model.clone(), false),
+    };
+    let Some(capability) = model.capability else {
+        tracing::warn!(
+            provider_id = provider.id(),
+            model = %model.model,
+            "excluding available-models entry without capability metadata"
+        );
+        return;
+    };
+    let description = capability.model_description;
+    let converted = ProviderModel {
+        id: id.clone(),
+        display_name: Some(description.clone()),
+        description: Some(description),
+        ratio: Some(capability.ratio),
+        price_type: Some(model.price_type),
+        context_window: Some(capability.context_window),
+        supports_image: Some(capability.supports_image),
+        supports_thinking: Some(capability.supports_thinking),
+        supports_web_search: None,
+        ..ProviderModel::default()
+    };
+    if let Some(&index) = model_indices.get(&id) {
+        if !is_internal {
+            models[index] = converted;
+        }
+    } else {
+        model_indices.insert(id, models.len());
+        models.push(converted);
     }
 }
 

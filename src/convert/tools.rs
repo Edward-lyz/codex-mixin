@@ -129,101 +129,36 @@ pub(super) fn convert_tools(
     };
     let mut web_search_added = false;
     for tool in tools {
+        if is_codex_web_search_function(tool) {
+            add_web_search_tool(
+                tool,
+                config,
+                web_search_enabled,
+                &mut web_search_added,
+                &mut result,
+            )?;
+            continue;
+        }
         match tool.get("type").and_then(Value::as_str) {
-            Some("function")
-                if is_codex_web_search_function(tool)
-                    && web_search_enabled
-                    && !web_search_added =>
-            {
-                if let Some(server_tool) = web_search_server_tool(config, tool)? {
-                    result.push(server_tool);
-                    web_search_added = true;
-                }
-            }
-            Some("function") if is_codex_web_search_function(tool) && web_search_enabled => {}
-            Some("function") if is_codex_web_search_function(tool) => {
-                tracing::debug!("omitting unavailable hosted web_search tool");
-            }
             Some("function") => {
-                let (converted, codex_name) =
-                    convert_function_tool(tool, None, use_mcp_bridge_names)?;
-                let anthropic_name = converted
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .expect("converted function tool missing name")
-                    .to_owned();
-                names.insert(anthropic_name, codex_name)?;
-                result.push(converted);
+                add_function_tool(tool, use_mcp_bridge_names, &mut result, &mut names)?
             }
             Some("namespace") => {
-                let namespace = tool.get("name").and_then(Value::as_str).ok_or_else(|| {
-                    GatewayError::BadRequest("namespace tool missing name".to_owned())
-                })?;
-                let nested_tools =
-                    tool.get("tools").and_then(Value::as_array).ok_or_else(|| {
-                        GatewayError::BadRequest("namespace tool missing tools".to_owned())
-                    })?;
-                for nested in nested_tools {
-                    let (converted, codex_name) =
-                        convert_function_tool(nested, Some(namespace), use_mcp_bridge_names)?;
-                    let anthropic_name = converted
-                        .get("name")
-                        .and_then(Value::as_str)
-                        .expect("converted namespace tool missing name")
-                        .to_owned();
-                    names.insert_namespaced(anthropic_name, namespace.to_owned(), codex_name)?;
-                    result.push(converted);
-                }
+                add_namespace_tool(tool, use_mcp_bridge_names, &mut result, &mut names)?
             }
-            Some("custom") => {
-                let (converted, codex_name) = convert_custom_tool(tool, use_mcp_bridge_names)?;
-                let upstream_name = converted
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .expect("converted custom tool missing name")
-                    .to_owned();
-                names.insert_custom(upstream_name, codex_name)?;
-                result.push(converted);
-            }
+            Some("custom") => add_custom_tool(tool, use_mcp_bridge_names, &mut result, &mut names)?,
             Some("tool_search") => {
-                let execution = tool
-                    .get("execution")
-                    .and_then(Value::as_str)
-                    .ok_or_else(|| {
-                        GatewayError::BadRequest("tool_search missing execution".to_owned())
-                    })?
-                    .to_owned();
-                if execution != "client" {
-                    return Err(GatewayError::BadRequest(format!(
-                        "unsupported tool_search execution: {execution}"
-                    )));
-                }
-                let mut function_tool = tool.clone();
-                function_tool["name"] = json!("tool_search");
-                let (converted, codex_name) =
-                    convert_function_tool(&function_tool, None, use_mcp_bridge_names)?;
-                let upstream_name = converted
-                    .get("name")
-                    .and_then(Value::as_str)
-                    .expect("converted tool_search missing name")
-                    .to_owned();
-                names.insert_tool_search(upstream_name, codex_name, execution)?;
-                result.push(converted);
+                add_tool_search(tool, use_mcp_bridge_names, &mut result, &mut names)?
             }
-            Some("web_search" | "web_search_preview")
-                if web_search_enabled && !web_search_added =>
-            {
-                if let Some(server_tool) = web_search_server_tool(config, tool)? {
-                    result.push(server_tool);
-                    web_search_added = true;
-                }
-            }
-            Some("web_search" | "web_search_preview") if web_search_enabled => {}
-            Some("web_search" | "web_search_preview") => {
-                tracing::debug!("omitting unavailable hosted web_search tool");
-            }
+            Some("web_search" | "web_search_preview") => add_web_search_tool(
+                tool,
+                config,
+                web_search_enabled,
+                &mut web_search_added,
+                &mut result,
+            )?,
             Some("image_generation") => {
-                tracing::debug!("omitting legacy OpenAI-hosted image_generation tool");
+                tracing::debug!("omitting legacy OpenAI-hosted image_generation tool")
             }
             Some(other) => {
                 return Err(GatewayError::BadRequest(format!(
@@ -238,6 +173,114 @@ pub(super) fn convert_tools(
         }
     }
     Ok((result, names))
+}
+
+fn add_web_search_tool(
+    tool: &Value,
+    config: &GatewayConfig,
+    enabled: bool,
+    added: &mut bool,
+    result: &mut Vec<Tool>,
+) -> Result<(), GatewayError> {
+    if !enabled {
+        tracing::debug!("omitting unavailable hosted web_search tool");
+    } else if !*added && let Some(server_tool) = web_search_server_tool(config, tool)? {
+        result.push(server_tool);
+        *added = true;
+    }
+    Ok(())
+}
+
+fn add_function_tool(
+    tool: &Value,
+    use_mcp_bridge_names: bool,
+    result: &mut Vec<Tool>,
+    names: &mut ToolNameMap,
+) -> Result<(), GatewayError> {
+    let (converted, codex_name) = convert_function_tool(tool, None, use_mcp_bridge_names)?;
+    let anthropic_name = converted
+        .get("name")
+        .and_then(Value::as_str)
+        .expect("converted function tool missing name")
+        .to_owned();
+    names.insert(anthropic_name, codex_name)?;
+    result.push(converted);
+    Ok(())
+}
+
+fn add_namespace_tool(
+    tool: &Value,
+    use_mcp_bridge_names: bool,
+    result: &mut Vec<Tool>,
+    names: &mut ToolNameMap,
+) -> Result<(), GatewayError> {
+    let namespace = tool
+        .get("name")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GatewayError::BadRequest("namespace tool missing name".to_owned()))?;
+    let nested_tools = tool
+        .get("tools")
+        .and_then(Value::as_array)
+        .ok_or_else(|| GatewayError::BadRequest("namespace tool missing tools".to_owned()))?;
+    for nested in nested_tools {
+        let (converted, codex_name) =
+            convert_function_tool(nested, Some(namespace), use_mcp_bridge_names)?;
+        let anthropic_name = converted
+            .get("name")
+            .and_then(Value::as_str)
+            .expect("converted namespace tool missing name")
+            .to_owned();
+        names.insert_namespaced(anthropic_name, namespace.to_owned(), codex_name)?;
+        result.push(converted);
+    }
+    Ok(())
+}
+
+fn add_custom_tool(
+    tool: &Value,
+    use_mcp_bridge_names: bool,
+    result: &mut Vec<Tool>,
+    names: &mut ToolNameMap,
+) -> Result<(), GatewayError> {
+    let (converted, codex_name) = convert_custom_tool(tool, use_mcp_bridge_names)?;
+    let upstream_name = converted
+        .get("name")
+        .and_then(Value::as_str)
+        .expect("converted custom tool missing name")
+        .to_owned();
+    names.insert_custom(upstream_name, codex_name)?;
+    result.push(converted);
+    Ok(())
+}
+
+fn add_tool_search(
+    tool: &Value,
+    use_mcp_bridge_names: bool,
+    result: &mut Vec<Tool>,
+    names: &mut ToolNameMap,
+) -> Result<(), GatewayError> {
+    let execution = tool
+        .get("execution")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GatewayError::BadRequest("tool_search missing execution".to_owned()))?
+        .to_owned();
+    if execution != "client" {
+        return Err(GatewayError::BadRequest(format!(
+            "unsupported tool_search execution: {execution}"
+        )));
+    }
+    let mut function_tool = tool.clone();
+    function_tool["name"] = json!("tool_search");
+    let (converted, codex_name) =
+        convert_function_tool(&function_tool, None, use_mcp_bridge_names)?;
+    let upstream_name = converted
+        .get("name")
+        .and_then(Value::as_str)
+        .expect("converted tool_search missing name")
+        .to_owned();
+    names.insert_tool_search(upstream_name, codex_name, execution)?;
+    result.push(converted);
+    Ok(())
 }
 
 pub(super) fn is_codex_web_search_function(tool: &Value) -> bool {

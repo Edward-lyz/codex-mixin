@@ -151,6 +151,7 @@ pub(super) async fn bind_gateway_listener(
     }
 }
 
+#[allow(clippy::cognitive_complexity)]
 pub(super) async fn start(
     bind: Option<SocketAddr>,
     daemon: bool,
