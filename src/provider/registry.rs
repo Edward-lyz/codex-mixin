@@ -551,13 +551,28 @@ fn insert_route(
 }
 
 fn endpoint_url(base_url: &str, path: &str) -> anyhow::Result<Url> {
-    let base_url = base_url.trim_end_matches('/');
+    let mut base_url = Url::parse(base_url)?;
+    let base_path = base_url.path().trim_end_matches('/');
     let path = if path.starts_with('/') {
         path.to_owned()
     } else {
         format!("/{path}")
     };
-    Url::parse(&format!("{base_url}{path}")).map_err(Into::into)
+    let endpoint_path = if base_path.is_empty()
+        || base_path == "/"
+        || path == base_path
+        || path.starts_with(&format!("{base_path}/"))
+    {
+        path
+    } else if let Some(base_without_version) = base_path.strip_suffix("/v1")
+        && (path == "/v1" || path.starts_with("/v1/"))
+    {
+        format!("{base_without_version}{path}")
+    } else {
+        format!("{base_path}{path}")
+    };
+    base_url.set_path(&endpoint_path);
+    Ok(base_url)
 }
 
 #[cfg(test)]
@@ -713,8 +728,8 @@ mod tests {
 
     #[test]
     fn endpoint_url_preserves_base_path() {
-        let provider = open_code_go_provider("opencode-go", "secret");
-        let registry = ProviderRegistry::new(vec![provider]).unwrap();
+        let mut provider = open_code_go_provider("opencode-go", "secret");
+        let registry = ProviderRegistry::new(vec![provider.clone()]).unwrap();
         let runtime = registry.provider("opencode-go").unwrap();
         assert_eq!(
             runtime.api_url().as_str(),
@@ -723,6 +738,15 @@ mod tests {
         assert_eq!(
             runtime.models_url().unwrap().as_str(),
             "https://opencode.ai/zen/go/v1/models"
+        );
+
+        provider = custom_provider("custom", "secret");
+        provider.base_url = "https://example.test/api/v1".to_owned();
+        let registry = ProviderRegistry::new(vec![provider]).unwrap();
+        let runtime = registry.provider("custom").unwrap();
+        assert_eq!(
+            runtime.models_url().unwrap().as_str(),
+            "https://example.test/api/v1/models"
         );
     }
 

@@ -65,7 +65,16 @@
 "providerSettings.useForVoiceAutoReviewAndOther" = "Use for image generation, auto review, and other auxiliary models";
 "providerSettings.workspaceID" = "Workspace ID";
 "providerSettings.authCookie" = "Auth Cookie";
-"providerSettings.protocolsAndEndpointPathsAreDetectedAutomatically" = "Protocols and endpoint paths are detected automatically.";
+"providerSettings.protocolsAndEndpointPathsAreDetectedAutomatically" = "Automatic mode probes only the standard /v1/models endpoint. Configure the protocol and complete endpoint paths here for legacy endpoints; custom providers can also pin them explicitly.";
+"providerSettings.upstreamProtocol" = "Upstream protocol";
+"providerSettings.responseAPIPath" = "Model response endpoint";
+"providerSettings.modelsAPIPath" = "Model list endpoint";
+"providerSettings.openAIResponses" = "OpenAI Responses";
+"providerSettings.anthropicMessages" = "Anthropic Messages";
+"providerSettings.openAIChatCompletions" = "OpenAI Chat Completions";
+"providerSettings.endpointConfigurationRequired" = "Incomplete endpoint configuration";
+"providerSettings.selectAnUpstreamProtocol" = "Select an upstream protocol.";
+"providerSettings.responseAndModelsPathsCannotBe" = "Both endpoint paths are required as complete relative paths, for example /v1/responses and /v1/models.";
 "providerSettings.authBridge" = "Auth bridge";
 "providerSettings.onlyOneAuxiliaryModelProviderCanBe" = "Only one auxiliary-model provider can be selected. A custom-only installation has no official fallback, so missing capabilities remain unavailable.";
 "providerSettings.onlyOneAuxiliaryModelProviderCanBe2" = "Only one auxiliary-model provider can be selected. It overrides the official OAuth route when the model is available, otherwise the default route is used.";

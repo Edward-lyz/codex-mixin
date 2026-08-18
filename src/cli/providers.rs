@@ -3,6 +3,7 @@ use std::path::PathBuf;
 use std::time::Duration;
 
 use anyhow::Context;
+use codex_mixin::anthropic::ModelsResponse;
 use codex_mixin::config::{
     GatewayConfig, StoredGatewayConfig, load_stored_config, mutate_stored_config,
 };
@@ -15,7 +16,7 @@ use codex_mixin::provider_capabilities::ProviderCapabilities;
 use codex_mixin::web_search::WebSearchCapabilities;
 use console::style;
 use futures_util::{StreamExt, stream};
-use serde_json::json;
+use serde_json::{Value, json};
 
 use super::codex::{
     codex_home_path, managed_codex_install_mode, reconcile_managed_skills,
@@ -230,6 +231,8 @@ pub(super) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
     }
     let user_set_protocol = options.protocol.is_some();
     let user_set_api_path = options.api_path.is_some();
+    let user_set_models_path = options.models_path.is_some();
+    let has_static_models = !options.static_models.is_empty();
     let inferred_endpoint = if preset == ProviderPreset::Custom {
         options
             .base_url
@@ -325,7 +328,9 @@ pub(super) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
     if preset == ProviderPreset::Custom
         && !user_set_protocol
         && !user_set_api_path
+        && !user_set_models_path
         && !path_explicit
+        && !has_static_models
         && let Some(endpoint) = detect_custom_provider_protocol(&provider).await?
     {
         detected_protocol = Some(protocol_name(endpoint.protocol).to_owned());
@@ -367,6 +372,7 @@ pub(super) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
     let header_env = parse_header_env(&options.header_env)?;
     let user_set_protocol = options.protocol.is_some();
     let user_set_api_path = options.api_path.is_some();
+    let user_set_models_path = options.models_path.is_some();
     let base_url_updated = options.base_url.is_some();
     let mut should_probe_protocol = false;
     mutate_and_invalidate_provider_capabilities(|config| {
@@ -416,6 +422,7 @@ pub(super) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
             && base_url_updated
             && !user_set_protocol
             && !user_set_api_path
+            && !user_set_models_path
             && !path_explicit;
         if let Some(models_path) = options.models_path {
             provider.model_source = ProviderModelSource::OpenAiCompatible {
@@ -1259,11 +1266,11 @@ fn infer_custom_provider_endpoint(raw_url: &str) -> anyhow::Result<InferredCusto
         });
     let (base_path, protocol, api_path, models_path, path_explicit) =
         matched.unwrap_or_else(|| {
-            let base_path = path.strip_suffix("/v1").unwrap_or(&path).to_owned();
+            let base_path = path.to_owned();
             (
                 base_path,
-                // Prefer the native Responses API when the URL does not name a path.
-                // Live probing may still replace this after add/update.
+                // Prefer the standard Responses API until the /v1/models gate
+                // confirms that protocol probing is safe to continue.
                 ProviderProtocol::OpenAiResponses,
                 "/v1/responses".to_owned(),
                 "/v1/models".to_owned(),
@@ -1295,7 +1302,13 @@ async fn detect_custom_provider_protocol(
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()?;
-    for (protocol, api_path, models_path, body) in custom_protocol_probe_candidates() {
+    let models_url = endpoint_join(&provider.base_url, "/v1/models")?;
+    if !probe_custom_models_endpoint(&client, runtime, models_url).await? {
+        anyhow::bail!(
+            "custom provider automatic discovery requires a JSON /v1/models endpoint; configure --protocol, --api-path, and --models-path explicitly for a non-standard provider"
+        );
+    }
+    for (protocol, api_path, body) in custom_protocol_probe_candidates() {
         let url = match endpoint_join(&provider.base_url, api_path) {
             Ok(url) => url,
             Err(_) => continue,
@@ -1305,55 +1318,31 @@ async fn detect_custom_provider_protocol(
                 base_url: provider.base_url.clone(),
                 protocol,
                 api_path: api_path.to_owned(),
-                models_path: models_path.to_owned(),
+                models_path: "/v1/models".to_owned(),
                 path_explicit: false,
             }));
         }
     }
-    Ok(None)
+    anyhow::bail!(
+        "custom provider /v1/models is valid, but no supported /v1 response endpoint was detected; configure --protocol and --api-path explicitly"
+    )
 }
 
-fn custom_protocol_probe_candidates() -> [(
-    ProviderProtocol,
-    &'static str,
-    &'static str,
-    serde_json::Value,
-); 6] {
+fn custom_protocol_probe_candidates() -> [(ProviderProtocol, &'static str, serde_json::Value); 3] {
     [
         (
             ProviderProtocol::OpenAiResponses,
             "/v1/responses",
-            "/v1/models",
-            protocol_probe_body(ProviderProtocol::OpenAiResponses),
-        ),
-        (
-            ProviderProtocol::OpenAiResponses,
-            "/responses",
-            "/models",
             protocol_probe_body(ProviderProtocol::OpenAiResponses),
         ),
         (
             ProviderProtocol::AnthropicMessages,
             "/v1/messages",
-            "/v1/models",
-            protocol_probe_body(ProviderProtocol::AnthropicMessages),
-        ),
-        (
-            ProviderProtocol::AnthropicMessages,
-            "/messages",
-            "/models",
             protocol_probe_body(ProviderProtocol::AnthropicMessages),
         ),
         (
             ProviderProtocol::OpenAiChat,
             "/v1/chat/completions",
-            "/v1/models",
-            protocol_probe_body(ProviderProtocol::OpenAiChat),
-        ),
-        (
-            ProviderProtocol::OpenAiChat,
-            "/chat/completions",
-            "/models",
             protocol_probe_body(ProviderProtocol::OpenAiChat),
         ),
     ]
@@ -1365,7 +1354,7 @@ fn protocol_probe_body(protocol: ProviderProtocol) -> serde_json::Value {
     match protocol {
         ProviderProtocol::OpenAiResponses => json!({
             "model": "codex-mixin-protocol-probe",
-            "stream": true
+            "stream": false
         }),
         ProviderProtocol::AnthropicMessages => json!({
             "model": "codex-mixin-protocol-probe",
@@ -1373,7 +1362,7 @@ fn protocol_probe_body(protocol: ProviderProtocol) -> serde_json::Value {
         }),
         ProviderProtocol::OpenAiChat => json!({
             "model": "codex-mixin-protocol-probe",
-            "stream": true
+            "stream": false
         }),
     }
 }
@@ -1395,28 +1384,161 @@ async fn protocol_endpoint_available(
         Err(_) => return false,
     };
     let status = response.status().as_u16();
-    match status {
-        // Endpoint exists: auth, validation, rate limit, or accidental success.
-        // A 403 is inconclusive because multi-protocol gateways also use it to
-        // reject a protocol that the current account or group does not allow.
-        200 | 201 | 400 | 401 | 408 | 409 | 413 | 415 | 422 | 429 => true,
-        403 => false,
-        // Path exists but rejects the method; still better than a missing route.
-        405 => true,
-        // Missing route or gateway that never mounted the API.
-        404 | 501 | 502 | 503 | 504 => false,
-        _ => false,
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    let body = match response.text().await {
+        Ok(body) => body,
+        Err(_) => return false,
+    };
+    if matches!(status, 403 | 404 | 501 | 502 | 504) {
+        return false;
+    }
+    protocol_probe_body_matches(protocol, &content_type, &body)
+}
+
+async fn probe_custom_models_endpoint(
+    client: &reqwest::Client,
+    runtime: &codex_mixin::provider::ProviderRuntime,
+    url: reqwest::Url,
+) -> anyhow::Result<bool> {
+    let response = runtime
+        .apply_auth(client.get(url.clone()))
+        .header(reqwest::header::ACCEPT, "application/json")
+        .send()
+        .await
+        .with_context(|| format!("requesting custom provider models endpoint {url}"))?;
+    let status = response.status();
+    let body = response.text().await?;
+    if is_json_api_error(&body) {
+        anyhow::bail!("custom provider models endpoint returned {status}: {body}");
+    }
+    if !status.is_success() {
+        return Ok(false);
+    }
+    let models: ModelsResponse = match serde_json::from_str(&body) {
+        Ok(models) => models,
+        Err(_) => return Ok(false),
+    };
+    if models.data.iter().any(|model| model.id.trim().is_empty()) {
+        return Ok(false);
+    }
+    Ok(true)
+}
+
+fn protocol_probe_body_matches(protocol: ProviderProtocol, content_type: &str, body: &str) -> bool {
+    let trimmed = body.trim_start();
+    if content_type
+        .split(';')
+        .next()
+        .is_some_and(|value| value.eq_ignore_ascii_case("text/html"))
+        || trimmed.starts_with("<!doctype html")
+        || trimmed.starts_with("<html")
+    {
+        return false;
+    }
+    let is_event_stream = content_type
+        .split(';')
+        .next()
+        .is_some_and(|value| value.eq_ignore_ascii_case("text/event-stream"))
+        || body
+            .lines()
+            .any(|line| line.trim_start().starts_with("data:"));
+    if is_event_stream {
+        return body
+            .lines()
+            .filter_map(|line| line.trim_start().strip_prefix("data:").map(str::trim))
+            .any(|data| {
+                serde_json::from_str::<Value>(data)
+                    .ok()
+                    .is_some_and(|value| protocol_probe_value_matches(protocol, &value))
+            });
+    }
+    serde_json::from_str::<Value>(body)
+        .ok()
+        .is_some_and(|value| protocol_probe_value_matches(protocol, &value))
+}
+
+fn protocol_probe_value_matches(protocol: ProviderProtocol, value: &Value) -> bool {
+    if is_json_api_error_value(value) {
+        return true;
+    }
+    let Some(object) = value.as_object() else {
+        return false;
+    };
+    match protocol {
+        ProviderProtocol::OpenAiResponses => {
+            let response = object
+                .get("response")
+                .and_then(Value::as_object)
+                .unwrap_or(object);
+            response
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| !id.is_empty())
+                && (response.contains_key("output")
+                    || response.get("object").and_then(Value::as_str) == Some("response")
+                    || object
+                        .get("type")
+                        .and_then(Value::as_str)
+                        .is_some_and(|kind| kind.starts_with("response.")))
+        }
+        ProviderProtocol::AnthropicMessages => {
+            let message = object
+                .get("message")
+                .and_then(Value::as_object)
+                .unwrap_or(object);
+            message.get("type").and_then(Value::as_str) == Some("message")
+                && message.contains_key("content")
+        }
+        ProviderProtocol::OpenAiChat => {
+            object
+                .get("id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| !id.is_empty())
+                && object.contains_key("choices")
+        }
     }
 }
 
+fn is_json_api_error(body: &str) -> bool {
+    serde_json::from_str::<Value>(body)
+        .ok()
+        .is_some_and(|value| is_json_api_error_value(&value))
+}
+
+fn is_json_api_error_value(value: &Value) -> bool {
+    value.get("error").is_some()
+        || (value.get("type").and_then(Value::as_str) == Some("error")
+            && value.get("message").is_some())
+}
+
 fn endpoint_join(base_url: &str, path: &str) -> anyhow::Result<reqwest::Url> {
-    let base_url = base_url.trim_end_matches('/');
+    let mut base_url = reqwest::Url::parse(base_url)?;
+    let base_path = base_url.path().trim_end_matches('/');
     let path = if path.starts_with('/') {
         path.to_owned()
     } else {
         format!("/{path}")
     };
-    Ok(reqwest::Url::parse(&format!("{base_url}{path}"))?)
+    let endpoint_path = if base_path.is_empty()
+        || base_path == "/"
+        || path == base_path
+        || path.starts_with(&format!("{base_path}/"))
+    {
+        path
+    } else if let Some(base_without_version) = base_path.strip_suffix("/v1")
+        && (path == "/v1" || path.starts_with("/v1/"))
+    {
+        format!("{base_without_version}{path}")
+    } else {
+        format!("{base_path}{path}")
+    };
+    base_url.set_path(&endpoint_path);
+    Ok(base_url)
 }
 
 fn apply_inferred_custom_endpoint(
@@ -1435,7 +1557,10 @@ fn apply_inferred_custom_endpoint(
 
 #[cfg(test)]
 mod tests {
-    use std::sync::{Arc, Mutex};
+    use std::sync::{
+        Arc, Mutex,
+        atomic::{AtomicUsize, Ordering},
+    };
 
     use axum::Router;
     use axum::http::{HeaderMap, header};
@@ -1729,7 +1854,7 @@ mod tests {
     #[test]
     fn infers_custom_provider_endpoints_without_exposing_protocol_fields() {
         let openai = infer_custom_provider_endpoint("https://public.example/v1").unwrap();
-        assert_eq!(openai.base_url, "https://public.example");
+        assert_eq!(openai.base_url, "https://public.example/v1");
         assert_eq!(openai.protocol, ProviderProtocol::OpenAiResponses);
         assert_eq!(openai.api_path, "/v1/responses");
         assert_eq!(openai.models_path, "/v1/models");
@@ -1750,12 +1875,22 @@ mod tests {
         assert_eq!(responses.api_path, "/v1/responses");
         assert_eq!(responses.models_path, "/v1/models");
         assert!(responses.path_explicit);
+        assert_eq!(
+            endpoint_join("https://public.example/api/v1", "/v1/models")
+                .unwrap()
+                .as_str(),
+            "https://public.example/api/v1/models"
+        );
     }
 
     #[tokio::test]
     async fn detects_responses_before_messages_and_chat_for_custom_providers() {
         use axum::routing::post;
         let app = Router::new()
+            .route(
+                "/v1/models",
+                get(|| async { axum::Json(serde_json::json!({"data":[{"id":"model"}]})) }),
+            )
             .route(
                 "/v1/responses",
                 post(|| async {
@@ -1790,6 +1925,12 @@ mod tests {
         });
         let mut provider = codex_mixin::provider::custom_provider("community", "secret");
         provider.base_url = format!("http://{address}");
+        assert_eq!(
+            endpoint_join(&provider.base_url, "/v1/models")
+                .unwrap()
+                .path(),
+            "/v1/models"
+        );
 
         let detected = detect_custom_provider_protocol(&provider)
             .await
@@ -1803,14 +1944,19 @@ mod tests {
 
     #[tokio::test]
     async fn forbidden_protocol_probes_do_not_switch_custom_providers_to_messages() {
-        let app = Router::new().fallback(|| async {
-            (
-                axum::http::StatusCode::FORBIDDEN,
-                axum::Json(serde_json::json!({
-                    "error": {"message": "This group does not allow this protocol dispatch"}
-                })),
+        let app = Router::new()
+            .route(
+                "/v1/models",
+                get(|| async { axum::Json(serde_json::json!({"data":[{"id":"model"}]})) }),
             )
-        });
+            .fallback(|| async {
+                (
+                    axum::http::StatusCode::FORBIDDEN,
+                    axum::Json(serde_json::json!({
+                        "error": {"message": "This group does not allow this protocol dispatch"}
+                    })),
+                )
+            });
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -1819,12 +1965,11 @@ mod tests {
         let mut provider = codex_mixin::provider::custom_provider("community", "secret");
         provider.base_url = format!("http://{address}");
 
-        assert!(
-            detect_custom_provider_protocol(&provider)
-                .await
-                .unwrap()
-                .is_none()
-        );
+        let error = detect_custom_provider_protocol(&provider)
+            .await
+            .unwrap_err()
+            .to_string();
+        assert!(error.contains("no supported /v1 response endpoint"));
         assert_eq!(provider.protocol, ProviderProtocol::OpenAiResponses);
         assert_eq!(provider.api_path, "/v1/responses");
     }
@@ -1833,6 +1978,10 @@ mod tests {
     async fn falls_back_to_messages_when_responses_is_missing() {
         use axum::routing::post;
         let app = Router::new()
+            .route(
+                "/v1/models",
+                get(|| async { axum::Json(serde_json::json!({"data":[{"id":"model"}]})) }),
+            )
             .route(
                 "/v1/messages",
                 post(|| async {
@@ -1871,15 +2020,20 @@ mod tests {
     #[tokio::test]
     async fn falls_back_to_chat_when_native_apis_are_missing() {
         use axum::routing::post;
-        let app = Router::new().route(
-            "/v1/chat/completions",
-            post(|| async {
-                (
-                    axum::http::StatusCode::BAD_REQUEST,
-                    axum::Json(serde_json::json!({"error":{"message":"missing messages"}})),
-                )
-            }),
-        );
+        let app = Router::new()
+            .route(
+                "/v1/models",
+                get(|| async { axum::Json(serde_json::json!({"data":[{"id":"model"}]})) }),
+            )
+            .route(
+                "/v1/chat/completions",
+                post(|| async {
+                    (
+                        axum::http::StatusCode::BAD_REQUEST,
+                        axum::Json(serde_json::json!({"error":{"message":"missing messages"}})),
+                    )
+                }),
+            );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
         tokio::spawn(async move {
@@ -1895,6 +2049,169 @@ mod tests {
 
         assert_eq!(detected.protocol, ProviderProtocol::OpenAiChat);
         assert_eq!(detected.api_path, "/v1/chat/completions");
+    }
+
+    #[tokio::test]
+    async fn accepts_an_empty_v1_models_list_as_a_real_endpoint() {
+        use axum::routing::post;
+        let app = Router::new()
+            .route(
+                "/v1/models",
+                get(|| async { axum::Json(serde_json::json!({"data":[]})) }),
+            )
+            .route(
+                "/v1/responses",
+                post(|| async {
+                    (
+                        axum::http::StatusCode::BAD_REQUEST,
+                        axum::Json(serde_json::json!({"error":{"message":"missing input"}})),
+                    )
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut provider = codex_mixin::provider::custom_provider("community", "secret");
+        provider.base_url = format!("http://{address}");
+
+        let detected = detect_custom_provider_protocol(&provider)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(detected.protocol, ProviderProtocol::OpenAiResponses);
+    }
+
+    #[tokio::test]
+    async fn does_not_probe_legacy_models_after_html_models_response() {
+        use axum::response::Html;
+        let legacy_requests = Arc::new(AtomicUsize::new(0));
+        let legacy_requests_for_handler = Arc::clone(&legacy_requests);
+        let app = Router::new()
+            .route(
+                "/v1/models",
+                get(|| async { Html("<!doctype html><html>login</html>") }),
+            )
+            .route(
+                "/models",
+                get(move || {
+                    legacy_requests_for_handler.fetch_add(1, Ordering::Relaxed);
+                    async { Html("<!doctype html><html>legacy</html>") }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut provider = codex_mixin::provider::custom_provider("community", "secret");
+        provider.base_url = format!("http://{address}");
+
+        let error = detect_custom_provider_protocol(&provider)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("requires a JSON /v1/models endpoint"));
+        assert_eq!(legacy_requests.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn reports_models_api_errors_without_trying_legacy_paths() {
+        let legacy_requests = Arc::new(AtomicUsize::new(0));
+        let legacy_requests_for_handler = Arc::clone(&legacy_requests);
+        let app = Router::new()
+            .route(
+                "/v1/models",
+                get(|| async {
+                    (
+                        axum::http::StatusCode::UNAUTHORIZED,
+                        axum::Json(serde_json::json!({
+                            "error": {"message": "invalid API key"}
+                        })),
+                    )
+                }),
+            )
+            .route(
+                "/models",
+                get(move || {
+                    legacy_requests_for_handler.fetch_add(1, Ordering::Relaxed);
+                    async { axum::Json(serde_json::json!({"data": [{"id": "legacy"}]})) }
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut provider = codex_mixin::provider::custom_provider("community", "secret");
+        provider.base_url = format!("http://{address}");
+
+        let error = detect_custom_provider_protocol(&provider)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("invalid API key"));
+        assert_eq!(legacy_requests.load(Ordering::Relaxed), 0);
+    }
+
+    #[tokio::test]
+    async fn rejects_unrelated_json_from_the_models_endpoint() {
+        let app = Router::new().route(
+            "/v1/models",
+            get(|| async { axum::Json(serde_json::json!({"status":"ok"})) }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut provider = codex_mixin::provider::custom_provider("community", "secret");
+        provider.base_url = format!("http://{address}");
+
+        let error = detect_custom_provider_protocol(&provider)
+            .await
+            .unwrap_err()
+            .to_string();
+
+        assert!(error.contains("requires a JSON /v1/models endpoint"));
+    }
+
+    #[test]
+    fn protocol_probe_rejects_pages_and_accepts_protocol_errors() {
+        assert!(!protocol_probe_body_matches(
+            ProviderProtocol::OpenAiResponses,
+            "text/html; charset=utf-8",
+            "<html>dashboard</html>"
+        ));
+        assert!(!protocol_probe_body_matches(
+            ProviderProtocol::OpenAiResponses,
+            "application/json",
+            "{\"object\":\"list\",\"data\":[]}"
+        ));
+        assert!(protocol_probe_body_matches(
+            ProviderProtocol::OpenAiResponses,
+            "application/json",
+            "{\"error\":{\"message\":\"missing input\"}}"
+        ));
+        assert!(protocol_probe_body_matches(
+            ProviderProtocol::OpenAiResponses,
+            "text/event-stream",
+            "data: {\"id\":\"resp_1\",\"object\":\"response\"}\n\n"
+        ));
+        assert!(protocol_probe_body_matches(
+            ProviderProtocol::OpenAiResponses,
+            "text/event-stream",
+            "data: {\"type\":\"response.created\",\"response\":{\"id\":\"resp_1\"}}\n\n"
+        ));
+        assert!(protocol_probe_body_matches(
+            ProviderProtocol::AnthropicMessages,
+            "text/event-stream",
+            "data: {\"type\":\"message_start\",\"message\":{\"type\":\"message\",\"content\":[]}}\n\n"
+        ));
     }
 
     #[test]

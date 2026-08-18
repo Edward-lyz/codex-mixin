@@ -181,12 +181,14 @@ codex-mixin service logs -n 200
 | `deepseek` | OpenAI Chat Completions | `https://api.deepseek.com` | `/chat/completions` | 可选，用户填写 | `/models` | 无默认值 |
 | `opencode-go` | OpenAI Responses | `https://opencode.ai/zen/go` | `/v1/responses` | 无 | `/v1/models` | dashboard `/workspace/{id}/go` + `/billing` |
 
-设置窗口里的上游地址只填根地址。路径由 provider preset 补齐。
+固定 preset 的上游地址和路径由 preset 管理；`custom` provider 可以在设置窗口或 CLI 中显式填写协议、模型响应接口路径和模型列表接口路径。
 Baidu OneAPI 的额度接口必须同时填写额度用户名；CLI 和 App 都会在保存时校验。
 OpenCode Go 的额度显示需要额外填写工作区 ID 和 `opencode.ai` 的 `auth` cookie；
 这两个值可以在浏览器控制台里从 OpenCode Go dashboard 页面取得，cookie 过期后需要重新填写。
-新增或更新 `custom` 供应商时，会按 `/v1/responses` → `/v1/messages` → Chat Completions
-顺序探测上游接口，并把第一个可用协议写入配置。Baidu OneAPI 不参与该探测，使用预设协议。
+新增或更新 `custom` 供应商且没有显式 endpoint 配置时，只先验证 `GET /v1/models` 的 JSON
+结构，再按 `/v1/responses` → `/v1/messages` → `/v1/chat/completions` 顺序读取响应内容探测协议。
+HTML、普通页面和无关 JSON 不会被当作接口；`/models`、`/responses` 等旧路径不会自动回退，必须显式配置。
+Baidu OneAPI 不参与该探测，使用预设协议。
 预设供应商的协议在离线验证后写死，例如 OpenCode Go 使用 `/v1/responses`。
 启用 Baidu OneAPI 时可以选择「DUCX 核心」。DUCX 是 header 产生器：
 网关启动后在后台预热一次，运行一个短命认证回合，从该回合发出的 OneAPI 请求中抓取
@@ -218,7 +220,26 @@ managed settings 中的 SessionStart、UserPromptSubmit、Stop、SessionEnd
 
 - OpenRouter 填 `https://openrouter.ai/api`，不要填 `/v1/chat/completions`。
 - DeepSeek 填 `https://api.deepseek.com`，不要填 `/chat/completions`。
-- Anthropic Messages 兼容网关通常填网关根地址，`custom` 会默认使用 `/v1/messages` 和 `/v1/models`。
+- 旧式或非标准网关请显式填写完整路径，例如 `--api-path /responses --models-path /models`；自动模式只支持标准 `/v1/models`。
+
+CLI 显式配置 `custom` provider：
+
+```bash
+codex-mixin providers add \
+  --preset custom \
+  --key "$KEY" \
+  --base-url https://example.com \
+  --protocol open_ai_responses \
+  --api-path /v1/responses \
+  --models-path /v1/models
+
+codex-mixin providers update PROVIDER_ID \
+  --protocol open_ai_responses \
+  --api-path /v1/responses \
+  --models-path /v1/models
+```
+
+这三个参数都是完整相对路径；只要显式传入其中任一 endpoint 配置，CLI 就不会再用自动探测覆盖它。
 
 ![Provider select](docs/assets/provider-select.png)
 
@@ -697,7 +718,7 @@ After launch, follow the menu bar actions to configure a provider and install it
 
 1. Open `Codex Mixin.app`.
 2. Open `Set Provider and Key...` from the menu bar.
-3. Choose a provider and enter your API key. Only enter the upstream root URL, not `/v1/messages` or `/v1/chat/completions`.
+3. Choose a provider and enter your API key. Curated presets manage their paths; custom providers can set complete endpoint paths in Advanced Connection Settings.
 4. Click `Start Local Gateway`.
 5. Click `Install to Codex...`, then explicitly choose Official Account Mode or Custom Models Only.
 6. Restart Codex Desktop.
@@ -720,6 +741,26 @@ For later management, use `provider` for providers, `service` for the gateway, `
 Codex, Claude, and DeepSeek Harness (DSH) integration, `update` to update the CLI from the latest
 GitHub Release, `info` for state, and `doctor` for diagnosis. Then start a new Codex CLI session.
 
+To configure a non-standard custom provider explicitly:
+
+```bash
+codex-mixin providers add \
+  --preset custom \
+  --key "$KEY" \
+  --base-url https://example.com \
+  --protocol open_ai_responses \
+  --api-path /v1/responses \
+  --models-path /v1/models
+
+codex-mixin providers update PROVIDER_ID \
+  --protocol open_ai_responses \
+  --api-path /v1/responses \
+  --models-path /v1/models
+```
+
+These are complete relative paths. Passing any one of the endpoint settings disables automatic
+endpoint discovery, so the CLI does not overwrite an explicit configuration.
+
 ### Provider Presets
 
 | Provider | Upstream protocol | Base URL | Chat path | Image path | Models path | Quota path |
@@ -730,14 +771,18 @@ GitHub Release, `info` for state, and `doctor` for diagnosis. Then start a new C
 | `deepseek` | OpenAI Chat Completions | `https://api.deepseek.com` | `/chat/completions` | Optional, user provided | `/models` | None |
 | `opencode-go` | OpenAI Responses | `https://opencode.ai/zen/go` | `/v1/responses` | None | `/v1/models` | Dashboard `/workspace/{id}/go` + `/billing` |
 
-Only enter the upstream root URL in the settings window. Codex Mixin adds provider-specific paths.
+Curated presets manage their upstream paths. For a `custom` provider, the settings window and CLI
+can explicitly set the protocol, model response path, and model list path.
 The Baidu OneAPI quota endpoint also requires a quota username; both the CLI and app validate it before saving.
 OpenCode Go quota display also requires a workspace ID and the `opencode.ai` `auth` cookie.
 Take both values from the OpenCode Go dashboard in a signed-in browser; refresh the cookie when it expires.
-When a `custom` provider is added or updated, Codex Mixin probes `/v1/responses`, then
-`/v1/messages`, then Chat Completions, and stores the first working protocol. Baidu OneAPI is
-excluded and keeps its curated protocol. Curated presets keep offline-verified
-protocols, for example OpenCode Go uses `/v1/responses`.
+When a `custom` provider is added or updated without explicit endpoint settings, Codex Mixin first
+validates the JSON structure returned by `GET /v1/models`, then reads responses from
+`/v1/responses`, `/v1/messages`, and `/v1/chat/completions` in that order. HTML, page content, and
+unrelated JSON do not count as API responses. Legacy `/models` and `/responses` paths are never
+probed automatically and must be configured explicitly. Baidu OneAPI is excluded and keeps its
+curated protocol. Curated presets keep offline-verified protocols, for example OpenCode Go uses
+`/v1/responses`.
 For Baidu OneAPI, users can select the “DUCX core”. It is a header generator: the
 gateway prewarms one short auth turn in the background, captures the
 native `comate_custom_header`, `Authorization`, and related headers, then caches them. The
@@ -767,8 +812,9 @@ SessionEnd hooks from its managed settings, attributing usage to Baidu OneAPI to
 When a `custom` provider is added or refreshed, Codex Mixin concurrently probes common
 read-only quota endpoints used by New API, Sub2API, OpenRouter, and similar gateways.
 It stores an endpoint only after receiving recognizable quota data and never runs paid inference.
-Separately, adding or updating a custom base URL without an explicit protocol or API path
-probes conversation endpoints in the order Responses, Messages, then Chat Completions.
+Separately, adding or updating a custom base URL without any explicit protocol, response path, or
+models path enables the standard `/v1/models` gate and then probes only the versioned conversation
+endpoints. Any explicit endpoint setting disables automatic endpoint discovery.
 
 ### Codex Install Behavior
 

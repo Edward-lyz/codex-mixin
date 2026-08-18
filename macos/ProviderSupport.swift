@@ -444,3 +444,24 @@ func appendProviderArgument(_ arguments: inout [String], _ name: String, _ rawVa
         arguments.append(value)
     }
 }
+
+func customProviderEndpointArguments(
+    protocolID: String,
+    apiPath: String,
+    modelsPath: String
+) -> [String]? {
+    let protocolID = protocolID.trimmingCharacters(in: .whitespacesAndNewlines)
+    let apiPath = apiPath.trimmingCharacters(in: .whitespacesAndNewlines)
+    let modelsPath = modelsPath.trimmingCharacters(in: .whitespacesAndNewlines)
+    guard ["open_ai_responses", "anthropic_messages", "open_ai_chat"].contains(protocolID),
+          !apiPath.isEmpty,
+          !modelsPath.isEmpty
+    else {
+        return nil
+    }
+    return [
+        "--protocol", protocolID,
+        "--api-path", apiPath,
+        "--models-path", modelsPath,
+    ]
+}

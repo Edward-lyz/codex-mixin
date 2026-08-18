@@ -212,6 +212,24 @@ struct ProviderSupportTests {
         precondition(benchmarkRatioValue("0.5x") == 0.5)
         precondition(benchmarkRatioValue(nil) == nil)
         precondition(
+            customProviderEndpointArguments(
+                protocolID: " open_ai_responses ",
+                apiPath: " /v1/responses ",
+                modelsPath: " /v1/models "
+            ) == [
+                "--protocol", "open_ai_responses",
+                "--api-path", "/v1/responses",
+                "--models-path", "/v1/models",
+            ]
+        )
+        precondition(
+            customProviderEndpointArguments(
+                protocolID: "open_ai_responses",
+                apiPath: "",
+                modelsPath: "/v1/models"
+            ) == nil
+        )
+        precondition(
             providerIssueDetails(
                 fromGatewayStatus: """
                 gateway: running

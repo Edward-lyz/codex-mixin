@@ -65,7 +65,16 @@
 "providerSettings.useForVoiceAutoReviewAndOther" = "用于绘图、自动审批等辅助模型上游";
 "providerSettings.workspaceID" = "工作区 ID";
 "providerSettings.authCookie" = "Auth Cookie";
-"providerSettings.protocolsAndEndpointPathsAreDetectedAutomatically" = "协议和接口路径会自动识别，不需要手动选择。";
+"providerSettings.protocolsAndEndpointPathsAreDetectedAutomatically" = "自动模式只探测标准 /v1/models；旧式接口必须手动填写协议和完整接口路径。custom provider 也可以在这里固定配置。";
+"providerSettings.upstreamProtocol" = "上游协议";
+"providerSettings.responseAPIPath" = "模型响应接口";
+"providerSettings.modelsAPIPath" = "模型列表接口";
+"providerSettings.openAIResponses" = "OpenAI Responses";
+"providerSettings.anthropicMessages" = "Anthropic Messages";
+"providerSettings.openAIChatCompletions" = "OpenAI Chat Completions";
+"providerSettings.endpointConfigurationRequired" = "接口配置不完整";
+"providerSettings.selectAnUpstreamProtocol" = "请选择上游协议。";
+"providerSettings.responseAndModelsPathsCannotBe" = "模型响应接口和模型列表接口路径都必须填写完整相对路径，例如 /v1/responses 和 /v1/models。";
 "providerSettings.authBridge" = "认证桥接";
 "providerSettings.onlyOneAuxiliaryModelProviderCanBe" = "同一时间只能指定一个辅助模型上游。custom-only 安装没有官方回落，供应商缺失的辅助能力将无法使用。";
 "providerSettings.onlyOneAuxiliaryModelProviderCanBe2" = "同一时间只能指定一个辅助模型上游。开启后会覆盖 OAuth 的官方辅助模型路由；该供应商没有对应模型时仍使用默认路由。";

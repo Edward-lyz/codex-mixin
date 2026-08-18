@@ -38,6 +38,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private let displayNameField = formTextField()
     private let baseURLField = formTextField()
     private let websiteURLField = formTextField()
+    private let protocolPopup = NSPopUpButton()
+    private let apiPathField = formTextField()
+    private let modelsPathField = formTextField()
     private let imageGenerationPathField = formTextField()
     private let apiKeyField = secureFormTextField()
     private let clearKeyButton = NSButton(title: "清除密钥", target: nil, action: nil)
@@ -63,6 +66,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private var customDisplayNameRow: NSView?
     private var customBaseURLRow: NSView?
     private var customWebsiteURLRow: NSView?
+    private var customProtocolRow: NSView?
+    private var customAPIPathRow: NSView?
+    private var customModelsPathRow: NSView?
     private var quotaUsernameRow: NSView?
     private var quotaWorkspaceIDRow: NSView?
     private var quotaAuthCookieRow: NSView?
@@ -223,6 +229,24 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         self.customBaseURLRow = customBaseURLRow
         let customWebsiteURLRow = compactLabeledView("官网地址", websiteURLField)
         self.customWebsiteURLRow = customWebsiteURLRow
+        configureProtocolPopup()
+        let customProtocolRow = compactLabeledView(
+            AppLocalization.string("providerSettings.upstreamProtocol"),
+            protocolPopup
+        )
+        self.customProtocolRow = customProtocolRow
+        let customAPIPathRow = compactLabeledView(
+            AppLocalization.string("providerSettings.responseAPIPath"),
+            apiPathField
+        )
+        self.customAPIPathRow = customAPIPathRow
+        let customModelsPathRow = compactLabeledView(
+            AppLocalization.string("providerSettings.modelsAPIPath"),
+            modelsPathField
+        )
+        self.customModelsPathRow = customModelsPathRow
+        apiPathField.placeholderString = "/v1/responses"
+        modelsPathField.placeholderString = "/v1/models"
         imageGenerationPathField.placeholderString = "/v1/images/generations"
         let managedConfigurationLabel = NSTextField(wrappingLabelWithString: AppLocalization.string("providerSettings.protocolsAndEndpointPathsAreDetectedAutomatically"))
         managedConfigurationLabel.textColor = .secondaryLabelColor
@@ -242,6 +266,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             customDisplayNameRow,
             customBaseURLRow,
             customWebsiteURLRow,
+            customProtocolRow,
+            customAPIPathRow,
+            customModelsPathRow,
             compactLabeledView("绘图接口路径", imageGenerationPathField),
             compactLabeledView("API 密钥", apiKeyControls),
             quotaUsernameRow,
@@ -403,6 +430,21 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         quotaAuthCookieField.placeholderString = "opencode.ai auth cookie"
     }
 
+    private func configureProtocolPopup() {
+        protocolPopup.removeAllItems()
+        for (title, value) in [
+            (AppLocalization.string("providerSettings.openAIResponses"), "open_ai_responses"),
+            (AppLocalization.string("providerSettings.anthropicMessages"), "anthropic_messages"),
+            (AppLocalization.string("providerSettings.openAIChatCompletions"), "open_ai_chat"),
+        ] {
+            protocolPopup.addItem(withTitle: title)
+            protocolPopup.lastItem?.representedObject = value
+        }
+        protocolPopup.translatesAutoresizingMaskIntoConstraints = false
+        protocolPopup.heightAnchor.constraint(equalToConstant: 28).isActive = true
+        selectPopupValue(protocolPopup, "open_ai_responses")
+    }
+
     private func configureButton(_ button: NSButton, action: Selector) {
         button.bezelStyle = .rounded
         button.target = self
@@ -503,6 +545,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         displayNameField.stringValue = provider.displayName
         baseURLField.stringValue = provider.baseURL
         websiteURLField.stringValue = provider.websiteURL ?? ""
+        selectPopupValue(protocolPopup, provider.protocolID)
+        apiPathField.stringValue = provider.apiPath
+        modelsPathField.stringValue = provider.modelsPath ?? ""
         imageGenerationPathField.stringValue = provider.imageGenerationPath ?? ""
         apiKeyField.stringValue = ""
         apiKeyField.placeholderString = provider.apiKeyConfigured
@@ -527,6 +572,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         customDisplayNameRow?.isHidden = !isCustom
         customBaseURLRow?.isHidden = !isCustom
         customWebsiteURLRow?.isHidden = !isCustom
+        customProtocolRow?.isHidden = !isCustom
+        customAPIPathRow?.isHidden = !isCustom
+        customModelsPathRow?.isHidden = !isCustom
         quotaUsernameRow?.isHidden = provider.presetID != "baidu-oneapi"
         let openCodeGo = requiresOpenCodeGoQuotaCredentials(provider.presetID ?? "")
         quotaWorkspaceIDRow?.isHidden = !openCodeGo
@@ -544,6 +592,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             displayNameField,
             baseURLField,
             websiteURLField,
+            apiPathField,
+            modelsPathField,
             apiKeyField,
             quotaUsernameField,
             quotaWorkspaceIDField,
@@ -553,6 +603,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         }
         clearQuotaCredentialsButton.isEnabled = false
         auxiliaryModelUpstreamButton.state = .off
+        selectPopupValue(protocolPopup, "open_ai_responses")
         selectPopupValue(baiduAuthBridgePopup, BaiduAuthBridgeMode.disabled.rawValue)
         baiduCodeReportButton.state = .off
         auxiliaryModelUpstreamButton.toolTip = auxiliaryModelDefaultTooltip()
@@ -574,6 +625,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             displayNameField,
             baseURLField,
             websiteURLField,
+            apiPathField,
+            modelsPathField,
             imageGenerationPathField,
             quotaUsernameField,
             quotaWorkspaceIDField,
@@ -581,6 +634,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             clearQuotaCredentialsButton,
             auxiliaryModelUpstreamButton,
             baiduAuthBridgePopup,
+            protocolPopup,
             enableButton,
             testButton,
             saveButton,
@@ -859,6 +913,23 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             }
             appendProviderArgument(&update, "--display-name", displayName)
             appendProviderArgument(&update, "--base-url", baseURL)
+            let protocolID = protocolPopup.selectedItem?.representedObject as? String ?? ""
+            let apiPath = apiPathField.stringValue
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            let modelsPath = modelsPathField.stringValue
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard let endpointArguments = customProviderEndpointArguments(
+                protocolID: protocolID,
+                apiPath: apiPath,
+                modelsPath: modelsPath
+            ) else {
+                showAlert(
+                    title: AppLocalization.string("providerSettings.endpointConfigurationRequired"),
+                    message: AppLocalization.string("providerSettings.responseAndModelsPathsCannotBe")
+                )
+                return
+            }
+            update.append(contentsOf: endpointArguments)
             let websiteURL = websiteURLField.stringValue
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if !websiteURL.isEmpty || provider.websiteURL != nil {
