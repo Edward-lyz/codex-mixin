@@ -15,8 +15,9 @@ use codex_mixin::config::{GatewayConfig, ThinkingMode};
 use codex_mixin::provider::{ProviderPreset, ProviderRegistry};
 use codex_mixin::server::AppState;
 
+use super::Cli;
 use super::claude::*;
-use super::{Cli, cli_release_target, release_version_from_redirect, replace_executable};
+use super::update::{cli_release_target, release_version_from_redirect, replace_executable};
 use super::{atomic_file::*, codex::*, runtime::*, service::*, status::*};
 
 #[test]

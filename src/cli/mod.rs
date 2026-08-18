@@ -1,17 +1,11 @@
-use std::fs;
-use std::io::Write;
 use std::io::{self, IsTerminal};
 use std::net::SocketAddr;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
-use std::time::{Instant, SystemTime, UNIX_EPOCH};
+use std::path::PathBuf;
+use std::time::Instant;
 
-use anyhow::Context;
 use clap::{Parser, Subcommand, ValueEnum};
 use codex_mixin::catalog::{codex_catalog_from_models_with_metadata, load_template_catalog};
-use codex_mixin::config::{GatewayConfig, load_stored_config};
+use codex_mixin::config::GatewayConfig;
 use codex_mixin::provider::ProviderPreset;
 use codex_mixin::server::AppState;
 use console::style;
@@ -32,13 +26,14 @@ mod providers;
 mod report_hook;
 mod runtime;
 mod service;
+mod setup;
 mod status;
+mod update;
 
 use benchmark_proxy::{benchmark_start, benchmark_status};
 use claude::{claude_status, install_claude, sync_claude_hooks, uninstall_claude};
 use codex::{
-    InstallCodexOptions, install_codex, refresh_default_managed_codex_catalog,
-    resolve_codex_install_paths, uninstall_codex,
+    InstallCodexOptions, install_codex, refresh_default_managed_codex_catalog, uninstall_codex,
 };
 use doctor::doctor;
 use dsh::{install_dsh, uninstall_dsh};
@@ -48,8 +43,8 @@ use maintenance::migrate_history;
 use metadata::{load_model_metadata_resolver, refresh_metadata};
 use providers::{
     AddProviderOptions, TestProviderOptions, UpdateProviderOptions, add_provider, discover_models,
-    discover_models_with_output, list_providers, remove_provider, reorder_providers, select_models,
-    set_provider_enabled, test_provider, update_provider,
+    list_providers, remove_provider, reorder_providers, select_models, set_provider_enabled,
+    test_provider, update_provider,
 };
 use service::{init_tracing, logs, restart, start, stop};
 use status::{models, probe_web_search, quota, show_config, status, usage};
@@ -115,173 +110,6 @@ pub(super) async fn stage<T>(
         }
     }
     result
-}
-
-fn install_cli_command() -> anyhow::Result<()> {
-    let Some(home) = std::env::var_os("HOME") else {
-        return Ok(());
-    };
-    let bin = PathBuf::from(home).join(".local/bin");
-    fs::create_dir_all(&bin)?;
-    let target = bin.join("codex-mixin");
-    let source = std::env::current_exe()?;
-    if source != target {
-        fs::copy(source, &target)?;
-    }
-    println!("CLI command installed: {}", target.display());
-    println!(
-        "Add {} to PATH if `codex-mixin` is not found.",
-        bin.display()
-    );
-    Ok(())
-}
-
-fn cli_release_target() -> anyhow::Result<&'static str> {
-    match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("linux", "x86_64") => Ok("x86_64-unknown-linux-musl"),
-        ("linux", "aarch64") => Ok("aarch64-unknown-linux-musl"),
-        ("macos", "x86_64") => Ok("x86_64-apple-darwin"),
-        ("macos", "aarch64") => Ok("aarch64-apple-darwin"),
-        (os, arch) => anyhow::bail!("automatic update is not available for {os}/{arch}"),
-    }
-}
-
-fn release_version_from_redirect(effective_url: &str) -> anyhow::Result<String> {
-    let segment = effective_url
-        .trim_end_matches('/')
-        .rsplit('/')
-        .next()
-        .filter(|segment| !segment.is_empty() && *segment != "latest")
-        .ok_or_else(|| {
-            anyhow::anyhow!("GitHub did not redirect to a release; proxy or rate limit response")
-        })?;
-    let version = segment.trim_start_matches('v');
-    ensure_version_chars(version)?;
-    Ok(version.to_owned())
-}
-
-fn ensure_version_chars(version: &str) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        !version.is_empty()
-            && version
-                .chars()
-                .all(|character| character.is_ascii_alphanumeric()
-                    || character == '.'
-                    || character == '-'),
-        "GitHub returned an invalid release version: {version}"
-    );
-    Ok(())
-}
-
-fn replace_executable(target: &Path, downloaded: &Path) -> anyhow::Result<()> {
-    let parent = target
-        .parent()
-        .context("current executable has no parent directory")?;
-    let token = SystemTime::now()
-        .duration_since(UNIX_EPOCH)
-        .context("system clock is before the Unix epoch")?
-        .as_nanos();
-    let staged = parent.join(format!(".codex-mixin-update-{token}.new"));
-    let backup = parent.join(format!(".codex-mixin-update-{token}.old"));
-    fs::copy(downloaded, &staged)?;
-    #[cfg(unix)]
-    fs::set_permissions(&staged, fs::Permissions::from_mode(0o755))?;
-    let replace_result: anyhow::Result<()> = (|| -> anyhow::Result<()> {
-        fs::rename(target, &backup).with_context(|| {
-            format!("failed to move current executable to {}", backup.display())
-        })?;
-        if let Err(error) = fs::rename(&staged, target) {
-            fs::rename(&backup, target).with_context(|| {
-                format!(
-                    "failed to restore {} after update failure: {error}",
-                    target.display()
-                )
-            })?;
-            return Err(error.into());
-        }
-        let _ = fs::remove_file(&backup);
-        Ok(())
-    })();
-    if replace_result.is_err() {
-        let _ = fs::remove_file(&staged);
-    }
-    replace_result
-}
-
-async fn update_cli() -> anyhow::Result<()> {
-    let current = env!("CARGO_PKG_VERSION");
-    let response = ProcessCommand::new("curl")
-        .args([
-            "--fail",
-            "--location",
-            "--silent",
-            "--show-error",
-            "--output",
-            "/dev/null",
-            "--write-out",
-            "%{url_effective}",
-            "--max-time",
-            "60",
-            "https://github.com/Edward-lyz/codex-mixin/releases/latest",
-        ])
-        .output()
-        .context("cannot query GitHub releases; check HTTP_PROXY/HTTPS_PROXY")?;
-    anyhow::ensure!(
-        response.status.success(),
-        "cannot query GitHub releases; curl exited with {}",
-        response.status
-    );
-    let effective_url = String::from_utf8(response.stdout)?.trim().to_owned();
-    let latest = release_version_from_redirect(&effective_url)?;
-    if latest == current {
-        println!("codex-mixin {current} is already up to date.");
-        return Ok(());
-    }
-    let asset = cli_release_target()?;
-    let url = format!(
-        "https://github.com/Edward-lyz/codex-mixin/releases/download/v{latest}/codex-mixin-cli-{asset}.tar.gz"
-    );
-    let temp = tempfile::tempdir()?;
-    let archive = temp.path().join("codex-mixin.tar.gz");
-    println!("Downloading codex-mixin {latest}...");
-    let status = ProcessCommand::new("curl")
-        .args([
-            "--fail",
-            "--location",
-            "--silent",
-            "--show-error",
-            "--max-time",
-            "600",
-            "--output",
-        ])
-        .arg(&archive)
-        .arg(&url)
-        .status()?;
-    anyhow::ensure!(
-        status.success(),
-        "download failed for {url}; download the asset manually"
-    );
-    let status = ProcessCommand::new("tar")
-        .args(["-xzf"])
-        .arg(&archive)
-        .arg("-C")
-        .arg(temp.path())
-        .arg("--strip-components=1")
-        .status()?;
-    anyhow::ensure!(status.success(), "failed to unpack downloaded release");
-    let downloaded = temp.path().join("codex-mixin");
-    anyhow::ensure!(
-        downloaded.is_file(),
-        "release archive did not contain codex-mixin"
-    );
-    anyhow::ensure!(
-        fs::metadata(&downloaded)?.len() > 1024 * 1024,
-        "downloaded release is unexpectedly small: {}",
-        downloaded.display()
-    );
-    replace_executable(&std::env::current_exe()?, &downloaded)?;
-    println!("Updated codex-mixin to {latest}; restarting gateway...");
-    restart(None, None, false).await
 }
 
 #[derive(Debug, Parser)]
@@ -891,277 +719,6 @@ pub(crate) async fn entrypoint() {
     }
 }
 
-fn read_secret(prompt: &str) -> anyhow::Result<String> {
-    print!("{prompt}");
-    io::stdout().flush()?;
-    #[cfg(unix)]
-    if !ProcessCommand::new("stty").arg("-echo").status()?.success() {
-        anyhow::bail!("failed to disable terminal echo for secret input")
-    }
-    let mut value = String::new();
-    let read_result = io::stdin().read_line(&mut value);
-    #[cfg(unix)]
-    if !ProcessCommand::new("stty").arg("echo").status()?.success() {
-        anyhow::bail!("failed to restore terminal echo after secret input")
-    }
-    println!();
-    read_result?;
-    let value = value.trim().to_owned();
-    if value.is_empty() {
-        anyhow::bail!("API key cannot be empty")
-    }
-    Ok(value)
-}
-
-fn choose_setup_codex_mode(mode: Option<SetupCodexMode>) -> anyhow::Result<SetupCodexMode> {
-    if let Some(mode) = mode {
-        return Ok(mode);
-    }
-    if !io::stdin().is_terminal() {
-        return Ok(SetupCodexMode::Skip);
-    }
-    println!("\nConnect Codex:");
-    println!("  1. Official account mode - keep ChatGPT login, plugins, and cloud features");
-    println!("  2. Custom models only - no official account required");
-    println!("  3. Skip for now");
-    print!("Choose [1-3]: ");
-    io::stdout().flush()?;
-    let mut choice = String::new();
-    io::stdin().read_line(&mut choice)?;
-    match choice.trim() {
-        "1" => Ok(SetupCodexMode::Official),
-        "2" => Ok(SetupCodexMode::Custom),
-        "3" => Ok(SetupCodexMode::Skip),
-        _ => anyhow::bail!("invalid Codex mode; choose 1, 2, or 3"),
-    }
-}
-
-fn choose_setup_preset(preset: Option<CliProviderPreset>) -> anyhow::Result<CliProviderPreset> {
-    if let Some(preset) = preset {
-        return Ok(preset);
-    }
-    if !io::stdin().is_terminal() {
-        anyhow::bail!(
-            "provider preset is required in non-interactive mode; pass --preset <preset>\navailable presets: {}\nexample: codex-mixin setup --preset baidu-oneapi",
-            ProviderPreset::available_presets_csv()
-        );
-    }
-    println!("Choose a provider preset:");
-    for (index, preset) in ProviderPreset::ALL.iter().enumerate() {
-        println!(
-            "  {}. {} - {}",
-            index + 1,
-            preset.as_str(),
-            preset.description()
-        );
-    }
-    print!("Choose [1-{}]: ", ProviderPreset::ALL.len());
-    io::stdout().flush()?;
-    let mut choice = String::new();
-    io::stdin().read_line(&mut choice)?;
-    let index = choice
-        .trim()
-        .parse::<usize>()
-        .map_err(|_| anyhow::anyhow!("invalid preset choice; enter a number"))?;
-    ProviderPreset::ALL
-        .get(index.saturating_sub(1))
-        .copied()
-        .filter(|_| index >= 1)
-        .map(CliProviderPreset::from)
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "invalid preset choice; choose a number between 1 and {}",
-                ProviderPreset::ALL.len()
-            )
-        })
-}
-
-async fn setup(
-    preset: Option<CliProviderPreset>,
-    key: Option<String>,
-    quota_username: Option<String>,
-    codex_mode: Option<SetupCodexMode>,
-    no_start: bool,
-) -> anyhow::Result<()> {
-    let preset = choose_setup_preset(preset)?.as_str();
-    if no_start
-        && matches!(
-            codex_mode,
-            Some(SetupCodexMode::Official | SetupCodexMode::Custom)
-        )
-    {
-        anyhow::bail!("--no-start cannot be combined with Codex installation");
-    }
-    install_cli_command()?;
-    let key = match key.or_else(|| std::env::var("CODEX_MIXIN_API_KEY").ok()) {
-        Some(key) if !key.trim().is_empty() => key,
-        _ if io::stdin().is_terminal() => read_secret(&format!("API key for {preset}: "))?,
-        _ => anyhow::bail!(
-            "API key is required; pass --key or set CODEX_MIXIN_API_KEY in non-interactive mode"
-        ),
-    };
-
-    let quota_username = if preset == "baidu-oneapi" {
-        match quota_username.or_else(|| std::env::var("CODEX_MIXIN_QUOTA_USERNAME").ok()) {
-            Some(username) if !username.trim().is_empty() => Some(username),
-            _ if io::stdin().is_terminal() => {
-                print!("Baidu OneAPI quota username: ");
-                io::stdout().flush()?;
-                let mut username = String::new();
-                io::stdin().read_line(&mut username)?;
-                let username = username.trim().to_owned();
-                if username.is_empty() {
-                    anyhow::bail!("Baidu OneAPI quota username cannot be empty")
-                }
-                Some(username)
-            }
-            _ => anyhow::bail!(
-                "Baidu OneAPI quota username is required; pass --quota-username or set CODEX_MIXIN_QUOTA_USERNAME in non-interactive mode"
-            ),
-        }
-    } else {
-        quota_username
-    };
-
-    let ducx_executable = if preset == "baidu-oneapi" {
-        Some(
-            stage(
-                "Preparing managed DUCX authentication",
-                ensure_managed_ducx(),
-            )
-            .await?,
-        )
-    } else {
-        None
-    };
-    let existing_provider = load_stored_config()?.and_then(|config| {
-        config
-            .providers
-            .into_iter()
-            .find(|provider| provider.id == preset)
-    });
-    if let Some(existing_provider) = existing_provider {
-        println!("Updating provider configuration: {preset}");
-        if existing_provider.preset_id.as_deref() != Some(preset) {
-            anyhow::bail!(
-                "provider {preset} already exists with preset {}; choose another provider id",
-                existing_provider.preset_id.as_deref().unwrap_or("custom")
-            )
-        }
-        update_provider(UpdateProviderOptions {
-            id: preset.to_owned(),
-            key: Some(key),
-            quota_username,
-            baidu_auth_bridge: (preset == "baidu-oneapi").then(|| "ducx_loopback".to_owned()),
-            ducx_executable,
-            ..UpdateProviderOptions::default()
-        })
-        .await?;
-    } else {
-        println!("Adding provider configuration: {preset}");
-        add_provider(AddProviderOptions {
-            preset: preset.to_owned(),
-            id: None,
-            key,
-            display_name: None,
-            base_url: None,
-            website_url: None,
-            protocol: None,
-            api_path: None,
-            models_path: None,
-            image_generation_path: None,
-            quota_url: None,
-            quota_username,
-            quota_workspace_id: None,
-            quota_auth_cookie: None,
-            quota_currency: None,
-            quota_parser: None,
-            gateway_key: None,
-            static_models: Vec::new(),
-            header_env: Vec::new(),
-            baidu_auth_bridge: (preset == "baidu-oneapi").then(|| "ducx_loopback".to_owned()),
-            ducx_executable,
-            baidu_code_report: None,
-        })
-        .await?;
-    }
-    stage(
-        &format!("Refreshing provider models for {preset}"),
-        discover_models_with_output(preset, true),
-    )
-    .await?;
-    println!("Provider models refreshed.");
-
-    let executable = std::env::current_exe()?.display().to_string();
-    if no_start {
-        println!("Provider configured. Next: {executable} service start");
-        return Ok(());
-    }
-
-    stage(
-        "Restarting gateway with the new provider configuration",
-        restart(None, None, true),
-    )
-    .await?;
-    println!("Gateway is ready.");
-    let codex_mode = choose_setup_codex_mode(codex_mode)?;
-    match codex_mode {
-        SetupCodexMode::Official => {
-            let paths = resolve_codex_install_paths(None, None)?;
-            if !paths.models_cache.exists() {
-                anyhow::bail!(
-                    "official Codex catalog is missing at {}; sign in and open Codex once, then run `{executable} connect codex --codex-oauth-proxy`",
-                    paths.models_cache.display()
-                )
-            }
-            install_codex(InstallCodexOptions {
-                requested_model: None,
-                set_default: false,
-                codex_oauth_proxy: true,
-                custom_only: false,
-                config_path: None,
-                catalog_path: None,
-                base_url: None,
-                web_search: "live".to_owned(),
-                env_key: None,
-                no_env_key: false,
-            })
-            .await?;
-        }
-        SetupCodexMode::Custom => {
-            install_codex(InstallCodexOptions {
-                requested_model: None,
-                set_default: true,
-                codex_oauth_proxy: false,
-                custom_only: true,
-                config_path: None,
-                catalog_path: None,
-                base_url: None,
-                web_search: "live".to_owned(),
-                env_key: None,
-                no_env_key: false,
-            })
-            .await?;
-        }
-        SetupCodexMode::Skip => {
-            println!("Gateway started.");
-            next_step_line(&format!(
-                "Connect Codex later: {executable} connect codex --codex-oauth-proxy"
-            ));
-        }
-    }
-    println!();
-    if progress_is_interactive() {
-        println!("{}", style("Setup complete").green().bold());
-    } else {
-        println!("Setup complete.");
-    }
-    next_step_line("Restart the Codex app, or start a new Codex CLI session");
-    next_step_line(&format!("Check status: {executable} info"));
-    next_step_line(&format!("Diagnose issues: {executable} doctor"));
-    Ok(())
-}
-
 #[allow(clippy::cognitive_complexity)]
 async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command.unwrap_or(Command::Info { json: false }) {
@@ -1172,8 +729,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             quota_username,
             codex_mode,
             no_start,
-        } => setup(preset, key, quota_username, codex_mode, no_start).await,
-        Command::Update => update_cli().await,
+        } => setup::run(preset, key, quota_username, codex_mode, no_start).await,
+        Command::Update => update::run().await,
         Command::Providers { command } => match *command {
             ProviderCommand::List { json } => list_providers(json),
             ProviderCommand::Add {
