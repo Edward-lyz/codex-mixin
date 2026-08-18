@@ -1,28 +1,27 @@
 use std::fs;
-use std::net::SocketAddr;
 use std::path::Path;
-use std::time::{Duration, Instant, SystemTime, UNIX_EPOCH};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use codex_mixin::config::{GatewayConfig, load_stored_config, stored_config_path};
-use codex_mixin::provider::{
-    ProviderDefinition, ProviderModelSource, discover_provider_models, redact_provider_error,
-};
 use console::style;
-use futures_util::future::join_all;
 use serde::Serialize;
-
-use super::runtime::*;
 
 mod codex;
 mod desktop;
+mod gateway;
 mod log;
+mod providers;
 mod repair;
+mod report;
 
 use codex::{check_codex_engine, check_codex_integration};
 #[cfg(target_os = "macos")]
 use desktop::check_desktop_apps;
+use gateway::{LiveGateway, check_gateway_models, check_gateway_runtime};
 use log::check_gateway_log;
+use providers::check_doctor_providers;
 use repair::apply_doctor_fixes;
+use report::print_doctor_report;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]
 #[serde(rename_all = "snake_case")]
@@ -402,20 +401,6 @@ async fn run_doctor_checks(options: DoctorCheckOptions) -> anyhow::Result<Doctor
     })
 }
 
-async fn check_doctor_providers(
-    providers: Vec<ProviderDefinition>,
-    timeout: Duration,
-    probe_live: bool,
-) -> anyhow::Result<Vec<DoctorProviderCheck>> {
-    let client = reqwest::Client::builder().timeout(timeout).build()?;
-    Ok(join_all(
-        providers
-            .into_iter()
-            .map(|provider| check_doctor_provider(client.clone(), provider, probe_live)),
-    )
-    .await)
-}
-
 fn planned_fixes(checks: &[DoctorCheck]) -> Vec<DoctorFix> {
     let mut fixes: Vec<DoctorFix> = checks
         .iter()
@@ -469,466 +454,17 @@ fn check_config_permissions(path: &Path) -> DoctorCheck {
     }
 }
 
-async fn check_doctor_provider(
-    client: reqwest::Client,
-    provider: ProviderDefinition,
-    probe_live: bool,
-) -> DoctorProviderCheck {
-    let readiness = provider.readiness();
-    let base = DoctorProviderCheck {
-        provider_id: provider.id.clone(),
-        display_name: provider.display_name.clone(),
-        enabled: provider.enabled,
-        protocol: format!("{:?}", provider.protocol),
-        status: DoctorStatus::Ok,
-        selected_model_count: provider.selected_models.len(),
-        routable_model_count: readiness.routable_model_count,
-        message: String::new(),
-        detail: None,
-        paid_inference_performed: false,
-    };
-    if let Err(error) = provider.validate() {
-        return DoctorProviderCheck {
-            status: DoctorStatus::Error,
-            message: "provider configuration failed validation".to_owned(),
-            detail: Some(format!("{error:#}")),
-            ..base
-        };
-    }
-    if !provider.enabled {
-        return DoctorProviderCheck {
-            status: DoctorStatus::Warning,
-            message: "provider is disabled; skipped network checks".to_owned(),
-            ..base
-        };
-    }
-    if readiness.routable_model_count == 0 {
-        return DoctorProviderCheck {
-            status: DoctorStatus::Error,
-            message: "no selected models are currently available".to_owned(),
-            detail: Some(readiness.issues.join(", ")),
-            ..base
-        };
-    }
-    if provider.model_source == ProviderModelSource::Static {
-        return DoctorProviderCheck {
-            message: format!(
-                "static model source is healthy with {} routable model(s); no paid inference was performed",
-                readiness.routable_model_count
-            ),
-            ..base
-        };
-    }
-    if !probe_live {
-        let cached_model_count = provider.cached_models.len();
-        let refreshed = provider
-            .models_refreshed_at_ms
-            .map(|timestamp| format!("; cache timestamp {timestamp}"))
-            .unwrap_or_default();
-        return DoctorProviderCheck {
-            status: if provider.models_refresh_error.is_some() {
-                DoctorStatus::Warning
-            } else {
-                DoctorStatus::Ok
-            },
-            message: format!(
-                "quick check used {} cached model(s) without contacting upstream{refreshed}",
-                cached_model_count
-            ),
-            detail: provider.models_refresh_error.clone(),
-            ..base
-        };
-    }
-    let started = Instant::now();
-    match discover_provider_models(&client, &provider).await {
-        Ok(models) => DoctorProviderCheck {
-            message: format!(
-                "models endpoint healthy; returned {} model(s) in {} ms; no paid inference was performed",
-                models.len(),
-                started.elapsed().as_millis()
-            ),
-            detail: provider.models_refresh_error.as_ref().map(|error| {
-                format!(
-                    "a previous refresh error is still cached, but this check recovered: {error}"
-                )
-            }),
-            ..base
-        },
-        Err(error) => {
-            let error = redact_provider_error(&provider, &format!("{error:#}"));
-            tracing::warn!(
-                provider_id = %provider.id,
-                error = %error,
-                "doctor provider model discovery failed"
-            );
-            DoctorProviderCheck {
-                status: DoctorStatus::Error,
-                message: "models endpoint connection or response check failed".to_owned(),
-                detail: Some(error),
-                ..base
-            }
-        }
-    }
-}
-
-struct LiveGateway {
-    bind: SocketAddr,
-}
-
-async fn check_gateway_runtime() -> (DoctorCheck, Option<LiveGateway>) {
-    let runtime = match load_runtime_metadata() {
-        Ok(Some(runtime)) => runtime,
-        Ok(None) => {
-            return (
-                DoctorCheck::new(
-                    "gateway",
-                    "Local gateway",
-                    DoctorStatus::Warning,
-                    "gateway is not running",
-                )
-                .hint("codex-mixin service start")
-                .fix(DoctorFix::StartGateway),
-                None,
-            );
-        }
-        Err(error) => {
-            return (
-                DoctorCheck::new(
-                    "gateway",
-                    "Local gateway",
-                    DoctorStatus::Error,
-                    "runtime metadata could not be read",
-                )
-                .detail(format!("{error:#}")),
-                None,
-            );
-        }
-    };
-    match pid_is_running(runtime.pid) {
-        Ok(false) => (
-            DoctorCheck::new(
-                "gateway",
-                "Local gateway",
-                DoctorStatus::Warning,
-                format!(
-                    "stale runtime metadata found: pid {} is not running",
-                    runtime.pid
-                ),
-            )
-            .detail(format!("bind {}", runtime.bind))
-            .fix(DoctorFix::CleanStaleGatewayMetadata)
-            .fix(DoctorFix::StartGateway),
-            None,
-        ),
-        Err(error) => (
-            DoctorCheck::new(
-                "gateway",
-                "Local gateway",
-                DoctorStatus::Error,
-                format!("could not inspect gateway pid {}", runtime.pid),
-            )
-            .detail(format!("{error:#}")),
-            None,
-        ),
-        Ok(true) => {
-            let url = format!("http://{}/healthz", runtime.bind);
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(2))
-                .build();
-            let client = match client {
-                Ok(client) => client,
-                Err(error) => {
-                    return (
-                        DoctorCheck::new(
-                            "gateway",
-                            "Local gateway",
-                            DoctorStatus::Error,
-                            "could not build the local gateway health request",
-                        )
-                        .detail(format!("{error:#}")),
-                        None,
-                    );
-                }
-            };
-            match client.get(&url).send().await {
-                Ok(response) if response.status().is_success() => {
-                    let current_version = env!("CARGO_PKG_VERSION");
-                    let live = Some(LiveGateway { bind: runtime.bind });
-                    match runtime.version.as_deref() {
-                        Some(version) if version != current_version => (
-                            DoctorCheck::new(
-                                "gateway",
-                                "Local gateway",
-                                DoctorStatus::Warning,
-                                format!(
-                                    "running as pid {} on {}, but gateway version {} does not match CLI version {}",
-                                    runtime.pid, runtime.bind, version, current_version
-                                ),
-                            )
-                            .hint("codex-mixin restart")
-                            .fix(DoctorFix::StartGateway),
-                            live,
-                        ),
-                        version => {
-                            let mut check = DoctorCheck::new(
-                                "gateway",
-                                "Local gateway",
-                                DoctorStatus::Ok,
-                                format!("running as pid {} on {}", runtime.pid, runtime.bind),
-                            );
-                            if let Some(version) = version {
-                                check = check.detail(format!("version {version}"));
-                            }
-                            (check, live)
-                        }
-                    }
-                }
-                Ok(response) => (
-                    DoctorCheck::new(
-                        "gateway",
-                        "Local gateway",
-                        DoctorStatus::Error,
-                        format!("healthz returned {}", response.status()),
-                    )
-                    .detail(url)
-                    .hint("codex-mixin restart"),
-                    None,
-                ),
-                Err(error) => (
-                    DoctorCheck::new(
-                        "gateway",
-                        "Local gateway",
-                        DoctorStatus::Error,
-                        "process is alive but healthz is unreachable",
-                    )
-                    .detail(format!("{error:#}"))
-                    .hint("codex-mixin restart"),
-                    None,
-                ),
-            }
-        }
-    }
-}
-
-async fn check_gateway_models(
-    bind: SocketAddr,
-    gateway_api_key: Option<&str>,
-) -> (DoctorCheck, Option<Vec<String>>) {
-    let url = format!("http://{bind}/v1/models");
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(10))
-        .build()
-    {
-        Ok(client) => client,
-        Err(error) => {
-            return (
-                DoctorCheck::new(
-                    "gateway_models",
-                    "Gateway models",
-                    DoctorStatus::Error,
-                    "could not build the models list request",
-                )
-                .detail(format!("{error:#}")),
-                None,
-            );
-        }
-    };
-    let mut request = client.get(&url);
-    if let Some(key) = gateway_api_key {
-        request = request.bearer_auth(key);
-    }
-    match request.send().await {
-        Ok(response) if response.status().is_success() => {
-            let body = match response.json::<serde_json::Value>().await {
-                Ok(body) => body,
-                Err(error) => {
-                    return (
-                        DoctorCheck::new(
-                            "gateway_models",
-                            "Gateway models",
-                            DoctorStatus::Error,
-                            "models list response is not valid JSON",
-                        )
-                        .detail(format!("{error:#}")),
-                        None,
-                    );
-                }
-            };
-            let ids: Vec<String> = body
-                .get("data")
-                .and_then(serde_json::Value::as_array)
-                .map(|models| {
-                    models
-                        .iter()
-                        .filter_map(|model| model.get("id").and_then(serde_json::Value::as_str))
-                        .map(str::to_owned)
-                        .collect()
-                })
-                .unwrap_or_default();
-            if ids.is_empty() {
-                (
-                    DoctorCheck::new(
-                        "gateway_models",
-                        "Gateway models",
-                        DoctorStatus::Error,
-                        "gateway /v1/models returned an empty list; Codex will have no models",
-                    )
-                    .detail(url),
-                    Some(ids),
-                )
-            } else {
-                (
-                    DoctorCheck::new(
-                        "gateway_models",
-                        "Gateway models",
-                        DoctorStatus::Ok,
-                        format!("gateway /v1/models returned {} model(s)", ids.len()),
-                    )
-                    .detail(url),
-                    Some(ids),
-                )
-            }
-        }
-        Ok(response)
-            if response.status() == reqwest::StatusCode::UNAUTHORIZED
-                || response.status() == reqwest::StatusCode::FORBIDDEN =>
-        {
-            (
-                DoctorCheck::new(
-                    "gateway_models",
-                    "Gateway models",
-                    DoctorStatus::Error,
-                    format!(
-                        "gateway rejected the models list request ({}); API key validation failed",
-                        response.status()
-                    ),
-                )
-                .detail(url),
-                None,
-            )
-        }
-        Ok(response) => (
-            DoctorCheck::new(
-                "gateway_models",
-                "Gateway models",
-                DoctorStatus::Error,
-                format!("gateway /v1/models returned {}", response.status()),
-            )
-            .detail(url),
-            None,
-        ),
-        Err(error) => (
-            DoctorCheck::new(
-                "gateway_models",
-                "Gateway models",
-                DoctorStatus::Error,
-                "could not request the gateway models list",
-            )
-            .detail(format!("{url}: {error:#}")),
-            None,
-        ),
-    }
-}
-
-fn print_doctor_report(report: &DoctorReport, fix_mode: bool) {
-    println!("{}", style("Codex Mixin health check").bold());
-    println!("{} {}", style("config:").dim(), report.config_path);
-    for check in &report.checks {
-        println!(
-            "{} {}: {}",
-            check.status.icon(),
-            style(&check.name).bold(),
-            check.message
-        );
-        if let Some(detail) = &check.detail {
-            println!("  {}", style(detail).dim());
-        }
-        if let Some(hint) = &check.fix_hint {
-            println!("  {} {hint}", style("hint:").cyan());
-        }
-        if !check.auto_fixes.is_empty() {
-            println!(
-                "  {} {}",
-                style("auto-fix:").cyan(),
-                check
-                    .auto_fixes
-                    .iter()
-                    .map(|fix| fix.description())
-                    .collect::<Vec<_>>()
-                    .join("；")
-            );
-        }
-    }
-    for provider in &report.providers {
-        println!(
-            "{} {} {}: {}",
-            provider.status.icon(),
-            style("Provider").dim(),
-            style(&provider.provider_id).bold(),
-            provider.message
-        );
-        if let Some(detail) = &provider.detail {
-            println!("  {}", style(detail).dim());
-        }
-    }
-    if !report.repairs.is_empty() {
-        println!("{}", style("repairs:").bold());
-        for repair in &report.repairs {
-            let icon = if repair.ok {
-                style("✓").green().bold()
-            } else {
-                style("✗").red().bold()
-            };
-            println!("{} {}: {}", icon, repair.description, repair.message);
-        }
-    }
-    let summary_style = if report.summary.errors > 0 {
-        style("summary:").red().bold()
-    } else if report.summary.warnings > 0 {
-        style("summary:").yellow().bold()
-    } else {
-        style("summary:").green().bold()
-    };
-    println!(
-        "{} {} ok, {} warnings, {} errors",
-        summary_style, report.summary.ok, report.summary.warnings, report.summary.errors
-    );
-    let available = planned_fixes(&report.checks);
-    if !fix_mode && !available.is_empty() {
-        let restart_count = available
-            .iter()
-            .filter(|fix| fix.requires_restart_opt_in())
-            .count();
-        let plain_count = available.len() - restart_count;
-        if plain_count > 0 {
-            println!(
-                "{} run `codex-mixin doctor --fix` to repair {plain_count} item(s)",
-                style("→").cyan()
-            );
-        }
-        if restart_count > 0 {
-            println!(
-                "{} app restarts need explicit confirmation; run `codex-mixin doctor --fix --restart-apps` (this interrupts live sessions)",
-                style("→").cyan()
-            );
-        }
-    }
-    if report.ok {
-        println!("{} doctor: ok", style("✓").green().bold());
-    } else {
-        println!("{} doctor: issues found", style("✗").red().bold());
-    }
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
     use codex_mixin::provider::{ProviderModel, custom_provider};
     use std::collections::HashSet;
+    use std::time::Instant;
 
     use super::codex::{AppServerProbe, normalized_model_key};
     use super::desktop::parse_ps_etime;
     use super::log::{GATEWAY_START_MARKER, count_error_lines};
+    use super::providers::check_doctor_provider;
 
     #[test]
     fn quick_doctor_caps_expensive_checks() {
