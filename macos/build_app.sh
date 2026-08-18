@@ -73,6 +73,8 @@ xcrun swiftc \
   "$ROOT_DIR/macos/StatusRefreshCoordinator.swift" \
   "$ROOT_DIR/macos/ProcessOutputCollector.swift" \
   "$ROOT_DIR/macos/GatewayService.swift" \
+  "$ROOT_DIR/macos/GatewayStatusSupport.swift" \
+  "$ROOT_DIR/macos/GatewayLifecycleSupport.swift" \
   "$ROOT_DIR/macos/GatewayProcessSupport.swift" \
   "$ROOT_DIR/macos/GatewayLaunchAgentSupport.swift" \
   "$ROOT_DIR/macos/SettingsActions.swift" \
