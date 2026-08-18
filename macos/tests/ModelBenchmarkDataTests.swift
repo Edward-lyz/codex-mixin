@@ -64,6 +64,66 @@ struct ModelBenchmarkDataTests {
         precondition(result.generationMs == 100)
         precondition(result.tps == 12.5)
         precondition(snapshot.providerCosts.first?.estimatedCost == 0.25)
+
+        let previous = ModelBenchmarkResult(
+            model: "old-model",
+            providerID: "old-provider",
+            providerName: "Old Provider",
+            upstreamModel: "old-upstream",
+            status: "completed",
+            ttftMs: 90,
+            generationMs: 900,
+            totalMs: 990,
+            outputTokens: 90,
+            tps: 9.9,
+            error: nil
+        )
+        let current = ModelBenchmarkResult(
+            model: "new-model",
+            providerID: "new-provider",
+            providerName: "New Provider",
+            upstreamModel: "new-upstream",
+            status: "failed",
+            ttftMs: 12,
+            generationMs: 120,
+            totalMs: 132,
+            outputTokens: 12,
+            tps: 1.2,
+            error: "upstream failed"
+        )
+        let ttftOnly = mergedBenchmarkResult(
+            current,
+            previous: previous,
+            targetOutputTokens: 1
+        )
+        precondition(ttftOnly.model == current.model)
+        precondition(ttftOnly.providerID == current.providerID)
+        precondition(ttftOnly.providerName == current.providerName)
+        precondition(ttftOnly.upstreamModel == current.upstreamModel)
+        precondition(ttftOnly.status == current.status)
+        precondition(ttftOnly.ttftMs == current.ttftMs)
+        precondition(ttftOnly.generationMs == previous.generationMs)
+        precondition(ttftOnly.totalMs == current.totalMs)
+        precondition(ttftOnly.outputTokens == current.outputTokens)
+        precondition(ttftOnly.tps == previous.tps)
+        precondition(ttftOnly.error == current.error)
+
+        let complete = mergedBenchmarkResult(
+            current,
+            previous: previous,
+            targetOutputTokens: 100
+        )
+        precondition(complete.model == current.model)
+        precondition(complete.providerID == current.providerID)
+        precondition(complete.providerName == current.providerName)
+        precondition(complete.upstreamModel == current.upstreamModel)
+        precondition(complete.status == current.status)
+        precondition(complete.ttftMs == current.ttftMs)
+        precondition(complete.generationMs == current.generationMs)
+        precondition(complete.totalMs == current.totalMs)
+        precondition(complete.outputTokens == current.outputTokens)
+        precondition(complete.tps == current.tps)
+        precondition(complete.error == current.error)
         print("Model benchmark DTO decode: passed")
     }
 }

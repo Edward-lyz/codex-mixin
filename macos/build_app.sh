@@ -101,6 +101,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/Localization.swift" \
   "$ROOT_DIR/macos/Generated/L10n.swift" \
   "$ROOT_DIR/macos/AppSupport.swift" \
+  "$ROOT_DIR/macos/ModelBenchmarkDataSupport.swift" \
   "$ROOT_DIR/macos/ModelBenchmarkWindow.swift" \
   "$ROOT_DIR/macos/FusionSettingsLogic.swift" \
   "$ROOT_DIR/macos/FusionSettingsWindow.swift" \

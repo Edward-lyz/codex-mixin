@@ -15,6 +15,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/InstallProgressWindow.swift" \
   "$ROOT_DIR/macos/ProviderSupport.swift" \
   "$ROOT_DIR/macos/ProviderWindowLayoutSupport.swift" \
+  "$ROOT_DIR/macos/ModelBenchmarkDataSupport.swift" \
   "$ROOT_DIR/macos/ModelBenchmarkWindow.swift" \
   "$ROOT_DIR/macos/tests/ModelBenchmarkDataTests.swift" \
   -framework Cocoa \
