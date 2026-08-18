@@ -1,29 +1,30 @@
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::PathBuf;
-use std::time::Duration;
 
 use anyhow::Context;
-use codex_mixin::anthropic::ModelsResponse;
 use codex_mixin::config::{
     GatewayConfig, StoredGatewayConfig, load_stored_config, mutate_stored_config,
 };
 use codex_mixin::provider::{
     BaiduAuthBridge, ProviderDefinition, ProviderModel, ProviderModelSource, ProviderPreset,
-    ProviderProtocol, ProviderQuotaParser, ProviderRegistry, apply_discovered_models,
-    catalog_model_slug, discover_provider_models, redact_provider_error,
+    ProviderProtocol, ProviderQuotaParser, apply_discovered_models, catalog_model_slug,
+    discover_provider_models, redact_provider_error,
 };
 use codex_mixin::provider_capabilities::ProviderCapabilities;
 use codex_mixin::web_search::WebSearchCapabilities;
 use console::style;
-use futures_util::{StreamExt, stream};
-use serde_json::{Value, json};
+use serde_json::json;
 
 use super::codex::{
     codex_home_path, managed_codex_install_mode, reconcile_managed_skills,
     resolve_codex_config_path,
 };
 use super::config_input::{normalize_base_url, trim_required};
-use super::status::{QuotaUsageSummary, quota_usage};
+mod discovery;
+use discovery::{
+    apply_discovered_quota, apply_inferred_custom_endpoint, detect_custom_provider_protocol,
+    discover_custom_quota, infer_custom_provider_endpoint,
+};
 
 #[derive(Clone, Debug)]
 pub(super) struct AddProviderOptions {
@@ -81,16 +82,26 @@ pub(super) struct UpdateProviderOptions {
     pub(super) baidu_code_report: Option<bool>,
 }
 
+#[derive(Clone, Debug, Default)]
+pub(super) struct TestProviderOptions {
+    pub(super) id: String,
+    pub(super) json: bool,
+    pub(super) key: Option<String>,
+    pub(super) base_url: Option<String>,
+    pub(super) baidu_auth_bridge: Option<String>,
+    pub(super) ducx_executable: Option<PathBuf>,
+}
+
 pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
     let mut config = load_stored_config()?.unwrap_or_default();
     let runtime_config = GatewayConfig::from_stored_config()?;
+    let codex_install_mode = managed_codex_install_mode(&resolve_codex_config_path(None)?)?;
     let capabilities = ProviderCapabilities::from_default_path(&runtime_config)?;
     for provider in &mut config.providers {
         capabilities.annotate_provider(provider);
     }
     if json_output {
-        let codex_install_mode = managed_codex_install_mode(&resolve_codex_config_path(None)?)?;
-        let providers = config
+        let mut providers = config
             .providers
             .iter()
             .map(|provider| {
@@ -107,6 +118,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     .collect::<Vec<_>>();
                 json!({
                     "id": provider.id,
+                    "kind": "configured",
                     "display_name": provider.display_name,
                     "enabled": provider.enabled,
                     "auxiliary_model_upstream": provider.auxiliary_model_upstream,
@@ -142,6 +154,9 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                 })
             })
             .collect::<Vec<_>>();
+        if official_provider_is_available(codex_install_mode) {
+            providers.insert(0, official_provider_view());
+        }
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
@@ -154,11 +169,11 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
         );
         return Ok(());
     }
-    if config.providers.is_empty() {
+    if config.providers.is_empty() && !official_provider_is_available(codex_install_mode) {
         println!("no providers configured");
         return Ok(());
     }
-    let table_rows: Vec<_> = config
+    let mut table_rows: Vec<_> = config
         .providers
         .iter()
         .map(|provider| {
@@ -182,6 +197,20 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
             )
         })
         .collect();
+    if official_provider_is_available(codex_install_mode) {
+        table_rows.insert(
+            0,
+            (
+                "official".to_owned(),
+                "OpenAI".to_owned(),
+                "managed",
+                "responses",
+                "-".to_owned(),
+                "-".to_owned(),
+                "healthy".to_owned(),
+            ),
+        );
+    }
     let id_width = table_rows.iter().map(|row| row.0.len()).max().unwrap_or(2);
     let name_width = table_rows.iter().map(|row| row.1.len()).max().unwrap_or(4);
     println!(
@@ -220,6 +249,46 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
         );
     }
     Ok(())
+}
+
+fn official_provider_is_available(codex_install_mode: Option<&str>) -> bool {
+    codex_install_mode == Some("codex_oauth_proxy")
+}
+
+fn official_provider_view() -> serde_json::Value {
+    json!({
+        "id": "official",
+        "kind": "official",
+        "display_name": "OpenAI",
+        "enabled": true,
+        "auxiliary_model_upstream": false,
+        "preset_id": null,
+        "protocol": "open_ai_responses",
+        "base_url": "https://chatgpt.com/backend-api/codex",
+        "website_url": "https://chatgpt.com",
+        "api_path": "/responses",
+        "model_source": {"kind": "static"},
+        "api_key_configured": true,
+        "image_generation_path": null,
+        "quota_url": null,
+        "quota_username": null,
+        "quota_workspace_id": null,
+        "quota_auth_cookie_configured": false,
+        "quota_currency": null,
+        "quota_parser": "generic",
+        "custom_headers_from_env": {},
+        "baidu_auth_bridge": null,
+        "baidu_code_report": false,
+        "selected_models": [],
+        "new_models": [],
+        "unavailable_selected_models": [],
+        "cached_models": [],
+        "models_refreshed_at_ms": null,
+        "last_model_refresh_error": null,
+        "readiness": "healthy",
+        "readiness_issues": [],
+        "routable_model_count": 0,
+    })
 }
 
 pub(super) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
@@ -623,6 +692,44 @@ pub(super) fn remove_provider(id: &str) -> anyhow::Result<()> {
     Ok(())
 }
 
+pub(super) fn reorder_providers(ids: Vec<String>) -> anyhow::Result<()> {
+    let order = ids.join(", ");
+    mutate_and_invalidate(|config| reorder_provider_ids(config, &ids))?;
+    println!("provider order updated: {order}");
+    Ok(())
+}
+
+fn reorder_provider_ids(config: &mut StoredGatewayConfig, ids: &[String]) -> anyhow::Result<()> {
+    ensure_has_providers(config)?;
+    anyhow::ensure!(
+        ids.len() == config.providers.len(),
+        "provider reorder requires all {} provider IDs in the desired order",
+        config.providers.len()
+    );
+    let mut seen = HashSet::new();
+    for id in ids {
+        anyhow::ensure!(
+            seen.insert(id),
+            "provider reorder contains duplicate provider ID: {id}"
+        );
+        anyhow::ensure!(
+            config.providers.iter().any(|provider| provider.id == *id),
+            "unknown provider: {id}"
+        );
+    }
+    let mut reordered = Vec::with_capacity(config.providers.len());
+    let mut remaining = std::mem::take(&mut config.providers);
+    for id in ids {
+        let index = remaining
+            .iter()
+            .position(|provider| provider.id == *id)
+            .ok_or_else(|| anyhow::anyhow!("unknown or duplicate provider ID: {id}"))?;
+        reordered.push(remaining.remove(index));
+    }
+    config.providers = reordered;
+    Ok(())
+}
+
 fn remove_provider_from_config(
     config: &mut StoredGatewayConfig,
     id: &str,
@@ -856,13 +963,36 @@ pub(super) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow
     Ok(())
 }
 
-pub(super) async fn test_provider(id: &str, json_output: bool) -> anyhow::Result<()> {
+pub(super) async fn test_provider(options: TestProviderOptions) -> anyhow::Result<()> {
+    let id = options.id.as_str();
     let config = required_config()?;
-    let provider = config
+    let stored_provider = config
         .providers
         .iter()
         .find(|provider| provider.id == id)
         .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?;
+    let mut provider = stored_provider.clone();
+    if let Some(key) = options.key {
+        provider.auth.api_key = trim_required("key", key)?;
+    }
+    if let Some(base_url) = options.base_url {
+        provider.base_url = normalize_base_url(base_url)?;
+    }
+    apply_baidu_auth_options(
+        &mut provider,
+        options.baidu_auth_bridge.as_deref(),
+        options.ducx_executable,
+    )?;
+    if provider.preset_id.as_deref() == Some("custom")
+        && !matches!(&provider.model_source, ProviderModelSource::Static)
+    {
+        let endpoint = detect_custom_provider_protocol(&provider)
+            .await?
+            .ok_or_else(|| {
+                anyhow::anyhow!("custom provider endpoint detection returned no result")
+            })?;
+        apply_inferred_custom_endpoint(&mut provider, endpoint);
+    }
     provider.validate()?;
     let (mode, model_count) = match &provider.model_source {
         ProviderModelSource::Static => ("configuration", provider.cached_models.len()),
@@ -870,7 +1000,7 @@ pub(super) async fn test_provider(id: &str, json_output: bool) -> anyhow::Result
             let client = reqwest::Client::builder()
                 .timeout(std::time::Duration::from_secs(10))
                 .build()?;
-            let models = discover_provider_models(&client, provider)
+            let models = discover_provider_models(&client, &provider)
                 .await
                 .with_context(|| {
                     format!(
@@ -880,7 +1010,7 @@ pub(super) async fn test_provider(id: &str, json_output: bool) -> anyhow::Result
             ("models_endpoint", models.len())
         }
     };
-    if json_output {
+    if options.json {
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
@@ -1061,500 +1191,6 @@ fn normalize_model_ids(models: Vec<String>) -> anyhow::Result<Vec<String>> {
     Ok(normalized)
 }
 
-#[derive(Clone, Debug, PartialEq)]
-struct DiscoveredQuotaEndpoint {
-    url: reqwest::Url,
-    parser: ProviderQuotaParser,
-    currency: Option<String>,
-    usage: QuotaUsageSummary,
-}
-
-async fn discover_custom_quota(
-    client: &reqwest::Client,
-    provider: &codex_mixin::provider::ProviderDefinition,
-) -> anyhow::Result<Option<DiscoveredQuotaEndpoint>> {
-    let registry = ProviderRegistry::new(vec![provider.clone()])?;
-    let runtime = registry
-        .provider(&provider.id)
-        .expect("newly constructed provider registry contains the custom provider");
-    let probes = stream::iter(
-        custom_quota_candidate_urls(&provider.base_url)?
-            .into_iter()
-            .map(|url| {
-                let runtime = &runtime;
-                async move {
-                    let response = runtime
-                        .apply_auth(
-                            client
-                                .get(url.clone())
-                                .header(reqwest::header::ACCEPT, "application/json")
-                                .timeout(Duration::from_secs(5)),
-                        )
-                        .send()
-                        .await
-                        .ok()?;
-                    if !response.status().is_success() {
-                        return None;
-                    }
-                    let body = response.bytes().await.ok()?;
-                    let value: serde_json::Value = serde_json::from_slice(&body).ok()?;
-                    let parser = ProviderQuotaParser::Generic;
-                    let usage = quota_usage(parser, &value).ok()?;
-                    Some(DiscoveredQuotaEndpoint {
-                        url,
-                        parser,
-                        currency: quota_currency(&value),
-                        usage,
-                    })
-                }
-            }),
-    )
-    .buffer_unordered(4)
-    .filter_map(|result| async move { result });
-    tokio::pin!(probes);
-    let discovered = tokio::time::timeout(Duration::from_secs(8), probes.next())
-        .await
-        .unwrap_or(None);
-    Ok(discovered)
-}
-
-fn custom_quota_candidate_urls(base_url: &str) -> anyhow::Result<Vec<reqwest::Url>> {
-    let base = reqwest::Url::parse(base_url)?;
-    let mut origin = base.clone();
-    origin.set_path("/");
-    origin.set_query(None);
-    origin.set_fragment(None);
-    let paths = [
-        // New API's canonical read-only token endpoint includes the trailing slash.
-        "api/usage/token/",
-        "api/usage/token",
-        // Sub2API exposes key-level quota, subscription, and wallet usage here.
-        "v1/usage",
-        "api/v1/credits",
-        "v1/credits",
-        "credits",
-        "api/usage",
-        "usage",
-        "api/token/usage",
-        "api/user/usage",
-        "v1/dashboard/billing/usage",
-        "dashboard/billing/usage",
-        "api/user/self",
-    ];
-    let mut bases = vec![origin];
-    if base.path() != "/" {
-        let mut base = base;
-        let path = format!("{}/", base.path().trim_end_matches('/'));
-        base.set_path(&path);
-        base.set_query(None);
-        base.set_fragment(None);
-        bases.push(base);
-    }
-    let mut seen = HashSet::new();
-    let mut urls = Vec::new();
-    for base in bases {
-        for path in paths {
-            let url = base.join(path)?;
-            if seen.insert(url.as_str().to_owned()) {
-                urls.push(url);
-            }
-        }
-    }
-    Ok(urls)
-}
-
-fn quota_currency(value: &serde_json::Value) -> Option<String> {
-    [
-        "/currency",
-        "/unit",
-        "/data/currency",
-        "/data/unit",
-        "/quota/currency",
-        "/quota/unit",
-        "/data/quota/currency",
-        "/data/quota/unit",
-        "/usage/currency",
-        "/usage/unit",
-        "/data/usage/currency",
-        "/data/usage/unit",
-    ]
-    .into_iter()
-    .find_map(|pointer| value.pointer(pointer).and_then(serde_json::Value::as_str))
-    .map(str::trim)
-    .filter(|currency| {
-        currency.len() == 3 && currency.bytes().all(|byte| byte.is_ascii_alphabetic())
-    })
-    .map(str::to_ascii_uppercase)
-}
-
-fn apply_discovered_quota(
-    provider: &mut codex_mixin::provider::ProviderDefinition,
-    discovered: &DiscoveredQuotaEndpoint,
-) {
-    provider.quota_url = Some(discovered.url.to_string());
-    provider.quota_parser = discovered.parser;
-    provider.quota_currency = discovered.currency.clone();
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-struct InferredCustomProviderEndpoint {
-    base_url: String,
-    protocol: ProviderProtocol,
-    api_path: String,
-    models_path: String,
-    path_explicit: bool,
-}
-
-fn infer_custom_provider_endpoint(raw_url: &str) -> anyhow::Result<InferredCustomProviderEndpoint> {
-    let normalized = normalize_base_url(raw_url.to_owned())?;
-    let mut url = reqwest::Url::parse(&normalized)?;
-    anyhow::ensure!(
-        url.query().is_none() && url.fragment().is_none(),
-        "custom provider URL must not contain a query or fragment"
-    );
-    let path = url.path().trim_end_matches('/').to_owned();
-    let candidates = [
-        (
-            "/v1/chat/completions",
-            ProviderProtocol::OpenAiChat,
-            "/v1/chat/completions",
-            "/v1/models",
-        ),
-        (
-            "/chat/completions",
-            ProviderProtocol::OpenAiChat,
-            "/chat/completions",
-            "/models",
-        ),
-        (
-            "/v1/messages",
-            ProviderProtocol::AnthropicMessages,
-            "/v1/messages",
-            "/v1/models",
-        ),
-        (
-            "/messages",
-            ProviderProtocol::AnthropicMessages,
-            "/messages",
-            "/models",
-        ),
-        (
-            "/v1/responses",
-            ProviderProtocol::OpenAiResponses,
-            "/v1/responses",
-            "/v1/models",
-        ),
-        (
-            "/responses",
-            ProviderProtocol::OpenAiResponses,
-            "/responses",
-            "/models",
-        ),
-    ];
-    let matched = candidates
-        .iter()
-        .find_map(|(suffix, protocol, api_path, models_path)| {
-            path.strip_suffix(suffix).map(|base_path| {
-                (
-                    base_path.to_owned(),
-                    *protocol,
-                    (*api_path).to_owned(),
-                    (*models_path).to_owned(),
-                    true,
-                )
-            })
-        });
-    let (base_path, protocol, api_path, models_path, path_explicit) =
-        matched.unwrap_or_else(|| {
-            let base_path = path.to_owned();
-            (
-                base_path,
-                // Prefer the standard Responses API until the /v1/models gate
-                // confirms that protocol probing is safe to continue.
-                ProviderProtocol::OpenAiResponses,
-                "/v1/responses".to_owned(),
-                "/v1/models".to_owned(),
-                false,
-            )
-        });
-    url.set_path(if base_path.is_empty() {
-        "/"
-    } else {
-        &base_path
-    });
-    let base_url = url.to_string().trim_end_matches('/').to_owned();
-    Ok(InferredCustomProviderEndpoint {
-        base_url,
-        protocol,
-        api_path,
-        models_path,
-        path_explicit,
-    })
-}
-
-async fn detect_custom_provider_protocol(
-    provider: &codex_mixin::provider::ProviderDefinition,
-) -> anyhow::Result<Option<InferredCustomProviderEndpoint>> {
-    let registry = ProviderRegistry::new(vec![provider.clone()])?;
-    let runtime = registry
-        .provider(&provider.id)
-        .expect("newly constructed provider registry contains the custom provider");
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
-        .build()?;
-    let models_url = endpoint_join(&provider.base_url, "/v1/models")?;
-    if !probe_custom_models_endpoint(&client, runtime, models_url).await? {
-        anyhow::bail!(
-            "custom provider automatic discovery requires a JSON /v1/models endpoint; configure --protocol, --api-path, and --models-path explicitly for a non-standard provider"
-        );
-    }
-    for (protocol, api_path, body) in custom_protocol_probe_candidates() {
-        let url = match endpoint_join(&provider.base_url, api_path) {
-            Ok(url) => url,
-            Err(_) => continue,
-        };
-        if protocol_endpoint_available(&client, runtime, protocol, url, &body).await {
-            return Ok(Some(InferredCustomProviderEndpoint {
-                base_url: provider.base_url.clone(),
-                protocol,
-                api_path: api_path.to_owned(),
-                models_path: "/v1/models".to_owned(),
-                path_explicit: false,
-            }));
-        }
-    }
-    anyhow::bail!(
-        "custom provider /v1/models is valid, but no supported /v1 response endpoint was detected; configure --protocol and --api-path explicitly"
-    )
-}
-
-fn custom_protocol_probe_candidates() -> [(ProviderProtocol, &'static str, serde_json::Value); 3] {
-    [
-        (
-            ProviderProtocol::OpenAiResponses,
-            "/v1/responses",
-            protocol_probe_body(ProviderProtocol::OpenAiResponses),
-        ),
-        (
-            ProviderProtocol::AnthropicMessages,
-            "/v1/messages",
-            protocol_probe_body(ProviderProtocol::AnthropicMessages),
-        ),
-        (
-            ProviderProtocol::OpenAiChat,
-            "/v1/chat/completions",
-            protocol_probe_body(ProviderProtocol::OpenAiChat),
-        ),
-    ]
-}
-
-fn protocol_probe_body(protocol: ProviderProtocol) -> serde_json::Value {
-    // Incomplete bodies intentionally avoid paid generation. A real endpoint
-    // still answers with 4xx validation or auth errors; missing routes 404.
-    match protocol {
-        ProviderProtocol::OpenAiResponses => json!({
-            "model": "codex-mixin-protocol-probe",
-            "stream": false
-        }),
-        ProviderProtocol::AnthropicMessages => json!({
-            "model": "codex-mixin-protocol-probe",
-            "max_tokens": 1
-        }),
-        ProviderProtocol::OpenAiChat => json!({
-            "model": "codex-mixin-protocol-probe",
-            "stream": false
-        }),
-    }
-}
-
-async fn protocol_endpoint_available(
-    client: &reqwest::Client,
-    runtime: &codex_mixin::provider::ProviderRuntime,
-    protocol: ProviderProtocol,
-    url: reqwest::Url,
-    body: &serde_json::Value,
-) -> bool {
-    let request = runtime
-        .apply_auth_for_protocol(client.post(url), protocol)
-        .header(reqwest::header::ACCEPT, "application/json")
-        .timeout(Duration::from_secs(5))
-        .json(body);
-    let response = match request.send().await {
-        Ok(response) => response,
-        Err(_) => return false,
-    };
-    let status = response.status().as_u16();
-    let content_type = response
-        .headers()
-        .get(reqwest::header::CONTENT_TYPE)
-        .and_then(|value| value.to_str().ok())
-        .unwrap_or("")
-        .to_owned();
-    let body = match response.text().await {
-        Ok(body) => body,
-        Err(_) => return false,
-    };
-    if matches!(status, 403 | 404 | 501 | 502 | 504) {
-        return false;
-    }
-    protocol_probe_body_matches(protocol, &content_type, &body)
-}
-
-async fn probe_custom_models_endpoint(
-    client: &reqwest::Client,
-    runtime: &codex_mixin::provider::ProviderRuntime,
-    url: reqwest::Url,
-) -> anyhow::Result<bool> {
-    let response = runtime
-        .apply_auth(client.get(url.clone()))
-        .header(reqwest::header::ACCEPT, "application/json")
-        .send()
-        .await
-        .with_context(|| format!("requesting custom provider models endpoint {url}"))?;
-    let status = response.status();
-    let body = response.text().await?;
-    if is_json_api_error(&body) {
-        anyhow::bail!("custom provider models endpoint returned {status}: {body}");
-    }
-    if !status.is_success() {
-        return Ok(false);
-    }
-    let models: ModelsResponse = match serde_json::from_str(&body) {
-        Ok(models) => models,
-        Err(_) => return Ok(false),
-    };
-    if models.data.iter().any(|model| model.id.trim().is_empty()) {
-        return Ok(false);
-    }
-    Ok(true)
-}
-
-fn protocol_probe_body_matches(protocol: ProviderProtocol, content_type: &str, body: &str) -> bool {
-    let trimmed = body.trim_start();
-    if content_type
-        .split(';')
-        .next()
-        .is_some_and(|value| value.eq_ignore_ascii_case("text/html"))
-        || trimmed.starts_with("<!doctype html")
-        || trimmed.starts_with("<html")
-    {
-        return false;
-    }
-    let is_event_stream = content_type
-        .split(';')
-        .next()
-        .is_some_and(|value| value.eq_ignore_ascii_case("text/event-stream"))
-        || body
-            .lines()
-            .any(|line| line.trim_start().starts_with("data:"));
-    if is_event_stream {
-        return body
-            .lines()
-            .filter_map(|line| line.trim_start().strip_prefix("data:").map(str::trim))
-            .any(|data| {
-                serde_json::from_str::<Value>(data)
-                    .ok()
-                    .is_some_and(|value| protocol_probe_value_matches(protocol, &value))
-            });
-    }
-    serde_json::from_str::<Value>(body)
-        .ok()
-        .is_some_and(|value| protocol_probe_value_matches(protocol, &value))
-}
-
-fn protocol_probe_value_matches(protocol: ProviderProtocol, value: &Value) -> bool {
-    if is_json_api_error_value(value) {
-        return true;
-    }
-    let Some(object) = value.as_object() else {
-        return false;
-    };
-    match protocol {
-        ProviderProtocol::OpenAiResponses => {
-            let response = object
-                .get("response")
-                .and_then(Value::as_object)
-                .unwrap_or(object);
-            response
-                .get("id")
-                .and_then(Value::as_str)
-                .is_some_and(|id| !id.is_empty())
-                && (response.contains_key("output")
-                    || response.get("object").and_then(Value::as_str) == Some("response")
-                    || object
-                        .get("type")
-                        .and_then(Value::as_str)
-                        .is_some_and(|kind| kind.starts_with("response.")))
-        }
-        ProviderProtocol::AnthropicMessages => {
-            let message = object
-                .get("message")
-                .and_then(Value::as_object)
-                .unwrap_or(object);
-            message.get("type").and_then(Value::as_str) == Some("message")
-                && message.contains_key("content")
-        }
-        ProviderProtocol::OpenAiChat => {
-            object
-                .get("id")
-                .and_then(Value::as_str)
-                .is_some_and(|id| !id.is_empty())
-                && object.contains_key("choices")
-        }
-    }
-}
-
-fn is_json_api_error(body: &str) -> bool {
-    serde_json::from_str::<Value>(body)
-        .ok()
-        .is_some_and(|value| is_json_api_error_value(&value))
-}
-
-fn is_json_api_error_value(value: &Value) -> bool {
-    value.get("error").is_some()
-        || (value.get("type").and_then(Value::as_str) == Some("error")
-            && value.get("message").is_some())
-}
-
-fn endpoint_join(base_url: &str, path: &str) -> anyhow::Result<reqwest::Url> {
-    let mut base_url = reqwest::Url::parse(base_url)?;
-    let base_path = base_url.path().trim_end_matches('/');
-    let path = if path.starts_with('/') {
-        path.to_owned()
-    } else {
-        format!("/{path}")
-    };
-    let endpoint_path = if base_path.is_empty()
-        || base_path == "/"
-        || path == base_path
-        || path.starts_with(&format!("{base_path}/"))
-    {
-        path
-    } else if let Some(base_without_version) = base_path.strip_suffix("/v1")
-        && (path == "/v1" || path.starts_with("/v1/"))
-    {
-        format!("{base_without_version}{path}")
-    } else {
-        format!("{base_path}{path}")
-    };
-    base_url.set_path(&endpoint_path);
-    Ok(base_url)
-}
-
-fn apply_inferred_custom_endpoint(
-    provider: &mut codex_mixin::provider::ProviderDefinition,
-    endpoint: InferredCustomProviderEndpoint,
-) {
-    provider.base_url = endpoint.base_url;
-    provider.protocol = endpoint.protocol;
-    provider.api_path = endpoint.api_path;
-    provider.model_source = ProviderModelSource::OpenAiCompatible {
-        path: endpoint.models_path,
-    };
-    provider.anthropic_version =
-        (endpoint.protocol == ProviderProtocol::AnthropicMessages).then(|| "2023-06-01".to_owned());
-}
-
 #[cfg(test)]
 mod tests {
     use std::sync::{
@@ -1567,7 +1203,22 @@ mod tests {
     use axum::routing::get;
     use codex_mixin::fusion::{FusionProfile, PanelToolsConfig};
 
+    use super::discovery::{endpoint_join, protocol_probe_body_matches};
     use super::*;
+
+    #[test]
+    fn official_provider_view_is_reserved_and_read_only() {
+        let provider = official_provider_view();
+
+        assert!(official_provider_is_available(Some("codex_oauth_proxy")));
+        assert!(!official_provider_is_available(Some("custom_only")));
+        assert!(!official_provider_is_available(None));
+        assert_eq!(provider["id"], "official");
+        assert_eq!(provider["kind"], "official");
+        assert_eq!(provider["display_name"], "OpenAI");
+        assert_eq!(provider["enabled"], true);
+        assert!(provider["selected_models"].as_array().unwrap().is_empty());
+    }
 
     #[test]
     fn baidu_oneapi_add_without_bridge_leaves_loopback_unset() {
@@ -1766,6 +1417,54 @@ mod tests {
         assert_eq!(discovered.usage.used, Some(12.5));
         assert_eq!(discovered.usage.limit, Some(50.0));
         assert_eq!(discovered.usage.remaining, Some(37.5));
+    }
+
+    #[test]
+    fn reorders_provider_ids_without_changing_provider_data() {
+        let mut first = codex_mixin::provider::custom_provider("first", "first-key");
+        first.selected_models = vec!["first-model".to_owned()];
+        let mut second = codex_mixin::provider::custom_provider("second", "second-key");
+        second.selected_models = vec!["second-model".to_owned()];
+        let mut config = StoredGatewayConfig {
+            providers: vec![first, second],
+            ..StoredGatewayConfig::default()
+        };
+
+        reorder_provider_ids(&mut config, &["second".to_owned(), "first".to_owned()]).unwrap();
+
+        assert_eq!(
+            config
+                .providers
+                .iter()
+                .map(|provider| provider.id.as_str())
+                .collect::<Vec<_>>(),
+            ["second", "first"]
+        );
+        assert_eq!(config.providers[0].selected_models, ["second-model"]);
+        assert_eq!(config.providers[1].selected_models, ["first-model"]);
+    }
+
+    #[test]
+    fn rejects_incomplete_or_duplicate_provider_orders() {
+        let first = codex_mixin::provider::custom_provider("first", "first-key");
+        let second = codex_mixin::provider::custom_provider("second", "second-key");
+        let mut config = StoredGatewayConfig {
+            providers: vec![first, second],
+            ..StoredGatewayConfig::default()
+        };
+
+        assert!(reorder_provider_ids(&mut config, &["first".to_owned()]).is_err());
+        assert!(
+            reorder_provider_ids(&mut config, &["first".to_owned(), "first".to_owned()]).is_err()
+        );
+        assert_eq!(
+            config
+                .providers
+                .iter()
+                .map(|provider| provider.id.as_str())
+                .collect::<Vec<_>>(),
+            ["first", "second"]
+        );
     }
 
     #[test]
@@ -1969,7 +1668,7 @@ mod tests {
             .await
             .unwrap_err()
             .to_string();
-        assert!(error.contains("no supported /v1 response endpoint"));
+        assert!(error.contains("failed for /v1/models and /models"));
         assert_eq!(provider.protocol, ProviderProtocol::OpenAiResponses);
         assert_eq!(provider.api_path, "/v1/responses");
     }
@@ -2085,8 +1784,9 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn does_not_probe_legacy_models_after_html_models_response() {
+    async fn falls_back_to_legacy_paths_after_v1_models_failure() {
         use axum::response::Html;
+        use axum::routing::post;
         let legacy_requests = Arc::new(AtomicUsize::new(0));
         let legacy_requests_for_handler = Arc::clone(&legacy_requests);
         let app = Router::new()
@@ -2098,7 +1798,16 @@ mod tests {
                 "/models",
                 get(move || {
                     legacy_requests_for_handler.fetch_add(1, Ordering::Relaxed);
-                    async { Html("<!doctype html><html>legacy</html>") }
+                    async { axum::Json(serde_json::json!({"data":[{"id":"legacy"}]})) }
+                }),
+            )
+            .route(
+                "/responses",
+                post(|| async {
+                    (
+                        axum::http::StatusCode::BAD_REQUEST,
+                        axum::Json(serde_json::json!({"error":{"message":"missing input"}})),
+                    )
                 }),
             );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
@@ -2109,17 +1818,57 @@ mod tests {
         let mut provider = codex_mixin::provider::custom_provider("community", "secret");
         provider.base_url = format!("http://{address}");
 
-        let error = detect_custom_provider_protocol(&provider)
+        let detected = detect_custom_provider_protocol(&provider)
             .await
-            .unwrap_err()
-            .to_string();
+            .unwrap()
+            .unwrap();
 
-        assert!(error.contains("requires a JSON /v1/models endpoint"));
-        assert_eq!(legacy_requests.load(Ordering::Relaxed), 0);
+        assert_eq!(detected.api_path, "/responses");
+        assert_eq!(detected.models_path, "/models");
+        assert_eq!(legacy_requests.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test]
-    async fn reports_models_api_errors_without_trying_legacy_paths() {
+    async fn falls_back_to_legacy_response_paths_after_v1_models_succeeds() {
+        use axum::routing::post;
+        let app = Router::new()
+            .route(
+                "/v1/models",
+                get(|| async { axum::Json(serde_json::json!({"data":[{"id":"model"}]})) }),
+            )
+            .route(
+                "/models",
+                get(|| async { axum::Json(serde_json::json!({"data":[{"id":"legacy"}]})) }),
+            )
+            .route(
+                "/responses",
+                post(|| async {
+                    (
+                        axum::http::StatusCode::BAD_REQUEST,
+                        axum::Json(serde_json::json!({"error":{"message":"missing input"}})),
+                    )
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut provider = codex_mixin::provider::custom_provider("community", "secret");
+        provider.base_url = format!("http://{address}");
+
+        let detected = detect_custom_provider_protocol(&provider)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(detected.api_path, "/responses");
+        assert_eq!(detected.models_path, "/models");
+    }
+
+    #[tokio::test]
+    async fn falls_back_to_legacy_paths_after_v1_models_api_error() {
+        use axum::routing::post;
         let legacy_requests = Arc::new(AtomicUsize::new(0));
         let legacy_requests_for_handler = Arc::clone(&legacy_requests);
         let app = Router::new()
@@ -2140,6 +1889,15 @@ mod tests {
                     legacy_requests_for_handler.fetch_add(1, Ordering::Relaxed);
                     async { axum::Json(serde_json::json!({"data": [{"id": "legacy"}]})) }
                 }),
+            )
+            .route(
+                "/responses",
+                post(|| async {
+                    (
+                        axum::http::StatusCode::BAD_REQUEST,
+                        axum::Json(serde_json::json!({"error":{"message":"missing input"}})),
+                    )
+                }),
             );
         let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
         let address = listener.local_addr().unwrap();
@@ -2149,13 +1907,14 @@ mod tests {
         let mut provider = codex_mixin::provider::custom_provider("community", "secret");
         provider.base_url = format!("http://{address}");
 
-        let error = detect_custom_provider_protocol(&provider)
+        let detected = detect_custom_provider_protocol(&provider)
             .await
-            .unwrap_err()
-            .to_string();
+            .unwrap()
+            .unwrap();
 
-        assert!(error.contains("invalid API key"));
-        assert_eq!(legacy_requests.load(Ordering::Relaxed), 0);
+        assert_eq!(detected.api_path, "/responses");
+        assert_eq!(detected.models_path, "/models");
+        assert_eq!(legacy_requests.load(Ordering::Relaxed), 1);
     }
 
     #[tokio::test]
@@ -2177,7 +1936,7 @@ mod tests {
             .unwrap_err()
             .to_string();
 
-        assert!(error.contains("requires a JSON /v1/models endpoint"));
+        assert!(error.contains("neither a valid /v1/models nor /models endpoint"));
     }
 
     #[test]

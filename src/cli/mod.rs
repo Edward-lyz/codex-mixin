@@ -47,8 +47,8 @@ use fusion_config::{delete_fusion_profile, get_fusion_profile, set_fusion_profil
 use maintenance::migrate_history;
 use metadata::{load_model_metadata_resolver, refresh_metadata};
 use providers::{
-    AddProviderOptions, UpdateProviderOptions, add_provider, discover_models,
-    discover_models_with_output, list_providers, remove_provider, select_models,
+    AddProviderOptions, TestProviderOptions, UpdateProviderOptions, add_provider, discover_models,
+    discover_models_with_output, list_providers, remove_provider, reorder_providers, select_models,
     set_provider_enabled, test_provider, update_provider,
 };
 use service::{init_tracing, logs, restart, start, stop};
@@ -657,11 +657,11 @@ enum ProviderCommand {
         base_url: Option<String>,
         #[arg(long)]
         website_url: Option<String>,
-        #[arg(long)]
+        #[arg(long, hide = true)]
         protocol: Option<String>,
-        #[arg(long)]
+        #[arg(long, hide = true)]
         api_path: Option<String>,
-        #[arg(long)]
+        #[arg(long, hide = true)]
         models_path: Option<String>,
         #[arg(long)]
         image_generation_path: Option<String>,
@@ -705,11 +705,11 @@ enum ProviderCommand {
         base_url: Option<String>,
         #[arg(long)]
         website_url: Option<String>,
-        #[arg(long)]
+        #[arg(long, hide = true)]
         protocol: Option<String>,
-        #[arg(long)]
+        #[arg(long, hide = true)]
         api_path: Option<String>,
-        #[arg(long)]
+        #[arg(long, hide = true)]
         models_path: Option<String>,
         #[arg(long)]
         image_generation_path: Option<String>,
@@ -753,6 +753,11 @@ enum ProviderCommand {
     Disable { id: String },
     /// Remove a provider.
     Remove { id: String },
+    /// Set the complete provider order.
+    Reorder {
+        #[arg(required = true)]
+        ids: Vec<String>,
+    },
     /// Refresh the provider model catalog.
     Discover { id: String },
     /// Test provider authentication and model access.
@@ -760,6 +765,14 @@ enum ProviderCommand {
         id: String,
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        key: Option<String>,
+        #[arg(long)]
+        base_url: Option<String>,
+        #[arg(long, value_name = "disabled|ducx_loopback")]
+        baidu_auth_bridge: Option<String>,
+        #[arg(long, value_name = "PATH")]
+        ducx_executable: Option<PathBuf>,
     },
     /// Select models exposed by a provider.
     Select {
@@ -1295,8 +1308,33 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 remove_provider(&id)?;
                 report_hook::sync_installation()
             }
+            ProviderCommand::Reorder { ids } => {
+                reorder_providers(ids)?;
+                report_hook::sync_installation()
+            }
             ProviderCommand::Discover { id } => discover_models(&id).await,
-            ProviderCommand::Test { id, json } => test_provider(&id, json).await,
+            ProviderCommand::Test {
+                id,
+                json,
+                key,
+                base_url,
+                baidu_auth_bridge,
+                ducx_executable,
+            } => {
+                let ducx_executable = match (baidu_auth_bridge.as_deref(), &ducx_executable) {
+                    (Some("ducx_loopback"), None) => Some(ensure_managed_ducx().await?),
+                    _ => ducx_executable,
+                };
+                test_provider(TestProviderOptions {
+                    id,
+                    json,
+                    key,
+                    base_url,
+                    baidu_auth_bridge,
+                    ducx_executable,
+                })
+                .await
+            }
             ProviderCommand::Select { id, models } => select_models(&id, models),
         },
         Command::Service { command } => match command {
