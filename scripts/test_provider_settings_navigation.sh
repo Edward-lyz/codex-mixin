@@ -18,6 +18,8 @@ xcrun swiftc \
   "$ROOT_DIR/macos/ProviderWindowLayoutSupport.swift" \
   "$ROOT_DIR/macos/AppOperationLogging.swift" \
   "$ROOT_DIR/macos/ProviderSettingsWindow.swift" \
+  "$ROOT_DIR/macos/BaiduAuthBridgeSupport.swift" \
+  "$ROOT_DIR/macos/ProviderSettingsPresentationSupport.swift" \
   "$ROOT_DIR/macos/tests/ProviderSettingsNavigationTests.swift" \
   -framework Cocoa \
   -o "$TEST_BINARY"

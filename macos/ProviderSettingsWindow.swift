@@ -294,7 +294,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         let managedConfigurationLabel = NSTextField(wrappingLabelWithString: AppLocalization.string("providerSettings.protocolsAndEndpointPathsAreDetectedAutomatically"))
         managedConfigurationLabel.textColor = .secondaryLabelColor
         managedConfigurationLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-        auxiliaryModelUpstreamButton.toolTip = auxiliaryModelDefaultTooltip()
+        auxiliaryModelUpstreamButton.toolTip = auxiliaryModelDefaultTooltip(for: codexInstallMode)
         let baiduAuthBridgeRow = compactLabeledView(
             AppLocalization.string("providerSettings.authBridge"),
             baiduAuthBridgePopup
@@ -548,7 +548,16 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         setBusy(true, status: "正在读取供应商…")
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { setBusy(false, status: selectedProviderStatus()) }
+            defer {
+                setBusy(
+                    false,
+                    status: selectedProviderStatus(
+                        provider: selectedProvider,
+                        providersEmpty: providers.isEmpty,
+                        codexInstallMode: codexInstallMode
+                    )
+                )
+            }
             do {
                 let previousID = providerID ?? selectedProvider?.id
                 let loaded = try await loadHandler()
@@ -620,7 +629,10 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             baiduAuthBridgePopup,
             provider.effectiveBaiduAuthBridge?.rawValue ?? BaiduAuthBridgeMode.disabled.rawValue
         )
-        auxiliaryModelUpstreamButton.toolTip = auxiliaryModelTooltip(for: provider)
+        auxiliaryModelUpstreamButton.toolTip = auxiliaryModelTooltip(
+            for: provider,
+            codexInstallMode: codexInstallMode
+        )
         baiduCodeReportButton.state = provider.baiduCodeReport == true ? .on : .off
         let isCustom = provider.presetID == "custom"
         customDisplayNameRow?.isHidden = !isCustom
@@ -635,7 +647,11 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         enableButton.title = provider.kind == .official
             ? "由登录模式管理"
             : provider.enabled ? "停用" : "启用"
-        statusLabel.stringValue = selectedProviderStatus()
+        statusLabel.stringValue = selectedProviderStatus(
+            provider: provider,
+            providersEmpty: providers.isEmpty,
+            codexInstallMode: codexInstallMode
+        )
         statusLabel.toolTip = provider.lastModelRefreshError
     }
 
@@ -656,7 +672,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         auxiliaryModelUpstreamButton.state = .off
         selectPopupValue(baiduAuthBridgePopup, BaiduAuthBridgeMode.disabled.rawValue)
         baiduCodeReportButton.state = .off
-        auxiliaryModelUpstreamButton.toolTip = auxiliaryModelDefaultTooltip()
+        auxiliaryModelUpstreamButton.toolTip = auxiliaryModelDefaultTooltip(for: codexInstallMode)
         statusLabel.stringValue = providers.isEmpty ? "等待新增 Provider" : "请选择 Provider"
         statusLabel.toolTip = nil
     }
@@ -702,86 +718,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             editable && selectedProvider?.quotaAuthCookieConfigured == true
     }
 
-    private func auxiliaryModelDefaultTooltip() -> String {
-        switch codexInstallMode {
-        case .customOnly:
-            return AppLocalization.string("providerSettings.onlyOneAuxiliaryModelProviderCanBe")
-        case .codexOAuthProxy:
-            return AppLocalization.string("providerSettings.onlyOneAuxiliaryModelProviderCanBe2")
-        case nil:
-            return AppLocalization.string("providerSettings.onlyOneAuxiliaryModelProviderCanBe3")
-        }
-    }
-
-    private func auxiliaryModelTooltip(for provider: ProviderView) -> String {
-        let capability: String
-        switch (codexInstallMode, provider.auxiliaryModelSupport) {
-        case (.customOnly, .none):
-            capability = AppLocalization.string("providerSettings.thisProviderSupportsNeitherAutoReviewNor")
-        case (.customOnly, .autoReviewOnly):
-            capability = AppLocalization.string("providerSettings.thisProviderSupportsAutoReviewOnlyVoice")
-        case (.customOnly, .voiceOnly):
-            capability = AppLocalization.string("providerSettings.thisProviderSupportsVoiceOnlyAutoReview")
-        case (.codexOAuthProxy, .none):
-            capability = AppLocalization.string("providerSettings.thisProviderOffersNeitherAutoReviewNor")
-        case (.codexOAuthProxy, .autoReviewOnly):
-            capability = AppLocalization.string("providerSettings.thisProviderOffersAutoReviewOnlyVoice")
-        case (.codexOAuthProxy, .voiceOnly):
-            capability = AppLocalization.string("providerSettings.thisProviderOffersVoiceOnlyAutoReview")
-        case (_, .none):
-            capability = AppLocalization.string("providerSettings.theCurrentModelCacheContainsNoAuto")
-        case (_, .autoReviewOnly):
-            capability = AppLocalization.string("providerSettings.thisProviderSupportsAutoReviewOnly")
-        case (_, .voiceOnly):
-            capability = AppLocalization.string("providerSettings.thisProviderSupportsVoiceOnly")
-        case (_, .autoReviewAndVoice):
-            capability = AppLocalization.string("providerSettings.thisProviderSupportsBothAutoReviewAnd")
-        }
-        return "\(capability)\n\n\(auxiliaryModelDefaultTooltip())"
-    }
-
-    private func auxiliaryModelStatus(for provider: ProviderView) -> String? {
-        switch (codexInstallMode, provider.auxiliaryModelSupport) {
-        case (.customOnly, .none):
-            return "辅助模型不可用：自动审查和语音均不支持"
-        case (_, .autoReviewOnly):
-            return "辅助模型：仅支持自动审查"
-        case (_, .voiceOnly):
-            return "辅助模型：仅支持语音"
-        case (.codexOAuthProxy, .none):
-            return "辅助模型：使用 OAuth 默认路由"
-        case (_, .none), (_, .autoReviewAndVoice):
-            return nil
-        }
-    }
-
-    private func selectedProviderStatus() -> String {
-        guard let provider = selectedProvider else {
-            return providers.isEmpty ? "等待新增 Provider" : "请选择 Provider"
-        }
-        if provider.kind == .official {
-            return "OpenAI 官方 OAuth 登录 · \(readinessLabel(provider.readiness)) · 跟随 Codex Mixin 安装模式 · 只读"
-        }
-        let refresh: String
-        if let milliseconds = provider.modelsRefreshedAtMilliseconds {
-            refresh = "模型缓存更新于 \(formatProviderTimestamp(milliseconds))"
-        } else {
-            refresh = "尚未在线刷新模型"
-        }
-        var details = [
-            "\(provider.routableModelCount) 个模型可路由",
-            "\(provider.newModels.count) 个新增",
-            "\(provider.unavailableSelectedModels.count) 个不可用",
-            refresh,
-        ]
-        if let auxiliaryStatus = auxiliaryModelStatus(for: provider) {
-            details.insert(auxiliaryStatus, at: 0)
-        }
-        if provider.lastModelRefreshError != nil {
-            details.append("上次刷新失败")
-        }
-        return details.joined(separator: " · ")
-    }
 
     @objc private func addProvider() {
         guard !isBusy, let window else { return }
@@ -867,7 +803,16 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         setBusy(true, status: "正在测试 \(provider.id)…")
         Task { @MainActor [weak self] in
             guard let self else { return }
-            defer { setBusy(false, status: selectedProviderStatus()) }
+            defer {
+                setBusy(
+                    false,
+                    status: selectedProviderStatus(
+                        provider: selectedProvider,
+                        providersEmpty: providers.isEmpty,
+                        codexInstallMode: codexInstallMode
+                    )
+                )
+            }
             do {
                 if provider.presetID == "baidu-oneapi",
                    selectedBridge == .ducxLoopback,
@@ -892,7 +837,11 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         guard let provider = selectedProvider, provider.presetID == "baidu-oneapi" else { return }
         let saved = provider.effectiveBaiduAuthBridge ?? .disabled
         if selectedBaiduAuthBridgeMode() == saved {
-            statusLabel.stringValue = selectedProviderStatus()
+            statusLabel.stringValue = selectedProviderStatus(
+                provider: provider,
+                providersEmpty: providers.isEmpty,
+                codexInstallMode: codexInstallMode
+            )
         } else {
             statusLabel.stringValue = "认证方式尚未保存；测试连接将使用当前选择，保存后才会写入配置"
         }
@@ -1084,7 +1033,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                     let executable = try await self.ensureBaiduBridgeAvailable(mode)
                     progress.advance(to: 1)
                     var arguments = ["providers", "update", provider.id]
-                    self.appendBaiduAuthBridgeArguments(
+                    appendBaiduAuthBridgeArguments(
                         &arguments,
                         mode: mode,
                         executable: executable
@@ -1140,7 +1089,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 ) { progress in
                     progress.advance(to: 0)
                     var arguments = ["providers", "update", providerID]
-                    self.appendBaiduAuthBridgeArguments(&arguments, mode: .disabled)
+                    appendBaiduAuthBridgeArguments(&arguments, mode: .disabled)
                     _ = try await self.runHandler(arguments)
                     try await self.applyHandler(progress)
                 }
@@ -1195,7 +1144,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                     var arguments = initialArguments
                     if let mode = requiresBaiduBridge, mode != .disabled {
                         let executable = try await self.ensureBaiduBridgeAvailable(mode)
-                        self.appendBaiduAuthBridgeExecutable(
+                        appendBaiduAuthBridgeExecutable(
                             &arguments,
                             mode: mode,
                             executable: executable
@@ -1231,33 +1180,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         ) ?? .disabled
     }
 
-    private func appendBaiduAuthBridgeArguments(
-        _ arguments: inout [String],
-        mode: BaiduAuthBridgeMode,
-        executable: URL? = nil
-    ) {
-        arguments.append(contentsOf: ["--baidu-auth-bridge", mode.rawValue])
-        if let executable {
-            appendBaiduAuthBridgeExecutable(
-                &arguments,
-                mode: mode,
-                executable: executable
-            )
-        }
-    }
-
-    private func appendBaiduAuthBridgeExecutable(
-        _ arguments: inout [String],
-        mode: BaiduAuthBridgeMode,
-        executable: URL
-    ) {
-        switch mode {
-        case .ducxLoopback:
-            arguments.append(contentsOf: ["--ducx-executable", executable.path])
-        case .disabled:
-            break
-        }
-    }
 
     private func ensureBaiduBridgeAvailable(_ mode: BaiduAuthBridgeMode) async throws -> URL {
         if let baiduBridgeSetupHandler {
@@ -1273,142 +1195,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     }
 }
 
-private func baiduBridgeDisplayName(_ mode: BaiduAuthBridgeMode) -> String {
-    switch mode {
-    case .disabled: return AppLocalization.string("providerSettings.authBridge2")
-    case .ducxLoopback: return "DUCX"
-    }
-}
-
-func managedDucxExecutableURL(
-    homeDirectory: URL = FileManager.default.homeDirectoryForCurrentUser
-) -> URL {
-    homeDirectory
-        .appendingPathComponent(
-            ".codex-mixin/ducx/home/.baidu-cx/baidu-cx/bin/ducx",
-            isDirectory: false
-        )
-}
-
-/// Run the managed DUCX install + QR login in a dedicated Terminal via the
-/// bundled `codex-mixin connect ducx`, then return the managed executable.
-private func setupDucxInTerminal() async throws -> URL {
-    guard let cli = Bundle.main.resourceURL?
-        .appendingPathComponent("codex-mixin")
-    else {
-        throw GatewayError.command("无法定位 codex-mixin 可执行文件。")
-    }
-    let executable = managedDucxExecutableURL()
-    let directory = FileManager.default.temporaryDirectory
-        .appendingPathComponent("codex-mixin-ducx-setup-\(UUID().uuidString)")
-    let script = directory.appendingPathComponent("Configure DUCX.command")
-    let loginStatus = directory.appendingPathComponent("login.status")
-    let terminalTitle = "Codex Mixin DUCX \(UUID().uuidString)"
-    try FileManager.default.createDirectory(
-        at: directory,
-        withIntermediateDirectories: true,
-        attributes: [.posixPermissions: 0o700]
-    )
-    var setupCompleted = false
-    defer {
-        if setupCompleted {
-            try? FileManager.default.removeItem(at: directory)
-        } else {
-            DispatchQueue.global(qos: .utility).asyncAfter(deadline: .now() + 60) {
-                try? FileManager.default.removeItem(at: directory)
-            }
-        }
-    }
-    let contents = """
-    #!/bin/zsh
-    printf '\\033]0;\(terminalTitle)\\007'
-    echo 'Codex Mixin — DUCX 隔离下载与扫码登录'
-    echo '================================'
-    \(shellQuoted(cli.path)) connect ducx
-    login_result=$?
-    printf '%s' "$login_result" > \(shellQuoted(loginStatus.path))
-    if [[ "$login_result" -ne 0 ]]; then
-      echo
-      echo "DUCX 配置失败（退出码 $login_result）。按任意键关闭。"
-      read -k 1
-      exit "$login_result"
-    fi
-    echo 'DUCX 配置完成，正在返回 Codex Mixin 应用...'
-    (
-      sleep 1
-      /usr/bin/osascript \\
-        -e 'tell application "Terminal"' \\
-        -e 'repeat with candidateWindow in windows' \\
-        -e 'if name of candidateWindow contains "\(terminalTitle)" then close candidateWindow' \\
-        -e 'end repeat' \\
-        -e 'end tell'
-    ) >/dev/null 2>&1 &!
-    exit 0
-    """
-    try contents.write(to: script, atomically: true, encoding: .utf8)
-    try FileManager.default.setAttributes(
-        [.posixPermissions: 0o700],
-        ofItemAtPath: script.path
-    )
-    guard NSWorkspace.shared.open(script) else {
-        throw GatewayError.command("无法打开 Terminal 配置 DUCX。")
-    }
-    let loginResult = try await waitForBridgeStatus(
-        at: loginStatus,
-        stage: "DUCX 登录",
-        timeoutSeconds: 1_800
-    )
-    guard loginResult == 0 else {
-        throw GatewayError.command("DUCX 配置未成功完成（退出码 \(loginResult)）。")
-    }
-    guard FileManager.default.isExecutableFile(atPath: executable.path) else {
-        throw GatewayError.command("DUCX 配置完成，但托管入口不可执行。")
-    }
-    setupCompleted = true
-    return executable
-}
-
-private func waitForBridgeStatus(
-    at status: URL,
-    stage: String,
-    timeoutSeconds: Int
-) async throws -> Int32 {
-    for _ in 0..<(timeoutSeconds * 4) {
-        if let value = try? String(contentsOf: status, encoding: .utf8)
-            .trimmingCharacters(in: .whitespacesAndNewlines),
-           let result = Int32(value)
-        {
-            return result
-        }
-        try await Task.sleep(nanoseconds: 250_000_000)
-    }
-    throw GatewayError.command("等待\(stage)超时。")
-}
-
-private func shellQuoted(_ value: String) -> String {
-    "'" + value.replacingOccurrences(of: "'", with: "'\\''") + "'"
-}
-
-func formatProviderTimestamp(_ milliseconds: UInt64) -> String {
-    let date = Date(timeIntervalSince1970: TimeInterval(milliseconds) / 1_000)
-    let formatter = DateFormatter()
-    formatter.dateStyle = .short
-    formatter.timeStyle = .short
-    return formatter.string(from: date)
-}
-
-func readinessLabel(_ readiness: String) -> String {
-    switch readiness {
-    case "healthy":
-        return "正常"
-    case "degraded":
-        return "降级"
-    case "disabled":
-        return "停用"
-    default:
-        return readiness
-    }
-}
 
 func compactLabeledView(_ title: String, _ field: NSView) -> NSView {
     let label = NSTextField(labelWithString: title)
