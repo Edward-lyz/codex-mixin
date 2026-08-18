@@ -88,7 +88,9 @@ xcrun swiftc \
   "$ROOT_DIR/macos/ProviderSettingsWindow.swift" \
   "$ROOT_DIR/macos/MenuViewUpdateSupport.swift" \
   "$ROOT_DIR/macos/AppOperationLogging.swift" \
-  "$ROOT_DIR/macos/MenuViews.swift" \
+  "$ROOT_DIR/macos/ServiceMenuViews.swift" \
+  "$ROOT_DIR/macos/ProviderUsageDashboardView.swift" \
+  "$ROOT_DIR/macos/MenuVisualSupport.swift" \
   "$ROOT_DIR/macos/AboutWindow.swift" \
   "$ROOT_DIR/macos/InstallCard.swift" \
   "$ROOT_DIR/macos/InstallCodexPanel.swift" \
