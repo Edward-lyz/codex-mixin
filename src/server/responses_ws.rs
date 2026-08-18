@@ -140,8 +140,21 @@ async fn handle_official_ws_request(
                 return Ok(());
             }
         };
-    let request_error =
-        proxy_official_ws_request(context, &mut body, model, &mut request_history).await?;
+    let effective_body = effective_official_cache_body(&body, request_history.as_deref());
+    let observation = super::responses_http::official_prefix_observation(
+        context.state,
+        context.headers,
+        &effective_body,
+    )?;
+    let mut usage_observer = observation.map(crate::gateway::UpstreamCacheObserver::new);
+    let request_error = proxy_official_ws_request(
+        context,
+        &mut body,
+        model,
+        &mut request_history,
+        &mut usage_observer,
+    )
+    .await?;
     if let Some((error, response_id)) = request_error {
         *context.official_state = None;
         tracing::warn!(model, error = %error, "official responses websocket request failed");
@@ -230,6 +243,7 @@ async fn proxy_official_ws_request(
     body: &mut Value,
     model: &str,
     request_history: &mut Option<Vec<Value>>,
+    usage_observer: &mut Option<crate::gateway::UpstreamCacheObserver>,
 ) -> anyhow::Result<Option<(anyhow::Error, Option<String>)>> {
     let mut retry_available = true;
     loop {
@@ -258,6 +272,7 @@ async fn proxy_official_ws_request(
             context.client_sender,
             body,
             context.state.config.request_timeout,
+            usage_observer.as_mut(),
         )
         .await
         {
@@ -372,6 +387,7 @@ async fn proxy_official_responses_ws(
     client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
     body: &Value,
     idle_timeout: Duration,
+    mut usage_observer: Option<&mut crate::gateway::UpstreamCacheObserver>,
 ) -> Result<OfficialWebSocketResponse, OfficialWebSocketRequestError> {
     tokio::time::timeout(
         idle_timeout,
@@ -424,6 +440,11 @@ async fn proxy_official_responses_ws(
             }
             _ => None,
         };
+        if let Some(event) = event.as_ref()
+            && let Some(observer) = usage_observer.as_deref_mut()
+        {
+            observer.observe_value(event);
+        }
         if response_id.is_none() {
             response_id = event
                 .as_ref()
@@ -529,6 +550,17 @@ async fn proxy_official_responses_ws(
             });
         }
     }
+}
+
+fn effective_official_cache_body(body: &Value, request_history: Option<&[Value]>) -> Value {
+    let mut effective = body.clone();
+    if let Some(request_history) = request_history {
+        effective["input"] = Value::Array(request_history.to_vec());
+        if let Some(effective) = effective.as_object_mut() {
+            effective.remove("previous_response_id");
+        }
+    }
+    effective
 }
 
 fn parse_official_ws_event(bytes: &[u8], response_id: Option<&str>) -> Option<Value> {
@@ -835,5 +867,32 @@ fn tungstenite_to_axum_message(message: TungsteniteMessage) -> Option<AxumWsMess
         TungsteniteMessage::Pong(bytes) => Some(AxumWsMessage::Pong(bytes)),
         TungsteniteMessage::Close(_) => Some(AxumWsMessage::Close(None)),
         TungsteniteMessage::Frame(_) => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn official_cache_shape_expands_history_without_rewriting_wire_request() {
+        let body = json!({
+            "type": "response.create",
+            "model": "gpt-5.6-sol",
+            "previous_response_id": "resp_1",
+            "input": [{"type":"message","role":"user","content":"next"}]
+        });
+        let history = vec![
+            json!({"type":"message","role":"user","content":"first"}),
+            json!({"type":"message","role":"assistant","content":"answer"}),
+            json!({"type":"message","role":"user","content":"next"}),
+        ];
+
+        let effective = effective_official_cache_body(&body, Some(&history));
+
+        assert_eq!(body["previous_response_id"], "resp_1");
+        assert_eq!(body["input"].as_array().unwrap().len(), 1);
+        assert!(effective.get("previous_response_id").is_none());
+        assert_eq!(effective["input"].as_array().unwrap(), &history);
     }
 }

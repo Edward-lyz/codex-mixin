@@ -9,18 +9,18 @@
 
 use std::collections::HashMap;
 use std::io::Write;
-use std::path::PathBuf;
 use std::sync::{Arc, Mutex, PoisonError};
 
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
-use rusqlite::{Connection, params};
 use serde::Serialize;
 use serde_json::Value;
 
 use crate::anthropic::MessageRequest;
 use crate::sse::SseDecoder;
 use crate::upstream::UpstreamRouting;
+
+use super::cache_usage::{ProviderTokenUsage, TokenUsageAggregator, UpstreamCacheUsage};
 
 pub(crate) const ANTHROPIC_MESSAGES: &str = "anthropic_messages";
 pub(crate) const OPENAI_CHAT: &str = "openai_chat";
@@ -42,220 +42,6 @@ const MIN_TURNS_FOR_REPLACED_HISTORY: usize = 8;
 
 const FNV_OFFSET: u64 = 0xcbf2_9ce4_8422_2325;
 const FNV_PRIME: u64 = 0x0000_0100_0000_01b3;
-
-/// Provider-level token and prompt cache counters observed on upstream
-/// responses, kept compact so the menu can visualize usage without retaining
-/// request bodies or history.
-#[derive(Clone, Debug, Default, Serialize)]
-pub(crate) struct ProviderTokenUsage {
-    pub(crate) provider_id: String,
-    pub(crate) model_id: String,
-    pub(crate) request_count: u64,
-    pub(crate) input_tokens: u64,
-    pub(crate) cache_read_tokens: u64,
-    pub(crate) cache_creation_tokens: u64,
-    pub(crate) output_tokens: u64,
-    pub(crate) cache_hit_percent: Option<f64>,
-    #[serde(skip)]
-    pub(crate) observed_cache_read_tokens: u64,
-    #[serde(skip)]
-    pub(crate) observed_uncached_input_tokens: u64,
-}
-
-#[derive(Debug, Default)]
-struct TokenUsageState {
-    entries: HashMap<(String, String), ProviderTokenUsage>,
-}
-
-fn load_persisted_usage(
-    path: &std::path::Path,
-) -> anyhow::Result<HashMap<(String, String), ProviderTokenUsage>> {
-    let connection = Connection::open(path)?;
-    connection.execute_batch(
-        "CREATE TABLE IF NOT EXISTS token_usage (
-            provider_id TEXT NOT NULL,
-            model_id TEXT NOT NULL,
-            request_count INTEGER NOT NULL,
-            input_tokens INTEGER NOT NULL,
-            cache_read_tokens INTEGER NOT NULL,
-            cache_creation_tokens INTEGER NOT NULL,
-            output_tokens INTEGER NOT NULL,
-            observed_cache_read_tokens INTEGER NOT NULL,
-            observed_uncached_input_tokens INTEGER NOT NULL,
-            PRIMARY KEY (provider_id, model_id)
-        )",
-    )?;
-    let mut statement = connection.prepare(
-        "SELECT provider_id, model_id, request_count, input_tokens, cache_read_tokens,
-                cache_creation_tokens, output_tokens, observed_cache_read_tokens,
-                observed_uncached_input_tokens
-         FROM token_usage",
-    )?;
-    let rows = statement.query_map([], |row| {
-        let provider_id = row.get::<_, String>(0)?;
-        let model_id = row.get::<_, String>(1)?;
-        Ok((
-            (provider_id.clone(), model_id.clone()),
-            ProviderTokenUsage {
-                provider_id,
-                model_id,
-                request_count: row.get(2)?,
-                input_tokens: row.get(3)?,
-                cache_read_tokens: row.get(4)?,
-                cache_creation_tokens: row.get(5)?,
-                output_tokens: row.get(6)?,
-                cache_hit_percent: None,
-                observed_cache_read_tokens: row.get(7)?,
-                observed_uncached_input_tokens: row.get(8)?,
-            },
-        ))
-    })?;
-    Ok(rows.collect::<Result<HashMap<_, _>, _>>()?)
-}
-
-fn persist_usage_delta(
-    path: &std::path::Path,
-    provider_id: &str,
-    model_id: &str,
-    usage: &UpstreamCacheUsage,
-) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        std::fs::create_dir_all(parent)?;
-    }
-    let connection = Connection::open(path)?;
-    connection.execute_batch(
-        "PRAGMA journal_mode = WAL;
-         PRAGMA synchronous = NORMAL;
-         CREATE TABLE IF NOT EXISTS token_usage (
-            provider_id TEXT NOT NULL,
-            model_id TEXT NOT NULL,
-            request_count INTEGER NOT NULL,
-            input_tokens INTEGER NOT NULL,
-            cache_read_tokens INTEGER NOT NULL,
-            cache_creation_tokens INTEGER NOT NULL,
-            output_tokens INTEGER NOT NULL,
-            observed_cache_read_tokens INTEGER NOT NULL,
-            observed_uncached_input_tokens INTEGER NOT NULL,
-            PRIMARY KEY (provider_id, model_id)
-         )",
-    )?;
-    connection.execute(
-        "INSERT INTO token_usage (
-            provider_id, model_id, request_count, input_tokens, cache_read_tokens,
-            cache_creation_tokens, output_tokens, observed_cache_read_tokens,
-            observed_uncached_input_tokens
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
-         ON CONFLICT(provider_id, model_id) DO UPDATE SET
-            request_count = token_usage.request_count + excluded.request_count,
-            input_tokens = token_usage.input_tokens + excluded.input_tokens,
-            cache_read_tokens = token_usage.cache_read_tokens + excluded.cache_read_tokens,
-            cache_creation_tokens = token_usage.cache_creation_tokens + excluded.cache_creation_tokens,
-            output_tokens = token_usage.output_tokens + excluded.output_tokens,
-            observed_cache_read_tokens = token_usage.observed_cache_read_tokens + excluded.observed_cache_read_tokens,
-            observed_uncached_input_tokens = token_usage.observed_uncached_input_tokens + excluded.observed_uncached_input_tokens",
-        params![
-            provider_id,
-            model_id,
-            1_u64,
-            usage.input_tokens.unwrap_or(0),
-            usage.cache_read_tokens.unwrap_or(0),
-            usage.cache_creation_tokens.unwrap_or(0),
-            usage.output_tokens.unwrap_or(0),
-            usage.cache_read_tokens.unwrap_or(0),
-            usage.input_tokens.unwrap_or(0)
-                .saturating_add(usage.cache_creation_tokens.unwrap_or(0)),
-        ],
-    )?;
-    Ok(())
-}
-
-/// In-memory aggregate of the counters seen on streamed provider responses.
-#[derive(Debug, Default)]
-pub(crate) struct TokenUsageAggregator {
-    state: Mutex<TokenUsageState>,
-    persist_path: Option<PathBuf>,
-}
-
-impl TokenUsageAggregator {
-    pub(crate) fn try_from_default_path() -> anyhow::Result<Self> {
-        let path = crate::config::stored_config_path()
-            .parent()
-            .map(|parent| parent.join("usage.sqlite3"));
-        let entries = match path.as_deref() {
-            Some(path) if path.exists() => load_persisted_usage(path)?,
-            _ => HashMap::new(),
-        };
-        Ok(Self {
-            state: Mutex::new(TokenUsageState { entries }),
-            persist_path: path,
-        })
-    }
-
-    fn record(&self, provider_id: &str, model_id: &str, usage: &UpstreamCacheUsage) {
-        let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
-        let entry = state
-            .entries
-            .entry((provider_id.to_owned(), model_id.to_owned()))
-            .or_default();
-        entry.provider_id = provider_id.to_owned();
-        entry.model_id = model_id.to_owned();
-        entry.request_count = entry.request_count.saturating_add(1);
-        entry.input_tokens = entry
-            .input_tokens
-            .saturating_add(usage.input_tokens.unwrap_or(0));
-        entry.cache_read_tokens = entry
-            .cache_read_tokens
-            .saturating_add(usage.cache_read_tokens.unwrap_or(0));
-        entry.cache_creation_tokens = entry
-            .cache_creation_tokens
-            .saturating_add(usage.cache_creation_tokens.unwrap_or(0));
-        entry.output_tokens = entry
-            .output_tokens
-            .saturating_add(usage.output_tokens.unwrap_or(0));
-        if let (Some(cache_read), Some(uncached)) = (usage.cache_read_tokens, usage.input_tokens) {
-            entry.observed_cache_read_tokens =
-                entry.observed_cache_read_tokens.saturating_add(cache_read);
-            entry.observed_uncached_input_tokens = entry
-                .observed_uncached_input_tokens
-                .saturating_add(uncached)
-                .saturating_add(usage.cache_creation_tokens.unwrap_or(0));
-        }
-        if let Some(path) = self.persist_path.clone() {
-            let provider_id = provider_id.to_owned();
-            let model_id = model_id.to_owned();
-            let usage = *usage;
-            tokio::task::spawn_blocking(move || {
-                if let Err(error) = persist_usage_delta(&path, &provider_id, &model_id, &usage) {
-                    tracing::warn!(error = %error, "failed to persist token usage");
-                }
-            });
-        }
-    }
-
-    pub(crate) fn snapshot(&self) -> Vec<ProviderTokenUsage> {
-        let mut entries = self
-            .state
-            .lock()
-            .unwrap_or_else(PoisonError::into_inner)
-            .entries
-            .values()
-            .cloned()
-            .collect::<Vec<_>>();
-        for entry in &mut entries {
-            let observed = entry
-                .observed_cache_read_tokens
-                .saturating_add(entry.observed_uncached_input_tokens);
-            entry.cache_hit_percent = (observed > 0)
-                .then(|| entry.observed_cache_read_tokens as f64 / observed as f64 * 100.0);
-        }
-        entries.sort_by(|left, right| {
-            left.provider_id
-                .cmp(&right.provider_id)
-                .then_with(|| left.model_id.cmp(&right.model_id))
-        });
-        entries
-    }
-}
 
 /// Streaming FNV-1a sink. Serializing straight into the hasher keeps the digest
 /// over the same bytes `reqwest` sends without buffering a second copy of the
@@ -993,84 +779,38 @@ impl PrefixObservation {
     }
 }
 
-/// Provider cache counters observed on a streamed response. Each protocol names
-/// them differently, so they are normalised to uncached input plus cache reads.
-#[derive(Clone, Copy, Debug, Default, Eq, PartialEq)]
-pub(crate) struct UpstreamCacheUsage {
-    pub(crate) input_tokens: Option<u64>,
-    pub(crate) cache_read_tokens: Option<u64>,
-    pub(crate) cache_creation_tokens: Option<u64>,
-    pub(crate) output_tokens: Option<u64>,
-}
-
-impl UpstreamCacheUsage {
-    fn absorb(&mut self, usage: &Value) {
-        // Anthropic Messages reports uncached input directly; DeepSeek and other
-        // Chat Completions upstreams split it into hit and miss counters, and
-        // OpenAI Responses nests the hit inside `input_tokens_details`.
-        let nested_cached = |parent: &str| {
-            usage
-                .get(parent)
-                .and_then(|details| details.get("cached_tokens"))
-                .and_then(Value::as_u64)
-        };
-        let field = |name: &str| usage.get(name).and_then(Value::as_u64);
-        let cache_read = field("cache_read_input_tokens")
-            .or_else(|| field("prompt_cache_hit_tokens"))
-            .or_else(|| nested_cached("prompt_tokens_details"))
-            .or_else(|| nested_cached("input_tokens_details"));
-        if let Some(cache_read) = cache_read {
-            self.cache_read_tokens = Some(cache_read);
-        }
-        // `prompt_tokens` counts the whole prompt including cache reads, so the
-        // uncached part has to be derived to stay comparable across protocols.
-        let input = field("prompt_cache_miss_tokens")
-            .or_else(|| {
-                field("prompt_tokens")
-                    .map(|prompt| prompt.saturating_sub(self.cache_read_tokens.unwrap_or(0)))
-            })
-            .or_else(|| {
-                field("input_tokens").map(|input| {
-                    if usage.get("input_tokens_details").is_some() {
-                        input.saturating_sub(self.cache_read_tokens.unwrap_or(0))
-                    } else {
-                        input
-                    }
-                })
-            });
-        if let Some(input) = input {
-            self.input_tokens = Some(input);
-        }
-        if let Some(created) = field("cache_creation_input_tokens") {
-            self.cache_creation_tokens = Some(created);
-        }
-        if let Some(output) = field("output_tokens").or_else(|| field("completion_tokens")) {
-            self.output_tokens = Some(output);
-        }
-    }
-
-    /// True once the prompt accounting is actually populated. Anthropic sends a
-    /// zeroed `usage` on `message_start` and the real counts on `message_delta`,
-    /// so reporting on the first `usage` seen would score every turn as a miss.
-    fn observed(&self) -> bool {
-        [self.input_tokens, self.cache_read_tokens]
-            .into_iter()
-            .flatten()
-            .any(|value| value > 0)
-    }
-}
-
 /// Holds the counters until the upstream stream is done with them. Anthropic
 /// upstreams send a partial `usage` frame before the final one, so a verdict
 /// taken on the first non-zero counter scores a cache hit as a miss. Reporting
 /// from `Drop` covers both endings that occur in practice: the stream running to
 /// completion, and a downstream mapper stopping once it sees the terminal event.
-struct CacheUsageReport {
+pub(crate) struct UpstreamCacheObserver {
     observation: PrefixObservation,
     usage: UpstreamCacheUsage,
 }
 
-impl Drop for CacheUsageReport {
+impl UpstreamCacheObserver {
+    pub(crate) fn new(observation: PrefixObservation) -> Self {
+        Self {
+            observation,
+            usage: UpstreamCacheUsage::default(),
+        }
+    }
+
+    pub(crate) fn observe_value(&mut self, value: &Value) {
+        for path in [
+            value,
+            value.get("message").unwrap_or(&Value::Null),
+            value.get("response").unwrap_or(&Value::Null),
+        ] {
+            if let Some(usage) = path.get("usage") {
+                self.usage.absorb(usage);
+            }
+        }
+    }
+}
+
+impl Drop for UpstreamCacheObserver {
     fn drop(&mut self) {
         if self.usage.observed() {
             self.observation.report_upstream_cache(&self.usage);
@@ -1091,10 +831,7 @@ where
 {
     async_stream::stream! {
         let mut decoder = SseDecoder::default();
-        let mut report = observation.map(|observation| CacheUsageReport {
-            observation,
-            usage: UpstreamCacheUsage::default(),
-        });
+        let mut report = observation.map(UpstreamCacheObserver::new);
         tokio::pin!(upstream);
         while let Some(chunk) = upstream.next().await {
             if let Ok(bytes) = &chunk
@@ -1104,15 +841,7 @@ where
                     let Ok(data) = serde_json::from_str::<Value>(&event.data) else {
                         continue;
                     };
-                    for path in [
-                        &data,
-                        data.get("message").unwrap_or(&Value::Null),
-                        data.get("response").unwrap_or(&Value::Null),
-                    ] {
-                        if let Some(found) = path.get("usage") {
-                            report.usage.absorb(found);
-                        }
-                    }
+                    report.observe_value(&data);
                 }
             }
             yield chunk;
@@ -1946,5 +1675,49 @@ mod tests {
         );
         assert_eq!(responses.cache_read_tokens, Some(3_500));
         assert_eq!(responses.input_tokens, Some(500));
+    }
+
+    #[test]
+    fn official_observer_records_responses_token_and_cache_usage() {
+        let tracker = CacheShapeTracker::with_usage(TokenUsageAggregator::default());
+        let request = json!({
+            "model": "gpt-5.6-sol",
+            "instructions": "stable",
+            "tools": [],
+            "input": [{"type":"message","role":"user","content":"hello"}]
+        });
+        let routing = UpstreamRouting {
+            session_id: "thread-1".to_owned(),
+            hash_key: "hash-1".to_owned(),
+        };
+        let observation = record_provider_prefix(
+            &tracker,
+            "official",
+            "gpt-5.6-sol",
+            "gpt-5.6-sol",
+            Some(&routing),
+            CacheShape::from_openai_responses(&request),
+        )
+        .unwrap();
+        let mut observer = UpstreamCacheObserver::new(observation);
+        observer.observe_value(&json!({
+            "type": "response.completed",
+            "response": {
+                "usage": {
+                    "input_tokens": 120,
+                    "input_tokens_details": {"cached_tokens": 80},
+                    "output_tokens": 30
+                }
+            }
+        }));
+        drop(observer);
+
+        let usage = tracker.usage_snapshot();
+        assert_eq!(usage.len(), 1);
+        assert_eq!(usage[0].provider_id, "official");
+        assert_eq!(usage[0].model_id, "gpt-5.6-sol");
+        assert_eq!(usage[0].input_tokens, 40);
+        assert_eq!(usage[0].cache_read_tokens, 80);
+        assert_eq!(usage[0].output_tokens, 30);
     }
 }

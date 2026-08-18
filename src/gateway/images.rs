@@ -37,6 +37,7 @@ pub(crate) async fn normalize_provider_images_blocking(
     mut value: Value,
 ) -> Result<(Value, ImageNormalizationStats), GatewayError> {
     run_image_work(move || {
+        canonicalize_provider_json(&mut value);
         let stats =
             normalize_provider_images_with_profile(&mut value, ImageCompressionProfile::Primary)?;
         Ok((value, stats))

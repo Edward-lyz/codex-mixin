@@ -112,6 +112,7 @@ async fn forward_official_responses(
     headers: &HeaderMap,
     body: Value,
 ) -> Result<Response, GatewayError> {
+    let observation = official_prefix_observation(state, headers, &body)?;
     let (authorization, account_id) = state.official_auth().await.map_err(GatewayError::Other)?;
     let mut upstream = send_official_responses(
         state,
@@ -153,7 +154,9 @@ async fn forward_official_responses(
         .status(status)
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, "no-cache")
-        .body(Body::from_stream(upstream.bytes_stream()))
+        .body(Body::from_stream(
+            crate::gateway::observe_upstream_cache_usage(upstream.bytes_stream(), observation),
+        ))
         .map_err(|err| GatewayError::Other(err.into()))
 }
 
@@ -186,6 +189,7 @@ pub(crate) async fn stream_official_response(
         .and_then(Value::as_str)
         .unwrap_or("official")
         .to_owned();
+    let observation = official_prefix_observation(state, headers, body)?;
     let (authorization, account_id) = state.official_auth().await.map_err(GatewayError::Other)?;
     let mut upstream = send_official_responses(
         state,
@@ -218,7 +222,11 @@ pub(crate) async fn stream_official_response(
         });
     }
     let stream = async_stream::stream! {
-        let mut upstream = upstream.bytes_stream();
+        let upstream = crate::gateway::observe_upstream_cache_usage(
+            upstream.bytes_stream(),
+            observation,
+        );
+        tokio::pin!(upstream);
         while let Some(chunk) = upstream.next().await {
             match chunk {
                 Ok(bytes) => yield Ok::<Bytes, Infallible>(bytes),
@@ -240,4 +248,24 @@ pub(crate) async fn stream_official_response(
         }
     };
     Ok(stream.boxed())
+}
+
+pub(super) fn official_prefix_observation(
+    state: &AppState,
+    headers: &HeaderMap,
+    body: &Value,
+) -> Result<Option<crate::gateway::PrefixObservation>, GatewayError> {
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?;
+    let routing = stable_oneapi_routing(headers, body)?;
+    Ok(crate::gateway::record_provider_prefix(
+        &state.cache_shapes,
+        "official",
+        model,
+        model,
+        routing.as_ref(),
+        crate::gateway::CacheShape::from_openai_responses(body),
+    ))
 }

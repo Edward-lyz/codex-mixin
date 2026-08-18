@@ -4,10 +4,7 @@ use axum::http::HeaderMap;
 use bytes::Bytes;
 use futures_util::StreamExt;
 
-use super::images::{
-    canonicalize_provider_json, normalize_provider_images_blocking,
-    normalize_provider_images_for_fallback,
-};
+use super::images::{normalize_provider_images_blocking, normalize_provider_images_for_fallback};
 use super::{RequestPlan, UpstreamTarget};
 use crate::compaction::TOKEN_PREFIX;
 use crate::error::GatewayError;
@@ -42,6 +39,17 @@ impl<'a> UpstreamExecutor<'a> {
     ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
         if matches!(&plan.target, UpstreamTarget::Provider { .. }) {
             plan.body = prepare_provider_body(plan.body).await?;
+        } else {
+            let (body, image_stats) = normalize_provider_images_blocking(plan.body).await?;
+            if image_stats.normalized_images > 0 || image_stats.omitted_tool_images > 0 {
+                tracing::info!(
+                    normalized_images = image_stats.normalized_images,
+                    omitted_tool_images = image_stats.omitted_tool_images,
+                    saved_image_bytes = image_stats.saved_bytes,
+                    "normalized official image payloads for cache-stable replay"
+                );
+            }
+            plan.body = body;
         }
         match plan.target {
             UpstreamTarget::Official => {
@@ -153,7 +161,6 @@ async fn prepare_provider_body(
             }
         }
     }
-    canonicalize_provider_json(&mut body);
     let (body, image_stats) = normalize_provider_images_blocking(body).await?;
     if image_stats.normalized_images > 0 || image_stats.omitted_tool_images > 0 {
         tracing::info!(
