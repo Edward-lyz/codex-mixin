@@ -16,7 +16,6 @@ use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde_json::{Value, json};
 use tokio_tungstenite_proxy::tungstenite::Message as TungsteniteMessage;
-use tokio_tungstenite_proxy::tungstenite::client::IntoClientRequest;
 use tokio_tungstenite_proxy::{MaybeTlsStream, WebSocketStream};
 use tower_http::decompression::RequestDecompressionLayer;
 use uuid::Uuid;
