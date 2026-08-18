@@ -1,3 +1,4 @@
+mod app_server;
 mod catalog;
 mod imagegen_skill;
 mod install;
@@ -5,6 +6,7 @@ mod managed_auth;
 mod managed_config;
 mod skill_guard;
 
+pub(super) use app_server::*;
 pub(super) use catalog::*;
 pub(super) use imagegen_skill::*;
 pub(super) use install::*;
