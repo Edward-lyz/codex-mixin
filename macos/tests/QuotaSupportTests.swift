@@ -57,6 +57,28 @@ struct QuotaSupportTests {
         precondition(structured[0].providerLabel == "OpenCode Go")
         precondition(structured[0].quotaID == "weekly")
         precondition(structured[0].label == "Weekly")
+        let official = try parseProviderQuotaUsage(
+            """
+            [{
+              "provider_id": "official",
+              "provider_display_name": "OpenAI",
+              "display_name": "OpenAI Codex 5h",
+              "quota_id": "codex.primary",
+              "label": "Codex · 5h",
+              "used": 25,
+              "limit": 100,
+              "remaining": 75,
+              "reset_at": "2024-11-07T00:00:00Z"
+            }]
+            """
+        )
+        precondition(official[0].providerID == "official")
+        precondition(official[0].providerLabel == "OpenAI")
+        precondition(official[0].quotaID == "codex.primary")
+        precondition(official[0].label == "Codex · 5h")
+        precondition(official[0].used == 25)
+        precondition(official[0].limit == 100)
+        precondition(official[0].resetAt == "2024-11-07T00:00:00Z")
         print("Provider quota labels: passed")
 
         let tokenUsages = try parseProviderTokenUsage(

@@ -186,6 +186,32 @@ struct MenuViewsLayoutTests {
             ]
             """
         )
+        let disabledQuota = try parseProviderQuotaUsage(
+            """
+            [{
+              "provider_id": "disabled-provider",
+              "provider_display_name": "Disabled Provider",
+              "quota_id": "quota",
+              "used": 90,
+              "limit": 100,
+              "remaining": 10
+            }]
+            """
+        )
+        let disabledTokenUsage = try parseProviderTokenUsage(
+            """
+            [{
+              "provider_id": "disabled-provider",
+              "model_id": "stale-model",
+              "request_count": 9,
+              "input_tokens": 900,
+              "cache_read_tokens": 0,
+              "cache_creation_tokens": 0,
+              "output_tokens": 90,
+              "cache_hit_percent": null
+            }]
+            """
+        )
         let dashboard = ProviderUsageDashboardView()
         dashboard.updateConfiguredProviders([
             ProviderDashboardProvider(id: "baidu-oneapi", displayName: "Baidu OneAPI"),
@@ -193,9 +219,14 @@ struct MenuViewsLayoutTests {
             ProviderDashboardProvider(id: "deepseek", displayName: "DeepSeek"),
             ProviderDashboardProvider(id: "custom-2", displayName: "AIHub"),
             ProviderDashboardProvider(id: "idle-provider", displayName: "Idle Provider"),
+            ProviderDashboardProvider(
+                id: "disabled-provider",
+                displayName: "Disabled Provider",
+                isEnabled: false
+            ),
         ])
-        dashboard.updateQuotaUsages(usages)
-        dashboard.updateTokenUsages(tokenUsages)
+        dashboard.updateQuotaUsages(usages + disabledQuota)
+        dashboard.updateTokenUsages(tokenUsages + disabledTokenUsage)
         dashboard.layoutSubtreeIfNeeded()
         precondition(dashboard.frame.width == 336)
         let collapsedHeight = dashboard.frame.height
@@ -209,6 +240,11 @@ struct MenuViewsLayoutTests {
         let providerButtons = descendants(of: dashboard, matching: NSButton.self)
             .filter { $0.identifier?.rawValue.hasPrefix("provider-tab-") == true }
         precondition(providerButtons.count == 5)
+        precondition(
+            !providerButtons.contains {
+                $0.identifier?.rawValue == "provider-tab-disabled-provider"
+            }
+        )
 
         let clickableModelRows = descendants(of: dashboard, matching: NSControl.self)
             .filter { $0.identifier?.rawValue.hasPrefix("token-model-") == true }

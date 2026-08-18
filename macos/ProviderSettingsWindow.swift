@@ -38,9 +38,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private let displayNameField = formTextField()
     private let baseURLField = formTextField()
     private let websiteURLField = formTextField()
-    private let protocolPopup = NSPopUpButton()
-    private let apiPathField = formTextField()
-    private let modelsPathField = formTextField()
     private let imageGenerationPathField = formTextField()
     private let apiKeyField = secureFormTextField()
     private let clearKeyButton = NSButton(title: "清除密钥", target: nil, action: nil)
@@ -66,14 +63,12 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private var customDisplayNameRow: NSView?
     private var customBaseURLRow: NSView?
     private var customWebsiteURLRow: NSView?
-    private var customProtocolRow: NSView?
-    private var customAPIPathRow: NSView?
-    private var customModelsPathRow: NSView?
     private var quotaUsernameRow: NSView?
     private var quotaWorkspaceIDRow: NSView?
     private var quotaAuthCookieRow: NSView?
     private var baiduAuthBridgeRow: NSView?
     private var baiduCodeReportRow: NSView?
+    private var configuredDetailsViews: [NSView] = []
 
     private let addButton = NSButton(title: "新增", target: nil, action: nil)
     private let removeButton = NSButton(title: "删除", target: nil, action: nil)
@@ -138,6 +133,72 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         loadSelectedProvider()
     }
 
+    func tableView(
+        _ tableView: NSTableView,
+        writeRowsWith rowIndexes: IndexSet,
+        to pasteboard: NSPasteboard
+    ) -> Bool {
+        guard tableView === providerTable,
+              rowIndexes.count == 1,
+              let row = rowIndexes.first,
+              providers.indices.contains(row),
+              providers[row].kind == .configured
+        else {
+            return false
+        }
+        pasteboard.clearContents()
+        return pasteboard.setString(providers[row].id, forType: .string)
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        validateDrop info: NSDraggingInfo,
+        proposedRow row: Int,
+        proposedDropOperation dropOperation: NSTableView.DropOperation
+    ) -> NSDragOperation {
+        guard tableView === providerTable,
+              dropOperation == .above,
+              let providerID = info.draggingPasteboard.string(forType: .string),
+              let source = providers.firstIndex(where: { $0.id == providerID }),
+              providers[source].kind == .configured
+        else {
+            return []
+        }
+        let firstConfigured = providers.firstIndex(where: { $0.kind == .configured }) ?? providers.count
+        let insertionRow = min(max(row, firstConfigured), providers.count)
+        tableView.setDropRow(insertionRow, dropOperation: .above)
+        return .move
+    }
+
+    func tableView(
+        _ tableView: NSTableView,
+        acceptDrop info: NSDraggingInfo,
+        row: Int,
+        dropOperation: NSTableView.DropOperation
+    ) -> Bool {
+        guard tableView === providerTable,
+              dropOperation == .above,
+              let providerID = info.draggingPasteboard.string(forType: .string),
+              let source = providers.firstIndex(where: { $0.id == providerID }),
+              providers[source].kind == .configured
+        else {
+            return false
+        }
+        let firstConfigured = providers.firstIndex(where: { $0.kind == .configured }) ?? providers.count
+        var insertion = min(max(row, firstConfigured), providers.count)
+        let movedProvider = providers.remove(at: source)
+        if source < insertion {
+            insertion -= 1
+        }
+        providers.insert(movedProvider, at: insertion)
+        providerTable.reloadData()
+        let newRow = providers.firstIndex(where: { $0.id == providerID }) ?? insertion
+        providerTable.selectRowIndexes(IndexSet(integer: newRow), byExtendingSelection: false)
+        loadSelectedProvider()
+        persistProviderOrder(selecting: providerID)
+        return true
+    }
+
     private var selectedProvider: ProviderView? {
         let row = providerTable.selectedRow
         return providers.indices.contains(row) ? providers[row] : nil
@@ -148,7 +209,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
         let titleLabel = NSTextField(labelWithString: "供应商设置")
         titleLabel.font = .boldSystemFont(ofSize: 20)
-        let detailLabel = NSTextField(wrappingLabelWithString: "这里只配置供应商地址、密钥与启停。模型勾选、刷新模型、性能对比与测速请使用独立的“模型选择与测速…”入口。")
+        let detailLabel = NSTextField(wrappingLabelWithString: "拖动左侧列表调整 Provider 顺序，OpenAI 官方固定第一位。这里只配置供应商地址、密钥与启停；模型勾选、刷新模型、性能对比与测速请使用独立的“模型选择与测速…”入口。")
         detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         detailLabel.textColor = .secondaryLabelColor
 
@@ -229,24 +290,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         self.customBaseURLRow = customBaseURLRow
         let customWebsiteURLRow = compactLabeledView("官网地址", websiteURLField)
         self.customWebsiteURLRow = customWebsiteURLRow
-        configureProtocolPopup()
-        let customProtocolRow = compactLabeledView(
-            AppLocalization.string("providerSettings.upstreamProtocol"),
-            protocolPopup
-        )
-        self.customProtocolRow = customProtocolRow
-        let customAPIPathRow = compactLabeledView(
-            AppLocalization.string("providerSettings.responseAPIPath"),
-            apiPathField
-        )
-        self.customAPIPathRow = customAPIPathRow
-        let customModelsPathRow = compactLabeledView(
-            AppLocalization.string("providerSettings.modelsAPIPath"),
-            modelsPathField
-        )
-        self.customModelsPathRow = customModelsPathRow
-        apiPathField.placeholderString = "/v1/responses"
-        modelsPathField.placeholderString = "/v1/models"
         imageGenerationPathField.placeholderString = "/v1/images/generations"
         let managedConfigurationLabel = NSTextField(wrappingLabelWithString: AppLocalization.string("providerSettings.protocolsAndEndpointPathsAreDetectedAutomatically"))
         managedConfigurationLabel.textColor = .secondaryLabelColor
@@ -266,9 +309,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             customDisplayNameRow,
             customBaseURLRow,
             customWebsiteURLRow,
-            customProtocolRow,
-            customAPIPathRow,
-            customModelsPathRow,
             compactLabeledView("绘图接口路径", imageGenerationPathField),
             compactLabeledView("API 密钥", apiKeyControls),
             quotaUsernameRow,
@@ -302,6 +342,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         actionRow.orientation = .horizontal
         actionRow.alignment = .centerY
         actionRow.spacing = 9
+        configuredDetailsViews = [sectionTitle, form, actionRow]
 
         statusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         statusLabel.textColor = .secondaryLabelColor
@@ -420,6 +461,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         providerTable.rowHeight = 42
         providerTable.allowsMultipleSelection = false
         providerTable.usesAlternatingRowBackgroundColors = true
+        providerTable.registerForDraggedTypes([.string])
+        providerTable.setDraggingSourceOperationMask(.move, forLocal: true)
     }
 
     private func configureFields() {
@@ -428,21 +471,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         quotaUsernameField.placeholderString = "Baidu OneAPI 额度接口必填"
         quotaWorkspaceIDField.placeholderString = "例如：wrk_abc123"
         quotaAuthCookieField.placeholderString = "opencode.ai auth cookie"
-    }
-
-    private func configureProtocolPopup() {
-        protocolPopup.removeAllItems()
-        for (title, value) in [
-            (AppLocalization.string("providerSettings.openAIResponses"), "open_ai_responses"),
-            (AppLocalization.string("providerSettings.anthropicMessages"), "anthropic_messages"),
-            (AppLocalization.string("providerSettings.openAIChatCompletions"), "open_ai_chat"),
-        ] {
-            protocolPopup.addItem(withTitle: title)
-            protocolPopup.lastItem?.representedObject = value
-        }
-        protocolPopup.translatesAutoresizingMaskIntoConstraints = false
-        protocolPopup.heightAnchor.constraint(equalToConstant: 28).isActive = true
-        selectPopupValue(protocolPopup, "open_ai_responses")
     }
 
     private func configureButton(_ button: NSButton, action: Selector) {
@@ -487,9 +515,32 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             .compactMap { $0 as? NSStackView }
             .flatMap(\.arrangedSubviews)
             .first { $0.identifier?.rawValue == "detail" } as? NSTextField
-        let auxiliary = provider.auxiliaryModelUpstream ? " · 辅助上游" : ""
-        detail?.stringValue = "\(provider.id) · \(readinessLabel(provider.readiness))\(auxiliary) · 已选 \(provider.selectedModels.count) / 可用 \(provider.cachedModels.count)"
+        if provider.kind == .official {
+            detail?.stringValue = "official · OAuth 登录 · \(readinessLabel(provider.readiness)) · 只读"
+        } else {
+            let auxiliary = provider.auxiliaryModelUpstream ? " · 辅助上游" : ""
+            detail?.stringValue = "\(provider.id) · \(readinessLabel(provider.readiness))\(auxiliary) · 已选 \(provider.selectedModels.count) / 可用 \(provider.cachedModels.count)"
+        }
         return cell
+    }
+
+    private func persistProviderOrder(selecting providerID: String) {
+        let ids = providers
+            .filter { $0.kind == .configured }
+            .map(\.id)
+        guard !isBusy else { return }
+        setBusy(true, status: "正在保存 Provider 顺序…")
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await runHandler(["providers", "reorder"] + ids)
+                setBusy(false, status: "Provider 顺序已保存")
+            } catch {
+                setBusy(false, status: "Provider 顺序保存失败")
+                showAlert(title: "保存 Provider 顺序失败", message: String(describing: error))
+                reloadProviders(selecting: providerID)
+            }
+        }
     }
 
     private func reloadProviders(selecting providerID: String? = nil) {
@@ -541,18 +592,21 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         }
         emptyLabel.isHidden = true
         setDetailControlsEnabled(!isBusy)
+        let isOfficial = provider.kind == .official
+        for view in configuredDetailsViews {
+            view.isHidden = isOfficial
+        }
         idField.stringValue = provider.id
         displayNameField.stringValue = provider.displayName
         baseURLField.stringValue = provider.baseURL
         websiteURLField.stringValue = provider.websiteURL ?? ""
-        selectPopupValue(protocolPopup, provider.protocolID)
-        apiPathField.stringValue = provider.apiPath
-        modelsPathField.stringValue = provider.modelsPath ?? ""
         imageGenerationPathField.stringValue = provider.imageGenerationPath ?? ""
         apiKeyField.stringValue = ""
-        apiKeyField.placeholderString = provider.apiKeyConfigured
-            ? "已配置；留空保留"
-            : "尚未配置；启用前必须填写"
+        apiKeyField.placeholderString = provider.kind == .official
+            ? "由 Codex 官方登录管理"
+            : provider.apiKeyConfigured
+                ? "已配置；留空保留"
+                : "尚未配置；启用前必须填写"
         quotaUsernameField.stringValue = provider.quotaUsername ?? ""
         quotaWorkspaceIDField.stringValue = provider.quotaWorkspaceID ?? ""
         quotaAuthCookieField.stringValue = ""
@@ -572,16 +626,15 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         customDisplayNameRow?.isHidden = !isCustom
         customBaseURLRow?.isHidden = !isCustom
         customWebsiteURLRow?.isHidden = !isCustom
-        customProtocolRow?.isHidden = !isCustom
-        customAPIPathRow?.isHidden = !isCustom
-        customModelsPathRow?.isHidden = !isCustom
         quotaUsernameRow?.isHidden = provider.presetID != "baidu-oneapi"
         let openCodeGo = requiresOpenCodeGoQuotaCredentials(provider.presetID ?? "")
         quotaWorkspaceIDRow?.isHidden = !openCodeGo
         quotaAuthCookieRow?.isHidden = !openCodeGo
         baiduAuthBridgeRow?.isHidden = provider.presetID != "baidu-oneapi"
         baiduCodeReportRow?.isHidden = provider.presetID != "baidu-oneapi"
-        enableButton.title = provider.enabled ? "停用" : "启用"
+        enableButton.title = provider.kind == .official
+            ? "由登录模式管理"
+            : provider.enabled ? "停用" : "启用"
         statusLabel.stringValue = selectedProviderStatus()
         statusLabel.toolTip = provider.lastModelRefreshError
     }
@@ -592,8 +645,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             displayNameField,
             baseURLField,
             websiteURLField,
-            apiPathField,
-            modelsPathField,
             apiKeyField,
             quotaUsernameField,
             quotaWorkspaceIDField,
@@ -603,7 +654,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         }
         clearQuotaCredentialsButton.isEnabled = false
         auxiliaryModelUpstreamButton.state = .off
-        selectPopupValue(protocolPopup, "open_ai_responses")
         selectPopupValue(baiduAuthBridgePopup, BaiduAuthBridgeMode.disabled.rawValue)
         baiduCodeReportButton.state = .off
         auxiliaryModelUpstreamButton.toolTip = auxiliaryModelDefaultTooltip()
@@ -616,17 +666,16 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         statusLabel.stringValue = status
         setDetailControlsEnabled(!busy && selectedProvider != nil)
         addButton.isEnabled = !busy
-        removeButton.isEnabled = !busy && selectedProvider != nil
+        removeButton.isEnabled = !busy && selectedProvider?.kind == .configured
     }
 
     private func setDetailControlsEnabled(_ enabled: Bool) {
+        let editable = enabled && selectedProvider?.kind == .configured
         let controls: [NSControl] = [
             apiKeyField,
             displayNameField,
             baseURLField,
             websiteURLField,
-            apiPathField,
-            modelsPathField,
             imageGenerationPathField,
             quotaUsernameField,
             quotaWorkspaceIDField,
@@ -634,24 +683,23 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             clearQuotaCredentialsButton,
             auxiliaryModelUpstreamButton,
             baiduAuthBridgePopup,
-            protocolPopup,
             enableButton,
             testButton,
             saveButton,
         ]
         for control in controls {
-            control.isEnabled = enabled
+            control.isEnabled = editable
         }
-        auxiliaryModelUpstreamButton.isEnabled = enabled
+        auxiliaryModelUpstreamButton.isEnabled = editable
             && selectedProvider.map {
                 isAuxiliaryModelUpstreamSelectable(
                     for: $0,
                     codexInstallMode: codexInstallMode
                 )
             } == true
-        clearKeyButton.isEnabled = enabled && selectedProvider?.apiKeyConfigured == true
+        clearKeyButton.isEnabled = editable && selectedProvider?.apiKeyConfigured == true
         clearQuotaCredentialsButton.isEnabled =
-            enabled && selectedProvider?.quotaAuthCookieConfigured == true
+            editable && selectedProvider?.quotaAuthCookieConfigured == true
     }
 
     private func auxiliaryModelDefaultTooltip() -> String {
@@ -710,6 +758,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private func selectedProviderStatus() -> String {
         guard let provider = selectedProvider else {
             return providers.isEmpty ? "等待新增 Provider" : "请选择 Provider"
+        }
+        if provider.kind == .official {
+            return "OpenAI 官方 OAuth 登录 · \(readinessLabel(provider.readiness)) · 跟随 Codex Mixin 安装模式 · 只读"
         }
         let refresh: String
         if let milliseconds = provider.modelsRefreshedAtMilliseconds {
@@ -779,7 +830,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     }
 
     @objc private func removeProvider() {
-        guard let provider = selectedProvider, !isBusy else { return }
+        guard let provider = selectedProvider, provider.kind == .configured, !isBusy else { return }
         guard confirm(
             title: "删除 \(provider.displayName)？",
             message: "将删除 Provider \(provider.id) 的地址、密钥和模型选择。被 Fusion 引用时 CLI 会拒绝删除。"
@@ -792,7 +843,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     }
 
     @objc private func toggleProvider() {
-        guard let provider = selectedProvider, !isBusy else { return }
+        guard let provider = selectedProvider, provider.kind == .configured, !isBusy else { return }
         let action = provider.enabled ? "disable" : "enable"
         performMutation(
             ["providers", action, provider.id],
@@ -802,20 +853,29 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     }
 
     @objc private func testProvider() {
-        guard let provider = selectedProvider, !isBusy else { return }
-        guard selectedBaiduAuthBridgeMode() == (provider.effectiveBaiduAuthBridge ?? .disabled) else {
-            showAlert(
-                title: "认证方式尚未应用",
-                message: "先保存认证方式，再测试连接或刷新模型。未保存的下拉框选择不会改变网关配置。"
-            )
-            return
+        guard let provider = selectedProvider, provider.kind == .configured, !isBusy else { return }
+        let selectedBridge = selectedBaiduAuthBridgeMode()
+        var arguments = ["providers", "test", provider.id, "--json"]
+        appendProviderArgument(&arguments, "--key", apiKeyField.stringValue)
+        if provider.presetID == "custom" {
+            appendProviderArgument(&arguments, "--base-url", baseURLField.stringValue)
+        }
+        if provider.presetID == "baidu-oneapi",
+           selectedBridge != (provider.effectiveBaiduAuthBridge ?? .disabled) {
+            arguments.append(contentsOf: ["--baidu-auth-bridge", selectedBridge.rawValue])
         }
         setBusy(true, status: "正在测试 \(provider.id)…")
         Task { @MainActor [weak self] in
             guard let self else { return }
             defer { setBusy(false, status: selectedProviderStatus()) }
             do {
-                let output = try await runHandler(["providers", "test", provider.id, "--json"])
+                if provider.presetID == "baidu-oneapi",
+                   selectedBridge == .ducxLoopback,
+                   selectedBridge != (provider.effectiveBaiduAuthBridge ?? .disabled) {
+                    let executable = try await ensureBaiduBridgeAvailable(selectedBridge)
+                    arguments.append(contentsOf: ["--ducx-executable", executable.path])
+                }
+                let output = try await runHandler(arguments)
                 let result = try decodeProviderTest(output)
                 let mode = result.mode == "configuration" ? "静态模型配置检查" : "模型接口检查"
                 showAlert(
@@ -833,15 +893,18 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         let saved = provider.effectiveBaiduAuthBridge ?? .disabled
         if selectedBaiduAuthBridgeMode() == saved {
             statusLabel.stringValue = selectedProviderStatus()
-            testButton.isEnabled = !isBusy
         } else {
-            statusLabel.stringValue = "认证方式尚未保存；保存后测试连接或刷新模型"
-            testButton.isEnabled = false
+            statusLabel.stringValue = "认证方式尚未保存；测试连接将使用当前选择，保存后才会写入配置"
         }
+        testButton.isEnabled = !isBusy
     }
 
     @objc private func clearProviderKey() {
-        guard let provider = selectedProvider, !isBusy, provider.apiKeyConfigured else { return }
+        guard let provider = selectedProvider,
+              provider.kind == .configured,
+              !isBusy,
+              provider.apiKeyConfigured
+        else { return }
         guard !provider.enabled else {
             showAlert(
                 title: "请先停用 Provider",
@@ -861,7 +924,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     }
 
     @objc private func clearQuotaCredentials() {
-        guard let provider = selectedProvider, !isBusy else { return }
+        guard let provider = selectedProvider, provider.kind == .configured, !isBusy else { return }
         guard requiresOpenCodeGoQuotaCredentials(provider.presetID ?? ""),
               provider.quotaAuthCookieConfigured == true
         else {
@@ -886,7 +949,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     }
 
     @objc private func saveProvider() {
-        guard let provider = selectedProvider, !isBusy else { return }
+        guard let provider = selectedProvider, provider.kind == .configured, !isBusy else { return }
         let auxiliaryModelUpstream = auxiliaryModelUpstreamButton.state == .on
         var update = ["providers", "update", provider.id]
         update.append("--auxiliary-model-upstream")
@@ -913,23 +976,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             }
             appendProviderArgument(&update, "--display-name", displayName)
             appendProviderArgument(&update, "--base-url", baseURL)
-            let protocolID = protocolPopup.selectedItem?.representedObject as? String ?? ""
-            let apiPath = apiPathField.stringValue
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            let modelsPath = modelsPathField.stringValue
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard let endpointArguments = customProviderEndpointArguments(
-                protocolID: protocolID,
-                apiPath: apiPath,
-                modelsPath: modelsPath
-            ) else {
-                showAlert(
-                    title: AppLocalization.string("providerSettings.endpointConfigurationRequired"),
-                    message: AppLocalization.string("providerSettings.responseAndModelsPathsCannotBe")
-                )
-                return
-            }
-            update.append(contentsOf: endpointArguments)
             let websiteURL = websiteURLField.stringValue
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if !websiteURL.isEmpty || provider.websiteURL != nil {

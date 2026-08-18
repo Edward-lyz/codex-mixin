@@ -104,6 +104,11 @@ struct ProviderListResponse: Decodable {
     }
 }
 
+enum ProviderKind: String, Decodable {
+    case configured
+    case official
+}
+
 enum AuxiliaryModelSupport: Equatable {
     case none
     case autoReviewOnly
@@ -113,6 +118,7 @@ enum AuxiliaryModelSupport: Equatable {
 
 struct ProviderView: Decodable {
     let id: String
+    let kind: ProviderKind
     let displayName: String
     let enabled: Bool
     let auxiliaryModelUpstream: Bool
@@ -144,6 +150,7 @@ struct ProviderView: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case kind
         case displayName = "display_name"
         case enabled
         case auxiliaryModelUpstream = "auxiliary_model_upstream"
@@ -172,6 +179,40 @@ struct ProviderView: Decodable {
         case readiness
         case readinessIssues = "readiness_issues"
         case routableModelCount = "routable_model_count"
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        id = try values.decode(String.self, forKey: .id)
+        kind = try values.decodeIfPresent(ProviderKind.self, forKey: .kind) ?? .configured
+        displayName = try values.decode(String.self, forKey: .displayName)
+        enabled = try values.decode(Bool.self, forKey: .enabled)
+        auxiliaryModelUpstream = try values.decode(Bool.self, forKey: .auxiliaryModelUpstream)
+        presetID = try values.decodeIfPresent(String.self, forKey: .presetID)
+        protocolID = try values.decode(String.self, forKey: .protocolID)
+        baseURL = try values.decode(String.self, forKey: .baseURL)
+        websiteURL = try values.decodeIfPresent(String.self, forKey: .websiteURL)
+        apiPath = try values.decode(String.self, forKey: .apiPath)
+        modelSource = try values.decode(ProviderModelSourceView.self, forKey: .modelSource)
+        apiKeyConfigured = try values.decode(Bool.self, forKey: .apiKeyConfigured)
+        imageGenerationPath = try values.decodeIfPresent(String.self, forKey: .imageGenerationPath)
+        quotaURL = try values.decodeIfPresent(String.self, forKey: .quotaURL)
+        quotaUsername = try values.decodeIfPresent(String.self, forKey: .quotaUsername)
+        quotaWorkspaceID = try values.decodeIfPresent(String.self, forKey: .quotaWorkspaceID)
+        quotaAuthCookieConfigured = try values.decodeIfPresent(Bool.self, forKey: .quotaAuthCookieConfigured)
+        quotaCurrency = try values.decodeIfPresent(String.self, forKey: .quotaCurrency)
+        quotaParser = try values.decode(String.self, forKey: .quotaParser)
+        baiduAuthBridge = try values.decodeIfPresent(BaiduAuthBridgeMode.self, forKey: .baiduAuthBridge)
+        baiduCodeReport = try values.decodeIfPresent(Bool.self, forKey: .baiduCodeReport)
+        selectedModels = try values.decode([String].self, forKey: .selectedModels)
+        newModels = try values.decode([String].self, forKey: .newModels)
+        unavailableSelectedModels = try values.decode([String].self, forKey: .unavailableSelectedModels)
+        cachedModels = try values.decode([ProviderModelView].self, forKey: .cachedModels)
+        modelsRefreshedAtMilliseconds = try values.decodeIfPresent(UInt64.self, forKey: .modelsRefreshedAtMilliseconds)
+        lastModelRefreshError = try values.decodeIfPresent(String.self, forKey: .lastModelRefreshError)
+        readiness = try values.decode(String.self, forKey: .readiness)
+        readinessIssues = try values.decode([String].self, forKey: .readinessIssues)
+        routableModelCount = try values.decode(Int.self, forKey: .routableModelCount)
     }
 
     var effectiveBaiduAuthBridge: BaiduAuthBridgeMode? {
@@ -239,6 +280,13 @@ struct ProviderView: Decodable {
                 isNew: false
             )
         }
+    }
+
+    var needsInitialModelDiscovery: Bool {
+        kind == .configured
+            && enabled
+            && modelsRefreshedAtMilliseconds == nil
+            && cachedModels.isEmpty
     }
 }
 
@@ -347,7 +395,7 @@ func benchmarkRatioValue(_ ratio: String?) -> Double? {
 }
 
 func configuredProviderOptions(_ providers: [ProviderView]) -> [ProviderPickerOption] {
-    providers.map {
+    providers.filter { $0.kind == .configured }.map {
         ProviderPickerOption(id: $0.id, displayName: $0.displayName)
     }
 }
@@ -371,7 +419,7 @@ func providerModelSelectionKey(providerID: String, modelID: String) -> String {
 }
 
 func selectedProviderModelKeys(_ providers: [ProviderView]) -> Set<String> {
-    Set(providers.flatMap { provider in
+    Set(providers.filter { $0.kind == .configured }.flatMap { provider in
         provider.selectedModels.map {
             providerModelSelectionKey(providerID: provider.id, modelID: $0)
         }
@@ -382,7 +430,7 @@ func providerModelSelections(
     _ providers: [ProviderView],
     selectedKeys: Set<String>
 ) -> [String: [String]] {
-    Dictionary(uniqueKeysWithValues: providers.map { provider in
+    Dictionary(uniqueKeysWithValues: providers.filter { $0.kind == .configured }.map { provider in
         let modelIDs = provider.modelItems
             .filter {
                 selectedKeys.contains(
@@ -443,25 +491,4 @@ func appendProviderArgument(_ arguments: inout [String], _ name: String, _ rawVa
         arguments.append(name)
         arguments.append(value)
     }
-}
-
-func customProviderEndpointArguments(
-    protocolID: String,
-    apiPath: String,
-    modelsPath: String
-) -> [String]? {
-    let protocolID = protocolID.trimmingCharacters(in: .whitespacesAndNewlines)
-    let apiPath = apiPath.trimmingCharacters(in: .whitespacesAndNewlines)
-    let modelsPath = modelsPath.trimmingCharacters(in: .whitespacesAndNewlines)
-    guard ["open_ai_responses", "anthropic_messages", "open_ai_chat"].contains(protocolID),
-          !apiPath.isEmpty,
-          !modelsPath.isEmpty
-    else {
-        return nil
-    }
-    return [
-        "--protocol", protocolID,
-        "--api-path", apiPath,
-        "--models-path", modelsPath,
-    ]
 }

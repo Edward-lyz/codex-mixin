@@ -145,13 +145,53 @@ struct ProviderSupportTests {
             """
         )
 
+        let officialResponse = try decodeProviderList(
+            """
+            {
+              "config_version": 2,
+              "gateway_auth_configured": true,
+              "codex_install_mode": "codex_oauth_proxy",
+              "providers": [{
+                "id": "official",
+                "kind": "official",
+                "display_name": "OpenAI",
+                "enabled": true,
+                "auxiliary_model_upstream": false,
+                "protocol": "open_ai_responses",
+                "base_url": "https://chatgpt.com/backend-api/codex",
+                "website_url": "https://chatgpt.com",
+                "api_path": "/responses",
+                "model_source": {"kind": "static"},
+                "api_key_configured": true,
+                "quota_auth_cookie_configured": false,
+                "quota_parser": "generic",
+                "selected_models": [],
+                "new_models": [],
+                "unavailable_selected_models": [],
+                "cached_models": [],
+                "readiness": "healthy",
+                "readiness_issues": [],
+                "routable_model_count": 0
+              }]
+            }
+            """
+        )
+
         let baidu = response.providers[0]
         let autoReviewOnly = response.providers[1]
         let unsupported = response.providers[2]
         let openCodeGo = response.providers[3]
+        let official = officialResponse.providers[0]
         precondition(response.codexInstallMode == .customOnly)
+        precondition(official.kind == .official)
+        precondition(!official.needsInitialModelDiscovery)
+        precondition(unsupported.needsInitialModelDiscovery)
         precondition(baidu.baiduAuthBridge == .ducxLoopback)
         precondition(baidu.effectiveBaiduAuthBridge == .ducxLoopback)
+        precondition(baidu.apiPath == "/v1/messages")
+        precondition(baidu.modelsPath == "/v1/models")
+        precondition(autoReviewOnly.apiPath == "/v1/chat/completions")
+        precondition(autoReviewOnly.modelsPath == "/v1/models")
         precondition(autoReviewOnly.effectiveBaiduAuthBridge == nil)
         precondition(baidu.auxiliaryModelUpstream)
         precondition(!autoReviewOnly.auxiliaryModelUpstream)
@@ -200,6 +240,9 @@ struct ProviderSupportTests {
         let providerOptions = configuredProviderOptions(response.providers)
         precondition(providerOptions.count == response.providers.count)
         precondition(Set(providerOptions.map(\.id)) == Set(response.providers.map(\.id)))
+        precondition(configuredProviderOptions(response.providers + [official]).count == 4)
+        precondition(selectedProviderModelKeys([official]).isEmpty)
+        precondition(providerModelSelections([official], selectedKeys: []).isEmpty)
         let benchmarkColumns = modelBenchmarkColumnDefinitions()
         precondition(
             benchmarkColumns.map(\.title)
@@ -211,24 +254,6 @@ struct ProviderSupportTests {
         precondition(Set(benchmarkColumns.map(\.id)).count == benchmarkColumns.count)
         precondition(benchmarkRatioValue("0.5x") == 0.5)
         precondition(benchmarkRatioValue(nil) == nil)
-        precondition(
-            customProviderEndpointArguments(
-                protocolID: " open_ai_responses ",
-                apiPath: " /v1/responses ",
-                modelsPath: " /v1/models "
-            ) == [
-                "--protocol", "open_ai_responses",
-                "--api-path", "/v1/responses",
-                "--models-path", "/v1/models",
-            ]
-        )
-        precondition(
-            customProviderEndpointArguments(
-                protocolID: "open_ai_responses",
-                apiPath: "",
-                modelsPath: "/v1/models"
-            ) == nil
-        )
         precondition(
             providerIssueDetails(
                 fromGatewayStatus: """

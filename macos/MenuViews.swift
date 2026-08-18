@@ -769,19 +769,8 @@ final class ProviderUsageDashboardView: FlippedMenuView {
     }
 
     private func usageGroups() -> [ProviderUsageGroup] {
-        var providerIDs = configuredProviders.map(\.id)
-        for providerID in quotaUsages.map(\.providerID)
-            where !providerIDs.contains(providerID)
-        {
-            providerIDs.append(providerID)
-        }
-        for providerID in tokenUsages.map(\.providerID).sorted()
-            where !providerIDs.contains(providerID)
-        {
-            providerIDs.append(providerID)
-        }
-        return providerIDs.map { providerID in
-            let configuredProvider = configuredProviders.first { $0.id == providerID }
+        configuredProviders.filter(\.isEnabled).map { configuredProvider in
+            let providerID = configuredProvider.id
             let quotas = quotaUsages.filter { $0.providerID == providerID }
             let models = tokenUsages
                 .filter { $0.providerID == providerID }
@@ -792,11 +781,9 @@ final class ProviderUsageDashboardView: FlippedMenuView {
                 }
             return ProviderUsageGroup(
                 providerID: providerID,
-                displayName: configuredProvider?.displayName
-                    ?? quotas.first?.providerLabel
-                    ?? providerID,
-                isEnabled: configuredProvider?.isEnabled ?? true,
-                websiteURL: configuredProvider?.websiteURL,
+                displayName: configuredProvider.displayName,
+                isEnabled: true,
+                websiteURL: configuredProvider.websiteURL,
                 quotas: quotas,
                 models: models
             )
