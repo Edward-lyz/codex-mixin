@@ -19,7 +19,6 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
     typealias SaveSelectionsHandler = ([String: [String]], OperationProgress) async throws -> Void
     typealias DiscoverHandler = (String, @escaping (String) -> Void) async throws -> Void
 
-    private let snapshotURL: URL
     private let startHandler: StartHandler
     private let fetchHandler: FetchHandler
     private let loadProvidersHandler: LoadProvidersHandler
@@ -56,7 +55,6 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
     private let emptyLabel = NSTextField(labelWithString: "当前 Provider 没有模型")
 
     init(
-        snapshotURL: URL,
         startHandler: @escaping StartHandler,
         fetchHandler: @escaping FetchHandler,
         loadProvidersHandler: @escaping LoadProvidersHandler,
@@ -64,7 +62,6 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         discoverHandler: @escaping DiscoverHandler,
         probeHandler: @escaping DiscoverHandler
     ) {
-        self.snapshotURL = snapshotURL
         self.startHandler = startHandler
         self.fetchHandler = fetchHandler
         self.loadProvidersHandler = loadProvidersHandler
@@ -93,12 +90,13 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
     }
 
     func present() {
-        loadPersistedSnapshot()
+        pollingTask?.cancel()
+        resultCache.removeAll()
+        applySnapshot(nil)
         reloadProviderModels()
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-        beginPolling()
     }
 
     func windowWillClose(_ notification: Notification) {
@@ -642,7 +640,6 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
                 savedModelKeys = selectedModelKeys
                 setProviderOptions(configuredProviderOptions(providers))
                 rebuildRows()
-                applySnapshotStatus()
                 updateActionState()
             } catch {
                 providers = []
@@ -862,33 +859,12 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         do {
             if let remote = try await fetchHandler() {
                 applySnapshot(remote)
-            } else {
-                loadPersistedSnapshot()
             }
         } catch {
-            loadPersistedSnapshot()
             if snapshot?.status == "running" {
                 statusLabel.stringValue = "网关状态暂不可用，显示已保存进度"
                 statusLabel.textColor = .mixinDegraded
             }
-        }
-    }
-
-    private func loadPersistedSnapshot() {
-        guard FileManager.default.fileExists(atPath: snapshotURL.path) else {
-            applySnapshot(nil)
-            return
-        }
-        do {
-            let data = try Data(contentsOf: snapshotURL)
-            applySnapshot(try JSONDecoder().decode(ModelBenchmarkSnapshot.self, from: data))
-        } catch {
-            snapshot = nil
-            statusLabel.stringValue = "测速结果文件无法读取"
-            statusLabel.textColor = .mixinError
-            summaryLabel.stringValue = snapshotURL.path
-            progressIndicator.doubleValue = 0
-            updateActionState()
         }
     }
 

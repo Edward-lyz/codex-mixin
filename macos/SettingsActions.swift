@@ -119,7 +119,6 @@ extension AppDelegate {
     @objc func showModelBenchmark() {
         if modelBenchmarkWindowController == nil {
             modelBenchmarkWindowController = ModelBenchmarkWindowController(
-                snapshotURL: stateDir().appendingPathComponent("model-benchmarks.json"),
                 startHandler: { [weak self] timeoutSeconds, providerID, targetOutputTokens in
                     guard let self else {
                         throw GatewayError.command("Codex Mixin 已退出")
