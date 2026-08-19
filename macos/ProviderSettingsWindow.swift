@@ -98,7 +98,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             defer: false
         )
         window.title = "供应商设置"
-        window.minSize = NSSize(width: 860, height: 600)
+        window.minSize = NSSize(width: 820, height: 580)
         window.isReleasedWhenClosed = false
         window.center()
         super.init(window: window)
@@ -208,23 +208,23 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         guard let contentView = window.contentView else { return }
 
         let titleLabel = NSTextField(labelWithString: "供应商设置")
-        titleLabel.font = .boldSystemFont(ofSize: 22)
-        let detailLabel = NSTextField(labelWithString: "管理连接、密钥和启停状态")
-        detailLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        titleLabel.font = .boldSystemFont(ofSize: 20)
+        let detailLabel = NSTextField(wrappingLabelWithString: "拖动左侧列表调整 Provider 顺序，OpenAI 官方固定第一位。这里只配置供应商地址、密钥与启停；模型勾选、刷新模型、性能对比与测速请使用独立的“模型选择与测速…”入口。")
+        detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         detailLabel.textColor = .secondaryLabelColor
 
         let header = NSStackView(views: [titleLabel, detailLabel])
         header.orientation = .vertical
         header.alignment = .leading
-        header.spacing = 4
+        header.spacing = 5
         header.translatesAutoresizingMaskIntoConstraints = false
 
         bannerView.wantsLayer = true
-        bannerView.layer?.cornerRadius = 10
+        bannerView.layer?.cornerRadius = 6
         bannerView.alphaValue = 0
         bannerView.isHidden = true
         bannerView.translatesAutoresizingMaskIntoConstraints = false
-        bannerLabel.font = .systemFont(ofSize: 13, weight: .medium)
+        bannerLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize, weight: .medium)
         bannerLabel.lineBreakMode = .byTruncatingTail
         bannerLabel.translatesAutoresizingMaskIntoConstraints = false
         bannerView.addSubview(bannerLabel)
@@ -234,43 +234,10 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         providerScrollView.documentView = providerTable
         providerScrollView.hasVerticalScroller = true
         providerScrollView.autohidesScrollers = true
-        providerScrollView.borderType = .noBorder
-        providerScrollView.drawsBackground = false
+        providerScrollView.borderType = .bezelBorder
         providerScrollView.translatesAutoresizingMaskIntoConstraints = false
-        providerTable.frame = NSRect(x: 0, y: 0, width: 1, height: 1)
+        providerTable.frame = NSRect(x: 0, y: 0, width: 230, height: 1)
         providerTable.autoresizingMask = [.width]
-
-        let listTitle = NSTextField(labelWithString: "供应商")
-        listTitle.font = .systemFont(ofSize: 15, weight: .semibold)
-        let listHint = NSTextField(labelWithString: "拖动行调整优先级")
-        listHint.font = .systemFont(ofSize: 12)
-        listHint.textColor = .secondaryLabelColor
-        let listHintIcon = NSImageView(
-            image: NSImage(
-                systemSymbolName: "arrow.up.arrow.down",
-                accessibilityDescription: "调整优先级"
-            ) ?? NSImage()
-        )
-        listHintIcon.contentTintColor = .secondaryLabelColor
-        listHintIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 12, weight: .medium)
-        let listHintStack = NSStackView(views: [listHintIcon, listHint])
-        listHintStack.orientation = .horizontal
-        listHintStack.alignment = .centerY
-        listHintStack.spacing = 5
-        let listHeader = NSStackView(views: [listTitle, listHintStack])
-        listHeader.orientation = .vertical
-        listHeader.alignment = .leading
-        listHeader.spacing = 4
-        listHeader.translatesAutoresizingMaskIntoConstraints = false
-
-        let providerSurface = providerSettingsSurface(material: .sidebar)
-        providerSurface.addSubview(providerScrollView)
-        NSLayoutConstraint.activate([
-            providerScrollView.leadingAnchor.constraint(equalTo: providerSurface.leadingAnchor),
-            providerScrollView.trailingAnchor.constraint(equalTo: providerSurface.trailingAnchor),
-            providerScrollView.topAnchor.constraint(equalTo: providerSurface.topAnchor),
-            providerScrollView.bottomAnchor.constraint(equalTo: providerSurface.bottomAnchor),
-        ])
 
         configureButton(addButton, action: #selector(addProvider))
         configureButton(removeButton, action: #selector(removeProvider))
@@ -279,12 +246,11 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         providerButtons.distribution = .fillEqually
         providerButtons.spacing = 8
 
-        let providerPane = NSStackView(views: [listHeader, providerSurface, providerButtons])
+        let providerPane = NSStackView(views: [providerScrollView, providerButtons])
         providerPane.orientation = .vertical
-        providerPane.alignment = .width
-        providerPane.spacing = 12
+        providerPane.spacing = 10
         providerPane.translatesAutoresizingMaskIntoConstraints = false
-        providerPane.widthAnchor.constraint(equalToConstant: 252).isActive = true
+        providerPane.widthAnchor.constraint(equalToConstant: 230).isActive = true
 
         configureFields()
         configureButton(clearKeyButton, action: #selector(clearProviderKey))
@@ -301,6 +267,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             quotaWorkspaceIDField
         )
         self.quotaWorkspaceIDRow = quotaWorkspaceIDRow
+        quotaAuthCookieField.translatesAutoresizingMaskIntoConstraints = false
+        quotaAuthCookieField.widthAnchor.constraint(equalToConstant: 300).isActive = true
         clearQuotaCredentialsButton.bezelStyle = .rounded
         clearQuotaCredentialsButton.controlSize = .small
         let quotaAuthCookieControls = NSStackView(views: [
@@ -349,31 +317,15 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             baiduAuthBridgeRow,
             baiduCodeReportRow,
             compactLabeledView("辅助模型", auxiliaryModelUpstreamButton),
+            compactLabeledView("", managedConfigurationLabel),
         ])
         form.orientation = .vertical
-        form.alignment = .width
-        form.spacing = 11
+        form.alignment = .leading
+        form.spacing = 9
         form.translatesAutoresizingMaskIntoConstraints = false
 
-        let managedConfigurationIcon = NSImageView(
-            image: NSImage(
-                systemSymbolName: "wand.and.stars",
-                accessibilityDescription: "自动配置"
-            ) ?? NSImage()
-        )
-        managedConfigurationIcon.contentTintColor = .secondaryLabelColor
-        managedConfigurationIcon.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
-        managedConfigurationLabel.font = .systemFont(ofSize: 12.5)
-        let managedConfigurationView = NSStackView(views: [managedConfigurationIcon, managedConfigurationLabel])
-        managedConfigurationView.orientation = .horizontal
-        managedConfigurationView.alignment = .top
-        managedConfigurationView.spacing = 7
-        managedConfigurationView.translatesAutoresizingMaskIntoConstraints = false
-        managedConfigurationView.setContentHuggingPriority(.required, for: .vertical)
-        form.addArrangedSubview(managedConfigurationView)
-
         let sectionTitle = NSTextField(labelWithString: "连接配置")
-        sectionTitle.font = .systemFont(ofSize: 16, weight: .semibold)
+        sectionTitle.font = .systemFont(ofSize: 14, weight: .semibold)
 
         configureButton(enableButton, action: #selector(toggleProvider))
         configureButton(testButton, action: #selector(testProvider))
@@ -392,15 +344,14 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         actionRow.spacing = 9
         configuredDetailsViews = [sectionTitle, form, actionRow]
 
-        statusLabel.font = .systemFont(ofSize: 12.5)
+        statusLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
         statusLabel.textColor = .secondaryLabelColor
-        statusLabel.maximumNumberOfLines = 2
-        statusLabel.lineBreakMode = .byTruncatingTail
+        statusLabel.lineBreakMode = .byTruncatingMiddle
 
         let detailsPane = NSStackView(views: [sectionTitle, form, actionRow, statusLabel])
         detailsPane.orientation = .vertical
-        detailsPane.alignment = .width
-        detailsPane.spacing = 16
+        detailsPane.alignment = .leading
+        detailsPane.spacing = 12
         detailsPane.translatesAutoresizingMaskIntoConstraints = false
 
         emptyLabel.textColor = .secondaryLabelColor
@@ -420,21 +371,12 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         detailsScroll.borderType = .noBorder
         detailsScroll.translatesAutoresizingMaskIntoConstraints = false
 
-        let detailsSurface = providerSettingsSurface()
-        detailsSurface.addSubview(detailsScroll)
-        NSLayoutConstraint.activate([
-            detailsScroll.leadingAnchor.constraint(equalTo: detailsSurface.leadingAnchor),
-            detailsScroll.trailingAnchor.constraint(equalTo: detailsSurface.trailingAnchor),
-            detailsScroll.topAnchor.constraint(equalTo: detailsSurface.topAnchor),
-            detailsScroll.bottomAnchor.constraint(equalTo: detailsSurface.bottomAnchor),
-        ])
-
         let body = NSSplitView()
         body.isVertical = true
         body.dividerStyle = .thin
         body.translatesAutoresizingMaskIntoConstraints = false
         body.addArrangedSubview(providerPane)
-        body.addArrangedSubview(detailsSurface)
+        body.addArrangedSubview(detailsScroll)
 
         contentView.addSubview(header)
         contentView.addSubview(bannerView)
@@ -454,9 +396,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
             body.leadingAnchor.constraint(equalTo: header.leadingAnchor),
             body.trailingAnchor.constraint(equalTo: header.trailingAnchor),
-            body.topAnchor.constraint(equalTo: bannerView.bottomAnchor, constant: 16),
+            body.topAnchor.constraint(equalTo: bannerView.bottomAnchor, constant: 6),
             body.bottomAnchor.constraint(equalTo: contentView.bottomAnchor, constant: -20),
-            detailsSurface.widthAnchor.constraint(greaterThanOrEqualToConstant: 560),
+            detailsScroll.widthAnchor.constraint(greaterThanOrEqualToConstant: 520),
 
             detailsDocument.widthAnchor.constraint(equalTo: detailsScroll.contentView.widthAnchor),
             detailsDocument.heightAnchor.constraint(greaterThanOrEqualTo: detailsScroll.contentView.heightAnchor),
@@ -516,12 +458,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         providerTable.headerView = nil
         providerTable.delegate = self
         providerTable.dataSource = self
-        providerTable.rowHeight = 54
+        providerTable.rowHeight = 42
         providerTable.allowsMultipleSelection = false
-        providerTable.usesAlternatingRowBackgroundColors = false
-        providerTable.backgroundColor = .clear
-        providerTable.intercellSpacing = NSSize(width: 0, height: 0)
-        providerTable.selectionHighlightStyle = .regular
+        providerTable.usesAlternatingRowBackgroundColors = true
         providerTable.registerForDraggedTypes([.string])
         providerTable.setDraggingSourceOperationMask(.move, forLocal: true)
     }
@@ -548,44 +487,27 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             cell = NSTableCellView()
             cell.identifier = identifier
             let title = NSTextField(labelWithString: "")
-            title.font = .systemFont(ofSize: 14, weight: .semibold)
+            title.font = .systemFont(ofSize: 13, weight: .medium)
             title.translatesAutoresizingMaskIntoConstraints = false
             let detail = NSTextField(labelWithString: "")
-            detail.font = .systemFont(ofSize: 12)
+            detail.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
             detail.textColor = .secondaryLabelColor
             detail.translatesAutoresizingMaskIntoConstraints = false
-            detail.lineBreakMode = .byTruncatingTail
-            detail.maximumNumberOfLines = 1
-            let handle = NSImageView(
-                image: NSImage(
-                    systemSymbolName: "line.3.horizontal",
-                    accessibilityDescription: "拖动排序"
-                ) ?? NSImage()
-            )
-            handle.identifier = NSUserInterfaceItemIdentifier("drag-handle")
-            handle.contentTintColor = .tertiaryLabelColor
-            handle.symbolConfiguration = NSImage.SymbolConfiguration(pointSize: 13, weight: .medium)
-            handle.translatesAutoresizingMaskIntoConstraints = false
             let stack = NSStackView(views: [title, detail])
             stack.orientation = .vertical
             stack.alignment = .leading
-            stack.spacing = 3
+            stack.spacing = 2
             stack.translatesAutoresizingMaskIntoConstraints = false
             cell.addSubview(stack)
-            cell.addSubview(handle)
             cell.textField = title
             cell.identifier = identifier
             detail.identifier = NSUserInterfaceItemIdentifier("detail")
             NSLayoutConstraint.activate([
                 stack.leadingAnchor.constraint(equalTo: cell.leadingAnchor, constant: 7),
-                stack.trailingAnchor.constraint(equalTo: handle.leadingAnchor, constant: -8),
+                stack.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -7),
                 stack.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
                 title.widthAnchor.constraint(equalTo: stack.widthAnchor),
                 detail.widthAnchor.constraint(equalTo: stack.widthAnchor),
-                handle.trailingAnchor.constraint(equalTo: cell.trailingAnchor, constant: -10),
-                handle.centerYAnchor.constraint(equalTo: cell.centerYAnchor),
-                handle.widthAnchor.constraint(equalToConstant: 14),
-                handle.heightAnchor.constraint(equalToConstant: 18),
             ])
         }
         cell.textField?.stringValue = provider.displayName
@@ -594,15 +516,11 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             .flatMap(\.arrangedSubviews)
             .first { $0.identifier?.rawValue == "detail" } as? NSTextField
         if provider.kind == .official {
-            detail?.stringValue = "官方 · OAuth 登录 · \(readinessLabel(provider.readiness)) · 只读"
+            detail?.stringValue = "official · OAuth 登录 · \(readinessLabel(provider.readiness)) · 只读"
         } else {
             let auxiliary = provider.auxiliaryModelUpstream ? " · 辅助上游" : ""
-            detail?.stringValue = "\(provider.id) · \(readinessLabel(provider.readiness))\(auxiliary) · \(provider.selectedModels.count)/\(provider.cachedModels.count) 个模型"
+            detail?.stringValue = "\(provider.id) · \(readinessLabel(provider.readiness))\(auxiliary) · 已选 \(provider.selectedModels.count) / 可用 \(provider.cachedModels.count)"
         }
-        cell.subviews
-            .compactMap { $0 as? NSImageView }
-            .first { $0.identifier?.rawValue == "drag-handle" }?
-            .isHidden = provider.kind == .official
         return cell
     }
 
@@ -648,8 +566,11 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 providerTable.frame = NSRect(
                     x: 0,
                     y: 0,
-                    width: max(providerScrollView.contentSize.width, 1),
-                    height: max(CGFloat(providers.count) * providerTable.rowHeight, 1)
+                    width: providerScrollView.contentSize.width,
+                    height: max(
+                        providerScrollView.contentSize.height,
+                        CGFloat(providers.count) * providerTable.rowHeight
+                    )
                 )
                 providerTable.reloadData()
                 emptyLabel.isHidden = !providers.isEmpty
@@ -1278,20 +1199,14 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 func compactLabeledView(_ title: String, _ field: NSView) -> NSView {
     let label = NSTextField(labelWithString: title)
     label.alignment = .right
-    label.font = .systemFont(ofSize: 13, weight: .medium)
     label.textColor = .secondaryLabelColor
     label.translatesAutoresizingMaskIntoConstraints = false
-    label.widthAnchor.constraint(equalToConstant: 112).isActive = true
-    label.setContentHuggingPriority(.required, for: .horizontal)
+    label.widthAnchor.constraint(equalToConstant: 78).isActive = true
     field.translatesAutoresizingMaskIntoConstraints = false
-    field.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    field.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    field.widthAnchor.constraint(equalToConstant: 390).isActive = true
     let row = NSStackView(views: [label, field])
     row.orientation = .horizontal
     row.alignment = .centerY
-    row.distribution = .fill
-    row.spacing = 12
-    row.setContentHuggingPriority(.defaultLow, for: .horizontal)
-    row.setContentCompressionResistancePriority(.defaultLow, for: .horizontal)
+    row.spacing = 10
     return row
 }

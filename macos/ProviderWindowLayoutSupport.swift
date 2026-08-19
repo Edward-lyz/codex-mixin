@@ -3,24 +3,9 @@ import Cocoa
 func providerSettingsContentSize(for visibleFrame: NSRect) -> NSSize {
     adaptiveWindowContentSize(
         for: visibleFrame,
-        ideal: NSSize(width: 980, height: 700),
-        minimum: NSSize(width: 860, height: 600)
+        ideal: NSSize(width: 900, height: 680),
+        minimum: NSSize(width: 820, height: 580)
     )
-}
-
-func providerSettingsSurface(
-    material: NSVisualEffectView.Material = .contentBackground
-) -> NSVisualEffectView {
-    let surface = NSVisualEffectView()
-    surface.material = material
-    surface.blendingMode = .withinWindow
-    surface.state = .active
-    surface.wantsLayer = true
-    surface.layer?.cornerRadius = 12
-    surface.layer?.masksToBounds = true
-    surface.translatesAutoresizingMaskIntoConstraints = false
-    surface.setContentHuggingPriority(.defaultLow, for: .vertical)
-    return surface
 }
 
 func modelBenchmarkContentSize(for visibleFrame: NSRect) -> NSSize {
