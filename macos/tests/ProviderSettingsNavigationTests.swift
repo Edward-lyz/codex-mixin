@@ -43,6 +43,17 @@ struct ProviderSettingsNavigationTests {
         waitUntil {
             loadCalls == 1 && controller.numberOfRows(in: table) == 2
         }
+        guard let contentView = controller.window?.contentView,
+              let body = descendantViews(of: NSSplitView.self, in: contentView).first
+        else {
+            preconditionFailure("Provider settings split view is missing")
+        }
+        controller.window?.layoutIfNeeded()
+        contentView.layoutSubtreeIfNeeded()
+        precondition(
+            body.frame.height > contentView.bounds.height * 0.6,
+            "Provider settings body was compressed to the bottom of the window"
+        )
         precondition(table.selectedRow == 0)
 
         table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)

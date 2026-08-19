@@ -1,5 +1,4 @@
 import Cocoa
-import SwiftUI
 
 func providerSettingsContentSize(for visibleFrame: NSRect) -> NSSize {
     adaptiveWindowContentSize(
@@ -11,53 +10,17 @@ func providerSettingsContentSize(for visibleFrame: NSRect) -> NSSize {
 
 func providerSettingsSurface(
     material: NSVisualEffectView.Material = .contentBackground
-) -> NSView {
-    let surface = ProviderSettingsSurfaceView(material: material)
+) -> NSVisualEffectView {
+    let surface = NSVisualEffectView()
+    surface.material = material
+    surface.blendingMode = .withinWindow
+    surface.state = .active
     surface.wantsLayer = true
     surface.layer?.cornerRadius = 12
     surface.layer?.masksToBounds = true
     surface.translatesAutoresizingMaskIntoConstraints = false
     surface.setContentHuggingPriority(.defaultLow, for: .vertical)
     return surface
-}
-
-final class ProviderSettingsSurfaceView: NSView {
-    private let backgroundView: NSView
-
-    init(material: NSVisualEffectView.Material) {
-        if #available(macOS 26.0, *) {
-            backgroundView = NSHostingView(rootView: ProviderLiquidGlassBackground())
-        } else {
-            let visualEffectView = NSVisualEffectView()
-            visualEffectView.material = material
-            visualEffectView.blendingMode = .withinWindow
-            visualEffectView.state = .active
-            backgroundView = visualEffectView
-        }
-        super.init(frame: .zero)
-        backgroundView.translatesAutoresizingMaskIntoConstraints = false
-        addSubview(backgroundView, positioned: .below, relativeTo: nil)
-        NSLayoutConstraint.activate([
-            backgroundView.leadingAnchor.constraint(equalTo: leadingAnchor),
-            backgroundView.trailingAnchor.constraint(equalTo: trailingAnchor),
-            backgroundView.topAnchor.constraint(equalTo: topAnchor),
-            backgroundView.bottomAnchor.constraint(equalTo: bottomAnchor),
-        ])
-    }
-
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-}
-
-@available(macOS 26.0, *)
-private struct ProviderLiquidGlassBackground: View {
-    var body: some View {
-        RoundedRectangle(cornerRadius: 12, style: .continuous)
-            .fill(.clear)
-            .glassEffect()
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-    }
 }
 
 func modelBenchmarkContentSize(for visibleFrame: NSRect) -> NSSize {
