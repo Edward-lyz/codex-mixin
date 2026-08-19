@@ -1,4 +1,37 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.4.3
+
+- 新增官方 Provider 默认展示，开箱即可选择
+- 优化 Provider 探测逻辑，支持手动调整 Provider 顺序
+- 支持 DSH 模型安装和思考强度选择
+- 优化模型刷新、额度与用量状态显示
+- 改进 Gateway 稳定性和 macOS App 更新流程
+
+<!-- codex-mixin:zh-Hans:end -->
+
+<!-- codex-mixin:zh-Hant:start -->
+## v0.4.3
+
+- 新增官方 Provider 預設顯示，開箱即可選擇
+- 優化 Provider 探測邏輯，支援手動調整 Provider 順序
+- 支援 DSH 模型安裝和思考強度選擇
+- 優化模型更新、額度與用量狀態顯示
+- 改進 Gateway 穩定性和 macOS App 更新流程
+
+<!-- codex-mixin:zh-Hant:end -->
+
+<!-- codex-mixin:en:start -->
+## v0.4.3
+
+- Show official providers by default for quick setup
+- Improve provider discovery and allow manual provider ordering
+- Support DSH model installation and reasoning intensity selection
+- Improve model refresh, quota, and usage status display
+- Improve gateway stability and macOS app update flow
+
+<!-- codex-mixin:en:end -->
+
+<!-- codex-mixin:zh-Hans:start -->
 ## v0.4.2
 
 本版本聚焦于更新体验、跨客户端安装和数据上报 hook。
