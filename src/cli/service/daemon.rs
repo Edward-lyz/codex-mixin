@@ -18,6 +18,10 @@ use super::super::runtime::{
 };
 use super::start;
 
+const STOP_POLL_INTERVAL: Duration = Duration::from_millis(100);
+const GRACEFUL_STOP_ATTEMPTS: usize = 50;
+const FORCED_STOP_ATTEMPTS: usize = 10;
+
 pub(crate) fn start_daemon(
     mut bind: Option<SocketAddr>,
     log_file: Option<PathBuf>,
@@ -262,30 +266,51 @@ pub(super) fn stop_with_output(force: bool, quiet: bool) -> anyhow::Result<()> {
         }
         return Ok(());
     };
+    let graceful_attempts = if force { 0 } else { GRACEFUL_STOP_ATTEMPTS };
+    let killed = terminate_process(pid, process_kind, quiet, graceful_attempts)?;
+    delete_daemon_metadata()?;
+    delete_runtime_metadata()?;
+    if !quiet {
+        let outcome = if killed { "killed" } else { "stopped" };
+        println!("gateway {process_kind} {outcome}: pid {pid}");
+    }
+    Ok(())
+}
+
+fn terminate_process(
+    pid: u32,
+    process_kind: &str,
+    quiet: bool,
+    graceful_attempts: usize,
+) -> anyhow::Result<bool> {
     send_signal(pid, "TERM")?;
-    for _ in 0..50 {
+    if wait_for_process_exit(pid, graceful_attempts)? {
+        return Ok(false);
+    }
+    if !quiet {
+        let reason = if graceful_attempts == 0 {
+            "forced stop requested"
+        } else {
+            "did not stop within 5s"
+        };
+        println!("gateway {process_kind} {reason}; sending SIGKILL: pid {pid}");
+    }
+    send_signal(pid, "KILL")?;
+    anyhow::ensure!(
+        wait_for_process_exit(pid, FORCED_STOP_ATTEMPTS)?,
+        "gateway {process_kind} did not exit within 1s after SIGKILL: pid {pid}"
+    );
+    Ok(true)
+}
+
+fn wait_for_process_exit(pid: u32, attempts: usize) -> anyhow::Result<bool> {
+    for _ in 0..attempts {
         if !pid_is_running(pid)? {
-            delete_daemon_metadata()?;
-            delete_runtime_metadata()?;
-            if !quiet {
-                println!("gateway {process_kind} stopped: pid {pid}");
-            }
-            return Ok(());
+            return Ok(true);
         }
-        thread::sleep(Duration::from_millis(100));
+        thread::sleep(STOP_POLL_INTERVAL);
     }
-    if force {
-        send_signal(pid, "KILL")?;
-        delete_daemon_metadata()?;
-        delete_runtime_metadata()?;
-        if !quiet {
-            println!("gateway {process_kind} killed: pid {pid}");
-        }
-        return Ok(());
-    }
-    anyhow::bail!(
-        "gateway {process_kind} did not stop within 5s: pid {pid}. Use --force to send SIGKILL"
-    )
+    Ok(!pid_is_running(pid)?)
 }
 
 pub(crate) async fn restart(
@@ -329,4 +354,34 @@ pub(crate) fn logs(lines: usize, follow: bool) -> anyhow::Result<()> {
         println!("{line}");
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use std::io::{BufRead, BufReader};
+
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn termination_timeout_forces_a_kill() {
+        let mut child = ProcessCommand::new("sh")
+            .args([
+                "-c",
+                "trap '' TERM; printf 'ready\\n'; while :; do sleep 1; done",
+            ])
+            .stdout(Stdio::piped())
+            .spawn()
+            .unwrap();
+        let mut ready = String::new();
+        BufReader::new(child.stdout.take().unwrap())
+            .read_line(&mut ready)
+            .unwrap();
+        assert_eq!(ready, "ready\n");
+        let pid = child.id();
+        let reaper = thread::spawn(move || child.wait().unwrap());
+
+        assert!(terminate_process(pid, "test", true, 1).unwrap());
+        assert!(!reaper.join().unwrap().success());
+    }
 }
