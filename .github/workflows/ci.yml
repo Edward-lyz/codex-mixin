@@ -57,12 +57,9 @@ jobs:
         run: |
           ./scripts/test_about_window.sh
           ./scripts/test_install_card.sh
-      - name: Test macOS DUCC setup flow
+      - name: Test macOS Provider setup flow
         if: runner.os == 'macOS'
         run: ./scripts/test_provider_settings_navigation.sh
-      - name: Test macOS DUCC managed installation
-        if: runner.os == 'macOS'
-        run: ./scripts/test_ducc_managed_install.sh
       - name: Test macOS process output collection
         if: runner.os == 'macOS'
         run: ./scripts/test_process_output_collector.sh
