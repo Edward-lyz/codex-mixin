@@ -22,5 +22,6 @@ xcrun swiftc \
   "$ROOT_DIR/macos/ProviderSettingsPresentationSupport.swift" \
   "$ROOT_DIR/macos/tests/ProviderSettingsNavigationTests.swift" \
   -framework Cocoa \
+  -framework SwiftUI \
   -o "$TEST_BINARY"
 CODEX_MIXIN_LOCALIZATION_DIR="$LOCALIZATION_BUNDLE" "$TEST_BINARY"

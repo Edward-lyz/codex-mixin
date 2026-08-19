@@ -13,5 +13,6 @@ xcrun swiftc \
   "$ROOT_DIR/macos/ProviderWindowLayoutSupport.swift" \
   "$ROOT_DIR/macos/tests/ProviderWindowLayoutTests.swift" \
   -framework Cocoa \
+  -framework SwiftUI \
   -o "$TEST_BINARY"
 CODEX_MIXIN_LOCALIZATION_DIR="$LOCALIZATION_BUNDLE" "$TEST_BINARY"
