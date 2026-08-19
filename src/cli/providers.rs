@@ -24,7 +24,8 @@ pub(super) use management::{
     add_provider, remove_provider, reorder_providers, set_provider_enabled, update_provider,
 };
 pub(super) use models::{
-    discover_models, discover_models_with_output, select_models, test_provider,
+    discover_models, discover_models_with_output, probe_selected_models, select_models,
+    test_provider,
 };
 
 #[derive(Clone, Debug)]

@@ -5,7 +5,7 @@ use anyhow::Context;
 use reqwest::Client;
 use serde_json::json;
 
-use crate::anthropic::{BaiduAvailableModelsResponse, ModelsResponse};
+use crate::anthropic::{BaiduAvailableModelsResponse, ModelInfo, ModelsResponse};
 
 use super::models_dev::{
     enrich_models_with_models_dev, fetch_models_dev_provider_models, uses_models_dev_capabilities,
@@ -64,22 +64,11 @@ async fn discover_openai_models(
     let mut models = models
         .data
         .into_iter()
-        .map(|model| ProviderModel {
-            id: model.id,
-            display_name: model.display_name,
-            description: model.description,
-            ratio: model.ratio,
-            price_type: model.price_type,
-            context_window: model.context_window,
-            protocol: model.protocol,
-            api_path: model.api_path,
-            supports_image: model.supports_image,
-            supports_thinking: model.supports_thinking,
-            supports_web_search: model.supports_web_search,
-            supports_tool_search: model.supports_tool_search,
-            supports_function_tools: model.supports_function_tools,
-            capability_probe_error: model.capability_probe_error,
-            capabilities_probed_at_ms: model.capabilities_probed_at_ms,
+        .map(|model| {
+            openai_model_to_provider_model(
+                model,
+                definition.preset_id.as_deref() == Some("openrouter"),
+            )
         })
         .collect::<Vec<_>>();
     if uses_models_dev_capabilities(definition.preset_id.as_deref(), definition.id.as_str()) {
@@ -94,6 +83,54 @@ async fn discover_openai_models(
     }
     normalize_models(&mut models);
     Ok(models)
+}
+
+fn openai_model_to_provider_model(model: ModelInfo, is_openrouter: bool) -> ProviderModel {
+    let (supports_image, supports_thinking, supports_web_search, supports_function_tools) =
+        if is_openrouter {
+            let supports_parameter = |parameter| {
+                model
+                    .supported_parameters
+                    .iter()
+                    .any(|supported| supported == parameter)
+            };
+            (
+                Some(model.architecture.as_ref().is_some_and(|architecture| {
+                    architecture
+                        .input_modalities
+                        .iter()
+                        .any(|modality| modality == "image")
+                })),
+                Some(
+                    model
+                        .reasoning
+                        .as_ref()
+                        .is_some_and(|reasoning| !reasoning.is_null())
+                        || supports_parameter("reasoning"),
+                ),
+                Some(supports_parameter("web_search_options")),
+                Some(supports_parameter("tools") && supports_parameter("tool_choice")),
+            )
+        } else {
+            (Some(false), Some(false), Some(false), Some(false))
+        };
+    ProviderModel {
+        id: model.id,
+        display_name: model.display_name,
+        description: model.description,
+        ratio: model.ratio,
+        price_type: model.price_type,
+        context_window: model.context_window,
+        protocol: model.protocol,
+        api_path: model.api_path,
+        supports_image,
+        supports_thinking,
+        supports_web_search,
+        supports_tool_search: Some(false),
+        supports_function_tools,
+        capability_probe_error: model.capability_probe_error,
+        capabilities_probed_at_ms: model.capabilities_probed_at_ms,
+    }
 }
 
 async fn discover_baidu_models(
@@ -154,6 +191,12 @@ fn add_baidu_model(
         );
         return;
     };
+    let declared_capability = |name| {
+        model
+            .capability_set
+            .iter()
+            .any(|capability| capability == name)
+    };
     let description = capability.model_description;
     let converted = ProviderModel {
         id: id.clone(),
@@ -162,9 +205,11 @@ fn add_baidu_model(
         ratio: Some(capability.ratio),
         price_type: Some(model.price_type),
         context_window: Some(capability.context_window),
-        supports_image: Some(capability.supports_image),
-        supports_thinking: Some(capability.supports_thinking),
-        supports_web_search: None,
+        supports_image: Some(capability.supports_image || declared_capability("image")),
+        supports_thinking: Some(capability.supports_thinking || declared_capability("thinking")),
+        supports_web_search: Some(declared_capability("web_search")),
+        supports_tool_search: Some(false),
+        supports_function_tools: Some(false),
         ..ProviderModel::default()
     };
     if let Some(&index) = model_indices.get(&id) {
@@ -246,6 +291,39 @@ mod tests {
             id: id.to_owned(),
             ..ProviderModel::default()
         }
+    }
+
+    #[test]
+    fn openrouter_declarations_populate_capabilities_without_a_probe() {
+        let response: ModelsResponse = serde_json::from_str(
+            r#"{"data":[{"id":"vision-tool-model","name":"Vision Tool","context_length":128000,"architecture":{"input_modalities":["text","image"]},"supported_parameters":["tools","tool_choice","reasoning","web_search_options"],"reasoning":{}}]}"#,
+        )
+        .unwrap();
+
+        let model = openai_model_to_provider_model(response.data.into_iter().next().unwrap(), true);
+
+        assert_eq!(model.display_name.as_deref(), Some("Vision Tool"));
+        assert_eq!(model.context_window, Some(128000));
+        assert_eq!(model.supports_image, Some(true));
+        assert_eq!(model.supports_thinking, Some(true));
+        assert_eq!(model.supports_function_tools, Some(true));
+        assert_eq!(model.supports_web_search, Some(true));
+        assert_eq!(model.supports_tool_search, Some(false));
+    }
+
+    #[test]
+    fn undeclared_openai_compatible_capabilities_are_conservative() {
+        let response: ModelsResponse =
+            serde_json::from_str(r#"{"data":[{"id":"unknown"}]}"#).unwrap();
+
+        let model =
+            openai_model_to_provider_model(response.data.into_iter().next().unwrap(), false);
+
+        assert_eq!(model.supports_image, Some(false));
+        assert_eq!(model.supports_thinking, Some(false));
+        assert_eq!(model.supports_function_tools, Some(false));
+        assert_eq!(model.supports_web_search, Some(false));
+        assert_eq!(model.supports_tool_search, Some(false));
     }
 
     #[test]

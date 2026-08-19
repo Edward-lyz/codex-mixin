@@ -52,7 +52,7 @@ pub(crate) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow
             None
         }
     };
-    let mut models = match models {
+    let models = match models {
         Ok(models) => models,
         Err(error) => {
             let stored_error = redact_provider_error(&provider, &format!("{error:#}"));
@@ -82,43 +82,12 @@ pub(crate) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow
         "Discovered {} models for provider {id}",
         models.len()
     ));
-    let provider_id = provider.id.clone();
-    let capability_summary = match ProviderCapabilities::probe_provider_with_progress(
-        client.clone(),
-        &provider,
-        &models,
-        Some(std::sync::Arc::new(
-            move |done, total, supported, indeterminate| {
-                super::super::progress_step(&format!(
-                    "Probing capabilities for {provider_id}: {done}/{total} complete ({supported} routed, {indeterminate} indeterminate)"
-                ));
-            },
-        )),
-    )
-    .await
-    {
-        Ok(summary) => summary,
-        Err(error) => {
-            super::super::progress_step(&format!(
-                "Capability probing failed for {id}: {}",
-                format!("{error:#}").lines().next().unwrap_or("probe failed")
-            ));
-            return Err(error);
-        }
-    };
-    if provider.model_source != ProviderModelSource::BaiduOneApi {
-        let current_runtime_config = GatewayConfig::from_stored_config()?;
-        let mut capabilities = ProviderCapabilities::from_default_path(&current_runtime_config)?;
-        capabilities.replace_provider_results(
-            &provider,
-            &current_runtime_config,
-            &capability_summary.results,
-        )?;
-        let mut annotated_provider = provider.clone();
-        annotated_provider.cached_models = models;
-        capabilities.annotate_provider(&mut annotated_provider);
-        models = annotated_provider.cached_models;
-    }
+    let runtime_config = GatewayConfig::from_stored_config()?;
+    let capabilities = ProviderCapabilities::from_default_path(&runtime_config)?;
+    let mut annotated_provider = provider.clone();
+    annotated_provider.cached_models = models;
+    capabilities.annotate_provider(&mut annotated_provider);
+    let models = annotated_provider.cached_models;
     let count = models.len();
     mutate_and_invalidate(|config| {
         let current = find_provider_mut(config, id)?;
@@ -132,17 +101,10 @@ pub(crate) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow
         apply_discovered_models(current, models)
     })?;
     super::super::progress_step(&format!(
-        "Model refresh complete for {id}: {count} available, {} routed, {} indeterminate",
-        capability_summary.supported, capability_summary.indeterminate
+        "Model refresh complete for {id}: {count} available"
     ));
     if !quiet {
         println!("provider models refreshed: {id} ({count} available)");
-        if capability_summary.attempted > 0 {
-            println!(
-                "provider capabilities probed: {id} ({} routed, {} indeterminate)",
-                capability_summary.supported, capability_summary.indeterminate
-            );
-        }
         if let Some(discovered_quota) = discovered_quota {
             println!(
                 "provider quota endpoint detected: {id} ({})",
@@ -150,6 +112,71 @@ pub(crate) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow
             );
         }
     }
+    Ok(())
+}
+
+pub(crate) async fn probe_selected_models(id: &str) -> anyhow::Result<()> {
+    let config = required_config()?;
+    let provider = config
+        .providers
+        .iter()
+        .find(|provider| provider.id == id)
+        .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?
+        .clone();
+    let selected_models = provider
+        .cached_models
+        .iter()
+        .filter(|model| {
+            provider
+                .selected_models
+                .iter()
+                .any(|selected| selected == &model.id)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    anyhow::ensure!(
+        !selected_models.is_empty(),
+        "provider {id} has no selected cached models; refresh the model list and select models first"
+    );
+    let client = reqwest::Client::builder()
+        .timeout(Duration::from_secs(30))
+        .build()?;
+    super::super::progress_step(&format!(
+        "Probing {} selected models for provider {id}",
+        selected_models.len()
+    ));
+    let provider_id = provider.id.clone();
+    let summary = ProviderCapabilities::probe_provider_with_progress(
+        client,
+        &provider,
+        &selected_models,
+        Some(std::sync::Arc::new(move |done, total, supported, indeterminate| {
+            super::super::progress_step(&format!(
+                "Probing capabilities for {provider_id}: {done}/{total} complete ({supported} routed, {indeterminate} indeterminate)"
+            ));
+        })),
+    )
+    .await?;
+    let runtime_config = GatewayConfig::from_stored_config()?;
+    let mut capabilities = ProviderCapabilities::from_default_path(&runtime_config)?;
+    capabilities.replace_provider_results(&provider, &runtime_config, &summary.results)?;
+    mutate_and_invalidate(|config| {
+        let current = find_provider_mut(config, id)?;
+        anyhow::ensure!(
+            discovery_settings_match(current, &provider),
+            "provider {id} settings changed during capability probing; retry"
+        );
+        capabilities.annotate_provider(current);
+        current.validate()
+    })?;
+    super::super::progress_step(&format!(
+        "Capability probing complete for {id}: {} models checked",
+        summary.attempted
+    ));
+    println!(
+        "provider capabilities probed: {id} ({} models checked)",
+        summary.attempted
+    );
     Ok(())
 }
 

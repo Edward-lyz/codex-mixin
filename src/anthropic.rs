@@ -64,7 +64,7 @@ pub struct ModelsResponse {
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]
 pub struct ModelInfo {
     pub id: String,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(default, alias = "name", skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     #[serde(default)]
     pub object: Option<String>,
@@ -78,7 +78,11 @@ pub struct ModelInfo {
     pub ratio: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub price_type: Option<String>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
+    #[serde(
+        default,
+        alias = "context_length",
+        skip_serializing_if = "Option::is_none"
+    )]
     pub context_window: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol: Option<crate::provider::ProviderProtocol>,
@@ -98,6 +102,18 @@ pub struct ModelInfo {
     pub capability_probe_error: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub capabilities_probed_at_ms: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub architecture: Option<OpenRouterModelArchitecture>,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub supported_parameters: Vec<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub reasoning: Option<Value>,
+}
+
+#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+pub struct OpenRouterModelArchitecture {
+    #[serde(default)]
+    pub input_modalities: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -112,6 +128,8 @@ pub struct BaiduAvailableModelsResponse {
 pub struct BaiduAvailableModel {
     pub model: String,
     pub capability: Option<BaiduModelCapability>,
+    #[serde(default)]
+    pub capability_set: Vec<String>,
     pub price_type: String,
 }
 

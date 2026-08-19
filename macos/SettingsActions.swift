@@ -193,6 +193,15 @@ extension AppDelegate {
                         ["providers", "discover", providerID],
                         onProgress: onProgress
                     )
+                },
+                probeHandler: { [weak self] providerID, onProgress in
+                    guard let self else {
+                        throw GatewayError.command("Codex Mixin 已退出")
+                    }
+                    _ = try await self.runGatewayStreaming(
+                        ["providers", "probe", providerID],
+                        onProgress: onProgress
+                    )
                 }
             )
         }

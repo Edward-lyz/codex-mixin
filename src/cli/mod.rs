@@ -43,8 +43,8 @@ use maintenance::migrate_history;
 use metadata::{load_model_metadata_resolver, refresh_metadata};
 use providers::{
     AddProviderOptions, TestProviderOptions, UpdateProviderOptions, add_provider, discover_models,
-    list_providers, remove_provider, reorder_providers, select_models, set_provider_enabled,
-    test_provider, update_provider,
+    list_providers, probe_selected_models, remove_provider, reorder_providers, select_models,
+    set_provider_enabled, test_provider, update_provider,
 };
 use service::{init_tracing, logs, restart, start, stop};
 use status::{models, probe_web_search, quota, show_config, status, usage};
@@ -588,6 +588,8 @@ enum ProviderCommand {
     },
     /// Refresh the provider model catalog.
     Discover { id: String },
+    /// Probe capabilities for models currently added to Codex.
+    Probe { id: String },
     /// Test provider authentication and model access.
     Test {
         id: String,
@@ -870,6 +872,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 report_hook::sync_installation()
             }
             ProviderCommand::Discover { id } => discover_models(&id).await,
+            ProviderCommand::Probe { id } => probe_selected_models(&id).await,
             ProviderCommand::Test {
                 id,
                 json,

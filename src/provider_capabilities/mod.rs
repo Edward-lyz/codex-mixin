@@ -51,9 +51,6 @@ impl ProviderCapabilities {
 
     pub fn annotate_config(&self, config: &mut GatewayConfig) {
         for provider in &mut config.providers {
-            if provider.model_source == ProviderModelSource::BaiduOneApi {
-                continue;
-            }
             let Some(record) = self.file.providers.get(&provider.id) else {
                 continue;
             };
@@ -65,9 +62,6 @@ impl ProviderCapabilities {
     }
 
     pub fn annotate_provider(&self, provider: &mut ProviderDefinition) {
-        if provider.model_source == ProviderModelSource::BaiduOneApi {
-            return;
-        }
         let Some(record) = self.file.providers.get(&provider.id) else {
             return;
         };

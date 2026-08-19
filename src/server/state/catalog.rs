@@ -41,6 +41,9 @@ impl AppState {
                     supports_function_tools: model.supports_function_tools,
                     capability_probe_error: model.capability_probe_error.clone(),
                     capabilities_probed_at_ms: model.capabilities_probed_at_ms,
+                    architecture: None,
+                    supported_parameters: Vec::new(),
+                    reasoning: None,
                 });
             }
         }

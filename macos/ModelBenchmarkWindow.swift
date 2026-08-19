@@ -25,6 +25,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
     private let loadProvidersHandler: LoadProvidersHandler
     private let saveSelectionsHandler: SaveSelectionsHandler
     private let discoverHandler: DiscoverHandler
+    private let probeHandler: DiscoverHandler
     private var pollingTask: Task<Void, Never>?
     private var snapshot: ModelBenchmarkSnapshot?
     private var providers: [ProviderView] = []
@@ -35,12 +36,14 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
     private var isSavingSelections = false
     private var isLaunchingBenchmark = false
     private var isDiscoveringModels = false
+    private var isProbingCapabilities = false
 
     private let providerPopup = NSPopUpButton()
     private let modePopup = NSPopUpButton()
     private let timeoutPopup = NSPopUpButton()
     private let startButton = NSButton(title: "测试当前 Provider", target: nil, action: nil)
     private let discoverButton = NSButton(title: "刷新模型", target: nil, action: nil)
+    private let probeButton = NSButton(title: "探测已加入模型", target: nil, action: nil)
     private let searchField = NSSearchField()
     private let selectionFilterPopup = NSPopUpButton()
     private let selectAllButton = NSButton(title: "全选", target: nil, action: nil)
@@ -58,7 +61,8 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         fetchHandler: @escaping FetchHandler,
         loadProvidersHandler: @escaping LoadProvidersHandler,
         saveSelectionsHandler: @escaping SaveSelectionsHandler,
-        discoverHandler: @escaping DiscoverHandler
+        discoverHandler: @escaping DiscoverHandler,
+        probeHandler: @escaping DiscoverHandler
     ) {
         self.snapshotURL = snapshotURL
         self.startHandler = startHandler
@@ -66,6 +70,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         self.loadProvidersHandler = loadProvidersHandler
         self.saveSelectionsHandler = saveSelectionsHandler
         self.discoverHandler = discoverHandler
+        self.probeHandler = probeHandler
         let visibleFrame = NSScreen.main?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1_280, height: 800)
         let window = NSWindow(
@@ -289,11 +294,18 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         discoverButton.target = self
         discoverButton.action = #selector(refreshProviderModels)
 
+        probeButton.bezelStyle = .rounded
+        probeButton.image = benchmarkSymbol("waveform.path.ecg")
+        probeButton.imagePosition = .imageLeading
+        probeButton.target = self
+        probeButton.action = #selector(probeSelectedModels)
+
         let topControls = NSStackView(views: [
             labeledControl("Provider", providerPopup),
             labeledControl("测速", modePopup),
             labeledControl("超时", timeoutPopup),
             discoverButton,
+            probeButton,
             startButton,
         ])
         topControls.orientation = .horizontal
@@ -561,6 +573,52 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         }
     }
 
+    @objc private func probeSelectedModels() {
+        guard let providerID = selectedProvider(), !isProbingCapabilities else { return }
+        isProbingCapabilities = true
+        updateActionState()
+        statusLabel.stringValue = "正在探测 \(providerID.displayName) 已加入 Codex 的模型…"
+        statusLabel.textColor = .secondaryLabelColor
+        progressIndicator.isIndeterminate = true
+        progressIndicator.startAnimation(nil)
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            defer {
+                isProbingCapabilities = false
+                updateActionState()
+            }
+            do {
+                try await probeHandler(providerID.id) { [weak self] progress in
+                    guard let self else { return }
+                    self.statusLabel.stringValue = localizedProgressLabel(progress)
+                    self.statusLabel.textColor = .secondaryLabelColor
+                    if let counts = modelCapabilityProbeCounts(progress) {
+                        self.progressIndicator.stopAnimation(nil)
+                        self.progressIndicator.isIndeterminate = false
+                        self.progressIndicator.maxValue = Double(counts.total)
+                        self.progressIndicator.doubleValue = Double(counts.completed)
+                    }
+                }
+                reloadProviderModels()
+                progressIndicator.stopAnimation(nil)
+                progressIndicator.isIndeterminate = false
+                progressIndicator.maxValue = 1
+                progressIndicator.doubleValue = 1
+                statusLabel.stringValue = "已完成 \(providerID.displayName) 已加入模型的能力探测"
+                statusLabel.textColor = .mixinHealthy
+            } catch {
+                progressIndicator.stopAnimation(nil)
+                progressIndicator.isIndeterminate = false
+                progressIndicator.maxValue = 1
+                progressIndicator.doubleValue = 0
+                presentBenchmarkError(
+                    title: "探测模型能力失败",
+                    message: localizedErrorDescription(error)
+                )
+            }
+        }
+    }
+
     private func selectedProviderID() -> String? {
         providerPopup.selectedItem?.representedObject as? String
     }
@@ -735,7 +793,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         let providerSelectedCount = rowsForSelectedProvider().filter {
             selectedModelKeys.contains($0.key) && $0.model.isAvailable
         }.count
-        let busy = isSavingSelections || isLaunchingBenchmark || isDiscoveringModels
+        let busy = isSavingSelections || isLaunchingBenchmark || isDiscoveringModels || isProbingCapabilities
             || snapshot?.status == "running"
         saveSelectionButton.isEnabled = dirty && !busy
         selectAllButton.isEnabled = !busy && selectedProvider() != nil
@@ -743,6 +801,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         startButton.title = dirty ? "保存并测试" : "测试当前 Provider"
         startButton.isEnabled = !busy && providerSelectedCount > 0
         discoverButton.isEnabled = !busy && selectedProvider() != nil
+        probeButton.isEnabled = !busy && !dirty && providerSelectedCount > 0
         providerPopup.isEnabled = !busy
         modePopup.isEnabled = !busy
         timeoutPopup.isEnabled = !busy
