@@ -77,7 +77,7 @@ Codex Mixin 的解法是：Codex 连到本机自动分配的 loopback 端口，�
 - 极致 prompt 缓存：用逐字节的前缀契约驱动上游自动缓存命中，并在每一轮报告缓存是否失效、失效在哪里；工具截图只在首次进入上下文的那一轮内联，之后回放为固定占位符，历史不会永久携带图片字节。
 - 图片能力：官方 GPT 保留 Codex 原生生图；自定义模型可调用上游 OpenAI-compatible 生图接口。
 - 模型 metadata 补齐：结合 LiteLLM metadata 和内置正则规则补齐上下文窗口、能力和 instruction 字段。
-- 模型选择与测速：独立窗口统一完成模型搜索、勾选和保存，并对已选模型测试 TTFT、TPS、实际 usage tokens、总耗时和本次额度花费；结果可按列升降序排列并持续保存。
+- 模型选择与测速：独立窗口统一完成模型搜索、勾选和保存。刷新模型只读取模型目录，不发推理；需要时可手动探测已加入 Codex 的模型高级能力。测速独立执行，显示 TTFT、TPS、实际 usage tokens、总耗时和本次额度花费。
 - Fusion 多模型编排：多个 Panel 并行分析，经 Judge 汇总后由 Final 模型流式回答；中间结果可使用 Codex 原生交互式 `Fusion · Review` 展示。
 - 菜单栏产品化：启动、暂停、重启、配置密钥、安装到 Codex、恢复、查看额度、Token/缓存使用和日志都在菜单栏完成。
 - App 启动即用：打开菜单栏 App 后自动启动后台网关，并在菜单顶部显示实际 endpoint。
@@ -181,7 +181,7 @@ codex-mixin service logs -n 200
 | `deepseek` | OpenAI Chat Completions | `https://api.deepseek.com` | `/chat/completions` | 可选，用户填写 | `/models` | 无默认值 |
 | `opencode-go` | OpenAI Responses | `https://opencode.ai/zen/go` | `/v1/responses` | 无 | `/v1/models` | dashboard `/workspace/{id}/go` + `/billing` |
 
-固定 preset 的上游地址和路径由 preset 管理；`custom` provider 会自动探测模型列表和响应接口。
+固定 preset 的上游地址和路径由 preset 管理；`custom` provider 会自动探测模型列表和响应接口，不发起有效模型推理。
 Baidu OneAPI 的额度接口必须同时填写额度用户名；CLI 和 App 都会在保存时校验。
 OpenCode Go 的额度显示需要额外填写工作区 ID 和 `opencode.ai` 的 `auth` cookie；
 这两个值可以在浏览器控制台里从 OpenCode Go dashboard 页面取得，cookie 过期后需要重新填写。
@@ -353,7 +353,7 @@ codex-mixin connect remove codex
 - `登录时启动并开启服务`：登录后同时打开菜单栏 App 和网关；开启时将当前 daemon 切换为 launchd 服务，关闭时将仍在运行的服务切回后台 daemon。
 - `刷新状态与额度`：刷新服务状态和额度进度条。
 - `供应商设置...`：新增、删除和启停 provider，填写 API Key、上游根地址和额度信息，并刷新上游模型缓存。
-- `模型选择与测速...`：搜索、筛选和勾选要加入 Codex 的模型；未保存的选择会在测速前自动保存。下方结果表按模型显示 TTFT、TPS、usage、总耗时和状态，可点击表头切换升降序。关闭窗口或退出 App 不会停止后台测速，重开 App 会从 `~/.codex-mixin/model-benchmarks.json` 恢复上次结果。
+- `模型选择与测速...`：搜索、筛选和勾选要加入 Codex 的模型。保存模型选择和测速是独立按钮；选择有改动时必须先保存，测速不会隐式保存或重启网关。刷新模型只更新模型目录；探测已加入模型会验证其高级能力。下方结果表按模型显示 TTFT、TPS、usage、总耗时和状态，可点击表头切换升降序。关闭窗口或退出 App 不会停止后台测速，但重开窗口会清空上次测速结果。
 - `Fusion 设置...`：选择 1–8 个 Panel 模型以及 Judge、Final 模型，并控制是否在回答中展示中间结果；也可以关闭 Fusion，从 Codex 模型选择器中移除对应虚拟模型。
 - `安装到 Codex...`：选择有账号或仅自定义模型模式；先确保网关已启动，再按实际动态端口生成模型目录并写入托管 Codex 配置。未检测到 `models_cache.json` 时默认选择仅自定义模型。
 - `从 Codex 恢复...`：恢复安装前备份并删除托管模型目录。
@@ -403,6 +403,7 @@ codex-mixin provider add --preset <preset> --key <key>
 codex-mixin provider update <id> --key <key>
 codex-mixin provider reorder <id> <id> ...
 codex-mixin provider discover <id>
+codex-mixin provider probe <id>       # 只探测已加入 Codex 的模型能力
 codex-mixin provider test <id>
 codex-mixin provider select <id> --model <model>...
 
@@ -653,7 +654,7 @@ Codex Mixin exposes a Responses-compatible endpoint on an automatically selected
 - Drives upstream automatic prompt caching with a byte-level prefix contract, reports per turn whether the cache survived and where it broke, and inlines a tool screenshot only on the turn it first enters the context so history never carries image bytes forever.
 - Keeps native Codex image generation for official GPT models and can route custom-model image calls to an OpenAI-compatible upstream image endpoint.
 - Completes model metadata using LiteLLM metadata plus built-in model-family rules.
-- Provides one model-selection and benchmark window for searching, enabling, and saving models, then recording sortable TTFT, TPS, actual usage tokens, total latency, timeout results, and estimated quota cost.
+- Provides one model-selection and benchmark window for searching, enabling, and saving models. Refreshing reads the model directory only; capability probing is manual and limited to models added to Codex. Benchmarking separately records sortable TTFT, TPS, actual usage tokens, total latency, timeout results, and estimated quota cost.
 - Orchestrates multiple Panel models in parallel, compares them with a Judge model, and streams a Final answer, with an optional native interactive `Fusion · Review` surface in Codex.
 - Provides a macOS menu bar control surface for service lifecycle, provider setup, Codex install, rollback, quota, token/cache usage, logs, and updates.
 - Exposes an Anthropic Messages-compatible `/v1/messages` endpoint so Claude Code and Anthropic SDKs can reuse the same local gateway.
@@ -735,7 +736,8 @@ GitHub Release, `info` for state, and `doctor` for diagnosis. Then start a new C
 | `opencode-go` | OpenAI Responses | `https://opencode.ai/zen/go` | `/v1/responses` | None | `/v1/models` | Dashboard `/workspace/{id}/go` + `/billing` |
 
 Curated presets manage their upstream paths. Custom providers automatically probe versioned
-endpoints first and then retry the corresponding legacy paths without `/v1`.
+endpoints first and then retry the corresponding legacy paths without `/v1`; this protocol check
+uses incomplete request bodies and does not run model inference.
 The Baidu OneAPI quota endpoint also requires a quota username; both the CLI and app validate it before saving.
 OpenCode Go quota display also requires a workspace ID and the `opencode.ai` `auth` cookie.
 Take both values from the OpenCode Go dashboard in a signed-in browser; refresh the cookie when it expires.
@@ -930,6 +932,7 @@ codex-mixin provider add --preset <preset> --key <key>
 codex-mixin provider update <id> --key <key>
 codex-mixin provider reorder <id> <id> ...
 codex-mixin provider discover <id>
+codex-mixin provider probe <id>       # Probe capabilities only for models added to Codex
 codex-mixin provider test <id>
 codex-mixin provider select <id> --model <model>...
 
