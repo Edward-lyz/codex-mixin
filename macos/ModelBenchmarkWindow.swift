@@ -41,7 +41,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
     private let providerPopup = NSPopUpButton()
     private let modePopup = NSPopUpButton()
     private let timeoutPopup = NSPopUpButton()
-    private let startButton = NSButton(title: "测试当前 Provider", target: nil, action: nil)
+    private let startButton = NSButton(title: "测速", target: nil, action: nil)
     private let discoverButton = NSButton(title: "刷新模型", target: nil, action: nil)
     private let probeButton = NSButton(title: "探测已加入模型", target: nil, action: nil)
     private let searchField = NSSearchField()
@@ -286,7 +286,6 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         startButton.imagePosition = .imageLeading
         startButton.target = self
         startButton.action = #selector(startBenchmark)
-        startButton.widthAnchor.constraint(equalToConstant: 148).isActive = true
 
         discoverButton.bezelStyle = .rounded
         discoverButton.image = benchmarkSymbol("arrow.clockwise")
@@ -306,7 +305,6 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
             labeledControl("超时", timeoutPopup),
             discoverButton,
             probeButton,
-            startButton,
         ])
         topControls.orientation = .horizontal
         topControls.alignment = .centerY
@@ -339,6 +337,8 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         }
         selectAllButton.action = #selector(selectAllVisibleModels)
         selectNoneButton.action = #selector(selectNoVisibleModels)
+        saveSelectionButton.image = benchmarkSymbol("square.and.arrow.down")
+        saveSelectionButton.imagePosition = .imageLeading
         saveSelectionButton.action = #selector(saveModelSelections)
         let selectionControls = NSStackView(views: [
             searchField,
@@ -347,6 +347,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
             selectAllButton,
             selectNoneButton,
             saveSelectionButton,
+            startButton,
         ])
         selectionControls.orientation = .horizontal
         selectionControls.alignment = .centerY
@@ -506,7 +507,6 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
                 updateActionState()
             }
             do {
-                try await persistSelectionsIfNeeded()
                 let snapshot = try await startHandler(
                     timeout,
                     providerID,
@@ -798,8 +798,8 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         saveSelectionButton.isEnabled = dirty && !busy
         selectAllButton.isEnabled = !busy && selectedProvider() != nil
         selectNoneButton.isEnabled = !busy && selectedProvider() != nil
-        startButton.title = dirty ? "保存并测试" : "测试当前 Provider"
-        startButton.isEnabled = !busy && providerSelectedCount > 0
+        startButton.isEnabled = !busy && !dirty && providerSelectedCount > 0
+        startButton.toolTip = dirty ? "请先保存模型选择" : "测试当前 Provider"
         discoverButton.isEnabled = !busy && selectedProvider() != nil
         probeButton.isEnabled = !busy && !dirty && providerSelectedCount > 0
         providerPopup.isEnabled = !busy
