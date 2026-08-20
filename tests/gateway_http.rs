@@ -697,8 +697,16 @@ async fn mock_messages(
     let payload = match state.mode {
         MockMode::Text if is_fusion_panel => panel_report_sse(),
         MockMode::Text => text_sse(),
-        MockMode::Compact => text_sse_with(
-            r#"{"goal":"continue task","constraints":["no tools"],"decisions":["use compact"],"files":["src/server/compact.rs"],"tool_results":["tests passed"],"pending_work":["run e2e"]}"#,
+        MockMode::Compact => tool_sse(
+            "submit_compaction",
+            json!({
+                "goal":"continue task",
+                "constraints":["no tools"],
+                "decisions":["use compact"],
+                "files":["src/server/compact.rs"],
+                "tool_results":["tests passed"],
+                "pending_work":["run e2e"]
+            }),
         ),
         MockMode::Thinking => thinking_sse(),
         MockMode::UnsignedThinking => unsigned_thinking_sse(),
@@ -848,11 +856,30 @@ async fn mock_openai_chat_completions(
         .get("x-hash-key")
         .and_then(|value| value.to_str().ok())
         .map_or(Value::Null, |value| json!(value));
+    let is_compaction = body["tools"].as_array().is_some_and(|tools| {
+        tools
+            .iter()
+            .any(|tool| tool["function"]["name"].as_str() == Some("submit_compaction"))
+    });
     requests.lock().unwrap().push(body);
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")
-        .body(Body::from(openai_chat_sse()))
+        .body(Body::from(if is_compaction {
+            openai_tool_sse(
+                "submit_compaction",
+                json!({
+                    "goal":"continue task",
+                    "constraints":["no tools"],
+                    "decisions":["use compact"],
+                    "files":["src/server/compact.rs"],
+                    "tool_results":["tests passed"],
+                    "pending_work":["run e2e"]
+                }),
+            )
+        } else {
+            openai_chat_sse()
+        }))
         .unwrap()
 }
 
@@ -1330,6 +1357,26 @@ fn openai_image_tool_sse() -> String {
                 "function": {
                     "name": "image_gen__imagegen",
                     "arguments": "{\"prompt\":\"draw a blue square\"}"
+                }
+            }]},
+            "finish_reason": "tool_calls"
+        }]
+    });
+    format!("data: {chunk}\n\ndata: [DONE]\n\n")
+}
+
+fn openai_tool_sse(name: &str, arguments: Value) -> String {
+    let chunk = json!({
+        "id": "chatcmpl_compact",
+        "object": "chat.completion.chunk",
+        "choices": [{
+            "index": 0,
+            "delta": {"tool_calls": [{
+                "index": 0,
+                "id": "call_compact",
+                "function": {
+                    "name": name,
+                    "arguments": arguments.to_string()
                 }
             }]},
             "finish_reason": "tool_calls"
@@ -3453,11 +3500,61 @@ async fn compacts_custom_provider_into_mixin_token() {
             .starts_with("codex-mixin:compaction:v1:")
     );
     let request = requests.lock().unwrap()[0].clone();
-    assert!(request.get("tools").is_none());
+    assert_eq!(request["tools"].as_array().unwrap().len(), 1);
+    assert_eq!(request["tools"][0]["name"], "submit_compaction");
+    assert_eq!(request["tool_choice"]["type"], "any");
+    assert_eq!(request["tool_choice"]["disable_parallel_tool_use"], true);
     assert_eq!(
         request["system"][0]["text"],
-        "Summarize this conversation for continuation by another coding agent.\nReturn only a JSON object with exactly these fields:\ngoal (string), constraints (array of strings), decisions (array of strings),\nfiles (array of strings), tool_results (array of strings), pending_work (array of strings).\nDo not call tools. Do not include markdown fences. Preserve concrete commands,\nfile paths, unresolved errors, and decisions needed to continue the work."
+        "Summarize this conversation for continuation by another coding agent.\nCall submit_compaction exactly once with the conversation summary. Preserve concrete\ncommands, file paths, unresolved errors, and decisions needed to continue the work."
     );
+}
+
+#[tokio::test]
+async fn rejects_plain_text_compact_output_without_the_required_function_call() {
+    let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses/compact"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model": "Claude Sonnet 5-custom",
+            "input": "continue"
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
+    assert!(
+        response
+            .text()
+            .await
+            .unwrap()
+            .contains("compact provider did not call submit_compaction")
+    );
+}
+
+#[tokio::test]
+async fn compacts_openai_chat_provider_into_mixin_token() {
+    let (upstream_url, requests) = spawn_mock_openai_chat().await;
+    let mut config = test_config(upstream_url);
+    configure_openai_chat(&mut config, "/chat/completions");
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses/compact"))
+        .bearer_auth("gateway-key")
+        .json(&json!({"model": "gpt-5.6-sol-custom", "input": "continue"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["output"][0]["type"], "compaction");
+    let request = requests.lock().unwrap()[0].clone();
+    assert_eq!(request["tools"].as_array().unwrap().len(), 1);
+    assert_eq!(request["tools"][0]["function"]["name"], "submit_compaction");
+    assert_eq!(request["tool_choice"], "required");
+    assert_eq!(request["parallel_tool_calls"], false);
 }
 
 #[tokio::test]

@@ -18,12 +18,11 @@ use super::{AppState, *};
 
 const COMPACTION_INSTRUCTION: &str = r#"
 Summarize this conversation for continuation by another coding agent.
-Return only a JSON object with exactly these fields:
-goal (string), constraints (array of strings), decisions (array of strings),
-files (array of strings), tool_results (array of strings), pending_work (array of strings).
-Do not call tools. Do not include markdown fences. Preserve concrete commands,
-file paths, unresolved errors, and decisions needed to continue the work.
+Call submit_compaction exactly once with the conversation summary. Preserve concrete
+commands, file paths, unresolved errors, and decisions needed to continue the work.
 "#;
+
+const COMPACTION_TOOL_NAME: &str = "submit_compaction";
 
 pub(super) async fn compact(
     State(state): State<AppState>,
@@ -102,10 +101,34 @@ async fn compact_custom_provider(
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     body["stream"] = Value::Bool(true);
     body["max_output_tokens"] = Value::from(4096);
-    body["tools"] = Value::Array(Vec::new());
-    body.as_object_mut()
-        .ok_or_else(|| GatewayError::BadRequest("compact request must be an object".to_owned()))?
-        .remove("tool_choice");
+    body["tools"] = json!([{
+        "type": "function",
+        "name": COMPACTION_TOOL_NAME,
+        "description": "Submit the conversation summary for continuation by another coding agent.",
+        "strict": true,
+        "parameters": {
+            "type": "object",
+            "additionalProperties": false,
+            "required": [
+                "goal",
+                "constraints",
+                "decisions",
+                "files",
+                "tool_results",
+                "pending_work"
+            ],
+            "properties": {
+                "goal": {"type": "string"},
+                "constraints": {"type": "array", "items": {"type": "string"}},
+                "decisions": {"type": "array", "items": {"type": "string"}},
+                "files": {"type": "array", "items": {"type": "string"}},
+                "tool_results": {"type": "array", "items": {"type": "string"}},
+                "pending_work": {"type": "array", "items": {"type": "string"}}
+            }
+        }
+    }]);
+    body["tool_choice"] = Value::String("required".to_owned());
+    body["parallel_tool_calls"] = Value::Bool(false);
     body.as_object_mut()
         .ok_or_else(|| GatewayError::BadRequest("compact request must be an object".to_owned()))?
         .remove("previous_response_id");
@@ -120,11 +143,32 @@ async fn compact_custom_provider(
     body["instructions"] = Value::String(instructions);
 
     let response = collect_response(state, body).await?;
-    let summary: CompactionSummary = compaction::summary_from_value(
-        serde_json::from_str(response.output_text.trim()).map_err(|error| {
-            GatewayError::Upstream(format!("compact provider returned invalid JSON: {error}"))
-        })?,
-    )?;
+    let mut compaction_calls = response.output.iter().filter(|item| {
+        item.get("type").and_then(Value::as_str) == Some("function_call")
+            && item.get("name").and_then(Value::as_str) == Some(COMPACTION_TOOL_NAME)
+    });
+    let compaction_call = compaction_calls.next().ok_or_else(|| {
+        GatewayError::Upstream("compact provider did not call submit_compaction".to_owned())
+    })?;
+    if compaction_calls.next().is_some() {
+        return Err(GatewayError::Upstream(
+            "compact provider called submit_compaction more than once".to_owned(),
+        ));
+    }
+    let arguments = compaction_call
+        .get("arguments")
+        .and_then(Value::as_str)
+        .ok_or_else(|| {
+            GatewayError::Upstream(
+                "compact provider returned non-string submit_compaction arguments".to_owned(),
+            )
+        })?;
+    let summary: CompactionSummary =
+        compaction::summary_from_value(serde_json::from_str(arguments).map_err(|error| {
+            GatewayError::Upstream(format!(
+                "compact provider returned invalid submit_compaction arguments: {error}"
+            ))
+        })?)?;
     let token = compaction::encode(&model, summary)?;
     let response_id = format!("resp_compact_{}", Uuid::new_v4().simple());
     let item_id = format!("cmp_{}", Uuid::new_v4().simple());
