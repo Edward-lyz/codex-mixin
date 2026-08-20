@@ -276,6 +276,34 @@ struct MenuViewsLayoutTests {
             $0.identifier?.rawValue == "provider-tab-idle-provider"
         }?.image != nil)
 
+        let scrollingDashboard = ProviderUsageDashboardView()
+        scrollingDashboard.updateConfiguredProviders([
+            ProviderDashboardProvider(id: "baidu-oneapi", displayName: "Baidu OneAPI"),
+        ])
+        scrollingDashboard.updateTokenUsages([
+            ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-1", requestCount: 1, inputTokens: 400, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil),
+            ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-2", requestCount: 1, inputTokens: 300, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil),
+            ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-3", requestCount: 1, inputTokens: 200, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil),
+            ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-4", requestCount: 1, inputTokens: 100, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil),
+        ])
+        scrollingDashboard.layoutSubtreeIfNeeded()
+        let tokenScroll = descendants(of: scrollingDashboard, matching: NSScrollView.self)
+            .first { $0.identifier?.rawValue == "token-model-scroll" }
+        precondition(tokenScroll != nil)
+        tokenScroll?.contentView.scroll(to: NSPoint(x: 0, y: 30))
+        tokenScroll.map { $0.reflectScrolledClipView($0.contentView) }
+        let scrolledRow = descendants(of: scrollingDashboard, matching: NSControl.self)
+            .first { $0.identifier?.rawValue == "token-model-model-4" }
+        precondition(scrolledRow != nil)
+        guard let scrolledRow, let scrolledAction = scrolledRow.action else {
+            preconditionFailure("scrolled token model row is missing its click action")
+        }
+        NSApp.sendAction(scrolledAction, to: scrolledRow.target, from: scrolledRow)
+        scrollingDashboard.layoutSubtreeIfNeeded()
+        let rerenderedTokenScroll = descendants(of: scrollingDashboard, matching: NSScrollView.self)
+            .first { $0.identifier?.rawValue == "token-model-scroll" }
+        precondition(rerenderedTokenScroll?.contentView.bounds.origin.y == 30)
+
         let tokenLabels = descendants(of: dashboard, matching: NSTextField.self)
         precondition(tokenLabels.contains {
             $0.stringValue.contains("gpt-5.6-sol")

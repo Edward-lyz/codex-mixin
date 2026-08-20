@@ -416,6 +416,12 @@ final class ProviderUsageDashboardView: FlippedMenuView {
     }
 
     private func render() {
+        let tokenModelScrollOrigin = subviews
+            .compactMap { $0 as? NSScrollView }
+            .first { $0.identifier?.rawValue == "token-model-scroll" }?
+            .contentView
+            .bounds
+            .origin
         subviews.forEach { $0.removeFromSuperview() }
         frame.size = NSSize(width: menuContentWidth, height: providerDashboardMinimumHeight)
         let groups = usageGroups()
@@ -448,7 +454,11 @@ final class ProviderUsageDashboardView: FlippedMenuView {
             frame.size.height = max(providerDashboardMinimumHeight, quotaBottom + 38)
             return
         }
-        let chartBottom = renderModelChart(group.models, at: quotaBottom + 8)
+        let chartBottom = renderModelChart(
+            group.models,
+            at: quotaBottom + 8,
+            scrollOrigin: tokenModelScrollOrigin
+        )
         if selectedModelID != nil {
             renderModelDetail(group.models, at: chartBottom + 6)
             frame.size.height = chartBottom + 74
@@ -591,7 +601,11 @@ final class ProviderUsageDashboardView: FlippedMenuView {
         return quotaTop + quotaHeight
     }
 
-    private func renderModelChart(_ models: [ProviderTokenUsage], at y: CGFloat) -> CGFloat {
+    private func renderModelChart(
+        _ models: [ProviderTokenUsage],
+        at y: CGFloat,
+        scrollOrigin: NSPoint?
+    ) -> CGFloat {
         visibleModels = models
         if let selectedModelID,
            !models.contains(where: { $0.modelID == selectedModelID })
@@ -639,6 +653,10 @@ final class ProviderUsageDashboardView: FlippedMenuView {
             document.addSubview(row)
         }
         scroll.documentView = document
+        if let scrollOrigin {
+            scroll.contentView.scroll(to: scrollOrigin)
+            scroll.reflectScrolledClipView(scroll.contentView)
+        }
         addSubview(scroll)
         return y + chartHeight
     }
