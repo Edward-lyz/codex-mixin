@@ -769,6 +769,11 @@ async fn mock_baidu_routed_responses(
 ) -> Response {
     let contains_websocket_envelope =
         body.get("type").is_some() || body.get("previous_response_id").is_some();
+    let is_compaction = body["tools"].as_array().is_some_and(|tools| {
+        tools
+            .iter()
+            .any(|tool| tool["name"].as_str() == Some("submit_compaction"))
+    });
     record_baidu_protocol_request(&state, "/v1/responses", &headers, body);
     if contains_websocket_envelope {
         return (
@@ -780,6 +785,33 @@ async fn mock_baidu_routed_responses(
             })),
         )
             .into_response();
+    }
+    if is_compaction {
+        let arguments = json!({
+            "goal":"continue task",
+            "constraints":["no tools"],
+            "decisions":["use compact"],
+            "files":["src/server/compact.rs"],
+            "tool_results":["tests passed"],
+            "pending_work":["run e2e"]
+        });
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(Body::from(format!(
+                "event: response.output_item.done\ndata: {}\n\nevent: response.completed\ndata: {{\"type\":\"response.completed\",\"response\":{{\"id\":\"resp_baidu\",\"object\":\"response\",\"status\":\"completed\",\"model\":\"gpt-5.6-sol\",\"output\":[]}}}}\n\n",
+                json!({
+                    "type":"response.output_item.done",
+                    "item": {
+                        "type":"function_call",
+                        "id":"fc_baidu",
+                        "call_id":"call_baidu",
+                        "name":"submit_compaction",
+                        "arguments":arguments.to_string()
+                    }
+                })
+            )))
+            .unwrap();
     }
     Response::builder()
         .status(StatusCode::OK)
@@ -3555,6 +3587,30 @@ async fn compacts_openai_chat_provider_into_mixin_token() {
     assert_eq!(request["tools"][0]["function"]["name"], "submit_compaction");
     assert_eq!(request["tool_choice"], "required");
     assert_eq!(request["parallel_tool_calls"], false);
+}
+
+#[tokio::test]
+async fn compacts_baidu_gpt_through_responses_provider() {
+    let (upstream_url, requests) = spawn_baidu_protocol_upstream().await;
+    let mut config = test_config(upstream_url);
+    configure_baidu_policy(&mut config);
+    configure_custom_headers_from_env(&mut config);
+    config.providers[0].model_source = ProviderModelSource::BaiduOneApi;
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses/compact"))
+        .bearer_auth("gateway-key")
+        .json(&json!({"model": "gpt-5.6-sol-custom", "input": "continue"}))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["output"][0]["type"], "compaction");
+    let request = requests.lock().unwrap()[0].clone();
+    assert_eq!(request["path"], "/v1/responses");
+    assert_eq!(request["body"]["model"], "gpt-5.6-sol");
+    assert_eq!(request["body"]["tool_choice"], "required");
 }
 
 #[tokio::test]
