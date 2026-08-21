@@ -1,4 +1,100 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.4.4
+
+本版本改进了 Provider、gateway 和 macOS 设置体验，并修复了百度代码使用上报。
+
+### Provider 与 gateway
+
+- 修复自定义 Provider 的 compact 输出，补齐百度 Responses compact 路径验证
+- 明确 Provider capability probe 的触发和结果，模型刷新不再混入过期能力状态
+- gateway 优雅停止超时后会结束残留 daemon，避免服务进程卡住
+
+### macOS
+
+- 修复模型选择器中的 token 使用量滚动位置
+- 分离模型保存和 benchmark 操作，并在新 benchmark 开始前清理旧结果
+
+### 百度上报可靠性
+
+- 修复 transcript 在 `SessionStart` 时上传的问题；上游 session 尚未建立时不再触发 `Session meta not found`
+- 只有 `upload/query` 成功后，才上报该 session 的代码生成、代码接受和 transcript
+- 缺少成功 query 的历史 session 会记录明确的 skip 原因，不再发送无效的 code 或 transcript 请求
+- Mixin 直接维护上报生命周期；DUCX 只用于获取短期 report client token
+- 上报响应日志会脱敏签名文件 URL，避免短期授权参数写入本机日志
+
+### 验证
+
+- `cargo fmt --all -- --check`
+- `cargo test --locked --all-targets`
+- `cargo clippy --all-targets -- -D clippy::cognitive_complexity -D clippy::redundant_closure_for_method_calls -D clippy::redundant_pattern_matching -D warnings`
+
+<!-- codex-mixin:zh-Hans:end -->
+
+<!-- codex-mixin:zh-Hant:start -->
+## v0.4.4
+
+本版本改善 Provider、gateway 和 macOS 設定體驗，並修正百度程式碼使用上報。
+
+### Provider 與 gateway
+
+- 修正自訂 Provider 的 compact 輸出，補齊百度 Responses compact 路徑驗證
+- 明確 Provider capability probe 的觸發和結果，模型更新不再混入過期能力狀態
+- gateway 優雅停止逾時後會結束殘留 daemon，避免服務程序卡住
+
+### macOS
+
+- 修正模型選擇器中的 token 使用量捲動位置
+- 分離模型儲存和 benchmark 操作，並在新 benchmark 開始前清除舊結果
+
+### 百度上報可靠性
+
+- 修正 transcript 在 `SessionStart` 時上傳的問題；上游 session 尚未建立時不再觸發 `Session meta not found`
+- 只有 `upload/query` 成功後，才上報該 session 的程式碼生成、程式碼接受和 transcript
+- 缺少成功 query 的歷史 session 會記錄明確的 skip 原因，不再發送無效的 code 或 transcript 請求
+- Mixin 直接維護上報生命週期；DUCX 只用於取得短期 report client token
+- 上報回應日誌會遮蔽簽名檔案 URL，避免短期授權參數寫入本機日誌
+
+### 驗證
+
+- `cargo fmt --all -- --check`
+- `cargo test --locked --all-targets`
+- `cargo clippy --all-targets -- -D clippy::cognitive_complexity -D clippy::redundant_closure_for_method_calls -D clippy::redundant_pattern_matching -D warnings`
+
+<!-- codex-mixin:zh-Hant:end -->
+
+<!-- codex-mixin:en:start -->
+## v0.4.4
+
+This release improves provider, gateway, and macOS settings behavior, and fixes Baidu code-usage reporting.
+
+### Provider and gateway
+
+- Fix compact output for custom providers and validate the Baidu Responses compact path
+- Make provider capability probes and their results explicit so model refresh does not mix in stale capability state
+- Terminate a remaining daemon when graceful gateway shutdown times out
+
+### macOS
+
+- Fix the token-usage scroll position in the model selector
+- Separate model saving from benchmark actions and clear old results before a new benchmark
+
+### Baidu reporting reliability
+
+- Stop uploading transcripts at `SessionStart`, which could send them before the upstream session exists and trigger `Session meta not found`
+- Upload code generation, code acceptance, and transcripts only after `upload/query` succeeds for the session
+- Log a clear skip reason for historical sessions without a successful query instead of sending invalid code or transcript requests
+- Keep the reporting lifecycle in Mixin; use DUCX only to obtain a short-lived report client token
+- Redact signed file URLs in report responses before writing them to local logs
+
+### Validation
+
+- `cargo fmt --all -- --check`
+- `cargo test --locked --all-targets`
+- `cargo clippy --all-targets -- -D clippy::cognitive_complexity -D clippy::redundant_closure_for_method_calls -D clippy::redundant_pattern_matching -D warnings`
+
+<!-- codex-mixin:en:end -->
+
+<!-- codex-mixin:zh-Hans:start -->
 ## v0.4.3
 
 - 新增官方 Provider 默认展示，开箱即可选择

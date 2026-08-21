@@ -3,6 +3,7 @@ use std::path::{Path, PathBuf};
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
+use regex::Regex;
 
 use codex_mixin::config::load_stored_config;
 use codex_mixin::provider::{BaiduAuthBridge, ProviderDefinition, catalog_model_slug};
@@ -172,6 +173,7 @@ async fn finish_response(
         .await
         .context("read DUCX report response body")?;
     let body = String::from_utf8_lossy(&body_bytes);
+    let body = redact_sensitive_response_body(&body)?;
     let body = truncate_for_log(&body, 2048);
     let latency_ms = started.elapsed().as_millis();
     if status.is_success() {
@@ -205,6 +207,15 @@ async fn finish_response(
             "DUCX report endpoint {path} returned {status}: {body}"
         ))
     }
+}
+
+pub(super) fn redact_sensitive_response_body(body: &str) -> anyhow::Result<String> {
+    let query_secret =
+        Regex::new(r#"(?i)([?&](?:authorization|token|signature|x-amz-signature)=)[^&#"\s]+"#)
+            .context("compile DUCX response log redaction pattern")?;
+    Ok(query_secret
+        .replace_all(body, "${1}<redacted>")
+        .into_owned())
 }
 
 pub(super) fn truncate_for_log(value: &str, max_chars: usize) -> String {

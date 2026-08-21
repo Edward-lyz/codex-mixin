@@ -350,7 +350,7 @@ fn parse_remote_repo(remote: &str) -> String {
 mod tests {
     use codex_mixin::provider::catalog_model_slug;
 
-    use super::transport::{provider_owns_model, truncate_for_log};
+    use super::transport::{provider_owns_model, redact_sensitive_response_body, truncate_for_log};
     use super::*;
 
     #[test]
@@ -439,5 +439,15 @@ mod tests {
         let truncated = truncate_for_log(&long, 16);
         assert!(truncated.starts_with("xxxxxxxxxxxxxxxx..."));
         assert!(truncated.contains("3000 chars total"));
+    }
+
+    #[test]
+    fn redacts_signed_file_urls_from_response_logs() {
+        let response =
+            "https://example.test/file?authorization=secret&x-amz-signature=also-secret&keep=1";
+        assert_eq!(
+            redact_sensitive_response_body(response).unwrap(),
+            "https://example.test/file?authorization=<redacted>&x-amz-signature=<redacted>&keep=1"
+        );
     }
 }
