@@ -192,8 +192,8 @@ final class ProviderUsageDashboardModel: ObservableObject {
     var contentHeight: CGFloat {
         guard let group = selectedGroup else { return providerDashboardMinimumHeight }
         let quotaRows = max(1, group.quotas.count)
-        let tokenHeight: CGFloat = group.models.isEmpty ? 20 : 152
-        let detailHeight: CGFloat = selectedModel == nil ? 0 : 116
+        let tokenHeight: CGFloat = group.models.isEmpty ? 20 : 144
+        let detailHeight: CGFloat = selectedModel == nil ? 0 : 104
         return max(providerDashboardMinimumHeight, 118 + CGFloat(quotaRows * 28) + tokenHeight + detailHeight)
     }
 
@@ -337,25 +337,26 @@ private struct ProviderUsageDashboardContent: View {
             } else {
                 let maximumTokens = group.models.map(\.totalTokens).max() ?? 0
                 ScrollView(.horizontal) {
-                    HStack(alignment: .bottom, spacing: 4) {
-                    ForEach(group.models, id: \.modelID) { usage in
-                        Button {
-                            model.selectModel(usage.modelID)
-                        } label: {
-                            TokenModelColumn(
-                                usage: usage,
-                                maximumTokens: maximumTokens,
-                                selected: usage.modelID == model.selectedModelID
-                            )
+                    HStack(alignment: .bottom, spacing: 3) {
+                        ForEach(group.models, id: \.modelID) { usage in
+                            Button {
+                                model.selectModel(usage.modelID)
+                            } label: {
+                                TokenModelColumn(
+                                    usage: usage,
+                                    maximumTokens: maximumTokens,
+                                    selected: usage.modelID == model.selectedModelID
+                                )
+                            }
+                            .buttonStyle(.plain)
+                            .help(tokenUsageDetail(usage))
+                            .accessibilityIdentifier("token-model-\(usage.modelID)")
                         }
-                        .buttonStyle(.plain)
-                        .help(tokenUsageDetail(usage))
-                        .accessibilityIdentifier("token-model-\(usage.modelID)")
                     }
-                }
+                    .padding(.horizontal, 4)
                 }
                 .scrollIndicators(.hidden)
-                .frame(height: 108)
+                .frame(height: 104)
 
                 if let selectedModel = model.selectedModel {
                     TokenModelDetail(usage: selectedModel)
@@ -408,43 +409,44 @@ private struct TokenModelColumn: View {
     let selected: Bool
 
     var body: some View {
-        VStack(spacing: 3) {
+        VStack(spacing: 4) {
             Text(formatTokenCount(usage.totalTokens))
-                .font(.caption2.monospacedDigit().weight(.medium))
+                .font(.system(size: 9, weight: selected ? .semibold : .medium).monospacedDigit())
+                .foregroundStyle(selected ? Color.primary : Color.secondary)
                 .lineLimit(1)
-                .minimumScaleFactor(0.72)
-                .frame(width: 44)
-            TokenVerticalBar(usage: usage, maximumTokens: maximumTokens)
+                .minimumScaleFactor(0.8)
+                .frame(width: 47)
+            TokenVerticalBar(usage: usage, maximumTokens: maximumTokens, selected: selected)
             Text(usage.modelID)
-                .font(.caption2.weight(selected ? .semibold : .medium))
+                .font(.system(size: 9, weight: selected ? .semibold : .regular))
+                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(width: 44)
+                .frame(width: 47)
         }
-        .padding(.vertical, 3)
-        .padding(.horizontal, 2)
-        .background(Color.accentColor.opacity(selected ? 0.12 : 0), in: RoundedRectangle(cornerRadius: 8))
+        .contentShape(Rectangle())
     }
 }
 
 private struct TokenVerticalBar: View {
     let usage: ProviderTokenUsage
     let maximumTokens: UInt64
+    let selected: Bool
 
     var body: some View {
-        ZStack(alignment: .bottom) {
-            Capsule().fill(.separator.opacity(0.22))
+        VStack {
+            Spacer(minLength: 0)
             Capsule()
-                .fill(Color.accentColor)
-                .frame(height: barHeight)
+                .fill(Color.accentColor.opacity(selected ? 1 : 0.78))
+                .frame(width: selected ? 9 : 7, height: barHeight)
         }
-        .frame(width: 9, height: 68)
+        .frame(width: 11, height: 66)
     }
 
     private var barHeight: CGFloat {
         maximumTokens == 0
             ? 0
-            : 68 * CGFloat(Double(usage.totalTokens) / Double(maximumTokens))
+            : max(3, 66 * CGFloat(Double(usage.totalTokens) / Double(maximumTokens)))
     }
 }
 
@@ -452,12 +454,12 @@ private struct TokenModelDetail: View {
     let usage: ProviderTokenUsage
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 5) {
-            Text("\(usage.modelID) · \(usage.requestCount) 次请求")
+        VStack(alignment: .leading, spacing: 7) {
+            Text(usage.modelID)
                 .font(.caption2.weight(.semibold))
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Grid(horizontalSpacing: 12, verticalSpacing: 7) {
+            Grid(horizontalSpacing: 10, verticalSpacing: 6) {
                 GridRow {
                     metric("请求", "\(usage.requestCount)")
                     metric("输入", formatTokenCount(usage.inputTokens))
@@ -470,17 +472,22 @@ private struct TokenModelDetail: View {
                 }
             }
         }
-        .padding(8)
-        .background(.quaternary.opacity(0.5), in: RoundedRectangle(cornerRadius: 9))
+        .padding(.horizontal, 10)
+        .padding(.vertical, 8)
+        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .overlay {
+            RoundedRectangle(cornerRadius: 8)
+                .stroke(.separator.opacity(0.35))
+        }
         .help(tokenUsageDetail(usage))
     }
 
     private func metric(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.system(size: 8)).foregroundStyle(.secondary)
-            Text(value).font(.caption2.monospacedDigit().weight(.semibold))
+            Text(title).font(.system(size: 8)).foregroundStyle(.tertiary)
+            Text(value).font(.system(size: 10, weight: .semibold).monospacedDigit())
                 .lineLimit(1)
-                .frame(minWidth: 78, alignment: .leading)
+                .frame(minWidth: 76, alignment: .leading)
         }
     }
 }
