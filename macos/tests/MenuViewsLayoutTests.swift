@@ -288,9 +288,11 @@ struct MenuViewsLayoutTests {
             target: nil,
             action: #selector(NSApplication.terminate(_:))
         )
-        let labels = descendants(of: serviceView, matching: NSTextField.self)
-        precondition(labels.contains { $0.stringValue == providerIssue })
-        precondition(labels.contains { $0.toolTip == providerIssue })
+        guard let hostedServiceView = serviceView as? ServiceMenuHostingView else {
+            preconditionFailure("Service menu must use its SwiftUI host")
+        }
+        precondition(hostedServiceView.model.detail == providerIssue)
+        precondition(hostedServiceView.model.statusDetail == providerIssue)
         print("Provider dashboard layout and switching: passed")
     }
 
