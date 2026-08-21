@@ -31,20 +31,21 @@ struct SettingsPanelPresentationTests {
         precondition(!(sheet is NSPanel), "The add-provider form must be a regular NSWindow")
         precondition(sheet.level == .normal, "The add-provider sheet must use the normal window level")
         precondition(NSApp.modalWindow == nil, "The add-provider form must not start an app-modal loop")
-        let popups = descendantViews(of: NSPopUpButton.self, in: sheet.contentView)
-        guard let bridgePopup = popups.first(where: {
-            $0.itemTitles.contains { $0.contains("DUCX") }
-        }) else {
-            preconditionFailure("The Baidu setup must offer the DUCX auth bridge")
-        }
+        precondition(sheet.contentViewController != nil, "The sheet must host its SwiftUI form")
+
+        let model = AddProviderFormModel()
         precondition(
-            bridgePopup.numberOfItems == 2,
-            "The auth bridge selector must contain only disabled and DUCX"
-        )
-        precondition(
-            bridgePopup.selectedItem?.representedObject as? String == "disabled",
+            model.baiduAuthBridge == "disabled",
             "Auth bridging must be disabled by default"
         )
+        precondition(
+            model.isBaiduOneAPI && !model.isCustom && !model.requiresQuotaCredentials,
+            "Baidu fields must be active for the default preset"
+        )
+        model.preset = "opencode-go"
+        precondition(model.requiresQuotaCredentials, "OpenCode Go must require quota credentials")
+        model.preset = "custom"
+        precondition(model.isCustom && model.credentialURL == nil, "Custom providers must show URL fields")
 
         parent.endSheet(sheet, returnCode: .cancel)
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
@@ -52,12 +53,4 @@ struct SettingsPanelPresentationTests {
         print("Add-provider sheet presentation: passed")
     }
 
-    private static func descendantViews<T: NSView>(
-        of type: T.Type,
-        in root: NSView?
-    ) -> [T] {
-        guard let root else { return [] }
-        let current = (root as? T).map { [$0] } ?? []
-        return current + root.subviews.flatMap { descendantViews(of: type, in: $0) }
-    }
 }

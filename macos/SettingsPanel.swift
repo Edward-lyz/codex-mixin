@@ -1,4 +1,5 @@
 import Cocoa
+import SwiftUI
 
 struct AddProviderFormValues {
     let preset: String
@@ -10,6 +11,183 @@ struct AddProviderFormValues {
     let quotaWorkspaceID: String
     let quotaAuthCookie: String
     let baiduAuthBridge: String
+}
+
+struct AddProviderPreset: Identifiable {
+    let id: String
+    let title: String
+}
+
+@MainActor
+final class AddProviderFormModel: ObservableObject {
+    let presets = [
+        AddProviderPreset(id: "baidu-oneapi", title: "Baidu OneAPI"),
+        AddProviderPreset(id: "openrouter", title: "OpenRouter"),
+        AddProviderPreset(id: "deepseek", title: "DeepSeek"),
+        AddProviderPreset(id: "opencode-go", title: "OpenCode Go"),
+        AddProviderPreset(id: "custom", title: AppLocalization.string("settings.customSite")),
+    ]
+
+    @Published var preset = "baidu-oneapi"
+    @Published var displayName = ""
+    @Published var baseURL = ""
+    @Published var websiteURL = ""
+    @Published var apiKey = ""
+    @Published var quotaUsername = ""
+    @Published var quotaWorkspaceID = ""
+    @Published var quotaAuthCookie = ""
+    @Published var baiduAuthBridge = "disabled"
+
+    var isCustom: Bool { preset == "custom" }
+    var isBaiduOneAPI: Bool { preset == "baidu-oneapi" }
+    var requiresQuotaCredentials: Bool { requiresOpenCodeGoQuotaCredentials(preset) }
+    var credentialURL: URL? { URL(string: providerCredentialURL(preset)) }
+
+    func validatedValues() -> AddProviderFormValues? {
+        let trimmedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isCustom, trimmedDisplayName.isEmpty || trimmedBaseURL.isEmpty {
+            showAlert(
+                title: AppLocalization.string("settings.customSiteInformationRequired"),
+                message: AppLocalization.string("settings.enterTheSiteNameAndAPIURL")
+            )
+            return nil
+        }
+
+        let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !trimmedAPIKey.isEmpty else {
+            showAlert(
+                title: "缺少 API 密钥",
+                message: AppLocalization.string("settings.enterTheProviderAPIKey")
+            )
+            return nil
+        }
+
+        let trimmedUsername = quotaUsername.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isBaiduOneAPI, trimmedUsername.isEmpty {
+            showAlert(
+                title: "缺少额度用户名",
+                message: AppLocalization.string("settings.enterTheBaiduOneAPIQuotaUsername")
+            )
+            return nil
+        }
+
+        let trimmedWorkspaceID = quotaWorkspaceID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedAuthCookie = quotaAuthCookie.trimmingCharacters(in: .whitespacesAndNewlines)
+        if requiresQuotaCredentials, trimmedWorkspaceID.isEmpty || trimmedAuthCookie.isEmpty {
+            showAlert(
+                title: AppLocalization.string("settings.opencodeGoQuotaCredentialsRequired"),
+                message: AppLocalization.string("settings.opencodeGoRequiresBothTheWorkspaceID")
+            )
+            return nil
+        }
+
+        return AddProviderFormValues(
+            preset: preset,
+            displayName: trimmedDisplayName,
+            baseURL: trimmedBaseURL,
+            websiteURL: websiteURL.trimmingCharacters(in: .whitespacesAndNewlines),
+            apiKey: trimmedAPIKey,
+            quotaUsername: trimmedUsername,
+            quotaWorkspaceID: trimmedWorkspaceID,
+            quotaAuthCookie: trimmedAuthCookie,
+            baiduAuthBridge: baiduAuthBridge
+        )
+    }
+}
+
+private struct AddProviderFormView: View {
+    @ObservedObject var model: AddProviderFormModel
+    let cancel: () -> Void
+    let submit: () -> Void
+
+    var body: some View {
+        VStack(spacing: 0) {
+            Form {
+                Section {
+                    Picker(AppLocalization.string("settings.provider"), selection: $model.preset) {
+                        ForEach(model.presets) { preset in
+                            Text(preset.title).tag(preset.id)
+                        }
+                    }
+
+                    if let credentialURL = model.credentialURL, !model.isCustom {
+                        Link(destination: credentialURL) {
+                            Label(AppLocalization.string("settings.openAPIKeyPage"), systemImage: "key")
+                        }
+                    }
+                } header: {
+                    Text(AppLocalization.string("settings.chooseASubscriptionAndEnterItsCredentials"))
+                }
+
+                if model.isCustom {
+                    Section(AppLocalization.string("settings.customSite")) {
+                        TextField(
+                            AppLocalization.string("settings.siteName"),
+                            text: $model.displayName,
+                            prompt: Text(AppLocalization.string("settings.forExampleCommunityAPI"))
+                        )
+                        TextField(
+                            AppLocalization.string("settings.apiURL"),
+                            text: $model.baseURL,
+                            prompt: Text("https://example.com/v1")
+                        )
+                        TextField("官网地址", text: $model.websiteURL, prompt: Text("https://example.com"))
+                    }
+                }
+
+                Section("凭据") {
+                    SecureField(
+                        "API Key",
+                        text: $model.apiKey,
+                        prompt: Text(AppLocalization.string("settings.requiredStoredOnlyByTheLocalRust"))
+                    )
+
+                    if model.isBaiduOneAPI {
+                        TextField(
+                            AppLocalization.string("settings.quotaUsername"),
+                            text: $model.quotaUsername,
+                            prompt: Text(AppLocalization.string("settings.baiduOneAPIQuotaUsername"))
+                        )
+                        Picker(AppLocalization.string("settings.authBridge"), selection: $model.baiduAuthBridge) {
+                            Text(AppLocalization.string("settings.disabledDefault")).tag("disabled")
+                            Text("DUCX 核心（loopback）").tag("ducx_loopback")
+                        }
+                        .help(AppLocalization.string("settings.ducxUsesACodexMixinManagedCopy"))
+                    }
+
+                    if model.requiresQuotaCredentials {
+                        TextField(
+                            AppLocalization.string("settings.workspaceID"),
+                            text: $model.quotaWorkspaceID,
+                            prompt: Text(AppLocalization.string("settings.forExampleWrkAbc123"))
+                        )
+                        SecureField(
+                            AppLocalization.string("settings.authCookie"),
+                            text: $model.quotaAuthCookie,
+                            prompt: Text(AppLocalization.string("settings.opencodeAiAuthCookie"))
+                        )
+                    }
+                }
+            }
+            .formStyle(.grouped)
+            .scrollContentBackground(.hidden)
+
+            Divider()
+
+            HStack {
+                Spacer()
+                Button(AppLocalization.string("settings.cancel"), action: cancel)
+                    .keyboardShortcut(.cancelAction)
+                Button(AppLocalization.string("settings.add"), action: submit)
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+            }
+            .padding(20)
+        }
+        .frame(minWidth: 620, minHeight: 500)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
 }
 
 final class ModalActionTarget: NSObject {
@@ -24,265 +202,44 @@ final class ModalActionTarget: NSObject {
     }
 }
 
+@MainActor
 func runAddProviderSheet(
     attachedTo parentWindow: NSWindow,
     completion: @escaping (AddProviderFormValues?) -> Void
 ) {
-    let providerPopup = NSPopUpButton()
-    let providers: [(title: String, id: String)] = [
-        ("Baidu OneAPI", "baidu-oneapi"),
-        ("OpenRouter", "openrouter"),
-        ("DeepSeek", "deepseek"),
-        ("OpenCode Go", "opencode-go"),
-        (AppLocalization.string("settings.customSite"), "custom"),
-    ]
-    for provider in providers {
-        providerPopup.addItem(withTitle: provider.title)
-        providerPopup.lastItem?.representedObject = provider.id
-    }
-    providerPopup.translatesAutoresizingMaskIntoConstraints = false
-    providerPopup.heightAnchor.constraint(equalToConstant: 28).isActive = true
-
-    let apiKeyField = secureFormTextField()
-    apiKeyField.placeholderString = AppLocalization.string("settings.requiredStoredOnlyByTheLocalRust")
-    let quotaUsernameField = formTextField()
-    quotaUsernameField.placeholderString = AppLocalization.string("settings.baiduOneAPIQuotaUsername")
-    let quotaUsernameRow = labeledView(
-        AppLocalization.string("settings.quotaUsername"),
-        quotaUsernameField
-    )
-    let quotaWorkspaceIDField = formTextField()
-    quotaWorkspaceIDField.placeholderString = AppLocalization.string("settings.forExampleWrkAbc123")
-    let quotaWorkspaceIDRow = labeledView(
-        AppLocalization.string("settings.workspaceID"),
-        quotaWorkspaceIDField
-    )
-    let quotaAuthCookieField = secureFormTextField()
-    quotaAuthCookieField.placeholderString = AppLocalization.string("settings.opencodeAiAuthCookie")
-    let quotaAuthCookieRow = labeledView(
-        AppLocalization.string("settings.authCookie"),
-        quotaAuthCookieField
-    )
-    let displayNameField = formTextField()
-    displayNameField.placeholderString = AppLocalization.string("settings.forExampleCommunityAPI")
-    let displayNameRow = labeledView(
-        AppLocalization.string("settings.siteName"),
-        displayNameField
-    )
-    let baseURLField = formTextField()
-    baseURLField.placeholderString = "https://example.com/v1"
-    let baseURLRow = labeledView(
-        AppLocalization.string("settings.apiURL"),
-        baseURLField
-    )
-    let websiteURLField = formTextField()
-    websiteURLField.placeholderString = "https://example.com"
-    let websiteURLRow = labeledView("官网地址", websiteURLField)
-    let baiduAuthBridgePopup = baiduAuthBridgePopUpButton()
-    let baiduAuthBridgeRow = labeledView(
-        AppLocalization.string("settings.authBridge"),
-        baiduAuthBridgePopup
-    )
-
-    let contentView = NSView(frame: NSRect(x: 0, y: 0, width: 650, height: 700))
-    let panel = NSWindow(
-        contentRect: contentView.frame,
+    let model = AddProviderFormModel()
+    let sheet = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 650, height: 560),
         styleMask: [.titled, .closable],
         backing: .buffered,
         defer: false
     )
-    panel.title = AppLocalization.string("settings.addProvider")
-    panel.contentView = contentView
-    panel.isReleasedWhenClosed = false
+    sheet.title = AppLocalization.string("settings.addProvider")
+    sheet.isReleasedWhenClosed = false
 
-    let titleLabel = NSTextField(
-        labelWithString: AppLocalization.string("settings.addProvider2")
-    )
-    titleLabel.font = .boldSystemFont(ofSize: 18)
-
-    let detailLabel = NSTextField(wrappingLabelWithString: AppLocalization.string("settings.chooseASubscriptionAndEnterItsCredentials"))
-    detailLabel.textColor = .secondaryLabelColor
-    detailLabel.font = .systemFont(ofSize: NSFont.smallSystemFontSize)
-    detailLabel.translatesAutoresizingMaskIntoConstraints = false
-    detailLabel.widthAnchor.constraint(equalToConstant: 550).isActive = true
-
-    let tokenButton = NSButton(
-        title: AppLocalization.string("settings.openAPIKeyPage"),
-        target: nil,
-        action: nil
-    )
-    tokenButton.bezelStyle = .inline
-    tokenButton.image = menuItemImage("key")
-    tokenButton.imagePosition = .imageLeading
-    tokenButton.contentTintColor = .controlAccentColor
-    let tokenTarget = ModalActionTarget {
-        guard let url = URL(string: providerCredentialURL(selectedProviderID(providerPopup))) else {
-            return
-        }
-        NSWorkspace.shared.open(url)
+    var submittedValues: AddProviderFormValues?
+    let cancel = {
+        parentWindow.endSheet(sheet, returnCode: .cancel)
     }
-    tokenButton.target = tokenTarget
-    tokenButton.action = #selector(ModalActionTarget.run(_:))
-
-    let providerTarget = ModalActionTarget {
-        let provider = selectedProviderID(providerPopup)
-        let isCustom = provider == "custom"
-        quotaUsernameRow.isHidden = provider != "baidu-oneapi"
-        quotaWorkspaceIDRow.isHidden = !requiresOpenCodeGoQuotaCredentials(provider)
-        quotaAuthCookieRow.isHidden = !requiresOpenCodeGoQuotaCredentials(provider)
-        displayNameRow.isHidden = !isCustom
-        baseURLRow.isHidden = !isCustom
-        websiteURLRow.isHidden = !isCustom
-        baiduAuthBridgeRow.isHidden = provider != "baidu-oneapi"
-        tokenButton.isHidden = isCustom
+    let submit = {
+        guard let values = model.validatedValues() else { return }
+        submittedValues = values
+        parentWindow.endSheet(sheet, returnCode: .OK)
     }
-    providerPopup.target = providerTarget
-    providerPopup.action = #selector(ModalActionTarget.run(_:))
-    providerTarget.run(nil)
-
-    let formStack = NSStackView(views: [
-        labeledView(AppLocalization.string("settings.provider"), providerPopup),
-        displayNameRow,
-        baseURLRow,
-        websiteURLRow,
-        labeledView("API Key", apiKeyField),
-        quotaUsernameRow,
-        quotaWorkspaceIDRow,
-        quotaAuthCookieRow,
-        baiduAuthBridgeRow,
-    ])
-    formStack.orientation = .vertical
-    formStack.spacing = 10
-
-    let cancelButton = NSButton(
-        title: AppLocalization.string("settings.cancel"),
-        target: nil,
-        action: nil
+    sheet.contentViewController = NSHostingController(
+        rootView: AddProviderFormView(model: model, cancel: cancel, submit: submit)
     )
-    cancelButton.bezelStyle = .rounded
-    let saveButton = NSButton(
-        title: AppLocalization.string("settings.add"),
-        target: nil,
-        action: nil
-    )
-    saveButton.bezelStyle = .rounded
-    saveButton.keyEquivalent = "\r"
-    let buttonRow = NSStackView(views: [cancelButton, saveButton])
-    buttonRow.orientation = .horizontal
-    buttonRow.spacing = 12
 
-    let mainStack = NSStackView(views: [
-        titleLabel,
-        detailLabel,
-        tokenButton,
-        formStack,
-        buttonRow,
-    ])
-    mainStack.orientation = .vertical
-    mainStack.alignment = .leading
-    mainStack.spacing = 18
-    mainStack.translatesAutoresizingMaskIntoConstraints = false
-    contentView.addSubview(mainStack)
-    NSLayoutConstraint.activate([
-        mainStack.leadingAnchor.constraint(equalTo: contentView.leadingAnchor, constant: 36),
-        mainStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -36),
-        mainStack.topAnchor.constraint(equalTo: contentView.topAnchor, constant: 30),
-        buttonRow.trailingAnchor.constraint(equalTo: mainStack.trailingAnchor),
-    ])
-
-    var values: AddProviderFormValues?
-    let saveTarget = ModalActionTarget {
-        let preset = selectedProviderID(providerPopup)
-        let displayName = displayNameField.stringValue
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let baseURL = baseURLField.stringValue
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if preset == "custom", displayName.isEmpty || baseURL.isEmpty {
-            showAlert(
-                title: AppLocalization.string("settings.customSiteInformationRequired"),
-                message: AppLocalization.string("settings.enterTheSiteNameAndAPIURL")
-            )
-            return
-        }
-        let apiKey = apiKeyField.stringValue.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !apiKey.isEmpty else {
-            showAlert(
-                title: "缺少 API 密钥",
-                message: AppLocalization.string("settings.enterTheProviderAPIKey")
-            )
-            return
-        }
-        let username = quotaUsernameField.stringValue
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if preset == "baidu-oneapi", username.isEmpty {
-            showAlert(
-                title: "缺少额度用户名",
-                message: AppLocalization.string("settings.enterTheBaiduOneAPIQuotaUsername")
-            )
-            return
-        }
-        let workspaceID = quotaWorkspaceIDField.stringValue
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        let authCookie = quotaAuthCookieField.stringValue
-            .trimmingCharacters(in: .whitespacesAndNewlines)
-        if requiresOpenCodeGoQuotaCredentials(preset), workspaceID.isEmpty || authCookie.isEmpty {
-            showAlert(
-                title: AppLocalization.string("settings.opencodeGoQuotaCredentialsRequired"),
-                message: AppLocalization.string("settings.opencodeGoRequiresBothTheWorkspaceID")
-            )
-            return
-        }
-        values = AddProviderFormValues(
-            preset: preset,
-            displayName: displayName,
-            baseURL: baseURL,
-            websiteURL: websiteURLField.stringValue
-                .trimmingCharacters(in: .whitespacesAndNewlines),
-            apiKey: apiKey,
-            quotaUsername: username,
-            quotaWorkspaceID: workspaceID,
-            quotaAuthCookie: authCookie,
-            baiduAuthBridge: selectedPopupValue(
-                baiduAuthBridgePopup,
-                fallback: "disabled"
-            )
-        )
-        parentWindow.endSheet(panel, returnCode: .OK)
-    }
-    let cancelTarget = ModalActionTarget {
-        parentWindow.endSheet(panel, returnCode: .cancel)
-    }
-    saveButton.target = saveTarget
-    saveButton.action = #selector(ModalActionTarget.run(_:))
-    cancelButton.target = cancelTarget
-    cancelButton.action = #selector(ModalActionTarget.run(_:))
-    panel.standardWindowButton(.closeButton)?.target = cancelTarget
-    panel.standardWindowButton(.closeButton)?.action = #selector(ModalActionTarget.run(_:))
+    let closeTarget = ModalActionTarget(cancel)
+    sheet.standardWindowButton(.closeButton)?.target = closeTarget
+    sheet.standardWindowButton(.closeButton)?.action = #selector(ModalActionTarget.run(_:))
 
     NSApp.activate(ignoringOtherApps: true)
-    let actionTargets = [tokenTarget, providerTarget, saveTarget, cancelTarget]
-    parentWindow.beginSheet(panel) { response in
-        panel.close()
-        _ = actionTargets
-        completion(response == .OK ? values : nil)
+    parentWindow.beginSheet(sheet) { response in
+        sheet.close()
+        _ = closeTarget
+        completion(response == .OK ? submittedValues : nil)
     }
-}
-
-func baiduAuthBridgePopUpButton() -> NSPopUpButton {
-    let popup = NSPopUpButton()
-    let modes: [(String, String)] = [
-        (AppLocalization.string("settings.disabledDefault"), "disabled"),
-        ("DUCX 核心（loopback）", "ducx_loopback"),
-    ]
-    for (title, value) in modes {
-        popup.addItem(withTitle: title)
-        popup.lastItem?.representedObject = value
-    }
-    popup.toolTip = AppLocalization.string("settings.ducxUsesACodexMixinManagedCopy")
-    popup.translatesAutoresizingMaskIntoConstraints = false
-    popup.heightAnchor.constraint(equalToConstant: 28).isActive = true
-    selectPopupValue(popup, "disabled")
-    return popup
 }
 
 func configureTransientModalPanel(_ panel: NSPanel) {
@@ -290,10 +247,6 @@ func configureTransientModalPanel(_ panel: NSPanel) {
     panel.isFloatingPanel = false
     panel.hidesOnDeactivate = true
     panel.becomesKeyOnlyIfNeeded = false
-}
-
-func selectedProviderID(_ popup: NSPopUpButton) -> String {
-    popup.selectedItem?.representedObject as? String ?? "baidu-oneapi"
 }
 
 func requiresOpenCodeGoQuotaCredentials(_ provider: String) -> Bool {
@@ -310,18 +263,7 @@ func providerCredentialURL(_ provider: String) -> String {
     }
 }
 
-func selectedPopupValue(_ popup: NSPopUpButton, fallback: String) -> String {
-    popup.selectedItem?.representedObject as? String ?? fallback
-}
-
-func selectPopupValue(_ popup: NSPopUpButton, _ value: String) {
-    if let item = popup.itemArray.first(where: { ($0.representedObject as? String) == value }) {
-        popup.select(item)
-    }
-}
-
 func labeledView(_ title: String, _ field: NSView) -> NSView {
-    // 110pt label 宽度，用于设置 sheet / 独立 modal 面板中的宽松表单。
     let label = NSTextField(labelWithString: title)
     label.alignment = .right
     label.textColor = .secondaryLabelColor
@@ -334,23 +276,6 @@ func labeledView(_ title: String, _ field: NSView) -> NSView {
     row.alignment = .centerY
     row.spacing = 10
     return row
-}
-
-func formTextField() -> NSTextField {
-    configuredFormTextField(NSTextField())
-}
-
-func secureFormTextField() -> NSSecureTextField {
-    configuredFormTextField(NSSecureTextField())
-}
-
-private func configuredFormTextField<T: NSTextField>(_ field: T) -> T {
-    field.controlSize = .regular
-    field.font = .systemFont(ofSize: NSFont.systemFontSize)
-    field.lineBreakMode = .byTruncatingMiddle
-    field.translatesAutoresizingMaskIntoConstraints = false
-    field.heightAnchor.constraint(equalToConstant: 28).isActive = true
-    return field
 }
 
 func copyableTextField(_ value: String) -> NSTextField {
