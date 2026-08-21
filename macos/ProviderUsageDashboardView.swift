@@ -349,7 +349,6 @@ private struct ProviderUsageDashboardContent: View {
                                 )
                             }
                             .buttonStyle(.plain)
-                            .help(tokenUsageDetail(usage))
                             .accessibilityIdentifier("token-model-\(usage.modelID)")
                         }
                     }
