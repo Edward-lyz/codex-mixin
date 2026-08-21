@@ -581,6 +581,7 @@ mod tests {
             reused_turns: 40,
             total_turns: 41,
             usage: Arc::new(TokenUsageAggregator::default()),
+            started_at: std::time::Instant::now(),
         }
     }
 
@@ -597,6 +598,7 @@ mod tests {
             cache_read_tokens: Some(17_792),
             cache_creation_tokens: None,
             output_tokens: None,
+            ..Default::default()
         };
 
         // 45% of the prompt, but essentially all of what could be reused.
@@ -607,6 +609,7 @@ mod tests {
             cache_read_tokens: Some(128),
             cache_creation_tokens: None,
             output_tokens: None,
+            ..Default::default()
         };
         assert!(subject.discarded_by_provider(&dropped));
     }
@@ -618,6 +621,7 @@ mod tests {
             cache_read_tokens: Some(3_456),
             cache_creation_tokens: None,
             output_tokens: None,
+            ..Default::default()
         };
 
         // Prefix kept byte-identical, provider still recomputed it.
@@ -634,6 +638,7 @@ mod tests {
                     cache_read_tokens: None,
                     cache_creation_tokens: None,
                     output_tokens: None,
+                    ..Default::default()
                 }
             )
         );
@@ -646,6 +651,7 @@ mod tests {
                     cache_read_tokens: Some(92_544),
                     cache_creation_tokens: None,
                     output_tokens: None,
+                    ..Default::default()
                 }
             )
         );
@@ -682,6 +688,7 @@ mod tests {
             cache_read_tokens: Some(16),
             cache_creation_tokens: None,
             output_tokens: None,
+            ..Default::default()
         };
 
         let subject = observation(PrefixState::AppendOnly, 960_000);
@@ -719,6 +726,9 @@ mod tests {
     async fn cache_usage_observation_reads_responses_completed_usage() {
         let events = vec![
             Bytes::from_static(
+                b"event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n",
+            ),
+            Bytes::from_static(
                 b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":4,\"input_tokens_details\":{\"cached_tokens\":3},\"output_tokens\":2}}}\n\n",
             ),
         ];
@@ -737,6 +747,8 @@ mod tests {
         assert_eq!(snapshot[0].input_tokens, 1);
         assert_eq!(snapshot[0].cache_read_tokens, 3);
         assert_eq!(snapshot[0].output_tokens, 2);
+        assert!(snapshot[0].average_ttft_ms.is_some());
+        assert!(snapshot[0].output_tps.is_some());
     }
 
     #[test]
@@ -790,6 +802,8 @@ mod tests {
                 cache_read_tokens: Some(3_000),
                 cache_creation_tokens: Some(500),
                 output_tokens: Some(200),
+                ttft_micros: Some(100_000),
+                generation_micros: Some(2_000_000),
             },
         );
         aggregator.record(
@@ -800,6 +814,8 @@ mod tests {
                 cache_read_tokens: Some(1_500),
                 cache_creation_tokens: None,
                 output_tokens: Some(100),
+                ttft_micros: Some(300_000),
+                generation_micros: Some(1_000_000),
             },
         );
 
@@ -812,6 +828,8 @@ mod tests {
         assert_eq!(snapshot[0].cache_read_tokens, 4_500);
         assert_eq!(snapshot[0].cache_creation_tokens, 500);
         assert_eq!(snapshot[0].output_tokens, 300);
+        assert_eq!(snapshot[0].average_ttft_ms, Some(200.0));
+        assert_eq!(snapshot[0].output_tps, Some(100.0));
         assert_eq!(
             snapshot[0].cache_hit_percent,
             Some(4_500.0 / 6_500.0 * 100.0)
@@ -829,6 +847,7 @@ mod tests {
                 cache_read_tokens: Some(150),
                 cache_creation_tokens: None,
                 output_tokens: Some(25),
+                ..Default::default()
             },
         );
         let snapshot = aggregator.snapshot();

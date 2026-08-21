@@ -22,10 +22,20 @@ pub(crate) struct ProviderTokenUsage {
     pub(crate) cache_creation_tokens: u64,
     pub(crate) output_tokens: u64,
     pub(crate) cache_hit_percent: Option<f64>,
+    pub(crate) average_ttft_ms: Option<f64>,
+    pub(crate) output_tps: Option<f64>,
     #[serde(skip)]
     pub(crate) observed_cache_read_tokens: u64,
     #[serde(skip)]
     pub(crate) observed_uncached_input_tokens: u64,
+    #[serde(skip)]
+    pub(crate) timing_sample_count: u64,
+    #[serde(skip)]
+    pub(crate) total_ttft_micros: u64,
+    #[serde(skip)]
+    pub(crate) total_generation_micros: u64,
+    #[serde(skip)]
+    pub(crate) timed_output_tokens: u64,
 }
 
 #[derive(Debug, Default)]
@@ -36,6 +46,28 @@ struct TokenUsageState {
 
 fn current_unix_day() -> anyhow::Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() / 86_400)
+}
+
+fn ensure_timing_columns(connection: &Connection, table: &str) -> anyhow::Result<()> {
+    let mut statement = connection.prepare(&format!("PRAGMA table_info({table})"))?;
+    let columns = statement
+        .query_map([], |row| row.get::<_, String>(1))?
+        .collect::<Result<Vec<_>, _>>()?;
+    drop(statement);
+    for column in [
+        "timing_sample_count",
+        "total_ttft_micros",
+        "total_generation_micros",
+        "timed_output_tokens",
+    ] {
+        if !columns.iter().any(|existing| existing == column) {
+            connection.execute(
+                &format!("ALTER TABLE {table} ADD COLUMN {column} INTEGER NOT NULL DEFAULT 0"),
+                [],
+            )?;
+        }
+    }
+    Ok(())
 }
 
 fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
@@ -51,6 +83,10 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
             output_tokens INTEGER NOT NULL,
             observed_cache_read_tokens INTEGER NOT NULL,
             observed_uncached_input_tokens INTEGER NOT NULL,
+            timing_sample_count INTEGER NOT NULL DEFAULT 0,
+            total_ttft_micros INTEGER NOT NULL DEFAULT 0,
+            total_generation_micros INTEGER NOT NULL DEFAULT 0,
+            timed_output_tokens INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (provider_id, model_id)
         );
         CREATE TABLE IF NOT EXISTS token_usage_daily (
@@ -64,13 +100,20 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
             output_tokens INTEGER NOT NULL,
             observed_cache_read_tokens INTEGER NOT NULL,
             observed_uncached_input_tokens INTEGER NOT NULL,
+            timing_sample_count INTEGER NOT NULL DEFAULT 0,
+            total_ttft_micros INTEGER NOT NULL DEFAULT 0,
+            total_generation_micros INTEGER NOT NULL DEFAULT 0,
+            timed_output_tokens INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (day, provider_id, model_id)
         )",
     )?;
+    ensure_timing_columns(&connection, "token_usage")?;
+    ensure_timing_columns(&connection, "token_usage_daily")?;
     let mut statement = connection.prepare(
         "SELECT provider_id, model_id, request_count, input_tokens, cache_read_tokens,
                 cache_creation_tokens, output_tokens, observed_cache_read_tokens,
-                observed_uncached_input_tokens
+                observed_uncached_input_tokens, timing_sample_count, total_ttft_micros,
+                total_generation_micros, timed_output_tokens
          FROM token_usage",
     )?;
     let rows = statement.query_map([], |row| {
@@ -87,8 +130,14 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
                 cache_creation_tokens: row.get(5)?,
                 output_tokens: row.get(6)?,
                 cache_hit_percent: None,
+                average_ttft_ms: None,
+                output_tps: None,
                 observed_cache_read_tokens: row.get(7)?,
                 observed_uncached_input_tokens: row.get(8)?,
+                timing_sample_count: row.get(9)?,
+                total_ttft_micros: row.get(10)?,
+                total_generation_micros: row.get(11)?,
+                timed_output_tokens: row.get(12)?,
             },
         ))
     })?;
@@ -97,7 +146,8 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
     let mut daily_statement = connection.prepare(
         "SELECT day, provider_id, model_id, request_count, input_tokens, cache_read_tokens,
                 cache_creation_tokens, output_tokens, observed_cache_read_tokens,
-                observed_uncached_input_tokens
+                observed_uncached_input_tokens, timing_sample_count, total_ttft_micros,
+                total_generation_micros, timed_output_tokens
          FROM token_usage_daily",
     )?;
     let daily_rows = daily_statement.query_map([], |row| {
@@ -115,8 +165,14 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
                 cache_creation_tokens: row.get(6)?,
                 output_tokens: row.get(7)?,
                 cache_hit_percent: None,
+                average_ttft_ms: None,
+                output_tps: None,
                 observed_cache_read_tokens: row.get(8)?,
                 observed_uncached_input_tokens: row.get(9)?,
+                timing_sample_count: row.get(10)?,
+                total_ttft_micros: row.get(11)?,
+                total_generation_micros: row.get(12)?,
+                timed_output_tokens: row.get(13)?,
             },
         ))
     })?;
@@ -149,6 +205,10 @@ fn persist_usage_delta(
             output_tokens INTEGER NOT NULL,
             observed_cache_read_tokens INTEGER NOT NULL,
             observed_uncached_input_tokens INTEGER NOT NULL,
+            timing_sample_count INTEGER NOT NULL DEFAULT 0,
+            total_ttft_micros INTEGER NOT NULL DEFAULT 0,
+            total_generation_micros INTEGER NOT NULL DEFAULT 0,
+            timed_output_tokens INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (provider_id, model_id)
          );
          CREATE TABLE IF NOT EXISTS token_usage_daily (
@@ -162,11 +222,20 @@ fn persist_usage_delta(
             output_tokens INTEGER NOT NULL,
             observed_cache_read_tokens INTEGER NOT NULL,
             observed_uncached_input_tokens INTEGER NOT NULL,
+            timing_sample_count INTEGER NOT NULL DEFAULT 0,
+            total_ttft_micros INTEGER NOT NULL DEFAULT 0,
+            total_generation_micros INTEGER NOT NULL DEFAULT 0,
+            timed_output_tokens INTEGER NOT NULL DEFAULT 0,
             PRIMARY KEY (day, provider_id, model_id)
          )",
     )?;
+    ensure_timing_columns(&connection, "token_usage")?;
+    ensure_timing_columns(&connection, "token_usage_daily")?;
     let day = current_unix_day()?;
     let transaction = connection.transaction()?;
+    let timing_recorded = usage.ttft_micros.is_some()
+        && usage.generation_micros.is_some()
+        && usage.output_tokens.is_some();
     let values = params![
         provider_id,
         model_id,
@@ -180,13 +249,18 @@ fn persist_usage_delta(
             .input_tokens
             .unwrap_or(0)
             .saturating_add(usage.cache_creation_tokens.unwrap_or(0)),
+        u64::from(timing_recorded),
+        usage.ttft_micros.unwrap_or(0),
+        usage.generation_micros.unwrap_or(0),
+        usage.output_tokens.filter(|_| timing_recorded).unwrap_or(0),
     ];
     transaction.execute(
         "INSERT INTO token_usage (
             provider_id, model_id, request_count, input_tokens, cache_read_tokens,
             cache_creation_tokens, output_tokens, observed_cache_read_tokens,
-            observed_uncached_input_tokens
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)
+            observed_uncached_input_tokens, timing_sample_count, total_ttft_micros,
+            total_generation_micros, timed_output_tokens
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13)
          ON CONFLICT(provider_id, model_id) DO UPDATE SET
             request_count = token_usage.request_count + excluded.request_count,
             input_tokens = token_usage.input_tokens + excluded.input_tokens,
@@ -194,15 +268,20 @@ fn persist_usage_delta(
             cache_creation_tokens = token_usage.cache_creation_tokens + excluded.cache_creation_tokens,
             output_tokens = token_usage.output_tokens + excluded.output_tokens,
             observed_cache_read_tokens = token_usage.observed_cache_read_tokens + excluded.observed_cache_read_tokens,
-            observed_uncached_input_tokens = token_usage.observed_uncached_input_tokens + excluded.observed_uncached_input_tokens",
+            observed_uncached_input_tokens = token_usage.observed_uncached_input_tokens + excluded.observed_uncached_input_tokens,
+            timing_sample_count = token_usage.timing_sample_count + excluded.timing_sample_count,
+            total_ttft_micros = token_usage.total_ttft_micros + excluded.total_ttft_micros,
+            total_generation_micros = token_usage.total_generation_micros + excluded.total_generation_micros,
+            timed_output_tokens = token_usage.timed_output_tokens + excluded.timed_output_tokens",
         values,
     )?;
     transaction.execute(
         "INSERT INTO token_usage_daily (
             day, provider_id, model_id, request_count, input_tokens, cache_read_tokens,
             cache_creation_tokens, output_tokens, observed_cache_read_tokens,
-            observed_uncached_input_tokens
-         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)
+            observed_uncached_input_tokens, timing_sample_count, total_ttft_micros,
+            total_generation_micros, timed_output_tokens
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14)
          ON CONFLICT(day, provider_id, model_id) DO UPDATE SET
             request_count = token_usage_daily.request_count + excluded.request_count,
             input_tokens = token_usage_daily.input_tokens + excluded.input_tokens,
@@ -210,7 +289,11 @@ fn persist_usage_delta(
             cache_creation_tokens = token_usage_daily.cache_creation_tokens + excluded.cache_creation_tokens,
             output_tokens = token_usage_daily.output_tokens + excluded.output_tokens,
             observed_cache_read_tokens = token_usage_daily.observed_cache_read_tokens + excluded.observed_cache_read_tokens,
-            observed_uncached_input_tokens = token_usage_daily.observed_uncached_input_tokens + excluded.observed_uncached_input_tokens",
+            observed_uncached_input_tokens = token_usage_daily.observed_uncached_input_tokens + excluded.observed_uncached_input_tokens,
+            timing_sample_count = token_usage_daily.timing_sample_count + excluded.timing_sample_count,
+            total_ttft_micros = token_usage_daily.total_ttft_micros + excluded.total_ttft_micros,
+            total_generation_micros = token_usage_daily.total_generation_micros + excluded.total_generation_micros,
+            timed_output_tokens = token_usage_daily.timed_output_tokens + excluded.timed_output_tokens",
         params![
             day,
             provider_id,
@@ -224,6 +307,10 @@ fn persist_usage_delta(
             usage.input_tokens
                 .unwrap_or(0)
                 .saturating_add(usage.cache_creation_tokens.unwrap_or(0)),
+            u64::from(timing_recorded),
+            usage.ttft_micros.unwrap_or(0),
+            usage.generation_micros.unwrap_or(0),
+            usage.output_tokens.filter(|_| timing_recorded).unwrap_or(0),
         ],
     )?;
     transaction.commit().map_err(Into::into)
@@ -341,6 +428,18 @@ fn add_usage(
             .saturating_add(uncached)
             .saturating_add(usage.cache_creation_tokens.unwrap_or(0));
     }
+    if let (Some(ttft_micros), Some(generation_micros), Some(output_tokens)) = (
+        usage.ttft_micros,
+        usage.generation_micros,
+        usage.output_tokens,
+    ) {
+        entry.timing_sample_count = entry.timing_sample_count.saturating_add(1);
+        entry.total_ttft_micros = entry.total_ttft_micros.saturating_add(ttft_micros);
+        entry.total_generation_micros = entry
+            .total_generation_micros
+            .saturating_add(generation_micros);
+        entry.timed_output_tokens = entry.timed_output_tokens.saturating_add(output_tokens);
+    }
 }
 
 fn add_aggregated_usage(entry: &mut ProviderTokenUsage, usage: &ProviderTokenUsage) {
@@ -361,6 +460,18 @@ fn add_aggregated_usage(entry: &mut ProviderTokenUsage, usage: &ProviderTokenUsa
     entry.observed_uncached_input_tokens = entry
         .observed_uncached_input_tokens
         .saturating_add(usage.observed_uncached_input_tokens);
+    entry.timing_sample_count = entry
+        .timing_sample_count
+        .saturating_add(usage.timing_sample_count);
+    entry.total_ttft_micros = entry
+        .total_ttft_micros
+        .saturating_add(usage.total_ttft_micros);
+    entry.total_generation_micros = entry
+        .total_generation_micros
+        .saturating_add(usage.total_generation_micros);
+    entry.timed_output_tokens = entry
+        .timed_output_tokens
+        .saturating_add(usage.timed_output_tokens);
 }
 
 fn finalize_usage(mut entries: Vec<ProviderTokenUsage>) -> Vec<ProviderTokenUsage> {
@@ -370,6 +481,11 @@ fn finalize_usage(mut entries: Vec<ProviderTokenUsage>) -> Vec<ProviderTokenUsag
             .saturating_add(entry.observed_uncached_input_tokens);
         entry.cache_hit_percent = (observed > 0)
             .then(|| entry.observed_cache_read_tokens as f64 / observed as f64 * 100.0);
+        entry.average_ttft_ms = (entry.timing_sample_count > 0)
+            .then(|| entry.total_ttft_micros as f64 / entry.timing_sample_count as f64 / 1_000.0);
+        entry.output_tps = (entry.total_generation_micros > 0).then(|| {
+            entry.timed_output_tokens as f64 * 1_000_000.0 / entry.total_generation_micros as f64
+        });
     }
     entries.sort_by(|left, right| {
         left.provider_id
@@ -387,6 +503,8 @@ pub(crate) struct UpstreamCacheUsage {
     pub(crate) cache_read_tokens: Option<u64>,
     pub(crate) cache_creation_tokens: Option<u64>,
     pub(crate) output_tokens: Option<u64>,
+    pub(crate) ttft_micros: Option<u64>,
+    pub(crate) generation_micros: Option<u64>,
 }
 
 impl UpstreamCacheUsage {

@@ -139,12 +139,15 @@ func providerQuotaLabel(_ usage: ProviderQuotaUsage, multiple: Bool) -> String {
 
 func tokenUsageDetail(_ usage: ProviderTokenUsage) -> String {
     let cacheRatio = usage.cacheHitPercent.map { String(format: "%.1f%%", $0) } ?? "未上报"
+    let ttft = usage.averageTTFTMs.map { String(format: "%.0f ms", $0) } ?? "未上报"
+    let tps = usage.outputTPS.map { String(format: "%.1f tok/s", $0) } ?? "未上报"
     return """
     输入 \(formatTokenCount(usage.inputTokens))
     缓存输入 \(formatTokenCount(usage.cacheReadTokens))
     输出 \(formatTokenCount(usage.outputTokens))
-    缓存输出 \(formatTokenCount(usage.cacheCreationTokens))
     整体缓存比例 \(cacheRatio)
+    首字响应 \(ttft)
+    每秒吞吐 \(tps)
     """
 }
 
@@ -194,7 +197,7 @@ final class ProviderUsageDashboardModel: ObservableObject {
         let quotaRows = max(1, group.quotas.count)
         let tokenHeight: CGFloat = group.models.isEmpty ? 20 : 144
         let detailHeight: CGFloat = selectedModel == nil ? 0 : 104
-        return max(providerDashboardMinimumHeight, 118 + CGFloat(quotaRows * 28) + tokenHeight + detailHeight)
+        return max(providerDashboardMinimumHeight, 98 + CGFloat(quotaRows * 28) + tokenHeight + detailHeight)
     }
 
     func normalizeSelection() {
@@ -234,9 +237,6 @@ private struct ProviderUsageDashboardContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            Text("Provider 使用")
-                .font(.caption.weight(.semibold))
-
             providerTabs
             Divider()
 
@@ -458,16 +458,18 @@ private struct TokenModelDetail: View {
                 .font(.caption2.weight(.semibold))
                 .lineLimit(1)
                 .truncationMode(.middle)
-            Grid(horizontalSpacing: 10, verticalSpacing: 6) {
+            Grid(horizontalSpacing: 6, verticalSpacing: 6) {
                 GridRow {
                     metric("请求", "\(usage.requestCount)")
                     metric("输入", formatTokenCount(usage.inputTokens))
                     metric("缓存输入", formatTokenCount(usage.cacheReadTokens))
+                    metric("输出", formatTokenCount(usage.outputTokens))
                 }
                 GridRow {
-                    metric("输出", formatTokenCount(usage.outputTokens))
-                    metric("缓存输出", formatTokenCount(usage.cacheCreationTokens))
                     metric("缓存比例", usage.cacheHitPercent.map { String(format: "%.1f%%", $0) } ?? "未上报")
+                    metric("首字响应", usage.averageTTFTMs.map { String(format: "%.0f ms", $0) } ?? "未上报")
+                    metric("每秒吞吐", usage.outputTPS.map { String(format: "%.1f tok/s", $0) } ?? "未上报")
+                    Color.clear.frame(width: 58)
                 }
             }
         }
@@ -486,7 +488,7 @@ private struct TokenModelDetail: View {
             Text(title).font(.system(size: 8)).foregroundStyle(.tertiary)
             Text(value).font(.system(size: 10, weight: .semibold).monospacedDigit())
                 .lineLimit(1)
-                .frame(minWidth: 76, alignment: .leading)
+                .frame(minWidth: 58, alignment: .leading)
         }
     }
 }

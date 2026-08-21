@@ -1,5 +1,6 @@
 use std::collections::HashMap;
 use std::sync::{Arc, Mutex, PoisonError};
+use std::time::Instant;
 
 use bytes::Bytes;
 use futures_util::{Stream, StreamExt};
@@ -217,6 +218,7 @@ pub(crate) fn record_provider_prefix(
         reused_turns: report.reused_turns,
         total_turns: report.total_turns,
         usage: tracker.usage(),
+        started_at: Instant::now(),
     })
 }
 
@@ -244,6 +246,7 @@ pub(crate) struct PrefixObservation {
     pub(super) reused_turns: usize,
     pub(super) total_turns: usize,
     pub(super) usage: Arc<TokenUsageAggregator>,
+    pub(super) started_at: Instant,
 }
 
 impl PrefixObservation {
@@ -351,6 +354,7 @@ impl PrefixObservation {
 pub(crate) struct UpstreamCacheObserver {
     observation: PrefixObservation,
     usage: UpstreamCacheUsage,
+    first_token_at: Option<Instant>,
 }
 
 impl UpstreamCacheObserver {
@@ -358,10 +362,14 @@ impl UpstreamCacheObserver {
         Self {
             observation,
             usage: UpstreamCacheUsage::default(),
+            first_token_at: None,
         }
     }
 
     pub(crate) fn observe_value(&mut self, value: &Value) {
+        if self.first_token_at.is_none() && contains_output_delta(value) {
+            self.first_token_at = Some(Instant::now());
+        }
         for path in [
             value,
             value.get("message").unwrap_or(&Value::Null),
@@ -377,9 +385,52 @@ impl UpstreamCacheObserver {
 impl Drop for UpstreamCacheObserver {
     fn drop(&mut self) {
         if self.usage.observed() {
+            if let Some(first_token_at) = self.first_token_at {
+                self.usage.ttft_micros = Some(
+                    first_token_at
+                        .duration_since(self.observation.started_at)
+                        .as_micros() as u64,
+                );
+                self.usage.generation_micros =
+                    Some(first_token_at.elapsed().as_micros().max(1) as u64);
+            }
             self.observation.report_upstream_cache(&self.usage);
         }
     }
+}
+
+fn contains_output_delta(value: &Value) -> bool {
+    if value
+        .get("delta")
+        .and_then(Value::as_str)
+        .is_some_and(|delta| !delta.is_empty())
+    {
+        return true;
+    }
+    if value
+        .get("delta")
+        .and_then(|delta| delta.get("text").or_else(|| delta.get("thinking")))
+        .and_then(Value::as_str)
+        .is_some_and(|delta| !delta.is_empty())
+    {
+        return true;
+    }
+    value
+        .get("choices")
+        .and_then(Value::as_array)
+        .is_some_and(|choices| {
+            choices.iter().any(|choice| {
+                choice
+                    .get("delta")
+                    .and_then(|delta| {
+                        delta
+                            .get("content")
+                            .or_else(|| delta.get("reasoning_content"))
+                    })
+                    .and_then(Value::as_str)
+                    .is_some_and(|delta| !delta.is_empty())
+            })
+        })
 }
 
 /// Passes an upstream SSE byte stream through untouched while collecting the

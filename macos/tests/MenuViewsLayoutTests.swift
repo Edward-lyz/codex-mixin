@@ -161,7 +161,9 @@ struct MenuViewsLayoutTests {
                 "cache_read_tokens": 4500,
                 "cache_creation_tokens": 500,
                 "output_tokens": 300,
-                "cache_hit_percent": 75.0
+                "cache_hit_percent": 75.0,
+                "average_ttft_ms": 428.0,
+                "output_tps": 52.4
               },
               {
                 "provider_id": "baidu-oneapi",
@@ -256,10 +258,10 @@ struct MenuViewsLayoutTests {
             ProviderDashboardProvider(id: "baidu-oneapi", displayName: "Baidu OneAPI"),
         ])
         scrollingDashboard.updateTokenUsages([
-            ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-1", requestCount: 1, inputTokens: 400, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil),
-            ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-2", requestCount: 1, inputTokens: 300, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil),
-            ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-3", requestCount: 1, inputTokens: 200, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil),
-            ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-4", requestCount: 1, inputTokens: 100, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil),
+            ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-1", requestCount: 1, inputTokens: 400, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil, averageTTFTMs: nil, outputTPS: nil),
+            ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-2", requestCount: 1, inputTokens: 300, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil, averageTTFTMs: nil, outputTPS: nil),
+            ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-3", requestCount: 1, inputTokens: 200, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil, averageTTFTMs: nil, outputTPS: nil),
+            ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-4", requestCount: 1, inputTokens: 100, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil, averageTTFTMs: nil, outputTPS: nil),
         ])
         precondition(scrollingDashboard.model.selectedGroup?.models.count == 4)
         scrollingDashboard.model.selectModel("model-4")
@@ -272,8 +274,9 @@ struct MenuViewsLayoutTests {
         precondition(usageDetail.contains("输入 1.5k"))
         precondition(usageDetail.contains("缓存输入 4.5k"))
         precondition(usageDetail.contains("输出 300"))
-        precondition(usageDetail.contains("缓存输出 500"))
         precondition(usageDetail.contains("整体缓存比例 75.0%"))
+        precondition(usageDetail.contains("首字响应 428 ms"))
+        precondition(usageDetail.contains("每秒吞吐 52.4 tok/s"))
 
         dashboard.model.selectProvider("custom-2")
         precondition(dashboard.model.selectedGroup?.models.first?.modelID == "other-model")

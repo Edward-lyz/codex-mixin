@@ -84,6 +84,8 @@ struct ProviderTokenUsage: Decodable {
     let cacheCreationTokens: UInt64
     let outputTokens: UInt64
     let cacheHitPercent: Double?
+    let averageTTFTMs: Double?
+    let outputTPS: Double?
 
     enum CodingKeys: String, CodingKey {
         case providerID = "provider_id"
@@ -94,6 +96,8 @@ struct ProviderTokenUsage: Decodable {
         case cacheCreationTokens = "cache_creation_tokens"
         case outputTokens = "output_tokens"
         case cacheHitPercent = "cache_hit_percent"
+        case averageTTFTMs = "average_ttft_ms"
+        case outputTPS = "output_tps"
     }
 
     var totalTokens: UInt64 {
