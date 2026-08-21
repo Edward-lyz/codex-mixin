@@ -6,6 +6,7 @@ func menuItemImage(_ systemSymbolName: String) -> NSImage? {
 
 @main
 struct ProviderSettingsNavigationTests {
+    @MainActor
     static func main() {
         _ = NSApplication.shared
 
@@ -16,6 +17,7 @@ struct ProviderSettingsNavigationTests {
         print("Provider settings behavior: passed")
     }
 
+    @MainActor
     private static func testReloadPreservesSelectionAndDisablesEmptyDetails() {
         var responses = [
             try! providerList(ids: ["custom", "baidu-oneapi"]),
@@ -38,34 +40,34 @@ struct ProviderSettingsNavigationTests {
         precondition(descendantViews(of: NSTextField.self, in: contentView)
             .allSatisfy { $0.placeholderString != "/v1/responses" && $0.placeholderString != "/v1/models" })
         controller.present()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
 
-        let table = providerTable(in: controller)
         waitUntil {
-            loadCalls == 1 && controller.numberOfRows(in: table) == 2
+            loadCalls == 1 && controller.model.providers.count == 2
         }
-        precondition(table.selectedRow == 0)
+        precondition(controller.model.selectedProviderID == "custom")
 
-        table.selectRowIndexes(IndexSet(integer: 1), byExtendingSelection: false)
-        waitUntil { table.selectedRow == 1 }
-        precondition(providerID(in: controller, row: table.selectedRow) == "baidu-oneapi")
+        controller.model.selectProvider("baidu-oneapi")
+        waitUntil { controller.model.selectedProviderID == "baidu-oneapi" }
+        precondition(controller.model.selectedProvider?.id == "baidu-oneapi")
 
         controller.present()
         waitUntil {
             loadCalls == 2
-                && controller.numberOfRows(in: table) == 2
-                && table.selectedRow == 0
+                && controller.model.providers.count == 2
+                && controller.model.selectedProviderID == "baidu-oneapi"
         }
-        precondition(providerID(in: controller, row: table.selectedRow) == "baidu-oneapi")
+        precondition(controller.model.selectedProvider?.id == "baidu-oneapi")
 
         controller.present()
         waitUntil {
-            loadCalls == 3 && controller.numberOfRows(in: table) == 0
+            loadCalls == 3 && controller.model.providers.isEmpty
+                && controller.model.selectedProviderID == nil
         }
-        for title in ["停用", "测试连接", "保存更改"] {
-            precondition(button(title: title, in: controller)?.isEnabled == false)
-        }
+        precondition(controller.model.canModifySelectedProvider == false)
     }
 
+    @MainActor
     private static func testMutationIsBusyAndRestartsInOrder() {
         var loadCalls = 0
         var events: [String] = []
@@ -85,19 +87,20 @@ struct ProviderSettingsNavigationTests {
             }
         )
         controller.present()
-        let table = providerTable(in: controller)
-        waitUntil { loadCalls == 1 && controller.numberOfRows(in: table) == 1 }
+        waitUntil {
+            loadCalls == 1 && controller.model.providers.count == 1
+                && controller.model.selectedProviderID == "custom"
+        }
 
-        let toggle = button(title: "停用", in: controller)
-        precondition(toggle?.isEnabled == true)
+        precondition(controller.model.canModifySelectedProvider == true)
         let alertTimer = dismissModalAlerts()
-        toggle?.performClick(nil)
+        controller.toggleProvider()
         waitUntil {
             events.contains { $0.hasPrefix("run:") }
         }
-        precondition(button(title: "新增", in: controller)?.isEnabled == false)
-        precondition(button(title: "保存更改", in: controller)?.isEnabled == false)
-        toggle?.performClick(nil)
+        precondition(controller.model.canAddProvider == false)
+        precondition(controller.model.canModifySelectedProvider == false)
+        controller.toggleProvider()
 
         waitUntil {
             events.contains("apply") && loadCalls == 2 && NSApp.modalWindow == nil
@@ -112,9 +115,10 @@ struct ProviderSettingsNavigationTests {
             preconditionFailure("mutation events are incomplete")
         }
         precondition(runIndex < applyIndex && applyIndex < reloadIndex)
-        precondition(button(title: "新增", in: controller)?.isEnabled == true)
+        precondition(controller.model.canAddProvider == true)
     }
 
+    @MainActor
     private static func testBaiduBridgeTestAndUpdateArguments() {
         var events: [String] = []
         var setupModes: [BaiduAuthBridgeMode] = []
@@ -151,30 +155,23 @@ struct ProviderSettingsNavigationTests {
             }
         )
         controller.present()
-        let table = providerTable(in: controller)
-        waitUntil { loadCalls == 1 && controller.numberOfRows(in: table) == 1 }
-
-        guard let popup = descendantViews(of: NSPopUpButton.self, in: controller.window?.contentView).first,
-              let test = button(title: "测试连接", in: controller),
-              let save = button(title: "保存更改", in: controller)
-        else {
-            preconditionFailure("Baidu provider controls are missing")
+        waitUntil {
+            loadCalls == 1 && controller.model.providers.count == 1
+                && controller.model.selectedProviderID == "baidu-oneapi"
         }
-        popup.selectItem(withTitle: "DUCX 核心（loopback）")
-        NSApp.sendAction(popup.action!, to: popup.target, from: popup)
-        precondition((popup.selectedItem?.representedObject as? String) == "ducx_loopback")
 
+        controller.model.baiduAuthBridge = .ducxLoopback
         let alertTimer = dismissModalAlerts()
-        test.performClick(nil)
+        controller.testProvider()
         waitUntil {
             events.contains {
                 $0 == "run:providers|test|baidu-oneapi|--json|--baidu-auth-bridge|ducx_loopback|--ducx-executable|/tmp/test-ducx"
             }
         }
         precondition(setupModes == [.ducxLoopback])
-        waitUntil { test.isEnabled && NSApp.modalWindow == nil }
+        waitUntil { controller.model.canModifySelectedProvider && NSApp.modalWindow == nil }
 
-        save.performClick(nil)
+        controller.saveProvider()
         waitUntil {
             events.contains {
                 $0 == "run:providers|update|baidu-oneapi|--auxiliary-model-upstream|false|--quota-username|quota-user|--baidu-auth-bridge|ducx_loopback|--baidu-code-report|false|--ducx-executable|/tmp/test-ducx"
@@ -241,32 +238,6 @@ struct ProviderSettingsNavigationTests {
         """
     }
 
-    private static func providerTable(in controller: ProviderSettingsWindowController) -> NSTableView {
-        guard let table = descendantViews(
-            of: NSTableView.self,
-            in: controller.window?.contentView
-        ).first else {
-            preconditionFailure("Provider table is missing")
-        }
-        return table
-    }
-
-    private static func providerID(
-        in controller: ProviderSettingsWindowController,
-        row: Int
-    ) -> String? {
-        guard let table = descendantViews(
-            of: NSTableView.self,
-            in: controller.window?.contentView
-        ).first,
-        let column = table.tableColumns.first,
-        let cell = controller.tableView(table, viewFor: column, row: row) as? NSTableCellView
-        else {
-            return nil
-        }
-        return cell.textField?.stringValue
-    }
-
     private static func button(title: String, in controller: ProviderSettingsWindowController) -> NSButton? {
         descendantViews(of: NSButton.self, in: controller.window?.contentView)
             .first { $0.title == title }
@@ -300,5 +271,19 @@ struct ProviderSettingsNavigationTests {
         guard let root else { return [] }
         let current = (root as? T).map { [$0] } ?? []
         return current + root.subviews.flatMap { descendantViews(of: type, in: $0) }
+    }
+
+    private static func swiftUIDescendantViews<T: NSView>(of type: T.Type, in root: NSView?) -> [T] {
+        guard let root else { return [] }
+        var result: [T] = []
+        var queue: [NSView] = [root]
+        while !queue.isEmpty {
+            let current = queue.removeFirst()
+            if let match = current as? T {
+                result.append(match)
+            }
+            queue.append(contentsOf: current.subviews)
+        }
+        return result
     }
 }

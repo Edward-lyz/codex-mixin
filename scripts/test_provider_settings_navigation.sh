@@ -8,6 +8,8 @@ TEST_BINARY="$(mktemp -d)/provider-settings-navigation-tests"
 LOCALIZATION_BUNDLE="$($ROOT_DIR/scripts/prepare_test_localization.sh)"
 
 xcrun swiftc \
+  -sdk "$(xcrun --show-sdk-path --sdk macosx)" \
+  -target "$(uname -m)-apple-macos26.0" \
   "$ROOT_DIR/macos/Generated/L10n.swift" \
   "$ROOT_DIR/macos/Localization.swift" \
   "$ROOT_DIR/macos/UpdateSupport.swift" \
@@ -15,12 +17,16 @@ xcrun swiftc \
   "$ROOT_DIR/macos/InstallProgressWindow.swift" \
   "$ROOT_DIR/macos/SettingsPanel.swift" \
   "$ROOT_DIR/macos/ProviderSupport.swift" \
+  "$ROOT_DIR/macos/ProviderIconCache.swift" \
   "$ROOT_DIR/macos/ProviderWindowLayoutSupport.swift" \
+  "$ROOT_DIR/macos/LiquidGlassSupport.swift" \
+  "$ROOT_DIR/macos/ProviderSettingsView.swift" \
   "$ROOT_DIR/macos/AppOperationLogging.swift" \
   "$ROOT_DIR/macos/ProviderSettingsWindow.swift" \
   "$ROOT_DIR/macos/BaiduAuthBridgeSupport.swift" \
   "$ROOT_DIR/macos/ProviderSettingsPresentationSupport.swift" \
   "$ROOT_DIR/macos/tests/ProviderSettingsNavigationTests.swift" \
   -framework Cocoa \
+  -framework SwiftUI \
   -o "$TEST_BINARY"
 CODEX_MIXIN_LOCALIZATION_DIR="$LOCALIZATION_BUNDLE" "$TEST_BINARY"

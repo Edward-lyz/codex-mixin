@@ -9,7 +9,7 @@ MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
 CARGO_BUILD_ARGS=(--release)
 TARGET_DIR="$ROOT_DIR/target/release"
-MACOS_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.1}"
+MACOS_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-26.0}"
 export MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET"
 
 if [[ "${CODEX_MIXIN_REFRESH_NASA_WALLPAPERS:-0}" == "1" ]]; then
@@ -93,6 +93,8 @@ xcrun swiftc \
   "$ROOT_DIR/macos/ServiceMenuViews.swift" \
   "$ROOT_DIR/macos/ProviderUsageDashboardView.swift" \
   "$ROOT_DIR/macos/MenuVisualSupport.swift" \
+  "$ROOT_DIR/macos/LiquidGlassSupport.swift" \
+  "$ROOT_DIR/macos/ProviderSettingsView.swift" \
   "$ROOT_DIR/macos/AboutWindow.swift" \
   "$ROOT_DIR/macos/InstallCard.swift" \
   "$ROOT_DIR/macos/InstallCodexPanel.swift" \
