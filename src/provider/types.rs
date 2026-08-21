@@ -85,10 +85,10 @@ pub struct ProviderRequestPolicy {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_report_executable: Option<PathBuf>,
     /// Client token captured from a managed data-report warmup and reused by
-    /// the native DUCX reporter.
+    /// the Mixin reporter.
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub data_report_client_token: Option<String>,
-    /// Report Baidu AI code-usage events through the managed data-report hook.
+    /// Report Baidu AI code-usage events through Mixin-managed hooks.
     #[serde(default)]
     pub baidu_code_report: bool,
 }

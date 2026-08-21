@@ -125,7 +125,7 @@ struct Cli {
 
 #[derive(Debug, Subcommand)]
 enum Command {
-    /// Internal: forward a Codex hook event to the managed DUCX data-report.
+    /// Internal: report a Codex hook event to Baidu.
     #[command(hide = true)]
     ReportHook {
         #[arg(long)]

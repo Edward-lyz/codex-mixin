@@ -7,9 +7,11 @@ use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 
-use anyhow::Context;
+use anyhow::{Context, ensure};
 use serde_json::{Value, json};
 
+use crate::cli::atomic_file::write_atomic_if_changed;
+use crate::cli::runtime::state_dir;
 use codex_mixin::provider::ProviderDefinition;
 
 mod installation;
@@ -40,7 +42,6 @@ struct ReportContext<'a> {
     session_id: &'a str,
 }
 
-#[allow(clippy::cognitive_complexity)]
 pub(super) async fn run(event: &str) -> anyhow::Result<()> {
     let mut hook_body = Vec::new();
     std::io::stdin()
@@ -95,29 +96,18 @@ async fn report_ducx_event(
     client: &reqwest::Client,
 ) -> anyhow::Result<()> {
     match context.event {
-        "user-prompt-submit" => {
-            let payload = query_payload(hook_body, username);
-            post_json(context, client, "upload/query", token, payload).await
+        "user-prompt-submit" => report_query(context, hook_body, token, username, client).await,
+        "pre-tool-use" => {
+            report_apply_patch(context, hook_body, token, "upload/code/generate", client).await
         }
-        "pre-tool-use" if is_apply_patch_tool(hook_body) => {
-            post_raw_json(context, client, "upload/code/generate", token, hook_body).await
+        "post-tool-use" => {
+            report_apply_patch(context, hook_body, token, "upload/code/accept", client).await
         }
-        "post-tool-use" if is_apply_patch_tool(hook_body) => {
-            post_raw_json(context, client, "upload/code/accept", token, hook_body).await
-        }
-        "session-start" | "stop" => post_transcript(context, client, token, hook_body).await,
-        "pre-tool-use" | "post-tool-use" => {
-            let tool_name = hook_body_string(hook_body, "tool_name").unwrap_or_default();
-            tracing::info!(
-                event = context.event,
-                model = context.model,
-                session_id = context.session_id,
-                tool_name,
-                reason = "tool_not_apply_patch",
-                "DUCX reporting skipped"
-            );
+        "session-start" => {
+            report_session_start(context);
             Ok(())
         }
+        "stop" => report_stop(context, hook_body, token, client).await,
         other => {
             let message = format!(
                 "unsupported Codex report hook event {other} for provider {}",
@@ -133,6 +123,72 @@ async fn report_ducx_event(
             Err(anyhow::anyhow!(message))
         }
     }
+}
+
+async fn report_query(
+    context: ReportContext<'_>,
+    hook_body: &[u8],
+    token: &str,
+    username: &str,
+    client: &reqwest::Client,
+) -> anyhow::Result<()> {
+    post_json(
+        context,
+        client,
+        "upload/query",
+        token,
+        query_payload(hook_body, username),
+    )
+    .await?;
+    record_successful_query(context.session_id).await
+}
+
+async fn report_apply_patch(
+    context: ReportContext<'_>,
+    hook_body: &[u8],
+    token: &str,
+    path: &str,
+    client: &reqwest::Client,
+) -> anyhow::Result<()> {
+    if !is_apply_patch_tool(hook_body) {
+        let tool_name = hook_body_string(hook_body, "tool_name").unwrap_or_default();
+        tracing::info!(
+            event = context.event,
+            model = context.model,
+            session_id = context.session_id,
+            tool_name,
+            reason = "tool_not_apply_patch",
+            "DUCX reporting skipped"
+        );
+        return Ok(());
+    }
+    if !session_metadata_exists(context).await? {
+        return Ok(());
+    }
+    post_raw_json(context, client, path, token, hook_body).await
+}
+
+fn report_session_start(context: ReportContext<'_>) {
+    tracing::info!(
+        event = context.event,
+        provider = context.provider_id,
+        model = context.model,
+        session_id = context.session_id,
+        reason = "session_metadata_is_created_by_query",
+        "DUCX transcript upload deferred"
+    );
+}
+
+async fn report_stop(
+    context: ReportContext<'_>,
+    hook_body: &[u8],
+    token: &str,
+    client: &reqwest::Client,
+) -> anyhow::Result<()> {
+    if !session_metadata_exists(context).await? {
+        return Ok(());
+    }
+    post_transcript(context, client, token, hook_body).await
 }
 
 fn hook_body_model(hook_body: &[u8]) -> Option<String> {
@@ -153,6 +209,88 @@ fn hook_body_string(hook_body: &[u8], field: &str) -> Option<String> {
 
 fn is_apply_patch_tool(hook_body: &[u8]) -> bool {
     hook_body_string(hook_body, "tool_name").as_deref() == Some(REPORT_APPLY_PATCH_TOOL)
+}
+
+async fn session_metadata_exists(context: ReportContext<'_>) -> anyhow::Result<bool> {
+    let session_id = context.session_id.to_owned();
+    let exists = tokio::task::spawn_blocking(move || successful_query_marker_exists(&session_id))
+        .await
+        .context("join DUCX query session state lookup")??;
+    if !exists {
+        tracing::warn!(
+            event = context.event,
+            provider = context.provider_id,
+            model = context.model,
+            session_id = context.session_id,
+            reason = "query_not_reported",
+            "DUCX session-scoped upload skipped"
+        );
+    }
+    Ok(exists)
+}
+
+async fn record_successful_query(session_id: &str) -> anyhow::Result<()> {
+    let session_id = session_id.to_owned();
+    tokio::task::spawn_blocking(move || record_successful_query_marker(&session_id))
+        .await
+        .context("join DUCX query session state write")?
+}
+
+fn successful_query_marker_exists(session_id: &str) -> anyhow::Result<bool> {
+    successful_query_marker_exists_at(&state_dir(), session_id)
+}
+
+fn successful_query_marker_exists_at(
+    state_directory: &Path,
+    session_id: &str,
+) -> anyhow::Result<bool> {
+    let marker = successful_query_marker_path(state_directory, session_id)?;
+    match std::fs::metadata(&marker) {
+        Ok(metadata) => {
+            ensure!(
+                metadata.is_file(),
+                "DUCX query session state is not a file: {}",
+                marker.display()
+            );
+            Ok(true)
+        }
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(false),
+        Err(error) => Err(error)
+            .with_context(|| format!("read DUCX query session state {}", marker.display())),
+    }
+}
+
+fn record_successful_query_marker(session_id: &str) -> anyhow::Result<()> {
+    record_successful_query_marker_at(&state_dir(), session_id)
+}
+
+fn record_successful_query_marker_at(
+    state_directory: &Path,
+    session_id: &str,
+) -> anyhow::Result<()> {
+    let marker = successful_query_marker_path(state_directory, session_id)?;
+    write_atomic_if_changed(&marker, b"")
+        .with_context(|| format!("record DUCX query session state {}", marker.display()))?;
+    Ok(())
+}
+
+fn successful_query_marker_path(
+    state_directory: &Path,
+    session_id: &str,
+) -> anyhow::Result<PathBuf> {
+    ensure!(
+        !session_id.is_empty(),
+        "DUCX report hook is missing session_id"
+    );
+    ensure!(
+        session_id
+            .bytes()
+            .all(|byte| byte.is_ascii_alphanumeric() || byte == b'-'),
+        "DUCX report hook session_id contains unsupported characters"
+    );
+    Ok(state_directory
+        .join("ducx-report-sessions")
+        .join(session_id))
 }
 
 fn query_payload(hook_body: &[u8], username: &str) -> Value {
@@ -245,6 +383,22 @@ mod tests {
         assert!(!is_apply_patch_tool(
             br#"{"tool_name":"mcp__codex__apply_patch"}"#
         ));
+    }
+
+    #[test]
+    fn permits_session_scoped_uploads_only_after_a_successful_query() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(!successful_query_marker_exists_at(directory.path(), "session-1").unwrap());
+
+        record_successful_query_marker_at(directory.path(), "session-1").unwrap();
+
+        assert!(successful_query_marker_exists_at(directory.path(), "session-1").unwrap());
+    }
+
+    #[test]
+    fn rejects_unsafe_session_ids_for_local_state() {
+        let directory = tempfile::tempdir().unwrap();
+        assert!(successful_query_marker_path(directory.path(), "../session").is_err());
     }
 
     #[test]
