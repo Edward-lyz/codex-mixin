@@ -95,7 +95,8 @@ extension AppDelegate {
         // cannot hide the local token history on a fresh app launch.
         let providersTask = Task { try await runGateway(["providers", "list", "--json"]) }
         let quotaTask = Task { try await runGateway(["quota", "--json"]) }
-        let usageTask = Task { try await runGateway(["usage", "--json"]) }
+        let usageRange = providerUsageDashboardView?.model.selectedRange ?? .all
+        let usageTask = Task { try await runGateway(usageRange.commandArguments) }
         do {
             let providerList = try decodeProviderList(await providersTask.value)
             guard isCurrent() else { return }
@@ -273,5 +274,21 @@ extension AppDelegate {
 
     func updateProviderTokenUsageStatus(_ usages: [ProviderTokenUsage]) {
         providerUsageDashboardView?.updateTokenUsages(usages)
+    }
+
+    @MainActor
+    func refreshTokenUsage(for range: TokenUsageRange) async {
+        do {
+            let usage = try await runGateway(range.commandArguments)
+            guard providerUsageDashboardView?.model.selectedRange == range else { return }
+            updateProviderTokenUsageStatus(try parseProviderTokenUsage(usage))
+        } catch {
+            guard providerUsageDashboardView?.model.selectedRange == range else { return }
+            updateTokenUsageStatus(
+                title: "Token 使用：不可用",
+                detail: localizedErrorDescription(error),
+                progress: nil
+            )
+        }
     }
 }

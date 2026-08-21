@@ -816,6 +816,10 @@ mod tests {
             snapshot[0].cache_hit_percent,
             Some(4_500.0 / 6_500.0 * 100.0)
         );
+        let daily_snapshot = aggregator.snapshot_for_days(1).unwrap();
+        assert_eq!(daily_snapshot.len(), 1);
+        assert_eq!(daily_snapshot[0].request_count, 2);
+        assert_eq!(daily_snapshot[0].input_tokens, 1_500);
 
         aggregator.record(
             "baidu-oneapi",

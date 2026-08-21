@@ -231,6 +231,8 @@ enum Command {
     Usage {
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        days: Option<u64>,
     },
     #[command(hide = true)]
     Config {
@@ -988,7 +990,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Status { json } => status(json).await,
         Command::Models { json } => models(json).await,
         Command::Quota { json, provider } => quota(json, provider.as_deref()).await,
-        Command::Usage { json } => usage(json).await,
+        Command::Usage { json, days } => usage(json, days).await,
         Command::Config { json, scope } => show_config(json, scope),
         Command::Start {
             bind,

@@ -103,6 +103,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let serviceItem = NSMenuItem(title: serviceStatus, action: nil, keyEquivalent: "")
         let providerUsageItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         let providerUsageView = ProviderUsageDashboardView()
+        providerUsageView.onRangeChange = { [weak self] range in
+            Task { @MainActor in
+                await self?.refreshTokenUsage(for: range)
+            }
+        }
         providerUsageItem.view = providerUsageView
         serviceStatusItem = serviceItem
         providerUsageDashboardView = providerUsageView

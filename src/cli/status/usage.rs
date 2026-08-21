@@ -5,14 +5,17 @@ use serde::{Deserialize, Serialize};
 
 use super::super::runtime::*;
 
-pub(crate) async fn usage(json_output: bool) -> anyhow::Result<()> {
+pub(crate) async fn usage(json_output: bool, days: Option<u64>) -> anyhow::Result<()> {
     let runtime =
         load_runtime_metadata()?.ok_or_else(|| anyhow::anyhow!("gateway is not running"))?;
     if !pid_is_running(runtime.pid)? {
         anyhow::bail!("gateway is not running");
     }
     let config = GatewayConfig::from_stored_config()?;
-    let url = format!("http://{}/v1/usage", runtime.bind);
+    let url = match days {
+        Some(days) => format!("http://{}/v1/usage?days={days}", runtime.bind),
+        None => format!("http://{}/v1/usage", runtime.bind),
+    };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()?;

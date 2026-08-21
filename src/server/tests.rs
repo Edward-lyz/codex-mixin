@@ -197,6 +197,25 @@ async fn usage_endpoint_requires_auth_and_returns_recorded_provider_usage() {
         .await
         .unwrap();
     assert_eq!(body, json!([]));
+    let daily_body: Value = client
+        .get(format!("http://{address}/v1/usage?days=1"))
+        .bearer_auth("gateway-key")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(daily_body, json!([]));
+    let invalid_range = client
+        .get(format!("http://{address}/v1/usage?days=0"))
+        .bearer_auth("gateway-key")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(invalid_range.status(), StatusCode::BAD_REQUEST);
 }
 
 #[test]

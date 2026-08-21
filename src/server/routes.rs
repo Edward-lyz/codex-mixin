@@ -5,6 +5,8 @@ use super::realtime::{live_sideband_ws, live_ws, realtime_call, realtime_ws};
 use super::responses_http::responses;
 use super::responses_ws::responses_ws;
 use super::*;
+use axum::extract::Query;
+use serde::Deserialize;
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -179,7 +181,24 @@ async fn start_model_benchmarks(
 async fn token_usage(
     State(state): State<AppState>,
     headers: HeaderMap,
+    Query(query): Query<TokenUsageQuery>,
 ) -> Result<Json<Vec<ProviderTokenUsage>>, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
-    Ok(Json(state.cache_shapes.usage_snapshot()))
+    let usage = match query.days {
+        Some(days) if (1..=3_650).contains(&days) => {
+            state.cache_shapes.usage_snapshot_for_days(days)?
+        }
+        Some(_) => {
+            return Err(GatewayError::BadRequest(
+                "usage days must be between 1 and 3650".to_owned(),
+            ));
+        }
+        None => state.cache_shapes.usage_snapshot(),
+    };
+    Ok(Json(usage))
+}
+
+#[derive(Deserialize)]
+struct TokenUsageQuery {
+    days: Option<u64>,
 }

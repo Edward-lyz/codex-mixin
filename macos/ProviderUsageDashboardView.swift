@@ -26,6 +26,35 @@ struct ProviderUsageGroup {
     let models: [ProviderTokenUsage]
 }
 
+enum TokenUsageRange: String, CaseIterable, Identifiable {
+    case day
+    case week
+    case month
+    case all
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .day: return "1天"
+        case .week: return "7天"
+        case .month: return "1月"
+        case .all: return "全部"
+        }
+    }
+    var days: Int? {
+        switch self {
+        case .day: return 1
+        case .week: return 7
+        case .month: return 30
+        case .all: return nil
+        }
+    }
+    var commandArguments: [String] {
+        guard let days else { return ["usage", "--json"] }
+        return ["usage", "--json", "--days", "\(days)"]
+    }
+}
+
 private func providerLogoAssetName(_ providerID: String) -> String {
     let normalized = providerID.lowercased()
     if normalized.contains("baidu") { return "baidu" }
@@ -121,6 +150,7 @@ func tokenUsageDetail(_ usage: ProviderTokenUsage) -> String {
 
 @MainActor
 final class ProviderUsageDashboardModel: ObservableObject {
+    var onRangeChange: ((TokenUsageRange) -> Void)?
     var onContentHeightChange: ((CGFloat) -> Void)?
     @Published var configuredProviders: [ProviderDashboardProvider] = []
     @Published var quotaUsages: [ProviderQuotaUsage] = []
@@ -131,6 +161,7 @@ final class ProviderUsageDashboardModel: ObservableObject {
     @Published var tokenStatusDetail: String?
     @Published var selectedProviderID: String?
     @Published var selectedModelID: String?
+    @Published var selectedRange = TokenUsageRange.all
 
     var groups: [ProviderUsageGroup] {
         configuredProviders.filter(\.isEnabled).map { provider in
@@ -161,9 +192,9 @@ final class ProviderUsageDashboardModel: ObservableObject {
     var contentHeight: CGFloat {
         guard let group = selectedGroup else { return providerDashboardMinimumHeight }
         let quotaRows = max(1, min(group.quotas.count, 3))
-        let modelRows = group.models.isEmpty ? 1 : min(group.models.count, 3)
-        let detailHeight: CGFloat = selectedModel == nil ? 0 : 66
-        return max(providerDashboardMinimumHeight, 116 + CGFloat(quotaRows * 42 + modelRows * 30) + detailHeight)
+        let tokenHeight: CGFloat = group.models.isEmpty ? 20 : 152
+        let detailHeight: CGFloat = selectedModel == nil ? 0 : 116
+        return max(providerDashboardMinimumHeight, 118 + CGFloat(quotaRows * 28) + tokenHeight + detailHeight)
     }
 
     func normalizeSelection() {
@@ -186,6 +217,14 @@ final class ProviderUsageDashboardModel: ObservableObject {
 
     func selectModel(_ modelID: String) {
         selectedModelID = selectedModelID == modelID ? nil : modelID
+        onContentHeightChange?(contentHeight)
+    }
+
+    func selectRange(_ range: TokenUsageRange) {
+        guard range != selectedRange else { return }
+        selectedRange = range
+        selectedModelID = nil
+        onRangeChange?(range)
         onContentHeightChange?(contentHeight)
     }
 }
@@ -272,27 +311,40 @@ private struct ProviderUsageDashboardContent: View {
                     }
                 }
             }
-            .frame(height: CGFloat(min(group.quotas.count, 3) * 42))
+            .frame(height: CGFloat(min(group.quotas.count, 3) * 28))
         }
     }
 
     @ViewBuilder
     private func tokenContent(_ group: ProviderUsageGroup) -> some View {
-        if group.models.isEmpty {
+        VStack(spacing: 7) {
+            Picker("统计口径", selection: Binding(
+                get: { model.selectedRange },
+                set: model.selectRange
+            )) {
+                ForEach(TokenUsageRange.allCases) { range in
+                    Text(range.title).tag(range)
+                }
+            }
+            .labelsHidden()
+            .pickerStyle(.segmented)
+            .controlSize(.mini)
+
+            if group.models.isEmpty {
             Text(model.tokenStatusTitle)
                 .font(.caption2)
                 .foregroundStyle(.tertiary)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .help(model.tokenStatusDetail ?? "")
-        } else {
-            let maximumTokens = group.models.map(\.totalTokens).max() ?? 0
-            ScrollView {
-                LazyVStack(spacing: 2) {
+            } else {
+                let maximumTokens = group.models.map(\.totalTokens).max() ?? 0
+                ScrollView(.horizontal) {
+                    HStack(alignment: .bottom, spacing: 10) {
                     ForEach(group.models, id: \.modelID) { usage in
                         Button {
                             model.selectModel(usage.modelID)
                         } label: {
-                            TokenModelRow(
+                            TokenModelColumn(
                                 usage: usage,
                                 maximumTokens: maximumTokens,
                                 selected: usage.modelID == model.selectedModelID
@@ -303,11 +355,13 @@ private struct ProviderUsageDashboardContent: View {
                         .accessibilityIdentifier("token-model-\(usage.modelID)")
                     }
                 }
-            }
-            .frame(height: CGFloat(min(group.models.count, 3) * 30))
+                }
+                .scrollIndicators(.hidden)
+                .frame(height: 112)
 
-            if let selectedModel = model.selectedModel {
-                TokenModelDetail(usage: selectedModel)
+                if let selectedModel = model.selectedModel {
+                    TokenModelDetail(usage: selectedModel)
+                }
             }
         }
     }
@@ -344,77 +398,59 @@ private struct ProviderQuotaRow: View {
             .font(.caption2)
             if let used = usage.used, let limit = usage.limit, limit > 0 {
                 ProgressView(value: min(max(used / limit, 0), 1))
-                if !detail.isEmpty {
-                    Text(detail)
-                        .font(.system(size: 8))
-                        .foregroundStyle(.tertiary)
-                        .frame(maxWidth: .infinity, alignment: .leading)
-                }
             }
         }
         .help(usage.error ?? "")
     }
-
-    private var detail: String {
-        if let remaining = usage.remaining {
-            let currency = usage.currency.map { " \($0)" } ?? ""
-            return AppLocalization.string("menuViews.remaining", formatQuotaAmount(remaining), currency)
-        }
-        return usage.resetAt ?? ""
-    }
 }
 
-private struct TokenModelRow: View {
+private struct TokenModelColumn: View {
     let usage: ProviderTokenUsage
     let maximumTokens: UInt64
     let selected: Bool
 
     var body: some View {
-        HStack(spacing: 6) {
+        VStack(spacing: 4) {
+            Text(formatTokenCount(usage.totalTokens))
+                .font(.caption2.monospacedDigit().weight(.medium))
+                .lineLimit(1)
+                .minimumScaleFactor(0.72)
+                .frame(width: 62)
+            TokenVerticalBar(usage: usage, maximumTokens: maximumTokens)
             Text(usage.modelID)
-                .font(.caption.weight(selected ? .semibold : .medium))
+                .font(.caption2.weight(selected ? .semibold : .medium))
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(width: 105, alignment: .leading)
-            TokenFlowBar(usage: usage, maximumTokens: maximumTokens)
-            Text(formatTokenCount(usage.totalTokens))
-                .font(.caption2.monospacedDigit())
-                .foregroundStyle(.secondary)
-                .frame(width: 45, alignment: .trailing)
+                .frame(width: 62)
         }
-        .padding(.horizontal, 4)
-        .frame(height: 28)
-        .background(Color.accentColor.opacity(selected ? 0.12 : 0), in: RoundedRectangle(cornerRadius: 7))
+        .padding(4)
+        .background(Color.accentColor.opacity(selected ? 0.12 : 0), in: RoundedRectangle(cornerRadius: 8))
     }
 }
 
-private struct TokenFlowBar: View {
+private struct TokenVerticalBar: View {
     let usage: ProviderTokenUsage
     let maximumTokens: UInt64
 
     var body: some View {
-        GeometryReader { geometry in
-            let totalWidth = maximumTokens == 0
-                ? 0
-                : geometry.size.width * CGFloat(Double(usage.totalTokens) / Double(maximumTokens))
-            HStack(spacing: 0) {
-                tokenSegment(usage.inputTokens, color: .blue.opacity(0.45), totalWidth: totalWidth)
-                tokenSegment(usage.cacheReadTokens, color: .blue, totalWidth: totalWidth)
-                tokenSegment(usage.outputTokens, color: .secondary.opacity(0.38), totalWidth: totalWidth)
-                tokenSegment(usage.cacheCreationTokens, color: .secondary.opacity(0.18), totalWidth: totalWidth)
-                Spacer(minLength: 0)
+        ZStack(alignment: .bottom) {
+            RoundedRectangle(cornerRadius: 5).fill(.separator.opacity(0.22))
+            VStack(spacing: 0) {
+                tokenSegment(usage.cacheCreationTokens, color: .cyan.opacity(0.55))
+                tokenSegment(usage.outputTokens, color: .teal)
+                tokenSegment(usage.cacheReadTokens, color: .blue)
+                tokenSegment(usage.inputTokens, color: .blue.opacity(0.45))
             }
-            .background(.separator.opacity(0.28))
-            .clipShape(Capsule())
+            .clipShape(RoundedRectangle(cornerRadius: 5))
         }
-        .frame(height: 8)
+        .frame(width: 30, height: 68)
     }
 
-    private func tokenSegment(_ value: UInt64, color: Color, totalWidth: CGFloat) -> some View {
-        let width = usage.totalTokens == 0
+    private func tokenSegment(_ value: UInt64, color: Color) -> some View {
+        let height = maximumTokens == 0
             ? 0
-            : totalWidth * CGFloat(Double(value) / Double(usage.totalTokens))
-        return color.frame(width: width)
+            : 68 * CGFloat(Double(value) / Double(maximumTokens))
+        return color.frame(width: 30, height: height)
     }
 }
 
@@ -427,15 +463,16 @@ private struct TokenModelDetail: View {
                 .font(.caption2.weight(.semibold))
                 .lineLimit(1)
                 .truncationMode(.middle)
-            HStack {
-                metric("输入", usage.inputTokens)
-                metric("缓存输入", usage.cacheReadTokens)
-                metric("输出", usage.outputTokens)
-                metric("缓存输出", usage.cacheCreationTokens)
-                VStack(alignment: .leading, spacing: 2) {
-                    Text("缓存比例").font(.system(size: 8)).foregroundStyle(.secondary)
-                    Text(usage.cacheHitPercent.map { String(format: "%.1f%%", $0) } ?? "未上报")
-                        .font(.caption2.monospacedDigit().weight(.semibold))
+            Grid(horizontalSpacing: 12, verticalSpacing: 7) {
+                GridRow {
+                    metric("请求", "\(usage.requestCount)")
+                    metric("输入", formatTokenCount(usage.inputTokens))
+                    metric("缓存输入", formatTokenCount(usage.cacheReadTokens))
+                }
+                GridRow {
+                    metric("输出", formatTokenCount(usage.outputTokens))
+                    metric("缓存输出", formatTokenCount(usage.cacheCreationTokens))
+                    metric("缓存比例", usage.cacheHitPercent.map { String(format: "%.1f%%", $0) } ?? "未上报")
                 }
             }
         }
@@ -444,10 +481,12 @@ private struct TokenModelDetail: View {
         .help(tokenUsageDetail(usage))
     }
 
-    private func metric(_ title: String, _ value: UInt64) -> some View {
+    private func metric(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
             Text(title).font(.system(size: 8)).foregroundStyle(.secondary)
-            Text(formatTokenCount(value)).font(.caption2.monospacedDigit().weight(.semibold))
+            Text(value).font(.caption2.monospacedDigit().weight(.semibold))
+                .lineLimit(1)
+                .frame(minWidth: 78, alignment: .leading)
         }
     }
 }
@@ -505,6 +544,11 @@ final class ProviderUsageDashboardView: FlippedMenuView {
         model.tokenStatusDetail = nil
         model.normalizeSelection()
         updateSize()
+    }
+
+    var onRangeChange: ((TokenUsageRange) -> Void)? {
+        get { model.onRangeChange }
+        set { model.onRangeChange = newValue }
     }
 
     private func installHostingView() {

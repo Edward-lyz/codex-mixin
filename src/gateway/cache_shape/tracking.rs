@@ -56,6 +56,13 @@ impl CacheShapeTracker {
         self.usage.snapshot()
     }
 
+    pub(crate) fn usage_snapshot_for_days(
+        &self,
+        days: u64,
+    ) -> anyhow::Result<Vec<ProviderTokenUsage>> {
+        self.usage.snapshot_for_days(days)
+    }
+
     pub(crate) fn record(&self, session_key: &str, shape: CacheShape) -> PrefixReport {
         let mut sessions = self.sessions.lock().unwrap_or_else(PoisonError::into_inner);
         let seq = sessions.next_seq;

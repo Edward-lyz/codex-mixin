@@ -228,6 +228,15 @@ struct MenuViewsLayoutTests {
         dashboard.updateQuotaUsages(usages + disabledQuota)
         dashboard.updateTokenUsages(tokenUsages + disabledTokenUsage)
         dashboard.layoutSubtreeIfNeeded()
+        precondition(dashboard.model.selectedRange == .all)
+        precondition(TokenUsageRange.day.commandArguments == ["usage", "--json", "--days", "1"])
+        precondition(TokenUsageRange.week.commandArguments == ["usage", "--json", "--days", "7"])
+        precondition(TokenUsageRange.month.commandArguments == ["usage", "--json", "--days", "30"])
+        var requestedRange: TokenUsageRange?
+        dashboard.onRangeChange = { requestedRange = $0 }
+        dashboard.model.selectRange(.week)
+        precondition(requestedRange == .week)
+        precondition(dashboard.model.selectedModelID == nil)
         precondition(dashboard.frame.width == 336)
         let collapsedHeight = dashboard.frame.height
         precondition(collapsedHeight < 334)

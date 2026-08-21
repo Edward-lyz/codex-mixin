@@ -166,40 +166,90 @@ func showDiagnosticReport(title: String, report: String) {
         }
         return
     }
-    let alert = NSAlert()
-    alert.messageText = localizedPrompt(title)
-    alert.informativeText = report.contains("[ERROR]")
+    let informativeText = report.contains("[ERROR]")
         ? AppLocalization.string("appSupport.issuesWereDetectedTheReportIncludesThe")
         : AppLocalization.string("appSupport.checkCompletedCopyTheReportWhenReporting")
-    alert.alertStyle = report.contains("[ERROR]") ? .warning : .informational
-    alert.accessoryView = NSHostingView(rootView: DiagnosticReportView(report: report))
-    alert.addButton(withTitle: AppLocalization.string("appSupport.close"))
-    alert.addButton(withTitle: AppLocalization.string("appSupport.copyReport"))
-    NSApp.activate(ignoringOtherApps: true)
-    if alert.runModal() == .alertSecondButtonReturn {
+    let window = NSWindow(
+        contentRect: NSRect(x: 0, y: 0, width: 760, height: 560),
+        styleMask: [.titled, .closable, .resizable],
+        backing: .buffered,
+        defer: false
+    )
+    window.title = localizedPrompt(title)
+    window.minSize = NSSize(width: 620, height: 420)
+    window.center()
+    let close = { NSApp.stopModal(withCode: .cancel) }
+    let copy = {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(report, forType: .string)
     }
+    window.contentViewController = NSHostingController(rootView: DiagnosticReportView(
+        title: localizedPrompt(title),
+        informativeText: informativeText,
+        report: report,
+        hasErrors: report.contains("[ERROR]"),
+        close: close,
+        copy: copy
+    ))
+    let closeTarget = DiagnosticModalTarget(close)
+    window.standardWindowButton(.closeButton)?.target = closeTarget
+    window.standardWindowButton(.closeButton)?.action = #selector(DiagnosticModalTarget.run(_:))
+    NSApp.activate(ignoringOtherApps: true)
+    NSApp.runModal(for: window)
+    window.close()
+    _ = closeTarget
 }
 
 private struct DiagnosticReportView: View {
+    let title: String
+    let informativeText: String
     let report: String
+    let hasErrors: Bool
+    let close: () -> Void
+    let copy: () -> Void
 
     var body: some View {
-        ScrollView([.horizontal, .vertical]) {
-            Text(report)
-                .font(.system(size: 12, design: .monospaced))
-                .textSelection(.enabled)
-                .fixedSize(horizontal: true, vertical: true)
-                .padding(10)
+        VStack(alignment: .leading, spacing: 14) {
+            Label(title, systemImage: hasErrors ? "exclamationmark.triangle.fill" : "checkmark.circle.fill")
+                .font(.title2.weight(.semibold))
+                .foregroundStyle(hasErrors ? Color.orange : Color.green)
+            Text(informativeText)
+                .foregroundStyle(.secondary)
+            ScrollView([.horizontal, .vertical]) {
+                Text(report)
+                    .font(.system(size: 12, design: .monospaced))
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: true, vertical: true)
+                    .padding(12)
+            }
+            .background(Color(nsColor: .textBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 8))
+            .overlay {
+                RoundedRectangle(cornerRadius: 8).stroke(.separator)
+            }
+            HStack {
+                Spacer()
+                Button(AppLocalization.string("appSupport.copyReport"), action: copy)
+                Button(AppLocalization.string("appSupport.close"), action: close)
+                    .keyboardShortcut(.defaultAction)
+                    .buttonStyle(.borderedProminent)
+            }
         }
-        .background(Color(nsColor: .textBackgroundColor))
-        .clipShape(RoundedRectangle(cornerRadius: 6))
-        .overlay {
-            RoundedRectangle(cornerRadius: 6)
-                .stroke(.separator)
-        }
-        .frame(width: 680, height: 420)
+        .padding(24)
+        .frame(minWidth: 620, minHeight: 420)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
+private final class DiagnosticModalTarget: NSObject {
+    let action: () -> Void
+
+    init(_ action: @escaping () -> Void) {
+        self.action = action
+    }
+
+    @objc func run(_ sender: Any?) {
+        action()
     }
 }
 
