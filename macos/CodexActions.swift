@@ -1,6 +1,7 @@
 import Cocoa
 
 extension AppDelegate {
+    @MainActor
     @objc func installCodexConfig() {
         guard let installMode = runInstallCodexPanel() else { return }
         Task { @MainActor in

@@ -242,13 +242,6 @@ func runAddProviderSheet(
     }
 }
 
-func configureTransientModalPanel(_ panel: NSPanel) {
-    panel.level = .normal
-    panel.isFloatingPanel = false
-    panel.hidesOnDeactivate = true
-    panel.becomesKeyOnlyIfNeeded = false
-}
-
 func requiresOpenCodeGoQuotaCredentials(_ provider: String) -> Bool {
     provider == "opencode-go"
 }
@@ -261,34 +254,4 @@ func providerCredentialURL(_ provider: String) -> String {
     case "opencode-go": return "https://opencode.ai/go"
     default: return ""
     }
-}
-
-func labeledView(_ title: String, _ field: NSView) -> NSView {
-    let label = NSTextField(labelWithString: title)
-    label.alignment = .right
-    label.textColor = .secondaryLabelColor
-    label.translatesAutoresizingMaskIntoConstraints = false
-    label.widthAnchor.constraint(equalToConstant: 110).isActive = true
-    field.translatesAutoresizingMaskIntoConstraints = false
-    field.widthAnchor.constraint(equalToConstant: 420).isActive = true
-    let row = NSStackView(views: [label, field])
-    row.orientation = .horizontal
-    row.alignment = .centerY
-    row.spacing = 10
-    return row
-}
-
-func copyableTextField(_ value: String) -> NSTextField {
-    let field = NSTextField()
-    field.stringValue = value
-    field.isEditable = false
-    field.isSelectable = true
-    field.isBordered = false
-    field.drawsBackground = false
-    field.font = .systemFont(ofSize: NSFont.systemFontSize)
-    field.textColor = .labelColor
-    field.lineBreakMode = .byTruncatingMiddle
-    field.translatesAutoresizingMaskIntoConstraints = false
-    field.heightAnchor.constraint(equalToConstant: 28).isActive = true
-    return field
 }
