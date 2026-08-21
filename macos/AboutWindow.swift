@@ -1,14 +1,6 @@
 import Cocoa
 import SwiftUI
 
-private final class AboutContentView: NSView {
-    override var wantsUpdateLayer: Bool { true }
-
-    override func updateLayer() {
-        layer?.backgroundColor = NSColor.windowBackgroundColor.cgColor
-    }
-}
-
 struct AppAboutInfo: Equatable {
     let version: String
     let build: String
@@ -28,18 +20,126 @@ struct AppAboutInfo: Equatable {
     }
 }
 
+@MainActor
+final class AboutModel: ObservableObject {
+    let info: AppAboutInfo
+    let cardIdentity: CardIdentityV1
+    let wallpaperOffset: Int
+    @Published var copied = false
+
+    private let openURL: (URL) -> Void
+    private let copyText: (String) -> Void
+    private let showCard: (Int) -> Void
+
+    init(
+        info: AppAboutInfo,
+        cardIdentity: CardIdentityV1,
+        wallpaperOffset: Int,
+        openURL: @escaping (URL) -> Void,
+        copyText: @escaping (String) -> Void,
+        showCard: @escaping (Int) -> Void
+    ) {
+        self.info = info
+        self.cardIdentity = cardIdentity
+        self.wallpaperOffset = wallpaperOffset
+        self.openURL = openURL
+        self.copyText = copyText
+        self.showCard = showCard
+    }
+
+    func openRepository() {
+        guard let url = URL(string: info.repositoryURL) else { return }
+        openURL(url)
+    }
+
+    func copyVersionInfo() {
+        copyText(info.versionSummary)
+        copied = true
+        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
+            self?.copied = false
+        }
+    }
+
+    func openCard() {
+        showCard(wallpaperOffset)
+    }
+}
+
+private struct AboutView: View {
+    @ObservedObject var model: AboutModel
+
+    var body: some View {
+        HStack(spacing: 0) {
+            VStack(spacing: 12) {
+                InstallCardThumbnailView(
+                    identity: model.cardIdentity,
+                    wallpaperOffset: model.wallpaperOffset,
+                    onOpen: model.openCard
+                )
+                .frame(width: 300, height: 188)
+                .accessibilityIdentifier("about.card-preview")
+
+                Text(L10n.About.cardHint)
+                    .font(.caption.weight(.medium))
+                    .foregroundStyle(.secondary)
+
+                HStack(alignment: .firstTextBaseline, spacing: 10) {
+                    Text(L10n.About.version(model.info.version))
+                        .font(.caption.monospaced().weight(.medium))
+                    Text("Build \(model.info.build)")
+                        .font(.caption2.monospaced())
+                        .foregroundStyle(.tertiary)
+                }
+                .foregroundStyle(.secondary)
+            }
+            .frame(width: 350)
+            .frame(maxHeight: .infinity)
+            .background(.ultraThinMaterial)
+
+            VStack(alignment: .leading, spacing: 10) {
+                Text("Codex Mixin")
+                    .font(.system(size: 30, weight: .bold, design: .rounded))
+                Text(L10n.About.slogan)
+                    .font(.title3.weight(.medium))
+                Text(L10n.About.detail)
+                    .font(.body)
+                    .foregroundStyle(.secondary)
+                    .fixedSize(horizontal: false, vertical: true)
+
+                HStack(spacing: 10) {
+                    Button(action: model.openRepository) {
+                        Label(L10n.About.openRepository, systemImage: "arrow.up.right.square")
+                            .frame(maxWidth: .infinity)
+                    }
+                    .help(model.info.repositoryURL)
+                    .accessibilityIdentifier("about.repository")
+
+                    Button(action: model.copyVersionInfo) {
+                        Label(
+                            model.copied ? L10n.About.copied : L10n.About.copyVersion,
+                            systemImage: model.copied ? "checkmark" : "doc.on.doc"
+                        )
+                        .frame(maxWidth: .infinity)
+                    }
+                    .accessibilityIdentifier("about.copy-version")
+                }
+                .controlSize(.large)
+                .padding(.top, 8)
+            }
+            .padding(36)
+            .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .leading)
+        }
+        .frame(width: 820, height: 460)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+}
+
 final class AboutWindowController: NSWindowController, NSWindowDelegate {
     typealias OpenURLHandler = (URL) -> Void
     typealias CopyTextHandler = (String) -> Void
     typealias ShowCardHandler = (_ wallpaperOffset: Int) -> Void
 
-    private let info: AppAboutInfo
-    private let cardIdentity: CardIdentityV1
-    private let wallpaperOffset: Int
-    private let openURL: OpenURLHandler
-    private let copyText: CopyTextHandler
-    private let showCard: ShowCardHandler
-    private let copyButton = NSButton()
+    let model: AboutModel
 
     init(
         info: AppAboutInfo = .current,
@@ -54,13 +154,14 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
         },
         showCard: @escaping ShowCardHandler = { _ in }
     ) {
-        self.info = info
-        self.cardIdentity = cardIdentity
-        self.wallpaperOffset = wallpaperOffset
-        self.openURL = openURL
-        self.copyText = copyText
-        self.showCard = showCard
-
+        model = AboutModel(
+            info: info,
+            cardIdentity: cardIdentity,
+            wallpaperOffset: wallpaperOffset,
+            openURL: openURL,
+            copyText: copyText,
+            showCard: showCard
+        )
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 820, height: 460),
             styleMask: [.titled, .closable, .fullSizeContentView],
@@ -72,12 +173,14 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
         window.isReleasedWhenClosed = false
-        window.contentView = AboutContentView(frame: window.contentView?.bounds ?? .zero)
         window.center()
-
         super.init(window: window)
         window.delegate = self
-        buildContent(in: window)
+        window.contentViewController = NSHostingController(rootView: AboutView(model: model))
+        window.setFrame(
+            NSRect(origin: window.frame.origin, size: NSSize(width: 820, height: 460)),
+            display: false
+        )
     }
 
     required init?(coder: NSCoder) {
@@ -88,145 +191,5 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
         showWindow(nil)
         window?.makeKeyAndOrderFront(nil)
         NSApp.activate(ignoringOtherApps: true)
-    }
-
-    @objc private func openRepository(_ sender: Any?) {
-        guard let url = URL(string: info.repositoryURL) else { return }
-        openURL(url)
-    }
-
-    @objc private func copyVersionInfo(_ sender: Any?) {
-        copyText(info.versionSummary)
-        copyButton.title = L10n.About.copied
-        copyButton.image = menuItemImage("checkmark")
-
-        DispatchQueue.main.asyncAfter(deadline: .now() + 1.5) { [weak self] in
-            self?.configureCopyButton()
-        }
-    }
-
-    private func buildContent(in window: NSWindow) {
-        guard let contentView = window.contentView else { return }
-
-        let brandPanel = NSVisualEffectView()
-        brandPanel.material = .sidebar
-        brandPanel.blendingMode = .withinWindow
-        brandPanel.state = .active
-        brandPanel.translatesAutoresizingMaskIntoConstraints = false
-
-        let cardPreview = NSHostingView(rootView: InstallCardThumbnailView(
-            identity: cardIdentity,
-            wallpaperOffset: wallpaperOffset,
-            onOpen: { [showCard, wallpaperOffset] in showCard(wallpaperOffset) }
-        ))
-        cardPreview.identifier = NSUserInterfaceItemIdentifier("about.card-preview")
-        cardPreview.translatesAutoresizingMaskIntoConstraints = false
-
-        let cardHint = NSTextField(labelWithString: L10n.About.cardHint)
-        cardHint.font = .systemFont(ofSize: 11, weight: .medium)
-        cardHint.textColor = .secondaryLabelColor
-        cardHint.alignment = .center
-
-        let versionLabel = NSTextField(labelWithString: L10n.About.version(info.version))
-        versionLabel.font = .monospacedSystemFont(ofSize: 12, weight: .medium)
-        versionLabel.textColor = .secondaryLabelColor
-        versionLabel.alignment = .center
-
-        let buildLabel = NSTextField(labelWithString: "Build \(info.build)")
-        buildLabel.font = .monospacedSystemFont(ofSize: 10, weight: .regular)
-        buildLabel.textColor = .tertiaryLabelColor
-        buildLabel.alignment = .center
-
-        let versionStack = NSStackView(views: [versionLabel, buildLabel])
-        versionStack.orientation = .horizontal
-        versionStack.alignment = .firstBaseline
-        versionStack.spacing = 10
-
-        let brandStack = NSStackView(views: [cardPreview, cardHint, versionStack])
-        brandStack.orientation = .vertical
-        brandStack.alignment = .centerX
-        brandStack.spacing = 9
-        brandStack.setCustomSpacing(14, after: cardHint)
-        brandStack.translatesAutoresizingMaskIntoConstraints = false
-        brandPanel.addSubview(brandStack)
-
-        let nameLabel = NSTextField(labelWithString: "Codex Mixin")
-        nameLabel.font = .systemFont(ofSize: 30, weight: .bold)
-        nameLabel.textColor = .labelColor
-
-        let sloganLabel = NSTextField(wrappingLabelWithString: L10n.About.slogan)
-        sloganLabel.font = .systemFont(ofSize: 17, weight: .medium)
-        sloganLabel.textColor = .labelColor
-
-        let detailLabel = NSTextField(wrappingLabelWithString: L10n.About.detail)
-        detailLabel.font = .systemFont(ofSize: 13)
-        detailLabel.textColor = .secondaryLabelColor
-        detailLabel.maximumNumberOfLines = 3
-        detailLabel.lineBreakMode = .byWordWrapping
-
-        let repositoryButton = NSButton(
-            title: L10n.About.openRepository,
-            target: self,
-            action: #selector(openRepository(_:))
-        )
-        repositoryButton.identifier = NSUserInterfaceItemIdentifier("about.repository")
-        repositoryButton.bezelStyle = .rounded
-        repositoryButton.controlSize = .large
-        repositoryButton.image = menuItemImage("arrow.up.right.square")
-        repositoryButton.imagePosition = .imageLeading
-        repositoryButton.toolTip = info.repositoryURL
-
-        configureCopyButton()
-        copyButton.identifier = NSUserInterfaceItemIdentifier("about.copy-version")
-        copyButton.target = self
-        copyButton.action = #selector(copyVersionInfo(_:))
-        copyButton.controlSize = .large
-
-        let buttons = NSStackView(views: [repositoryButton, copyButton])
-        buttons.orientation = .horizontal
-        buttons.alignment = .centerY
-        buttons.distribution = .fillEqually
-        buttons.spacing = 10
-
-        let rightStack = NSStackView(views: [
-            nameLabel,
-            sloganLabel,
-            detailLabel,
-            buttons,
-        ])
-        rightStack.orientation = .vertical
-        rightStack.alignment = .leading
-        rightStack.spacing = 10
-        rightStack.setCustomSpacing(4, after: nameLabel)
-        rightStack.setCustomSpacing(18, after: detailLabel)
-        rightStack.translatesAutoresizingMaskIntoConstraints = false
-        buttons.widthAnchor.constraint(equalTo: rightStack.widthAnchor).isActive = true
-
-        contentView.addSubview(brandPanel)
-        contentView.addSubview(rightStack)
-        NSLayoutConstraint.activate([
-            brandPanel.leadingAnchor.constraint(equalTo: contentView.leadingAnchor),
-            brandPanel.topAnchor.constraint(equalTo: contentView.topAnchor),
-            brandPanel.bottomAnchor.constraint(equalTo: contentView.bottomAnchor),
-            brandPanel.widthAnchor.constraint(equalToConstant: 350),
-
-            brandStack.centerXAnchor.constraint(equalTo: brandPanel.centerXAnchor),
-            brandStack.centerYAnchor.constraint(equalTo: brandPanel.centerYAnchor, constant: 10),
-            cardPreview.widthAnchor.constraint(equalToConstant: 300),
-            cardPreview.heightAnchor.constraint(equalToConstant: 188),
-
-            rightStack.leadingAnchor.constraint(equalTo: brandPanel.trailingAnchor, constant: 36),
-            rightStack.trailingAnchor.constraint(equalTo: contentView.trailingAnchor, constant: -36),
-            rightStack.centerYAnchor.constraint(equalTo: contentView.centerYAnchor, constant: 10),
-            repositoryButton.heightAnchor.constraint(equalToConstant: 36),
-            copyButton.heightAnchor.constraint(equalToConstant: 36),
-        ])
-    }
-
-    private func configureCopyButton() {
-        copyButton.title = L10n.About.copyVersion
-        copyButton.bezelStyle = .rounded
-        copyButton.image = menuItemImage("doc.on.doc")
-        copyButton.imagePosition = .imageLeading
     }
 }

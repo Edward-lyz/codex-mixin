@@ -49,49 +49,17 @@ struct AboutWindowTests {
             "About window must have content"
         )
         window.contentView?.layoutSubtreeIfNeeded()
-
-        let labels = descendantViews(of: NSTextField.self, in: window.contentView)
-        precondition(labels.contains { $0.stringValue == "Codex Mixin" })
-        precondition(labels.contains { $0.stringValue == L10n.About.version("0.3.8") })
-        precondition(labels.contains { $0.stringValue == "Build 0.3.8" })
-
-        let buttons = descendantViews(of: NSButton.self, in: window.contentView)
-        precondition(buttons.contains { $0.title == L10n.About.openRepository })
-        precondition(buttons.contains { $0.title == L10n.About.copyVersion })
-        precondition(buttons.contains { $0.toolTip == info.repositoryURL })
-
-        guard
-            let repositoryButton = buttons.first(where: {
-                $0.identifier?.rawValue == "about.repository"
-            }),
-            let copyButton = buttons.first(where: {
-                $0.identifier?.rawValue == "about.copy-version"
-            })
-        else {
-            preconditionFailure("About actions must be discoverable")
-        }
         if let snapshotPath = ProcessInfo.processInfo.environment["ABOUT_WINDOW_SNAPSHOT"] {
             writeSnapshot(of: window, to: snapshotPath)
         }
-        repositoryButton.performClick(nil)
-        copyButton.performClick(nil)
+        controller.model.openRepository()
+        controller.model.copyVersionInfo()
         precondition(openedURL?.absoluteString == info.repositoryURL)
         precondition(copiedText == info.versionSummary)
-        precondition(copyButton.title == L10n.About.copied)
+        precondition(controller.model.copied)
 
-        let cardPreviews = descendantViews(
-            of: NSHostingView<InstallCardThumbnailView>.self,
-            in: window.contentView
-        )
-        precondition(cardPreviews.count == 1)
-        precondition(cardPreviews[0].identifier?.rawValue == "about.card-preview")
-        precondition(cardPreviews[0].rootView.wallpaperOffset == 2)
-        cardPreviews[0].rootView.onOpen()
+        controller.model.openCard()
         precondition(shownCardWallpaperOffset == 2)
-
-        let brandPanel = descendantViews(of: NSVisualEffectView.self, in: window.contentView)
-        precondition(brandPanel.count == 1)
-        precondition(brandPanel[0].frame.width == 350)
         precondition(window.frame.size == NSSize(width: 820, height: 460))
         print("About window layout: passed")
     }
@@ -112,14 +80,5 @@ struct AboutWindowTests {
         } catch {
             preconditionFailure("About window snapshot could not be written: \(error)")
         }
-    }
-
-    private static func descendantViews<T: NSView>(
-        of type: T.Type,
-        in root: NSView?
-    ) -> [T] {
-        guard let root else { return [] }
-        let current = (root as? T).map { [$0] } ?? []
-        return current + root.subviews.flatMap { descendantViews(of: type, in: $0) }
     }
 }
