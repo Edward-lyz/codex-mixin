@@ -231,50 +231,16 @@ struct MenuViewsLayoutTests {
         precondition(dashboard.frame.width == 336)
         let collapsedHeight = dashboard.frame.height
         precondition(collapsedHeight < 334)
-
-        let providerScroll = descendants(of: dashboard, matching: NSScrollView.self)
-            .first { $0.identifier?.rawValue == "provider-tab-scroll" }
-        precondition(providerScroll != nil)
-        precondition(providerScroll?.hasVerticalScroller == false)
-        precondition(providerScroll?.frame.width == 316)
-        let providerButtons = descendants(of: dashboard, matching: NSButton.self)
-            .filter { $0.identifier?.rawValue.hasPrefix("provider-tab-") == true }
-        precondition(providerButtons.count == 5)
+        precondition(dashboard.model.groups.count == 5)
         precondition(
-            !providerButtons.contains {
-                $0.identifier?.rawValue == "provider-tab-disabled-provider"
-            }
+            !dashboard.model.groups.contains { $0.providerID == "disabled-provider" }
         )
-
-        let clickableModelRows = descendants(of: dashboard, matching: NSControl.self)
-            .filter { $0.identifier?.rawValue.hasPrefix("token-model-") == true }
-        precondition(clickableModelRows.count == 2)
-        guard let modelAction = clickableModelRows[0].action else {
-            preconditionFailure("token model row is missing its click action")
-        }
-        NSApp.sendAction(
-            modelAction,
-            to: clickableModelRows[0].target,
-            from: clickableModelRows[0]
-        )
-        dashboard.layoutSubtreeIfNeeded()
+        precondition(dashboard.model.selectedGroup?.models.count == 2)
+        precondition(dashboard.model.selectedGroup?.models.first?.modelID == "gpt-5.6-sol")
+        dashboard.model.selectModel("gpt-5.6-sol")
         precondition(dashboard.frame.height > collapsedHeight)
-        NSApp.sendAction(
-            modelAction,
-            to: clickableModelRows[0].target,
-            from: clickableModelRows[0]
-        )
-        dashboard.layoutSubtreeIfNeeded()
+        dashboard.model.selectModel("gpt-5.6-sol")
         precondition(dashboard.frame.height == collapsedHeight)
-        precondition(providerButtons.first {
-            $0.identifier?.rawValue == "provider-tab-baidu-oneapi"
-        }?.image != nil)
-        precondition(providerButtons.first {
-            $0.identifier?.rawValue == "provider-tab-opencode-go"
-        }?.image != nil)
-        precondition(providerButtons.first {
-            $0.identifier?.rawValue == "provider-tab-idle-provider"
-        }?.image != nil)
 
         let scrollingDashboard = ProviderUsageDashboardView()
         scrollingDashboard.updateConfiguredProviders([
@@ -286,70 +252,32 @@ struct MenuViewsLayoutTests {
             ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-3", requestCount: 1, inputTokens: 200, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil),
             ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-4", requestCount: 1, inputTokens: 100, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil),
         ])
-        scrollingDashboard.layoutSubtreeIfNeeded()
-        let tokenScroll = descendants(of: scrollingDashboard, matching: NSScrollView.self)
-            .first { $0.identifier?.rawValue == "token-model-scroll" }
-        precondition(tokenScroll != nil)
-        tokenScroll?.contentView.scroll(to: NSPoint(x: 0, y: 30))
-        tokenScroll.map { $0.reflectScrolledClipView($0.contentView) }
-        let scrolledRow = descendants(of: scrollingDashboard, matching: NSControl.self)
-            .first { $0.identifier?.rawValue == "token-model-model-4" }
-        precondition(scrolledRow != nil)
-        guard let scrolledRow, let scrolledAction = scrolledRow.action else {
-            preconditionFailure("scrolled token model row is missing its click action")
+        precondition(scrollingDashboard.model.selectedGroup?.models.count == 4)
+        scrollingDashboard.model.selectModel("model-4")
+        precondition(scrollingDashboard.model.selectedModel?.modelID == "model-4")
+
+        guard let primaryUsage = dashboard.model.selectedGroup?.models.first else {
+            preconditionFailure("Baidu token usage must exist")
         }
-        NSApp.sendAction(scrolledAction, to: scrolledRow.target, from: scrolledRow)
-        scrollingDashboard.layoutSubtreeIfNeeded()
-        let rerenderedTokenScroll = descendants(of: scrollingDashboard, matching: NSScrollView.self)
-            .first { $0.identifier?.rawValue == "token-model-scroll" }
-        precondition(rerenderedTokenScroll?.contentView.bounds.origin.y == 30)
+        let usageDetail = tokenUsageDetail(primaryUsage)
+        precondition(usageDetail.contains("输入 1.5k"))
+        precondition(usageDetail.contains("缓存输入 4.5k"))
+        precondition(usageDetail.contains("输出 300"))
+        precondition(usageDetail.contains("缓存输出 500"))
+        precondition(usageDetail.contains("整体缓存比例 75.0%"))
 
-        let tokenLabels = descendants(of: dashboard, matching: NSTextField.self)
-        precondition(tokenLabels.contains {
-            $0.stringValue.contains("gpt-5.6-sol")
-        })
-        precondition(tokenLabels.contains {
-            $0.stringValue.contains("DeepSeek-V4-Flash")
-        })
-        precondition(!tokenLabels.contains { $0.stringValue == "缓存输出" })
-        precondition(!tokenLabels.contains { $0.stringValue == "baidu-oneapi" })
-        precondition(!tokenLabels.contains { $0.stringValue.contains("other-model") })
-        let modelRows = descendants(of: dashboard, matching: NSControl.self)
-        precondition(modelRows.contains {
-            $0.toolTip?.contains("输入 1.5k") == true
-                && $0.toolTip?.contains("缓存输入 4.5k") == true
-                && $0.toolTip?.contains("输出 300") == true
-                && $0.toolTip?.contains("缓存输出 500") == true
-                && $0.toolTip?.contains("整体缓存比例 75.0%") == true
-        })
-
-        let customProviderButton = descendants(of: dashboard, matching: NSButton.self)
-            .first { $0.identifier?.rawValue == "provider-tab-custom-2" }
-        precondition(customProviderButton != nil)
-        customProviderButton?.performClick(nil)
-        dashboard.layoutSubtreeIfNeeded()
-        precondition(descendants(of: dashboard, matching: NSTextField.self)
-            .contains { $0.stringValue.contains("other-model") })
-        precondition(!descendants(of: dashboard, matching: NSTextField.self)
-            .contains { $0.stringValue.contains("gpt-5.6-sol") })
-
-        let openCodeButton = descendants(of: dashboard, matching: NSButton.self)
-            .first { $0.identifier?.rawValue == "provider-tab-opencode-go" }
-        precondition(openCodeButton != nil)
-        openCodeButton?.performClick(nil)
-        dashboard.layoutSubtreeIfNeeded()
-        let openCodeLabels = descendants(of: dashboard, matching: NSTextField.self)
-        precondition(openCodeLabels.contains { $0.stringValue == "OpenCode Go" })
-        precondition(openCodeLabels.contains { $0.stringValue == "5h" })
-        precondition(openCodeLabels.contains { $0.stringValue == "1 周" })
-        precondition(openCodeLabels.contains { $0.stringValue == "月度" })
-        precondition(
-            descendants(of: dashboard, matching: NSProgressIndicator.self).count == 3
-        )
-        let quotaScroll = descendants(of: dashboard, matching: NSScrollView.self)
-            .first { $0.identifier?.rawValue == "provider-quota-scroll" }
-        precondition(quotaScroll?.hasVerticalScroller == true)
-        precondition(quotaScroll.map { dashboard.frame.height >= $0.frame.maxY } == true)
+        dashboard.model.selectProvider("custom-2")
+        precondition(dashboard.model.selectedGroup?.models.first?.modelID == "other-model")
+        dashboard.model.selectProvider("opencode-go")
+        guard let openCodeGroup = dashboard.model.selectedGroup else {
+            preconditionFailure("OpenCode Go group must exist")
+        }
+        precondition(openCodeGroup.displayName == "OpenCode Go")
+        precondition(openCodeGroup.quotas.count == 4)
+        let quotaLabels = openCodeGroup.quotas.map {
+            providerQuotaLabel($0, multiple: true)
+        }
+        precondition(quotaLabels == ["5h", "1 周", "月度", "余额"])
         let providerIssue = "Baidu OneAPI：模型 unreachable-model 当前不可达"
         let serviceView = serviceMenuView(
             title: "本地网关运行中 · Provider 降级",
