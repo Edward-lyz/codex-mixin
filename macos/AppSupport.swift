@@ -1,4 +1,5 @@
 import Cocoa
+import SwiftUI
 
 enum GatewayError: Error, CustomStringConvertible {
     case command(String)
@@ -165,33 +166,40 @@ func showDiagnosticReport(title: String, report: String) {
         }
         return
     }
-    let textView = NSTextView(frame: NSRect(x: 0, y: 0, width: 680, height: 420))
-    textView.string = report
-    textView.isEditable = false
-    textView.isSelectable = true
-    textView.font = .monospacedSystemFont(ofSize: 12, weight: .regular)
-    textView.textContainerInset = NSSize(width: 10, height: 10)
-
-    let scrollView = NSScrollView(frame: textView.frame)
-    scrollView.documentView = textView
-    scrollView.hasVerticalScroller = true
-    scrollView.hasHorizontalScroller = true
-    scrollView.autohidesScrollers = true
-    scrollView.borderType = .bezelBorder
-
     let alert = NSAlert()
     alert.messageText = localizedPrompt(title)
     alert.informativeText = report.contains("[ERROR]")
         ? AppLocalization.string("appSupport.issuesWereDetectedTheReportIncludesThe")
         : AppLocalization.string("appSupport.checkCompletedCopyTheReportWhenReporting")
     alert.alertStyle = report.contains("[ERROR]") ? .warning : .informational
-    alert.accessoryView = scrollView
+    alert.accessoryView = NSHostingView(rootView: DiagnosticReportView(report: report))
     alert.addButton(withTitle: AppLocalization.string("appSupport.close"))
     alert.addButton(withTitle: AppLocalization.string("appSupport.copyReport"))
     NSApp.activate(ignoringOtherApps: true)
     if alert.runModal() == .alertSecondButtonReturn {
         NSPasteboard.general.clearContents()
         NSPasteboard.general.setString(report, forType: .string)
+    }
+}
+
+private struct DiagnosticReportView: View {
+    let report: String
+
+    var body: some View {
+        ScrollView([.horizontal, .vertical]) {
+            Text(report)
+                .font(.system(size: 12, design: .monospaced))
+                .textSelection(.enabled)
+                .fixedSize(horizontal: true, vertical: true)
+                .padding(10)
+        }
+        .background(Color(nsColor: .textBackgroundColor))
+        .clipShape(RoundedRectangle(cornerRadius: 6))
+        .overlay {
+            RoundedRectangle(cornerRadius: 6)
+                .stroke(.separator)
+        }
+        .frame(width: 680, height: 420)
     }
 }
 
