@@ -21,16 +21,6 @@ struct ProviderWindowLayoutTests {
         precondition(combinedSize.width == 1_180)
         precondition(combinedSize.height == 660)
 
-        let modelScroll = NSScrollView()
-        configureModelTableScrollView(modelScroll)
-        precondition(modelScroll.hasVerticalScroller)
-        precondition(modelScroll.hasHorizontalScroller)
-        precondition(!modelScroll.autohidesScrollers)
-
-        let benchmarkScroll = NSScrollView()
-        configureModelTableScrollView(benchmarkScroll)
-        precondition(benchmarkScroll.hasHorizontalScroller)
-
         print("Provider and benchmark window layout: passed")
     }
 }

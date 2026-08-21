@@ -16,13 +16,6 @@ func modelBenchmarkContentSize(for visibleFrame: NSRect) -> NSSize {
     )
 }
 
-func configureModelTableScrollView(_ scrollView: NSScrollView) {
-    scrollView.hasVerticalScroller = true
-    scrollView.hasHorizontalScroller = true
-    scrollView.autohidesScrollers = false
-    scrollView.borderType = .bezelBorder
-}
-
 private func adaptiveWindowContentSize(
     for visibleFrame: NSRect,
     ideal: NSSize,
