@@ -1,4 +1,5 @@
 import Cocoa
+import SwiftUI
 
 struct GitHubRelease: Decodable {
     let tagName: String
@@ -239,48 +240,31 @@ func readableReleaseNotes(_ markdown: String) -> String {
 }
 
 func releaseNotesView(title: String, notes: String) -> NSView {
-    let width: CGFloat = 560
-    let height: CGFloat = 300
-    let titleHeight: CGFloat = 24
-    let container = NSView(frame: NSRect(x: 0, y: 0, width: width, height: height))
-    let titleLabel = NSTextField(labelWithString: title)
-    titleLabel.font = .boldSystemFont(ofSize: 13)
-    titleLabel.frame = NSRect(x: 0, y: height - titleHeight, width: width, height: titleHeight)
+    NSHostingView(rootView: ReleaseNotesView(title: title, notes: notes))
+}
 
-    let scrollView = NSScrollView(
-        frame: NSRect(x: 0, y: 0, width: width, height: height - titleHeight - 4)
-    )
-    scrollView.hasVerticalScroller = true
-    scrollView.autohidesScrollers = true
-    scrollView.borderType = .bezelBorder
+private struct ReleaseNotesView: View {
+    let title: String
+    let notes: String
 
-    let textView = NSTextView(frame: scrollView.contentView.bounds)
-    textView.string = notes
-    textView.font = .systemFont(ofSize: 13)
-    textView.textColor = .labelColor
-    textView.backgroundColor = .textBackgroundColor
-    textView.isEditable = false
-    textView.isSelectable = true
-    textView.isRichText = false
-    textView.isHorizontallyResizable = false
-    textView.isVerticallyResizable = true
-    textView.autoresizingMask = [.width]
-    textView.textContainerInset = NSSize(width: 10, height: 10)
-    textView.textContainer?.widthTracksTextView = true
-    textView.textContainer?.containerSize = NSSize(
-        width: scrollView.contentSize.width,
-        height: .greatestFiniteMagnitude
-    )
-    textView.layoutManager?.ensureLayout(for: textView.textContainer!)
-    let usedHeight = textView.layoutManager?
-        .usedRect(for: textView.textContainer!)
-        .height ?? scrollView.contentSize.height
-    textView.frame.size.height = max(
-        scrollView.contentSize.height,
-        usedHeight + textView.textContainerInset.height * 2
-    )
-    scrollView.documentView = textView
-    container.addSubview(titleLabel)
-    container.addSubview(scrollView)
-    return container
+    var body: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(title)
+                .font(.callout.weight(.semibold))
+            ScrollView {
+                Text(notes)
+                    .font(.body)
+                    .textSelection(.enabled)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+                    .padding(10)
+            }
+            .background(Color(nsColor: .textBackgroundColor))
+            .clipShape(RoundedRectangle(cornerRadius: 6))
+            .overlay {
+                RoundedRectangle(cornerRadius: 6)
+                    .stroke(.separator)
+            }
+        }
+        .frame(width: 560, height: 300)
+    }
 }
