@@ -467,9 +467,9 @@ private struct TokenModelDetail: View {
                 }
                 GridRow {
                     metric("缓存比例", usage.cacheHitPercent.map { String(format: "%.1f%%", $0) } ?? "未上报")
+                    metric("缓存输出", formatTokenCount(usage.cacheCreationTokens))
                     metric("首字响应", usage.averageTTFTMs.map { String(format: "%.0f ms", $0) } ?? "未上报")
                     metric("每秒吞吐", usage.outputTPS.map { String(format: "%.1f tok/s", $0) } ?? "未上报")
-                    Color.clear.frame(width: 58)
                 }
             }
         }
@@ -480,7 +480,6 @@ private struct TokenModelDetail: View {
             RoundedRectangle(cornerRadius: 8)
                 .stroke(.separator.opacity(0.35))
         }
-        .help(tokenUsageDetail(usage))
     }
 
     private func metric(_ title: String, _ value: String) -> some View {

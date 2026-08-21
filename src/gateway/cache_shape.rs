@@ -803,7 +803,7 @@ mod tests {
                 cache_creation_tokens: Some(500),
                 output_tokens: Some(200),
                 ttft_micros: Some(100_000),
-                generation_micros: Some(2_000_000),
+                generation_micros: Some(4_000_000),
             },
         );
         aggregator.record(
@@ -829,7 +829,7 @@ mod tests {
         assert_eq!(snapshot[0].cache_creation_tokens, 500);
         assert_eq!(snapshot[0].output_tokens, 300);
         assert_eq!(snapshot[0].average_ttft_ms, Some(200.0));
-        assert_eq!(snapshot[0].output_tps, Some(100.0));
+        assert_eq!(snapshot[0].output_tps, Some(75.0));
         assert_eq!(
             snapshot[0].cache_hit_percent,
             Some(4_500.0 / 6_500.0 * 100.0)
