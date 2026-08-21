@@ -191,7 +191,7 @@ final class ProviderUsageDashboardModel: ObservableObject {
 
     var contentHeight: CGFloat {
         guard let group = selectedGroup else { return providerDashboardMinimumHeight }
-        let quotaRows = max(1, min(group.quotas.count, 3))
+        let quotaRows = max(1, group.quotas.count)
         let tokenHeight: CGFloat = group.models.isEmpty ? 20 : 152
         let detailHeight: CGFloat = selectedModel == nil ? 0 : 116
         return max(providerDashboardMinimumHeight, 118 + CGFloat(quotaRows * 28) + tokenHeight + detailHeight)
@@ -304,14 +304,12 @@ private struct ProviderUsageDashboardContent: View {
                 .foregroundStyle(.secondary)
                 .help(model.quotaStatusDetail ?? "")
         } else {
-            ScrollView {
-                VStack(spacing: 6) {
-                    ForEach(Array(group.quotas.enumerated()), id: \.offset) { _, usage in
-                        ProviderQuotaRow(usage: usage, multiple: group.quotas.count > 1)
-                    }
+            VStack(spacing: 6) {
+                ForEach(Array(group.quotas.enumerated()), id: \.offset) { _, usage in
+                    ProviderQuotaRow(usage: usage, multiple: group.quotas.count > 1)
                 }
             }
-            .frame(height: CGFloat(min(group.quotas.count, 3) * 28))
+            .frame(height: CGFloat(group.quotas.count * 28))
         }
     }
 
@@ -339,7 +337,7 @@ private struct ProviderUsageDashboardContent: View {
             } else {
                 let maximumTokens = group.models.map(\.totalTokens).max() ?? 0
                 ScrollView(.horizontal) {
-                    HStack(alignment: .bottom, spacing: 10) {
+                    HStack(alignment: .bottom, spacing: 4) {
                     ForEach(group.models, id: \.modelID) { usage in
                         Button {
                             model.selectModel(usage.modelID)
@@ -357,7 +355,7 @@ private struct ProviderUsageDashboardContent: View {
                 }
                 }
                 .scrollIndicators(.hidden)
-                .frame(height: 112)
+                .frame(height: 108)
 
                 if let selectedModel = model.selectedModel {
                     TokenModelDetail(usage: selectedModel)
@@ -410,20 +408,21 @@ private struct TokenModelColumn: View {
     let selected: Bool
 
     var body: some View {
-        VStack(spacing: 4) {
+        VStack(spacing: 3) {
             Text(formatTokenCount(usage.totalTokens))
                 .font(.caption2.monospacedDigit().weight(.medium))
                 .lineLimit(1)
                 .minimumScaleFactor(0.72)
-                .frame(width: 62)
+                .frame(width: 44)
             TokenVerticalBar(usage: usage, maximumTokens: maximumTokens)
             Text(usage.modelID)
                 .font(.caption2.weight(selected ? .semibold : .medium))
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(width: 62)
+                .frame(width: 44)
         }
-        .padding(4)
+        .padding(.vertical, 3)
+        .padding(.horizontal, 2)
         .background(Color.accentColor.opacity(selected ? 0.12 : 0), in: RoundedRectangle(cornerRadius: 8))
     }
 }
@@ -434,23 +433,18 @@ private struct TokenVerticalBar: View {
 
     var body: some View {
         ZStack(alignment: .bottom) {
-            RoundedRectangle(cornerRadius: 5).fill(.separator.opacity(0.22))
-            VStack(spacing: 0) {
-                tokenSegment(usage.cacheCreationTokens, color: .cyan.opacity(0.55))
-                tokenSegment(usage.outputTokens, color: .teal)
-                tokenSegment(usage.cacheReadTokens, color: .blue)
-                tokenSegment(usage.inputTokens, color: .blue.opacity(0.45))
-            }
-            .clipShape(RoundedRectangle(cornerRadius: 5))
+            Capsule().fill(.separator.opacity(0.22))
+            Capsule()
+                .fill(Color.accentColor)
+                .frame(height: barHeight)
         }
-        .frame(width: 30, height: 68)
+        .frame(width: 9, height: 68)
     }
 
-    private func tokenSegment(_ value: UInt64, color: Color) -> some View {
-        let height = maximumTokens == 0
+    private var barHeight: CGFloat {
+        maximumTokens == 0
             ? 0
-            : 68 * CGFloat(Double(value) / Double(maximumTokens))
-        return color.frame(width: 30, height: height)
+            : 68 * CGFloat(Double(usage.totalTokens) / Double(maximumTokens))
     }
 }
 
