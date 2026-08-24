@@ -353,6 +353,8 @@ pub(super) fn effective_official_cache_body(
 
 fn parse_official_ws_event(bytes: &[u8], response_id: Option<&str>) -> Option<Value> {
     if response_id.is_some()
+        && memmem::find(bytes, b"response.output_text.delta").is_none()
+        && memmem::find(bytes, b"response.reasoning_summary_text.delta").is_none()
         && memmem::find(bytes, b"response.output_item.done").is_none()
         && memmem::find(bytes, b"response.completed").is_none()
         && memmem::find(bytes, b"response.failed").is_none()
@@ -406,4 +408,59 @@ fn websocket_url_from_http_url(url: &str) -> anyhow::Result<String> {
         return Ok(format!("ws://{rest}"));
     }
     anyhow::bail!("official responses URL must start with http:// or https://")
+}
+
+#[cfg(test)]
+mod tests {
+    use serde_json::json;
+
+    use super::parse_official_ws_event;
+    use crate::gateway::{
+        CacheShape, CacheShapeTracker, UpstreamCacheObserver, record_provider_prefix,
+    };
+    use crate::upstream::UpstreamRouting;
+
+    #[test]
+    fn official_websocket_records_response_timing_after_response_id() {
+        let tracker = CacheShapeTracker::default();
+        let request = json!({
+            "model": "gpt-5.6-sol",
+            "input": [{"type": "message", "role": "user", "content": "hello"}]
+        });
+        let routing = UpstreamRouting {
+            session_id: "thread-1".to_owned(),
+            hash_key: "hash-1".to_owned(),
+        };
+        let observation = record_provider_prefix(
+            &tracker,
+            "official",
+            "gpt-5.6-sol",
+            "gpt-5.6-sol",
+            Some(&routing),
+            CacheShape::from_openai_responses(&request),
+        )
+        .unwrap();
+        let mut observer = UpstreamCacheObserver::new(observation);
+
+        let delta = br#"{"type":"response.output_text.delta","delta":"hi"}"#;
+        observer.observe_value(
+            &parse_official_ws_event(delta, Some("response-1"))
+                .expect("output delta remains visible to timing observer"),
+        );
+        observer.observe_value(&json!({
+            "type": "response.completed",
+            "response": {
+                "usage": {
+                    "input_tokens": 4,
+                    "input_tokens_details": {"cached_tokens": 3},
+                    "output_tokens": 2
+                }
+            }
+        }));
+        drop(observer);
+
+        let usage = tracker.usage_snapshot();
+        assert!(usage[0].average_ttft_ms.is_some());
+        assert!(usage[0].output_tps.is_some());
+    }
 }
