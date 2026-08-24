@@ -1,4 +1,91 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.5.0
+
+这是 Codex Mixin 的界面与使用体验大版本。macOS 控制中心完成 SwiftUI 重构，Linux、SSH 和远端开发机获得可用鼠标与键盘操作的全屏 TUI；两套界面现在共享同一套 Provider、模型、应用和系统管理能力。
+
+### 全屏 TUI
+
+- 无参数运行 `codex-mixin` 即进入主界面；首次启动自动安装到 `~/.local/bin/codex-mixin` 并打开 Setup
+- 提供 Home、Setup、Providers、Models、Speed、Fusion、Apps、System 和 Logs 完整页面
+- 支持新增、编辑、删除 Provider，配置 API Key、DUCX 扫码认证、辅助模型和百度数据上报
+- 支持模型发现、多选、保存和测速，并展示 TTFT、吞吐、Token、额度及健康状态
+- 可安装或恢复 Codex、Claude Code 和 DSH，管理 gateway、升级、修复及诊断日志
+- 支持鼠标点击、键盘导航和全屏二级工作区；原有 subcommand、`--json` 与 `--no-tui` 继续用于脚本和 macOS App
+
+### macOS 控制中心
+
+- Provider 设置、模型测速、Fusion、安装进度、Codex 安装、About、用量和诊断界面迁移到 SwiftUI
+- 重新设计 Provider 设置和模型选择体验，增加响应性能、平均 TTFT 与输出吞吐展示
+- 使用 macOS 26 Liquid Glass，同时为 macOS 13.1–15 提供原生材质兼容界面
+- 最低系统版本保持 macOS 13.1 Ventura，不要求升级到 macOS 26
+
+### 稳定性
+
+- 修复官方 WebSocket 与 CLI JSON 转发中的 timing 数据采集和展示
+- 修复 TUI 操作结果丢失、长任务阻塞、Tab 导航、鼠标命中和 DUCX 二维码显示
+- 改进 Provider throughput 聚合并排除异常 timing 样本
+
+<!-- codex-mixin:zh-Hans:end -->
+
+<!-- codex-mixin:zh-Hant:start -->
+## v0.5.0
+
+這是 Codex Mixin 的介面與使用體驗大版本。macOS 控制中心完成 SwiftUI 重構，Linux、SSH 和遠端開發機獲得可用滑鼠與鍵盤操作的全螢幕 TUI；兩套介面現在共享同一套 Provider、模型、應用程式和系統管理能力。
+
+### 全螢幕 TUI
+
+- 不帶參數執行 `codex-mixin` 即進入主介面；首次啟動自動安裝到 `~/.local/bin/codex-mixin` 並開啟 Setup
+- 提供 Home、Setup、Providers、Models、Speed、Fusion、Apps、System 和 Logs 完整頁面
+- 支援新增、編輯、刪除 Provider，設定 API Key、DUCX 掃碼認證、輔助模型和百度資料上報
+- 支援模型探索、多選、儲存和測速，並顯示 TTFT、吞吐、Token、額度及健康狀態
+- 可安裝或還原 Codex、Claude Code 和 DSH，管理 gateway、升級、修復及診斷日誌
+- 支援滑鼠點選、鍵盤導覽和全螢幕次級工作區；原有 subcommand、`--json` 與 `--no-tui` 繼續用於腳本和 macOS App
+
+### macOS 控制中心
+
+- Provider 設定、模型測速、Fusion、安裝進度、Codex 安裝、About、用量和診斷介面遷移到 SwiftUI
+- 重新設計 Provider 設定和模型選擇體驗，增加回應效能、平均 TTFT 與輸出吞吐顯示
+- 使用 macOS 26 Liquid Glass，同時為 macOS 13.1–15 提供原生材質相容介面
+- 最低系統版本保持 macOS 13.1 Ventura，不要求升級到 macOS 26
+
+### 穩定性
+
+- 修正官方 WebSocket 與 CLI JSON 轉送中的 timing 資料收集和顯示
+- 修正 TUI 操作結果遺失、長任務阻塞、Tab 導覽、滑鼠命中和 DUCX QR code 顯示
+- 改善 Provider throughput 彙總並排除異常 timing 樣本
+
+<!-- codex-mixin:zh-Hant:end -->
+
+<!-- codex-mixin:en:start -->
+## v0.5.0
+
+This is a major interface and usability release. The macOS control center has moved to SwiftUI, while Linux, SSH, and remote development environments now have a full-screen TUI with mouse and keyboard control. Both interfaces manage the same providers, models, applications, and system services.
+
+### Full-screen TUI
+
+- Run `codex-mixin` without arguments to open the control center; the first launch installs it to `~/.local/bin/codex-mixin` and opens Setup
+- Use complete Home, Setup, Providers, Models, Speed, Fusion, Apps, System, and Logs pages
+- Add, edit, and remove providers, including API keys, DUCX QR authentication, auxiliary models, and Baidu reporting settings
+- Discover, select, save, and benchmark models with TTFT, throughput, token, quota, and health data
+- Install or restore Codex, Claude Code, and DSH, and manage the gateway, updates, repairs, and diagnostics
+- Use mouse input, keyboard navigation, and full-screen secondary workspaces; existing subcommands, `--json`, and `--no-tui` remain available for automation and the macOS app
+
+### macOS control center
+
+- Move provider settings, model benchmarks, Fusion, installation progress, Codex installation, About, usage, and diagnostics to SwiftUI
+- Redesign provider settings and model selection, including response performance, average TTFT, and output throughput
+- Use Liquid Glass on macOS 26 with a native material interface on macOS 13.1–15
+- Keep macOS 13.1 Ventura as the minimum supported version; macOS 26 is not required
+
+### Reliability
+
+- Fix timing collection and display for official WebSocket traffic and CLI JSON forwarding
+- Fix lost TUI operation results, blocking tasks, Tab navigation, mouse hit testing, and DUCX QR rendering
+- Improve provider throughput aggregation and reject anomalous timing samples
+
+<!-- codex-mixin:en:end -->
+
+<!-- codex-mixin:zh-Hans:start -->
 ## v0.4.4
 
 本版本改进了 Provider、gateway 和 macOS 设置体验，并修复了百度代码使用上报。
