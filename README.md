@@ -159,6 +159,8 @@ Codex Mixin 的解法是：Codex 连到本机自动分配的 loopback 端口，�
 
 ### 快速安装
 
+#### macOS 菜单栏 App
+
 从 [GitHub Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 下载当前 Mac 架构对应的 DMG：
 
 | Mac 架构 | 下载文件 |
@@ -174,7 +176,17 @@ Codex Mixin 的解法是：Codex 连到本机自动分配的 loopback 端口，�
 xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 ```
 
-打开后按菜单栏提示完成配置。远端开发机或 Linux 用户可以从 Release 页面下载 CLI 包自行使用。
+打开后按菜单栏提示完成配置。
+
+#### Linux、SSH 与远端开发机
+
+从同一个 Release 页面下载当前架构的 CLI 压缩包或 `.deb`。解压后直接运行 `codex-mixin` 二进制，不附带任何 subcommand：
+
+```bash
+./codex-mixin
+```
+
+第一次启动会把当前二进制安装到 Linux 常用的用户级目录 `~/.local/bin/codex-mixin`，随后进入全屏 TUI。没有 Provider 配置时会自动打开 Setup 页面，不需要运行 `codex-mixin setup`。
 
 <details>
 <summary>CLI 下载文件名</summary>
@@ -200,47 +212,29 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 
 界面和完整操作入口见上方 [Product tour](#product-tour--产品界面)。
 
-#### 远端 Codex CLI 用户
+#### Linux、SSH 与远端 Codex CLI 用户
 
-```bash
-codex-mixin setup
-codex-mixin info
-```
+**第 1 步：打开二进制。** 直接运行 `codex-mixin`，不要加 `setup`。首次使用会自动进入下面的 Setup 页面；之后启动则进入 Home。
 
-`setup` 是 CLI 的首次配置入口：交互终端可直接运行并选择 preset，隐藏输入 API Key、添加或更新 provider、刷新模型、启动或按需重启网关，
-然后询问 Codex 集成方式，选择保留官方账号能力、仅使用自定义模型或暂时跳过。选择后可以直接完成
-Codex 安装，不需要再单独执行 `connect codex`；跳过时可以用 `connect codex` 以后再装。
+<p align="center"><a href="docs/assets/CLI-Setup.png"><img src="docs/assets/CLI-Setup.png" alt="Codex Mixin TUI Setup 页面"></a></p>
 
-Baidu OneAPI 还会询问额度查询用户名，自动下载并登录托管 DUCX 认证核心。DUCX
-作为 header 产生器使用，不转发 warmup 请求到 OneAPI：
+**第 2 步：完成 Setup。** 用鼠标点击或方向键选择 Provider preset，填写凭据和 Provider 专属设置，再选择 Codex 模式。百度 OneAPI 可以在这里启用 DUCX、代码使用上报和辅助模型上游。按 `Enter` 后，TUI 会在当前界面依次完成 Provider 保存、模型发现、Gateway 启动和 Codex 接入；需要扫码时会切换到完整二维码页面。
 
-```bash
-codex-mixin setup --preset baidu-oneapi
-```
+**第 3 步：检查 Provider 并选择模型。** 打开 Providers 页面测试、启停、排序或编辑 Provider；再进入 Models 页面，用鼠标或 `Space` 选择要加入 Codex 的模型并保存。
 
-脚本和 CI 用 `--key`、`--quota-username`、`--codex-mode official|custom|skip` 跳过交互，或设置
-`CODEX_MIXIN_API_KEY` 和 `CODEX_MIXIN_QUOTA_USERNAME`：
+<p align="center"><a href="docs/assets/CLI-Providers.png"><img src="docs/assets/CLI-Providers.png" alt="Codex Mixin TUI Provider 管理"></a></p>
 
-```bash
-codex-mixin setup --preset openrouter --key <key> --codex-mode custom
-codex-mixin setup --preset baidu-oneapi --key <key> --quota-username <username> --codex-mode skip
-```
+<p align="center"><a href="docs/assets/CLI-models.png"><img src="docs/assets/CLI-models.png" alt="Codex Mixin TUI 模型选择"></a></p>
 
-只写配置、不启动网关时增加 `--no-start`。日常入口按任务收敛：`setup` 负责首次配置，`update` 负责从
-GitHub Release 更新 CLI 并重启网关，`provider` 管理供应商，`service` 管理本地网关，`connect` 管理
-Codex、Claude 和 DSH 集成，`info` 查看运行状态，`doctor` 负责诊断和修复。
+**第 4 步：安装应用集成。** 进入 Apps 页面，直接选择 Codex 的官方账号模式或仅自定义模型模式，也可以安装、刷新或恢复 Claude Code 和 DSH。每个变更都会先显示确认页和执行进度。
 
-然后重新打开 Codex CLI 会话，在模型选择器里选择接入后的模型。遇到问题时再运行
-`codex-mixin doctor --quick`；它会给出具体修复命令。
+<p align="center"><a href="docs/assets/CLI-Apps.png"><img src="docs/assets/CLI-Apps.png" alt="Codex Mixin TUI 应用安装"></a></p>
 
-常用检查命令：
+**第 5 步：回到 Home 验证。** Home 会集中显示 Gateway、Provider、额度、Token、缓存、TTFT 和吞吐；Speed、System、Logs 页面分别负责测速、升级修复和诊断。安装或恢复 Codex 后，重启 Codex App 或开启新的 Codex CLI 会话即可看到最新模型。
 
-```bash
-codex-mixin info
-codex-mixin info --json
-codex-mixin provider list --json
-codex-mixin service logs -n 200
-```
+<p align="center"><a href="docs/assets/CLI-Home.png"><img src="docs/assets/CLI-Home.png" alt="Codex Mixin TUI Home 总览"></a></p>
+
+顶部标签支持鼠标点击，`Tab` 和 `Shift-Tab` 可切换页面，当前页面底部会始终显示可用快捷键。自动化脚本所需的稳定 subcommand 和 `--json` 接口收在后面的 [自动化 CLI 参考](#自动化-cli-参考)，普通用户不需要使用。
 
 ### 供应商预设
 
@@ -299,7 +293,7 @@ Provider 设置界面见上方 [macOS control center](#macos-control-center)；�
 ### 安装到 Claude Code
 
 Codex Mixin 也提供一个 Anthropic Messages 兼容端点 `/v1/messages`，所以 Claude Code
-可以直接把本地网关当作上游使用。菜单栏 App 选择「安装到 Claude Code...」后，会：
+可以直接把本地网关当作上游使用。在 macOS 菜单栏选择「安装到 Claude Code...」，或在 TUI 的 Apps 页面点击 Claude Code 的 `Install / refresh` 后，会：
 
 1. 备份并保留 `~/.claude/settings.json` 中已有的 `env` 配置。
 2. 在 `env` 中写入 `ANTHROPIC_BASE_URL=http://127.0.0.1:<端口>`。
@@ -308,21 +302,12 @@ Codex Mixin 也提供一个 Anthropic Messages 兼容端点 `/v1/messages`，所
    和 `ANTHROPIC_DEFAULT_HAIKU_MODEL`。
 4. 写入 `codex_mixin_managed` 标记，卸载时恢复之前的值。
 
-CLI 等价命令：
-
-```bash
-codex-mixin connect claude --model "Claude Sonnet 5"
-codex-mixin connect remove claude
-codex-mixin connect status
-```
-
-注意：Claude Code 默认模型名可能不是本地 provider 的 catalog 名称；安装后建议使用
-`--model` 显式选择，或先执行 `codex-mixin info` 查看网关和 provider 状态。
+需要卸载时，在同一个 Apps 页面选择 Claude Code 的 `Restore`。Claude Code 默认模型名可能不是本地 Provider 的 catalog 名称，TUI 会从当前已选模型中明确选择并展示实际写入的模型。
 
 ### 安装到 DSH
 
-DeepSeek Harness（DSH）可以通过 pi-ai adapter 使用本地网关。菜单栏 App 选择
-「安装到 DSH...」后，会：
+DeepSeek Harness（DSH）可以通过 pi-ai adapter 使用本地网关。在 macOS 菜单栏选择
+「安装到 DSH...」，或在 TUI 的 Apps 页面点击 DSH 的 `Install / refresh` 后，会：
 
 1. 在 `$DSH_HOME/settings.yaml` 的 `llm-pi-ai.providers.codex-mixin` 写入
    `openai-responses` 路由，`baseURL` 指向本地网关的 `/v1`。
@@ -333,26 +318,18 @@ DeepSeek Harness（DSH）可以通过 pi-ai adapter 使用本地网关。菜单�
 4. 卸载时删除 `llm-pi-ai.providers.codex-mixin` 和
    `CODEX_MIXIN_GATEWAY_API_KEY`，保留 DSH 的其他配置。
 
-CLI 等价命令：
-
-```bash
-codex-mixin connect dsh
-codex-mixin connect remove dsh
-```
-
-DSH 目录默认使用 `$DSH_HOME`，未设置时使用 `~/.dsh`。自定义目录可以传
-`--dsh-home`。安装或卸载后需要重启 DSH 或开启新会话。
+需要卸载时，在同一个 Apps 页面选择 DSH 的 `Remove`。DSH 目录默认使用 `$DSH_HOME`，未设置时使用 `~/.dsh`。安装或卸载后需要重启 DSH 或开启新会话。
 
 ### 安装到 Codex 的行为
 
-安装面板和 CLI 都提供两种互斥模式：
+macOS 安装面板和 TUI 的 Apps 页面都提供两种互斥模式：
 
-| 模式 | CLI 命令 | `models_cache.json` | 安装结果 |
+| 模式 | TUI 选项 | `models_cache.json` | 安装结果 |
 | --- | --- | --- | --- |
-| 官方账号模式 | `codex-mixin connect codex --codex-oauth-proxy` | 必须存在；请先登录并打开一次 Codex | 合并官方 GPT 与自定义模型，保留官方 OAuth、插件、云任务和账户能力 |
-| 仅自定义模型模式 | `codex-mixin connect codex --custom-only` | 不依赖、不要求存在 | 备份并临时替换 Codex 登录，用本地登录占位开启模型选择器；官方插件、云任务和账户功能不可用 |
+| 官方账号模式 | Apps → Codex → `Official` | 必须存在；请先登录并打开一次 Codex | 合并官方 GPT 与自定义模型，保留官方 OAuth、插件、云任务和账户能力 |
+| 仅自定义模型模式 | Apps → Codex → `Custom-only` | 不依赖、不要求存在 | 备份并临时替换 Codex 登录，用本地登录占位开启模型选择器；官方插件、云任务和账户功能不可用 |
 
-CLI 不会根据 `auth.json` 或 `models_cache.json` 猜测模式，也不允许省略模式参数。即使你有官方账号，也可以明确选择仅自定义模型模式；如果想使用官方能力，请先取消安装，在 Codex 中登录并打开一次，然后选择官方账号模式。
+Codex Mixin 不会根据 `auth.json` 或 `models_cache.json` 猜测模式，确认页会完整展示即将应用的选择。即使你有官方账号，也可以明确选择仅自定义模型模式；如果想使用官方能力，请先取消安装，在 Codex 中登录并打开一次，然后选择官方账号模式。
 
 安装会做这些事：
 
@@ -394,21 +371,11 @@ base_url = "http://127.0.0.1:<自动分配端口>/v1"
 
 有账号模式安装后，可以在同一个 Codex 会话中从官方 GPT 切换到自定义模型，也可以再切回官方模型。Codex Mixin 会按每个 Responses WebSocket 请求重新分流，并在自定义模型连续调用时重建增量上下文。
 
-默认不会改顶层 `model`。如果确实要顺手设置默认模型，可以显式传入：
-
-```bash
-codex-mixin connect codex --codex-oauth-proxy --model deepseek-chat --set-default
-```
-
-卸载并恢复安装前配置：
-
-```bash
-codex-mixin connect remove codex
-```
+默认不会改顶层 `model`。模型选择由 Models 页面管理；需要卸载并恢复安装前配置时，在 Apps 页面选择 Codex 的 `Restore`。
 
 卸载会从备份配置读取原 provider；原配置没有显式 provider 时使用 Codex 默认的 `openai`。当前托管 provider 的历史会同步迁回该 provider，避免恢复配置后会话消失。仅自定义模型模式创建的本地登录占位会被删除，并恢复安装前的 `auth.json`；如果用户安装后自行改过登录，卸载会保留当前登录且不会用旧备份覆盖它。
 
-从仅自定义模型模式切到官方账号模式时，先执行卸载，登录 Codex 并打开一次以生成模型缓存，再用 `--codex-oauth-proxy` 重新安装。切回仅自定义模型模式时，直接用 `--custom-only` 重新安装即可，当前官方登录会被备份。
+从仅自定义模型模式切到官方账号模式时，先在 Apps 页面恢复 Codex，登录 Codex 并打开一次以生成模型缓存，再选择 `Official`。切回仅自定义模型模式时直接选择 `Custom-only`，当前官方登录会被备份。
 
 安装或卸载后需要重启 Codex App。Codex CLI 需要开启新会话。
 
@@ -436,7 +403,7 @@ codex-mixin connect remove codex
 
 ### Fusion 多模型编排
 
-Fusion 虚拟模型使用 `Panel → Judge → Final` 三段式管线。打开菜单栏的 `Fusion 设置...`，选择 1–8 个并行 Panel 模型、一个 Judge 模型和一个 Final 模型；保存并重启网关后，`mixin/fusion/<profile-id>` 会出现在 Codex 模型选择器中。不再使用时，在同一窗口点击 `关闭 Fusion`，或运行 `codex-mixin fusion delete --id <profile-id>`，网关会删除该 profile 并在刷新 catalog 后把它从模型选择器中移除。
+Fusion 虚拟模型使用 `Panel → Judge → Final` 三段式管线。打开菜单栏的 `Fusion 设置...` 或 TUI 的 Fusion 页面，选择 1–8 个并行 Panel 模型、一个 Judge 模型和一个 Final 模型；保存后，`mixin/fusion/<profile-id>` 会出现在 Codex 模型选择器中。不再使用时，在同一界面点击 `关闭 Fusion`，网关会删除该 profile 并在刷新 catalog 后把它从模型选择器中移除。
 
 Fusion 只在 Plan 模式的新用户轮次运行 Panel 和 Judge。切换到 Default 模式执行计划后，所有后续用户轮次与工具结果续跑都直接交给该 profile 的 Final 模型，避免在编码阶段重复分析。
 
@@ -452,17 +419,20 @@ Fusion 只在 Plan 模式的新用户轮次运行 Panel 和 Judge。切换到 De
 
 关闭该选项时，Panel 和 Judge 仍会正常参与生成，但回答区只保留 Final 内容；执行进度仍通过 reasoning summary 显示，避免长时间无反馈。
 
-### CLI
+### 自动化 CLI 参考
+
+普通用户应使用全屏 TUI。下面的命令只面向脚本、CI 和无交互环境，接口继续保持稳定。
+
+<details>
+<summary>展开自动化命令</summary>
+
+<br>
 
 ```bash
-# 无参数打开全屏控制台；脚本和 macOS App 使用 --no-tui 保留普通输出
-codex-mixin
+# 禁用 TUI，保留普通输出
 codex-mixin --no-tui
 
-# 首次配置：交互终端可直接运行并选择 preset / API Key / Codex 集成方式
-codex-mixin setup
-
-# 脚本或 CI：显式传参，跳过所有交互
+# 首次配置必须显式传参，跳过所有交互
 codex-mixin setup --preset openrouter --key <key> --codex-mode custom
 codex-mixin setup --preset baidu-oneapi --key <key> --quota-username <username> --codex-mode skip
 codex-mixin setup --preset <preset> --no-start
@@ -505,10 +475,9 @@ codex-mixin doctor --fix               # 自动修复权限、失效状态、网
 codex-mixin doctor --fix --restart-apps # 额外允许重启 ChatGPT/Codex App（会中断进行中的会话）
 ```
 
-全屏控制台是 CLI 的主界面，支持鼠标点击和完整键盘导航。它可执行首次 Setup、新增/编辑/删除/测试 Provider、模型发现和多选、Token/TTFT/吞吐统计、可调参数测速、网关管理、健康修复、版本升级，以及 Codex、Claude Code、DSH 的安装和恢复。`codex-mixin setup` 在终端中打开同一个控制台并定位到 Setup 页面；自动化脚本继续使用带参数的 subcommand 或 `--no-tui`。
+</details>
 
-新用户从 `setup` 开始，日常只需要 `update`、`provider`、`service`、`connect`、`info` 和 `doctor`。
-`fusion`、`benchmark`、catalog 刷新和历史迁移仍可用，但属于高级维护命令。
+无参数启动才是面向用户的默认入口；它会打开 TUI，未配置时自动定位到 Setup。`setup`、`provider`、`service`、`connect`、`info` 和 `doctor` 仅作为自动化接口保留。
 
 ### 模型目录和 metadata
 
@@ -624,12 +593,6 @@ OpenAI Chat Completions 兼容上游不接受 `tool` 消息内嵌图片，网关
 | 安装前无登录文件标记 | `~/.codex/auth.json.codex-mixin.absent` |
 | Codex 模型目录 | `~/.codex/model-catalogs/mixin-models.json` |
 
-做 Codex 配置实验时不要直接碰真实配置，可以使用隔离目录：
-
-```bash
-CODEX_HOME=/tmp/codex-mixin-home codex-mixin connect codex --codex-oauth-proxy
-```
-
 ### 开发与发布
 
 本地检查：
@@ -728,6 +691,8 @@ Codex Mixin exposes a Responses-compatible endpoint on an automatically selected
 
 ### Install
 
+#### macOS menu bar app
+
 Download the DMG for your Mac from [GitHub Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest):
 
 | Mac | File |
@@ -743,7 +708,17 @@ Release bundles have a valid ad-hoc signature, but are not signed with an Apple 
 xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 ```
 
-After launch, follow the menu bar actions to configure a provider and install it into Codex. Remote Linux or Codex CLI users can download the CLI archives from the same Release page.
+After launch, follow the menu bar actions to configure a provider and install it into Codex.
+
+#### Linux, SSH, and remote machines
+
+Download the CLI archive or `.deb` for your architecture from the same Release page. Extract it and launch the `codex-mixin` binary without a subcommand:
+
+```bash
+./codex-mixin
+```
+
+On first launch, it installs itself to the standard user-level location `~/.local/bin/codex-mixin` and opens the full-screen TUI. With no configured Provider, it opens the Setup workspace automatically. Do not run `codex-mixin setup` for the normal installation flow.
 
 <details>
 <summary>CLI asset names</summary>
@@ -767,21 +742,29 @@ After launch, follow the menu bar actions to configure a provider and install it
 6. Restart Codex Desktop.
 7. Pick an available model in Codex.
 
-#### For Codex CLI
+#### For Linux, SSH, and Codex CLI
 
-```bash
-codex-mixin setup
-codex-mixin info
-```
+**Step 1: launch the binary.** Run `codex-mixin` without `setup` or another subcommand. A new installation opens Setup automatically; later launches open Home.
 
-`codex-mixin` opens the complete full-screen control deck, and `setup` opens the same TUI directly
-on its Setup workspace. The guided flow configures the provider, refreshes models, starts or
-restarts the gateway, then installs Codex in official-account or custom-only mode. Scripts and CI can pass
-`--key`, `--quota-username`, and `--codex-mode official|custom|skip` to skip all prompts.
+<p align="center"><a href="docs/assets/CLI-Setup.png"><img src="docs/assets/CLI-Setup.png" alt="Codex Mixin TUI Setup workspace"></a></p>
 
-For later management, use `provider` for providers, `service` for the gateway, `connect` for
-Codex, Claude, and DeepSeek Harness (DSH) integration, `update` to update the CLI from the latest
-GitHub Release, `info` for state, and `doctor` for diagnosis. Then start a new Codex CLI session.
+**Step 2: complete Setup.** Use the mouse or arrow keys to select a Provider preset, enter credentials and Provider-specific options, then choose the Codex mode. Baidu OneAPI exposes DUCX, code reporting, and auxiliary-upstream controls here. Press `Enter` to save the Provider, discover models, start the Gateway, and connect Codex inside the same TUI. QR authentication switches to a complete full-screen view.
+
+**Step 3: verify the Provider and select models.** Use Providers to test, enable, reorder, or edit a Provider. Open Models, select catalog entries with the mouse or `Space`, then save.
+
+<p align="center"><a href="docs/assets/CLI-Providers.png"><img src="docs/assets/CLI-Providers.png" alt="Codex Mixin TUI Provider management"></a></p>
+
+<p align="center"><a href="docs/assets/CLI-models.png"><img src="docs/assets/CLI-models.png" alt="Codex Mixin TUI model selection"></a></p>
+
+**Step 4: install application integrations.** Open Apps and choose Codex Official or Custom-only mode. The same page installs, refreshes, or restores Claude Code and DSH, with confirmation and progress views for every change.
+
+<p align="center"><a href="docs/assets/CLI-Apps.png"><img src="docs/assets/CLI-Apps.png" alt="Codex Mixin TUI application installation"></a></p>
+
+**Step 5: verify Home.** Home shows Gateway state, Providers, quota, tokens, cache, TTFT, and throughput. Speed, System, and Logs cover benchmarks, updates, repairs, and diagnostics. Restart Codex Desktop or open a new Codex CLI session after an install or restore.
+
+<p align="center"><a href="docs/assets/CLI-Home.png"><img src="docs/assets/CLI-Home.png" alt="Codex Mixin TUI Home dashboard"></a></p>
+
+Click the top tabs or use `Tab` and `Shift-Tab` to change workspaces. The footer always shows the shortcuts for the current page. Stable subcommands and JSON output remain available under [Automation CLI reference](#automation-cli-reference), but normal users do not need them.
 
 ### Provider Presets
 
@@ -840,14 +823,14 @@ endpoints first, then retries the corresponding legacy paths if the versioned gr
 
 ### Codex Install Behavior
 
-The install panel and CLI expose two mutually exclusive modes:
+The macOS install panel and the TUI Apps workspace expose two mutually exclusive modes:
 
-| Mode | CLI command | `models_cache.json` | Result |
+| Mode | TUI option | `models_cache.json` | Result |
 | --- | --- | --- | --- |
-| Official account mode | `codex-mixin connect codex --codex-oauth-proxy` | Required; sign in and open Codex once first | Merges official GPT and custom models while preserving official OAuth, plugins, cloud tasks, and account features |
-| Custom models only | `codex-mixin connect codex --custom-only` | Never read or required | Backs up and temporarily replaces Codex auth, then uses a local login placeholder to enable the model picker; official plugins, cloud tasks, and account features are unavailable |
+| Official account mode | Apps → Codex → `Official` | Required; sign in and open Codex once first | Merges official GPT and custom models while preserving official OAuth, plugins, cloud tasks, and account features |
+| Custom models only | Apps → Codex → `Custom-only` | Never read or required | Backs up and temporarily replaces Codex auth, then uses a local login placeholder to enable the model picker; official plugins, cloud tasks, and account features are unavailable |
 
-The CLI never guesses a mode from `auth.json` or `models_cache.json`, and the mode flag is required. Even if you have an official account, you may explicitly choose custom-only mode. To use official features, cancel installation, sign in to Codex and open it once, then select official account mode.
+Codex Mixin never guesses a mode from `auth.json` or `models_cache.json`; the confirmation view shows the complete choice before applying it. Even if you have an official account, you may explicitly choose custom-only mode. To use official features, cancel installation, sign in to Codex and open it once, then select official account mode.
 
 Installation needs a local `codex` binary to validate the managed config with `codex doctor` and `codex debug models`. Codex Mixin first uses `CODEX_CLI_PATH`, the bundled CLI inside `/Applications/ChatGPT.app` or `/Applications/Codex.app`, then `~/.local/bin/codex`, then `PATH`. If none is found, it runs the official Codex installer in non-interactive mode and installs the standalone CLI under `~/.local/bin`.
 
@@ -889,21 +872,17 @@ base_url = "http://127.0.0.1:<auto-selected-port>/v1"
 
 In account mode, you can switch from an official GPT model to a custom model and back within the same Codex task. Codex Mixin routes each Responses WebSocket request independently and rebuilds incremental custom-model context across turns.
 
-Rollback:
-
-```bash
-codex-mixin connect remove codex
-```
+To roll back, open Apps and choose Codex `Restore`.
 
 Uninstall reads the original provider from the config backup, or uses Codex's default `openai` provider when none was configured. Sessions using the managed provider are migrated back so they remain visible after rollback. It also removes the custom-only login placeholder and restores the pre-install `auth.json`. If the user changed auth after installation, uninstall preserves the current login instead of overwriting it with the old backup.
 
-To move from custom-only to official account mode, uninstall first, sign in to Codex and open it once to generate the model cache, then reinstall with `--codex-oauth-proxy`. To move back to custom-only mode, reinstall with `--custom-only`; the current official login is backed up.
+To move from custom-only to official account mode, restore Codex from Apps first, sign in to Codex and open it once to generate the model cache, then choose `Official`. To move back, choose `Custom-only`; the current official login is backed up.
 
 Restart Codex Desktop after install or uninstall. Start a new session for Codex CLI.
 
 ### Model Fusion
 
-Fusion virtual models run a `Panel → Judge → Final` pipeline. Open `Fusion Settings...` from the menu bar, select 1–8 Panel models plus one Judge and one Final model, then save and restart the gateway. The virtual model appears in Codex as `mixin/fusion/<profile-id>`. To turn it off, click `Disable Fusion` in the same window or run `codex-mixin fusion delete --id <profile-id>`; the gateway deletes that profile and removes it from the model picker after the catalog refresh.
+Fusion virtual models run a `Panel → Judge → Final` pipeline. Open `Fusion Settings...` from the menu bar or the TUI Fusion workspace, select 1–8 Panel models plus one Judge and one Final model, then save. The virtual model appears in Codex as `mixin/fusion/<profile-id>`. Use `Disable Fusion` in the same UI to remove that profile from the model picker after the catalog refresh.
 
 Fusion runs Panel and Judge only for new user turns in Plan mode. After switching to Default mode to execute the plan, all later user turns and tool-result continuations go directly to the profile's Final model, avoiding repeated analysis during implementation.
 
@@ -970,17 +949,20 @@ results they pair with.
 `scripts/e2e_prompt_cache.sh` checks all of this against the real upstream bytes through a live
 gateway, and CI runs it on every commit.
 
-### CLI Reference
+### Automation CLI Reference
+
+Normal users should use the full-screen TUI. These commands are retained for scripts, CI, and non-interactive environments.
+
+<details>
+<summary>Show automation commands</summary>
+
+<br>
 
 ```bash
-# Open the full-screen control center; use --no-tui to preserve plain output
-codex-mixin
+# Disable the TUI and preserve plain output
 codex-mixin --no-tui
 
-# First-run setup; prompts for the preset, API key, and Codex mode
-codex-mixin setup
-
-# Scripts and CI: pass everything explicitly
+# First-run configuration must pass everything explicitly
 codex-mixin setup --preset openrouter --key <key> --codex-mode custom
 codex-mixin setup --preset baidu-oneapi --key <key> --quota-username <username> --codex-mode skip
 codex-mixin setup --preset <preset> --no-start
@@ -1023,7 +1005,9 @@ codex-mixin doctor --fix               # auto-repair permissions, stale state, g
 codex-mixin doctor --fix --restart-apps # additionally allow restarting the ChatGPT/Codex app (interrupts active sessions)
 ```
 
-The full-screen control center is the primary CLI interface, with mouse input and complete keyboard navigation. It covers first-time setup; provider add, edit, remove, and testing; model discovery and selection; token, TTFT, and throughput metrics; configurable benchmarks; gateway control; health repair; CLI updates; and installation or restoration for Codex, Claude Code, and DSH. In a terminal, `codex-mixin setup` opens the same control center on its Setup page. Automation continues to use parameterized subcommands or `--no-tui`.
+</details>
+
+Launching without arguments is the user-facing entry point. It opens the TUI and selects Setup automatically when no Provider exists. `setup`, `provider`, `service`, `connect`, `info`, and `doctor` remain automation interfaces only.
 
 ### Files
 
@@ -1041,14 +1025,6 @@ The full-screen control center is the primary CLI interface, with mouse input an
 | Codex model catalog | `~/.codex/model-catalogs/mixin-models.json` |
 | DSH settings | `$DSH_HOME/settings.yaml` or `~/.dsh/settings.yaml` |
 | DSH credentials | `$DSH_HOME/.credentials.yaml` or `~/.dsh/.credentials.yaml` |
-| DSH settings | `$DSH_HOME/settings.yaml` or `~/.dsh/settings.yaml` |
-| DSH credentials | `$DSH_HOME/.credentials.yaml` or `~/.dsh/.credentials.yaml` |
-
-Use an isolated Codex home for experiments:
-
-```bash
-CODEX_HOME=/tmp/codex-mixin-home codex-mixin connect codex --codex-oauth-proxy
-```
 
 ### Development
 
