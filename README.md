@@ -436,6 +436,8 @@ codex-mixin doctor --fix               # 自动修复权限、失效状态、网
 codex-mixin doctor --fix --restart-apps # 额外允许重启 ChatGPT/Codex App（会中断进行中的会话）
 ```
 
+全屏控制台可直接新增、编辑、删除和测试 Provider，刷新并多选模型，查看 Token、TTFT 和吞吐统计，运行模型测速，以及安装 Codex、Claude Code 和 DSH 集成。所有自动化脚本继续使用显式 subcommand 或 `--no-tui`。
+
 新用户从 `setup` 开始，日常只需要 `update`、`provider`、`service`、`connect`、`info` 和 `doctor`。
 `fusion`、`benchmark`、catalog 刷新和历史迁移仍可用，但属于高级维护命令。
 
@@ -968,6 +970,8 @@ codex-mixin doctor --quick
 codex-mixin doctor --fix               # auto-repair permissions, stale state, gateway startup, base_url, model catalog
 codex-mixin doctor --fix --restart-apps # additionally allow restarting the ChatGPT/Codex app (interrupts active sessions)
 ```
+
+The full-screen control center can add, edit, remove, and test providers; refresh and select models; show token, TTFT, and throughput metrics; run model benchmarks; and install Codex, Claude Code, or DSH integrations. Automation continues to use explicit subcommands or `--no-tui`.
 
 ### Files
 
