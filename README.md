@@ -74,20 +74,28 @@ Run `codex-mixin` without arguments to open the mouse-enabled TUI. It covers fir
 <br>
 <table>
   <tr>
-    <td width="50%" align="center"><a href="docs/assets/CLI-Setup.png"><img src="docs/assets/CLI-Setup.png" alt="TUI setup workspace"></a><br><sub>Setup · provider, credentials and Codex mode</sub></td>
-    <td width="50%" align="center"><a href="docs/assets/CLI-Providers.png"><img src="docs/assets/CLI-Providers.png" alt="TUI provider workspace"></a><br><sub>Providers · readiness, authentication and routing</sub></td>
+    <td width="100%" align="center"><a href="docs/assets/CLI-Setup.png"><img src="docs/assets/CLI-Setup.png" alt="TUI setup workspace"></a><br><sub>Setup · provider, credentials and Codex mode</sub></td>
   </tr>
   <tr>
-    <td align="center"><a href="docs/assets/CLI-models.png"><img src="docs/assets/CLI-models.png" alt="TUI model selection"></a><br><sub>Models · discover, probe and multi-select</sub></td>
-    <td align="center"><a href="docs/assets/CLI-Speed.png"><img src="docs/assets/CLI-Speed.png" alt="TUI model benchmark"></a><br><sub>Speed · TTFT, throughput and run controls</sub></td>
+    <td width="100%" align="center"><a href="docs/assets/CLI-Providers.png"><img src="docs/assets/CLI-Providers.png" alt="TUI provider workspace"></a><br><sub>Providers · readiness, authentication and routing</sub></td>
   </tr>
   <tr>
-    <td align="center"><a href="docs/assets/CLI-Fusion.png"><img src="docs/assets/CLI-Fusion.png" alt="TUI Fusion orchestration"></a><br><sub>Fusion · Panel, Judge and Final orchestration</sub></td>
-    <td align="center"><a href="docs/assets/CLI-Apps.png"><img src="docs/assets/CLI-Apps.png" alt="TUI application integrations"></a><br><sub>Apps · install and restore Codex, Claude Code and DSH</sub></td>
+    <td width="100%" align="center"><a href="docs/assets/CLI-models.png"><img src="docs/assets/CLI-models.png" alt="TUI model selection"></a><br><sub>Models · discover, probe and multi-select</sub></td>
   </tr>
   <tr>
-    <td align="center"><a href="docs/assets/CLI-System.png"><img src="docs/assets/CLI-System.png" alt="TUI system maintenance"></a><br><sub>System · gateway, updates, doctor and catalog repair</sub></td>
-    <td align="center"><a href="docs/assets/CLI-Logs.png"><img src="docs/assets/CLI-Logs.png" alt="TUI diagnostics and logs"></a><br><sub>Logs · health checks and actionable diagnostics</sub></td>
+    <td width="100%" align="center"><a href="docs/assets/CLI-Speed.png"><img src="docs/assets/CLI-Speed.png" alt="TUI model benchmark"></a><br><sub>Speed · TTFT, throughput and run controls</sub></td>
+  </tr>
+  <tr>
+    <td width="100%" align="center"><a href="docs/assets/CLI-Fusion.png"><img src="docs/assets/CLI-Fusion.png" alt="TUI Fusion orchestration"></a><br><sub>Fusion · Panel, Judge and Final orchestration</sub></td>
+  </tr>
+  <tr>
+    <td width="100%" align="center"><a href="docs/assets/CLI-Apps.png"><img src="docs/assets/CLI-Apps.png" alt="TUI application integrations"></a><br><sub>Apps · install and restore Codex, Claude Code and DSH</sub></td>
+  </tr>
+  <tr>
+    <td width="100%" align="center"><a href="docs/assets/CLI-System.png"><img src="docs/assets/CLI-System.png" alt="TUI system maintenance"></a><br><sub>System · gateway, updates, doctor and catalog repair</sub></td>
+  </tr>
+  <tr>
+    <td width="100%" align="center"><a href="docs/assets/CLI-Logs.png"><img src="docs/assets/CLI-Logs.png" alt="TUI diagnostics and logs"></a><br><sub>Logs · health checks and actionable diagnostics</sub></td>
   </tr>
 </table>
 </details>
