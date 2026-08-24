@@ -59,14 +59,15 @@ extension AppDelegate {
         throw GatewayError.command("网关在 5 秒内未停止，可能存在不受 Codex Mixin 管理的进程。")
     }
     func runGateway(_ arguments: [String]) async throws -> String {
+        let cliArguments = ["--no-tui"] + arguments
         let operationID = String(UUID().uuidString.prefix(8))
-        let command = diagnosticCommandDescription(arguments)
+        let command = diagnosticCommandDescription(cliArguments)
         let startedAt = Date()
         appendDiagnosticLog(
             "APP_OPERATION started id=\(operationID) command=\(command.isEmpty ? "<default>" : command)"
         )
         do {
-            let output = try await runProcess(try gatewayExecutableURL().path, arguments)
+            let output = try await runProcess(try gatewayExecutableURL().path, cliArguments)
             let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
             appendDiagnosticLog(
                 """
@@ -89,7 +90,7 @@ extension AppDelegate {
 
     func runGatewayStreaming(_ arguments: [String], onProgress: @escaping (String) -> Void) async throws -> String {
         let executable = try gatewayExecutableURL().path
-        return try await runProcessStreaming(executable, arguments, onProgress: onProgress)
+        return try await runProcessStreaming(executable, ["--no-tui"] + arguments, onProgress: onProgress)
     }
 
     func bootoutIfLoaded(_ domainAndLabel: String) async throws {

@@ -206,6 +206,21 @@ fn user_facing_command_groups_parse() {
 }
 
 #[test]
+fn no_tui_flag_preserves_plain_default_command() {
+    let interactive = Cli::try_parse_from(["codex-mixin"]).unwrap();
+    assert!(!interactive.no_tui);
+    assert!(interactive.command.is_none());
+
+    let plain = Cli::try_parse_from(["codex-mixin", "--no-tui"]).unwrap();
+    assert!(plain.no_tui);
+    assert!(plain.command.is_none());
+
+    let explicit = Cli::try_parse_from(["codex-mixin", "info"]).unwrap();
+    assert!(!explicit.no_tui);
+    assert!(explicit.command.is_some());
+}
+
+#[test]
 fn setup_help_lists_provider_presets() {
     let mut help = Vec::new();
     Cli::command()

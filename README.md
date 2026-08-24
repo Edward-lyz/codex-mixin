@@ -386,6 +386,10 @@ Fusion 只在 Plan 模式的新用户轮次运行 Panel 和 Judge。切换到 De
 ### CLI
 
 ```bash
+# 无参数打开全屏控制台；脚本和 macOS App 使用 --no-tui 保留普通输出
+codex-mixin
+codex-mixin --no-tui
+
 # 首次配置：交互终端可直接运行并选择 preset / API Key / Codex 集成方式
 codex-mixin setup
 
@@ -915,6 +919,10 @@ gateway, and CI runs it on every commit.
 ### CLI Reference
 
 ```bash
+# Open the full-screen control center; use --no-tui to preserve plain output
+codex-mixin
+codex-mixin --no-tui
+
 # First-run setup; prompts for the preset, API key, and Codex mode
 codex-mixin setup
 

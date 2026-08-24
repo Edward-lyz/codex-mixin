@@ -28,6 +28,7 @@ mod runtime;
 mod service;
 mod setup;
 mod status;
+mod tui;
 mod update;
 
 use benchmark_proxy::{benchmark_start, benchmark_status};
@@ -119,6 +120,9 @@ pub(super) async fn stage<T>(
     about = "Connect custom model providers to Codex, Claude, and DSH"
 )]
 struct Cli {
+    /// Keep the plain CLI interface instead of opening the full-screen UI.
+    #[arg(long, global = true)]
+    no_tui: bool,
     #[command(subcommand)]
     command: Option<Command>,
 }
@@ -671,6 +675,7 @@ impl From<ProviderPreset> for CliProviderPreset {
 
 pub(crate) async fn entrypoint() {
     let cli = Cli::parse();
+    let launch_tui = cli.command.is_none() && !cli.no_tui;
     let foreground_log_file = match &cli.command {
         Some(Command::Start {
             daemon: false,
@@ -713,7 +718,12 @@ pub(crate) async fn entrypoint() {
             "gateway process starting"
         );
     }
-    if let Err(error) = run(cli).await {
+    let result = if launch_tui {
+        tui::run().await
+    } else {
+        run(cli).await
+    };
+    if let Err(error) = result {
         if foreground_log_file.is_some() {
             tracing::error!(error = %format!("{error:#}"), "command failed");
         } else {
