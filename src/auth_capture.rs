@@ -1,8 +1,8 @@
 //! Shared one-shot header capture for Baidu auth-carrier CLIs.
 //!
-//! Auth carriers are treated as header generators: run a short carrier process
-//! through a loopback HTTP proxy, capture the native authentication headers it
-//! emits, and stop before the warmup request reaches OneAPI.
+//! Auth carriers are treated as header generators. The listener accepts direct
+//! loopback endpoint requests and can proxy legacy carriers that honor HTTP
+//! proxy variables. It stops before the warmup request reaches OneAPI.
 
 use std::sync::Arc;
 
@@ -117,7 +117,6 @@ async fn proxy_connection(
         return tunnel_connect(client, &target).await;
     }
 
-    let (host, port, path) = split_absolute_target(&target)?;
     let mut header_map = HeaderMap::new();
     for line in lines.clone() {
         if line.is_empty() {
@@ -149,6 +148,7 @@ async fn proxy_connection(
 
     // Transparent forward: replay non-auth handshake traffic so the carrier can
     // finish model discovery and source-auth steps before the inference request.
+    let (host, port, path) = split_absolute_target(&target)?;
     let mut origin = TcpStream::connect((host.as_str(), port))
         .await
         .with_context(|| format!("connect capture proxy origin {host}:{port}"))?;
@@ -328,5 +328,20 @@ mod tests {
             .unwrap();
         assert_eq!(captured.get(NATIVE_HEADER).unwrap(), "native-value");
         assert!(TcpStream::connect(addr).await.is_err());
+    }
+
+    #[tokio::test]
+    async fn server_captures_native_header_from_origin_form_request() {
+        let proxy = CaptureProxy::start(CaptureTrigger::NativeHeader)
+            .await
+            .unwrap();
+        let request = "POST /v1/responses HTTP/1.1\r\nHost: 127.0.0.1\r\ncomate_custom_header: native-value\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        let mut client = TcpStream::connect(proxy.addr).await.unwrap();
+        client.write_all(request.as_bytes()).await.unwrap();
+        let captured = proxy
+            .capture(std::time::Duration::from_secs(1))
+            .await
+            .unwrap();
+        assert_eq!(captured.get(NATIVE_HEADER).unwrap(), "native-value");
     }
 }

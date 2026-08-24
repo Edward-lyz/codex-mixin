@@ -1,4 +1,37 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.5.1
+
+这是针对新版 DUCX 的紧急兼容修复。
+
+- 改用显式 loopback endpoint 捕获 DUCX 原生认证 header，不再依赖新版 DUCX 已绕过的 HTTP proxy 环境变量
+- 恢复百度 OneAPI 模型发现和推理请求
+- 保留旧认证载体的 forward proxy 兼容能力
+
+<!-- codex-mixin:zh-Hans:end -->
+
+<!-- codex-mixin:zh-Hant:start -->
+## v0.5.1
+
+這是針對新版 DUCX 的緊急相容性修正。
+
+- 改用明確的 loopback endpoint 擷取 DUCX 原生驗證 header，不再依賴新版 DUCX 已略過的 HTTP proxy 環境變數
+- 恢復百度 OneAPI 模型探索和推理請求
+- 保留舊驗證載體的 forward proxy 相容能力
+
+<!-- codex-mixin:zh-Hant:end -->
+
+<!-- codex-mixin:en:start -->
+## v0.5.1
+
+This is an emergency compatibility fix for the latest DUCX release.
+
+- Capture native DUCX authentication headers through an explicit loopback endpoint instead of HTTP proxy environment variables that the latest DUCX bypasses
+- Restore Baidu OneAPI model discovery and inference requests
+- Preserve forward proxy compatibility for legacy authentication carriers
+
+<!-- codex-mixin:en:end -->
+
+<!-- codex-mixin:zh-Hans:start -->
 ## v0.5.0
 
 这是 Codex Mixin 的界面与使用体验大版本。macOS 控制中心完成 SwiftUI 重构，Linux、SSH 和远端开发机获得可用鼠标与键盘操作的全屏 TUI；两套界面现在共享同一套 Provider、模型、应用和系统管理能力。

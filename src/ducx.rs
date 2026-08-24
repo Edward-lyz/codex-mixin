@@ -1,11 +1,10 @@
 //! Managed DUCX authentication capture.
 //!
 //! DUCX is Baidu's Codex fork. Its default model proxy mints a per-session
-//! `comate_custom_header` (and bearer token) from the login state and sends the
-//! OneAPI request in plaintext HTTP. We run a one-shot local forward proxy, let
-//! DUCX perform its real auth handshake, and sniff the native headers off the
-//! first proxied request that carries `comate_custom_header`. Mixin then injects
-//! those headers into its own upstream request.
+//! `comate_custom_header` (and bearer token) from the login state. We override
+//! its OneAPI base URL with a one-shot loopback endpoint, let DUCX perform its
+//! real auth handshake, and capture the native headers from its warmup request.
+//! Mixin then injects those headers into its own upstream request.
 
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -20,10 +19,6 @@ use tokio::sync::Mutex;
 
 use crate::auth_capture::{CaptureProxy, CaptureTrigger, REPORT_CLIENT_TOKEN_HEADER};
 
-/// Auth handshake hosts DUCX must reach directly. Only the OneAPI inference host
-/// is routed through our capture proxy; proxying the source-auth handshake makes
-/// DUCX's `generate source auth` call fail, so these bypass the proxy.
-const DIRECT_HOSTS: &str = "baidu-int.com,bcebos.com,baidu.com,openai.com,chatgpt.com";
 /// DUCX platform identity required for the comate source-auth handshake.
 const DUCX_PLATFORM: &str = "AIIDE-terminal";
 /// Captured headers are reused until this TTL elapses to avoid spawning DUCX per
@@ -136,10 +131,15 @@ impl DucxRuntime {
 
     async fn mint_headers(&self, timeout: Duration) -> anyhow::Result<HeaderMap> {
         let proxy = CaptureProxy::start(CaptureTrigger::NativeHeader).await?;
-        let proxy_url = format!("http://{}", proxy.addr);
+        let base_url_override = format!(
+            "model_providers.oneapi.base_url=\"http://{}/v1\"",
+            proxy.addr
+        );
         let codex_home = self.home.join(".baidu-cx");
         let mut child = Command::new(&self.executable)
             .args([
+                "-c",
+                &base_url_override,
                 "--disable",
                 "hooks",
                 "--disable",
@@ -152,10 +152,6 @@ impl DucxRuntime {
             .current_dir(&self.home)
             .env("HOME", &self.home)
             .env("CODEX_HOME", &codex_home)
-            .env("HTTP_PROXY", &proxy_url)
-            .env("http_proxy", &proxy_url)
-            .env("NO_PROXY", DIRECT_HOSTS)
-            .env("no_proxy", DIRECT_HOSTS)
             .env("BAIDU_CX_PLATFORM", DUCX_PLATFORM)
             .env("DISABLE_DUCX_CLI_UPDATE", "1")
             .env("DISABLE_BAIDU_CLAUDE_UPDATE", "1")
