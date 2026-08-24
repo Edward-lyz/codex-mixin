@@ -453,7 +453,7 @@ mod tests {
                 "usage": {
                     "input_tokens": 4,
                     "input_tokens_details": {"cached_tokens": 3},
-                    "output_tokens": 2
+                    "output_tokens": 200
                 }
             }
         }));

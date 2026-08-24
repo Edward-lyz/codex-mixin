@@ -9,6 +9,9 @@ use rusqlite::{Connection, params};
 use serde::Serialize;
 use serde_json::Value;
 
+const MAX_RECORDED_TTFT_MICROS: u64 = 50_000_000;
+const MIN_RECORDED_OUTPUT_TOKENS: u64 = 100;
+
 /// Provider-level token and prompt cache counters observed on upstream
 /// responses, kept compact so the menu can visualize usage without retaining
 /// request bodies or history.
@@ -253,9 +256,7 @@ fn persist_usage_delta(
     ensure_timing_columns(&connection, "token_usage_daily")?;
     let day = current_unix_day()?;
     let transaction = connection.transaction()?;
-    let timing_recorded = usage.ttft_micros.is_some()
-        && usage.generation_micros.is_some()
-        && usage.output_tokens.is_some();
+    let timing_recorded = is_representative_timing_sample(usage);
     let output_tps = match (usage.output_tokens, usage.generation_micros) {
         (Some(tokens), Some(micros)) if timing_recorded && micros > 0 => {
             tokens as f64 * 1_000_000.0 / micros as f64
@@ -462,11 +463,13 @@ fn add_usage(
             .saturating_add(uncached)
             .saturating_add(usage.cache_creation_tokens.unwrap_or(0));
     }
-    if let (Some(ttft_micros), Some(generation_micros), Some(output_tokens)) = (
-        usage.ttft_micros,
-        usage.generation_micros,
-        usage.output_tokens,
-    ) {
+    if is_representative_timing_sample(usage)
+        && let (Some(ttft_micros), Some(generation_micros), Some(output_tokens)) = (
+            usage.ttft_micros,
+            usage.generation_micros,
+            usage.output_tokens,
+        )
+    {
         entry.timing_sample_count = entry.timing_sample_count.saturating_add(1);
         entry.total_ttft_micros = entry.total_ttft_micros.saturating_add(ttft_micros);
         entry.total_generation_micros = entry
@@ -478,6 +481,15 @@ fn add_usage(
             entry.tps_sample_count = entry.tps_sample_count.saturating_add(1);
         }
     }
+}
+
+fn is_representative_timing_sample(usage: &UpstreamCacheUsage) -> bool {
+    matches!(
+        (usage.ttft_micros, usage.generation_micros, usage.output_tokens),
+        (Some(ttft), Some(_), Some(output_tokens))
+            if ttft <= MAX_RECORDED_TTFT_MICROS
+                && output_tokens >= MIN_RECORDED_OUTPUT_TOKENS
+    )
 }
 
 fn add_aggregated_usage(entry: &mut ProviderTokenUsage, usage: &ProviderTokenUsage) {

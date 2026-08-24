@@ -729,7 +729,7 @@ mod tests {
                 b"event: response.output_text.delta\ndata: {\"type\":\"response.output_text.delta\",\"delta\":\"hi\"}\n\n",
             ),
             Bytes::from_static(
-                b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":4,\"input_tokens_details\":{\"cached_tokens\":3},\"output_tokens\":2}}}\n\n",
+                b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"usage\":{\"input_tokens\":4,\"input_tokens_details\":{\"cached_tokens\":3},\"output_tokens\":200}}}\n\n",
             ),
         ];
         let usage = Arc::new(TokenUsageAggregator::default());
@@ -746,7 +746,7 @@ mod tests {
         let snapshot = usage.snapshot();
         assert_eq!(snapshot[0].input_tokens, 1);
         assert_eq!(snapshot[0].cache_read_tokens, 3);
-        assert_eq!(snapshot[0].output_tokens, 2);
+        assert_eq!(snapshot[0].output_tokens, 200);
         assert!(snapshot[0].average_ttft_ms.is_some());
         assert!(snapshot[0].output_tps.is_some());
     }
@@ -839,6 +839,28 @@ mod tests {
         assert_eq!(daily_snapshot[0].request_count, 2);
         assert_eq!(daily_snapshot[0].input_tokens, 1_500);
 
+        for usage in [
+            UpstreamCacheUsage {
+                output_tokens: Some(1_000),
+                ttft_micros: Some(50_000_001),
+                generation_micros: Some(1_000_000),
+                ..Default::default()
+            },
+            UpstreamCacheUsage {
+                output_tokens: Some(99),
+                ttft_micros: Some(100_000),
+                generation_micros: Some(1),
+                ..Default::default()
+            },
+        ] {
+            aggregator.record("baidu-oneapi", "gpt-5.6-sol", &usage);
+        }
+        let snapshot = aggregator.snapshot();
+        assert_eq!(snapshot[0].request_count, 4);
+        assert_eq!(snapshot[0].output_tokens, 1_399);
+        assert_eq!(snapshot[0].average_ttft_ms, Some(200.0));
+        assert_eq!(snapshot[0].output_tps, Some(60.0));
+
         aggregator.record(
             "baidu-oneapi",
             "DeepSeek-V4-Flash",
@@ -855,7 +877,7 @@ mod tests {
         assert_eq!(snapshot[0].model_id, "DeepSeek-V4-Flash");
         assert_eq!(snapshot[0].request_count, 1);
         assert_eq!(snapshot[1].model_id, "gpt-5.6-sol");
-        assert_eq!(snapshot[1].request_count, 2);
+        assert_eq!(snapshot[1].request_count, 4);
     }
 
     /// Chat Completions upstreams report cache hits under their own names, and
