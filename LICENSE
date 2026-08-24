@@ -1,73 +1,72 @@
-# PolyForm Noncommercial License 1.0.0
+Codex Mixin Source Code Viewing License 1.0
 
-<https://polyformproject.org/licenses/noncommercial/1.0.0>
+Copyright (c) 2026 Edward. All rights reserved.
 
-## Acceptance
+1. Permission
 
-In order to get any license under these terms, you must agree to them as both strict obligations and conditions to all your licenses.
+The copyright holder grants you a limited, personal, non-exclusive,
+non-transferable, and revocable permission to access and view this source code
+through a source repository authorized by the copyright holder, solely for
+inspection and evaluation.
 
-## Copyright License
+This permission includes only temporary technical copies made automatically by
+your browser or the authorized repository service when displaying the source
+code. It does not grant permission to download, clone, or otherwise retain a
+copy of the source code.
 
-The licensor grants you a copyright license for the software to do everything you might do with the software that would otherwise infringe the licensor's copyright in it for any permitted purpose.  However, you may only distribute the software according to [Distribution License](#distribution-license) and make changes or new works based on the software according to [Changes and New Works License](#changes-and-new-works-license).
+2. Restrictions
 
-## Distribution License
+Without prior written permission from the copyright holder, you may not:
 
-The licensor grants you an additional copyright license to distribute copies of the software.  Your license to distribute covers distributing the software with changes and new works permitted by [Changes and New Works License](#changes-and-new-works-license).
+- use the software or source code for any purpose other than the viewing
+  permitted in Section 1;
+- run, execute, compile, build, install, deploy, host, benchmark, or test the
+  software or any part of it;
+- copy, reproduce, download, clone, archive, or store the source code, except
+  for the temporary technical copies permitted in Section 1;
+- modify, adapt, translate, reverse engineer, or create derivative works from
+  the software or source code;
+- distribute, publish, transmit, sublicense, sell, rent, lease, provide access
+  to, or otherwise make the software or source code available to any third
+  party;
+- use the software or source code for commercial, educational, research,
+  governmental, charitable, personal, or any other operational purpose; or
+- remove or alter any copyright, license, attribution, or proprietary notice.
 
-## Notices
+3. No Implied Rights
 
-You must ensure that anyone who gets a copy of any part of the software from you also gets a copy of these terms or the URL for them above, as well as copies of any plain-text lines beginning with `Required Notice:` that the licensor provided with the software.  For example:
+No patent, trademark, trade secret, publicity, privacy, or other rights are
+granted. All rights not expressly granted in Section 1 are reserved by the
+copyright holder. Any permission for another use must be obtained in a separate
+written agreement signed by the copyright holder.
 
-> Required Notice: Copyright Yoyodyne, Inc. (http://example.com)
+4. Third-Party Material
 
-## Changes and New Works License
+This license applies only to material for which Edward owns the copyright.
+Third-party software, assets, trademarks, and other material remain subject to
+their respective licenses and terms.
 
-The licensor grants you an additional copyright license to make changes and new works based on the software for any permitted purpose.
+5. Earlier Versions
 
-## Patent License
+This license applies to each version of Codex Mixin distributed with this
+license. A version previously distributed under another license remains subject
+to the license that accompanied that version.
 
-The licensor grants you a patent license for the software that covers patent claims the licensor can license, or becomes able to license, that you would infringe by using the software.
+6. Termination
 
-## Noncommercial Purposes
+Your permission under Section 1 terminates automatically and immediately if you
+breach this license. On termination, you must stop accessing the source code and
+delete all copies in your possession or control, except where retention is
+required by law.
 
-Any noncommercial purpose is a permitted purpose.
+7. Disclaimer and Limitation of Liability
 
-## Personal Uses
+TO THE MAXIMUM EXTENT PERMITTED BY LAW, THE SOFTWARE AND SOURCE CODE ARE
+PROVIDED AS IS, WITHOUT WARRANTY OF ANY KIND, EXPRESS OR IMPLIED. THE COPYRIGHT
+HOLDER WILL NOT BE LIABLE FOR ANY CLAIM, DAMAGE, OR OTHER LIABILITY ARISING FROM
+OR RELATED TO THE SOFTWARE, SOURCE CODE, OR THESE TERMS.
 
-Personal use for research, experiment, and testing for the benefit of public knowledge, personal study, private entertainment, hobby projects, amateur pursuits, or religious observance, without any anticipated commercial application, is use for a permitted purpose.
+8. Statutory Rights
 
-## Noncommercial Organizations
-
-Use by any charitable organization, educational institution, public research organization, public safety or health organization, environmental protection organization, or government institution is use for a permitted purpose regardless of the source of funding or obligations resulting from the funding.
-
-## Fair Use
-
-You may have "fair use" rights for the software under the law. These terms do not limit them.
-
-## No Other Rights
-
-These terms do not allow you to sublicense or transfer any of your licenses to anyone else, or prevent the licensor from granting licenses to anyone else.  These terms do not imply any other licenses.
-
-## Patent Defense
-
-If you make any written claim that the software infringes or contributes to infringement of any patent, your patent license for the software granted under these terms ends immediately. If your company makes such a claim, your patent license ends immediately for work on behalf of your company.
-
-## Violations
-
-The first time you are notified in writing that you have violated any of these terms, or done anything with the software not covered by your licenses, your licenses can nonetheless continue if you come into full compliance with these terms, and take practical steps to correct past violations, within 32 days of receiving notice.  Otherwise, all your licenses end immediately.
-
-## No Liability
-
-***As far as the law allows, the software comes as is, without any warranty or condition, and the licensor will not be liable to you for any damages arising out of these terms or the use or nature of the software, under any kind of legal claim.***
-
-## Definitions
-
-The **licensor** is the individual or entity offering these terms, and the **software** is the software the licensor makes available under these terms.
-
-**You** refers to the individual or entity agreeing to these terms.
-
-**Your company** is any legal entity, sole proprietorship, or other kind of organization that you work for, plus all organizations that have control over, are under the control of, or are under common control with that organization.  **Control** means ownership of substantially all the assets of an entity, or the power to direct its management and policies by vote, contract, or otherwise.  Control can be direct or indirect.
-
-**Your licenses** are all the licenses granted to you for the software under these terms.
-
-**Use** means anything you do with the software requiring one of your licenses.
+Nothing in this license limits rights that cannot lawfully be restricted,
+including applicable fair-use or fair-dealing rights.

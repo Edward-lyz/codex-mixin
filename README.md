@@ -8,7 +8,7 @@
   <a href="https://github.com/Edward-lyz/codex-mixin/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Edward-lyz/codex-mixin/actions/workflows/ci.yml/badge.svg"></a>
   <a href="https://github.com/Edward-lyz/codex-mixin/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Edward-lyz/codex-mixin?sort=semver"></a>
   <a href="https://github.com/Edward-lyz/codex-mixin/releases"><img alt="macOS and Linux" src="https://img.shields.io/badge/platform-macOS%20%7C%20Linux-blue"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-PolyForm%20Noncommercial%201.0.0-lightgrey"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Source%20Code%20Viewing%201.0-lightgrey"></a>
   <img alt="Rust" src="https://img.shields.io/badge/Rust-local%20gateway-orange">
 </p>
 
@@ -653,11 +653,11 @@ macOS DMG 内包含 `Codex Mixin.app`、`bin/codex-mixin`、`README.md` 和 `App
 
 ### 许可证
 
-Codex Mixin 使用 [PolyForm Noncommercial License 1.0.0](LICENSE)。
+Codex Mixin 使用 [Source Code Viewing License 1.0](LICENSE)。
 
-这意味着你可以为非商业目的使用、复制、修改和分发源码及其修改版本；不能把它用于商业目的。这个许可证是 source-available / non-commercial license，不是 OSI open source license。
+源码仅供在线查看和审阅。未经版权所有者事先书面许可，不得下载、克隆、保留、运行、编译、安装、测试、修改、分发、部署，也不得用于商业或非商业项目。该许可证不是开源许可证。
 
-分发副本或修改版本时，请同时保留 `LICENSE` 和 `NOTICE`。
+此前已经按其他许可证发布的版本继续适用其随附许可证，新许可证不追溯撤销既有授权。
 
 ### 常见问题
 
@@ -1052,23 +1052,17 @@ CODEX_HOME=/tmp/codex-mixin-home codex-mixin connect codex --codex-oauth-proxy
 
 ### Development
 
-```bash
-git clone https://github.com/Edward-lyz/codex-mixin.git
-cd codex-mixin
-cargo fmt --all -- --check
-cargo test --locked
-./macos/build_app.sh
-```
+Source access does not grant development rights. Cloning, building, testing, modifying, or contributing requires prior written permission from the copyright holder.
 
 Release builds are produced by GitHub Actions for Linux and macOS, x86_64 and aarch64, including CLI archives plus `.deb` or `.dmg` installers.
 
 ### License
 
-Codex Mixin is licensed under the [PolyForm Noncommercial License 1.0.0](LICENSE).
+Codex Mixin is licensed under the [Source Code Viewing License 1.0](LICENSE).
 
-You may use, copy, modify, and distribute the source code and modified versions for noncommercial purposes. Commercial use is not permitted. This is a source-available / non-commercial license, not an OSI open source license.
+The source code is available only for online viewing and inspection. Without prior written permission from the copyright holder, you may not download, clone, retain, run, compile, install, test, modify, distribute, deploy, or use it for commercial or noncommercial projects. This is not an open-source license.
 
-Keep both `LICENSE` and `NOTICE` when distributing copies or modified versions.
+Versions previously released under another license remain governed by the license distributed with those versions. The new license does not retroactively revoke existing grants.
 
 ### Support
 
