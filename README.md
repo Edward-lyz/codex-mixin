@@ -13,17 +13,99 @@
 </p>
 
 <p align="center">
-  <b>Bring custom model providers into official Codex without giving up ChatGPT account features.</b>
+  <b>Custom providers and official Codex, managed from one local control plane.</b><br>
+  <sub>Native macOS menu bar app · full-screen TUI · reversible local gateway</sub>
 </p>
 
 <p align="center">
   <a href="#中文">中文</a> ·
   <a href="#english">English</a> ·
+  <a href="#product-tour--产品界面">Product tour</a> ·
   <a href="https://github.com/Edward-lyz/codex-mixin/releases/latest">Download</a> ·
   <a href="https://github.com/Edward-lyz/codex-mixin/issues">Issues</a>
 </p>
 
-![Codex model picker with custom models](docs/assets/codex-model-picker.png)
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <a href="docs/assets/APP-model-picker.png"><img src="docs/assets/APP-model-picker.png" alt="macOS model picker and benchmark window"></a><br>
+      <sub>macOS · model catalog, capability state, selection and benchmark</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="docs/assets/CLI-Home.png"><img src="docs/assets/CLI-Home.png" alt="Codex Mixin full-screen terminal dashboard"></a><br>
+      <sub>Terminal · gateway, providers, quota, token usage, TTFT and throughput</sub>
+    </td>
+  </tr>
+</table>
+
+## Product tour · 产品界面
+
+Codex Mixin 为本机 macOS 用户提供原生菜单栏 App，也为 Linux、SSH 和远端开发机提供功能完整的全屏 TUI。两套界面共享同一份配置、后台网关和 CLI 命令，不需要在易用性与可自动化之间二选一。
+
+Codex Mixin offers a native menu bar app for macOS and a complete full-screen TUI for Linux, SSH, and remote development. Both surfaces operate the same config, gateway, and CLI contract.
+
+### macOS control center
+
+<table>
+  <tr>
+    <td width="34%" align="center">
+      <a href="docs/assets/APP-MainMenu.png"><img src="docs/assets/APP-MainMenu.png" alt="Codex Mixin macOS menu bar"></a><br>
+      <sub>Service lifecycle, quota, integrations, updates and logs</sub>
+    </td>
+    <td width="66%" align="center">
+      <a href="docs/assets/APP-Provider-Set.png"><img src="docs/assets/APP-Provider-Set.png" alt="Codex Mixin provider settings"></a><br>
+      <sub>Provider credentials, DUCX authentication, reporting and upstream options</sub>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center">
+      <a href="docs/assets/APP-model-test.png"><img src="docs/assets/APP-model-test.png" alt="Codex Mixin model benchmark results"></a><br>
+      <sub>Per-model TTFT, output speed, token usage, total latency and quota cost</sub>
+    </td>
+  </tr>
+</table>
+
+### Full-screen terminal control deck
+
+Run `codex-mixin` without arguments to open the mouse-enabled TUI. It covers first-run setup, Provider management, model selection, benchmarking, Fusion, application integrations, upgrades, repair and logs.
+
+<details>
+<summary><b>Open the complete TUI gallery · 展开完整 TUI 页面</b></summary>
+<br>
+<table>
+  <tr>
+    <td width="50%" align="center"><a href="docs/assets/CLI-Setup.png"><img src="docs/assets/CLI-Setup.png" alt="TUI setup workspace"></a><br><sub>Setup · provider, credentials and Codex mode</sub></td>
+    <td width="50%" align="center"><a href="docs/assets/CLI-Providers.png"><img src="docs/assets/CLI-Providers.png" alt="TUI provider workspace"></a><br><sub>Providers · readiness, authentication and routing</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/assets/CLI-models.png"><img src="docs/assets/CLI-models.png" alt="TUI model selection"></a><br><sub>Models · discover, probe and multi-select</sub></td>
+    <td align="center"><a href="docs/assets/CLI-Speed.png"><img src="docs/assets/CLI-Speed.png" alt="TUI model benchmark"></a><br><sub>Speed · TTFT, throughput and run controls</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/assets/CLI-Fusion.png"><img src="docs/assets/CLI-Fusion.png" alt="TUI Fusion orchestration"></a><br><sub>Fusion · Panel, Judge and Final orchestration</sub></td>
+    <td align="center"><a href="docs/assets/CLI-Apps.png"><img src="docs/assets/CLI-Apps.png" alt="TUI application integrations"></a><br><sub>Apps · install and restore Codex, Claude Code and DSH</sub></td>
+  </tr>
+  <tr>
+    <td align="center"><a href="docs/assets/CLI-System.png"><img src="docs/assets/CLI-System.png" alt="TUI system maintenance"></a><br><sub>System · gateway, updates, doctor and catalog repair</sub></td>
+    <td align="center"><a href="docs/assets/CLI-Logs.png"><img src="docs/assets/CLI-Logs.png" alt="TUI diagnostics and logs"></a><br><sub>Logs · health checks and actionable diagnostics</sub></td>
+  </tr>
+</table>
+</details>
+
+### Native Fusion review and project identity
+
+<table>
+  <tr>
+    <td width="62%" align="center">
+      <a href="docs/assets/fusion-review.png"><img src="docs/assets/fusion-review.png" alt="Interactive Fusion Review inside Codex"></a><br>
+      <sub>Fusion · Review uses Codex-native expandable Panel and Judge results</sub>
+    </td>
+    <td width="38%" align="center">
+      <a href="docs/assets/APP-About.png"><img src="docs/assets/APP-About.png" alt="Codex Mixin about window"></a><br>
+      <sub>Version, build, project link and local Mixin card</sub>
+    </td>
+  </tr>
+</table>
 
 ## 中文
 
@@ -33,22 +115,15 @@ Codex Mixin 是一个 Rust 本地网关、CLI 和 macOS 菜单栏 App。它把 O
 
 ### 目录
 
-- [为什么需要它](#为什么需要它)
-- [功能特性](#功能特性)
 - [快速安装](#快速安装)
 - [快速使用](#快速使用)
 - [供应商预设](#供应商预设)
-- [安装到 Codex 的行为](#安装到-codex-的行为)
-- [菜单栏 App](#菜单栏-app)
+- [安装到 Codex](#安装到-codex-的行为)
+- [Claude Code 与 DSH](#安装到-claude-code)
 - [Fusion 多模型编排](#fusion-多模型编排)
 - [CLI](#cli)
-- [模型目录和 metadata](#模型目录和-metadata)
-- [图片生成](#图片生成)
-- [Thinking 与 Web Search](#thinking-与-web-search)
 - [Prompt 缓存优化](#prompt-缓存优化)
 - [数据位置](#数据位置)
-- [开发与发布](#开发与发布)
-- [许可证](#许可证)
 - [常见问题](#常见问题)
 
 ### 为什么需要它
@@ -67,24 +142,12 @@ Codex Mixin 的解法是：Codex 连到本机自动分配的 loopback 端口，�
 
 ### 功能特性
 
-- 保留官方路径：官方 GPT 模型继续走 Codex 官方认证、官方后端和远程控制路径。
-- 接入自定义模型：自定义模型进入 Codex 模型选择器，和官方模型一起使用。
-- 避免模型冲突：上游返回的 `gpt-*` 与官方模型重名时会附加 provider 后缀（例如 `gpt-...-baidu-oneapi`），不顶掉官方 GPT；旧的 `-custom` 别名仍兼容。
-- 保护历史会话：安装时按官方/自定义模式注册托管 provider，并把现有会话统一迁移到该 provider。
-- 可回滚配置：安装前备份 `~/.codex/config.toml`；卸载时恢复配置和原 provider，并删除托管模型目录。
-- 供应商预设：内置 `custom`、`baidu-oneapi`、`openrouter`、`deepseek`。
-- 协议转换：支持 Anthropic Messages 和 OpenAI Chat Completions 上游。
-- 极致 prompt 缓存：用逐字节的前缀契约驱动上游自动缓存命中，并在每一轮报告缓存是否失效、失效在哪里；工具截图只在首次进入上下文的那一轮内联，之后回放为固定占位符，历史不会永久携带图片字节。
-- 图片能力：官方 GPT 保留 Codex 原生生图；自定义模型可调用上游 OpenAI-compatible 生图接口。
-- 模型 metadata 补齐：结合 LiteLLM metadata 和内置正则规则补齐上下文窗口、能力和 instruction 字段。
-- 模型选择与测速：独立窗口统一完成模型搜索、勾选和保存。刷新模型只读取模型目录，不发推理；需要时可手动探测已加入 Codex 的模型高级能力。测速独立执行，显示 TTFT、TPS、实际 usage tokens、总耗时和本次额度花费。
-- Fusion 多模型编排：多个 Panel 并行分析，经 Judge 汇总后由 Final 模型流式回答；中间结果可使用 Codex 原生交互式 `Fusion · Review` 展示。
-- 菜单栏产品化：启动、暂停、重启、配置密钥、安装到 Codex、恢复、查看额度、Token/缓存使用和日志都在菜单栏完成。
-- App 启动即用：打开菜单栏 App 后自动启动后台网关，并在菜单顶部显示实际 endpoint。
-- 自动端口管理：优先复用上次端口，冲突时由系统分配空闲端口，并同步受管 Codex 配置。
-- 常驻服务：后台 daemon 在退出菜单栏 App 后仍可运行；启用登录自启时会切换为 launchd 托管，异常退出后由 launchd 节流重启。
-- 可诊断日志：网关日志包含带时间戳的启动、监听、刷新、错误和停止记录，达到 5 MiB 后保留一个 `.1` 备份。
-- 自动更新检查：菜单栏 App 每次启动都会静默检查 GitHub Release；发现新版本时提示下载当前架构对应的 DMG。
+- **官方与自定义模型共存**：官方 GPT 保留 Codex OAuth、官方后端和账号能力；自定义模型进入同一个模型目录，重名模型自动隔离，历史会话继续可见。
+- **完整 Provider 控制面**：内置常用 preset，也支持自定义 OpenAI Responses、Chat Completions 和 Anthropic Messages 上游；密钥、DUCX 认证、额度、数据上报、辅助模型和生图路径都可配置。
+- **macOS 与 TUI 功能对齐**：本机使用原生菜单栏 App，Linux、SSH 和远端开发机使用支持鼠标与键盘的全屏 TUI；脚本继续使用稳定的 subcommand 和 `--json` 输出。
+- **模型选择、测速与观测**：统一完成模型发现、能力探测、多选和保存，持续展示 TTFT、TPS、Token、缓存命中、额度与运行日志。
+- **Fusion 与 Codex 原生能力**：Panel、Judge、Final 多模型编排可生成原生交互式 Review；官方和自定义模型都保留 Thinking、Web Search、图片生成与 prompt-cache 优化路径。
+- **本地、常驻、可恢复**：Rust 网关只监听 loopback，自动管理端口和后台服务；安装前备份 Codex 配置，卸载时恢复 provider、登录和历史索引。
 
 ### 快速安装
 
@@ -127,7 +190,7 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 6. 重启 Codex App。
 7. 在 Codex 模型选择器里选择可用模型。
 
-![Menu bar status](docs/assets/menu-status.png)
+界面和完整操作入口见上方 [Product tour](#product-tour--产品界面)。
 
 #### 远端 Codex CLI 用户
 
@@ -223,9 +286,7 @@ managed settings 中的 SessionStart、UserPromptSubmit、Stop、SessionEnd
 - DeepSeek 填 `https://api.deepseek.com`，不要填 `/chat/completions`。
 - 旧式或非标准网关也会在标准 `/v1` 接口失败后自动尝试去掉 `/v1` 的路径。
 
-![Provider select](docs/assets/provider-select.png)
-
-![Provider config](docs/assets/provider-config.png)
+Provider 设置界面见上方 [macOS control center](#macos-control-center)；远端用户可在同一 TUI workspace 中完成等价配置。
 
 ### 安装到 Claude Code
 
@@ -371,7 +432,7 @@ Fusion 虚拟模型使用 `Panel → Judge → Final` 三段式管线。打开�
 
 Fusion 只在 Plan 模式的新用户轮次运行 Panel 和 Judge。切换到 Default 模式执行计划后，所有后续用户轮次与工具结果续跑都直接交给该 profile 的 Final 模型，避免在编码阶段重复分析。
 
-![Codex 中的交互式 Fusion Review](docs/assets/fusion-review.png)
+交互效果见上方 [Native Fusion review](#native-fusion-review-and-project-identity)。
 
 高级选项 `在回答中显示 Panel / Judge 中间结果` 默认开启，对应 stored config 中的 `show_intermediate_results: true`。开启后，Codex Mixin 会直接使用 Codex 原生 inline visualization：
 
@@ -650,28 +711,12 @@ Codex Mixin exposes a Responses-compatible endpoint on an automatically selected
 
 ### Features
 
-- Keeps official Codex/OpenAI account path for official GPT models.
-- Adds custom upstream models to the Codex model picker.
-- Avoids GPT name collisions by suffixing upstream `gpt-*` models with their provider (for example, `gpt-...-baidu-oneapi`); legacy `-custom` aliases remain compatible.
-- Registers the managed provider for the selected mode and migrates existing sessions to it during installation.
-- Backs up `~/.codex/config.toml` before managed changes and restores both the config and original history provider on uninstall.
-- Includes provider presets for `custom`, `baidu-oneapi`, `openrouter`, and `deepseek`.
-- Supports Anthropic Messages and OpenAI Chat Completions upstreams.
-- Drives upstream automatic prompt caching with a byte-level prefix contract, reports per turn whether the cache survived and where it broke, and inlines a tool screenshot only on the turn it first enters the context so history never carries image bytes forever.
-- Keeps native Codex image generation for official GPT models and can route custom-model image calls to an OpenAI-compatible upstream image endpoint.
-- Completes model metadata using LiteLLM metadata plus built-in model-family rules.
-- Provides one model-selection and benchmark window for searching, enabling, and saving models. Refreshing reads the model directory only; capability probing is manual and limited to models added to Codex. Benchmarking separately records sortable TTFT, TPS, actual usage tokens, total latency, timeout results, and estimated quota cost.
-- Orchestrates multiple Panel models in parallel, compares them with a Judge model, and streams a Final answer, with an optional native interactive `Fusion · Review` surface in Codex.
-- Provides a macOS menu bar control surface for service lifecycle, provider setup, Codex install, rollback, quota, token/cache usage, logs, and updates.
-- Exposes an Anthropic Messages-compatible `/v1/messages` endpoint so Claude Code and Anthropic SDKs can reuse the same local gateway.
-- Provides one-click install/uninstall for Claude Code through `~/.claude/settings.json` env overrides.
-- Starts the background gateway when the menu bar app opens and prominently shows the active endpoint.
-- Reuses a persisted loopback port, automatically selects a free port on conflict, and synchronizes the managed Codex endpoint.
-- Opens both the menu bar app and gateway at login, while keeping their launchd jobs independent.
-- Keeps the background daemon running after the app exits and migrates gateway ownership between the daemon and launchd without running both at once.
-- Uses launchd to restart unexpected failures with throttling, while graceful stops remain stopped.
-- Writes timestamped lifecycle and error logs, rotating at 5 MiB with one `.1` backup.
-- Silently checks GitHub Releases on every app launch and prompts only when a newer version is available.
+- **Official and custom models together:** official GPT models keep Codex OAuth and account features, while custom models join the same catalog without name collisions or disappearing history.
+- **A complete Provider control plane:** use curated presets or custom OpenAI Responses, Chat Completions, and Anthropic Messages endpoints; manage credentials, DUCX auth, quota, reporting, auxiliary routing, and image generation explicitly.
+- **Native macOS and full-screen TUI:** local users get a menu bar app, while Linux, SSH, and remote machines get a mouse-enabled terminal workspace with the same operational coverage. Scripts retain stable subcommands and JSON output.
+- **Model selection and measurable performance:** discover, probe, select, and benchmark models with TTFT, output speed, token usage, cache state, quota, total latency, and actionable logs.
+- **Fusion and native Codex capabilities:** orchestrate Panel, Judge, and Final models with an interactive Codex-native review while preserving Thinking, Web Search, image generation, and prompt-cache paths.
+- **Local, persistent, and reversible:** the Rust gateway binds to loopback, manages its port and daemon lifecycle, backs up Codex state before installation, and restores config, authentication, and history indexes on uninstall.
 
 ### Install
 
@@ -721,10 +766,9 @@ codex-mixin setup
 codex-mixin info
 ```
 
-`setup` is the first-run entry point: in a TTY it can prompt for the provider preset and API key, adds or updates the provider,
-refreshes models, starts or restarts the gateway as needed, then asks whether to keep official
-Codex account features, use custom models only, or skip Codex installation. When you choose an
-installation mode, `setup` finishes the Codex install itself. Scripts and CI can pass
+`codex-mixin` opens the complete full-screen control deck, and `setup` opens the same TUI directly
+on its Setup workspace. The guided flow configures the provider, refreshes models, starts or
+restarts the gateway, then installs Codex in official-account or custom-only mode. Scripts and CI can pass
 `--key`, `--quota-username`, and `--codex-mode official|custom|skip` to skip all prompts.
 
 For later management, use `provider` for providers, `service` for the gateway, `connect` for
@@ -855,7 +899,7 @@ Fusion virtual models run a `Panel → Judge → Final` pipeline. Open `Fusion S
 
 Fusion runs Panel and Judge only for new user turns in Plan mode. After switching to Default mode to execute the plan, all later user turns and tool-result continuations go directly to the profile's Final model, avoiding repeated analysis during implementation.
 
-![Interactive Fusion Review in Codex](docs/assets/fusion-review.png)
+See the [native Fusion review](#native-fusion-review-and-project-identity) in the product tour above.
 
 `Show Panel / Judge intermediate results` is enabled by default and maps to `show_intermediate_results: true` in stored config. When enabled, Codex Mixin uses Codex's native inline visualization surface:
 
