@@ -6,6 +6,7 @@ use codex_mixin::model_metadata::{ModelMetadataResolver, default_cache_path};
 
 pub(super) const LITELLM_MODEL_METADATA_URL: &str =
     "https://raw.githubusercontent.com/BerriAI/litellm/main/model_prices_and_context_window.json";
+const METADATA_FETCH_TIMEOUT: Duration = Duration::from_secs(5);
 
 pub(super) async fn refresh_metadata(output: Option<PathBuf>) -> anyhow::Result<()> {
     let output = output.unwrap_or_else(default_cache_path);
@@ -60,7 +61,7 @@ pub(super) async fn fetch_litellm_metadata() -> anyhow::Result<String> {
         .unwrap_or_else(|_| LITELLM_MODEL_METADATA_URL.to_owned());
     let response = reqwest::Client::new()
         .get(&url)
-        .timeout(Duration::from_secs(30))
+        .timeout(METADATA_FETCH_TIMEOUT)
         .send()
         .await?;
     let status = response.status();
@@ -69,4 +70,14 @@ pub(super) async fn fetch_litellm_metadata() -> anyhow::Result<String> {
         anyhow::bail!("metadata endpoint returned {status}: {body}");
     }
     Ok(body)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn optional_metadata_cannot_block_an_interactive_install() {
+        assert!(METADATA_FETCH_TIMEOUT <= Duration::from_secs(5));
+    }
 }

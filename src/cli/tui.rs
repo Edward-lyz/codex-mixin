@@ -1,6 +1,7 @@
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::io::{self, IsTerminal, Stdout};
+use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
@@ -23,9 +24,19 @@ use ratatui::widgets::{
     Tabs, Wrap,
 };
 use serde_json::Value;
+use tokio::io::{AsyncBufReadExt, BufReader};
 use tokio::process::Command;
 
 const REFRESH_INTERVAL: Duration = Duration::from_secs(10);
+const PROVIDER_ACTION_LABELS: [&str; 6] = [
+    "a add",
+    "u edit",
+    "D delete",
+    "e enable",
+    "t test",
+    "m discover",
+];
+const MODEL_ACTION_LABELS: [&str; 5] = ["[SAVE]", "[ALL]", "[NONE]", "[DISCOVER]", "[PROBE]"];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Page {
@@ -1100,9 +1111,6 @@ fn handle_event(app: &mut App, event: Event) -> Action {
     if key.kind != KeyEventKind::Press {
         return Action::None;
     }
-    if app.page == Page::Setup && app.dialog.is_none() {
-        return handle_setup_event(app, key.code, key.modifiers);
-    }
     if app.dialog.is_some() {
         return handle_dialog_event(app, key.code, key.modifiers);
     }
@@ -1111,17 +1119,23 @@ fn handle_event(app: &mut App, event: Event) -> Action {
         return Action::None;
     }
     match key.code {
-        KeyCode::Char('q') => Action::Quit,
-        KeyCode::Char('?') => {
-            app.help_visible = true;
-            Action::None
-        }
         KeyCode::Tab => {
             app.next_page(1);
-            Action::None
+            return Action::None;
         }
         KeyCode::BackTab => {
             app.next_page(-1);
+            return Action::None;
+        }
+        _ => {}
+    }
+    if app.page == Page::Setup {
+        return handle_setup_event(app, key.code, key.modifiers);
+    }
+    match key.code {
+        KeyCode::Char('q') => Action::Quit,
+        KeyCode::Char('?') => {
+            app.help_visible = true;
             Action::None
         }
         KeyCode::Char('r') => Action::Refresh,
@@ -1168,7 +1182,7 @@ fn handle_mouse_event(app: &mut App, kind: MouseEventKind, column: u16, row: u16
     }
     let area = app.viewport.get();
     let tabs_y = area.y + 4;
-    if row >= tabs_y && row < tabs_y + 3 {
+    if row == tabs_y {
         let mut start = area.x;
         for page in Page::ALL {
             let end = start + page.title().len() as u16 + 2;
@@ -1218,27 +1232,24 @@ fn handle_mouse_event(app: &mut App, kind: MouseEventKind, column: u16, row: u16
                     app.provider_index = index;
                     app.load_model_draft();
                 }
-            } else if row >= body.y + 9 {
-                let segment = usize::from(column.saturating_sub(body.x + 30)) * 6
-                    / usize::from(body.width.saturating_sub(30).max(1));
-                return match segment.min(5) {
-                    0 => Action::AddProvider,
-                    1 => Action::EditProvider,
-                    2 => Action::RemoveProvider,
-                    3 => Action::ToggleProvider,
-                    4 => Action::TestProvider,
-                    _ => Action::DiscoverModels,
+            } else if row == body.y + body.height.saturating_sub(2) {
+                return match clicked_action_label(column, body.x + 31, &PROVIDER_ACTION_LABELS) {
+                    Some(0) => Action::AddProvider,
+                    Some(1) => Action::EditProvider,
+                    Some(2) => Action::RemoveProvider,
+                    Some(3) => Action::ToggleProvider,
+                    Some(4) => Action::TestProvider,
+                    Some(5) => Action::DiscoverModels,
+                    _ => Action::None,
                 };
             }
             Action::None
         }
         Page::Models => {
-            if row < body.y + 3 {
-                let segment =
-                    usize::from(column.saturating_sub(body.x)) * 5 / usize::from(body.width.max(1));
-                return match segment.min(4) {
-                    0 => Action::ApplyModels,
-                    1 => {
+            if row == body.y + 2 {
+                return match clicked_action_label(column, body.x + 1, &MODEL_ACTION_LABELS) {
+                    Some(0) => Action::ApplyModels,
+                    Some(1) => {
                         app.model_draft = app
                             .selected_models()
                             .into_iter()
@@ -1246,16 +1257,17 @@ fn handle_mouse_event(app: &mut App, kind: MouseEventKind, column: u16, row: u16
                             .collect();
                         Action::None
                     }
-                    2 => {
+                    Some(2) => {
                         app.model_draft.clear();
                         Action::None
                     }
-                    3 => Action::DiscoverModels,
-                    _ => Action::ProbeModels,
+                    Some(3) => Action::DiscoverModels,
+                    Some(4) => Action::ProbeModels,
+                    _ => Action::None,
                 };
             }
-            if row > body.y + 4 {
-                let index = row.saturating_sub(body.y + 5) as usize;
+            if row > body.y + 5 {
+                let index = row.saturating_sub(body.y + 6) as usize;
                 if index < app.selected_models().len() {
                     app.model_index = index;
                     if column < body.x + 8 {
@@ -1331,6 +1343,18 @@ fn system_action(index: usize) -> Action {
         2 => Action::ConfirmRepair,
         _ => Action::RefreshCatalog,
     }
+}
+
+fn clicked_action_label(column: u16, start: u16, labels: &[&str]) -> Option<usize> {
+    let mut cursor = start;
+    for (index, label) in labels.iter().enumerate() {
+        let end = cursor.saturating_add(label.len() as u16);
+        if column >= cursor && column < end {
+            return Some(index);
+        }
+        cursor = end.saturating_add(2);
+    }
+    None
 }
 
 fn handle_page_event(app: &mut App, code: KeyCode) -> Action {
@@ -1420,8 +1444,8 @@ fn handle_setup_event(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> 
         return Action::RunSetup;
     }
     match code {
-        KeyCode::Tab => app.setup.move_focus(1),
-        KeyCode::BackTab => app.setup.move_focus(-1),
+        KeyCode::Down => app.setup.move_focus(1),
+        KeyCode::Up => app.setup.move_focus(-1),
         KeyCode::Left if app.setup.focus == 0 => {
             app.setup.provider.preset_index = app.setup.provider.preset_index.saturating_sub(1);
         }
@@ -1660,13 +1684,18 @@ async fn run_action(
     refresh_after: bool,
 ) -> Option<String> {
     app.busy = Some(label);
+    app.diagnostics.clear();
+    app.diagnostics_scroll = 0;
     let _ = terminal.draw(app);
-    let output = match run_cli(args).await {
-        Ok(output) => {
+    let output = match run_cli_with_progress(terminal, app, args).await {
+        Ok(Some(output)) => {
             set_notice(app, false, &format!("{label} completed."));
             app.diagnostics = pretty_json_or_text(&output);
-            app.diagnostics_scroll = 0;
             Some(output)
+        }
+        Ok(None) => {
+            set_notice(app, false, &format!("{label} cancelled."));
+            None
         }
         Err(error) => {
             set_notice(app, true, &format!("{label} failed: {error:#}"));
@@ -1678,6 +1707,111 @@ async fn run_action(
         refresh(terminal, app).await;
     }
     output
+}
+
+async fn run_cli_with_progress(
+    terminal: &mut TerminalSession,
+    app: &mut App,
+    args: &[&str],
+) -> anyhow::Result<Option<String>> {
+    let executable = std::env::current_exe().context("resolve current executable")?;
+    let mut child = Command::new(&executable)
+        .arg("--no-tui")
+        .args(args)
+        .stdout(Stdio::piped())
+        .stderr(Stdio::piped())
+        .kill_on_drop(true)
+        .spawn()
+        .with_context(|| format!("run {} --no-tui {}", executable.display(), args.join(" ")))?;
+    let stdout = child.stdout.take().context("capture CLI stdout")?;
+    let stderr = child.stderr.take().context("capture CLI stderr")?;
+    let mut stdout_lines = BufReader::new(stdout).lines();
+    let mut stderr_lines = BufReader::new(stderr).lines();
+    let mut stdout_open = true;
+    let mut stderr_open = true;
+    let mut stdout_output = String::new();
+    let mut stderr_output = String::new();
+
+    while stdout_open || stderr_open {
+        tokio::select! {
+            line = stdout_lines.next_line(), if stdout_open => match line? {
+                Some(line) => {
+                    stdout_output.push_str(&line);
+                    stdout_output.push('\n');
+                    show_operation_progress(terminal, app, &line)?;
+                }
+                None => stdout_open = false,
+            },
+            line = stderr_lines.next_line(), if stderr_open => match line? {
+                Some(line) => {
+                    stderr_output.push_str(&line);
+                    stderr_output.push('\n');
+                    show_operation_progress(terminal, app, &line)?;
+                }
+                None => stderr_open = false,
+            },
+            event = read_event() => {
+                if let Some(event) = event?
+                    && operation_cancel_requested(&event, app.viewport.get())
+                {
+                    child.start_kill().context("cancel CLI operation")?;
+                    child.wait().await.context("wait for cancelled CLI operation")?;
+                    return Ok(None);
+                }
+            }
+        }
+    }
+
+    let status = child.wait().await.context("wait for CLI operation")?;
+    if !status.success() {
+        anyhow::bail!(
+            "`{}` exited with {}: {}",
+            args.join(" "),
+            status,
+            stderr_output.trim()
+        )
+    }
+    Ok(Some(stdout_output))
+}
+
+fn show_operation_progress(
+    terminal: &mut TerminalSession,
+    app: &mut App,
+    line: &str,
+) -> anyhow::Result<()> {
+    let message = line.strip_prefix("MIXIN_PROGRESS ").unwrap_or(line).trim();
+    if !message.is_empty() {
+        app.notice = message.to_owned();
+        if !app.diagnostics.is_empty() {
+            app.diagnostics.push('\n');
+        }
+        app.diagnostics.push_str(message);
+        if app.diagnostics.len() > 32 * 1024 {
+            while app.diagnostics.len() > 24 * 1024 {
+                let Some(line_end) = app.diagnostics.find('\n') else {
+                    app.diagnostics.clear();
+                    break;
+                };
+                app.diagnostics.drain(..=line_end);
+            }
+        }
+        terminal.draw(app)?;
+    }
+    Ok(())
+}
+
+fn operation_cancel_requested(event: &Event, viewport: Rect) -> bool {
+    match event {
+        Event::Key(key) if key.kind == KeyEventKind::Press => {
+            key.code == KeyCode::Esc
+                || (key.code == KeyCode::Char('c') && key.modifiers.contains(KeyModifiers::CONTROL))
+        }
+        Event::Mouse(mouse) => {
+            mouse.kind == MouseEventKind::Down(MouseButton::Left)
+                && mouse.row >= viewport.y + viewport.height.saturating_sub(3)
+        }
+        _ => false,
+    }
 }
 
 async fn run_owned_action(
@@ -1807,6 +1941,9 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &App) {
     }
     if let Some(dialog) = &app.dialog {
         render_dialog(frame, area, dialog, &app.notice, app.notice_is_error);
+    }
+    if app.busy.is_some() {
+        render_busy(frame, area, app);
     }
 }
 
@@ -1996,7 +2133,7 @@ fn render_setup(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         form_line("Codex mode", form.codex_mode_name(), form.focus == 9, false),
         Line::from(""),
         Line::from(Span::styled(
-            "Tab move  Left/Right choose  Enter run  Esc dashboard",
+            "Up/Down field  Left/Right choose  Enter run  Tab workspace",
             Style::default().fg(Color::DarkGray),
         )),
     ]);
@@ -2259,6 +2396,10 @@ fn render_providers(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         &mut state,
     );
 
+    let details = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(8), Constraint::Length(3)])
+        .split(columns[1]);
     let lines = if let Some(provider) = app.selected_provider() {
         let selected = provider
             .get("selected_models")
@@ -2302,11 +2443,6 @@ fn render_providers(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 "Base URL    {}",
                 value_str(provider, "base_url", "managed by Codex")
             )),
-            Line::from(""),
-            Line::from(Span::styled(
-                "a add  u edit  D delete  e enable  t test  m discover",
-                Style::default().fg(Color::DarkGray),
-            )),
         ]
     } else {
         vec![Line::from("No providers configured. Press a to add one.")]
@@ -2320,31 +2456,46 @@ fn render_providers(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                     .border_type(BorderType::Rounded),
             )
             .wrap(Wrap { trim: true }),
-        columns[1],
+        details[0],
+    );
+    frame.render_widget(
+        Paragraph::new(Line::from(Span::styled(
+            PROVIDER_ACTION_LABELS.join("  "),
+            Style::default().fg(Color::Cyan),
+        )))
+        .block(
+            Block::default()
+                .title(" Actions ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded),
+        ),
+        details[1],
     );
 }
 
 fn render_models(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let sections = Layout::default()
         .direction(Direction::Vertical)
-        .constraints([Constraint::Length(3), Constraint::Min(5)])
+        .constraints([Constraint::Length(4), Constraint::Min(5)])
         .split(area);
     let provider = app.selected_provider();
     let title = provider
         .map(|provider| value_str(provider, "display_name", "-"))
         .unwrap_or("No provider");
     frame.render_widget(
-        Paragraph::new(Line::from(vec![
-            Span::styled(
-                format!(" {title}  "),
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                format!("Provider  {title}"),
                 Style::default().fg(Color::Cyan).bold(),
-            ),
-            Span::styled(
-                " [SAVE] ",
-                Style::default().fg(Color::Black).bg(Color::Green).bold(),
-            ),
-            Span::raw("  [ALL]  [NONE]  [DISCOVER]  [PROBE]"),
-        ]))
+            )),
+            Line::from(vec![
+                Span::styled(
+                    MODEL_ACTION_LABELS[0],
+                    Style::default().fg(Color::Black).bg(Color::Green).bold(),
+                ),
+                Span::raw(format!("  {}", MODEL_ACTION_LABELS[1..].join("  "))),
+            ]),
+        ])
         .block(
             Block::default()
                 .title(" MODEL WORKSPACE ")
@@ -2829,19 +2980,25 @@ fn render_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             Style::default().fg(notice_color),
         ))
     };
-    let keys = match app.page {
-        Page::Dashboard => {
-            "Up/Down token usage  c quota  s start/stop  r refresh  x doctor  ? help"
+    let keys = if app.busy.is_some() {
+        "Esc / Ctrl-C cancel   click this footer to cancel"
+    } else {
+        match app.page {
+            Page::Dashboard => {
+                "Up/Down token usage  c quota  s start/stop  r refresh  x doctor  ? help"
+            }
+            Page::Setup => "Up/Down field  Left/Right option  Enter setup  Tab workspace",
+            Page::Providers => "a add  u edit  D delete  e enable  t test  m discover  ? help",
+            Page::Models => {
+                "[ ] provider  Up/Down row  Space/click toggle  a all  n none  s save  d discover"
+            }
+            Page::Benchmark => {
+                "[ ] provider  b/click run  -/+ timeout  ,/. output tokens  r refresh"
+            }
+            Page::Integrations => "1-3 Codex  4-5 Claude  6-7 DSH  click or press a number",
+            Page::System => "s/R gateway  u update  d doctor  F repair  f catalog  l logs",
+            Page::Diagnostics => "x doctor  PgUp/PgDn scroll  r refresh  ? help  q quit",
         }
-        Page::Setup => "Tab field  Left/Right option  Enter setup  Esc dashboard",
-        Page::Providers => "a add  u edit  D delete  e enable  t test  m discover  ? help",
-        Page::Models => {
-            "[ ] provider  Up/Down row  Space/click toggle  a all  n none  s save  d discover"
-        }
-        Page::Benchmark => "[ ] provider  b/click run  -/+ timeout  ,/. output tokens  r refresh",
-        Page::Integrations => "1-3 Codex  4-5 Claude  6-7 DSH  click or press a number",
-        Page::System => "s/R gateway  u update  d doctor  F repair  f catalog  l logs",
-        Page::Diagnostics => "x doctor  PgUp/PgDn scroll  r refresh  ? help  q quit",
     };
     frame.render_widget(
         Paragraph::new(vec![
@@ -2850,6 +3007,52 @@ fn render_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         ])
         .block(Block::default().borders(Borders::TOP)),
         area,
+    );
+}
+
+fn render_busy(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let popup = centered_rect(area, area.width.min(88), area.height.min(18));
+    let visible_lines = usize::from(popup.height.saturating_sub(7));
+    let output = app
+        .diagnostics
+        .lines()
+        .rev()
+        .take(visible_lines)
+        .collect::<Vec<_>>()
+        .into_iter()
+        .rev()
+        .map(|line| {
+            Line::from(Span::styled(
+                line.to_owned(),
+                Style::default().fg(Color::Gray),
+            ))
+        })
+        .collect::<Vec<_>>();
+    let mut lines = vec![
+        Line::from(Span::styled(
+            app.busy.unwrap_or("Working"),
+            Style::default().fg(Color::Cyan).bold(),
+        )),
+        Line::from(""),
+    ];
+    lines.extend(output);
+    lines.push(Line::from(""));
+    lines.push(Line::from(Span::styled(
+        "Esc / Ctrl-C cancel  ·  progress continues live",
+        Style::default().fg(Color::Yellow),
+    )));
+    frame.render_widget(Clear, popup);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title(" OPERATION ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Double)
+                    .border_style(Style::default().fg(Color::Cyan)),
+            )
+            .wrap(Wrap { trim: false }),
+        popup,
     );
 }
 
@@ -3050,6 +3253,43 @@ mod tests {
     }
 
     #[test]
+    fn tab_moves_to_the_next_workspace_once() {
+        let snapshot = Snapshot {
+            status: serde_json::json!({"configured": true, "gateway": "stopped"}),
+            providers: Vec::new(),
+            codex_install_mode: None,
+            benchmark: None,
+            usage: Vec::new(),
+            refreshed_at: Instant::now(),
+        };
+        let mut app = App::new(snapshot, StartPage::Dashboard);
+
+        assert_eq!(
+            handle_event(
+                &mut app,
+                Event::Key(crossterm::event::KeyEvent::new(
+                    KeyCode::Tab,
+                    KeyModifiers::NONE,
+                )),
+            ),
+            Action::None
+        );
+        assert_eq!(app.page, Page::Setup);
+
+        assert_eq!(
+            handle_event(
+                &mut app,
+                Event::Key(crossterm::event::KeyEvent::new(
+                    KeyCode::Tab,
+                    KeyModifiers::NONE,
+                )),
+            ),
+            Action::None
+        );
+        assert_eq!(app.page, Page::Providers);
+    }
+
+    #[test]
     fn mouse_selects_tabs_and_integration_actions() {
         let snapshot = Snapshot {
             status: serde_json::json!({"configured": true, "gateway": "stopped"}),
@@ -3062,15 +3302,66 @@ mod tests {
         let mut app = App::new(snapshot, StartPage::Dashboard);
         app.viewport.set(Rect::new(0, 0, 100, 30));
         assert_eq!(
-            handle_mouse_event(&mut app, MouseEventKind::Down(MouseButton::Left), 8, 5),
+            handle_mouse_event(&mut app, MouseEventKind::Down(MouseButton::Left), 8, 4),
             Action::None
         );
         assert_eq!(app.page, Page::Setup);
+        app.page = Page::Dashboard;
+        assert_eq!(
+            handle_mouse_event(&mut app, MouseEventKind::Down(MouseButton::Left), 8, 5),
+            Action::None
+        );
+        assert_eq!(app.page, Page::Dashboard);
         app.page = Page::Integrations;
         assert_eq!(
             handle_mouse_event(&mut app, MouseEventKind::Down(MouseButton::Left), 90, 8),
             Action::ConfirmUninstallCodex
         );
+    }
+
+    #[test]
+    fn running_operation_can_be_cancelled_by_keyboard_or_footer_click() {
+        let viewport = Rect::new(0, 0, 100, 30);
+        assert!(operation_cancel_requested(
+            &Event::Key(crossterm::event::KeyEvent::new(
+                KeyCode::Esc,
+                KeyModifiers::NONE,
+            )),
+            viewport,
+        ));
+        assert!(operation_cancel_requested(
+            &Event::Mouse(crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 50,
+                row: 28,
+                modifiers: KeyModifiers::NONE,
+            }),
+            viewport,
+        ));
+        assert!(!operation_cancel_requested(
+            &Event::Mouse(crossterm::event::MouseEvent {
+                kind: MouseEventKind::Down(MouseButton::Left),
+                column: 50,
+                row: 20,
+                modifiers: KeyModifiers::NONE,
+            }),
+            viewport,
+        ));
+    }
+
+    #[test]
+    fn action_labels_only_accept_clicks_on_visible_text() {
+        assert_eq!(
+            clicked_action_label(31, 31, &PROVIDER_ACTION_LABELS),
+            Some(0)
+        );
+        assert_eq!(clicked_action_label(36, 31, &PROVIDER_ACTION_LABELS), None);
+        assert_eq!(
+            clicked_action_label(39, 31, &PROVIDER_ACTION_LABELS),
+            Some(1)
+        );
+        assert_eq!(clicked_action_label(7, 1, &MODEL_ACTION_LABELS), None);
+        assert_eq!(clicked_action_label(10, 1, &MODEL_ACTION_LABELS), Some(1));
     }
 
     #[test]
