@@ -67,4 +67,32 @@ struct ProviderTokenUsageRow {
     cache_creation_tokens: u64,
     output_tokens: u64,
     cache_hit_percent: Option<f64>,
+    average_ttft_ms: Option<f64>,
+    output_tps: Option<f64>,
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn usage_json_preserves_provider_timing_fields() {
+        let input = serde_json::json!({
+            "provider_id": "official",
+            "model_id": "gpt-5.6-sol",
+            "request_count": 9,
+            "input_tokens": 100,
+            "cache_read_tokens": 50,
+            "cache_creation_tokens": 0,
+            "output_tokens": 900,
+            "cache_hit_percent": 50.0,
+            "average_ttft_ms": 4172.0,
+            "output_tps": 87.6
+        });
+        let row: ProviderTokenUsageRow = serde_json::from_value(input).unwrap();
+        let output = serde_json::to_value(row).unwrap();
+
+        assert_eq!(output["average_ttft_ms"], 4172.0);
+        assert_eq!(output["output_tps"], 87.6);
+    }
 }
