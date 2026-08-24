@@ -682,7 +682,9 @@ pub(super) async fn run(start_page: StartPage) -> anyhow::Result<()> {
         match action {
             Action::None => {}
             Action::Quit => break,
-            Action::Refresh => refresh(&mut terminal, &mut app).await,
+            Action::Refresh => {
+                refresh(&mut terminal, &mut app).await;
+            }
             Action::ToggleGateway => {
                 let args = if app.snapshot.gateway_running() {
                     vec!["service", "stop"]
@@ -1630,10 +1632,10 @@ fn handle_dialog_event(app: &mut App, code: KeyCode, modifiers: KeyModifiers) ->
     }
 }
 
-async fn refresh(terminal: &mut TerminalSession, app: &mut App) {
+async fn refresh(terminal: &mut TerminalSession, app: &mut App) -> bool {
     app.busy = Some("Refreshing status");
     let _ = terminal.draw(app);
-    match Snapshot::load().await {
+    let refreshed = match Snapshot::load().await {
         Ok(snapshot) => {
             app.snapshot = snapshot;
             app.clamp_provider_index();
@@ -1641,10 +1643,15 @@ async fn refresh(terminal: &mut TerminalSession, app: &mut App) {
                 .usage_offset
                 .min(app.snapshot.usage.len().saturating_sub(1));
             set_notice(app, false, "Status refreshed.");
+            true
         }
-        Err(error) => set_notice(app, true, &format!("Refresh failed: {error:#}")),
-    }
+        Err(error) => {
+            set_notice(app, true, &format!("Refresh failed: {error:#}"));
+            false
+        }
+    };
     app.busy = None;
+    refreshed
 }
 
 async fn refresh_benchmark(app: &mut App) {
@@ -1687,24 +1694,19 @@ async fn run_action(
     app.diagnostics.clear();
     app.diagnostics_scroll = 0;
     let _ = terminal.draw(app);
-    let output = match run_cli_with_progress(terminal, app, args).await {
-        Ok(Some(output)) => {
-            set_notice(app, false, &format!("{label} completed."));
-            app.diagnostics = pretty_json_or_text(&output);
-            Some(output)
-        }
-        Ok(None) => {
-            set_notice(app, false, &format!("{label} cancelled."));
-            None
-        }
-        Err(error) => {
-            set_notice(app, true, &format!("{label} failed: {error:#}"));
-            None
-        }
-    };
+    let (output, final_notice, final_notice_is_error) =
+        match run_cli_with_progress(terminal, app, args).await {
+            Ok(Some(output)) => {
+                app.diagnostics = pretty_json_or_text(&output);
+                (Some(output), format!("{label} completed."), false)
+            }
+            Ok(None) => (None, format!("{label} cancelled."), false),
+            Err(error) => (None, format!("{label} failed: {error:#}"), true),
+        };
     app.busy = None;
-    if refresh_after {
-        refresh(terminal, app).await;
+    let refresh_succeeded = !refresh_after || refresh(terminal, app).await;
+    if refresh_succeeded {
+        set_notice(app, final_notice_is_error, &final_notice);
     }
     output
 }
