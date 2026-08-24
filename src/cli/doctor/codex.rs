@@ -14,6 +14,7 @@ use super::super::codex::{
 use super::{DoctorCheck, DoctorFix, DoctorStatus, LiveGateway};
 
 pub(super) struct ManagedIntegration {
+    #[cfg(target_os = "macos")]
     pub(super) config_path: PathBuf,
     pub(super) codex_home: PathBuf,
     pub(super) managed_slugs: HashSet<String>,
@@ -296,6 +297,7 @@ pub(super) fn check_codex_integration(
             return (
                 checks,
                 Some(ManagedIntegration {
+                    #[cfg(target_os = "macos")]
                     config_path: path,
                     codex_home,
                     managed_slugs: HashSet::new(),
@@ -320,6 +322,7 @@ pub(super) fn check_codex_integration(
         return (
             checks,
             Some(ManagedIntegration {
+                #[cfg(target_os = "macos")]
                 config_path: path,
                 codex_home,
                 managed_slugs: HashSet::new(),
@@ -412,6 +415,7 @@ pub(super) fn check_codex_integration(
     (
         checks,
         Some(ManagedIntegration {
+            #[cfg(target_os = "macos")]
             config_path: path,
             codex_home,
             managed_slugs,

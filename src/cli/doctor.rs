@@ -51,7 +51,9 @@ enum DoctorFix {
     FixConfigPermissions,
     SyncGatewayBaseUrl,
     RefreshCodexCatalog,
+    #[cfg(target_os = "macos")]
     RestartChatGptApp,
+    #[cfg(target_os = "macos")]
     RestartCodexApp,
 }
 
@@ -59,7 +61,15 @@ impl DoctorFix {
     /// Restarting a desktop app can kill in-flight user sessions, so it is
     /// only applied when the user explicitly passes `--restart-apps`.
     fn requires_restart_opt_in(self) -> bool {
-        matches!(self, Self::RestartChatGptApp | Self::RestartCodexApp)
+        #[cfg(target_os = "macos")]
+        {
+            matches!(self, Self::RestartChatGptApp | Self::RestartCodexApp)
+        }
+        #[cfg(not(target_os = "macos"))]
+        {
+            let _ = self;
+            false
+        }
     }
 
     fn description(self) -> &'static str {
@@ -69,7 +79,9 @@ impl DoctorFix {
             Self::FixConfigPermissions => "Tighten config file permissions to 600",
             Self::SyncGatewayBaseUrl => "Sync the managed Codex gateway base_url",
             Self::RefreshCodexCatalog => "Regenerate the managed model catalog",
+            #[cfg(target_os = "macos")]
             Self::RestartChatGptApp => "Restart the ChatGPT app to load the new config",
+            #[cfg(target_os = "macos")]
             Self::RestartCodexApp => "Restart the Codex app to load the new config",
         }
     }

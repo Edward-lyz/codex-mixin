@@ -1,3 +1,4 @@
+#[cfg(target_os = "macos")]
 use std::time::{Duration, Instant};
 
 use codex_mixin::config::{GatewayConfig, stored_config_path};
@@ -96,11 +97,14 @@ async fn apply_doctor_fix(fix: DoctorFix) -> anyhow::Result<String> {
             refresh_default_managed_codex_catalog().await?;
             Ok("managed model catalog refreshed".to_owned())
         }
+        #[cfg(target_os = "macos")]
         DoctorFix::RestartChatGptApp => restart_app_fix("ChatGPT").await,
+        #[cfg(target_os = "macos")]
         DoctorFix::RestartCodexApp => restart_app_fix("Codex").await,
     }
 }
 
+#[cfg(target_os = "macos")]
 async fn restart_app_fix(app: &'static str) -> anyhow::Result<String> {
     tokio::task::spawn_blocking(move || restart_macos_app(app)).await?
 }
@@ -135,9 +139,4 @@ fn restart_macos_app(app: &str) -> anyhow::Result<String> {
         anyhow::bail!("failed to reopen {app}");
     }
     Ok(format!("{app} restarted"))
-}
-
-#[cfg(not(target_os = "macos"))]
-fn restart_macos_app(app: &str) -> anyhow::Result<String> {
-    anyhow::bail!("automatic app restart is not supported on this platform for {app}")
 }

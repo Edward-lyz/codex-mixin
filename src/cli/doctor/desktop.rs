@@ -2,7 +2,10 @@
 use std::path::Path;
 #[cfg(target_os = "macos")]
 use std::process::Command as ProcessCommand;
-use std::time::{Duration, SystemTime};
+#[cfg(any(target_os = "macos", test))]
+use std::time::Duration;
+#[cfg(target_os = "macos")]
+use std::time::SystemTime;
 
 #[cfg(target_os = "macos")]
 use super::{DoctorCheck, DoctorFix, DoctorStatus};
@@ -110,6 +113,7 @@ fn process_start_time(pid: u32) -> Option<SystemTime> {
 }
 
 /// Parses `ps -o etime=` values shaped like `[[dd-]hh:]mm:ss`.
+#[cfg(any(target_os = "macos", test))]
 pub(super) fn parse_ps_etime(raw: &str) -> Option<Duration> {
     let (days, rest) = match raw.split_once('-') {
         Some((days, rest)) => (days.parse::<u64>().ok()?, rest),
