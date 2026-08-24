@@ -829,7 +829,7 @@ mod tests {
         assert_eq!(snapshot[0].cache_creation_tokens, 500);
         assert_eq!(snapshot[0].output_tokens, 300);
         assert_eq!(snapshot[0].average_ttft_ms, Some(200.0));
-        assert_eq!(snapshot[0].output_tps, Some(75.0));
+        assert_eq!(snapshot[0].output_tps, Some(60.0));
         assert_eq!(
             snapshot[0].cache_hit_percent,
             Some(4_500.0 / 6_500.0 * 100.0)

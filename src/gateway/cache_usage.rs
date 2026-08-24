@@ -525,8 +525,9 @@ fn finalize_usage(mut entries: Vec<ProviderTokenUsage>) -> Vec<ProviderTokenUsag
             .then(|| entry.observed_cache_read_tokens as f64 / observed as f64 * 100.0);
         entry.average_ttft_ms = (entry.timing_sample_count > 0)
             .then(|| entry.total_ttft_micros as f64 / entry.timing_sample_count as f64 / 1_000.0);
-        entry.output_tps = (entry.tps_sample_count > 0)
-            .then(|| entry.total_output_tps / entry.tps_sample_count as f64);
+        entry.output_tps = (entry.total_generation_micros > 0).then(|| {
+            entry.timed_output_tokens as f64 * 1_000_000.0 / entry.total_generation_micros as f64
+        });
     }
     entries.sort_by(|left, right| {
         left.provider_id
