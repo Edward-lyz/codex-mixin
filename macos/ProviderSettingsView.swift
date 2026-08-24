@@ -390,7 +390,7 @@ private struct ProviderDetailForm: View {
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
         .onAppear(perform: loadProvider)
-        .onChange(of: provider.id) { loadProvider() }
+        .onChange(of: provider.id) { _ in loadProvider() }
     }
 
     private var isCustom: Bool { provider.presetID == "custom" }
@@ -449,7 +449,7 @@ private struct ProviderActionBar: View {
                     .disabled(!canModify)
                 Button("保存更改", action: onSave)
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.glassProminent)
+                    .liquidGlassProminentButton()
                     .disabled(!canModify)
             }
             .padding(.horizontal, 20)

@@ -277,11 +277,11 @@ private struct FusionSettingsView: View {
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
             .disabled(model.isBusy)
-            .onChange(of: model.selectedPanels) { model.refreshValidationStatus() }
-            .onChange(of: model.judgeModel) { model.refreshValidationStatus() }
-            .onChange(of: model.finalModel) { model.refreshValidationStatus() }
-            .onChange(of: model.minSuccessful) { model.refreshValidationStatus() }
-            .onChange(of: model.timeoutMs) { model.refreshValidationStatus() }
+            .onChange(of: model.selectedPanels) { _ in model.refreshValidationStatus() }
+            .onChange(of: model.judgeModel) { _ in model.refreshValidationStatus() }
+            .onChange(of: model.finalModel) { _ in model.refreshValidationStatus() }
+            .onChange(of: model.minSuccessful) { _ in model.refreshValidationStatus() }
+            .onChange(of: model.timeoutMs) { _ in model.refreshValidationStatus() }
 
             Divider()
             HStack(spacing: 10) {
@@ -310,7 +310,7 @@ private struct FusionSettingsView: View {
     private var profileSection: some View {
         Section {
             TextField("Profile ID", text: $model.profileID)
-                .onChange(of: model.profileID) { model.refreshValidationStatus() }
+                .onChange(of: model.profileID) { _ in model.refreshValidationStatus() }
         } header: {
             Text("Fusion 模型编排")
         } footer: {
@@ -356,10 +356,14 @@ private struct FusionPanelList: View {
 
     var body: some View {
         if model.options.isEmpty {
-            ContentUnavailableView(
-                L10n.Fusion.noModels,
-                systemImage: "rectangle.3.group"
-            )
+            VStack(spacing: 8) {
+                Image(systemName: "rectangle.3.group")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                Text(L10n.Fusion.noModels)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
             ForEach(model.options, id: \.id) { option in
                 Button {

@@ -453,13 +453,13 @@ struct ModelBenchmarkRootView: View {
         .onAppear {
             model.rebuildRows(sortOverride: sortOrder)
         }
-        .onChange(of: sortOrder) { _, newValue in
+        .onChange(of: sortOrder) { newValue in
             model.rebuildRows(sortOverride: newValue)
         }
-        .onChange(of: model.query) {
+        .onChange(of: model.query) { _ in
             model.rebuildRows(sortOverride: sortOrder)
         }
-        .onChange(of: model.selectionFilter) {
+        .onChange(of: model.selectionFilter) { _ in
             model.rebuildRows(sortOverride: sortOrder)
         }
     }
@@ -648,34 +648,34 @@ struct ModelBenchmarkRootView: View {
     private var latencyColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
         TableColumn("TTFT", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.ttftSortValue)) { row in
             latencyCell(row)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .width(min: 84, ideal: 104)
-        .alignment(.trailing)
     }
 
     private var throughputColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
         TableColumn("吞吐", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.tpsSortValue)) { row in
             throughputCell(row)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .width(min: 90, ideal: 112)
-        .alignment(.trailing)
     }
 
     private var contextColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
         TableColumn("上下文", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.contextSortValue)) { row in
             Text(row.model.contextWindow.map(formatContextWindow) ?? "-")
                 .foregroundStyle(.secondary)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .width(min: 86, ideal: 104)
-        .alignment(.trailing)
     }
 
     private var ratioColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
         TableColumn("倍率", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.ratioSortValue)) { row in
             ratioCell(row)
+                .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .width(min: 70, ideal: 86)
-        .alignment(.trailing)
     }
 
     private var protocolColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {

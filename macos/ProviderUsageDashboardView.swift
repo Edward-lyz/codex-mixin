@@ -245,10 +245,15 @@ private struct ProviderUsageDashboardContent: View {
                 quotaContent(group)
                 tokenContent(group)
             } else {
-                ContentUnavailableView(
-                    model.tokenStatusTitle,
-                    systemImage: "chart.bar.xaxis"
-                )
+                VStack(spacing: 8) {
+                    Image(systemName: "chart.bar.xaxis")
+                        .font(.title2)
+                        .foregroundStyle(.secondary)
+                    Text(model.tokenStatusTitle)
+                        .font(.headline)
+                        .multilineTextAlignment(.center)
+                }
+                .frame(maxWidth: .infinity, maxHeight: .infinity)
                 .help(model.tokenStatusDetail ?? model.quotaStatusDetail ?? "")
             }
         }

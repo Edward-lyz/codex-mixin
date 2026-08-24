@@ -51,7 +51,7 @@ jobs:
       - name: Build macOS app
         if: runner.os == 'macOS'
         env:
-          MACOSX_DEPLOYMENT_TARGET: "26.0"
+          MACOSX_DEPLOYMENT_TARGET: "13.1"
         run: ./macos/build_app.sh
       - name: Test macOS About window and install card
         if: runner.os == 'macOS'
