@@ -436,7 +436,7 @@ codex-mixin doctor --fix               # 自动修复权限、失效状态、网
 codex-mixin doctor --fix --restart-apps # 额外允许重启 ChatGPT/Codex App（会中断进行中的会话）
 ```
 
-全屏控制台可直接新增、编辑、删除和测试 Provider，刷新并多选模型，查看 Token、TTFT 和吞吐统计，运行模型测速，以及安装 Codex、Claude Code 和 DSH 集成。所有自动化脚本继续使用显式 subcommand 或 `--no-tui`。
+全屏控制台是 CLI 的主界面，支持鼠标点击和完整键盘导航。它可执行首次 Setup、新增/编辑/删除/测试 Provider、模型发现和多选、Token/TTFT/吞吐统计、可调参数测速、网关管理、健康修复、版本升级，以及 Codex、Claude Code、DSH 的安装和恢复。`codex-mixin setup` 在终端中打开同一个控制台并定位到 Setup 页面；自动化脚本继续使用带参数的 subcommand 或 `--no-tui`。
 
 新用户从 `setup` 开始，日常只需要 `update`、`provider`、`service`、`connect`、`info` 和 `doctor`。
 `fusion`、`benchmark`、catalog 刷新和历史迁移仍可用，但属于高级维护命令。
@@ -971,7 +971,7 @@ codex-mixin doctor --fix               # auto-repair permissions, stale state, g
 codex-mixin doctor --fix --restart-apps # additionally allow restarting the ChatGPT/Codex app (interrupts active sessions)
 ```
 
-The full-screen control center can add, edit, remove, and test providers; refresh and select models; show token, TTFT, and throughput metrics; run model benchmarks; and install Codex, Claude Code, or DSH integrations. Automation continues to use explicit subcommands or `--no-tui`.
+The full-screen control center is the primary CLI interface, with mouse input and complete keyboard navigation. It covers first-time setup; provider add, edit, remove, and testing; model discovery and selection; token, TTFT, and throughput metrics; configurable benchmarks; gateway control; health repair; CLI updates; and installation or restoration for Codex, Claude Code, and DSH. In a terminal, `codex-mixin setup` opens the same control center on its Setup page. Automation continues to use parameterized subcommands or `--no-tui`.
 
 ### Files
 

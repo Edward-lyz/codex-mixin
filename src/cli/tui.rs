@@ -1,3 +1,4 @@
+use std::cell::Cell;
 use std::collections::HashSet;
 use std::io::{self, IsTerminal, Stdout};
 use std::time::{Duration, Instant};
@@ -6,6 +7,7 @@ use anyhow::Context;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
+    MouseButton, MouseEventKind,
 };
 use crossterm::execute;
 use crossterm::terminal::{
@@ -17,7 +19,8 @@ use ratatui::layout::{Alignment, Constraint, Direction, Layout, Rect};
 use ratatui::style::{Color, Modifier, Style, Stylize};
 use ratatui::text::{Line, Span};
 use ratatui::widgets::{
-    Block, Borders, Clear, List, ListItem, Paragraph, Row, Table, TableState, Tabs, Wrap,
+    Block, BorderType, Borders, Clear, Gauge, List, ListItem, Paragraph, Row, Table, TableState,
+    Tabs, Wrap,
 };
 use serde_json::Value;
 use tokio::process::Command;
@@ -27,33 +30,45 @@ const REFRESH_INTERVAL: Duration = Duration::from_secs(10);
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Page {
     Dashboard,
+    Setup,
     Providers,
     Models,
     Benchmark,
-    Connections,
+    Integrations,
+    System,
     Diagnostics,
 }
 
 impl Page {
-    const ALL: [Self; 6] = [
+    const ALL: [Self; 8] = [
         Self::Dashboard,
+        Self::Setup,
         Self::Providers,
         Self::Models,
         Self::Benchmark,
-        Self::Connections,
+        Self::Integrations,
+        Self::System,
         Self::Diagnostics,
     ];
 
     fn title(self) -> &'static str {
         match self {
-            Self::Dashboard => "Dashboard",
+            Self::Dashboard => "Home",
+            Self::Setup => "Setup",
             Self::Providers => "Providers",
             Self::Models => "Models",
-            Self::Benchmark => "Benchmark",
-            Self::Connections => "Connections",
-            Self::Diagnostics => "Diagnostics",
+            Self::Benchmark => "Speed",
+            Self::Integrations => "Apps",
+            Self::System => "System",
+            Self::Diagnostics => "Logs",
         }
     }
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(super) enum StartPage {
+    Dashboard,
+    Setup,
 }
 
 #[derive(Debug)]
@@ -151,12 +166,25 @@ struct App {
     dialog: Option<Dialog>,
     busy: Option<&'static str>,
     benchmark_refreshed_at: Instant,
+    setup: SetupForm,
+    viewport: Cell<Rect>,
+    integration_index: usize,
+    system_index: usize,
+    benchmark_timeout_seconds: u64,
+    benchmark_output_tokens: u64,
+    quota: Vec<Value>,
 }
 
 impl App {
-    fn new(snapshot: Snapshot) -> Self {
+    fn new(snapshot: Snapshot, start_page: StartPage) -> Self {
+        let providers = snapshot.providers.clone();
+        let configured = snapshot.configured();
         let mut app = Self {
-            page: Page::Dashboard,
+            page: match start_page {
+                StartPage::Dashboard if configured => Page::Dashboard,
+                StartPage::Dashboard => Page::Setup,
+                StartPage::Setup => Page::Setup,
+            },
             snapshot,
             provider_index: 0,
             model_index: 0,
@@ -170,6 +198,13 @@ impl App {
             dialog: None,
             busy: None,
             benchmark_refreshed_at: Instant::now(),
+            setup: SetupForm::new(&providers),
+            viewport: Cell::new(Rect::default()),
+            integration_index: 0,
+            system_index: 0,
+            benchmark_timeout_seconds: 120,
+            benchmark_output_tokens: 100,
+            quota: Vec::new(),
         };
         app.load_model_draft();
         app
@@ -224,6 +259,40 @@ enum Dialog {
     AddProvider(AddProviderForm),
     EditProvider(EditProviderForm),
     ConfirmRemove(String),
+    ConfirmOperation(ConfirmOperation),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+enum ConfirmOperation {
+    UninstallCodex,
+    UninstallClaude,
+    UninstallDsh,
+    Update,
+    Repair,
+}
+
+impl ConfirmOperation {
+    fn title(self) -> &'static str {
+        match self {
+            Self::UninstallCodex => "Restore Codex",
+            Self::UninstallClaude => "Restore Claude Code",
+            Self::UninstallDsh => "Remove DSH integration",
+            Self::Update => "Update Codex Mixin",
+            Self::Repair => "Repair configuration",
+        }
+    }
+
+    fn description(self) -> &'static str {
+        match self {
+            Self::UninstallCodex => "Restore the Codex configuration saved before installation.",
+            Self::UninstallClaude => "Remove managed Claude Code settings and restore the backup.",
+            Self::UninstallDsh => "Remove codex-mixin from DSH settings and credentials.",
+            Self::Update => {
+                "Replace this CLI with the latest GitHub release and restart the gateway."
+            }
+            Self::Repair => "Run doctor --fix --quick and apply safe repairs.",
+        }
+    }
 }
 
 const PROVIDER_PRESETS: [&str; 5] = [
@@ -247,6 +316,13 @@ struct AddProviderForm {
     quota_workspace_id: String,
     quota_auth_cookie: String,
     existing_ids: HashSet<String>,
+}
+
+#[derive(Debug)]
+struct SetupForm {
+    provider: AddProviderForm,
+    focus: usize,
+    codex_mode: usize,
 }
 
 #[derive(Debug)]
@@ -304,6 +380,7 @@ impl Drop for TerminalSession {
     }
 }
 
+#[derive(Debug, Eq, PartialEq)]
 enum Action {
     None,
     Quit,
@@ -320,11 +397,21 @@ enum Action {
     RemoveProvider,
     ConfirmRemoveProvider,
     SubmitDialog,
+    RunSetup,
     StartBenchmark,
     ConnectCodexOfficial,
     ConnectCodexCustom,
     ConnectClaude,
     ConnectDsh,
+    ConfirmUninstallCodex,
+    ConfirmUninstallClaude,
+    ConfirmUninstallDsh,
+    ConfirmUpdate,
+    ConfirmRepair,
+    RunConfirmedOperation,
+    RefreshCatalog,
+    ShowLogs,
+    RefreshQuota,
     RunDoctor,
 }
 
@@ -451,6 +538,52 @@ impl AddProviderForm {
         }
         Ok(args)
     }
+
+    fn clear_secrets(&mut self) {
+        self.api_key.clear();
+        self.quota_auth_cookie.clear();
+    }
+}
+
+impl SetupForm {
+    fn new(providers: &[Value]) -> Self {
+        Self {
+            provider: AddProviderForm::new(providers),
+            focus: 0,
+            codex_mode: 0,
+        }
+    }
+
+    fn active_fields(&self) -> Vec<usize> {
+        let mut fields = self.provider.active_fields().to_vec();
+        fields.push(9);
+        fields
+    }
+
+    fn move_focus(&mut self, offset: isize) {
+        let fields = self.active_fields();
+        let position = fields
+            .iter()
+            .position(|field| *field == self.focus)
+            .unwrap_or(0);
+        self.focus =
+            fields[(position as isize + offset).rem_euclid(fields.len() as isize) as usize];
+        if self.focus != 9 {
+            self.provider.focus = self.focus;
+        }
+    }
+
+    fn codex_mode_name(&self) -> &'static str {
+        match self.codex_mode {
+            0 => "Official account",
+            1 => "Custom models only",
+            _ => "Skip for now",
+        }
+    }
+
+    fn reset(&mut self, providers: &[Value]) {
+        *self = Self::new(providers);
+    }
 }
 
 impl EditProviderForm {
@@ -503,15 +636,19 @@ impl EditProviderForm {
 }
 
 #[allow(clippy::cognitive_complexity)]
-pub(super) async fn run() -> anyhow::Result<()> {
+pub(super) async fn run(start_page: StartPage) -> anyhow::Result<()> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         anyhow::bail!("the full-screen UI requires a terminal; use --no-tui for plain output")
     }
 
     let snapshot = Snapshot::load().await?;
-    let mut app = App::new(snapshot);
+    let mut app = App::new(snapshot, start_page);
     let mut terminal = TerminalSession::enter()?;
     terminal.draw(&app)?;
+    if app.snapshot.gateway_running() {
+        refresh_quota(&mut terminal, &mut app).await;
+        terminal.draw(&app)?;
+    }
 
     loop {
         if app.page == Page::Benchmark
@@ -568,14 +705,18 @@ pub(super) async fn run() -> anyhow::Result<()> {
                         set_notice(&mut app, true, "The official provider is managed by Codex.");
                     } else if let Some(id) = id {
                         let operation = if enabled { "disable" } else { "enable" };
-                        run_action(
+                        let changed = run_action(
                             &mut terminal,
                             &mut app,
                             "Updating provider",
                             &["providers", operation, &id],
                             true,
                         )
-                        .await;
+                        .await
+                        .is_some();
+                        if changed {
+                            apply_provider_changes(&mut terminal, &mut app).await;
+                        }
                     }
                 }
             }
@@ -624,14 +765,36 @@ pub(super) async fn run() -> anyhow::Result<()> {
                     for model in models {
                         args.extend(["--model".to_owned(), model]);
                     }
-                    run_owned_action(
+                    let saved = run_owned_action(
                         &mut terminal,
                         &mut app,
                         "Saving model selection",
                         args,
                         true,
                     )
-                    .await;
+                    .await
+                    .is_some();
+                    if saved {
+                        let restarted = run_action(
+                            &mut terminal,
+                            &mut app,
+                            "Restarting gateway",
+                            &["service", "restart"],
+                            true,
+                        )
+                        .await
+                        .is_some();
+                        if restarted {
+                            run_action(
+                                &mut terminal,
+                                &mut app,
+                                "Refreshing Codex model catalog",
+                                &["refresh-codex-catalog"],
+                                true,
+                            )
+                            .await;
+                        }
+                    }
                     app.load_model_draft();
                 }
             }
@@ -660,14 +823,18 @@ pub(super) async fn run() -> anyhow::Result<()> {
                     Some(Dialog::ConfirmRemove(id)) => id,
                     _ => continue,
                 };
-                run_owned_action(
+                let removed = run_owned_action(
                     &mut terminal,
                     &mut app,
                     "Removing provider",
                     vec!["providers".to_owned(), "remove".to_owned(), id],
                     true,
                 )
-                .await;
+                .await
+                .is_some();
+                if removed {
+                    apply_provider_changes(&mut terminal, &mut app).await;
+                }
                 app.load_model_draft();
             }
             Action::SubmitDialog => {
@@ -683,8 +850,86 @@ pub(super) async fn run() -> anyhow::Result<()> {
                 match submission {
                     Ok((label, args)) => {
                         app.dialog = None;
-                        run_owned_action(&mut terminal, &mut app, label, args, true).await;
+                        let changed = run_owned_action(&mut terminal, &mut app, label, args, true)
+                            .await
+                            .is_some();
+                        if changed {
+                            apply_provider_changes(&mut terminal, &mut app).await;
+                        }
                         app.load_model_draft();
+                    }
+                    Err(error) => set_notice(&mut app, true, &error.to_string()),
+                }
+            }
+            Action::RunSetup => {
+                let submission = app.setup.provider.args();
+                match submission {
+                    Ok(args) => {
+                        let provider_id = app.setup.provider.provider_id();
+                        let codex_mode = app.setup.codex_mode;
+                        app.setup.provider.clear_secrets();
+                        let added = run_owned_action(
+                            &mut terminal,
+                            &mut app,
+                            "Adding provider",
+                            args,
+                            true,
+                        )
+                        .await
+                        .is_some();
+                        if added {
+                            let discovered = run_action(
+                                &mut terminal,
+                                &mut app,
+                                "Discovering provider models",
+                                &["providers", "discover", &provider_id],
+                                true,
+                            )
+                            .await
+                            .is_some();
+                            if discovered {
+                                let started = run_action(
+                                    &mut terminal,
+                                    &mut app,
+                                    "Starting local gateway",
+                                    &["service", "restart"],
+                                    true,
+                                )
+                                .await
+                                .is_some();
+                                if started {
+                                    let codex_args = match codex_mode {
+                                        0 => Some(&["connect", "codex", "--codex-oauth-proxy"][..]),
+                                        1 => Some(&["connect", "codex", "--custom-only"][..]),
+                                        _ => None,
+                                    };
+                                    let installed = if let Some(codex_args) = codex_args {
+                                        run_action(
+                                            &mut terminal,
+                                            &mut app,
+                                            "Installing Codex integration",
+                                            codex_args,
+                                            true,
+                                        )
+                                        .await
+                                        .is_some()
+                                    } else {
+                                        true
+                                    };
+                                    if installed {
+                                        let providers = app.snapshot.providers.clone();
+                                        app.setup.reset(&providers);
+                                        app.page = Page::Models;
+                                        app.load_model_draft();
+                                        set_notice(
+                                            &mut app,
+                                            false,
+                                            "Setup complete. Review the selected models.",
+                                        );
+                                    }
+                                }
+                            }
+                        }
                     }
                     Err(error) => set_notice(&mut app, true, &error.to_string()),
                 }
@@ -694,9 +939,9 @@ pub(super) async fn run() -> anyhow::Result<()> {
                     "benchmark".to_owned(),
                     "start".to_owned(),
                     "--timeout-seconds".to_owned(),
-                    "120".to_owned(),
+                    app.benchmark_timeout_seconds.to_string(),
                     "--target-output-tokens".to_owned(),
-                    "100".to_owned(),
+                    app.benchmark_output_tokens.to_string(),
                 ];
                 if let Some(id) = app
                     .selected_provider()
@@ -747,6 +992,84 @@ pub(super) async fn run() -> anyhow::Result<()> {
                 )
                 .await;
             }
+            Action::ConfirmUninstallCodex => {
+                app.dialog = Some(Dialog::ConfirmOperation(ConfirmOperation::UninstallCodex));
+            }
+            Action::ConfirmUninstallClaude => {
+                app.dialog = Some(Dialog::ConfirmOperation(ConfirmOperation::UninstallClaude));
+            }
+            Action::ConfirmUninstallDsh => {
+                app.dialog = Some(Dialog::ConfirmOperation(ConfirmOperation::UninstallDsh));
+            }
+            Action::ConfirmUpdate => {
+                app.dialog = Some(Dialog::ConfirmOperation(ConfirmOperation::Update));
+            }
+            Action::ConfirmRepair => {
+                app.dialog = Some(Dialog::ConfirmOperation(ConfirmOperation::Repair));
+            }
+            Action::RunConfirmedOperation => {
+                let operation = match app.dialog.take() {
+                    Some(Dialog::ConfirmOperation(operation)) => operation,
+                    _ => continue,
+                };
+                let (label, args, refresh_after) = match operation {
+                    ConfirmOperation::UninstallCodex => (
+                        "Restoring Codex configuration",
+                        &["connect", "remove", "codex"][..],
+                        true,
+                    ),
+                    ConfirmOperation::UninstallClaude => (
+                        "Restoring Claude Code configuration",
+                        &["connect", "remove", "claude"][..],
+                        true,
+                    ),
+                    ConfirmOperation::UninstallDsh => (
+                        "Removing DSH integration",
+                        &["connect", "remove", "dsh"][..],
+                        true,
+                    ),
+                    ConfirmOperation::Update => ("Updating Codex Mixin", &["update"][..], false),
+                    ConfirmOperation::Repair => (
+                        "Repairing configuration",
+                        &["doctor", "--fix", "--quick"][..],
+                        true,
+                    ),
+                };
+                let output = run_action(&mut terminal, &mut app, label, args, refresh_after).await;
+                if operation == ConfirmOperation::Repair
+                    && let Some(output) = output
+                {
+                    app.diagnostics = pretty_json_or_text(&output);
+                    app.diagnostics_scroll = 0;
+                    app.page = Page::Diagnostics;
+                }
+            }
+            Action::RefreshCatalog => {
+                run_action(
+                    &mut terminal,
+                    &mut app,
+                    "Refreshing Codex model catalog",
+                    &["refresh-codex-catalog"],
+                    true,
+                )
+                .await;
+            }
+            Action::ShowLogs => {
+                if let Some(output) = run_action(
+                    &mut terminal,
+                    &mut app,
+                    "Loading gateway logs",
+                    &["service", "logs", "-n", "200"],
+                    false,
+                )
+                .await
+                {
+                    app.diagnostics = output;
+                    app.diagnostics_scroll = 0;
+                    app.page = Page::Diagnostics;
+                }
+            }
+            Action::RefreshQuota => refresh_quota(&mut terminal, &mut app).await,
             Action::RunDoctor => {
                 let output = run_action(
                     &mut terminal,
@@ -769,11 +1092,16 @@ pub(super) async fn run() -> anyhow::Result<()> {
 }
 
 fn handle_event(app: &mut App, event: Event) -> Action {
-    let Event::Key(key) = event else {
-        return Action::None;
+    let key = match event {
+        Event::Mouse(mouse) => return handle_mouse_event(app, mouse.kind, mouse.column, mouse.row),
+        Event::Key(key) => key,
+        _ => return Action::None,
     };
     if key.kind != KeyEventKind::Press {
         return Action::None;
+    }
+    if app.page == Page::Setup && app.dialog.is_none() {
+        return handle_setup_event(app, key.code, key.modifiers);
     }
     if app.dialog.is_some() {
         return handle_dialog_event(app, key.code, key.modifiers);
@@ -788,15 +1116,16 @@ fn handle_event(app: &mut App, event: Event) -> Action {
             app.help_visible = true;
             Action::None
         }
-        KeyCode::Tab | KeyCode::Right => {
+        KeyCode::Tab => {
             app.next_page(1);
             Action::None
         }
-        KeyCode::BackTab | KeyCode::Left => {
+        KeyCode::BackTab => {
             app.next_page(-1);
             Action::None
         }
         KeyCode::Char('r') => Action::Refresh,
+        KeyCode::Char('c') => Action::RefreshQuota,
         KeyCode::Char('s') if app.page != Page::Models => Action::ToggleGateway,
         KeyCode::Char('R') => Action::RestartGateway,
         KeyCode::Char('x') => Action::RunDoctor,
@@ -804,16 +1133,254 @@ fn handle_event(app: &mut App, event: Event) -> Action {
     }
 }
 
+#[allow(clippy::cognitive_complexity)]
+fn handle_mouse_event(app: &mut App, kind: MouseEventKind, column: u16, row: u16) -> Action {
+    if app.dialog.is_some() {
+        return Action::None;
+    }
+    if matches!(kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) {
+        let offset = if kind == MouseEventKind::ScrollUp {
+            -1
+        } else {
+            1
+        };
+        return match app.page {
+            Page::Dashboard => {
+                app.usage_offset = (app.usage_offset as isize + offset)
+                    .clamp(0, app.snapshot.usage.len().saturating_sub(1) as isize)
+                    as usize;
+                Action::None
+            }
+            Page::Providers | Page::Models | Page::Benchmark => {
+                select_provider(app, offset);
+                Action::None
+            }
+            Page::Diagnostics => {
+                app.diagnostics_scroll =
+                    (app.diagnostics_scroll as isize + offset * 3).max(0) as u16;
+                Action::None
+            }
+            _ => Action::None,
+        };
+    }
+    if kind != MouseEventKind::Down(MouseButton::Left) {
+        return Action::None;
+    }
+    let area = app.viewport.get();
+    let tabs_y = area.y + 4;
+    if row >= tabs_y && row < tabs_y + 3 {
+        let mut start = area.x;
+        for page in Page::ALL {
+            let end = start + page.title().len() as u16 + 2;
+            if column >= start && column < end {
+                app.page = page;
+                return Action::None;
+            }
+            start = end + 1;
+        }
+    }
+    let body = Rect::new(
+        area.x,
+        area.y + 7,
+        area.width,
+        area.height.saturating_sub(10),
+    );
+    if row < body.y || row >= body.y + body.height {
+        return Action::None;
+    }
+    match app.page {
+        Page::Setup => {
+            let split = body.x + body.width.saturating_mul(38) / 100;
+            if column <= split {
+                return if row >= body.y + body.height.saturating_sub(4) {
+                    Action::RunSetup
+                } else {
+                    Action::None
+                };
+            }
+            if row <= body.y {
+                return Action::None;
+            }
+            let line = row.saturating_sub(body.y + 1) as usize;
+            let fields = app.setup.active_fields();
+            if line < fields.len().saturating_sub(1) {
+                app.setup.focus = fields[line];
+                app.setup.provider.focus = app.setup.focus;
+            } else if line == fields.len() {
+                app.setup.focus = 9;
+            }
+            Action::None
+        }
+        Page::Providers => {
+            if column < body.x + 30 && row > body.y {
+                let index = row.saturating_sub(body.y + 1) as usize / 2;
+                if index < app.snapshot.providers.len() {
+                    app.provider_index = index;
+                    app.load_model_draft();
+                }
+            } else if row >= body.y + 9 {
+                let segment = usize::from(column.saturating_sub(body.x + 30)) * 6
+                    / usize::from(body.width.saturating_sub(30).max(1));
+                return match segment.min(5) {
+                    0 => Action::AddProvider,
+                    1 => Action::EditProvider,
+                    2 => Action::RemoveProvider,
+                    3 => Action::ToggleProvider,
+                    4 => Action::TestProvider,
+                    _ => Action::DiscoverModels,
+                };
+            }
+            Action::None
+        }
+        Page::Models => {
+            if row < body.y + 3 {
+                let segment =
+                    usize::from(column.saturating_sub(body.x)) * 5 / usize::from(body.width.max(1));
+                return match segment.min(4) {
+                    0 => Action::ApplyModels,
+                    1 => {
+                        app.model_draft = app
+                            .selected_models()
+                            .into_iter()
+                            .map(|model| model_id(model).to_owned())
+                            .collect();
+                        Action::None
+                    }
+                    2 => {
+                        app.model_draft.clear();
+                        Action::None
+                    }
+                    3 => Action::DiscoverModels,
+                    _ => Action::ProbeModels,
+                };
+            }
+            if row > body.y + 4 {
+                let index = row.saturating_sub(body.y + 5) as usize;
+                if index < app.selected_models().len() {
+                    app.model_index = index;
+                    if column < body.x + 8 {
+                        let model = model_id(app.selected_models()[index]).to_owned();
+                        if !app.model_draft.remove(&model) {
+                            app.model_draft.insert(model);
+                        }
+                    }
+                }
+            }
+            Action::None
+        }
+        Page::Benchmark => {
+            if row < body.y + 5 {
+                Action::StartBenchmark
+            } else {
+                Action::None
+            }
+        }
+        Page::Integrations => {
+            let relative_row = row.saturating_sub(body.y);
+            let card = (usize::from(relative_row) * 3 / usize::from(body.height.max(1))).min(2);
+            let relative_column = column.saturating_sub(body.x);
+            app.integration_index = match card {
+                0 => (usize::from(relative_column) * 3 / usize::from(body.width.max(1))).min(2),
+                1 => 3 + (usize::from(relative_column) * 2 / usize::from(body.width.max(1))).min(1),
+                _ => 5 + (usize::from(relative_column) * 2 / usize::from(body.width.max(1))).min(1),
+            };
+            integration_action(app.integration_index)
+        }
+        Page::System => {
+            let right = column >= body.x + body.width / 2;
+            let bottom = row >= body.y + body.height / 2;
+            app.system_index = usize::from(bottom) * 2 + usize::from(right);
+            if bottom && !right {
+                let within_card = column.saturating_sub(body.x);
+                if within_card < body.width / 4 {
+                    Action::RunDoctor
+                } else {
+                    Action::ConfirmRepair
+                }
+            } else if bottom {
+                let within_card = column.saturating_sub(body.x + body.width / 2);
+                if within_card < body.width / 4 {
+                    Action::RefreshCatalog
+                } else {
+                    Action::ShowLogs
+                }
+            } else {
+                system_action(app.system_index)
+            }
+        }
+        Page::Dashboard | Page::Diagnostics => Action::None,
+    }
+}
+
+fn integration_action(index: usize) -> Action {
+    match index {
+        0 => Action::ConnectCodexOfficial,
+        1 => Action::ConnectCodexCustom,
+        2 => Action::ConfirmUninstallCodex,
+        3 => Action::ConnectClaude,
+        4 => Action::ConfirmUninstallClaude,
+        5 => Action::ConnectDsh,
+        _ => Action::ConfirmUninstallDsh,
+    }
+}
+
+fn system_action(index: usize) -> Action {
+    match index {
+        0 => Action::ToggleGateway,
+        1 => Action::ConfirmUpdate,
+        2 => Action::ConfirmRepair,
+        _ => Action::RefreshCatalog,
+    }
+}
+
 fn handle_page_event(app: &mut App, code: KeyCode) -> Action {
     match app.page {
+        Page::Setup => Action::None,
         Page::Providers => handle_provider_event(app, code),
         Page::Models => handle_model_event(app, code),
         Page::Benchmark => handle_benchmark_event(app, code),
-        Page::Connections => match code {
+        Page::Integrations => match code {
+            KeyCode::Left | KeyCode::Up => {
+                app.integration_index = app.integration_index.saturating_sub(1);
+                Action::None
+            }
+            KeyCode::Right | KeyCode::Down => {
+                app.integration_index = (app.integration_index + 1).min(6);
+                Action::None
+            }
+            KeyCode::Enter => integration_action(app.integration_index),
             KeyCode::Char('1') => Action::ConnectCodexOfficial,
             KeyCode::Char('2') => Action::ConnectCodexCustom,
-            KeyCode::Char('3') => Action::ConnectClaude,
-            KeyCode::Char('4') => Action::ConnectDsh,
+            KeyCode::Char('3') => Action::ConfirmUninstallCodex,
+            KeyCode::Char('4') => Action::ConnectClaude,
+            KeyCode::Char('5') => Action::ConfirmUninstallClaude,
+            KeyCode::Char('6') => Action::ConnectDsh,
+            KeyCode::Char('7') => Action::ConfirmUninstallDsh,
+            _ => Action::None,
+        },
+        Page::System => match code {
+            KeyCode::Left if app.system_index % 2 == 1 => {
+                app.system_index -= 1;
+                Action::None
+            }
+            KeyCode::Right if app.system_index.is_multiple_of(2) => {
+                app.system_index += 1;
+                Action::None
+            }
+            KeyCode::Up if app.system_index >= 2 => {
+                app.system_index -= 2;
+                Action::None
+            }
+            KeyCode::Down if app.system_index < 2 => {
+                app.system_index += 2;
+                Action::None
+            }
+            KeyCode::Enter => system_action(app.system_index),
+            KeyCode::Char('u') => Action::ConfirmUpdate,
+            KeyCode::Char('f') => Action::RefreshCatalog,
+            KeyCode::Char('d') => Action::RunDoctor,
+            KeyCode::Char('F') => Action::ConfirmRepair,
+            KeyCode::Char('l') => Action::ShowLogs,
             _ => Action::None,
         },
         Page::Diagnostics => match code {
@@ -840,6 +1407,47 @@ fn handle_page_event(app: &mut App, code: KeyCode) -> Action {
             _ => Action::None,
         },
     }
+}
+
+fn handle_setup_event(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> Action {
+    if code == KeyCode::Esc {
+        app.page = Page::Dashboard;
+        return Action::None;
+    }
+    if code == KeyCode::Enter
+        || (code == KeyCode::Char('s') && modifiers.contains(KeyModifiers::CONTROL))
+    {
+        return Action::RunSetup;
+    }
+    match code {
+        KeyCode::Tab => app.setup.move_focus(1),
+        KeyCode::BackTab => app.setup.move_focus(-1),
+        KeyCode::Left if app.setup.focus == 0 => {
+            app.setup.provider.preset_index = app.setup.provider.preset_index.saturating_sub(1);
+        }
+        KeyCode::Right if app.setup.focus == 0 => {
+            app.setup.provider.preset_index =
+                (app.setup.provider.preset_index + 1).min(PROVIDER_PRESETS.len() - 1);
+        }
+        KeyCode::Left if app.setup.focus == 9 => {
+            app.setup.codex_mode = app.setup.codex_mode.saturating_sub(1);
+        }
+        KeyCode::Right if app.setup.focus == 9 => {
+            app.setup.codex_mode = (app.setup.codex_mode + 1).min(2);
+        }
+        KeyCode::Backspace if app.setup.focus != 9 => {
+            if let Some(value) = app.setup.provider.focused_text() {
+                value.pop();
+            }
+        }
+        KeyCode::Char(character) if app.setup.focus != 9 => {
+            if let Some(value) = app.setup.provider.focused_text() {
+                value.push(character);
+            }
+        }
+        _ => {}
+    }
+    Action::None
 }
 
 fn handle_provider_event(app: &mut App, code: KeyCode) -> Action {
@@ -881,6 +1489,14 @@ fn handle_model_event(app: &mut App, code: KeyCode) -> Action {
                 app.model_draft.insert(model);
             }
         }
+        KeyCode::Char('a') => {
+            app.model_draft = app
+                .selected_models()
+                .into_iter()
+                .map(|model| model_id(model).to_owned())
+                .collect();
+        }
+        KeyCode::Char('n') => app.model_draft.clear(),
         KeyCode::Char('d') => return Action::DiscoverModels,
         KeyCode::Char('p') => return Action::ProbeModels,
         KeyCode::Char('s') => return Action::ApplyModels,
@@ -893,6 +1509,19 @@ fn handle_benchmark_event(app: &mut App, code: KeyCode) -> Action {
     match code {
         KeyCode::Char('[') => select_provider(app, -1),
         KeyCode::Char(']') => select_provider(app, 1),
+        KeyCode::Char('-') => {
+            app.benchmark_timeout_seconds =
+                app.benchmark_timeout_seconds.saturating_sub(30).max(30);
+        }
+        KeyCode::Char('+') | KeyCode::Char('=') => {
+            app.benchmark_timeout_seconds = (app.benchmark_timeout_seconds + 30).min(600);
+        }
+        KeyCode::Char(',') => {
+            app.benchmark_output_tokens = app.benchmark_output_tokens.saturating_sub(25).max(25);
+        }
+        KeyCode::Char('.') => {
+            app.benchmark_output_tokens = (app.benchmark_output_tokens + 25).min(1_000);
+        }
         KeyCode::Char('b') => return Action::StartBenchmark,
         _ => {}
     }
@@ -918,6 +1547,14 @@ fn handle_dialog_event(app: &mut App, code: KeyCode, modifiers: KeyModifiers) ->
     match dialog {
         Dialog::ConfirmRemove(_) => match code {
             KeyCode::Char('y') | KeyCode::Char('Y') => Action::ConfirmRemoveProvider,
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                app.dialog = None;
+                Action::None
+            }
+            _ => Action::None,
+        },
+        Dialog::ConfirmOperation(_) => match code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => Action::RunConfirmedOperation,
             KeyCode::Char('n') | KeyCode::Char('N') => {
                 app.dialog = None;
                 Action::None
@@ -999,6 +1636,22 @@ async fn refresh_benchmark(app: &mut App) {
     app.benchmark_refreshed_at = Instant::now();
 }
 
+async fn refresh_quota(terminal: &mut TerminalSession, app: &mut App) {
+    app.busy = Some("Refreshing provider quota");
+    let _ = terminal.draw(app);
+    match run_json(&["quota", "--json"]).await {
+        Ok(document) => match document.as_array() {
+            Some(rows) => {
+                app.quota.clone_from(rows);
+                set_notice(app, false, "Provider quota refreshed.");
+            }
+            None => set_notice(app, true, "Quota refresh returned a non-array response."),
+        },
+        Err(error) => set_notice(app, true, &format!("Quota refresh failed: {error:#}")),
+    }
+    app.busy = None;
+}
+
 async fn run_action(
     terminal: &mut TerminalSession,
     app: &mut App,
@@ -1036,6 +1689,39 @@ async fn run_owned_action(
 ) -> Option<String> {
     let borrowed = args.iter().map(String::as_str).collect::<Vec<_>>();
     run_action(terminal, app, label, &borrowed, refresh_after).await
+}
+
+async fn apply_provider_changes(terminal: &mut TerminalSession, app: &mut App) {
+    if app.snapshot.providers.is_empty() {
+        run_action(
+            terminal,
+            app,
+            "Stopping gateway without providers",
+            &["service", "stop"],
+            true,
+        )
+        .await;
+        return;
+    }
+    let restarted = run_action(
+        terminal,
+        app,
+        "Applying provider configuration",
+        &["service", "restart"],
+        true,
+    )
+    .await
+    .is_some();
+    if restarted && app.snapshot.codex_install_mode.is_some() {
+        run_action(
+            terminal,
+            app,
+            "Refreshing Codex model catalog",
+            &["refresh-codex-catalog"],
+            true,
+        )
+        .await;
+    }
 }
 
 fn selected_configured_provider_id(app: &App) -> Option<String> {
@@ -1092,24 +1778,27 @@ async fn read_event() -> anyhow::Result<Option<Event>> {
 
 fn render(frame: &mut ratatui::Frame<'_>, app: &App) {
     let area = frame.area();
+    app.viewport.set(area);
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Length(3),
+            Constraint::Length(4),
             Constraint::Length(3),
             Constraint::Min(8),
             Constraint::Length(3),
         ])
         .split(area);
 
-    render_header(frame, sections[0]);
+    render_header(frame, sections[0], app);
     render_tabs(frame, sections[1], app.page);
     match app.page {
         Page::Dashboard => render_dashboard(frame, sections[2], app),
+        Page::Setup => render_setup(frame, sections[2], app),
         Page::Providers => render_providers(frame, sections[2], app),
         Page::Models => render_models(frame, sections[2], app),
         Page::Benchmark => render_benchmark(frame, sections[2], app),
-        Page::Connections => render_connections(frame, sections[2], app),
+        Page::Integrations => render_integrations(frame, sections[2], app),
+        Page::System => render_system(frame, sections[2], app),
         Page::Diagnostics => render_diagnostics(frame, sections[2], app),
     }
     render_footer(frame, sections[3], app);
@@ -1121,18 +1810,47 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &App) {
     }
 }
 
-fn render_header(frame: &mut ratatui::Frame<'_>, area: Rect) {
-    let title = Line::from(vec![
-        Span::styled(" CODEX ", Style::default().fg(Color::Black).bg(Color::Cyan)),
-        Span::styled(" MIXIN ", Style::default().fg(Color::Black).bg(Color::Blue)),
+fn render_header(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let gateway = if app.snapshot.gateway_running() {
         Span::styled(
-            format!("  Control Center  v{}", env!("CARGO_PKG_VERSION")),
-            Style::default().fg(Color::Gray),
-        ),
-    ]);
+            " ONLINE ",
+            Style::default().fg(Color::Black).bg(Color::Green),
+        )
+    } else {
+        Span::styled(
+            " OFFLINE ",
+            Style::default().fg(Color::White).bg(Color::Red),
+        )
+    };
+    let title = vec![
+        Line::from(vec![
+            Span::styled(
+                " CODEX ",
+                Style::default().fg(Color::Black).bg(Color::Cyan).bold(),
+            ),
+            Span::styled(
+                " MIXIN ",
+                Style::default().fg(Color::White).bg(Color::Blue).bold(),
+            ),
+            Span::styled(
+                format!("  v{}  ", env!("CARGO_PKG_VERSION")),
+                Style::default().fg(Color::Gray),
+            ),
+            gateway,
+        ]),
+        Line::from(Span::styled(
+            "  LOCAL AI ROUTING CONTROL DECK",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ];
     frame.render_widget(
         Paragraph::new(title)
-            .block(Block::default().borders(Borders::BOTTOM))
+            .block(
+                Block::default()
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::Blue)),
+            )
             .alignment(Alignment::Left),
         area,
     );
@@ -1153,8 +1871,146 @@ fn render_tabs(frame: &mut ratatui::Frame<'_>, area: Rect, page: Page) {
                     .fg(Color::Cyan)
                     .add_modifier(Modifier::BOLD | Modifier::UNDERLINED),
             )
-            .divider("|"),
+            .divider(Span::styled("|", Style::default().fg(Color::Blue))),
         area,
+    );
+}
+
+fn render_setup(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(38), Constraint::Percentage(62)])
+        .split(area);
+    let form = &app.setup;
+    let provider = &form.provider;
+    let required = provider.active_fields();
+    let completed = required
+        .iter()
+        .filter(|field| match field {
+            0 => true,
+            1 => true,
+            2 => !provider.display_name.trim().is_empty(),
+            3 => !provider.base_url.trim().is_empty(),
+            4 => true,
+            5 => !provider.api_key.trim().is_empty(),
+            6 => !provider.quota_username.trim().is_empty(),
+            7 => !provider.quota_workspace_id.trim().is_empty(),
+            8 => !provider.quota_auth_cookie.trim().is_empty(),
+            _ => false,
+        })
+        .count();
+    let ratio = completed as f64 / required.len().max(1) as f64;
+    let left = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Min(9), Constraint::Length(4)])
+        .split(columns[0]);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                "Connect your first provider",
+                Style::default().fg(Color::Cyan).bold(),
+            )),
+            Line::from(""),
+            Line::from("01  Provider and credentials"),
+            Line::from("02  Discover and select models"),
+            Line::from("03  Start the local gateway"),
+            Line::from("04  Connect Codex"),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Enter runs the complete setup inside this UI.",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ])
+        .block(
+            Block::default()
+                .title(" QUICK START ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::Blue)),
+        )
+        .wrap(Wrap { trim: true }),
+        left[0],
+    );
+    frame.render_widget(
+        Gauge::default()
+            .block(
+                Block::default()
+                    .title(" READY ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded),
+            )
+            .gauge_style(Style::default().fg(Color::Cyan).bg(Color::Black).bold())
+            .ratio(ratio)
+            .label(format!("{completed}/{} fields", required.len())),
+        left[1],
+    );
+
+    let provider_id = provider.provider_id();
+    let mut lines = vec![
+        form_line("Preset", provider.preset(), form.focus == 0, false),
+        form_line("Provider ID", &provider_id, form.focus == 1, false),
+    ];
+    if provider.preset() == "custom" {
+        lines.extend([
+            form_line(
+                "Display name",
+                &provider.display_name,
+                form.focus == 2,
+                false,
+            ),
+            form_line("Base URL", &provider.base_url, form.focus == 3, false),
+            form_line("Website", &provider.website_url, form.focus == 4, false),
+        ]);
+    }
+    lines.push(form_line(
+        "API key",
+        &provider.api_key,
+        form.focus == 5,
+        true,
+    ));
+    if provider.preset() == "baidu-oneapi" {
+        lines.push(form_line(
+            "Quota user",
+            &provider.quota_username,
+            form.focus == 6,
+            false,
+        ));
+    } else if provider.preset() == "opencode-go" {
+        lines.extend([
+            form_line(
+                "Workspace ID",
+                &provider.quota_workspace_id,
+                form.focus == 7,
+                false,
+            ),
+            form_line(
+                "Auth cookie",
+                &provider.quota_auth_cookie,
+                form.focus == 8,
+                true,
+            ),
+        ]);
+    }
+    lines.extend([
+        Line::from(""),
+        form_line("Codex mode", form.codex_mode_name(), form.focus == 9, false),
+        Line::from(""),
+        Line::from(Span::styled(
+            "Tab move  Left/Right choose  Enter run  Esc dashboard",
+            Style::default().fg(Color::DarkGray),
+        )),
+    ]);
+    frame.render_widget(
+        Paragraph::new(lines)
+            .block(
+                Block::default()
+                    .title(" SETUP WORKSPACE ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::Cyan)),
+            )
+            .wrap(Wrap { trim: true }),
+        columns[1],
     );
 }
 
@@ -1165,7 +2021,11 @@ fn render_dashboard(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         .split(area);
     let cards = Layout::default()
         .direction(Direction::Horizontal)
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .constraints([
+            Constraint::Percentage(36),
+            Constraint::Percentage(28),
+            Constraint::Percentage(36),
+        ])
         .split(sections[0]);
 
     let gateway = if app.snapshot.gateway_running() {
@@ -1207,6 +2067,7 @@ fn render_dashboard(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             Block::default()
                 .title(" Runtime ")
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::Blue)),
         )
         .wrap(Wrap { trim: true }),
@@ -1241,9 +2102,50 @@ fn render_dashboard(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             Block::default()
                 .title(" Providers ")
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::Cyan)),
         ),
         cards[1],
+    );
+
+    let quota_lines = if app.quota.is_empty() {
+        vec![
+            Line::from("No quota data"),
+            Line::from(Span::styled(
+                "Press c to refresh",
+                Style::default().fg(Color::DarkGray),
+            )),
+        ]
+    } else {
+        app.quota
+            .iter()
+            .take(5)
+            .map(|quota| {
+                let name = value_str(quota, "display_name", "-");
+                let currency = value_str(quota, "currency", "");
+                let remaining = quota
+                    .get("remaining")
+                    .and_then(Value::as_f64)
+                    .map(|value| format!("{value:.1} {currency}"))
+                    .unwrap_or_else(|| "unavailable".to_owned());
+                Line::from(vec![
+                    Span::styled(format!("{name:<14}"), Style::default().fg(Color::Gray)),
+                    Span::styled(remaining, Style::default().fg(Color::Green)),
+                ])
+            })
+            .collect()
+    };
+    frame.render_widget(
+        Paragraph::new(quota_lines)
+            .block(
+                Block::default()
+                    .title(" Quota ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
+                    .border_style(Style::default().fg(Color::Magenta)),
+            )
+            .wrap(Wrap { trim: true }),
+        cards[2],
     );
 
     let usage_rows = app
@@ -1300,7 +2202,8 @@ fn render_dashboard(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         .block(
             Block::default()
                 .title(" Token usage ")
-                .borders(Borders::ALL),
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded),
         ),
         sections[1],
     );
@@ -1346,7 +2249,12 @@ fn render_providers(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         List::new(items)
             .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
             .highlight_symbol("> ")
-            .block(Block::default().title(" Providers ").borders(Borders::ALL)),
+            .block(
+                Block::default()
+                    .title(" Providers ")
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded),
+            ),
         columns[0],
         &mut state,
     );
@@ -1408,7 +2316,8 @@ fn render_providers(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             .block(
                 Block::default()
                     .title(" Provider details ")
-                    .borders(Borders::ALL),
+                    .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded),
             )
             .wrap(Wrap { trim: true }),
         columns[1],
@@ -1416,10 +2325,35 @@ fn render_providers(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
 }
 
 fn render_models(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Length(3), Constraint::Min(5)])
+        .split(area);
     let provider = app.selected_provider();
     let title = provider
         .map(|provider| value_str(provider, "display_name", "-"))
         .unwrap_or("No provider");
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                format!(" {title}  "),
+                Style::default().fg(Color::Cyan).bold(),
+            ),
+            Span::styled(
+                " [SAVE] ",
+                Style::default().fg(Color::Black).bg(Color::Green).bold(),
+            ),
+            Span::raw("  [ALL]  [NONE]  [DISCOVER]  [PROBE]"),
+        ]))
+        .block(
+            Block::default()
+                .title(" MODEL WORKSPACE ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::Blue)),
+        ),
+        sections[0],
+    );
     let rows = app.selected_models().into_iter().map(|model| {
         let id = model_id(model);
         let selected = app.model_draft.contains(id);
@@ -1457,13 +2391,14 @@ fn render_models(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     .block(
         Block::default()
             .title(format!(" Models: {title} "))
-            .borders(Borders::ALL),
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded),
     );
     let mut state = TableState::default();
     if !app.selected_models().is_empty() {
         state.select(Some(app.model_index));
     }
-    frame.render_stateful_widget(table, area, &mut state);
+    frame.render_stateful_widget(table, sections[1], &mut state);
 }
 
 fn render_benchmark(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
@@ -1497,13 +2432,15 @@ fn render_benchmark(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 Span::raw(format!("    Next run  {selected_provider}")),
             ]),
             Line::from(format!(
-                "Current {current}    b start 120s / 100 output tokens"
+                "Current {current}    [b / click] RUN    timeout {}s [-/+]    output {} [,/.]",
+                app.benchmark_timeout_seconds, app.benchmark_output_tokens
             )),
         ])
         .block(
             Block::default()
                 .title(" Model benchmark ")
-                .borders(Borders::ALL),
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded),
         ),
         sections[0],
     );
@@ -1548,42 +2485,49 @@ fn render_benchmark(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             Row::new(["PROVIDER", "MODEL", "STATUS", "TTFT", "TOK/S"])
                 .style(Style::default().fg(Color::Cyan).bold()),
         )
-        .block(Block::default().title(" Results ").borders(Borders::ALL)),
+        .block(
+            Block::default()
+                .title(" Results ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded),
+        ),
         sections[1],
     );
 }
 
-fn render_connections(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+fn render_integrations(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let mode = app
         .snapshot
         .codex_install_mode
         .as_deref()
         .unwrap_or("not managed");
     let cards = Layout::default()
-        .direction(if area.width >= 90 {
-            Direction::Horizontal
-        } else {
-            Direction::Vertical
-        })
-        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Percentage(34),
+            Constraint::Percentage(33),
+            Constraint::Percentage(33),
+        ])
         .split(area);
     frame.render_widget(
         Paragraph::new(vec![
-            Line::from(Span::styled(
-                "Codex",
-                Style::default().fg(Color::Cyan).bold(),
-            )),
-            Line::from(format!("Current mode  {mode}")),
-            Line::from(""),
-            Line::from("1  Install official account mode"),
-            Line::from("2  Install custom-only mode"),
-            Line::from(""),
-            Line::from("A new Codex session is required after changing mode."),
+            Line::from(vec![
+                Span::styled("CODEX  ", Style::default().fg(Color::Cyan).bold()),
+                Span::styled(mode.to_owned(), Style::default().fg(Color::Green)),
+            ]),
+            Line::from(vec![
+                action_label(0, "[1] Official", app.integration_index),
+                Span::raw("   "),
+                action_label(1, "[2] Custom-only", app.integration_index),
+                Span::raw("   "),
+                action_label(2, "[3] Restore", app.integration_index),
+            ]),
         ])
         .block(
             Block::default()
-                .title(" Codex integration ")
+                .title(" CODEX ")
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::Blue)),
         )
         .wrap(Wrap { trim: true }),
@@ -1592,23 +2536,143 @@ fn render_connections(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(Span::styled(
-                "Developer clients",
-                Style::default().fg(Color::Cyan).bold(),
+                "CLAUDE CODE",
+                Style::default().fg(Color::Magenta).bold(),
             )),
-            Line::from(""),
-            Line::from("3  Install Claude Code connection"),
-            Line::from("4  Install DeepSeek Harness connection"),
-            Line::from(""),
-            Line::from("Existing settings are backed up by the CLI before mutation."),
+            Line::from(vec![
+                action_label(3, "[4] Install / refresh", app.integration_index),
+                Span::raw("       "),
+                action_label(4, "[5] Restore", app.integration_index),
+            ]),
         ])
         .block(
             Block::default()
-                .title(" Other clients ")
+                .title(" CLAUDE CODE ")
                 .borders(Borders::ALL)
-                .border_style(Style::default().fg(Color::Cyan)),
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::Magenta)),
         )
         .wrap(Wrap { trim: true }),
         cards[1],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                "DEEPSEEK HARNESS",
+                Style::default().fg(Color::Green).bold(),
+            )),
+            Line::from(vec![
+                action_label(5, "[6] Install / refresh", app.integration_index),
+                Span::raw("       "),
+                action_label(6, "[7] Remove", app.integration_index),
+            ]),
+        ])
+        .block(
+            Block::default()
+                .title(" DSH ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::Green)),
+        )
+        .wrap(Wrap { trim: true }),
+        cards[2],
+    );
+}
+
+fn render_system(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(area);
+    let top = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(rows[0]);
+    let bottom = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(50), Constraint::Percentage(50)])
+        .split(rows[1]);
+    let gateway_state = if app.snapshot.gateway_running() {
+        "RUNNING"
+    } else {
+        "STOPPED"
+    };
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                gateway_state,
+                Style::default().fg(Color::Green).bold(),
+            )),
+            Line::from("[s] Start/stop    [R] Restart"),
+        ])
+        .block(
+            Block::default()
+                .title(" GATEWAY ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(if app.system_index == 0 {
+                    Color::Yellow
+                } else {
+                    Color::Green
+                })),
+        ),
+        top[0],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(format!("Installed v{}", env!("CARGO_PKG_VERSION"))),
+            Line::from("[u] Check, download, and install latest CLI"),
+        ])
+        .block(
+            Block::default()
+                .title(" UPDATE ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(if app.system_index == 1 {
+                    Color::Yellow
+                } else {
+                    Color::Cyan
+                })),
+        )
+        .wrap(Wrap { trim: true }),
+        top[1],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from("[d] Inspect only    [F] Repair safe issues"),
+            Line::from("Repair requires confirmation and shows the full report."),
+        ])
+        .block(
+            Block::default()
+                .title(" HEALTH ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(if app.system_index == 2 {
+                    Color::Yellow
+                } else {
+                    Color::DarkGray
+                })),
+        )
+        .wrap(Wrap { trim: true }),
+        bottom[0],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from("[f] Rebuild Codex model catalog"),
+            Line::from("[l] Open the latest 200 gateway log lines"),
+        ])
+        .block(
+            Block::default()
+                .title(" MAINTENANCE ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(if app.system_index == 3 {
+                    Color::Yellow
+                } else {
+                    Color::Blue
+                })),
+        ),
+        bottom[1],
     );
 }
 
@@ -1630,6 +2694,22 @@ fn render_dialog(
                 Line::from(""),
                 Line::from(Span::styled(
                     "y confirm    n/Esc cancel",
+                    Style::default().fg(Color::Red),
+                )),
+            ],
+        ),
+        Dialog::ConfirmOperation(operation) => (
+            operation.title(),
+            vec![
+                Line::from(Span::styled(
+                    operation.title(),
+                    Style::default().fg(Color::Yellow).bold(),
+                )),
+                Line::from(""),
+                Line::from(operation.description()),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "[y] Confirm    [n] Cancel",
                     Style::default().fg(Color::Red),
                 )),
             ],
@@ -1708,6 +2788,7 @@ fn render_dialog(
                 Block::default()
                     .title(title)
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(Color::Cyan)),
             )
             .wrap(Wrap { trim: true }),
@@ -1722,6 +2803,7 @@ fn render_diagnostics(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 Block::default()
                     .title(" Health check output ")
                     .borders(Borders::ALL)
+                    .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(Color::Yellow)),
             )
             .scroll((app.diagnostics_scroll, 0))
@@ -1748,11 +2830,17 @@ fn render_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         ))
     };
     let keys = match app.page {
-        Page::Dashboard => "Up/Down token usage  s start/stop  r refresh  x doctor  ? help",
+        Page::Dashboard => {
+            "Up/Down token usage  c quota  s start/stop  r refresh  x doctor  ? help"
+        }
+        Page::Setup => "Tab field  Left/Right option  Enter setup  Esc dashboard",
         Page::Providers => "a add  u edit  D delete  e enable  t test  m discover  ? help",
-        Page::Models => "[ ] provider  Up/Down model  Space toggle  s save  d discover  p probe",
-        Page::Benchmark => "[ ] provider  b start benchmark  r refresh  ? help  q quit",
-        Page::Connections => "1 Codex official  2 Codex custom  3 Claude  4 DSH  ? help",
+        Page::Models => {
+            "[ ] provider  Up/Down row  Space/click toggle  a all  n none  s save  d discover"
+        }
+        Page::Benchmark => "[ ] provider  b/click run  -/+ timeout  ,/. output tokens  r refresh",
+        Page::Integrations => "1-3 Codex  4-5 Claude  6-7 DSH  click or press a number",
+        Page::System => "s/R gateway  u update  d doctor  F repair  f catalog  l logs",
         Page::Diagnostics => "x doctor  PgUp/PgDn scroll  r refresh  ? help  q quit",
     };
     frame.render_widget(
@@ -1778,10 +2866,13 @@ fn render_help(frame: &mut ratatui::Frame<'_>, area: Rect) {
     frame.render_widget(
         Paragraph::new(vec![
             Line::from("Tab / Left / Right   Change page"),
+            Line::from("Mouse click          Tabs, rows, and page actions"),
             Line::from("a / u / D            Add, edit, delete provider"),
             Line::from("e / t / m            Enable, test, discover provider"),
             Line::from("Space / s / p        Toggle, save, probe models"),
             Line::from("b                    Benchmark selected provider"),
+            Line::from("1-7                  Install or restore integrations"),
+            Line::from("u / F / f / l        Update, repair, catalog, logs"),
             Line::from("r                    Refresh status"),
             Line::from("s / R                Start-stop / restart gateway"),
             Line::from("x                    Run quick doctor"),
@@ -1796,6 +2887,7 @@ fn render_help(frame: &mut ratatui::Frame<'_>, area: Rect) {
             Block::default()
                 .title(" Keyboard shortcuts ")
                 .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::Cyan)),
         )
         .wrap(Wrap { trim: true }),
@@ -1829,6 +2921,17 @@ fn form_line(label: &str, value: &str, focused: bool, secret: bool) -> Line<'sta
         Span::styled(format!("{label:<15}"), Style::default().fg(Color::DarkGray)),
         Span::styled(format!(" {shown} "), style),
     ])
+}
+
+fn action_label(index: usize, label: &'static str, selected: usize) -> Span<'static> {
+    if index == selected {
+        Span::styled(
+            format!(" {label} "),
+            Style::default().fg(Color::Black).bg(Color::Cyan).bold(),
+        )
+    } else {
+        Span::styled(label, Style::default().fg(Color::Gray))
+    }
 }
 
 fn model_id(model: &Value) -> &str {
@@ -1930,5 +3033,69 @@ mod tests {
         let args = form.args().unwrap();
         assert!(!args.iter().any(|argument| argument == "--base-url"));
         assert!(!args.iter().any(|argument| argument == "--display-name"));
+    }
+
+    #[test]
+    fn unconfigured_launch_opens_the_setup_workspace() {
+        let snapshot = Snapshot {
+            status: serde_json::json!({"configured": false}),
+            providers: Vec::new(),
+            codex_install_mode: None,
+            benchmark: None,
+            usage: Vec::new(),
+            refreshed_at: Instant::now(),
+        };
+        let app = App::new(snapshot, StartPage::Dashboard);
+        assert_eq!(app.page, Page::Setup);
+    }
+
+    #[test]
+    fn mouse_selects_tabs_and_integration_actions() {
+        let snapshot = Snapshot {
+            status: serde_json::json!({"configured": true, "gateway": "stopped"}),
+            providers: Vec::new(),
+            codex_install_mode: None,
+            benchmark: None,
+            usage: Vec::new(),
+            refreshed_at: Instant::now(),
+        };
+        let mut app = App::new(snapshot, StartPage::Dashboard);
+        app.viewport.set(Rect::new(0, 0, 100, 30));
+        assert_eq!(
+            handle_mouse_event(&mut app, MouseEventKind::Down(MouseButton::Left), 8, 5),
+            Action::None
+        );
+        assert_eq!(app.page, Page::Setup);
+        app.page = Page::Integrations;
+        assert_eq!(
+            handle_mouse_event(&mut app, MouseEventKind::Down(MouseButton::Left), 90, 8),
+            Action::ConfirmUninstallCodex
+        );
+    }
+
+    #[test]
+    fn setup_workspace_renders_at_eighty_by_twenty_four() {
+        let snapshot = Snapshot {
+            status: serde_json::json!({"configured": false}),
+            providers: Vec::new(),
+            codex_install_mode: None,
+            benchmark: None,
+            usage: Vec::new(),
+            refreshed_at: Instant::now(),
+        };
+        let app = App::new(snapshot, StartPage::Setup);
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+        let rendered = terminal
+            .backend()
+            .buffer()
+            .content()
+            .iter()
+            .map(ratatui::buffer::Cell::symbol)
+            .collect::<String>();
+        assert!(rendered.contains("SETUP WORKSPACE"));
+        assert!(rendered.contains("LOCAL AI ROUTING CONTROL DECK"));
+        assert!(rendered.contains(" Logs "));
     }
 }

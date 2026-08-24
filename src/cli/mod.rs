@@ -673,9 +673,30 @@ impl From<ProviderPreset> for CliProviderPreset {
     }
 }
 
+fn requested_tui_start(cli: &Cli, interactive: bool) -> Option<tui::StartPage> {
+    if cli.no_tui {
+        None
+    } else {
+        match &cli.command {
+            None => Some(tui::StartPage::Dashboard),
+            Some(Command::Setup {
+                preset: None,
+                key: None,
+                quota_username: None,
+                codex_mode: None,
+                no_start: false,
+            }) if interactive => Some(tui::StartPage::Setup),
+            _ => None,
+        }
+    }
+}
+
 pub(crate) async fn entrypoint() {
     let cli = Cli::parse();
-    let launch_tui = cli.command.is_none() && !cli.no_tui;
+    let tui_start = requested_tui_start(
+        &cli,
+        io::stdin().is_terminal() && io::stdout().is_terminal(),
+    );
     let foreground_log_file = match &cli.command {
         Some(Command::Start {
             daemon: false,
@@ -718,8 +739,8 @@ pub(crate) async fn entrypoint() {
             "gateway process starting"
         );
     }
-    let result = if launch_tui {
-        tui::run().await
+    let result = if let Some(start_page) = tui_start {
+        tui::run(start_page).await
     } else {
         run(cli).await
     };

@@ -15,9 +15,10 @@ use codex_mixin::config::{GatewayConfig, ThinkingMode};
 use codex_mixin::provider::{ProviderPreset, ProviderRegistry};
 use codex_mixin::server::AppState;
 
-use super::Cli;
 use super::claude::*;
+use super::tui::StartPage;
 use super::update::{cli_release_target, release_version_from_redirect, replace_executable};
+use super::{Cli, requested_tui_start};
 use super::{atomic_file::*, codex::*, runtime::*, service::*, status::*};
 
 #[test]
@@ -218,6 +219,16 @@ fn no_tui_flag_preserves_plain_default_command() {
     let explicit = Cli::try_parse_from(["codex-mixin", "info"]).unwrap();
     assert!(!explicit.no_tui);
     assert!(explicit.command.is_some());
+}
+
+#[test]
+fn bare_setup_opens_the_same_tui_control_center() {
+    let setup = Cli::try_parse_from(["codex-mixin", "setup"]).unwrap();
+    assert_eq!(requested_tui_start(&setup, true), Some(StartPage::Setup));
+    assert_eq!(requested_tui_start(&setup, false), None);
+
+    let plain = Cli::try_parse_from(["codex-mixin", "--no-tui", "setup"]).unwrap();
+    assert_eq!(requested_tui_start(&plain, true), None);
 }
 
 #[test]
