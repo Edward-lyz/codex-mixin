@@ -59,14 +59,11 @@ pub(super) async fn ensure_managed_ducx() -> anyhow::Result<PathBuf> {
         .stderr(Stdio::inherit())
         .spawn()
         .context("failed to start DUCX login")?;
-    let mut waited = 0;
     let status = loop {
         if let Some(status) = child.try_wait().context("failed to monitor DUCX login")? {
             break status;
         }
         tokio::time::sleep(Duration::from_secs(5)).await;
-        waited += 5;
-        println!("Still waiting for DUCX login ({waited}s elapsed); continue after scanning.");
     };
     ensure!(status.success(), "DUCX login failed with {status}");
     ensure!(

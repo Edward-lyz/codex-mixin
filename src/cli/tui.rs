@@ -82,10 +82,23 @@ impl Page {
     }
 
     fn tab_title(self, compact: bool) -> &'static str {
-        if compact && self == Self::System {
-            "Sys"
-        } else {
-            self.title()
+        if compact {
+            return if self == Self::System {
+                "Sys"
+            } else {
+                self.title()
+            };
+        }
+        match self {
+            Self::Dashboard => "\u{2302} Home",
+            Self::Setup => "\u{2295} Setup",
+            Self::Providers => "\u{25c6} Providers",
+            Self::Models => "\u{2261} Models",
+            Self::Benchmark => "\u{21af} Speed",
+            Self::Fusion => "\u{2726} Fusion",
+            Self::Integrations => "\u{25c7} Apps",
+            Self::System => "\u{2699} System",
+            Self::Diagnostics => "\u{2637} Logs",
         }
     }
 }
@@ -1778,10 +1791,10 @@ fn handle_mouse_event(app: &mut App, kind: MouseEventKind, column: u16, row: u16
     let area = app.viewport.get();
     let tabs_y = area.y + 4;
     if row == tabs_y {
-        let compact_tabs = area.width < 90;
+        let compact_tabs = area.width < 110;
         let mut start = area.x;
         for page in Page::ALL {
-            let end = start + page.tab_title(compact_tabs).len() as u16 + 2;
+            let end = start + Span::raw(page.tab_title(compact_tabs)).width() as u16 + 2;
             if column >= start && column < end {
                 app.page = page;
                 return Action::None;
@@ -1969,7 +1982,15 @@ fn handle_dialog_mouse_event(app: &mut App, kind: MouseEventKind, column: u16, r
     if kind != MouseEventKind::Down(MouseButton::Left) {
         return Action::None;
     }
-    let popup = dialog_popup(app.viewport.get());
+    let editor_open = matches!(
+        app.dialog.as_ref(),
+        Some(Dialog::AddProvider(_) | Dialog::EditProvider(_))
+    );
+    let popup = if editor_open {
+        provider_editor_form_area(app.viewport.get())
+    } else {
+        dialog_popup(app.viewport.get())
+    };
     if column <= popup.x
         || column >= popup.x + popup.width.saturating_sub(1)
         || row <= popup.y
@@ -2610,9 +2631,9 @@ fn show_operation_progress(
     app: &mut App,
     line: &str,
 ) -> anyhow::Result<()> {
-    let message = line.strip_prefix("MIXIN_PROGRESS ").unwrap_or(line).trim();
-    if !message.is_empty() {
-        app.notice = message.to_owned();
+    let message = line.strip_prefix("MIXIN_PROGRESS ").unwrap_or(line);
+    if !message.trim().is_empty() {
+        app.notice = message.trim().to_owned();
         if !app.diagnostics.is_empty() {
             app.diagnostics.push('\n');
         }
@@ -2744,6 +2765,14 @@ async fn read_event() -> anyhow::Result<Option<Event>> {
 fn render(frame: &mut ratatui::Frame<'_>, app: &App) {
     let area = frame.area();
     app.viewport.set(area);
+    if app.busy.is_some() {
+        render_busy(frame, area, app);
+        return;
+    }
+    if let Some(dialog @ (Dialog::AddProvider(_) | Dialog::EditProvider(_))) = &app.dialog {
+        render_provider_editor(frame, area, app, dialog);
+        return;
+    }
     let sections = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
@@ -2774,20 +2803,17 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &App) {
     if let Some(dialog) = &app.dialog {
         render_dialog(frame, area, dialog, &app.notice, app.notice_is_error);
     }
-    if app.busy.is_some() {
-        render_busy(frame, area, app);
-    }
 }
 
 fn render_header(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let gateway = if app.snapshot.gateway_running() {
         Span::styled(
-            " ONLINE ",
+            " \u{25cf} ONLINE ",
             Style::default().fg(Color::Black).bg(Color::Green),
         )
     } else {
         Span::styled(
-            " OFFLINE ",
+            " \u{25cb} OFFLINE ",
             Style::default().fg(Color::White).bg(Color::Red),
         )
     };
@@ -2827,7 +2853,7 @@ fn render_header(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
 
 fn render_tabs(frame: &mut ratatui::Frame<'_>, area: Rect, page: Page) {
     let selected = Page::ALL.iter().position(|item| *item == page).unwrap_or(0);
-    let compact_tabs = area.width < 90;
+    let compact_tabs = area.width < 110;
     let titles = Page::ALL
         .iter()
         .map(|item| Line::from(format!(" {} ", item.tab_title(compact_tabs))))
@@ -3033,9 +3059,9 @@ fn render_dashboard(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         .split(sections[0]);
 
     let gateway = if app.snapshot.gateway_running() {
-        Span::styled("RUNNING", Style::default().fg(Color::Green).bold())
+        Span::styled("\u{25cf} RUNNING", Style::default().fg(Color::Green).bold())
     } else {
-        Span::styled("STOPPED", Style::default().fg(Color::Red).bold())
+        Span::styled("\u{25cb} STOPPED", Style::default().fg(Color::Red).bold())
     };
     let endpoint = app
         .snapshot
@@ -3069,7 +3095,7 @@ fn render_dashboard(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         ])
         .block(
             Block::default()
-                .title(" Runtime ")
+                .title(" \u{25cf} Runtime ")
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::Blue)),
@@ -3104,7 +3130,7 @@ fn render_dashboard(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         ])
         .block(
             Block::default()
-                .title(" Providers ")
+                .title(" \u{25c6} Providers ")
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded)
                 .border_style(Style::default().fg(Color::Cyan)),
@@ -3143,7 +3169,7 @@ fn render_dashboard(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         Paragraph::new(quota_lines)
             .block(
                 Block::default()
-                    .title(" Quota ")
+                    .title(" \u{25c8} Quota ")
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded)
                     .border_style(Style::default().fg(Color::Magenta)),
@@ -3206,7 +3232,7 @@ fn render_dashboard(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         .block(
             Block::default()
                 .title(format!(
-                    " Token usage  {}  selected {} ",
+                    " \u{3a3} Token usage  {}  selected {} ",
                     USAGE_RANGE_LABELS.join("  "),
                     USAGE_RANGE_LABELS[app.usage_range]
                 ))
@@ -3241,7 +3267,10 @@ fn render_providers(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 Style::default().bold(),
             )),
             Line::from(vec![
-                Span::styled(format!("{readiness:<10}"), Style::default().fg(color)),
+                Span::styled(
+                    format!("\u{25cf} {readiness:<8}"),
+                    Style::default().fg(color),
+                ),
                 Span::styled(
                     value_str(provider, "id", "-"),
                     Style::default().fg(Color::DarkGray),
@@ -3256,10 +3285,10 @@ fn render_providers(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     frame.render_stateful_widget(
         List::new(items)
             .highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
-            .highlight_symbol("> ")
+            .highlight_symbol("\u{25b8} ")
             .block(
                 Block::default()
-                    .title(" Providers ")
+                    .title(" \u{25c6} Providers ")
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded),
             ),
@@ -3395,7 +3424,7 @@ fn render_providers(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         Paragraph::new(lines)
             .block(
                 Block::default()
-                    .title(" Provider details ")
+                    .title(" \u{25c7} Provider details ")
                     .borders(Borders::ALL)
                     .border_type(BorderType::Rounded),
             )
@@ -3872,6 +3901,95 @@ fn render_system(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     );
 }
 
+fn render_provider_editor(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App, dialog: &Dialog) {
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Length(3),
+            Constraint::Min(10),
+            Constraint::Length(3),
+        ])
+        .split(area);
+    render_header(frame, sections[0], app);
+    let operation = if matches!(dialog, Dialog::AddProvider(_)) {
+        "Add provider"
+    } else {
+        "Edit provider"
+    };
+    frame.render_widget(
+        Paragraph::new(Line::from(vec![
+            Span::styled(
+                " \u{2190} Providers ",
+                Style::default().fg(Color::Cyan).bold(),
+            ),
+            Span::styled("/", Style::default().fg(Color::DarkGray)),
+            Span::styled(format!(" {operation}"), Style::default().fg(Color::White)),
+        ]))
+        .block(Block::default().borders(Borders::BOTTOM)),
+        sections[1],
+    );
+    let (guide_area, form_area) = provider_editor_columns(sections[2]);
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                "\u{25c6} PROVIDER WORKSPACE",
+                Style::default().fg(Color::Blue).bold(),
+            )),
+            Line::from(""),
+            Line::from("Configure routing, credentials, authentication, and upstream behavior."),
+            Line::from(""),
+            Line::from(Span::styled(
+                "Keys",
+                Style::default().fg(Color::Cyan).bold(),
+            )),
+            Line::from("\u{2191}/\u{2193} or Tab   Move"),
+            Line::from("\u{2190}/\u{2192} or Space Choose"),
+            Line::from("Enter         Save"),
+            Line::from("Esc           Back"),
+        ])
+        .block(
+            Block::default()
+                .title(" GUIDE ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::Blue)),
+        )
+        .wrap(Wrap { trim: true }),
+        guide_area,
+    );
+    render_dialog(frame, form_area, dialog, &app.notice, app.notice_is_error);
+    frame.render_widget(
+        Paragraph::new(vec![Line::from(Span::styled(
+            " [ENTER] Save   [ESC] Back   Mouse and keyboard enabled",
+            Style::default().fg(Color::DarkGray),
+        ))])
+        .block(Block::default().borders(Borders::TOP)),
+        sections[3],
+    );
+}
+
+fn provider_editor_columns(area: Rect) -> (Rect, Rect) {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(30), Constraint::Percentage(70)])
+        .split(area);
+    (columns[0], columns[1])
+}
+
+fn provider_editor_form_area(area: Rect) -> Rect {
+    let sections = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([
+            Constraint::Length(4),
+            Constraint::Length(3),
+            Constraint::Min(10),
+            Constraint::Length(3),
+        ])
+        .split(area);
+    provider_editor_columns(sections[2]).1
+}
+
 fn render_dialog(
     frame: &mut ratatui::Frame<'_>,
     area: Rect,
@@ -3879,7 +3997,11 @@ fn render_dialog(
     notice: &str,
     notice_is_error: bool,
 ) {
-    let popup = dialog_popup(area);
+    let popup = if matches!(dialog, Dialog::AddProvider(_) | Dialog::EditProvider(_)) {
+        area
+    } else {
+        dialog_popup(area)
+    };
     frame.render_widget(Clear, popup);
     let (title, lines) = match dialog {
         Dialog::ConfirmRemove(id) => (
@@ -3984,7 +4106,7 @@ fn render_dialog(
                 Line::from(""),
                 Line::from("[ ADD ]  [ CANCEL ]   Tab/Up/Down field  Left/Right/Space choose"),
             ]);
-            (" Add provider ", lines)
+            (" \u{2295} ADD PROVIDER ", lines)
         }
         Dialog::EditProvider(form) => {
             let mut lines = vec![
@@ -4069,7 +4191,7 @@ fn render_dialog(
                 Line::from("Empty secrets preserve them unless Clear is enabled."),
                 Line::from("[ SAVE ]  [ CANCEL ]   Tab/Up/Down field  Left/Right/Space choose"),
             ]);
-            (" Edit provider ", lines)
+            (" \u{25c6} EDIT PROVIDER ", lines)
         }
     };
     let mut content = lines;
@@ -4166,7 +4288,7 @@ fn render_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
 }
 
 fn render_busy(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
-    let popup = centered_rect(area, area.width.min(88), area.height.min(18));
+    let popup = operation_viewport(area);
     let visible_lines = usize::from(popup.height.saturating_sub(7));
     let output = app
         .diagnostics
@@ -4193,7 +4315,7 @@ fn render_busy(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     lines.extend(output);
     lines.push(Line::from(""));
     lines.push(Line::from(Span::styled(
-        "Esc / Ctrl-C cancel  ·  progress continues live",
+        "Esc / Ctrl-C cancel  \u{b7}  progress continues live",
         Style::default().fg(Color::Yellow),
     )));
     frame.render_widget(Clear, popup);
@@ -4201,7 +4323,7 @@ fn render_busy(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         Paragraph::new(lines)
             .block(
                 Block::default()
-                    .title(" OPERATION ")
+                    .title(" \u{25c9} OPERATION ")
                     .borders(Borders::ALL)
                     .border_type(BorderType::Double)
                     .border_style(Style::default().fg(Color::Cyan)),
@@ -4209,6 +4331,10 @@ fn render_busy(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             .wrap(Wrap { trim: false }),
         popup,
     );
+}
+
+fn operation_viewport(area: Rect) -> Rect {
+    area
 }
 
 fn render_help(frame: &mut ratatui::Frame<'_>, area: Rect) {
@@ -4276,7 +4402,14 @@ fn form_line(label: &str, value: &str, focused: bool, secret: bool) -> Line<'sta
         Style::default()
     };
     Line::from(vec![
-        Span::styled(format!("{label:<15}"), Style::default().fg(Color::DarkGray)),
+        Span::styled(
+            format!("{} {label:<13}", if focused { "\u{203a}" } else { " " }),
+            Style::default().fg(if focused {
+                Color::Cyan
+            } else {
+                Color::DarkGray
+            }),
+        ),
         Span::styled(format!(" {shown} "), style),
     ])
 }
@@ -4480,7 +4613,7 @@ mod tests {
         let mut app = App::new(snapshot, StartPage::Dashboard);
         app.viewport.set(Rect::new(0, 0, 100, 30));
         app.dialog = Some(Dialog::AddProvider(AddProviderForm::default()));
-        let popup = dialog_popup(app.viewport.get());
+        let popup = provider_editor_form_area(app.viewport.get());
 
         assert_eq!(
             handle_mouse_event(
@@ -4506,6 +4639,40 @@ mod tests {
             ),
             Action::SubmitDialog
         );
+    }
+
+    #[test]
+    fn provider_editor_replaces_the_primary_workspace() {
+        let snapshot = Snapshot {
+            status: serde_json::json!({"configured": true, "gateway": "stopped"}),
+            providers: Vec::new(),
+            codex_install_mode: None,
+            benchmark: None,
+            usage: Vec::new(),
+            models: Vec::new(),
+            fusion_profile: None,
+            refreshed_at: Instant::now(),
+        };
+        let mut app = App::new(snapshot, StartPage::Dashboard);
+        app.dialog = Some(Dialog::AddProvider(AddProviderForm::default()));
+        let backend = ratatui::backend::TestBackend::new(100, 30);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let mut rendered = String::new();
+        for row in 0..buffer.area.height {
+            for column in 0..buffer.area.width {
+                if let Some(cell) = buffer.cell((column, row)) {
+                    rendered.push_str(cell.symbol());
+                }
+            }
+            rendered.push('\n');
+        }
+        assert!(rendered.contains("\u{2190} Providers / Add provider"));
+        assert!(rendered.contains("PROVIDER WORKSPACE"));
+        assert!(!rendered.contains("\u{21af} Speed"));
     }
 
     #[test]
@@ -4747,6 +4914,54 @@ mod tests {
             }),
             viewport,
         ));
+    }
+
+    #[test]
+    fn operation_uses_the_full_terminal_for_qr_output() {
+        let terminal = Rect::new(0, 0, 120, 50);
+
+        assert_eq!(operation_viewport(terminal), terminal);
+    }
+
+    #[test]
+    fn operation_keeps_the_complete_qr_visible_on_a_large_terminal() {
+        let snapshot = Snapshot {
+            status: serde_json::json!({"configured": true, "gateway": "stopped"}),
+            providers: Vec::new(),
+            codex_install_mode: None,
+            benchmark: None,
+            usage: Vec::new(),
+            models: Vec::new(),
+            fusion_profile: None,
+            refreshed_at: Instant::now(),
+        };
+        let mut app = App::new(snapshot, StartPage::Dashboard);
+        app.busy = Some("DUCX authentication");
+        app.diagnostics = (0..32)
+            .map(|row| match row {
+                0 => "QR-TOP".to_owned(),
+                31 => "QR-BOTTOM".to_owned(),
+                _ => format!("QR-{row:02}  \u{2588}\u{2588}  \u{2588}\u{2588}"),
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        let backend = ratatui::backend::TestBackend::new(120, 50);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        terminal.draw(|frame| render(frame, &app)).unwrap();
+
+        let buffer = terminal.backend().buffer();
+        let mut rendered = String::new();
+        for row in 0..buffer.area.height {
+            for column in 0..buffer.area.width {
+                if let Some(cell) = buffer.cell((column, row)) {
+                    rendered.push_str(cell.symbol());
+                }
+            }
+            rendered.push('\n');
+        }
+        assert!(rendered.contains("QR-TOP"));
+        assert!(rendered.contains("QR-BOTTOM"));
     }
 
     #[test]
