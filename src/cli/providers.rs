@@ -31,6 +31,7 @@ pub(super) use models::{
 #[derive(Clone, Debug)]
 pub(super) struct AddProviderOptions {
     pub(super) preset: String,
+    pub(super) auxiliary_model_upstream: Option<bool>,
     pub(super) id: Option<String>,
     pub(super) key: String,
     pub(super) display_name: Option<String>,
@@ -166,6 +167,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                 "gateway_bind": config.gateway_bind,
                 "gateway_auth_configured": config.gateway_api_key.is_some(),
                 "codex_install_mode": codex_install_mode,
+                "fusion_profile": config.fusion_profiles.first(),
                 "providers": providers,
             }))?
         );

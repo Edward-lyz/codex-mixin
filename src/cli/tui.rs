@@ -1,10 +1,12 @@
 use std::cell::Cell;
 use std::collections::HashSet;
 use std::io::{self, IsTerminal, Stdout};
+use std::path::PathBuf;
 use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
+use codex_mixin::provider::catalog_model_slug;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
@@ -37,6 +39,7 @@ const PROVIDER_ACTION_LABELS: [&str; 6] = [
     "m discover",
 ];
 const MODEL_ACTION_LABELS: [&str; 5] = ["[SAVE]", "[ALL]", "[NONE]", "[DISCOVER]", "[PROBE]"];
+const USAGE_RANGE_LABELS: [&str; 4] = ["[1D]", "[7D]", "[30D]", "[ALL]"];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 enum Page {
@@ -45,18 +48,20 @@ enum Page {
     Providers,
     Models,
     Benchmark,
+    Fusion,
     Integrations,
     System,
     Diagnostics,
 }
 
 impl Page {
-    const ALL: [Self; 8] = [
+    const ALL: [Self; 9] = [
         Self::Dashboard,
         Self::Setup,
         Self::Providers,
         Self::Models,
         Self::Benchmark,
+        Self::Fusion,
         Self::Integrations,
         Self::System,
         Self::Diagnostics,
@@ -69,9 +74,18 @@ impl Page {
             Self::Providers => "Providers",
             Self::Models => "Models",
             Self::Benchmark => "Speed",
+            Self::Fusion => "Fusion",
             Self::Integrations => "Apps",
             Self::System => "System",
             Self::Diagnostics => "Logs",
+        }
+    }
+
+    fn tab_title(self, compact: bool) -> &'static str {
+        if compact && self == Self::System {
+            "Sys"
+        } else {
+            self.title()
         }
     }
 }
@@ -89,11 +103,13 @@ struct Snapshot {
     codex_install_mode: Option<String>,
     benchmark: Option<Value>,
     usage: Vec<Value>,
+    models: Vec<Value>,
+    fusion_profile: Option<Value>,
     refreshed_at: Instant,
 }
 
 impl Snapshot {
-    async fn load() -> anyhow::Result<Self> {
+    async fn load(usage_range: usize) -> anyhow::Result<Self> {
         let status = run_json(&["info", "--json"]).await?;
         let configured = status
             .get("configured")
@@ -124,20 +140,70 @@ impl Snapshot {
             None
         };
         let usage = if gateway_running {
-            run_json(&["usage", "--json"])
-                .await?
+            let usage = match usage_range {
+                0 => run_json(&["usage", "--json", "--days", "1"]).await?,
+                1 => run_json(&["usage", "--json", "--days", "7"]).await?,
+                2 => run_json(&["usage", "--json", "--days", "30"]).await?,
+                _ => run_json(&["usage", "--json"]).await?,
+            };
+            usage
                 .as_array()
                 .context("usage output is not an array")?
                 .clone()
         } else {
             Vec::new()
         };
+        let mut models = providers
+            .iter()
+            .filter(|provider| value_str(provider, "kind", "") == "configured")
+            .filter(|provider| {
+                provider
+                    .get("enabled")
+                    .and_then(Value::as_bool)
+                    .unwrap_or(false)
+            })
+            .flat_map(|provider| {
+                let provider_id = value_str(provider, "id", "");
+                let cached = provider
+                    .get("cached_models")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default();
+                provider
+                    .get("selected_models")
+                    .and_then(Value::as_array)
+                    .map(Vec::as_slice)
+                    .unwrap_or_default()
+                    .iter()
+                    .filter_map(Value::as_str)
+                    .map(move |model_id| {
+                        let display_name = cached
+                            .iter()
+                            .find(|model| value_str(model, "id", "") == model_id)
+                            .map(|model| value_str(model, "display_name", model_id))
+                            .unwrap_or(model_id);
+                        serde_json::json!({
+                            "id": catalog_model_slug(model_id, provider_id),
+                            "display_name": display_name,
+                        })
+                    })
+            })
+            .collect::<Vec<_>>();
+        if configured {
+            models.extend(load_official_fusion_models().await?);
+        }
+        let fusion_profile = provider_document
+            .get("fusion_profile")
+            .cloned()
+            .filter(|profile| !profile.is_null());
         Ok(Self {
             status,
             providers,
             codex_install_mode,
             benchmark,
             usage,
+            models,
+            fusion_profile,
             refreshed_at: Instant::now(),
         })
     }
@@ -162,6 +228,30 @@ impl Snapshot {
     }
 }
 
+async fn load_official_fusion_models() -> anyhow::Result<Vec<Value>> {
+    let home = std::env::var_os("HOME").context("HOME is required to load official models")?;
+    let cache = PathBuf::from(home).join(".codex/models_cache.json");
+    if !tokio::fs::try_exists(&cache).await? {
+        return Ok(Vec::new());
+    }
+    let document: Value = serde_json::from_slice(&tokio::fs::read(&cache).await?)?;
+    let models = document
+        .get("models")
+        .and_then(Value::as_array)
+        .context("official models cache does not contain a models array")?;
+    Ok(models
+        .iter()
+        .filter(|model| value_str(model, "visibility", "list") != "hide")
+        .filter_map(|model| {
+            let slug = model.get("slug").and_then(Value::as_str)?;
+            Some(serde_json::json!({
+                "id": format!("official:{slug}"),
+                "display_name": value_str(model, "display_name", slug),
+            }))
+        })
+        .collect())
+}
+
 struct App {
     page: Page,
     snapshot: Snapshot,
@@ -169,6 +259,7 @@ struct App {
     model_index: usize,
     model_draft: HashSet<String>,
     usage_offset: usize,
+    usage_range: usize,
     notice: String,
     notice_is_error: bool,
     diagnostics: String,
@@ -184,12 +275,14 @@ struct App {
     benchmark_timeout_seconds: u64,
     benchmark_output_tokens: u64,
     quota: Vec<Value>,
+    fusion: FusionForm,
 }
 
 impl App {
     fn new(snapshot: Snapshot, start_page: StartPage) -> Self {
         let providers = snapshot.providers.clone();
         let configured = snapshot.configured();
+        let fusion = FusionForm::new(&snapshot);
         let mut app = Self {
             page: match start_page {
                 StartPage::Dashboard if configured => Page::Dashboard,
@@ -201,6 +294,7 @@ impl App {
             model_index: 0,
             model_draft: HashSet::new(),
             usage_offset: 0,
+            usage_range: 3,
             notice: "Ready".to_owned(),
             notice_is_error: false,
             diagnostics: "Press x to run a quick health check.".to_owned(),
@@ -216,6 +310,7 @@ impl App {
             benchmark_timeout_seconds: 120,
             benchmark_output_tokens: 100,
             quota: Vec::new(),
+            fusion,
         };
         app.load_model_draft();
         app
@@ -271,6 +366,7 @@ enum Dialog {
     EditProvider(EditProviderForm),
     ConfirmRemove(String),
     ConfirmOperation(ConfirmOperation),
+    ConfirmDisableFusion(String),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -326,6 +422,10 @@ struct AddProviderForm {
     quota_username: String,
     quota_workspace_id: String,
     quota_auth_cookie: String,
+    image_generation_path: String,
+    baidu_auth_bridge: usize,
+    baidu_code_report: bool,
+    auxiliary_model_upstream: bool,
     existing_ids: HashSet<String>,
 }
 
@@ -340,10 +440,41 @@ struct SetupForm {
 struct EditProviderForm {
     focus: usize,
     id: String,
+    preset: String,
+    enabled: bool,
     display_name: String,
     base_url: String,
     website_url: String,
+    website_url_configured: bool,
+    image_generation_path: String,
+    image_generation_configured: bool,
     api_key: String,
+    api_key_configured: bool,
+    clear_key: bool,
+    quota_username: String,
+    quota_workspace_id: String,
+    original_quota_workspace_id: String,
+    quota_auth_cookie: String,
+    quota_auth_cookie_configured: bool,
+    clear_quota: bool,
+    baidu_auth_bridge: usize,
+    baidu_code_report: bool,
+    auxiliary_model_upstream: bool,
+}
+
+#[derive(Debug)]
+struct FusionForm {
+    profile_id: String,
+    loaded_profile_id: Option<String>,
+    panel_models: HashSet<String>,
+    model_index: usize,
+    judge_model: String,
+    final_model: String,
+    min_successful: usize,
+    timeout_ms: u64,
+    show_intermediate_results: bool,
+    panel_tools_enabled: bool,
+    editing_profile_id: bool,
 }
 
 struct TerminalSession {
@@ -406,6 +537,8 @@ enum Action {
     AddProvider,
     EditProvider,
     RemoveProvider,
+    MoveProviderUp,
+    MoveProviderDown,
     ConfirmRemoveProvider,
     SubmitDialog,
     RunSetup,
@@ -424,6 +557,9 @@ enum Action {
     ShowLogs,
     RefreshQuota,
     RunDoctor,
+    SaveFusion,
+    ConfirmDisableFusion,
+    DisableFusion,
 }
 
 impl AddProviderForm {
@@ -445,10 +581,10 @@ impl AddProviderForm {
 
     fn active_fields(&self) -> &'static [usize] {
         match self.preset() {
-            "custom" => &[0, 1, 2, 3, 4, 5],
-            "baidu-oneapi" => &[0, 1, 5, 6],
-            "opencode-go" => &[0, 1, 5, 7, 8],
-            _ => &[0, 1, 5],
+            "custom" => &[0, 1, 2, 3, 4, 5, 12, 11],
+            "baidu-oneapi" => &[0, 1, 5, 6, 9, 10, 12, 11],
+            "opencode-go" => &[0, 1, 5, 7, 8, 12, 11],
+            _ => &[0, 1, 5, 12, 11],
         }
     }
 
@@ -490,7 +626,36 @@ impl AddProviderForm {
             6 => Some(&mut self.quota_username),
             7 => Some(&mut self.quota_workspace_id),
             8 => Some(&mut self.quota_auth_cookie),
+            12 => Some(&mut self.image_generation_path),
             _ => None,
+        }
+    }
+
+    fn toggle_focused(&mut self, offset: isize) {
+        match self.focus {
+            0 => {
+                self.preset_index = (self.preset_index as isize + offset)
+                    .clamp(0, PROVIDER_PRESETS.len().saturating_sub(1) as isize)
+                    as usize;
+                if !self.active_fields().contains(&self.focus) {
+                    self.focus = self.active_fields()[0];
+                }
+            }
+            9 => {
+                self.baidu_auth_bridge =
+                    (self.baidu_auth_bridge as isize + offset).clamp(0, 1) as usize;
+            }
+            10 => self.baidu_code_report = !self.baidu_code_report,
+            11 => self.auxiliary_model_upstream = !self.auxiliary_model_upstream,
+            _ => {}
+        }
+    }
+
+    fn baidu_auth_bridge_name(&self) -> &'static str {
+        if self.baidu_auth_bridge == 0 {
+            "Disabled"
+        } else {
+            "DUCX loopback"
         }
     }
 
@@ -547,6 +712,29 @@ impl AddProviderForm {
                 args.extend([flag.to_owned(), value.trim().to_owned()]);
             }
         }
+        if !self.image_generation_path.trim().is_empty() {
+            args.extend([
+                "--image-generation-path".to_owned(),
+                self.image_generation_path.trim().to_owned(),
+            ]);
+        }
+        args.extend([
+            "--auxiliary-model-upstream".to_owned(),
+            self.auxiliary_model_upstream.to_string(),
+        ]);
+        if preset == "baidu-oneapi" {
+            args.extend([
+                "--baidu-auth-bridge".to_owned(),
+                if self.baidu_auth_bridge == 0 {
+                    "disabled"
+                } else {
+                    "ducx_loopback"
+                }
+                .to_owned(),
+                "--baidu-code-report".to_owned(),
+                self.baidu_code_report.to_string(),
+            ]);
+        }
         Ok(args)
     }
 
@@ -567,7 +755,7 @@ impl SetupForm {
 
     fn active_fields(&self) -> Vec<usize> {
         let mut fields = self.provider.active_fields().to_vec();
-        fields.push(9);
+        fields.push(13);
         fields
     }
 
@@ -579,7 +767,7 @@ impl SetupForm {
             .unwrap_or(0);
         self.focus =
             fields[(position as isize + offset).rem_euclid(fields.len() as isize) as usize];
-        if self.focus != 9 {
+        if self.focus != 13 {
             self.provider.focus = self.focus;
         }
     }
@@ -602,58 +790,361 @@ impl EditProviderForm {
         (provider.get("kind").and_then(Value::as_str) == Some("configured")).then(|| Self {
             focus: 0,
             id: value_str(provider, "id", "-").to_owned(),
+            preset: value_str(provider, "preset_id", "custom").to_owned(),
+            enabled: provider
+                .get("enabled")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
             display_name: value_str(provider, "display_name", "").to_owned(),
             base_url: value_str(provider, "base_url", "").to_owned(),
             website_url: value_str(provider, "website_url", "").to_owned(),
+            website_url_configured: provider
+                .get("website_url")
+                .is_some_and(|value| !value.is_null()),
+            image_generation_path: value_str(provider, "image_generation_path", "").to_owned(),
+            image_generation_configured: provider
+                .get("image_generation_path")
+                .is_some_and(|value| !value.is_null()),
             api_key: String::new(),
+            api_key_configured: provider
+                .get("api_key_configured")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            clear_key: false,
+            quota_username: value_str(provider, "quota_username", "").to_owned(),
+            quota_workspace_id: value_str(provider, "quota_workspace_id", "").to_owned(),
+            original_quota_workspace_id: value_str(provider, "quota_workspace_id", "").to_owned(),
+            quota_auth_cookie: String::new(),
+            quota_auth_cookie_configured: provider
+                .get("quota_auth_cookie_configured")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            clear_quota: false,
+            baidu_auth_bridge: usize::from(
+                value_str(provider, "baidu_auth_bridge", "disabled") == "ducx_loopback",
+            ),
+            baidu_code_report: provider
+                .get("baidu_code_report")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            auxiliary_model_upstream: provider
+                .get("auxiliary_model_upstream")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
         })
     }
 
-    fn focused_text(&mut self) -> &mut String {
+    fn active_fields(&self) -> &'static [usize] {
+        match self.preset.as_str() {
+            "custom" => &[0, 1, 2, 3, 4, 5, 9],
+            "baidu-oneapi" => &[3, 4, 5, 6, 7, 8, 9],
+            "opencode-go" => &[3, 4, 5, 10, 11, 12, 9],
+            _ => &[3, 4, 5, 9],
+        }
+    }
+
+    fn move_focus(&mut self, offset: isize) {
+        let fields = self.active_fields();
+        let position = fields
+            .iter()
+            .position(|field| *field == self.focus)
+            .unwrap_or(0);
+        self.focus =
+            fields[(position as isize + offset).rem_euclid(fields.len() as isize) as usize];
+    }
+
+    fn focused_text(&mut self) -> Option<&mut String> {
         match self.focus {
-            0 => &mut self.display_name,
-            1 => &mut self.base_url,
-            2 => &mut self.website_url,
-            _ => &mut self.api_key,
+            0 => Some(&mut self.display_name),
+            1 => Some(&mut self.base_url),
+            2 => Some(&mut self.website_url),
+            3 => Some(&mut self.image_generation_path),
+            4 => Some(&mut self.api_key),
+            6 => Some(&mut self.quota_username),
+            10 => Some(&mut self.quota_workspace_id),
+            11 => Some(&mut self.quota_auth_cookie),
+            _ => None,
+        }
+    }
+
+    fn toggle_focused(&mut self, offset: isize) {
+        match self.focus {
+            5 if self.api_key_configured => {
+                self.clear_key = !self.clear_key;
+                if self.clear_key {
+                    self.api_key.clear();
+                }
+            }
+            7 => {
+                self.baidu_auth_bridge =
+                    (self.baidu_auth_bridge as isize + offset).clamp(0, 1) as usize;
+            }
+            8 => self.baidu_code_report = !self.baidu_code_report,
+            9 => self.auxiliary_model_upstream = !self.auxiliary_model_upstream,
+            12 if self.quota_auth_cookie_configured => {
+                self.clear_quota = !self.clear_quota;
+                if self.clear_quota {
+                    self.quota_auth_cookie.clear();
+                    self.quota_workspace_id.clear();
+                }
+            }
+            _ => {}
         }
     }
 
     fn args(&self) -> anyhow::Result<Vec<String>> {
-        anyhow::ensure!(
-            !self.display_name.trim().is_empty(),
-            "display name is required"
-        );
-        anyhow::ensure!(!self.base_url.trim().is_empty(), "base URL is required");
-        let mut args = vec![
-            "providers".to_owned(),
-            "update".to_owned(),
-            self.id.clone(),
-            "--display-name".to_owned(),
-            self.display_name.trim().to_owned(),
-            "--base-url".to_owned(),
-            self.base_url.trim().to_owned(),
-        ];
-        if !self.website_url.trim().is_empty() {
+        let mut args = vec!["providers".to_owned(), "update".to_owned(), self.id.clone()];
+        if self.preset == "custom" {
+            anyhow::ensure!(
+                !self.display_name.trim().is_empty(),
+                "display name is required"
+            );
+            anyhow::ensure!(!self.base_url.trim().is_empty(), "base URL is required");
             args.extend([
-                "--website-url".to_owned(),
-                self.website_url.trim().to_owned(),
+                "--display-name".to_owned(),
+                self.display_name.trim().to_owned(),
+                "--base-url".to_owned(),
+                self.base_url.trim().to_owned(),
+            ]);
+            if !self.website_url.trim().is_empty() || self.website_url_configured {
+                args.extend([
+                    "--website-url".to_owned(),
+                    self.website_url.trim().to_owned(),
+                ]);
+            }
+        }
+        if self.clear_key {
+            anyhow::ensure!(
+                !self.enabled,
+                "disable the provider before clearing its API key"
+            );
+            args.push("--clear-key".to_owned());
+        } else if !self.api_key.trim().is_empty() {
+            args.extend(["--key".to_owned(), self.api_key.trim().to_owned()]);
+        }
+        if self.image_generation_path.trim().is_empty() {
+            if self.image_generation_configured {
+                args.push("--clear-image-generation".to_owned());
+            }
+        } else {
+            args.extend([
+                "--image-generation-path".to_owned(),
+                self.image_generation_path.trim().to_owned(),
             ]);
         }
-        if !self.api_key.trim().is_empty() {
-            args.extend(["--key".to_owned(), self.api_key.trim().to_owned()]);
+        args.extend([
+            "--auxiliary-model-upstream".to_owned(),
+            self.auxiliary_model_upstream.to_string(),
+        ]);
+        if self.preset == "baidu-oneapi" {
+            anyhow::ensure!(
+                !self.quota_username.trim().is_empty(),
+                "quota username is required"
+            );
+            args.extend([
+                "--quota-username".to_owned(),
+                self.quota_username.trim().to_owned(),
+                "--baidu-auth-bridge".to_owned(),
+                if self.baidu_auth_bridge == 0 {
+                    "disabled"
+                } else {
+                    "ducx_loopback"
+                }
+                .to_owned(),
+                "--baidu-code-report".to_owned(),
+                self.baidu_code_report.to_string(),
+            ]);
+        }
+        if self.preset == "opencode-go" {
+            if self.clear_quota {
+                args.push("--clear-quota".to_owned());
+            } else if self.quota_workspace_id.trim() != self.original_quota_workspace_id
+                || !self.quota_auth_cookie.trim().is_empty()
+            {
+                anyhow::ensure!(
+                    !self.quota_workspace_id.trim().is_empty()
+                        && !self.quota_auth_cookie.trim().is_empty(),
+                    "workspace ID and auth cookie must be entered together"
+                );
+                args.extend([
+                    "--quota-workspace-id".to_owned(),
+                    self.quota_workspace_id.trim().to_owned(),
+                    "--quota-auth-cookie".to_owned(),
+                    self.quota_auth_cookie.trim().to_owned(),
+                ]);
+            }
+        }
+        Ok(args)
+    }
+}
+
+impl FusionForm {
+    fn new(snapshot: &Snapshot) -> Self {
+        let available = snapshot
+            .models
+            .iter()
+            .filter_map(|model| model.get("id").and_then(Value::as_str))
+            .filter(|id| !id.starts_with("mixin/fusion/"))
+            .map(str::to_owned)
+            .collect::<Vec<_>>();
+        let profile = snapshot.fusion_profile.as_ref();
+        let loaded_profile_id = profile
+            .and_then(|profile| profile.get("id"))
+            .and_then(Value::as_str)
+            .map(str::to_owned);
+        let stored_panels = profile
+            .and_then(|profile| profile.get("panel_models"))
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .filter(|model| available.iter().any(|available| available == model))
+            .map(str::to_owned)
+            .take(8)
+            .collect::<HashSet<_>>();
+        let panel_models = if stored_panels.is_empty() {
+            available.iter().take(3).cloned().collect()
+        } else {
+            stored_panels
+        };
+        let stored_judge = profile
+            .and_then(|profile| profile.get("judge_model"))
+            .and_then(Value::as_str)
+            .filter(|model| available.iter().any(|available| available == model));
+        let judge_model = stored_judge
+            .or_else(|| available.first().map(String::as_str))
+            .unwrap_or_default()
+            .to_owned();
+        let stored_final = profile
+            .and_then(|profile| profile.get("final_model"))
+            .and_then(Value::as_str)
+            .filter(|model| available.iter().any(|available| available == model));
+        let final_model = stored_final
+            .or_else(|| {
+                available
+                    .get(1)
+                    .or_else(|| available.first())
+                    .map(String::as_str)
+            })
+            .unwrap_or_default()
+            .to_owned();
+        Self {
+            profile_id: loaded_profile_id
+                .clone()
+                .unwrap_or_else(|| "default".to_owned()),
+            loaded_profile_id,
+            panel_models,
+            model_index: 0,
+            judge_model,
+            final_model,
+            min_successful: profile
+                .and_then(|profile| profile.get("min_successful"))
+                .and_then(Value::as_u64)
+                .unwrap_or(1) as usize,
+            timeout_ms: profile
+                .and_then(|profile| profile.get("timeout_ms"))
+                .and_then(Value::as_u64)
+                .unwrap_or(300_000),
+            show_intermediate_results: profile
+                .and_then(|profile| profile.get("show_intermediate_results"))
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+            panel_tools_enabled: profile
+                .and_then(|profile| profile.get("panel_tools"))
+                .and_then(|tools| tools.get("enabled"))
+                .and_then(Value::as_bool)
+                .unwrap_or(true),
+            editing_profile_id: false,
+        }
+    }
+
+    fn selected_model<'a>(&self, models: &'a [Value]) -> Option<&'a str> {
+        fusion_models(models)
+            .get(self.model_index)
+            .and_then(|model| model.get("id"))
+            .and_then(Value::as_str)
+    }
+
+    fn args(&self, models: &[Value]) -> anyhow::Result<Vec<String>> {
+        let id = self.profile_id.trim();
+        anyhow::ensure!(
+            !id.is_empty() && !id.contains('/'),
+            "invalid Fusion profile ID"
+        );
+        anyhow::ensure!(
+            (1..=8).contains(&self.panel_models.len()),
+            "select between 1 and 8 Panel models"
+        );
+        anyhow::ensure!(
+            !self.judge_model.is_empty() && !self.final_model.is_empty(),
+            "select Judge and Final models"
+        );
+        anyhow::ensure!(
+            (1..=self.panel_models.len()).contains(&self.min_successful),
+            "minimum successful Panels must not exceed the Panel count"
+        );
+        let ordered_panels = models
+            .iter()
+            .filter_map(|model| model.get("id").and_then(Value::as_str))
+            .filter(|model| self.panel_models.contains(*model))
+            .collect::<Vec<_>>();
+        let profile = serde_json::json!({
+            "id": id,
+            "panel_models": ordered_panels,
+            "judge_model": self.judge_model,
+            "final_model": self.final_model,
+            "min_successful": self.min_successful,
+            "max_completion_tokens": 2048,
+            "timeout_ms": self.timeout_ms,
+            "show_intermediate_results": self.show_intermediate_results,
+            "panel_tools": {
+                "enabled": self.panel_tools_enabled,
+                "max_rounds": 16,
+                "max_calls_per_model": 64
+            }
+        });
+        let mut args = vec![
+            "fusion".to_owned(),
+            "set".to_owned(),
+            "--profile-json".to_owned(),
+            serde_json::to_string(&profile)?,
+        ];
+        if let Some(loaded_id) = &self.loaded_profile_id {
+            args.extend(["--replace-id".to_owned(), loaded_id.clone()]);
         }
         Ok(args)
     }
 }
 
 #[allow(clippy::cognitive_complexity)]
-pub(super) async fn run(start_page: StartPage) -> anyhow::Result<()> {
+pub(super) async fn run(
+    start_page: StartPage,
+    installed_cli_path: Option<PathBuf>,
+) -> anyhow::Result<()> {
     if !io::stdin().is_terminal() || !io::stdout().is_terminal() {
         anyhow::bail!("the full-screen UI requires a terminal; use --no-tui for plain output")
     }
 
-    let snapshot = Snapshot::load().await?;
+    let snapshot = Snapshot::load(3).await?;
     let mut app = App::new(snapshot, start_page);
+    if let Some(path) = installed_cli_path {
+        let bin = path
+            .parent()
+            .context("installed CLI target has no parent directory")?;
+        let bin_on_path = std::env::var_os("PATH")
+            .map(|paths| std::env::split_paths(&paths).any(|entry| entry == bin))
+            .unwrap_or(false);
+        let installation_notice = if bin_on_path {
+            format!("Installed command at {}", path.display())
+        } else {
+            format!(
+                "Installed at {}; add {} to PATH",
+                path.display(),
+                bin.display()
+            )
+        };
+        set_notice(&mut app, !bin_on_path, &installation_notice);
+    }
     let mut terminal = TerminalSession::enter()?;
     terminal.draw(&app)?;
     if app.snapshot.gateway_running() {
@@ -729,6 +1220,49 @@ pub(super) async fn run(start_page: StartPage) -> anyhow::Result<()> {
                         .is_some();
                         if changed {
                             apply_provider_changes(&mut terminal, &mut app).await;
+                        }
+                    }
+                }
+            }
+            Action::MoveProviderUp | Action::MoveProviderDown => {
+                let offset = if action == Action::MoveProviderUp {
+                    -1
+                } else {
+                    1
+                };
+                if let Some(id) = selected_configured_provider_id(&app) {
+                    let configured_ids = app
+                        .snapshot
+                        .providers
+                        .iter()
+                        .filter(|provider| value_str(provider, "kind", "") == "configured")
+                        .filter_map(|provider| provider.get("id").and_then(Value::as_str))
+                        .map(str::to_owned)
+                        .collect::<Vec<_>>();
+                    if let Some(current) = configured_ids.iter().position(|current| current == &id)
+                    {
+                        let target = (current as isize + offset)
+                            .clamp(0, configured_ids.len().saturating_sub(1) as isize)
+                            as usize;
+                        if target != current {
+                            let mut reordered = configured_ids;
+                            reordered.swap(current, target);
+                            let mut args = vec!["providers".to_owned(), "reorder".to_owned()];
+                            args.extend(reordered);
+                            if run_owned_action(
+                                &mut terminal,
+                                &mut app,
+                                "Reordering providers",
+                                args,
+                                true,
+                            )
+                            .await
+                            .is_some()
+                            {
+                                app.provider_index =
+                                    (app.provider_index as isize + offset).max(0) as usize;
+                                apply_provider_changes(&mut terminal, &mut app).await;
+                            }
                         }
                     }
                 }
@@ -809,6 +1343,55 @@ pub(super) async fn run(start_page: StartPage) -> anyhow::Result<()> {
                         }
                     }
                     app.load_model_draft();
+                }
+            }
+            Action::SaveFusion => match app.fusion.args(&app.snapshot.models) {
+                Ok(args) => {
+                    if run_owned_action(
+                        &mut terminal,
+                        &mut app,
+                        "Saving Fusion profile",
+                        args,
+                        true,
+                    )
+                    .await
+                    .is_some()
+                    {
+                        apply_provider_changes(&mut terminal, &mut app).await;
+                        app.fusion = FusionForm::new(&app.snapshot);
+                    }
+                }
+                Err(error) => set_notice(&mut app, true, &error.to_string()),
+            },
+            Action::ConfirmDisableFusion => {
+                if let Some(id) = app.fusion.loaded_profile_id.clone() {
+                    app.dialog = Some(Dialog::ConfirmDisableFusion(id));
+                } else {
+                    set_notice(&mut app, true, "No Fusion profile is configured.");
+                }
+            }
+            Action::DisableFusion => {
+                let id = match app.dialog.take() {
+                    Some(Dialog::ConfirmDisableFusion(id)) => id,
+                    _ => continue,
+                };
+                if run_owned_action(
+                    &mut terminal,
+                    &mut app,
+                    "Disabling Fusion",
+                    vec![
+                        "fusion".to_owned(),
+                        "delete".to_owned(),
+                        "--id".to_owned(),
+                        id,
+                    ],
+                    true,
+                )
+                .await
+                .is_some()
+                {
+                    apply_provider_changes(&mut terminal, &mut app).await;
+                    app.fusion = FusionForm::new(&app.snapshot);
                 }
             }
             Action::AddProvider => {
@@ -1134,6 +1717,9 @@ fn handle_event(app: &mut App, event: Event) -> Action {
     if app.page == Page::Setup {
         return handle_setup_event(app, key.code, key.modifiers);
     }
+    if app.page == Page::Fusion {
+        return handle_fusion_event(app, key.code);
+    }
     match key.code {
         KeyCode::Char('q') => Action::Quit,
         KeyCode::Char('?') => {
@@ -1152,7 +1738,7 @@ fn handle_event(app: &mut App, event: Event) -> Action {
 #[allow(clippy::cognitive_complexity)]
 fn handle_mouse_event(app: &mut App, kind: MouseEventKind, column: u16, row: u16) -> Action {
     if app.dialog.is_some() {
-        return Action::None;
+        return handle_dialog_mouse_event(app, kind, column, row);
     }
     if matches!(kind, MouseEventKind::ScrollUp | MouseEventKind::ScrollDown) {
         let offset = if kind == MouseEventKind::ScrollUp {
@@ -1171,6 +1757,13 @@ fn handle_mouse_event(app: &mut App, kind: MouseEventKind, column: u16, row: u16
                 select_provider(app, offset);
                 Action::None
             }
+            Page::Fusion => {
+                app.fusion.model_index = (app.fusion.model_index as isize + offset).clamp(
+                    0,
+                    fusion_models(&app.snapshot.models).len().saturating_sub(1) as isize,
+                ) as usize;
+                Action::None
+            }
             Page::Diagnostics => {
                 app.diagnostics_scroll =
                     (app.diagnostics_scroll as isize + offset * 3).max(0) as u16;
@@ -1185,9 +1778,10 @@ fn handle_mouse_event(app: &mut App, kind: MouseEventKind, column: u16, row: u16
     let area = app.viewport.get();
     let tabs_y = area.y + 4;
     if row == tabs_y {
+        let compact_tabs = area.width < 90;
         let mut start = area.x;
         for page in Page::ALL {
-            let end = start + page.title().len() as u16 + 2;
+            let end = start + page.tab_title(compact_tabs).len() as u16 + 2;
             if column >= start && column < end {
                 app.page = page;
                 return Action::None;
@@ -1222,8 +1816,11 @@ fn handle_mouse_event(app: &mut App, kind: MouseEventKind, column: u16, row: u16
             if line < fields.len().saturating_sub(1) {
                 app.setup.focus = fields[line];
                 app.setup.provider.focus = app.setup.focus;
+                if matches!(app.setup.focus, 0 | 9 | 10 | 11) {
+                    app.setup.provider.toggle_focused(1);
+                }
             } else if line == fields.len() {
-                app.setup.focus = 9;
+                app.setup.focus = 13;
             }
             Action::None
         }
@@ -1289,6 +1886,37 @@ fn handle_mouse_event(app: &mut App, kind: MouseEventKind, column: u16, row: u16
                 Action::None
             }
         }
+        Page::Fusion => {
+            let split = body.x + body.width.saturating_mul(58) / 100;
+            if column < split {
+                if row > body.y + 1 {
+                    let index = row.saturating_sub(body.y + 2) as usize;
+                    if index < fusion_models(&app.snapshot.models).len() {
+                        app.fusion.model_index = index;
+                        return handle_fusion_event(app, KeyCode::Char(' '));
+                    }
+                }
+                return Action::None;
+            }
+            let content_row = row.saturating_sub(body.y + 1);
+            match content_row {
+                0 => {
+                    app.fusion.editing_profile_id = true;
+                    Action::None
+                }
+                7 => {
+                    app.fusion.show_intermediate_results = !app.fusion.show_intermediate_results;
+                    Action::None
+                }
+                8 => {
+                    app.fusion.panel_tools_enabled = !app.fusion.panel_tools_enabled;
+                    Action::None
+                }
+                10 if column < split + 12 => Action::SaveFusion,
+                10 => Action::ConfirmDisableFusion,
+                _ => Action::None,
+            }
+        }
         Page::Integrations => {
             let relative_row = row.saturating_sub(body.y);
             let card = (usize::from(relative_row) * 3 / usize::from(body.height.max(1))).min(2);
@@ -1322,7 +1950,106 @@ fn handle_mouse_event(app: &mut App, kind: MouseEventKind, column: u16, row: u16
                 system_action(app.system_index)
             }
         }
-        Page::Dashboard | Page::Diagnostics => Action::None,
+        Page::Dashboard => {
+            if row == body.y + 10 {
+                let start = body.x + 15;
+                if let Some(range) = clicked_action_label(column, start, &USAGE_RANGE_LABELS) {
+                    app.usage_range = range;
+                    app.usage_offset = 0;
+                    return Action::Refresh;
+                }
+            }
+            Action::None
+        }
+        Page::Diagnostics => Action::None,
+    }
+}
+
+fn handle_dialog_mouse_event(app: &mut App, kind: MouseEventKind, column: u16, row: u16) -> Action {
+    if kind != MouseEventKind::Down(MouseButton::Left) {
+        return Action::None;
+    }
+    let popup = dialog_popup(app.viewport.get());
+    if column <= popup.x
+        || column >= popup.x + popup.width.saturating_sub(1)
+        || row <= popup.y
+        || row >= popup.y + popup.height.saturating_sub(1)
+    {
+        return Action::None;
+    }
+    let content_row = row.saturating_sub(popup.y + 1) as usize;
+    let Some(dialog) = app.dialog.as_mut() else {
+        return Action::None;
+    };
+    match dialog {
+        Dialog::AddProvider(form) => {
+            let fields = form.active_fields();
+            if let Some(field) = fields.get(content_row) {
+                form.focus = *field;
+                if matches!(form.focus, 0 | 9 | 10 | 11) {
+                    form.toggle_focused(1);
+                }
+                return Action::None;
+            }
+            if content_row == fields.len() + 1 {
+                if column < popup.x + 10 {
+                    return Action::SubmitDialog;
+                }
+                if column < popup.x + 22 {
+                    app.dialog = None;
+                }
+            }
+            Action::None
+        }
+        Dialog::EditProvider(form) => {
+            let fields = form.active_fields();
+            if let Some(field) = content_row
+                .checked_sub(2)
+                .and_then(|index| fields.get(index))
+            {
+                form.focus = *field;
+                if matches!(form.focus, 5 | 7 | 8 | 9 | 12) {
+                    form.toggle_focused(1);
+                }
+                return Action::None;
+            }
+            if content_row == fields.len() + 4 {
+                if column < popup.x + 11 {
+                    return Action::SubmitDialog;
+                }
+                if column < popup.x + 23 {
+                    app.dialog = None;
+                }
+            }
+            Action::None
+        }
+        Dialog::ConfirmRemove(_) => {
+            if content_row == 3 {
+                if column < popup.x + 16 {
+                    return Action::ConfirmRemoveProvider;
+                }
+                app.dialog = None;
+            }
+            Action::None
+        }
+        Dialog::ConfirmOperation(_) => {
+            if content_row == 4 {
+                if column < popup.x + 18 {
+                    return Action::RunConfirmedOperation;
+                }
+                app.dialog = None;
+            }
+            Action::None
+        }
+        Dialog::ConfirmDisableFusion(_) => {
+            if content_row == 3 {
+                if column < popup.x + 18 {
+                    return Action::DisableFusion;
+                }
+                app.dialog = None;
+            }
+            Action::None
+        }
     }
 }
 
@@ -1362,6 +2089,7 @@ fn clicked_action_label(column: u16, start: u16, labels: &[&str]) -> Option<usiz
 fn handle_page_event(app: &mut App, code: KeyCode) -> Action {
     match app.page {
         Page::Setup => Action::None,
+        Page::Fusion => Action::None,
         Page::Providers => handle_provider_event(app, code),
         Page::Models => handle_model_event(app, code),
         Page::Benchmark => handle_benchmark_event(app, code),
@@ -1421,6 +2149,16 @@ fn handle_page_event(app: &mut App, code: KeyCode) -> Action {
             _ => Action::None,
         },
         Page::Dashboard => match code {
+            KeyCode::Left => {
+                app.usage_range = app.usage_range.saturating_sub(1);
+                app.usage_offset = 0;
+                Action::Refresh
+            }
+            KeyCode::Right => {
+                app.usage_range = (app.usage_range + 1).min(USAGE_RANGE_LABELS.len() - 1);
+                app.usage_offset = 0;
+                Action::Refresh
+            }
             KeyCode::Up => {
                 app.usage_offset = app.usage_offset.saturating_sub(1);
                 Action::None
@@ -1448,25 +2186,21 @@ fn handle_setup_event(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> 
     match code {
         KeyCode::Down => app.setup.move_focus(1),
         KeyCode::Up => app.setup.move_focus(-1),
-        KeyCode::Left if app.setup.focus == 0 => {
-            app.setup.provider.preset_index = app.setup.provider.preset_index.saturating_sub(1);
-        }
-        KeyCode::Right if app.setup.focus == 0 => {
-            app.setup.provider.preset_index =
-                (app.setup.provider.preset_index + 1).min(PROVIDER_PRESETS.len() - 1);
-        }
-        KeyCode::Left if app.setup.focus == 9 => {
+        KeyCode::Left if app.setup.focus != 13 => app.setup.provider.toggle_focused(-1),
+        KeyCode::Right if app.setup.focus != 13 => app.setup.provider.toggle_focused(1),
+        KeyCode::Char(' ') if app.setup.focus != 13 => app.setup.provider.toggle_focused(1),
+        KeyCode::Left if app.setup.focus == 13 => {
             app.setup.codex_mode = app.setup.codex_mode.saturating_sub(1);
         }
-        KeyCode::Right if app.setup.focus == 9 => {
+        KeyCode::Right if app.setup.focus == 13 => {
             app.setup.codex_mode = (app.setup.codex_mode + 1).min(2);
         }
-        KeyCode::Backspace if app.setup.focus != 9 => {
+        KeyCode::Backspace if app.setup.focus != 13 => {
             if let Some(value) = app.setup.provider.focused_text() {
                 value.pop();
             }
         }
-        KeyCode::Char(character) if app.setup.focus != 9 => {
+        KeyCode::Char(character) if app.setup.focus != 13 => {
             if let Some(value) = app.setup.provider.focused_text() {
                 value.push(character);
             }
@@ -1492,6 +2226,8 @@ fn handle_provider_event(app: &mut App, code: KeyCode) -> Action {
         KeyCode::Char('D') => Action::RemoveProvider,
         KeyCode::Char('t') => Action::TestProvider,
         KeyCode::Char('m') => Action::DiscoverModels,
+        KeyCode::Char('K') => Action::MoveProviderUp,
+        KeyCode::Char('J') => Action::MoveProviderDown,
         _ => Action::None,
     }
 }
@@ -1554,6 +2290,81 @@ fn handle_benchmark_event(app: &mut App, code: KeyCode) -> Action {
     Action::None
 }
 
+fn handle_fusion_event(app: &mut App, code: KeyCode) -> Action {
+    if app.fusion.editing_profile_id {
+        match code {
+            KeyCode::Esc | KeyCode::Enter => app.fusion.editing_profile_id = false,
+            KeyCode::Backspace => {
+                app.fusion.profile_id.pop();
+            }
+            KeyCode::Char(character) if character != '/' => {
+                app.fusion.profile_id.push(character);
+            }
+            _ => {}
+        }
+        return Action::None;
+    }
+    match code {
+        KeyCode::Char('q') => return Action::Quit,
+        KeyCode::Char('?') => {
+            app.help_visible = true;
+        }
+        KeyCode::Char('r') => return Action::Refresh,
+        KeyCode::Char('x') => return Action::RunDoctor,
+        KeyCode::Up => app.fusion.model_index = app.fusion.model_index.saturating_sub(1),
+        KeyCode::Down => {
+            app.fusion.model_index = (app.fusion.model_index + 1)
+                .min(fusion_models(&app.snapshot.models).len().saturating_sub(1));
+        }
+        KeyCode::Char(' ') => {
+            if let Some(model) = app
+                .fusion
+                .selected_model(&app.snapshot.models)
+                .map(str::to_owned)
+                && !app.fusion.panel_models.remove(&model)
+            {
+                if app.fusion.panel_models.len() < 8 {
+                    app.fusion.panel_models.insert(model);
+                } else {
+                    set_notice(app, true, "Fusion supports at most 8 Panel models.");
+                }
+            }
+        }
+        KeyCode::Char('j') => {
+            if let Some(model) = app.fusion.selected_model(&app.snapshot.models) {
+                app.fusion.judge_model = model.to_owned();
+            }
+        }
+        KeyCode::Char('f') => {
+            if let Some(model) = app.fusion.selected_model(&app.snapshot.models) {
+                app.fusion.final_model = model.to_owned();
+            }
+        }
+        KeyCode::Char('e') => app.fusion.editing_profile_id = true,
+        KeyCode::Char('-') => {
+            app.fusion.min_successful = app.fusion.min_successful.saturating_sub(1).max(1);
+        }
+        KeyCode::Char('+') | KeyCode::Char('=') => {
+            app.fusion.min_successful =
+                (app.fusion.min_successful + 1).min(app.fusion.panel_models.len().max(1));
+        }
+        KeyCode::Left => {
+            app.fusion.timeout_ms = app.fusion.timeout_ms.saturating_sub(30_000).max(30_000)
+        }
+        KeyCode::Right => app.fusion.timeout_ms = app.fusion.timeout_ms.saturating_add(30_000),
+        KeyCode::Char('i') => {
+            app.fusion.show_intermediate_results = !app.fusion.show_intermediate_results;
+        }
+        KeyCode::Char('t') => {
+            app.fusion.panel_tools_enabled = !app.fusion.panel_tools_enabled;
+        }
+        KeyCode::Char('s') => return Action::SaveFusion,
+        KeyCode::Char('D') => return Action::ConfirmDisableFusion,
+        _ => {}
+    }
+    Action::None
+}
+
 fn select_provider(app: &mut App, offset: isize) {
     let last = app.snapshot.providers.len().saturating_sub(1) as isize;
     app.provider_index = (app.provider_index as isize + offset).clamp(0, last) as usize;
@@ -1587,19 +2398,23 @@ fn handle_dialog_event(app: &mut App, code: KeyCode, modifiers: KeyModifiers) ->
             }
             _ => Action::None,
         },
+        Dialog::ConfirmDisableFusion(_) => match code {
+            KeyCode::Char('y') | KeyCode::Char('Y') => Action::DisableFusion,
+            KeyCode::Char('n') | KeyCode::Char('N') => {
+                app.dialog = None;
+                Action::None
+            }
+            _ => Action::None,
+        },
         Dialog::AddProvider(form) => {
             if submit {
                 return Action::SubmitDialog;
             }
             match code {
-                KeyCode::Tab => form.move_focus(1),
-                KeyCode::BackTab => form.move_focus(-1),
-                KeyCode::Left if form.focus == 0 => {
-                    form.preset_index = form.preset_index.saturating_sub(1);
-                }
-                KeyCode::Right if form.focus == 0 => {
-                    form.preset_index = (form.preset_index + 1).min(PROVIDER_PRESETS.len() - 1);
-                }
+                KeyCode::Tab | KeyCode::Down => form.move_focus(1),
+                KeyCode::BackTab | KeyCode::Up => form.move_focus(-1),
+                KeyCode::Left => form.toggle_focused(-1),
+                KeyCode::Right | KeyCode::Char(' ') => form.toggle_focused(1),
                 KeyCode::Backspace => {
                     if let Some(value) = form.focused_text() {
                         value.pop();
@@ -1619,12 +2434,26 @@ fn handle_dialog_event(app: &mut App, code: KeyCode, modifiers: KeyModifiers) ->
                 return Action::SubmitDialog;
             }
             match code {
-                KeyCode::Tab => form.focus = (form.focus + 1) % 4,
-                KeyCode::BackTab => form.focus = (form.focus + 3) % 4,
+                KeyCode::Tab | KeyCode::Down => form.move_focus(1),
+                KeyCode::BackTab | KeyCode::Up => form.move_focus(-1),
+                KeyCode::Left => form.toggle_focused(-1),
+                KeyCode::Right | KeyCode::Char(' ') => form.toggle_focused(1),
                 KeyCode::Backspace => {
-                    form.focused_text().pop();
+                    if let Some(value) = form.focused_text() {
+                        value.pop();
+                    }
                 }
-                KeyCode::Char(character) => form.focused_text().push(character),
+                KeyCode::Char(character) => {
+                    let focus = form.focus;
+                    if let Some(value) = form.focused_text() {
+                        value.push(character);
+                        if focus == 4 {
+                            form.clear_key = false;
+                        } else if focus == 11 {
+                            form.clear_quota = false;
+                        }
+                    }
+                }
                 _ => {}
             }
             Action::None
@@ -1635,7 +2464,7 @@ fn handle_dialog_event(app: &mut App, code: KeyCode, modifiers: KeyModifiers) ->
 async fn refresh(terminal: &mut TerminalSession, app: &mut App) -> bool {
     app.busy = Some("Refreshing status");
     let _ = terminal.draw(app);
-    let refreshed = match Snapshot::load().await {
+    let refreshed = match Snapshot::load(app.usage_range).await {
         Ok(snapshot) => {
             app.snapshot = snapshot;
             app.clamp_provider_index();
@@ -1933,6 +2762,7 @@ fn render(frame: &mut ratatui::Frame<'_>, app: &App) {
         Page::Providers => render_providers(frame, sections[2], app),
         Page::Models => render_models(frame, sections[2], app),
         Page::Benchmark => render_benchmark(frame, sections[2], app),
+        Page::Fusion => render_fusion(frame, sections[2], app),
         Page::Integrations => render_integrations(frame, sections[2], app),
         Page::System => render_system(frame, sections[2], app),
         Page::Diagnostics => render_diagnostics(frame, sections[2], app),
@@ -1997,13 +2827,15 @@ fn render_header(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
 
 fn render_tabs(frame: &mut ratatui::Frame<'_>, area: Rect, page: Page) {
     let selected = Page::ALL.iter().position(|item| *item == page).unwrap_or(0);
+    let compact_tabs = area.width < 90;
     let titles = Page::ALL
         .iter()
-        .map(|item| Line::from(format!(" {} ", item.title())))
+        .map(|item| Line::from(format!(" {} ", item.tab_title(compact_tabs))))
         .collect::<Vec<_>>();
     frame.render_widget(
         Tabs::new(titles)
             .select(selected)
+            .padding("", "")
             .style(Style::default().fg(Color::DarkGray))
             .highlight_style(
                 Style::default()
@@ -2108,12 +2940,26 @@ fn render_setup(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         true,
     ));
     if provider.preset() == "baidu-oneapi" {
-        lines.push(form_line(
-            "Quota user",
-            &provider.quota_username,
-            form.focus == 6,
-            false,
-        ));
+        lines.extend([
+            form_line(
+                "Quota user",
+                &provider.quota_username,
+                form.focus == 6,
+                false,
+            ),
+            form_line(
+                "DUCX auth",
+                provider.baidu_auth_bridge_name(),
+                form.focus == 9,
+                false,
+            ),
+            form_line(
+                "Code report",
+                bool_name(provider.baidu_code_report),
+                form.focus == 10,
+                false,
+            ),
+        ]);
     } else if provider.preset() == "opencode-go" {
         lines.extend([
             form_line(
@@ -2131,8 +2977,27 @@ fn render_setup(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         ]);
     }
     lines.extend([
+        form_line(
+            "Image path",
+            &provider.image_generation_path,
+            form.focus == 12,
+            false,
+        ),
+        form_line(
+            "Aux upstream",
+            bool_name(provider.auxiliary_model_upstream),
+            form.focus == 11,
+            false,
+        ),
+    ]);
+    lines.extend([
         Line::from(""),
-        form_line("Codex mode", form.codex_mode_name(), form.focus == 9, false),
+        form_line(
+            "Codex mode",
+            form.codex_mode_name(),
+            form.focus == 13,
+            false,
+        ),
         Line::from(""),
         Line::from(Span::styled(
             "Up/Down field  Left/Right choose  Enter run  Tab workspace",
@@ -2340,7 +3205,11 @@ fn render_dashboard(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         )
         .block(
             Block::default()
-                .title(" Token usage ")
+                .title(format!(
+                    " Token usage  {}  selected {} ",
+                    USAGE_RANGE_LABELS.join("  "),
+                    USAGE_RANGE_LABELS[app.usage_range]
+                ))
                 .borders(Borders::ALL)
                 .border_type(BorderType::Rounded),
         ),
@@ -2417,7 +3286,7 @@ fn render_providers(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             .get("enabled")
             .and_then(Value::as_bool)
             .unwrap_or(false);
-        vec![
+        let mut lines = vec![
             Line::from(Span::styled(
                 value_str(provider, "display_name", "-"),
                 Style::default().fg(Color::Cyan).bold(),
@@ -2445,7 +3314,80 @@ fn render_providers(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 "Base URL    {}",
                 value_str(provider, "base_url", "managed by Codex")
             )),
-        ]
+        ];
+        if value_str(provider, "kind", "") == "configured" {
+            let auxiliary = provider
+                .get("auxiliary_model_upstream")
+                .and_then(Value::as_bool)
+                .unwrap_or(false);
+            lines.extend([
+                Line::from(format!(
+                    "Aux route   {}",
+                    if auxiliary {
+                        "selected"
+                    } else {
+                        "not selected"
+                    }
+                )),
+                Line::from(format!(
+                    "Image API   {}",
+                    value_str(provider, "image_generation_path", "not configured")
+                )),
+            ]);
+            if value_str(provider, "preset_id", "") == "baidu-oneapi" {
+                lines.extend([
+                    Line::from(format!(
+                        "DUCX auth   {}",
+                        value_str(provider, "baidu_auth_bridge", "disabled")
+                    )),
+                    Line::from(format!(
+                        "Code report {}",
+                        bool_name(
+                            provider
+                                .get("baidu_code_report")
+                                .and_then(Value::as_bool)
+                                .unwrap_or(false)
+                        )
+                    )),
+                ]);
+            }
+            if let Some(issues) = provider.get("readiness_issues").and_then(Value::as_array)
+                && !issues.is_empty()
+            {
+                lines.push(Line::from(Span::styled(
+                    format!(
+                        "Issues      {}",
+                        issues
+                            .iter()
+                            .filter_map(Value::as_str)
+                            .collect::<Vec<_>>()
+                            .join("; ")
+                    ),
+                    Style::default().fg(Color::Yellow),
+                )));
+            }
+            let new_models = provider
+                .get("new_models")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            let unavailable = provider
+                .get("unavailable_selected_models")
+                .and_then(Value::as_array)
+                .map_or(0, Vec::len);
+            lines.push(Line::from(format!(
+                "Catalog     {new_models} new, {unavailable} unavailable"
+            )));
+            if let Some(error) = provider
+                .get("last_model_refresh_error")
+                .and_then(Value::as_str)
+            {
+                lines.push(Line::from(Span::styled(
+                    format!("Refresh     {error}"),
+                    Style::default().fg(Color::Red),
+                )));
+            }
+        }
+        lines
     } else {
         vec![Line::from("No providers configured. Press a to add one.")]
     };
@@ -2648,6 +3590,107 @@ fn render_benchmark(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     );
 }
 
+fn render_fusion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
+    let columns = Layout::default()
+        .direction(Direction::Horizontal)
+        .constraints([Constraint::Percentage(58), Constraint::Percentage(42)])
+        .split(area);
+    let models = fusion_models(&app.snapshot.models);
+    let rows = models.iter().map(|model| {
+        let id = value_str(model, "id", "-");
+        Row::new([
+            if app.fusion.panel_models.contains(id) {
+                "[x]"
+            } else {
+                "[ ]"
+            },
+            if app.fusion.judge_model == id {
+                "J"
+            } else {
+                ""
+            },
+            if app.fusion.final_model == id {
+                "F"
+            } else {
+                ""
+            },
+            id,
+        ])
+    });
+    let table = Table::new(
+        rows,
+        [
+            Constraint::Length(4),
+            Constraint::Length(2),
+            Constraint::Length(2),
+            Constraint::Min(20),
+        ],
+    )
+    .header(Row::new(["P", "J", "F", "MODEL"]).style(Style::default().fg(Color::Cyan).bold()))
+    .row_highlight_style(Style::default().fg(Color::Black).bg(Color::Cyan))
+    .highlight_symbol("> ")
+    .block(
+        Block::default()
+            .title(" Panel / Judge / Final models ")
+            .borders(Borders::ALL)
+            .border_type(BorderType::Rounded),
+    );
+    let mut state = TableState::default();
+    if !models.is_empty() {
+        state.select(Some(app.fusion.model_index));
+    }
+    frame.render_stateful_widget(table, columns[0], &mut state);
+
+    let profile_style = if app.fusion.editing_profile_id {
+        Style::default().fg(Color::Black).bg(Color::Cyan).bold()
+    } else {
+        Style::default().fg(Color::Cyan)
+    };
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                format!("Profile       {}", app.fusion.profile_id),
+                profile_style,
+            )),
+            Line::from(""),
+            Line::from(format!(
+                "Panels        {} / 8",
+                app.fusion.panel_models.len()
+            )),
+            Line::from(format!("Judge         {}", app.fusion.judge_model)),
+            Line::from(format!("Final         {}", app.fusion.final_model)),
+            Line::from(format!("Min success   {}", app.fusion.min_successful)),
+            Line::from(format!("Timeout       {} ms", app.fusion.timeout_ms)),
+            Line::from(format!(
+                "Intermediate  {}",
+                bool_name(app.fusion.show_intermediate_results)
+            )),
+            Line::from(format!(
+                "Panel tools   {}",
+                bool_name(app.fusion.panel_tools_enabled)
+            )),
+            Line::from(""),
+            Line::from(Span::styled(
+                "[ SAVE ]  [ DISABLE ]",
+                Style::default().fg(Color::Cyan).bold(),
+            )),
+            Line::from(""),
+            Line::from("Space Panel  j Judge  f Final"),
+            Line::from("e Profile  -/+ Min  Left/Right timeout"),
+            Line::from("i Intermediate  t Tools"),
+        ])
+        .block(
+            Block::default()
+                .title(" Fusion orchestration ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::Blue)),
+        )
+        .wrap(Wrap { trim: true }),
+        columns[1],
+    );
+}
+
 fn render_integrations(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let mode = app
         .snapshot
@@ -2836,7 +3879,7 @@ fn render_dialog(
     notice: &str,
     notice_is_error: bool,
 ) {
-    let popup = centered_rect(area, area.width.min(78), area.height.min(22));
+    let popup = dialog_popup(area);
     frame.render_widget(Clear, popup);
     let (title, lines) = match dialog {
         Dialog::ConfirmRemove(id) => (
@@ -2867,6 +3910,18 @@ fn render_dialog(
                 )),
             ],
         ),
+        Dialog::ConfirmDisableFusion(id) => (
+            " Disable Fusion ",
+            vec![
+                Line::from(format!("Disable Fusion profile {id}?")),
+                Line::from("This removes its virtual model from the Codex catalog."),
+                Line::from(""),
+                Line::from(Span::styled(
+                    "[y] Confirm    [n] Cancel",
+                    Style::default().fg(Color::Red),
+                )),
+            ],
+        ),
         Dialog::AddProvider(form) => {
             let provider_id = form.provider_id();
             let mut lines = vec![
@@ -2882,12 +3937,21 @@ fn render_dialog(
             }
             lines.push(form_line("API key", &form.api_key, form.focus == 5, true));
             if form.preset() == "baidu-oneapi" {
-                lines.push(form_line(
-                    "Quota user",
-                    &form.quota_username,
-                    form.focus == 6,
-                    false,
-                ));
+                lines.extend([
+                    form_line("Quota user", &form.quota_username, form.focus == 6, false),
+                    form_line(
+                        "DUCX auth",
+                        form.baidu_auth_bridge_name(),
+                        form.focus == 9,
+                        false,
+                    ),
+                    form_line(
+                        "Code report",
+                        bool_name(form.baidu_code_report),
+                        form.focus == 10,
+                        false,
+                    ),
+                ]);
             } else if form.preset() == "opencode-go" {
                 lines.extend([
                     form_line(
@@ -2905,28 +3969,108 @@ fn render_dialog(
                 ]);
             }
             lines.extend([
+                form_line(
+                    "Image path",
+                    &form.image_generation_path,
+                    form.focus == 12,
+                    false,
+                ),
+                form_line(
+                    "Aux upstream",
+                    bool_name(form.auxiliary_model_upstream),
+                    form.focus == 11,
+                    false,
+                ),
                 Line::from(""),
-                Line::from("Tab field  Left/Right preset  Ctrl-S/Enter add  Esc cancel"),
+                Line::from("[ ADD ]  [ CANCEL ]   Tab/Up/Down field  Left/Right/Space choose"),
             ]);
             (" Add provider ", lines)
         }
-        Dialog::EditProvider(form) => (
-            " Edit provider ",
-            vec![
+        Dialog::EditProvider(form) => {
+            let mut lines = vec![
                 Line::from(Span::styled(
                     format!("Provider {}", form.id),
                     Style::default().fg(Color::Cyan),
                 )),
                 Line::from(""),
-                form_line("Display name", &form.display_name, form.focus == 0, false),
-                form_line("Base URL", &form.base_url, form.focus == 1, false),
-                form_line("Website", &form.website_url, form.focus == 2, false),
-                form_line("New API key", &form.api_key, form.focus == 3, true),
+            ];
+            if form.preset == "custom" {
+                lines.extend([
+                    form_line("Display name", &form.display_name, form.focus == 0, false),
+                    form_line("Base URL", &form.base_url, form.focus == 1, false),
+                    form_line("Website", &form.website_url, form.focus == 2, false),
+                ]);
+            }
+            lines.extend([
+                form_line(
+                    "Image path",
+                    &form.image_generation_path,
+                    form.focus == 3,
+                    false,
+                ),
+                form_line("New API key", &form.api_key, form.focus == 4, true),
+                form_line(
+                    "Clear API key",
+                    bool_name(form.clear_key),
+                    form.focus == 5,
+                    false,
+                ),
+            ]);
+            if form.preset == "baidu-oneapi" {
+                lines.extend([
+                    form_line("Quota user", &form.quota_username, form.focus == 6, false),
+                    form_line(
+                        "DUCX auth",
+                        if form.baidu_auth_bridge == 0 {
+                            "Disabled"
+                        } else {
+                            "DUCX loopback"
+                        },
+                        form.focus == 7,
+                        false,
+                    ),
+                    form_line(
+                        "Code report",
+                        bool_name(form.baidu_code_report),
+                        form.focus == 8,
+                        false,
+                    ),
+                ]);
+            } else if form.preset == "opencode-go" {
+                lines.extend([
+                    form_line(
+                        "Workspace ID",
+                        &form.quota_workspace_id,
+                        form.focus == 10,
+                        false,
+                    ),
+                    form_line(
+                        "New auth cookie",
+                        &form.quota_auth_cookie,
+                        form.focus == 11,
+                        true,
+                    ),
+                    form_line(
+                        "Clear quota auth",
+                        bool_name(form.clear_quota),
+                        form.focus == 12,
+                        false,
+                    ),
+                ]);
+            }
+            lines.extend([
+                form_line(
+                    "Aux upstream",
+                    bool_name(form.auxiliary_model_upstream),
+                    form.focus == 9,
+                    false,
+                ),
                 Line::from(""),
-                Line::from("Leave API key empty to preserve it."),
-                Line::from("Tab field  Ctrl-S/Enter save  Esc cancel"),
-            ],
-        ),
+                Line::from("Empty secrets preserve them unless Clear is enabled."),
+                Line::from("[ SAVE ]  [ CANCEL ]   Tab/Up/Down field  Left/Right/Space choose"),
+            ]);
+            (" Edit provider ", lines)
+        }
     };
     let mut content = lines;
     if notice_is_error {
@@ -2947,6 +4091,14 @@ fn render_dialog(
             .wrap(Wrap { trim: true }),
         popup,
     );
+}
+
+fn dialog_popup(area: Rect) -> Rect {
+    centered_rect(
+        area,
+        area.width.min(84),
+        area.height.saturating_sub(2).min(30),
+    )
 }
 
 fn render_diagnostics(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
@@ -2987,16 +4139,17 @@ fn render_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     } else {
         match app.page {
             Page::Dashboard => {
-                "Up/Down token usage  c quota  s start/stop  r refresh  x doctor  ? help"
+                "Left/Right range  Up/Down usage  c quota  s start/stop  r refresh  x doctor"
             }
             Page::Setup => "Up/Down field  Left/Right option  Enter setup  Tab workspace",
-            Page::Providers => "a add  u edit  D delete  e enable  t test  m discover  ? help",
+            Page::Providers => "a add  u edit  D delete  e enable  t test  m discover  K/J reorder",
             Page::Models => {
                 "[ ] provider  Up/Down row  Space/click toggle  a all  n none  s save  d discover"
             }
             Page::Benchmark => {
                 "[ ] provider  b/click run  -/+ timeout  ,/. output tokens  r refresh"
             }
+            Page::Fusion => "Up/Down model  Space Panel  j Judge  f Final  s save  D disable",
             Page::Integrations => "1-3 Codex  4-5 Claude  6-7 DSH  click or press a number",
             Page::System => "s/R gateway  u update  d doctor  F repair  f catalog  l logs",
             Page::Diagnostics => "x doctor  PgUp/PgDn scroll  r refresh  ? help  q quit",
@@ -3128,6 +4281,10 @@ fn form_line(label: &str, value: &str, focused: bool, secret: bool) -> Line<'sta
     ])
 }
 
+fn bool_name(value: bool) -> &'static str {
+    if value { "Yes" } else { "No" }
+}
+
 fn action_label(index: usize, label: &'static str, selected: usize) -> Span<'static> {
     if index == selected {
         Span::styled(
@@ -3145,6 +4302,13 @@ fn model_id(model: &Value) -> &str {
         .and_then(Value::as_str)
         .or_else(|| model.as_str())
         .unwrap_or("-")
+}
+
+fn fusion_models(models: &[Value]) -> Vec<&Value> {
+    models
+        .iter()
+        .filter(|model| !value_str(model, "id", "").starts_with("mixin/fusion/"))
+        .collect()
 }
 
 fn benchmark_status_style(status: &str) -> Style {
@@ -3185,6 +4349,8 @@ mod tests {
             codex_install_mode: None,
             benchmark: None,
             usage: Vec::new(),
+            models: Vec::new(),
+            fusion_profile: None,
             refreshed_at: Instant::now(),
         };
         assert!(!snapshot.configured());
@@ -3227,6 +4393,232 @@ mod tests {
     }
 
     #[test]
+    fn baidu_provider_form_submits_gui_parity_settings() {
+        let form = AddProviderForm {
+            api_key: "secret".to_owned(),
+            quota_username: "owner".to_owned(),
+            image_generation_path: "/v1/images/generations".to_owned(),
+            baidu_auth_bridge: 1,
+            baidu_code_report: true,
+            auxiliary_model_upstream: true,
+            ..AddProviderForm::default()
+        };
+        let args = form.args().unwrap();
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--baidu-auth-bridge", "ducx_loopback"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--baidu-code-report", "true"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--auxiliary-model-upstream", "true"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| { pair == ["--image-generation-path", "/v1/images/generations"] })
+        );
+    }
+
+    #[test]
+    fn edit_provider_form_preserves_and_clears_credentials_explicitly() {
+        let provider = serde_json::json!({
+            "id": "baidu-oneapi",
+            "kind": "configured",
+            "preset_id": "baidu-oneapi",
+            "enabled": false,
+            "display_name": "Baidu OneAPI",
+            "base_url": "https://example.test",
+            "api_key_configured": true,
+            "quota_username": "owner",
+            "baidu_auth_bridge": "disabled",
+            "baidu_code_report": false,
+            "auxiliary_model_upstream": false
+        });
+        let mut form = EditProviderForm::from_provider(&provider).unwrap();
+        let preserved = form.args().unwrap();
+        assert!(!preserved.iter().any(|argument| argument == "--key"));
+        assert!(!preserved.iter().any(|argument| argument == "--clear-key"));
+
+        form.clear_key = true;
+        form.baidu_auth_bridge = 1;
+        form.baidu_code_report = true;
+        form.auxiliary_model_upstream = true;
+        let changed = form.args().unwrap();
+        assert!(changed.iter().any(|argument| argument == "--clear-key"));
+        assert!(
+            changed
+                .windows(2)
+                .any(|pair| pair == ["--baidu-auth-bridge", "ducx_loopback"])
+        );
+        assert!(
+            changed
+                .windows(2)
+                .any(|pair| pair == ["--baidu-code-report", "true"])
+        );
+        assert!(
+            changed
+                .windows(2)
+                .any(|pair| pair == ["--auxiliary-model-upstream", "true"])
+        );
+    }
+
+    #[test]
+    fn provider_dialog_accepts_mouse_field_and_action_clicks() {
+        let snapshot = Snapshot {
+            status: serde_json::json!({"configured": true, "gateway": "stopped"}),
+            providers: Vec::new(),
+            codex_install_mode: None,
+            benchmark: None,
+            usage: Vec::new(),
+            models: Vec::new(),
+            fusion_profile: None,
+            refreshed_at: Instant::now(),
+        };
+        let mut app = App::new(snapshot, StartPage::Dashboard);
+        app.viewport.set(Rect::new(0, 0, 100, 30));
+        app.dialog = Some(Dialog::AddProvider(AddProviderForm::default()));
+        let popup = dialog_popup(app.viewport.get());
+
+        assert_eq!(
+            handle_mouse_event(
+                &mut app,
+                MouseEventKind::Down(MouseButton::Left),
+                popup.x + 20,
+                popup.y + 5,
+            ),
+            Action::None
+        );
+        let Some(Dialog::AddProvider(form)) = app.dialog.as_ref() else {
+            panic!("add provider dialog should remain open")
+        };
+        assert_eq!(form.focus, 9);
+        assert_eq!(form.baidu_auth_bridge, 1);
+
+        assert_eq!(
+            handle_mouse_event(
+                &mut app,
+                MouseEventKind::Down(MouseButton::Left),
+                popup.x + 2,
+                popup.y + 10,
+            ),
+            Action::SubmitDialog
+        );
+    }
+
+    #[test]
+    fn fusion_workspace_builds_the_complete_profile() {
+        let snapshot = Snapshot {
+            status: serde_json::json!({"configured": true, "gateway": "stopped"}),
+            providers: Vec::new(),
+            codex_install_mode: None,
+            benchmark: None,
+            usage: Vec::new(),
+            models: vec![
+                serde_json::json!({"id": "model-a"}),
+                serde_json::json!({"id": "model-b"}),
+                serde_json::json!({"id": "mixin/fusion/old"}),
+            ],
+            fusion_profile: None,
+            refreshed_at: Instant::now(),
+        };
+        let mut form = FusionForm::new(&snapshot);
+        form.profile_id = "review".to_owned();
+        form.min_successful = 2;
+        form.timeout_ms = 180_000;
+        form.show_intermediate_results = false;
+        let args = form.args(&snapshot.models).unwrap();
+        let profile_index = args
+            .iter()
+            .position(|argument| argument == "--profile-json")
+            .unwrap();
+        let profile: Value = serde_json::from_str(&args[profile_index + 1]).unwrap();
+        assert_eq!(profile["id"], "review");
+        assert_eq!(
+            profile["panel_models"],
+            serde_json::json!(["model-a", "model-b"])
+        );
+        assert_eq!(profile["judge_model"], "model-a");
+        assert_eq!(profile["final_model"], "model-b");
+        assert_eq!(profile["min_successful"], 2);
+        assert_eq!(profile["timeout_ms"], 180_000);
+        assert_eq!(profile["show_intermediate_results"], false);
+    }
+
+    #[test]
+    fn fusion_workspace_supports_mouse_model_selection() {
+        let snapshot = Snapshot {
+            status: serde_json::json!({"configured": true, "gateway": "stopped"}),
+            providers: Vec::new(),
+            codex_install_mode: None,
+            benchmark: None,
+            usage: Vec::new(),
+            models: vec![serde_json::json!({"id": "model-a"})],
+            fusion_profile: None,
+            refreshed_at: Instant::now(),
+        };
+        let mut app = App::new(snapshot, StartPage::Dashboard);
+        app.page = Page::Fusion;
+        app.viewport.set(Rect::new(0, 0, 100, 30));
+        app.fusion.panel_models.clear();
+
+        assert_eq!(
+            handle_mouse_event(&mut app, MouseEventKind::Down(MouseButton::Left), 10, 9,),
+            Action::None
+        );
+        assert!(app.fusion.panel_models.contains("model-a"));
+    }
+
+    #[test]
+    fn dashboard_usage_range_supports_keyboard_and_mouse() {
+        let snapshot = Snapshot {
+            status: serde_json::json!({"configured": true, "gateway": "stopped"}),
+            providers: Vec::new(),
+            codex_install_mode: None,
+            benchmark: None,
+            usage: Vec::new(),
+            models: Vec::new(),
+            fusion_profile: None,
+            refreshed_at: Instant::now(),
+        };
+        let mut app = App::new(snapshot, StartPage::Dashboard);
+        app.viewport.set(Rect::new(0, 0, 100, 30));
+        app.usage_range = 0;
+
+        assert_eq!(handle_page_event(&mut app, KeyCode::Right), Action::Refresh);
+        assert_eq!(app.usage_range, 1);
+        assert_eq!(
+            handle_mouse_event(&mut app, MouseEventKind::Down(MouseButton::Left), 15, 17,),
+            Action::Refresh
+        );
+        assert_eq!(app.usage_range, 0);
+    }
+
+    #[test]
+    fn every_workspace_renders_at_eighty_by_twenty_four() {
+        let snapshot = Snapshot {
+            status: serde_json::json!({"configured": true, "gateway": "stopped"}),
+            providers: Vec::new(),
+            codex_install_mode: None,
+            benchmark: None,
+            usage: Vec::new(),
+            models: vec![serde_json::json!({"id": "model-a"})],
+            fusion_profile: None,
+            refreshed_at: Instant::now(),
+        };
+        let mut app = App::new(snapshot, StartPage::Dashboard);
+        let backend = ratatui::backend::TestBackend::new(80, 24);
+        let mut terminal = Terminal::new(backend).unwrap();
+
+        for page in Page::ALL {
+            app.page = page;
+            terminal.draw(|frame| render(frame, &app)).unwrap();
+        }
+    }
+
+    #[test]
     fn inactive_provider_fields_are_not_submitted() {
         let form = AddProviderForm {
             preset_index: 1,
@@ -3248,6 +4640,8 @@ mod tests {
             codex_install_mode: None,
             benchmark: None,
             usage: Vec::new(),
+            models: Vec::new(),
+            fusion_profile: None,
             refreshed_at: Instant::now(),
         };
         let app = App::new(snapshot, StartPage::Dashboard);
@@ -3262,6 +4656,8 @@ mod tests {
             codex_install_mode: None,
             benchmark: None,
             usage: Vec::new(),
+            models: Vec::new(),
+            fusion_profile: None,
             refreshed_at: Instant::now(),
         };
         let mut app = App::new(snapshot, StartPage::Dashboard);
@@ -3299,6 +4695,8 @@ mod tests {
             codex_install_mode: None,
             benchmark: None,
             usage: Vec::new(),
+            models: Vec::new(),
+            fusion_profile: None,
             refreshed_at: Instant::now(),
         };
         let mut app = App::new(snapshot, StartPage::Dashboard);
@@ -3374,6 +4772,8 @@ mod tests {
             codex_install_mode: None,
             benchmark: None,
             usage: Vec::new(),
+            models: Vec::new(),
+            fusion_profile: None,
             refreshed_at: Instant::now(),
         };
         let app = App::new(snapshot, StartPage::Setup);

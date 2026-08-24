@@ -481,6 +481,8 @@ enum ProviderCommand {
     Add {
         #[arg(long, value_enum)]
         preset: CliProviderPreset,
+        #[arg(long, value_name = "BOOL")]
+        auxiliary_model_upstream: Option<bool>,
         #[arg(long)]
         id: Option<String>,
         #[arg(long)]
@@ -740,7 +742,10 @@ pub(crate) async fn entrypoint() {
         );
     }
     let result = if let Some(start_page) = tui_start {
-        tui::run(start_page).await
+        match setup::install_cli_command() {
+            Ok(installed_path) => tui::run(start_page, installed_path).await,
+            Err(error) => Err(error),
+        }
     } else {
         run(cli).await
     };
@@ -770,6 +775,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             ProviderCommand::List { json } => list_providers(json),
             ProviderCommand::Add {
                 preset,
+                auxiliary_model_upstream,
                 id,
                 key,
                 display_name,
@@ -800,6 +806,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 };
                 add_provider(AddProviderOptions {
                     preset: preset.as_str().to_owned(),
+                    auxiliary_model_upstream,
                     id,
                     key,
                     display_name,

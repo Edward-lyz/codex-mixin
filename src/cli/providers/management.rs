@@ -118,6 +118,7 @@ pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
             .as_deref()
             .and_then(data_report_sibling);
     }
+    provider.auxiliary_model_upstream = options.auxiliary_model_upstream.unwrap_or(false);
     let mut detected_protocol = None;
     // Baidu uses its curated protocol. Custom sites get a live protocol probe so
     // users do not have to know the path.
@@ -143,6 +144,11 @@ pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
         }
         if gateway_api_key.is_some() {
             config.gateway_api_key = gateway_api_key;
+        }
+        if provider.auxiliary_model_upstream {
+            for existing_provider in &mut config.providers {
+                existing_provider.auxiliary_model_upstream = false;
+            }
         }
         config.providers.push(provider);
         Ok(())

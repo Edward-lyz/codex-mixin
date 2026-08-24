@@ -1,7 +1,8 @@
 use std::io::{self, IsTerminal, Write};
-use std::path::PathBuf;
+use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
+use anyhow::Context;
 use codex_mixin::config::load_stored_config;
 use codex_mixin::provider::ProviderPreset;
 use console::style;
@@ -15,23 +16,36 @@ use super::providers::{
 use super::service::restart;
 use super::{CliProviderPreset, SetupCodexMode, next_step_line, progress_is_interactive, stage};
 
-fn install_cli_command() -> anyhow::Result<()> {
-    let Some(home) = std::env::var_os("HOME") else {
-        return Ok(());
-    };
+fn install_cli_executable(source: &Path, target: &Path) -> anyhow::Result<bool> {
+    if source == target
+        || (target.exists() && std::fs::canonicalize(source)? == std::fs::canonicalize(target)?)
+    {
+        return Ok(false);
+    }
+    let parent = target
+        .parent()
+        .context("CLI installation target has no parent directory")?;
+    std::fs::create_dir_all(parent)?;
+    let file_name = target
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("CLI installation target has no valid file name")?;
+    let temporary = target.with_file_name(format!("{file_name}.tmp.{}", std::process::id()));
+    std::fs::copy(source, &temporary)?;
+    std::fs::set_permissions(&temporary, std::fs::metadata(source)?.permissions())?;
+    if let Err(error) = std::fs::rename(&temporary, target) {
+        let _ = std::fs::remove_file(&temporary);
+        return Err(error.into());
+    }
+    Ok(true)
+}
+
+pub(super) fn install_cli_command() -> anyhow::Result<Option<PathBuf>> {
+    let home = std::env::var_os("HOME").context("HOME is required to install codex-mixin")?;
     let bin = PathBuf::from(home).join(".local/bin");
-    std::fs::create_dir_all(&bin)?;
     let target = bin.join("codex-mixin");
     let source = std::env::current_exe()?;
-    if source != target {
-        std::fs::copy(source, &target)?;
-    }
-    println!("CLI command installed: {}", target.display());
-    println!(
-        "Add {} to PATH if `codex-mixin` is not found.",
-        bin.display()
-    );
-    Ok(())
+    install_cli_executable(&source, &target).map(|installed| installed.then_some(target))
 }
 
 fn read_secret(prompt: &str) -> anyhow::Result<String> {
@@ -135,7 +149,16 @@ pub(super) async fn run(
     {
         anyhow::bail!("--no-start cannot be combined with Codex installation");
     }
-    install_cli_command()?;
+    if let Some(target) = install_cli_command()? {
+        let bin = target
+            .parent()
+            .context("installed CLI target has no parent directory")?;
+        println!("CLI command installed: {}", target.display());
+        println!(
+            "Add {} to PATH if `codex-mixin` is not found.",
+            bin.display()
+        );
+    }
     let key = match key.or_else(|| std::env::var("CODEX_MIXIN_API_KEY").ok()) {
         Some(key) if !key.trim().is_empty() => key,
         _ if io::stdin().is_terminal() => read_secret(&format!("API key for {preset}: "))?,
@@ -204,6 +227,7 @@ pub(super) async fn run(
         println!("Adding provider configuration: {preset}");
         add_provider(AddProviderOptions {
             preset: preset.to_owned(),
+            auxiliary_model_upstream: None,
             id: None,
             key,
             display_name: None,
@@ -303,4 +327,39 @@ pub(super) async fn run(
     next_step_line(&format!("Check status: {executable} info"));
     next_step_line(&format!("Diagnose issues: {executable} doctor"));
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(unix)]
+    #[test]
+    fn cli_install_replaces_target_and_preserves_executable_permissions() {
+        use std::os::unix::fs::PermissionsExt;
+
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("downloaded-codex-mixin");
+        let target = directory.path().join("bin/codex-mixin");
+        std::fs::write(&source, b"new binary").unwrap();
+        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o755)).unwrap();
+        std::fs::create_dir_all(target.parent().unwrap()).unwrap();
+        std::fs::write(&target, b"old binary").unwrap();
+
+        assert!(install_cli_executable(&source, &target).unwrap());
+        assert_eq!(std::fs::read(&target).unwrap(), b"new binary");
+        assert_eq!(
+            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
+            0o755
+        );
+    }
+
+    #[test]
+    fn cli_install_skips_the_installed_executable() {
+        let directory = tempfile::tempdir().unwrap();
+        let target = directory.path().join("codex-mixin");
+        std::fs::write(&target, b"binary").unwrap();
+
+        assert!(!install_cli_executable(&target, &target).unwrap());
+    }
 }
