@@ -917,6 +917,40 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn allows_slow_custom_protocol_probes() {
+        use axum::routing::post;
+        let app = Router::new()
+            .route(
+                "/v1/models",
+                get(|| async { axum::Json(serde_json::json!({"data":[{"id":"model"}]})) }),
+            )
+            .route(
+                "/v1/responses",
+                post(|| async {
+                    tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+                    (
+                        axum::http::StatusCode::BAD_REQUEST,
+                        axum::Json(serde_json::json!({"error":{"message":"missing input"}})),
+                    )
+                }),
+            );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let mut provider = codex_mixin::provider::custom_provider("community", "secret");
+        provider.base_url = format!("http://{address}");
+
+        let detected = detect_custom_provider_protocol(&provider)
+            .await
+            .unwrap()
+            .unwrap();
+
+        assert_eq!(detected.protocol, ProviderProtocol::OpenAiResponses);
+    }
+
+    #[tokio::test]
     async fn forbidden_protocol_probes_do_not_switch_custom_providers_to_messages() {
         let app = Router::new()
             .route(
@@ -943,7 +977,9 @@ mod tests {
             .await
             .unwrap_err()
             .to_string();
-        assert!(error.contains("failed for /v1/models and /models"));
+        assert!(error.contains("models endpoint is valid"));
+        assert!(error.contains("protocol detection failed"));
+        assert!(error.contains("within 30 seconds"));
         assert_eq!(provider.protocol, ProviderProtocol::OpenAiResponses);
         assert_eq!(provider.api_path, "/v1/responses");
     }

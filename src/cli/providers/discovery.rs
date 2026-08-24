@@ -12,6 +12,8 @@ use serde_json::{Value, json};
 use super::super::config_input::normalize_base_url;
 use super::super::status::{QuotaUsageSummary, quota_usage};
 
+const CUSTOM_PROTOCOL_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct DiscoveredQuotaEndpoint {
     pub(super) url: reqwest::Url,
@@ -253,9 +255,10 @@ pub(super) async fn detect_custom_provider_protocol(
         .provider(&provider.id)
         .expect("newly constructed provider registry contains the custom provider");
     let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(5))
+        .timeout(CUSTOM_PROTOCOL_PROBE_TIMEOUT)
         .build()?;
     let mut last_models_error = None;
+    let mut found_models_endpoint = false;
     for (models_path, versioned) in [("/v1/models", true), ("/models", false)] {
         let models_url = endpoint_join(&provider.base_url, models_path)?;
         let models_valid = match probe_custom_models_endpoint(&client, runtime, models_url).await {
@@ -268,6 +271,7 @@ pub(super) async fn detect_custom_provider_protocol(
         if !models_valid {
             continue;
         }
+        found_models_endpoint = true;
         for (protocol, api_path, body) in custom_protocol_probe_candidates(versioned) {
             let url = match endpoint_join(&provider.base_url, api_path) {
                 Ok(url) => url,
@@ -283,6 +287,13 @@ pub(super) async fn detect_custom_provider_protocol(
                 }));
             }
         }
+    }
+    if found_models_endpoint {
+        anyhow::bail!(
+            "custom provider models endpoint is valid, but automatic protocol detection failed: \
+             no supported Responses, Messages, or Chat Completions endpoint responded within {} seconds",
+            CUSTOM_PROTOCOL_PROBE_TIMEOUT.as_secs()
+        );
     }
     if let Some(error) = last_models_error {
         return Err(
@@ -350,7 +361,7 @@ async fn protocol_endpoint_available(
     let request = runtime
         .apply_auth_for_protocol(client.post(url), protocol)
         .header(reqwest::header::ACCEPT, "application/json")
-        .timeout(Duration::from_secs(5))
+        .timeout(CUSTOM_PROTOCOL_PROBE_TIMEOUT)
         .json(body);
     let response = match request.send().await {
         Ok(response) => response,
