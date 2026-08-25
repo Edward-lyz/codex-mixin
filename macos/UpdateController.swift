@@ -232,10 +232,10 @@ extension AppDelegate {
             )
         )
         alert.window.level = .floating
-        alert.window.hidesOnDeactivate = false
         alert.window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
-        NSApp.activate(ignoringOtherApps: true)
+        presentPersistentWindow(alert.window)
         let response = alert.runModal()
+        alert.window.close()
         if assetAvailable {
             switch response {
             case .alertFirstButtonReturn: return .download

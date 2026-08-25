@@ -176,17 +176,17 @@ final class InstallProgressWindowController: NSWindowController, NSWindowDelegat
         model = InstallProgressModel(detail: detail)
         self.successTitle = successTitle
         self.failureTitle = failureTitle
-        let window = NSPanel(
+        let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 500, height: 170),
-            styleMask: [.titled],
+            styleMask: [.titled, .closable, .miniaturizable],
             backing: .buffered,
             defer: false
         )
         window.title = title
-        window.isReleasedWhenClosed = false
         super.init(window: window)
         window.delegate = self
         window.contentViewController = NSHostingController(rootView: InstallProgressView(model: model))
+        configurePersistentWindow(window)
     }
 
     required init?(coder: NSCoder) {
@@ -196,8 +196,9 @@ final class InstallProgressWindowController: NSWindowController, NSWindowDelegat
     func present() {
         showWindow(nil)
         window?.center()
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        if let window {
+            presentPersistentWindow(window)
+        }
     }
 
     func update(phase: String) { model.update(phase: phase) }
@@ -217,19 +218,16 @@ final class InstallProgressWindowController: NSWindowController, NSWindowDelegat
     func finish() {
         guard model.state == .running else { return }
         model.finish(title: successTitle)
-        DispatchQueue.main.asyncAfter(deadline: .now() + 0.8) {
-            self.close()
+        guard window?.isVisible == true else { return }
+        if !InstallProgressWindowController.retainedControllers.contains(where: { $0 === self }) {
+            InstallProgressWindowController.retainedControllers.append(self)
         }
-    }
-
-    func finishAndWait() async {
-        finish()
-        try? await Task.sleep(nanoseconds: 850_000_000)
     }
 
     func fail(message: String) {
         guard model.state == .running else { return }
         model.fail(title: failureTitle, message: message)
+        guard window?.isVisible == true else { return }
         window?.styleMask.insert(.closable)
         window?.delegate = self
         if !InstallProgressWindowController.retainedControllers.contains(where: { $0 === self }) {
@@ -332,7 +330,6 @@ final class OperationProgress {
         await MainActor.run {
             self.window.finish()
         }
-        try? await Task.sleep(nanoseconds: 850_000_000)
     }
 
     func fail(message: String) {
@@ -369,8 +366,7 @@ func runOperationProgress<T>(
     }
     do {
         let result = try await work(progress)
-        // Wait until the success window has closed so callers do not race it
-        // with a modal alert while the controller is already deallocated.
+        // Keep the final state visible until the user closes the window.
         await progress.finishAndWait()
         return result
     } catch {

@@ -10,6 +10,7 @@ LOCALIZATION_BUNDLE="$($ROOT_DIR/scripts/prepare_test_localization.sh)"
 xcrun swiftc \
   "$ROOT_DIR/macos/Generated/L10n.swift" \
   "$ROOT_DIR/macos/Localization.swift" \
+  "$ROOT_DIR/macos/ApplicationMenuSupport.swift" \
   "$ROOT_DIR/macos/SettingsPanel.swift" \
   "$ROOT_DIR/macos/tests/SettingsPanelPresentationTests.swift" \
   -framework Cocoa \

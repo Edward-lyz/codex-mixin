@@ -668,12 +668,12 @@ final class InstallCardWindowController: NSWindowController, NSWindowDelegate {
         )
         window.title = AppLocalization.string("installCard.myMixinCard")
         window.minSize = NSSize(width: 720, height: 560)
-        window.isReleasedWhenClosed = false
         window.center()
 
         super.init(window: window)
         window.delegate = self
         installContent(in: window)
+        configurePersistentWindow(window)
     }
 
     required init?(coder: NSCoder) {
@@ -682,8 +682,9 @@ final class InstallCardWindowController: NSWindowController, NSWindowDelegate {
 
     func present() {
         showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        if let window {
+            presentPersistentWindow(window)
+        }
     }
 
     private func installContent(in window: NSWindow) {

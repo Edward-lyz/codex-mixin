@@ -215,7 +215,7 @@ func runAddProviderSheet(
         defer: false
     )
     sheet.title = AppLocalization.string("settings.addProvider")
-    sheet.isReleasedWhenClosed = false
+    configurePersistentWindow(sheet)
 
     var submittedValues: AddProviderFormValues?
     let cancel = {
@@ -234,7 +234,7 @@ func runAddProviderSheet(
     sheet.standardWindowButton(.closeButton)?.target = closeTarget
     sheet.standardWindowButton(.closeButton)?.action = #selector(ModalActionTarget.run(_:))
 
-    NSApp.activate(ignoringOtherApps: true)
+    presentPersistentWindow(parentWindow)
     parentWindow.beginSheet(sheet) { response in
         sheet.close()
         _ = closeTarget

@@ -133,19 +133,16 @@ private struct InstallModeDescription: View {
 
 @MainActor
 func runInstallCodexPanel() -> CodexInstallMode? {
-    let panel = NSPanel(
+    let panel = NSWindow(
         contentRect: NSRect(x: 0, y: 0, width: 820, height: 560),
         styleMask: [.titled, .closable],
         backing: .buffered,
         defer: false
     )
     panel.title = "安装到 Codex"
-    panel.isReleasedWhenClosed = false
     panel.level = .normal
-    panel.isFloatingPanel = false
-    panel.hidesOnDeactivate = true
-    panel.becomesKeyOnlyIfNeeded = false
     panel.center()
+    configurePersistentWindow(panel)
 
     var confirmedMode: CodexInstallMode?
     let cancel = { NSApp.stopModal(withCode: .cancel) }
@@ -161,7 +158,7 @@ func runInstallCodexPanel() -> CodexInstallMode? {
     panel.standardWindowButton(.closeButton)?.target = closeTarget
     panel.standardWindowButton(.closeButton)?.action = #selector(ModalActionTarget.run(_:))
 
-    NSApp.activate(ignoringOtherApps: true)
+    presentPersistentWindow(panel)
     let response = NSApp.runModal(for: panel)
     panel.close()
     _ = closeTarget

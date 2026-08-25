@@ -172,7 +172,6 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
         window.titleVisibility = .hidden
         window.titlebarAppearsTransparent = true
         window.isMovableByWindowBackground = true
-        window.isReleasedWhenClosed = false
         window.center()
         super.init(window: window)
         window.delegate = self
@@ -181,6 +180,7 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
             NSRect(origin: window.frame.origin, size: NSSize(width: 820, height: 460)),
             display: false
         )
+        configurePersistentWindow(window)
     }
 
     required init?(coder: NSCoder) {
@@ -189,7 +189,8 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
 
     func present() {
         showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        if let window {
+            presentPersistentWindow(window)
+        }
     }
 }

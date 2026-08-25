@@ -1,5 +1,65 @@
 import Cocoa
 
+private final class PersistentWindowCoordinator: NSObject {
+    static let shared = PersistentWindowCoordinator()
+
+    private let windows = NSHashTable<NSWindow>.weakObjects()
+
+    func configure(_ window: NSWindow) {
+        window.styleMask.insert(.closable)
+        window.isReleasedWhenClosed = false
+        window.hidesOnDeactivate = false
+        guard !windows.contains(window) else { return }
+        windows.add(window)
+        NotificationCenter.default.addObserver(
+            self,
+            selector: #selector(windowWillClose(_:)),
+            name: NSWindow.willCloseNotification,
+            object: window
+        )
+        if let closeButton = window.standardWindowButton(.closeButton) {
+            closeButton.target = self
+            closeButton.action = #selector(closeWindow(_:))
+        }
+    }
+
+    func present(_ window: NSWindow) {
+        configure(window)
+        NSApp.setActivationPolicy(.regular)
+        window.makeKeyAndOrderFront(nil)
+        NSApp.activate(ignoringOtherApps: true)
+    }
+
+    @objc private func closeWindow(_ sender: NSButton) {
+        guard let window = sender.window else { return }
+        if let parent = window.sheetParent {
+            parent.endSheet(window, returnCode: .cancel)
+            return
+        }
+        if NSApp.modalWindow === window {
+            NSApp.abortModal()
+        }
+        window.close()
+    }
+
+    @objc private func windowWillClose(_ notification: Notification) {
+        DispatchQueue.main.async { [weak self] in
+            guard let self,
+                  !windows.allObjects.contains(where: \.isVisible)
+            else { return }
+            NSApp.setActivationPolicy(.accessory)
+        }
+    }
+}
+
+func configurePersistentWindow(_ window: NSWindow) {
+    PersistentWindowCoordinator.shared.configure(window)
+}
+
+func presentPersistentWindow(_ window: NSWindow) {
+    PersistentWindowCoordinator.shared.present(window)
+}
+
 func closeWindow(_ window: NSWindow?, sender: Any?) {
     window?.performClose(sender)
 }

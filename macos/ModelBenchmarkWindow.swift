@@ -839,7 +839,6 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         )
         window.title = "模型选择与测速"
         window.minSize = NSSize(width: 920, height: 520)
-        window.isReleasedWhenClosed = false
         window.toolbarStyle = .unified
         if #available(macOS 26.0, *) {
             window.titlebarAppearsTransparent = true
@@ -848,6 +847,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         super.init(window: window)
         window.delegate = self
         installContent()
+        configurePersistentWindow(window)
     }
 
     required init?(coder: NSCoder) {
@@ -856,8 +856,9 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
 
     func present() {
         showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        if let window {
+            presentPersistentWindow(window)
+        }
         model.resetForPresentation()
     }
 
@@ -955,8 +956,9 @@ private func presentBenchmarkError(title: String, message: String) {
     alert.informativeText = localizedGatewayMessage(message)
     alert.alertStyle = .warning
     alert.addButton(withTitle: AppLocalization.string("modelBenchmark.ok"))
-    NSApp.activate(ignoringOtherApps: true)
+    presentPersistentWindow(alert.window)
     alert.runModal()
+    alert.window.close()
 }
 
 private func presentBenchmarkMessage(title: String, message: String) {
@@ -965,6 +967,7 @@ private func presentBenchmarkMessage(title: String, message: String) {
     alert.informativeText = localizedGatewayMessage(message)
     alert.alertStyle = .informational
     alert.addButton(withTitle: AppLocalization.string("modelBenchmark.ok2"))
-    NSApp.activate(ignoringOtherApps: true)
+    presentPersistentWindow(alert.window)
     alert.runModal()
+    alert.window.close()
 }

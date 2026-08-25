@@ -47,11 +47,14 @@ struct InstallProgressWindowTests {
         controller.advanceStreamedPhase("Fetching available models")
         controller.advanceStreamedPhase("Loading model metadata")
         controller.advanceStreamedPhase("Writing Codex config and model catalog")
-        // finish() must keep the controller alive long enough to auto-close.
+        // Completed operations remain visible until the user closes them.
         var retained: InstallProgressWindowController? = controller
         retained?.finish()
         RunLoop.current.run(until: Date().addingTimeInterval(1.0))
-        precondition(retained?.window?.isVisible != true, "success progress window must auto-close")
+        precondition(retained?.window?.isVisible == true, "success progress window must remain visible")
+        precondition(retained?.window?.styleMask.contains(.closable) == true)
+        precondition(!(retained?.window is NSPanel), "progress must use a persistent NSWindow")
+        retained?.close()
         retained = nil
 
         let failing = InstallProgressWindowController(

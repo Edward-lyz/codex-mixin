@@ -12,6 +12,7 @@ xcrun swiftc \
   -target "$(uname -m)-apple-macos26.0" \
   "$ROOT_DIR/macos/Generated/L10n.swift" \
   "$ROOT_DIR/macos/Localization.swift" \
+  "$ROOT_DIR/macos/ApplicationMenuSupport.swift" \
   "$ROOT_DIR/macos/UpdateSupport.swift" \
   "$ROOT_DIR/macos/AppSupport.swift" \
   "$ROOT_DIR/macos/InstallProgressWindow.swift" \

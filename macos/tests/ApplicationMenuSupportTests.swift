@@ -76,6 +76,39 @@ struct ApplicationMenuSupportTests {
             recordingWindow.didPerformClose,
             "The close command must invoke performClose on the selected window"
         )
+
+        let persistentWindow = NSPanel(
+            contentRect: .zero,
+            styleMask: [.titled],
+            backing: .buffered,
+            defer: false
+        )
+        persistentWindow.isReleasedWhenClosed = true
+        persistentWindow.hidesOnDeactivate = true
+        configurePersistentWindow(persistentWindow)
+        precondition(
+            persistentWindow.styleMask.contains(.closable),
+            "Every app window must expose a close button"
+        )
+        precondition(
+            !persistentWindow.isReleasedWhenClosed,
+            "App windows must remain retained until explicitly closed"
+        )
+        precondition(
+            !persistentWindow.hidesOnDeactivate,
+            "App windows must remain visible when another app becomes active"
+        )
+        presentPersistentWindow(persistentWindow)
+        precondition(
+            app.activationPolicy() == .regular,
+            "Visible app windows must make Codex Mixin available in Command-Tab"
+        )
+        persistentWindow.close()
+        RunLoop.current.run(until: Date().addingTimeInterval(0.05))
+        precondition(
+            app.activationPolicy() == .accessory,
+            "Closing the final app window must restore menu bar-only mode"
+        )
         print("Application menu close-window command: passed")
     }
 }

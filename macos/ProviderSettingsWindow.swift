@@ -44,7 +44,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         )
         window.title = "供应商设置"
         window.minSize = NSSize(width: 820, height: 580)
-        window.isReleasedWhenClosed = false
         window.toolbarStyle = .unified
         if #available(macOS 26.0, *) {
             window.titlebarAppearsTransparent = true
@@ -53,6 +52,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         super.init(window: window)
         window.delegate = self
         installContent()
+        configurePersistentWindow(window)
     }
 
     required init?(coder: NSCoder) {
@@ -61,8 +61,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
     func present() {
         showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        if let window {
+            presentPersistentWindow(window)
+        }
         reloadProviders()
     }
 
@@ -446,6 +447,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         alert.informativeText = AppLocalization.string("providerSettings.ducxUsesACodexMixinManagedCopy")
         alert.addButton(withTitle: AppLocalization.string("providerSettings.configureDUCX"))
         alert.addButton(withTitle: AppLocalization.string("providerSettings.keepDisabled"))
+        configurePersistentWindow(alert.window)
         alert.beginSheetModal(for: window) { [weak self] response in
             guard let self else { return }
             switch response {

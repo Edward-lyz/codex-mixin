@@ -432,13 +432,13 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
         )
         window.title = "Fusion 设置"
         window.minSize = NSSize(width: 700, height: 580)
-        window.isReleasedWhenClosed = false
         window.center()
         super.init(window: window)
         window.delegate = self
         window.contentViewController = NSHostingController(
             rootView: FusionSettingsView(model: model) { [weak window] in window?.close() }
         )
+        configurePersistentWindow(window)
     }
 
     required init?(coder: NSCoder) {
@@ -447,8 +447,9 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
 
     func present() {
         showWindow(nil)
-        window?.makeKeyAndOrderFront(nil)
-        NSApp.activate(ignoringOtherApps: true)
+        if let window {
+            presentPersistentWindow(window)
+        }
         model.reload()
     }
 }
@@ -459,6 +460,7 @@ private func presentFusionAlert(title: String, message: String) {
     alert.informativeText = localizedGatewayMessage(message)
     alert.alertStyle = .warning
     alert.addButton(withTitle: L10n.Common.ok)
-    NSApp.activate(ignoringOtherApps: true)
+    presentPersistentWindow(alert.window)
     alert.runModal()
+    alert.window.close()
 }

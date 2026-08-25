@@ -139,8 +139,9 @@ func showAlert(title: String, message: String) {
         ? .warning
         : .informational
     alert.addButton(withTitle: AppLocalization.string("appSupport.ok"))
-    NSApp.activate(ignoringOtherApps: true)
+    presentPersistentWindow(alert.window)
     alert.runModal()
+    alert.window.close()
 }
 
 func confirm(title: String, message: String) -> Bool {
@@ -155,8 +156,10 @@ func confirm(title: String, message: String) -> Bool {
     alert.alertStyle = .warning
     alert.addButton(withTitle: AppLocalization.string("appSupport.continue"))
     alert.addButton(withTitle: AppLocalization.string("appSupport.cancel"))
-    NSApp.activate(ignoringOtherApps: true)
-    return alert.runModal() == .alertFirstButtonReturn
+    presentPersistentWindow(alert.window)
+    let response = alert.runModal()
+    alert.window.close()
+    return response == .alertFirstButtonReturn
 }
 
 func showDiagnosticReport(title: String, report: String) {
@@ -178,6 +181,7 @@ func showDiagnosticReport(title: String, report: String) {
     window.title = localizedPrompt(title)
     window.minSize = NSSize(width: 620, height: 420)
     window.center()
+    configurePersistentWindow(window)
     let close = { NSApp.stopModal(withCode: .cancel) }
     let copy = {
         NSPasteboard.general.clearContents()
@@ -194,7 +198,7 @@ func showDiagnosticReport(title: String, report: String) {
     let closeTarget = DiagnosticModalTarget(close)
     window.standardWindowButton(.closeButton)?.target = closeTarget
     window.standardWindowButton(.closeButton)?.action = #selector(DiagnosticModalTarget.run(_:))
-    NSApp.activate(ignoringOtherApps: true)
+    presentPersistentWindow(window)
     NSApp.runModal(for: window)
     window.close()
     _ = closeTarget
