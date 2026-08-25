@@ -87,7 +87,7 @@ impl DucxRuntime {
         })
         .await
         .context("join isolated DUCX data-report preparation")??;
-        resign_executable(executable.path()).await?;
+        resign_executable(executable.as_ref()).await?;
         let codex_home = self.home.join(".baidu-cx");
         let body = serde_json::to_vec(&json!({
             "session_id": "codex-mixin-report-warmup",
@@ -95,7 +95,7 @@ impl DucxRuntime {
             "cwd": ".",
             "prompt": "codex-mixin report warmup"
         }))?;
-        let mut child = Command::new(executable.path())
+        let mut child = Command::new(&executable)
             .arg("--user-prompt-submit")
             .env("HOME", &self.home)
             .env("CODEX_HOME", &codex_home)
@@ -108,7 +108,7 @@ impl DucxRuntime {
             .with_context(|| {
                 format!(
                     "start isolated managed DUCX data-report {}",
-                    executable.path().display()
+                    executable.to_path_buf().display()
                 )
             })?;
         let stderr = child
@@ -239,7 +239,7 @@ fn patched_data_report(
     source: &Path,
     temporary_directory: &Path,
     capture_addr: std::net::SocketAddr,
-) -> anyhow::Result<tempfile::NamedTempFile> {
+) -> anyhow::Result<tempfile::TempPath> {
     let mut binary = std::fs::read(source)
         .with_context(|| format!("read managed DUCX data-report {}", source.display()))?;
     let matches = memchr::memmem::find_iter(&binary, DATA_REPORT_BASE_URL).collect::<Vec<_>>();
@@ -284,7 +284,7 @@ fn patched_data_report(
         .as_file()
         .set_permissions(std::fs::Permissions::from_mode(0o700))
         .context("make isolated DUCX data-report executable")?;
-    Ok(executable)
+    Ok(executable.into_temp_path())
 }
 
 #[cfg(target_os = "macos")]
@@ -395,7 +395,7 @@ mod tests {
             "127.0.0.1:12345".parse().unwrap(),
         )
         .unwrap();
-        let patched = std::fs::read(executable.path()).unwrap();
+        let patched = std::fs::read(executable).unwrap();
 
         assert_eq!(patched.len(), fixture.len());
         assert!(
