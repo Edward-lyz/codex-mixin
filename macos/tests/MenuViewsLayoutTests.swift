@@ -290,6 +290,24 @@ struct MenuViewsLayoutTests {
             proDashboard.frame.height >= 442,
             "three quota rows must keep their row spacing instead of compressing into the token range picker"
         )
+        proDashboard.layoutSubtreeIfNeeded()
+        let threeQuotaScrollCount = descendants(of: proDashboard, matching: NSScrollView.self).count
+        let threeQuotaHeight = proDashboard.frame.height
+        let manyQuotaRows = (1...8).map {
+            #"{"provider_id":"official","quota_id":"quota.\#($0)","label":"Quota \#($0)","used":\#($0),"limit":100}"#
+        }.joined(separator: ",")
+        proDashboard.updateQuotaUsages(try parseProviderQuotaUsage("[\(manyQuotaRows)]"))
+        proDashboard.layoutSubtreeIfNeeded()
+        precondition(proDashboard.model.selectedGroup?.quotas.count == 8)
+        precondition(
+            proDashboard.frame.height == threeQuotaHeight,
+            "quota sections with more than three rows must scroll instead of growing the menu"
+        )
+        precondition(
+            descendants(of: proDashboard, matching: NSScrollView.self).count
+                == threeQuotaScrollCount + 1,
+            "quota overflow must add a vertical scroll view"
+        )
 
         guard let primaryUsage = dashboard.model.selectedGroup?.models.first else {
             preconditionFailure("Baidu token usage must exist")

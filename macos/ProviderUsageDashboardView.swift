@@ -5,9 +5,10 @@ private let menuContentWidth: CGFloat = 336
 private let providerDashboardMinimumHeight: CGFloat = 168
 private let providerQuotaRowHeight: CGFloat = 28
 private let providerQuotaRowSpacing: CGFloat = 6
+private let visibleProviderQuotaRows = 3
 
 private func providerQuotaSectionHeight(_ quotaCount: Int) -> CGFloat {
-    let rowCount = max(1, quotaCount)
+    let rowCount = max(1, min(quotaCount, visibleProviderQuotaRows))
     return CGFloat(rowCount) * providerQuotaRowHeight
         + CGFloat(rowCount - 1) * providerQuotaRowSpacing
 }
@@ -319,10 +320,20 @@ private struct ProviderUsageDashboardContent: View {
                 .foregroundStyle(.secondary)
                 .help(model.quotaStatusDetail ?? "")
         } else {
-            VStack(spacing: providerQuotaRowSpacing) {
+            let quotaRows = VStack(spacing: providerQuotaRowSpacing) {
                 ForEach(Array(group.quotas.enumerated()), id: \.offset) { _, usage in
                     ProviderQuotaRow(usage: usage, multiple: group.quotas.count > 1)
                         .frame(height: providerQuotaRowHeight)
+                }
+            }
+            Group {
+                if group.quotas.count > visibleProviderQuotaRows {
+                    ScrollView(.vertical) {
+                        quotaRows
+                    }
+                    .scrollIndicators(.visible)
+                } else {
+                    quotaRows
                 }
             }
             .frame(height: providerQuotaSectionHeight(group.quotas.count))
