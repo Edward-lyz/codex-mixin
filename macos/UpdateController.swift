@@ -231,6 +231,9 @@ extension AppDelegate {
                 fallback: strings.noReleaseNotes
             )
         )
+        alert.window.level = .floating
+        alert.window.hidesOnDeactivate = false
+        alert.window.collectionBehavior = [.canJoinAllSpaces, .fullScreenAuxiliary]
         NSApp.activate(ignoringOtherApps: true)
         let response = alert.runModal()
         if assetAvailable {
@@ -328,6 +331,7 @@ extension AppDelegate {
         appendDiagnosticLog(
             "APP_UPDATE stage=helper-started pid=\(updater.processIdentifier) destination=\(destination.path)"
         )
+        updateTerminationReady = true
         NSApp.terminate(nil)
     }
 

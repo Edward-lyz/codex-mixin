@@ -121,6 +121,10 @@ extension AppDelegate {
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
+        if updateTerminationReady {
+            timer?.invalidate()
+            return .terminateNow
+        }
         if terminationInProgress {
             return .terminateLater
         }

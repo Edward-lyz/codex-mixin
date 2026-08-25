@@ -698,8 +698,15 @@ mod tests {
     fn reorders_provider_ids_without_changing_provider_data() {
         let mut first = codex_mixin::provider::custom_provider("first", "first-key");
         first.selected_models = vec!["first-model".to_owned()];
+        first.enabled = false;
+        first.quota_username = Some("first-user".to_owned());
+        first.request_policy.baidu_auth_bridge = Some(BaiduAuthBridge::DucxLoopback);
+        first.request_policy.baidu_code_report = true;
         let mut second = codex_mixin::provider::custom_provider("second", "second-key");
         second.selected_models = vec!["second-model".to_owned()];
+        second.quota_username = Some("second-user".to_owned());
+        let first_before = first.clone();
+        let second_before = second.clone();
         let mut config = StoredGatewayConfig {
             providers: vec![first, second],
             ..StoredGatewayConfig::default()
@@ -717,6 +724,7 @@ mod tests {
         );
         assert_eq!(config.providers[0].selected_models, ["second-model"]);
         assert_eq!(config.providers[1].selected_models, ["first-model"]);
+        assert_eq!(config.providers, [second_before, first_before]);
     }
 
     #[test]

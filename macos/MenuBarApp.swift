@@ -16,6 +16,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let menuItemViewUpdater = MenuItemViewUpdater()
     var timer: Timer?
     var terminationInProgress = false
+    var updateTerminationReady = false
     var isRunning = false
     var serviceBusy = false {
         didSet {
@@ -124,8 +125,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(.separator())
         menu.addItem(submenuItem("设置与模型", symbolName: "gearshape", items: [
             actionItem("供应商设置...", #selector(configureLogin), "gearshape"),
-            actionItem("模型选择与测速...", #selector(showModelBenchmark), "speedometer"),
-            actionItem("Fusion 设置…", #selector(showFusionSettings), "rectangle.3.group")
+            actionItem("模型选择与测速...", #selector(showModelBenchmark), "speedometer")
+        ]))
+        menu.addItem(submenuItem("高级", symbolName: "gearshape.2", items: [
+            actionItem("Fusion 设置…", #selector(showFusionSettings), "rectangle.3.group"),
+            actionItem("手动触发上报…", #selector(manuallyReportSessions), "arrow.triangle.2.circlepath")
         ]))
         menu.addItem(submenuItem("安装与恢复", symbolName: "square.and.arrow.down", items: [
             actionItem("安装到 Codex...", #selector(installCodexConfig), "square.and.arrow.down"),

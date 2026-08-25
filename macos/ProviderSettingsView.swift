@@ -190,6 +190,7 @@ struct ProviderSettingsRootView: View {
                         onClearKey: onClearKey,
                         onClearQuotaCredentials: onClearQuotaCredentials
                     )
+                    .id(provider.id)
                 } else {
                     ProviderEmptyState(
                         isEmpty: model.providers.isEmpty,
@@ -389,8 +390,6 @@ private struct ProviderDetailForm: View {
             )
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity)
-        .onAppear(perform: loadProvider)
-        .onChange(of: provider.id) { _ in loadProvider() }
     }
 
     private var isCustom: Bool { provider.presetID == "custom" }
@@ -411,19 +410,6 @@ private struct ProviderDetailForm: View {
         provider.quotaAuthCookieConfigured == true ? "已配置；留空保留" : "opencode.ai auth cookie"
     }
 
-    private func loadProvider() {
-        formState.displayName = provider.displayName
-        formState.baseURL = provider.baseURL
-        formState.websiteURL = provider.websiteURL ?? ""
-        formState.imageGenerationPath = provider.imageGenerationPath ?? ""
-        formState.apiKey = ""
-        formState.quotaUsername = provider.quotaUsername ?? ""
-        formState.quotaWorkspaceID = provider.quotaWorkspaceID ?? ""
-        formState.quotaAuthCookie = ""
-        formState.auxiliaryModelUpstream = provider.auxiliaryModelUpstream
-        formState.baiduAuthBridge = provider.effectiveBaiduAuthBridge ?? .disabled
-        formState.baiduCodeReport = provider.baiduCodeReport == true
-    }
 }
 
 private struct ProviderActionBar: View {

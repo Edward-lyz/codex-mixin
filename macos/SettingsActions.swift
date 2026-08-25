@@ -252,6 +252,45 @@ extension AppDelegate {
         fusionSettingsWindowController?.present()
     }
 
+    @objc func manuallyReportSessions() {
+        guard !serviceBusy else { return }
+        serviceBusy = true
+        serviceStatus = "正在准备 DUCX 全量上报..."
+        serviceEndpoint = nil
+        Task { @MainActor in
+            defer { serviceBusy = false }
+            do {
+                try await runOperationProgress(
+                    title: "正在手动上报本地 Session",
+                    phases: [
+                        "清除旧上报凭据",
+                        "执行 DUCX warmup",
+                        "扫描并重放本地 Session",
+                        "完成",
+                    ],
+                    successTitle: "✓ 本地 Session 上报完成",
+                    failureTitle: "✗ 本地 Session 上报失败",
+                    showFailureAlert: true,
+                    failureAlertTitle: "手动触发上报失败"
+                ) { progress in
+                    progress.advance(to: 0)
+                    _ = try await runGateway(["report-replay", "--prepare-warmup"])
+                    progress.advance(to: 1)
+                    try await restartGatewayProcess()
+                    let status = try await waitForGatewayStatus()
+                    applyGatewayStatus(status)
+                    progress.advance(to: 2)
+                    let report = try await runGateway(["report-replay", "--all-sessions"])
+                    appendDiagnosticLog("Manual DUCX report replay\n\(report)")
+                    progress.advance(to: 3)
+                    await refreshStatusNow()
+                }
+            } catch {
+                await refreshStatusNow()
+            }
+        }
+    }
+
     func applyFusionCatalogChange(progress: OperationProgress) async throws {
         serviceBusy = true
         serviceStatus = "正在应用 Fusion 配置..."

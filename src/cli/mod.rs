@@ -135,6 +135,14 @@ enum Command {
         #[arg(long)]
         event: String,
     },
+    /// Internal: replay persisted Baidu reporting events.
+    #[command(name = "report-replay", hide = true)]
+    ReportReplay {
+        #[arg(long)]
+        all_sessions: bool,
+        #[arg(long)]
+        prepare_warmup: bool,
+    },
     /// Add a provider, start the gateway, and print the next step.
     Setup {
         #[arg(
@@ -695,6 +703,7 @@ fn requested_tui_start(cli: &Cli, interactive: bool) -> Option<tui::StartPage> {
 
 pub(crate) async fn entrypoint() {
     let cli = Cli::parse();
+    let print_errors_to_stderr = matches!(&cli.command, Some(Command::ReportReplay { .. }));
     let tui_start = requested_tui_start(
         &cli,
         io::stdin().is_terminal() && io::stdout().is_terminal(),
@@ -713,7 +722,9 @@ pub(crate) async fn entrypoint() {
                     ..
                 },
         }) => Some(path.clone()),
-        Some(Command::ReportHook { .. }) => Some(runtime::default_report_hook_log_path()),
+        Some(Command::ReportHook { .. } | Command::ReportReplay { .. }) => {
+            Some(runtime::default_report_hook_log_path())
+        }
         _ => None,
     };
     let quiet_parent_logs = foreground_log_file.is_none()
@@ -750,19 +761,32 @@ pub(crate) async fn entrypoint() {
         run(cli).await
     };
     if let Err(error) = result {
-        if foreground_log_file.is_some() {
-            tracing::error!(error = %format!("{error:#}"), "command failed");
-        } else {
-            eprintln!("Error: {error:#}");
-        }
-        std::process::exit(1);
+        exit_with_command_error(error, foreground_log_file.is_some(), print_errors_to_stderr);
     }
+}
+
+fn exit_with_command_error(
+    error: anyhow::Error,
+    has_foreground_log: bool,
+    print_to_stderr: bool,
+) -> ! {
+    if has_foreground_log {
+        tracing::error!(error = %format!("{error:#}"), "command failed");
+    }
+    if !has_foreground_log || print_to_stderr {
+        eprintln!("Error: {error:#}");
+    }
+    std::process::exit(1);
 }
 
 #[allow(clippy::cognitive_complexity)]
 async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command.unwrap_or(Command::Info { json: false }) {
         Command::ReportHook { event } => report_hook::run(&event).await,
+        Command::ReportReplay {
+            all_sessions,
+            prepare_warmup,
+        } => report_hook::replay(all_sessions, prepare_warmup).await,
         Command::Setup {
             preset,
             key,

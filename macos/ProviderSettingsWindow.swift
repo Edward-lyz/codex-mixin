@@ -115,7 +115,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             guard let self else { return }
             do {
                 _ = try await runHandler(["providers", "reorder"] + ids)
-                setBusy(false, status: "Provider 顺序已保存")
+                setBusy(false, status: "Provider 顺序已保存，正在核对配置…")
+                reloadProviders(selecting: providerID)
             } catch {
                 setBusy(false, status: "Provider 顺序保存失败")
                 showAlert(title: "保存 Provider 顺序失败", message: String(describing: error))

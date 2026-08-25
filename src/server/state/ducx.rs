@@ -3,22 +3,25 @@ use anyhow::Context;
 
 impl AppState {
     pub(crate) async fn prewarm_ducx(&self) -> Result<(), GatewayError> {
-        let Some(provider) = self
+        let reporting_providers = self
             .providers
             .providers()
             .iter()
-            .find(|provider| provider.uses_ducx_loopback())
-        else {
+            .filter(|provider| provider.uses_ducx_loopback() && provider.baidu_code_report())
+            .collect::<Vec<_>>();
+        if reporting_providers.is_empty() {
+            if let Some(provider) = self
+                .providers
+                .providers()
+                .iter()
+                .find(|provider| provider.uses_ducx_loopback())
+            {
+                self.ducx_native_headers(provider).await?;
+            }
             return Ok(());
-        };
-        self.ducx_native_headers(provider).await?;
-        if provider.baidu_code_report()
-            && provider
-                .definition()
-                .request_policy
-                .data_report_client_token
-                .is_none()
-        {
+        }
+
+        for provider in reporting_providers {
             let provider_id = provider.id().to_owned();
             let runtime = self.ducx_runtime_for(provider).await?;
             match runtime
@@ -35,15 +38,14 @@ impl AppState {
                                 .with_context(|| {
                                     format!("DUCX reporting provider disappeared: {provider_id}")
                                 })?;
-                            if stored_provider.request_policy.baidu_code_report
-                                && stored_provider
-                                    .request_policy
-                                    .data_report_client_token
-                                    .is_none()
-                            {
-                                stored_provider.request_policy.data_report_client_token =
-                                    Some(token);
-                            }
+                            anyhow::ensure!(
+                                stored_provider.enabled
+                                    && stored_provider.request_policy.baidu_code_report
+                                    && stored_provider.request_policy.effective_baidu_auth_bridge()
+                                        == crate::provider::BaiduAuthBridge::DucxLoopback,
+                                "DUCX reporting provider changed during warmup: {provider_id}"
+                            );
+                            stored_provider.request_policy.data_report_client_token = Some(token);
                             Ok(())
                         })
                     })
@@ -63,6 +65,7 @@ impl AppState {
                     );
                 }
             }
+            self.ducx_native_headers(provider).await?;
         }
         Ok(())
     }

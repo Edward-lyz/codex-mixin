@@ -239,8 +239,12 @@ func readableReleaseNotes(_ markdown: String) -> String {
     return String(result.prefix(12_000)) + "\n…"
 }
 
+private let releaseNotesSize = NSSize(width: 560, height: 300)
+
 func releaseNotesView(title: String, notes: String) -> NSView {
-    NSHostingView(rootView: ReleaseNotesView(title: title, notes: notes))
+    let view = NSHostingView(rootView: ReleaseNotesView(title: title, notes: notes))
+    view.frame = NSRect(origin: .zero, size: releaseNotesSize)
+    return view
 }
 
 private struct ReleaseNotesView: View {
@@ -265,6 +269,6 @@ private struct ReleaseNotesView: View {
                     .stroke(.separator)
             }
         }
-        .frame(width: 560, height: 300)
+        .frame(width: releaseNotesSize.width, height: releaseNotesSize.height)
     }
 }

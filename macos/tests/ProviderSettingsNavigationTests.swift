@@ -13,6 +13,8 @@ struct ProviderSettingsNavigationTests {
         testReloadPreservesSelectionAndDisablesEmptyDetails()
         testMutationIsBusyAndRestartsInOrder()
         testBaiduBridgeTestAndUpdateArguments()
+        testReorderReloadsPersistedProviderState()
+        testOneAPIFieldsStayWithTheirProvider()
 
         print("Provider settings behavior: passed")
     }
@@ -194,6 +196,55 @@ struct ProviderSettingsNavigationTests {
         precondition(events.lastIndex(of: "setup:ducx_loopback")! < updateRunIndex!)
     }
 
+    @MainActor
+    private static func testReorderReloadsPersistedProviderState() {
+        var loadCalls = 0
+        var events: [String] = []
+        let controller = ProviderSettingsWindowController(
+            loadHandler: {
+                loadCalls += 1
+                return try providerList(ids: loadCalls == 1
+                    ? ["baidu-oneapi", "baidu-oneapi-2"]
+                    : ["baidu-oneapi-2", "baidu-oneapi"])
+            },
+            runHandler: { arguments in
+                events.append(arguments.joined(separator: "|"))
+                return ""
+            },
+            applyHandler: { _ in }
+        )
+        controller.present()
+        waitUntil { loadCalls == 1 && controller.model.providers.count == 2 }
+
+        controller.moveProviders(from: IndexSet(integer: 1), to: 0)
+
+        waitUntil { loadCalls == 2 && controller.model.canModifySelectedProvider }
+        precondition(events == ["providers|reorder|baidu-oneapi-2|baidu-oneapi"])
+        precondition(controller.model.providers.map(\.id) == ["baidu-oneapi-2", "baidu-oneapi"])
+        precondition(controller.model.selectedProviderID == "baidu-oneapi-2")
+    }
+
+    @MainActor
+    private static func testOneAPIFieldsStayWithTheirProvider() {
+        let controller = ProviderSettingsWindowController(
+            loadHandler: {
+                try providerList(ids: ["baidu-oneapi", "baidu-oneapi-2"])
+            },
+            runHandler: { _ in "" },
+            applyHandler: { _ in }
+        )
+        controller.present()
+        waitUntil { controller.model.providers.count == 2 }
+
+        controller.model.selectProvider("baidu-oneapi-2")
+        precondition(controller.model.quotaUsername == "quota-user-2")
+        precondition(controller.model.baiduAuthBridge == .ducxLoopback)
+
+        controller.model.selectProvider("baidu-oneapi")
+        precondition(controller.model.quotaUsername == "quota-user")
+        precondition(controller.model.baiduAuthBridge == .disabled)
+    }
+
     private static func providerList(ids: [String]) throws -> ProviderListResponse {
         let providers = ids.map(providerJSON).joined(separator: ",")
         let json = """
@@ -207,12 +258,15 @@ struct ProviderSettingsNavigationTests {
     }
 
     private static func providerJSON(id: String) -> String {
-        let preset = id == "baidu-oneapi" ? "baidu-oneapi" : "custom"
-        let protocolID = id == "baidu-oneapi" ? "anthropic_messages" : "open_ai_chat"
-        let apiPath = id == "baidu-oneapi" ? "/v1/messages" : "/v1/chat/completions"
-        let modelSourceKind = id == "baidu-oneapi" ? "baidu_oneapi" : "open_ai_compatible"
+        let isBaidu = id.hasPrefix("baidu-oneapi")
+        let preset = isBaidu ? "baidu-oneapi" : "custom"
+        let protocolID = isBaidu ? "anthropic_messages" : "open_ai_chat"
+        let apiPath = isBaidu ? "/v1/messages" : "/v1/chat/completions"
+        let modelSourceKind = isBaidu ? "baidu_oneapi" : "open_ai_compatible"
         let bridge = id == "baidu-oneapi"
             ? ", \"baidu_auth_bridge\": \"disabled\", \"baidu_code_report\": false, \"quota_username\": \"quota-user\""
+            : id == "baidu-oneapi-2"
+            ? ", \"baidu_auth_bridge\": \"ducx_loopback\", \"baidu_code_report\": true, \"quota_username\": \"quota-user-2\""
             : ""
         return """
         {

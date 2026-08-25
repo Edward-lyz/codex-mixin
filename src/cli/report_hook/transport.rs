@@ -228,15 +228,32 @@ pub(super) fn truncate_for_log(value: &str, max_chars: usize) -> String {
 
 /// Select the enabled Baidu reporting provider that owns `model`.
 pub(super) fn reporting_provider(model: &str) -> anyhow::Result<Option<ProviderDefinition>> {
+    Ok(reporting_providers()?
+        .into_iter()
+        .find(|provider| provider_owns_model(provider, model)))
+}
+
+pub(super) fn reporting_provider_by_id(
+    provider_id: &str,
+) -> anyhow::Result<Option<ProviderDefinition>> {
+    Ok(reporting_providers()?
+        .into_iter()
+        .find(|provider| provider.id == provider_id))
+}
+
+pub(super) fn reporting_providers() -> anyhow::Result<Vec<ProviderDefinition>> {
     let Some(config) = load_stored_config()? else {
-        return Ok(None);
+        return Ok(Vec::new());
     };
-    Ok(config.providers.into_iter().find(|provider| {
-        provider.enabled
-            && provider.request_policy.baidu_code_report
-            && provider.model_source == codex_mixin::provider::ProviderModelSource::BaiduOneApi
-            && provider_owns_model(provider, model)
-    }))
+    Ok(config
+        .providers
+        .into_iter()
+        .filter(|provider| {
+            provider.enabled
+                && provider.request_policy.baidu_code_report
+                && provider.model_source == codex_mixin::provider::ProviderModelSource::BaiduOneApi
+        })
+        .collect())
 }
 
 fn ducx_report_home(provider: &ProviderDefinition) -> anyhow::Result<PathBuf> {

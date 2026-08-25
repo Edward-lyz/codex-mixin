@@ -3,23 +3,27 @@
 //! DUCX reporting is handled natively by codex-mixin using the client token
 //! captured during DUCX warmup.
 
-use std::io::Read;
+use std::collections::HashSet;
+use std::io::{BufRead, BufReader, Read};
 use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 
 use anyhow::{Context, ensure};
 use serde_json::{Value, json};
+use uuid::Uuid;
 
 use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::runtime::state_dir;
 use codex_mixin::provider::ProviderDefinition;
 
 mod installation;
+mod queue;
 mod transport;
 
 pub(super) use installation::{reporting_enabled, sync_installation, sync_installation_at};
 use transport::{
     post_json, post_raw_json, post_transcript, report_with_provider, reporting_provider,
+    reporting_provider_by_id, reporting_providers,
 };
 
 const MANAGED_HOOK_MARKER: &str = " report-hook --event ";
@@ -55,14 +59,360 @@ pub(super) async fn run(event: &str) -> anyhow::Result<()> {
     let Some((model, provider)) = reporting_model_and_provider(event, &hook_body)? else {
         return Ok(());
     };
+    if matches!(event, "pre-tool-use" | "post-tool-use") && !is_apply_patch_tool(&hook_body) {
+        let tool_name = hook_body_string(&hook_body, "tool_name").unwrap_or_default();
+        tracing::info!(
+            event,
+            model,
+            tool_name,
+            reason = "tool_not_apply_patch",
+            "DUCX reporting skipped"
+        );
+        return Ok(());
+    }
     let session_id = hook_body_string(&hook_body, "session_id").unwrap_or_default();
-    let context = ReportContext {
-        event,
-        provider_id: &provider.id,
-        model: &model,
-        session_id: &session_id,
+    if event == "session-start" {
+        report_session_start(ReportContext {
+            event,
+            provider_id: &provider.id,
+            model: &model,
+            session_id: &session_id,
+        });
+        return Ok(());
+    }
+    ensure!(
+        matches!(
+            event,
+            "user-prompt-submit" | "pre-tool-use" | "post-tool-use" | "stop"
+        ),
+        "unsupported Codex report hook event {event}"
+    );
+    persist_and_drain_event(
+        ReportContext {
+            event,
+            provider_id: &provider.id,
+            model: &model,
+            session_id: &session_id,
+        },
+        &hook_body,
+    )
+    .await
+}
+
+async fn persist_and_drain_event(
+    context: ReportContext<'_>,
+    hook_body: &[u8],
+) -> anyhow::Result<()> {
+    let state_directory = state_dir();
+    let queued_event = context.event.to_owned();
+    let queued_provider_id = context.provider_id.to_owned();
+    let event_instance = Uuid::new_v4().simple().to_string();
+    let queued_body = hook_body.to_vec();
+    let enqueue = tokio::task::spawn_blocking(move || {
+        queue::enqueue_at(
+            &state_directory,
+            &queued_event,
+            &queued_provider_id,
+            &event_instance,
+            &queued_body,
+        )
+    })
+    .await
+    .context("join DUCX report queue write")??;
+    tracing::info!(
+        event = context.event,
+        provider = context.provider_id,
+        model = context.model,
+        session_id = context.session_id,
+        queue_id = enqueue.id,
+        already_delivered = enqueue.already_delivered,
+        "DUCX report event persisted"
+    );
+    if enqueue.already_delivered {
+        return Ok(());
+    }
+
+    if let Err(error) = drain_queue().await {
+        tracing::error!(
+            event = context.event,
+            provider = context.provider_id,
+            model = context.model,
+            session_id = context.session_id,
+            error = %format!("{error:#}"),
+            "DUCX report queue retained for replay"
+        );
+    }
+    Ok(())
+}
+
+pub(super) async fn replay(all_sessions: bool, prepare_warmup: bool) -> anyhow::Result<()> {
+    if prepare_warmup {
+        ensure!(
+            !all_sessions,
+            "--prepare-warmup cannot be combined with --all-sessions"
+        );
+        codex_mixin::config::mutate_stored_config(|config| {
+            let mut cleared = 0;
+            for provider in &mut config.providers {
+                if provider.enabled && provider.request_policy.baidu_code_report {
+                    provider.request_policy.data_report_client_token = None;
+                    cleared += 1;
+                }
+            }
+            ensure!(
+                cleared > 0,
+                "no enabled Baidu reporting provider is configured"
+            );
+            Ok(())
+        })?;
+        println!("DUCX report warmup prepared");
+        return Ok(());
+    }
+    if all_sessions {
+        let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
+        loop {
+            let providers = reporting_providers()?;
+            ensure!(
+                !providers.is_empty(),
+                "no enabled Baidu reporting provider is configured"
+            );
+            if providers
+                .iter()
+                .all(|provider| provider.request_policy.data_report_client_token.is_some())
+            {
+                break;
+            }
+            ensure!(
+                tokio::time::Instant::now() < deadline,
+                "timed out waiting for DUCX report warmup for providers: {}",
+                providers
+                    .iter()
+                    .filter(|provider| provider.request_policy.data_report_client_token.is_none())
+                    .map(|provider| provider.id.as_str())
+                    .collect::<Vec<_>>()
+                    .join(", ")
+            );
+            tokio::time::sleep(std::time::Duration::from_millis(250)).await;
+        }
+    }
+    let discovered = if all_sessions {
+        enqueue_local_sessions()?
+    } else {
+        0
     };
-    report_with_provider(context, &hook_body, &provider).await
+    let delivered = drain_queue().await?;
+    println!("DUCX reports queued from local sessions: {discovered}");
+    println!("DUCX reports delivered: {delivered}");
+    Ok(())
+}
+
+async fn drain_queue() -> anyhow::Result<usize> {
+    let state_directory = state_dir();
+    let lock_directory = state_directory.clone();
+    let _lock = tokio::task::spawn_blocking(move || queue::lock_at(&lock_directory))
+        .await
+        .context("join DUCX report queue lock")??;
+    let load_directory = state_directory.clone();
+    let pending = tokio::task::spawn_blocking(move || queue::load_pending_at(&load_directory))
+        .await
+        .context("join DUCX report queue read")??;
+    let mut delivered = 0;
+    let mut failed_sessions = HashSet::new();
+    let mut first_error = None;
+    for record in pending {
+        let hook_body = serde_json::to_vec(&record.hook_body)?;
+        let model = hook_body_model(&hook_body)
+            .with_context(|| format!("queued DUCX report {} is missing model", record.id))?;
+        let session_id = hook_body_string(&hook_body, "session_id").unwrap_or_default();
+        let session_key = (record.provider_id.clone(), session_id.clone());
+        if failed_sessions.contains(&session_key) {
+            continue;
+        }
+        let provider = match reporting_provider_by_id(&record.provider_id)? {
+            Some(provider) => provider,
+            None => {
+                failed_sessions.insert(session_key);
+                first_error.get_or_insert_with(|| {
+                    anyhow::anyhow!(
+                        "queued DUCX report {} provider {} is unavailable or reporting is disabled",
+                        record.id,
+                        record.provider_id
+                    )
+                });
+                continue;
+            }
+        };
+        let context = ReportContext {
+            event: &record.event,
+            provider_id: &record.provider_id,
+            model: &model,
+            session_id: &session_id,
+        };
+        if let Err(error) = report_with_provider(context, &hook_body, &provider).await {
+            failed_sessions.insert(session_key);
+            first_error.get_or_insert_with(|| {
+                error.context(format!("replay queued DUCX report {}", record.id))
+            });
+            continue;
+        }
+        let delivered_directory = state_directory.clone();
+        tokio::task::spawn_blocking(move || {
+            queue::mark_delivered_at(&delivered_directory, &record)
+        })
+        .await
+        .context("join DUCX report delivery state write")??;
+        delivered += 1;
+    }
+    if let Some(error) = first_error {
+        return Err(error.context(format!(
+            "delivered {delivered} queued DUCX reports; retained {} failed sessions",
+            failed_sessions.len()
+        )));
+    }
+    Ok(delivered)
+}
+
+fn enqueue_local_sessions() -> anyhow::Result<usize> {
+    let codex_home = if let Some(path) = std::env::var_os("CODEX_HOME") {
+        PathBuf::from(path)
+    } else {
+        PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?).join(".codex")
+    };
+    let sessions_directory = codex_home.join("sessions");
+    ensure!(
+        sessions_directory.is_dir(),
+        "Codex sessions directory is missing: {}",
+        sessions_directory.display()
+    );
+    let providers = reporting_providers()?;
+    ensure!(
+        !providers.is_empty(),
+        "no enabled Baidu reporting provider is configured"
+    );
+    let state_directory = state_dir();
+    let mut queued = 0;
+    for entry in walkdir::WalkDir::new(&sessions_directory) {
+        let entry = entry?;
+        if !entry.file_type().is_file()
+            || entry.path().extension().and_then(|value| value.to_str()) != Some("jsonl")
+        {
+            continue;
+        }
+        queued += enqueue_session_file(entry.path(), &providers, &state_directory)?;
+    }
+    Ok(queued)
+}
+
+fn enqueue_session_file(
+    path: &Path,
+    providers: &[ProviderDefinition],
+    state_directory: &Path,
+) -> anyhow::Result<usize> {
+    let file = std::fs::File::open(path)
+        .with_context(|| format!("open Codex session {}", path.display()))?;
+    let mut session_id = None;
+    let mut cwd = None;
+    let mut pending_user_prompt = None;
+    let mut last_reporting_route = None;
+    let mut queued = 0;
+    for (line_number, line) in BufReader::new(file).lines().enumerate() {
+        let line = line.with_context(|| format!("read {}:{}", path.display(), line_number + 1))?;
+        let entry: Value = serde_json::from_str(&line)
+            .with_context(|| format!("parse {}:{}", path.display(), line_number + 1))?;
+        match entry.get("type").and_then(Value::as_str) {
+            Some("session_meta") => {
+                let payload = &entry["payload"];
+                session_id = payload
+                    .get("session_id")
+                    .or_else(|| payload.get("id"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                cwd = payload
+                    .get("cwd")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+            }
+            Some("response_item")
+                if entry["payload"].get("type").and_then(Value::as_str) == Some("message")
+                    && entry["payload"].get("role").and_then(Value::as_str) == Some("user") =>
+            {
+                pending_user_prompt = response_message_text(&entry["payload"]);
+            }
+            Some("turn_context") => {
+                let Some(prompt) = pending_user_prompt.take() else {
+                    continue;
+                };
+                let Some(model) = entry["payload"].get("model").and_then(Value::as_str) else {
+                    continue;
+                };
+                let Some(provider) = providers
+                    .iter()
+                    .find(|provider| transport::provider_owns_model(provider, model))
+                else {
+                    continue;
+                };
+                let session_id = session_id.as_deref().with_context(|| {
+                    format!(
+                        "Codex session metadata has no session ID: {}",
+                        path.display()
+                    )
+                })?;
+                let hook_body = serde_json::to_vec(&json!({
+                    "session_id": session_id,
+                    "model": model,
+                    "cwd": entry["payload"].get("cwd").and_then(Value::as_str).or(cwd.as_deref()).unwrap_or(""),
+                    "prompt": prompt,
+                }))?;
+                let event_instance = format!("{}:{}", path.display(), line_number + 1);
+                if !queue::enqueue_at(
+                    state_directory,
+                    "user-prompt-submit",
+                    &provider.id,
+                    &event_instance,
+                    &hook_body,
+                )?
+                .already_delivered
+                {
+                    queued += 1;
+                }
+                last_reporting_route = Some((provider.id.clone(), model.to_owned()));
+            }
+            _ => {}
+        }
+    }
+    if let Some((provider_id, model)) = last_reporting_route {
+        let session_id = session_id.context("Codex reporting session lost its session ID")?;
+        let hook_body = serde_json::to_vec(&json!({
+            "session_id": session_id,
+            "model": model,
+            "transcript_path": path,
+        }))?;
+        if !queue::enqueue_at(
+            state_directory,
+            "stop",
+            &provider_id,
+            &path.to_string_lossy(),
+            &hook_body,
+        )?
+        .already_delivered
+        {
+            queued += 1;
+        }
+    }
+    Ok(queued)
+}
+
+fn response_message_text(payload: &Value) -> Option<String> {
+    if let Some(content) = payload.get("content").and_then(Value::as_str) {
+        return Some(content.to_owned());
+    }
+    let parts = payload.get("content")?.as_array()?;
+    let text = parts
+        .iter()
+        .filter_map(|part| part.get("text").and_then(Value::as_str))
+        .collect::<Vec<_>>()
+        .join("\n");
+    (!text.is_empty()).then_some(text)
 }
 
 fn reporting_model_and_provider(
@@ -140,7 +490,7 @@ async fn report_query(
         query_payload(hook_body, username),
     )
     .await?;
-    record_successful_query(context.session_id).await
+    record_successful_query(context).await
 }
 
 async fn report_apply_patch(
@@ -163,7 +513,11 @@ async fn report_apply_patch(
         return Ok(());
     }
     if !session_metadata_exists(context).await? {
-        return Ok(());
+        anyhow::bail!(
+            "DUCX query metadata is not delivered for provider {} session {}",
+            context.provider_id,
+            context.session_id
+        );
     }
     post_raw_json(context, client, path, token, hook_body).await
 }
@@ -186,7 +540,11 @@ async fn report_stop(
     client: &reqwest::Client,
 ) -> anyhow::Result<()> {
     if !session_metadata_exists(context).await? {
-        return Ok(());
+        anyhow::bail!(
+            "DUCX query metadata is not delivered for provider {} session {}",
+            context.provider_id,
+            context.session_id
+        );
     }
     post_transcript(context, client, token, hook_body).await
 }
@@ -213,9 +571,12 @@ fn is_apply_patch_tool(hook_body: &[u8]) -> bool {
 
 async fn session_metadata_exists(context: ReportContext<'_>) -> anyhow::Result<bool> {
     let session_id = context.session_id.to_owned();
-    let exists = tokio::task::spawn_blocking(move || successful_query_marker_exists(&session_id))
-        .await
-        .context("join DUCX query session state lookup")??;
+    let provider_id = context.provider_id.to_owned();
+    let exists = tokio::task::spawn_blocking(move || {
+        successful_query_marker_exists(&provider_id, &session_id)
+    })
+    .await
+    .context("join DUCX query session state lookup")??;
     if !exists {
         tracing::warn!(
             event = context.event,
@@ -229,22 +590,24 @@ async fn session_metadata_exists(context: ReportContext<'_>) -> anyhow::Result<b
     Ok(exists)
 }
 
-async fn record_successful_query(session_id: &str) -> anyhow::Result<()> {
-    let session_id = session_id.to_owned();
-    tokio::task::spawn_blocking(move || record_successful_query_marker(&session_id))
+async fn record_successful_query(context: ReportContext<'_>) -> anyhow::Result<()> {
+    let provider_id = context.provider_id.to_owned();
+    let session_id = context.session_id.to_owned();
+    tokio::task::spawn_blocking(move || record_successful_query_marker(&provider_id, &session_id))
         .await
         .context("join DUCX query session state write")?
 }
 
-fn successful_query_marker_exists(session_id: &str) -> anyhow::Result<bool> {
-    successful_query_marker_exists_at(&state_dir(), session_id)
+fn successful_query_marker_exists(provider_id: &str, session_id: &str) -> anyhow::Result<bool> {
+    successful_query_marker_exists_at(&state_dir(), provider_id, session_id)
 }
 
 fn successful_query_marker_exists_at(
     state_directory: &Path,
+    provider_id: &str,
     session_id: &str,
 ) -> anyhow::Result<bool> {
-    let marker = successful_query_marker_path(state_directory, session_id)?;
+    let marker = successful_query_marker_path(state_directory, provider_id, session_id)?;
     match std::fs::metadata(&marker) {
         Ok(metadata) => {
             ensure!(
@@ -260,15 +623,16 @@ fn successful_query_marker_exists_at(
     }
 }
 
-fn record_successful_query_marker(session_id: &str) -> anyhow::Result<()> {
-    record_successful_query_marker_at(&state_dir(), session_id)
+fn record_successful_query_marker(provider_id: &str, session_id: &str) -> anyhow::Result<()> {
+    record_successful_query_marker_at(&state_dir(), provider_id, session_id)
 }
 
 fn record_successful_query_marker_at(
     state_directory: &Path,
+    provider_id: &str,
     session_id: &str,
 ) -> anyhow::Result<()> {
-    let marker = successful_query_marker_path(state_directory, session_id)?;
+    let marker = successful_query_marker_path(state_directory, provider_id, session_id)?;
     write_atomic_if_changed(&marker, b"")
         .with_context(|| format!("record DUCX query session state {}", marker.display()))?;
     Ok(())
@@ -276,8 +640,16 @@ fn record_successful_query_marker_at(
 
 fn successful_query_marker_path(
     state_directory: &Path,
+    provider_id: &str,
     session_id: &str,
 ) -> anyhow::Result<PathBuf> {
+    ensure!(
+        !provider_id.is_empty()
+            && provider_id
+                .bytes()
+                .all(|byte| byte.is_ascii_alphanumeric() || matches!(byte, b'-' | b'_')),
+        "DUCX reporting provider ID contains unsupported characters"
+    );
     ensure!(
         !session_id.is_empty(),
         "DUCX report hook is missing session_id"
@@ -290,6 +662,7 @@ fn successful_query_marker_path(
     );
     Ok(state_directory
         .join("ducx-report-sessions")
+        .join(provider_id)
         .join(session_id))
 }
 
@@ -350,6 +723,7 @@ fn parse_remote_repo(remote: &str) -> String {
 mod tests {
     use codex_mixin::provider::catalog_model_slug;
 
+    use super::queue::{enqueue_at, load_pending_at, mark_delivered_at};
     use super::transport::{provider_owns_model, redact_sensitive_response_body, truncate_for_log};
     use super::*;
 
@@ -388,17 +762,27 @@ mod tests {
     #[test]
     fn permits_session_scoped_uploads_only_after_a_successful_query() {
         let directory = tempfile::tempdir().unwrap();
-        assert!(!successful_query_marker_exists_at(directory.path(), "session-1").unwrap());
+        assert!(
+            !successful_query_marker_exists_at(directory.path(), "provider-1", "session-1")
+                .unwrap()
+        );
 
-        record_successful_query_marker_at(directory.path(), "session-1").unwrap();
+        record_successful_query_marker_at(directory.path(), "provider-1", "session-1").unwrap();
 
-        assert!(successful_query_marker_exists_at(directory.path(), "session-1").unwrap());
+        assert!(
+            successful_query_marker_exists_at(directory.path(), "provider-1", "session-1").unwrap()
+        );
+        assert!(
+            !successful_query_marker_exists_at(directory.path(), "provider-2", "session-1")
+                .unwrap()
+        );
     }
 
     #[test]
     fn rejects_unsafe_session_ids_for_local_state() {
         let directory = tempfile::tempdir().unwrap();
-        assert!(successful_query_marker_path(directory.path(), "../session").is_err());
+        assert!(successful_query_marker_path(directory.path(), "provider", "../session").is_err());
+        assert!(successful_query_marker_path(directory.path(), "../provider", "session").is_err());
     }
 
     #[test]
@@ -448,6 +832,105 @@ mod tests {
         assert_eq!(
             redact_sensitive_response_body(response).unwrap(),
             "https://example.test/file?authorization=<redacted>&x-amz-signature=<redacted>&keep=1"
+        );
+    }
+
+    #[test]
+    fn report_queue_deduplicates_and_remembers_delivery() {
+        let directory = tempfile::tempdir().unwrap();
+        let body = br#"{"session_id":"session-1","model":"model-1","prompt":"hello"}"#;
+
+        let first = enqueue_at(
+            directory.path(),
+            "user-prompt-submit",
+            "baidu-oneapi",
+            "turn-1",
+            body,
+        )
+        .unwrap();
+        let second = enqueue_at(
+            directory.path(),
+            "user-prompt-submit",
+            "baidu-oneapi",
+            "turn-1",
+            body,
+        )
+        .unwrap();
+        enqueue_at(
+            directory.path(),
+            "user-prompt-submit",
+            "baidu-oneapi",
+            "turn-2",
+            body,
+        )
+        .unwrap();
+
+        assert_eq!(first.id, second.id);
+        assert_eq!(load_pending_at(directory.path()).unwrap().len(), 2);
+
+        let pending = load_pending_at(directory.path()).unwrap();
+        let first_record = pending.iter().find(|record| record.id == first.id).unwrap();
+        mark_delivered_at(directory.path(), first_record).unwrap();
+        assert_eq!(load_pending_at(directory.path()).unwrap().len(), 1);
+        assert!(
+            enqueue_at(
+                directory.path(),
+                "user-prompt-submit",
+                "baidu-oneapi",
+                "turn-1",
+                body,
+            )
+            .unwrap()
+            .already_delivered
+        );
+    }
+
+    #[test]
+    fn report_queue_keeps_provider_identities_separate() {
+        let directory = tempfile::tempdir().unwrap();
+        let body = br#"{"session_id":"session-1","model":"shared-model"}"#;
+
+        enqueue_at(directory.path(), "stop", "baidu-oneapi", "stop-1", body).unwrap();
+        enqueue_at(directory.path(), "stop", "baidu-oneapi-2", "stop-1", body).unwrap();
+
+        let pending = load_pending_at(directory.path()).unwrap();
+        assert_eq!(pending.len(), 2);
+        assert_ne!(pending[0].id, pending[1].id);
+    }
+
+    #[test]
+    fn local_session_replay_uses_the_last_user_message_before_each_turn() {
+        let directory = tempfile::tempdir().unwrap();
+        let session_path = directory.path().join("session.jsonl");
+        std::fs::write(
+            &session_path,
+            concat!(
+                "{\"type\":\"session_meta\",\"payload\":{\"id\":\"session-1\",\"cwd\":\"/repo\"}}\n",
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"injected context\"}]}}\n",
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"actual prompt\"}]}}\n",
+                "{\"type\":\"turn_context\",\"payload\":{\"model\":\"model-1-baidu-oneapi\",\"cwd\":\"/repo\"}}\n",
+                "{\"type\":\"response_item\",\"payload\":{\"type\":\"message\",\"role\":\"user\",\"content\":[{\"type\":\"input_text\",\"text\":\"official prompt\"}]}}\n",
+                "{\"type\":\"turn_context\",\"payload\":{\"model\":\"gpt-official\",\"cwd\":\"/repo\"}}\n"
+            ),
+        )
+        .unwrap();
+        let mut provider = codex_mixin::provider::baidu_oneapi_provider("baidu-oneapi", "key");
+        provider.enabled = true;
+        provider.request_policy.baidu_code_report = true;
+        provider.selected_models = vec!["model-1".to_owned()];
+
+        assert_eq!(
+            enqueue_session_file(&session_path, &[provider], directory.path()).unwrap(),
+            2
+        );
+        let pending = load_pending_at(directory.path()).unwrap();
+        assert_eq!(pending.len(), 2);
+        assert_eq!(pending[0].event, "user-prompt-submit");
+        assert_eq!(pending[0].hook_body["prompt"], "actual prompt");
+        assert_eq!(pending[1].event, "stop");
+        assert_eq!(
+            pending[1].hook_body["transcript_path"],
+            session_path.to_string_lossy().as_ref()
         );
     }
 }

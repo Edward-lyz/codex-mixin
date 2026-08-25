@@ -15,6 +15,22 @@ struct InstallProgressWindowTests {
             localizedProgressLabel("unknown progress line") == "unknown progress line"
         )
 
+        let releaseNotes = releaseNotesView(title: "更新内容", notes: "修复更新窗口布局")
+        precondition(
+            releaseNotes.frame.size == NSSize(width: 560, height: 300),
+            "release notes accessory must have an explicit AppKit frame"
+        )
+        let updateAlert = NSAlert()
+        updateAlert.messageText = "发现新版本"
+        updateAlert.informativeText = "当前版本 0.5.0，最新版本 0.5.1"
+        updateAlert.addButton(withTitle: "稍后")
+        updateAlert.accessoryView = releaseNotes
+        updateAlert.layout()
+        precondition(
+            updateAlert.window.frame.width >= 560 && updateAlert.window.frame.height >= 300,
+            "update alert must not collapse around its release notes"
+        )
+
         let controller = InstallProgressWindowController(
             title: "测试进度",
             detail: "detail",

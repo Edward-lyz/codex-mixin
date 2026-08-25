@@ -121,10 +121,25 @@ jobs:
         with:
           path: dist/release
           merge-multiple: true
+      - name: Prepare current release notes
+        shell: bash
+        run: |
+          awk '
+            /^<!-- codex-mixin:zh-Hans:start -->$/ {
+              section += 1
+              if (section == 2) exit
+            }
+            section == 1 { print }
+          ' RELEASE_NOTES.md > .current-release-notes.md
+          heading_count="$(grep -Fxc "## ${{ steps.version.outputs.tag }}" .current-release-notes.md)"
+          if [[ "$heading_count" != "3" ]]; then
+            echo "expected three localized headings for ${{ steps.version.outputs.tag }}, found $heading_count" >&2
+            exit 1
+          fi
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Codex Mixin ${{ steps.version.outputs.tag }}
-          body_path: RELEASE_NOTES.md
+          body_path: .current-release-notes.md
           files: dist/release/*
