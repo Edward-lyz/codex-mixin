@@ -267,6 +267,30 @@ struct MenuViewsLayoutTests {
         scrollingDashboard.model.selectModel("model-4")
         precondition(scrollingDashboard.model.selectedModel?.modelID == "model-4")
 
+        let proDashboard = ProviderUsageDashboardView()
+        proDashboard.updateConfiguredProviders([
+            ProviderDashboardProvider(id: "official", displayName: "OpenAI"),
+        ])
+        proDashboard.updateQuotaUsages(try parseProviderQuotaUsage(
+            """
+            [
+              {"provider_id":"official","quota_id":"codex.secondary","label":"Codex · 7d","used":34,"limit":100},
+              {"provider_id":"official","quota_id":"spark.primary","label":"GPT-5.3-Codex-Spark · 5h","used":0,"limit":100},
+              {"provider_id":"official","quota_id":"spark.secondary","label":"GPT-5.3-Codex-Spark · 7d","used":0,"limit":100}
+            ]
+            """
+        ))
+        proDashboard.updateTokenUsages(try parseProviderTokenUsage(
+            """
+            [{"provider_id":"official","model_id":"gpt-5.6-sol","request_count":129,"input_tokens":2200000,"cache_read_tokens":55200000,"cache_creation_tokens":0,"output_tokens":58400,"cache_hit_percent":96.2,"average_ttft_ms":7486,"output_tps":39.3}]
+            """
+        ))
+        proDashboard.model.selectModel("gpt-5.6-sol")
+        precondition(
+            proDashboard.frame.height >= 442,
+            "three quota rows must keep their row spacing instead of compressing into the token range picker"
+        )
+
         guard let primaryUsage = dashboard.model.selectedGroup?.models.first else {
             preconditionFailure("Baidu token usage must exist")
         }

@@ -3,6 +3,14 @@ import SwiftUI
 
 private let menuContentWidth: CGFloat = 336
 private let providerDashboardMinimumHeight: CGFloat = 168
+private let providerQuotaRowHeight: CGFloat = 28
+private let providerQuotaRowSpacing: CGFloat = 6
+
+private func providerQuotaSectionHeight(_ quotaCount: Int) -> CGFloat {
+    let rowCount = max(1, quotaCount)
+    return CGFloat(rowCount) * providerQuotaRowHeight
+        + CGFloat(rowCount - 1) * providerQuotaRowSpacing
+}
 
 struct ProviderDashboardProvider: Equatable {
     let id: String
@@ -194,10 +202,12 @@ final class ProviderUsageDashboardModel: ObservableObject {
 
     var contentHeight: CGFloat {
         guard let group = selectedGroup else { return providerDashboardMinimumHeight }
-        let quotaRows = max(1, group.quotas.count)
         let tokenHeight: CGFloat = group.models.isEmpty ? 20 : 144
         let detailHeight: CGFloat = selectedModel == nil ? 0 : 104
-        return max(providerDashboardMinimumHeight, 98 + CGFloat(quotaRows * 28) + tokenHeight + detailHeight)
+        return max(
+            providerDashboardMinimumHeight,
+            98 + providerQuotaSectionHeight(group.quotas.count) + tokenHeight + detailHeight
+        )
     }
 
     func normalizeSelection() {
@@ -309,12 +319,13 @@ private struct ProviderUsageDashboardContent: View {
                 .foregroundStyle(.secondary)
                 .help(model.quotaStatusDetail ?? "")
         } else {
-            VStack(spacing: 6) {
+            VStack(spacing: providerQuotaRowSpacing) {
                 ForEach(Array(group.quotas.enumerated()), id: \.offset) { _, usage in
                     ProviderQuotaRow(usage: usage, multiple: group.quotas.count > 1)
+                        .frame(height: providerQuotaRowHeight)
                 }
             }
-            .frame(height: CGFloat(group.quotas.count * 28))
+            .frame(height: providerQuotaSectionHeight(group.quotas.count))
         }
     }
 
