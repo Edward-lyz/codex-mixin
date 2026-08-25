@@ -175,7 +175,11 @@ pub(super) fn append_input_item(
             let output = serde_json::to_string(tools)?;
             messages.push(json!({"role":"tool","tool_call_id":call_id,"content":output}));
         }
-        "reasoning" | "web_search_call" | "image_generation_call" | "additional_tools" => {}
+        "compaction_trigger"
+        | "reasoning"
+        | "web_search_call"
+        | "image_generation_call"
+        | "additional_tools" => {}
         "agent_message" => {
             messages.push(json!({"role":"user","content":agent_message_text(item)?}));
         }

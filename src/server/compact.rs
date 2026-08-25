@@ -23,6 +23,7 @@ commands, file paths, unresolved errors, and decisions needed to continue the wo
 "#;
 
 const COMPACTION_TOOL_NAME: &str = "submit_compaction";
+const MAX_COMPACTION_ATTEMPTS: usize = 3;
 
 pub(super) async fn compact(
     State(state): State<AppState>,
@@ -142,7 +143,34 @@ async fn compact_custom_provider(
         );
     body["instructions"] = Value::String(instructions);
 
-    let response = collect_response(state, body).await?;
+    let mut attempt = 1;
+    let response = loop {
+        let attempt_body = if attempt == MAX_COMPACTION_ATTEMPTS {
+            body.take()
+        } else {
+            body.clone()
+        };
+        let response = collect_response(state, attempt_body).await?;
+        let called_compaction_tool = response.output.iter().any(|item| {
+            item.get("type").and_then(Value::as_str) == Some("function_call")
+                && item.get("name").and_then(Value::as_str) == Some(COMPACTION_TOOL_NAME)
+        });
+        if called_compaction_tool {
+            break response;
+        }
+        if attempt == MAX_COMPACTION_ATTEMPTS {
+            return Err(GatewayError::Upstream(
+                "compact provider did not call submit_compaction".to_owned(),
+            ));
+        }
+        tracing::warn!(
+            model,
+            attempt,
+            max_attempts = MAX_COMPACTION_ATTEMPTS,
+            "retrying compaction after provider omitted required tool call"
+        );
+        attempt += 1;
+    };
     let mut compaction_calls = response.output.iter().filter(|item| {
         item.get("type").and_then(Value::as_str) == Some("function_call")
             && item.get("name").and_then(Value::as_str) == Some(COMPACTION_TOOL_NAME)

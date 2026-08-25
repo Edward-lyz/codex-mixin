@@ -210,7 +210,8 @@ pub(super) fn append_input_item(
             });
         }
         "reasoning" => append_anthropic_reasoning(item, messages, replay_model)?,
-        "web_search_call" | "image_generation_call" | "additional_tools" => {}
+        "compaction_trigger" | "web_search_call" | "image_generation_call" | "additional_tools" => {
+        }
         "agent_message" => messages.push(Message {
             role: "user".to_owned(),
             content: vec![ContentBlock::Text {

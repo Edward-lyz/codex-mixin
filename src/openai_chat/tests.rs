@@ -364,6 +364,7 @@ fn ignores_provider_native_history_when_switching_to_custom_model() {
         "model": "deepseek-chat",
         "stream": true,
         "input": [
+            {"type":"compaction_trigger","id":"ct_1"},
             {"type":"reasoning","encrypted_content":"opaque","summary":[]},
             {"type":"web_search_call","id":"ws_1","status":"completed"},
             {"type":"image_generation_call","id":"ig_1","status":"completed","result":"base64"},

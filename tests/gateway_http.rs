@@ -72,6 +72,7 @@ fn data_url_dimensions(image_url: &str) -> (u32, u32) {
 enum MockMode {
     Text,
     Compact,
+    CompactRetry,
     Thinking,
     UnsignedThinking,
     Tool,
@@ -697,7 +698,8 @@ async fn mock_messages(
     let payload = match state.mode {
         MockMode::Text if is_fusion_panel => panel_report_sse(),
         MockMode::Text => text_sse(),
-        MockMode::Compact => tool_sse(
+        MockMode::CompactRetry if request_index == 0 => text_sse(),
+        MockMode::Compact | MockMode::CompactRetry => tool_sse(
             "submit_compaction",
             json!({
                 "goal":"continue task",
@@ -3504,6 +3506,36 @@ async fn maps_compaction_style_request_without_tools() {
 }
 
 #[tokio::test]
+async fn ignores_compaction_trigger_for_custom_responses() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model": "Claude Sonnet 5-custom",
+            "stream": true,
+            "input": [
+                {"type":"compaction_trigger","id":"ct_1"},
+                {"type":"message","role":"user","content":[
+                    {"type":"input_text","text":"continue after compaction"}
+                ]}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "unexpected response: {body}");
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["messages"].as_array().unwrap().len(), 1);
+    assert_eq!(requests[0]["messages"][0]["role"], "user");
+}
+
+#[tokio::test]
 async fn compacts_custom_provider_into_mixin_token() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Compact).await;
     let gateway_url = spawn_gateway(upstream_url).await;
@@ -3544,7 +3576,7 @@ async fn compacts_custom_provider_into_mixin_token() {
 
 #[tokio::test]
 async fn rejects_plain_text_compact_output_without_the_required_function_call() {
-    let (upstream_url, _) = spawn_mock_upstream(MockMode::Text).await;
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let gateway_url = spawn_gateway(upstream_url).await;
     let response = reqwest::Client::new()
         .post(format!("{gateway_url}/v1/responses/compact"))
@@ -3564,6 +3596,27 @@ async fn rejects_plain_text_compact_output_without_the_required_function_call() 
             .unwrap()
             .contains("compact provider did not call submit_compaction")
     );
+    assert_eq!(requests.lock().unwrap().len(), 3);
+}
+
+#[tokio::test]
+async fn retries_compaction_when_provider_omits_required_tool_call() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::CompactRetry).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses/compact"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model": "Claude Sonnet 5-custom",
+            "input": "continue"
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "unexpected response: {body}");
+    assert_eq!(requests.lock().unwrap().len(), 2);
 }
 
 #[tokio::test]
