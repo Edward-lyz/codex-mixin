@@ -1,4 +1,100 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.5.2
+
+本版本重点改进 DUCX 数据上报可靠性、macOS 操作窗口体验和用量展示，并提升自定义模型 compaction 稳定性。
+
+### DUCX 数据上报
+
+- 持久化保存失败的上报事件，网络或服务异常后可重试，避免事件丢失
+- 支持扫描并重放本地历史 Session
+- 即使部分事件上传失败，也保留已成功上传的结果，不重复处理
+- 失败的 Session 会继续保留在队列中，并显示具体的服务端错误
+- macOS 手动上报窗口展示加入队列、上传成功和保留重试的完整结果
+- 兼容新版 DUCX 清理 proxy 环境变量后的认证 token 获取流程
+- 仅对实际的 `apply_patch` 操作上报代码变更事件
+- `report-replay --all-sessions --json` 支持结构化输出
+
+### macOS
+
+- 设置、安装、测速等窗口在切换焦点后继续保持显示，并可以通过 Command-Tab 切换
+- 操作完成或失败后的结果保持显示，直到用户主动关闭
+- 修复 Provider 设置、更新窗口和操作进度窗口的状态保持问题
+- 限制用量面板最多显示三行 quota，更多 quota 通过滚动查看
+- 修复多行 quota 与 token 范围选择器之间的布局间距
+
+### 稳定性
+
+- 忽略没有 provider 可见内容的 Codex compaction 边界标记
+- 自定义模型遗漏 `submit_compaction` 时，自动重试同一个严格 compaction 请求
+- 增加 DUCX 重放、macOS 窗口策略、安装进度和用量布局相关回归测试
+
+<!-- codex-mixin:zh-Hans:end -->
+
+<!-- codex-mixin:zh-Hant:start -->
+## v0.5.2
+
+本版本重點改進 DUCX 資料上報可靠性、macOS 操作視窗體驗和用量顯示，並提升自訂模型 compaction 穩定性。
+
+### DUCX 資料上報
+
+- 持久化保存失敗的上報事件，網路或服務異常後可重試，避免事件遺失
+- 支援掃描並重放本機歷史 Session
+- 即使部分事件上傳失敗，也保留已成功上傳的結果，不重複處理
+- 失敗的 Session 會繼續保留在佇列中，並顯示具體的伺服器錯誤
+- macOS 手動上報視窗展示加入佇列、上傳成功和保留重試的完整結果
+- 相容新版 DUCX 清理 proxy 環境變數後的驗證 token 取得流程
+- 僅對實際的 `apply_patch` 操作上報程式碼變更事件
+- `report-replay --all-sessions --json` 支援結構化輸出
+
+### macOS
+
+- 設定、安裝、測速等視窗在切換焦點後繼續保持顯示，並可以透過 Command-Tab 切換
+- 操作完成或失敗後的結果保持顯示，直到使用者主動關閉
+- 修正 Provider 設定、更新視窗和操作進度視窗的狀態保持問題
+- 限制用量面板最多顯示三行 quota，更多 quota 透過捲動查看
+- 修正多行 quota 與 token 範圍選擇器之間的版面間距
+
+### 穩定性
+
+- 忽略沒有 provider 可見內容的 Codex compaction 邊界標記
+- 自訂模型遺漏 `submit_compaction` 時，自動重試同一個嚴格 compaction 請求
+- 增加 DUCX 重放、macOS 視窗策略、安裝進度和用量版面相關回歸測試
+
+<!-- codex-mixin:zh-Hant:end -->
+
+<!-- codex-mixin:en:start -->
+## v0.5.2
+
+This release improves DUCX reporting reliability, macOS operation windows and quota display, and custom-model compaction stability.
+
+### DUCX reporting
+
+- Persist failed report events for retry after network or service failures
+- Scan and replay local historical Sessions
+- Preserve successful uploads when only part of a replay fails, without reprocessing them
+- Keep failed Sessions queued and show the server error that caused the failure
+- Show queued, delivered, and retained retry results in the macOS manual reporting window
+- Support authentication token capture from DUCX builds that clear proxy environment variables
+- Report code-change events only for actual `apply_patch` operations
+- Add structured output to `report-replay --all-sessions --json`
+
+### macOS
+
+- Keep settings, installation, and benchmark windows visible when focus changes, and expose them through Command-Tab
+- Keep completed and failed operation results visible until the user closes them
+- Fix state preservation for provider settings, updater, and operation progress windows
+- Show at most three quota rows in the usage panel and scroll additional rows
+- Fix spacing between multiple quota rows and the token range picker
+
+### Reliability
+
+- Ignore Codex compaction boundary markers with no provider-visible content
+- Retry the same strict compaction request when a custom model omits `submit_compaction`
+- Add regression coverage for DUCX replay, macOS window policy, installation progress, and quota layout
+
+<!-- codex-mixin:en:end -->
+
+<!-- codex-mixin:zh-Hans:start -->
 ## v0.5.1
 
 这是针对新版 DUCX 的紧急兼容修复。
