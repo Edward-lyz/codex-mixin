@@ -124,13 +124,17 @@ impl DucxRuntime {
                 .context("read DUCX data-report stderr")?;
             anyhow::Ok(output)
         });
-        child
+        let write_result = child
             .stdin
             .take()
             .context("capture DUCX data-report stdin")?
             .write_all(&body)
-            .await
-            .context("write DUCX data-report input")?;
+            .await;
+        if let Err(error) = write_result
+            && error.kind() != std::io::ErrorKind::BrokenPipe
+        {
+            return Err(error).context("write DUCX data-report input");
+        }
         let capture = proxy.capture(timeout);
         tokio::pin!(capture);
         let capture_result = tokio::select! {
