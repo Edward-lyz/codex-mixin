@@ -12,6 +12,86 @@ enum GatewayError: Error, CustomStringConvertible {
     }
 }
 
+struct DUCXReplayEvent: Decodable {
+    let providerID: String
+    let sessionID: String
+    let event: String
+
+    private enum CodingKeys: String, CodingKey {
+        case providerID = "provider_id"
+        case sessionID = "session_id"
+        case event
+    }
+}
+
+struct DUCXReplayFailure: Decodable {
+    let providerID: String
+    let sessionID: String
+    let event: String
+    let error: String
+
+    private enum CodingKeys: String, CodingKey {
+        case providerID = "provider_id"
+        case sessionID = "session_id"
+        case event
+        case error
+    }
+}
+
+struct DUCXReplayReport: Decodable {
+    let queuedFromLocalSessions: Int
+    let delivered: [DUCXReplayEvent]
+    let retained: [DUCXReplayFailure]
+
+    private enum CodingKeys: String, CodingKey {
+        case queuedFromLocalSessions = "queued_from_local_sessions"
+        case delivered
+        case retained
+    }
+}
+
+func decodeDUCXReplayReport(_ output: String) throws -> DUCXReplayReport {
+    let decoder = JSONDecoder()
+    do {
+        return try decoder.decode(DUCXReplayReport.self, from: Data(output.utf8))
+    } catch {
+        throw GatewayError.command("DUCX 上报返回了无效 JSON：\(error)")
+    }
+}
+
+func formatDUCXReplayReport(_ report: DUCXReplayReport) -> String {
+    var lines = [
+        "本地 Session 新加入队列：\(report.queuedFromLocalSessions)",
+        "上传成功：\(report.delivered.count)",
+        "上传失败并保留重试：\(report.retained.count)",
+        "",
+    ]
+    if report.delivered.isEmpty {
+        lines.append("[INFO] 本次没有成功上传项")
+    } else {
+        lines.append(contentsOf: report.delivered.map {
+            "[OK] \(ducxEventLabel($0.event)) · \($0.providerID) · \($0.sessionID)"
+        })
+    }
+    if !report.retained.isEmpty {
+        lines.append("")
+        lines.append(contentsOf: report.retained.map {
+            "[ERROR] \(ducxEventLabel($0.event)) · \($0.providerID) · \($0.sessionID)\n\($0.error)"
+        })
+    }
+    return lines.joined(separator: "\n")
+}
+
+private func ducxEventLabel(_ event: String) -> String {
+    switch event {
+    case "user-prompt-submit": return "用户请求"
+    case "pre-tool-use": return "代码生成"
+    case "post-tool-use": return "代码采纳"
+    case "stop": return "Session 文件"
+    default: return event
+    }
+}
+
 func localizedPrompt(_ text: String) -> String {
     let translations: [String: (traditional: String, english: String)] = [
         "启动服务失败": ("啟動服務失敗", "Unable to Start Service"),

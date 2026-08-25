@@ -142,6 +142,8 @@ enum Command {
         all_sessions: bool,
         #[arg(long)]
         prepare_warmup: bool,
+        #[arg(long)]
+        json: bool,
     },
     /// Add a provider, start the gateway, and print the next step.
     Setup {
@@ -786,7 +788,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::ReportReplay {
             all_sessions,
             prepare_warmup,
-        } => report_hook::replay(all_sessions, prepare_warmup).await,
+            json,
+        } => report_hook::replay(all_sessions, prepare_warmup, json).await,
         Command::Setup {
             preset,
             key,

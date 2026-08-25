@@ -260,7 +260,7 @@ extension AppDelegate {
         Task { @MainActor in
             defer { serviceBusy = false }
             do {
-                try await runOperationProgress(
+                let replayReport = try await runOperationProgress(
                     title: "正在手动上报本地 Session",
                     phases: [
                         "清除旧上报凭据",
@@ -268,7 +268,7 @@ extension AppDelegate {
                         "扫描并重放本地 Session",
                         "完成",
                     ],
-                    successTitle: "✓ 本地 Session 上报完成",
+                    successTitle: "✓ 本地 Session 上报已处理",
                     failureTitle: "✗ 本地 Session 上报失败",
                     showFailureAlert: true,
                     failureAlertTitle: "手动触发上报失败"
@@ -280,11 +280,21 @@ extension AppDelegate {
                     let status = try await waitForGatewayStatus()
                     applyGatewayStatus(status)
                     progress.advance(to: 2)
-                    let report = try await runGateway(["report-replay", "--all-sessions"])
+                    let report = try await runGateway([
+                        "report-replay",
+                        "--all-sessions",
+                        "--json",
+                    ])
                     appendDiagnosticLog("Manual DUCX report replay\n\(report)")
+                    let replayReport = try decodeDUCXReplayReport(report)
                     progress.advance(to: 3)
                     await refreshStatusNow()
+                    return replayReport
                 }
+                showDiagnosticReport(
+                    title: "DUCX 手动上报结果",
+                    report: formatDUCXReplayReport(replayReport)
+                )
             } catch {
                 await refreshStatusNow()
             }

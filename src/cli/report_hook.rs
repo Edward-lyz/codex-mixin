@@ -9,6 +9,7 @@ use std::path::{Path, PathBuf};
 use std::process::Command as StdCommand;
 
 use anyhow::{Context, ensure};
+use serde::Serialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
@@ -44,6 +45,34 @@ struct ReportContext<'a> {
     provider_id: &'a str,
     model: &'a str,
     session_id: &'a str,
+}
+
+#[derive(Debug, Serialize)]
+struct ReplayEvent {
+    provider_id: String,
+    session_id: String,
+    event: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ReplayFailure {
+    provider_id: String,
+    session_id: String,
+    event: String,
+    error: String,
+}
+
+#[derive(Debug, Serialize)]
+struct ReplayReport {
+    queued_from_local_sessions: usize,
+    delivered: Vec<ReplayEvent>,
+    retained: Vec<ReplayFailure>,
+}
+
+#[derive(Debug)]
+struct DrainReport {
+    delivered: Vec<ReplayEvent>,
+    retained: Vec<ReplayFailure>,
 }
 
 pub(super) async fn run(event: &str) -> anyhow::Result<()> {
@@ -145,11 +174,15 @@ async fn persist_and_drain_event(
     Ok(())
 }
 
-pub(super) async fn replay(all_sessions: bool, prepare_warmup: bool) -> anyhow::Result<()> {
+pub(super) async fn replay(
+    all_sessions: bool,
+    prepare_warmup: bool,
+    json_output: bool,
+) -> anyhow::Result<()> {
     if prepare_warmup {
         ensure!(
-            !all_sessions,
-            "--prepare-warmup cannot be combined with --all-sessions"
+            !all_sessions && !json_output,
+            "--prepare-warmup cannot be combined with --all-sessions or --json"
         );
         codex_mixin::config::mutate_stored_config(|config| {
             let mut cleared = 0;
@@ -168,6 +201,10 @@ pub(super) async fn replay(all_sessions: bool, prepare_warmup: bool) -> anyhow::
         println!("DUCX report warmup prepared");
         return Ok(());
     }
+    ensure!(
+        !json_output || all_sessions,
+        "--json requires --all-sessions"
+    );
     if all_sessions {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
@@ -200,13 +237,43 @@ pub(super) async fn replay(all_sessions: bool, prepare_warmup: bool) -> anyhow::
     } else {
         0
     };
-    let delivered = drain_queue().await?;
+    let drain_report = drain_queue_report().await?;
+    let report = ReplayReport {
+        queued_from_local_sessions: discovered,
+        delivered: drain_report.delivered,
+        retained: drain_report.retained,
+    };
+    if json_output {
+        println!("{}", serde_json::to_string(&report)?);
+        return Ok(());
+    }
     println!("DUCX reports queued from local sessions: {discovered}");
-    println!("DUCX reports delivered: {delivered}");
+    println!("DUCX reports delivered: {}", report.delivered.len());
+    if let Some(failure) = report.retained.first() {
+        anyhow::bail!(
+            "delivered {} queued DUCX reports; retained {} failed sessions: {}",
+            report.delivered.len(),
+            report.retained.len(),
+            failure.error
+        );
+    }
     Ok(())
 }
 
 async fn drain_queue() -> anyhow::Result<usize> {
+    let report = drain_queue_report().await?;
+    if let Some(failure) = report.retained.first() {
+        anyhow::bail!(
+            "delivered {} queued DUCX reports; retained {} failed sessions: {}",
+            report.delivered.len(),
+            report.retained.len(),
+            failure.error
+        );
+    }
+    Ok(report.delivered.len())
+}
+
+async fn drain_queue_report() -> anyhow::Result<DrainReport> {
     let state_directory = state_dir();
     let lock_directory = state_directory.clone();
     let _lock = tokio::task::spawn_blocking(move || queue::lock_at(&lock_directory))
@@ -216,9 +283,9 @@ async fn drain_queue() -> anyhow::Result<usize> {
     let pending = tokio::task::spawn_blocking(move || queue::load_pending_at(&load_directory))
         .await
         .context("join DUCX report queue read")??;
-    let mut delivered = 0;
+    let mut delivered = Vec::new();
     let mut failed_sessions = HashSet::new();
-    let mut first_error = None;
+    let mut retained = Vec::new();
     for record in pending {
         let hook_body = serde_json::to_vec(&record.hook_body)?;
         let model = hook_body_model(&hook_body)
@@ -232,12 +299,14 @@ async fn drain_queue() -> anyhow::Result<usize> {
             Some(provider) => provider,
             None => {
                 failed_sessions.insert(session_key);
-                first_error.get_or_insert_with(|| {
-                    anyhow::anyhow!(
+                retained.push(ReplayFailure {
+                    provider_id: record.provider_id.clone(),
+                    session_id,
+                    event: record.event.clone(),
+                    error: format!(
                         "queued DUCX report {} provider {} is unavailable or reporting is disabled",
-                        record.id,
-                        record.provider_id
-                    )
+                        record.id, record.provider_id
+                    ),
                 });
                 continue;
             }
@@ -250,26 +319,34 @@ async fn drain_queue() -> anyhow::Result<usize> {
         };
         if let Err(error) = report_with_provider(context, &hook_body, &provider).await {
             failed_sessions.insert(session_key);
-            first_error.get_or_insert_with(|| {
-                error.context(format!("replay queued DUCX report {}", record.id))
+            retained.push(ReplayFailure {
+                provider_id: record.provider_id.clone(),
+                session_id,
+                event: record.event.clone(),
+                error: format!(
+                    "{:#}",
+                    error.context(format!("replay queued DUCX report {}", record.id))
+                ),
             });
             continue;
         }
+        let delivered_event = ReplayEvent {
+            provider_id: record.provider_id.clone(),
+            session_id,
+            event: record.event.clone(),
+        };
         let delivered_directory = state_directory.clone();
         tokio::task::spawn_blocking(move || {
             queue::mark_delivered_at(&delivered_directory, &record)
         })
         .await
         .context("join DUCX report delivery state write")??;
-        delivered += 1;
+        delivered.push(delivered_event);
     }
-    if let Some(error) = first_error {
-        return Err(error.context(format!(
-            "delivered {delivered} queued DUCX reports; retained {} failed sessions",
-            failed_sessions.len()
-        )));
-    }
-    Ok(delivered)
+    Ok(DrainReport {
+        delivered,
+        retained,
+    })
 }
 
 fn enqueue_local_sessions() -> anyhow::Result<usize> {
@@ -931,6 +1008,36 @@ mod tests {
         assert_eq!(
             pending[1].hook_body["transcript_path"],
             session_path.to_string_lossy().as_ref()
+        );
+    }
+
+    #[test]
+    fn partial_replay_json_preserves_successes_and_failures() {
+        let report = ReplayReport {
+            queued_from_local_sessions: 3,
+            delivered: vec![ReplayEvent {
+                provider_id: "baidu-oneapi".to_owned(),
+                session_id: "session-ok".to_owned(),
+                event: "post-tool-use".to_owned(),
+            }],
+            retained: vec![ReplayFailure {
+                provider_id: "baidu-oneapi".to_owned(),
+                session_id: "session-failed".to_owned(),
+                event: "post-tool-use".to_owned(),
+                error: "DUCX report endpoint upload/code/accept returned 500 Internal Server Error"
+                    .to_owned(),
+            }],
+        };
+
+        let value = serde_json::to_value(report).unwrap();
+        assert_eq!(value["queued_from_local_sessions"], 3);
+        assert_eq!(value["delivered"][0]["session_id"], "session-ok");
+        assert_eq!(value["retained"][0]["session_id"], "session-failed");
+        assert!(
+            value["retained"][0]["error"]
+                .as_str()
+                .unwrap()
+                .contains("upload/code/accept returned 500")
         );
     }
 }

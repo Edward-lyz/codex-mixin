@@ -15,6 +15,16 @@ struct InstallProgressWindowTests {
             localizedProgressLabel("unknown progress line") == "unknown progress line"
         )
 
+        let replay = try! decodeDUCXReplayReport(
+            #"{"queued_from_local_sessions":3,"delivered":[{"provider_id":"baidu-oneapi","session_id":"session-ok","event":"post-tool-use"}],"retained":[{"provider_id":"baidu-oneapi","session_id":"session-failed","event":"post-tool-use","error":"upload/code/accept returned 500"}]}"#
+        )
+        let replayText = formatDUCXReplayReport(replay)
+        precondition(replayText.contains("上传成功：1"))
+        precondition(replayText.contains("[OK] 代码采纳 · baidu-oneapi · session-ok"))
+        precondition(replayText.contains("上传失败并保留重试：1"))
+        precondition(replayText.contains("[ERROR] 代码采纳 · baidu-oneapi · session-failed"))
+        precondition(replayText.contains("upload/code/accept returned 500"))
+
         let releaseNotes = releaseNotesView(title: "更新内容", notes: "修复更新窗口布局")
         precondition(
             releaseNotes.frame.size == NSSize(width: 560, height: 300),
