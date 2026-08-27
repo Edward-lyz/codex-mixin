@@ -148,10 +148,7 @@ extension AppDelegate {
                         try await waitForGatewayStopped()
                         try installLaunchAgent()
                         progress.advance(to: 1)
-                        _ = try await runProcess(
-                            "/bin/launchctl",
-                            ["bootstrap", launchDomain(), launchAgentPath().path]
-                        )
+                        try await bootstrapLaunchAgent()
                         _ = try await waitForGatewayStatus()
                     }
                     progress.advance(to: 2)

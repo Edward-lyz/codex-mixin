@@ -84,7 +84,7 @@ extension AppDelegate {
             try await bootoutIfLoaded(launchDomainAndLabel())
             try await waitForGatewayStopped()
             try installLaunchAgent()
-            _ = try await runProcess("/bin/launchctl", ["bootstrap", launchDomain(), launchAgentPath().path])
+            try await bootstrapLaunchAgent()
         } else {
             _ = try await runGateway(["start", "--daemon"])
         }

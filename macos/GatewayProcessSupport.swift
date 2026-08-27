@@ -7,7 +7,7 @@ extension AppDelegate {
             _ = try await runGateway(["stop"])
             try await waitForGatewayStopped()
             try installLaunchAgent()
-            _ = try await runProcess("/bin/launchctl", ["bootstrap", launchDomain(), launchAgentPath().path])
+            try await bootstrapLaunchAgent()
             return
         }
         _ = try await runGateway(["stop"])
@@ -101,6 +101,15 @@ extension AppDelegate {
             if !message.contains("No such process") && !message.contains("Could not find service") {
                 throw error
             }
+        }
+    }
+
+    func bootstrapLaunchAgent() async throws {
+        _ = try await retryLaunchAgentBootstrap {
+            try await runProcess(
+                "/bin/launchctl",
+                ["bootstrap", launchDomain(), launchAgentPath().path]
+            )
         }
     }
 
