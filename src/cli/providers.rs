@@ -5,7 +5,7 @@ use codex_mixin::config::{
     GatewayConfig, StoredGatewayConfig, load_stored_config, mutate_stored_config,
 };
 use codex_mixin::provider::{
-    BaiduAuthBridge, ProviderDefinition, ProviderProtocol, ProviderQuotaParser,
+    BaiduAuthBridge, ProviderDefinition, ProviderModel, ProviderProtocol, ProviderQuotaParser,
 };
 use codex_mixin::provider_capabilities::ProviderCapabilities;
 use codex_mixin::web_search::WebSearchCapabilities;
@@ -17,6 +17,7 @@ use super::codex::{
     resolve_codex_config_path,
 };
 use super::config_input::{normalize_base_url, trim_required};
+use super::official_models::load_official_models;
 mod discovery;
 mod management;
 mod models;
@@ -158,7 +159,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
             })
             .collect::<Vec<_>>();
         if official_provider_is_available(codex_install_mode) {
-            providers.insert(0, official_provider_view());
+            providers.insert(0, official_provider_view(&config, load_official_models()?));
         }
         println!(
             "{}",
@@ -259,7 +260,25 @@ fn official_provider_is_available(codex_install_mode: Option<&str>) -> bool {
     codex_install_mode == Some("codex_oauth_proxy")
 }
 
-fn official_provider_view() -> serde_json::Value {
+fn official_provider_view(
+    config: &StoredGatewayConfig,
+    cached_models: Vec<ProviderModel>,
+) -> serde_json::Value {
+    let available_models = cached_models
+        .iter()
+        .map(|model| model.id.as_str())
+        .collect::<HashSet<_>>();
+    let selected_models = config.official_selected_models.as_ref().map_or_else(
+        || cached_models.iter().map(|model| model.id.clone()).collect(),
+        |selected| {
+            selected
+                .iter()
+                .filter(|model| available_models.contains(model.as_str()))
+                .cloned()
+                .collect::<Vec<_>>()
+        },
+    );
+    let routable_model_count = selected_models.len();
     json!({
         "id": "official",
         "kind": "official",
@@ -283,15 +302,15 @@ fn official_provider_view() -> serde_json::Value {
         "custom_headers_from_env": {},
         "baidu_auth_bridge": null,
         "baidu_code_report": false,
-        "selected_models": [],
+        "selected_models": selected_models,
         "new_models": [],
         "unavailable_selected_models": [],
-        "cached_models": [],
+        "cached_models": cached_models,
         "models_refreshed_at_ms": null,
         "last_model_refresh_error": null,
         "readiness": "healthy",
         "readiness_issues": [],
-        "routable_model_count": 0,
+        "routable_model_count": routable_model_count,
     })
 }
 
@@ -483,7 +502,17 @@ mod tests {
 
     #[test]
     fn official_provider_view_is_reserved_and_read_only() {
-        let provider = official_provider_view();
+        let config = StoredGatewayConfig {
+            official_selected_models: Some(vec!["gpt-5.6-sol".to_owned()]),
+            ..StoredGatewayConfig::default()
+        };
+        let provider = official_provider_view(
+            &config,
+            vec![ProviderModel {
+                id: "gpt-5.6-sol".to_owned(),
+                ..ProviderModel::default()
+            }],
+        );
 
         assert!(official_provider_is_available(Some("codex_oauth_proxy")));
         assert!(!official_provider_is_available(Some("custom_only")));
@@ -492,7 +521,8 @@ mod tests {
         assert_eq!(provider["kind"], "official");
         assert_eq!(provider["display_name"], "OpenAI");
         assert_eq!(provider["enabled"], true);
-        assert!(provider["selected_models"].as_array().unwrap().is_empty());
+        assert_eq!(provider["selected_models"], json!(["gpt-5.6-sol"]));
+        assert_eq!(provider["cached_models"][0]["id"], "gpt-5.6-sol");
     }
 
     #[test]

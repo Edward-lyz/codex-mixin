@@ -65,6 +65,47 @@ struct ModelBenchmarkDataTests {
         precondition(result.tps == 12.5)
         precondition(snapshot.providerCosts.first?.estimatedCost == 0.25)
 
+        let provider = try decodeProviderList(
+            """
+            {
+              "config_version": 2,
+              "gateway_auth_configured": false,
+              "codex_install_mode": "custom_only",
+              "providers": [{
+                "id": "provider-1",
+                "display_name": "Provider 1",
+                "enabled": true,
+                "auxiliary_model_upstream": false,
+                "protocol": "open_ai_responses",
+                "base_url": "https://example.com",
+                "api_path": "/v1/responses",
+                "model_source": {"kind": "static"},
+                "api_key_configured": true,
+                "quota_parser": "generic",
+                "selected_models": ["selected"],
+                "new_models": [],
+                "unavailable_selected_models": [],
+                "cached_models": [{"id": "selected"}, {"id": "unselected"}],
+                "readiness": "healthy",
+                "readiness_issues": [],
+                "routable_model_count": 1
+              }]
+            }
+            """
+        ).providers[0]
+        let selectionRows = provider.modelItems.map { model in
+            ModelBenchmarkTableRow(
+                providerID: provider.id,
+                model: model,
+                result: nil,
+                isSelectedSortValue: model.id == "selected" ? 1 : 0
+            )
+        }
+        let sortedSelectionRows = selectionRows.sorted(using: [
+            KeyPathComparator(\ModelBenchmarkTableRow.isSelectedSortValue),
+        ])
+        precondition(sortedSelectionRows.map(\.model.id) == ["unselected", "selected"])
+
         let previous = ModelBenchmarkResult(
             model: "old-model",
             providerID: "old-provider",

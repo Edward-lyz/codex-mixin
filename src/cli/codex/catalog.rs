@@ -18,6 +18,7 @@ use super::install::resolve_codex_cli;
 use super::managed_config::*;
 use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::metadata::load_model_metadata_resolver;
+use crate::cli::official_models::filter_official_catalog;
 
 pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::Result<()> {
     let config_path = resolve_codex_config_path(None)?;
@@ -34,7 +35,7 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
     let codex_home = config_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?;
-    let template = if oauth_proxy {
+    let mut template = if oauth_proxy {
         let models_cache = codex_home.join("models_cache.json");
         let template =
             load_preferred_official_catalog(&state, &models_cache, Some(&catalog_path)).await?;
@@ -48,6 +49,9 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
     } else {
         None
     };
+    if let Some(template) = &mut template {
+        filter_official_catalog(template, gateway_config.official_selected_models.as_deref())?;
+    }
     let metadata = load_model_metadata_resolver().await?;
     let catalog = if oauth_proxy {
         codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
@@ -164,10 +168,17 @@ pub(in crate::cli) fn write_generated_managed_codex_catalog(
     if !is_managed_config(&raw_config) {
         return Ok(false);
     }
-    let doc = raw_config.parse::<DocumentMut>()?;
+    let mut doc = raw_config.parse::<DocumentMut>()?;
     let catalog_path = managed_catalog_path(&doc, &config_path)?;
     apply_web_search_capabilities(&mut catalog, supported_web_search_models)?;
-    write_atomic_if_changed(&catalog_path, &serde_json::to_vec_pretty(&catalog)?)
+    let config_changed = if remove_unavailable_default_model(&mut doc, &catalog) {
+        write_atomic_if_changed(&config_path, doc.to_string().as_bytes())?
+    } else {
+        false
+    };
+    let catalog_changed =
+        write_atomic_if_changed(&catalog_path, &serde_json::to_vec_pretty(&catalog)?)?;
+    Ok(config_changed || catalog_changed)
 }
 
 #[cfg(test)]
@@ -222,7 +233,7 @@ fn refresh_managed_codex_catalog_with_source(
     if !is_managed_config(&raw_config) {
         return Ok(false);
     }
-    let doc = raw_config.parse::<DocumentMut>()?;
+    let mut doc = raw_config.parse::<DocumentMut>()?;
     let provider_id = managed_config_provider_id(&doc)?;
     let provider = doc
         .get("model_providers")
@@ -246,7 +257,25 @@ fn refresh_managed_codex_catalog_with_source(
     if let Some(supported_web_search_models) = supported_web_search_models {
         apply_web_search_capabilities(&mut refreshed, supported_web_search_models)?;
     }
-    write_atomic_if_changed(&catalog_path, &serde_json::to_vec_pretty(&refreshed)?)
+    let config_changed = if remove_unavailable_default_model(&mut doc, &refreshed) {
+        write_atomic_if_changed(&config_path, doc.to_string().as_bytes())?
+    } else {
+        false
+    };
+    let catalog_changed =
+        write_atomic_if_changed(&catalog_path, &serde_json::to_vec_pretty(&refreshed)?)?;
+    Ok(config_changed || catalog_changed)
+}
+
+fn remove_unavailable_default_model(doc: &mut DocumentMut, catalog: &serde_json::Value) -> bool {
+    let Some(current_model) = doc.get("model").and_then(Item::as_str) else {
+        return false;
+    };
+    if template_catalog_has_model(Some(catalog), current_model) {
+        return false;
+    }
+    doc.remove("model");
+    true
 }
 
 fn managed_oauth_proxy_mode(
@@ -268,17 +297,21 @@ pub(in crate::cli) async fn load_codex_install_template_online(
     paths: &CodexInstallPaths,
     codex_oauth_proxy: bool,
     state: &AppState,
+    official_selected_models: Option<&[String]>,
 ) -> anyhow::Result<Option<serde_json::Value>> {
     if !codex_oauth_proxy {
         return Ok(None);
     }
-    let template =
+    let mut template =
         load_preferred_official_catalog(state, &paths.models_cache, Some(&paths.catalog)).await?;
     if template.is_none() {
         anyhow::bail!(
             "official Codex model cache is missing: {}. Open Codex once before installing Codex Mixin",
             paths.models_cache.display()
         );
+    }
+    if let Some(template) = &mut template {
+        filter_official_catalog(template, official_selected_models)?;
     }
     Ok(template)
 }
@@ -318,7 +351,12 @@ pub(in crate::cli) async fn refresh_managed_official_codex_catalog(
         .join("models_cache.json");
     let client_version = resolve_codex_client_version(&models_cache)
         .ok_or_else(|| anyhow::anyhow!("Codex client version could not be determined"))?;
-    let official_catalog = state.fetch_official_models_catalog(&client_version).await?;
+    let mut official_catalog = state.fetch_official_models_catalog(&client_version).await?;
+    let gateway_config = GatewayConfig::from_stored_config()?;
+    filter_official_catalog(
+        &mut official_catalog,
+        gateway_config.official_selected_models.as_deref(),
+    )?;
     refresh_managed_codex_catalog_from_official(
         config_path,
         &official_catalog,

@@ -253,6 +253,7 @@ fn migrate_legacy_config(legacy: LegacyStoredGatewayConfig) -> anyhow::Result<St
         gateway_bind: legacy.gateway_bind,
         gateway_api_key: legacy.gateway_api_key,
         compaction_secret: None,
+        official_selected_models: None,
         fusion_profiles: legacy.fusion_profiles,
         providers: vec![provider],
     })

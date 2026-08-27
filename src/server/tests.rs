@@ -51,6 +51,7 @@ fn messages_endpoint_rejects_non_anthropic_provider_protocols() {
         codex_auth_path: tempfile::tempdir().unwrap().path().join("auth.json"),
         gateway_api_key: None,
         accept_codex_oauth: false,
+        official_selected_models: None,
         default_max_tokens: 8192,
         default_context_window: 1_000_000,
         request_timeout: Duration::from_secs(2),
@@ -69,6 +70,43 @@ fn messages_endpoint_rejects_non_anthropic_provider_protocols() {
             .protocol_for_model(resolved.upstream_model_id),
         crate::provider::ProviderProtocol::AnthropicMessages
     );
+}
+
+#[tokio::test]
+async fn explicit_official_selection_rejects_unselected_models() {
+    let directory = tempfile::tempdir().unwrap();
+    let auth_path = directory.path().join("auth.json");
+    tokio::fs::write(
+        &auth_path,
+        r#"{"tokens":{"access_token":"secret","account_id":"account-one"}}"#,
+    )
+    .await
+    .unwrap();
+    let state = AppState::new(GatewayConfig {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        providers: Vec::new(),
+        official_responses_url: "https://example.invalid/responses".to_owned(),
+        codex_auth_path: auth_path,
+        gateway_api_key: None,
+        accept_codex_oauth: true,
+        official_selected_models: Some(vec!["gpt-5.6-sol".to_owned()]),
+        default_max_tokens: 8192,
+        default_context_window: 1_000_000,
+        request_timeout: Duration::from_secs(2),
+        thinking_mode: ThinkingMode::Off,
+        enable_web_search_tool: false,
+        web_search_tool_type: "web_search_20250305".to_owned(),
+        web_search_max_uses: Some(3),
+        fusion_profiles: Vec::new(),
+    })
+    .unwrap();
+
+    let error = state.resolve_model_route("gpt-5.5").await.unwrap_err();
+
+    assert!(matches!(
+        error,
+        GatewayError::BadRequest(message) if message.contains("not selected")
+    ));
 }
 
 #[test]
@@ -122,6 +160,7 @@ async fn gateway_auth_accepts_only_the_configured_key_or_actual_codex_oauth_toke
         codex_auth_path: auth_path,
         gateway_api_key: Some("gateway-secret".to_owned()),
         accept_codex_oauth: true,
+        official_selected_models: None,
         default_max_tokens: 8192,
         default_context_window: 1_000_000,
         request_timeout: Duration::from_secs(2),
@@ -160,6 +199,7 @@ async fn usage_endpoint_requires_auth_and_returns_recorded_provider_usage() {
             codex_auth_path: directory.path().join("auth.json"),
             gateway_api_key: Some("gateway-key".to_owned()),
             accept_codex_oauth: false,
+            official_selected_models: None,
             default_max_tokens: 8192,
             default_context_window: 1_000_000,
             request_timeout: Duration::from_secs(2),
@@ -395,6 +435,7 @@ async fn fetches_official_models_with_codex_auth_and_client_version() {
         codex_auth_path: auth_path,
         gateway_api_key: None,
         accept_codex_oauth: true,
+        official_selected_models: None,
         default_max_tokens: 8192,
         default_context_window: 1_000_000,
         request_timeout: Duration::from_secs(2),
@@ -496,6 +537,7 @@ async fn benchmark_api_runs_after_the_start_request_returns_and_persists_results
         codex_auth_path: results_directory.path().join("auth.json"),
         gateway_api_key: Some("gateway-key".to_owned()),
         accept_codex_oauth: false,
+        official_selected_models: None,
         default_max_tokens: 8192,
         default_context_window: 1_000_000,
         request_timeout: Duration::from_secs(2),

@@ -41,6 +41,7 @@ private struct ClaudeProviderDocument: Decodable {
 
 private struct ClaudeProviderRecord: Decodable {
     let id: String?
+    let kind: String?
     let displayName: String?
     let enabled: Bool?
     let selectedModels: [String]?
@@ -48,6 +49,7 @@ private struct ClaudeProviderRecord: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case kind
         case displayName = "display_name"
         case enabled
         case selectedModels = "selected_models"
@@ -85,7 +87,7 @@ func decodeClaudeModelOptions(_ rawJSON: String) throws -> [ClaudeModelOption] {
             }
             let providerName = provider.displayName ?? providerID
             return ClaudeModelOption(
-                id: "\(model.id)-\(providerID)",
+                id: provider.kind == "official" ? model.id : "\(model.id)-\(providerID)",
                 displayName: "\(model.id) · \(providerName)"
             )
         }

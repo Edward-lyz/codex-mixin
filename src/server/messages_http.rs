@@ -20,6 +20,21 @@ pub(super) async fn messages(
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?;
+    let route = state.resolve_model_route(requested_model).await?;
+    if route == ResolvedModelRoute::Official {
+        let request = normalize_message_request(&body, requested_model)?;
+        let responses_body =
+            super::anthropic_compat::message_request_to_responses(&request, requested_model)?;
+        let plan = RequestPlan::official(responses_body, Some(requested_model.to_owned()))?;
+        return responses_compatible_message(
+            &state,
+            &headers,
+            requested_model,
+            body_stream_requested(&body),
+            plan,
+        )
+        .await;
+    }
     let resolved = state.resolve_native_provider_model(requested_model)?;
     let provider = resolved.provider;
     let upstream_model_id = resolved.upstream_model_id;
@@ -37,23 +52,14 @@ pub(super) async fn messages(
             routing,
             Some(requested_model.to_owned()),
         )?;
-        let upstream = UpstreamExecutor::new(&state).stream(plan, &headers).await?;
-        if stream_requested {
-            let stream = super::anthropic_compat::responses_to_anthropic_stream(
-                upstream,
-                requested_model.to_owned(),
-            );
-            return Response::builder()
-                .status(StatusCode::OK)
-                .header(header::CONTENT_TYPE, "text/event-stream")
-                .header(header::CACHE_CONTROL, "no-cache")
-                .body(Body::from_stream(stream))
-                .map_err(|err| GatewayError::Other(err.into()));
-        }
-        let collected = crate::upstream::collect_response_stream(upstream).await?;
-        let message =
-            super::anthropic_compat::collected_to_anthropic_message(collected, requested_model)?;
-        return Ok(Json(message).into_response());
+        return responses_compatible_message(
+            &state,
+            &headers,
+            requested_model,
+            stream_requested,
+            plan,
+        )
+        .await;
     }
     let hash_key = routing.map(|routing| routing.hash_key);
     let first = state
@@ -105,6 +111,32 @@ pub(super) async fn messages(
         .header(header::CACHE_CONTROL, "no-cache")
         .body(body)
         .map_err(|err| GatewayError::Other(err.into()))
+}
+
+async fn responses_compatible_message(
+    state: &AppState,
+    headers: &HeaderMap,
+    requested_model: &str,
+    stream_requested: bool,
+    plan: RequestPlan,
+) -> Result<Response, GatewayError> {
+    let upstream = UpstreamExecutor::new(state).stream(plan, headers).await?;
+    if stream_requested {
+        let stream = super::anthropic_compat::responses_to_anthropic_stream(
+            upstream,
+            requested_model.to_owned(),
+        );
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .header(header::CACHE_CONTROL, "no-cache")
+            .body(Body::from_stream(stream))
+            .map_err(|err| GatewayError::Other(err.into()));
+    }
+    let collected = crate::upstream::collect_response_stream(upstream).await?;
+    let message =
+        super::anthropic_compat::collected_to_anthropic_message(collected, requested_model)?;
+    Ok(Json(message).into_response())
 }
 
 fn body_stream_requested(body: &Value) -> bool {

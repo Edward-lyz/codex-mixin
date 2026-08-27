@@ -60,6 +60,7 @@ fn claude_install_writes_base_url_and_uninstall_restores_settings() {
         codex_auth_path: directory.path().join("auth.json"),
         gateway_api_key: None,
         accept_codex_oauth: false,
+        official_selected_models: None,
         default_max_tokens: 4096,
         default_context_window: 128_000,
         request_timeout: std::time::Duration::from_secs(30),
@@ -258,6 +259,7 @@ fn claude_install_uses_gateway_api_key_as_auth_token() {
         codex_auth_path: directory.path().join("auth.json"),
         gateway_api_key: Some("gateway-secret".to_owned()),
         accept_codex_oauth: false,
+        official_selected_models: None,
         default_max_tokens: 4096,
         default_context_window: 128_000,
         request_timeout: std::time::Duration::from_secs(30),
@@ -315,6 +317,7 @@ fn claude_install_migrates_legacy_managed_env_backup() {
         codex_auth_path: directory.path().join("auth.json"),
         gateway_api_key: Some("gateway-secret".to_owned()),
         accept_codex_oauth: false,
+        official_selected_models: None,
         default_max_tokens: 4096,
         default_context_window: 128_000,
         request_timeout: std::time::Duration::from_secs(30),
@@ -433,6 +436,7 @@ fn claude_install_accepts_any_routable_model_protocol() {
         codex_auth_path: directory.path().join("auth.json"),
         gateway_api_key: None,
         accept_codex_oauth: false,
+        official_selected_models: None,
         default_max_tokens: 4096,
         default_context_window: 128_000,
         request_timeout: std::time::Duration::from_secs(30),
@@ -869,6 +873,7 @@ async fn oauth_install_falls_back_to_local_cache_when_official_fetch_fails() {
         codex_auth_path: auth_path,
         gateway_api_key: None,
         accept_codex_oauth: true,
+        official_selected_models: None,
         default_max_tokens: 8192,
         default_context_window: 1_000_000,
         request_timeout: Duration::from_secs(2),
@@ -880,7 +885,7 @@ async fn oauth_install_falls_back_to_local_cache_when_official_fetch_fails() {
     })
     .unwrap();
 
-    let template = load_codex_install_template_online(&paths, true, &state)
+    let template = load_codex_install_template_online(&paths, true, &state, None)
         .await
         .unwrap()
         .unwrap();
@@ -1326,7 +1331,7 @@ fn refreshes_managed_catalog_from_latest_official_catalog() {
     fs::write(
         &config_path,
         format!(
-            "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\nsupports_websockets = true\n",
+            "{MANAGED_CONFIG_HEADER}\nmodel = \"gpt-5.5\"\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\nsupports_websockets = true\n",
             catalog_path.to_string_lossy()
         ),
     )
@@ -1343,6 +1348,11 @@ fn refreshes_managed_catalog_from_latest_official_catalog() {
     .unwrap();
 
     assert!(refresh_managed_codex_catalog(&config_path).unwrap());
+    let refreshed_config = fs::read_to_string(&config_path)
+        .unwrap()
+        .parse::<DocumentMut>()
+        .unwrap();
+    assert!(refreshed_config.get("model").is_none());
     let refreshed: serde_json::Value =
         serde_json::from_slice(&fs::read(&catalog_path).unwrap()).unwrap();
     assert_eq!(refreshed["models"][0]["slug"], "gpt-5.6-sol");
@@ -1509,7 +1519,7 @@ fn generated_catalog_refresh_adds_new_fusion_models() {
     fs::write(
         &config_path,
         format!(
-            "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\n",
+            "{MANAGED_CONFIG_HEADER}\nmodel = \"gpt-5.5\"\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\n",
             catalog_path.to_string_lossy()
         ),
     )
@@ -1529,6 +1539,11 @@ fn generated_catalog_refresh_adds_new_fusion_models() {
     assert!(
         write_generated_managed_codex_catalog(&config_path, generated, &HashSet::new()).unwrap()
     );
+    let refreshed_config = fs::read_to_string(&config_path)
+        .unwrap()
+        .parse::<DocumentMut>()
+        .unwrap();
+    assert!(refreshed_config.get("model").is_none());
     let refreshed: serde_json::Value =
         serde_json::from_slice(&fs::read(catalog_path).unwrap()).unwrap();
     assert!(

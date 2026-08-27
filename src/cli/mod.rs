@@ -22,6 +22,7 @@ mod ducx_setup;
 mod fusion_config;
 mod maintenance;
 mod metadata;
+mod official_models;
 mod providers;
 mod report_hook;
 mod runtime;

@@ -15,6 +15,9 @@ use super::{
     find_provider_mut, mutate_and_invalidate, normalize_base_url, normalize_model_ids,
     required_config, trim_required,
 };
+use crate::cli::official_models::{
+    OFFICIAL_PROVIDER_ID, available_official_ids, load_official_models,
+};
 
 pub(crate) async fn discover_models(id: &str) -> anyhow::Result<()> {
     discover_models_with_output(id, false).await
@@ -251,6 +254,22 @@ pub(crate) async fn test_provider(options: TestProviderOptions) -> anyhow::Resul
 pub(crate) fn select_models(id: &str, models: Vec<String>) -> anyhow::Result<()> {
     let models = normalize_model_ids(models)?;
     let selected_count = models.len();
+    if id == OFFICIAL_PROVIDER_ID {
+        let available_models = load_official_models()?;
+        let available_ids = available_official_ids(&available_models);
+        for model in &models {
+            anyhow::ensure!(
+                available_ids.contains(model.as_str()),
+                "official provider has no known model {model}; open Codex once to refresh its model cache"
+            );
+        }
+        mutate_and_invalidate(|config| {
+            config.official_selected_models = Some(models);
+            Ok(())
+        })?;
+        println!("provider models selected: {id} ({selected_count})");
+        return Ok(());
+    }
     mutate_and_invalidate(|config| {
         ensure_has_providers(config)?;
         apply_model_selection(find_provider_mut(config, id)?, models)

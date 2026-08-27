@@ -14,6 +14,7 @@ fn config() -> GatewayConfig {
         codex_auth_path: std::path::PathBuf::from("/tmp/codex-auth.json"),
         gateway_api_key: None,
         accept_codex_oauth: true,
+        official_selected_models: None,
         default_max_tokens: 8192,
         default_context_window: 1_000_000,
         request_timeout: Duration::from_secs(30),

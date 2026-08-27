@@ -164,6 +164,7 @@ fn test_config(upstream_base_url: String) -> GatewayConfig {
         codex_auth_path: std::path::PathBuf::from("/tmp/codex-auth.json"),
         gateway_api_key: Some("gateway-key".to_owned()),
         accept_codex_oauth: true,
+        official_selected_models: None,
         default_max_tokens: 8192,
         default_context_window: 1_000_000,
         request_timeout: Duration::from_secs(30),
@@ -3615,6 +3616,86 @@ async fn converts_anthropic_messages_for_openai_responses_models() {
         "function_call_output"
     );
     assert_eq!(requests[1]["body"]["input"][1]["output"], "/workspace");
+}
+
+#[tokio::test]
+async fn converts_anthropic_messages_for_official_models() {
+    let official_requests = Arc::new(Mutex::new(Vec::<Value>::new()));
+    let captured = official_requests.clone();
+    let official_url = spawn_router(Router::new().route(
+        "/v1/responses",
+        post(move |headers: HeaderMap, Json(body): Json<Value>| {
+            let captured = captured.clone();
+            async move {
+                assert_eq!(
+                    headers.get(header::AUTHORIZATION).and_then(|value| value.to_str().ok()),
+                    Some("Bearer codex-oauth-token")
+                );
+                captured.lock().unwrap().push(body.clone());
+                let item = json!({
+                    "id":"msg_official",
+                    "type":"message",
+                    "status":"completed",
+                    "role":"assistant",
+                    "content":[{"type":"output_text","text":"hello official","annotations":[]}]
+                });
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/event-stream")
+                    .body(Body::from(format!(
+                        "event: response.output_item.done\ndata: {}\n\nevent: response.completed\ndata: {}\n\n",
+                        json!({"type":"response.output_item.done","output_index":0,"item":item}),
+                        json!({
+                            "type":"response.completed",
+                            "response":{
+                                "id":"resp_official",
+                                "object":"response",
+                                "status":"completed",
+                                "model":body["model"],
+                                "output":[],
+                                "usage":{"input_tokens":4,"output_tokens":2,"total_tokens":6}
+                            }
+                        })
+                    )))
+                    .unwrap()
+            }
+        }),
+    ))
+    .await;
+    let (custom_url, _) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(custom_url);
+    config.official_responses_url = format!("{official_url}/v1/responses");
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    let gateway_url = spawn_gateway_with_config(config).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/messages"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model":"gpt-5.5",
+            "max_tokens":1024,
+            "stream":true,
+            "system":"You are Claude Code.",
+            "messages":[{"role":"user","content":"say hi"}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+
+    assert_eq!(status, StatusCode::OK, "unexpected response: {body}");
+    assert!(body.contains("hello official"), "{body}");
+    let requests = official_requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["model"], "gpt-5.5");
+    assert_eq!(requests[0]["instructions"], "You are Claude Code.");
 }
 
 #[tokio::test]

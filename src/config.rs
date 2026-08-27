@@ -36,6 +36,7 @@ pub struct GatewayConfig {
     pub codex_auth_path: PathBuf,
     pub gateway_api_key: Option<String>,
     pub accept_codex_oauth: bool,
+    pub official_selected_models: Option<Vec<String>>,
     pub default_max_tokens: u64,
     pub default_context_window: u64,
     pub request_timeout: Duration,
@@ -79,6 +80,7 @@ impl GatewayConfig {
             codex_auth_path: default_codex_auth_path(),
             gateway_api_key: stored_config.gateway_api_key,
             accept_codex_oauth: true,
+            official_selected_models: stored_config.official_selected_models,
             default_max_tokens: 8192,
             default_context_window: 1_000_000,
             request_timeout: Duration::from_millis(600_000),
@@ -146,6 +148,8 @@ pub struct StoredGatewayConfig {
     pub gateway_api_key: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction_secret: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub official_selected_models: Option<Vec<String>>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fusion_profiles: Vec<FusionProfile>,
     pub providers: Vec<ProviderDefinition>,
@@ -158,6 +162,7 @@ impl Default for StoredGatewayConfig {
             gateway_bind: None,
             gateway_api_key: None,
             compaction_secret: None,
+            official_selected_models: None,
             fusion_profiles: Vec::new(),
             providers: Vec::new(),
         }
@@ -191,6 +196,7 @@ mod tests {
             gateway_bind: Some("127.0.0.1:18787".to_owned()),
             gateway_api_key: Some("local-key".to_owned()),
             compaction_secret: None,
+            official_selected_models: Some(vec!["gpt-5.6-sol".to_owned()]),
             fusion_profiles: Vec::new(),
             providers: vec![crate::provider::open_code_go_provider(
                 "opencode-go",
@@ -202,6 +208,10 @@ mod tests {
         assert_eq!(loaded.config_version, CONFIG_VERSION);
         assert_eq!(loaded.gateway_bind.as_deref(), Some("127.0.0.1:18787"));
         assert_eq!(loaded.gateway_api_key.as_deref(), Some("local-key"));
+        assert_eq!(
+            loaded.official_selected_models.as_ref().unwrap(),
+            &["gpt-5.6-sol".to_owned()]
+        );
         assert_eq!(loaded.providers[0].id, "opencode-go");
         assert!(!loaded.providers[0].auxiliary_model_upstream);
         #[cfg(unix)]
@@ -589,6 +599,7 @@ mod tests {
             codex_auth_path: PathBuf::from("/tmp/auth.json"),
             gateway_api_key: None,
             accept_codex_oauth: true,
+            official_selected_models: None,
             default_max_tokens: 8192,
             default_context_window: 1_000_000,
             request_timeout: Duration::from_secs(30),

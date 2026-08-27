@@ -30,11 +30,19 @@ struct InstallClaudePanelTests {
                 "enabled":true,
                 "selected_models":["selected-only","shared"],
                 "cached_models":[{"id":"cached-only"},{"id":"shared"}]
+              }, {
+                "id":"official",
+                "kind":"official",
+                "display_name":"OpenAI",
+                "enabled":true,
+                "selected_models":["gpt-5.6-sol"],
+                "cached_models":[{"id":"gpt-5.6-sol"},{"id":"gpt-5.5"}]
               }]
             }
             """
         )
         precondition(options.map(\.id) == [
+            "gpt-5.6-sol",
             "haiku-backend-provider",
             "opus-backend-provider",
             "responses-provider",
@@ -44,6 +52,7 @@ struct InstallClaudePanelTests {
         precondition(!options.contains { $0.id == "hidden-disabled" })
         precondition(!options.contains { $0.id == "selected-only-partial" })
         precondition(!options.contains { $0.id == "cached-only-partial" })
+        precondition(!options.contains { $0.id == "gpt-5.5" })
         precondition(
             options.first { $0.id == "opus-backend-provider" }?.displayName
                 == "opus-backend · Provider"

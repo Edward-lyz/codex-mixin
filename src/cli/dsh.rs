@@ -10,6 +10,7 @@ use codex_mixin::config::GatewayConfig;
 use codex_mixin::provider::catalog_model_slug;
 
 use super::atomic_file::write_atomic_if_changed;
+use super::official_models::selected_official_models;
 use super::runtime::{load_runtime_metadata, pid_is_running};
 
 pub(in crate::cli) const DSH_PROVIDER_ID: &str = "codex-mixin";
@@ -33,12 +34,22 @@ fn resolve_dsh_home(dsh_home: Option<PathBuf>) -> anyhow::Result<PathBuf> {
 
 pub(in crate::cli) fn install_dsh(dsh_home: Option<PathBuf>) -> anyhow::Result<()> {
     let gateway_config = GatewayConfig::from_stored_config()?;
-    install_dsh_with_config(dsh_home, &gateway_config)
+    let official_models = selected_official_models(&gateway_config)?;
+    install_dsh_with_models(dsh_home, &gateway_config, &official_models)
 }
 
+#[cfg(test)]
 pub(in crate::cli) fn install_dsh_with_config(
     dsh_home: Option<PathBuf>,
     gateway_config: &GatewayConfig,
+) -> anyhow::Result<()> {
+    install_dsh_with_models(dsh_home, gateway_config, &[])
+}
+
+fn install_dsh_with_models(
+    dsh_home: Option<PathBuf>,
+    gateway_config: &GatewayConfig,
+    official_models: &[codex_mixin::provider::ProviderModel],
 ) -> anyhow::Result<()> {
     let dsh_home = resolve_dsh_home(dsh_home)?;
     ensure_owner_only_dir(&dsh_home)?;
@@ -46,7 +57,7 @@ pub(in crate::cli) fn install_dsh_with_config(
         Some(runtime) if pid_is_running(runtime.pid)? => runtime.bind,
         _ => gateway_config.bind,
     };
-    let models = collect_dsh_models(gateway_config);
+    let models = collect_dsh_models(gateway_config, official_models);
     anyhow::ensure!(
         !models.is_empty(),
         "no enabled upstream models are available; refresh or select models before installing to DSH"
@@ -146,7 +157,10 @@ pub(in crate::cli) fn uninstall_dsh(dsh_home: Option<PathBuf>) -> anyhow::Result
     Ok(())
 }
 
-fn collect_dsh_models(config: &GatewayConfig) -> Vec<Value> {
+fn collect_dsh_models(
+    config: &GatewayConfig,
+    official_models: &[codex_mixin::provider::ProviderModel],
+) -> Vec<Value> {
     let mut seen = HashSet::new();
     let mut models = Vec::new();
     for provider in &config.providers {
@@ -174,10 +188,7 @@ fn collect_dsh_models(config: &GatewayConfig) -> Vec<Value> {
             if cached.supports_thinking != Some(false) {
                 entry.insert(
                     Value::String("reasoningEfforts".to_owned()),
-                    serde_yaml::from_str(
-                        r#"{off: null, minimal: low, low: low, medium: medium, high: high, xhigh: max, max: max}"#,
-                    )
-                    .expect("static DSH reasoning effort map is valid YAML"),
+                    dsh_reasoning_efforts(),
                 );
             }
             if let Some(context_window) = cached.context_window {
@@ -198,6 +209,45 @@ fn collect_dsh_models(config: &GatewayConfig) -> Vec<Value> {
             models.push(Value::Mapping(entry));
         }
     }
+    for model in official_models {
+        if !seen.insert(model.id.clone()) {
+            continue;
+        }
+        let mut entry = Mapping::new();
+        entry.insert(
+            Value::String("id".to_owned()),
+            Value::String(model.id.clone()),
+        );
+        entry.insert(
+            Value::String("name".to_owned()),
+            Value::String(format!(
+                "{} · OpenAI",
+                model.display_name.as_deref().unwrap_or(&model.id)
+            )),
+        );
+        if model.supports_thinking != Some(false) {
+            entry.insert(
+                Value::String("reasoningEfforts".to_owned()),
+                dsh_reasoning_efforts(),
+            );
+        }
+        if let Some(context_window) = model.context_window {
+            entry.insert(
+                Value::String("contextWindow".to_owned()),
+                Value::Number(context_window.into()),
+            );
+        }
+        if model.supports_image == Some(true) {
+            entry.insert(
+                Value::String("input".to_owned()),
+                Value::Sequence(vec![
+                    Value::String("text".to_owned()),
+                    Value::String("image".to_owned()),
+                ]),
+            );
+        }
+        models.push(Value::Mapping(entry));
+    }
     for profile in &config.fusion_profiles {
         let id = profile.model_slug();
         if !seen.insert(id.clone()) {
@@ -217,6 +267,23 @@ fn collect_dsh_models(config: &GatewayConfig) -> Vec<Value> {
         models.push(Value::Mapping(entry));
     }
     models
+}
+
+fn dsh_reasoning_efforts() -> Value {
+    Value::Mapping(
+        [
+            ("off", Value::Null),
+            ("minimal", Value::String("low".to_owned())),
+            ("low", Value::String("low".to_owned())),
+            ("medium", Value::String("medium".to_owned())),
+            ("high", Value::String("high".to_owned())),
+            ("xhigh", Value::String("max".to_owned())),
+            ("max", Value::String("max".to_owned())),
+        ]
+        .into_iter()
+        .map(|(effort, value)| (Value::String(effort.to_owned()), value))
+        .collect(),
+    )
 }
 
 fn build_dsh_provider_profile(bind: &SocketAddr, models: Vec<Value>) -> Value {
@@ -324,6 +391,7 @@ mod tests {
             codex_auth_path: PathBuf::from("/tmp/auth.json"),
             gateway_api_key: gateway_key.map(str::to_owned),
             accept_codex_oauth: false,
+            official_selected_models: None,
             default_max_tokens: 8192,
             default_context_window: 128_000,
             request_timeout: std::time::Duration::from_secs(30),
@@ -455,6 +523,28 @@ mod tests {
             credentials[DSH_API_KEY_ENV].as_str().unwrap(),
             DSH_LOCAL_KEY_PLACEHOLDER
         );
+    }
+
+    #[test]
+    fn includes_selected_official_models_without_provider_suffixes() {
+        let config = gateway_config(None, false, false);
+        let models = collect_dsh_models(
+            &config,
+            &[ProviderModel {
+                id: "gpt-5.6-sol".to_owned(),
+                display_name: Some("GPT-5.6 Sol".to_owned()),
+                context_window: Some(272_000),
+                supports_thinking: Some(true),
+                ..ProviderModel::default()
+            }],
+        );
+        let official = models
+            .iter()
+            .find(|model| model["id"].as_str() == Some("gpt-5.6-sol"))
+            .unwrap();
+
+        assert_eq!(official["name"].as_str(), Some("GPT-5.6 Sol · OpenAI"));
+        assert_eq!(official["contextWindow"].as_u64(), Some(272_000));
     }
 
     #[test]

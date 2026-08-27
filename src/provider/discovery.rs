@@ -236,24 +236,20 @@ pub fn apply_discovered_models(
             .iter()
             .map(|model| model.id.as_str())
             .collect::<HashSet<_>>();
-        let selected_models = provider
-            .selected_models
+        let available_models = models
             .iter()
-            .map(String::as_str)
+            .map(|model| model.id.as_str())
             .collect::<HashSet<_>>();
-        // Models not present in the previous refresh are newly discovered upstream.
-        // They auto-join selected_models so providers pick up upstream additions by
-        // default, and are also tagged in new_models for visibility in the UI.
-        let newly_discovered: Vec<String> = models
+        provider
+            .selected_models
+            .retain(|model| available_models.contains(model.as_str()));
+        // Refreshes preserve explicit user selection. New models remain visible for
+        // review, while models removed upstream leave the selection immediately.
+        provider.new_models = models
             .iter()
-            .filter(|model| {
-                !previous_models.contains(model.id.as_str())
-                    && !selected_models.contains(model.id.as_str())
-            })
+            .filter(|model| !previous_models.contains(model.id.as_str()))
             .map(|model| model.id.clone())
             .collect();
-        provider.new_models = newly_discovered.clone();
-        provider.selected_models.extend(newly_discovered);
     }
     provider.cached_models = models;
     provider.models_refreshed_at_ms =
@@ -338,7 +334,7 @@ mod tests {
     }
 
     #[test]
-    fn later_refresh_auto_selects_and_tags_newly_discovered_models() {
+    fn later_refresh_keeps_new_models_unselected_and_removes_unavailable_models() {
         let mut provider = crate::provider::custom_provider("custom", "key");
         provider.base_url = "https://example.test".to_owned();
         provider.models_refreshed_at_ms = Some(1);
@@ -347,8 +343,7 @@ mod tests {
 
         apply_discovered_models(&mut provider, vec![model("a"), model("new")]).unwrap();
 
-        // New upstream models auto-join selected_models by default.
-        assert_eq!(provider.selected_models, ["a", "gone", "new"]);
+        assert_eq!(provider.selected_models, ["a"]);
         assert_eq!(provider.new_models, ["new"]);
         assert_eq!(
             provider
@@ -361,11 +356,7 @@ mod tests {
     }
 
     #[test]
-    fn reappearing_model_is_auto_selected_again_after_leaving_cached_models() {
-        // A model explicitly deselected by the user that then disappears upstream
-        // (drops out of cached_models) and later reappears is treated as newly
-        // discovered and auto-selected, matching the "upstream additions are
-        // default-on" contract.
+    fn reappearing_model_stays_unselected_after_leaving_cached_models() {
         let mut provider = crate::provider::custom_provider("custom", "key");
         provider.base_url = "https://example.test".to_owned();
         provider.models_refreshed_at_ms = Some(1);
@@ -377,20 +368,17 @@ mod tests {
 
         // Upstream drops "flap" entirely.
         apply_discovered_models(&mut provider, vec![model("other")]).unwrap();
-        assert_eq!(provider.selected_models, ["other"]);
+        assert!(provider.selected_models.is_empty());
         assert_eq!(provider.new_models, ["other"]);
 
-        // Upstream brings "flap" back; it re-enters cached_models/previous
-        // is absent, so it is newly discovered and auto-selected again.
         apply_discovered_models(&mut provider, vec![model("flap"), model("other")]).unwrap();
-        assert_eq!(provider.selected_models, ["other", "flap"]);
+        assert!(provider.selected_models.is_empty());
         assert_eq!(provider.new_models, ["flap"]);
     }
 
     #[test]
     fn discovery_then_manual_select_then_rediscover_does_not_dup_or_retag() {
-        // Discover adds "new"; user saves selections (which clears new_models);
-        // a subsequent refresh with the same list does not re-tag or duplicate.
+        // The first discovery keeps the bootstrap behavior for a newly configured provider.
         let mut provider = crate::provider::custom_provider("custom", "key");
         provider.base_url = "https://example.test".to_owned();
 

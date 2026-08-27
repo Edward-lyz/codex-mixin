@@ -7,7 +7,9 @@ use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::report_hook::reporting_enabled;
 use crate::cli::runtime::{load_runtime_metadata, pid_is_running};
 use codex_mixin::config::GatewayConfig;
-use codex_mixin::provider::ProviderRegistry;
+use codex_mixin::provider::{ProviderModel, ProviderRegistry};
+
+use super::official_models::selected_official_models;
 
 pub(in crate::cli) const MANAGED_CLAUDE_MARKER: &str = "codex-mixin managed Claude Code";
 const MANAGED_CLAUDE_HOOK_MARKER: &str = " report-hook --event ";
@@ -127,16 +129,32 @@ pub(in crate::cli) fn install_claude(
     model_request: ClaudeModelRequest,
 ) -> anyhow::Result<()> {
     let gateway_config = GatewayConfig::from_stored_config()?;
-    install_claude_with_config(settings_path, model_request, &gateway_config)
+    let official_models = selected_official_models(&gateway_config)?;
+    install_claude_with_models(
+        settings_path,
+        model_request,
+        &gateway_config,
+        &official_models,
+    )
 }
 
+#[cfg(test)]
 pub(in crate::cli) fn install_claude_with_config(
     settings_path: Option<PathBuf>,
     model_request: ClaudeModelRequest,
     gateway_config: &GatewayConfig,
 ) -> anyhow::Result<()> {
+    install_claude_with_models(settings_path, model_request, gateway_config, &[])
+}
+
+fn install_claude_with_models(
+    settings_path: Option<PathBuf>,
+    model_request: ClaudeModelRequest,
+    gateway_config: &GatewayConfig,
+    official_models: &[ProviderModel],
+) -> anyhow::Result<()> {
     let settings_path = resolve_claude_settings_path(settings_path)?;
-    let models = resolve_claude_models(gateway_config, model_request)?;
+    let models = resolve_claude_models(gateway_config, official_models, model_request)?;
     let gateway_bind = match load_runtime_metadata()? {
         Some(runtime) if pid_is_running(runtime.pid)? => runtime.bind,
         _ => gateway_config.bind,
@@ -592,13 +610,18 @@ pub(in crate::cli) fn claude_status(settings_path: Option<PathBuf>) -> anyhow::R
 
 fn resolve_claude_models(
     config: &GatewayConfig,
+    official_models: &[ProviderModel],
     request: ClaudeModelRequest,
 ) -> anyhow::Result<ClaudeModelMapping> {
     let registry = ProviderRegistry::new(config.providers.clone())?;
+    let official_ids = official_models
+        .iter()
+        .map(|model| model.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
     match request {
-        ClaudeModelRequest::Automatic => select_default_claude_models(&registry),
+        ClaudeModelRequest::Automatic => select_default_claude_models(&registry, official_models),
         ClaudeModelRequest::Single(model) => {
-            let model = validate_claude_model(&registry, &model)?;
+            let model = validate_claude_model(&registry, &official_ids, &model)?;
             Ok(ClaudeModelMapping {
                 opus: model.clone(),
                 sonnet: model.clone(),
@@ -606,21 +629,31 @@ fn resolve_claude_models(
             })
         }
         ClaudeModelRequest::Mapping(models) => Ok(ClaudeModelMapping {
-            opus: validate_claude_model(&registry, &models.opus)?,
-            sonnet: validate_claude_model(&registry, &models.sonnet)?,
-            haiku: validate_claude_model(&registry, &models.haiku)?,
+            opus: validate_claude_model(&registry, &official_ids, &models.opus)?,
+            sonnet: validate_claude_model(&registry, &official_ids, &models.sonnet)?,
+            haiku: validate_claude_model(&registry, &official_ids, &models.haiku)?,
         }),
     }
 }
 
-fn validate_claude_model(registry: &ProviderRegistry, model: &str) -> anyhow::Result<String> {
+fn validate_claude_model(
+    registry: &ProviderRegistry,
+    official_ids: &std::collections::HashSet<&str>,
+    model: &str,
+) -> anyhow::Result<String> {
+    if official_ids.contains(model) {
+        return Ok(model.to_owned());
+    }
     let resolved = registry
         .resolve_native_model(model)
         .ok_or_else(|| anyhow::anyhow!("requested Claude model is not configured: {model}"))?;
     Ok(resolved.catalog_slug.to_owned())
 }
 
-fn select_default_claude_models(registry: &ProviderRegistry) -> anyhow::Result<ClaudeModelMapping> {
+fn select_default_claude_models(
+    registry: &ProviderRegistry,
+    official_models: &[ProviderModel],
+) -> anyhow::Result<ClaudeModelMapping> {
     let mut candidates = Vec::new();
     for resolved in registry.routable_models() {
         candidates.push((
@@ -628,6 +661,11 @@ fn select_default_claude_models(registry: &ProviderRegistry) -> anyhow::Result<C
             resolved.upstream_model_id.to_ascii_lowercase(),
         ));
     }
+    candidates.extend(
+        official_models
+            .iter()
+            .map(|model| (model.id.clone(), model.id.to_ascii_lowercase())),
+    );
     let fallback = candidates
         .iter()
         .find(|(_, model)| model.contains("claude"))
@@ -646,4 +684,27 @@ fn select_default_claude_models(registry: &ProviderRegistry) -> anyhow::Result<C
         sonnet: select("sonnet"),
         haiku: select("haiku"),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn accepts_selected_official_models_without_provider_suffixes() {
+        let mut provider = codex_mixin::provider::custom_provider("custom", "key");
+        provider.base_url = "https://example.test".to_owned();
+        provider.selected_models = vec!["custom-model".to_owned()];
+        provider.cached_models = vec![ProviderModel {
+            id: "custom-model".to_owned(),
+            ..ProviderModel::default()
+        }];
+        let registry = ProviderRegistry::new(vec![provider]).unwrap();
+        let official_ids = ["gpt-5.6-sol"].into_iter().collect();
+
+        assert_eq!(
+            validate_claude_model(&registry, &official_ids, "gpt-5.6-sol").unwrap(),
+            "gpt-5.6-sol"
+        );
+    }
 }

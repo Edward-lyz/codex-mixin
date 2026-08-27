@@ -111,7 +111,13 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
     let gateway_config = GatewayConfig::from_stored_config()?;
     let state = AppState::new(gateway_config.clone())?;
     super::super::progress_step("Loading Codex config template");
-    let template = load_codex_install_template_online(&paths, codex_oauth_proxy, &state).await?;
+    let template = load_codex_install_template_online(
+        &paths,
+        codex_oauth_proxy,
+        &state,
+        gateway_config.official_selected_models.as_deref(),
+    )
+    .await?;
     super::super::progress_step("Fetching available models");
     let models = state.fetch_models().await?;
     if models.is_empty() {

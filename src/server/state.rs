@@ -193,6 +193,21 @@ impl AppState {
         if custom_result.is_ok() || !crate::gateway::is_official_model_slug(model) {
             return custom_result;
         }
+        if !model.eq_ignore_ascii_case(crate::gateway::AUTO_REVIEW_MODEL_SLUG)
+            && self
+                .config
+                .official_selected_models
+                .as_ref()
+                .is_some_and(|selected| {
+                    !selected
+                        .iter()
+                        .any(|candidate| candidate.eq_ignore_ascii_case(model))
+                })
+        {
+            return Err(GatewayError::BadRequest(format!(
+                "official model is not selected: {model}"
+            )));
+        }
         if self.config.accept_codex_oauth && self.official_auth().await.is_ok() {
             return Ok(ResolvedModelRoute::Official);
         }

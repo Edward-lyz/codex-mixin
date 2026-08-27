@@ -259,26 +259,6 @@ struct ProviderView: Decodable {
         let newModelIDs = Set(newModels)
         return cachedModels.map {
             ProviderModelListItem(model: $0, isAvailable: true, isNew: newModelIDs.contains($0.id))
-        } + unavailableSelectedModels.map {
-            ProviderModelListItem(
-                model: ProviderModelView(
-                    id: $0,
-                    displayName: nil,
-                    description: "该模型仍保留在 allowlist，但本次模型发现未返回它。",
-                    ratio: nil,
-                    priceType: nil,
-                    contextWindow: nil,
-                    protocolID: nil,
-                    supportsImage: nil,
-                    supportsThinking: nil,
-                    supportsWebSearch: nil,
-                    supportsToolSearch: nil,
-                    supportsFunctionTools: nil,
-                    capabilityProbeError: nil
-                ),
-                isAvailable: false,
-                isNew: false
-            )
         }
     }
 
@@ -394,8 +374,8 @@ func benchmarkRatioValue(_ ratio: String?) -> Double? {
     )
 }
 
-func configuredProviderOptions(_ providers: [ProviderView]) -> [ProviderPickerOption] {
-    providers.filter { $0.kind == .configured }.map {
+func modelSelectionProviderOptions(_ providers: [ProviderView]) -> [ProviderPickerOption] {
+    providers.map {
         ProviderPickerOption(id: $0.id, displayName: $0.displayName)
     }
 }
@@ -419,7 +399,7 @@ func providerModelSelectionKey(providerID: String, modelID: String) -> String {
 }
 
 func selectedProviderModelKeys(_ providers: [ProviderView]) -> Set<String> {
-    Set(providers.filter { $0.kind == .configured }.flatMap { provider in
+    Set(providers.flatMap { provider in
         provider.selectedModels.map {
             providerModelSelectionKey(providerID: provider.id, modelID: $0)
         }
@@ -430,7 +410,7 @@ func providerModelSelections(
     _ providers: [ProviderView],
     selectedKeys: Set<String>
 ) -> [String: [String]] {
-    Dictionary(uniqueKeysWithValues: providers.filter { $0.kind == .configured }.map { provider in
+    Dictionary(uniqueKeysWithValues: providers.map { provider in
         let modelIDs = provider.modelItems
             .filter {
                 selectedKeys.contains(

@@ -35,6 +35,7 @@ async fn startup_does_not_wait_for_official_catalog_network() {
             gateway_bind: None,
             gateway_api_key: Some("gateway-key".to_owned()),
             compaction_secret: None,
+            official_selected_models: None,
             fusion_profiles: Vec::new(),
             providers: vec![open_code_go_provider("test-provider", "upstream-key")],
         },

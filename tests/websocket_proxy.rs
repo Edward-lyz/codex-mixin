@@ -213,6 +213,7 @@ fn test_config(official_responses_url: String, codex_auth_path: PathBuf) -> Gate
         codex_auth_path,
         gateway_api_key: Some("gateway-key".to_owned()),
         accept_codex_oauth: true,
+        official_selected_models: None,
         default_max_tokens: 8192,
         default_context_window: 1_000_000,
         request_timeout: Duration::from_secs(10),

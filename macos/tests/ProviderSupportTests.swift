@@ -165,10 +165,10 @@ struct ProviderSupportTests {
                 "api_key_configured": true,
                 "quota_auth_cookie_configured": false,
                 "quota_parser": "generic",
-                "selected_models": [],
+                "selected_models": ["gpt-5.6-sol"],
                 "new_models": [],
                 "unavailable_selected_models": [],
-                "cached_models": [],
+                "cached_models": [{"id":"gpt-5.6-sol"},{"id":"gpt-5.5"}],
                 "readiness": "healthy",
                 "readiness_issues": [],
                 "routable_model_count": 0
@@ -237,12 +237,20 @@ struct ProviderSupportTests {
         )
         let selections = providerModelSelections(response.providers, selectedKeys: selectedKeys)
         precondition(selections[baidu.id] == baidu.selectedModels)
-        let providerOptions = configuredProviderOptions(response.providers)
+        let providerOptions = modelSelectionProviderOptions(response.providers)
         precondition(providerOptions.count == response.providers.count)
         precondition(Set(providerOptions.map(\.id)) == Set(response.providers.map(\.id)))
-        precondition(configuredProviderOptions(response.providers + [official]).count == 4)
-        precondition(selectedProviderModelKeys([official]).isEmpty)
-        precondition(providerModelSelections([official], selectedKeys: []).isEmpty)
+        precondition(modelSelectionProviderOptions(response.providers + [official]).count == 5)
+        let officialSelectedKeys = selectedProviderModelKeys([official])
+        precondition(
+            officialSelectedKeys.contains(
+                providerModelSelectionKey(providerID: "official", modelID: "gpt-5.6-sol")
+            )
+        )
+        precondition(
+            providerModelSelections([official], selectedKeys: officialSelectedKeys)["official"]
+                == ["gpt-5.6-sol"]
+        )
         let benchmarkColumns = modelBenchmarkColumnDefinitions()
         precondition(
             benchmarkColumns.map(\.title)

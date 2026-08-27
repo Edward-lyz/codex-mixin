@@ -5,12 +5,12 @@ struct ModelBenchmarkTableRow: Identifiable {
     let providerID: String
     let model: ProviderModelListItem
     let result: ModelBenchmarkResult?
+    let isSelectedSortValue: Int
 
     var id: String {
         providerModelSelectionKey(providerID: providerID, modelID: model.id)
     }
 
-    var isSelectedSortValue: Int { 0 }
     var ttftSortValue: UInt64? { result?.ttftMs }
     var tpsSortValue: Double? { result?.tps }
     var contextSortValue: UInt64? { model.contextWindow }
@@ -75,7 +75,7 @@ final class ModelBenchmarkModel: ObservableObject {
     }
 
     var providerOptions: [ProviderPickerOption] {
-        configuredProviderOptions(providers)
+        modelSelectionProviderOptions(providers)
     }
 
     var dirty: Bool {
@@ -175,7 +175,8 @@ final class ModelBenchmarkModel: ObservableObject {
     }
 
     func refreshModels() {
-        guard let providerID = selectedProviderID, !isBusy else { return }
+        guard let provider = selectedProvider, provider.kind == .configured, !isBusy else { return }
+        let providerID = provider.id
         let providerName = selectedProvider?.displayName ?? providerID
         isDiscoveringModels = true
         resetProgress()
@@ -197,7 +198,7 @@ final class ModelBenchmarkModel: ObservableObject {
     }
 
     func probeCapabilities() {
-        guard let provider = selectedProvider, !isBusy else { return }
+        guard let provider = selectedProvider, provider.kind == .configured, !isBusy else { return }
         isProbingCapabilities = true
         resetProgress()
         setStatus("正在探测 \(provider.displayName) 已加入 Codex 的模型…", color: .secondary)
@@ -264,14 +265,14 @@ final class ModelBenchmarkModel: ObservableObject {
             switch filter {
             case "selected": matchesFilter = selectedModelKeys.contains(key)
             case "new": matchesFilter = model.isNew
-            case "unavailable": matchesFilter = !model.isAvailable
             default: matchesFilter = true
             }
             guard matchesQuery && matchesFilter else { return nil }
             return ModelBenchmarkTableRow(
                 providerID: provider.id,
                 model: model,
-                result: resultCache[key]
+                result: resultCache[key],
+                isSelectedSortValue: selectedModelKeys.contains(key) ? 1 : 0
             )
         }
         visibleRows = rows.sorted(using: sortOverride ?? [
@@ -486,7 +487,7 @@ struct ModelBenchmarkRootView: View {
 
     private var emptyStateTitle: String {
         model.selectedProvider == nil
-            ? "没有可用的自定义 Provider"
+            ? "没有可用的 Provider"
             : "当前 Provider 没有模型"
     }
 
@@ -553,12 +554,15 @@ struct ModelBenchmarkRootView: View {
             Button(action: model.refreshModels) {
                 Label("刷新模型", systemImage: "arrow.clockwise")
             }
-            .disabled(model.isBusy || model.selectedProvider == nil)
+            .disabled(model.isBusy || model.selectedProvider?.kind != .configured)
 
             Button(action: model.probeCapabilities) {
                 Label("探测已加入模型", systemImage: "waveform.path.ecg")
             }
-            .disabled(model.isBusy || model.dirty || model.selectedVisibleCount == 0)
+            .disabled(
+                model.isBusy || model.dirty || model.selectedVisibleCount == 0
+                    || model.selectedProvider?.kind != .configured
+            )
 
             Spacer()
 
@@ -567,7 +571,10 @@ struct ModelBenchmarkRootView: View {
             }
             .keyboardShortcut(.defaultAction)
             .buttonStyle(.borderedProminent)
-            .disabled(model.isBusy || model.dirty || model.selectedVisibleCount == 0)
+            .disabled(
+                model.isBusy || model.dirty || model.selectedVisibleCount == 0
+                    || model.selectedProvider?.kind != .configured
+            )
         }
         .padding(.horizontal, 20)
         .padding(.top, 18)
@@ -586,7 +593,6 @@ struct ModelBenchmarkRootView: View {
                 Text("全部模型").tag("all")
                 Text("已加入 Codex").tag("selected")
                 Text("新增").tag("new")
-                Text("不可用").tag("unavailable")
             }
             .labelsHidden()
             .frame(width: 150)
