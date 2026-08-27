@@ -32,7 +32,9 @@ mod tui;
 mod update;
 
 use benchmark_proxy::{benchmark_start, benchmark_status};
-use claude::{claude_status, install_claude, sync_claude_hooks, uninstall_claude};
+use claude::{
+    claude_model_request, claude_status, install_claude, sync_claude_hooks, uninstall_claude,
+};
 use codex::{
     InstallCodexOptions, install_codex, refresh_default_managed_codex_catalog, uninstall_codex,
 };
@@ -349,8 +351,30 @@ enum Command {
     InstallClaude {
         #[arg(long)]
         settings: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(
+            long,
+            conflicts_with_all = ["opus_model", "sonnet_model", "haiku_model"],
+            help = "Compatibility shorthand that maps Opus, Sonnet, and Haiku to one backend model"
+        )]
         model: Option<String>,
+        #[arg(
+            long,
+            requires_all = ["sonnet_model", "haiku_model"],
+            help = "Backend model used when Claude Code selects Opus"
+        )]
+        opus_model: Option<String>,
+        #[arg(
+            long,
+            requires_all = ["opus_model", "haiku_model"],
+            help = "Backend model used when Claude Code selects Sonnet"
+        )]
+        sonnet_model: Option<String>,
+        #[arg(
+            long,
+            requires_all = ["opus_model", "sonnet_model"],
+            help = "Backend model used when Claude Code selects Haiku"
+        )]
+        haiku_model: Option<String>,
     },
     #[command(name = "uninstall-claude", hide = true)]
     UninstallClaude {
@@ -421,8 +445,30 @@ enum ConnectCommand {
     Claude {
         #[arg(long)]
         settings_path: Option<PathBuf>,
-        #[arg(long)]
+        #[arg(
+            long,
+            conflicts_with_all = ["opus_model", "sonnet_model", "haiku_model"],
+            help = "Compatibility shorthand that maps Opus, Sonnet, and Haiku to one backend model"
+        )]
         model: Option<String>,
+        #[arg(
+            long,
+            requires_all = ["sonnet_model", "haiku_model"],
+            help = "Backend model used when Claude Code selects Opus"
+        )]
+        opus_model: Option<String>,
+        #[arg(
+            long,
+            requires_all = ["opus_model", "haiku_model"],
+            help = "Backend model used when Claude Code selects Sonnet"
+        )]
+        sonnet_model: Option<String>,
+        #[arg(
+            long,
+            requires_all = ["opus_model", "sonnet_model"],
+            help = "Backend model used when Claude Code selects Haiku"
+        )]
+        haiku_model: Option<String>,
     },
     /// Install the Codex Mixin gateway as a DeepSeek Harness provider.
     Dsh {
@@ -985,9 +1031,15 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             ConnectCommand::Claude {
                 settings_path,
                 model,
+                opus_model,
+                sonnet_model,
+                haiku_model,
             } => {
                 let hook_settings_path = settings_path.clone();
-                install_claude(settings_path, model)?;
+                install_claude(
+                    settings_path,
+                    claude_model_request(model, opus_model, sonnet_model, haiku_model)?,
+                )?;
                 sync_claude_hooks(hook_settings_path)?;
                 report_hook::sync_installation()
             }
@@ -1113,9 +1165,18 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             .await
         }
         Command::UninstallCodex { config, catalog } => uninstall_codex(config, catalog),
-        Command::InstallClaude { settings, model } => {
+        Command::InstallClaude {
+            settings,
+            model,
+            opus_model,
+            sonnet_model,
+            haiku_model,
+        } => {
             let hook_settings_path = settings.clone();
-            install_claude(settings, model)?;
+            install_claude(
+                settings,
+                claude_model_request(model, opus_model, sonnet_model, haiku_model)?,
+            )?;
             sync_claude_hooks(hook_settings_path)?;
             report_hook::sync_installation()
         }

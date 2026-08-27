@@ -293,16 +293,22 @@ Provider 设置界面见上方 [macOS control center](#macos-control-center)；�
 ### 安装到 Claude Code
 
 Codex Mixin 也提供一个 Anthropic Messages 兼容端点 `/v1/messages`，所以 Claude Code
-可以直接把本地网关当作上游使用。在 macOS 菜单栏选择「安装到 Claude Code...」，或在 TUI 的 Apps 页面点击 Claude Code 的 `Install / refresh` 后，会：
+可以直接把本地网关当作上游使用。在 macOS 菜单栏选择「安装到 Claude Code...」后，SwiftUI 面板会要求分别选择 Opus、Sonnet 和 Haiku 对应的实际后端模型；TUI 的 Apps 页面会按模型名称自动匹配这三个模型族。
 
 1. 备份并保留 `~/.claude/settings.json` 中已有的 `env` 配置。
-2. 在 `env` 中写入 `ANTHROPIC_BASE_URL=http://127.0.0.1:<端口>`。
-3. 自动选择一个已配置的 Claude/Anthropic Messages 模型，写入
-   `ANTHROPIC_MODEL`、`ANTHROPIC_DEFAULT_SONNET_MODEL`、`ANTHROPIC_DEFAULT_OPUS_MODEL`
-   和 `ANTHROPIC_DEFAULT_HAIKU_MODEL`。
-4. 写入 `codex_mixin_managed` 标记，卸载时恢复之前的值。
+2. 在 `env` 中写入 `ANTHROPIC_BASE_URL=http://127.0.0.1:<端口>` 和
+   `ANTHROPIC_AUTH_TOKEN`。网关配置了 `gateway_api_key` 时使用该值；否则使用本地占位
+   token，让 Claude Code 无需登录 Anthropic。
+3. 写入 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`，停止非必要官方流量；
+   `DISABLE_LOGIN_COMMAND=1` 隐藏不适用的官方登录入口。不启用 Claude 内部 Cloud
+   Gateway 模式。
+4. 将三个映射分别写入 `ANTHROPIC_DEFAULT_OPUS_MODEL`、
+   `ANTHROPIC_DEFAULT_SONNET_MODEL` 和 `ANTHROPIC_DEFAULT_HAIKU_MODEL`；顶层 `model`
+   写为 `sonnet`，所以默认请求也会经过 Sonnet 映射。同时在 `modelOverrides` 登记三个
+   实际后端 ID，避免 Claude Code 把自定义 ID 报为 `unrecognized_model`。
+5. 写入 `codex_mixin_managed` 标记，卸载时恢复之前的值。
 
-需要卸载时，在同一个 Apps 页面选择 Claude Code 的 `Restore`。Claude Code 默认模型名可能不是本地 Provider 的 catalog 名称，TUI 会从当前已选模型中明确选择并展示实际写入的模型。
+需要卸载时，在同一个 Apps 页面选择 Claude Code 的 `Restore`。CLI 可以用三个参数明确设置映射；兼容参数 `--model` 会把同一个后端模型用于三个模型族。
 
 ### 安装到 DSH
 
@@ -460,7 +466,10 @@ codex-mixin service start --foreground
 # Codex / Claude / DSH 集成
 codex-mixin connect codex --codex-oauth-proxy
 codex-mixin connect codex --custom-only
-codex-mixin connect claude --model "Claude Sonnet 5"
+codex-mixin connect claude \
+  --opus-model "Claude Opus 5-provider" \
+  --sonnet-model "Claude Sonnet 5-provider" \
+  --haiku-model "Claude Haiku 5-provider"
 codex-mixin connect dsh
 codex-mixin connect remove codex
 codex-mixin connect remove dsh

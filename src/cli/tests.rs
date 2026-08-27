@@ -12,7 +12,7 @@ use toml_edit::DocumentMut;
 
 use codex_mixin::anthropic::ModelInfo;
 use codex_mixin::config::{GatewayConfig, ThinkingMode};
-use codex_mixin::provider::{ProviderPreset, ProviderRegistry};
+use codex_mixin::provider::{ProviderModel, ProviderPreset, ProviderProtocol, ProviderRegistry};
 use codex_mixin::server::AppState;
 
 use super::claude::*;
@@ -38,7 +38,21 @@ fn claude_install_writes_base_url_and_uninstall_restores_settings() {
     let directory = tempfile::tempdir().unwrap();
     let settings = directory.path().join("settings.json");
     let mut baidu = ProviderPreset::BaiduOneApi.create("baidu", "key");
-    baidu.selected_models.push("Claude Sonnet 5".to_owned());
+    baidu.quota_username = Some("test-user".to_owned());
+    baidu.selected_models = vec![
+        "Claude Opus 5".to_owned(),
+        "Claude Sonnet 5".to_owned(),
+        "Claude Haiku 5".to_owned(),
+    ];
+    baidu.cached_models = baidu
+        .selected_models
+        .iter()
+        .map(|id| ProviderModel {
+            id: id.clone(),
+            protocol: Some(ProviderProtocol::AnthropicMessages),
+            ..ProviderModel::default()
+        })
+        .collect();
     let gateway_config = GatewayConfig {
         bind: "127.0.0.1:8787".parse().unwrap(),
         providers: vec![baidu],
@@ -57,41 +71,406 @@ fn claude_install_writes_base_url_and_uninstall_restores_settings() {
     };
     fs::write(
         &settings,
-        "{\"existing\": true, \"env\": {\"ANTHROPIC_BASE_URL\": \"https://old\"}}",
+        r#"{
+            "existing": true,
+            "model": "old-default",
+            "modelOverrides": {
+                "claude-opus-4-6": "old-opus-route",
+                "unrelated-model": "keep-route"
+            },
+            "env": {
+                "ANTHROPIC_BASE_URL": "https://old",
+                "ANTHROPIC_AUTH_TOKEN": "old-token",
+                "ANTHROPIC_MODEL": "old-model",
+                "ANTHROPIC_DEFAULT_OPUS_MODEL": "old-opus",
+                "ANTHROPIC_DEFAULT_SONNET_MODEL": "old-sonnet",
+                "ANTHROPIC_DEFAULT_HAIKU_MODEL": "old-haiku",
+                "CLAUDE_CODE_USE_GATEWAY": "old-gateway",
+                "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "old-traffic",
+                "DISABLE_LOGIN_COMMAND": "old-login"
+            }
+        }"#,
     )
     .unwrap();
 
     install_claude_with_config(
         Some(settings.clone()),
-        Some("Claude Sonnet 5".to_owned()),
+        ClaudeModelRequest::Mapping(ClaudeModelMapping {
+            opus: "Claude Opus 5-baidu".to_owned(),
+            sonnet: "Claude Sonnet 5-baidu".to_owned(),
+            haiku: "Claude Haiku 5-baidu".to_owned(),
+        }),
         &gateway_config,
     )
     .unwrap();
     let installed: serde_json::Value =
         serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert_installed_claude_settings(&installed);
+
+    install_claude_with_config(
+        Some(settings.clone()),
+        ClaudeModelRequest::Mapping(ClaudeModelMapping {
+            opus: "Claude Haiku 5-baidu".to_owned(),
+            sonnet: "Claude Opus 5-baidu".to_owned(),
+            haiku: "Claude Sonnet 5-baidu".to_owned(),
+        }),
+        &gateway_config,
+    )
+    .unwrap();
+
+    uninstall_claude(Some(settings.clone())).unwrap();
+    let restored: serde_json::Value =
+        serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert_restored_claude_settings(&restored);
+
+    install_claude_with_config(
+        Some(settings.clone()),
+        ClaudeModelRequest::Automatic,
+        &gateway_config,
+    )
+    .unwrap();
+    let automatic: serde_json::Value =
+        serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert_eq!(
+        automatic["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
+        "Claude Opus 5-baidu"
+    );
+    assert_eq!(
+        automatic["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+        "Claude Sonnet 5-baidu"
+    );
+    assert_eq!(
+        automatic["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
+        "Claude Haiku 5-baidu"
+    );
+    uninstall_claude(Some(settings)).unwrap();
+}
+
+fn assert_installed_claude_settings(installed: &serde_json::Value) {
     assert_eq!(installed["existing"], true);
     assert_eq!(
         installed["env"]["ANTHROPIC_BASE_URL"].as_str().unwrap(),
         "http://127.0.0.1:8787"
     );
     assert_eq!(
-        installed["env"]["ANTHROPIC_MODEL"].as_str().unwrap(),
-        "Claude Sonnet 5"
+        installed["env"]["ANTHROPIC_AUTH_TOKEN"].as_str().unwrap(),
+        "codex-mixin-local"
+    );
+    assert_eq!(installed["env"]["CLAUDE_CODE_USE_GATEWAY"], "old-gateway");
+    assert_eq!(
+        installed["env"]["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"],
+        "1"
+    );
+    assert_eq!(installed["env"]["DISABLE_LOGIN_COMMAND"], "1");
+    assert!(installed["env"].get("ANTHROPIC_MODEL").is_none());
+    assert_eq!(
+        installed["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"]
+            .as_str()
+            .unwrap(),
+        "Claude Opus 5-baidu"
+    );
+    assert_eq!(
+        installed["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"]
+            .as_str()
+            .unwrap(),
+        "Claude Sonnet 5-baidu"
+    );
+    assert_eq!(
+        installed["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"]
+            .as_str()
+            .unwrap(),
+        "Claude Haiku 5-baidu"
+    );
+    assert_eq!(installed["model"], "sonnet");
+    assert_eq!(
+        installed["modelOverrides"],
+        serde_json::json!({
+            "claude-opus-4-6": "Claude Opus 5-baidu",
+            "claude-sonnet-4-6": "Claude Sonnet 5-baidu",
+            "claude-haiku-4-5-20251001": "Claude Haiku 5-baidu",
+            "unrelated-model": "keep-route"
+        })
     );
     assert_eq!(
         installed["codex_mixin_managed"]["marker"].as_str().unwrap(),
         MANAGED_CLAUDE_MARKER
     );
+    assert_eq!(
+        installed["codex_mixin_managed"]["models"],
+        serde_json::json!({
+            "opus": "Claude Opus 5-baidu",
+            "sonnet": "Claude Sonnet 5-baidu",
+            "haiku": "Claude Haiku 5-baidu"
+        })
+    );
+}
 
-    uninstall_claude(Some(settings.clone())).unwrap();
-    let restored: serde_json::Value =
-        serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+fn assert_restored_claude_settings(restored: &serde_json::Value) {
     assert_eq!(restored["existing"], true);
     assert_eq!(
         restored["env"]["ANTHROPIC_BASE_URL"].as_str().unwrap(),
         "https://old"
     );
+    assert_eq!(restored["env"]["ANTHROPIC_AUTH_TOKEN"], "old-token");
+    assert_eq!(restored["env"]["CLAUDE_CODE_USE_GATEWAY"], "old-gateway");
+    assert_eq!(
+        restored["env"]["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"],
+        "old-traffic"
+    );
+    assert_eq!(restored["env"]["DISABLE_LOGIN_COMMAND"], "old-login");
+    assert_eq!(restored["env"]["ANTHROPIC_MODEL"], "old-model");
+    assert_eq!(restored["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"], "old-opus");
+    assert_eq!(
+        restored["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+        "old-sonnet"
+    );
+    assert_eq!(
+        restored["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
+        "old-haiku"
+    );
+    assert_eq!(restored["model"], "old-default");
+    assert_eq!(
+        restored["modelOverrides"],
+        serde_json::json!({
+            "claude-opus-4-6": "old-opus-route",
+            "unrelated-model": "keep-route"
+        })
+    );
     assert!(restored.get("codex_mixin_managed").is_none());
+}
+
+#[test]
+fn claude_install_uses_gateway_api_key_as_auth_token() {
+    let directory = tempfile::tempdir().unwrap();
+    let settings = directory.path().join("settings.json");
+    let mut provider = ProviderPreset::BaiduOneApi.create("baidu", "provider-key");
+    provider.quota_username = Some("test-user".to_owned());
+    provider.selected_models = vec!["Claude Sonnet 5".to_owned()];
+    provider.cached_models = vec![ProviderModel {
+        id: "Claude Sonnet 5".to_owned(),
+        protocol: Some(ProviderProtocol::AnthropicMessages),
+        ..ProviderModel::default()
+    }];
+    let gateway_config = GatewayConfig {
+        bind: "127.0.0.1:8787".parse().unwrap(),
+        providers: vec![provider],
+        official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
+        codex_auth_path: directory.path().join("auth.json"),
+        gateway_api_key: Some("gateway-secret".to_owned()),
+        accept_codex_oauth: false,
+        default_max_tokens: 4096,
+        default_context_window: 128_000,
+        request_timeout: std::time::Duration::from_secs(30),
+        thinking_mode: ThinkingMode::Auto,
+        enable_web_search_tool: false,
+        web_search_tool_type: "web_search".to_owned(),
+        web_search_max_uses: None,
+        fusion_profiles: Vec::new(),
+    };
+
+    install_claude_with_config(
+        Some(settings.clone()),
+        ClaudeModelRequest::Single("Claude Sonnet 5-baidu".to_owned()),
+        &gateway_config,
+    )
+    .unwrap();
+
+    let installed: serde_json::Value =
+        serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert_eq!(installed["env"]["ANTHROPIC_AUTH_TOKEN"], "gateway-secret");
+    assert_eq!(
+        installed["modelOverrides"]["claude-sonnet-4-6"],
+        "Claude Sonnet 5-baidu"
+    );
+
+    install_claude_with_config(
+        Some(settings.clone()),
+        ClaudeModelRequest::Single("Claude Sonnet 5-baidu".to_owned()),
+        &gateway_config,
+    )
+    .unwrap();
+    uninstall_claude(Some(settings.clone())).unwrap();
+    let restored: serde_json::Value = serde_json::from_slice(&fs::read(settings).unwrap()).unwrap();
+    assert!(restored.get("env").is_none());
+    assert!(restored.get("model").is_none());
+    assert!(restored.get("modelOverrides").is_none());
+}
+
+#[test]
+fn claude_install_migrates_legacy_managed_env_backup() {
+    let directory = tempfile::tempdir().unwrap();
+    let settings = directory.path().join("settings.json");
+    let mut provider = ProviderPreset::BaiduOneApi.create("baidu", "provider-key");
+    provider.quota_username = Some("test-user".to_owned());
+    provider.selected_models = vec!["Claude Sonnet 5".to_owned()];
+    provider.cached_models = vec![ProviderModel {
+        id: "Claude Sonnet 5".to_owned(),
+        protocol: Some(ProviderProtocol::AnthropicMessages),
+        ..ProviderModel::default()
+    }];
+    let gateway_config = GatewayConfig {
+        bind: "127.0.0.1:8787".parse().unwrap(),
+        providers: vec![provider],
+        official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
+        codex_auth_path: directory.path().join("auth.json"),
+        gateway_api_key: Some("gateway-secret".to_owned()),
+        accept_codex_oauth: false,
+        default_max_tokens: 4096,
+        default_context_window: 128_000,
+        request_timeout: std::time::Duration::from_secs(30),
+        thinking_mode: ThinkingMode::Auto,
+        enable_web_search_tool: false,
+        web_search_tool_type: "web_search".to_owned(),
+        web_search_max_uses: None,
+        fusion_profiles: Vec::new(),
+    };
+
+    install_claude_with_config(
+        Some(settings.clone()),
+        ClaudeModelRequest::Single("Claude Sonnet 5-baidu".to_owned()),
+        &gateway_config,
+    )
+    .unwrap();
+    let mut legacy: serde_json::Value =
+        serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    legacy["codex_mixin_managed"]
+        .as_object_mut()
+        .unwrap()
+        .remove("env_keys");
+    legacy["codex_mixin_managed"]
+        .as_object_mut()
+        .unwrap()
+        .remove("model_override_keys");
+    legacy["env"]["ANTHROPIC_AUTH_TOKEN"] = "manual-token".into();
+    legacy["modelOverrides"]["claude-sonnet-4-6"] = "manual-route".into();
+    fs::write(&settings, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
+
+    install_claude_with_config(
+        Some(settings.clone()),
+        ClaudeModelRequest::Single("Claude Sonnet 5-baidu".to_owned()),
+        &gateway_config,
+    )
+    .unwrap();
+    uninstall_claude(Some(settings.clone())).unwrap();
+
+    let restored: serde_json::Value = serde_json::from_slice(&fs::read(settings).unwrap()).unwrap();
+    assert_eq!(restored["env"]["ANTHROPIC_AUTH_TOKEN"], "manual-token");
+    assert_eq!(
+        restored["modelOverrides"]["claude-sonnet-4-6"],
+        "manual-route"
+    );
+}
+
+#[test]
+fn claude_connect_requires_a_complete_model_mapping() {
+    assert!(
+        Cli::try_parse_from([
+            "codex-mixin",
+            "connect",
+            "claude",
+            "--opus-model",
+            "opus-backend",
+            "--sonnet-model",
+            "sonnet-backend",
+            "--haiku-model",
+            "haiku-backend",
+        ])
+        .is_ok()
+    );
+    assert!(
+        Cli::try_parse_from([
+            "codex-mixin",
+            "install-claude",
+            "--opus-model",
+            "opus-backend",
+            "--sonnet-model",
+            "sonnet-backend",
+            "--haiku-model",
+            "haiku-backend",
+        ])
+        .is_ok()
+    );
+    assert!(
+        Cli::try_parse_from([
+            "codex-mixin",
+            "connect",
+            "claude",
+            "--opus-model",
+            "opus-backend",
+        ])
+        .is_err()
+    );
+    assert!(
+        Cli::try_parse_from([
+            "codex-mixin",
+            "connect",
+            "claude",
+            "--model",
+            "one-backend",
+            "--sonnet-model",
+            "sonnet-backend",
+        ])
+        .is_err()
+    );
+}
+
+#[test]
+fn claude_install_accepts_any_routable_model_protocol() {
+    let directory = tempfile::tempdir().unwrap();
+    let settings = directory.path().join("settings.json");
+    let mut provider = ProviderPreset::BaiduOneApi.create("baidu", "key");
+    provider.quota_username = Some("test-user".to_owned());
+    provider.selected_models = vec!["gpt-5.6-sol".to_owned()];
+    provider.cached_models = vec![ProviderModel {
+        id: "gpt-5.6-sol".to_owned(),
+        protocol: Some(ProviderProtocol::OpenAiResponses),
+        ..ProviderModel::default()
+    }];
+    let gateway_config = GatewayConfig {
+        bind: "127.0.0.1:8787".parse().unwrap(),
+        providers: vec![provider],
+        official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
+        codex_auth_path: directory.path().join("auth.json"),
+        gateway_api_key: None,
+        accept_codex_oauth: false,
+        default_max_tokens: 4096,
+        default_context_window: 128_000,
+        request_timeout: std::time::Duration::from_secs(30),
+        thinking_mode: ThinkingMode::Auto,
+        enable_web_search_tool: false,
+        web_search_tool_type: "web_search".to_owned(),
+        web_search_max_uses: None,
+        fusion_profiles: Vec::new(),
+    };
+
+    install_claude_with_config(
+        Some(settings.clone()),
+        ClaudeModelRequest::Single("gpt-5.6-sol-baidu".to_owned()),
+        &gateway_config,
+    )
+    .unwrap();
+
+    let installed: serde_json::Value =
+        serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    for family in ["OPUS", "SONNET", "HAIKU"] {
+        assert_eq!(
+            installed["env"][format!("ANTHROPIC_DEFAULT_{family}_MODEL")],
+            "gpt-5.6-sol-baidu"
+        );
+    }
+
+    install_claude_with_config(
+        Some(settings.clone()),
+        ClaudeModelRequest::Automatic,
+        &gateway_config,
+    )
+    .unwrap();
+    let automatic: serde_json::Value =
+        serde_json::from_slice(&fs::read(settings).unwrap()).unwrap();
+    assert_eq!(
+        automatic["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
+        "gpt-5.6-sol-baidu"
+    );
 }
 
 #[test]

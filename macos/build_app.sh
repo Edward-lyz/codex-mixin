@@ -98,6 +98,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/AboutWindow.swift" \
   "$ROOT_DIR/macos/InstallCard.swift" \
   "$ROOT_DIR/macos/InstallCodexPanel.swift" \
+  "$ROOT_DIR/macos/InstallClaudePanel.swift" \
   "$ROOT_DIR/macos/InstallProgressWindow.swift" \
   "$ROOT_DIR/macos/QuotaSupport.swift" \
   "$ROOT_DIR/macos/Localization.swift" \
