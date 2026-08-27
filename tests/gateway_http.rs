@@ -776,6 +776,7 @@ async fn mock_baidu_routed_responses(
             .iter()
             .any(|tool| tool["name"].as_str() == Some("submit_compaction"))
     });
+    let is_claude_compat = body["instructions"].as_str() == Some("You are Claude Code.");
     record_baidu_protocol_request(&state, "/v1/responses", &headers, body);
     if contains_websocket_envelope {
         return (
@@ -813,6 +814,47 @@ async fn mock_baidu_routed_responses(
                     }
                 })
             )))
+            .unwrap();
+    }
+    if is_claude_compat {
+        let item = json!({
+            "type":"function_call",
+            "id":"fc_claude",
+            "call_id":"call_claude",
+            "name":"exec_command",
+            "arguments":"{\"cmd\":\"pwd\"}"
+        });
+        let events = [
+            json!({"type":"response.output_item.added","output_index":0,"item":item.clone()}),
+            json!({"type":"response.function_call_arguments.delta","item_id":"fc_claude","output_index":0,"delta":"{\"cmd\":"}),
+            json!({"type":"response.function_call_arguments.delta","item_id":"fc_claude","output_index":0,"delta":"\"pwd\"}"}),
+            json!({"type":"response.function_call_arguments.done","item_id":"fc_claude","output_index":0,"arguments":"{\"cmd\":\"pwd\"}"}),
+            json!({"type":"response.output_item.done","output_index":0,"item":item.clone()}),
+            json!({
+                "type":"response.completed",
+                "response":{
+                    "id":"resp_claude",
+                    "object":"response",
+                    "status":"completed",
+                    "model":"gpt-5.6-sol",
+                    "output":[item],
+                    "usage":{"input_tokens":12,"output_tokens":4,"total_tokens":16}
+                }
+            }),
+        ];
+        let payload = events
+            .iter()
+            .map(|event| {
+                format!(
+                    "event: {}\ndata: {event}\n\n",
+                    event["type"].as_str().unwrap()
+                )
+            })
+            .collect::<String>();
+        return Response::builder()
+            .status(StatusCode::OK)
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(Body::from(payload))
             .unwrap();
     }
     Response::builder()
@@ -3466,6 +3508,203 @@ async fn routes_baidu_models_with_per_model_reasoning_capabilities() {
         .unwrap();
     assert_eq!(deepseek_request["body"]["thinking"]["type"], "adaptive");
     assert_eq!(deepseek_request["body"]["output_config"]["effort"], "max");
+}
+
+#[tokio::test]
+async fn converts_anthropic_messages_for_openai_responses_models() {
+    let (upstream_url, requests) = spawn_baidu_protocol_upstream().await;
+    let mut config = test_config(upstream_url);
+    configure_baidu_policy(&mut config);
+    configure_custom_headers_from_env(&mut config);
+    config.providers[0].model_source = ProviderModelSource::BaiduOneApi;
+    let gateway_url = spawn_gateway_with_config(config).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/messages"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model": "gpt-5.6-sol-custom",
+            "max_tokens": 1024,
+            "stream": true,
+            "system": "You are Claude Code.",
+            "messages": [{"role": "user", "content": "say hi"}],
+            "tools": [{
+                "name": "exec_command",
+                "description": "run shell",
+                "input_schema": {"type": "object", "properties": {"cmd": {"type": "string"}}}
+            }]
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let body = response.text().await.unwrap();
+
+    assert_eq!(status, StatusCode::OK, "unexpected response: {body}");
+    let mut event_buffer = body.into_bytes();
+    let events = drain_events(&mut event_buffer);
+    let payloads = events
+        .iter()
+        .map(|event| serde_json::from_str::<Value>(&event.data).unwrap())
+        .collect::<Vec<_>>();
+    let tool_starts = payloads
+        .iter()
+        .filter(|payload| {
+            payload["type"] == "content_block_start"
+                && payload["content_block"]["type"] == "tool_use"
+        })
+        .collect::<Vec<_>>();
+    assert_eq!(tool_starts.len(), 1);
+    assert_eq!(tool_starts[0]["content_block"]["id"], "call_claude");
+    assert_eq!(tool_starts[0]["content_block"]["name"], "exec_command");
+    let arguments = payloads
+        .iter()
+        .filter(|payload| payload["delta"]["type"] == "input_json_delta")
+        .filter_map(|payload| payload["delta"]["partial_json"].as_str())
+        .collect::<String>();
+    assert_eq!(
+        serde_json::from_str::<Value>(&arguments).unwrap(),
+        json!({"cmd":"pwd"})
+    );
+    assert!(payloads.iter().any(|payload| {
+        payload["type"] == "message_delta" && payload["delta"]["stop_reason"] == "tool_use"
+    }));
+    assert!(
+        payloads
+            .iter()
+            .any(|payload| payload["type"] == "message_stop")
+    );
+
+    let continuation = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/messages"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model": "gpt-5.6-sol-custom",
+            "max_tokens": 1024,
+            "stream": true,
+            "system": "You are Claude Code.",
+            "messages": [
+                {"role":"assistant","content":[{
+                    "type":"tool_use",
+                    "id":"call_claude",
+                    "name":"exec_command",
+                    "input":{"cmd":"pwd"}
+                }]},
+                {"role":"user","content":[{
+                    "type":"tool_result",
+                    "tool_use_id":"call_claude",
+                    "content":"/workspace"
+                }]}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(continuation.status(), StatusCode::OK);
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["path"], "/v1/responses");
+    assert_eq!(requests[0]["body"]["model"], "gpt-5.6-sol");
+    assert_eq!(requests[0]["body"]["instructions"], "You are Claude Code.");
+    assert_eq!(requests[0]["body"]["input"][0]["role"], "user");
+    assert_eq!(requests[0]["body"]["tools"][0]["name"], "exec_command");
+    assert_eq!(requests[1]["body"]["input"][0]["type"], "function_call");
+    assert_eq!(
+        requests[1]["body"]["input"][1]["type"],
+        "function_call_output"
+    );
+    assert_eq!(requests[1]["body"]["input"][1]["output"], "/workspace");
+}
+
+#[tokio::test]
+async fn converts_anthropic_messages_for_openai_chat_models() {
+    let (upstream_url, requests) = spawn_mock_openai_chat().await;
+    let mut config = test_config(upstream_url);
+    configure_openai_chat(&mut config, "/chat/completions");
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+    let request = json!({
+        "model": "gpt-5.6-sol-custom",
+        "max_tokens": 1024,
+        "stream": true,
+        "system": "You are Claude Code.",
+        "messages": [{"role": "user", "content": "say hi"}]
+    });
+
+    let streamed = client
+        .post(format!("{gateway_url}/v1/messages"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(streamed.status(), StatusCode::OK);
+    let streamed = streamed.text().await.unwrap();
+    assert_eq!(streamed.matches("event: content_block_start").count(), 1);
+    assert!(streamed.contains("hello"), "{streamed}");
+    assert!(streamed.contains(" openai"), "{streamed}");
+    assert!(streamed.contains("event: message_stop"), "{streamed}");
+
+    let mut request = request;
+    request["stream"] = Value::Bool(false);
+    let buffered = client
+        .post(format!("{gateway_url}/v1/messages"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(buffered.status(), StatusCode::OK);
+    let buffered: Value = buffered.json().await.unwrap();
+    assert_eq!(buffered["type"], "message");
+    assert_eq!(buffered["content"][0]["text"], "hello openai");
+    assert_eq!(buffered["stop_reason"], "end_turn");
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert_eq!(requests[0]["model"], "gpt-5.6-sol");
+    assert_eq!(requests[0]["messages"][0]["role"], "system");
+    assert_eq!(requests[0]["messages"][1]["role"], "user");
+}
+
+#[tokio::test]
+async fn converts_openai_chat_tool_calls_to_anthropic_messages() {
+    let (upstream_url, requests) = spawn_mock_openai_image_chat().await;
+    let mut config = test_config(upstream_url);
+    configure_openai_chat(&mut config, "/chat/completions");
+    let gateway_url = spawn_gateway_with_config(config).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/messages"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model": "gpt-5.6-sol-custom",
+            "max_tokens": 1024,
+            "stream": true,
+            "messages": [{"role": "user", "content": "draw"}],
+            "tools": [{
+                "name": "image_gen__imagegen",
+                "description": "draw image",
+                "input_schema": {"type": "object", "properties": {"prompt": {"type": "string"}}}
+            }]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert_eq!(body.matches("\"type\":\"tool_use\"").count(), 1, "{body}");
+    assert!(body.contains("image_gen__imagegen"), "{body}");
+    assert!(body.contains("input_json_delta"), "{body}");
+    assert!(body.contains("\"stop_reason\":\"tool_use\""), "{body}");
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(
+        requests[0]["tools"][0]["function"]["name"],
+        "image_gen__imagegen"
+    );
 }
 
 #[tokio::test]

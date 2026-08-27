@@ -117,7 +117,21 @@ pub(crate) fn responses_to_openai_chat_streaming_with_model(
     }
     if !tools.is_empty() {
         if let Some(tool_choice) = body.get("tool_choice") {
-            request["tool_choice"] = tool_choice.clone();
+            request["tool_choice"] = if tool_choice.get("type").and_then(Value::as_str)
+                == Some("function")
+            {
+                let name = tool_choice
+                    .get("name")
+                    .and_then(Value::as_str)
+                    .ok_or_else(|| {
+                        GatewayError::BadRequest(
+                            "Responses function tool_choice missing name".to_owned(),
+                        )
+                    })?;
+                json!({"type":"function","function":{"name":name}})
+            } else {
+                tool_choice.clone()
+            };
         }
         if let Some(parallel_tool_calls) = body.get("parallel_tool_calls").and_then(Value::as_bool)
         {

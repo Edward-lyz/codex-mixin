@@ -158,7 +158,26 @@ pub(crate) async fn collect_response_stream(
                         observed_output.push(item);
                     }
                 }
-                Some("response.failed" | "response.incomplete") => {
+                Some("response.incomplete") => {
+                    let mut payload: Value = serde_json::from_str(&event.data)?;
+                    if payload
+                        .pointer("/response/incomplete_details/reason")
+                        .and_then(Value::as_str)
+                        == Some("max_output_tokens")
+                    {
+                        completed = payload.get_mut("response").map(Value::take);
+                        continue;
+                    }
+                    terminal_error = Some(
+                        payload
+                            .pointer("/error/message")
+                            .or_else(|| payload.pointer("/response/error/message"))
+                            .and_then(Value::as_str)
+                            .unwrap_or("upstream response did not complete")
+                            .to_owned(),
+                    );
+                }
+                Some("response.failed") => {
                     let payload: Value = serde_json::from_str(&event.data)?;
                     terminal_error = Some(
                         payload
@@ -275,5 +294,19 @@ mod tests {
         let events = split_malformed_metadata_events("response.completed", &valid);
 
         assert_eq!(events, vec![("response.completed".to_owned(), valid)]);
+    }
+
+    #[tokio::test]
+    async fn collects_token_limited_incomplete_response() {
+        let source = Bytes::from_static(
+            b"event: response.incomplete\ndata: {\"type\":\"response.incomplete\",\"response\":{\"id\":\"resp_1\",\"status\":\"incomplete\",\"output\":[],\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"input_tokens\":3,\"output_tokens\":7}}}\n\n",
+        );
+        let stream: ResponseStream =
+            futures_util::stream::iter(vec![Ok::<Bytes, std::convert::Infallible>(source)]).boxed();
+
+        let collected = collect_response_stream(stream).await.unwrap();
+
+        assert_eq!(collected.response["status"], "incomplete");
+        assert_eq!(collected.usage["output_tokens"], 7);
     }
 }

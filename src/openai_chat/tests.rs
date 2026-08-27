@@ -343,6 +343,23 @@ fn omits_unavailable_hosted_web_search_tool() {
 }
 
 #[test]
+fn converts_responses_function_tool_choice_to_chat_shape() {
+    let converted = responses_to_openai_chat(&json!({
+        "model": "deepseek-chat",
+        "stream": true,
+        "input": "hi",
+        "tools": [{"type":"function","name":"bash","parameters":{"type":"object"}}],
+        "tool_choice": {"type":"function","name":"bash"}
+    }))
+    .unwrap();
+
+    assert_eq!(
+        converted.request["tool_choice"],
+        json!({"type":"function","function":{"name":"bash"}})
+    );
+}
+
+#[test]
 fn omits_legacy_openai_hosted_image_generation_tool() {
     let converted = responses_to_openai_chat(&json!({
         "model": "deepseek-chat",

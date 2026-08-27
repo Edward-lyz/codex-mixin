@@ -66,6 +66,17 @@ where
                     pending.push(encode_raw_event("response.warning", &json!({"type":"response.warning","warning":"invalid upstream SSE JSON"}).to_string()));
                     continue;
                 };
+                if let Some(error) = data.get("error") {
+                    if let Some(combined) = coalesce_events(&mut pending) {
+                        yield Ok(combined);
+                    }
+                    let message = error
+                        .get("message")
+                        .and_then(Value::as_str)
+                        .unwrap_or("OpenAI Chat upstream returned an error");
+                    yield Ok(state.failed_event(message));
+                    return;
+                }
                 if let Some(usage) = data.get("usage") {
                     state.usage.input_tokens = usage.get("prompt_tokens").and_then(Value::as_u64);
                     state.usage.output_tokens = usage.get("completion_tokens").and_then(Value::as_u64);

@@ -117,6 +117,19 @@ async fn map_anthropic_events(events: &[Value]) -> String {
 }
 
 #[tokio::test]
+async fn maps_openai_chat_sse_error_to_failed_response() {
+    let body = map_openai_events(
+        &[json!({"error":{"message":"provider overloaded","type":"server_error"}})],
+        true,
+    )
+    .await;
+
+    assert!(body.contains("event: response.failed"), "{body}");
+    assert!(body.contains("provider overloaded"), "{body}");
+    assert!(!body.contains("event: response.completed"), "{body}");
+}
+
+#[tokio::test]
 async fn preserves_anthropic_signed_thinking_as_replayable_reasoning() {
     let body = map_anthropic_events(&[
         json!({"type":"content_block_start","index":0,"content_block":{"type":"thinking","thinking":""}}),

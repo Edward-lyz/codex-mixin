@@ -42,6 +42,7 @@ use crate::sse::{SseDecoder, encode_event};
 use crate::upstream::{ResponseStream, UpstreamRouting};
 use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};
 
+mod anthropic_compat;
 mod auth;
 mod compact;
 mod images;
