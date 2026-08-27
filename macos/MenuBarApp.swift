@@ -1,5 +1,6 @@
 import Cocoa
 import Darwin
+import Sparkle
 
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let serviceLabel = "local.codex-mixin.service"
@@ -17,6 +18,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var timer: Timer?
     var terminationInProgress = false
     var updateTerminationReady = false
+    @MainActor var updaterController: SPUStandardUpdaterController?
+    var updateWatchdogLaunchGate = UpdateWatchdogLaunchGate()
     var isRunning = false
     var serviceBusy = false {
         didSet {
@@ -42,6 +45,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        updaterController = SPUStandardUpdaterController(
+            updaterDelegate: self,
+            userDriverDelegate: nil
+        )
         CardIdentityStore.standard.current()
         installApplicationMenu()
         installStatusItem()
@@ -56,13 +63,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await self?.refreshScheduledStatus()
             }
         }
-        if !CommandLine.arguments.contains("--check-updates") {
-            DispatchQueue.main.asyncAfter(deadline: .now() + 3) { [weak self] in
-                Task { @MainActor in
-                    await self?.checkForUpdates(interactive: false)
-                }
-            }
-        }
         if CommandLine.arguments.contains("--show-settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.configureLogin()
@@ -70,7 +70,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         }
         if CommandLine.arguments.contains("--check-updates") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
-                self?.checkForUpdatesFromMenu()
+                self?.updaterController?.checkForUpdates(nil)
             }
         }
     }
@@ -227,7 +227,7 @@ struct CodexMixinApplication {
     static let delegate = AppDelegate()
 
     static func main() {
-        if UpdateHelper.runIfRequested(arguments: CommandLine.arguments) {
+        if UpdateWatchdog.runIfRequested(arguments: CommandLine.arguments) {
             return
         }
         let app = NSApplication.shared

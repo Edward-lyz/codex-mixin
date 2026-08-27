@@ -7,10 +7,12 @@ APP_DIR="$ROOT_DIR/dist/$APP_NAME"
 CONTENTS_DIR="$APP_DIR/Contents"
 MACOS_DIR="$CONTENTS_DIR/MacOS"
 RESOURCES_DIR="$CONTENTS_DIR/Resources"
+FRAMEWORKS_DIR="$CONTENTS_DIR/Frameworks"
 CARGO_BUILD_ARGS=(--release)
 TARGET_DIR="$ROOT_DIR/target/release"
 MACOS_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.1}"
 export MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET"
+CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:--}"
 
 if [[ "${CODEX_MIXIN_REFRESH_NASA_WALLPAPERS:-0}" == "1" ]]; then
   # The wallpapers are decorative and a usable set is committed, so a refresh
@@ -40,13 +42,14 @@ cargo build "${CARGO_BUILD_ARGS[@]}"
 mkdir -p "$ROOT_DIR/macos/Generated"
 "$ROOT_DIR/scripts/check_localizations.sh"
 "$ROOT_DIR/scripts/swiftgen.sh" config run --config "$ROOT_DIR/swiftgen.yml"
+SPARKLE_DIR="$("$ROOT_DIR/scripts/fetch_sparkle.sh")"
 "$ROOT_DIR/macos/make_icon.sh"
 PACKAGE_ID="$(cargo pkgid --package codex-mixin)"
 APP_VERSION="${PACKAGE_ID##*#}"
 APP_VERSION="${APP_VERSION##*@}"
 
 rm -rf "$APP_DIR"
-mkdir -p "$MACOS_DIR" "$RESOURCES_DIR"
+mkdir -p "$MACOS_DIR" "$RESOURCES_DIR" "$FRAMEWORKS_DIR"
 cp "$ROOT_DIR/macos/Info.plist" "$CONTENTS_DIR/Info.plist"
 for localization_dir in "$ROOT_DIR"/macos/*.lproj; do
   [[ -d "$localization_dir" ]] || continue
@@ -63,11 +66,17 @@ cp "$ROOT_DIR/macos/assets/nasa-wallpapers/ATTRIBUTION.md" "$RESOURCES_DIR/Wallp
 mkdir -p "$RESOURCES_DIR/ProviderLogos"
 cp "$ROOT_DIR/macos/assets/providers/"*.svg "$RESOURCES_DIR/ProviderLogos/"
 cp "$ROOT_DIR/macos/assets/providers/ATTRIBUTION.md" "$RESOURCES_DIR/ProviderLogos/"
+mkdir -p "$RESOURCES_DIR/ThirdPartyLicenses"
+cp "$SPARKLE_DIR/LICENSE" "$RESOURCES_DIR/ThirdPartyLicenses/Sparkle.txt"
 cp "$TARGET_DIR/codex-mixin" "$RESOURCES_DIR/codex-mixin"
 chmod +x "$RESOURCES_DIR/codex-mixin"
+cp -R "$SPARKLE_DIR/Sparkle.framework" "$FRAMEWORKS_DIR/Sparkle.framework"
 
 xcrun swiftc \
   -target "$SWIFT_ARCH-apple-macosx$MACOS_DEPLOYMENT_TARGET" \
+  -F "$SPARKLE_DIR" \
+  -Xlinker -rpath \
+  -Xlinker '@executable_path/../Frameworks' \
   "$ROOT_DIR/macos/ApplicationMenuSupport.swift" \
   "$ROOT_DIR/macos/MenuBarApp.swift" \
   "$ROOT_DIR/macos/StatusRefreshCoordinator.swift" \
@@ -81,6 +90,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/CodexActions.swift" \
   "$ROOT_DIR/macos/UpdateController.swift" \
   "$ROOT_DIR/macos/UpdateSupport.swift" \
+  "$ROOT_DIR/macos/UpdateWatchdog.swift" \
   "$ROOT_DIR/macos/SettingsPanel.swift" \
   "$ROOT_DIR/macos/ProviderSupport.swift" \
   "$ROOT_DIR/macos/ProviderIconCache.swift" \
@@ -110,6 +120,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/FusionSettingsWindow.swift" \
   -framework Cocoa \
   -framework CryptoKit \
+  -framework Sparkle \
   -framework SwiftUI \
   -o "$MACOS_DIR/CodexMixinMenu"
 chmod +x "$MACOS_DIR/CodexMixinMenu"
@@ -123,9 +134,15 @@ if [[ "$MENU_MIN_VERSION" != "$MACOS_DEPLOYMENT_TARGET" ]]; then
   exit 1
 fi
 
-codesign --force --sign - "$RESOURCES_DIR/codex-mixin"
-codesign --force --sign - "$MACOS_DIR/CodexMixinMenu"
-codesign --force --sign - "$APP_DIR"
+SPARKLE_FRAMEWORK="$FRAMEWORKS_DIR/Sparkle.framework/Versions/B"
+codesign --force --sign "$CODE_SIGN_IDENTITY" "$SPARKLE_FRAMEWORK/XPCServices/Downloader.xpc"
+codesign --force --sign "$CODE_SIGN_IDENTITY" "$SPARKLE_FRAMEWORK/XPCServices/Installer.xpc"
+codesign --force --sign "$CODE_SIGN_IDENTITY" "$SPARKLE_FRAMEWORK/Updater.app"
+codesign --force --sign "$CODE_SIGN_IDENTITY" "$SPARKLE_FRAMEWORK/Autoupdate"
+codesign --force --sign "$CODE_SIGN_IDENTITY" "$FRAMEWORKS_DIR/Sparkle.framework"
+codesign --force --sign "$CODE_SIGN_IDENTITY" "$RESOURCES_DIR/codex-mixin"
+codesign --force --sign "$CODE_SIGN_IDENTITY" "$MACOS_DIR/CodexMixinMenu"
+codesign --force --sign "$CODE_SIGN_IDENTITY" "$APP_DIR"
 codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 
 BUILT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$CONTENTS_DIR/Info.plist")"

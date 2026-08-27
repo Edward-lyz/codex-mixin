@@ -103,7 +103,7 @@ jobs:
   publish:
     name: Publish release
     needs: build
-    runs-on: ubuntu-latest
+    runs-on: macos-15
     steps:
       - uses: actions/checkout@v4
       - name: Resolve release tag
@@ -136,6 +136,42 @@ jobs:
             echo "expected three localized headings for ${{ steps.version.outputs.tag }}, found $heading_count" >&2
             exit 1
           fi
+      - name: Generate signed Sparkle appcast
+        shell: bash
+        env:
+          SPARKLE_PRIVATE_KEY: ${{ secrets.SPARKLE_PRIVATE_KEY }}
+        run: |
+          if [[ -z "$SPARKLE_PRIVATE_KEY" ]]; then
+            echo "missing required SPARKLE_PRIVATE_KEY repository secret" >&2
+            exit 1
+          fi
+          sparkle_dir="$(./scripts/fetch_sparkle.sh)"
+          appcast_dir="$RUNNER_TEMP/codex-mixin-appcast"
+          rm -rf "$appcast_dir"
+          mkdir -p "$appcast_dir"
+          find dist/release -maxdepth 1 -type f -name '*.dmg' -exec cp {} "$appcast_dir/" \;
+          dmg_count="$(find "$appcast_dir" -maxdepth 1 -type f -name '*.dmg' | wc -l | tr -d '[:space:]')"
+          if [[ "$dmg_count" != "2" ]]; then
+            echo "expected two macOS DMGs for the appcast, found $dmg_count" >&2
+            exit 1
+          fi
+          for dmg in "$appcast_dir"/*.dmg; do
+            cp .current-release-notes.md "${dmg%.dmg}.md"
+          done
+          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sparkle_dir/bin/generate_appcast" \
+            --ed-key-file - \
+            --download-url-prefix "https://github.com/Edward-lyz/codex-mixin/releases/download/${{ steps.version.outputs.tag }}/" \
+            --embed-release-notes \
+            --maximum-deltas 0 \
+            --link "https://github.com/Edward-lyz/codex-mixin/releases/tag/${{ steps.version.outputs.tag }}" \
+            -o "$appcast_dir/appcast.xml" \
+            "$appcast_dir"
+          xmllint --noout "$appcast_dir/appcast.xml"
+          for dmg in "$appcast_dir"/*.dmg; do
+            grep -Fq "$(basename "$dmg")" "$appcast_dir/appcast.xml"
+          done
+          grep -Fq 'sparkle:edSignature=' "$appcast_dir/appcast.xml"
+          cp "$appcast_dir/appcast.xml" dist/release/appcast.xml
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v2
         with:
