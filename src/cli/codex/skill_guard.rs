@@ -79,7 +79,7 @@ mod tests {
         assert!(
             std::fs::read_to_string(imagegen_skill)
                 .unwrap()
-                .contains("codex-mixin managed imagegen skill v2")
+                .contains("codex-mixin managed imagegen skill v3")
         );
     }
 }

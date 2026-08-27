@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, ensure};
 
 const MANAGED_PREFIX: &str = "codex-mixin managed imagegen skill";
-const MANAGED_MARKER: &str = "codex-mixin managed imagegen skill v2";
+const MANAGED_MARKER: &str = "codex-mixin managed imagegen skill v3";
 const BACKUP_SUFFIX: &str = ".codex-mixin.bak";
 
 const MANAGED_SKILL: &str = r#"---
@@ -16,15 +16,15 @@ description: __DESCRIPTION__
 
 Read this file at `__SKILL_PATH__` before acting. Do not search for another imagegen Skill or inspect unrelated imagegen directories.
 
-Use the built-in `image_gen` tool when it is available. If it is unavailable for a generation request, run `python3 '__SCRIPT_PATH__'`; do not stop to ask for `OPENAI_API_KEY` or install Python packages.
+For image generation, always run `python3 '__SCRIPT_PATH__'`. Do not call the built-in `image_gen` tool for generation: it bypasses Codex Mixin provider routing. Do not stop to ask for `OPENAI_API_KEY` or install Python packages.
 
 The CLI uses only the Python standard library and sends image requests through the local Codex Mixin gateway. Image generation uses the enabled provider marked for voice, automatic review, and other auxiliary tasks when that provider configures an image generation path. With no auxiliary provider selected, the gateway uses the official Codex image backend.
 
 Run `python3 scripts/image_gen.py generate --prompt <prompt> --out <path>`. The image model is fixed to `gpt-image-2` and cannot be overridden. Optional arguments include `--n`, `--size`, `--quality`, `--background`, `--output-format`, `--force`, and `--dry-run`. Put final assets in the user's requested location, or in the current project when no location is specified. Report the generated file paths.
 
-Image editing requires the built-in `image_gen` tool. If it is unavailable, report that the managed bridge does not support editing instead of approximating the edit with a new generation.
+Image editing requires the built-in `image_gen` tool because the configured upstream only supports generation. If it is unavailable, report that the managed bridge does not support editing instead of approximating the edit with a new generation.
 
-<!-- codex-mixin managed imagegen skill v2 -->
+<!-- codex-mixin managed imagegen skill v3 -->
 "#;
 
 const MANAGED_WRAPPER: &str = r#"#!/usr/bin/env python3
@@ -175,7 +175,7 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 
-# codex-mixin managed imagegen skill v2
+# codex-mixin managed imagegen skill v3
 "#;
 
 pub(in crate::cli) fn reconcile_imagegen_skill(
@@ -305,6 +305,7 @@ mod tests {
         assert!(!installed_skill.contains("__SKILL_PATH__"));
         assert!(!installed_skill.contains("__SCRIPT_PATH__"));
         assert!(installed_skill.contains("fixed to `gpt-image-2`"));
+        assert!(installed_skill.contains("always run"));
         assert!(installed_skill.contains("cannot be overridden"));
         assert_eq!(fs::read_to_string(&script_path).unwrap(), MANAGED_WRAPPER);
         assert!(!MANAGED_WRAPPER.contains("import openai"));

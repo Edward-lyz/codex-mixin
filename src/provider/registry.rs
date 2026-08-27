@@ -380,6 +380,12 @@ impl ProviderRegistry {
         })
     }
 
+    pub fn has_enabled_auxiliary_model_upstream(&self) -> bool {
+        self.providers.iter().any(|provider| {
+            provider.definition().enabled && provider.definition().auxiliary_model_upstream
+        })
+    }
+
     pub fn catalog_slugs(&self) -> impl Iterator<Item = &str> {
         self.routes.keys().map(String::as_str)
     }

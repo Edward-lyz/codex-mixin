@@ -48,6 +48,7 @@ pub(super) fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConf
         upgrade_deepseek_quota_defaults(&mut parsed);
         upgrade_opencode_go_quota_defaults(&mut parsed);
         upgrade_opencode_go_responses_endpoint(&mut parsed);
+        upgrade_baidu_image_generation_defaults(&mut parsed);
         bootstrap_unrefreshed_selected_models(&mut parsed);
         backfill_data_report_executable(&mut parsed);
         return Ok(parsed);
@@ -81,6 +82,16 @@ pub(super) fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConf
     bootstrap_unrefreshed_selected_models(&mut migrated);
     backfill_data_report_executable(&mut migrated);
     Ok(migrated)
+}
+
+fn upgrade_baidu_image_generation_defaults(config: &mut StoredGatewayConfig) {
+    for provider in &mut config.providers {
+        if provider.preset_id.as_deref() == Some("baidu-oneapi")
+            && provider.image_generation_path.is_none()
+        {
+            provider.image_generation_path = Some("/v1/images/generations".to_owned());
+        }
+    }
 }
 fn migrate_legacy_ducc_config(document: &mut serde_json::Value) {
     let Some(providers) = document
@@ -252,5 +263,26 @@ fn normalize_legacy_path(path: String) -> String {
         path.to_owned()
     } else {
         format!("/{path}")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::provider::baidu_oneapi_provider;
+
+    #[test]
+    fn backfills_baidu_image_generation_path() {
+        let mut config = StoredGatewayConfig::default();
+        let mut provider = baidu_oneapi_provider("baidu-oneapi", "key");
+        provider.image_generation_path = None;
+        config.providers.push(provider);
+
+        upgrade_baidu_image_generation_defaults(&mut config);
+
+        assert_eq!(
+            config.providers[0].image_generation_path.as_deref(),
+            Some("/v1/images/generations")
+        );
     }
 }

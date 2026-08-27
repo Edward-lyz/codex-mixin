@@ -59,6 +59,12 @@ pub(super) async fn image_generations(
         return proxy_image_response(upstream, &format!("provider {}", provider.id())).await;
     }
 
+    if state.providers.has_enabled_auxiliary_model_upstream() {
+        return Err(GatewayError::Other(anyhow::anyhow!(
+            "enabled auxiliary provider has no image generation endpoint"
+        )));
+    }
+
     let url = state
         .config
         .official_image_generation_url()
