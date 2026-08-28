@@ -25,6 +25,7 @@ final class AddProviderFormModel: ObservableObject {
         AddProviderPreset(id: "openrouter", title: "OpenRouter"),
         AddProviderPreset(id: "deepseek", title: "DeepSeek"),
         AddProviderPreset(id: "opencode-go", title: "OpenCode Go"),
+        AddProviderPreset(id: "aws-bedrock", title: "Amazon Bedrock (Mantle)"),
         AddProviderPreset(id: "custom", title: AppLocalization.string("settings.customSite")),
     ]
 
@@ -40,6 +41,7 @@ final class AddProviderFormModel: ObservableObject {
 
     var isCustom: Bool { preset == "custom" }
     var isBaiduOneAPI: Bool { preset == "baidu-oneapi" }
+    var isAWSBedrock: Bool { preset == "aws-bedrock" }
     var requiresQuotaCredentials: Bool { requiresOpenCodeGoQuotaCredentials(preset) }
     var credentialURL: URL? { URL(string: providerCredentialURL(preset)) }
 
@@ -133,6 +135,19 @@ private struct AddProviderFormView: View {
                             prompt: Text("https://example.com/v1")
                         )
                         TextField("官网地址", text: $model.websiteURL, prompt: Text("https://example.com"))
+                    }
+                }
+
+                if model.isAWSBedrock {
+                    Section("Amazon Bedrock (Mantle)") {
+                        TextField(
+                            "Mantle API 地址",
+                            text: $model.baseURL,
+                            prompt: Text("https://bedrock-mantle.us-east-1.api.aws/anthropic")
+                        )
+                        Text("使用 Bedrock API key；留空时默认使用 us-east-1。其他区域请修改 URL 中的区域名。")
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                     }
                 }
 
@@ -252,6 +267,7 @@ func providerCredentialURL(_ provider: String) -> String {
     case "openrouter": return "https://openrouter.ai/settings/keys"
     case "deepseek": return "https://platform.deepseek.com/api_keys"
     case "opencode-go": return "https://opencode.ai/go"
+    case "aws-bedrock": return "https://code.claude.com/docs/zh-CN/amazon-bedrock#2-configure-aws-credentials"
     default: return ""
     }
 }

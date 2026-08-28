@@ -629,6 +629,7 @@ fn setup_help_lists_provider_presets() {
         "openrouter",
         "deepseek",
         "opencode-go",
+        "aws-bedrock",
     ] {
         assert!(
             help.contains(preset),

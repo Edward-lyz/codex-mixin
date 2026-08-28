@@ -15,7 +15,7 @@ use codex_mixin::config::{GatewayConfig, ThinkingMode};
 use codex_mixin::fusion::{FusionProfile, PanelToolsConfig};
 use codex_mixin::provider::{
     ProviderModel, ProviderModelSource, ProviderProtocol, ProviderRegistry, ProviderRequestPolicy,
-    apply_discovered_models, custom_provider, discover_provider_models,
+    apply_discovered_models, aws_bedrock_provider, custom_provider, discover_provider_models,
 };
 use codex_mixin::server::{AppState, router};
 use codex_mixin::sse::drain_events;
@@ -1564,6 +1564,31 @@ fn responses_request() -> Value {
             {"type":"function","name":"exec_command","description":"run shell","parameters":{"type":"object","properties":{"cmd":{"type":"string"}}}}
         ]
     })
+}
+
+#[tokio::test]
+async fn routes_aws_bedrock_preset_through_mantle_messages() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url.clone());
+    let mut provider = aws_bedrock_provider("aws-bedrock", "upstream-key");
+    provider.base_url = upstream_url;
+    config.providers = vec![provider];
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut request = responses_request();
+    request["model"] = json!("anthropic.claude-sonnet-5-aws-bedrock");
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["model"], "anthropic.claude-sonnet-5");
 }
 
 fn fusion_profile() -> FusionProfile {

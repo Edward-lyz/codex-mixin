@@ -4,6 +4,8 @@ use super::types::{
 };
 
 pub const OPEN_CODE_GO_PRESET_ID: &str = "opencode-go";
+pub const AWS_BEDROCK_PRESET_ID: &str = "aws-bedrock";
+pub const AWS_BEDROCK_MANTLE_BASE_URL: &str = "https://bedrock-mantle.us-east-1.api.aws/anthropic";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProviderPreset {
@@ -12,15 +14,17 @@ pub enum ProviderPreset {
     OpenRouter,
     DeepSeek,
     OpenCodeGo,
+    AwsBedrock,
 }
 
 impl ProviderPreset {
-    pub const ALL: [Self; 5] = [
+    pub const ALL: [Self; 6] = [
         Self::Custom,
         Self::BaiduOneApi,
         Self::OpenRouter,
         Self::DeepSeek,
         Self::OpenCodeGo,
+        Self::AwsBedrock,
     ];
 
     pub fn parse(value: &str) -> anyhow::Result<Self> {
@@ -30,6 +34,7 @@ impl ProviderPreset {
             "openrouter" => Ok(Self::OpenRouter),
             "deepseek" => Ok(Self::DeepSeek),
             "opencode-go" | "opencode_go" => Ok(Self::OpenCodeGo),
+            "aws-bedrock" | "amazon-bedrock" => Ok(Self::AwsBedrock),
             _ => anyhow::bail!(
                 "unsupported provider preset: {value}; available presets: {}",
                 Self::available_presets_csv()
@@ -44,6 +49,7 @@ impl ProviderPreset {
             Self::OpenRouter => "openrouter",
             Self::DeepSeek => "deepseek",
             Self::OpenCodeGo => OPEN_CODE_GO_PRESET_ID,
+            Self::AwsBedrock => AWS_BEDROCK_PRESET_ID,
         }
     }
 
@@ -56,6 +62,7 @@ impl ProviderPreset {
             Self::OpenRouter => "OpenRouter multi-model router",
             Self::DeepSeek => "DeepSeek official API",
             Self::OpenCodeGo => "OpenCode Go subscription models",
+            Self::AwsBedrock => "Amazon Bedrock Mantle with a Bedrock API key",
         }
     }
 
@@ -80,7 +87,65 @@ impl ProviderPreset {
             Self::OpenRouter => openrouter_provider(id, api_key),
             Self::DeepSeek => deepseek_provider(id, api_key),
             Self::OpenCodeGo => open_code_go_provider(id, api_key),
+            Self::AwsBedrock => aws_bedrock_provider(id, api_key),
         }
+    }
+}
+
+pub fn aws_bedrock_provider(
+    id: impl Into<String>,
+    api_key: impl Into<String>,
+) -> ProviderDefinition {
+    let cached_models = vec![
+        bedrock_model("anthropic.claude-sonnet-5", "Claude Sonnet 5", 1_000_000),
+        bedrock_model("anthropic.claude-opus-4-8", "Claude Opus 4.8", 1_000_000),
+        bedrock_model("anthropic.claude-haiku-4-5", "Claude Haiku 4.5", 200_000),
+    ];
+    let selected_models = cached_models.iter().map(|model| model.id.clone()).collect();
+    ProviderDefinition {
+        id: id.into(),
+        display_name: "Amazon Bedrock (Mantle)".to_owned(),
+        enabled: true,
+        auxiliary_model_upstream: false,
+        preset_id: Some(AWS_BEDROCK_PRESET_ID.to_owned()),
+        protocol: ProviderProtocol::AnthropicMessages,
+        base_url: AWS_BEDROCK_MANTLE_BASE_URL.to_owned(),
+        website_url: Some("https://code.claude.com/docs/zh-CN/amazon-bedrock".to_owned()),
+        api_path: "/v1/messages".to_owned(),
+        model_source: ProviderModelSource::Static,
+        auth: ProviderAuthConfig {
+            header: ProviderAuthHeader::AuthorizationBearer,
+            api_key: api_key.into(),
+        },
+        anthropic_version: Some("2023-06-01".to_owned()),
+        anthropic_beta: None,
+        image_generation_path: None,
+        quota_url: None,
+        quota_username: None,
+        quota_workspace_id: None,
+        quota_auth_cookie: None,
+        quota_currency: Some("USD".to_owned()),
+        quota_parser: ProviderQuotaParser::Generic,
+        request_policy: ProviderRequestPolicy::default(),
+        selected_models,
+        new_models: Vec::new(),
+        cached_models,
+        models_refreshed_at_ms: None,
+        models_refresh_error: None,
+    }
+}
+
+fn bedrock_model(id: &str, display_name: &str, context_window: u64) -> ProviderModel {
+    ProviderModel {
+        id: id.to_owned(),
+        display_name: Some(display_name.to_owned()),
+        context_window: Some(context_window),
+        supports_image: Some(true),
+        supports_thinking: Some(true),
+        supports_web_search: Some(false),
+        supports_tool_search: Some(false),
+        supports_function_tools: Some(true),
+        ..ProviderModel::default()
     }
 }
 
@@ -337,6 +402,34 @@ mod tests {
             Some("https://api.deepseek.com/user/balance")
         );
         assert_eq!(provider.quota_parser, ProviderQuotaParser::DeepSeek);
+    }
+
+    #[test]
+    fn aws_bedrock_preset_uses_mantle_and_static_claude_models() {
+        let provider = aws_bedrock_provider("aws-bedrock", "secret");
+
+        provider.validate().unwrap();
+        assert_eq!(provider.protocol, ProviderProtocol::AnthropicMessages);
+        assert_eq!(provider.base_url, AWS_BEDROCK_MANTLE_BASE_URL);
+        assert_eq!(provider.api_path, "/v1/messages");
+        assert_eq!(
+            provider.auth.header,
+            ProviderAuthHeader::AuthorizationBearer
+        );
+        assert_eq!(provider.model_source, ProviderModelSource::Static);
+        assert_eq!(
+            provider.selected_models,
+            [
+                "anthropic.claude-sonnet-5",
+                "anthropic.claude-opus-4-8",
+                "anthropic.claude-haiku-4-5",
+            ]
+        );
+        assert!(provider.cached_models.iter().all(|model| {
+            model.supports_image == Some(true)
+                && model.supports_thinking == Some(true)
+                && model.supports_function_tools == Some(true)
+        }));
     }
 
     #[test]

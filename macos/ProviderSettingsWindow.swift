@@ -205,6 +205,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             appendProviderArgument(&arguments, "--display-name", values.displayName)
             appendProviderArgument(&arguments, "--base-url", values.baseURL)
             appendProviderArgument(&arguments, "--website-url", values.websiteURL)
+        } else if values.preset == "aws-bedrock" {
+            appendProviderArgument(&arguments, "--base-url", values.baseURL)
         }
         appendProviderArgument(&arguments, "--quota-username", values.quotaUsername)
         if requiresOpenCodeGoQuotaCredentials(values.preset) {
@@ -259,7 +261,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         let selectedBridge = model.baiduAuthBridge
         var arguments = ["providers", "test", provider.id, "--json"]
         appendProviderArgument(&arguments, "--key", model.apiKey)
-        if provider.presetID == "custom" {
+        if provider.presetID == "custom" || provider.presetID == "aws-bedrock" {
             appendProviderArgument(&arguments, "--base-url", model.baseURL)
         }
         if provider.presetID == "baidu-oneapi",
@@ -384,6 +386,17 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             if !websiteURL.isEmpty || provider.websiteURL != nil {
                 update.append(contentsOf: ["--website-url", websiteURL])
             }
+        } else if provider.presetID == "aws-bedrock" {
+            let baseURL = model.baseURL
+                .trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !baseURL.isEmpty else {
+                showAlert(
+                    title: "缺少 Mantle API 地址",
+                    message: "Amazon Bedrock Provider 必须配置 Mantle API 地址。"
+                )
+                return
+            }
+            appendProviderArgument(&update, "--base-url", baseURL)
         }
         let quotaUsername = model.quotaUsername
             .trimmingCharacters(in: .whitespacesAndNewlines)

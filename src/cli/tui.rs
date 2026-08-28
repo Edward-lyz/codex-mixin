@@ -6,7 +6,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use codex_mixin::provider::catalog_model_slug;
+use codex_mixin::provider::{AWS_BEDROCK_MANTLE_BASE_URL, catalog_model_slug};
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
@@ -420,13 +420,18 @@ impl ConfirmOperation {
     }
 }
 
-const PROVIDER_PRESETS: [&str; 5] = [
+const PROVIDER_PRESETS: [&str; 6] = [
     "baidu-oneapi",
     "openrouter",
     "deepseek",
     "opencode-go",
+    "aws-bedrock",
     "custom",
 ];
+
+fn is_aws_bedrock(preset: &str) -> bool {
+    preset == "aws-bedrock"
+}
 
 #[derive(Debug, Default)]
 struct AddProviderForm {
@@ -604,6 +609,7 @@ impl AddProviderForm {
             "custom" => &[0, 1, 2, 3, 4, 5, 12, 11],
             "baidu-oneapi" => &[0, 1, 5, 6, 9, 10, 12, 11],
             "opencode-go" => &[0, 1, 5, 7, 8, 12, 11],
+            "aws-bedrock" => &[0, 1, 3, 5, 12, 11],
             _ => &[0, 1, 5, 12, 11],
         }
     }
@@ -657,6 +663,9 @@ impl AddProviderForm {
                 self.preset_index = (self.preset_index as isize + offset)
                     .clamp(0, PROVIDER_PRESETS.len().saturating_sub(1) as isize)
                     as usize;
+                if is_aws_bedrock(self.preset()) && self.base_url.trim().is_empty() {
+                    self.base_url = AWS_BEDROCK_MANTLE_BASE_URL.to_owned();
+                }
                 if !self.active_fields().contains(&self.focus) {
                     self.focus = self.active_fields()[0];
                 }
@@ -726,6 +735,8 @@ impl AddProviderForm {
                 ("--quota-workspace-id", self.quota_workspace_id.as_str()),
                 ("--quota-auth-cookie", self.quota_auth_cookie.as_str()),
             ]);
+        } else if is_aws_bedrock(preset) {
+            optional.push(("--base-url", self.base_url.as_str()));
         }
         for (flag, value) in optional {
             if !value.trim().is_empty() {
@@ -859,6 +870,7 @@ impl EditProviderForm {
             "custom" => &[0, 1, 2, 3, 4, 5, 9],
             "baidu-oneapi" => &[3, 4, 5, 6, 7, 8, 9],
             "opencode-go" => &[3, 4, 5, 10, 11, 12, 9],
+            "aws-bedrock" => &[1, 3, 4, 5, 9],
             _ => &[3, 4, 5, 9],
         }
     }
@@ -932,6 +944,9 @@ impl EditProviderForm {
                     self.website_url.trim().to_owned(),
                 ]);
             }
+        } else if is_aws_bedrock(&self.preset) {
+            anyhow::ensure!(!self.base_url.trim().is_empty(), "base URL is required");
+            args.extend(["--base-url".to_owned(), self.base_url.trim().to_owned()]);
         }
         if self.clear_key {
             anyhow::ensure!(
@@ -2990,6 +3005,13 @@ fn render_setup(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             form_line("Base URL", &provider.base_url, form.focus == 3, false),
             form_line("Website", &provider.website_url, form.focus == 4, false),
         ]);
+    } else if is_aws_bedrock(provider.preset()) {
+        lines.push(form_line(
+            "Mantle URL",
+            &provider.base_url,
+            form.focus == 3,
+            false,
+        ));
     }
     lines.push(form_line(
         "API key",
@@ -4111,6 +4133,13 @@ fn render_dialog(
                     form_line("Base URL", &form.base_url, form.focus == 3, false),
                     form_line("Website", &form.website_url, form.focus == 4, false),
                 ]);
+            } else if is_aws_bedrock(form.preset()) {
+                lines.push(form_line(
+                    "Mantle URL",
+                    &form.base_url,
+                    form.focus == 3,
+                    false,
+                ));
             }
             lines.push(form_line("API key", &form.api_key, form.focus == 5, true));
             if form.preset() == "baidu-oneapi" {
@@ -4177,6 +4206,13 @@ fn render_dialog(
                     form_line("Base URL", &form.base_url, form.focus == 1, false),
                     form_line("Website", &form.website_url, form.focus == 2, false),
                 ]);
+            } else if is_aws_bedrock(&form.preset) {
+                lines.push(form_line(
+                    "Mantle URL",
+                    &form.base_url,
+                    form.focus == 1,
+                    false,
+                ));
             }
             lines.extend([
                 form_line(
@@ -4567,7 +4603,7 @@ mod tests {
     #[test]
     fn custom_provider_form_builds_complete_cli_arguments() {
         let form = AddProviderForm {
-            preset_index: 4,
+            preset_index: 5,
             display_name: "Community API".to_owned(),
             base_url: "https://example.com/v1".to_owned(),
             api_key: "secret".to_owned(),
@@ -4610,6 +4646,29 @@ mod tests {
             args.windows(2)
                 .any(|pair| { pair == ["--image-generation-path", "/v1/images/generations"] })
         );
+    }
+
+    #[test]
+    fn aws_bedrock_form_submits_mantle_url() {
+        let form = AddProviderForm {
+            preset_index: 4,
+            base_url: "https://bedrock-mantle.eu-west-1.api.aws/anthropic".to_owned(),
+            api_key: "secret".to_owned(),
+            ..AddProviderForm::default()
+        };
+
+        let args = form.args().unwrap();
+
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--preset", "aws-bedrock"])
+        );
+        assert!(args.windows(2).any(|pair| {
+            pair == [
+                "--base-url",
+                "https://bedrock-mantle.eu-west-1.api.aws/anthropic",
+            ]
+        }));
     }
 
     #[test]

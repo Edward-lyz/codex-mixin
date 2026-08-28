@@ -320,6 +320,8 @@ private struct ProviderDetailForm: View {
                         TextField("站点名称", text: $formState.displayName)
                         TextField("API 地址", text: $formState.baseURL)
                         TextField("官网地址", text: $formState.websiteURL)
+                    } else if isAWSBedrock {
+                        TextField("Mantle API 地址", text: $formState.baseURL)
                     }
                     TextField("绘图接口路径", text: $formState.imageGenerationPath, prompt: Text("/v1/images/generations"))
                     HStack(spacing: 8) {
@@ -393,6 +395,7 @@ private struct ProviderDetailForm: View {
     }
 
     private var isCustom: Bool { provider.presetID == "custom" }
+    private var isAWSBedrock: Bool { provider.presetID == "aws-bedrock" }
     private var isBaiduOneAPI: Bool { provider.presetID == "baidu-oneapi" }
     private var isOpenCodeGo: Bool { requiresOpenCodeGoQuotaCredentials(provider.presetID ?? "") }
     private var apiKeyConfigured: Bool { provider.apiKeyConfigured && !isBusy }

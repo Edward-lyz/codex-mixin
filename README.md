@@ -245,11 +245,17 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 | `openrouter` | OpenAI Chat Completions | `https://openrouter.ai/api` | `/v1/chat/completions` | 可选，用户填写 | `/v1/models` | `/v1/credits` |
 | `deepseek` | OpenAI Chat Completions | `https://api.deepseek.com` | `/chat/completions` | 可选，用户填写 | `/models` | 无默认值 |
 | `opencode-go` | OpenAI Responses | `https://opencode.ai/zen/go` | `/v1/responses` | 无 | `/v1/models` | dashboard `/workspace/{id}/go` + `/billing` |
+| `aws-bedrock` | Anthropic Messages (Mantle) | `https://bedrock-mantle.us-east-1.api.aws/anthropic` | `/v1/messages` | 无 | 内置 Claude 模型 | 无默认值 |
 
 固定 preset 的上游地址和路径由 preset 管理；`custom` provider 会自动探测模型列表和响应接口，不发起有效模型推理。
 Baidu OneAPI 的额度接口必须同时填写额度用户名；CLI 和 App 都会在保存时校验。
 OpenCode Go 的额度显示需要额外填写工作区 ID 和 `opencode.ai` 的 `auth` cookie；
 这两个值可以在浏览器控制台里从 OpenCode Go dashboard 页面取得，cookie 过期后需要重新填写。
+`aws-bedrock` 使用 Amazon Bedrock Mantle 原生 Anthropic Messages 接口和
+`AWS_BEARER_TOKEN_BEDROCK` 对应的 Bedrock API key。默认区域为 `us-east-1`；其他区域可把
+Mantle URL 改为 `https://bedrock-mantle.<region>.api.aws/anthropic`。该 preset 明确不处理
+AWS access key、SSO profile 或默认 credential chain 的 SigV4 签名；需要这些认证方式时，
+应先使用 Bedrock API key，不能把 access key 填入 API Key 字段。
 新增或更新 `custom` 供应商时，会先验证 `GET /v1/models` 的 JSON 结构，再按
 `/v1/responses` → `/v1/messages` → `/v1/chat/completions` 顺序探测响应协议；整组 `/v1`
 接口失败后，再尝试 `/models`、`/responses`、`/messages` 和 `/chat/completions`。
@@ -286,6 +292,7 @@ managed settings 中的 SessionStart、UserPromptSubmit、Stop、SessionEnd
 
 - OpenRouter 填 `https://openrouter.ai/api`，不要填 `/v1/chat/completions`。
 - DeepSeek 填 `https://api.deepseek.com`，不要填 `/chat/completions`。
+- Amazon Bedrock 填 Bedrock API key；切换区域时只替换 Mantle URL 中的 `us-east-1`。
 - 旧式或非标准网关也会在标准 `/v1` 接口失败后自动尝试去掉 `/v1` 的路径。
 
 Provider 设置界面见上方 [macOS control center](#macos-control-center)；远端用户可在同一 TUI workspace 中完成等价配置。
@@ -811,6 +818,7 @@ Click the top tabs or use `Tab` and `Shift-Tab` to change workspaces. The footer
 | `openrouter` | OpenAI Chat Completions | `https://openrouter.ai/api` | `/v1/chat/completions` | Optional, user provided | `/v1/models` | `/v1/credits` |
 | `deepseek` | OpenAI Chat Completions | `https://api.deepseek.com` | `/chat/completions` | Optional, user provided | `/models` | None |
 | `opencode-go` | OpenAI Responses | `https://opencode.ai/zen/go` | `/v1/responses` | None | `/v1/models` | Dashboard `/workspace/{id}/go` + `/billing` |
+| `aws-bedrock` | Anthropic Messages (Mantle) | `https://bedrock-mantle.us-east-1.api.aws/anthropic` | `/v1/messages` | None | Built-in Claude models | None |
 
 Curated presets manage their upstream paths. Custom providers automatically probe versioned
 endpoints first and then retry the corresponding legacy paths without `/v1`; this protocol check
@@ -818,6 +826,11 @@ uses incomplete request bodies and does not run model inference.
 The Baidu OneAPI quota endpoint also requires a quota username; both the CLI and app validate it before saving.
 OpenCode Go quota display also requires a workspace ID and the `opencode.ai` `auth` cookie.
 Take both values from the OpenCode Go dashboard in a signed-in browser; refresh the cookie when it expires.
+`aws-bedrock` uses the Amazon Bedrock Mantle native Anthropic Messages endpoint and the Bedrock
+API key represented by `AWS_BEARER_TOKEN_BEDROCK`. It defaults to `us-east-1`; for another region,
+set the Mantle URL to `https://bedrock-mantle.<region>.api.aws/anthropic`. This preset deliberately
+does not implement SigV4 signing for AWS access keys, SSO profiles, or the default credential chain.
+Use a Bedrock API key instead of entering an AWS access key in the API Key field.
 When a `custom` provider is added or updated, Codex Mixin first validates the JSON structure
 returned by `GET /v1/models`, then probes `/v1/responses`, `/v1/messages`, and
 `/v1/chat/completions` in that order. If the complete versioned probe fails, it retries
@@ -1026,6 +1039,7 @@ codex-mixin --no-tui
 # First-run configuration must pass everything explicitly
 codex-mixin setup --preset openrouter --key <key> --codex-mode custom
 codex-mixin setup --preset baidu-oneapi --key <key> --quota-username <username> --codex-mode skip
+codex-mixin setup --preset aws-bedrock --key <bedrock-api-key> --codex-mode custom
 codex-mixin setup --preset <preset> --no-start
 
 # Update the CLI from the latest GitHub Release and restart the gateway

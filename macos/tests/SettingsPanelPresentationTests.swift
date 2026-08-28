@@ -44,6 +44,11 @@ struct SettingsPanelPresentationTests {
         )
         model.preset = "opencode-go"
         precondition(model.requiresQuotaCredentials, "OpenCode Go must require quota credentials")
+        model.preset = "aws-bedrock"
+        precondition(
+            model.isAWSBedrock && model.credentialURL != nil,
+            "Amazon Bedrock must expose its Mantle endpoint and setup documentation"
+        )
         model.preset = "custom"
         precondition(model.isCustom && model.credentialURL == nil, "Custom providers must show URL fields")
 

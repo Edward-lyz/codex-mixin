@@ -17,8 +17,9 @@ pub use models_dev::{
     parse_models_dev_provider_models, uses_models_dev_capabilities,
 };
 pub use presets::{
-    OPEN_CODE_GO_PRESET_ID, ProviderPreset, baidu_oneapi_provider, custom_provider,
-    deepseek_provider, open_code_go_provider, openrouter_provider,
+    AWS_BEDROCK_MANTLE_BASE_URL, AWS_BEDROCK_PRESET_ID, OPEN_CODE_GO_PRESET_ID, ProviderPreset,
+    aws_bedrock_provider, baidu_oneapi_provider, custom_provider, deepseek_provider,
+    open_code_go_provider, openrouter_provider,
 };
 pub use registry::{ProviderRegistry, ProviderRuntime, ResolvedProviderModel, catalog_model_slug};
 pub use types::{

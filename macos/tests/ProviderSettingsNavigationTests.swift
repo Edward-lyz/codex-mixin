@@ -13,6 +13,7 @@ struct ProviderSettingsNavigationTests {
         testReloadPreservesSelectionAndDisablesEmptyDetails()
         testMutationIsBusyAndRestartsInOrder()
         testBaiduBridgeTestAndUpdateArguments()
+        testAWSBedrockEndpointArguments()
         testReorderReloadsPersistedProviderState()
         testOneAPIFieldsStayWithTheirProvider()
 
@@ -197,6 +198,57 @@ struct ProviderSettingsNavigationTests {
     }
 
     @MainActor
+    private static func testAWSBedrockEndpointArguments() {
+        var events: [String] = []
+        var loadCalls = 0
+        let endpoint = "https://bedrock-mantle.eu-west-1.api.aws/anthropic"
+        let controller = ProviderSettingsWindowController(
+            loadHandler: {
+                loadCalls += 1
+                return try providerList(ids: ["aws-bedrock"])
+            },
+            runHandler: { arguments in
+                events.append(arguments.joined(separator: "|"))
+                if arguments.contains("test") {
+                    return """
+                    {
+                      "provider_id": "aws-bedrock",
+                      "ok": true,
+                      "mode": "configuration",
+                      "model_count": 3,
+                      "paid_inference_performed": false
+                    }
+                    """
+                }
+                return ""
+            },
+            applyHandler: { _ in }
+        )
+        controller.present()
+        waitUntil {
+            loadCalls == 1 && controller.model.selectedProviderID == "aws-bedrock"
+        }
+        controller.model.baseURL = endpoint
+        let alertTimer = dismissModalAlerts()
+
+        controller.testProvider()
+        waitUntil {
+            events.contains(
+                "providers|test|aws-bedrock|--json|--base-url|\(endpoint)"
+            )
+        }
+        waitUntil { controller.model.canModifySelectedProvider && NSApp.modalWindow == nil }
+
+        controller.saveProvider()
+        waitUntil {
+            events.contains(
+                "providers|update|aws-bedrock|--auxiliary-model-upstream|false|--base-url|\(endpoint)"
+            )
+        }
+        alertTimer.invalidate()
+    }
+
+    @MainActor
     private static func testReorderReloadsPersistedProviderState() {
         var loadCalls = 0
         var events: [String] = []
@@ -259,10 +311,15 @@ struct ProviderSettingsNavigationTests {
 
     private static func providerJSON(id: String) -> String {
         let isBaidu = id.hasPrefix("baidu-oneapi")
-        let preset = isBaidu ? "baidu-oneapi" : "custom"
-        let protocolID = isBaidu ? "anthropic_messages" : "open_ai_chat"
-        let apiPath = isBaidu ? "/v1/messages" : "/v1/chat/completions"
-        let modelSourceKind = isBaidu ? "baidu_oneapi" : "open_ai_compatible"
+        let isAWSBedrock = id == "aws-bedrock"
+        let preset = isBaidu ? "baidu-oneapi" : isAWSBedrock ? "aws-bedrock" : "custom"
+        let protocolID = isBaidu || isAWSBedrock ? "anthropic_messages" : "open_ai_chat"
+        let apiPath = isBaidu || isAWSBedrock ? "/v1/messages" : "/v1/chat/completions"
+        let modelSource = isBaidu
+            ? "{\"kind\": \"baidu_oneapi\", \"path\": \"/v1/models\"}"
+            : isAWSBedrock
+            ? "{\"kind\": \"static\"}"
+            : "{\"kind\": \"open_ai_compatible\", \"path\": \"/v1/models\"}"
         let bridge = id == "baidu-oneapi"
             ? ", \"baidu_auth_bridge\": \"disabled\", \"baidu_code_report\": false, \"quota_username\": \"quota-user\""
             : id == "baidu-oneapi-2"
@@ -278,7 +335,7 @@ struct ProviderSettingsNavigationTests {
           "protocol": "\(protocolID)",
           "base_url": "https://example.com",
           "api_path": "\(apiPath)",
-          "model_source": {"kind": "\(modelSourceKind)", "path": "/v1/models"},
+          "model_source": \(modelSource),
           "api_key_configured": true,
           "quota_parser": "generic"\(bridge),
           "selected_models": [],

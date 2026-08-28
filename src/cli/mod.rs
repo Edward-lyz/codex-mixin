@@ -711,6 +711,8 @@ enum CliProviderPreset {
     DeepSeek,
     #[value(name = "opencode-go", alias = "opencode_go")]
     OpenCodeGo,
+    #[value(name = "aws-bedrock", alias = "amazon-bedrock")]
+    AwsBedrock,
 }
 
 impl CliProviderPreset {
@@ -721,6 +723,7 @@ impl CliProviderPreset {
             Self::OpenRouter => ProviderPreset::OpenRouter,
             Self::DeepSeek => ProviderPreset::DeepSeek,
             Self::OpenCodeGo => ProviderPreset::OpenCodeGo,
+            Self::AwsBedrock => ProviderPreset::AwsBedrock,
         }
     }
 
@@ -737,6 +740,7 @@ impl From<ProviderPreset> for CliProviderPreset {
             ProviderPreset::OpenRouter => Self::OpenRouter,
             ProviderPreset::DeepSeek => Self::DeepSeek,
             ProviderPreset::OpenCodeGo => Self::OpenCodeGo,
+            ProviderPreset::AwsBedrock => Self::AwsBedrock,
         }
     }
 }
