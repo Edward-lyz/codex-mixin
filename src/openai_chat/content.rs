@@ -10,9 +10,15 @@ pub(super) fn append_input_item(
     messages: &mut Vec<Value>,
     replay_model: Option<&str>,
 ) -> Result<(), GatewayError> {
+    // OpenCode and DSH send standard Responses message items without the
+    // optional envelope type. Accept only that unambiguous message shape.
     let item_type = item
         .get("type")
         .and_then(Value::as_str)
+        .or_else(|| {
+            (item.get("role").and_then(Value::as_str).is_some() && item.get("content").is_some())
+                .then_some("message")
+        })
         .ok_or_else(|| GatewayError::BadRequest("input item missing type".to_owned()))?;
     match item_type {
         "compaction" => {

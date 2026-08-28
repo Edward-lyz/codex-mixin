@@ -387,6 +387,7 @@ enum ConfirmOperation {
     UninstallCodex,
     UninstallClaude,
     UninstallDsh,
+    UninstallOpenCode,
     Update,
     Repair,
 }
@@ -397,6 +398,7 @@ impl ConfirmOperation {
             Self::UninstallCodex => "Restore Codex",
             Self::UninstallClaude => "Restore Claude Code",
             Self::UninstallDsh => "Remove DSH integration",
+            Self::UninstallOpenCode => "Remove OpenCode integration",
             Self::Update => "Update Codex Mixin",
             Self::Repair => "Repair configuration",
         }
@@ -407,6 +409,9 @@ impl ConfirmOperation {
             Self::UninstallCodex => "Restore the Codex configuration saved before installation.",
             Self::UninstallClaude => "Remove managed Claude Code settings and restore the backup.",
             Self::UninstallDsh => "Remove codex-mixin from DSH settings and credentials.",
+            Self::UninstallOpenCode => {
+                "Remove the managed provider and gateway credential from OpenCode."
+            }
             Self::Update => {
                 "Replace this CLI with the latest GitHub release and restart the gateway."
             }
@@ -560,9 +565,11 @@ enum Action {
     ConnectCodexCustom,
     ConnectClaude,
     ConnectDsh,
+    ConnectOpenCode,
     ConfirmUninstallCodex,
     ConfirmUninstallClaude,
     ConfirmUninstallDsh,
+    ConfirmUninstallOpenCode,
     ConfirmUpdate,
     ConfirmRepair,
     RunConfirmedOperation,
@@ -1601,6 +1608,16 @@ pub(super) async fn run(
                 )
                 .await;
             }
+            Action::ConnectOpenCode => {
+                run_action(
+                    &mut terminal,
+                    &mut app,
+                    "Installing OpenCode connection",
+                    &["connect", "opencode"],
+                    true,
+                )
+                .await;
+            }
             Action::ConfirmUninstallCodex => {
                 app.dialog = Some(Dialog::ConfirmOperation(ConfirmOperation::UninstallCodex));
             }
@@ -1609,6 +1626,11 @@ pub(super) async fn run(
             }
             Action::ConfirmUninstallDsh => {
                 app.dialog = Some(Dialog::ConfirmOperation(ConfirmOperation::UninstallDsh));
+            }
+            Action::ConfirmUninstallOpenCode => {
+                app.dialog = Some(Dialog::ConfirmOperation(
+                    ConfirmOperation::UninstallOpenCode,
+                ));
             }
             Action::ConfirmUpdate => {
                 app.dialog = Some(Dialog::ConfirmOperation(ConfirmOperation::Update));
@@ -1635,6 +1657,11 @@ pub(super) async fn run(
                     ConfirmOperation::UninstallDsh => (
                         "Removing DSH integration",
                         &["connect", "remove", "dsh"][..],
+                        true,
+                    ),
+                    ConfirmOperation::UninstallOpenCode => (
+                        "Removing OpenCode integration",
+                        &["connect", "remove", "opencode"][..],
                         true,
                     ),
                     ConfirmOperation::Update => ("Updating Codex Mixin", &["update"][..], false),
@@ -1932,12 +1959,13 @@ fn handle_mouse_event(app: &mut App, kind: MouseEventKind, column: u16, row: u16
         }
         Page::Integrations => {
             let relative_row = row.saturating_sub(body.y);
-            let card = (usize::from(relative_row) * 3 / usize::from(body.height.max(1))).min(2);
+            let card = (usize::from(relative_row) * 4 / usize::from(body.height.max(1))).min(3);
             let relative_column = column.saturating_sub(body.x);
             app.integration_index = match card {
                 0 => (usize::from(relative_column) * 3 / usize::from(body.width.max(1))).min(2),
                 1 => 3 + (usize::from(relative_column) * 2 / usize::from(body.width.max(1))).min(1),
-                _ => 5 + (usize::from(relative_column) * 2 / usize::from(body.width.max(1))).min(1),
+                2 => 5 + (usize::from(relative_column) * 2 / usize::from(body.width.max(1))).min(1),
+                _ => 7 + (usize::from(relative_column) * 2 / usize::from(body.width.max(1))).min(1),
             };
             integration_action(app.integration_index)
         }
@@ -2082,7 +2110,9 @@ fn integration_action(index: usize) -> Action {
         3 => Action::ConnectClaude,
         4 => Action::ConfirmUninstallClaude,
         5 => Action::ConnectDsh,
-        _ => Action::ConfirmUninstallDsh,
+        6 => Action::ConfirmUninstallDsh,
+        7 => Action::ConnectOpenCode,
+        _ => Action::ConfirmUninstallOpenCode,
     }
 }
 
@@ -2120,7 +2150,7 @@ fn handle_page_event(app: &mut App, code: KeyCode) -> Action {
                 Action::None
             }
             KeyCode::Right | KeyCode::Down => {
-                app.integration_index = (app.integration_index + 1).min(6);
+                app.integration_index = (app.integration_index + 1).min(8);
                 Action::None
             }
             KeyCode::Enter => integration_action(app.integration_index),
@@ -2131,6 +2161,8 @@ fn handle_page_event(app: &mut App, code: KeyCode) -> Action {
             KeyCode::Char('5') => Action::ConfirmUninstallClaude,
             KeyCode::Char('6') => Action::ConnectDsh,
             KeyCode::Char('7') => Action::ConfirmUninstallDsh,
+            KeyCode::Char('8') => Action::ConnectOpenCode,
+            KeyCode::Char('9') => Action::ConfirmUninstallOpenCode,
             _ => Action::None,
         },
         Page::System => match code {
@@ -3729,9 +3761,10 @@ fn render_integrations(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let cards = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(34),
-            Constraint::Percentage(33),
-            Constraint::Percentage(33),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
+            Constraint::Percentage(25),
         ])
         .split(area);
     frame.render_widget(
@@ -3801,6 +3834,28 @@ fn render_integrations(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         )
         .wrap(Wrap { trim: true }),
         cards[2],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                "OPENCODE",
+                Style::default().fg(Color::Cyan).bold(),
+            )),
+            Line::from(vec![
+                action_label(7, "[8] Install / refresh", app.integration_index),
+                Span::raw("       "),
+                action_label(8, "[9] Remove", app.integration_index),
+            ]),
+        ])
+        .block(
+            Block::default()
+                .title(" OPENCODE ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::Cyan)),
+        )
+        .wrap(Wrap { trim: true }),
+        cards[3],
     );
 }
 
@@ -4272,7 +4327,9 @@ fn render_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
                 "[ ] provider  b/click run  -/+ timeout  ,/. output tokens  r refresh"
             }
             Page::Fusion => "Up/Down model  Space Panel  j Judge  f Final  s save  D disable",
-            Page::Integrations => "1-3 Codex  4-5 Claude  6-7 DSH  click or press a number",
+            Page::Integrations => {
+                "1-3 Codex  4-5 Claude  6-7 DSH  8-9 OpenCode  click or press a number"
+            }
             Page::System => "s/R gateway  u update  d doctor  F repair  f catalog  l logs",
             Page::Diagnostics => "x doctor  PgUp/PgDn scroll  r refresh  ? help  q quit",
         }

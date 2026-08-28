@@ -92,6 +92,7 @@ async fn handle_official_ws_request(
     body: Value,
     model: &str,
 ) -> anyhow::Result<()> {
+    let body = super::responses_http::normalize_official_responses_body(body);
     let (mut body, _) = crate::gateway::normalize_provider_images_blocking(body).await?;
     *context.custom_state = None;
     tracing::debug!(

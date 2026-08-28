@@ -23,6 +23,7 @@ mod fusion_config;
 mod maintenance;
 mod metadata;
 mod official_models;
+mod opencode;
 mod providers;
 mod report_hook;
 mod runtime;
@@ -45,6 +46,7 @@ use ducx_setup::ensure_managed_ducx;
 use fusion_config::{delete_fusion_profile, get_fusion_profile, set_fusion_profile};
 use maintenance::migrate_history;
 use metadata::{load_model_metadata_resolver, refresh_metadata};
+use opencode::{install_opencode, uninstall_opencode};
 use providers::{
     AddProviderOptions, TestProviderOptions, UpdateProviderOptions, add_provider, discover_models,
     list_providers, probe_selected_models, remove_provider, reorder_providers, select_models,
@@ -120,7 +122,7 @@ pub(super) async fn stage<T>(
 #[command(
     author,
     version,
-    about = "Connect custom model providers to Codex, Claude, and DSH"
+    about = "Connect custom model providers to Codex, Claude, DSH, and OpenCode"
 )]
 struct Cli {
     /// Keep the plain CLI interface instead of opening the full-screen UI.
@@ -185,7 +187,7 @@ enum Command {
         #[command(subcommand)]
         command: ServiceCommand,
     },
-    /// Install Codex or Claude integration.
+    /// Install or remove an application integration.
     Connect {
         #[command(subcommand)]
         command: ConnectCommand,
@@ -476,19 +478,26 @@ enum ConnectCommand {
         #[arg(long)]
         dsh_home: Option<PathBuf>,
     },
+    /// Install the Codex Mixin gateway as an OpenCode provider.
+    Opencode {
+        #[arg(long = "config")]
+        config_path: Option<PathBuf>,
+    },
     /// Show Claude Code integration status.
     Status {
         #[arg(long)]
         settings_path: Option<PathBuf>,
     },
-    /// Remove Codex, Claude, or DSH integration.
+    /// Remove Codex, Claude, DSH, or OpenCode integration.
     Remove {
-        #[arg(value_parser = ["codex", "claude", "dsh"])]
+        #[arg(value_parser = ["codex", "claude", "dsh", "opencode"])]
         target: String,
         #[arg(long)]
         settings_path: Option<PathBuf>,
         #[arg(long)]
         dsh_home: Option<PathBuf>,
+        #[arg(long = "opencode-config")]
+        opencode_config: Option<PathBuf>,
     },
 }
 
@@ -1053,11 +1062,13 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 report_hook::sync_installation_at(&hooks_path, report_hook::reporting_enabled()?)?;
                 report_hook::sync_installation()
             }
+            ConnectCommand::Opencode { config_path } => install_opencode(config_path),
             ConnectCommand::Status { settings_path } => claude_status(settings_path),
             ConnectCommand::Remove {
                 target,
                 settings_path,
                 dsh_home,
+                opencode_config,
             } => match target.as_str() {
                 "codex" => uninstall_codex(None, None),
                 "claude" => {
@@ -1078,6 +1089,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     )?;
                     report_hook::sync_installation()
                 }
+                "opencode" => uninstall_opencode(opencode_config),
                 _ => unreachable!("clap validates connect target"),
             },
         },

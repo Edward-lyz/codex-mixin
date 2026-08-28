@@ -167,6 +167,7 @@ async fn send_official_responses(
     authorization: axum::http::HeaderValue,
     account_id: axum::http::HeaderValue,
 ) -> Result<reqwest::Response, GatewayError> {
+    let body = normalize_official_responses_body(body);
     let request = forward_official_headers(
         state
             .client
@@ -177,6 +178,13 @@ async fn send_official_responses(
         headers,
     );
     crate::request_body::send_json(request, body).await
+}
+
+pub(super) fn normalize_official_responses_body(mut body: Value) -> Value {
+    if let Some(body) = body.as_object_mut() {
+        body.remove("max_output_tokens");
+    }
+    body
 }
 
 pub(crate) async fn stream_official_response(

@@ -242,6 +242,83 @@ extension AppDelegate {
         }
     }
 
+    @objc func installOpenCode() {
+        Task { @MainActor in
+            serviceBusy = true
+            serviceStatus = "正在准备 OpenCode 配置..."
+            defer { serviceBusy = false }
+            do {
+                try await runOperationProgress(
+                    title: "正在安装到 OpenCode",
+                    phases: [
+                        "准备网关",
+                        "写入 OpenCode provider",
+                        "写入模型与思考强度",
+                        "完成",
+                    ],
+                    successTitle: "✓ 安装完成",
+                    failureTitle: "✗ 安装失败",
+                    showFailureAlert: true,
+                    failureAlertTitle: "安装到 OpenCode 失败"
+                ) { progress in
+                    progress.advance(to: 0)
+                    let status = try await ensureGatewayReady()
+                    applyGatewayStatus(status)
+                    progress.advance(to: 1)
+                    _ = try await runGateway(["connect", "opencode"])
+                    progress.advance(to: 2)
+                    progress.advance(to: 3)
+                    showAlert(
+                        title: "OpenCode 配置已更新",
+                        message: "已把本地网关注册为 OpenCode 的 codex-mixin provider，并加入当前已选模型与 none 到 max 思考强度。请重启 OpenCode 或开新会话，然后用 /models 选择模型、用 variant_cycle 切换思考强度。"
+                    )
+                    await refreshStatusNow()
+                }
+            } catch {
+                serviceStatus = "安装 OpenCode 配置失败"
+            }
+        }
+    }
+
+    @objc func uninstallOpenCode() {
+        guard confirm(
+            title: "从 OpenCode 卸载",
+            message: "会从 OpenCode 全局配置删除 Codex Mixin 管理的 codex-mixin provider 和本地网关凭据文件，其他 OpenCode 配置会保留。完成后需要重启 OpenCode。"
+        ) else { return }
+        Task { @MainActor in
+            serviceBusy = true
+            defer { serviceBusy = false }
+            do {
+                try await runOperationProgress(
+                    title: "正在从 OpenCode 卸载",
+                    phases: [
+                        "读取 OpenCode 配置",
+                        "移除 codex-mixin provider",
+                        "清理本地网关凭据",
+                        "完成",
+                    ],
+                    successTitle: "✓ 卸载完成",
+                    failureTitle: "✗ 卸载失败",
+                    showFailureAlert: true,
+                    failureAlertTitle: "从 OpenCode 卸载失败"
+                ) { progress in
+                    progress.advance(to: 0)
+                    progress.advance(to: 1)
+                    let output = try await runGateway(["connect", "remove", "opencode"])
+                    progress.advance(to: 2)
+                    progress.advance(to: 3)
+                    let message = output.isEmpty
+                        ? "已从 OpenCode 移除 codex-mixin provider。请重启 OpenCode。"
+                        : "\(output)\n\n请重启 OpenCode。"
+                    showAlert(title: "OpenCode 配置已恢复", message: message)
+                    refreshStatus()
+                }
+            } catch {
+                // Failure already shown by the progress window + alert.
+            }
+        }
+    }
+
     @objc func copyLocalEndpoint() {
         Task { @MainActor in
             do {

@@ -137,7 +137,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             actionItem("安装到 Claude Code...", #selector(installClaudeCode), "square.and.arrow.down"),
             actionItem("从 Claude Code 恢复...", #selector(uninstallClaudeCode), "arrow.uturn.backward.circle"),
             actionItem("安装到 DSH...", #selector(installDsh), "square.and.arrow.down"),
-            actionItem("从 DSH 卸载...", #selector(uninstallDsh), "arrow.uturn.backward.circle")
+            actionItem("从 DSH 卸载...", #selector(uninstallDsh), "arrow.uturn.backward.circle"),
+            actionItem("安装到 OpenCode...", #selector(installOpenCode), "square.and.arrow.down"),
+            actionItem("从 OpenCode 卸载...", #selector(uninstallOpenCode), "arrow.uturn.backward.circle")
         ]))
         menu.addItem(submenuItem("关于", symbolName: "info.circle", items: [
             actionItem("关于 Codex Mixin...", #selector(showAbout), "info.circle"),

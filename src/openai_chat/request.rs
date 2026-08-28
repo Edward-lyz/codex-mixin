@@ -81,6 +81,9 @@ pub(crate) fn responses_to_openai_chat_streaming_with_model(
     if let Some(top_p) = body.get("top_p") {
         request["top_p"] = top_p.clone();
     }
+    if let Some(reasoning_effort) = body.pointer("/reasoning/effort").and_then(Value::as_str) {
+        request["reasoning_effort"] = Value::String(reasoning_effort.to_owned());
+    }
     if let Some(format) = body.get("text").and_then(|text| text.get("format")) {
         match format.get("type").and_then(Value::as_str) {
             None | Some("text") => {}

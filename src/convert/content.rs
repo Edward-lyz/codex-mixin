@@ -12,7 +12,7 @@ pub(super) fn append_input_item(
     use_mcp_bridge_names: bool,
     replay_model: Option<&str>,
 ) -> Result<(), GatewayError> {
-    // DSH sends OpenAI-compatible message items without the Responses envelope type.
+    // OpenCode and DSH send message items without the Responses envelope type.
     // Accept only that unambiguous shape; all other missing-type items still fail fast.
     let item_type = item
         .get("type")

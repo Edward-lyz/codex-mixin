@@ -83,8 +83,12 @@ pub(crate) async fn stream_provider_response(
             .boxed()
         }
         ProviderProtocol::OpenAiChat => {
-            let converted =
-                responses_to_openai_chat_streaming_with_model(body, Some(&upstream_model_id))?;
+            let mut upstream_body = body.clone();
+            prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
+            let converted = responses_to_openai_chat_streaming_with_model(
+                &upstream_body,
+                Some(&upstream_model_id),
+            )?;
             let observation = record_provider_prefix(
                 &state.cache_shapes,
                 provider.id(),

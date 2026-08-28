@@ -4049,10 +4049,12 @@ async fn maps_openai_chat_stream_to_responses_sse() {
     configure_openai_chat(&mut config, "/chat/completions");
     let gateway_url = spawn_gateway_with_config(config).await;
     let client = reqwest::Client::new();
+    let mut request = responses_request();
+    request["reasoning"] = json!({"effort": "high"});
     let response = client
         .post(format!("{gateway_url}/v1/responses"))
         .bearer_auth("gateway-key")
-        .json(&responses_request())
+        .json(&request)
         .send()
         .await
         .unwrap();
@@ -4068,6 +4070,7 @@ async fn maps_openai_chat_stream_to_responses_sse() {
     assert_eq!(upstream_request["messages"][1]["role"], "system");
     assert_eq!(upstream_request["messages"][2]["role"], "user");
     assert_eq!(upstream_request["tools"].as_array().unwrap().len(), 1);
+    assert_eq!(upstream_request["reasoning_effort"], "high");
 }
 
 #[tokio::test]
@@ -5148,6 +5151,7 @@ async fn routes_auto_review_to_official_websocket() {
     body.as_object_mut().unwrap().remove("stream");
     body["type"] = json!("response.create");
     body["model"] = json!("codex-auto-review");
+    body["max_output_tokens"] = json!(8192);
 
     socket
         .send(WsMessage::Text(body.to_string().into()))
@@ -5164,6 +5168,7 @@ async fn routes_auto_review_to_official_websocket() {
     assert_eq!(official_requests.len(), 1);
     assert_eq!(official_requests[0]["model"], "codex-auto-review");
     assert_eq!(official_requests[0]["stream"], true);
+    assert!(official_requests[0].get("max_output_tokens").is_none());
     assert_eq!(official_websocket_connections.load(Ordering::SeqCst), 1);
 }
 
@@ -6680,6 +6685,31 @@ async fn routes_auto_review_to_official_http_backend() {
 
     assert_eq!(response.status(), StatusCode::OK);
     assert_eq!(official_requests.lock().unwrap().as_slice(), &[request]);
+}
+
+#[tokio::test]
+async fn omits_unsupported_output_limit_from_official_responses() {
+    let (gateway_url, official_requests, _, _codex_home) = spawn_gateway_with_mock_official(
+        OfficialWebSocketBehavior::Persistent,
+        Duration::from_secs(2),
+    )
+    .await;
+    let mut request = responses_request();
+    request["model"] = json!("codex-auto-review");
+    request["max_output_tokens"] = json!(8192);
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let official_requests = official_requests.lock().unwrap();
+    assert_eq!(official_requests.len(), 1);
+    assert!(official_requests[0].get("max_output_tokens").is_none());
 }
 
 #[tokio::test]

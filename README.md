@@ -89,7 +89,7 @@ Run `codex-mixin` without arguments to open the mouse-enabled TUI. It covers fir
     <td width="100%" align="center"><a href="docs/assets/CLI-Fusion.png"><img src="docs/assets/CLI-Fusion.png" alt="TUI Fusion orchestration"></a><br><sub>Fusion · Panel, Judge and Final orchestration</sub></td>
   </tr>
   <tr>
-    <td width="100%" align="center"><a href="docs/assets/CLI-Apps.png"><img src="docs/assets/CLI-Apps.png" alt="TUI application integrations"></a><br><sub>Apps · install and restore Codex, Claude Code and DSH</sub></td>
+    <td width="100%" align="center"><a href="docs/assets/CLI-Apps.png"><img src="docs/assets/CLI-Apps.png" alt="TUI application integrations"></a><br><sub>Apps · install and restore Codex, Claude Code, DSH and OpenCode</sub></td>
   </tr>
   <tr>
     <td width="100%" align="center"><a href="docs/assets/CLI-System.png"><img src="docs/assets/CLI-System.png" alt="TUI system maintenance"></a><br><sub>System · gateway, updates, doctor and catalog repair</sub></td>
@@ -127,7 +127,7 @@ Codex Mixin 是一个 Rust 本地网关、CLI 和 macOS 菜单栏 App。它把 O
 - [快速使用](#快速使用)
 - [供应商预设](#供应商预设)
 - [安装到 Codex](#安装到-codex-的行为)
-- [Claude Code 与 DSH](#安装到-claude-code)
+- [Claude Code、DSH 与 OpenCode](#安装到-claude-code)
 - [Fusion 多模型编排](#fusion-多模型编排)
 - [CLI](#cli)
 - [Prompt 缓存优化](#prompt-缓存优化)
@@ -226,7 +226,7 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 
 <p align="center"><a href="docs/assets/CLI-models.png"><img src="docs/assets/CLI-models.png" alt="Codex Mixin TUI 模型选择"></a></p>
 
-**第 4 步：安装应用集成。** 进入 Apps 页面，直接选择 Codex 的官方账号模式或仅自定义模型模式，也可以安装、刷新或恢复 Claude Code 和 DSH。每个变更都会先显示确认页和执行进度。
+**第 4 步：安装应用集成。** 进入 Apps 页面，直接选择 Codex 的官方账号模式或仅自定义模型模式，也可以安装、刷新或恢复 Claude Code、DSH 和 OpenCode。每个变更都会先显示确认页和执行进度。
 
 <p align="center"><a href="docs/assets/CLI-Apps.png"><img src="docs/assets/CLI-Apps.png" alt="Codex Mixin TUI 应用安装"></a></p>
 
@@ -325,6 +325,29 @@ DeepSeek Harness（DSH）可以通过 pi-ai adapter 使用本地网关。在 mac
    `CODEX_MIXIN_GATEWAY_API_KEY`，保留 DSH 的其他配置。
 
 需要卸载时，在同一个 Apps 页面选择 DSH 的 `Remove`。DSH 目录默认使用 `$DSH_HOME`，未设置时使用 `~/.dsh`。安装或卸载后需要重启 DSH 或开启新会话。
+
+### 安装到 OpenCode
+
+在 macOS 菜单栏选择「安装到 OpenCode...」，或在 TUI 的 Apps 页面点击 OpenCode 的
+`Install / refresh`。CLI 使用 `codex-mixin connect opencode`。安装会：
+
+1. 在 `~/.config/opencode/opencode.json` 合并一个 `codex-mixin` provider，保留已有
+   provider、plugin、默认模型和其他字段；也支持 `OPENCODE_CONFIG` 与
+   `XDG_CONFIG_HOME`。
+2. 使用 `@ai-sdk/openai` 连接网关的 `/v1/responses`。Mixin 会继续把请求转换到各
+   provider 的 OpenAI Responses、Chat Completions 或 Anthropic Messages 上游，因此
+   OpenCode 不需要按上游协议切换配置。
+3. 加入当前已选的 custom、OpenAI official 和 Fusion 模型，但不会替用户修改 OpenCode
+   的默认模型。打开 `/models` 选择 `codex-mixin/<模型>`。
+4. 为支持 thinking 的模型加入 `none`、`low`、`medium`、`high`、`xhigh` 和 `max`
+   variants；用 OpenCode 的 variant selector 或 `variant_cycle` 切换。
+5. 把网关凭据写入权限为 `0600` 的 `~/.codex-mixin/opencode-api-key`，OpenCode 配置只保存
+   `{file:...}` 引用。卸载只删除 Mixin 管理的 provider 和该凭据文件。
+
+初版只改写 strict JSON。现有 `opencode.json` 如果包含 JSONC 注释，安装会明确失败，避免
+破坏注释。初版不安装 OpenCode plugin/hooks：OpenCode 插件接口本身可用，但 Codex Mixin
+现有 reporting hook 的事件格式只适配 Codex、Claude Code 和 DSH，需要独立 adapter 才能
+保证事件语义正确。安装或卸载后请重启 OpenCode 或开启新会话。
 
 ### 安装到 Codex 的行为
 
@@ -463,7 +486,7 @@ codex-mixin service restart
 codex-mixin service logs -n 200
 codex-mixin service start --foreground
 
-# Codex / Claude / DSH 集成
+# Codex / Claude / DSH / OpenCode 集成
 codex-mixin connect codex --codex-oauth-proxy
 codex-mixin connect codex --custom-only
 codex-mixin connect claude \
@@ -471,8 +494,10 @@ codex-mixin connect claude \
   --sonnet-model "Claude Sonnet 5-provider" \
   --haiku-model "Claude Haiku 5-provider"
 codex-mixin connect dsh
+codex-mixin connect opencode
 codex-mixin connect remove codex
 codex-mixin connect remove dsh
+codex-mixin connect remove opencode
 codex-mixin connect status
 
 # 状态与诊断
@@ -601,6 +626,8 @@ OpenAI Chat Completions 兼容上游不接受 `tool` 消息内嵌图片，网关
 | 仅自定义模式登录备份 | `~/.codex/auth.json.codex-mixin.backup` |
 | 安装前无登录文件标记 | `~/.codex/auth.json.codex-mixin.absent` |
 | Codex 模型目录 | `~/.codex/model-catalogs/mixin-models.json` |
+| OpenCode 配置 | `$OPENCODE_CONFIG`、`$XDG_CONFIG_HOME/opencode/opencode.json` 或 `~/.config/opencode/opencode.json` |
+| OpenCode 网关凭据 | `~/.codex-mixin/opencode-api-key` |
 
 ### 开发与发布
 
@@ -765,7 +792,7 @@ On first launch, it installs itself to the standard user-level location `~/.loca
 
 <p align="center"><a href="docs/assets/CLI-models.png"><img src="docs/assets/CLI-models.png" alt="Codex Mixin TUI model selection"></a></p>
 
-**Step 4: install application integrations.** Open Apps and choose Codex Official or Custom-only mode. The same page installs, refreshes, or restores Claude Code and DSH, with confirmation and progress views for every change.
+**Step 4: install application integrations.** Open Apps and choose Codex Official or Custom-only mode. The same page installs, refreshes, or restores Claude Code, DSH, and OpenCode, with confirmation and progress views for every change.
 
 <p align="center"><a href="docs/assets/CLI-Apps.png"><img src="docs/assets/CLI-Apps.png" alt="Codex Mixin TUI application installation"></a></p>
 
@@ -829,6 +856,31 @@ read-only quota endpoints used by New API, Sub2API, OpenRouter, and similar gate
 It stores an endpoint only after receiving recognizable quota data and never runs paid inference.
 Separately, adding or updating a custom base URL probes the versioned model and conversation
 endpoints first, then retries the corresponding legacy paths if the versioned group fails.
+
+### OpenCode Integration
+
+Choose `Install to OpenCode...` from the macOS menu, use `Install / refresh` under OpenCode in
+the TUI Apps workspace, or run `codex-mixin connect opencode`. The integration:
+
+1. Merges a managed `codex-mixin` provider into `~/.config/opencode/opencode.json` while
+   preserving existing providers, plugins, the default model, and unrelated fields. It also honors
+   `OPENCODE_CONFIG` and `XDG_CONFIG_HOME`.
+2. Uses `@ai-sdk/openai` and `/v1/responses`. Mixin then converts requests for each provider's
+   OpenAI Responses, Chat Completions, or Anthropic Messages upstream, so OpenCode does not need
+   per-upstream protocol configuration.
+3. Exposes the currently selected custom and OpenAI official models plus Fusion virtual models.
+   Pick `codex-mixin/<model>` from `/models`; installation does not change the OpenCode default.
+4. Adds `none`, `low`, `medium`, `high`, `xhigh`, and `max` variants for thinking-capable models.
+   Select one with OpenCode's variant selector or `variant_cycle`.
+5. Stores the gateway credential in the owner-only `~/.codex-mixin/opencode-api-key` file. The
+   OpenCode config contains only a `{file:...}` reference. Removal deletes only the managed
+   provider and this credential file.
+
+The initial integration rewrites strict JSON only. It fails explicitly if the existing config uses
+JSONC comments, preventing comment loss. It does not install OpenCode plugins or hooks: OpenCode's
+plugin API is suitable, but the existing Codex Mixin reporting events are specific to Codex,
+Claude Code, and DSH and require a separate adapter. Restart OpenCode or open a new session after
+installation or removal.
 
 ### Codex Install Behavior
 
@@ -996,13 +1048,15 @@ codex-mixin service restart
 codex-mixin service logs -n 200
 codex-mixin service start --foreground
 
-# Codex / Claude / DSH integration
+# Codex / Claude / DSH / OpenCode integration
 codex-mixin connect codex --codex-oauth-proxy
 codex-mixin connect codex --custom-only
 codex-mixin connect claude --model "Claude Sonnet 5"
 codex-mixin connect dsh
+codex-mixin connect opencode
 codex-mixin connect remove codex
 codex-mixin connect remove dsh
+codex-mixin connect remove opencode
 codex-mixin connect status
 
 # State and diagnosis
@@ -1034,6 +1088,8 @@ Launching without arguments is the user-facing entry point. It opens the TUI and
 | Codex model catalog | `~/.codex/model-catalogs/mixin-models.json` |
 | DSH settings | `$DSH_HOME/settings.yaml` or `~/.dsh/settings.yaml` |
 | DSH credentials | `$DSH_HOME/.credentials.yaml` or `~/.dsh/.credentials.yaml` |
+| OpenCode config | `$OPENCODE_CONFIG`, `$XDG_CONFIG_HOME/opencode/opencode.json`, or `~/.config/opencode/opencode.json` |
+| OpenCode gateway credential | `~/.codex-mixin/opencode-api-key` |
 
 ### Development
 

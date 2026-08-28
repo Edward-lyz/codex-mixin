@@ -1,6 +1,38 @@
 use super::*;
 
 #[test]
+fn accepts_standard_message_items_without_an_explicit_type() {
+    let converted = responses_to_openai_chat(&json!({
+        "model": "deepseek-chat",
+        "stream": true,
+        "input": [{
+            "role": "user",
+            "content": [{"type": "input_text", "text": "hello"}]
+        }]
+    }))
+    .unwrap();
+
+    assert_eq!(converted.request["messages"][0]["role"], "user");
+    assert_eq!(
+        converted.request["messages"][0]["content"],
+        json!([{"type": "text", "text": "hello"}])
+    );
+}
+
+#[test]
+fn maps_responses_reasoning_effort_to_chat_completions() {
+    let converted = responses_to_openai_chat(&json!({
+        "model": "reasoning-model",
+        "stream": true,
+        "reasoning": {"effort": "high"},
+        "input": "solve it"
+    }))
+    .unwrap();
+
+    assert_eq!(converted.request["reasoning_effort"], "high");
+}
+
+#[test]
 fn keeps_a_parallel_tool_run_contiguous_when_relocating_images() {
     let converted = responses_to_openai_chat(&json!({
         "model":"deepseek-chat",
