@@ -201,6 +201,13 @@ extension AppDelegate {
                         ["providers", "probe", providerID],
                         onProgress: onProgress
                     )
+                    self.serviceBusy = true
+                    self.serviceStatus = "正在应用模型能力..."
+                    self.serviceEndpoint = nil
+                    defer { self.serviceBusy = false }
+                    try await self.restartGatewayProcess()
+                    let status = try await self.waitForGatewayStatus()
+                    self.applyGatewayStatus(status)
                 }
             )
         }
