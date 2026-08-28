@@ -123,6 +123,7 @@ async fn probe_protocol(
                 api_path: api_path.to_owned(),
                 baseline: CapabilityStatus::Indeterminate,
                 image_input: CapabilityStatus::Indeterminate,
+                thinking: CapabilityStatus::Indeterminate,
                 function_tools: CapabilityStatus::Indeterminate,
                 tool_search: CapabilityStatus::Indeterminate,
                 web_search: CapabilityStatus::Indeterminate,
@@ -146,19 +147,29 @@ async fn probe_protocol(
             api_path: api_path.to_owned(),
             baseline: baseline.status,
             image_input: CapabilityStatus::Indeterminate,
+            thinking: CapabilityStatus::Indeterminate,
             function_tools: CapabilityStatus::Indeterminate,
             tool_search: CapabilityStatus::Indeterminate,
             web_search: CapabilityStatus::Indeterminate,
             error: baseline.error,
         };
     }
-    let (image, function_tools, tool_search, web_search) = tokio::join!(
+    let (image, thinking, function_tools, tool_search, web_search) = tokio::join!(
         send_probe(
             client,
             provider,
             protocol,
             &url,
             probe_body(protocol, model, Some(ProbeFeature::Image)),
+            request_limit,
+            native_headers,
+        ),
+        send_probe(
+            client,
+            provider,
+            protocol,
+            &url,
+            probe_body(protocol, model, Some(ProbeFeature::Thinking)),
             request_limit,
             native_headers,
         ),
@@ -192,6 +203,7 @@ async fn probe_protocol(
     );
     let errors = [
         image.error,
+        thinking.error,
         function_tools.error,
         tool_search.error,
         web_search.error,
@@ -204,6 +216,7 @@ async fn probe_protocol(
         api_path: api_path.to_owned(),
         baseline: CapabilityStatus::Supported,
         image_input: image.status,
+        thinking: thinking.status,
         function_tools: function_tools.status,
         tool_search: tool_search.status,
         web_search: web_search.status,
@@ -214,6 +227,7 @@ async fn probe_protocol(
 #[derive(Clone, Copy)]
 enum ProbeFeature {
     Image,
+    Thinking,
     FunctionTools,
     ToolSearch,
     WebSearch,
@@ -243,6 +257,10 @@ fn responses_body(model: &str, feature: Option<ProbeFeature>) -> Value {
                 {"type": "input_image", "image_url": IMAGE_DATA_URL},
                 {"type": "input_text", "text": "Reply with OK."}
             ]);
+        }
+        Some(ProbeFeature::Thinking) => {
+            body["max_output_tokens"] = json!(128);
+            body["reasoning"] = json!({"effort": "low"});
         }
         Some(ProbeFeature::FunctionTools) => {
             body["tools"] = json!([function_tool()]);
@@ -278,6 +296,10 @@ fn chat_body(model: &str, feature: Option<ProbeFeature>) -> Value {
                 {"type": "text", "text": "Reply with OK."}
             ]);
         }
+        Some(ProbeFeature::Thinking) => {
+            body["max_tokens"] = json!(128);
+            body["reasoning_effort"] = json!("low");
+        }
         Some(ProbeFeature::FunctionTools) => {
             body["tools"] = json!([{"type": "function", "function": function_tool()}]);
             body["tool_choice"] = json!("auto");
@@ -309,6 +331,10 @@ fn messages_body(model: &str, feature: Option<ProbeFeature>) -> Value {
                 {"type": "image", "source": {"type": "base64", "media_type": "image/png", "data": IMAGE_DATA_URL.trim_start_matches("data:image/png;base64,")}},
                 {"type": "text", "text": "Reply with OK."}
             ]);
+        }
+        Some(ProbeFeature::Thinking) => {
+            body["max_output_tokens"] = json!(1025);
+            body["thinking"] = json!({"type": "enabled", "budget_tokens": 1024});
         }
         Some(ProbeFeature::FunctionTools) => {
             body["tools"] = json!([{
@@ -513,6 +539,7 @@ mod tests {
             api_path: api_path.to_owned(),
             baseline,
             image_input: CapabilityStatus::Indeterminate,
+            thinking: CapabilityStatus::Indeterminate,
             function_tools: CapabilityStatus::Indeterminate,
             tool_search: CapabilityStatus::Indeterminate,
             web_search: CapabilityStatus::Indeterminate,
@@ -552,6 +579,32 @@ mod tests {
         assert_eq!(
             classify_status(StatusCode::UNPROCESSABLE_ENTITY),
             CapabilityStatus::Unsupported
+        );
+    }
+
+    #[test]
+    fn thinking_probes_use_each_protocol_reasoning_field() {
+        let responses = probe_body(
+            ProviderProtocol::OpenAiResponses,
+            "model-a",
+            Some(ProbeFeature::Thinking),
+        );
+        let chat = probe_body(
+            ProviderProtocol::OpenAiChat,
+            "model-a",
+            Some(ProbeFeature::Thinking),
+        );
+        let messages = probe_body(
+            ProviderProtocol::AnthropicMessages,
+            "model-a",
+            Some(ProbeFeature::Thinking),
+        );
+
+        assert_eq!(responses["reasoning"], json!({"effort": "low"}));
+        assert_eq!(chat["reasoning_effort"], json!("low"));
+        assert_eq!(
+            messages["thinking"],
+            json!({"type": "enabled", "budget_tokens": 1024})
         );
     }
 

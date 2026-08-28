@@ -247,6 +247,10 @@ fn annotate_models(
             continue;
         };
         model.supports_image = selected.image_input.as_option_bool();
+        model.supports_thinking = selected
+            .thinking
+            .as_option_bool()
+            .or(model.supports_thinking);
         model.supports_function_tools = selected.function_tools.as_option_bool();
         model.supports_tool_search = selected.tool_search.as_option_bool();
         model.supports_web_search = selected.web_search.as_option_bool();
@@ -279,6 +283,9 @@ fn merge_model_result(
         }
         if protocol.image_input == CapabilityStatus::Indeterminate {
             protocol.image_input = old.image_input;
+        }
+        if protocol.thinking == CapabilityStatus::Indeterminate {
+            protocol.thinking = old.thinking;
         }
         if protocol.function_tools == CapabilityStatus::Indeterminate {
             protocol.function_tools = old.function_tools;
@@ -314,6 +321,7 @@ mod tests {
             api_path: "/v1/responses".to_owned(),
             baseline: CapabilityStatus::Supported,
             image_input: CapabilityStatus::Supported,
+            thinking: CapabilityStatus::Supported,
             function_tools: CapabilityStatus::Supported,
             tool_search,
             web_search: CapabilityStatus::Unsupported,
@@ -349,5 +357,32 @@ mod tests {
         );
         assert_eq!(merged.last_probe_error.as_deref(), Some("rate limited"));
         assert_eq!(merged.probed_at_ms, 2);
+    }
+
+    #[test]
+    fn indeterminate_thinking_probe_preserves_advertised_support() {
+        let mut protocol = protocol_capabilities(CapabilityStatus::Supported);
+        protocol.thinking = CapabilityStatus::Indeterminate;
+        let capabilities = ModelCapabilities {
+            model: "model-a".to_owned(),
+            selected_protocol: Some(crate::provider::ProviderProtocol::OpenAiResponses),
+            selected_api_path: Some("/v1/responses".to_owned()),
+            protocols: vec![protocol],
+            probed_at_ms: 2,
+            last_probe_error: None,
+        };
+        let model = crate::provider::ProviderModel {
+            id: "model-a".to_owned(),
+            supports_thinking: Some(true),
+            ..Default::default()
+        };
+
+        let mut models = [model];
+        annotate_models(
+            &mut models,
+            &BTreeMap::from([("model-a".to_owned(), capabilities)]),
+        );
+
+        assert_eq!(models[0].supports_thinking, Some(true));
     }
 }

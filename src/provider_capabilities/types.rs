@@ -8,11 +8,12 @@ pub(super) const CAPABILITY_FILE_VERSION: u64 = 2;
 pub(super) const PROBE_CONCURRENCY: usize = 4;
 pub(super) const PROBE_REQUEST_CONCURRENCY: usize = 8;
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
+#[derive(Clone, Copy, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(rename_all = "snake_case")]
 pub enum CapabilityStatus {
     Supported,
     Unsupported,
+    #[default]
     Indeterminate,
 }
 
@@ -32,6 +33,8 @@ pub struct ProtocolCapabilities {
     pub api_path: String,
     pub baseline: CapabilityStatus,
     pub image_input: CapabilityStatus,
+    #[serde(default)]
+    pub thinking: CapabilityStatus,
     pub function_tools: CapabilityStatus,
     pub tool_search: CapabilityStatus,
     pub web_search: CapabilityStatus,

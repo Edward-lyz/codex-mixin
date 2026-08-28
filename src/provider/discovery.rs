@@ -112,7 +112,7 @@ fn openai_model_to_provider_model(model: ModelInfo, is_openrouter: bool) -> Prov
                 Some(supports_parameter("tools") && supports_parameter("tool_choice")),
             )
         } else {
-            (Some(false), Some(false), Some(false), Some(false))
+            (Some(false), None, Some(false), Some(false))
         };
     ProviderModel {
         id: model.id,
@@ -308,7 +308,7 @@ mod tests {
     }
 
     #[test]
-    fn undeclared_openai_compatible_capabilities_are_conservative() {
+    fn undeclared_openai_compatible_thinking_is_unknown() {
         let response: ModelsResponse =
             serde_json::from_str(r#"{"data":[{"id":"unknown"}]}"#).unwrap();
 
@@ -316,7 +316,7 @@ mod tests {
             openai_model_to_provider_model(response.data.into_iter().next().unwrap(), false);
 
         assert_eq!(model.supports_image, Some(false));
-        assert_eq!(model.supports_thinking, Some(false));
+        assert_eq!(model.supports_thinking, None);
         assert_eq!(model.supports_function_tools, Some(false));
         assert_eq!(model.supports_web_search, Some(false));
         assert_eq!(model.supports_tool_search, Some(false));
