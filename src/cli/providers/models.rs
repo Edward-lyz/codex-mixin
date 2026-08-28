@@ -18,6 +18,7 @@ use super::{
 use crate::cli::official_models::{
     OFFICIAL_PROVIDER_ID, available_official_ids, load_official_models, refresh_official_models,
 };
+use crate::cli::refresh_default_managed_codex_catalog;
 
 pub(crate) async fn discover_models(id: &str) -> anyhow::Result<()> {
     discover_models_with_output(id, false).await
@@ -183,6 +184,8 @@ pub(crate) async fn probe_selected_models(id: &str) -> anyhow::Result<()> {
         capabilities.annotate_provider(current);
         current.validate()
     })?;
+    super::super::progress_step("Refreshing Codex model catalog after capability probing");
+    refresh_default_managed_codex_catalog().await?;
     super::super::progress_step(&format!(
         "Capability probing complete for {id}: {} models checked",
         summary.attempted
