@@ -22,6 +22,7 @@ fn config() -> GatewayConfig {
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
         codex_auth_path: "/tmp/codex-mixin-perf-auth.json".into(),
         gateway_api_key: Some("perf-key".to_owned()),
+        gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys::default(),
         accept_codex_oauth: true,
         official_selected_models: None,
         default_max_tokens: 8192,

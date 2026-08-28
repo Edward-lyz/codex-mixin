@@ -59,6 +59,8 @@ pub(in crate::cli) struct InstallCodexOptions {
 }
 
 pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyhow::Result<()> {
+    let client = codex_mixin::gateway_access::GatewayClient::Codex;
+    let key_existed = codex_mixin::config::gateway_client_key_exists(client)?;
     let config_path = resolve_codex_config_path(options.config_path.clone())?;
     let auth_mode = if options.codex_oauth_proxy {
         ManagedAuthMode::Official
@@ -67,7 +69,7 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
     };
     let auth_transaction = ManagedAuthTransaction::begin(&config_path, auth_mode)?;
     let result = install_codex_inner(options).await;
-    match result {
+    let result = match result {
         Ok(()) => auth_transaction.commit(),
         Err(install_error) => match auth_transaction.rollback() {
             Ok(()) => Err(install_error),
@@ -75,7 +77,8 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
                 "{install_error}; Codex auth rollback also failed: {rollback_error}"
             )),
         },
-    }
+    };
+    crate::cli::rollback_new_client_key_on_error(result, client, key_existed)
 }
 
 async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()> {
@@ -108,6 +111,9 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
         paths.catalog.display()
     );
     super::super::progress_step("Checking local config and gateway state");
+    let client_key = codex_mixin::config::ensure_gateway_client_key(
+        codex_mixin::gateway_access::GatewayClient::Codex,
+    )?;
     let gateway_config = GatewayConfig::from_stored_config()?;
     let state = AppState::new(gateway_config.clone())?;
     super::super::progress_step("Loading Codex config template");
@@ -178,7 +184,7 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
         &paths.catalog,
         &gateway_base_url,
         &web_search,
-        None,
+        Some(&client_key),
         codex_oauth_proxy,
     )?;
     let serialized_config = format!("{MANAGED_CONFIG_HEADER}\n{doc}");

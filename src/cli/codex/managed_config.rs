@@ -3,7 +3,7 @@ use std::fs::OpenOptions;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
-use toml_edit::{DocumentMut, Item, Table, value};
+use toml_edit::{DocumentMut, InlineTable, Item, Table, Value, value};
 
 use codex_mixin::CODEX_MIXIN_PROVIDER;
 
@@ -194,7 +194,7 @@ pub(in crate::cli) fn upsert_codex_config(
     catalog_path: &std::path::Path,
     base_url: &str,
     web_search: &str,
-    _env_key: Option<&str>,
+    client_key: Option<&str>,
     codex_oauth_proxy: bool,
 ) -> anyhow::Result<()> {
     let provider_id = managed_codex_provider_id(codex_oauth_proxy);
@@ -217,6 +217,9 @@ pub(in crate::cli) fn upsert_codex_config(
     }
     let mut provider_table = Table::new();
     provider_table["base_url"] = value(base_url);
+    if let Some(client_key) = client_key {
+        set_client_key_header(&mut provider_table, client_key)?;
+    }
     if codex_oauth_proxy {
         provider_table["name"] = value("Codex Mixin");
         provider_table["wire_api"] = value("responses");
@@ -224,6 +227,53 @@ pub(in crate::cli) fn upsert_codex_config(
         provider_table["supports_websockets"] = value(true);
     }
     providers.insert(provider_id, Item::Table(provider_table));
+    Ok(())
+}
+
+pub(in crate::cli) fn sync_installed_codex_client_key() -> anyhow::Result<()> {
+    let config_path = resolve_codex_config_path(None)?;
+    if !config_path.exists() {
+        return Ok(());
+    }
+    let raw = fs::read_to_string(&config_path)?;
+    if !is_managed_config(&raw) {
+        return Ok(());
+    }
+    let mut doc = raw.parse::<DocumentMut>()?;
+    let provider_id = managed_config_provider_id(&doc)?.to_owned();
+    let client_key = codex_mixin::config::ensure_gateway_client_key(
+        codex_mixin::gateway_access::GatewayClient::Codex,
+    )?;
+    let provider = doc
+        .get_mut("model_providers")
+        .and_then(Item::as_table_mut)
+        .and_then(|providers| providers.get_mut(&provider_id))
+        .and_then(Item::as_table_mut)
+        .ok_or_else(|| anyhow::anyhow!("managed Codex provider table is missing"))?;
+    set_client_key_header(provider, &client_key)?;
+    let serialized = format!("{MANAGED_CONFIG_HEADER}\n{doc}");
+    write_atomic_if_changed(&config_path, serialized.as_bytes())?;
+    Ok(())
+}
+
+fn set_client_key_header(provider: &mut Table, client_key: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        !client_key.trim().is_empty(),
+        "Codex client key must not be empty"
+    );
+    anyhow::ensure!(
+        client_key == client_key.trim(),
+        "Codex client key has whitespace"
+    );
+    let headers = provider
+        .entry("http_headers")
+        .or_insert(Item::Value(Value::InlineTable(InlineTable::new())))
+        .as_inline_table_mut()
+        .ok_or_else(|| anyhow::anyhow!("managed Codex http_headers must be an inline table"))?;
+    headers.insert(
+        codex_mixin::gateway_access::CODEX_CLIENT_KEY_HEADER,
+        Value::from(client_key),
+    );
     Ok(())
 }
 

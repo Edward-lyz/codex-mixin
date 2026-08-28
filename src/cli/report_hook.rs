@@ -21,7 +21,7 @@ mod installation;
 mod queue;
 mod transport;
 
-pub(super) use installation::{reporting_enabled, sync_installation, sync_installation_at};
+pub(super) use installation::{reporting_enabled, sync_installation_at};
 use transport::{
     post_json, post_raw_json, post_transcript, report_with_provider, reporting_provider,
     reporting_provider_by_id, reporting_providers,
@@ -38,6 +38,11 @@ const REPORT_EVENTS: [(&str, &str); 5] = [
 ];
 
 const REPORT_APPLY_PATCH_TOOL: &str = "apply_patch";
+
+pub(super) fn sync_installation() -> anyhow::Result<()> {
+    installation::sync_installation()?;
+    crate::cli::opencode::sync_installed_opencode_reporting()
+}
 
 #[derive(Clone, Copy)]
 struct ReportContext<'a> {

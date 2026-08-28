@@ -12,7 +12,7 @@ use crate::server::AppState;
 mod provider;
 mod responses;
 
-pub(crate) use provider::stream_provider_response;
+pub(crate) use provider::{ProviderResponseRequest, stream_provider_response};
 pub(crate) use responses::collect_response_stream;
 
 pub type ResponseStream = BoxStream<'static, Result<Bytes, Infallible>>;
@@ -35,6 +35,14 @@ pub async fn stream_response(
     state: &AppState,
     body: Value,
 ) -> Result<ResponseStream, GatewayError> {
+    stream_response_with_headers(state, body, &HeaderMap::new()).await
+}
+
+pub(crate) async fn stream_response_with_headers(
+    state: &AppState,
+    body: Value,
+    headers: &HeaderMap,
+) -> Result<ResponseStream, GatewayError> {
     let catalog_slug = body
         .get("model")
         .and_then(Value::as_str)
@@ -49,9 +57,17 @@ pub async fn stream_response(
         None,
         None,
     )?;
-    UpstreamExecutor::new(state)
-        .stream(plan, &HeaderMap::new())
-        .await
+    UpstreamExecutor::new(state).stream(plan, headers).await
+}
+
+pub(crate) async fn collect_response_with_headers(
+    state: &AppState,
+    mut body: Value,
+    headers: &HeaderMap,
+) -> Result<CollectedResponse, GatewayError> {
+    body["stream"] = Value::Bool(true);
+    let stream = stream_response_with_headers(state, body, headers).await?;
+    collect_response_stream(stream).await
 }
 
 pub async fn collect_response(

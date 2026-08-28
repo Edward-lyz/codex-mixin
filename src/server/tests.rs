@@ -50,6 +50,7 @@ fn messages_endpoint_rejects_non_anthropic_provider_protocols() {
         official_responses_url: "https://example.invalid/responses".to_owned(),
         codex_auth_path: tempfile::tempdir().unwrap().path().join("auth.json"),
         gateway_api_key: None,
+        gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
         accept_codex_oauth: false,
         official_selected_models: None,
         default_max_tokens: 8192,
@@ -88,6 +89,7 @@ async fn explicit_official_selection_rejects_unselected_models() {
         official_responses_url: "https://example.invalid/responses".to_owned(),
         codex_auth_path: auth_path,
         gateway_api_key: None,
+        gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
         accept_codex_oauth: true,
         official_selected_models: Some(vec!["gpt-5.6-sol".to_owned()]),
         default_max_tokens: 8192,
@@ -159,6 +161,10 @@ async fn gateway_auth_accepts_only_the_configured_key_or_actual_codex_oauth_toke
         official_responses_url: "https://example.invalid/responses".to_owned(),
         codex_auth_path: auth_path,
         gateway_api_key: Some("gateway-secret".to_owned()),
+        gateway_client_keys: crate::gateway_access::GatewayClientKeys {
+            claude: Some("claude-client-key".to_owned()),
+            ..Default::default()
+        },
         accept_codex_oauth: true,
         official_selected_models: None,
         default_max_tokens: 8192,
@@ -172,7 +178,7 @@ async fn gateway_auth_accepts_only_the_configured_key_or_actual_codex_oauth_toke
     })
     .unwrap();
 
-    for token in ["gateway-secret", "oauth-secret"] {
+    for token in ["gateway-secret", "oauth-secret", "claude-client-key"] {
         let mut headers = HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
@@ -198,6 +204,7 @@ async fn usage_endpoint_requires_auth_and_returns_recorded_provider_usage() {
             official_responses_url: "https://example.invalid/responses".to_owned(),
             codex_auth_path: directory.path().join("auth.json"),
             gateway_api_key: Some("gateway-key".to_owned()),
+            gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
             accept_codex_oauth: false,
             official_selected_models: None,
             default_max_tokens: 8192,
@@ -434,6 +441,7 @@ async fn fetches_official_models_with_codex_auth_and_client_version() {
         official_responses_url: format!("http://{address}/backend-api/codex/responses"),
         codex_auth_path: auth_path,
         gateway_api_key: None,
+        gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
         accept_codex_oauth: true,
         official_selected_models: None,
         default_max_tokens: 8192,
@@ -536,6 +544,7 @@ async fn benchmark_api_runs_after_the_start_request_returns_and_persists_results
         official_responses_url: "https://example.invalid/responses".to_owned(),
         codex_auth_path: results_directory.path().join("auth.json"),
         gateway_api_key: Some("gateway-key".to_owned()),
+        gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
         accept_codex_oauth: false,
         official_selected_models: None,
         default_max_tokens: 8192,

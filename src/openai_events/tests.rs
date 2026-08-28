@@ -11,6 +11,7 @@ fn anthropic_config() -> GatewayConfig {
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
         codex_auth_path: std::path::PathBuf::from("/tmp/codex-auth.json"),
         gateway_api_key: None,
+        gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
         accept_codex_oauth: true,
         official_selected_models: None,
         default_max_tokens: 8192,

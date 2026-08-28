@@ -10,7 +10,17 @@ use crate::compaction::TOKEN_PREFIX;
 use crate::error::GatewayError;
 use crate::server::{AppState, stream_official_response};
 use crate::sse::{SseDecoder, encode_event, encode_raw_event, event_contains_response_metadata};
-use crate::upstream::{ResponseStream, UpstreamRouting, stream_provider_response};
+use crate::upstream::{
+    ProviderResponseRequest, ResponseStream, UpstreamRouting, stream_provider_response,
+};
+
+struct ProviderStreamPlan {
+    downstream_model: Option<String>,
+    catalog_slug: String,
+    provider_id: String,
+    upstream_model_id: String,
+    routing: Option<UpstreamRouting>,
+}
 
 #[derive(Clone, Copy)]
 pub(crate) struct UpstreamExecutor<'a> {
@@ -64,11 +74,14 @@ impl<'a> UpstreamExecutor<'a> {
             } => {
                 self.stream_provider(
                     plan.body,
-                    plan.downstream_model,
-                    catalog_slug,
-                    provider_id,
-                    upstream_model_id,
-                    routing,
+                    ProviderStreamPlan {
+                        downstream_model: plan.downstream_model,
+                        catalog_slug,
+                        provider_id,
+                        upstream_model_id,
+                        routing,
+                    },
+                    headers,
                 )
                 .await
             }
@@ -92,20 +105,20 @@ impl<'a> UpstreamExecutor<'a> {
     async fn stream_provider(
         self,
         body: serde_json::Value,
-        downstream_model: Option<String>,
-        catalog_slug: String,
-        provider_id: String,
-        upstream_model_id: String,
-        routing: Option<UpstreamRouting>,
+        plan: ProviderStreamPlan,
+        headers: &HeaderMap,
     ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
         let first = stream_provider_response(
             self.state,
-            &body,
-            &catalog_slug,
-            &provider_id,
-            &upstream_model_id,
-            routing.as_ref(),
-            downstream_model.as_deref(),
+            ProviderResponseRequest {
+                body: &body,
+                catalog_slug: &plan.catalog_slug,
+                provider_id: &plan.provider_id,
+                upstream_model_id: &plan.upstream_model_id,
+                routing: plan.routing.as_ref(),
+                downstream_model: plan.downstream_model.as_deref(),
+                headers,
+            },
         )
         .await;
         let Err(error @ GatewayError::UpstreamStatus { status, .. }) = first else {
@@ -119,20 +132,23 @@ impl<'a> UpstreamExecutor<'a> {
             return Err(error);
         }
         tracing::warn!(
-            provider_id,
-            upstream_model_id,
+            provider_id = %plan.provider_id,
+            upstream_model_id = %plan.upstream_model_id,
             normalized_images = stats.normalized_images,
             saved_image_bytes = stats.saved_bytes,
             "retrying provider request after 413 with aggressively compressed images"
         );
         stream_provider_response(
             self.state,
-            &fallback_body,
-            &catalog_slug,
-            &provider_id,
-            &upstream_model_id,
-            routing.as_ref(),
-            downstream_model.as_deref(),
+            ProviderResponseRequest {
+                body: &fallback_body,
+                catalog_slug: &plan.catalog_slug,
+                provider_id: &plan.provider_id,
+                upstream_model_id: &plan.upstream_model_id,
+                routing: plan.routing.as_ref(),
+                downstream_model: plan.downstream_model.as_deref(),
+                headers,
+            },
         )
         .await
         .map(|stream| (stream, fallback_body))

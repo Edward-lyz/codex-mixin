@@ -57,7 +57,16 @@ pub(super) async fn check_gateway_auth(
     let Some(actual) = bearer_token(headers) else {
         return Err(GatewayError::Unauthorized);
     };
-    if bool::from(actual.as_bytes().ct_eq(expected.as_bytes())) {
+    if bool::from(actual.as_bytes().ct_eq(expected.as_bytes()))
+        || matches!(
+            state.config.gateway_client_keys.authenticate(headers),
+            Some(
+                crate::gateway_access::GatewayClient::Claude
+                    | crate::gateway_access::GatewayClient::Dsh
+                    | crate::gateway_access::GatewayClient::OpenCode
+            )
+        )
+    {
         return Ok(());
     }
     if !state.config.accept_codex_oauth || !state.config.bind.ip().is_loopback() {
@@ -77,6 +86,22 @@ pub(super) async fn check_gateway_auth(
     } else {
         Err(GatewayError::Unauthorized)
     }
+}
+
+pub(crate) fn require_ducx_client(
+    state: &AppState,
+    provider: &ProviderRuntime,
+    headers: &HeaderMap,
+) -> Result<(), GatewayError> {
+    if !provider.uses_ducx_loopback() {
+        return Ok(());
+    }
+    state
+        .config
+        .gateway_client_keys
+        .authenticate(headers)
+        .map(|_| ())
+        .ok_or(GatewayError::Unauthorized)
 }
 
 pub(super) fn stable_oneapi_routing(

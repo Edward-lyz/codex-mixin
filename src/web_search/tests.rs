@@ -20,6 +20,7 @@ fn test_config(upstream_base_url: &str) -> GatewayConfig {
         official_responses_url: "https://example.test/responses".to_owned(),
         codex_auth_path: PathBuf::from("/tmp/auth.json"),
         gateway_api_key: None,
+        gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
         accept_codex_oauth: false,
         official_selected_models: None,
         default_max_tokens: 8192,

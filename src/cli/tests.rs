@@ -59,6 +59,10 @@ fn claude_install_writes_base_url_and_uninstall_restores_settings() {
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
         codex_auth_path: directory.path().join("auth.json"),
         gateway_api_key: None,
+        gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
+            claude: Some("claude-client-key".to_owned()),
+            ..Default::default()
+        },
         accept_codex_oauth: false,
         official_selected_models: None,
         default_max_tokens: 4096,
@@ -155,7 +159,7 @@ fn assert_installed_claude_settings(installed: &serde_json::Value) {
     );
     assert_eq!(
         installed["env"]["ANTHROPIC_AUTH_TOKEN"].as_str().unwrap(),
-        "codex-mixin-local"
+        "claude-client-key"
     );
     assert_eq!(installed["env"]["CLAUDE_CODE_USE_GATEWAY"], "old-gateway");
     assert_eq!(
@@ -241,7 +245,7 @@ fn assert_restored_claude_settings(restored: &serde_json::Value) {
 }
 
 #[test]
-fn claude_install_uses_gateway_api_key_as_auth_token() {
+fn claude_install_uses_dedicated_client_key_as_auth_token() {
     let directory = tempfile::tempdir().unwrap();
     let settings = directory.path().join("settings.json");
     let mut provider = ProviderPreset::BaiduOneApi.create("baidu", "provider-key");
@@ -258,6 +262,10 @@ fn claude_install_uses_gateway_api_key_as_auth_token() {
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
         codex_auth_path: directory.path().join("auth.json"),
         gateway_api_key: Some("gateway-secret".to_owned()),
+        gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
+            claude: Some("claude-client-key".to_owned()),
+            ..Default::default()
+        },
         accept_codex_oauth: false,
         official_selected_models: None,
         default_max_tokens: 4096,
@@ -279,7 +287,10 @@ fn claude_install_uses_gateway_api_key_as_auth_token() {
 
     let installed: serde_json::Value =
         serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
-    assert_eq!(installed["env"]["ANTHROPIC_AUTH_TOKEN"], "gateway-secret");
+    assert_eq!(
+        installed["env"]["ANTHROPIC_AUTH_TOKEN"],
+        "claude-client-key"
+    );
     assert_eq!(
         installed["modelOverrides"]["claude-sonnet-4-6"],
         "Claude Sonnet 5-baidu"
@@ -316,6 +327,10 @@ fn claude_install_migrates_legacy_managed_env_backup() {
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
         codex_auth_path: directory.path().join("auth.json"),
         gateway_api_key: Some("gateway-secret".to_owned()),
+        gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
+            claude: Some("claude-client-key".to_owned()),
+            ..Default::default()
+        },
         accept_codex_oauth: false,
         official_selected_models: None,
         default_max_tokens: 4096,
@@ -435,6 +450,10 @@ fn claude_install_accepts_any_routable_model_protocol() {
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
         codex_auth_path: directory.path().join("auth.json"),
         gateway_api_key: None,
+        gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
+            claude: Some("claude-client-key".to_owned()),
+            ..Default::default()
+        },
         accept_codex_oauth: false,
         official_selected_models: None,
         default_max_tokens: 4096,
@@ -873,6 +892,10 @@ async fn oauth_install_falls_back_to_local_cache_when_official_fetch_fails() {
         official_responses_url: format!("http://{address}/backend-api/codex/responses"),
         codex_auth_path: auth_path,
         gateway_api_key: None,
+        gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
+            claude: Some("claude-client-key".to_owned()),
+            ..Default::default()
+        },
         accept_codex_oauth: true,
         official_selected_models: None,
         default_max_tokens: 8192,

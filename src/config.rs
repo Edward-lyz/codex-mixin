@@ -11,8 +11,9 @@ use crate::provider::{CONFIG_VERSION, ProviderDefinition, ProviderRegistry};
 mod migration;
 mod storage;
 pub use storage::{
-    delete_stored_config, ensure_compaction_secret, load_stored_config,
-    load_stored_config_from_path, mutate_stored_config, mutate_stored_config_at_path,
+    delete_stored_config, ensure_compaction_secret, ensure_gateway_client_key,
+    gateway_client_key_exists, load_stored_config, load_stored_config_from_path,
+    mutate_stored_config, mutate_stored_config_at_path, revoke_gateway_client_key,
     save_stored_config, save_stored_config_to_path, stored_config_path,
 };
 
@@ -35,6 +36,7 @@ pub struct GatewayConfig {
     pub official_responses_url: String,
     pub codex_auth_path: PathBuf,
     pub gateway_api_key: Option<String>,
+    pub gateway_client_keys: crate::gateway_access::GatewayClientKeys,
     pub accept_codex_oauth: bool,
     pub official_selected_models: Option<Vec<String>>,
     pub default_max_tokens: u64,
@@ -79,6 +81,7 @@ impl GatewayConfig {
             official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
             codex_auth_path: default_codex_auth_path(),
             gateway_api_key: stored_config.gateway_api_key,
+            gateway_client_keys: stored_config.gateway_client_keys,
             accept_codex_oauth: true,
             official_selected_models: stored_config.official_selected_models,
             default_max_tokens: 8192,
@@ -146,6 +149,8 @@ pub struct StoredGatewayConfig {
     pub gateway_bind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gateway_api_key: Option<String>,
+    #[serde(default, skip_serializing_if = "gateway_client_keys_are_empty")]
+    pub gateway_client_keys: crate::gateway_access::GatewayClientKeys,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub compaction_secret: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -161,12 +166,17 @@ impl Default for StoredGatewayConfig {
             config_version: CONFIG_VERSION,
             gateway_bind: None,
             gateway_api_key: None,
+            gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
             compaction_secret: None,
             official_selected_models: None,
             fusion_profiles: Vec::new(),
             providers: Vec::new(),
         }
     }
+}
+
+fn gateway_client_keys_are_empty(keys: &crate::gateway_access::GatewayClientKeys) -> bool {
+    keys.codex.is_none() && keys.claude.is_none() && keys.dsh.is_none() && keys.opencode.is_none()
 }
 
 pub fn ensure_config_version(version: u32) -> anyhow::Result<()> {
@@ -195,6 +205,7 @@ mod tests {
             config_version: CONFIG_VERSION,
             gateway_bind: Some("127.0.0.1:18787".to_owned()),
             gateway_api_key: Some("local-key".to_owned()),
+            gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
             compaction_secret: None,
             official_selected_models: Some(vec!["gpt-5.6-sol".to_owned()]),
             fusion_profiles: Vec::new(),
@@ -598,6 +609,7 @@ mod tests {
                 .to_owned(),
             codex_auth_path: PathBuf::from("/tmp/auth.json"),
             gateway_api_key: None,
+            gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
             accept_codex_oauth: true,
             official_selected_models: None,
             default_max_tokens: 8192,

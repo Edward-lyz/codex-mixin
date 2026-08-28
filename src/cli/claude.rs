@@ -14,7 +14,6 @@ use super::official_models::selected_official_models;
 pub(in crate::cli) const MANAGED_CLAUDE_MARKER: &str = "codex-mixin managed Claude Code";
 const MANAGED_CLAUDE_HOOK_MARKER: &str = " report-hook --event ";
 const CLAUDE_DEFAULT_MODEL: &str = "sonnet";
-const CLAUDE_LOCAL_AUTH_TOKEN: &str = "codex-mixin-local";
 const LEGACY_MANAGED_CLAUDE_ENV_KEYS: &[&str] = &[
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_MODEL",
@@ -128,14 +127,20 @@ pub(in crate::cli) fn install_claude(
     settings_path: Option<PathBuf>,
     model_request: ClaudeModelRequest,
 ) -> anyhow::Result<()> {
-    let gateway_config = GatewayConfig::from_stored_config()?;
-    let official_models = selected_official_models(&gateway_config)?;
-    install_claude_with_models(
-        settings_path,
-        model_request,
-        &gateway_config,
-        &official_models,
-    )
+    let client = codex_mixin::gateway_access::GatewayClient::Claude;
+    let key_existed = codex_mixin::config::gateway_client_key_exists(client)?;
+    codex_mixin::config::ensure_gateway_client_key(client)?;
+    let result = (|| {
+        let gateway_config = GatewayConfig::from_stored_config()?;
+        let official_models = selected_official_models(&gateway_config)?;
+        install_claude_with_models(
+            settings_path,
+            model_request,
+            &gateway_config,
+            &official_models,
+        )
+    })();
+    super::rollback_new_client_key_on_error(result, client, key_existed)
 }
 
 #[cfg(test)]
@@ -309,12 +314,7 @@ fn install_claude_with_models(
     );
     env.insert(
         "ANTHROPIC_AUTH_TOKEN".to_owned(),
-        Value::String(
-            gateway_config
-                .gateway_api_key
-                .clone()
-                .unwrap_or_else(|| CLAUDE_LOCAL_AUTH_TOKEN.to_owned()),
-        ),
+        Value::String(claude_credential_value(gateway_config)?),
     );
     env.insert(
         "ANTHROPIC_DEFAULT_SONNET_MODEL".to_owned(),
@@ -389,6 +389,52 @@ fn install_claude_with_models(
     println!("claude code gateway auth: configured");
     println!("claude code nonessential traffic: disabled");
     println!("reload required: restart Claude Code or start a new session");
+    Ok(())
+}
+
+fn claude_credential_value(config: &GatewayConfig) -> anyhow::Result<String> {
+    let key = config
+        .gateway_client_keys
+        .get(codex_mixin::gateway_access::GatewayClient::Claude)
+        .ok_or_else(|| anyhow::anyhow!("Claude client key is missing"))?;
+    anyhow::ensure!(
+        !key.trim().is_empty(),
+        "Claude client key must not be empty"
+    );
+    anyhow::ensure!(key == key.trim(), "Claude client key has whitespace");
+    Ok(key.to_owned())
+}
+
+pub(in crate::cli) fn sync_installed_claude_client_key() -> anyhow::Result<()> {
+    let settings_path = resolve_claude_settings_path(None)?;
+    if !settings_path.exists() {
+        return Ok(());
+    }
+    let raw = fs::read(&settings_path)?;
+    if !String::from_utf8_lossy(&raw).contains(MANAGED_CLAUDE_MARKER) {
+        return Ok(());
+    }
+    let mut settings: Value = serde_json::from_slice(&raw)?;
+    let object = settings
+        .as_object_mut()
+        .ok_or_else(|| anyhow::anyhow!("Claude Code settings must be a JSON object"))?;
+    if object
+        .get("codex_mixin_managed")
+        .and_then(|managed| managed.get("marker"))
+        .and_then(Value::as_str)
+        != Some(MANAGED_CLAUDE_MARKER)
+    {
+        return Ok(());
+    }
+    let client_key = codex_mixin::config::ensure_gateway_client_key(
+        codex_mixin::gateway_access::GatewayClient::Claude,
+    )?;
+    object
+        .get_mut("env")
+        .and_then(Value::as_object_mut)
+        .ok_or_else(|| anyhow::anyhow!("managed Claude Code env is missing"))?
+        .insert("ANTHROPIC_AUTH_TOKEN".to_owned(), Value::String(client_key));
+    write_atomic_if_changed(&settings_path, &serde_json::to_vec_pretty(&settings)?)?;
     Ok(())
 }
 

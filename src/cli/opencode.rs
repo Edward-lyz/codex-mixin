@@ -12,31 +12,41 @@ use codex_mixin::provider::{ProviderModel, catalog_model_slug};
 
 use super::atomic_file::write_atomic_if_changed;
 use super::official_models::selected_official_models;
+use super::report_hook::reporting_enabled;
 use super::runtime::{load_runtime_metadata, pid_is_running};
 
 const OPENCODE_PROVIDER_ID: &str = "codex-mixin";
 const OPENCODE_PROVIDER_NAME: &str = "Codex Mixin";
 const OPENCODE_API_KEY_FILE: &str = "opencode-api-key";
-const OPENCODE_LOCAL_KEY: &str = "codex-mixin-local";
 const OPENCODE_SCHEMA: &str = "https://opencode.ai/config.json";
 const OPENAI_RESPONSES_PACKAGE: &str = "@ai-sdk/openai";
+const OPENCODE_REPORT_PLUGIN_FILE: &str = "codex-mixin-report.js";
+const OPENCODE_REPORT_PLUGIN_MARKER: &str = "codex-mixin managed DUCX reporting plugin";
 
 pub(in crate::cli) fn install_opencode(config_path: Option<PathBuf>) -> anyhow::Result<()> {
-    let gateway_config = GatewayConfig::from_stored_config()?;
-    let official_models = selected_official_models(&gateway_config)?;
-    let config_path = resolve_opencode_config_path(config_path)?;
-    let key_path = std::path::absolute(stored_config_path().with_file_name(OPENCODE_API_KEY_FILE))?;
-    let bind = match load_runtime_metadata()? {
-        Some(runtime) if pid_is_running(runtime.pid)? => runtime.bind,
-        _ => gateway_config.bind,
-    };
-    install_opencode_with_models(
-        &config_path,
-        &key_path,
-        bind,
-        &gateway_config,
-        &official_models,
-    )
+    let client = codex_mixin::gateway_access::GatewayClient::OpenCode;
+    let key_existed = codex_mixin::config::gateway_client_key_exists(client)?;
+    codex_mixin::config::ensure_gateway_client_key(client)?;
+    let result = (|| {
+        let gateway_config = GatewayConfig::from_stored_config()?;
+        let official_models = selected_official_models(&gateway_config)?;
+        let config_path = resolve_opencode_config_path(config_path)?;
+        let key_path =
+            std::path::absolute(stored_config_path().with_file_name(OPENCODE_API_KEY_FILE))?;
+        let bind = match load_runtime_metadata()? {
+            Some(runtime) if pid_is_running(runtime.pid)? => runtime.bind,
+            _ => gateway_config.bind,
+        };
+        install_opencode_with_models(
+            &config_path,
+            &key_path,
+            bind,
+            &gateway_config,
+            &official_models,
+            reporting_enabled()?,
+        )
+    })();
+    super::rollback_new_client_key_on_error(result, client, key_existed)
 }
 
 pub(in crate::cli) fn uninstall_opencode(config_path: Option<PathBuf>) -> anyhow::Result<()> {
@@ -74,6 +84,7 @@ fn install_opencode_with_models(
     bind: SocketAddr,
     gateway_config: &GatewayConfig,
     official_models: &[ProviderModel],
+    reporting_is_enabled: bool,
 ) -> anyhow::Result<()> {
     let models = collect_opencode_models(gateway_config, official_models);
     anyhow::ensure!(
@@ -120,6 +131,7 @@ fn install_opencode_with_models(
     let gateway_key = gateway_credential(gateway_config)?;
     write_owner_only(key_path, gateway_key.as_bytes())?;
     write_json_config(config_path, &document)?;
+    sync_opencode_reporting_plugin(config_path, reporting_is_enabled)?;
 
     println!("OpenCode config updated: {}", config_path.display());
     println!("OpenCode provider: {OPENCODE_PROVIDER_ID}");
@@ -164,6 +176,7 @@ fn uninstall_opencode_at(config_path: &Path, key_path: &Path) -> anyhow::Result<
         fs::remove_file(key_path)
             .with_context(|| format!("remove OpenCode gateway key {}", key_path.display()))?;
     }
+    sync_opencode_reporting_plugin(config_path, false)?;
 
     println!("OpenCode config restored: {}", config_path.display());
     println!("OpenCode provider removed: {OPENCODE_PROVIDER_ID}");
@@ -297,19 +310,177 @@ fn opencode_reasoning_variants() -> Value {
 }
 
 fn gateway_credential(config: &GatewayConfig) -> anyhow::Result<String> {
-    let Some(gateway_key) = config.gateway_api_key.as_deref() else {
-        return Ok(OPENCODE_LOCAL_KEY.to_owned());
-    };
+    let key = config
+        .gateway_client_keys
+        .get(codex_mixin::gateway_access::GatewayClient::OpenCode)
+        .ok_or_else(|| anyhow::anyhow!("OpenCode client key is missing"))?;
     anyhow::ensure!(
-        !gateway_key.trim().is_empty(),
-        "gateway_api_key must not be empty when installing to OpenCode"
+        !key.trim().is_empty(),
+        "OpenCode client key must not be empty"
     );
-    anyhow::ensure!(
-        gateway_key == gateway_key.trim(),
-        "gateway_api_key must not have leading or trailing whitespace when installing to OpenCode"
-    );
-    Ok(gateway_key.to_owned())
+    anyhow::ensure!(key == key.trim(), "OpenCode client key has whitespace");
+    Ok(key.to_owned())
 }
+
+pub(in crate::cli) fn sync_installed_opencode_client_key() -> anyhow::Result<()> {
+    let config_path = resolve_opencode_config_path(None)?;
+    if !config_path.exists() {
+        return Ok(());
+    }
+    let raw = fs::read_to_string(&config_path)?;
+    if !raw.contains(OPENCODE_PROVIDER_NAME) {
+        return Ok(());
+    }
+    let key_path = std::path::absolute(stored_config_path().with_file_name(OPENCODE_API_KEY_FILE))?;
+    let document = read_opencode_config(&config_path)?;
+    let key_reference = format!("{{file:{}}}", key_path.display());
+    if !document
+        .get("provider")
+        .and_then(Value::as_object)
+        .and_then(|providers| providers.get(OPENCODE_PROVIDER_ID))
+        .is_some_and(|provider| is_managed_provider(provider, &key_reference))
+    {
+        return Ok(());
+    }
+    let client_key = codex_mixin::config::ensure_gateway_client_key(
+        codex_mixin::gateway_access::GatewayClient::OpenCode,
+    )?;
+    write_owner_only(&key_path, client_key.as_bytes())?;
+    sync_opencode_reporting_plugin(&config_path, reporting_enabled()?)
+}
+
+pub(in crate::cli) fn sync_installed_opencode_reporting() -> anyhow::Result<()> {
+    let config_path = resolve_opencode_config_path(None)?;
+    if !config_path.exists() {
+        return Ok(());
+    }
+    let raw = fs::read_to_string(&config_path)?;
+    if !raw.contains(OPENCODE_PROVIDER_NAME) {
+        return Ok(());
+    }
+    let key_path = std::path::absolute(stored_config_path().with_file_name(OPENCODE_API_KEY_FILE))?;
+    let document = read_opencode_config(&config_path)?;
+    let key_reference = format!("{{file:{}}}", key_path.display());
+    if !document
+        .get("provider")
+        .and_then(Value::as_object)
+        .and_then(|providers| providers.get(OPENCODE_PROVIDER_ID))
+        .is_some_and(|provider| is_managed_provider(provider, &key_reference))
+    {
+        return Ok(());
+    }
+    sync_opencode_reporting_plugin(&config_path, reporting_enabled()?)
+}
+
+fn sync_opencode_reporting_plugin(config_path: &Path, enabled: bool) -> anyhow::Result<()> {
+    let config_directory = config_path
+        .parent()
+        .ok_or_else(|| anyhow::anyhow!("OpenCode config path has no parent"))?;
+    let plugin_path = config_directory
+        .join("plugins")
+        .join(OPENCODE_REPORT_PLUGIN_FILE);
+    if !enabled {
+        if plugin_path.exists() {
+            let raw = fs::read_to_string(&plugin_path)?;
+            anyhow::ensure!(
+                raw.contains(OPENCODE_REPORT_PLUGIN_MARKER),
+                "OpenCode reporting plugin path is not managed by Codex Mixin"
+            );
+            fs::remove_file(&plugin_path)?;
+        }
+        return Ok(());
+    }
+    if plugin_path.exists() {
+        let raw = fs::read_to_string(&plugin_path)?;
+        anyhow::ensure!(
+            raw.contains(OPENCODE_REPORT_PLUGIN_MARKER),
+            "OpenCode reporting plugin path is not managed by Codex Mixin"
+        );
+    }
+    let executable = if cfg!(target_os = "macos") {
+        let app = PathBuf::from("/Applications/Codex Mixin.app/Contents/Resources/codex-mixin");
+        if app.is_file() {
+            app
+        } else {
+            std::env::current_exe().context("resolve codex-mixin executable")?
+        }
+    } else {
+        std::env::current_exe().context("resolve codex-mixin executable")?
+    };
+    let executable_json = serde_json::to_string(&executable.to_string_lossy())?;
+    let plugin = OPENCODE_REPORT_PLUGIN.replace("__MIXIN_EXECUTABLE__", &executable_json);
+    write_atomic_if_changed(&plugin_path, plugin.as_bytes())?;
+    Ok(())
+}
+
+const OPENCODE_REPORT_PLUGIN: &str = r#"// codex-mixin managed DUCX reporting plugin
+import { unlink } from "node:fs/promises";
+import { join } from "node:path";
+import { tmpdir } from "node:os";
+
+const executable = __MIXIN_EXECUTABLE__;
+const routes = new Map();
+const mutatingTools = new Set(["apply_patch", "edit", "write"]);
+
+async function report(event, body) {
+  const child = Bun.spawn([executable, "report-hook", "--event", event], {
+    stdin: JSON.stringify(body), stdout: "ignore", stderr: "ignore",
+  });
+  if (await child.exited !== 0) {
+    throw new Error(`codex-mixin DUCX reporting failed for ${event}`);
+  }
+}
+
+export const CodexMixinReport = async ({ client, directory }) => ({
+  "chat.message": async (input, output) => {
+    if (input.model?.providerID !== "codex-mixin") return;
+    const model = input.model.modelID;
+    routes.set(input.sessionID, model);
+    const prompt = output.parts.filter((part) => part.type === "text")
+      .map((part) => part.text).join("\n");
+    await report("user-prompt-submit", {
+      session_id: input.sessionID, model, cwd: directory, prompt, client: "opencode",
+    });
+  },
+  "tool.execute.before": async (input, output) => {
+    const model = routes.get(input.sessionID);
+    if (!model || !mutatingTools.has(input.tool)) return;
+    await report("pre-tool-use", {
+      session_id: input.sessionID, model, cwd: directory, tool_name: "apply_patch",
+      opencode_tool_name: input.tool, tool_input: output.args, client: "opencode",
+    });
+  },
+  "tool.execute.after": async (input, output) => {
+    const model = routes.get(input.sessionID);
+    if (!model || !mutatingTools.has(input.tool)) return;
+    await report("post-tool-use", {
+      session_id: input.sessionID, model, cwd: directory, tool_name: "apply_patch",
+      opencode_tool_name: input.tool, tool_input: input.args,
+      tool_output: output.output, client: "opencode",
+    });
+  },
+  event: async ({ event }) => {
+    if (event.type !== "session.idle") return;
+    const sessionID = event.properties.sessionID;
+    const model = routes.get(sessionID);
+    if (!model) return;
+    const transcriptPath = join(tmpdir(), `codex-mixin-opencode-${sessionID}.json`);
+    try {
+      const response = await client.session.messages({
+        path: { id: sessionID }, query: { directory },
+      });
+      await Bun.write(transcriptPath, JSON.stringify(response.data ?? response));
+      await report("stop", {
+        session_id: sessionID, model, cwd: directory,
+        transcript_path: transcriptPath, client: "opencode",
+      });
+    } finally {
+      routes.delete(sessionID);
+      await unlink(transcriptPath).catch(() => {});
+    }
+  },
+});
+"#;
 
 fn read_opencode_config(path: &Path) -> anyhow::Result<Value> {
     if !path.exists() {
@@ -408,6 +579,10 @@ mod tests {
             official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
             codex_auth_path: PathBuf::from("/tmp/auth.json"),
             gateway_api_key: gateway_key.map(str::to_owned),
+            gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
+                opencode: Some(gateway_key.unwrap_or("opencode-client-key").to_owned()),
+                ..Default::default()
+            },
             accept_codex_oauth: false,
             official_selected_models: None,
             default_max_tokens: 8192,
@@ -453,6 +628,7 @@ mod tests {
             "127.0.0.1:9898".parse().unwrap(),
             &config,
             &[official],
+            false,
         )
         .unwrap();
 
@@ -496,20 +672,21 @@ mod tests {
     }
 
     #[test]
-    fn install_without_gateway_key_uses_local_placeholder() {
+    fn install_without_gateway_key_uses_client_key() {
         let directory = tempfile::tempdir().unwrap();
         let config_path = directory.path().join("opencode.json");
         let key_path = directory.path().join("opencode-api-key");
         let config = gateway_config(None);
 
-        install_opencode_with_models(&config_path, &key_path, config.bind, &config, &[]).unwrap();
+        install_opencode_with_models(&config_path, &key_path, config.bind, &config, &[], false)
+            .unwrap();
 
         let document: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
         assert_eq!(
             document["provider"][OPENCODE_PROVIDER_ID]["npm"],
             OPENAI_RESPONSES_PACKAGE
         );
-        assert_eq!(fs::read_to_string(key_path).unwrap(), OPENCODE_LOCAL_KEY);
+        assert_eq!(fs::read_to_string(key_path).unwrap(), "opencode-client-key");
     }
 
     #[test]
@@ -529,11 +706,32 @@ mod tests {
         let config = gateway_config(Some("gateway-secret"));
 
         let error =
-            install_opencode_with_models(&config_path, &key_path, config.bind, &config, &[])
+            install_opencode_with_models(&config_path, &key_path, config.bind, &config, &[], false)
                 .unwrap_err();
 
         assert!(error.to_string().contains("is not managed by Codex Mixin"));
         assert_eq!(fs::read(config_path).unwrap(), original);
         assert!(!key_path.exists());
+    }
+
+    #[test]
+    fn reporting_plugin_installation_is_managed_and_reversible() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = directory.path().join("opencode.json");
+        sync_opencode_reporting_plugin(&config_path, true).unwrap();
+
+        let plugin_path = directory
+            .path()
+            .join("plugins")
+            .join(OPENCODE_REPORT_PLUGIN_FILE);
+        let plugin = fs::read_to_string(&plugin_path).unwrap();
+        assert!(plugin.contains(OPENCODE_REPORT_PLUGIN_MARKER));
+        assert!(plugin.contains("chat.message"));
+        assert!(plugin.contains("session.idle"));
+        assert!(plugin.contains("tool.execute.before"));
+        assert!(plugin.contains("tool.execute.after"));
+
+        sync_opencode_reporting_plugin(&config_path, false).unwrap();
+        assert!(!plugin_path.exists());
     }
 }

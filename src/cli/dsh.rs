@@ -16,7 +16,6 @@ use super::runtime::{load_runtime_metadata, pid_is_running};
 pub(in crate::cli) const DSH_PROVIDER_ID: &str = "codex-mixin";
 const DSH_API_PROTOCOL: &str = "openai-responses";
 const DSH_API_KEY_ENV: &str = "CODEX_MIXIN_GATEWAY_API_KEY";
-const DSH_LOCAL_KEY_PLACEHOLDER: &str = "codex-mixin-local";
 
 pub(in crate::cli) fn default_dsh_home() -> PathBuf {
     std::env::var_os("DSH_HOME")
@@ -33,9 +32,15 @@ fn resolve_dsh_home(dsh_home: Option<PathBuf>) -> anyhow::Result<PathBuf> {
 }
 
 pub(in crate::cli) fn install_dsh(dsh_home: Option<PathBuf>) -> anyhow::Result<()> {
-    let gateway_config = GatewayConfig::from_stored_config()?;
-    let official_models = selected_official_models(&gateway_config)?;
-    install_dsh_with_models(dsh_home, &gateway_config, &official_models)
+    let client = codex_mixin::gateway_access::GatewayClient::Dsh;
+    let key_existed = codex_mixin::config::gateway_client_key_exists(client)?;
+    codex_mixin::config::ensure_gateway_client_key(client)?;
+    let result = (|| {
+        let gateway_config = GatewayConfig::from_stored_config()?;
+        let official_models = selected_official_models(&gateway_config)?;
+        install_dsh_with_models(dsh_home, &gateway_config, &official_models)
+    })();
+    super::rollback_new_client_key_on_error(result, client, key_existed)
 }
 
 #[cfg(test)]
@@ -309,18 +314,49 @@ fn build_dsh_provider_profile(bind: &SocketAddr, models: Vec<Value>) -> Value {
 }
 
 fn dsh_credential_value(config: &GatewayConfig) -> anyhow::Result<String> {
-    let Some(gateway_key) = config.gateway_api_key.as_deref() else {
-        return Ok(DSH_LOCAL_KEY_PLACEHOLDER.to_owned());
-    };
-    anyhow::ensure!(
-        !gateway_key.trim().is_empty(),
-        "gateway_api_key must not be empty when installing to DSH"
-    );
-    anyhow::ensure!(
-        gateway_key == gateway_key.trim(),
-        "gateway_api_key must not have leading or trailing whitespace when installing to DSH"
-    );
-    Ok(gateway_key.to_owned())
+    let key = config
+        .gateway_client_keys
+        .get(codex_mixin::gateway_access::GatewayClient::Dsh)
+        .ok_or_else(|| anyhow::anyhow!("DSH client key is missing"))?;
+    anyhow::ensure!(!key.trim().is_empty(), "DSH client key must not be empty");
+    anyhow::ensure!(key == key.trim(), "DSH client key has whitespace");
+    Ok(key.to_owned())
+}
+
+pub(in crate::cli) fn sync_installed_dsh_client_key() -> anyhow::Result<()> {
+    let dsh_home = resolve_dsh_home(None)?;
+    let settings_path = dsh_home.join("settings.yaml");
+    if !settings_path.exists() {
+        return Ok(());
+    }
+    let raw = fs::read_to_string(&settings_path)?;
+    if !raw.contains("displayName: Codex Mixin") {
+        return Ok(());
+    }
+    let settings = read_yaml_document(&settings_path, "DSH settings")?;
+    if settings
+        .get("llm-pi-ai")
+        .and_then(|value| value.get("providers"))
+        .and_then(|value| value.get(DSH_PROVIDER_ID))
+        .and_then(|provider| provider.get("displayName"))
+        .and_then(Value::as_str)
+        != Some("Codex Mixin")
+    {
+        return Ok(());
+    }
+    let client_key = codex_mixin::config::ensure_gateway_client_key(
+        codex_mixin::gateway_access::GatewayClient::Dsh,
+    )?;
+    let credentials_path = dsh_home.join(".credentials.yaml");
+    let mut credentials = read_yaml_document(&credentials_path, "DSH credentials")?;
+    credentials
+        .as_mapping_mut()
+        .context("DSH credentials must be a YAML mapping")?
+        .insert(
+            Value::String(DSH_API_KEY_ENV.to_owned()),
+            Value::String(client_key),
+        );
+    write_yaml_owner_only(&credentials_path, &credentials)
 }
 
 fn read_yaml_document(path: &Path, label: &str) -> anyhow::Result<Value> {
@@ -390,6 +426,10 @@ mod tests {
             official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
             codex_auth_path: PathBuf::from("/tmp/auth.json"),
             gateway_api_key: gateway_key.map(str::to_owned),
+            gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
+                dsh: Some(gateway_key.unwrap_or("dsh-client-key").to_owned()),
+                ..Default::default()
+            },
             accept_codex_oauth: false,
             official_selected_models: None,
             default_max_tokens: 8192,
@@ -496,7 +536,7 @@ mod tests {
     }
 
     #[test]
-    fn install_uses_placeholder_credential_for_keyless_gateway_and_includes_fusion_models() {
+    fn install_uses_client_credential_for_keyless_gateway_and_includes_fusion_models() {
         let directory = tempfile::tempdir().unwrap();
         let config = gateway_config(None, false, true);
 
@@ -521,7 +561,7 @@ mod tests {
         .unwrap();
         assert_eq!(
             credentials[DSH_API_KEY_ENV].as_str().unwrap(),
-            DSH_LOCAL_KEY_PLACEHOLDER
+            "dsh-client-key"
         );
     }
 
@@ -551,12 +591,12 @@ mod tests {
     fn install_rejects_whitespace_only_gateway_key_before_writing_settings() {
         let directory = tempfile::tempdir().unwrap();
         let mut config = gateway_config(Some("gateway-secret"), false, false);
-        config.gateway_api_key = Some("   ".to_owned());
+        config.gateway_client_keys.dsh = Some("   ".to_owned());
 
         let error =
             install_dsh_with_config(Some(directory.path().to_owned()), &config).unwrap_err();
 
-        assert!(error.to_string().contains("gateway_api_key"));
+        assert!(error.to_string().contains("DSH client key"));
         assert!(!directory.path().join("settings.yaml").exists());
     }
 

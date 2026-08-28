@@ -34,6 +34,7 @@ async fn startup_does_not_wait_for_official_catalog_network() {
             config_version: CONFIG_VERSION,
             gateway_bind: None,
             gateway_api_key: Some("gateway-key".to_owned()),
+            gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys::default(),
             compaction_secret: None,
             official_selected_models: None,
             fusion_profiles: Vec::new(),

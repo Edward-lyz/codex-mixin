@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::compaction::{self, CompactionSummary};
 use crate::error::GatewayError;
 use crate::gateway::ResolvedModelRoute;
-use crate::upstream::collect_response;
+use crate::upstream::collect_response_with_headers;
 
 use super::auth::{check_gateway_auth, forward_official_headers};
 use super::{AppState, *};
@@ -39,7 +39,9 @@ pub(super) async fn compact(
         .ok_or_else(|| GatewayError::BadRequest("compact request missing model".to_owned()))?;
     match state.resolve_model_route(model).await? {
         ResolvedModelRoute::Official => forward_official_compact(&state, &headers, body).await,
-        ResolvedModelRoute::Provider { .. } => compact_custom_provider(&state, body).await,
+        ResolvedModelRoute::Provider { .. } => {
+            compact_custom_provider(&state, &headers, body).await
+        }
         ResolvedModelRoute::Fusion { profile_id } => {
             compact_fusion(&state, &headers, body, &profile_id).await
         }
@@ -62,7 +64,7 @@ async fn compact_fusion(
     body["model"] = Value::String(final_model.clone());
     match state.resolve_model_route(&final_model).await? {
         ResolvedModelRoute::Official => forward_official_compact(state, headers, body).await,
-        ResolvedModelRoute::Provider { .. } => compact_custom_provider(state, body).await,
+        ResolvedModelRoute::Provider { .. } => compact_custom_provider(state, headers, body).await,
         ResolvedModelRoute::Fusion { .. } => Err(GatewayError::BadRequest(
             "fusion final model cannot reference another fusion profile".to_owned(),
         )),
@@ -92,6 +94,7 @@ fn validate_compact_request(body: &Value) -> Result<(), GatewayError> {
 
 async fn compact_custom_provider(
     state: &AppState,
+    headers: &HeaderMap,
     mut body: Value,
 ) -> Result<Response, GatewayError> {
     let model = body
@@ -150,7 +153,7 @@ async fn compact_custom_provider(
         } else {
             body.clone()
         };
-        let response = collect_response(state, attempt_body).await?;
+        let response = collect_response_with_headers(state, attempt_body, headers).await?;
         let called_compaction_tool = response.output.iter().any(|item| {
             item.get("type").and_then(Value::as_str) == Some("function_call")
                 && item.get("name").and_then(Value::as_str) == Some(COMPACTION_TOOL_NAME)

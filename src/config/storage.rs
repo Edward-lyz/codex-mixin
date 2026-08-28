@@ -25,6 +25,38 @@ pub fn ensure_compaction_secret() -> anyhow::Result<String> {
     })?;
     secret.ok_or_else(|| anyhow!("compaction secret was not persisted"))
 }
+
+pub fn ensure_gateway_client_key(
+    client: crate::gateway_access::GatewayClient,
+) -> anyhow::Result<String> {
+    let mut client_key = None;
+    mutate_stored_config(|config| {
+        let stored_key = config.gateway_client_keys.get_mut(client);
+        if stored_key.is_none() {
+            *stored_key = Some(crate::gateway_access::generate_client_key(client)?);
+        }
+        client_key.clone_from(stored_key);
+        Ok(())
+    })?;
+    client_key.ok_or_else(|| anyhow!("gateway client key was not persisted"))
+}
+
+pub fn gateway_client_key_exists(
+    client: crate::gateway_access::GatewayClient,
+) -> anyhow::Result<bool> {
+    Ok(load_stored_config()?
+        .and_then(|config| config.gateway_client_keys.get(client).map(str::to_owned))
+        .is_some())
+}
+
+pub fn revoke_gateway_client_key(
+    client: crate::gateway_access::GatewayClient,
+) -> anyhow::Result<()> {
+    mutate_stored_config(|config| {
+        *config.gateway_client_keys.get_mut(client) = None;
+        Ok(())
+    })
+}
 pub fn stored_config_path() -> PathBuf {
     if let Some(path) = env::var("CODEX_GATEWAY_CONFIG")
         .ok()

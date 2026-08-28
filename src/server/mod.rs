@@ -43,7 +43,7 @@ use crate::upstream::{ResponseStream, UpstreamRouting};
 use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};
 
 mod anthropic_compat;
-mod auth;
+pub(crate) mod auth;
 mod compact;
 mod images;
 mod messages_http;

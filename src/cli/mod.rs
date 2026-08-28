@@ -35,18 +35,20 @@ mod update;
 
 use benchmark_proxy::{benchmark_start, benchmark_status};
 use claude::{
-    claude_model_request, claude_status, install_claude, sync_claude_hooks, uninstall_claude,
+    claude_model_request, claude_status, install_claude, sync_claude_hooks,
+    sync_installed_claude_client_key, uninstall_claude,
 };
 use codex::{
-    InstallCodexOptions, install_codex, refresh_default_managed_codex_catalog, uninstall_codex,
+    InstallCodexOptions, install_codex, refresh_default_managed_codex_catalog,
+    sync_installed_codex_client_key, uninstall_codex,
 };
 use doctor::doctor;
-use dsh::{install_dsh, uninstall_dsh};
+use dsh::{install_dsh, sync_installed_dsh_client_key, uninstall_dsh};
 use ducx_setup::ensure_managed_ducx;
 use fusion_config::{delete_fusion_profile, get_fusion_profile, set_fusion_profile};
 use maintenance::migrate_history;
 use metadata::{load_model_metadata_resolver, refresh_metadata};
-use opencode::{install_opencode, uninstall_opencode};
+use opencode::{install_opencode, sync_installed_opencode_client_key, uninstall_opencode};
 use providers::{
     AddProviderOptions, TestProviderOptions, UpdateProviderOptions, add_provider, discover_models,
     list_providers, probe_selected_models, remove_provider, reorder_providers, select_models,
@@ -69,6 +71,23 @@ pub(super) fn next_step_line(message: &str) {
         println!("{} {message}", style("→").cyan().bold());
     } else {
         println!("next: {message}");
+    }
+}
+
+fn rollback_new_client_key_on_error(
+    result: anyhow::Result<()>,
+    client: codex_mixin::gateway_access::GatewayClient,
+    key_existed: bool,
+) -> anyhow::Result<()> {
+    match result {
+        Ok(()) => Ok(()),
+        Err(error) if key_existed => Err(error),
+        Err(error) => match codex_mixin::config::revoke_gateway_client_key(client) {
+            Ok(()) => Err(error),
+            Err(revoke_error) => Err(anyhow::anyhow!(
+                "{error:#}; gateway client key rollback also failed: {revoke_error:#}"
+            )),
+        },
     }
 }
 
@@ -843,6 +862,15 @@ fn exit_with_command_error(
 
 #[allow(clippy::cognitive_complexity)]
 async fn run(cli: Cli) -> anyhow::Result<()> {
+    if !matches!(
+        &cli.command,
+        Some(Command::ReportHook { .. } | Command::ReportReplay { .. })
+    ) {
+        sync_installed_codex_client_key()?;
+        sync_installed_claude_client_key()?;
+        sync_installed_dsh_client_key()?;
+        sync_installed_opencode_client_key()?;
+    }
     match cli.command.unwrap_or(Command::Info { json: false }) {
         Command::ReportHook { event } => report_hook::run(&event).await,
         Command::ReportReplay {
@@ -1074,10 +1102,18 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 dsh_home,
                 opencode_config,
             } => match target.as_str() {
-                "codex" => uninstall_codex(None, None),
+                "codex" => {
+                    uninstall_codex(None, None)?;
+                    codex_mixin::config::revoke_gateway_client_key(
+                        codex_mixin::gateway_access::GatewayClient::Codex,
+                    )
+                }
                 "claude" => {
                     let hook_settings_path = settings_path.clone();
                     uninstall_claude(settings_path)?;
+                    codex_mixin::config::revoke_gateway_client_key(
+                        codex_mixin::gateway_access::GatewayClient::Claude,
+                    )?;
                     sync_claude_hooks(hook_settings_path)?;
                     report_hook::sync_installation()
                 }
@@ -1087,13 +1123,21 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                         .unwrap_or_else(dsh::default_dsh_home)
                         .join("hooks.json");
                     uninstall_dsh(dsh_home)?;
+                    codex_mixin::config::revoke_gateway_client_key(
+                        codex_mixin::gateway_access::GatewayClient::Dsh,
+                    )?;
                     report_hook::sync_installation_at(
                         &hooks_path,
                         report_hook::reporting_enabled()?,
                     )?;
                     report_hook::sync_installation()
                 }
-                "opencode" => uninstall_opencode(opencode_config),
+                "opencode" => {
+                    uninstall_opencode(opencode_config)?;
+                    codex_mixin::config::revoke_gateway_client_key(
+                        codex_mixin::gateway_access::GatewayClient::OpenCode,
+                    )
+                }
                 _ => unreachable!("clap validates connect target"),
             },
         },
@@ -1181,7 +1225,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             })
             .await
         }
-        Command::UninstallCodex { config, catalog } => uninstall_codex(config, catalog),
+        Command::UninstallCodex { config, catalog } => {
+            uninstall_codex(config, catalog)?;
+            codex_mixin::config::revoke_gateway_client_key(
+                codex_mixin::gateway_access::GatewayClient::Codex,
+            )
+        }
         Command::InstallClaude {
             settings,
             model,
@@ -1200,6 +1249,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::UninstallClaude { settings } => {
             let hook_settings_path = settings.clone();
             uninstall_claude(settings)?;
+            codex_mixin::config::revoke_gateway_client_key(
+                codex_mixin::gateway_access::GatewayClient::Claude,
+            )?;
             sync_claude_hooks(hook_settings_path)?;
             report_hook::sync_installation()
         }

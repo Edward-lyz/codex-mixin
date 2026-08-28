@@ -11,19 +11,34 @@ use crate::openai_events::{
 };
 use crate::provider::ProviderProtocol;
 use crate::server::AppState;
+use crate::server::auth::require_ducx_client;
 
 use super::responses::map_openai_responses_sse;
 use super::{ResponseStream, UpstreamRouting};
 
+pub(crate) struct ProviderResponseRequest<'a> {
+    pub(crate) body: &'a Value,
+    pub(crate) catalog_slug: &'a str,
+    pub(crate) provider_id: &'a str,
+    pub(crate) upstream_model_id: &'a str,
+    pub(crate) routing: Option<&'a UpstreamRouting>,
+    pub(crate) downstream_model: Option<&'a str>,
+    pub(crate) headers: &'a axum::http::HeaderMap,
+}
+
 pub(crate) async fn stream_provider_response(
     state: &AppState,
-    body: &Value,
-    catalog_slug: &str,
-    provider_id: &str,
-    upstream_model_id: &str,
-    routing: Option<&UpstreamRouting>,
-    downstream_model: Option<&str>,
+    request: ProviderResponseRequest<'_>,
 ) -> Result<ResponseStream, GatewayError> {
+    let ProviderResponseRequest {
+        body,
+        catalog_slug,
+        provider_id,
+        upstream_model_id,
+        routing,
+        downstream_model,
+        headers,
+    } = request;
     let provider = state
         .providers
         .provider(provider_id)
@@ -34,6 +49,7 @@ pub(crate) async fn stream_provider_response(
     let web_search_enabled = state.web_search_enabled_for_custom_request(body);
     let protocol = provider.protocol_for_model(&upstream_model_id);
     let advertised_thinking = provider.model_supports_thinking(&upstream_model_id);
+    require_ducx_client(state, provider, headers)?;
     // Both managed auth cores mint native headers. Fetch once and inject at the
     // send sites instead of the stored placeholder key.
     let baidu_native = state.baidu_native_headers(provider).await?;

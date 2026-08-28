@@ -162,6 +162,7 @@ mod tests {
             official_responses_url: format!("http://{address}/responses"),
             codex_auth_path: auth_path,
             gateway_api_key: None,
+            gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
             accept_codex_oauth: true,
             official_selected_models: None,
             default_max_tokens: 8192,
