@@ -1,4 +1,112 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.5.3
+
+本版本扩展 Claude Code 和 OpenCode 集成，补充 Amazon Bedrock 与 Anthropic 协议兼容，并加强百度 Provider 的访问控制、模型能力探测和 macOS 更新稳定性。
+
+### 应用集成
+
+- Claude Code 支持分别映射 Opus、Sonnet 和 Haiku 模型，可从 macOS、TUI 或 CLI 安装和恢复配置
+- 新增 OpenCode 集成，在保留现有配置的同时接入已选模型、Fusion 模型和 reasoning variants
+- OpenCode 支持安装 Mixin 管理的 prompt、代码编辑和 transcript 上报 hooks
+- Codex、Claude Code、DSH 和 OpenCode 使用相互独立的 gateway client key；已有托管安装会自动迁移，卸载时撤销对应 key
+
+### Provider 与模型
+
+- gateway 可将 Anthropic Messages 请求、工具、图片、usage 和流式事件转换到 OpenAI 兼容 Provider
+- 新增 Amazon Bedrock Mantle preset，支持使用 Bedrock API key 访问内置 Claude 模型
+- ImageGen 可通过辅助 Provider 使用本地 gateway，并为已有百度配置补齐图片路由
+- 模型能力探测新增 thinking 检测，保留 Provider 已声明但本次无法确定的能力状态
+- 探测完成后自动刷新 Codex 模型目录；macOS 同时重载 gateway，使能力变化立即生效
+
+### 官方模型与 macOS
+
+- OpenAI 官方 Provider 支持刷新和排序模型；新发现的模型默认不选中，已被上游移除的模型会从选择中清理
+- 官方模型选择会同步应用到 Codex、Claude Code 和 DSH，模型列表刷新最长等待 10 秒
+- macOS 改用 Sparkle 检查和安装签名更新；自动安装停滞时可打开已验证的 DMG
+- 修复 LaunchAgent 停止后立即重启时的 `launchctl bootstrap` 竞态
+
+### 安全与稳定性
+
+- 仅允许 Mixin 托管客户端使用 DUCX 提供的百度原生认证，复制 gateway 地址或通用凭据不能绕过客户端身份校验
+- gateway client key 使用独立安全随机值，配置更新和安装失败时保持原子性并回滚未完成的凭据变更
+- 修复 DUCX 启动前临时文件未关闭，以及认证管道提前关闭时的处理
+- 增加协议转换、应用配置、能力探测、访问控制、macOS 更新和 gateway 重启相关回归测试
+
+<!-- codex-mixin:zh-Hans:end -->
+
+<!-- codex-mixin:zh-Hant:start -->
+## v0.5.3
+
+本版本擴充 Claude Code 和 OpenCode 整合，補充 Amazon Bedrock 與 Anthropic 協定相容性，並加強百度 Provider 的存取控制、模型能力探測和 macOS 更新穩定性。
+
+### 應用程式整合
+
+- Claude Code 支援分別映射 Opus、Sonnet 和 Haiku 模型，可從 macOS、TUI 或 CLI 安裝和還原設定
+- 新增 OpenCode 整合，在保留現有設定的同時接入已選模型、Fusion 模型和 reasoning variants
+- OpenCode 支援安裝 Mixin 管理的 prompt、程式碼編輯和 transcript 上報 hooks
+- Codex、Claude Code、DSH 和 OpenCode 使用彼此獨立的 gateway client key；既有託管安裝會自動遷移，解除安裝時撤銷對應 key
+
+### Provider 與模型
+
+- gateway 可將 Anthropic Messages 請求、工具、圖片、usage 和串流事件轉換到 OpenAI 相容 Provider
+- 新增 Amazon Bedrock Mantle preset，支援使用 Bedrock API key 存取內建 Claude 模型
+- ImageGen 可透過輔助 Provider 使用本機 gateway，並為既有百度設定補齊圖片路由
+- 模型能力探測新增 thinking 檢測，保留 Provider 已宣告但本次無法確定的能力狀態
+- 探測完成後自動更新 Codex 模型目錄；macOS 同時重新載入 gateway，使能力變更立即生效
+
+### 官方模型與 macOS
+
+- OpenAI 官方 Provider 支援更新和排序模型；新探索到的模型預設不選取，已被上游移除的模型會從選擇中清理
+- 官方模型選擇會同步套用到 Codex、Claude Code 和 DSH，模型清單更新最長等待 10 秒
+- macOS 改用 Sparkle 檢查和安裝簽名更新；自動安裝停滯時可開啟已驗證的 DMG
+- 修正 LaunchAgent 停止後立即重新啟動時的 `launchctl bootstrap` 競態
+
+### 安全與穩定性
+
+- 僅允許 Mixin 託管客戶端使用 DUCX 提供的百度原生驗證，複製 gateway 位址或通用憑證無法繞過客戶端身分驗證
+- gateway client key 使用獨立安全隨機值，設定更新和安裝失敗時保持原子性並回復未完成的憑證變更
+- 修正 DUCX 啟動前暫存檔未關閉，以及驗證管道提前關閉時的處理
+- 增加協定轉換、應用程式設定、能力探測、存取控制、macOS 更新和 gateway 重新啟動相關回歸測試
+
+<!-- codex-mixin:zh-Hant:end -->
+
+<!-- codex-mixin:en:start -->
+## v0.5.3
+
+This release expands Claude Code and OpenCode integration, adds Amazon Bedrock and Anthropic protocol compatibility, and strengthens Baidu provider access control, model capability probing, and macOS update reliability.
+
+### Application integration
+
+- Map Claude Code Opus, Sonnet, and Haiku model families independently, with installation and restoration through macOS, the TUI, or the CLI
+- Add OpenCode integration while preserving existing configuration and exposing selected models, Fusion models, and reasoning variants
+- Install Mixin-managed OpenCode hooks for prompt, code-edit, and transcript reporting
+- Give Codex, Claude Code, DSH, and OpenCode independent gateway client keys, migrate existing managed installations automatically, and revoke each key on uninstall
+
+### Providers and models
+
+- Translate Anthropic Messages requests, tools, images, usage, and streaming events for OpenAI-compatible providers
+- Add an Amazon Bedrock Mantle preset for accessing built-in Claude models with a Bedrock API key
+- Route ImageGen through auxiliary providers over the local gateway and backfill image routes for existing Baidu configurations
+- Probe thinking support and preserve provider-advertised capabilities when a probe is indeterminate
+- Refresh the Codex model catalog after capability probing and reload the gateway on macOS so capability changes take effect immediately
+
+### Official models and macOS
+
+- Refresh and sort OpenAI official models, leave newly discovered models unselected, and prune models removed upstream
+- Apply official model choices across Codex, Claude Code, and DSH, with a 10-second upper bound on model catalog refreshes
+- Use Sparkle to check and install signed macOS updates, with a verified DMG fallback when automatic installation stalls
+- Recover from the `launchctl bootstrap` race caused by restarting a LaunchAgent immediately after teardown
+
+### Security and reliability
+
+- Allow only Mixin-managed clients to use DUCX-backed native Baidu authentication, preventing copied gateway endpoints or generic credentials from bypassing client identity checks
+- Generate independent cryptographically secure gateway client keys and roll back incomplete credential changes when configuration updates or installation fail
+- Close the temporary file before starting DUCX and handle early authentication pipe closure
+- Add regression coverage for protocol translation, application configuration, capability probing, access control, macOS updates, and gateway restarts
+
+<!-- codex-mixin:en:end -->
+
+<!-- codex-mixin:zh-Hans:start -->
 ## v0.5.2
 
 本版本重点改进 DUCX 数据上报可靠性、macOS 操作窗口体验和用量展示，并提升自定义模型 compaction 稳定性。
