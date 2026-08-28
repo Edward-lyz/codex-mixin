@@ -1,5 +1,7 @@
 use super::*;
 
+const OFFICIAL_MODELS_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
+
 impl AppState {
     pub(crate) async fn official_auth(
         &self,
@@ -11,28 +13,42 @@ impl AppState {
         &self,
         client_version: &str,
     ) -> anyhow::Result<Value> {
+        self.fetch_official_models_catalog_with_timeout(
+            client_version,
+            OFFICIAL_MODELS_FETCH_TIMEOUT,
+        )
+        .await
+    }
+
+    async fn fetch_official_models_catalog_with_timeout(
+        &self,
+        client_version: &str,
+        timeout: Duration,
+    ) -> anyhow::Result<Value> {
         let url = official_models_url(&self.config.official_responses_url, client_version)?;
         let (authorization, account_id) = self.official_auth().await?;
-        let response = tokio::time::timeout(
-            Duration::from_secs(10),
-            self.client
+        let fetch_catalog = async {
+            let response = self
+                .client
                 .get(url)
                 .header(header::AUTHORIZATION, authorization)
                 .header("chatgpt-account-id", account_id)
                 .header(header::ACCEPT, "application/json")
-                .send(),
-        )
-        .await
-        .map_err(|_| anyhow::anyhow!("official models endpoint timed out"))??;
-        let status = response.status();
-        if !status.is_success() {
-            anyhow::bail!("official models endpoint returned {status}");
-        }
-        let catalog: Value = response.json().await?;
-        if catalog.get("models").and_then(Value::as_array).is_none() {
-            anyhow::bail!("official models endpoint returned no models array");
-        }
-        Ok(catalog)
+                .send()
+                .await?;
+            let status = response.status();
+            if !status.is_success() {
+                anyhow::bail!("official models endpoint returned {status}");
+            }
+            let catalog: Value = response.json().await?;
+            if catalog.get("models").and_then(Value::as_array).is_none() {
+                anyhow::bail!("official models endpoint returned no models array");
+            }
+            Ok(catalog)
+        };
+        tokio::time::timeout(timeout, fetch_catalog)
+            .await
+            .map_err(|_| anyhow::anyhow!("official models endpoint timed out"))?
     }
 }
 pub(crate) async fn read_codex_official_auth(
@@ -99,4 +115,73 @@ fn official_models_url(
     url.query_pairs_mut()
         .append_pair("client_version", client_version);
     Ok(url)
+}
+
+#[cfg(test)]
+mod tests {
+    use std::convert::Infallible;
+
+    use axum::Router;
+    use axum::body::Body;
+    use axum::response::Response;
+    use axum::routing::get;
+    use futures_util::stream;
+
+    use super::*;
+    use crate::config::ThinkingMode;
+
+    #[tokio::test]
+    async fn official_models_timeout_covers_response_body() {
+        let upstream = Router::new().route(
+            "/models",
+            get(|| async {
+                Response::builder()
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .body(Body::from_stream(stream::pending::<
+                        Result<Bytes, Infallible>,
+                    >()))
+                    .unwrap()
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        tokio::spawn(async move {
+            axum::serve(listener, upstream).await.unwrap();
+        });
+        let directory = tempfile::tempdir().unwrap();
+        let auth_path = directory.path().join("auth.json");
+        tokio::fs::write(
+            &auth_path,
+            r#"{"tokens":{"access_token":"secret","account_id":"account-one"}}"#,
+        )
+        .await
+        .unwrap();
+        let state = AppState::new(GatewayConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            providers: Vec::new(),
+            official_responses_url: format!("http://{address}/responses"),
+            codex_auth_path: auth_path,
+            gateway_api_key: None,
+            accept_codex_oauth: true,
+            official_selected_models: None,
+            default_max_tokens: 8192,
+            default_context_window: 1_000_000,
+            request_timeout: Duration::from_secs(2),
+            thinking_mode: ThinkingMode::Off,
+            enable_web_search_tool: false,
+            web_search_tool_type: "web_search_20250305".to_owned(),
+            web_search_max_uses: Some(3),
+            fusion_profiles: Vec::new(),
+        })
+        .unwrap();
+
+        let fetch =
+            state.fetch_official_models_catalog_with_timeout("0.148.0", Duration::from_millis(50));
+        let error = tokio::time::timeout(Duration::from_millis(250), fetch)
+            .await
+            .expect("fetch did not enforce its own timeout")
+            .unwrap_err();
+
+        assert_eq!(error.to_string(), "official models endpoint timed out");
+    }
 }
