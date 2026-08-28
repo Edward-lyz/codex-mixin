@@ -184,6 +184,8 @@ struct ProviderSupportTests {
         let official = officialResponse.providers[0]
         precondition(response.codexInstallMode == .customOnly)
         precondition(official.kind == .official)
+        precondition(official.supportsModelRefresh)
+        precondition(baidu.supportsModelRefresh)
         precondition(!official.needsInitialModelDiscovery)
         precondition(unsupported.needsInitialModelDiscovery)
         precondition(baidu.baiduAuthBridge == .ducxLoopback)

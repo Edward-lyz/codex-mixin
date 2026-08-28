@@ -175,7 +175,7 @@ final class ModelBenchmarkModel: ObservableObject {
     }
 
     func refreshModels() {
-        guard let provider = selectedProvider, provider.kind == .configured, !isBusy else { return }
+        guard let provider = selectedProvider, provider.supportsModelRefresh, !isBusy else { return }
         let providerID = provider.id
         let providerName = selectedProvider?.displayName ?? providerID
         isDiscoveringModels = true
@@ -554,7 +554,7 @@ struct ModelBenchmarkRootView: View {
             Button(action: model.refreshModels) {
                 Label("刷新模型", systemImage: "arrow.clockwise")
             }
-            .disabled(model.isBusy || model.selectedProvider?.kind != .configured)
+            .disabled(model.isBusy || model.selectedProvider?.supportsModelRefresh != true)
 
             Button(action: model.probeCapabilities) {
                 Label("探测已加入模型", systemImage: "waveform.path.ecg")

@@ -419,7 +419,7 @@ pub(in crate::cli) fn is_managed_catalog_model(model: &serde_json::Value) -> boo
             .is_some_and(|slug| slug.ends_with("-custom"))
 }
 
-fn resolve_codex_client_version(models_cache: &Path) -> Option<String> {
+pub(in crate::cli) fn resolve_codex_client_version(models_cache: &Path) -> Option<String> {
     if let Ok(codex_cli) = resolve_codex_cli()
         && let Ok(output) = ProcessCommand::new(codex_cli).arg("--version").output()
         && output.status.success()

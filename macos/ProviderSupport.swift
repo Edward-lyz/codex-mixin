@@ -268,6 +268,10 @@ struct ProviderView: Decodable {
             && modelsRefreshedAtMilliseconds == nil
             && cachedModels.isEmpty
     }
+
+    var supportsModelRefresh: Bool {
+        kind == .configured || kind == .official
+    }
 }
 
 func isAuxiliaryModelUpstreamSelectable(

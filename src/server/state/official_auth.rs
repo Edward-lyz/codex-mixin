@@ -14,7 +14,7 @@ impl AppState {
         let url = official_models_url(&self.config.official_responses_url, client_version)?;
         let (authorization, account_id) = self.official_auth().await?;
         let response = tokio::time::timeout(
-            Duration::from_secs(5),
+            Duration::from_secs(10),
             self.client
                 .get(url)
                 .header(header::AUTHORIZATION, authorization)

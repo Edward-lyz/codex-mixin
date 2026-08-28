@@ -16,7 +16,7 @@ use super::{
     required_config, trim_required,
 };
 use crate::cli::official_models::{
-    OFFICIAL_PROVIDER_ID, available_official_ids, load_official_models,
+    OFFICIAL_PROVIDER_ID, available_official_ids, load_official_models, refresh_official_models,
 };
 
 pub(crate) async fn discover_models(id: &str) -> anyhow::Result<()> {
@@ -24,6 +24,17 @@ pub(crate) async fn discover_models(id: &str) -> anyhow::Result<()> {
 }
 
 pub(crate) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow::Result<()> {
+    if id == OFFICIAL_PROVIDER_ID {
+        super::super::progress_step("Refreshing model list for provider official");
+        let count = refresh_official_models().await?;
+        super::super::progress_step(&format!(
+            "Model refresh complete for official: {count} available"
+        ));
+        if !quiet {
+            println!("provider models refreshed: official ({count} available)");
+        }
+        return Ok(());
+    }
     let config = required_config()?;
     let provider = config
         .providers
@@ -260,7 +271,7 @@ pub(crate) fn select_models(id: &str, models: Vec<String>) -> anyhow::Result<()>
         for model in &models {
             anyhow::ensure!(
                 available_ids.contains(model.as_str()),
-                "official provider has no known model {model}; open Codex once to refresh its model cache"
+                "official provider has no known model {model}; refresh the OpenAI model list first"
             );
         }
         mutate_and_invalidate(|config| {
