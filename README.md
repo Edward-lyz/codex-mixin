@@ -115,6 +115,17 @@ Run `codex-mixin` without arguments to open the mouse-enabled TUI. It covers fir
   </tr>
 </table>
 
+### Remote mobile model selection · 移动端远程选模型
+
+Mixin-managed custom models remain available when remotely creating a Codex task from mobile. Choose an official or custom model directly in the native new-task model picker, without returning to the development machine.
+
+通过移动端远程新建 Codex 会话时，Mixin 托管的自定义模型仍会出现在原生模型选择器中。无需回到开发机，即可直接选择官方或自定义模型开始任务。
+
+<p align="center">
+  <a href="docs/assets/Mobile_Choice.PNG"><img src="docs/assets/Mobile_Choice.PNG" width="360" alt="Select a Codex Mixin custom model when remotely creating a task from mobile"></a><br>
+  <sub>Mobile remote control · create a task with an official or Mixin-managed custom model</sub>
+</p>
+
 ## 中文
 
 Codex Mixin 是一个 Rust 本地网关、CLI 和 macOS 菜单栏 App。它把 OpenRouter、DeepSeek、Baidu OneAPI 或其他 OpenAI Chat Completions / Anthropic Messages 兼容模型接入官方 Codex，同时保留官方 ChatGPT/OpenAI 账号路径、官方 GPT 模型、远程控制和 Codex 原生体验。
