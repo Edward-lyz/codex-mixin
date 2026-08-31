@@ -42,7 +42,7 @@ jobs:
             target: aarch64-apple-darwin
 
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -94,7 +94,7 @@ jobs:
         if: matrix.os == 'macos'
         run: ./scripts/package-macos-dmg.sh "${{ matrix.target }}" "${{ steps.version.outputs.version }}" dist/release
       - name: Upload artifacts
-        uses: actions/upload-artifact@v4
+        uses: actions/upload-artifact@v7
         with:
           name: codex-mixin-${{ matrix.name }}
           path: dist/release/*
@@ -105,7 +105,7 @@ jobs:
     needs: build
     runs-on: macos-15
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - name: Resolve release tag
         id: version
         shell: bash
@@ -117,7 +117,7 @@ jobs:
           fi
           echo "tag=$tag" >>"$GITHUB_OUTPUT"
       - name: Download artifacts
-        uses: actions/download-artifact@v4
+        uses: actions/download-artifact@v8
         with:
           path: dist/release
           merge-multiple: true
@@ -146,34 +146,64 @@ jobs:
             exit 1
           fi
           sparkle_dir="$(./scripts/fetch_sparkle.sh)"
-          appcast_dir="$RUNNER_TEMP/codex-mixin-appcast"
-          rm -rf "$appcast_dir"
-          mkdir -p "$appcast_dir"
-          find dist/release -maxdepth 1 -type f -name '*.dmg' -exec cp {} "$appcast_dir/" \;
-          dmg_count="$(find "$appcast_dir" -maxdepth 1 -type f -name '*.dmg' | wc -l | tr -d '[:space:]')"
+          appcast_root="$RUNNER_TEMP/codex-mixin-appcast"
+          rm -rf "$appcast_root"
+          mkdir -p "$appcast_root"
+          dmg_count="$(find dist/release -maxdepth 1 -type f -name '*.dmg' | wc -l | tr -d '[:space:]')"
           if [[ "$dmg_count" != "2" ]]; then
             echo "expected two macOS DMGs for the appcast, found $dmg_count" >&2
             exit 1
           fi
-          for dmg in "$appcast_dir"/*.dmg; do
-            cp .current-release-notes.md "${dmg%.dmg}.md"
+
+          for arch in aarch64 x86_64; do
+            arch_dir="$appcast_root/$arch"
+            mkdir -p "$arch_dir"
+            dmg="$(find dist/release -maxdepth 1 -type f -name "*-$arch-apple-darwin.dmg" -print -quit)"
+            if [[ -z "$dmg" ]]; then
+              echo "missing macOS DMG for $arch" >&2
+              exit 1
+            fi
+            cp "$dmg" "$arch_dir/"
+            cp .current-release-notes.md "$arch_dir/$(basename "${dmg%.dmg}.md")"
+            printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sparkle_dir/bin/generate_appcast" \
+              --ed-key-file - \
+              --download-url-prefix "https://github.com/Edward-lyz/codex-mixin/releases/download/${{ steps.version.outputs.tag }}/" \
+              --embed-release-notes \
+              --maximum-deltas 0 \
+              --link "https://github.com/Edward-lyz/codex-mixin/releases/tag/${{ steps.version.outputs.tag }}" \
+              -o "$appcast_root/appcast-$arch.xml" \
+              "$arch_dir"
+            xmllint --noout "$appcast_root/appcast-$arch.xml"
+            test "$(grep -c '<item>' "$appcast_root/appcast-$arch.xml")" = 1
+            grep -Fq "$(basename "$dmg")" "$appcast_root/appcast-$arch.xml"
+            grep -Fq 'sparkle:edSignature=' "$appcast_root/appcast-$arch.xml"
+            cp "$appcast_root/appcast-$arch.xml" "dist/release/appcast-$arch.xml"
           done
-          printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sparkle_dir/bin/generate_appcast" \
-            --ed-key-file - \
-            --download-url-prefix "https://github.com/Edward-lyz/codex-mixin/releases/download/${{ steps.version.outputs.tag }}/" \
-            --embed-release-notes \
-            --maximum-deltas 0 \
-            --link "https://github.com/Edward-lyz/codex-mixin/releases/tag/${{ steps.version.outputs.tag }}" \
-            -o "$appcast_dir/appcast.xml" \
-            "$appcast_dir"
-          xmllint --noout "$appcast_dir/appcast.xml"
-          for dmg in "$appcast_dir"/*.dmg; do
-            grep -Fq "$(basename "$dmg")" "$appcast_dir/appcast.xml"
+
+          # v0.5.2 and older use the shared appcast.xml. Put the arm64 item
+          # first so Apple Silicon selects its native update; Intel rejects
+          # that item's arm64 hardware requirement and selects the next item.
+          awk '/<item>/{copy=1} copy{print} /<\/item>/{exit}' \
+            "$appcast_root/appcast-x86_64.xml" > "$appcast_root/x86_64-item.xml"
+          awk -v item="$appcast_root/x86_64-item.xml" '
+            /<\/channel>/ {
+              while ((getline line < item) > 0) print line
+              close(item)
+            }
+            { print }
+          ' "$appcast_root/appcast-aarch64.xml" > "$appcast_root/appcast.xml"
+          xmllint --noout "$appcast_root/appcast.xml"
+          test "$(grep -c '<item>' "$appcast_root/appcast.xml")" = 2
+          grep -Fq '<sparkle:hardwareRequirements>arm64</sparkle:hardwareRequirements>' \
+            "$appcast_root/appcast.xml"
+          test "$(grep -c 'sparkle:edSignature=' "$appcast_root/appcast.xml")" = 2
+          for arch in aarch64 x86_64; do
+            grep -Fq -- "-$arch-apple-darwin.dmg" \
+              "$appcast_root/appcast.xml"
           done
-          grep -Fq 'sparkle:edSignature=' "$appcast_dir/appcast.xml"
-          cp "$appcast_dir/appcast.xml" dist/release/appcast.xml
+          cp "$appcast_root/appcast.xml" dist/release/appcast.xml
       - name: Publish GitHub release
-        uses: softprops/action-gh-release@v2
+        uses: softprops/action-gh-release@v3
         with:
           tag_name: ${{ steps.version.outputs.tag }}
           name: Codex Mixin ${{ steps.version.outputs.tag }}

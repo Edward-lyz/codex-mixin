@@ -28,14 +28,30 @@ if [[ -n "${CARGO_BUILD_TARGET:-}" ]]; then
 fi
 
 case "${CARGO_BUILD_TARGET:-}" in
-  "") SWIFT_ARCH="$(uname -m)" ;;
-  aarch64-apple-darwin) SWIFT_ARCH="arm64" ;;
-  x86_64-apple-darwin) SWIFT_ARCH="x86_64" ;;
+  "")
+    SWIFT_ARCH="$(uname -m)"
+    ;;
+  aarch64-apple-darwin)
+    SWIFT_ARCH="arm64"
+    ;;
+  x86_64-apple-darwin)
+    SWIFT_ARCH="x86_64"
+    ;;
   *)
     echo "unsupported macOS build target: $CARGO_BUILD_TARGET" >&2
     exit 1
     ;;
 esac
+
+case "$SWIFT_ARCH" in
+  arm64) SPARKLE_FEED_ARCH="aarch64" ;;
+  x86_64) SPARKLE_FEED_ARCH="x86_64" ;;
+  *)
+    echo "unsupported macOS architecture: $SWIFT_ARCH" >&2
+    exit 1
+    ;;
+esac
+SPARKLE_FEED_URL="https://github.com/Edward-lyz/codex-mixin/releases/latest/download/appcast-$SPARKLE_FEED_ARCH.xml"
 
 cd "$ROOT_DIR"
 cargo build "${CARGO_BUILD_ARGS[@]}"
@@ -58,6 +74,7 @@ done
 /usr/libexec/PlistBuddy -c "Set :CFBundleShortVersionString $APP_VERSION" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :CFBundleVersion $APP_VERSION" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $MACOS_DEPLOYMENT_TARGET" "$CONTENTS_DIR/Info.plist"
+/usr/libexec/PlistBuddy -c "Set :SUFeedURL $SPARKLE_FEED_URL" "$CONTENTS_DIR/Info.plist"
 cp "$ROOT_DIR/macos/CodexMixin.icns" "$RESOURCES_DIR/CodexMixin.icns"
 mkdir -p "$RESOURCES_DIR/Wallpapers"
 cp "$ROOT_DIR/macos/assets/nasa-wallpapers/"*.png "$RESOURCES_DIR/Wallpapers/"
@@ -149,6 +166,12 @@ codesign --verify --deep --strict --verbose=2 "$APP_DIR"
 BUILT_VERSION="$(/usr/libexec/PlistBuddy -c 'Print :CFBundleShortVersionString' "$CONTENTS_DIR/Info.plist")"
 if [[ "$BUILT_VERSION" != "$APP_VERSION" ]]; then
   echo "app version mismatch: expected $APP_VERSION, got $BUILT_VERSION" >&2
+  exit 1
+fi
+
+BUILT_FEED_URL="$(/usr/libexec/PlistBuddy -c 'Print :SUFeedURL' "$CONTENTS_DIR/Info.plist")"
+if [[ "$BUILT_FEED_URL" != "$SPARKLE_FEED_URL" ]]; then
+  echo "Sparkle feed mismatch: expected $SPARKLE_FEED_URL, got ${BUILT_FEED_URL:-missing}" >&2
   exit 1
 fi
 
