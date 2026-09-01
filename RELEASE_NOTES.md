@@ -1,4 +1,31 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.5.4
+
+- 新增 Pi 集成，支持模型配置、thinking 和 DUCX 用量上报
+- 修复自定义模型错误继承官方生命周期元数据的问题
+- DUCX 认证过期时自动刷新并重试请求
+
+<!-- codex-mixin:zh-Hans:end -->
+
+<!-- codex-mixin:zh-Hant:start -->
+## v0.5.4
+
+- 新增 Pi 整合，支援模型設定、thinking 和 DUCX 用量上報
+- 修正自訂模型錯誤繼承官方生命週期中繼資料的問題
+- DUCX 驗證過期時自動更新並重試請求
+
+<!-- codex-mixin:zh-Hant:end -->
+
+<!-- codex-mixin:en:start -->
+## v0.5.4
+
+- Add Pi integration with model configuration, thinking, and DUCX usage reporting
+- Fix custom models inheriting official model lifecycle metadata
+- Refresh expired DUCX authentication and retry the request
+
+<!-- codex-mixin:en:end -->
+
+<!-- codex-mixin:zh-Hans:start -->
 ## v0.5.3
 
 本版本扩展 Claude Code 和 OpenCode 集成，补充 Amazon Bedrock 与 Anthropic 协议兼容，并加强百度 Provider 的访问控制、模型能力探测和 macOS 更新稳定性。
