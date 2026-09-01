@@ -319,6 +319,83 @@ extension AppDelegate {
         }
     }
 
+    @objc func installPi() {
+        Task { @MainActor in
+            serviceBusy = true
+            serviceStatus = "正在准备 Pi 配置..."
+            defer { serviceBusy = false }
+            do {
+                try await runOperationProgress(
+                    title: "正在安装到 Pi",
+                    phases: [
+                        "准备网关",
+                        "写入 Pi provider 和模型",
+                        "安装 Pi 用量上报 Hooks",
+                        "完成",
+                    ],
+                    successTitle: "✓ 安装完成",
+                    failureTitle: "✗ 安装失败",
+                    showFailureAlert: true,
+                    failureAlertTitle: "安装到 Pi 失败"
+                ) { progress in
+                    progress.advance(to: 0)
+                    let status = try await ensureGatewayReady()
+                    applyGatewayStatus(status)
+                    progress.advance(to: 1)
+                    _ = try await runGateway(["connect", "pi"])
+                    progress.advance(to: 2)
+                    progress.advance(to: 3)
+                    showAlert(
+                        title: "Pi 配置已更新",
+                        message: "已把本地网关注册为 Pi 的 codex-mixin provider，并安装 query、代码修改和 transcript 用量上报 Hooks。请在 Pi 中运行 /reload 或开启新会话，然后选择 codex-mixin 模型。"
+                    )
+                    await refreshStatusNow()
+                }
+            } catch {
+                serviceStatus = "安装 Pi 配置失败"
+            }
+        }
+    }
+
+    @objc func uninstallPi() {
+        guard confirm(
+            title: "从 Pi 卸载",
+            message: "会从 Pi models.json 删除 Codex Mixin 管理的 provider，并删除本地网关凭据和用量上报 Hooks。其他 Pi 配置会保留。完成后请运行 /reload 或开启新会话。"
+        ) else { return }
+        Task { @MainActor in
+            serviceBusy = true
+            defer { serviceBusy = false }
+            do {
+                try await runOperationProgress(
+                    title: "正在从 Pi 卸载",
+                    phases: [
+                        "读取 Pi 配置",
+                        "移除 codex-mixin provider",
+                        "清理凭据和上报 Hooks",
+                        "完成",
+                    ],
+                    successTitle: "✓ 卸载完成",
+                    failureTitle: "✗ 卸载失败",
+                    showFailureAlert: true,
+                    failureAlertTitle: "从 Pi 卸载失败"
+                ) { progress in
+                    progress.advance(to: 0)
+                    progress.advance(to: 1)
+                    let output = try await runGateway(["connect", "remove", "pi"])
+                    progress.advance(to: 2)
+                    progress.advance(to: 3)
+                    let message = output.isEmpty
+                        ? "已从 Pi 移除 codex-mixin provider 和用量上报 Hooks。请运行 /reload 或开启新会话。"
+                        : "\(output)\n\n请运行 /reload 或开启新会话。"
+                    showAlert(title: "Pi 配置已恢复", message: message)
+                    refreshStatus()
+                }
+            } catch {
+                // Failure already shown by the progress window + alert.
+            }
+        }
+    }
+
     @objc func copyLocalEndpoint() {
         Task { @MainActor in
             do {

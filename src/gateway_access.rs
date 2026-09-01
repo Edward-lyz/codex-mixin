@@ -12,6 +12,7 @@ pub enum GatewayClient {
     Claude,
     Dsh,
     OpenCode,
+    Pi,
 }
 
 impl GatewayClient {
@@ -21,6 +22,7 @@ impl GatewayClient {
             Self::Claude => "claude",
             Self::Dsh => "dsh",
             Self::OpenCode => "opencode",
+            Self::Pi => "pi",
         }
     }
 }
@@ -35,6 +37,8 @@ pub struct GatewayClientKeys {
     pub dsh: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opencode: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub pi: Option<String>,
 }
 
 impl GatewayClientKeys {
@@ -44,6 +48,7 @@ impl GatewayClientKeys {
             GatewayClient::Claude => self.claude.as_deref(),
             GatewayClient::Dsh => self.dsh.as_deref(),
             GatewayClient::OpenCode => self.opencode.as_deref(),
+            GatewayClient::Pi => self.pi.as_deref(),
         }
     }
 
@@ -53,6 +58,7 @@ impl GatewayClientKeys {
             GatewayClient::Claude => &mut self.claude,
             GatewayClient::Dsh => &mut self.dsh,
             GatewayClient::OpenCode => &mut self.opencode,
+            GatewayClient::Pi => &mut self.pi,
         }
     }
 
@@ -71,6 +77,7 @@ impl GatewayClientKeys {
             GatewayClient::Claude,
             GatewayClient::Dsh,
             GatewayClient::OpenCode,
+            GatewayClient::Pi,
         ]
         .into_iter()
         .find(|client| self.matches(*client, bearer))
@@ -114,6 +121,13 @@ mod tests {
         assert_eq!(keys.authenticate(&headers), Some(GatewayClient::Claude));
         headers.insert(header::AUTHORIZATION, "Bearer copied-key".parse().unwrap());
         assert_eq!(keys.authenticate(&headers), None);
+
+        let keys = GatewayClientKeys {
+            pi: Some("pi-key".to_owned()),
+            ..Default::default()
+        };
+        headers.insert(header::AUTHORIZATION, "Bearer pi-key".parse().unwrap());
+        assert_eq!(keys.authenticate(&headers), Some(GatewayClient::Pi));
     }
 
     #[test]

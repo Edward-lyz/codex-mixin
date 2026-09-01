@@ -138,7 +138,7 @@ Codex Mixin 是一个 Rust 本地网关、CLI 和 macOS 菜单栏 App。它把 O
 - [快速使用](#快速使用)
 - [供应商预设](#供应商预设)
 - [安装到 Codex](#安装到-codex-的行为)
-- [Claude Code、DSH 与 OpenCode](#安装到-claude-code)
+- [Claude Code、DSH、OpenCode 与 Pi](#安装到-claude-code)
 - [Fusion 多模型编排](#fusion-多模型编排)
 - [CLI](#cli)
 - [Prompt 缓存优化](#prompt-缓存优化)
@@ -237,7 +237,7 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 
 <p align="center"><a href="docs/assets/CLI-models.png"><img src="docs/assets/CLI-models.png" alt="Codex Mixin TUI 模型选择"></a></p>
 
-**第 4 步：安装应用集成。** 进入 Apps 页面，直接选择 Codex 的官方账号模式或仅自定义模型模式，也可以安装、刷新或恢复 Claude Code、DSH 和 OpenCode。每个变更都会先显示确认页和执行进度。
+**第 4 步：安装应用集成。** 进入 Apps 页面，直接选择 Codex 的官方账号模式或仅自定义模型模式，也可以安装、刷新或恢复 Claude Code、DSH、OpenCode 和 Pi。每个变更都会先显示确认页和执行进度。
 
 <p align="center"><a href="docs/assets/CLI-Apps.png"><img src="docs/assets/CLI-Apps.png" alt="Codex Mixin TUI 应用安装"></a></p>
 
@@ -366,6 +366,25 @@ DeepSeek Harness（DSH）可以通过 pi-ai adapter 使用本地网关。在 mac
 破坏注释。初版不安装 OpenCode plugin/hooks：OpenCode 插件接口本身可用，但 Codex Mixin
 现有 reporting hook 的事件格式只适配 Codex、Claude Code 和 DSH，需要独立 adapter 才能
 保证事件语义正确。安装或卸载后请重启 OpenCode 或开启新会话。
+
+### 安装到 Pi
+
+在 macOS 菜单栏选择「安装到 Pi...」，在 TUI Apps 页面按 `p`，或运行
+`codex-mixin connect pi`。安装会：
+
+1. 在 `$PI_CODING_AGENT_DIR/models.json`（默认 `~/.pi/agent/models.json`）合并一个
+   `codex-mixin` provider，并保留其他 provider 和顶层字段。
+2. 使用 Pi 原生 `openai-responses` adapter 连接本地网关 `/v1/responses`，加入当前已选的
+   custom、OpenAI official 和 Fusion 模型；支持图片输入的模型会保留该能力。
+3. 为 thinking 模型暴露 `off`、`minimal`、`low`、`medium`、`high`、`xhigh` 和 `max`。
+4. 把 Pi 专用网关凭据写入权限为 `0600` 的 `~/.codex-mixin/pi-api-key`，Pi 配置只保存
+   `!cat` 引用。
+5. 启用百度代码用量上报时，在 `~/.pi/agent/extensions/codex-mixin-report.ts` 安装受管
+   Hooks adapter。它只观察 `codex-mixin` provider，把用户请求、`apply_patch` / `edit` /
+   `write` 的生成与采纳事件以及每轮 transcript 交给 Codex Mixin 的持久化重试队列。
+
+卸载使用 `codex-mixin connect remove pi`。它只删除带 Codex Mixin 标记的 provider、凭据
+和 Hooks，不修改其他 Pi 配置。安装、刷新或卸载后，在 Pi 中运行 `/reload` 或开启新会话。
 
 ### 安装到 Codex 的行为
 
@@ -504,7 +523,7 @@ codex-mixin service restart
 codex-mixin service logs -n 200
 codex-mixin service start --foreground
 
-# Codex / Claude / DSH / OpenCode 集成
+# Codex / Claude / DSH / OpenCode / Pi 集成
 codex-mixin connect codex --codex-oauth-proxy
 codex-mixin connect codex --custom-only
 codex-mixin connect claude \
@@ -513,9 +532,11 @@ codex-mixin connect claude \
   --haiku-model "Claude Haiku 5-provider"
 codex-mixin connect dsh
 codex-mixin connect opencode
+codex-mixin connect pi
 codex-mixin connect remove codex
 codex-mixin connect remove dsh
 codex-mixin connect remove opencode
+codex-mixin connect remove pi
 codex-mixin connect status
 
 # 状态与诊断
@@ -646,6 +667,9 @@ OpenAI Chat Completions 兼容上游不接受 `tool` 消息内嵌图片，网关
 | Codex 模型目录 | `~/.codex/model-catalogs/mixin-models.json` |
 | OpenCode 配置 | `$OPENCODE_CONFIG`、`$XDG_CONFIG_HOME/opencode/opencode.json` 或 `~/.config/opencode/opencode.json` |
 | OpenCode 网关凭据 | `~/.codex-mixin/opencode-api-key` |
+| Pi 模型配置 | `$PI_CODING_AGENT_DIR/models.json` 或 `~/.pi/agent/models.json` |
+| Pi 网关凭据 | `~/.codex-mixin/pi-api-key` |
+| Pi 用量上报 Hooks | `$PI_CODING_AGENT_DIR/extensions/codex-mixin-report.ts` 或 `~/.pi/agent/extensions/codex-mixin-report.ts` |
 
 ### 开发与发布
 
@@ -810,7 +834,7 @@ On first launch, it installs itself to the standard user-level location `~/.loca
 
 <p align="center"><a href="docs/assets/CLI-models.png"><img src="docs/assets/CLI-models.png" alt="Codex Mixin TUI model selection"></a></p>
 
-**Step 4: install application integrations.** Open Apps and choose Codex Official or Custom-only mode. The same page installs, refreshes, or restores Claude Code, DSH, and OpenCode, with confirmation and progress views for every change.
+**Step 4: install application integrations.** Open Apps and choose Codex Official or Custom-only mode. The same page installs, refreshes, or restores Claude Code, DSH, OpenCode, and Pi, with confirmation and progress views for every change.
 
 <p align="center"><a href="docs/assets/CLI-Apps.png"><img src="docs/assets/CLI-Apps.png" alt="Codex Mixin TUI application installation"></a></p>
 
@@ -905,6 +929,26 @@ JSONC comments, preventing comment loss. It does not install OpenCode plugins or
 plugin API is suitable, but the existing Codex Mixin reporting events are specific to Codex,
 Claude Code, and DSH and require a separate adapter. Restart OpenCode or open a new session after
 installation or removal.
+
+### Pi Integration
+
+Choose `Install to Pi...` from the macOS menu, press `p` in the TUI Apps workspace, or run
+`codex-mixin connect pi`. The integration:
+
+1. Merges a managed `codex-mixin` provider into `$PI_CODING_AGENT_DIR/models.json` (default
+   `~/.pi/agent/models.json`) while preserving other providers and top-level fields.
+2. Uses Pi's native `openai-responses` adapter with the local `/v1/responses` endpoint and exposes
+   the selected custom and OpenAI official models plus Fusion virtual models.
+3. Exposes `off`, `minimal`, `low`, `medium`, `high`, `xhigh`, and `max` for reasoning models.
+4. Stores a dedicated gateway credential in the owner-only `~/.codex-mixin/pi-api-key` file; Pi
+   keeps only a `!cat` reference.
+5. When Baidu code-usage reporting is enabled, installs a managed extension at
+   `~/.pi/agent/extensions/codex-mixin-report.ts`. It reports prompts, generated and accepted
+   `apply_patch` / `edit` / `write` changes, and turn transcripts only for the `codex-mixin`
+   provider through Codex Mixin's persistent retry queue.
+
+Run `codex-mixin connect remove pi` to remove only the managed provider, credential, and hooks.
+Run `/reload` in Pi or start a new session after installation, refresh, or removal.
 
 ### Codex Install Behavior
 
@@ -1073,15 +1117,17 @@ codex-mixin service restart
 codex-mixin service logs -n 200
 codex-mixin service start --foreground
 
-# Codex / Claude / DSH / OpenCode integration
+# Codex / Claude / DSH / OpenCode / Pi integration
 codex-mixin connect codex --codex-oauth-proxy
 codex-mixin connect codex --custom-only
 codex-mixin connect claude --model "Claude Sonnet 5"
 codex-mixin connect dsh
 codex-mixin connect opencode
+codex-mixin connect pi
 codex-mixin connect remove codex
 codex-mixin connect remove dsh
 codex-mixin connect remove opencode
+codex-mixin connect remove pi
 codex-mixin connect status
 
 # State and diagnosis
@@ -1115,6 +1161,9 @@ Launching without arguments is the user-facing entry point. It opens the TUI and
 | DSH credentials | `$DSH_HOME/.credentials.yaml` or `~/.dsh/.credentials.yaml` |
 | OpenCode config | `$OPENCODE_CONFIG`, `$XDG_CONFIG_HOME/opencode/opencode.json`, or `~/.config/opencode/opencode.json` |
 | OpenCode gateway credential | `~/.codex-mixin/opencode-api-key` |
+| Pi models config | `$PI_CODING_AGENT_DIR/models.json` or `~/.pi/agent/models.json` |
+| Pi gateway credential | `~/.codex-mixin/pi-api-key` |
+| Pi reporting hooks | `$PI_CODING_AGENT_DIR/extensions/codex-mixin-report.ts` or `~/.pi/agent/extensions/codex-mixin-report.ts` |
 
 ### Development
 

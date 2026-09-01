@@ -41,7 +41,8 @@ const REPORT_APPLY_PATCH_TOOL: &str = "apply_patch";
 
 pub(super) fn sync_installation() -> anyhow::Result<()> {
     installation::sync_installation()?;
-    crate::cli::opencode::sync_installed_opencode_reporting()
+    crate::cli::opencode::sync_installed_opencode_reporting()?;
+    crate::cli::pi::sync_installed_pi_reporting()
 }
 
 #[derive(Clone, Copy)]

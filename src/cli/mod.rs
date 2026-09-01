@@ -24,6 +24,7 @@ mod maintenance;
 mod metadata;
 mod official_models;
 mod opencode;
+mod pi;
 mod providers;
 mod report_hook;
 mod runtime;
@@ -49,6 +50,7 @@ use fusion_config::{delete_fusion_profile, get_fusion_profile, set_fusion_profil
 use maintenance::migrate_history;
 use metadata::{load_model_metadata_resolver, refresh_metadata};
 use opencode::{install_opencode, sync_installed_opencode_client_key, uninstall_opencode};
+use pi::{install_pi, sync_installed_pi_client_key, uninstall_pi};
 use providers::{
     AddProviderOptions, TestProviderOptions, UpdateProviderOptions, add_provider, discover_models,
     list_providers, probe_selected_models, remove_provider, reorder_providers, select_models,
@@ -141,7 +143,7 @@ pub(super) async fn stage<T>(
 #[command(
     author,
     version,
-    about = "Connect custom model providers to Codex, Claude, DSH, and OpenCode"
+    about = "Connect custom model providers to Codex, Claude, DSH, OpenCode, and Pi"
 )]
 struct Cli {
     /// Keep the plain CLI interface instead of opening the full-screen UI.
@@ -502,14 +504,19 @@ enum ConnectCommand {
         #[arg(long = "config")]
         config_path: Option<PathBuf>,
     },
+    /// Install the Codex Mixin gateway and reporting hooks into Pi.
+    Pi {
+        #[arg(long)]
+        agent_dir: Option<PathBuf>,
+    },
     /// Show Claude Code integration status.
     Status {
         #[arg(long)]
         settings_path: Option<PathBuf>,
     },
-    /// Remove Codex, Claude, DSH, or OpenCode integration.
+    /// Remove Codex, Claude, DSH, OpenCode, or Pi integration.
     Remove {
-        #[arg(value_parser = ["codex", "claude", "dsh", "opencode"])]
+        #[arg(value_parser = ["codex", "claude", "dsh", "opencode", "pi"])]
         target: String,
         #[arg(long)]
         settings_path: Option<PathBuf>,
@@ -517,6 +524,8 @@ enum ConnectCommand {
         dsh_home: Option<PathBuf>,
         #[arg(long = "opencode-config")]
         opencode_config: Option<PathBuf>,
+        #[arg(long = "pi-agent-dir")]
+        pi_agent_dir: Option<PathBuf>,
     },
 }
 
@@ -870,6 +879,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         sync_installed_claude_client_key()?;
         sync_installed_dsh_client_key()?;
         sync_installed_opencode_client_key()?;
+        sync_installed_pi_client_key()?;
     }
     match cli.command.unwrap_or(Command::Info { json: false }) {
         Command::ReportHook { event } => report_hook::run(&event).await,
@@ -1095,12 +1105,14 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 report_hook::sync_installation()
             }
             ConnectCommand::Opencode { config_path } => install_opencode(config_path),
+            ConnectCommand::Pi { agent_dir } => install_pi(agent_dir),
             ConnectCommand::Status { settings_path } => claude_status(settings_path),
             ConnectCommand::Remove {
                 target,
                 settings_path,
                 dsh_home,
                 opencode_config,
+                pi_agent_dir,
             } => match target.as_str() {
                 "codex" => {
                     uninstall_codex(None, None)?;
@@ -1136,6 +1148,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     uninstall_opencode(opencode_config)?;
                     codex_mixin::config::revoke_gateway_client_key(
                         codex_mixin::gateway_access::GatewayClient::OpenCode,
+                    )
+                }
+                "pi" => {
+                    uninstall_pi(pi_agent_dir)?;
+                    codex_mixin::config::revoke_gateway_client_key(
+                        codex_mixin::gateway_access::GatewayClient::Pi,
                     )
                 }
                 _ => unreachable!("clap validates connect target"),

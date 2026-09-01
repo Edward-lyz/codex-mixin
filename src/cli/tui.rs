@@ -388,6 +388,7 @@ enum ConfirmOperation {
     UninstallClaude,
     UninstallDsh,
     UninstallOpenCode,
+    UninstallPi,
     Update,
     Repair,
 }
@@ -399,6 +400,7 @@ impl ConfirmOperation {
             Self::UninstallClaude => "Restore Claude Code",
             Self::UninstallDsh => "Remove DSH integration",
             Self::UninstallOpenCode => "Remove OpenCode integration",
+            Self::UninstallPi => "Remove Pi integration",
             Self::Update => "Update Codex Mixin",
             Self::Repair => "Repair configuration",
         }
@@ -411,6 +413,9 @@ impl ConfirmOperation {
             Self::UninstallDsh => "Remove codex-mixin from DSH settings and credentials.",
             Self::UninstallOpenCode => {
                 "Remove the managed provider and gateway credential from OpenCode."
+            }
+            Self::UninstallPi => {
+                "Remove the managed provider, gateway credential, and reporting hooks from Pi."
             }
             Self::Update => {
                 "Replace this CLI with the latest GitHub release and restart the gateway."
@@ -571,10 +576,12 @@ enum Action {
     ConnectClaude,
     ConnectDsh,
     ConnectOpenCode,
+    ConnectPi,
     ConfirmUninstallCodex,
     ConfirmUninstallClaude,
     ConfirmUninstallDsh,
     ConfirmUninstallOpenCode,
+    ConfirmUninstallPi,
     ConfirmUpdate,
     ConfirmRepair,
     RunConfirmedOperation,
@@ -1633,6 +1640,16 @@ pub(super) async fn run(
                 )
                 .await;
             }
+            Action::ConnectPi => {
+                run_action(
+                    &mut terminal,
+                    &mut app,
+                    "Installing Pi connection and reporting hooks",
+                    &["connect", "pi"],
+                    true,
+                )
+                .await;
+            }
             Action::ConfirmUninstallCodex => {
                 app.dialog = Some(Dialog::ConfirmOperation(ConfirmOperation::UninstallCodex));
             }
@@ -1646,6 +1663,9 @@ pub(super) async fn run(
                 app.dialog = Some(Dialog::ConfirmOperation(
                     ConfirmOperation::UninstallOpenCode,
                 ));
+            }
+            Action::ConfirmUninstallPi => {
+                app.dialog = Some(Dialog::ConfirmOperation(ConfirmOperation::UninstallPi));
             }
             Action::ConfirmUpdate => {
                 app.dialog = Some(Dialog::ConfirmOperation(ConfirmOperation::Update));
@@ -1677,6 +1697,11 @@ pub(super) async fn run(
                     ConfirmOperation::UninstallOpenCode => (
                         "Removing OpenCode integration",
                         &["connect", "remove", "opencode"][..],
+                        true,
+                    ),
+                    ConfirmOperation::UninstallPi => (
+                        "Removing Pi integration",
+                        &["connect", "remove", "pi"][..],
                         true,
                     ),
                     ConfirmOperation::Update => ("Updating Codex Mixin", &["update"][..], false),
@@ -1974,13 +1999,14 @@ fn handle_mouse_event(app: &mut App, kind: MouseEventKind, column: u16, row: u16
         }
         Page::Integrations => {
             let relative_row = row.saturating_sub(body.y);
-            let card = (usize::from(relative_row) * 4 / usize::from(body.height.max(1))).min(3);
+            let card = (usize::from(relative_row) * 5 / usize::from(body.height.max(1))).min(4);
             let relative_column = column.saturating_sub(body.x);
             app.integration_index = match card {
                 0 => (usize::from(relative_column) * 3 / usize::from(body.width.max(1))).min(2),
                 1 => 3 + (usize::from(relative_column) * 2 / usize::from(body.width.max(1))).min(1),
                 2 => 5 + (usize::from(relative_column) * 2 / usize::from(body.width.max(1))).min(1),
-                _ => 7 + (usize::from(relative_column) * 2 / usize::from(body.width.max(1))).min(1),
+                3 => 7 + (usize::from(relative_column) * 2 / usize::from(body.width.max(1))).min(1),
+                _ => 9 + (usize::from(relative_column) * 2 / usize::from(body.width.max(1))).min(1),
             };
             integration_action(app.integration_index)
         }
@@ -2127,7 +2153,9 @@ fn integration_action(index: usize) -> Action {
         5 => Action::ConnectDsh,
         6 => Action::ConfirmUninstallDsh,
         7 => Action::ConnectOpenCode,
-        _ => Action::ConfirmUninstallOpenCode,
+        8 => Action::ConfirmUninstallOpenCode,
+        9 => Action::ConnectPi,
+        _ => Action::ConfirmUninstallPi,
     }
 }
 
@@ -2165,7 +2193,7 @@ fn handle_page_event(app: &mut App, code: KeyCode) -> Action {
                 Action::None
             }
             KeyCode::Right | KeyCode::Down => {
-                app.integration_index = (app.integration_index + 1).min(8);
+                app.integration_index = (app.integration_index + 1).min(10);
                 Action::None
             }
             KeyCode::Enter => integration_action(app.integration_index),
@@ -2178,6 +2206,8 @@ fn handle_page_event(app: &mut App, code: KeyCode) -> Action {
             KeyCode::Char('7') => Action::ConfirmUninstallDsh,
             KeyCode::Char('8') => Action::ConnectOpenCode,
             KeyCode::Char('9') => Action::ConfirmUninstallOpenCode,
+            KeyCode::Char('p') => Action::ConnectPi,
+            KeyCode::Char('P') => Action::ConfirmUninstallPi,
             _ => Action::None,
         },
         Page::System => match code {
@@ -3783,10 +3813,11 @@ fn render_integrations(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let cards = Layout::default()
         .direction(Direction::Vertical)
         .constraints([
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
-            Constraint::Percentage(25),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
+            Constraint::Percentage(20),
         ])
         .split(area);
     frame.render_widget(
@@ -3878,6 +3909,28 @@ fn render_integrations(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         )
         .wrap(Wrap { trim: true }),
         cards[3],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                "PI CODING AGENT",
+                Style::default().fg(Color::Yellow).bold(),
+            )),
+            Line::from(vec![
+                action_label(9, "[p] Install / refresh", app.integration_index),
+                Span::raw("       "),
+                action_label(10, "[P] Remove", app.integration_index),
+            ]),
+        ])
+        .block(
+            Block::default()
+                .title(" PI ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::Yellow)),
+        )
+        .wrap(Wrap { trim: true }),
+        cards[4],
     );
 }
 
@@ -4364,7 +4417,7 @@ fn render_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             }
             Page::Fusion => "Up/Down model  Space Panel  j Judge  f Final  s save  D disable",
             Page::Integrations => {
-                "1-3 Codex  4-5 Claude  6-7 DSH  8-9 OpenCode  click or press a number"
+                "1-3 Codex  4-5 Claude  6-7 DSH  8-9 OpenCode  p/P Pi  click or press a key"
             }
             Page::System => "s/R gateway  u update  d doctor  F repair  f catalog  l logs",
             Page::Diagnostics => "x doctor  PgUp/PgDn scroll  r refresh  ? help  q quit",
@@ -5000,6 +5053,8 @@ mod tests {
             handle_mouse_event(&mut app, MouseEventKind::Down(MouseButton::Left), 90, 8),
             Action::ConfirmUninstallCodex
         );
+        assert_eq!(integration_action(9), Action::ConnectPi);
+        assert_eq!(integration_action(10), Action::ConfirmUninstallPi);
     }
 
     #[test]

@@ -64,6 +64,7 @@ pub(super) async fn check_gateway_auth(
                 crate::gateway_access::GatewayClient::Claude
                     | crate::gateway_access::GatewayClient::Dsh
                     | crate::gateway_access::GatewayClient::OpenCode
+                    | crate::gateway_access::GatewayClient::Pi
             )
         )
     {
