@@ -8,7 +8,7 @@ use toml_edit::{DocumentMut, Item};
 use codex_mixin::catalog::{
     apply_web_search_capabilities, codex_catalog_from_models_with_metadata,
     codex_oauth_proxy_catalog_from_aggregated_models_with_metadata, load_template_catalog,
-    refresh_managed_oauth_catalog,
+    migrate_managed_model_metadata, refresh_managed_oauth_catalog,
 };
 use codex_mixin::config::GatewayConfig;
 use codex_mixin::server::AppState;
@@ -248,7 +248,8 @@ fn refresh_managed_codex_catalog_with_source(
         return Ok(false);
     }
     let catalog_path = managed_catalog_path(&doc, &config_path)?;
-    let managed_catalog = serde_json::from_slice(&fs::read(&catalog_path)?)?;
+    let mut managed_catalog = serde_json::from_slice(&fs::read(&catalog_path)?)?;
+    migrate_managed_model_metadata(&mut managed_catalog)?;
     let mut refreshed = if oauth_proxy && let Some(official_catalog) = official_catalog {
         refresh_managed_oauth_catalog(official_catalog, &managed_catalog)?
     } else {

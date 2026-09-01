@@ -51,6 +51,7 @@ pub fn refresh_managed_oauth_catalog(
         .filter(|model| is_managed_custom_model(model))
     {
         let mut model = model.clone();
+        remove_official_lifecycle_metadata(&mut model);
         let slug = model
             .get("slug")
             .and_then(Value::as_str)
@@ -81,6 +82,37 @@ pub fn refresh_managed_oauth_catalog(
 
     refreshed.insert("models".to_owned(), Value::Array(models));
     Ok(Value::Object(refreshed))
+}
+
+pub fn migrate_managed_model_metadata(catalog: &mut Value) -> anyhow::Result<bool> {
+    let models = catalog
+        .get_mut("models")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| anyhow::anyhow!("managed Codex catalog has no models array"))?;
+    let mut changed = false;
+    for model in models
+        .iter_mut()
+        .filter(|model| is_managed_custom_model(model))
+    {
+        changed |= remove_official_lifecycle_metadata(model);
+    }
+    Ok(changed)
+}
+
+pub(super) fn remove_official_lifecycle_metadata(model: &mut Value) -> bool {
+    let Some(model) = model.as_object_mut() else {
+        return false;
+    };
+    let mut changed = false;
+    for field in [
+        "upgrade",
+        "availability_nux",
+        "retirement_at",
+        "migration_markdown",
+    ] {
+        changed |= model.remove(field).is_some();
+    }
+    changed
 }
 
 pub(super) fn enable_fast_service_tier(model: &mut Value) {

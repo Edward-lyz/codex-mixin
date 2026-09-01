@@ -1520,7 +1520,7 @@ fn refreshes_per_model_web_search_for_non_oauth_catalog() {
     .unwrap();
     fs::write(
         &catalog_path,
-        r#"{"models":[{"slug":"Claude Haiku 4.5","codex_mixin_managed":true},{"slug":"DeepSeek-V4-Flash","codex_mixin_managed":true,"web_search_tool_type":"text"}]}"#,
+        r#"{"models":[{"slug":"Claude Haiku 4.5","codex_mixin_managed":true,"upgrade":{"model":"gpt-5.6-luna","migration_markdown":"Retired"},"availability_nux":{"message":"Official notice"}},{"slug":"DeepSeek-V4-Flash","codex_mixin_managed":true,"web_search_tool_type":"text"}]}"#,
     )
     .unwrap();
 
@@ -1532,6 +1532,8 @@ fn refreshes_per_model_web_search_for_non_oauth_catalog() {
     let refreshed: serde_json::Value =
         serde_json::from_slice(&fs::read(catalog_path).unwrap()).unwrap();
     assert_eq!(refreshed["models"][0]["web_search_tool_type"], "text");
+    assert!(refreshed["models"][0].get("upgrade").is_none());
+    assert!(refreshed["models"][0].get("availability_nux").is_none());
     assert!(refreshed["models"][1].get("web_search_tool_type").is_none());
 }
 

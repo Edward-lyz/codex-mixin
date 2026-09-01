@@ -3,6 +3,7 @@ use serde_json::{Value, json};
 use crate::anthropic::ModelInfo;
 use crate::model_metadata::ModelMetadataResolver;
 
+use super::managed::remove_official_lifecycle_metadata;
 use super::managed::{apply_model_reasoning_capabilities, ensure_instruction_fields};
 use super::template::{fallback_template, template_model_context_window};
 use super::{
@@ -135,6 +136,7 @@ fn codex_catalog_from_models_with_options(
             let mut item = template
                 .cloned()
                 .unwrap_or_else(|| fallback_template(default_context_window));
+            remove_official_lifecycle_metadata(&mut item);
             let owned_provider = model
                 .owned_by
                 .as_deref()
