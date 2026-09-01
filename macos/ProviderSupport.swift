@@ -1,5 +1,16 @@
 import Foundation
 
+private let manuallyEnteredModelContextWindow: UInt64 = 128_000
+private let modelContextTokensPerK: UInt64 = 1_000
+
+func modelContextK(fromTokens tokens: UInt64) -> UInt64 {
+    max(tokens / modelContextTokensPerK, 1)
+}
+
+func modelContextTokens(fromK contextK: UInt64) -> UInt64 {
+    min(max(contextK, 1), UInt64.max / modelContextTokensPerK) * modelContextTokensPerK
+}
+
 func modelCapabilityProbeCounts(_ progress: String) -> (completed: Int, total: Int)? {
     guard
         progress.hasPrefix("Probing capabilities for "),
@@ -288,6 +299,7 @@ struct ProviderModelSourceView: Decodable {
 
 struct ProviderModelView: Decodable {
     let id: String
+    let manuallyAdded: Bool?
     let displayName: String?
     let description: String?
     let ratio: String?
@@ -303,6 +315,7 @@ struct ProviderModelView: Decodable {
 
     enum CodingKeys: String, CodingKey {
         case id
+        case manuallyAdded = "manually_added"
         case displayName = "display_name"
         case description
         case ratio
@@ -324,6 +337,7 @@ struct ProviderModelListItem {
     let isNew: Bool
 
     var id: String { model.id }
+    var manuallyAdded: Bool { model.manuallyAdded == true }
     var displayName: String? { model.displayName }
     var description: String? { model.description }
     var ratio: String? { model.ratio }
@@ -336,6 +350,41 @@ struct ProviderModelListItem {
     var supportsToolSearch: Bool? { model.supportsToolSearch }
     var supportsFunctionTools: Bool? { model.supportsFunctionTools }
     var capabilityProbeError: String? { model.capabilityProbeError }
+}
+
+func manuallyEnteredProviderModel(_ id: String) -> ProviderModelListItem {
+    ProviderModelListItem(
+        model: ProviderModelView(
+            id: id,
+            manuallyAdded: true,
+            displayName: nil,
+            description: "用户手动指定；未通过模型列表或能力探测验证",
+            ratio: nil,
+            priceType: nil,
+            contextWindow: manuallyEnteredModelContextWindow,
+            protocolID: nil,
+            supportsImage: false,
+            supportsThinking: true,
+            supportsWebSearch: false,
+            supportsToolSearch: false,
+            supportsFunctionTools: true,
+            capabilityProbeError: nil
+        ),
+        isAvailable: true,
+        isNew: false
+    )
+}
+
+func mergedProviderModelItems(
+    _ provider: ProviderView,
+    additionalModelIDs: Set<String>,
+    excludingModelIDs: Set<String>
+) -> [ProviderModelListItem] {
+    let additional = additionalModelIDs.sorted().map(manuallyEnteredProviderModel)
+    var seenModelIDs = Set<String>()
+    return (provider.modelItems + additional).filter { model in
+        !excludingModelIDs.contains(model.id) && seenModelIDs.insert(model.id).inserted
+    }
 }
 
 struct ProviderPickerOption {
@@ -412,16 +461,19 @@ func selectedProviderModelKeys(_ providers: [ProviderView]) -> Set<String> {
 
 func providerModelSelections(
     _ providers: [ProviderView],
-    selectedKeys: Set<String>
+    selectedKeys: Set<String>,
+    additionalModelIDs: [String: Set<String>] = [:]
 ) -> [String: [String]] {
     Dictionary(uniqueKeysWithValues: providers.map { provider in
-        let modelIDs = provider.modelItems
-            .filter {
+        let modelIDs = (provider.modelItems.map(\.id) + Array(additionalModelIDs[provider.id] ?? []))
+            .filter { modelID in
                 selectedKeys.contains(
-                    providerModelSelectionKey(providerID: provider.id, modelID: $0.id)
+                    providerModelSelectionKey(providerID: provider.id, modelID: modelID)
                 )
             }
-            .map(\.id)
+            .reduce(into: [String]()) { modelIDs, modelID in
+                if !modelIDs.contains(modelID) { modelIDs.append(modelID) }
+            }
         return (provider.id, modelIDs)
     })
 }

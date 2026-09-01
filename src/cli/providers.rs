@@ -501,6 +501,55 @@ mod tests {
     use codex_mixin::provider::{ProviderModel, redact_provider_error};
 
     #[test]
+    fn selecting_unknown_model_adds_it_with_safe_defaults() {
+        let mut provider = codex_mixin::provider::custom_provider("custom", "key");
+        provider.base_url = "https://example.test".to_owned();
+
+        let contexts = BTreeMap::from([("hidden-model".to_owned(), 256_000)]);
+        apply_model_selection(&mut provider, vec!["hidden-model".to_owned()], &contexts).unwrap();
+
+        assert_eq!(provider.selected_models, ["hidden-model"]);
+        let model = &provider.cached_models[0];
+        assert!(model.manually_added);
+        assert_eq!(model.context_window, Some(256_000));
+        assert_eq!(model.supports_image, Some(false));
+        assert_eq!(model.supports_thinking, Some(true));
+        assert_eq!(model.supports_web_search, Some(false));
+        assert_eq!(model.supports_tool_search, Some(false));
+        assert_eq!(model.supports_function_tools, Some(true));
+
+        apply_model_selection(&mut provider, Vec::new(), &BTreeMap::new()).unwrap();
+
+        assert!(provider.selected_models.is_empty());
+        assert!(provider.cached_models.is_empty());
+    }
+
+    #[test]
+    fn context_override_rejects_discovered_model() {
+        let mut provider = codex_mixin::provider::custom_provider("custom", "key");
+        provider
+            .cached_models
+            .push(codex_mixin::provider::ProviderModel {
+                id: "discovered-model".to_owned(),
+                ..codex_mixin::provider::ProviderModel::default()
+            });
+        let contexts = BTreeMap::from([("discovered-model".to_owned(), 256_000)]);
+
+        let error = apply_model_selection(
+            &mut provider,
+            vec!["discovered-model".to_owned()],
+            &contexts,
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("model context can only be edited for manually added models")
+        );
+    }
+
+    #[test]
     fn official_provider_view_is_reserved_and_read_only() {
         let config = StoredGatewayConfig {
             official_selected_models: Some(vec!["gpt-5.6-sol".to_owned()]),
@@ -1335,12 +1384,13 @@ mod tests {
         apply_model_selection(
             &mut provider,
             vec!["glm-5.2".to_owned(), "temporarily-gone".to_owned()],
+            &BTreeMap::new(),
         )
         .unwrap();
         assert_eq!(provider.selected_models, ["glm-5.2", "temporarily-gone"]);
         assert!(provider.new_models.is_empty());
 
-        apply_model_selection(&mut provider, vec!["glm-5.2".to_owned()]).unwrap();
+        apply_model_selection(&mut provider, vec!["glm-5.2".to_owned()], &BTreeMap::new()).unwrap();
         assert_eq!(provider.selected_models, ["glm-5.2"]);
     }
 

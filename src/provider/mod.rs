@@ -23,9 +23,10 @@ pub use presets::{
 };
 pub use registry::{ProviderRegistry, ProviderRuntime, ResolvedProviderModel, catalog_model_slug};
 pub use types::{
-    BaiduAuthBridge, CONFIG_VERSION, ProviderAuthConfig, ProviderAuthHeader, ProviderDefinition,
-    ProviderModel, ProviderModelKey, ProviderModelSource, ProviderProtocol, ProviderQuotaParser,
-    ProviderReadiness, ProviderReadinessStatus, ProviderRequestPolicy, is_auto_review_model_id,
+    BaiduAuthBridge, CONFIG_VERSION, MANUAL_MODEL_CONTEXT_WINDOW, ProviderAuthConfig,
+    ProviderAuthHeader, ProviderDefinition, ProviderModel, ProviderModelKey, ProviderModelSource,
+    ProviderProtocol, ProviderQuotaParser, ProviderReadiness, ProviderReadinessStatus,
+    ProviderRequestPolicy, is_auto_review_model_id,
 };
 
 /// Mint the native auth headers for the selected Baidu auth core.

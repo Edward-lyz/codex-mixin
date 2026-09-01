@@ -101,21 +101,16 @@ fn openai_model_to_provider_model(model: ModelInfo, is_openrouter: bool) -> Prov
                         .iter()
                         .any(|modality| modality == "image")
                 })),
-                Some(
-                    model
-                        .reasoning
-                        .as_ref()
-                        .is_some_and(|reasoning| !reasoning.is_null())
-                        || supports_parameter("reasoning"),
-                ),
+                Some(true),
                 Some(supports_parameter("web_search_options")),
-                Some(supports_parameter("tools") && supports_parameter("tool_choice")),
+                Some(true),
             )
         } else {
-            (Some(false), None, Some(false), Some(false))
+            (Some(false), Some(true), Some(false), Some(true))
         };
     ProviderModel {
         id: model.id,
+        manually_added: false,
         display_name: model.display_name,
         description: model.description,
         ratio: model.ratio,
@@ -206,10 +201,10 @@ fn add_baidu_model(
         price_type: Some(model.price_type),
         context_window: Some(capability.context_window),
         supports_image: Some(capability.supports_image || declared_capability("image")),
-        supports_thinking: Some(capability.supports_thinking || declared_capability("thinking")),
+        supports_thinking: Some(true),
         supports_web_search: Some(declared_capability("web_search")),
         supports_tool_search: Some(false),
-        supports_function_tools: Some(false),
+        supports_function_tools: Some(true),
         ..ProviderModel::default()
     };
     if let Some(&index) = model_indices.get(&id) {
@@ -224,8 +219,20 @@ fn add_baidu_model(
 
 pub fn apply_discovered_models(
     provider: &mut ProviderDefinition,
-    models: Vec<ProviderModel>,
+    mut models: Vec<ProviderModel>,
 ) -> anyhow::Result<()> {
+    let discovered_ids = models
+        .iter()
+        .map(|model| model.id.clone())
+        .collect::<HashSet<_>>();
+    models.extend(
+        provider
+            .cached_models
+            .iter()
+            .filter(|model| model.manually_added && !discovered_ids.contains(&model.id))
+            .cloned(),
+    );
+    normalize_models(&mut models);
     let first_successful_refresh = provider.models_refreshed_at_ms.is_none();
     if first_successful_refresh {
         provider.selected_models = models.iter().map(|model| model.id.clone()).collect();
@@ -308,7 +315,21 @@ mod tests {
     }
 
     #[test]
-    fn undeclared_openai_compatible_thinking_is_unknown() {
+    fn openrouter_models_without_declarations_get_safe_defaults() {
+        let response: ModelsResponse =
+            serde_json::from_str(r#"{"data":[{"id":"unknown"}]}"#).unwrap();
+
+        let model = openai_model_to_provider_model(response.data.into_iter().next().unwrap(), true);
+
+        assert_eq!(model.supports_thinking, Some(true));
+        assert_eq!(model.supports_function_tools, Some(true));
+        assert_eq!(model.supports_image, Some(false));
+        assert_eq!(model.supports_web_search, Some(false));
+        assert_eq!(model.supports_tool_search, Some(false));
+    }
+
+    #[test]
+    fn undeclared_openai_compatible_models_get_safe_defaults() {
         let response: ModelsResponse =
             serde_json::from_str(r#"{"data":[{"id":"unknown"}]}"#).unwrap();
 
@@ -316,10 +337,38 @@ mod tests {
             openai_model_to_provider_model(response.data.into_iter().next().unwrap(), false);
 
         assert_eq!(model.supports_image, Some(false));
-        assert_eq!(model.supports_thinking, None);
-        assert_eq!(model.supports_function_tools, Some(false));
+        assert_eq!(model.supports_thinking, Some(true));
+        assert_eq!(model.supports_function_tools, Some(true));
         assert_eq!(model.supports_web_search, Some(false));
         assert_eq!(model.supports_tool_search, Some(false));
+    }
+
+    #[test]
+    fn refresh_preserves_manually_added_models_missing_upstream() {
+        let mut provider = crate::provider::custom_provider("custom", "key");
+        provider.base_url = "https://example.test".to_owned();
+        provider.models_refreshed_at_ms = Some(1);
+        provider.cached_models = vec![ProviderModel {
+            id: "manual".to_owned(),
+            manually_added: true,
+            supports_image: Some(false),
+            supports_thinking: Some(true),
+            supports_web_search: Some(false),
+            supports_tool_search: Some(false),
+            supports_function_tools: Some(true),
+            ..ProviderModel::default()
+        }];
+        provider.selected_models = vec!["manual".to_owned()];
+
+        apply_discovered_models(&mut provider, vec![model("upstream")]).unwrap();
+
+        assert_eq!(provider.selected_models, ["manual"]);
+        assert!(
+            provider
+                .cached_models
+                .iter()
+                .any(|model| model.id == "manual" && model.manually_added)
+        );
     }
 
     #[test]

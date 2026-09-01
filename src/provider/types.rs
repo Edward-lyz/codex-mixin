@@ -6,6 +6,7 @@ use reqwest::header::HeaderName;
 use serde::{Deserialize, Serialize};
 
 pub const CONFIG_VERSION: u32 = 2;
+pub const MANUAL_MODEL_CONTEXT_WINDOW: u64 = 128_000;
 
 pub fn is_auto_review_model_id(model_id: &str) -> bool {
     matches!(
@@ -102,6 +103,8 @@ impl ProviderRequestPolicy {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ProviderModel {
     pub id: String,
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub manually_added: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub display_name: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

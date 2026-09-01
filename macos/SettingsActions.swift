@@ -159,7 +159,7 @@ extension AppDelegate {
                         try await self.runGateway(["providers", "list", "--json"])
                     )
                 },
-                saveSelectionsHandler: { [weak self] selections, progress in
+                saveSelectionsHandler: { [weak self] selections, modelContexts, progress in
                     guard let self else {
                         throw GatewayError.command("Codex Mixin 已退出")
                     }
@@ -168,6 +168,13 @@ extension AppDelegate {
                         var arguments = ["providers", "select", providerID]
                         for modelID in selections[providerID] ?? [] {
                             arguments.append(contentsOf: ["--model", modelID])
+                        }
+                        for (modelID, contextWindow) in (modelContexts[providerID] ?? [:]).sorted(by: {
+                            $0.key.localizedStandardCompare($1.key) == .orderedAscending
+                        }) {
+                            arguments.append(contentsOf: [
+                                "--model-context", "\(modelID)=\(contextWindow)",
+                            ])
                         }
                         _ = try await self.runGateway(arguments)
                     }

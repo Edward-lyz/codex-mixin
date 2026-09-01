@@ -1,9 +1,11 @@
+use std::collections::BTreeMap;
 use std::time::Duration;
 
 use anyhow::Context;
 use codex_mixin::config::GatewayConfig;
 use codex_mixin::provider::{
-    ProviderModelSource, apply_discovered_models, discover_provider_models, redact_provider_error,
+    MANUAL_MODEL_CONTEXT_WINDOW, ProviderModelSource, apply_discovered_models,
+    discover_provider_models, redact_provider_error,
 };
 use codex_mixin::provider_capabilities::ProviderCapabilities;
 use serde_json::json;
@@ -265,10 +267,19 @@ pub(crate) async fn test_provider(options: TestProviderOptions) -> anyhow::Resul
     Ok(())
 }
 
-pub(crate) fn select_models(id: &str, models: Vec<String>) -> anyhow::Result<()> {
+pub(crate) fn select_models(
+    id: &str,
+    models: Vec<String>,
+    model_contexts: Vec<String>,
+) -> anyhow::Result<()> {
     let models = normalize_model_ids(models)?;
+    let model_contexts = parse_model_contexts(model_contexts)?;
     let selected_count = models.len();
     if id == OFFICIAL_PROVIDER_ID {
+        anyhow::ensure!(
+            model_contexts.is_empty(),
+            "official model context windows cannot be overridden"
+        );
         let available_models = load_official_models()?;
         let available_ids = available_official_ids(&available_models);
         for model in &models {
@@ -286,7 +297,7 @@ pub(crate) fn select_models(id: &str, models: Vec<String>) -> anyhow::Result<()>
     }
     mutate_and_invalidate(|config| {
         ensure_has_providers(config)?;
-        apply_model_selection(find_provider_mut(config, id)?, models)
+        apply_model_selection(find_provider_mut(config, id)?, models, &model_contexts)
     })?;
     println!("provider models selected: {id} ({selected_count})");
     Ok(())
@@ -295,22 +306,96 @@ pub(crate) fn select_models(id: &str, models: Vec<String>) -> anyhow::Result<()>
 pub(super) fn apply_model_selection(
     provider: &mut codex_mixin::provider::ProviderDefinition,
     models: Vec<String>,
+    model_contexts: &BTreeMap<String, u64>,
 ) -> anyhow::Result<()> {
-    let allowed = provider
+    let mut known = provider
         .cached_models
         .iter()
-        .map(|model| model.id.as_str())
-        .chain(provider.selected_models.iter().map(String::as_str))
+        .map(|model| model.id.clone())
         .collect::<std::collections::HashSet<_>>();
     for model in &models {
-        if !allowed.contains(model.as_str()) {
-            anyhow::bail!(
-                "provider {} has no known model {model}; run discover first",
-                provider.id
-            );
+        if known.insert(model.clone()) {
+            provider
+                .cached_models
+                .push(codex_mixin::provider::ProviderModel {
+                    id: model.clone(),
+                    manually_added: true,
+                    context_window: Some(MANUAL_MODEL_CONTEXT_WINDOW),
+                    supports_image: Some(false),
+                    supports_thinking: Some(true),
+                    supports_web_search: Some(false),
+                    supports_tool_search: Some(false),
+                    supports_function_tools: Some(true),
+                    ..codex_mixin::provider::ProviderModel::default()
+                });
         }
     }
+    let selected = models
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::HashSet<_>>();
+    for (model_id, context_window) in model_contexts {
+        anyhow::ensure!(
+            selected.contains(model_id.as_str()),
+            "model context override targets unselected model {model_id}"
+        );
+        let model = provider
+            .cached_models
+            .iter_mut()
+            .find(|model| model.id == *model_id)
+            .ok_or_else(|| anyhow::anyhow!("unknown model context override: {model_id}"))?;
+        anyhow::ensure!(
+            model.manually_added,
+            "model context can only be edited for manually added models: {model_id}"
+        );
+        model.context_window = Some(*context_window);
+    }
+    provider
+        .cached_models
+        .retain(|model| !model.manually_added || selected.contains(model.id.as_str()));
     provider.selected_models = models;
     provider.new_models.clear();
     provider.validate()
+}
+
+fn parse_model_contexts(values: Vec<String>) -> anyhow::Result<BTreeMap<String, u64>> {
+    let mut contexts = BTreeMap::new();
+    for value in values {
+        let (model_id, context_window) = value
+            .rsplit_once('=')
+            .ok_or_else(|| anyhow::anyhow!("model context must use MODEL=TOKENS: {value}"))?;
+        let model_id = super::trim_required("model context model", model_id.to_owned())?;
+        let context_window = context_window.trim().parse::<u64>().with_context(|| {
+            format!("invalid context window for model {model_id}: {context_window}")
+        })?;
+        anyhow::ensure!(
+            context_window > 0,
+            "model context window must be greater than zero: {model_id}"
+        );
+        anyhow::ensure!(
+            contexts.insert(model_id.clone(), context_window).is_none(),
+            "duplicate model context override: {model_id}"
+        );
+    }
+    Ok(contexts)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::parse_model_contexts;
+
+    #[test]
+    fn rejects_duplicate_model_context_overrides() {
+        let error = parse_model_contexts(vec![
+            "model-a=128000".to_owned(),
+            "model-a=256000".to_owned(),
+        ])
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("duplicate model context override")
+        );
+    }
 }

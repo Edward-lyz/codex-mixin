@@ -105,6 +105,69 @@ struct ModelBenchmarkDataTests {
             KeyPathComparator(\ModelBenchmarkTableRow.isSelectedSortValue),
         ])
         precondition(sortedSelectionRows.map(\.model.id) == ["unselected", "selected"])
+        let manual = manuallyEnteredProviderModel("not-listed")
+        precondition(manual.id == "not-listed")
+        precondition(manual.contextWindow == 128_000)
+        precondition(manual.supportsThinking == true)
+        precondition(manual.supportsFunctionTools == true)
+        precondition(manual.supportsImage == false)
+        precondition(manual.supportsWebSearch == false)
+        precondition(manual.supportsToolSearch == false)
+        precondition(modelContextK(fromTokens: 256_000) == 256)
+        precondition(modelContextTokens(fromK: 256) == 256_000)
+        let manualKey = providerModelSelectionKey(providerID: provider.id, modelID: manual.id)
+        let manualSelections = providerModelSelections(
+            [provider],
+            selectedKeys: [manualKey],
+            additionalModelIDs: [provider.id: [manual.id]]
+        )
+        precondition(manualSelections[provider.id] == [manual.id])
+
+        let cachedManualProvider = try decodeProviderList(
+            """
+            {
+              "config_version": 2,
+              "gateway_auth_configured": false,
+              "providers": [{
+                "id": "baidu-oneapi",
+                "display_name": "Baidu OneAPI",
+                "enabled": true,
+                "auxiliary_model_upstream": false,
+                "protocol": "open_ai_responses",
+                "base_url": "https://example.com",
+                "api_path": "/v1/responses",
+                "model_source": {"kind": "baidu_one_api"},
+                "api_key_configured": true,
+                "quota_parser": "baidu_oneapi",
+                "selected_models": ["GLM-5.3-Flash"],
+                "new_models": [],
+                "unavailable_selected_models": [],
+                "cached_models": [{
+                  "id": "GLM-5.3-Flash",
+                  "manually_added": true,
+                  "context_window": 256000
+                }],
+                "readiness": "healthy",
+                "readiness_issues": [],
+                "routable_model_count": 1
+              }]
+            }
+            """
+        ).providers[0]
+        let deduplicated = mergedProviderModelItems(
+            cachedManualProvider,
+            additionalModelIDs: ["GLM-5.3-Flash"],
+            excludingModelIDs: []
+        )
+        precondition(deduplicated.map(\.id) == ["GLM-5.3-Flash"])
+        precondition(deduplicated[0].manuallyAdded)
+        precondition(deduplicated[0].contextWindow == 256_000)
+        let deleted = mergedProviderModelItems(
+            cachedManualProvider,
+            additionalModelIDs: ["GLM-5.3-Flash"],
+            excludingModelIDs: ["GLM-5.3-Flash"]
+        )
+        precondition(deleted.isEmpty)
 
         let previous = ModelBenchmarkResult(
             model: "old-model",

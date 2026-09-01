@@ -28,7 +28,9 @@ final class ModelBenchmarkModel: ObservableObject {
     let startHandler: (Int, String, Int) async throws -> ModelBenchmarkSnapshot
     let fetchHandler: () async throws -> ModelBenchmarkSnapshot?
     let loadProvidersHandler: () async throws -> ProviderListResponse
-    let saveSelectionsHandler: ([String: [String]], OperationProgress) async throws -> Void
+    let saveSelectionsHandler: (
+        [String: [String]], [String: [String: UInt64]], OperationProgress
+    ) async throws -> Void
     let discoverHandler: (String, @escaping (String) -> Void) async throws -> Void
     let probeHandler: (String, @escaping (String) -> Void) async throws -> Void
 
@@ -38,6 +40,7 @@ final class ModelBenchmarkModel: ObservableObject {
     @Published var selectedModelKeys: Set<String> = []
     @Published var savedModelKeys: Set<String> = []
     @Published var query = ""
+    @Published var manualModelID = ""
     @Published var selectionFilter = "all"
     @Published var modeSelection = 1
     @Published var timeoutSeconds = 5
@@ -52,13 +55,19 @@ final class ModelBenchmarkModel: ObservableObject {
     @Published var isProbingCapabilities = false
 
     private(set) var resultCache: [String: ModelBenchmarkResult] = [:]
+    private(set) var manualModelIDs: [String: Set<String>] = [:]
+    private(set) var manualModelContexts: [String: [String: UInt64]] = [:]
+    private(set) var savedManualModelContexts: [String: [String: UInt64]] = [:]
+    private(set) var removedManualModelIDs: [String: Set<String>] = [:]
     private var pollingTask: Task<Void, Never>?
 
     init(
         startHandler: @escaping (Int, String, Int) async throws -> ModelBenchmarkSnapshot,
         fetchHandler: @escaping () async throws -> ModelBenchmarkSnapshot?,
         loadProvidersHandler: @escaping () async throws -> ProviderListResponse,
-        saveSelectionsHandler: @escaping ([String: [String]], OperationProgress) async throws -> Void,
+        saveSelectionsHandler: @escaping (
+            [String: [String]], [String: [String: UInt64]], OperationProgress
+        ) async throws -> Void,
         discoverHandler: @escaping (String, @escaping (String) -> Void) async throws -> Void,
         probeHandler: @escaping (String, @escaping (String) -> Void) async throws -> Void
     ) {
@@ -79,7 +88,7 @@ final class ModelBenchmarkModel: ObservableObject {
     }
 
     var dirty: Bool {
-        selectedModelKeys != savedModelKeys
+        selectedModelKeys != savedModelKeys || manualModelContexts != savedManualModelContexts
     }
 
     var isBusy: Bool {
@@ -118,6 +127,12 @@ final class ModelBenchmarkModel: ObservableObject {
             selectedModelKeys.insert(row.id)
         } else {
             selectedModelKeys.remove(row.id)
+            if row.model.manuallyAdded {
+                manualModelContexts[row.providerID]?.removeValue(forKey: row.model.id)
+                if manualModelContexts[row.providerID]?.isEmpty == true {
+                    manualModelContexts.removeValue(forKey: row.providerID)
+                }
+            }
         }
     }
 
@@ -127,6 +142,49 @@ final class ModelBenchmarkModel: ObservableObject {
 
     func selectNoneVisible() {
         selectedModelKeys.subtract(visibleRows.map(\.id))
+    }
+
+    func addManualModel() {
+        guard let provider = selectedProvider, provider.kind == .configured, !isBusy else { return }
+        let modelID = manualModelID.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !modelID.isEmpty else { return }
+        let key = providerModelSelectionKey(providerID: provider.id, modelID: modelID)
+        removedManualModelIDs[provider.id]?.remove(modelID)
+        if !provider.modelItems.contains(where: { $0.id == modelID }) {
+            manualModelIDs[provider.id, default: []].insert(modelID)
+            manualModelContexts[provider.id, default: [:]][modelID] = 128_000
+        }
+        selectedModelKeys.insert(key)
+        manualModelID = ""
+        rebuildRows()
+    }
+
+    func removeManualModel(_ row: ModelBenchmarkTableRow) {
+        guard row.model.manuallyAdded, !isBusy else { return }
+        manualModelIDs[row.providerID]?.remove(row.model.id)
+        manualModelContexts[row.providerID]?.removeValue(forKey: row.model.id)
+        if manualModelContexts[row.providerID]?.isEmpty == true {
+            manualModelContexts.removeValue(forKey: row.providerID)
+        }
+        removedManualModelIDs[row.providerID, default: []].insert(row.model.id)
+        selectedModelKeys.remove(row.id)
+        rebuildRows()
+    }
+
+    func manualModelContextK(_ row: ModelBenchmarkTableRow) -> UInt64 {
+        modelContextK(
+            fromTokens: manualModelContexts[row.providerID]?[row.model.id]
+                ?? row.model.contextWindow
+                ?? 128_000
+        )
+    }
+
+    func setManualModelContextK(_ row: ModelBenchmarkTableRow, contextK: UInt64) {
+        guard row.model.manuallyAdded, !isBusy else { return }
+        manualModelContexts[row.providerID, default: [:]][row.model.id] = modelContextTokens(
+            fromK: contextK
+        )
+        rebuildRows()
     }
 
     func saveSelections() {
@@ -175,7 +233,7 @@ final class ModelBenchmarkModel: ObservableObject {
     }
 
     func refreshModels() {
-        guard let provider = selectedProvider, provider.supportsModelRefresh, !isBusy else { return }
+        guard let provider = selectedProvider, provider.supportsModelRefresh, !isBusy, !dirty else { return }
         let providerID = provider.id
         let providerName = selectedProvider?.displayName ?? providerID
         isDiscoveringModels = true
@@ -188,7 +246,7 @@ final class ModelBenchmarkModel: ObservableObject {
                 }
             }
         } onSuccess: {
-            self.reloadProviders(selecting: providerID)
+            try await self.loadProviders(selecting: providerID)
             self.resetProgress(to: 1)
             self.setStatus("已刷新 \(providerName) 的模型", color: .green)
         } onFailure: { error in
@@ -209,7 +267,7 @@ final class ModelBenchmarkModel: ObservableObject {
                 }
             }
         } onSuccess: {
-            self.reloadProviders(selecting: provider.id)
+            try await self.loadProviders(selecting: provider.id)
             self.resetProgress(to: 1)
             self.setStatus("已完成 \(provider.displayName) 已加入模型的能力探测", color: .green)
         } onFailure: { error in
@@ -222,24 +280,9 @@ final class ModelBenchmarkModel: ObservableObject {
         Task { @MainActor [weak self] in
             guard let self else { return }
             do {
-                let response = try await loadProvidersHandler()
-                providers = response.providers
-                selectedProviderID = providerID ?? selectedProviderID
-                    ?? providers.first(where: { $0.kind == .configured })?.id
-                selectedModelKeys = selectedProviderModelKeys(providers)
-                savedModelKeys = selectedModelKeys
-                rebuildRows()
+                try await loadProviders(selecting: providerID)
             } catch {
-                providers = []
-                visibleRows = []
-                selectedProviderID = nil
-                selectedModelKeys = []
-                savedModelKeys = []
-                setStatus("读取模型列表失败", color: .red)
-                presentBenchmarkError(
-                    title: "读取模型列表失败",
-                    message: localizedErrorDescription(error)
-                )
+                handleProviderLoadFailure(error)
             }
         }
     }
@@ -255,7 +298,12 @@ final class ModelBenchmarkModel: ObservableObject {
         }
         let searchText = (queryOverride ?? query).trimmingCharacters(in: .whitespacesAndNewlines)
         let filter = filterOverride ?? selectionFilter
-        let rows = provider.modelItems.compactMap { model -> ModelBenchmarkTableRow? in
+        let modelItems = mergedProviderModelItems(
+            provider,
+            additionalModelIDs: manualModelIDs[provider.id] ?? [],
+            excludingModelIDs: removedManualModelIDs[provider.id] ?? []
+        )
+        let rows = modelItems.compactMap { model -> ModelBenchmarkTableRow? in
             let key = providerModelSelectionKey(providerID: provider.id, modelID: model.id)
             let matchesQuery = searchText.isEmpty
                 || model.id.localizedCaseInsensitiveContains(searchText)
@@ -280,6 +328,49 @@ final class ModelBenchmarkModel: ObservableObject {
         ])
     }
 
+    private func reconcileManualModelState() {
+        for provider in providers {
+            let cachedModelIDs = Set(provider.modelItems.map(\.id))
+            manualModelIDs[provider.id]?.subtract(cachedModelIDs)
+            if manualModelIDs[provider.id]?.isEmpty == true {
+                manualModelIDs.removeValue(forKey: provider.id)
+            }
+            let cachedManualIDs = Set(
+                provider.modelItems.filter(\.manuallyAdded).map(\.id)
+            )
+            removedManualModelIDs[provider.id]?.formIntersection(cachedManualIDs)
+            if removedManualModelIDs[provider.id]?.isEmpty == true {
+                removedManualModelIDs.removeValue(forKey: provider.id)
+            }
+        }
+    }
+
+    private func loadProviders(selecting providerID: String?) async throws {
+        let response = try await loadProvidersHandler()
+        providers = response.providers
+        manualModelContexts = [:]
+        savedManualModelContexts = [:]
+        reconcileManualModelState()
+        selectedProviderID = providerID ?? selectedProviderID
+            ?? providers.first(where: { $0.kind == .configured })?.id
+        selectedModelKeys = selectedProviderModelKeys(providers)
+        savedModelKeys = selectedModelKeys
+        rebuildRows()
+    }
+
+    private func handleProviderLoadFailure(_ error: Error) {
+        providers = []
+        visibleRows = []
+        selectedProviderID = nil
+        selectedModelKeys = []
+        savedModelKeys = []
+        setStatus("读取模型列表失败", color: .red)
+        presentBenchmarkError(
+            title: "读取模型列表失败",
+            message: localizedErrorDescription(error)
+        )
+    }
+
     private func persistSelectionsIfNeeded() async throws {
         guard dirty else { return }
         isSavingSelections = true
@@ -287,7 +378,20 @@ final class ModelBenchmarkModel: ObservableObject {
             isSavingSelections = false
         }
         setStatus("正在保存模型选择并更新 Codex 目录…", color: .secondary)
-        let selections = providerModelSelections(providers, selectedKeys: selectedModelKeys)
+        let selections = providerModelSelections(
+            providers,
+            selectedKeys: selectedModelKeys,
+            additionalModelIDs: manualModelIDs
+        )
+        let selectedContexts = Dictionary(uniqueKeysWithValues: manualModelContexts.compactMap {
+            providerID, contexts in
+            let selected = contexts.filter { modelID, _ in
+                selectedModelKeys.contains(
+                    providerModelSelectionKey(providerID: providerID, modelID: modelID)
+                )
+            }
+            return selected.isEmpty ? nil : (providerID, selected)
+        })
         try await runOperationProgress(
             title: "正在保存模型选择",
             phases: ["写入模型选择", "重启本地网关", "刷新 Codex 模型目录", "完成"],
@@ -295,9 +399,10 @@ final class ModelBenchmarkModel: ObservableObject {
             failureTitle: "✗ 保存失败",
             showFailureAlert: false
         ) { progress in
-            try await self.saveSelectionsHandler(selections, progress)
+            try await self.saveSelectionsHandler(selections, selectedContexts, progress)
         }
         savedModelKeys = selectedModelKeys
+        savedManualModelContexts = manualModelContexts
     }
 
     private func beginPolling() {
@@ -390,7 +495,7 @@ final class ModelBenchmarkModel: ObservableObject {
 
     private func runStreaming(
         _ operation: @escaping () async throws -> Void,
-        onSuccess: @escaping () -> Void,
+        onSuccess: @escaping () async throws -> Void,
         onFailure: @escaping (Error) -> Void
     ) {
         // The handler itself reports streaming progress; completion is centralized here.
@@ -402,7 +507,7 @@ final class ModelBenchmarkModel: ObservableObject {
             }
             do {
                 try await operation()
-                onSuccess()
+                try await onSuccess()
             } catch {
                 onFailure(error)
             }
@@ -554,7 +659,7 @@ struct ModelBenchmarkRootView: View {
             Button(action: model.refreshModels) {
                 Label("刷新模型", systemImage: "arrow.clockwise")
             }
-            .disabled(model.isBusy || model.selectedProvider?.supportsModelRefresh != true)
+            .disabled(model.isBusy || model.dirty || model.selectedProvider?.supportsModelRefresh != true)
 
             Button(action: model.probeCapabilities) {
                 Label("探测已加入模型", systemImage: "waveform.path.ecg")
@@ -582,34 +687,50 @@ struct ModelBenchmarkRootView: View {
     }
 
     private var selectionToolbar: some View {
-        HStack(spacing: 8) {
-            Image(systemName: "magnifyingglass")
-                .foregroundStyle(.secondary)
+        VStack(spacing: 8) {
+            HStack(spacing: 8) {
+                Image(systemName: "magnifyingglass")
+                    .foregroundStyle(.secondary)
 
-            TextField("搜索当前 Provider 的模型", text: searchBinding)
-                .textFieldStyle(.roundedBorder)
+                TextField("搜索当前 Provider 的模型", text: searchBinding)
+                    .textFieldStyle(.roundedBorder)
 
-            Picker("筛选", selection: filterBinding) {
-                Text("全部模型").tag("all")
-                Text("已加入 Codex").tag("selected")
-                Text("新增").tag("new")
+                Picker("筛选", selection: filterBinding) {
+                    Text("全部模型").tag("all")
+                    Text("已加入 Codex").tag("selected")
+                    Text("新增").tag("new")
+                }
+                .labelsHidden()
+                .frame(width: 150)
+
+                Button("全选", action: model.selectAllVisible)
+                    .disabled(model.isBusy || model.visibleRows.isEmpty)
+
+                Button("全不选", action: model.selectNoneVisible)
+                    .disabled(model.isBusy || model.visibleRows.isEmpty)
+
+                Button {
+                    model.saveSelections()
+                } label: {
+                    Label("保存模型选择", systemImage: "square.and.arrow.down")
+                }
+                .buttonStyle(.borderedProminent)
+                .disabled(!model.dirty || model.isBusy)
             }
-            .labelsHidden()
-            .frame(width: 150)
 
-            Button("全选", action: model.selectAllVisible)
-                .disabled(model.isBusy || model.visibleRows.isEmpty)
-
-            Button("全不选", action: model.selectNoneVisible)
-                .disabled(model.isBusy || model.visibleRows.isEmpty)
-
-            Button {
-                model.saveSelections()
-            } label: {
-                Label("保存模型选择", systemImage: "square.and.arrow.down")
+            HStack(spacing: 8) {
+                TextField("手动输入模型 ID（可不在 /v1/models 中）", text: $model.manualModelID)
+                    .textFieldStyle(.roundedBorder)
+                    .onSubmit(model.addManualModel)
+                Button("添加并选中", action: model.addManualModel)
+                    .disabled(
+                        model.isBusy || model.selectedProvider?.kind != .configured
+                            || model.manualModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
+                    )
+                Text("默认：Thinking、Function Tools")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
             }
-            .buttonStyle(.borderedProminent)
-            .disabled(!model.dirty || model.isBusy)
         }
         .padding(.horizontal, 20)
         .padding(.bottom, 12)
@@ -669,9 +790,21 @@ struct ModelBenchmarkRootView: View {
 
     private var contextColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
         TableColumn("上下文", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.contextSortValue)) { row in
-            Text(row.model.contextWindow.map(formatContextWindow) ?? "-")
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .trailing)
+            if row.model.manuallyAdded {
+                HStack(spacing: 2) {
+                    TextField("", value: manualContextBinding(row), format: .number)
+                        .textFieldStyle(.plain)
+                        .multilineTextAlignment(.trailing)
+                    Text("K")
+                        .foregroundStyle(.secondary)
+                }
+                .disabled(model.isBusy)
+                .help("手动模型上下文，单位 K；修改后保存模型选择")
+            } else {
+                Text(row.model.contextWindow.map(formatContextWindow) ?? "-")
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .trailing)
+            }
         }
         .width(min: 86, ideal: 104)
     }
@@ -743,18 +876,39 @@ struct ModelBenchmarkRootView: View {
         )
     }
 
+    private func manualContextBinding(_ row: ModelBenchmarkTableRow) -> Binding<UInt64> {
+        Binding(
+            get: { model.manualModelContextK(row) },
+            set: { model.setManualModelContextK(row, contextK: $0) }
+        )
+    }
+
     private func modelCell(_ row: ModelBenchmarkTableRow) -> some View {
         let displayName = row.model.displayName.flatMap { $0 == row.model.id ? nil : $0 }
         var suffixes: [String] = []
         if row.model.isNew { suffixes.append("新增") }
         if !row.model.isAvailable { suffixes.append("不可用") }
         let suffix = suffixes.isEmpty ? "" : " · \(suffixes.joined(separator: " / "))"
-        return Text((displayName.map { "\(row.model.id) · \($0)" } ?? row.model.id) + suffix)
-            .font(.callout.monospaced())
-            .lineLimit(1)
-            .truncationMode(.middle)
-            .foregroundStyle(row.model.isAvailable ? .primary : .secondary)
-            .help(row.model.description ?? row.model.id)
+        return HStack(spacing: 6) {
+            Text((displayName.map { "\(row.model.id) · \($0)" } ?? row.model.id) + suffix)
+                .font(.callout.monospaced())
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .foregroundStyle(row.model.isAvailable ? .primary : .secondary)
+                .help(row.model.description ?? row.model.id)
+            Spacer(minLength: 4)
+            if row.model.manuallyAdded {
+                Button {
+                    model.removeManualModel(row)
+                } label: {
+                    Image(systemName: "trash")
+                        .foregroundStyle(.secondary)
+                }
+                .buttonStyle(.borderless)
+                .disabled(model.isBusy)
+                .help("删除手动模型；保存模型选择后生效")
+            }
+        }
     }
 
     private func latencyCell(_ row: ModelBenchmarkTableRow) -> some View {
@@ -823,7 +977,9 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         startHandler: @escaping (Int, String, Int) async throws -> ModelBenchmarkSnapshot,
         fetchHandler: @escaping () async throws -> ModelBenchmarkSnapshot?,
         loadProvidersHandler: @escaping () async throws -> ProviderListResponse,
-        saveSelectionsHandler: @escaping ([String: [String]], OperationProgress) async throws -> Void,
+        saveSelectionsHandler: @escaping (
+            [String: [String]], [String: [String: UInt64]], OperationProgress
+        ) async throws -> Void,
         discoverHandler: @escaping (String, @escaping (String) -> Void) async throws -> Void,
         probeHandler: @escaping (String, @escaping (String) -> Void) async throws -> Void
     ) {

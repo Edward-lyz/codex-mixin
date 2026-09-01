@@ -711,6 +711,8 @@ enum ProviderCommand {
         id: String,
         #[arg(long = "model")]
         models: Vec<String>,
+        #[arg(long = "model-context", value_name = "MODEL=TOKENS")]
+        model_contexts: Vec<String>,
     },
 }
 
@@ -1060,7 +1062,11 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 })
                 .await
             }
-            ProviderCommand::Select { id, models } => select_models(&id, models),
+            ProviderCommand::Select {
+                id,
+                models,
+                model_contexts,
+            } => select_models(&id, models, model_contexts),
         },
         Command::Service { command } => match command {
             ServiceCommand::Start {
