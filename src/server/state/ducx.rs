@@ -109,6 +109,17 @@ impl AppState {
             .map_err(GatewayError::Other)
     }
 
+    pub(crate) async fn invalidate_ducx_headers(
+        &self,
+        provider: &ProviderRuntime,
+    ) -> Result<(), GatewayError> {
+        self.ducx_runtime_for(provider)
+            .await?
+            .invalidate_headers()
+            .await;
+        Ok(())
+    }
+
     pub(crate) async fn baidu_native_headers(
         &self,
         provider: &ProviderRuntime,

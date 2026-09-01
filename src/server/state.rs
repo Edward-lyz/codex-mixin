@@ -277,40 +277,56 @@ impl AppState {
         } else {
             provider.definition().anthropic_beta.clone()
         };
-        // DUCX acts as a header generator. Merge its native headers instead of
-        // the stored key.
-        let native = self.baidu_native_headers(provider).await?;
-        let base_request = self.client.post(provider.api_url().clone());
-        let mut upstream_request = match &native {
-            Some(native) => base_request.headers(native.clone()),
-            None => provider.apply_auth(base_request),
-        };
-        upstream_request = provider.apply_anthropic_beta(upstream_request, beta.as_deref());
-        let upstream_request = provider
-            .apply_session_affinity(upstream_request, hash_key)
-            .header(header::ACCEPT, "text/event-stream");
-        let response = crate::request_body::send_json(upstream_request, request.clone())
-            .await
-            .inspect_err(|error| {
-                tracing::error!(
+        let mut refreshed_ducx_auth = false;
+        loop {
+            // DUCX acts as a header generator. Merge its native headers instead
+            // of the stored key.
+            let native = self.baidu_native_headers(provider).await?;
+            let base_request = self.client.post(provider.api_url().clone());
+            let mut upstream_request = match &native {
+                Some(native) => base_request.headers(native.clone()),
+                None => provider.apply_auth(base_request),
+            };
+            upstream_request = provider.apply_anthropic_beta(upstream_request, beta.as_deref());
+            let upstream_request = provider
+                .apply_session_affinity(upstream_request, hash_key)
+                .header(header::ACCEPT, "text/event-stream");
+            let response = crate::request_body::send_json(upstream_request, request.clone())
+                .await
+                .inspect_err(|error| {
+                    tracing::error!(
+                        provider_id = provider.id(),
+                        upstream_model_id = %request.model,
+                        error = %crate::error::format_error_chain(error),
+                        "provider messages request failed before receiving a response"
+                    );
+                })?;
+            let status = response.status();
+            if status == StatusCode::UNAUTHORIZED
+                && provider.uses_ducx_loopback()
+                && !refreshed_ducx_auth
+            {
+                tracing::warn!(
                     provider_id = provider.id(),
                     upstream_model_id = %request.model,
-                    error = %crate::error::format_error_chain(error),
-                    "provider messages request failed before receiving a response"
+                    "refreshing DUCX authentication after upstream rejected cached headers"
                 );
-            })?;
-        let status = response.status();
-        if !status.is_success() {
-            let body = crate::request_body::read_error_text(response).await?;
-            return Err(GatewayError::UpstreamStatus {
-                status,
-                message: format!(
-                    "provider {} messages endpoint returned {status}: {body}",
-                    provider.id()
-                ),
-            });
+                self.invalidate_ducx_headers(provider).await?;
+                refreshed_ducx_auth = true;
+                continue;
+            }
+            if !status.is_success() {
+                let body = crate::request_body::read_error_text(response).await?;
+                return Err(GatewayError::UpstreamStatus {
+                    status,
+                    message: format!(
+                        "provider {} messages endpoint returned {status}: {body}",
+                        provider.id()
+                    ),
+                });
+            }
+            return Ok(response.bytes_stream().boxed());
         }
-        Ok(response.bytes_stream().boxed())
     }
 
     pub(crate) async fn anthropic_stream_with_web_search_retry(

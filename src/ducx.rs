@@ -25,9 +25,9 @@ use crate::auth_capture::{CaptureProxy, CaptureTrigger, REPORT_CLIENT_TOKEN_HEAD
 const DUCX_PLATFORM: &str = "AIIDE-terminal";
 const DATA_REPORT_BASE_URL: &[u8] = b"http://ducc-data.baidu-int.com:8501";
 const DATA_REPORT_STDERR_LIMIT: u64 = 8 * 1024;
-/// Captured headers are reused until this TTL elapses to avoid spawning DUCX per
-/// request. The minted token is short lived upstream, so keep the window small.
-const HEADER_TTL: Duration = Duration::from_secs(600);
+/// Captured headers are refreshed on demand after one minute. No background
+/// process runs while the gateway is idle.
+const HEADER_TTL: Duration = Duration::from_secs(60);
 
 struct CapturedHeaders {
     headers: HeaderMap,
@@ -68,6 +68,10 @@ impl DucxRuntime {
             at: Instant::now(),
         });
         Ok(headers)
+    }
+
+    pub(crate) async fn invalidate_headers(&self) {
+        *self.cached.lock().await = None;
     }
 
     pub(crate) async fn report_client_token(&self, timeout: Duration) -> anyhow::Result<String> {
@@ -382,6 +386,22 @@ mod tests {
     #[test]
     fn native_header_is_captured_from_shared_proxy() {
         assert_eq!(crate::auth_capture::NATIVE_HEADER, "comate_custom_header");
+    }
+
+    #[tokio::test]
+    async fn invalidates_cached_native_headers() {
+        let runtime = DucxRuntime {
+            executable: PathBuf::from("/tmp/ducx"),
+            home: PathBuf::from("/tmp"),
+            cached: Mutex::new(Some(CapturedHeaders {
+                headers: HeaderMap::new(),
+                at: Instant::now(),
+            })),
+        };
+
+        runtime.invalidate_headers().await;
+
+        assert!(runtime.cached.lock().await.is_none());
     }
 
     #[test]
