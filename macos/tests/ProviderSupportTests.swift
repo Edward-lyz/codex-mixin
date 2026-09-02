@@ -64,9 +64,6 @@ struct ProviderSupportTests {
                       "context_window": 1000000
                     },
                     {
-                      "id": "codex-auto-review"
-                    },
-                    {
                       "id": "gpt-realtime-1.5"
                     }
                   ],

@@ -1,8 +1,8 @@
 use crate::error::GatewayError;
 use crate::fusion::{FUSION_MODEL_PREFIX, FusionProfile};
-use crate::provider::ProviderRegistry;
+use crate::provider::{AUTO_REVIEW_MODEL_ID, ProviderRegistry};
 
-pub(crate) const AUTO_REVIEW_MODEL_SLUG: &str = "codex-auto-review";
+pub(crate) const AUTO_REVIEW_MODEL_SLUG: &str = AUTO_REVIEW_MODEL_ID;
 
 pub(crate) fn is_official_model_slug(model: &str) -> bool {
     model

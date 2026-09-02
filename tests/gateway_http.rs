@@ -6849,6 +6849,40 @@ async fn auxiliary_provider_overrides_official_auto_review_http_backend() {
 }
 
 #[tokio::test]
+async fn baidu_auxiliary_routes_hidden_auto_review_model_id() {
+    let (upstream_url, upstream_requests) = spawn_baidu_protocol_upstream().await;
+    let mut config = test_config(upstream_url);
+    configure_baidu_policy(&mut config);
+    configure_custom_headers_from_env(&mut config);
+    config.providers[0].model_source = ProviderModelSource::BaiduOneApi;
+    config.providers[0].auxiliary_model_upstream = true;
+    config.accept_codex_oauth = false;
+    assert!(
+        config.providers[0]
+            .cached_models
+            .iter()
+            .all(|model| model.id != "codex-auto-review")
+    );
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut request = responses_request();
+    request["model"] = json!("codex-auto-review");
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let upstream_requests = upstream_requests.lock().unwrap();
+    assert_eq!(upstream_requests.len(), 1);
+    assert_eq!(upstream_requests[0]["path"], "/v1/messages");
+    assert_eq!(upstream_requests[0]["body"]["model"], "codex-auto-review");
+}
+
+#[tokio::test]
 async fn custom_only_routes_available_auto_review_model_to_provider() {
     let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
     let mut config = test_config(upstream_url);

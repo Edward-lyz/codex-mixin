@@ -5,6 +5,7 @@ use std::time::{Duration, Instant};
 
 use axum::Router;
 use codex_mixin::config::GatewayConfig;
+use codex_mixin::gateway_access::CODEX_CLIENT_KEY_HEADER;
 use codex_mixin::provider::{ProviderModelSource, catalog_model_slug};
 use codex_mixin::server::{AppState, router};
 use futures_util::{SinkExt, StreamExt};
@@ -314,6 +315,7 @@ async fn baidu_auxiliary_auto_review_alias_reaches_real_upstream() {
     let mut config =
         GatewayConfig::from_stored_config().expect("load local Codex Mixin configuration");
     let gateway_api_key = config.gateway_api_key.clone();
+    let codex_client_key = config.gateway_client_keys.codex.clone();
     let provider_index = config
         .providers
         .iter()
@@ -321,13 +323,6 @@ async fn baidu_auxiliary_auto_review_alias_reaches_real_upstream() {
         .expect("Baidu OneAPI provider is not configured");
     let provider = config.providers.remove(provider_index);
     assert!(provider.auxiliary_model_upstream);
-    assert!(
-        provider
-            .cached_models
-            .iter()
-            .any(|model| model.id == "auto"),
-        "Baidu OneAPI cache does not contain the auto model"
-    );
     config.providers = vec![provider];
     config.fusion_profiles.clear();
     config.accept_codex_oauth = false;
@@ -349,6 +344,9 @@ async fn baidu_auxiliary_auto_review_alias_reaches_real_upstream() {
         }));
     if let Some(api_key) = gateway_api_key {
         request = request.bearer_auth(api_key);
+    }
+    if let Some(client_key) = codex_client_key {
+        request = request.header(CODEX_CLIENT_KEY_HEADER, client_key);
     }
 
     let response = request

@@ -32,6 +32,7 @@ pub use types::{
 };
 
 pub(crate) use aws_sigv4::sign_request as sign_aws_request;
+pub(crate) use types::AUTO_REVIEW_MODEL_ID;
 
 /// Mint the native auth headers for the selected Baidu auth core.
 ///

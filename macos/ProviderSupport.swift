@@ -247,7 +247,7 @@ struct ProviderView: Decodable {
     }
 
     var supportsAutoReview: Bool {
-        cachedModels.contains { model in
+        modelSource.kind == "baidu_oneapi" || cachedModels.contains { model in
             switch model.id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
             case "codex-auto-review", "auto", "auto-baidu-oneapi":
                 true

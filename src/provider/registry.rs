@@ -6,8 +6,9 @@ use reqwest::{RequestBuilder, Url};
 
 use super::external_auth::resolve_custom_headers_from_env;
 use super::types::{
-    BaiduAuthBridge, ProviderAuthHeader, ProviderDefinition, ProviderModel, ProviderModelKey,
-    ProviderModelSource, ProviderProtocol, ProviderQuotaParser, is_auto_review_model_id,
+    AUTO_REVIEW_MODEL_ID, BaiduAuthBridge, ProviderAuthHeader, ProviderDefinition, ProviderModel,
+    ProviderModelKey, ProviderModelSource, ProviderProtocol, ProviderQuotaParser,
+    is_auto_review_model_id,
 };
 
 const FUSION_MODEL_PREFIX: &str = "mixin/fusion/";
@@ -410,13 +411,25 @@ impl ProviderRegistry {
         self.resolve_from(&self.known_routes, catalog_slug)
     }
 
-    pub fn resolve_auxiliary_model(
-        &self,
+    pub fn resolve_auxiliary_model<'a>(
+        &'a self,
         upstream_model_id: &str,
-    ) -> Option<ResolvedProviderModel<'_>> {
+    ) -> Option<ResolvedProviderModel<'a>> {
         let provider = self.providers.iter().find(|provider| {
             provider.definition.enabled && provider.definition.auxiliary_model_upstream
         })?;
+        if provider.is_baidu_model_source()
+            && upstream_model_id
+                .trim()
+                .eq_ignore_ascii_case(AUTO_REVIEW_MODEL_ID)
+        {
+            return Some(ResolvedProviderModel {
+                catalog_slug: AUTO_REVIEW_MODEL_ID,
+                provider,
+                upstream_model_id: AUTO_REVIEW_MODEL_ID,
+                model: None,
+            });
+        }
         let model = provider.definition.cached_models.iter().find(|candidate| {
             candidate.id.eq_ignore_ascii_case(upstream_model_id)
                 || (is_auto_review_model_id(upstream_model_id)
@@ -674,19 +687,21 @@ mod tests {
     }
 
     #[test]
-    fn auxiliary_auto_review_alias_resolves_baidu_default_model() {
+    fn auxiliary_auto_review_uses_baidu_hidden_upstream_model() {
         let mut provider = baidu_oneapi_provider("baidu", "test-key");
         provider.quota_username = Some("quota-user".to_owned());
         provider.auxiliary_model_upstream = true;
         provider.cached_models = vec![ProviderModel {
-            id: "auto".to_owned(),
+            id: "Claude Opus 4.6".to_owned(),
             ..ProviderModel::default()
         }];
         let registry = ProviderRegistry::new(vec![provider]).unwrap();
 
         let resolved = registry.resolve_auxiliary_model("codex-auto-review");
 
-        assert_eq!(resolved.unwrap().upstream_model_id, "auto");
+        let resolved = resolved.unwrap();
+        assert_eq!(resolved.upstream_model_id, "codex-auto-review");
+        assert!(resolved.model.is_none());
     }
 
     #[test]

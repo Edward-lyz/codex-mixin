@@ -7,11 +7,12 @@ use serde::{Deserialize, Serialize};
 
 pub const CONFIG_VERSION: u32 = 2;
 pub const MANUAL_MODEL_CONTEXT_WINDOW: u64 = 128_000;
+pub(crate) const AUTO_REVIEW_MODEL_ID: &str = "codex-auto-review";
 
 pub fn is_auto_review_model_id(model_id: &str) -> bool {
     matches!(
         model_id.trim().to_ascii_lowercase().as_str(),
-        "codex-auto-review" | "auto" | "auto-baidu-oneapi"
+        AUTO_REVIEW_MODEL_ID | "auto" | "auto-baidu-oneapi"
     )
 }
 
