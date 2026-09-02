@@ -7,7 +7,7 @@ use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::report_hook::reporting_enabled;
 use crate::cli::runtime::{load_runtime_metadata, pid_is_running};
 use codex_mixin::config::GatewayConfig;
-use codex_mixin::provider::{ProviderModel, ProviderRegistry};
+use codex_mixin::provider::{ProviderModel, ProviderRegistry, catalog_model_slug};
 
 use super::official_models::selected_official_models;
 
@@ -53,6 +53,9 @@ pub(in crate::cli) struct ClaudeModelMapping {
     pub(in crate::cli) opus: String,
     pub(in crate::cli) sonnet: String,
     pub(in crate::cli) haiku: String,
+    pub(in crate::cli) opus_override: Option<String>,
+    pub(in crate::cli) sonnet_override: Option<String>,
+    pub(in crate::cli) haiku_override: Option<String>,
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -67,7 +70,17 @@ pub(in crate::cli) fn claude_model_request(
     opus_model: Option<String>,
     sonnet_model: Option<String>,
     haiku_model: Option<String>,
+    opus_model_override: Option<String>,
+    sonnet_model_override: Option<String>,
+    haiku_model_override: Option<String>,
 ) -> anyhow::Result<ClaudeModelRequest> {
+    anyhow::ensure!(
+        opus_model_override.is_none()
+            && sonnet_model_override.is_none()
+            && haiku_model_override.is_none()
+            || opus_model.is_some() && sonnet_model.is_some() && haiku_model.is_some(),
+        "model overrides require --opus-model, --sonnet-model, and --haiku-model"
+    );
     match (model, opus_model, sonnet_model, haiku_model) {
         (None, None, None, None) => Ok(ClaudeModelRequest::Automatic),
         (Some(model), None, None, None) => Ok(ClaudeModelRequest::Single(model)),
@@ -76,6 +89,9 @@ pub(in crate::cli) fn claude_model_request(
                 opus,
                 sonnet,
                 haiku,
+                opus_override: opus_model_override,
+                sonnet_override: sonnet_model_override,
+                haiku_override: haiku_model_override,
             }))
         }
         _ => anyhow::bail!(
@@ -672,14 +688,61 @@ fn resolve_claude_models(
                 opus: model.clone(),
                 sonnet: model.clone(),
                 haiku: model,
+                opus_override: None,
+                sonnet_override: None,
+                haiku_override: None,
             })
         }
         ClaudeModelRequest::Mapping(models) => Ok(ClaudeModelMapping {
-            opus: validate_claude_model(&registry, &official_ids, &models.opus)?,
-            sonnet: validate_claude_model(&registry, &official_ids, &models.sonnet)?,
-            haiku: validate_claude_model(&registry, &official_ids, &models.haiku)?,
+            opus: resolve_claude_model(
+                &registry,
+                &official_ids,
+                &models.opus,
+                models.opus_override.as_deref(),
+            )?,
+            sonnet: resolve_claude_model(
+                &registry,
+                &official_ids,
+                &models.sonnet,
+                models.sonnet_override.as_deref(),
+            )?,
+            haiku: resolve_claude_model(
+                &registry,
+                &official_ids,
+                &models.haiku,
+                models.haiku_override.as_deref(),
+            )?,
+            opus_override: None,
+            sonnet_override: None,
+            haiku_override: None,
         }),
     }
+}
+
+fn resolve_claude_model(
+    registry: &ProviderRegistry,
+    official_ids: &std::collections::HashSet<&str>,
+    model: &str,
+    model_override: Option<&str>,
+) -> anyhow::Result<String> {
+    let catalog_slug = validate_claude_model(registry, official_ids, model)?;
+    let Some(model_override) = model_override else {
+        return Ok(catalog_slug);
+    };
+    let model_override = model_override.trim();
+    anyhow::ensure!(!model_override.is_empty(), "Claude model override is empty");
+    anyhow::ensure!(
+        model_override.starts_with("arn:") && model_override.contains(":bedrock:"),
+        "Claude model override must be an AWS Bedrock ARN"
+    );
+    let resolved = registry.resolve(&catalog_slug).ok_or_else(|| {
+        anyhow::anyhow!("Claude model overrides require a configured provider model: {model}")
+    })?;
+    anyhow::ensure!(
+        resolved.provider.definition().preset_id.as_deref() == Some("aws-bedrock"),
+        "Claude model overrides require an aws-bedrock provider: {model}"
+    );
+    Ok(catalog_model_slug(model_override, resolved.provider.id()))
 }
 
 fn validate_claude_model(
@@ -729,6 +792,9 @@ fn select_default_claude_models(
         opus: select("opus"),
         sonnet: select("sonnet"),
         haiku: select("haiku"),
+        opus_override: None,
+        sonnet_override: None,
+        haiku_override: None,
     })
 }
 
@@ -752,5 +818,23 @@ mod tests {
             validate_claude_model(&registry, &official_ids, "gpt-5.6-sol").unwrap(),
             "gpt-5.6-sol"
         );
+    }
+
+    #[test]
+    fn qualifies_bedrock_arn_override_with_selected_provider() {
+        let provider = codex_mixin::provider::aws_bedrock_provider("aws-bedrock", "key");
+        let registry = ProviderRegistry::new(vec![provider]).unwrap();
+        let official_ids = std::collections::HashSet::new();
+        let arn = "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/example";
+
+        let model = resolve_claude_model(
+            &registry,
+            &official_ids,
+            "anthropic.claude-sonnet-5-aws-bedrock",
+            Some(arn),
+        )
+        .unwrap();
+
+        assert_eq!(model, catalog_model_slug(arn, "aws-bedrock"));
     }
 }

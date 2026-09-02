@@ -63,12 +63,9 @@ fn messages_endpoint_rejects_non_anthropic_provider_protocols() {
         fusion_profiles: Vec::new(),
     })
     .unwrap();
-    let resolved = state.resolve_native_provider_model("gpt-test").unwrap();
-    assert_eq!(resolved.provider.id(), "test-provider");
+    let provider = state.provider("test-provider").unwrap();
     assert_ne!(
-        resolved
-            .provider
-            .protocol_for_model(resolved.upstream_model_id),
+        provider.protocol_for_model("gpt-test"),
         crate::provider::ProviderProtocol::AnthropicMessages
     );
 }

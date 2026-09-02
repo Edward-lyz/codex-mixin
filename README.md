@@ -312,6 +312,9 @@ Provider 设置界面见上方 [macOS control center](#macos-control-center)；�
 
 Codex Mixin 也提供一个 Anthropic Messages 兼容端点 `/v1/messages`，所以 Claude Code
 可以直接把本地网关当作上游使用。在 macOS 菜单栏选择「安装到 Claude Code...」后，SwiftUI 面板会要求分别选择 Opus、Sonnet 和 Haiku 对应的实际后端模型；TUI 的 Apps 页面会按模型名称自动匹配这三个模型族。
+选择 AWS Bedrock 模型时，每个模型族还可以填写可选的 Bedrock ARN 覆写。网关仍用所选
+Provider 路由和签名，但发给 Bedrock 的 `model` 会替换为该 ARN，可用于 application
+inference profile 等计费模型；非 AWS Provider 不接受 ARN 覆写。
 
 1. 备份并保留 `~/.claude/settings.json` 中已有的 `env` 配置。
 2. 在 `env` 中写入 `ANTHROPIC_BASE_URL=http://127.0.0.1:<端口>` 和
@@ -1122,6 +1125,7 @@ codex-mixin service start --foreground
 codex-mixin connect codex --codex-oauth-proxy
 codex-mixin connect codex --custom-only
 codex-mixin connect claude --model "Claude Sonnet 5"
+codex-mixin connect claude --opus-model <model> --sonnet-model <model> --haiku-model <model> --sonnet-model-override <bedrock-arn>
 codex-mixin connect dsh
 codex-mixin connect opencode
 codex-mixin connect pi

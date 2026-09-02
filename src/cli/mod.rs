@@ -399,6 +399,24 @@ enum Command {
             help = "Backend model used when Claude Code selects Haiku"
         )]
         haiku_model: Option<String>,
+        #[arg(
+            long,
+            requires = "opus_model",
+            help = "Optional AWS Bedrock ARN used for Opus requests"
+        )]
+        opus_model_override: Option<String>,
+        #[arg(
+            long,
+            requires = "sonnet_model",
+            help = "Optional AWS Bedrock ARN used for Sonnet requests"
+        )]
+        sonnet_model_override: Option<String>,
+        #[arg(
+            long,
+            requires = "haiku_model",
+            help = "Optional AWS Bedrock ARN used for Haiku requests"
+        )]
+        haiku_model_override: Option<String>,
     },
     #[command(name = "uninstall-claude", hide = true)]
     UninstallClaude {
@@ -493,6 +511,24 @@ enum ConnectCommand {
             help = "Backend model used when Claude Code selects Haiku"
         )]
         haiku_model: Option<String>,
+        #[arg(
+            long,
+            requires = "opus_model",
+            help = "Optional AWS Bedrock ARN used for Opus requests"
+        )]
+        opus_model_override: Option<String>,
+        #[arg(
+            long,
+            requires = "sonnet_model",
+            help = "Optional AWS Bedrock ARN used for Sonnet requests"
+        )]
+        sonnet_model_override: Option<String>,
+        #[arg(
+            long,
+            requires = "haiku_model",
+            help = "Optional AWS Bedrock ARN used for Haiku requests"
+        )]
+        haiku_model_override: Option<String>,
     },
     /// Install the Codex Mixin gateway as a DeepSeek Harness provider.
     Dsh {
@@ -1151,11 +1187,22 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 opus_model,
                 sonnet_model,
                 haiku_model,
+                opus_model_override,
+                sonnet_model_override,
+                haiku_model_override,
             } => {
                 let hook_settings_path = settings_path.clone();
                 install_claude(
                     settings_path,
-                    claude_model_request(model, opus_model, sonnet_model, haiku_model)?,
+                    claude_model_request(
+                        model,
+                        opus_model,
+                        sonnet_model,
+                        haiku_model,
+                        opus_model_override,
+                        sonnet_model_override,
+                        haiku_model_override,
+                    )?,
                 )?;
                 sync_claude_hooks(hook_settings_path)?;
                 report_hook::sync_installation()
@@ -1320,11 +1367,22 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             opus_model,
             sonnet_model,
             haiku_model,
+            opus_model_override,
+            sonnet_model_override,
+            haiku_model_override,
         } => {
             let hook_settings_path = settings.clone();
             install_claude(
                 settings,
-                claude_model_request(model, opus_model, sonnet_model, haiku_model)?,
+                claude_model_request(
+                    model,
+                    opus_model,
+                    sonnet_model,
+                    haiku_model,
+                    opus_model_override,
+                    sonnet_model_override,
+                    haiku_model_override,
+                )?,
             )?;
             sync_claude_hooks(hook_settings_path)?;
             report_hook::sync_installation()

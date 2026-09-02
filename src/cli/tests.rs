@@ -104,6 +104,9 @@ fn claude_install_writes_base_url_and_uninstall_restores_settings() {
             opus: "Claude Opus 5-baidu".to_owned(),
             sonnet: "Claude Sonnet 5-baidu".to_owned(),
             haiku: "Claude Haiku 5-baidu".to_owned(),
+            opus_override: None,
+            sonnet_override: None,
+            haiku_override: None,
         }),
         &gateway_config,
     )
@@ -118,6 +121,9 @@ fn claude_install_writes_base_url_and_uninstall_restores_settings() {
             opus: "Claude Haiku 5-baidu".to_owned(),
             sonnet: "Claude Opus 5-baidu".to_owned(),
             haiku: "Claude Sonnet 5-baidu".to_owned(),
+            opus_override: None,
+            sonnet_override: None,
+            haiku_override: None,
         }),
         &gateway_config,
     )

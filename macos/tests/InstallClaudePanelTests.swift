@@ -62,11 +62,20 @@ struct InstallClaudePanelTests {
         precondition(mapping.opus == "opus-backend-provider")
         precondition(mapping.sonnet == "sonnet-backend-provider")
         precondition(mapping.haiku == "haiku-backend-provider")
-        precondition(mapping.commandArguments == [
+        let overridden = ClaudeModelMapping(
+            opus: mapping.opus,
+            sonnet: mapping.sonnet,
+            haiku: mapping.haiku,
+            opusOverride: "arn:aws:bedrock:us-east-1:123:application-inference-profile/opus",
+            sonnetOverride: "",
+            haikuOverride: ""
+        )
+        precondition(overridden.commandArguments == [
             "install-claude",
             "--opus-model", "opus-backend-provider",
             "--sonnet-model", "sonnet-backend-provider",
             "--haiku-model", "haiku-backend-provider",
+            "--opus-model-override", "arn:aws:bedrock:us-east-1:123:application-inference-profile/opus",
         ])
 
         do {

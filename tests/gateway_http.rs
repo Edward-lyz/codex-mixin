@@ -1637,6 +1637,32 @@ async fn signs_aws_bedrock_mantle_requests_with_aksk() {
     assert_eq!(requests[0]["__aws_session_token"], "session-example");
 }
 
+#[tokio::test]
+async fn routes_qualified_bedrock_arn_override_to_selected_provider() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url.clone());
+    let mut provider = aws_bedrock_provider("aws-bedrock", "upstream-key");
+    provider.base_url = upstream_url;
+    config.providers = vec![provider];
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let arn = "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/example";
+    let mut request = responses_request();
+    request["model"] = json!(format!("{arn}-aws-bedrock"));
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["model"], arn);
+}
+
 fn fusion_profile() -> FusionProfile {
     FusionProfile {
         id: "default".to_owned(),

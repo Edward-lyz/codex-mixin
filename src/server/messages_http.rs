@@ -21,34 +21,46 @@ pub(super) async fn messages(
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?;
     let route = state.resolve_model_route(requested_model).await?;
-    if route == ResolvedModelRoute::Official {
-        let request = normalize_message_request(&body, requested_model)?;
-        let responses_body =
-            super::anthropic_compat::message_request_to_responses(&request, requested_model)?;
-        let plan = RequestPlan::official(responses_body, Some(requested_model.to_owned()))?;
-        return responses_compatible_message(
-            &state,
-            &headers,
-            requested_model,
-            body_stream_requested(&body),
-            plan,
-        )
-        .await;
-    }
-    let resolved = state.resolve_native_provider_model(requested_model)?;
-    let provider = resolved.provider;
-    let upstream_model_id = resolved.upstream_model_id;
+    let (catalog_slug, provider_id, upstream_model_id) = match route {
+        ResolvedModelRoute::Official => {
+            let request = normalize_message_request(&body, requested_model)?;
+            let responses_body =
+                super::anthropic_compat::message_request_to_responses(&request, requested_model)?;
+            let plan = RequestPlan::official(responses_body, Some(requested_model.to_owned()))?;
+            return responses_compatible_message(
+                &state,
+                &headers,
+                requested_model,
+                body_stream_requested(&body),
+                plan,
+            )
+            .await;
+        }
+        ResolvedModelRoute::Provider {
+            catalog_slug,
+            provider_id,
+            upstream_model_id,
+        } => (catalog_slug, provider_id, upstream_model_id),
+        ResolvedModelRoute::Fusion { profile_id } => {
+            return Err(GatewayError::BadRequest(format!(
+                "fusion model is not supported by Anthropic Messages: {profile_id}"
+            )));
+        }
+    };
+    let provider = state
+        .provider(&provider_id)
+        .ok_or_else(|| GatewayError::BadRequest(format!("unknown provider: {provider_id}")))?;
     super::auth::require_ducx_client(&state, provider, &headers)?;
-    let request = normalize_message_request(&body, upstream_model_id)?;
+    let request = normalize_message_request(&body, &upstream_model_id)?;
     let routing = stable_oneapi_routing(&headers, &body)?;
     let stream_requested = body_stream_requested(&body);
-    if provider.protocol_for_model(upstream_model_id) != ProviderProtocol::AnthropicMessages {
+    if provider.protocol_for_model(&upstream_model_id) != ProviderProtocol::AnthropicMessages {
         let responses_body =
             super::anthropic_compat::message_request_to_responses(&request, requested_model)?;
         let plan = RequestPlan::provider(
-            resolved.catalog_slug.to_owned(),
-            provider.id().to_owned(),
-            upstream_model_id.to_owned(),
+            catalog_slug,
+            provider_id,
+            upstream_model_id.clone(),
             responses_body,
             routing,
             Some(requested_model.to_owned()),
@@ -86,7 +98,7 @@ pub(super) async fn messages(
                 saved_image_bytes = stats.saved_bytes,
                 "retrying Anthropic Messages request after 413 with aggressively compressed images"
             );
-            let fallback_request = normalize_message_request(&fallback_body, upstream_model_id)?;
+            let fallback_request = normalize_message_request(&fallback_body, &upstream_model_id)?;
             state
                 .anthropic_stream_with_web_search_retry(
                     provider,

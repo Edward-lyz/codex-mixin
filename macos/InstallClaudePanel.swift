@@ -10,14 +10,25 @@ struct ClaudeModelMapping: Equatable {
     let opus: String
     let sonnet: String
     let haiku: String
+    let opusOverride: String
+    let sonnetOverride: String
+    let haikuOverride: String
 
     var commandArguments: [String] {
-        [
+        var arguments = [
             "install-claude",
             "--opus-model", opus,
             "--sonnet-model", sonnet,
             "--haiku-model", haiku,
         ]
+        for (flag, value) in [
+            ("--opus-model-override", opusOverride),
+            ("--sonnet-model-override", sonnetOverride),
+            ("--haiku-model-override", haikuOverride),
+        ] where !value.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty {
+            arguments.append(contentsOf: [flag, value.trimmingCharacters(in: .whitespacesAndNewlines)])
+        }
+        return arguments
     }
 }
 
@@ -111,7 +122,14 @@ func suggestedClaudeModelMapping(
     let haiku = options.first {
         $0.displayName.localizedCaseInsensitiveContains("haiku")
     } ?? fallback
-    return ClaudeModelMapping(opus: opus.id, sonnet: sonnet.id, haiku: haiku.id)
+    return ClaudeModelMapping(
+        opus: opus.id,
+        sonnet: sonnet.id,
+        haiku: haiku.id,
+        opusOverride: "",
+        sonnetOverride: "",
+        haikuOverride: ""
+    )
 }
 
 private struct InstallClaudeView: View {
@@ -119,6 +137,9 @@ private struct InstallClaudeView: View {
     @State private var opusModel: String
     @State private var sonnetModel: String
     @State private var haikuModel: String
+    @State private var opusOverride: String
+    @State private var sonnetOverride: String
+    @State private var haikuOverride: String
     let cancel: () -> Void
     let install: (ClaudeModelMapping) -> Void
 
@@ -132,6 +153,9 @@ private struct InstallClaudeView: View {
         _opusModel = State(initialValue: initialMapping.opus)
         _sonnetModel = State(initialValue: initialMapping.sonnet)
         _haikuModel = State(initialValue: initialMapping.haiku)
+        _opusOverride = State(initialValue: initialMapping.opusOverride)
+        _sonnetOverride = State(initialValue: initialMapping.sonnetOverride)
+        _haikuOverride = State(initialValue: initialMapping.haikuOverride)
         self.cancel = cancel
         self.install = install
     }
@@ -143,22 +167,25 @@ private struct InstallClaudeView: View {
                     modelPicker(
                         title: "Opus",
                         detail: "Claude Code 选择 Opus 时使用",
-                        selection: $opusModel
+                        selection: $opusModel,
+                        modelOverride: $opusOverride
                     )
                     modelPicker(
                         title: "Sonnet",
                         detail: "默认模型；Claude Code 选择 Sonnet 时使用",
-                        selection: $sonnetModel
+                        selection: $sonnetModel,
+                        modelOverride: $sonnetOverride
                     )
                     modelPicker(
                         title: "Haiku",
                         detail: "Claude Code 选择 Haiku 时使用",
-                        selection: $haikuModel
+                        selection: $haikuModel,
+                        modelOverride: $haikuOverride
                     )
                 } header: {
                     Text("选择三个模型映射")
                 } footer: {
-                    Text("Claude Code 只识别 Opus、Sonnet 和 Haiku 三个模型族；每个模型族会转发到这里选择的实际后端模型。")
+                    Text("每个模型族会转发到选择的后端模型。AWS Bedrock 可填写 ARN 覆写，以使用 inference profile；留空则使用原模型 ID。")
                 }
 
                 Section {
@@ -198,7 +225,10 @@ private struct InstallClaudeView: View {
                     install(ClaudeModelMapping(
                         opus: opusModel,
                         sonnet: sonnetModel,
-                        haiku: haikuModel
+                        haiku: haikuModel,
+                        opusOverride: opusOverride,
+                        sonnetOverride: sonnetOverride,
+                        haikuOverride: haikuOverride
                     ))
                 }
                 .keyboardShortcut(.defaultAction)
@@ -206,14 +236,15 @@ private struct InstallClaudeView: View {
             }
             .padding(20)
         }
-        .frame(minWidth: 760, minHeight: 480)
+        .frame(minWidth: 900, minHeight: 620)
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
     private func modelPicker(
         title: String,
         detail: String,
-        selection: Binding<String>
+        selection: Binding<String>,
+        modelOverride: Binding<String>
     ) -> some View {
         VStack(alignment: .leading, spacing: 6) {
             Picker(title, selection: selection) {
@@ -222,6 +253,9 @@ private struct InstallClaudeView: View {
                 }
             }
             .pickerStyle(.menu)
+            TextField("AWS Bedrock ARN 覆写（可选）", text: modelOverride)
+                .textFieldStyle(.roundedBorder)
+                .font(.system(.body, design: .monospaced))
             Text(detail)
                 .font(.caption)
                 .foregroundStyle(.secondary)
@@ -248,7 +282,7 @@ func runInstallClaudePanel(
 ) throws -> ClaudeModelMapping? {
     let initialMapping = try suggestedClaudeModelMapping(options: options)
     let panel = NSWindow(
-        contentRect: NSRect(x: 0, y: 0, width: 820, height: 540),
+        contentRect: NSRect(x: 0, y: 0, width: 960, height: 680),
         styleMask: [.titled, .closable],
         backing: .buffered,
         defer: false
