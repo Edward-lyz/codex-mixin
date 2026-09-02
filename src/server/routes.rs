@@ -44,12 +44,12 @@ pub async fn serve_on_listener(
     let bind = listener.local_addr()?;
     config.bind = bind;
     let state = AppState::new(config)?;
-    let ducx_report_warmup_state = state.clone();
-    let ducx_report_warmup_task = tokio::spawn(async move {
-        if let Err(error) = ducx_report_warmup_state.prewarm_ducx_reporting().await {
+    let ducx_warmup_state = state.clone();
+    let ducx_warmup_task = tokio::spawn(async move {
+        if let Err(error) = ducx_warmup_state.prewarm_ducx().await {
             tracing::warn!(
                 error = %format!("{error:#}"),
-                "managed DUCX reporting token warmup failed"
+                "managed DUCX warmup failed"
             );
         }
     });
@@ -94,7 +94,7 @@ pub async fn serve_on_listener(
     if let Some(probe_task) = probe_task {
         probe_task.abort();
     }
-    ducx_report_warmup_task.abort();
+    ducx_warmup_task.abort();
     result?;
     Ok(())
 }

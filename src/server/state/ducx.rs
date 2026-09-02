@@ -2,61 +2,65 @@ use super::*;
 use anyhow::Context;
 
 impl AppState {
-    pub(crate) async fn prewarm_ducx_reporting(&self) -> Result<(), GatewayError> {
-        let reporting_providers = self
+    pub(crate) async fn prewarm_ducx(&self) -> Result<(), GatewayError> {
+        let ducx_providers = self
             .providers
             .providers()
             .iter()
-            .filter(|provider| provider.uses_ducx_loopback() && provider.baidu_code_report())
+            .filter(|provider| provider.definition().enabled && provider.uses_ducx_loopback())
             .collect::<Vec<_>>();
-        if reporting_providers.is_empty() {
-            return Ok(());
-        }
-
-        for provider in reporting_providers {
-            let provider_id = provider.id().to_owned();
-            let runtime = self.ducx_runtime_for(provider).await?;
-            match runtime
-                .report_client_token(self.config.request_timeout)
-                .await
-            {
-                Ok(token) => {
-                    let result = tokio::task::spawn_blocking(move || {
-                        crate::config::mutate_stored_config(|config| {
-                            let stored_provider = config
-                                .providers
-                                .iter_mut()
-                                .find(|candidate| candidate.id == provider_id)
-                                .with_context(|| {
-                                    format!("DUCX reporting provider disappeared: {provider_id}")
-                                })?;
-                            anyhow::ensure!(
-                                stored_provider.enabled
-                                    && stored_provider.request_policy.baidu_code_report
-                                    && stored_provider.request_policy.effective_baidu_auth_bridge()
-                                        == crate::provider::BaiduAuthBridge::DucxLoopback,
-                                "DUCX reporting provider changed during warmup: {provider_id}"
-                            );
-                            stored_provider.request_policy.data_report_client_token = Some(token);
-                            Ok(())
-                        })
-                    })
+        for provider in ducx_providers {
+            if provider.baidu_code_report() {
+                let provider_id = provider.id().to_owned();
+                let runtime = self.ducx_runtime_for(provider).await?;
+                match runtime
+                    .report_client_token(self.config.request_timeout)
                     .await
-                    .context("join DUCX report token persistence task");
-                    if let Err(error) = result.and_then(|inner| inner) {
+                {
+                    Ok(token) => {
+                        let result = tokio::task::spawn_blocking(move || {
+                            crate::config::mutate_stored_config(|config| {
+                                let stored_provider = config
+                                    .providers
+                                    .iter_mut()
+                                    .find(|candidate| candidate.id == provider_id)
+                                    .with_context(|| {
+                                        format!(
+                                            "DUCX reporting provider disappeared: {provider_id}"
+                                        )
+                                    })?;
+                                anyhow::ensure!(
+                                    stored_provider.enabled
+                                        && stored_provider.request_policy.baidu_code_report
+                                        && stored_provider
+                                            .request_policy
+                                            .effective_baidu_auth_bridge()
+                                            == crate::provider::BaiduAuthBridge::DucxLoopback,
+                                    "DUCX reporting provider changed during warmup: {provider_id}"
+                                );
+                                stored_provider.request_policy.data_report_client_token =
+                                    Some(token);
+                                Ok(())
+                            })
+                        })
+                        .await
+                        .context("join DUCX report token persistence task");
+                        if let Err(error) = result.and_then(|inner| inner) {
+                            tracing::error!(
+                                error = %format!("{error:#}"),
+                                "failed to persist DUCX data-report client token"
+                            );
+                        }
+                    }
+                    Err(error) => {
                         tracing::error!(
                             error = %format!("{error:#}"),
-                            "failed to persist DUCX data-report client token"
+                            "failed to warm up DUCX data-report client token"
                         );
                     }
                 }
-                Err(error) => {
-                    tracing::error!(
-                        error = %format!("{error:#}"),
-                        "failed to warm up DUCX data-report client token"
-                    );
-                }
             }
+            self.ducx_native_headers(provider).await?;
         }
         Ok(())
     }
@@ -132,17 +136,18 @@ mod tests {
     use std::time::Duration;
 
     #[tokio::test]
-    async fn gateway_startup_does_not_mint_native_ducx_headers() {
+    async fn gateway_startup_prewarms_once_for_the_first_request() {
         let directory = tempfile::tempdir().unwrap();
         let home = directory.path().join("home");
         let executable = home.join(".baidu-cx/baidu-cx/bin/ducx");
-        let marker = home.join("native-warmup-started");
+        let marker = home.join("native-warmup-count");
         std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
         std::fs::write(
             &executable,
             format!(
                 r#"#!/bin/sh
-/usr/bin/touch '{}'
+/bin/echo warmup >> '{}'
+/bin/sleep 0.1
 for argument in "$@"; do
   case "$argument" in
     model_providers.oneapi.base_url=*)
@@ -188,11 +193,11 @@ done
             state.providers.providers()[0].ducx_executable(),
             Some(executable.as_path())
         );
-        state.prewarm_ducx_reporting().await.unwrap();
+        state.prewarm_ducx().await.unwrap();
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "warmup\n");
 
-        assert!(
-            !marker.exists(),
-            "gateway startup launched the heavyweight native DUCX warmup"
-        );
+        let provider = &state.providers.providers()[0];
+        state.ducx_native_headers(provider).await.unwrap();
+        assert_eq!(std::fs::read_to_string(marker).unwrap(), "warmup\n");
     }
 }

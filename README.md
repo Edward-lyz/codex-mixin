@@ -274,9 +274,10 @@ HTML、普通页面和无关 JSON 不会被当作接口。
 Baidu OneAPI 不参与该探测，使用预设协议。
 预设供应商的协议在离线验证后写死，例如 OpenCode Go 使用 `/v1/responses`。
 启用 Baidu OneAPI 时可以选择「DUCX 核心」。DUCX 是 header 产生器：
-网关启动时不运行完整认证预热；首次真实请求按需启动短命认证回合，从该回合发出的 OneAPI
-请求中抓取 `comate_custom_header`、`Authorization` 等原生 Header，并缓存 60 秒。抓取后
-立即终止整个 warmup 进程组，不会把请求转发到真实 OneAPI，也不会留下 DUCX 后代进程。
+网关监听成功后在后台启动一个有序的短命认证回合，从该回合发出的 OneAPI 请求中抓取
+`comate_custom_header`、`Authorization` 等原生 Header，并缓存 60 秒。启动预热与首个真实
+请求共享同一把缓存锁，并发时也只会启动一个 warmup。抓取后立即终止整个进程组，不会把
+请求转发到真实 OneAPI，也不会留下 DUCX 后代进程。
 
 真实模型请求始终由调用方决定，Header 由所选认证核心产生并注入到 Mixin 自己的上游请求。
 Fusion、Web Search、画图和 Auto Review 产生的子请求走同一个统一执行层，不会绕过用户
@@ -877,9 +878,10 @@ unrelated JSON do not count as API responses. Baidu OneAPI is excluded and keeps
 protocol. Curated presets keep offline-verified protocols, for example OpenCode Go uses
 `/v1/responses`.
 For Baidu OneAPI, users can select the “DUCX core”. It is a header generator: the
-gateway does not run the full authentication warmup at startup. The first real request starts a
-short-lived auth turn on demand, captures the native `comate_custom_header`, `Authorization`, and
-related headers, then caches them for 60 seconds. Mixin stops the complete warmup process group
+gateway starts one ordered, short-lived authentication turn in the background after it begins
+listening. It captures the native `comate_custom_header`, `Authorization`, and related headers,
+then caches them for 60 seconds. Startup warmup and the first real request share the same cache
+lock, so concurrent calls still start only one warmup. Mixin stops the complete process group
 before the request reaches OneAPI, so it consumes no inference quota and leaves no DUCX descendants.
 
 The caller request always determines the real model and body. The selected auth core only
