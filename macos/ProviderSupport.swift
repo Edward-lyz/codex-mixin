@@ -140,6 +140,9 @@ struct ProviderView: Decodable {
     let apiPath: String
     let modelSource: ProviderModelSourceView
     let apiKeyConfigured: Bool
+    let awsSigV4Configured: Bool?
+    let awsRegion: String?
+    let awsSessionTokenConfigured: Bool?
     let imageGenerationPath: String?
     let quotaURL: String?
     let quotaUsername: String?
@@ -172,6 +175,9 @@ struct ProviderView: Decodable {
         case apiPath = "api_path"
         case modelSource = "model_source"
         case apiKeyConfigured = "api_key_configured"
+        case awsSigV4Configured = "aws_sigv4_configured"
+        case awsRegion = "aws_region"
+        case awsSessionTokenConfigured = "aws_session_token_configured"
         case imageGenerationPath = "image_generation_path"
         case quotaURL = "quota_url"
         case quotaUsername = "quota_username"
@@ -206,6 +212,12 @@ struct ProviderView: Decodable {
         apiPath = try values.decode(String.self, forKey: .apiPath)
         modelSource = try values.decode(ProviderModelSourceView.self, forKey: .modelSource)
         apiKeyConfigured = try values.decode(Bool.self, forKey: .apiKeyConfigured)
+        awsSigV4Configured = try values.decodeIfPresent(Bool.self, forKey: .awsSigV4Configured)
+        awsRegion = try values.decodeIfPresent(String.self, forKey: .awsRegion)
+        awsSessionTokenConfigured = try values.decodeIfPresent(
+            Bool.self,
+            forKey: .awsSessionTokenConfigured
+        )
         imageGenerationPath = try values.decodeIfPresent(String.self, forKey: .imageGenerationPath)
         quotaURL = try values.decodeIfPresent(String.self, forKey: .quotaURL)
         quotaUsername = try values.decodeIfPresent(String.self, forKey: .quotaUsername)

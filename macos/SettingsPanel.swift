@@ -7,6 +7,10 @@ struct AddProviderFormValues {
     let baseURL: String
     let websiteURL: String
     let apiKey: String
+    let awsAccessKeyID: String
+    let awsSecretAccessKey: String
+    let awsSessionToken: String
+    let awsRegion: String
     let quotaUsername: String
     let quotaWorkspaceID: String
     let quotaAuthCookie: String
@@ -25,7 +29,7 @@ final class AddProviderFormModel: ObservableObject {
         AddProviderPreset(id: "openrouter", title: "OpenRouter"),
         AddProviderPreset(id: "deepseek", title: "DeepSeek"),
         AddProviderPreset(id: "opencode-go", title: "OpenCode Go"),
-        AddProviderPreset(id: "aws-bedrock", title: "Amazon Bedrock (Mantle)"),
+        AddProviderPreset(id: "aws-bedrock", title: "Amazon Bedrock (AK/SK)"),
         AddProviderPreset(id: "custom", title: AppLocalization.string("settings.customSite")),
     ]
 
@@ -34,6 +38,10 @@ final class AddProviderFormModel: ObservableObject {
     @Published var baseURL = ""
     @Published var websiteURL = ""
     @Published var apiKey = ""
+    @Published var awsAccessKeyID = ""
+    @Published var awsSecretAccessKey = ""
+    @Published var awsSessionToken = ""
+    @Published var awsRegion = "us-east-1"
     @Published var quotaUsername = ""
     @Published var quotaWorkspaceID = ""
     @Published var quotaAuthCookie = ""
@@ -57,10 +65,23 @@ final class AddProviderFormModel: ObservableObject {
         }
 
         let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !trimmedAPIKey.isEmpty else {
+        guard isAWSBedrock || !trimmedAPIKey.isEmpty else {
             showAlert(
                 title: "缺少 API 密钥",
                 message: AppLocalization.string("settings.enterTheProviderAPIKey")
+            )
+            return nil
+        }
+
+        let trimmedAccessKeyID = awsAccessKeyID.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSecretAccessKey = awsSecretAccessKey.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedSessionToken = awsSessionToken.trimmingCharacters(in: .whitespacesAndNewlines)
+        let trimmedRegion = awsRegion.trimmingCharacters(in: .whitespacesAndNewlines)
+        if isAWSBedrock,
+           trimmedAccessKeyID.isEmpty || trimmedSecretAccessKey.isEmpty || trimmedRegion.isEmpty {
+            showAlert(
+                title: "缺少 AWS 凭据",
+                message: "Amazon Bedrock 必须填写 Region、Access Key ID 和 Secret Access Key。"
             )
             return nil
         }
@@ -90,6 +111,10 @@ final class AddProviderFormModel: ObservableObject {
             baseURL: trimmedBaseURL,
             websiteURL: websiteURL.trimmingCharacters(in: .whitespacesAndNewlines),
             apiKey: trimmedAPIKey,
+            awsAccessKeyID: trimmedAccessKeyID,
+            awsSecretAccessKey: trimmedSecretAccessKey,
+            awsSessionToken: trimmedSessionToken,
+            awsRegion: trimmedRegion,
             quotaUsername: trimmedUsername,
             quotaWorkspaceID: trimmedWorkspaceID,
             quotaAuthCookie: trimmedAuthCookie,
@@ -139,24 +164,29 @@ private struct AddProviderFormView: View {
                 }
 
                 if model.isAWSBedrock {
-                    Section("Amazon Bedrock (Mantle)") {
-                        TextField(
-                            "Mantle API 地址",
-                            text: $model.baseURL,
-                            prompt: Text("https://bedrock-mantle.us-east-1.api.aws/anthropic")
-                        )
-                        Text("使用 Bedrock API key；留空时默认使用 us-east-1。其他区域请修改 URL 中的区域名。")
+                    Section("Amazon Bedrock") {
+                        TextField("AWS Region", text: $model.awsRegion, prompt: Text("us-east-1"))
+                        Text("Endpoint 会按 Region 自动设置为 Bedrock Mantle。")
                             .font(.caption)
                             .foregroundStyle(.secondary)
                     }
                 }
 
                 Section("凭据") {
-                    SecureField(
-                        "API Key",
-                        text: $model.apiKey,
-                        prompt: Text(AppLocalization.string("settings.requiredStoredOnlyByTheLocalRust"))
-                    )
+                    if model.isAWSBedrock {
+                        SecureField("Access Key ID", text: $model.awsAccessKeyID)
+                        SecureField("Secret Access Key", text: $model.awsSecretAccessKey)
+                        SecureField(
+                            "Session Token（可选）",
+                            text: $model.awsSessionToken
+                        )
+                    } else {
+                        SecureField(
+                            "API Key",
+                            text: $model.apiKey,
+                            prompt: Text(AppLocalization.string("settings.requiredStoredOnlyByTheLocalRust"))
+                        )
+                    }
 
                     if model.isBaiduOneAPI {
                         TextField(

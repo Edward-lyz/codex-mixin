@@ -43,6 +43,37 @@ pub enum BaiduAuthBridge {
 pub struct ProviderAuthConfig {
     pub header: ProviderAuthHeader,
     pub api_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub aws_sigv4: Option<AwsSigV4AuthConfig>,
+}
+
+impl ProviderAuthConfig {
+    pub fn is_configured(&self) -> bool {
+        !self.api_key.trim().is_empty()
+            || self
+                .aws_sigv4
+                .as_ref()
+                .is_some_and(AwsSigV4AuthConfig::is_configured)
+    }
+}
+
+#[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
+pub struct AwsSigV4AuthConfig {
+    pub access_key_id: String,
+    pub secret_access_key: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub session_token: Option<String>,
+    pub region: String,
+    pub service: String,
+}
+
+impl AwsSigV4AuthConfig {
+    pub fn is_configured(&self) -> bool {
+        !self.access_key_id.trim().is_empty()
+            && !self.secret_access_key.trim().is_empty()
+            && !self.region.trim().is_empty()
+            && !self.service.trim().is_empty()
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -302,8 +333,26 @@ impl ProviderDefinition {
         }
         if self.enabled {
             ensure!(
-                !self.auth.api_key.trim().is_empty(),
-                "enabled provider {} must configure an API key",
+                self.auth.is_configured(),
+                "enabled provider {} must configure credentials",
+                self.id
+            );
+        }
+        if let Some(aws) = &self.auth.aws_sigv4 {
+            ensure!(
+                self.auth.api_key.trim().is_empty(),
+                "provider {} cannot configure both an API key and AWS SigV4 credentials",
+                self.id
+            );
+            ensure!(
+                aws.is_configured(),
+                "provider {} must configure AWS access key ID, secret access key, region, and service",
+                self.id
+            );
+            ensure!(
+                self.preset_id.as_deref() == Some("aws-bedrock")
+                    && self.protocol == ProviderProtocol::AnthropicMessages,
+                "provider {} can use AWS SigV4 only with the aws-bedrock Anthropic preset",
                 self.id
             );
         }
@@ -342,8 +391,8 @@ impl ProviderDefinition {
             .len()
             .saturating_sub(unavailable_selected_model_count);
         let mut issues = Vec::new();
-        if self.auth.api_key.trim().is_empty() {
-            issues.push("api_key_missing".to_owned());
+        if !self.auth.is_configured() {
+            issues.push("credentials_missing".to_owned());
         }
         if routable_model_count == 0 {
             issues.push("no_routable_models".to_owned());

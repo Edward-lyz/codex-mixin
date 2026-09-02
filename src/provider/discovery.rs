@@ -266,11 +266,23 @@ pub fn apply_discovered_models(
 }
 
 pub fn redact_provider_error(definition: &ProviderDefinition, error: &str) -> String {
-    let redacted = if definition.auth.api_key.is_empty() {
-        error.to_owned()
-    } else {
-        error.replace(&definition.auth.api_key, "<redacted>")
-    };
+    let mut redacted = error.to_owned();
+    if !definition.auth.api_key.is_empty() {
+        redacted = redacted.replace(&definition.auth.api_key, "<redacted>");
+    }
+    if let Some(aws) = &definition.auth.aws_sigv4 {
+        for secret in [
+            Some(aws.access_key_id.as_str()),
+            Some(aws.secret_access_key.as_str()),
+            aws.session_token.as_deref(),
+        ]
+        .into_iter()
+        .flatten()
+        .filter(|secret| !secret.is_empty())
+        {
+            redacted = redacted.replace(secret, "<redacted>");
+        }
+    }
     redacted.chars().take(8_000).collect()
 }
 
@@ -288,6 +300,24 @@ fn normalize_models(models: &mut Vec<ProviderModel>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn redacts_all_aws_credentials_from_provider_errors() {
+        let provider = crate::provider::aws_bedrock_aksk_provider(
+            "aws-bedrock",
+            "AKIDEXAMPLE",
+            "secret-example",
+            Some("session-example".to_owned()),
+            "us-east-1",
+        );
+
+        let redacted = redact_provider_error(
+            &provider,
+            "AKIDEXAMPLE secret-example session-example request failed",
+        );
+
+        assert_eq!(redacted, "<redacted> <redacted> <redacted> request failed");
+    }
 
     fn model(id: &str) -> ProviderModel {
         ProviderModel {

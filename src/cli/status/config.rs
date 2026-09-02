@@ -62,6 +62,13 @@ pub(crate) fn redacted_providers(
                 "api_path": provider.api_path,
                 "model_source": provider.model_source,
                 "api_key": if provider.auth.api_key.is_empty() { "<missing>" } else { "<redacted>" },
+                "aws_sigv4": provider.auth.aws_sigv4.as_ref().map(|aws| serde_json::json!({
+                    "access_key_id": "<redacted>",
+                    "secret_access_key": "<redacted>",
+                    "session_token": aws.session_token.as_ref().map(|_| "<redacted>"),
+                    "region": aws.region,
+                    "service": aws.service,
+                })),
                 "image_generation_path": provider.image_generation_path,
                 "quota_url": provider.quota_url,
                 "quota_username": provider.quota_username,

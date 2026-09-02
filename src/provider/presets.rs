@@ -1,11 +1,17 @@
 use super::types::{
-    ProviderAuthConfig, ProviderAuthHeader, ProviderDefinition, ProviderModel, ProviderModelSource,
-    ProviderProtocol, ProviderQuotaParser, ProviderRequestPolicy,
+    AwsSigV4AuthConfig, ProviderAuthConfig, ProviderAuthHeader, ProviderDefinition, ProviderModel,
+    ProviderModelSource, ProviderProtocol, ProviderQuotaParser, ProviderRequestPolicy,
 };
 
 pub const OPEN_CODE_GO_PRESET_ID: &str = "opencode-go";
 pub const AWS_BEDROCK_PRESET_ID: &str = "aws-bedrock";
 pub const AWS_BEDROCK_MANTLE_BASE_URL: &str = "https://bedrock-mantle.us-east-1.api.aws/anthropic";
+pub const AWS_BEDROCK_DEFAULT_REGION: &str = "us-east-1";
+pub const AWS_BEDROCK_MANTLE_SERVICE: &str = "bedrock-mantle";
+
+pub fn aws_bedrock_mantle_base_url(region: &str) -> String {
+    format!("https://bedrock-mantle.{region}.api.aws/anthropic")
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProviderPreset {
@@ -116,6 +122,7 @@ pub fn aws_bedrock_provider(
         auth: ProviderAuthConfig {
             header: ProviderAuthHeader::AuthorizationBearer,
             api_key: api_key.into(),
+            aws_sigv4: None,
         },
         anthropic_version: Some("2023-06-01".to_owned()),
         anthropic_beta: None,
@@ -133,6 +140,27 @@ pub fn aws_bedrock_provider(
         models_refreshed_at_ms: None,
         models_refresh_error: None,
     }
+}
+
+pub fn aws_bedrock_aksk_provider(
+    id: impl Into<String>,
+    access_key_id: impl Into<String>,
+    secret_access_key: impl Into<String>,
+    session_token: Option<String>,
+    region: impl Into<String>,
+) -> ProviderDefinition {
+    let region = region.into();
+    let mut provider = aws_bedrock_provider(id, "");
+    provider.display_name = "Amazon Bedrock (AK/SK)".to_owned();
+    provider.base_url = aws_bedrock_mantle_base_url(&region);
+    provider.auth.aws_sigv4 = Some(AwsSigV4AuthConfig {
+        access_key_id: access_key_id.into(),
+        secret_access_key: secret_access_key.into(),
+        session_token,
+        region,
+        service: AWS_BEDROCK_MANTLE_SERVICE.to_owned(),
+    });
+    provider
 }
 
 fn bedrock_model(id: &str, display_name: &str, context_window: u64) -> ProviderModel {
@@ -183,6 +211,7 @@ pub fn open_code_go_provider(
         auth: ProviderAuthConfig {
             header: ProviderAuthHeader::AuthorizationBearer,
             api_key: api_key.into(),
+            aws_sigv4: None,
         },
         anthropic_version: None,
         anthropic_beta: None,
@@ -221,6 +250,7 @@ pub fn custom_provider(id: impl Into<String>, api_key: impl Into<String>) -> Pro
         auth: ProviderAuthConfig {
             header: ProviderAuthHeader::AuthorizationBearer,
             api_key: api_key.into(),
+            aws_sigv4: None,
         },
         anthropic_version: None,
         anthropic_beta: None,
@@ -331,6 +361,7 @@ fn openai_chat_provider(
         auth: ProviderAuthConfig {
             header: ProviderAuthHeader::AuthorizationBearer,
             api_key: api_key.into(),
+            aws_sigv4: None,
         },
         anthropic_version: None,
         anthropic_beta: None,
@@ -430,6 +461,30 @@ mod tests {
                 && model.supports_thinking == Some(true)
                 && model.supports_function_tools == Some(true)
         }));
+    }
+
+    #[test]
+    fn aws_bedrock_aksk_preset_uses_sigv4_credentials() {
+        let provider = aws_bedrock_aksk_provider(
+            "aws-bedrock",
+            "AKIDEXAMPLE",
+            "secret-example",
+            Some("session-example".to_owned()),
+            "eu-west-1",
+        );
+
+        provider.validate().unwrap();
+        assert!(provider.auth.api_key.is_empty());
+        let aws = provider.auth.aws_sigv4.unwrap();
+        assert_eq!(aws.access_key_id, "AKIDEXAMPLE");
+        assert_eq!(aws.secret_access_key, "secret-example");
+        assert_eq!(aws.session_token.as_deref(), Some("session-example"));
+        assert_eq!(aws.region, "eu-west-1");
+        assert_eq!(aws.service, "bedrock-mantle");
+        assert_eq!(
+            provider.base_url,
+            "https://bedrock-mantle.eu-west-1.api.aws/anthropic"
+        );
     }
 
     #[test]

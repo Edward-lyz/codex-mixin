@@ -20,6 +20,11 @@ final class ProviderSettingsModel: ObservableObject {
     @Published var websiteURL = ""
     @Published var imageGenerationPath = ""
     @Published var apiKey = ""
+    @Published var awsAccessKeyID = ""
+    @Published var awsSecretAccessKey = ""
+    @Published var awsSessionToken = ""
+    @Published var awsRegion = "us-east-1"
+    @Published var clearAwsSessionToken = false
     @Published var quotaUsername = ""
     @Published var quotaWorkspaceID = ""
     @Published var quotaAuthCookie = ""
@@ -51,6 +56,11 @@ final class ProviderSettingsModel: ObservableObject {
         websiteURL = provider.websiteURL ?? ""
         imageGenerationPath = provider.imageGenerationPath ?? ""
         apiKey = ""
+        awsAccessKeyID = ""
+        awsSecretAccessKey = ""
+        awsSessionToken = ""
+        awsRegion = provider.awsRegion ?? "us-east-1"
+        clearAwsSessionToken = false
         quotaUsername = provider.quotaUsername ?? ""
         quotaWorkspaceID = provider.quotaWorkspaceID ?? ""
         quotaAuthCookie = ""
@@ -321,17 +331,34 @@ private struct ProviderDetailForm: View {
                         TextField("API 地址", text: $formState.baseURL)
                         TextField("官网地址", text: $formState.websiteURL)
                     } else if isAWSBedrock {
-                        TextField("Mantle API 地址", text: $formState.baseURL)
+                        TextField("AWS Region", text: $formState.awsRegion)
                     }
                     TextField("绘图接口路径", text: $formState.imageGenerationPath, prompt: Text("/v1/images/generations"))
-                    HStack(spacing: 8) {
-                        SecureField(apiKeyPrompt, text: $formState.apiKey)
-                        if apiKeyConfigured {
-                            Button("清除密钥", action: onClearKey)
-                                .disabled(isBusy || !provider.apiKeyConfigured)
+                    if isAWSBedrock {
+                        SecureField(awsAccessKeyPrompt, text: $formState.awsAccessKeyID)
+                        SecureField(awsSecretKeyPrompt, text: $formState.awsSecretAccessKey)
+                        HStack(spacing: 8) {
+                            SecureField(awsSessionTokenPrompt, text: $formState.awsSessionToken)
+                            if provider.awsSessionTokenConfigured == true {
+                                Button("清除 Session Token") {
+                                    formState.awsSessionToken = ""
+                                    formState.clearAwsSessionToken = true
+                                }
+                                .disabled(isBusy || formState.clearAwsSessionToken)
+                            }
                         }
-                    }
-                    if apiKeyConfigured {
+                        if provider.awsSigV4Configured == true {
+                            Button("清除 AWS 凭据", action: onClearKey)
+                                .disabled(isBusy)
+                        }
+                    } else {
+                        HStack(spacing: 8) {
+                            SecureField(apiKeyPrompt, text: $formState.apiKey)
+                            if apiKeyConfigured {
+                                Button("清除密钥", action: onClearKey)
+                                    .disabled(isBusy || !provider.apiKeyConfigured)
+                            }
+                        }
                     }
                 }
             } header: {
@@ -407,6 +434,25 @@ private struct ProviderDetailForm: View {
 
     private var apiKeyPrompt: String {
         provider.apiKeyConfigured ? "已配置；留空保留" : "尚未配置；启用前必须填写"
+    }
+
+    private var awsAccessKeyPrompt: String {
+        provider.awsSigV4Configured == true ? "Access Key ID 已配置；留空保留" : "Access Key ID"
+    }
+
+    private var awsSecretKeyPrompt: String {
+        provider.awsSigV4Configured == true
+            ? "Secret Access Key 已配置；留空保留"
+            : "Secret Access Key"
+    }
+
+    private var awsSessionTokenPrompt: String {
+        if formState.clearAwsSessionToken {
+            return "保存后清除"
+        }
+        return provider.awsSessionTokenConfigured == true
+            ? "Session Token 已配置；留空保留"
+            : "Session Token（可选）"
     }
 
     private var authCookiePrompt: String {

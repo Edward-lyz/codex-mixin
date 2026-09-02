@@ -285,22 +285,47 @@ impl AppState {
             let base_request = self.client.post(provider.api_url().clone());
             let mut upstream_request = match &native {
                 Some(native) => base_request.headers(native.clone()),
+                None if provider.aws_sigv4().is_some() => provider.apply_protocol_headers(
+                    base_request,
+                    crate::provider::ProviderProtocol::AnthropicMessages,
+                ),
                 None => provider.apply_auth(base_request),
             };
             upstream_request = provider.apply_anthropic_beta(upstream_request, beta.as_deref());
             let upstream_request = provider
                 .apply_session_affinity(upstream_request, hash_key)
                 .header(header::ACCEPT, "text/event-stream");
-            let response = crate::request_body::send_json(upstream_request, request.clone())
-                .await
-                .inspect_err(|error| {
-                    tracing::error!(
-                        provider_id = provider.id(),
-                        upstream_model_id = %request.model,
-                        error = %crate::error::format_error_chain(error),
-                        "provider messages request failed before receiving a response"
-                    );
-                })?;
+            let response = if let Some(aws) = provider.aws_sigv4() {
+                let prepared = crate::request_body::prepare_signed_json(request.clone()).await?;
+                let content_length = header::HeaderValue::from_str(&prepared.length.to_string())
+                    .map_err(|error| GatewayError::Other(error.into()))?;
+                let mut request = upstream_request
+                    .header(header::CONTENT_TYPE, "application/json")
+                    .header(header::CONTENT_LENGTH, content_length)
+                    .body(prepared.file)
+                    .build()
+                    .map_err(GatewayError::Http)?;
+                crate::provider::sign_aws_request(
+                    &mut request,
+                    aws,
+                    prepared.sha256,
+                    std::time::SystemTime::now(),
+                )?;
+                self.client
+                    .execute(request)
+                    .await
+                    .map_err(GatewayError::Http)
+            } else {
+                crate::request_body::send_json(upstream_request, request.clone()).await
+            }
+            .inspect_err(|error| {
+                tracing::error!(
+                    provider_id = provider.id(),
+                    upstream_model_id = %request.model,
+                    error = %crate::error::format_error_chain(error),
+                    "provider messages request failed before receiving a response"
+                );
+            })?;
             let status = response.status();
             if status == StatusCode::UNAUTHORIZED
                 && provider.uses_ducx_loopback()

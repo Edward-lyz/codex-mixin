@@ -246,8 +246,7 @@ fn migrate_legacy_config(legacy: LegacyStoredGatewayConfig) -> anyhow::Result<St
     {
         provider.quota_url = None;
     }
-    provider.enabled =
-        !provider.auth.api_key.trim().is_empty() && !provider.base_url.trim().is_empty();
+    provider.enabled = provider.auth.is_configured() && !provider.base_url.trim().is_empty();
     Ok(StoredGatewayConfig {
         config_version: CONFIG_VERSION,
         gateway_bind: legacy.gateway_bind,

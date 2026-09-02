@@ -1,4 +1,4 @@
-use std::io::{Seek, SeekFrom};
+use std::io::{Seek, SeekFrom, Write};
 
 use axum::body::Body;
 use futures_util::StreamExt;
@@ -11,6 +11,61 @@ use crate::error::GatewayError;
 
 const MAX_UPSTREAM_ERROR_BYTES: usize = 64 * 1024;
 pub(crate) const MAX_REQUEST_BYTES: usize = 256 * 1024 * 1024;
+
+pub(crate) struct SignedJsonBody {
+    pub(crate) file: tokio::fs::File,
+    pub(crate) length: u64,
+    pub(crate) sha256: String,
+}
+
+struct DigestWriter<W> {
+    inner: W,
+    digest: ring::digest::Context,
+}
+
+impl<W: Write> Write for DigestWriter<W> {
+    fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(bytes)?;
+        self.digest.update(&bytes[..written]);
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
+pub(crate) async fn prepare_signed_json<T>(value: T) -> Result<SignedJsonBody, GatewayError>
+where
+    T: Serialize + Send + 'static,
+{
+    tokio::task::spawn_blocking(move || {
+        let file = tempfile::tempfile()?;
+        let mut writer = DigestWriter {
+            inner: file,
+            digest: ring::digest::Context::new(&ring::digest::SHA256),
+        };
+        serde_json::to_writer(&mut writer, &value)?;
+        writer.flush()?;
+        let length = writer.inner.stream_position()?;
+        writer.inner.seek(SeekFrom::Start(0))?;
+        let digest = writer.digest.finish();
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let mut sha256 = String::with_capacity(digest.as_ref().len() * 2);
+        for byte in digest.as_ref() {
+            sha256.push(char::from(HEX[usize::from(*byte >> 4)]));
+            sha256.push(char::from(HEX[usize::from(*byte & 0x0f)]));
+        }
+        Ok::<_, anyhow::Error>(SignedJsonBody {
+            file: tokio::fs::File::from_std(writer.inner),
+            length,
+            sha256,
+        })
+    })
+    .await
+    .map_err(|error| GatewayError::Other(error.into()))?
+    .map_err(GatewayError::Other)
+}
 
 pub(crate) async fn parse_json(body: Body) -> Result<Value, GatewayError> {
     parse_json_with_limit(body, MAX_REQUEST_BYTES).await

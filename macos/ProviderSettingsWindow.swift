@@ -196,17 +196,25 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private func submitNewProvider(_ values: AddProviderFormValues) {
         let id = nextProviderID(for: values.preset)
         let key = values.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard !key.isEmpty else {
+        if values.preset != "aws-bedrock", key.isEmpty {
             showAlert(title: "缺少 API 密钥", message: "新增 Provider 必须填写 API 密钥。")
             return
         }
-        var arguments = ["providers", "add", "--preset", values.preset, "--id", id, "--key", key]
+        var arguments = ["providers", "add", "--preset", values.preset, "--id", id]
+        if values.preset == "aws-bedrock" {
+            arguments.append(contentsOf: [
+                "--aws-access-key-id", values.awsAccessKeyID,
+                "--aws-secret-access-key", values.awsSecretAccessKey,
+                "--aws-region", values.awsRegion,
+            ])
+            appendProviderArgument(&arguments, "--aws-session-token", values.awsSessionToken)
+        } else {
+            arguments.append(contentsOf: ["--key", key])
+        }
         if values.preset == "custom" {
             appendProviderArgument(&arguments, "--display-name", values.displayName)
             appendProviderArgument(&arguments, "--base-url", values.baseURL)
             appendProviderArgument(&arguments, "--website-url", values.websiteURL)
-        } else if values.preset == "aws-bedrock" {
-            appendProviderArgument(&arguments, "--base-url", values.baseURL)
         }
         appendProviderArgument(&arguments, "--quota-username", values.quotaUsername)
         if requiresOpenCodeGoQuotaCredentials(values.preset) {
@@ -260,8 +268,15 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         guard let provider = selectedProvider, provider.kind == .configured, !model.isBusy else { return }
         let selectedBridge = model.baiduAuthBridge
         var arguments = ["providers", "test", provider.id, "--json"]
-        appendProviderArgument(&arguments, "--key", model.apiKey)
-        if provider.presetID == "custom" || provider.presetID == "aws-bedrock" {
+        if provider.presetID == "aws-bedrock" {
+            appendProviderArgument(&arguments, "--aws-access-key-id", model.awsAccessKeyID)
+            appendProviderArgument(&arguments, "--aws-secret-access-key", model.awsSecretAccessKey)
+            appendProviderArgument(&arguments, "--aws-session-token", model.awsSessionToken)
+            appendProviderArgument(&arguments, "--aws-region", model.awsRegion)
+        } else {
+            appendProviderArgument(&arguments, "--key", model.apiKey)
+        }
+        if provider.presetID == "custom" {
             appendProviderArgument(&arguments, "--base-url", model.baseURL)
         }
         if provider.presetID == "baidu-oneapi",
@@ -319,7 +334,10 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             message: "此操作会永久移除已保存的 API 密钥。之后必须重新填写密钥才能启用该 Provider。"
         ) else { return }
         performMutation(
-            ["providers", "update", provider.id, "--clear-key"],
+            [
+                "providers", "update", provider.id,
+                provider.presetID == "aws-bedrock" ? "--clear-aws-credentials" : "--clear-key",
+            ],
             status: "正在清除 \(provider.id) 的密钥…",
             selecting: provider.id
         )
@@ -356,7 +374,30 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         var update = ["providers", "update", provider.id]
         update.append("--auxiliary-model-upstream")
         update.append(auxiliaryModelUpstream ? "true" : "false")
-        appendProviderArgument(&update, "--key", model.apiKey)
+        if provider.presetID == "aws-bedrock" {
+            let region = model.awsRegion.trimmingCharacters(in: .whitespacesAndNewlines)
+            let hasStoredCredentials = provider.awsSigV4Configured == true
+            let accessKeyID = model.awsAccessKeyID.trimmingCharacters(in: .whitespacesAndNewlines)
+            let secretAccessKey = model.awsSecretAccessKey.trimmingCharacters(in: .whitespacesAndNewlines)
+            guard !region.isEmpty,
+                  hasStoredCredentials || (!accessKeyID.isEmpty && !secretAccessKey.isEmpty)
+            else {
+                showAlert(
+                    title: "缺少 AWS 凭据",
+                    message: "Amazon Bedrock 必须填写 Region、Access Key ID 和 Secret Access Key。"
+                )
+                return
+            }
+            appendProviderArgument(&update, "--aws-access-key-id", accessKeyID)
+            appendProviderArgument(&update, "--aws-secret-access-key", secretAccessKey)
+            appendProviderArgument(&update, "--aws-session-token", model.awsSessionToken)
+            appendProviderArgument(&update, "--aws-region", region)
+            if model.clearAwsSessionToken {
+                update.append("--clear-aws-session-token")
+            }
+        } else {
+            appendProviderArgument(&update, "--key", model.apiKey)
+        }
         let imageGenerationPath = model.imageGenerationPath
             .trimmingCharacters(in: .whitespacesAndNewlines)
         if imageGenerationPath.isEmpty {
@@ -386,17 +427,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             if !websiteURL.isEmpty || provider.websiteURL != nil {
                 update.append(contentsOf: ["--website-url", websiteURL])
             }
-        } else if provider.presetID == "aws-bedrock" {
-            let baseURL = model.baseURL
-                .trimmingCharacters(in: .whitespacesAndNewlines)
-            guard !baseURL.isEmpty else {
-                showAlert(
-                    title: "缺少 Mantle API 地址",
-                    message: "Amazon Bedrock Provider 必须配置 Mantle API 地址。"
-                )
-                return
-            }
-            appendProviderArgument(&update, "--base-url", baseURL)
         }
         let quotaUsername = model.quotaUsername
             .trimmingCharacters(in: .whitespacesAndNewlines)

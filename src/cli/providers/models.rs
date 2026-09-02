@@ -4,8 +4,9 @@ use std::time::Duration;
 use anyhow::Context;
 use codex_mixin::config::GatewayConfig;
 use codex_mixin::provider::{
+    AWS_BEDROCK_DEFAULT_REGION, AWS_BEDROCK_MANTLE_SERVICE, AwsSigV4AuthConfig,
     MANUAL_MODEL_CONTEXT_WINDOW, ProviderModelSource, apply_discovered_models,
-    discover_provider_models, redact_provider_error,
+    aws_bedrock_mantle_base_url, discover_provider_models, redact_provider_error,
 };
 use codex_mixin::provider_capabilities::ProviderCapabilities;
 use serde_json::json;
@@ -210,6 +211,45 @@ pub(crate) async fn test_provider(options: TestProviderOptions) -> anyhow::Resul
     let mut provider = stored_provider.clone();
     if let Some(key) = options.key {
         provider.auth.api_key = trim_required("key", key)?;
+        provider.auth.aws_sigv4 = None;
+    }
+    let has_aws_override = options.aws_access_key_id.is_some()
+        || options.aws_secret_access_key.is_some()
+        || options.aws_session_token.is_some()
+        || options.aws_region.is_some();
+    if has_aws_override {
+        anyhow::ensure!(
+            provider.preset_id.as_deref() == Some("aws-bedrock"),
+            "AWS credential options require an aws-bedrock provider"
+        );
+        let mut aws = provider
+            .auth
+            .aws_sigv4
+            .take()
+            .unwrap_or(AwsSigV4AuthConfig {
+                access_key_id: String::new(),
+                secret_access_key: String::new(),
+                session_token: None,
+                region: AWS_BEDROCK_DEFAULT_REGION.to_owned(),
+                service: AWS_BEDROCK_MANTLE_SERVICE.to_owned(),
+            });
+        if let Some(value) = options.aws_access_key_id {
+            aws.access_key_id = trim_required("AWS access key ID", value)?;
+        }
+        if let Some(value) = options.aws_secret_access_key {
+            aws.secret_access_key = trim_required("AWS secret access key", value)?;
+        }
+        if let Some(value) = options.aws_session_token {
+            aws.session_token = Some(trim_required("AWS session token", value)?);
+        }
+        if let Some(value) = options.aws_region {
+            aws.region = trim_required("AWS region", value)?;
+            if options.base_url.is_none() {
+                provider.base_url = aws_bedrock_mantle_base_url(&aws.region);
+            }
+        }
+        provider.auth.api_key.clear();
+        provider.auth.aws_sigv4 = Some(aws);
     }
     if let Some(base_url) = options.base_url {
         provider.base_url = normalize_base_url(base_url)?;

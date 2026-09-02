@@ -6,7 +6,7 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use codex_mixin::provider::{AWS_BEDROCK_MANTLE_BASE_URL, catalog_model_slug};
+use codex_mixin::provider::{AWS_BEDROCK_DEFAULT_REGION, catalog_model_slug};
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{
     self, DisableMouseCapture, EnableMouseCapture, Event, KeyCode, KeyEventKind, KeyModifiers,
@@ -447,6 +447,10 @@ struct AddProviderForm {
     base_url: String,
     website_url: String,
     api_key: String,
+    aws_access_key_id: String,
+    aws_secret_access_key: String,
+    aws_session_token: String,
+    aws_region: String,
     quota_username: String,
     quota_workspace_id: String,
     quota_auth_cookie: String,
@@ -479,6 +483,14 @@ struct EditProviderForm {
     api_key: String,
     api_key_configured: bool,
     clear_key: bool,
+    aws_access_key_id: String,
+    aws_secret_access_key: String,
+    aws_session_token: String,
+    aws_region: String,
+    aws_sigv4_configured: bool,
+    aws_session_token_configured: bool,
+    clear_aws_session_token: bool,
+    clear_aws_credentials: bool,
     quota_username: String,
     quota_workspace_id: String,
     original_quota_workspace_id: String,
@@ -597,6 +609,7 @@ enum Action {
 impl AddProviderForm {
     fn new(providers: &[Value]) -> Self {
         Self {
+            aws_region: AWS_BEDROCK_DEFAULT_REGION.to_owned(),
             existing_ids: providers
                 .iter()
                 .filter_map(|provider| provider.get("id"))
@@ -616,7 +629,7 @@ impl AddProviderForm {
             "custom" => &[0, 1, 2, 3, 4, 5, 12, 11],
             "baidu-oneapi" => &[0, 1, 5, 6, 9, 10, 12, 11],
             "opencode-go" => &[0, 1, 5, 7, 8, 12, 11],
-            "aws-bedrock" => &[0, 1, 3, 5, 12, 11],
+            "aws-bedrock" => &[0, 1, 13, 14, 15, 16, 12, 11],
             _ => &[0, 1, 5, 12, 11],
         }
     }
@@ -660,6 +673,10 @@ impl AddProviderForm {
             7 => Some(&mut self.quota_workspace_id),
             8 => Some(&mut self.quota_auth_cookie),
             12 => Some(&mut self.image_generation_path),
+            13 => Some(&mut self.aws_region),
+            14 => Some(&mut self.aws_access_key_id),
+            15 => Some(&mut self.aws_secret_access_key),
+            16 => Some(&mut self.aws_session_token),
             _ => None,
         }
     }
@@ -670,8 +687,8 @@ impl AddProviderForm {
                 self.preset_index = (self.preset_index as isize + offset)
                     .clamp(0, PROVIDER_PRESETS.len().saturating_sub(1) as isize)
                     as usize;
-                if is_aws_bedrock(self.preset()) && self.base_url.trim().is_empty() {
-                    self.base_url = AWS_BEDROCK_MANTLE_BASE_URL.to_owned();
+                if is_aws_bedrock(self.preset()) && self.aws_region.trim().is_empty() {
+                    self.aws_region = AWS_BEDROCK_DEFAULT_REGION.to_owned();
                 }
                 if !self.active_fields().contains(&self.focus) {
                     self.focus = self.active_fields()[0];
@@ -697,7 +714,19 @@ impl AddProviderForm {
 
     fn args(&self) -> anyhow::Result<Vec<String>> {
         let preset = self.preset();
-        anyhow::ensure!(!self.api_key.trim().is_empty(), "API key is required");
+        if is_aws_bedrock(preset) {
+            anyhow::ensure!(!self.aws_region.trim().is_empty(), "AWS region is required");
+            anyhow::ensure!(
+                !self.aws_access_key_id.trim().is_empty(),
+                "AWS access key ID is required"
+            );
+            anyhow::ensure!(
+                !self.aws_secret_access_key.trim().is_empty(),
+                "AWS secret access key is required"
+            );
+        } else {
+            anyhow::ensure!(!self.api_key.trim().is_empty(), "API key is required");
+        }
         if preset == "custom" {
             anyhow::ensure!(
                 !self.display_name.trim().is_empty(),
@@ -723,9 +752,25 @@ impl AddProviderForm {
             "add".to_owned(),
             "--preset".to_owned(),
             preset.to_owned(),
-            "--key".to_owned(),
-            self.api_key.trim().to_owned(),
         ];
+        if is_aws_bedrock(preset) {
+            args.extend([
+                "--aws-access-key-id".to_owned(),
+                self.aws_access_key_id.trim().to_owned(),
+                "--aws-secret-access-key".to_owned(),
+                self.aws_secret_access_key.trim().to_owned(),
+                "--aws-region".to_owned(),
+                self.aws_region.trim().to_owned(),
+            ]);
+            if !self.aws_session_token.trim().is_empty() {
+                args.extend([
+                    "--aws-session-token".to_owned(),
+                    self.aws_session_token.trim().to_owned(),
+                ]);
+            }
+        } else {
+            args.extend(["--key".to_owned(), self.api_key.trim().to_owned()]);
+        }
         let provider_id = self.provider_id();
         args.extend(["--id".to_owned(), provider_id]);
         let mut optional = Vec::new();
@@ -742,8 +787,6 @@ impl AddProviderForm {
                 ("--quota-workspace-id", self.quota_workspace_id.as_str()),
                 ("--quota-auth-cookie", self.quota_auth_cookie.as_str()),
             ]);
-        } else if is_aws_bedrock(preset) {
-            optional.push(("--base-url", self.base_url.as_str()));
         }
         for (flag, value) in optional {
             if !value.trim().is_empty() {
@@ -779,6 +822,9 @@ impl AddProviderForm {
     fn clear_secrets(&mut self) {
         self.api_key.clear();
         self.quota_auth_cookie.clear();
+        self.aws_access_key_id.clear();
+        self.aws_secret_access_key.clear();
+        self.aws_session_token.clear();
     }
 }
 
@@ -793,7 +839,7 @@ impl SetupForm {
 
     fn active_fields(&self) -> Vec<usize> {
         let mut fields = self.provider.active_fields().to_vec();
-        fields.push(13);
+        fields.push(17);
         fields
     }
 
@@ -805,7 +851,7 @@ impl SetupForm {
             .unwrap_or(0);
         self.focus =
             fields[(position as isize + offset).rem_euclid(fields.len() as isize) as usize];
-        if self.focus != 13 {
+        if self.focus != 17 {
             self.provider.focus = self.focus;
         }
     }
@@ -849,6 +895,20 @@ impl EditProviderForm {
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
             clear_key: false,
+            aws_access_key_id: String::new(),
+            aws_secret_access_key: String::new(),
+            aws_session_token: String::new(),
+            aws_region: value_str(provider, "aws_region", AWS_BEDROCK_DEFAULT_REGION).to_owned(),
+            aws_sigv4_configured: provider
+                .get("aws_sigv4_configured")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            aws_session_token_configured: provider
+                .get("aws_session_token_configured")
+                .and_then(Value::as_bool)
+                .unwrap_or(false),
+            clear_aws_session_token: false,
+            clear_aws_credentials: false,
             quota_username: value_str(provider, "quota_username", "").to_owned(),
             quota_workspace_id: value_str(provider, "quota_workspace_id", "").to_owned(),
             original_quota_workspace_id: value_str(provider, "quota_workspace_id", "").to_owned(),
@@ -877,7 +937,7 @@ impl EditProviderForm {
             "custom" => &[0, 1, 2, 3, 4, 5, 9],
             "baidu-oneapi" => &[3, 4, 5, 6, 7, 8, 9],
             "opencode-go" => &[3, 4, 5, 10, 11, 12, 9],
-            "aws-bedrock" => &[1, 3, 4, 5, 9],
+            "aws-bedrock" => &[13, 14, 15, 16, 17, 18, 3, 9],
             _ => &[3, 4, 5, 9],
         }
     }
@@ -902,6 +962,10 @@ impl EditProviderForm {
             6 => Some(&mut self.quota_username),
             10 => Some(&mut self.quota_workspace_id),
             11 => Some(&mut self.quota_auth_cookie),
+            13 => Some(&mut self.aws_region),
+            14 => Some(&mut self.aws_access_key_id),
+            15 => Some(&mut self.aws_secret_access_key),
+            16 => Some(&mut self.aws_session_token),
             _ => None,
         }
     }
@@ -925,6 +989,21 @@ impl EditProviderForm {
                 if self.clear_quota {
                     self.quota_auth_cookie.clear();
                     self.quota_workspace_id.clear();
+                }
+            }
+            17 if self.aws_session_token_configured => {
+                self.clear_aws_session_token = !self.clear_aws_session_token;
+                if self.clear_aws_session_token {
+                    self.aws_session_token.clear();
+                }
+            }
+            18 if self.aws_sigv4_configured => {
+                self.clear_aws_credentials = !self.clear_aws_credentials;
+                if self.clear_aws_credentials {
+                    self.aws_access_key_id.clear();
+                    self.aws_secret_access_key.clear();
+                    self.aws_session_token.clear();
+                    self.clear_aws_session_token = false;
                 }
             }
             _ => {}
@@ -951,9 +1030,6 @@ impl EditProviderForm {
                     self.website_url.trim().to_owned(),
                 ]);
             }
-        } else if is_aws_bedrock(&self.preset) {
-            anyhow::ensure!(!self.base_url.trim().is_empty(), "base URL is required");
-            args.extend(["--base-url".to_owned(), self.base_url.trim().to_owned()]);
         }
         if self.clear_key {
             anyhow::ensure!(
@@ -963,6 +1039,38 @@ impl EditProviderForm {
             args.push("--clear-key".to_owned());
         } else if !self.api_key.trim().is_empty() {
             args.extend(["--key".to_owned(), self.api_key.trim().to_owned()]);
+        }
+        if is_aws_bedrock(&self.preset) {
+            anyhow::ensure!(!self.aws_region.trim().is_empty(), "AWS region is required");
+            if self.clear_aws_credentials {
+                anyhow::ensure!(
+                    !self.enabled,
+                    "disable the provider before clearing its AWS credentials"
+                );
+                args.push("--clear-aws-credentials".to_owned());
+            } else {
+                args.extend(["--aws-region".to_owned(), self.aws_region.trim().to_owned()]);
+                if !self.aws_access_key_id.trim().is_empty() {
+                    args.extend([
+                        "--aws-access-key-id".to_owned(),
+                        self.aws_access_key_id.trim().to_owned(),
+                    ]);
+                }
+                if !self.aws_secret_access_key.trim().is_empty() {
+                    args.extend([
+                        "--aws-secret-access-key".to_owned(),
+                        self.aws_secret_access_key.trim().to_owned(),
+                    ]);
+                }
+                if self.clear_aws_session_token {
+                    args.push("--clear-aws-session-token".to_owned());
+                } else if !self.aws_session_token.trim().is_empty() {
+                    args.extend([
+                        "--aws-session-token".to_owned(),
+                        self.aws_session_token.trim().to_owned(),
+                    ]);
+                }
+            }
         }
         if self.image_generation_path.trim().is_empty() {
             if self.image_generation_configured {
@@ -1900,7 +2008,7 @@ fn handle_mouse_event(app: &mut App, kind: MouseEventKind, column: u16, row: u16
                     app.setup.provider.toggle_focused(1);
                 }
             } else if line == fields.len() {
-                app.setup.focus = 13;
+                app.setup.focus = 17;
             }
             Action::None
         }
@@ -2098,7 +2206,7 @@ fn handle_dialog_mouse_event(app: &mut App, kind: MouseEventKind, column: u16, r
                 .and_then(|index| fields.get(index))
             {
                 form.focus = *field;
-                if matches!(form.focus, 5 | 7 | 8 | 9 | 12) {
+                if matches!(form.focus, 5 | 7 | 8 | 9 | 12 | 17 | 18) {
                     form.toggle_focused(1);
                 }
                 return Action::None;
@@ -2284,21 +2392,21 @@ fn handle_setup_event(app: &mut App, code: KeyCode, modifiers: KeyModifiers) -> 
     match code {
         KeyCode::Down => app.setup.move_focus(1),
         KeyCode::Up => app.setup.move_focus(-1),
-        KeyCode::Left if app.setup.focus != 13 => app.setup.provider.toggle_focused(-1),
-        KeyCode::Right if app.setup.focus != 13 => app.setup.provider.toggle_focused(1),
-        KeyCode::Char(' ') if app.setup.focus != 13 => app.setup.provider.toggle_focused(1),
-        KeyCode::Left if app.setup.focus == 13 => {
+        KeyCode::Left if app.setup.focus != 17 => app.setup.provider.toggle_focused(-1),
+        KeyCode::Right if app.setup.focus != 17 => app.setup.provider.toggle_focused(1),
+        KeyCode::Char(' ') if app.setup.focus != 17 => app.setup.provider.toggle_focused(1),
+        KeyCode::Left if app.setup.focus == 17 => {
             app.setup.codex_mode = app.setup.codex_mode.saturating_sub(1);
         }
-        KeyCode::Right if app.setup.focus == 13 => {
+        KeyCode::Right if app.setup.focus == 17 => {
             app.setup.codex_mode = (app.setup.codex_mode + 1).min(2);
         }
-        KeyCode::Backspace if app.setup.focus != 13 => {
+        KeyCode::Backspace if app.setup.focus != 17 => {
             if let Some(value) = app.setup.provider.focused_text() {
                 value.pop();
             }
         }
-        KeyCode::Char(character) if app.setup.focus != 13 => {
+        KeyCode::Char(character) if app.setup.focus != 17 => {
             if let Some(value) = app.setup.provider.focused_text() {
                 value.push(character);
             }
@@ -2549,6 +2657,11 @@ fn handle_dialog_event(app: &mut App, code: KeyCode, modifiers: KeyModifiers) ->
                             form.clear_key = false;
                         } else if focus == 11 {
                             form.clear_quota = false;
+                        } else if matches!(focus, 14 | 15) {
+                            form.clear_aws_credentials = false;
+                        } else if focus == 16 {
+                            form.clear_aws_session_token = false;
+                            form.clear_aws_credentials = false;
                         }
                     }
                 }
@@ -3036,19 +3149,35 @@ fn render_setup(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
             form_line("Website", &provider.website_url, form.focus == 4, false),
         ]);
     } else if is_aws_bedrock(provider.preset()) {
+        lines.extend([
+            form_line("AWS region", &provider.aws_region, form.focus == 13, false),
+            form_line(
+                "Access key ID",
+                &provider.aws_access_key_id,
+                form.focus == 14,
+                true,
+            ),
+            form_line(
+                "Secret access key",
+                &provider.aws_secret_access_key,
+                form.focus == 15,
+                true,
+            ),
+            form_line(
+                "Session token",
+                &provider.aws_session_token,
+                form.focus == 16,
+                true,
+            ),
+        ]);
+    } else {
         lines.push(form_line(
-            "Mantle URL",
-            &provider.base_url,
-            form.focus == 3,
-            false,
+            "API key",
+            &provider.api_key,
+            form.focus == 5,
+            true,
         ));
     }
-    lines.push(form_line(
-        "API key",
-        &provider.api_key,
-        form.focus == 5,
-        true,
-    ));
     if provider.preset() == "baidu-oneapi" {
         lines.extend([
             form_line(
@@ -3105,7 +3234,7 @@ fn render_setup(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
         form_line(
             "Codex mode",
             form.codex_mode_name(),
-            form.focus == 13,
+            form.focus == 17,
             false,
         ),
         Line::from(""),
@@ -4187,14 +4316,30 @@ fn render_dialog(
                     form_line("Website", &form.website_url, form.focus == 4, false),
                 ]);
             } else if is_aws_bedrock(form.preset()) {
-                lines.push(form_line(
-                    "Mantle URL",
-                    &form.base_url,
-                    form.focus == 3,
-                    false,
-                ));
+                lines.extend([
+                    form_line("AWS region", &form.aws_region, form.focus == 13, false),
+                    form_line(
+                        "Access key ID",
+                        &form.aws_access_key_id,
+                        form.focus == 14,
+                        true,
+                    ),
+                    form_line(
+                        "Secret access key",
+                        &form.aws_secret_access_key,
+                        form.focus == 15,
+                        true,
+                    ),
+                    form_line(
+                        "Session token",
+                        &form.aws_session_token,
+                        form.focus == 16,
+                        true,
+                    ),
+                ]);
+            } else {
+                lines.push(form_line("API key", &form.api_key, form.focus == 5, true));
             }
-            lines.push(form_line("API key", &form.api_key, form.focus == 5, true));
             if form.preset() == "baidu-oneapi" {
                 lines.extend([
                     form_line("Quota user", &form.quota_username, form.focus == 6, false),
@@ -4260,28 +4405,57 @@ fn render_dialog(
                     form_line("Website", &form.website_url, form.focus == 2, false),
                 ]);
             } else if is_aws_bedrock(&form.preset) {
-                lines.push(form_line(
-                    "Mantle URL",
-                    &form.base_url,
-                    form.focus == 1,
-                    false,
-                ));
+                lines.extend([
+                    form_line("AWS region", &form.aws_region, form.focus == 13, false),
+                    form_line(
+                        "New access key ID",
+                        &form.aws_access_key_id,
+                        form.focus == 14,
+                        true,
+                    ),
+                    form_line(
+                        "New secret access key",
+                        &form.aws_secret_access_key,
+                        form.focus == 15,
+                        true,
+                    ),
+                    form_line(
+                        "New session token",
+                        &form.aws_session_token,
+                        form.focus == 16,
+                        true,
+                    ),
+                    form_line(
+                        "Clear session token",
+                        bool_name(form.clear_aws_session_token),
+                        form.focus == 17,
+                        false,
+                    ),
+                    form_line(
+                        "Clear AWS credentials",
+                        bool_name(form.clear_aws_credentials),
+                        form.focus == 18,
+                        false,
+                    ),
+                ]);
             }
-            lines.extend([
-                form_line(
-                    "Image path",
-                    &form.image_generation_path,
-                    form.focus == 3,
-                    false,
-                ),
-                form_line("New API key", &form.api_key, form.focus == 4, true),
-                form_line(
-                    "Clear API key",
-                    bool_name(form.clear_key),
-                    form.focus == 5,
-                    false,
-                ),
-            ]);
+            lines.push(form_line(
+                "Image path",
+                &form.image_generation_path,
+                form.focus == 3,
+                false,
+            ));
+            if !is_aws_bedrock(&form.preset) {
+                lines.extend([
+                    form_line("New API key", &form.api_key, form.focus == 4, true),
+                    form_line(
+                        "Clear API key",
+                        bool_name(form.clear_key),
+                        form.focus == 5,
+                        false,
+                    ),
+                ]);
+            }
             if form.preset == "baidu-oneapi" {
                 lines.extend([
                     form_line("Quota user", &form.quota_username, form.focus == 6, false),
@@ -4702,11 +4876,13 @@ mod tests {
     }
 
     #[test]
-    fn aws_bedrock_form_submits_mantle_url() {
+    fn aws_bedrock_form_submits_aksk_credentials() {
         let form = AddProviderForm {
             preset_index: 4,
-            base_url: "https://bedrock-mantle.eu-west-1.api.aws/anthropic".to_owned(),
-            api_key: "secret".to_owned(),
+            aws_access_key_id: "AKIDEXAMPLE".to_owned(),
+            aws_secret_access_key: "secret".to_owned(),
+            aws_session_token: "session".to_owned(),
+            aws_region: "eu-west-1".to_owned(),
             ..AddProviderForm::default()
         };
 
@@ -4716,12 +4892,75 @@ mod tests {
             args.windows(2)
                 .any(|pair| pair == ["--preset", "aws-bedrock"])
         );
-        assert!(args.windows(2).any(|pair| {
-            pair == [
-                "--base-url",
-                "https://bedrock-mantle.eu-west-1.api.aws/anthropic",
-            ]
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--aws-access-key-id", "AKIDEXAMPLE"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--aws-secret-access-key", "secret"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--aws-session-token", "session"])
+        );
+        assert!(
+            args.windows(2)
+                .any(|pair| pair == ["--aws-region", "eu-west-1"])
+        );
+        assert!(!args.iter().any(|argument| argument == "--key"));
+        assert!(!args.iter().any(|argument| argument == "--base-url"));
+    }
+
+    #[test]
+    fn edit_aws_bedrock_form_preserves_and_clears_credentials_explicitly() {
+        let provider = serde_json::json!({
+            "id": "aws-bedrock",
+            "kind": "configured",
+            "preset_id": "aws-bedrock",
+            "enabled": false,
+            "display_name": "Amazon Bedrock",
+            "base_url": "https://bedrock-mantle.eu-west-1.api.aws/anthropic",
+            "aws_sigv4_configured": true,
+            "aws_region": "eu-west-1",
+            "aws_session_token_configured": true,
+            "auxiliary_model_upstream": false
+        });
+        let mut form = EditProviderForm::from_provider(&provider).unwrap();
+
+        let preserved = form.args().unwrap();
+        assert!(
+            preserved
+                .windows(2)
+                .any(|pair| pair == ["--aws-region", "eu-west-1"])
+        );
+        assert!(!preserved.iter().any(|argument| {
+            matches!(
+                argument.as_str(),
+                "--aws-access-key-id"
+                    | "--aws-secret-access-key"
+                    | "--aws-session-token"
+                    | "--clear-aws-session-token"
+                    | "--clear-aws-credentials"
+            )
         }));
+
+        form.clear_aws_session_token = true;
+        assert!(
+            form.args()
+                .unwrap()
+                .iter()
+                .any(|argument| argument == "--clear-aws-session-token")
+        );
+
+        form.clear_aws_session_token = false;
+        form.clear_aws_credentials = true;
+        assert!(
+            form.args()
+                .unwrap()
+                .iter()
+                .any(|argument| argument == "--clear-aws-credentials")
+        );
     }
 
     #[test]

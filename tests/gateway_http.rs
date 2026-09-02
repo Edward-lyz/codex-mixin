@@ -15,7 +15,8 @@ use codex_mixin::config::{GatewayConfig, ThinkingMode};
 use codex_mixin::fusion::{FusionProfile, PanelToolsConfig};
 use codex_mixin::provider::{
     ProviderModel, ProviderModelSource, ProviderProtocol, ProviderRegistry, ProviderRequestPolicy,
-    apply_discovered_models, aws_bedrock_provider, custom_provider, discover_provider_models,
+    apply_discovered_models, aws_bedrock_aksk_provider, aws_bedrock_provider, custom_provider,
+    discover_provider_models,
 };
 use codex_mixin::server::{AppState, router};
 use codex_mixin::sse::drain_events;
@@ -646,7 +647,10 @@ async fn mock_messages(
     let auth = headers
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok());
-    assert_eq!(auth, Some("Bearer upstream-key"));
+    assert!(
+        auth == Some("Bearer upstream-key")
+            || auth.is_some_and(|value| value.starts_with("AWS4-HMAC-SHA256 "))
+    );
     let has_hosted_web_search = body
         .get("tools")
         .and_then(Value::as_array)
@@ -696,6 +700,13 @@ async fn mock_messages(
         .get("anthropic-beta")
         .and_then(|value| value.to_str().ok())
         .map_or(Value::Null, |value| json!(value));
+    if auth.is_some_and(|value| value.starts_with("AWS4-HMAC-SHA256 ")) {
+        body["__authorization"] = auth.map_or(Value::Null, |value| json!(value));
+        body["__aws_session_token"] = headers
+            .get("x-amz-security-token")
+            .and_then(|value| value.to_str().ok())
+            .map_or(Value::Null, |value| json!(value));
+    }
     state.requests.lock().unwrap().push(body.clone());
     let payload = match state.mode {
         MockMode::Text if is_fusion_panel => panel_report_sse(),
@@ -1590,6 +1601,40 @@ async fn routes_aws_bedrock_preset_through_mantle_messages() {
     let requests = requests.lock().unwrap();
     assert_eq!(requests.len(), 1);
     assert_eq!(requests[0]["model"], "anthropic.claude-sonnet-5");
+}
+
+#[tokio::test]
+async fn signs_aws_bedrock_mantle_requests_with_aksk() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url.clone());
+    let mut provider = aws_bedrock_aksk_provider(
+        "aws-bedrock",
+        "AKIDEXAMPLE",
+        "secret-example",
+        Some("session-example".to_owned()),
+        "us-east-1",
+    );
+    provider.base_url = upstream_url;
+    config.providers = vec![provider];
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut request = responses_request();
+    request["model"] = json!("anthropic.claude-sonnet-5-aws-bedrock");
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let requests = requests.lock().unwrap();
+    let authorization = requests[0]["__authorization"].as_str().unwrap();
+    assert!(authorization.starts_with("AWS4-HMAC-SHA256 "));
+    assert!(authorization.contains("Credential=AKIDEXAMPLE/"));
+    assert!(!authorization.contains("secret-example"));
+    assert_eq!(requests[0]["__aws_session_token"], "session-example");
 }
 
 fn fusion_profile() -> FusionProfile {

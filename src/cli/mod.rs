@@ -580,7 +580,15 @@ enum ProviderCommand {
         #[arg(long)]
         id: Option<String>,
         #[arg(long)]
-        key: String,
+        key: Option<String>,
+        #[arg(long)]
+        aws_access_key_id: Option<String>,
+        #[arg(long)]
+        aws_secret_access_key: Option<String>,
+        #[arg(long)]
+        aws_session_token: Option<String>,
+        #[arg(long)]
+        aws_region: Option<String>,
         #[arg(long)]
         display_name: Option<String>,
         #[arg(long)]
@@ -629,6 +637,21 @@ enum ProviderCommand {
         key: Option<String>,
         #[arg(long, conflicts_with = "key")]
         clear_key: bool,
+        #[arg(long)]
+        aws_access_key_id: Option<String>,
+        #[arg(long)]
+        aws_secret_access_key: Option<String>,
+        #[arg(long)]
+        aws_session_token: Option<String>,
+        #[arg(long)]
+        aws_region: Option<String>,
+        #[arg(long, conflicts_with = "aws_session_token")]
+        clear_aws_session_token: bool,
+        #[arg(
+            long,
+            conflicts_with_all = ["aws_access_key_id", "aws_secret_access_key", "aws_session_token", "aws_region"]
+        )]
+        clear_aws_credentials: bool,
         #[arg(long)]
         display_name: Option<String>,
         #[arg(long)]
@@ -699,6 +722,14 @@ enum ProviderCommand {
         json: bool,
         #[arg(long)]
         key: Option<String>,
+        #[arg(long)]
+        aws_access_key_id: Option<String>,
+        #[arg(long)]
+        aws_secret_access_key: Option<String>,
+        #[arg(long)]
+        aws_session_token: Option<String>,
+        #[arg(long)]
+        aws_region: Option<String>,
         #[arg(long)]
         base_url: Option<String>,
         #[arg(long, value_name = "disabled|ducx_loopback")]
@@ -905,6 +936,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 auxiliary_model_upstream,
                 id,
                 key,
+                aws_access_key_id,
+                aws_secret_access_key,
+                aws_session_token,
+                aws_region,
                 display_name,
                 base_url,
                 website_url,
@@ -936,6 +971,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     auxiliary_model_upstream,
                     id,
                     key,
+                    aws_access_key_id,
+                    aws_secret_access_key,
+                    aws_session_token,
+                    aws_region,
                     display_name,
                     base_url,
                     website_url,
@@ -964,6 +1003,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 auxiliary_model_upstream,
                 key,
                 clear_key,
+                aws_access_key_id,
+                aws_secret_access_key,
+                aws_session_token,
+                aws_region,
+                clear_aws_session_token,
+                clear_aws_credentials,
                 display_name,
                 base_url,
                 website_url,
@@ -996,6 +1041,12 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     auxiliary_model_upstream,
                     key,
                     clear_key,
+                    aws_access_key_id,
+                    aws_secret_access_key,
+                    aws_session_token,
+                    aws_region,
+                    clear_aws_session_token,
+                    clear_aws_credentials,
                     display_name,
                     base_url,
                     website_url,
@@ -1044,6 +1095,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 id,
                 json,
                 key,
+                aws_access_key_id,
+                aws_secret_access_key,
+                aws_session_token,
+                aws_region,
                 base_url,
                 baidu_auth_bridge,
                 ducx_executable,
@@ -1056,6 +1111,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     id,
                     json,
                     key,
+                    aws_access_key_id,
+                    aws_secret_access_key,
+                    aws_session_token,
+                    aws_region,
                     base_url,
                     baidu_auth_bridge,
                     ducx_executable,

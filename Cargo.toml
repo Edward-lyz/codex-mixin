@@ -14,6 +14,8 @@ lto = "thin"
 [dependencies]
 anyhow = "1.0"
 async-stream = "0.3"
+aws-credential-types = "1"
+aws-sigv4 = "1"
 axum = { version = "0.8", features = ["ws"] }
 base64 = "0.22"
 bytes = "1.10"

@@ -198,6 +198,14 @@ impl ProviderRuntime {
                 request.header("x-api-key", &self.definition.auth.api_key)
             }
         };
+        self.apply_protocol_headers(request, protocol)
+    }
+
+    pub fn apply_protocol_headers(
+        &self,
+        request: RequestBuilder,
+        protocol: ProviderProtocol,
+    ) -> RequestBuilder {
         let request = request.headers(self.custom_headers.clone());
         if protocol == ProviderProtocol::AnthropicMessages {
             request.header(
@@ -210,6 +218,10 @@ impl ProviderRuntime {
         } else {
             request
         }
+    }
+
+    pub fn aws_sigv4(&self) -> Option<&super::AwsSigV4AuthConfig> {
+        self.definition.auth.aws_sigv4.as_ref()
     }
 
     pub fn apply_custom_headers(&self, headers: &mut HeaderMap) {
@@ -887,6 +899,7 @@ mod tests {
             auth: ProviderAuthConfig {
                 header: ProviderAuthHeader::AuthorizationBearer,
                 api_key: "secret".to_owned(),
+                aws_sigv4: None,
             },
             anthropic_version: None,
             anthropic_beta: None,

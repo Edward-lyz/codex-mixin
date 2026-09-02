@@ -201,7 +201,7 @@ struct ProviderSettingsNavigationTests {
     private static func testAWSBedrockEndpointArguments() {
         var events: [String] = []
         var loadCalls = 0
-        let endpoint = "https://bedrock-mantle.eu-west-1.api.aws/anthropic"
+        let region = "eu-west-1"
         let controller = ProviderSettingsWindowController(
             loadHandler: {
                 loadCalls += 1
@@ -228,13 +228,13 @@ struct ProviderSettingsNavigationTests {
         waitUntil {
             loadCalls == 1 && controller.model.selectedProviderID == "aws-bedrock"
         }
-        controller.model.baseURL = endpoint
+        controller.model.awsRegion = region
         let alertTimer = dismissModalAlerts()
 
         controller.testProvider()
         waitUntil {
             events.contains(
-                "providers|test|aws-bedrock|--json|--base-url|\(endpoint)"
+                "providers|test|aws-bedrock|--json|--aws-region|\(region)"
             )
         }
         waitUntil { controller.model.canModifySelectedProvider && NSApp.modalWindow == nil }
@@ -242,7 +242,7 @@ struct ProviderSettingsNavigationTests {
         controller.saveProvider()
         waitUntil {
             events.contains(
-                "providers|update|aws-bedrock|--auxiliary-model-upstream|false|--base-url|\(endpoint)"
+                "providers|update|aws-bedrock|--auxiliary-model-upstream|false|--aws-region|\(region)"
             )
         }
         alertTimer.invalidate()
@@ -325,6 +325,9 @@ struct ProviderSettingsNavigationTests {
             : id == "baidu-oneapi-2"
             ? ", \"baidu_auth_bridge\": \"ducx_loopback\", \"baidu_code_report\": true, \"quota_username\": \"quota-user-2\""
             : ""
+        let aws = isAWSBedrock
+            ? ", \"aws_sigv4_configured\": true, \"aws_region\": \"us-east-1\", \"aws_session_token_configured\": false"
+            : ""
         return """
         {
           "id": "\(id)",
@@ -336,7 +339,7 @@ struct ProviderSettingsNavigationTests {
           "base_url": "https://example.com",
           "api_path": "\(apiPath)",
           "model_source": \(modelSource),
-          "api_key_configured": true,
+          "api_key_configured": true\(aws),
           "quota_parser": "generic"\(bridge),
           "selected_models": [],
           "new_models": [],

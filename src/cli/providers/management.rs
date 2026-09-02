@@ -2,7 +2,9 @@ use std::collections::{HashMap, HashSet};
 
 use codex_mixin::config::StoredGatewayConfig;
 use codex_mixin::provider::{
-    ProviderModel, ProviderModelSource, ProviderPreset, ProviderQuotaParser, catalog_model_slug,
+    AWS_BEDROCK_DEFAULT_REGION, AwsSigV4AuthConfig, ProviderModel, ProviderModelSource,
+    ProviderPreset, ProviderQuotaParser, aws_bedrock_aksk_provider, aws_bedrock_mantle_base_url,
+    catalog_model_slug,
 };
 
 use super::{
@@ -21,7 +23,54 @@ use super::{
 pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
     let preset = ProviderPreset::parse(options.preset.trim())?;
     let id = options.id.unwrap_or_else(|| preset.default_id().to_owned());
-    let mut provider = preset.create(id.clone(), trim_required("key", options.key)?);
+    let mut provider = if preset == ProviderPreset::AwsBedrock && options.key.is_none() {
+        let access_key_id = trim_required(
+            "AWS access key ID",
+            options
+                .aws_access_key_id
+                .ok_or_else(|| anyhow::anyhow!("aws-bedrock requires --aws-access-key-id"))?,
+        )?;
+        let secret_access_key = trim_required(
+            "AWS secret access key",
+            options
+                .aws_secret_access_key
+                .ok_or_else(|| anyhow::anyhow!("aws-bedrock requires --aws-secret-access-key"))?,
+        )?;
+        let session_token = options
+            .aws_session_token
+            .map(|value| trim_required("AWS session token", value))
+            .transpose()?;
+        let region = trim_required(
+            "AWS region",
+            options
+                .aws_region
+                .unwrap_or_else(|| AWS_BEDROCK_DEFAULT_REGION.to_owned()),
+        )?;
+        aws_bedrock_aksk_provider(
+            id.clone(),
+            access_key_id,
+            secret_access_key,
+            session_token,
+            region,
+        )
+    } else {
+        anyhow::ensure!(
+            options.aws_access_key_id.is_none()
+                && options.aws_secret_access_key.is_none()
+                && options.aws_session_token.is_none()
+                && options.aws_region.is_none(),
+            "AWS credential options require the aws-bedrock preset without --key"
+        );
+        preset.create(
+            id.clone(),
+            trim_required(
+                "key",
+                options
+                    .key
+                    .ok_or_else(|| anyhow::anyhow!("provider requires --key"))?,
+            )?,
+        )
+    };
     if let Some(display_name) = options.display_name {
         provider.display_name = trim_required("display name", display_name)?;
     }
@@ -184,9 +233,11 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
         let provider = find_provider_mut(config, &id)?;
         if options.clear_key {
             provider.auth.api_key.clear();
-        } else if let Some(key) = options.key {
-            provider.auth.api_key = trim_required("key", key)?;
+        } else if let Some(key) = &options.key {
+            provider.auth.api_key = trim_required("key", key.clone())?;
+            provider.auth.aws_sigv4 = None;
         }
+        apply_aws_auth_options(provider, &options)?;
         if let Some(display_name) = options.display_name {
             provider.display_name = trim_required("display name", display_name)?;
         }
@@ -338,6 +389,60 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
             discover_models_with_output(&id, false).await?;
         }
     }
+    Ok(())
+}
+
+fn apply_aws_auth_options(
+    provider: &mut codex_mixin::provider::ProviderDefinition,
+    options: &UpdateProviderOptions,
+) -> anyhow::Result<()> {
+    let has_update = options.aws_access_key_id.is_some()
+        || options.aws_secret_access_key.is_some()
+        || options.aws_session_token.is_some()
+        || options.aws_region.is_some()
+        || options.clear_aws_session_token
+        || options.clear_aws_credentials;
+    if !has_update {
+        return Ok(());
+    }
+    anyhow::ensure!(
+        provider.preset_id.as_deref() == Some("aws-bedrock"),
+        "AWS credential options require an aws-bedrock provider"
+    );
+    if options.clear_aws_credentials {
+        provider.auth.aws_sigv4 = None;
+        return Ok(());
+    }
+    let mut aws = provider
+        .auth
+        .aws_sigv4
+        .take()
+        .unwrap_or(AwsSigV4AuthConfig {
+            access_key_id: String::new(),
+            secret_access_key: String::new(),
+            session_token: None,
+            region: AWS_BEDROCK_DEFAULT_REGION.to_owned(),
+            service: codex_mixin::provider::AWS_BEDROCK_MANTLE_SERVICE.to_owned(),
+        });
+    if let Some(value) = &options.aws_access_key_id {
+        aws.access_key_id = trim_required("AWS access key ID", value.clone())?;
+    }
+    if let Some(value) = &options.aws_secret_access_key {
+        aws.secret_access_key = trim_required("AWS secret access key", value.clone())?;
+    }
+    if options.clear_aws_session_token {
+        aws.session_token = None;
+    } else if let Some(value) = &options.aws_session_token {
+        aws.session_token = Some(trim_required("AWS session token", value.clone())?);
+    }
+    if let Some(value) = &options.aws_region {
+        aws.region = trim_required("AWS region", value.clone())?;
+        if options.base_url.is_none() {
+            provider.base_url = aws_bedrock_mantle_base_url(&aws.region);
+        }
+    }
+    provider.auth.api_key.clear();
+    provider.auth.aws_sigv4 = Some(aws);
     Ok(())
 }
 

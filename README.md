@@ -262,11 +262,11 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 Baidu OneAPI 的额度接口必须同时填写额度用户名；CLI 和 App 都会在保存时校验。
 OpenCode Go 的额度显示需要额外填写工作区 ID 和 `opencode.ai` 的 `auth` cookie；
 这两个值可以在浏览器控制台里从 OpenCode Go dashboard 页面取得，cookie 过期后需要重新填写。
-`aws-bedrock` 使用 Amazon Bedrock Mantle 原生 Anthropic Messages 接口和
-`AWS_BEARER_TOKEN_BEDROCK` 对应的 Bedrock API key。默认区域为 `us-east-1`；其他区域可把
-Mantle URL 改为 `https://bedrock-mantle.<region>.api.aws/anthropic`。该 preset 明确不处理
-AWS access key、SSO profile 或默认 credential chain 的 SigV4 签名；需要这些认证方式时，
-应先使用 Bedrock API key，不能把 access key 填入 API Key 字段。
+`aws-bedrock` 使用 Amazon Bedrock Mantle 原生 Anthropic Messages 接口。新增 Provider 时填写
+AWS Region、Access Key ID、Secret Access Key，以及可选的 Session Token；Codex Mixin 会按
+`bedrock-mantle` service 生成 SigV4 签名，并根据 Region 自动生成 Mantle URL。当前只支持显式
+输入 AK/SK，不读取 AWS SSO profile 或默认 credential chain。旧配置中的 Bedrock API key
+仍可继续使用，但新的 App 和 TUI 入口默认使用 AK/SK。
 新增或更新 `custom` 供应商时，会先验证 `GET /v1/models` 的 JSON 结构，再按
 `/v1/responses` → `/v1/messages` → `/v1/chat/completions` 顺序探测响应协议；整组 `/v1`
 接口失败后，再尝试 `/models`、`/responses`、`/messages` 和 `/chat/completions`。
@@ -303,7 +303,7 @@ managed settings 中的 SessionStart、UserPromptSubmit、Stop、SessionEnd
 
 - OpenRouter 填 `https://openrouter.ai/api`，不要填 `/v1/chat/completions`。
 - DeepSeek 填 `https://api.deepseek.com`，不要填 `/chat/completions`。
-- Amazon Bedrock 填 Bedrock API key；切换区域时只替换 Mantle URL 中的 `us-east-1`。
+- Amazon Bedrock 填 AK/SK 和 Region；临时凭据再填写 Session Token。
 - 旧式或非标准网关也会在标准 `/v1` 接口失败后自动尝试去掉 `/v1` 的路径。
 
 Provider 设置界面见上方 [macOS control center](#macos-control-center)；远端用户可在同一 TUI workspace 中完成等价配置。
@@ -861,11 +861,12 @@ uses incomplete request bodies and does not run model inference.
 The Baidu OneAPI quota endpoint also requires a quota username; both the CLI and app validate it before saving.
 OpenCode Go quota display also requires a workspace ID and the `opencode.ai` `auth` cookie.
 Take both values from the OpenCode Go dashboard in a signed-in browser; refresh the cookie when it expires.
-`aws-bedrock` uses the Amazon Bedrock Mantle native Anthropic Messages endpoint and the Bedrock
-API key represented by `AWS_BEARER_TOKEN_BEDROCK`. It defaults to `us-east-1`; for another region,
-set the Mantle URL to `https://bedrock-mantle.<region>.api.aws/anthropic`. This preset deliberately
-does not implement SigV4 signing for AWS access keys, SSO profiles, or the default credential chain.
-Use a Bedrock API key instead of entering an AWS access key in the API Key field.
+`aws-bedrock` uses the Amazon Bedrock Mantle native Anthropic Messages endpoint. Enter an AWS
+Region, Access Key ID, Secret Access Key, and an optional Session Token. Codex Mixin signs requests
+with SigV4 using the `bedrock-mantle` service and derives the Mantle URL from the Region. It currently
+supports explicit AK/SK credentials only, not AWS SSO profiles or the default credential chain.
+Existing Bedrock API-key configurations remain compatible, while the app and TUI use AK/SK for new
+providers.
 When a `custom` provider is added or updated, Codex Mixin first validates the JSON structure
 returned by `GET /v1/models`, then probes `/v1/responses`, `/v1/messages`, and
 `/v1/chat/completions` in that order. If the complete versioned probe fails, it retries
@@ -1094,7 +1095,6 @@ codex-mixin --no-tui
 # First-run configuration must pass everything explicitly
 codex-mixin setup --preset openrouter --key <key> --codex-mode custom
 codex-mixin setup --preset baidu-oneapi --key <key> --quota-username <username> --codex-mode skip
-codex-mixin setup --preset aws-bedrock --key <bedrock-api-key> --codex-mode custom
 codex-mixin setup --preset <preset> --no-start
 
 # Update the CLI from the latest GitHub Release and restart the gateway
@@ -1103,6 +1103,7 @@ codex-mixin update
 # Provider management
 codex-mixin provider list
 codex-mixin provider add --preset <preset> --key <key>
+codex-mixin provider add --preset aws-bedrock --aws-access-key-id <ak> --aws-secret-access-key <sk> --aws-region <region>
 codex-mixin provider update <id> --key <key>
 codex-mixin provider reorder <id> <id> ...
 codex-mixin provider discover <id>

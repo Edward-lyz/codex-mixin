@@ -270,8 +270,8 @@ fn provider_readiness_issue_descriptions(providers: &[ProviderDefinition]) -> Ve
             continue;
         }
         let provider_name = single_line(&provider.display_name);
-        if provider.auth.api_key.trim().is_empty() {
-            descriptions.push(format!("{provider_name}: API key is not configured"));
+        if !provider.auth.is_configured() {
+            descriptions.push(format!("{provider_name}: credentials are not configured"));
         }
         let available_models = provider
             .cached_models
