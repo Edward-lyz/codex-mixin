@@ -99,7 +99,9 @@ impl DucxRuntime {
             "cwd": ".",
             "prompt": "codex-mixin report warmup"
         }))?;
-        let mut child = Command::new(&executable)
+        let mut command = Command::new(&executable);
+        command.process_group(0);
+        let mut child = command
             .arg("--user-prompt-submit")
             .env("HOME", &self.home)
             .env("CODEX_HOME", &codex_home)
@@ -115,6 +117,7 @@ impl DucxRuntime {
                     executable.to_path_buf().display()
                 )
             })?;
+        let process_group_id = child.id();
         let stderr = child
             .stderr
             .take()
@@ -148,6 +151,7 @@ impl DucxRuntime {
             ),
             status = child.wait() => {
                 let status = status.context("wait for DUCX data-report warmup")?;
+                terminate_process_group(process_group_id, &mut child).await;
                 let stderr = stderr_task
                     .await
                     .context("join DUCX data-report stderr task")??;
@@ -162,8 +166,7 @@ impl DucxRuntime {
         let captured = match capture_result {
             Ok(captured) => captured,
             Err(error) => {
-                let _ = child.kill().await;
-                let _ = child.wait().await;
+                terminate_process_group(process_group_id, &mut child).await;
                 let stderr = stderr_task
                     .await
                     .context("join DUCX data-report stderr task")??;
@@ -183,8 +186,7 @@ impl DucxRuntime {
             .to_str()
             .context("DUCX data-report client token is not valid UTF-8")?
             .to_owned();
-        let _ = child.kill().await;
-        let _ = child.wait().await;
+        terminate_process_group(process_group_id, &mut child).await;
         let _ = stderr_task.await;
         executable
             .close()
@@ -209,7 +211,9 @@ impl DucxRuntime {
             proxy.addr
         );
         let codex_home = self.home.join(".baidu-cx");
-        let mut child = Command::new(&self.executable)
+        let mut command = Command::new(&self.executable);
+        command.process_group(0);
+        let mut child = command
             .args([
                 "-c",
                 &base_url_override,
@@ -234,13 +238,26 @@ impl DucxRuntime {
             .kill_on_drop(true)
             .spawn()
             .with_context(|| format!("start managed DUCX {}", self.executable.display()))?;
-        let captured = proxy.capture(timeout).await.context(
-            "DUCX did not emit an authenticated request before the capture proxy closed",
-        )?;
-        let _ = child.kill().await;
-        let _ = child.wait().await;
-        Ok(captured)
+        let process_group_id = child.id();
+        let capture_result = proxy
+            .capture(timeout)
+            .await
+            .context("DUCX did not emit an authenticated request before the capture proxy closed");
+        terminate_process_group(process_group_id, &mut child).await;
+        capture_result
     }
+}
+
+async fn terminate_process_group(process_group_id: Option<u32>, child: &mut tokio::process::Child) {
+    if let Some(process_group_id) = process_group_id {
+        let group = format!("-{process_group_id}");
+        let _ = Command::new("/bin/kill")
+            .args(["-KILL", "--", &group])
+            .status()
+            .await;
+    }
+    let _ = child.kill().await;
+    let _ = child.wait().await;
 }
 
 fn patched_data_report(
@@ -483,6 +500,56 @@ mod tests {
                 .contains("before emitting its client token"),
             "{error:#}"
         );
+    }
+
+    #[tokio::test]
+    async fn native_header_warmup_terminates_descendant_processes() {
+        let directory = tempfile::tempdir().unwrap();
+        let home = directory.path().join("home");
+        let executable = home.join(".baidu-cx/baidu-cx/bin/ducx");
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(
+            &executable,
+            r#"#!/bin/sh
+/bin/sleep 30 &
+descendant=$!
+printf '%s' "$descendant" > "$HOME/descendant.pid"
+for argument in "$@"; do
+  case "$argument" in
+    model_providers.oneapi.base_url=*)
+      url=$(printf '%s' "$argument" | /usr/bin/sed -E 's/^[^"]*"([^"]+)".*/\1/')
+      ;;
+  esac
+done
+/usr/bin/curl --silent --max-time 2 \
+  --header 'comate_custom_header: fixture' \
+  --data '{}' "$url/responses" >/dev/null 2>&1 || true
+wait
+"#,
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let runtime = DucxRuntime::spawn(executable).await.unwrap();
+
+        let headers = runtime
+            .native_headers(Duration::from_secs(3))
+            .await
+            .unwrap();
+        assert_eq!(headers[crate::auth_capture::NATIVE_HEADER], "fixture");
+        let descendant_pid = std::fs::read_to_string(home.join("descendant.pid")).unwrap();
+        let descendant_pid = descendant_pid.trim();
+        let descendant_alive = std::process::Command::new("/bin/kill")
+            .args(["-0", descendant_pid])
+            .status()
+            .unwrap()
+            .success();
+        if descendant_alive {
+            let _ = std::process::Command::new("/bin/kill")
+                .args(["-KILL", descendant_pid])
+                .status();
+        }
+
+        assert!(!descendant_alive, "DUCX warmup descendant remained alive");
     }
 
     #[tokio::test]

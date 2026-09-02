@@ -2,7 +2,7 @@ use super::*;
 use anyhow::Context;
 
 impl AppState {
-    pub(crate) async fn prewarm_ducx(&self) -> Result<(), GatewayError> {
+    pub(crate) async fn prewarm_ducx_reporting(&self) -> Result<(), GatewayError> {
         let reporting_providers = self
             .providers
             .providers()
@@ -10,14 +10,6 @@ impl AppState {
             .filter(|provider| provider.uses_ducx_loopback() && provider.baidu_code_report())
             .collect::<Vec<_>>();
         if reporting_providers.is_empty() {
-            if let Some(provider) = self
-                .providers
-                .providers()
-                .iter()
-                .find(|provider| provider.uses_ducx_loopback())
-            {
-                self.ducx_native_headers(provider).await?;
-            }
             return Ok(());
         }
 
@@ -65,7 +57,6 @@ impl AppState {
                     );
                 }
             }
-            self.ducx_native_headers(provider).await?;
         }
         Ok(())
     }
@@ -129,5 +120,79 @@ impl AppState {
         } else {
             Ok(None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::config::{GatewayConfig, ThinkingMode};
+    use crate::provider::{BaiduAuthBridge, baidu_oneapi_provider};
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::time::Duration;
+
+    #[tokio::test]
+    async fn gateway_startup_does_not_mint_native_ducx_headers() {
+        let directory = tempfile::tempdir().unwrap();
+        let home = directory.path().join("home");
+        let executable = home.join(".baidu-cx/baidu-cx/bin/ducx");
+        let marker = home.join("native-warmup-started");
+        std::fs::create_dir_all(executable.parent().unwrap()).unwrap();
+        std::fs::write(
+            &executable,
+            format!(
+                r#"#!/bin/sh
+/usr/bin/touch '{}'
+for argument in "$@"; do
+  case "$argument" in
+    model_providers.oneapi.base_url=*)
+      url=$(printf '%s' "$argument" | /usr/bin/sed -E 's/^[^"]*"([^"]+)".*/\1/')
+      ;;
+  esac
+done
+/usr/bin/curl --silent --max-time 2 \
+  --header 'comate_custom_header: fixture' \
+  --data '{{}}' "$url/responses" >/dev/null 2>&1 || true
+"#,
+                marker.display()
+            ),
+        )
+        .unwrap();
+        std::fs::set_permissions(&executable, std::fs::Permissions::from_mode(0o700)).unwrap();
+        let mut provider = baidu_oneapi_provider("baidu", "key");
+        provider.quota_username = Some("test-user".to_owned());
+        provider.request_policy.baidu_auth_bridge = Some(BaiduAuthBridge::DucxLoopback);
+        provider.request_policy.ducx_executable = Some(executable.clone());
+        let state = AppState::new(GatewayConfig {
+            bind: "127.0.0.1:0".parse().unwrap(),
+            providers: vec![provider],
+            official_responses_url: "https://example.invalid/responses".to_owned(),
+            codex_auth_path: directory.path().join("auth.json"),
+            gateway_api_key: None,
+            gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
+            accept_codex_oauth: false,
+            official_selected_models: None,
+            default_max_tokens: 8192,
+            default_context_window: 1_000_000,
+            request_timeout: Duration::from_secs(3),
+            thinking_mode: ThinkingMode::Off,
+            enable_web_search_tool: false,
+            web_search_tool_type: "web_search_20250305".to_owned(),
+            web_search_max_uses: None,
+            fusion_profiles: Vec::new(),
+        })
+        .unwrap();
+
+        assert!(state.providers.providers()[0].uses_ducx_loopback());
+        assert_eq!(
+            state.providers.providers()[0].ducx_executable(),
+            Some(executable.as_path())
+        );
+        state.prewarm_ducx_reporting().await.unwrap();
+
+        assert!(
+            !marker.exists(),
+            "gateway startup launched the heavyweight native DUCX warmup"
+        );
     }
 }
