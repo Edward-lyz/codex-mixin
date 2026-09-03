@@ -3,12 +3,12 @@ use std::time::Duration;
 
 use anyhow::Context;
 use codex_mixin::config::GatewayConfig;
+use codex_mixin::provider::capabilities::ProviderCapabilities;
 use codex_mixin::provider::{
     AWS_BEDROCK_DEFAULT_REGION, AWS_BEDROCK_MANTLE_SERVICE, AwsSigV4AuthConfig,
     MANUAL_MODEL_CONTEXT_WINDOW, ProviderModelSource, apply_discovered_models,
     aws_bedrock_mantle_base_url, discover_provider_models, redact_provider_error,
 };
-use codex_mixin::provider_capabilities::ProviderCapabilities;
 use serde_json::json;
 
 use super::{

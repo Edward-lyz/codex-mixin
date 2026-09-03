@@ -1,4 +1,5 @@
 mod aws_sigv4;
+pub mod capabilities;
 mod discovery;
 mod external_auth;
 mod registry;

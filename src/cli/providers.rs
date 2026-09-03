@@ -4,11 +4,11 @@ use std::path::PathBuf;
 use codex_mixin::config::{
     GatewayConfig, StoredGatewayConfig, load_stored_config, mutate_stored_config,
 };
+use codex_mixin::provider::capabilities::ProviderCapabilities;
 use codex_mixin::provider::{
     BaiduAuthBridge, ProviderDefinition, ProviderModel, ProviderProtocol, ProviderQuotaParser,
     spec_for,
 };
-use codex_mixin::provider_capabilities::ProviderCapabilities;
 use codex_mixin::web_search::WebSearchCapabilities;
 use console::style;
 use serde_json::json;
