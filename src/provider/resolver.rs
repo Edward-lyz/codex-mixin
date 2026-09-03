@@ -17,7 +17,6 @@ use reqwest::Client;
 use serde::Deserialize;
 use serde_json::Value;
 
-use super::spec::OPEN_CODE_GO_PRESET_ID;
 use super::types::ProviderModel;
 
 pub const MODELS_DEV_API_URL: &str = "https://models.dev/api.json";
@@ -504,12 +503,12 @@ fn builtin_metadata(model: &str, default_context_window: u64) -> ModelMetadata {
     }
 }
 
-/// Fetch provider model capability metadata from models.dev.
+/// Fetch one provider's model capability metadata from models.dev.
 ///
-/// OpenCode Go's `/v1/models` endpoint typically returns IDs only. OpenCode itself
-/// loads full limits/capabilities from models.dev, so codex-mixin should do the same
-/// for that provider instead of inventing a local capability table.
-pub async fn fetch_models_dev_provider_models(
+/// Some provider catalogs return IDs only (OpenCode Go, DeepSeek) or omit
+/// capabilities entirely (AWS Bedrock control plane); models.dev supplies the
+/// missing limits and capability flags for those.
+pub(crate) async fn fetch_models_dev_provider_models(
     client: &Client,
     provider_id: &str,
 ) -> anyhow::Result<HashMap<String, ProviderModel>> {
@@ -532,7 +531,7 @@ pub async fn fetch_models_dev_provider_models(
     parse_models_dev_provider_models(provider_id, &body)
 }
 
-pub fn parse_models_dev_provider_models(
+pub(crate) fn parse_models_dev_provider_models(
     provider_id: &str,
     body: &str,
 ) -> anyhow::Result<HashMap<String, ProviderModel>> {
@@ -569,36 +568,37 @@ pub fn parse_models_dev_provider_models(
     Ok(models)
 }
 
-pub fn enrich_models_with_models_dev(
+/// Fill fields the provider's own catalog left unset from models.dev data.
+///
+/// Provider-declared values always win; models.dev only completes the gaps.
+pub(crate) fn enrich_models_with_models_dev(
     models: &mut [ProviderModel],
     metadata: &HashMap<String, ProviderModel>,
 ) {
     for model in models {
-        let Some(source) = metadata.get(model.id.as_str()) else {
-            continue;
-        };
-        // models.dev is the capability SSOT for OpenCode Go. Prefer its values over
-        // empty/ID-only discovery payloads.
-        if let Some(display_name) = source.display_name.clone() {
-            model.display_name = Some(display_name);
-        }
-        if let Some(description) = source.description.clone() {
-            model.description = Some(description);
-        }
-        if let Some(context_window) = source.context_window {
-            model.context_window = Some(context_window);
-        }
-        if let Some(supports_image) = source.supports_image {
-            model.supports_image = Some(supports_image);
-        }
-        if let Some(supports_thinking) = source.supports_thinking {
-            model.supports_thinking = Some(supports_thinking);
+        if let Some(source) = metadata.get(model.id.as_str()) {
+            fill_missing_model_fields(model, source);
         }
     }
 }
 
-pub fn uses_models_dev_capabilities(definition_preset_id: Option<&str>, provider_id: &str) -> bool {
-    definition_preset_id == Some(OPEN_CODE_GO_PRESET_ID) || provider_id == OPEN_CODE_GO_PRESET_ID
+/// Field-level precedence: keep every value the provider already declared.
+pub(crate) fn fill_missing_model_fields(model: &mut ProviderModel, source: &ProviderModel) {
+    if model.display_name.is_none() {
+        model.display_name = source.display_name.clone();
+    }
+    if model.description.is_none() {
+        model.description = source.description.clone();
+    }
+    if model.context_window.is_none() {
+        model.context_window = source.context_window;
+    }
+    if model.supports_image.is_none() {
+        model.supports_image = source.supports_image;
+    }
+    if model.supports_thinking.is_none() {
+        model.supports_thinking = source.supports_thinking;
+    }
 }
 
 fn model_supports_image(model: &ModelsDevModel) -> bool {
@@ -750,7 +750,7 @@ mod tests {
     }
 
     #[test]
-    fn enrich_prefers_models_dev_fields_over_id_only_discovery() {
+    fn enrich_fills_gaps_but_keeps_provider_declared_values() {
         let metadata = HashMap::from([(
             "gpt-5.6-luna".to_owned(),
             ProviderModel {
@@ -765,6 +765,7 @@ mod tests {
         )]);
         let mut models = vec![ProviderModel {
             id: "gpt-5.6-luna".to_owned(),
+            context_window: Some(42),
             ..ProviderModel::default()
         }];
 
@@ -775,7 +776,8 @@ mod tests {
             Some("GPT-5.6 Luna (2x usage)")
         );
         assert_eq!(models[0].description.as_deref(), Some("from models.dev"));
-        assert_eq!(models[0].context_window, Some(1_050_000));
+        // The provider-declared window wins over the models.dev value.
+        assert_eq!(models[0].context_window, Some(42));
         assert_eq!(models[0].supports_image, Some(true));
         assert_eq!(models[0].supports_thinking, Some(true));
     }

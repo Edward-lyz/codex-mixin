@@ -134,6 +134,9 @@ pub struct ProviderSpec {
     pub anthropic_version: Option<&'static str>,
     pub image_generation_path: Option<&'static str>,
     pub model_source: ModelSourceSpec,
+    /// models.dev provider id used to fill fields the provider's own catalog
+    /// does not declare (id-only model lists, missing limits).
+    pub models_dev_provider: Option<&'static str>,
     pub quota_url: Option<&'static str>,
     pub quota_currency: Option<&'static str>,
     pub quota_parser: ProviderQuotaParser,
@@ -198,6 +201,7 @@ static SPECS: [ProviderSpec; 6] = [
         anthropic_version: None,
         image_generation_path: None,
         model_source: ModelSourceSpec::OpenAiCompatible("/v1/models"),
+        models_dev_provider: None,
         quota_url: None,
         quota_currency: None,
         quota_parser: ProviderQuotaParser::Generic,
@@ -219,6 +223,7 @@ static SPECS: [ProviderSpec; 6] = [
         anthropic_version: Some("2023-06-01"),
         image_generation_path: Some("/v1/images/generations"),
         model_source: ModelSourceSpec::BaiduOneApi,
+        models_dev_provider: None,
         quota_url: Some("https://oneapi-comate.baidu-int.com/openapi/v3/user/quota"),
         quota_currency: Some("CNY"),
         quota_parser: ProviderQuotaParser::BaiduOneApi,
@@ -238,6 +243,7 @@ static SPECS: [ProviderSpec; 6] = [
         anthropic_version: None,
         image_generation_path: None,
         model_source: ModelSourceSpec::OpenAiCompatible("/v1/models"),
+        models_dev_provider: None,
         quota_url: Some("https://openrouter.ai/api/v1/credits"),
         quota_currency: Some("USD"),
         quota_parser: ProviderQuotaParser::OpenRouter,
@@ -257,6 +263,7 @@ static SPECS: [ProviderSpec; 6] = [
         anthropic_version: None,
         image_generation_path: None,
         model_source: ModelSourceSpec::OpenAiCompatible("/models"),
+        models_dev_provider: Some("deepseek"),
         quota_url: Some("https://api.deepseek.com/user/balance"),
         quota_currency: None,
         quota_parser: ProviderQuotaParser::DeepSeek,
@@ -278,6 +285,7 @@ static SPECS: [ProviderSpec; 6] = [
         anthropic_version: None,
         image_generation_path: None,
         model_source: ModelSourceSpec::OpenAiCompatible("/v1/models"),
+        models_dev_provider: Some(OPEN_CODE_GO_PRESET_ID),
         quota_url: None,
         quota_currency: Some("USD"),
         quota_parser: ProviderQuotaParser::OpenCodeGo,
@@ -297,6 +305,7 @@ static SPECS: [ProviderSpec; 6] = [
         anthropic_version: Some("2023-06-01"),
         image_generation_path: None,
         model_source: ModelSourceSpec::Static,
+        models_dev_provider: Some("amazon-bedrock"),
         quota_url: None,
         quota_currency: Some("USD"),
         quota_parser: ProviderQuotaParser::Generic,
@@ -427,6 +436,14 @@ mod tests {
             assert!(!spec.display_name.is_empty());
             assert!(!spec.description.is_empty());
         }
+        assert_eq!(
+            ProviderPreset::OpenCodeGo.spec().models_dev_provider,
+            Some("opencode-go")
+        );
+        assert_eq!(
+            ProviderPreset::AwsBedrock.spec().models_dev_provider,
+            Some("amazon-bedrock")
+        );
     }
 
     #[test]

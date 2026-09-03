@@ -9,8 +9,9 @@ use serde_json::json;
 use crate::anthropic::{BaiduAvailableModelsResponse, ModelInfo, ModelsResponse};
 
 use super::resolver::{
-    enrich_models_with_models_dev, fetch_models_dev_provider_models, uses_models_dev_capabilities,
+    enrich_models_with_models_dev, fetch_models_dev_provider_models, fill_missing_model_fields,
 };
+use super::spec::{OPEN_CODE_GO_PRESET_ID, spec_for};
 use super::{
     AwsSigV4AuthConfig, ProviderDefinition, ProviderModel, ProviderModelSource, ProviderRuntime,
     sign_aws_request,
@@ -98,6 +99,15 @@ async fn discover_aws_bedrock_models(
         fetch_inference_profiles(client, &base_url, &control_auth, "SYSTEM_DEFINED", false).await?,
     );
     models.extend(fetch_foundation_models(client, &base_url, &control_auth).await?);
+    match fetch_models_dev_provider_models(client, "amazon-bedrock").await {
+        Ok(metadata) => enrich_bedrock_models(&mut models, &metadata),
+        Err(error) => tracing::warn!(
+            provider_id = %definition.id,
+            error = %format!("{error:#}"),
+            "failed to enrich AWS Bedrock models from models.dev"
+        ),
+    }
+    apply_bedrock_capability_hints(&mut models);
     normalize_models(&mut models);
     Ok(models)
 }
@@ -161,7 +171,7 @@ fn inference_profile_models(page: InferenceProfilesResponse, use_arn: bool) -> V
                 .into_iter()
                 .filter_map(|model| model.model_arn.rsplit('/').next().map(str::to_owned))
                 .collect();
-            bedrock_discovered_model(id, profile.inference_profile_name, aliases, true)
+            bedrock_discovered_model(id, profile.inference_profile_name, aliases, None)
         })
         .collect()
 }
@@ -204,7 +214,7 @@ fn foundation_model_entries(response: FoundationModelsResponse) -> Vec<ProviderM
                 model.model_id,
                 format!("{} {}", model.provider_name, model.model_name),
                 Vec::new(),
-                supports_image,
+                Some(supports_image),
             )
         })
         .collect()
@@ -214,18 +224,69 @@ fn bedrock_discovered_model(
     id: String,
     display_name: String,
     aliases: Vec<String>,
-    supports_image: bool,
+    supports_image: Option<bool>,
 ) -> ProviderModel {
     ProviderModel {
         id,
         aliases,
         display_name: Some(display_name),
-        supports_image: Some(supports_image),
-        supports_thinking: Some(true),
+        // The Bedrock control plane does not report reasoning or tool
+        // support; models.dev enrichment and family hints fill those in.
+        supports_image,
         supports_web_search: Some(false),
         supports_tool_search: Some(false),
-        supports_function_tools: Some(true),
         ..ProviderModel::default()
+    }
+}
+
+fn enrich_bedrock_models(models: &mut [ProviderModel], metadata: &HashMap<String, ProviderModel>) {
+    for model in models {
+        if let Some(source) = bedrock_metadata_for(model, metadata) {
+            fill_missing_model_fields(model, source);
+        }
+    }
+}
+
+fn bedrock_metadata_for<'metadata>(
+    model: &ProviderModel,
+    metadata: &'metadata HashMap<String, ProviderModel>,
+) -> Option<&'metadata ProviderModel> {
+    std::iter::once(model.id.as_str())
+        .chain(model.aliases.iter().map(String::as_str))
+        .find_map(|key| lookup_without_region_prefix(metadata, key))
+}
+
+/// Cross-region inference ids ("us.anthropic. ...") wrap the foundation model
+/// id that models.dev catalogs.
+fn lookup_without_region_prefix<'metadata>(
+    metadata: &'metadata HashMap<String, ProviderModel>,
+    key: &str,
+) -> Option<&'metadata ProviderModel> {
+    if let Some(found) = metadata.get(key) {
+        return Some(found);
+    }
+    let (prefix, rest) = key.split_once('.')?;
+    if matches!(prefix, "us" | "eu" | "apac" | "jp" | "au" | "ca" | "global") {
+        metadata.get(rest)
+    } else {
+        None
+    }
+}
+
+/// Bedrock Mantle exposes the Anthropic Messages API, so Claude models are
+/// the ones actually served through this preset. Their family capabilities
+/// are stable facts; other vendors stay unknown until probed.
+fn apply_bedrock_capability_hints(models: &mut [ProviderModel]) {
+    for model in models {
+        let claude = std::iter::once(model.id.as_str())
+            .chain(model.aliases.iter().map(String::as_str))
+            .chain(model.display_name.as_deref())
+            .any(|value| value.to_ascii_lowercase().contains("claude"));
+        if claude {
+            model.supports_image.get_or_insert(true);
+            model.supports_thinking.get_or_insert(true);
+            model.supports_function_tools.get_or_insert(true);
+        }
     }
 }
 
@@ -271,18 +332,39 @@ async fn discover_openai_models(
             )
         })
         .collect::<Vec<_>>();
-    if uses_models_dev_capabilities(definition.preset_id.as_deref(), definition.id.as_str()) {
-        match fetch_models_dev_provider_models(client, "opencode-go").await {
+    if let Some(models_dev_provider) = models_dev_provider_for(definition) {
+        match fetch_models_dev_provider_models(client, models_dev_provider).await {
             Ok(metadata) => enrich_models_with_models_dev(&mut models, &metadata),
             Err(error) => tracing::warn!(
                 provider_id = %definition.id,
                 error = %format!("{error:#}"),
-                "failed to enrich OpenCode Go models from models.dev"
+                "failed to enrich provider models from models.dev"
             ),
         }
     }
+    apply_generic_capability_defaults(&mut models);
     normalize_models(&mut models);
     Ok(models)
+}
+
+fn models_dev_provider_for(definition: &ProviderDefinition) -> Option<&'static str> {
+    if let Some(provider) = spec_for(definition.preset_id.as_deref()).models_dev_provider {
+        return Some(provider);
+    }
+    // OpenCode Go providers configured before preset stamping carry the id only.
+    (definition.id == OPEN_CODE_GO_PRESET_ID).then_some(OPEN_CODE_GO_PRESET_ID)
+}
+
+/// Permissive chat defaults for anything neither the provider nor models.dev
+/// declared; live capability probes refine these later.
+fn apply_generic_capability_defaults(models: &mut [ProviderModel]) {
+    for model in models {
+        model.supports_image.get_or_insert(false);
+        model.supports_thinking.get_or_insert(true);
+        model.supports_web_search.get_or_insert(false);
+        model.supports_tool_search.get_or_insert(false);
+        model.supports_function_tools.get_or_insert(true);
+    }
 }
 
 fn openai_model_to_provider_model(model: ModelInfo, is_openrouter: bool) -> ProviderModel {
@@ -306,7 +388,7 @@ fn openai_model_to_provider_model(model: ModelInfo, is_openrouter: bool) -> Prov
                 Some(true),
             )
         } else {
-            (Some(false), Some(true), Some(false), Some(true))
+            (None, None, None, None)
         };
     ProviderModel {
         id: model.id,
@@ -322,7 +404,7 @@ fn openai_model_to_provider_model(model: ModelInfo, is_openrouter: bool) -> Prov
         supports_image,
         supports_thinking,
         supports_web_search,
-        supports_tool_search: Some(false),
+        supports_tool_search: is_openrouter.then_some(false),
         supports_function_tools,
         capability_probe_error: model.capability_probe_error,
         capabilities_probed_at_ms: model.capabilities_probed_at_ms,
@@ -568,14 +650,69 @@ mod tests {
         let response: ModelsResponse =
             serde_json::from_str(r#"{"data":[{"id":"unknown"}]}"#).unwrap();
 
-        let model =
+        let mut model =
             openai_model_to_provider_model(response.data.into_iter().next().unwrap(), false);
+        apply_generic_capability_defaults(std::slice::from_mut(&mut model));
 
         assert_eq!(model.supports_image, Some(false));
         assert_eq!(model.supports_thinking, Some(true));
         assert_eq!(model.supports_function_tools, Some(true));
         assert_eq!(model.supports_web_search, Some(false));
         assert_eq!(model.supports_tool_search, Some(false));
+    }
+
+    #[test]
+    fn bedrock_enrichment_matches_aliases_and_region_prefixed_ids() {
+        let metadata = HashMap::from([(
+            "anthropic.claude-opus-5-20251101-v1:0".to_owned(),
+            ProviderModel {
+                id: "anthropic.claude-opus-5-20251101-v1:0".to_owned(),
+                context_window: Some(1_000_000),
+                supports_image: Some(true),
+                supports_thinking: Some(true),
+                ..ProviderModel::default()
+            },
+        )]);
+        let mut models = vec![
+            ProviderModel {
+                id: "arn:aws:bedrock:us-east-2:123:application-inference-profile/abc".to_owned(),
+                aliases: vec!["anthropic.claude-opus-5-20251101-v1:0".to_owned()],
+                ..ProviderModel::default()
+            },
+            ProviderModel {
+                id: "us.anthropic.claude-opus-5-20251101-v1:0".to_owned(),
+                ..ProviderModel::default()
+            },
+        ];
+
+        enrich_bedrock_models(&mut models, &metadata);
+
+        assert_eq!(models[0].context_window, Some(1_000_000));
+        assert_eq!(models[0].supports_thinking, Some(true));
+        assert_eq!(models[1].context_window, Some(1_000_000));
+        assert_eq!(models[1].supports_image, Some(true));
+    }
+
+    #[test]
+    fn bedrock_family_hints_cover_claude_but_not_other_vendors() {
+        let mut models = vec![
+            ProviderModel {
+                id: "anthropic.claude-haiku-4-5".to_owned(),
+                ..ProviderModel::default()
+            },
+            ProviderModel {
+                id: "meta.llama4-70b-instruct".to_owned(),
+                ..ProviderModel::default()
+            },
+        ];
+
+        apply_bedrock_capability_hints(&mut models);
+
+        assert_eq!(models[0].supports_thinking, Some(true));
+        assert_eq!(models[0].supports_function_tools, Some(true));
+        assert_eq!(models[0].supports_image, Some(true));
+        assert_eq!(models[1].supports_thinking, None);
+        assert_eq!(models[1].supports_function_tools, None);
     }
 
     #[test]
@@ -737,5 +874,8 @@ mod tests {
             Some("Anthropic Claude Sonnet 5")
         );
         assert_eq!(models[0].supports_image, Some(true));
+        // Reasoning and tool support come from models.dev or family hints.
+        assert_eq!(models[0].supports_thinking, None);
+        assert_eq!(models[0].supports_function_tools, None);
     }
 }
