@@ -10,7 +10,7 @@ use futures_util::{StreamExt, stream};
 use serde_json::{Value, json};
 
 use super::super::config_input::normalize_base_url;
-use super::super::status::{QuotaUsageSummary, quota_usage};
+use codex_mixin::provider::{QuotaUsageSummary, quota_usage};
 
 const CUSTOM_PROTOCOL_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
 

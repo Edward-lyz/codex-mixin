@@ -20,6 +20,7 @@ use super::tui::StartPage;
 use super::update::{cli_release_target, release_version_from_redirect, replace_executable};
 use super::{Cli, requested_tui_start};
 use super::{atomic_file::*, codex::*, runtime::*, service::*, status::*};
+use codex_mixin::provider::{QuotaUsageSummary, quota_usage};
 
 #[test]
 fn managed_model_catalog_refreshes_promptly() {

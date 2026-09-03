@@ -21,9 +21,9 @@ pub(crate) use opencode_go::{
     fetch_opencode_go_quota_results, official_quota_rows, parse_opencode_go_billing_html,
     parse_opencode_go_usage_html,
 };
+pub(crate) use quota::quota;
 #[cfg(test)]
 pub(crate) use quota::summarize_quota_json;
-pub(crate) use quota::{QuotaUsageSummary, quota, quota_usage};
 pub(crate) use usage::usage;
 
 pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {

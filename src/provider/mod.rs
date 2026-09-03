@@ -1,6 +1,7 @@
 pub(crate) mod auth;
 pub mod capabilities;
 mod discovery;
+mod quota;
 mod registry;
 mod resolver;
 mod spec;
@@ -13,6 +14,7 @@ use anyhow::{Context, bail};
 use reqwest::header::HeaderMap;
 
 pub use discovery::{apply_discovered_models, discover_provider_models, redact_provider_error};
+pub use quota::{QuotaUsageSummary, quota_usage};
 pub use registry::{ProviderRegistry, ProviderRuntime, ResolvedProviderModel, catalog_model_slug};
 pub use resolver::{
     MODELS_DEV_API_URL, MetadataResolver, ModelMetadata, default_metadata_cache_path,
