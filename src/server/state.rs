@@ -23,7 +23,7 @@ enum AnthropicStreamDisposition {
 
 struct CatalogSources {
     template: Option<Value>,
-    metadata: ModelMetadataResolver,
+    metadata: MetadataResolver,
 }
 
 struct CachedCatalogSources {

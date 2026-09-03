@@ -8,7 +8,7 @@ use serde_json::json;
 
 use crate::anthropic::{BaiduAvailableModelsResponse, ModelInfo, ModelsResponse};
 
-use super::models_dev::{
+use super::resolver::{
     enrich_models_with_models_dev, fetch_models_dev_provider_models, uses_models_dev_capabilities,
 };
 use super::{

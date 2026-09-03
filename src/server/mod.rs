@@ -33,7 +33,7 @@ use crate::gateway::{
     UpstreamExecutor,
 };
 use crate::image_generation::ImageRouteRegistry;
-use crate::model_metadata::ModelMetadataResolver;
+use crate::provider::MetadataResolver;
 use crate::provider::{
     ProviderRegistry, ProviderRuntime, ResolvedProviderModel, catalog_model_slug,
 };

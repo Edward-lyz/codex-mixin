@@ -1,8 +1,8 @@
 mod aws_sigv4;
 mod discovery;
 mod external_auth;
-mod models_dev;
 mod registry;
+mod resolver;
 mod spec;
 mod types;
 
@@ -13,11 +13,12 @@ use anyhow::{Context, bail};
 use reqwest::header::HeaderMap;
 
 pub use discovery::{apply_discovered_models, discover_provider_models, redact_provider_error};
-pub use models_dev::{
+pub use registry::{ProviderRegistry, ProviderRuntime, ResolvedProviderModel, catalog_model_slug};
+pub use resolver::{
+    MODELS_DEV_API_URL, MetadataResolver, ModelMetadata, default_metadata_cache_path,
     enrich_models_with_models_dev, fetch_models_dev_provider_models,
     parse_models_dev_provider_models, uses_models_dev_capabilities,
 };
-pub use registry::{ProviderRegistry, ProviderRuntime, ResolvedProviderModel, catalog_model_slug};
 pub use spec::{
     AWS_BEDROCK_DEFAULT_REGION, AWS_BEDROCK_MANTLE_BASE_URL, AWS_BEDROCK_MANTLE_SERVICE,
     AWS_BEDROCK_PRESET_ID, OPEN_CODE_GO_PRESET_ID, ProviderPreset, ProviderSpec,

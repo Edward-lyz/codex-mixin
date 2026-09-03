@@ -1,7 +1,7 @@
 use serde_json::{Value, json};
 
 use crate::anthropic::ModelInfo;
-use crate::model_metadata::ModelMetadataResolver;
+use crate::provider::MetadataResolver;
 
 use super::managed::remove_official_lifecycle_metadata;
 use super::managed::{apply_model_reasoning_capabilities, ensure_instruction_fields};
@@ -45,7 +45,7 @@ pub fn codex_catalog_from_models_with_metadata(
     models: &[ModelInfo],
     default_context_window: u64,
     template_catalog: Option<&Value>,
-    metadata: &ModelMetadataResolver,
+    metadata: &MetadataResolver,
 ) -> Value {
     codex_catalog_from_models_with_options(
         models,
@@ -61,7 +61,7 @@ pub fn codex_oauth_proxy_catalog_from_models_with_metadata(
     models: &[ModelInfo],
     default_context_window: u64,
     template_catalog: Option<&Value>,
-    metadata: &ModelMetadataResolver,
+    metadata: &MetadataResolver,
 ) -> Value {
     codex_catalog_from_models_with_options(
         models,
@@ -77,7 +77,7 @@ pub fn codex_oauth_proxy_catalog_from_models_with_metadata_for_provider(
     models: &[ModelInfo],
     default_context_window: u64,
     template_catalog: Option<&Value>,
-    metadata: &ModelMetadataResolver,
+    metadata: &MetadataResolver,
     provider_suffix: &str,
 ) -> Value {
     codex_catalog_from_models_with_options(
@@ -94,7 +94,7 @@ pub fn codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
     models: &[ModelInfo],
     default_context_window: u64,
     template_catalog: Option<&Value>,
-    metadata: &ModelMetadataResolver,
+    metadata: &MetadataResolver,
 ) -> Value {
     codex_catalog_from_models_with_options(
         models,
@@ -111,7 +111,7 @@ fn codex_catalog_from_models_with_options(
     default_context_window: u64,
     template_catalog: Option<&Value>,
     include_template_models: bool,
-    metadata: Option<&ModelMetadataResolver>,
+    metadata: Option<&MetadataResolver>,
     provider_suffix: Option<&str>,
 ) -> Value {
     let template = template_catalog
@@ -195,8 +195,7 @@ fn codex_catalog_from_models_with_options(
             let metadata = metadata
                 .map(|resolver| resolver.resolve(&upstream_model_id, default_context_window))
                 .unwrap_or_else(|| {
-                    ModelMetadataResolver::empty()
-                        .resolve(&upstream_model_id, default_context_window)
+                    MetadataResolver::empty().resolve(&upstream_model_id, default_context_window)
                 });
             let mut context_window = model.context_window.unwrap_or(metadata.context_window);
             // Only fall back to official GPT windows when the provider did not advertise one.

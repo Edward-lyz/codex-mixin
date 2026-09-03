@@ -23,7 +23,7 @@ mod tests {
     use serde_json::{Value, json};
 
     use crate::anthropic::ModelInfo;
-    use crate::model_metadata::ModelMetadataResolver;
+    use crate::provider::MetadataResolver;
 
     use super::{
         CUSTOM_MODEL_MARKER, FALLBACK_BASE_INSTRUCTIONS, SUPPORTS_THINKING_MARKER,
@@ -80,7 +80,7 @@ mod tests {
 
     #[test]
     fn applies_model_metadata_to_context_window_and_modalities() {
-        let metadata = ModelMetadataResolver::from_json(&json!({
+        let metadata = MetadataResolver::from_json(&json!({
             "fireworks_ai/minimax-m3": {
                 "mode": "chat",
                 "max_input_tokens": 512000,
@@ -380,7 +380,7 @@ mod tests {
             context_window: Some(372_000),
             ..ModelInfo::default()
         }];
-        let metadata = ModelMetadataResolver::empty();
+        let metadata = MetadataResolver::empty();
         let catalog = codex_oauth_proxy_catalog_from_models_with_metadata_for_provider(
             &models,
             1_000_000,
@@ -408,7 +408,7 @@ mod tests {
             display_name: Some("5.6 Sol · AIHub".to_owned()),
             ..ModelInfo::default()
         }];
-        let metadata = ModelMetadataResolver::empty();
+        let metadata = MetadataResolver::empty();
 
         let catalog = codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
             &models,
@@ -429,7 +429,7 @@ mod tests {
             "context_window":272000,
             "max_context_window":272000
         }]});
-        let metadata = ModelMetadataResolver::empty();
+        let metadata = MetadataResolver::empty();
         for model_id in ["gpt-5.6-luna", "gpt-5.6-luna-opencode-go"] {
             let models = vec![ModelInfo {
                 id: model_id.to_owned(),

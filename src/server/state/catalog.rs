@@ -141,7 +141,7 @@ impl AppState {
         let sources = tokio::task::spawn_blocking(|| -> anyhow::Result<CatalogSources> {
             Ok(CatalogSources {
                 template: load_template_catalog(None)?,
-                metadata: ModelMetadataResolver::from_default_files()?,
+                metadata: MetadataResolver::from_default_files()?,
             })
         })
         .await
