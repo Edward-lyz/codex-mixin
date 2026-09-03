@@ -297,7 +297,7 @@ func providerCredentialURL(_ provider: String) -> String {
     case "openrouter": return "https://openrouter.ai/settings/keys"
     case "deepseek": return "https://platform.deepseek.com/api_keys"
     case "opencode-go": return "https://opencode.ai/go"
-    case "aws-bedrock": return "https://code.claude.com/docs/zh-CN/amazon-bedrock#2-configure-aws-credentials"
+    case "aws-bedrock": return "https://aws.amazon.com/bedrock/"
     default: return ""
     }
 }

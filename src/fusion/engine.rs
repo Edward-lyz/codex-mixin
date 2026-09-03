@@ -474,12 +474,10 @@ fn fusion_request_plan(
         }
         FusionModelProvider::Provider => {
             let resolved = state.resolved_provider_model(&model)?;
-            let provider_id = resolved.provider.id().to_owned();
-            let upstream_model_id = resolved.upstream_model_id.to_owned();
             RequestPlan::provider(
                 model,
-                provider_id,
-                upstream_model_id,
+                resolved.provider.id().to_owned(),
+                resolved.upstream_model_id.to_owned(),
                 body,
                 routing.cloned(),
                 downstream_model,

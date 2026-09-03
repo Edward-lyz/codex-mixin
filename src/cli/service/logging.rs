@@ -128,6 +128,7 @@ pub(super) fn log_gateway_configuration(config: &GatewayConfig) {
             model_source = match &provider.model_source {
                 codex_mixin::provider::ProviderModelSource::OpenAiCompatible { .. } => "open_ai_compatible",
                 codex_mixin::provider::ProviderModelSource::BaiduOneApi => "baidu_oneapi",
+                codex_mixin::provider::ProviderModelSource::AwsBedrock => "aws_bedrock",
                 codex_mixin::provider::ProviderModelSource::Static => "static",
             },
             selected_models = provider.selected_models.len(),

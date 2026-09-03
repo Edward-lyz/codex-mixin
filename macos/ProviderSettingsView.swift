@@ -567,6 +567,8 @@ private func providerLogoImageForSettings(_ provider: ProviderView) -> NSImage? 
         assetName = "opencode"
     } else if normalized.contains("openrouter") {
         assetName = "openrouter"
+    } else if normalized.contains("aws") || normalized.contains("bedrock") {
+        assetName = "aws"
     } else if normalized.contains("openai") || normalized.contains("chatgpt") || provider.kind == .official {
         assetName = "openai"
     } else {

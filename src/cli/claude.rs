@@ -1,3 +1,4 @@
+use std::collections::BTreeSet;
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -7,13 +8,12 @@ use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::report_hook::reporting_enabled;
 use crate::cli::runtime::{load_runtime_metadata, pid_is_running};
 use codex_mixin::config::GatewayConfig;
-use codex_mixin::provider::{ProviderModel, ProviderRegistry, catalog_model_slug};
+use codex_mixin::provider::{ProviderDefinition, ProviderModel, catalog_model_slug};
 
 use super::official_models::selected_official_models;
 
 pub(in crate::cli) const MANAGED_CLAUDE_MARKER: &str = "codex-mixin managed Claude Code";
 const MANAGED_CLAUDE_HOOK_MARKER: &str = " report-hook --event ";
-const CLAUDE_DEFAULT_MODEL: &str = "sonnet";
 const LEGACY_MANAGED_CLAUDE_ENV_KEYS: &[&str] = &[
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_MODEL",
@@ -31,73 +31,14 @@ const MANAGED_CLAUDE_ENV_KEYS: &[&str] = &[
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
     "DISABLE_LOGIN_COMMAND",
 ];
-const CLAUDE_OPUS_OVERRIDE_ID: &str = "claude-opus-4-6";
-const CLAUDE_SONNET_OVERRIDE_ID: &str = "claude-sonnet-4-6";
-const CLAUDE_HAIKU_OVERRIDE_ID: &str = "claude-haiku-4-5-20251001";
-const MANAGED_CLAUDE_MODEL_OVERRIDE_KEYS: &[&str] = &[
-    CLAUDE_OPUS_OVERRIDE_ID,
-    CLAUDE_SONNET_OVERRIDE_ID,
-    CLAUDE_HAIKU_OVERRIDE_ID,
-];
-
 struct ClaudeSettingsBackup {
     previous_env: Map<String, Value>,
     previous_model: Option<Value>,
     managed_env_keys: Vec<String>,
     previous_model_overrides: Map<String, Value>,
     managed_model_override_keys: Vec<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::cli) struct ClaudeModelMapping {
-    pub(in crate::cli) opus: String,
-    pub(in crate::cli) sonnet: String,
-    pub(in crate::cli) haiku: String,
-    pub(in crate::cli) opus_override: Option<String>,
-    pub(in crate::cli) sonnet_override: Option<String>,
-    pub(in crate::cli) haiku_override: Option<String>,
-}
-
-#[derive(Clone, Debug, Eq, PartialEq)]
-pub(in crate::cli) enum ClaudeModelRequest {
-    Automatic,
-    Single(String),
-    Mapping(ClaudeModelMapping),
-}
-
-pub(in crate::cli) fn claude_model_request(
-    model: Option<String>,
-    opus_model: Option<String>,
-    sonnet_model: Option<String>,
-    haiku_model: Option<String>,
-    opus_model_override: Option<String>,
-    sonnet_model_override: Option<String>,
-    haiku_model_override: Option<String>,
-) -> anyhow::Result<ClaudeModelRequest> {
-    anyhow::ensure!(
-        opus_model_override.is_none()
-            && sonnet_model_override.is_none()
-            && haiku_model_override.is_none()
-            || opus_model.is_some() && sonnet_model.is_some() && haiku_model.is_some(),
-        "model overrides require --opus-model, --sonnet-model, and --haiku-model"
-    );
-    match (model, opus_model, sonnet_model, haiku_model) {
-        (None, None, None, None) => Ok(ClaudeModelRequest::Automatic),
-        (Some(model), None, None, None) => Ok(ClaudeModelRequest::Single(model)),
-        (None, Some(opus), Some(sonnet), Some(haiku)) => {
-            Ok(ClaudeModelRequest::Mapping(ClaudeModelMapping {
-                opus,
-                sonnet,
-                haiku,
-                opus_override: opus_model_override,
-                sonnet_override: sonnet_model_override,
-                haiku_override: haiku_model_override,
-            }))
-        }
-        _ => anyhow::bail!(
-            "set --model alone, or set --opus-model, --sonnet-model, and --haiku-model together"
-        ),
-    }
+    previous_model_picker: Option<Value>,
+    manages_model_picker: bool,
 }
 
 pub(in crate::cli) fn default_claude_settings_path() -> PathBuf {
@@ -139,22 +80,14 @@ fn managed_claude_keys(
     }
 }
 
-pub(in crate::cli) fn install_claude(
-    settings_path: Option<PathBuf>,
-    model_request: ClaudeModelRequest,
-) -> anyhow::Result<()> {
+pub(in crate::cli) fn install_claude(settings_path: Option<PathBuf>) -> anyhow::Result<()> {
     let client = codex_mixin::gateway_access::GatewayClient::Claude;
     let key_existed = codex_mixin::config::gateway_client_key_exists(client)?;
     codex_mixin::config::ensure_gateway_client_key(client)?;
     let result = (|| {
         let gateway_config = GatewayConfig::from_stored_config()?;
         let official_models = selected_official_models(&gateway_config)?;
-        install_claude_with_models(
-            settings_path,
-            model_request,
-            &gateway_config,
-            &official_models,
-        )
+        install_claude_with_models(settings_path, &gateway_config, &official_models)
     })();
     super::rollback_new_client_key_on_error(result, client, key_existed)
 }
@@ -162,20 +95,19 @@ pub(in crate::cli) fn install_claude(
 #[cfg(test)]
 pub(in crate::cli) fn install_claude_with_config(
     settings_path: Option<PathBuf>,
-    model_request: ClaudeModelRequest,
     gateway_config: &GatewayConfig,
 ) -> anyhow::Result<()> {
-    install_claude_with_models(settings_path, model_request, gateway_config, &[])
+    install_claude_with_models(settings_path, gateway_config, &[])
 }
 
 fn install_claude_with_models(
     settings_path: Option<PathBuf>,
-    model_request: ClaudeModelRequest,
     gateway_config: &GatewayConfig,
     official_models: &[ProviderModel],
 ) -> anyhow::Result<()> {
     let settings_path = resolve_claude_settings_path(settings_path)?;
-    let models = resolve_claude_models(gateway_config, official_models, model_request)?;
+    let (model_picker, default_model) = claude_model_picker(gateway_config, official_models)?;
+    let managed_model_override_keys = Vec::<String>::new();
     let gateway_bind = match load_runtime_metadata()? {
         Some(runtime) if pid_is_running(runtime.pid)? => runtime.bind,
         _ => gateway_config.bind,
@@ -246,6 +178,12 @@ fn install_claude_with_models(
                     &[],
                     &settings_path,
                 )?,
+                previous_model_picker: managed
+                    .get("previous_model_picker")
+                    .filter(|value| !value.is_null())
+                    .cloned(),
+                manages_model_picker: managed.get("model_picker_managed").and_then(Value::as_bool)
+                    == Some(true),
             })
         })
         .transpose()?;
@@ -256,17 +194,24 @@ fn install_claude_with_models(
         .map(|backup| backup.previous_env.clone())
         .unwrap_or_default();
     if let Some(env) = object.get_mut("env").and_then(Value::as_object_mut) {
-        for key in MANAGED_CLAUDE_ENV_KEYS {
+        let env_keys = existing_backup
+            .as_ref()
+            .map(|backup| backup.managed_env_keys.iter().cloned().collect())
+            .unwrap_or_else(BTreeSet::new)
+            .into_iter()
+            .chain(MANAGED_CLAUDE_ENV_KEYS.iter().map(|key| (*key).to_owned()))
+            .collect::<BTreeSet<_>>();
+        for key in env_keys {
             let was_managed = existing_backup.as_ref().is_some_and(|backup| {
                 backup
                     .managed_env_keys
                     .iter()
-                    .any(|managed_key| managed_key == key)
+                    .any(|managed_key| managed_key == &key)
             });
-            if let Some(value) = env.remove(*key)
+            if let Some(value) = env.remove(&key)
                 && !was_managed
             {
-                previous_env.insert((*key).to_owned(), value);
+                previous_env.insert(key, value);
             }
         }
     } else if object.get("env").is_some() {
@@ -278,6 +223,13 @@ fn install_claude_with_models(
     let current_model = match object.remove("model") {
         Some(Value::Null) | None => None,
         Some(model) => Some(model),
+    };
+    let current_model_picker = object
+        .remove("modelPicker")
+        .filter(|value| !value.is_null());
+    let previous_model_picker = match &existing_backup {
+        Some(backup) if backup.manages_model_picker => backup.previous_model_picker.clone(),
+        _ => current_model_picker,
     };
     let previous_model = match &existing_backup {
         Some(backup) => backup.previous_model.clone(),
@@ -294,17 +246,24 @@ fn install_claude_with_models(
                 settings_path.display()
             )
         })?;
-        for key in MANAGED_CLAUDE_MODEL_OVERRIDE_KEYS {
+        let keys = existing_backup
+            .as_ref()
+            .map(|backup| backup.managed_model_override_keys.iter().cloned().collect())
+            .unwrap_or_else(BTreeSet::new)
+            .into_iter()
+            .chain(managed_model_override_keys.iter().cloned())
+            .collect::<BTreeSet<_>>();
+        for key in keys {
             let was_managed = existing_backup.as_ref().is_some_and(|backup| {
                 backup
                     .managed_model_override_keys
                     .iter()
-                    .any(|managed_key| managed_key == key)
+                    .any(|managed_key| managed_key == &key)
             });
-            if let Some(value) = overrides.remove(*key)
+            if let Some(value) = overrides.remove(&key)
                 && !was_managed
             {
-                previous_model_overrides.insert((*key).to_owned(), value);
+                previous_model_overrides.insert(key, value);
             }
         }
         overrides.is_empty()
@@ -333,18 +292,6 @@ fn install_claude_with_models(
         Value::String(claude_credential_value(gateway_config)?),
     );
     env.insert(
-        "ANTHROPIC_DEFAULT_SONNET_MODEL".to_owned(),
-        Value::String(models.sonnet.clone()),
-    );
-    env.insert(
-        "ANTHROPIC_DEFAULT_OPUS_MODEL".to_owned(),
-        Value::String(models.opus.clone()),
-    );
-    env.insert(
-        "ANTHROPIC_DEFAULT_HAIKU_MODEL".to_owned(),
-        Value::String(models.haiku.clone()),
-    );
-    env.insert(
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".to_owned(),
         Value::String("1".to_owned()),
     );
@@ -352,60 +299,132 @@ fn install_claude_with_models(
         "DISABLE_LOGIN_COMMAND".to_owned(),
         Value::String("1".to_owned()),
     );
-    let model_overrides = object
-        .entry("modelOverrides")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Claude Code settings modelOverrides must be a JSON object: {}",
-                settings_path.display()
-            )
-        })?;
-    model_overrides.insert(
-        CLAUDE_OPUS_OVERRIDE_ID.to_owned(),
-        Value::String(models.opus.clone()),
-    );
-    model_overrides.insert(
-        CLAUDE_SONNET_OVERRIDE_ID.to_owned(),
-        Value::String(models.sonnet.clone()),
-    );
-    model_overrides.insert(
-        CLAUDE_HAIKU_OVERRIDE_ID.to_owned(),
-        Value::String(models.haiku.clone()),
-    );
-    object.insert(
-        "model".to_owned(),
-        Value::String(CLAUDE_DEFAULT_MODEL.to_owned()),
-    );
+    object.insert("model".to_owned(), Value::String(default_model.clone()));
+    object.insert("modelPicker".to_owned(), model_picker);
     object.insert(
         "codex_mixin_managed".to_owned(),
         json!({
             "marker": MANAGED_CLAUDE_MARKER,
             "env_keys": MANAGED_CLAUDE_ENV_KEYS,
-            "model_override_keys": MANAGED_CLAUDE_MODEL_OVERRIDE_KEYS,
+            "model_override_keys": managed_model_override_keys,
             "base_url": base_url,
-            "model": CLAUDE_DEFAULT_MODEL,
-            "models": {
-                "opus": models.opus,
-                "sonnet": models.sonnet,
-                "haiku": models.haiku
-            },
+            "model": default_model,
+            "model_picker_managed": true,
             "previous_env": previous_env,
             "previous_model": previous_model,
+            "previous_model_picker": previous_model_picker,
             "previous_model_overrides": previous_model_overrides
         }),
     );
     write_atomic_if_changed(&settings_path, &serde_json::to_vec_pretty(&settings)?)?;
     println!("claude code settings updated: {}", settings_path.display());
     println!("ANTHROPIC_BASE_URL: {base_url}");
-    println!("claude code opus model: {}", models.opus);
-    println!("claude code sonnet model: {}", models.sonnet);
-    println!("claude code haiku model: {}", models.haiku);
+    println!("claude code default model: {default_model}");
     println!("claude code gateway auth: configured");
     println!("claude code nonessential traffic: disabled");
     println!("reload required: restart Claude Code or start a new session");
     Ok(())
+}
+
+fn claude_model_picker(
+    config: &GatewayConfig,
+    official_models: &[ProviderModel],
+) -> anyhow::Result<(Value, String)> {
+    let mut options = Vec::new();
+    let mut picker_models = BTreeSet::new();
+    for provider in config.providers.iter().filter(|provider| provider.enabled) {
+        for model in provider.cached_models.iter().filter(|model| {
+            provider
+                .selected_models
+                .iter()
+                .any(|selected| selected == &model.id)
+        }) {
+            let target = catalog_model_slug(&model.id, &provider.id);
+            if !picker_models.insert(target.clone()) {
+                continue;
+            }
+            options.push(json!({
+                "model": target,
+                "label": claude_picker_label(provider, model),
+                "description": claude_picker_description(provider, model),
+            }));
+        }
+    }
+    for model in official_models {
+        if !picker_models.insert(model.id.clone()) {
+            continue;
+        }
+        options.push(json!({
+            "model": model.id,
+            "label": model.display_name.as_deref().unwrap_or(&model.id),
+            "description": "OpenAI official",
+        }));
+    }
+    options.sort_by(|left, right| {
+        left.get("label")
+            .and_then(Value::as_str)
+            .cmp(&right.get("label").and_then(Value::as_str))
+    });
+    let default_model = options
+        .first()
+        .and_then(|option| option.get("model"))
+        .and_then(Value::as_str)
+        .ok_or_else(|| anyhow::anyhow!("no enabled and selected Claude Code model is configured"))?
+        .to_owned();
+    Ok((
+        json!({
+            "replaceBuiltInOptions": true,
+            "options": options,
+        }),
+        default_model,
+    ))
+}
+
+fn claude_picker_label<'a>(provider: &ProviderDefinition, model: &'a ProviderModel) -> &'a str {
+    if provider.preset_id.as_deref() == Some("baidu-oneapi") {
+        return &model.id;
+    }
+    model.display_name.as_deref().unwrap_or(&model.id)
+}
+
+fn claude_picker_description(provider: &ProviderDefinition, model: &ProviderModel) -> String {
+    if provider.preset_id.as_deref() != Some("aws-bedrock") {
+        return provider.display_name.clone();
+    }
+    if model.id.contains(":application-inference-profile/") {
+        let profile_id = model.id.rsplit('/').next().unwrap_or(&model.id);
+        let scope = if model
+            .aliases
+            .iter()
+            .any(|alias| alias.starts_with("global."))
+        {
+            "Global"
+        } else if model.aliases.iter().any(|alias| alias.starts_with("us.")) {
+            "US"
+        } else {
+            ""
+        };
+        return if scope.is_empty() {
+            format!("Discount \u{b7} {profile_id}")
+        } else {
+            format!("Discount {scope} \u{b7} {profile_id}")
+        };
+    }
+    let inference_profile_id = model
+        .id
+        .split_once(":inference-profile/")
+        .map(|(_, profile_id)| profile_id)
+        .unwrap_or(&model.id);
+    if inference_profile_id.starts_with("global.") {
+        return "AWS Global".to_owned();
+    }
+    if inference_profile_id.starts_with("us.") {
+        return "AWS US".to_owned();
+    }
+    if model.id.contains(":inference-profile/") {
+        return "AWS Inference Profile".to_owned();
+    }
+    "AWS Foundation".to_owned()
 }
 
 fn claude_credential_value(config: &GatewayConfig) -> anyhow::Result<String> {
@@ -570,6 +589,16 @@ pub(in crate::cli) fn uninstall_claude(settings_path: Option<PathBuf>) -> anyhow
         .and_then(|value| value.get("previous_model"))
         .filter(|value| !value.is_null())
         .cloned();
+    let manages_model_picker = managed
+        .as_ref()
+        .and_then(|value| value.get("model_picker_managed"))
+        .and_then(Value::as_bool)
+        == Some(true);
+    let previous_model_picker = managed
+        .as_ref()
+        .and_then(|value| value.get("previous_model_picker"))
+        .filter(|value| !value.is_null())
+        .cloned();
     let previous_model_overrides = match managed
         .as_ref()
         .and_then(|value| value.get("previous_model_overrides"))
@@ -589,6 +618,14 @@ pub(in crate::cli) fn uninstall_claude(settings_path: Option<PathBuf>) -> anyhow
         &[],
         &settings_path,
     )?;
+    let env_keys = managed_claude_keys(
+        managed
+            .as_ref()
+            .ok_or_else(|| anyhow::anyhow!("Claude Code managed settings are missing"))?,
+        "env_keys",
+        LEGACY_MANAGED_CLAUDE_ENV_KEYS,
+        &settings_path,
+    )?;
     if let Some(env_value) = object.get_mut("env") {
         let env = env_value.as_object_mut().ok_or_else(|| {
             anyhow::anyhow!(
@@ -596,8 +633,8 @@ pub(in crate::cli) fn uninstall_claude(settings_path: Option<PathBuf>) -> anyhow
                 settings_path.display()
             )
         })?;
-        for key in MANAGED_CLAUDE_ENV_KEYS {
-            env.remove(*key);
+        for key in env_keys {
+            env.remove(&key);
         }
         env.extend(previous_env);
         if env.is_empty() {
@@ -638,6 +675,16 @@ pub(in crate::cli) fn uninstall_claude(settings_path: Option<PathBuf>) -> anyhow
             object.remove("model");
         }
     }
+    if manages_model_picker {
+        match previous_model_picker {
+            Some(previous) => {
+                object.insert("modelPicker".to_owned(), previous);
+            }
+            None => {
+                object.remove("modelPicker");
+            }
+        }
+    }
     write_atomic_if_changed(&settings_path, &serde_json::to_vec_pretty(&settings)?)?;
     println!("claude code settings restored: {}", settings_path.display());
     println!("managed Claude Code settings restored; restart Claude Code to apply");
@@ -670,171 +717,39 @@ pub(in crate::cli) fn claude_status(settings_path: Option<PathBuf>) -> anyhow::R
     Ok(())
 }
 
-fn resolve_claude_models(
-    config: &GatewayConfig,
-    official_models: &[ProviderModel],
-    request: ClaudeModelRequest,
-) -> anyhow::Result<ClaudeModelMapping> {
-    let registry = ProviderRegistry::new(config.providers.clone())?;
-    let official_ids = official_models
-        .iter()
-        .map(|model| model.id.as_str())
-        .collect::<std::collections::HashSet<_>>();
-    match request {
-        ClaudeModelRequest::Automatic => select_default_claude_models(&registry, official_models),
-        ClaudeModelRequest::Single(model) => {
-            let model = validate_claude_model(&registry, &official_ids, &model)?;
-            Ok(ClaudeModelMapping {
-                opus: model.clone(),
-                sonnet: model.clone(),
-                haiku: model,
-                opus_override: None,
-                sonnet_override: None,
-                haiku_override: None,
-            })
-        }
-        ClaudeModelRequest::Mapping(models) => Ok(ClaudeModelMapping {
-            opus: resolve_claude_model(
-                &registry,
-                &official_ids,
-                &models.opus,
-                models.opus_override.as_deref(),
-            )?,
-            sonnet: resolve_claude_model(
-                &registry,
-                &official_ids,
-                &models.sonnet,
-                models.sonnet_override.as_deref(),
-            )?,
-            haiku: resolve_claude_model(
-                &registry,
-                &official_ids,
-                &models.haiku,
-                models.haiku_override.as_deref(),
-            )?,
-            opus_override: None,
-            sonnet_override: None,
-            haiku_override: None,
-        }),
-    }
-}
-
-fn resolve_claude_model(
-    registry: &ProviderRegistry,
-    official_ids: &std::collections::HashSet<&str>,
-    model: &str,
-    model_override: Option<&str>,
-) -> anyhow::Result<String> {
-    let catalog_slug = validate_claude_model(registry, official_ids, model)?;
-    let Some(model_override) = model_override else {
-        return Ok(catalog_slug);
-    };
-    let model_override = model_override.trim();
-    anyhow::ensure!(!model_override.is_empty(), "Claude model override is empty");
-    anyhow::ensure!(
-        model_override.starts_with("arn:") && model_override.contains(":bedrock:"),
-        "Claude model override must be an AWS Bedrock ARN"
-    );
-    let resolved = registry.resolve(&catalog_slug).ok_or_else(|| {
-        anyhow::anyhow!("Claude model overrides require a configured provider model: {model}")
-    })?;
-    anyhow::ensure!(
-        resolved.provider.definition().preset_id.as_deref() == Some("aws-bedrock"),
-        "Claude model overrides require an aws-bedrock provider: {model}"
-    );
-    Ok(catalog_model_slug(model_override, resolved.provider.id()))
-}
-
-fn validate_claude_model(
-    registry: &ProviderRegistry,
-    official_ids: &std::collections::HashSet<&str>,
-    model: &str,
-) -> anyhow::Result<String> {
-    if official_ids.contains(model) {
-        return Ok(model.to_owned());
-    }
-    let resolved = registry
-        .resolve_native_model(model)
-        .ok_or_else(|| anyhow::anyhow!("requested Claude model is not configured: {model}"))?;
-    Ok(resolved.catalog_slug.to_owned())
-}
-
-fn select_default_claude_models(
-    registry: &ProviderRegistry,
-    official_models: &[ProviderModel],
-) -> anyhow::Result<ClaudeModelMapping> {
-    let mut candidates = Vec::new();
-    for resolved in registry.routable_models() {
-        candidates.push((
-            resolved.catalog_slug.to_owned(),
-            resolved.upstream_model_id.to_ascii_lowercase(),
-        ));
-    }
-    candidates.extend(
-        official_models
-            .iter()
-            .map(|model| (model.id.clone(), model.id.to_ascii_lowercase())),
-    );
-    let fallback = candidates
-        .iter()
-        .find(|(_, model)| model.contains("claude"))
-        .or_else(|| candidates.first())
-        .map(|(slug, _)| slug.clone())
-        .ok_or_else(|| anyhow::anyhow!("no enabled model is configured"))?;
-    let select = |family: &str| {
-        candidates
-            .iter()
-            .find(|(_, model)| model.contains(family))
-            .map(|(slug, _)| slug.clone())
-            .unwrap_or_else(|| fallback.clone())
-    };
-    Ok(ClaudeModelMapping {
-        opus: select("opus"),
-        sonnet: select("sonnet"),
-        haiku: select("haiku"),
-        opus_override: None,
-        sonnet_override: None,
-        haiku_override: None,
-    })
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     #[test]
-    fn accepts_selected_official_models_without_provider_suffixes() {
-        let mut provider = codex_mixin::provider::custom_provider("custom", "key");
-        provider.base_url = "https://example.test".to_owned();
-        provider.selected_models = vec!["custom-model".to_owned()];
-        provider.cached_models = vec![ProviderModel {
-            id: "custom-model".to_owned(),
+    fn picker_uses_baidu_model_id_instead_of_marketing_description() {
+        let provider = codex_mixin::provider::baidu_oneapi_provider("baidu", "key");
+        let model = ProviderModel {
+            id: "GLM-5.3".to_owned(),
+            display_name: Some("GLM latest flagship model".to_owned()),
             ..ProviderModel::default()
-        }];
-        let registry = ProviderRegistry::new(vec![provider]).unwrap();
-        let official_ids = ["gpt-5.6-sol"].into_iter().collect();
+        };
 
-        assert_eq!(
-            validate_claude_model(&registry, &official_ids, "gpt-5.6-sol").unwrap(),
-            "gpt-5.6-sol"
-        );
+        assert_eq!(claude_picker_label(&provider, &model), "GLM-5.3");
     }
 
     #[test]
-    fn qualifies_bedrock_arn_override_with_selected_provider() {
-        let provider = codex_mixin::provider::aws_bedrock_provider("aws-bedrock", "key");
-        let registry = ProviderRegistry::new(vec![provider]).unwrap();
-        let official_ids = std::collections::HashSet::new();
-        let arn = "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/example";
-
-        let model = resolve_claude_model(
-            &registry,
-            &official_ids,
-            "anthropic.claude-sonnet-5-aws-bedrock",
-            Some(arn),
-        )
-        .unwrap();
-
-        assert_eq!(model, catalog_model_slug(arn, "aws-bedrock"));
+    fn picker_describes_application_profile_scope() {
+        let provider = codex_mixin::provider::aws_bedrock_aksk_provider(
+            "aws-bedrock",
+            "access-key",
+            "secret-key",
+            None,
+            "us-east-2",
+        );
+        let model = ProviderModel {
+            id: "arn:aws:bedrock:us-east-2:123:application-inference-profile/abc".to_owned(),
+            aliases: vec!["us.anthropic.claude-opus-5-20251101-v1:0".to_owned()],
+            ..ProviderModel::default()
+        };
+        assert_eq!(
+            claude_picker_description(&provider, &model),
+            "Discount US \u{b7} abc"
+        );
     }
 }

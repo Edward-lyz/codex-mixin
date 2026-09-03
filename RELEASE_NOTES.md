@@ -3,7 +3,7 @@
 
 - 完善 Provider 模型管理与测速，支持手动添加模型、设置上下文窗口、搜索筛选和刷新模型列表
 - 新增 Amazon Bedrock AK/SK 与可选 Session Token 认证，使用 SigV4 签名；兼容旧 API key 配置
-- 支持 Claude Code 的 Opus、Sonnet、Haiku 独立模型映射及 Bedrock ARN 覆写
+- 支持通过自定义模型选择器把已选 Provider 模型直接安装到 Claude Code
 - 优化 DUCX 启动预热、并发控制和进程回收；修复 Baidu 辅助流量中隐藏 `codex-auto-review` 模型的路由
 
 <!-- codex-mixin:zh-Hans:end -->
@@ -13,7 +13,7 @@
 
 - 完善 Provider 模型管理與測速，支援手動新增模型、設定上下文視窗、搜尋篩選和重新整理模型清單
 - 新增 Amazon Bedrock AK/SK 與可選 Session Token 驗證，使用 SigV4 簽名；相容舊 API key 設定
-- 支援 Claude Code 的 Opus、Sonnet、Haiku 獨立模型映射及 Bedrock ARN 覆寫
+- 支援透過自訂模型選擇器把已選 Provider 模型直接安裝到 Claude Code
 - 優化 DUCX 啟動預熱、並發控制和程序回收；修正 Baidu 輔助流量中隱藏 `codex-auto-review` 模型的路由
 
 <!-- codex-mixin:zh-Hant:end -->
@@ -23,7 +23,7 @@
 
 - Improve Provider model management and benchmarking with manual models, context-window editing, search, filtering, and refresh
 - Add Amazon Bedrock AK/SK and optional Session Token authentication with SigV4 signing while keeping existing API-key configurations compatible
-- Support independent Opus, Sonnet, and Haiku model mappings for Claude Code, including Bedrock ARN overrides
+- Install selected Provider models directly into Claude Code through its custom model picker
 - Improve DUCX startup warmup, concurrency control, and process cleanup; fix routing of the hidden `codex-auto-review` model for Baidu auxiliary traffic
 
 <!-- codex-mixin:en:end -->

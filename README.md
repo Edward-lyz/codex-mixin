@@ -256,7 +256,7 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 | `openrouter` | OpenAI Chat Completions | `https://openrouter.ai/api` | `/v1/chat/completions` | 可选，用户填写 | `/v1/models` | `/v1/credits` |
 | `deepseek` | OpenAI Chat Completions | `https://api.deepseek.com` | `/chat/completions` | 可选，用户填写 | `/models` | 无默认值 |
 | `opencode-go` | OpenAI Responses | `https://opencode.ai/zen/go` | `/v1/responses` | 无 | `/v1/models` | dashboard `/workspace/{id}/go` + `/billing` |
-| `aws-bedrock` | Anthropic Messages (Mantle) | `https://bedrock-mantle.us-east-1.api.aws/anthropic` | `/v1/messages` | 无 | 内置 Claude 模型 | 无默认值 |
+| `aws-bedrock` | Anthropic Messages (Mantle) | `https://bedrock-mantle.us-east-1.api.aws/anthropic` | `/v1/messages` | 无 | AWS Bedrock control plane | 无默认值 |
 
 固定 preset 的上游地址和路径由 preset 管理；`custom` provider 会自动探测模型列表和响应接口，不发起有效模型推理。
 Baidu OneAPI 的额度接口必须同时填写额度用户名；CLI 和 App 都会在保存时校验。
@@ -267,9 +267,14 @@ AWS Region、Access Key ID、Secret Access Key，以及可选的 Session Token�
 `bedrock-mantle` service 生成 SigV4 签名，并根据 Region 自动生成 Mantle URL。当前只支持显式
 输入 AK/SK，不读取 AWS SSO profile 或默认 credential chain。旧配置中的 Bedrock API key
 仍可继续使用，但新的 App 和 TUI 入口默认使用 AK/SK。
+模型刷新会通过 SigV4 读取 `ListInferenceProfiles(APPLICATION)`、
+`ListInferenceProfiles(SYSTEM_DEFINED)` 和 `ListFoundationModels`，再合并账号折扣 profile、
+官方跨区 profile 与当前 Region 的基础模型目录。
 新增或更新 `custom` 供应商时，会先验证 `GET /v1/models` 的 JSON 结构，再按
 `/v1/responses` → `/v1/messages` → `/v1/chat/completions` 顺序探测响应协议；整组 `/v1`
 接口失败后，再尝试 `/models`、`/responses`、`/messages` 和 `/chat/completions`。
+新增 Provider 首次成功读取模型目录时，默认选择排序后的前 10 个模型；后续刷新保留用户
+选择，新发现的模型仅标记为待选择。
 HTML、普通页面和无关 JSON 不会被当作接口。
 Baidu OneAPI 不参与该探测，使用预设协议。
 预设供应商的协议在离线验证后写死，例如 OpenCode Go 使用 `/v1/responses`。
@@ -311,10 +316,8 @@ Provider 设置界面见上方 [macOS control center](#macos-control-center)；�
 ### 安装到 Claude Code
 
 Codex Mixin 也提供一个 Anthropic Messages 兼容端点 `/v1/messages`，所以 Claude Code
-可以直接把本地网关当作上游使用。在 macOS 菜单栏选择「安装到 Claude Code...」后，SwiftUI 面板会要求分别选择 Opus、Sonnet 和 Haiku 对应的实际后端模型；TUI 的 Apps 页面会按模型名称自动匹配这三个模型族。
-选择 AWS Bedrock 模型时，每个模型族还可以填写可选的 Bedrock ARN 覆写。网关仍用所选
-Provider 路由和签名，但发给 Bedrock 的 `model` 会替换为该 ARN，可用于 application
-inference profile 等计费模型；非 AWS Provider 不接受 ARN 覆写。
+可以直接把本地网关当作上游使用。在 macOS 菜单栏或 TUI 的 Apps 页面选择「安装到
+Claude Code」后，会直接写入当前已启用且已选择的模型。
 
 1. 备份并保留 `~/.claude/settings.json` 中已有的 `env` 配置。
 2. 在 `env` 中写入 `ANTHROPIC_BASE_URL=http://127.0.0.1:<端口>` 和
@@ -323,13 +326,14 @@ inference profile 等计费模型；非 AWS Provider 不接受 ARN 覆写。
 3. 写入 `CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC=1`，停止非必要官方流量；
    `DISABLE_LOGIN_COMMAND=1` 隐藏不适用的官方登录入口。不启用 Claude 内部 Cloud
    Gateway 模式。
-4. 将三个映射分别写入 `ANTHROPIC_DEFAULT_OPUS_MODEL`、
-   `ANTHROPIC_DEFAULT_SONNET_MODEL` 和 `ANTHROPIC_DEFAULT_HAIKU_MODEL`；顶层 `model`
-   写为 `sonnet`，所以默认请求也会经过 Sonnet 映射。同时在 `modelOverrides` 登记三个
-   实际后端 ID，避免 Claude Code 把自定义 ID 报为 `unrecognized_model`。
-5. 写入 `codex_mixin_managed` 标记，卸载时恢复之前的值。
+4. 把所有已启用且已选择的模型写入顶层 `modelPicker`，让 Claude Code 的模型选择器直接
+   展示并请求 Codex Mixin 的可路由模型 ID，不再写入 Opus、Sonnet、Haiku 映射或
+   `modelOverrides`。顶层 `model` 默认使用 picker 中的第一个模型。
+5. 写入 `codex_mixin_managed` 标记，卸载时恢复之前的 `env`、`model`、`modelPicker` 和
+   历史版本管理过的 `modelOverrides`。
 
-需要卸载时，在同一个 Apps 页面选择 Claude Code 的 `Restore`。CLI 可以用三个参数明确设置映射；兼容参数 `--model` 会把同一个后端模型用于三个模型族。
+需要卸载时，在同一个 Apps 页面选择 Claude Code 的 `Restore`。CLI 使用
+`codex-mixin connect claude` 安装。
 
 ### 安装到 DSH
 
@@ -529,10 +533,7 @@ codex-mixin service start --foreground
 # Codex / Claude / DSH / OpenCode / Pi 集成
 codex-mixin connect codex --codex-oauth-proxy
 codex-mixin connect codex --custom-only
-codex-mixin connect claude \
-  --opus-model "Claude Opus 5-provider" \
-  --sonnet-model "Claude Sonnet 5-provider" \
-  --haiku-model "Claude Haiku 5-provider"
+codex-mixin connect claude
 codex-mixin connect dsh
 codex-mixin connect opencode
 codex-mixin connect pi
@@ -727,7 +728,10 @@ Codex App 读取配置有自己的生命周期。安装或恢复 Codex 配置后
 
 #### API Key 存在哪里？
 
-默认保存在 `~/.codex-mixin/config.json`。这是本机用户目录下的配置文件。不要把它提交到 Git。
+默认保存在 `~/.codex-mixin/config.json`。文件内容使用 AES-256-GCM 整体加密，随机本机 key
+保存在同目录的 `config.json.key`，两者权限均为 `0600`。首次读取旧明文配置时会自动迁移。
+需要备份明文时，在 macOS 菜单「高级」选择「导出明文配置…」，或运行
+`codex-mixin config --export /path/to/config.json`。导出文件包含全部密钥，不要提交到 Git。
 
 #### 反馈问题时应该带什么？
 
@@ -856,7 +860,7 @@ Click the top tabs or use `Tab` and `Shift-Tab` to change workspaces. The footer
 | `openrouter` | OpenAI Chat Completions | `https://openrouter.ai/api` | `/v1/chat/completions` | Optional, user provided | `/v1/models` | `/v1/credits` |
 | `deepseek` | OpenAI Chat Completions | `https://api.deepseek.com` | `/chat/completions` | Optional, user provided | `/models` | None |
 | `opencode-go` | OpenAI Responses | `https://opencode.ai/zen/go` | `/v1/responses` | None | `/v1/models` | Dashboard `/workspace/{id}/go` + `/billing` |
-| `aws-bedrock` | Anthropic Messages (Mantle) | `https://bedrock-mantle.us-east-1.api.aws/anthropic` | `/v1/messages` | None | Built-in Claude models | None |
+| `aws-bedrock` | Anthropic Messages (Mantle) | `https://bedrock-mantle.us-east-1.api.aws/anthropic` | `/v1/messages` | None | AWS Bedrock control plane | None |
 
 Curated presets manage their upstream paths. Custom providers automatically probe versioned
 endpoints first and then retry the corresponding legacy paths without `/v1`; this protocol check
@@ -870,12 +874,18 @@ with SigV4 using the `bedrock-mantle` service and derives the Mantle URL from th
 supports explicit AK/SK credentials only, not AWS SSO profiles or the default credential chain.
 Existing Bedrock API-key configurations remain compatible, while the app and TUI use AK/SK for new
 providers.
+Model refresh signs and calls `ListInferenceProfiles(APPLICATION)`,
+`ListInferenceProfiles(SYSTEM_DEFINED)`, and `ListFoundationModels`, then merges account application
+profiles, AWS cross-Region profiles, and the Region's foundation-model catalog.
 When a `custom` provider is added or updated, Codex Mixin first validates the JSON structure
 returned by `GET /v1/models`, then probes `/v1/responses`, `/v1/messages`, and
 `/v1/chat/completions` in that order. If the complete versioned probe fails, it retries
 `/models`, `/responses`, `/messages`, and `/chat/completions`. HTML, page content, and
-unrelated JSON do not count as API responses. Baidu OneAPI is excluded and keeps its curated
-protocol. Curated presets keep offline-verified protocols, for example OpenCode Go uses
+unrelated JSON do not count as API responses. On the first successful catalog refresh for a new
+Provider, Codex Mixin selects the first 10 sorted models by default. Later refreshes preserve the
+user's selection and only mark new models for review.
+Baidu OneAPI is excluded and keeps its curated protocol. Curated presets keep offline-verified
+protocols, for example OpenCode Go uses
 `/v1/responses`.
 For Baidu OneAPI, users can select the “DUCX core”. It is a header generator: the
 gateway starts one ordered, short-lived authentication turn in the background after it begins
@@ -1124,8 +1134,7 @@ codex-mixin service start --foreground
 # Codex / Claude / DSH / OpenCode / Pi integration
 codex-mixin connect codex --codex-oauth-proxy
 codex-mixin connect codex --custom-only
-codex-mixin connect claude --model "Claude Sonnet 5"
-codex-mixin connect claude --opus-model <model> --sonnet-model <model> --haiku-model <model> --sonnet-model-override <bedrock-arn>
+codex-mixin connect claude
 codex-mixin connect dsh
 codex-mixin connect opencode
 codex-mixin connect pi

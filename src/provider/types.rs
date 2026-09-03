@@ -82,6 +82,7 @@ impl AwsSigV4AuthConfig {
 pub enum ProviderModelSource {
     OpenAiCompatible { path: String },
     BaiduOneApi,
+    AwsBedrock,
     Static,
 }
 
@@ -135,6 +136,8 @@ impl ProviderRequestPolicy {
 #[derive(Clone, Debug, Default, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ProviderModel {
     pub id: String,
+    #[serde(default, skip_serializing_if = "Vec::is_empty")]
+    pub aliases: Vec<String>,
     #[serde(default, skip_serializing_if = "is_false")]
     pub manually_added: bool,
     #[serde(default, skip_serializing_if = "Option::is_none")]

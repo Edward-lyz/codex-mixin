@@ -116,7 +116,7 @@ pub fn aws_bedrock_provider(
         preset_id: Some(AWS_BEDROCK_PRESET_ID.to_owned()),
         protocol: ProviderProtocol::AnthropicMessages,
         base_url: AWS_BEDROCK_MANTLE_BASE_URL.to_owned(),
-        website_url: Some("https://code.claude.com/docs/zh-CN/amazon-bedrock".to_owned()),
+        website_url: Some("https://aws.amazon.com/bedrock/".to_owned()),
         api_path: "/v1/messages".to_owned(),
         model_source: ProviderModelSource::Static,
         auth: ProviderAuthConfig {
@@ -160,6 +160,7 @@ pub fn aws_bedrock_aksk_provider(
         region,
         service: AWS_BEDROCK_MANTLE_SERVICE.to_owned(),
     });
+    provider.model_source = ProviderModelSource::AwsBedrock;
     provider
 }
 
@@ -436,7 +437,7 @@ mod tests {
     }
 
     #[test]
-    fn aws_bedrock_preset_uses_mantle_and_static_claude_models() {
+    fn aws_bedrock_api_key_preset_uses_static_claude_models() {
         let provider = aws_bedrock_provider("aws-bedrock", "secret");
 
         provider.validate().unwrap();
@@ -481,6 +482,7 @@ mod tests {
         assert_eq!(aws.session_token.as_deref(), Some("session-example"));
         assert_eq!(aws.region, "eu-west-1");
         assert_eq!(aws.service, "bedrock-mantle");
+        assert_eq!(provider.model_source, ProviderModelSource::AwsBedrock);
         assert_eq!(
             provider.base_url,
             "https://bedrock-mantle.eu-west-1.api.aws/anthropic"

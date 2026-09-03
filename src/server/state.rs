@@ -225,13 +225,12 @@ impl AppState {
         custom_result
     }
 
-    pub(crate) fn resolved_provider_model<'a>(
-        &'a self,
-        catalog_slug: &'a str,
-    ) -> Result<ResolvedProviderModel<'a>, GatewayError> {
+    pub(crate) fn resolved_provider_model(
+        &self,
+        catalog_slug: &str,
+    ) -> Result<ResolvedProviderModel<'_>, GatewayError> {
         self.providers
             .resolve(catalog_slug)
-            .or_else(|| self.providers.resolve_aws_model_override(catalog_slug))
             .or_else(|| {
                 self.providers
                     .resolve_known(catalog_slug)
@@ -244,6 +243,15 @@ impl AppState {
             .ok_or_else(|| {
                 GatewayError::BadRequest(format!("model is not routable: {catalog_slug}"))
             })
+    }
+
+    pub(crate) fn resolve_native_provider_model(
+        &self,
+        model: &str,
+    ) -> Result<ResolvedProviderModel<'_>, GatewayError> {
+        self.providers
+            .resolve_native_model(model)
+            .ok_or_else(|| GatewayError::BadRequest(format!("model is not routable: {model}")))
     }
 
     pub async fn send_anthropic_request(

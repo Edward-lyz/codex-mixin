@@ -1,4 +1,8 @@
-use codex_mixin::config::{GatewayConfig, load_stored_config, stored_config_path};
+use std::path::Path;
+
+use codex_mixin::config::{
+    GatewayConfig, export_stored_config, load_stored_config, stored_config_path,
+};
 
 use super::super::ConfigScope;
 use super::super::runtime::*;
@@ -44,6 +48,13 @@ pub(crate) fn show_config(json_output: bool, scope: ConfigScope) -> anyhow::Resu
             print_config_value(json_output, &value)
         }
     }
+}
+
+pub(crate) fn export_config(path: &Path) -> anyhow::Result<()> {
+    let path = std::path::absolute(path)?;
+    export_stored_config(&path)?;
+    println!("plaintext configuration exported: {}", path.display());
+    Ok(())
 }
 
 pub(crate) fn redacted_providers(

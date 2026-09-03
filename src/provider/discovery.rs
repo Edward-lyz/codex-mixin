@@ -3,6 +3,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use reqwest::Client;
+use serde::Deserialize;
 use serde_json::json;
 
 use crate::anthropic::{BaiduAvailableModelsResponse, ModelInfo, ModelsResponse};
@@ -10,7 +11,54 @@ use crate::anthropic::{BaiduAvailableModelsResponse, ModelInfo, ModelsResponse};
 use super::models_dev::{
     enrich_models_with_models_dev, fetch_models_dev_provider_models, uses_models_dev_capabilities,
 };
-use super::{ProviderDefinition, ProviderModel, ProviderModelSource, ProviderRuntime};
+use super::{
+    AwsSigV4AuthConfig, ProviderDefinition, ProviderModel, ProviderModelSource, ProviderRuntime,
+    sign_aws_request,
+};
+
+const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
+const DEFAULT_SELECTED_MODEL_LIMIT: usize = 10;
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InferenceProfilesResponse {
+    #[serde(default)]
+    inference_profile_summaries: Vec<InferenceProfileSummary>,
+    next_token: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InferenceProfileSummary {
+    inference_profile_id: String,
+    inference_profile_name: String,
+    inference_profile_arn: String,
+    #[serde(default)]
+    models: Vec<InferenceProfileModel>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct InferenceProfileModel {
+    model_arn: String,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FoundationModelsResponse {
+    #[serde(default)]
+    model_summaries: Vec<FoundationModelSummary>,
+}
+
+#[derive(Debug, Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct FoundationModelSummary {
+    model_id: String,
+    model_name: String,
+    provider_name: String,
+    #[serde(default)]
+    input_modalities: Vec<String>,
+}
 
 pub async fn discover_provider_models(
     client: &Client,
@@ -26,6 +74,158 @@ pub async fn discover_provider_models(
         ProviderModelSource::BaiduOneApi => {
             discover_baidu_models(client, &provider, native_headers.as_ref()).await
         }
+        ProviderModelSource::AwsBedrock => discover_aws_bedrock_models(client, definition).await,
+    }
+}
+
+async fn discover_aws_bedrock_models(
+    client: &Client,
+    definition: &ProviderDefinition,
+) -> anyhow::Result<Vec<ProviderModel>> {
+    let mantle_auth = definition
+        .auth
+        .aws_sigv4
+        .as_ref()
+        .context("AWS Bedrock model discovery requires SigV4 credentials")?;
+    let mut control_auth = mantle_auth.clone();
+    control_auth.service = "bedrock".to_owned();
+    let base_url = format!("https://bedrock.{}.amazonaws.com", control_auth.region);
+    let mut models = Vec::new();
+    models.extend(
+        fetch_inference_profiles(client, &base_url, &control_auth, "APPLICATION", true).await?,
+    );
+    models.extend(
+        fetch_inference_profiles(client, &base_url, &control_auth, "SYSTEM_DEFINED", false).await?,
+    );
+    models.extend(fetch_foundation_models(client, &base_url, &control_auth).await?);
+    normalize_models(&mut models);
+    Ok(models)
+}
+
+async fn fetch_inference_profiles(
+    client: &Client,
+    base_url: &str,
+    auth: &AwsSigV4AuthConfig,
+    profile_type: &str,
+    use_arn: bool,
+) -> anyhow::Result<Vec<ProviderModel>> {
+    let mut models = Vec::new();
+    let mut next_token: Option<String> = None;
+    loop {
+        let mut request = client
+            .get(format!("{base_url}/inference-profiles"))
+            .query(&[("typeEquals", profile_type)])
+            .build()?;
+        if let Some(token) = &next_token {
+            request
+                .url_mut()
+                .query_pairs_mut()
+                .append_pair("nextToken", token);
+        }
+        sign_aws_request(
+            &mut request,
+            auth,
+            EMPTY_SHA256.to_owned(),
+            SystemTime::now(),
+        )?;
+        let response = client.execute(request).await?;
+        let status = response.status();
+        let body = response.text().await?;
+        if !status.is_success() {
+            anyhow::bail!(
+                "AWS Bedrock {profile_type} inference profiles returned {status}: {body}"
+            );
+        }
+        let page: InferenceProfilesResponse = serde_json::from_str(&body)
+            .context("AWS Bedrock inference profiles returned invalid JSON")?;
+        next_token.clone_from(&page.next_token);
+        models.extend(inference_profile_models(page, use_arn));
+        if next_token.is_none() {
+            break;
+        }
+    }
+    Ok(models)
+}
+
+fn inference_profile_models(page: InferenceProfilesResponse, use_arn: bool) -> Vec<ProviderModel> {
+    page.inference_profile_summaries
+        .into_iter()
+        .map(|profile| {
+            let id = if use_arn {
+                profile.inference_profile_arn
+            } else {
+                profile.inference_profile_id
+            };
+            let aliases = profile
+                .models
+                .into_iter()
+                .filter_map(|model| model.model_arn.rsplit('/').next().map(str::to_owned))
+                .collect();
+            bedrock_discovered_model(id, profile.inference_profile_name, aliases, true)
+        })
+        .collect()
+}
+
+async fn fetch_foundation_models(
+    client: &Client,
+    base_url: &str,
+    auth: &AwsSigV4AuthConfig,
+) -> anyhow::Result<Vec<ProviderModel>> {
+    let mut request = client
+        .get(format!("{base_url}/foundation-models"))
+        .build()?;
+    sign_aws_request(
+        &mut request,
+        auth,
+        EMPTY_SHA256.to_owned(),
+        SystemTime::now(),
+    )?;
+    let response = client.execute(request).await?;
+    let status = response.status();
+    let body = response.text().await?;
+    if !status.is_success() {
+        anyhow::bail!("AWS Bedrock foundation models returned {status}: {body}");
+    }
+    let response: FoundationModelsResponse = serde_json::from_str(&body)
+        .context("AWS Bedrock foundation models returned invalid JSON")?;
+    Ok(foundation_model_entries(response))
+}
+
+fn foundation_model_entries(response: FoundationModelsResponse) -> Vec<ProviderModel> {
+    response
+        .model_summaries
+        .into_iter()
+        .map(|model| {
+            let supports_image = model
+                .input_modalities
+                .iter()
+                .any(|modality| modality.eq_ignore_ascii_case("IMAGE"));
+            bedrock_discovered_model(
+                model.model_id,
+                format!("{} {}", model.provider_name, model.model_name),
+                Vec::new(),
+                supports_image,
+            )
+        })
+        .collect()
+}
+
+fn bedrock_discovered_model(
+    id: String,
+    display_name: String,
+    aliases: Vec<String>,
+    supports_image: bool,
+) -> ProviderModel {
+    ProviderModel {
+        id,
+        aliases,
+        display_name: Some(display_name),
+        supports_image: Some(supports_image),
+        supports_thinking: Some(true),
+        supports_web_search: Some(false),
+        supports_tool_search: Some(false),
+        supports_function_tools: Some(true),
+        ..ProviderModel::default()
     }
 }
 
@@ -110,6 +310,7 @@ fn openai_model_to_provider_model(model: ModelInfo, is_openrouter: bool) -> Prov
         };
     ProviderModel {
         id: model.id,
+        aliases: Vec::new(),
         manually_added: false,
         display_name: model.display_name,
         description: model.description,
@@ -235,7 +436,11 @@ pub fn apply_discovered_models(
     normalize_models(&mut models);
     let first_successful_refresh = provider.models_refreshed_at_ms.is_none();
     if first_successful_refresh {
-        provider.selected_models = models.iter().map(|model| model.id.clone()).collect();
+        provider.selected_models = models
+            .iter()
+            .take(DEFAULT_SELECTED_MODEL_LIMIT)
+            .map(|model| model.id.clone())
+            .collect();
         provider.new_models.clear();
     } else {
         let previous_models = provider
@@ -402,13 +607,23 @@ mod tests {
     }
 
     #[test]
-    fn first_refresh_selects_every_model_without_marking_them_new() {
+    fn first_refresh_selects_first_ten_models_without_marking_them_new() {
         let mut provider = crate::provider::custom_provider("custom", "key");
         provider.base_url = "https://example.test".to_owned();
+        let models = (0..12)
+            .rev()
+            .map(|index| model(&format!("model-{index:02}")))
+            .collect();
 
-        apply_discovered_models(&mut provider, vec![model("a"), model("b")]).unwrap();
+        apply_discovered_models(&mut provider, models).unwrap();
 
-        assert_eq!(provider.selected_models, ["a", "b"]);
+        assert_eq!(
+            provider.selected_models,
+            (0..10)
+                .map(|index| format!("model-{index:02}"))
+                .collect::<Vec<_>>()
+        );
+        assert_eq!(provider.cached_models.len(), 12);
         assert!(provider.new_models.is_empty());
     }
 
@@ -472,5 +687,55 @@ mod tests {
         apply_discovered_models(&mut provider, vec![model("a"), model("new")]).unwrap();
         assert_eq!(provider.selected_models, ["a", "new"]);
         assert!(provider.new_models.is_empty());
+    }
+
+    #[test]
+    fn parses_application_and_system_inference_profiles() {
+        let response: InferenceProfilesResponse = serde_json::from_str(
+            r#"{
+              "inferenceProfileSummaries": [{
+                "inferenceProfileName": "Claude Opus 5",
+                "inferenceProfileArn": "arn:aws:bedrock:us-east-2:123:application-inference-profile/abc",
+                "inferenceProfileId": "abc",
+                "models": [{"modelArn":"arn:aws:bedrock:us-east-2::foundation-model/anthropic.claude-opus-5-20251101-v1:0"}]
+              }]
+            }"#,
+        )
+        .unwrap();
+
+        let application = inference_profile_models(response, true);
+
+        assert_eq!(
+            application[0].id,
+            "arn:aws:bedrock:us-east-2:123:application-inference-profile/abc"
+        );
+        assert_eq!(
+            application[0].aliases,
+            ["anthropic.claude-opus-5-20251101-v1:0"]
+        );
+
+        let response: InferenceProfilesResponse = serde_json::from_str(
+            r#"{"inferenceProfileSummaries":[{"inferenceProfileName":"US Claude Opus 5","inferenceProfileArn":"arn:system","inferenceProfileId":"us.anthropic.claude-opus-5-v1:0"}]}"#,
+        )
+        .unwrap();
+        let system = inference_profile_models(response, false);
+        assert_eq!(system[0].id, "us.anthropic.claude-opus-5-v1:0");
+    }
+
+    #[test]
+    fn parses_foundation_model_catalog_capabilities() {
+        let response: FoundationModelsResponse = serde_json::from_str(
+            r#"{"modelSummaries":[{"modelId":"anthropic.claude-sonnet-5","modelName":"Claude Sonnet 5","providerName":"Anthropic","inputModalities":["TEXT","IMAGE"]}]}"#,
+        )
+        .unwrap();
+
+        let models = foundation_model_entries(response);
+
+        assert_eq!(models[0].id, "anthropic.claude-sonnet-5");
+        assert_eq!(
+            models[0].display_name.as_deref(),
+            Some("Anthropic Claude Sonnet 5")
+        );
+        assert_eq!(models[0].supports_image, Some(true));
     }
 }

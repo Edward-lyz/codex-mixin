@@ -129,7 +129,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ]))
         menu.addItem(submenuItem("高级", symbolName: "gearshape.2", items: [
             actionItem("Fusion 设置…", #selector(showFusionSettings), "rectangle.3.group"),
-            actionItem("手动触发上报…", #selector(manuallyReportSessions), "arrow.triangle.2.circlepath")
+            actionItem("手动触发上报…", #selector(manuallyReportSessions), "arrow.triangle.2.circlepath"),
+            actionItem("导出明文配置…", #selector(exportPlaintextConfig), "square.and.arrow.up")
         ]))
         menu.addItem(submenuItem("安装与恢复", symbolName: "square.and.arrow.down", items: [
             actionItem("安装到 Codex...", #selector(installCodexConfig), "square.and.arrow.down"),

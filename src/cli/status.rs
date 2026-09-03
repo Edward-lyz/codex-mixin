@@ -15,7 +15,7 @@ mod usage;
 
 #[cfg(test)]
 pub(crate) use config::redacted_providers;
-pub(crate) use config::show_config;
+pub(crate) use config::{export_config, show_config};
 #[cfg(test)]
 pub(crate) use opencode_go::{
     fetch_opencode_go_quota_results, official_quota_rows, parse_opencode_go_billing_html,

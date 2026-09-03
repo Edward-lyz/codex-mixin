@@ -49,6 +49,7 @@ pub(super) fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConf
         upgrade_opencode_go_quota_defaults(&mut parsed);
         upgrade_opencode_go_responses_endpoint(&mut parsed);
         upgrade_baidu_image_generation_defaults(&mut parsed);
+        upgrade_aws_bedrock_model_source(&mut parsed);
         bootstrap_unrefreshed_selected_models(&mut parsed);
         backfill_data_report_executable(&mut parsed);
         return Ok(parsed);
@@ -90,6 +91,16 @@ fn upgrade_baidu_image_generation_defaults(config: &mut StoredGatewayConfig) {
             && provider.image_generation_path.is_none()
         {
             provider.image_generation_path = Some("/v1/images/generations".to_owned());
+        }
+    }
+}
+fn upgrade_aws_bedrock_model_source(config: &mut StoredGatewayConfig) {
+    for provider in &mut config.providers {
+        if provider.preset_id.as_deref() == Some("aws-bedrock")
+            && provider.auth.aws_sigv4.is_some()
+            && provider.model_source == ProviderModelSource::Static
+        {
+            provider.model_source = ProviderModelSource::AwsBedrock;
         }
     }
 }

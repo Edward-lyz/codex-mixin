@@ -36,8 +36,8 @@ mod update;
 
 use benchmark_proxy::{benchmark_start, benchmark_status};
 use claude::{
-    claude_model_request, claude_status, install_claude, sync_claude_hooks,
-    sync_installed_claude_client_key, uninstall_claude,
+    claude_status, install_claude, sync_claude_hooks, sync_installed_claude_client_key,
+    uninstall_claude,
 };
 use codex::{
     InstallCodexOptions, install_codex, refresh_default_managed_codex_catalog,
@@ -57,7 +57,7 @@ use providers::{
     set_provider_enabled, test_provider, update_provider,
 };
 use service::{init_tracing, logs, restart, start, stop};
-use status::{models, probe_web_search, quota, show_config, status, usage};
+use status::{export_config, models, probe_web_search, quota, show_config, status, usage};
 
 fn progress_is_interactive() -> bool {
     io::stdout().is_terminal()
@@ -280,6 +280,8 @@ enum Command {
         json: bool,
         #[arg(long, value_enum, default_value_t = ConfigScope::Effective)]
         scope: ConfigScope,
+        #[arg(long, value_name = "PATH")]
+        export: Option<PathBuf>,
     },
     #[command(hide = true)]
     Start {
@@ -375,48 +377,6 @@ enum Command {
     InstallClaude {
         #[arg(long)]
         settings: Option<PathBuf>,
-        #[arg(
-            long,
-            conflicts_with_all = ["opus_model", "sonnet_model", "haiku_model"],
-            help = "Compatibility shorthand that maps Opus, Sonnet, and Haiku to one backend model"
-        )]
-        model: Option<String>,
-        #[arg(
-            long,
-            requires_all = ["sonnet_model", "haiku_model"],
-            help = "Backend model used when Claude Code selects Opus"
-        )]
-        opus_model: Option<String>,
-        #[arg(
-            long,
-            requires_all = ["opus_model", "haiku_model"],
-            help = "Backend model used when Claude Code selects Sonnet"
-        )]
-        sonnet_model: Option<String>,
-        #[arg(
-            long,
-            requires_all = ["opus_model", "sonnet_model"],
-            help = "Backend model used when Claude Code selects Haiku"
-        )]
-        haiku_model: Option<String>,
-        #[arg(
-            long,
-            requires = "opus_model",
-            help = "Optional AWS Bedrock ARN used for Opus requests"
-        )]
-        opus_model_override: Option<String>,
-        #[arg(
-            long,
-            requires = "sonnet_model",
-            help = "Optional AWS Bedrock ARN used for Sonnet requests"
-        )]
-        sonnet_model_override: Option<String>,
-        #[arg(
-            long,
-            requires = "haiku_model",
-            help = "Optional AWS Bedrock ARN used for Haiku requests"
-        )]
-        haiku_model_override: Option<String>,
     },
     #[command(name = "uninstall-claude", hide = true)]
     UninstallClaude {
@@ -487,48 +447,6 @@ enum ConnectCommand {
     Claude {
         #[arg(long)]
         settings_path: Option<PathBuf>,
-        #[arg(
-            long,
-            conflicts_with_all = ["opus_model", "sonnet_model", "haiku_model"],
-            help = "Compatibility shorthand that maps Opus, Sonnet, and Haiku to one backend model"
-        )]
-        model: Option<String>,
-        #[arg(
-            long,
-            requires_all = ["sonnet_model", "haiku_model"],
-            help = "Backend model used when Claude Code selects Opus"
-        )]
-        opus_model: Option<String>,
-        #[arg(
-            long,
-            requires_all = ["opus_model", "haiku_model"],
-            help = "Backend model used when Claude Code selects Sonnet"
-        )]
-        sonnet_model: Option<String>,
-        #[arg(
-            long,
-            requires_all = ["opus_model", "sonnet_model"],
-            help = "Backend model used when Claude Code selects Haiku"
-        )]
-        haiku_model: Option<String>,
-        #[arg(
-            long,
-            requires = "opus_model",
-            help = "Optional AWS Bedrock ARN used for Opus requests"
-        )]
-        opus_model_override: Option<String>,
-        #[arg(
-            long,
-            requires = "sonnet_model",
-            help = "Optional AWS Bedrock ARN used for Sonnet requests"
-        )]
-        sonnet_model_override: Option<String>,
-        #[arg(
-            long,
-            requires = "haiku_model",
-            help = "Optional AWS Bedrock ARN used for Haiku requests"
-        )]
-        haiku_model_override: Option<String>,
     },
     /// Install the Codex Mixin gateway as a DeepSeek Harness provider.
     Dsh {
@@ -1181,29 +1099,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 println!("managed ducx ready: {}", executable.display());
                 Ok(())
             }
-            ConnectCommand::Claude {
-                settings_path,
-                model,
-                opus_model,
-                sonnet_model,
-                haiku_model,
-                opus_model_override,
-                sonnet_model_override,
-                haiku_model_override,
-            } => {
+            ConnectCommand::Claude { settings_path } => {
                 let hook_settings_path = settings_path.clone();
-                install_claude(
-                    settings_path,
-                    claude_model_request(
-                        model,
-                        opus_model,
-                        sonnet_model,
-                        haiku_model,
-                        opus_model_override,
-                        sonnet_model_override,
-                        haiku_model_override,
-                    )?,
-                )?;
+                install_claude(settings_path)?;
                 sync_claude_hooks(hook_settings_path)?;
                 report_hook::sync_installation()
             }
@@ -1299,7 +1197,14 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Models { json } => models(json).await,
         Command::Quota { json, provider } => quota(json, provider.as_deref()).await,
         Command::Usage { json, days } => usage(json, days).await,
-        Command::Config { json, scope } => show_config(json, scope),
+        Command::Config {
+            json,
+            scope,
+            export,
+        } => match export {
+            Some(path) => export_config(&path),
+            None => show_config(json, scope),
+        },
         Command::Start {
             bind,
             daemon,
@@ -1361,29 +1266,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 codex_mixin::gateway_access::GatewayClient::Codex,
             )
         }
-        Command::InstallClaude {
-            settings,
-            model,
-            opus_model,
-            sonnet_model,
-            haiku_model,
-            opus_model_override,
-            sonnet_model_override,
-            haiku_model_override,
-        } => {
+        Command::InstallClaude { settings } => {
             let hook_settings_path = settings.clone();
-            install_claude(
-                settings,
-                claude_model_request(
-                    model,
-                    opus_model,
-                    sonnet_model,
-                    haiku_model,
-                    opus_model_override,
-                    sonnet_model_override,
-                    haiku_model_override,
-                )?,
-            )?;
+            install_claude(settings)?;
             sync_claude_hooks(hook_settings_path)?;
             report_hook::sync_installation()
         }

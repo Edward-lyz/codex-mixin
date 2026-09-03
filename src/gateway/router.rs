@@ -66,13 +66,6 @@ impl<'a> ModelRouter<'a> {
                 upstream_model_id: resolved.upstream_model_id.to_owned(),
             });
         }
-        if let Some(resolved) = self.providers.resolve_aws_model_override(model) {
-            return Ok(ResolvedModelRoute::Provider {
-                catalog_slug: model.to_owned(),
-                provider_id: resolved.provider.id().to_owned(),
-                upstream_model_id: resolved.upstream_model_id.to_owned(),
-            });
-        }
         if model.eq_ignore_ascii_case(AUTO_REVIEW_MODEL_SLUG)
             && let Some(resolved) = self
                 .providers

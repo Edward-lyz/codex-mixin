@@ -12,9 +12,9 @@ mod migration;
 mod storage;
 pub use storage::{
     delete_stored_config, ensure_compaction_secret, ensure_gateway_client_key,
-    gateway_client_key_exists, load_stored_config, load_stored_config_from_path,
-    mutate_stored_config, mutate_stored_config_at_path, revoke_gateway_client_key,
-    save_stored_config, save_stored_config_to_path, stored_config_path,
+    export_stored_config, gateway_client_key_exists, load_stored_config,
+    load_stored_config_from_path, mutate_stored_config, mutate_stored_config_at_path,
+    revoke_gateway_client_key, save_stored_config, save_stored_config_to_path, stored_config_path,
 };
 
 pub use crate::provider::{
@@ -219,6 +219,11 @@ mod tests {
             )],
         };
         save_stored_config_to_path(&path, &config).unwrap();
+        let encrypted = fs::read_to_string(&path).unwrap();
+        assert!(encrypted.contains("\"encryption\": \"aes-256-gcm\""));
+        assert!(!encrypted.contains("local-key"));
+        assert!(!encrypted.contains("opencode-key"));
+        assert!(path.with_file_name("config.json.key").exists());
         let loaded = load_stored_config_from_path(&path).unwrap().unwrap();
         assert_eq!(loaded.config_version, CONFIG_VERSION);
         assert_eq!(loaded.gateway_bind.as_deref(), Some("127.0.0.1:18787"));
@@ -240,6 +245,22 @@ mod tests {
     }
 
     #[test]
+    fn encrypted_config_fails_closed_without_its_key() {
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        save_stored_config_to_path(&path, &StoredGatewayConfig::default()).unwrap();
+        fs::remove_file(path.with_file_name("config.json.key")).unwrap();
+
+        let error = load_stored_config_from_path(&path).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("config encryption key is missing")
+        );
+    }
+
+    #[test]
     fn rejects_unrecognized_missing_or_wrong_config_version() {
         assert!(serde_json::from_str::<StoredGatewayConfig>("{}").is_err());
         let dir = tempfile::tempdir().unwrap();
@@ -258,7 +279,7 @@ mod tests {
     }
 
     #[test]
-    fn reads_legacy_single_provider_config_without_rewriting_it() {
+    fn reads_and_encrypts_legacy_single_provider_config() {
         let dir = tempfile::tempdir().unwrap();
         let path = dir.path().join("config.json");
         let legacy = r#"{
@@ -290,7 +311,12 @@ mod tests {
         assert_eq!(provider.quota_username.as_deref(), Some("legacy-user"));
         assert_eq!(provider.models_refreshed_at_ms, None);
         assert!(provider.selected_models.is_empty());
-        assert_eq!(fs::read_to_string(&path).unwrap(), legacy);
+        let encrypted = fs::read_to_string(&path).unwrap();
+        assert!(encrypted.contains("\"encryption\": \"aes-256-gcm\""));
+        assert!(!encrypted.contains("legacy-secret"));
+        let backup = fs::read_to_string(path.with_file_name("config.json.v1.backup")).unwrap();
+        assert!(backup.contains("\"encryption\": \"aes-256-gcm\""));
+        assert!(!backup.contains("legacy-secret"));
     }
 
     #[test]
@@ -470,11 +496,12 @@ mod tests {
         .unwrap();
 
         let backup = path.with_file_name("config.json.v1.backup");
-        assert_eq!(fs::read_to_string(backup).unwrap(), legacy);
-        let stored: serde_json::Value =
-            serde_json::from_str(&fs::read_to_string(path).unwrap()).unwrap();
-        assert_eq!(stored["config_version"], CONFIG_VERSION);
-        assert_eq!(stored["providers"][0]["id"], "deepseek");
+        let encrypted_backup = fs::read_to_string(backup).unwrap();
+        assert!(encrypted_backup.contains("\"encryption\": \"aes-256-gcm\""));
+        assert!(!encrypted_backup.contains("legacy-secret"));
+        let stored = load_stored_config_from_path(&path).unwrap().unwrap();
+        assert_eq!(stored.config_version, CONFIG_VERSION);
+        assert_eq!(stored.providers[0].id, "deepseek");
     }
 
     #[test]

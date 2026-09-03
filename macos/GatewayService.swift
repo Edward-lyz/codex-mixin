@@ -1,4 +1,5 @@
 import Cocoa
+import UniformTypeIdentifiers
 
 extension AppDelegate {
     @objc func startService() {
@@ -181,6 +182,23 @@ extension AppDelegate {
             NSWorkspace.shared.open(stateDir())
         } catch {
             showAlert(title: "打开配置目录失败", message: String(describing: error))
+        }
+    }
+
+    @objc func exportPlaintextConfig() {
+        let panel = NSSavePanel()
+        panel.title = "导出明文配置"
+        panel.message = "导出的 JSON 包含 API Key、AWS 凭据和本地访问密钥，请妥善保管。"
+        panel.nameFieldStringValue = "codex-mixin-config.json"
+        panel.allowedContentTypes = [.json]
+        guard panel.runModal() == .OK, let destination = panel.url else { return }
+        Task { @MainActor in
+            do {
+                _ = try await runGateway(["config", "--export", destination.path])
+                showAlert(title: "配置已导出", message: "明文配置已保存到 \(destination.path)，文件权限为仅当前用户可读写。")
+            } catch {
+                showAlert(title: "导出配置失败", message: String(describing: error))
+            }
         }
     }
 

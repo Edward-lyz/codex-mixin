@@ -84,16 +84,9 @@ extension AppDelegate {
     @objc func installClaudeCode() {
         Task { @MainActor in
             serviceBusy = true
-            serviceStatus = "正在加载 Claude Code 模型..."
+            serviceStatus = "正在准备 Claude Code 配置..."
             defer { serviceBusy = false }
             do {
-                let providerJSON = try await runGateway(["providers", "list", "--json"])
-                let modelOptions = try decodeClaudeModelOptions(providerJSON)
-                guard let modelMapping = try runInstallClaudePanel(options: modelOptions) else {
-                    refreshStatus()
-                    return
-                }
-                serviceStatus = "正在准备 Claude Code 配置..."
                 try await runOperationProgress(
                     title: "正在安装到 Claude Code",
                     phases: [
@@ -110,11 +103,11 @@ extension AppDelegate {
                     let status = try await ensureGatewayReady()
                     applyGatewayStatus(status)
                     progress.advance(to: 1)
-                    _ = try await runGateway(modelMapping.commandArguments)
+                    _ = try await runGateway(["install-claude"])
                     progress.advance(to: 2)
                     showAlert(
                         title: "Claude Code 配置已更新",
-                        message: "已映射 Opus、Sonnet 和 Haiku，配置本地网关认证，隐藏官方登录入口，并禁用非必要官方流量。请重启 Claude Code 或开新会话。"
+                        message: "已写入可用模型列表，配置本地网关认证，隐藏官方登录入口，并禁用非必要官方流量。请重启 Claude Code 或开新会话。"
                     )
                     await refreshStatusNow()
                 }
@@ -131,7 +124,7 @@ extension AppDelegate {
     @objc func uninstallClaudeCode() {
         guard confirm(
             title: "从 Claude Code 恢复配置",
-            message: "会恢复 Codex Mixin 管理的模型映射、网关认证和流量设置，并保留其他 Claude Code 配置。完成后需要重启 Claude Code。"
+            message: "会恢复 Codex Mixin 管理的模型列表、网关认证和流量设置，并保留其他 Claude Code 配置。完成后需要重启 Claude Code。"
         ) else { return }
         Task { @MainActor in
             serviceBusy = true

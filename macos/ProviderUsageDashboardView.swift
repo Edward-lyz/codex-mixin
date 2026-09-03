@@ -70,6 +70,7 @@ private func providerLogoAssetName(_ providerID: String) -> String {
     if normalized.contains("deepseek") { return "deepseek" }
     if normalized.contains("opencode") { return "opencode" }
     if normalized.contains("openrouter") { return "openrouter" }
+    if normalized.contains("aws") || normalized.contains("bedrock") { return "aws" }
     if normalized.contains("openai") || normalized.contains("chatgpt") { return "openai" }
     return "custom"
 }
@@ -80,6 +81,9 @@ private func providerBrandColor(_ providerID: String) -> Color {
     if normalized.contains("deepseek") { return Color(red: 0.34, green: 0.53, blue: 1) }
     if normalized.contains("opencode") { return .primary }
     if normalized.contains("openrouter") { return Color(red: 0.42, green: 0.44, blue: 0.95) }
+    if normalized.contains("aws") || normalized.contains("bedrock") {
+        return Color(red: 1.00, green: 0.60, blue: 0.00)
+    }
     if normalized.contains("openai") || normalized.contains("chatgpt") {
         return Color(red: 0.10, green: 0.68, blue: 0.56)
     }

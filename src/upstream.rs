@@ -49,12 +49,10 @@ pub(crate) async fn stream_response_with_headers(
         .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?
         .to_owned();
     let resolved = state.resolved_provider_model(&catalog_slug)?;
-    let provider_id = resolved.provider.id().to_owned();
-    let upstream_model_id = resolved.upstream_model_id.to_owned();
     let plan = RequestPlan::provider(
         catalog_slug,
-        provider_id,
-        upstream_model_id,
+        resolved.provider.id().to_owned(),
+        resolved.upstream_model_id.to_owned(),
         body,
         None,
         None,

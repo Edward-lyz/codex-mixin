@@ -70,6 +70,7 @@ impl ProviderRuntime {
                 endpoint_url(&definition.base_url, "/openapi/v2/available_models")
                     .with_context(|| format!("provider {} available-models URL", definition.id))?,
             ),
+            ProviderModelSource::AwsBedrock => None,
             ProviderModelSource::Static => None,
         };
         let image_generation_url = definition
@@ -504,33 +505,6 @@ impl ProviderRegistry {
         self.resolve(&catalog_slug)
     }
 
-    pub fn resolve_aws_model_override<'a>(
-        &'a self,
-        catalog_slug: &'a str,
-    ) -> Option<ResolvedProviderModel<'a>> {
-        let (provider, upstream_model_id) = self
-            .providers
-            .iter()
-            .filter(|provider| {
-                provider.definition.enabled
-                    && provider.definition.preset_id.as_deref() == Some("aws-bedrock")
-            })
-            .filter_map(|provider| {
-                catalog_slug
-                    .strip_suffix(provider.id())
-                    .and_then(|model| model.strip_suffix('-'))
-                    .filter(|model| model.starts_with("arn:") && model.contains(":bedrock:"))
-                    .map(|model| (provider, model))
-            })
-            .max_by_key(|(provider, _)| provider.id().len())?;
-        Some(ResolvedProviderModel {
-            catalog_slug,
-            provider,
-            upstream_model_id,
-            model: None,
-        })
-    }
-
     pub fn routable_models(&self) -> impl Iterator<Item = ResolvedProviderModel<'_>> {
         self.routes
             .keys()
@@ -726,21 +700,6 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["glm-5.2-opencode-go"]
         );
-    }
-
-    #[test]
-    fn resolves_qualified_aws_bedrock_arn_override() {
-        let provider = crate::provider::aws_bedrock_provider("aws-bedrock", "secret");
-        let registry = ProviderRegistry::new(vec![provider]).unwrap();
-        let arn = "arn:aws:bedrock:us-east-1:123456789012:application-inference-profile/example";
-        let slug = catalog_model_slug(arn, "aws-bedrock");
-
-        let resolved = registry.resolve_aws_model_override(&slug).unwrap();
-
-        assert_eq!(resolved.provider.id(), "aws-bedrock");
-        assert_eq!(resolved.upstream_model_id, arn);
-        assert!(resolved.model.is_none());
-        assert!(registry.resolve_aws_model_override(arn).is_none());
     }
 
     #[test]

@@ -95,7 +95,9 @@ pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
     } else if let Some(base_url) = options.base_url {
         provider.base_url = normalize_base_url(base_url)?;
     }
-    provider.website_url = options.website_url.map(normalize_base_url).transpose()?;
+    if let Some(website_url) = options.website_url {
+        provider.website_url = Some(normalize_base_url(website_url)?);
+    }
     if preset == ProviderPreset::Custom && provider.base_url.is_empty() {
         anyhow::bail!("custom provider requires --base-url");
     }

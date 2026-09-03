@@ -49,6 +49,7 @@ fn claude_install_writes_base_url_and_uninstall_restores_settings() {
         .iter()
         .map(|id| ProviderModel {
             id: id.clone(),
+            display_name: Some(format!("{id} marketing description")),
             protocol: Some(ProviderProtocol::AnthropicMessages),
             ..ProviderModel::default()
         })
@@ -79,6 +80,10 @@ fn claude_install_writes_base_url_and_uninstall_restores_settings() {
         r#"{
             "existing": true,
             "model": "old-default",
+            "modelPicker": {
+                "replaceBuiltInOptions": false,
+                "options": [{"model": "old-picker", "label": "Old picker"}]
+            },
             "modelOverrides": {
                 "claude-opus-4-6": "old-opus-route",
                 "unrelated-model": "keep-route"
@@ -98,62 +103,19 @@ fn claude_install_writes_base_url_and_uninstall_restores_settings() {
     )
     .unwrap();
 
-    install_claude_with_config(
-        Some(settings.clone()),
-        ClaudeModelRequest::Mapping(ClaudeModelMapping {
-            opus: "Claude Opus 5-baidu".to_owned(),
-            sonnet: "Claude Sonnet 5-baidu".to_owned(),
-            haiku: "Claude Haiku 5-baidu".to_owned(),
-            opus_override: None,
-            sonnet_override: None,
-            haiku_override: None,
-        }),
-        &gateway_config,
-    )
-    .unwrap();
+    install_claude_with_config(Some(settings.clone()), &gateway_config).unwrap();
     let installed: serde_json::Value =
         serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
     assert_installed_claude_settings(&installed);
 
-    install_claude_with_config(
-        Some(settings.clone()),
-        ClaudeModelRequest::Mapping(ClaudeModelMapping {
-            opus: "Claude Haiku 5-baidu".to_owned(),
-            sonnet: "Claude Opus 5-baidu".to_owned(),
-            haiku: "Claude Sonnet 5-baidu".to_owned(),
-            opus_override: None,
-            sonnet_override: None,
-            haiku_override: None,
-        }),
-        &gateway_config,
-    )
-    .unwrap();
+    install_claude_with_config(Some(settings.clone()), &gateway_config).unwrap();
 
     uninstall_claude(Some(settings.clone())).unwrap();
     let restored: serde_json::Value =
         serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
     assert_restored_claude_settings(&restored);
 
-    install_claude_with_config(
-        Some(settings.clone()),
-        ClaudeModelRequest::Automatic,
-        &gateway_config,
-    )
-    .unwrap();
-    let automatic: serde_json::Value =
-        serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
-    assert_eq!(
-        automatic["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"],
-        "Claude Opus 5-baidu"
-    );
-    assert_eq!(
-        automatic["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
-        "Claude Sonnet 5-baidu"
-    );
-    assert_eq!(
-        automatic["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"],
-        "Claude Haiku 5-baidu"
-    );
+    install_claude_with_config(Some(settings.clone()), &gateway_config).unwrap();
     uninstall_claude(Some(settings)).unwrap();
 }
 
@@ -174,31 +136,49 @@ fn assert_installed_claude_settings(installed: &serde_json::Value) {
     );
     assert_eq!(installed["env"]["DISABLE_LOGIN_COMMAND"], "1");
     assert!(installed["env"].get("ANTHROPIC_MODEL").is_none());
-    assert_eq!(
-        installed["env"]["ANTHROPIC_DEFAULT_OPUS_MODEL"]
-            .as_str()
-            .unwrap(),
-        "Claude Opus 5-baidu"
+    assert!(
+        installed["env"]
+            .get("ANTHROPIC_DEFAULT_OPUS_MODEL")
+            .is_none()
     );
-    assert_eq!(
-        installed["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"]
-            .as_str()
-            .unwrap(),
-        "Claude Sonnet 5-baidu"
+    assert!(
+        installed["env"]
+            .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+            .is_none()
     );
-    assert_eq!(
-        installed["env"]["ANTHROPIC_DEFAULT_HAIKU_MODEL"]
-            .as_str()
-            .unwrap(),
-        "Claude Haiku 5-baidu"
+    assert!(
+        installed["env"]
+            .get("ANTHROPIC_DEFAULT_HAIKU_MODEL")
+            .is_none()
     );
-    assert_eq!(installed["model"], "sonnet");
+    assert_eq!(installed["model"], "Claude Haiku 5-baidu");
+    assert_eq!(
+        installed["modelPicker"],
+        serde_json::json!({
+            "replaceBuiltInOptions": true,
+            "options": [
+                {
+                    "model": "Claude Haiku 5-baidu",
+                    "label": "Claude Haiku 5",
+                    "description": "Baidu OneAPI"
+                },
+                {
+                    "model": "Claude Opus 5-baidu",
+                    "label": "Claude Opus 5",
+                    "description": "Baidu OneAPI"
+                },
+                {
+                    "model": "Claude Sonnet 5-baidu",
+                    "label": "Claude Sonnet 5",
+                    "description": "Baidu OneAPI"
+                }
+            ]
+        })
+    );
     assert_eq!(
         installed["modelOverrides"],
         serde_json::json!({
-            "claude-opus-4-6": "Claude Opus 5-baidu",
-            "claude-sonnet-4-6": "Claude Sonnet 5-baidu",
-            "claude-haiku-4-5-20251001": "Claude Haiku 5-baidu",
+            "claude-opus-4-6": "old-opus-route",
             "unrelated-model": "keep-route"
         })
     );
@@ -206,13 +186,10 @@ fn assert_installed_claude_settings(installed: &serde_json::Value) {
         installed["codex_mixin_managed"]["marker"].as_str().unwrap(),
         MANAGED_CLAUDE_MARKER
     );
+    assert!(installed["codex_mixin_managed"].get("models").is_none());
     assert_eq!(
-        installed["codex_mixin_managed"]["models"],
-        serde_json::json!({
-            "opus": "Claude Opus 5-baidu",
-            "sonnet": "Claude Sonnet 5-baidu",
-            "haiku": "Claude Haiku 5-baidu"
-        })
+        installed["codex_mixin_managed"]["model_override_keys"],
+        serde_json::json!([])
     );
 }
 
@@ -240,6 +217,13 @@ fn assert_restored_claude_settings(restored: &serde_json::Value) {
         "old-haiku"
     );
     assert_eq!(restored["model"], "old-default");
+    assert_eq!(
+        restored["modelPicker"],
+        serde_json::json!({
+            "replaceBuiltInOptions": false,
+            "options": [{"model": "old-picker", "label": "Old picker"}]
+        })
+    );
     assert_eq!(
         restored["modelOverrides"],
         serde_json::json!({
@@ -284,34 +268,40 @@ fn claude_install_uses_dedicated_client_key_as_auth_token() {
         fusion_profiles: Vec::new(),
     };
 
-    install_claude_with_config(
-        Some(settings.clone()),
-        ClaudeModelRequest::Single("Claude Sonnet 5-baidu".to_owned()),
-        &gateway_config,
-    )
-    .unwrap();
+    install_claude_with_config(Some(settings.clone()), &gateway_config).unwrap();
 
-    let installed: serde_json::Value =
+    let mut installed: serde_json::Value =
         serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
     assert_eq!(
         installed["env"]["ANTHROPIC_AUTH_TOKEN"],
         "claude-client-key"
     );
-    assert_eq!(
-        installed["modelOverrides"]["claude-sonnet-4-6"],
-        "Claude Sonnet 5-baidu"
-    );
+    assert!(installed.get("modelOverrides").is_none());
+    assert_eq!(installed["model"], "Claude Sonnet 5-baidu");
 
-    install_claude_with_config(
-        Some(settings.clone()),
-        ClaudeModelRequest::Single("Claude Sonnet 5-baidu".to_owned()),
-        &gateway_config,
-    )
-    .unwrap();
+    installed["codex_mixin_managed"]["model_override_keys"] =
+        serde_json::json!(["sonnet", "claude-sonnet-4-6"]);
+    installed["modelOverrides"] = serde_json::json!({
+        "sonnet": "Claude Sonnet 5-baidu",
+        "claude-sonnet-4-6": "Claude Sonnet 5-baidu"
+    });
+    installed["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"] = "Claude Sonnet 5-baidu".into();
+    fs::write(&settings, serde_json::to_vec_pretty(&installed).unwrap()).unwrap();
+
+    install_claude_with_config(Some(settings.clone()), &gateway_config).unwrap();
+    let migrated: serde_json::Value =
+        serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert!(migrated.get("modelOverrides").is_none());
+    assert!(
+        migrated["env"]
+            .get("ANTHROPIC_DEFAULT_SONNET_MODEL")
+            .is_none()
+    );
     uninstall_claude(Some(settings.clone())).unwrap();
     let restored: serde_json::Value = serde_json::from_slice(&fs::read(settings).unwrap()).unwrap();
     assert!(restored.get("env").is_none());
     assert!(restored.get("model").is_none());
+    assert!(restored.get("modelPicker").is_none());
     assert!(restored.get("modelOverrides").is_none());
 }
 
@@ -349,12 +339,7 @@ fn claude_install_migrates_legacy_managed_env_backup() {
         fusion_profiles: Vec::new(),
     };
 
-    install_claude_with_config(
-        Some(settings.clone()),
-        ClaudeModelRequest::Single("Claude Sonnet 5-baidu".to_owned()),
-        &gateway_config,
-    )
-    .unwrap();
+    install_claude_with_config(Some(settings.clone()), &gateway_config).unwrap();
     let mut legacy: serde_json::Value =
         serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
     legacy["codex_mixin_managed"]
@@ -365,16 +350,23 @@ fn claude_install_migrates_legacy_managed_env_backup() {
         .as_object_mut()
         .unwrap()
         .remove("model_override_keys");
+    legacy["codex_mixin_managed"]
+        .as_object_mut()
+        .unwrap()
+        .remove("model_picker_managed");
+    legacy["codex_mixin_managed"]
+        .as_object_mut()
+        .unwrap()
+        .remove("previous_model_picker");
     legacy["env"]["ANTHROPIC_AUTH_TOKEN"] = "manual-token".into();
     legacy["modelOverrides"]["claude-sonnet-4-6"] = "manual-route".into();
+    legacy["modelPicker"] = serde_json::json!({
+        "replaceBuiltInOptions": false,
+        "options": [{"model": "manual-picker", "label": "Manual picker"}]
+    });
     fs::write(&settings, serde_json::to_vec_pretty(&legacy).unwrap()).unwrap();
 
-    install_claude_with_config(
-        Some(settings.clone()),
-        ClaudeModelRequest::Single("Claude Sonnet 5-baidu".to_owned()),
-        &gateway_config,
-    )
-    .unwrap();
+    install_claude_with_config(Some(settings.clone()), &gateway_config).unwrap();
     uninstall_claude(Some(settings.clone())).unwrap();
 
     let restored: serde_json::Value = serde_json::from_slice(&fs::read(settings).unwrap()).unwrap();
@@ -383,58 +375,22 @@ fn claude_install_migrates_legacy_managed_env_backup() {
         restored["modelOverrides"]["claude-sonnet-4-6"],
         "manual-route"
     );
+    assert_eq!(
+        restored["modelPicker"],
+        serde_json::json!({
+            "replaceBuiltInOptions": false,
+            "options": [{"model": "manual-picker", "label": "Manual picker"}]
+        })
+    );
 }
 
 #[test]
-fn claude_connect_requires_a_complete_model_mapping() {
+fn claude_connect_has_no_model_mapping_options() {
+    assert!(Cli::try_parse_from(["codex-mixin", "connect", "claude"]).is_ok());
+    assert!(Cli::try_parse_from(["codex-mixin", "install-claude"]).is_ok());
     assert!(
-        Cli::try_parse_from([
-            "codex-mixin",
-            "connect",
-            "claude",
-            "--opus-model",
-            "opus-backend",
-            "--sonnet-model",
-            "sonnet-backend",
-            "--haiku-model",
-            "haiku-backend",
-        ])
-        .is_ok()
-    );
-    assert!(
-        Cli::try_parse_from([
-            "codex-mixin",
-            "install-claude",
-            "--opus-model",
-            "opus-backend",
-            "--sonnet-model",
-            "sonnet-backend",
-            "--haiku-model",
-            "haiku-backend",
-        ])
-        .is_ok()
-    );
-    assert!(
-        Cli::try_parse_from([
-            "codex-mixin",
-            "connect",
-            "claude",
-            "--opus-model",
-            "opus-backend",
-        ])
-        .is_err()
-    );
-    assert!(
-        Cli::try_parse_from([
-            "codex-mixin",
-            "connect",
-            "claude",
-            "--model",
-            "one-backend",
-            "--sonnet-model",
-            "sonnet-backend",
-        ])
-        .is_err()
+        Cli::try_parse_from(["codex-mixin", "connect", "claude", "--model", "one-backend",])
+            .is_err()
     );
 }
 
@@ -472,33 +428,26 @@ fn claude_install_accepts_any_routable_model_protocol() {
         fusion_profiles: Vec::new(),
     };
 
-    install_claude_with_config(
-        Some(settings.clone()),
-        ClaudeModelRequest::Single("gpt-5.6-sol-baidu".to_owned()),
-        &gateway_config,
-    )
-    .unwrap();
+    install_claude_with_config(Some(settings.clone()), &gateway_config).unwrap();
 
     let installed: serde_json::Value =
         serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
-    for family in ["OPUS", "SONNET", "HAIKU"] {
-        assert_eq!(
-            installed["env"][format!("ANTHROPIC_DEFAULT_{family}_MODEL")],
-            "gpt-5.6-sol-baidu"
-        );
-    }
-
-    install_claude_with_config(
-        Some(settings.clone()),
-        ClaudeModelRequest::Automatic,
-        &gateway_config,
-    )
-    .unwrap();
-    let automatic: serde_json::Value =
-        serde_json::from_slice(&fs::read(settings).unwrap()).unwrap();
+    assert_eq!(installed["model"], "gpt-5.6-sol-baidu");
     assert_eq!(
-        automatic["env"]["ANTHROPIC_DEFAULT_SONNET_MODEL"],
-        "gpt-5.6-sol-baidu"
+        installed["modelPicker"]["options"][0],
+        serde_json::json!({
+            "model": "gpt-5.6-sol-baidu",
+            "label": "gpt-5.6-sol",
+            "description": "Baidu OneAPI"
+        })
+    );
+    assert!(installed.get("modelOverrides").is_none());
+    assert!(
+        installed["env"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .all(|key| !key.starts_with("ANTHROPIC_DEFAULT_"))
     );
 }
 
@@ -589,16 +538,7 @@ fn user_facing_command_groups_parse() {
     assert!(Cli::try_parse_from(["codex-mixin", "provider", "list"]).is_ok());
     assert!(Cli::try_parse_from(["codex-mixin", "service", "start", "--foreground"]).is_ok());
     assert!(Cli::try_parse_from(["codex-mixin", "connect", "codex", "--custom-only"]).is_ok());
-    assert!(
-        Cli::try_parse_from([
-            "codex-mixin",
-            "connect",
-            "claude",
-            "--model",
-            "claude-3-7-sonnet"
-        ])
-        .is_ok()
-    );
+    assert!(Cli::try_parse_from(["codex-mixin", "connect", "claude"]).is_ok());
     assert!(Cli::try_parse_from(["codex-mixin", "connect", "dsh"]).is_ok());
     assert!(
         Cli::try_parse_from([
