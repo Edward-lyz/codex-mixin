@@ -12,7 +12,7 @@ use codex_mixin::provider::catalog_model_slug;
 
 use super::atomic_file::{ensure_owner_only_dir, set_owner_only, write_atomic_if_changed};
 use super::official_models::selected_official_models;
-use super::runtime::{load_runtime_metadata, pid_is_running};
+use super::runtime::effective_gateway_bind;
 
 pub(in crate::cli) const DSH_PROVIDER_ID: &str = "codex-mixin";
 const DSH_API_PROTOCOL: &str = "openai-responses";
@@ -39,7 +39,8 @@ pub(in crate::cli) fn install_dsh(dsh_home: Option<PathBuf>) -> anyhow::Result<(
     let result = (|| {
         let gateway_config = GatewayConfig::from_stored_config()?;
         let official_models = selected_official_models(&gateway_config)?;
-        install_dsh_with_models(dsh_home, &gateway_config, &official_models)
+        let bind = effective_gateway_bind(&gateway_config)?;
+        install_dsh_with_models(dsh_home, &gateway_config, &official_models, bind)
     })();
     super::rollback_new_client_key_on_error(result, client, key_existed)
 }
@@ -49,20 +50,17 @@ pub(in crate::cli) fn install_dsh_with_config(
     dsh_home: Option<PathBuf>,
     gateway_config: &GatewayConfig,
 ) -> anyhow::Result<()> {
-    install_dsh_with_models(dsh_home, gateway_config, &[])
+    install_dsh_with_models(dsh_home, gateway_config, &[], gateway_config.bind)
 }
 
 fn install_dsh_with_models(
     dsh_home: Option<PathBuf>,
     gateway_config: &GatewayConfig,
     official_models: &[codex_mixin::provider::ProviderModel],
+    bind: std::net::SocketAddr,
 ) -> anyhow::Result<()> {
     let dsh_home = resolve_dsh_home(dsh_home)?;
     ensure_owner_only_dir(&dsh_home)?;
-    let bind = match load_runtime_metadata()? {
-        Some(runtime) if pid_is_running(runtime.pid)? => runtime.bind,
-        _ => gateway_config.bind,
-    };
     let models = collect_dsh_models(gateway_config, official_models);
     anyhow::ensure!(
         !models.is_empty(),

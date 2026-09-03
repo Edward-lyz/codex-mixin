@@ -6,7 +6,7 @@ use serde_json::{Map, Value, json};
 
 use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::report_hook::reporting_enabled;
-use crate::cli::runtime::{load_runtime_metadata, pid_is_running};
+use crate::cli::runtime::effective_gateway_bind;
 use codex_mixin::config::GatewayConfig;
 use codex_mixin::gateway_access::GatewayClient;
 use codex_mixin::provider::{ProviderDefinition, ProviderModel, catalog_model_slug};
@@ -90,7 +90,13 @@ pub(in crate::cli) fn install_claude(settings_path: Option<PathBuf>) -> anyhow::
     let result = (|| {
         let gateway_config = GatewayConfig::from_stored_config()?;
         let official_models = selected_official_models(&gateway_config)?;
-        install_claude_with_models(settings_path, &gateway_config, &official_models)
+        let gateway_bind = effective_gateway_bind(&gateway_config)?;
+        install_claude_with_models(
+            settings_path,
+            &gateway_config,
+            &official_models,
+            gateway_bind,
+        )
     })();
     super::rollback_new_client_key_on_error(result, client, key_existed)
 }
@@ -100,21 +106,18 @@ pub(in crate::cli) fn install_claude_with_config(
     settings_path: Option<PathBuf>,
     gateway_config: &GatewayConfig,
 ) -> anyhow::Result<()> {
-    install_claude_with_models(settings_path, gateway_config, &[])
+    install_claude_with_models(settings_path, gateway_config, &[], gateway_config.bind)
 }
 
 fn install_claude_with_models(
     settings_path: Option<PathBuf>,
     gateway_config: &GatewayConfig,
     official_models: &[ProviderModel],
+    gateway_bind: std::net::SocketAddr,
 ) -> anyhow::Result<()> {
     let settings_path = resolve_claude_settings_path(settings_path)?;
     let (model_picker, default_model) = claude_model_picker(gateway_config, official_models)?;
     let managed_model_override_keys = Vec::<String>::new();
-    let gateway_bind = match load_runtime_metadata()? {
-        Some(runtime) if pid_is_running(runtime.pid)? => runtime.bind,
-        _ => gateway_config.bind,
-    };
     let base_url = format!("http://{gateway_bind}");
     let raw = if settings_path.exists() {
         fs::read_to_string(&settings_path)?

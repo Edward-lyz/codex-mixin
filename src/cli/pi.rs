@@ -13,7 +13,7 @@ use codex_mixin::provider::{ProviderModel, catalog_model_slug};
 use super::atomic_file::{set_owner_only, write_atomic_if_changed, write_owner_only};
 use super::official_models::selected_official_models;
 use super::report_hook::reporting_enabled;
-use super::runtime::{load_runtime_metadata, pid_is_running};
+use super::runtime::effective_gateway_bind;
 
 const PI_PROVIDER_ID: &str = "codex-mixin";
 const PI_PROVIDER_NAME: &str = "Codex Mixin";
@@ -33,10 +33,7 @@ pub(in crate::cli) fn install_pi(agent_dir: Option<PathBuf>) -> anyhow::Result<(
         let models_path = agent_dir.join("models.json");
         let extension_path = agent_dir.join("extensions").join(PI_REPORT_EXTENSION_FILE);
         let key_path = std::path::absolute(stored_config_path().with_file_name(PI_API_KEY_FILE))?;
-        let bind = match load_runtime_metadata()? {
-            Some(runtime) if pid_is_running(runtime.pid)? => runtime.bind,
-            _ => gateway_config.bind,
-        };
+        let bind = effective_gateway_bind(&gateway_config)?;
         install_pi_at(
             &models_path,
             &key_path,

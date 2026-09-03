@@ -104,6 +104,17 @@ pub(super) fn load_runtime_metadata() -> anyhow::Result<Option<RuntimeMetadata>>
     Ok(Some(serde_json::from_str(&raw)?))
 }
 
+/// The bind client installs should target: a live gateway's actual bind wins
+/// over the configured one, so clients keep pointing at the running instance.
+pub(super) fn effective_gateway_bind(
+    config: &codex_mixin::config::GatewayConfig,
+) -> anyhow::Result<SocketAddr> {
+    Ok(match load_runtime_metadata()? {
+        Some(runtime) if pid_is_running(runtime.pid)? => runtime.bind,
+        _ => config.bind,
+    })
+}
+
 pub(super) fn replacement_bind_for_outdated_runtime(
     runtime: &RuntimeMetadata,
     current_version: &str,

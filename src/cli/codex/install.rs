@@ -17,7 +17,7 @@ use super::validate::validate_codex_install;
 use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::config_input::normalize_base_url;
 use crate::cli::metadata::load_model_metadata_resolver;
-use crate::cli::runtime::{load_runtime_metadata, pid_is_running};
+use crate::cli::runtime::effective_gateway_bind;
 
 #[derive(Debug, Args)]
 pub(in crate::cli) struct InstallCodexOptions {
@@ -132,10 +132,7 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
         codex_oauth_proxy,
     );
     let serialized_catalog = serde_json::to_vec_pretty(&catalog)?;
-    let gateway_bind = match load_runtime_metadata()? {
-        Some(runtime) if pid_is_running(runtime.pid)? => runtime.bind,
-        _ => gateway_config.bind,
-    };
+    let gateway_bind = effective_gateway_bind(&gateway_config)?;
     let gateway_base_url =
         normalize_base_url(base_url.unwrap_or_else(|| format!("http://{gateway_bind}/v1")))?;
     let provider_id = managed_codex_provider_id(codex_oauth_proxy);
