@@ -1,6 +1,6 @@
 use std::path::PathBuf;
 
-use codex_mixin::history::migrate_history_to_mixin_provider;
+use super::codex::history::migrate_history_to_mixin_provider;
 
 use super::codex::codex_home_path;
 

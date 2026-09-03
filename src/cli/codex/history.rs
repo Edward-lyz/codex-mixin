@@ -6,7 +6,7 @@ use std::time::{SystemTime, UNIX_EPOCH};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::CODEX_MIXIN_PROVIDER;
+use codex_mixin::CODEX_MIXIN_PROVIDER;
 
 #[derive(Clone, Debug, Default)]
 pub struct HistoryMigrationOutcome {
@@ -20,13 +20,6 @@ pub fn migrate_history_to_mixin_provider(
     codex_home: &Path,
 ) -> anyhow::Result<HistoryMigrationOutcome> {
     migrate_history_to_provider(codex_home, CODEX_MIXIN_PROVIDER)
-}
-
-pub fn migrate_history_from_mixin_provider(
-    codex_home: &Path,
-    target_provider: &str,
-) -> anyhow::Result<HistoryMigrationOutcome> {
-    migrate_history_from_provider(codex_home, CODEX_MIXIN_PROVIDER, target_provider)
 }
 
 pub fn migrate_history_to_provider(

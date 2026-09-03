@@ -8,7 +8,6 @@ pub mod error;
 pub mod fusion;
 mod gateway;
 pub mod gateway_access;
-pub mod history;
 mod images;
 pub mod protocol;
 pub mod provider;

@@ -4,8 +4,8 @@ use std::path::PathBuf;
 use clap::Args;
 use toml_edit::{DocumentMut, Item};
 
+use super::history::{migrate_history_from_provider, migrate_history_to_provider};
 use codex_mixin::config::GatewayConfig;
-use codex_mixin::history::{migrate_history_from_provider, migrate_history_to_provider};
 use codex_mixin::server::AppState;
 
 use super::bin::ensure_codex_cli_for_install;

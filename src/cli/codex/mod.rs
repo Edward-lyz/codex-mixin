@@ -1,6 +1,7 @@
 mod app_server;
 mod bin;
 mod catalog;
+pub(super) mod history;
 mod imagegen_skill;
 mod install;
 mod managed_auth;
