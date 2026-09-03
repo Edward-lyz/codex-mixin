@@ -28,12 +28,13 @@ use crate::catalog::{codex_catalog_from_models_with_metadata, load_template_cata
 use crate::config::GatewayConfig;
 use crate::error::GatewayError;
 use crate::fusion::{FusionEngine, should_fuse_turn, validate_fusion_profiles};
+use crate::gateway::UpstreamRouting;
 use crate::gateway::{
     CacheShapeTracker, ModelRouter, ProviderTokenUsage, RequestPlan, ResolvedModelRoute,
     UpstreamExecutor,
 };
-use crate::gateway::{ResponseStream, UpstreamRouting};
 use crate::images::ImageRouteRegistry;
+use crate::protocol::ResponseStream;
 use crate::protocol::sse::{SseDecoder, encode_event};
 use crate::provider::MetadataResolver;
 use crate::provider::capabilities::ProviderCapabilities;
@@ -42,7 +43,6 @@ use crate::provider::{
 };
 use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};
 
-mod anthropic_compat;
 pub(crate) mod auth;
 mod compact;
 mod images;

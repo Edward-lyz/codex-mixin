@@ -23,8 +23,10 @@ pub(super) async fn messages(
     let route = state.resolve_model_route(requested_model).await?;
     if route == ResolvedModelRoute::Official {
         let request = normalize_message_request(&body, requested_model)?;
-        let responses_body =
-            super::anthropic_compat::message_request_to_responses(&request, requested_model)?;
+        let responses_body = crate::protocol::anthropic_compat::message_request_to_responses(
+            &request,
+            requested_model,
+        )?;
         let plan = RequestPlan::official(responses_body, Some(requested_model.to_owned()))?;
         return responses_compatible_message(
             &state,
@@ -43,8 +45,10 @@ pub(super) async fn messages(
     let routing = stable_oneapi_routing(&headers, &body)?;
     let stream_requested = body_stream_requested(&body);
     if provider.protocol_for_model(upstream_model_id) != ProviderProtocol::AnthropicMessages {
-        let responses_body =
-            super::anthropic_compat::message_request_to_responses(&request, requested_model)?;
+        let responses_body = crate::protocol::anthropic_compat::message_request_to_responses(
+            &request,
+            requested_model,
+        )?;
         let plan = RequestPlan::provider(
             resolved.catalog_slug.to_owned(),
             provider.id().to_owned(),
@@ -123,7 +127,7 @@ async fn responses_compatible_message(
 ) -> Result<Response, GatewayError> {
     let upstream = UpstreamExecutor::new(state).stream(plan, headers).await?;
     if stream_requested {
-        let stream = super::anthropic_compat::responses_to_anthropic_stream(
+        let stream = crate::protocol::anthropic_compat::responses_to_anthropic_stream(
             upstream,
             requested_model.to_owned(),
         );
@@ -135,8 +139,10 @@ async fn responses_compatible_message(
             .map_err(|err| GatewayError::Other(err.into()));
     }
     let collected = crate::gateway::collect_response_stream(upstream).await?;
-    let message =
-        super::anthropic_compat::collected_to_anthropic_message(collected, requested_model)?;
+    let message = crate::protocol::anthropic_compat::collected_to_anthropic_message(
+        collected,
+        requested_model,
+    )?;
     Ok(Json(message).into_response())
 }
 

@@ -1,11 +1,8 @@
-use std::convert::Infallible;
-
 use axum::http::HeaderMap;
-use bytes::Bytes;
-use futures_util::stream::BoxStream;
 use serde_json::Value;
 
 use crate::error::GatewayError;
+use crate::protocol::{CollectedResponse, ResponseStream};
 use crate::server::AppState;
 
 mod cache_shape;
@@ -29,20 +26,10 @@ pub(crate) use router::{
     AUTO_REVIEW_MODEL_SLUG, ModelRouter, ResolvedModelRoute, is_official_model_slug,
 };
 
-pub type ResponseStream = BoxStream<'static, Result<Bytes, Infallible>>;
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct UpstreamRouting {
     pub session_id: String,
     pub hash_key: String,
-}
-
-#[derive(Clone, Debug)]
-pub struct CollectedResponse {
-    pub response: Value,
-    pub output: Vec<Value>,
-    pub output_text: String,
-    pub usage: Value,
 }
 
 pub(crate) async fn stream_response_with_headers(

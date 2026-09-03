@@ -5,12 +5,12 @@ use bytes::Bytes;
 use futures_util::{StreamExt, stream::BoxStream};
 use serde_json::{Value, json};
 
+use super::{CollectedResponse, ResponseStream};
 use crate::anthropic::{ContentBlock, MessageRequest};
 use crate::error::GatewayError;
-use crate::gateway::{CollectedResponse, ResponseStream};
 use crate::protocol::sse::{SseDecoder, encode_raw_event};
 
-pub(super) fn message_request_to_responses(
+pub(crate) fn message_request_to_responses(
     request: &MessageRequest,
     downstream_model: &str,
 ) -> Result<Value, GatewayError> {
@@ -472,7 +472,7 @@ fn anthropic_event(event: &str, payload: Value) -> Bytes {
     encode_raw_event(event, &payload.to_string())
 }
 
-pub(super) fn responses_to_anthropic_stream(
+pub(crate) fn responses_to_anthropic_stream(
     upstream: ResponseStream,
     downstream_model: String,
 ) -> BoxStream<'static, Result<Bytes, Infallible>> {
@@ -723,7 +723,7 @@ fn response_item_key(envelope: &Value, item: Option<&Value>) -> String {
         })
 }
 
-pub(super) fn collected_to_anthropic_message(
+pub(crate) fn collected_to_anthropic_message(
     collected: CollectedResponse,
     downstream_model: &str,
 ) -> Result<Value, GatewayError> {

@@ -8,7 +8,7 @@ use crate::protocol::sse::{
     response_failed_payload,
 };
 
-use super::{CollectedResponse, ResponseStream};
+use crate::protocol::{CollectedResponse, ResponseStream};
 
 pub(super) fn map_openai_responses_sse<S>(
     upstream: S,
