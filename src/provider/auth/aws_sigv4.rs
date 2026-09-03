@@ -5,7 +5,7 @@ use aws_credential_types::Credentials;
 use aws_sigv4::http_request::{SignableBody, SignableRequest, SigningSettings, sign};
 use aws_sigv4::sign::v4;
 
-use super::AwsSigV4AuthConfig;
+use crate::provider::AwsSigV4AuthConfig;
 
 pub(crate) fn sign_request(
     request: &mut reqwest::Request,

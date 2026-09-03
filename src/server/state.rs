@@ -58,7 +58,8 @@ pub struct AppState {
     catalog_sources_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogSources>>>,
     catalog_response_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogResponse>>>,
     official_auth_cache: Arc<tokio::sync::Mutex<Option<CachedOfficialAuth>>>,
-    ducx_runtimes: Arc<tokio::sync::Mutex<HashMap<String, Arc<crate::ducx::DucxRuntime>>>>,
+    ducx_runtimes:
+        Arc<tokio::sync::Mutex<HashMap<String, Arc<crate::provider::auth::ducx::DucxRuntime>>>>,
 }
 
 impl AppState {

@@ -68,11 +68,11 @@ impl AppState {
     async fn ducx_runtime_for(
         &self,
         provider: &ProviderRuntime,
-    ) -> Result<Arc<crate::ducx::DucxRuntime>, GatewayError> {
+    ) -> Result<Arc<crate::provider::auth::ducx::DucxRuntime>, GatewayError> {
         let executable = provider
             .ducx_executable()
             .map(PathBuf::from)
-            .or_else(crate::ducx::default_ducx_executable)
+            .or_else(crate::provider::auth::ducx::default_ducx_executable)
             .ok_or_else(|| {
                 GatewayError::Upstream(
                     "DUCX loopback is enabled but the managed ducx executable was not found"
@@ -84,7 +84,7 @@ impl AppState {
             return Ok(Arc::clone(runtime));
         }
         let runtime = Arc::new(
-            crate::ducx::DucxRuntime::spawn(executable)
+            crate::provider::auth::ducx::DucxRuntime::spawn(executable)
                 .await
                 .map_err(GatewayError::Other)?,
         );

@@ -4,7 +4,7 @@ use anyhow::{Context, ensure};
 use reqwest::header::HeaderMap;
 use reqwest::{RequestBuilder, Url};
 
-use super::external_auth::resolve_custom_headers_from_env;
+use super::auth::external::resolve_custom_headers_from_env;
 use super::types::{
     AUTO_REVIEW_MODEL_ID, BaiduAuthBridge, ProviderAuthHeader, ProviderDefinition, ProviderModel,
     ProviderModelKey, ProviderModelSource, ProviderProtocol, ProviderQuotaParser,

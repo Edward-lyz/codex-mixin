@@ -3,7 +3,7 @@ use std::collections::BTreeMap;
 use anyhow::Context;
 use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
 
-pub(super) fn resolve_custom_headers_from_env(
+pub(crate) fn resolve_custom_headers_from_env(
     mapping: &BTreeMap<String, String>,
     lookup: &dyn Fn(&str) -> Option<String>,
 ) -> anyhow::Result<HeaderMap> {

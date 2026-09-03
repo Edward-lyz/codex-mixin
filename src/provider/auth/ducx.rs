@@ -19,7 +19,7 @@ use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
-use crate::auth_capture::{CaptureProxy, CaptureTrigger, REPORT_CLIENT_TOKEN_HEADER};
+use super::capture::{CaptureProxy, CaptureTrigger, REPORT_CLIENT_TOKEN_HEADER};
 
 /// DUCX platform identity required for the comate source-auth handshake.
 const DUCX_PLATFORM: &str = "AIIDE-terminal";
@@ -402,7 +402,10 @@ mod tests {
 
     #[test]
     fn native_header_is_captured_from_shared_proxy() {
-        assert_eq!(crate::auth_capture::NATIVE_HEADER, "comate_custom_header");
+        assert_eq!(
+            crate::provider::auth::capture::NATIVE_HEADER,
+            "comate_custom_header"
+        );
     }
 
     #[tokio::test]
@@ -535,7 +538,10 @@ wait
             .native_headers(Duration::from_secs(3))
             .await
             .unwrap();
-        assert_eq!(headers[crate::auth_capture::NATIVE_HEADER], "fixture");
+        assert_eq!(
+            headers[crate::provider::auth::capture::NATIVE_HEADER],
+            "fixture"
+        );
         let descendant_pid = std::fs::read_to_string(home.join("descendant.pid")).unwrap();
         let descendant_pid = descendant_pid.trim();
         let descendant_alive = std::process::Command::new("/bin/kill")

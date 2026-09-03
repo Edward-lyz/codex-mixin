@@ -1,7 +1,6 @@
-mod aws_sigv4;
+pub(crate) mod auth;
 pub mod capabilities;
 mod discovery;
-mod external_auth;
 mod registry;
 mod resolver;
 mod spec;
@@ -32,7 +31,7 @@ pub use types::{
     ProviderReadinessStatus, ProviderRequestPolicy, is_auto_review_model_id,
 };
 
-pub(crate) use aws_sigv4::sign_request as sign_aws_request;
+pub(crate) use auth::aws_sigv4::sign_request as sign_aws_request;
 pub(crate) use types::AUTO_REVIEW_MODEL_ID;
 
 /// Mint the native auth headers for the selected Baidu auth core.
@@ -42,10 +41,10 @@ pub(crate) async fn native_baidu_headers(provider: &ProviderRuntime) -> anyhow::
     let executable = provider
         .ducx_executable()
         .map(PathBuf::from)
-        .or_else(crate::ducx::default_ducx_executable)
+        .or_else(auth::ducx::default_ducx_executable)
         .context("Baidu auth bridge is enabled but no managed executable is configured")?;
     if provider.uses_ducx_loopback() {
-        crate::ducx::DucxRuntime::spawn(executable)
+        auth::ducx::DucxRuntime::spawn(executable)
             .await?
             .native_headers(Duration::from_secs(30))
             .await
