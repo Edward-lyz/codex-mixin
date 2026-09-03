@@ -14,6 +14,7 @@ use super::official_models::selected_official_models;
 
 pub(in crate::cli) const MANAGED_CLAUDE_MARKER: &str = "codex-mixin managed Claude Code";
 const MANAGED_CLAUDE_HOOK_MARKER: &str = " report-hook --event ";
+const CLAUDE_EXTENDED_CONTEXT_WINDOW: u64 = 1_000_000;
 const LEGACY_MANAGED_CLAUDE_ENV_KEYS: &[&str] = &[
     "ANTHROPIC_BASE_URL",
     "ANTHROPIC_MODEL",
@@ -29,6 +30,7 @@ const MANAGED_CLAUDE_ENV_KEYS: &[&str] = &[
     "ANTHROPIC_DEFAULT_OPUS_MODEL",
     "ANTHROPIC_DEFAULT_HAIKU_MODEL",
     "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
+    "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT",
     "DISABLE_LOGIN_COMMAND",
 ];
 struct ClaudeSettingsBackup {
@@ -296,6 +298,10 @@ fn install_claude_with_models(
         Value::String("1".to_owned()),
     );
     env.insert(
+        "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT".to_owned(),
+        Value::String("1".to_owned()),
+    );
+    env.insert(
         "DISABLE_LOGIN_COMMAND".to_owned(),
         Value::String("1".to_owned()),
     );
@@ -344,7 +350,7 @@ fn claude_model_picker(
                 continue;
             }
             options.push(json!({
-                "model": target,
+                "model": claude_picker_model(&target, model.context_window),
                 "label": claude_picker_label(provider, model),
                 "description": claude_picker_description(provider, model),
             }));
@@ -355,9 +361,9 @@ fn claude_model_picker(
             continue;
         }
         options.push(json!({
-            "model": model.id,
+            "model": claude_picker_model(&model.id, model.context_window),
             "label": model.display_name.as_deref().unwrap_or(&model.id),
-            "description": "OpenAI official",
+            "description": claude_picker_description_text("OpenAI official", model.context_window),
         }));
     }
     options.sort_by(|left, right| {
@@ -380,6 +386,13 @@ fn claude_model_picker(
     ))
 }
 
+fn claude_picker_model(model: &str, context_window: Option<u64>) -> String {
+    if context_window.is_some_and(|window| window >= CLAUDE_EXTENDED_CONTEXT_WINDOW) {
+        return format!("{model}[1m]");
+    }
+    model.to_owned()
+}
+
 fn claude_picker_label<'a>(provider: &ProviderDefinition, model: &'a ProviderModel) -> &'a str {
     if provider.preset_id.as_deref() == Some("baidu-oneapi") {
         return &model.id;
@@ -388,10 +401,9 @@ fn claude_picker_label<'a>(provider: &ProviderDefinition, model: &'a ProviderMod
 }
 
 fn claude_picker_description(provider: &ProviderDefinition, model: &ProviderModel) -> String {
-    if provider.preset_id.as_deref() != Some("aws-bedrock") {
-        return provider.display_name.clone();
-    }
-    if model.id.contains(":application-inference-profile/") {
+    let description = if provider.preset_id.as_deref() != Some("aws-bedrock") {
+        provider.display_name.clone()
+    } else if model.id.contains(":application-inference-profile/") {
         let profile_id = model.id.rsplit('/').next().unwrap_or(&model.id);
         let scope = if model
             .aliases
@@ -404,27 +416,42 @@ fn claude_picker_description(provider: &ProviderDefinition, model: &ProviderMode
         } else {
             ""
         };
-        return if scope.is_empty() {
+        if scope.is_empty() {
             format!("Discount \u{b7} {profile_id}")
         } else {
             format!("Discount {scope} \u{b7} {profile_id}")
-        };
-    }
-    let inference_profile_id = model
-        .id
-        .split_once(":inference-profile/")
-        .map(|(_, profile_id)| profile_id)
-        .unwrap_or(&model.id);
-    if inference_profile_id.starts_with("global.") {
-        return "AWS Global".to_owned();
-    }
-    if inference_profile_id.starts_with("us.") {
-        return "AWS US".to_owned();
-    }
-    if model.id.contains(":inference-profile/") {
-        return "AWS Inference Profile".to_owned();
-    }
-    "AWS Foundation".to_owned()
+        }
+    } else {
+        let inference_profile_id = model
+            .id
+            .split_once(":inference-profile/")
+            .map(|(_, profile_id)| profile_id)
+            .unwrap_or(&model.id);
+        if inference_profile_id.starts_with("global.") {
+            "AWS Global".to_owned()
+        } else if inference_profile_id.starts_with("us.") {
+            "AWS US".to_owned()
+        } else if model.id.contains(":inference-profile/") {
+            "AWS Inference Profile".to_owned()
+        } else {
+            "AWS Foundation".to_owned()
+        }
+    };
+    claude_picker_description_text(&description, model.context_window)
+}
+
+fn claude_picker_description_text(description: &str, context_window: Option<u64>) -> String {
+    let Some(context_window) = context_window else {
+        return description.to_owned();
+    };
+    let context = if context_window % 1_000_000 == 0 {
+        format!("{}M", context_window / 1_000_000)
+    } else if context_window % 1_000 == 0 {
+        format!("{}K", context_window / 1_000)
+    } else {
+        context_window.to_string()
+    };
+    format!("{description} \u{b7} {context} context")
 }
 
 fn claude_credential_value(config: &GatewayConfig) -> anyhow::Result<String> {

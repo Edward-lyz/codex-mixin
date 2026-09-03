@@ -97,6 +97,7 @@ fn claude_install_writes_base_url_and_uninstall_restores_settings() {
                 "ANTHROPIC_DEFAULT_HAIKU_MODEL": "old-haiku",
                 "CLAUDE_CODE_USE_GATEWAY": "old-gateway",
                 "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC": "old-traffic",
+                "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT": "old-window-enforcement",
                 "DISABLE_LOGIN_COMMAND": "old-login"
             }
         }"#,
@@ -132,6 +133,10 @@ fn assert_installed_claude_settings(installed: &serde_json::Value) {
     assert_eq!(installed["env"]["CLAUDE_CODE_USE_GATEWAY"], "old-gateway");
     assert_eq!(
         installed["env"]["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"],
+        "1"
+    );
+    assert_eq!(
+        installed["env"]["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"],
         "1"
     );
     assert_eq!(installed["env"]["DISABLE_LOGIN_COMMAND"], "1");
@@ -204,6 +209,10 @@ fn assert_restored_claude_settings(restored: &serde_json::Value) {
     assert_eq!(
         restored["env"]["CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC"],
         "old-traffic"
+    );
+    assert_eq!(
+        restored["env"]["CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT"],
+        "old-window-enforcement"
     );
     assert_eq!(restored["env"]["DISABLE_LOGIN_COMMAND"], "old-login");
     assert_eq!(restored["env"]["ANTHROPIC_MODEL"], "old-model");
@@ -403,6 +412,7 @@ fn claude_install_accepts_any_routable_model_protocol() {
     provider.selected_models = vec!["gpt-5.6-sol".to_owned()];
     provider.cached_models = vec![ProviderModel {
         id: "gpt-5.6-sol".to_owned(),
+        context_window: Some(272_000),
         protocol: Some(ProviderProtocol::OpenAiResponses),
         ..ProviderModel::default()
     }];
@@ -438,9 +448,85 @@ fn claude_install_accepts_any_routable_model_protocol() {
         serde_json::json!({
             "model": "gpt-5.6-sol-baidu",
             "label": "gpt-5.6-sol",
-            "description": "Baidu OneAPI"
+            "description": "Baidu OneAPI · 272K context"
         })
     );
+    assert!(installed.get("modelOverrides").is_none());
+    assert!(
+        installed["env"]
+            .as_object()
+            .unwrap()
+            .keys()
+            .all(|key| !key.starts_with("ANTHROPIC_DEFAULT_"))
+    );
+}
+
+#[test]
+fn claude_install_marks_extended_context_models_without_family_mappings() {
+    let directory = tempfile::tempdir().unwrap();
+    let settings = directory.path().join("settings.json");
+    let mut provider = ProviderPreset::BaiduOneApi.create("baidu", "provider-key");
+    provider.quota_username = Some("test-user".to_owned());
+    provider.selected_models = vec!["DeepSeek-V4-Flash".to_owned(), "GLM-5.3".to_owned()];
+    provider.cached_models = vec![
+        ProviderModel {
+            id: "DeepSeek-V4-Flash".to_owned(),
+            context_window: Some(1_024_000),
+            protocol: Some(ProviderProtocol::AnthropicMessages),
+            ..ProviderModel::default()
+        },
+        ProviderModel {
+            id: "GLM-5.3".to_owned(),
+            context_window: Some(1_000_000),
+            protocol: Some(ProviderProtocol::AnthropicMessages),
+            ..ProviderModel::default()
+        },
+    ];
+    let gateway_config = GatewayConfig {
+        bind: "127.0.0.1:8787".parse().unwrap(),
+        providers: vec![provider],
+        official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
+        codex_auth_path: directory.path().join("auth.json"),
+        gateway_api_key: None,
+        gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
+            claude: Some("claude-client-key".to_owned()),
+            ..Default::default()
+        },
+        accept_codex_oauth: false,
+        official_selected_models: None,
+        default_max_tokens: 4096,
+        default_context_window: 128_000,
+        request_timeout: std::time::Duration::from_secs(30),
+        thinking_mode: ThinkingMode::Auto,
+        enable_web_search_tool: false,
+        web_search_tool_type: "web_search".to_owned(),
+        web_search_max_uses: None,
+        fusion_profiles: Vec::new(),
+    };
+
+    install_claude_with_config(Some(settings.clone()), &gateway_config).unwrap();
+
+    let installed: serde_json::Value =
+        serde_json::from_slice(&fs::read(&settings).unwrap()).unwrap();
+    assert_eq!(
+        installed["modelPicker"],
+        serde_json::json!({
+            "replaceBuiltInOptions": true,
+            "options": [
+                {
+                    "model": "DeepSeek-V4-Flash-baidu[1m]",
+                    "label": "DeepSeek-V4-Flash",
+                    "description": "Baidu OneAPI · 1024K context"
+                },
+                {
+                    "model": "GLM-5.3-baidu[1m]",
+                    "label": "GLM-5.3",
+                    "description": "Baidu OneAPI · 1M context"
+                }
+            ]
+        })
+    );
+    assert_eq!(installed["model"], "DeepSeek-V4-Flash-baidu[1m]");
     assert!(installed.get("modelOverrides").is_none());
     assert!(
         installed["env"]

@@ -328,7 +328,10 @@ Claude Code」后，会直接写入当前已启用且已选择的模型。
    Gateway 模式。
 4. 把所有已启用且已选择的模型写入顶层 `modelPicker`，让 Claude Code 的模型选择器直接
    展示并请求 Codex Mixin 的可路由模型 ID，不再写入 Opus、Sonnet、Haiku 映射或
-   `modelOverrides`。顶层 `model` 默认使用 picker 中的第一个模型。
+   `modelOverrides`。模型目录中的 context window 会显示在描述中；达到 1M 的模型会带
+   `[1m]` 后缀，让 Claude Code 使用 1M window，并在请求前自动移除后缀。其他未知模型
+   关闭 Claude Code 固定 200K window enforcement，由上游的真实 context limit 决定何时
+   compact。顶层 `model` 默认使用 picker 中的第一个模型。
 5. 写入 `codex_mixin_managed` 标记，卸载时恢复之前的 `env`、`model`、`modelPicker` 和
    历史版本管理过的 `modelOverrides`。
 
