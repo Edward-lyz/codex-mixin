@@ -2,7 +2,7 @@ use serde_json::Value;
 
 use super::ResolvedModelRoute;
 use crate::error::GatewayError;
-use crate::upstream::UpstreamRouting;
+use crate::gateway::UpstreamRouting;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) enum UpstreamTarget {

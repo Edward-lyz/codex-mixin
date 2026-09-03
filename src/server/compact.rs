@@ -11,7 +11,7 @@ use uuid::Uuid;
 use crate::compaction::{self, CompactionSummary};
 use crate::error::GatewayError;
 use crate::gateway::ResolvedModelRoute;
-use crate::upstream::collect_response_with_headers;
+use crate::gateway::collect_response_with_headers;
 
 use super::auth::{check_gateway_auth, forward_official_headers};
 use super::{AppState, *};

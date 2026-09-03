@@ -75,7 +75,7 @@ async fn stream_fusion_responses(
     state: &AppState,
     headers: &HeaderMap,
     mut body: Value,
-    provider_routing: Option<crate::upstream::UpstreamRouting>,
+    provider_routing: Option<crate::gateway::UpstreamRouting>,
     profile_id: String,
 ) -> Result<ResponseStream, GatewayError> {
     let profile = state

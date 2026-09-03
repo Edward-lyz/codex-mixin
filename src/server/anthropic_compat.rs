@@ -7,8 +7,8 @@ use serde_json::{Value, json};
 
 use crate::anthropic::{ContentBlock, MessageRequest};
 use crate::error::GatewayError;
+use crate::gateway::{CollectedResponse, ResponseStream};
 use crate::sse::{SseDecoder, encode_raw_event};
-use crate::upstream::{CollectedResponse, ResponseStream};
 
 pub(super) fn message_request_to_responses(
     request: &MessageRequest,

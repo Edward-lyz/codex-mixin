@@ -410,7 +410,7 @@ pub(super) async fn collect_fusion_response(
     body: Value,
     headers: &HeaderMap,
     routing: Option<&UpstreamRouting>,
-) -> Result<crate::upstream::CollectedResponse, GatewayError> {
+) -> Result<crate::gateway::CollectedResponse, GatewayError> {
     let stream =
         stream_fusion_response(state, model_reference, body, headers, routing, None).await?;
     collect_response_stream(stream).await
@@ -422,7 +422,7 @@ async fn collect_fusion_response_preserving_body(
     body: Value,
     headers: &HeaderMap,
     routing: Option<&UpstreamRouting>,
-) -> Result<(crate::upstream::CollectedResponse, Value), GatewayError> {
+) -> Result<(crate::gateway::CollectedResponse, Value), GatewayError> {
     let original_model = body.get("model").cloned();
     let original_store = body.get("store").cloned();
     let original_max_output_tokens = body.get("max_output_tokens").cloned();

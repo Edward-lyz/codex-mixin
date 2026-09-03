@@ -8,11 +8,11 @@ use super::images::{normalize_provider_images_blocking, normalize_provider_image
 use super::{RequestPlan, UpstreamTarget};
 use crate::compaction::TOKEN_PREFIX;
 use crate::error::GatewayError;
-use crate::server::{AppState, stream_official_response};
-use crate::sse::{SseDecoder, encode_event, encode_raw_event, event_contains_response_metadata};
-use crate::upstream::{
+use crate::gateway::{
     ProviderResponseRequest, ResponseStream, UpstreamRouting, stream_provider_response,
 };
+use crate::server::{AppState, stream_official_response};
+use crate::sse::{SseDecoder, encode_event, encode_raw_event, event_contains_response_metadata};
 
 struct ProviderStreamPlan {
     downstream_model: Option<String>,

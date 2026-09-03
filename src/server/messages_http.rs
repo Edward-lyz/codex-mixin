@@ -134,7 +134,7 @@ async fn responses_compatible_message(
             .body(Body::from_stream(stream))
             .map_err(|err| GatewayError::Other(err.into()));
     }
-    let collected = crate::upstream::collect_response_stream(upstream).await?;
+    let collected = crate::gateway::collect_response_stream(upstream).await?;
     let message =
         super::anthropic_compat::collected_to_anthropic_message(collected, requested_model)?;
     Ok(Json(message).into_response())

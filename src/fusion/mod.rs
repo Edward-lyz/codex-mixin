@@ -12,9 +12,9 @@ use serde_json::{Value, json};
 
 use crate::error::GatewayError;
 use crate::gateway::{RequestPlan, UpstreamExecutor};
+use crate::gateway::{ResponseStream, UpstreamRouting, collect_response_stream};
 use crate::server::AppState;
 use crate::sse::{SseDecoder, encode_event, encode_raw_event};
-use crate::upstream::{ResponseStream, UpstreamRouting, collect_response_stream};
 
 use self::tools::PanelToolExecutor;
 

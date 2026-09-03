@@ -20,7 +20,6 @@ pub mod provider;
 pub(crate) mod request_body;
 pub mod server;
 pub mod sse;
-pub mod upstream;
 pub mod web_search;
 
 pub const CODEX_MIXIN_PROVIDER: &str = "codex-mixin";

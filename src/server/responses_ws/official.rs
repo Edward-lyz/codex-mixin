@@ -415,10 +415,10 @@ mod tests {
     use serde_json::json;
 
     use super::parse_official_ws_event;
+    use crate::gateway::UpstreamRouting;
     use crate::gateway::{
         CacheShape, CacheShapeTracker, UpstreamCacheObserver, record_provider_prefix,
     };
-    use crate::upstream::UpstreamRouting;
 
     #[test]
     fn official_websocket_records_response_timing_after_response_id() {

@@ -19,7 +19,9 @@ pub(crate) use tracking::{
 #[cfg(test)]
 use super::cache_usage::{TokenUsageAggregator, UpstreamCacheUsage};
 #[cfg(test)]
-use crate::{anthropic::MessageRequest, upstream::UpstreamRouting};
+use crate::anthropic::MessageRequest;
+#[cfg(test)]
+use crate::gateway::UpstreamRouting;
 #[cfg(test)]
 use bytes::Bytes;
 #[cfg(test)]
