@@ -1,11 +1,10 @@
 //! Unified model metadata resolution.
 //!
 //! One resolver answers "what are this model's limits and modalities" from
-//! layered sources: a cached models.dev catalog (preferred), legacy LiteLLM
-//! or Pi caches (kept readable so existing installs need no migration), and
-//! built-in family rules as the offline fallback. models.dev is also the
-//! capability source for providers whose own catalog only returns model ids
-//! (OpenCode Go today).
+//! two layered sources: a cached models.dev catalog, then built-in family
+//! rules as the offline fallback. models.dev is also the capability source
+//! for providers whose own catalog only returns model ids (OpenCode Go
+//! today).
 
 use std::collections::{BTreeMap, HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -40,44 +39,6 @@ struct MetadataEntry {
     key: String,
     token_variants: Vec<Vec<String>>,
     metadata: ModelMetadata,
-}
-
-#[derive(Debug, Deserialize)]
-struct LiteLlmModelSpec {
-    #[serde(default)]
-    mode: Option<String>,
-    #[serde(default)]
-    max_input_tokens: Option<Value>,
-    #[serde(default)]
-    max_tokens: Option<Value>,
-    #[serde(default)]
-    max_output_tokens: Option<Value>,
-    #[serde(default)]
-    input_modalities: Option<Vec<String>>,
-    #[serde(default)]
-    supports_vision: Option<bool>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PiModelsJson {
-    providers: BTreeMap<String, PiProvider>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PiProvider {
-    #[serde(default)]
-    models: Vec<PiModelSpec>,
-}
-
-#[derive(Debug, Deserialize)]
-struct PiModelSpec {
-    id: String,
-    #[serde(rename = "contextWindow")]
-    context_window: Option<u64>,
-    #[serde(rename = "maxTokens")]
-    max_tokens: Option<u64>,
-    #[serde(default)]
-    input: Vec<String>,
 }
 
 #[derive(Debug, Deserialize)]
@@ -130,83 +91,6 @@ impl MetadataResolver {
     }
 
     pub fn from_json(value: &Value) -> anyhow::Result<Self> {
-        if value.get("providers").is_some() {
-            return Self::from_pi_json(value.clone());
-        }
-        if looks_like_models_dev(value) {
-            return Self::from_models_dev_json(value);
-        }
-        Self::from_litellm_json(value)
-    }
-
-    pub fn from_json_file(path: &Path) -> anyhow::Result<Self> {
-        let raw = std::fs::read_to_string(path)?;
-        let value = serde_json::from_str(&raw)?;
-        Self::from_json(&value)
-    }
-
-    pub fn from_default_files() -> anyhow::Result<Self> {
-        if let Ok(path) = std::env::var("CODEX_GATEWAY_MODEL_METADATA")
-            && !path.is_empty()
-        {
-            return Self::from_json_file(Path::new(&path));
-        }
-        let cache_path = default_metadata_cache_path();
-        if cache_path.exists() {
-            return Self::from_json_file(&cache_path);
-        }
-        // Installs that cached LiteLLM data before the models.dev switch keep
-        // resolving from that file until the next metadata refresh.
-        let legacy_path = legacy_litellm_cache_path();
-        if legacy_path.exists() {
-            return Self::from_json_file(&legacy_path);
-        }
-        Ok(Self::empty())
-    }
-
-    pub fn len(&self) -> usize {
-        self.entries.len()
-    }
-
-    pub fn is_empty(&self) -> bool {
-        self.entries.is_empty()
-    }
-
-    fn from_litellm_json(value: &Value) -> anyhow::Result<Self> {
-        let specs: BTreeMap<String, Value> = serde_json::from_value(value.clone())?;
-        let mut entries = Vec::new();
-        for (key, raw_spec) in specs {
-            if key == "sample_spec" {
-                continue;
-            }
-            let spec: LiteLlmModelSpec = serde_json::from_value(raw_spec)?;
-            if spec.mode.as_deref().is_some_and(|mode| mode != "chat") {
-                continue;
-            }
-            let Some(context_window) = numeric_u64(spec.max_input_tokens.as_ref())
-                .or_else(|| numeric_u64(spec.max_tokens.as_ref()))
-            else {
-                continue;
-            };
-            entries.push(MetadataEntry {
-                token_variants: token_variants(&key),
-                metadata: ModelMetadata {
-                    context_window,
-                    max_output_tokens: numeric_u64(spec.max_output_tokens.as_ref())
-                        .or_else(|| numeric_u64(spec.max_tokens.as_ref())),
-                    input_modalities: input_modalities(
-                        spec.input_modalities,
-                        spec.supports_vision.unwrap_or(false),
-                    ),
-                    source: format!("litellm:{key}"),
-                },
-                key,
-            });
-        }
-        Ok(Self::from_entries(entries))
-    }
-
-    fn from_models_dev_json(value: &Value) -> anyhow::Result<Self> {
         let catalog: ModelsDevCatalog = serde_json::from_value(value.clone())
             .context("models.dev catalog has an unexpected shape")?;
         let mut entries = Vec::new();
@@ -237,31 +121,31 @@ impl MetadataResolver {
         Ok(Self::from_entries(entries))
     }
 
-    fn from_pi_json(value: Value) -> anyhow::Result<Self> {
-        let parsed: PiModelsJson = serde_json::from_value(value)?;
-        let mut entries = Vec::new();
-        for provider in parsed.providers.values() {
-            for model in &provider.models {
-                let Some(context_window) = model.context_window else {
-                    continue;
-                };
-                entries.push(MetadataEntry {
-                    key: model.id.clone(),
-                    token_variants: token_variants(&model.id),
-                    metadata: ModelMetadata {
-                        context_window,
-                        max_output_tokens: model.max_tokens,
-                        input_modalities: if model.input.is_empty() {
-                            vec!["text".to_owned()]
-                        } else {
-                            model.input.clone()
-                        },
-                        source: format!("metadata:{}", model.id),
-                    },
-                });
-            }
+    pub fn from_json_file(path: &Path) -> anyhow::Result<Self> {
+        let raw = std::fs::read_to_string(path)?;
+        let value = serde_json::from_str(&raw)?;
+        Self::from_json(&value)
+    }
+
+    pub fn from_default_files() -> anyhow::Result<Self> {
+        if let Ok(path) = std::env::var("CODEX_GATEWAY_MODEL_METADATA")
+            && !path.is_empty()
+        {
+            return Self::from_json_file(Path::new(&path));
         }
-        Ok(Self::from_entries(entries))
+        let cache_path = default_metadata_cache_path();
+        if cache_path.exists() {
+            return Self::from_json_file(&cache_path);
+        }
+        Ok(Self::empty())
+    }
+
+    pub fn len(&self) -> usize {
+        self.entries.len()
+    }
+
+    pub fn is_empty(&self) -> bool {
+        self.entries.is_empty()
     }
 
     pub fn resolve(&self, model: &str, default_context_window: u64) -> ModelMetadata {
@@ -323,24 +207,6 @@ impl MetadataResolver {
     }
 }
 
-fn looks_like_models_dev(value: &Value) -> bool {
-    value.as_object().is_some_and(|providers| {
-        providers
-            .values()
-            .any(|provider| provider.get("models").is_some_and(Value::is_object))
-    })
-}
-
-fn numeric_u64(value: Option<&Value>) -> Option<u64> {
-    match value? {
-        Value::Number(number) => number
-            .as_u64()
-            .or_else(|| number.as_f64().map(|value| value as u64)),
-        Value::String(value) => value.parse().ok(),
-        _ => None,
-    }
-}
-
 pub fn default_metadata_cache_path() -> PathBuf {
     if let Ok(path) = std::env::var("CODEX_GATEWAY_MODEL_METADATA_CACHE")
         && !path.is_empty()
@@ -348,10 +214,6 @@ pub fn default_metadata_cache_path() -> PathBuf {
         return PathBuf::from(path);
     }
     codex_mixin_home().join("models_dev_api.json")
-}
-
-fn legacy_litellm_cache_path() -> PathBuf {
-    codex_mixin_home().join("model_metadata_litellm.json")
 }
 
 fn codex_mixin_home() -> PathBuf {
@@ -677,10 +539,18 @@ mod tests {
     }
 
     #[test]
-    fn matches_litellm_decimal_and_p_variants() {
+    fn matches_decimal_and_p_version_variants() {
         let resolver = MetadataResolver::from_json(&json!({
-            "fireworks_ai/glm-5p2": {"mode":"chat","max_input_tokens":1048576,"max_output_tokens":131072},
-            "azure_ai/deepseek-v4-flash": {"mode":"chat","max_input_tokens":1000000,"max_output_tokens":384000}
+            "fireworks-ai": {
+                "models": {
+                    "glm-5p2": {"limit": {"context": 1048576, "output": 131072}}
+                }
+            },
+            "azure-ai": {
+                "models": {
+                    "deepseek-v4-flash": {"limit": {"context": 1000000, "output": 384000}}
+                }
+            }
         }))
         .unwrap();
         assert_eq!(

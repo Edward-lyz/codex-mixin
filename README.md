@@ -564,7 +564,7 @@ codex-mixin doctor --fix --restart-apps # 额外允许重启 ChatGPT/Codex App�
 很多上游 `/models` 只返回模型 ID。Codex Mixin 生成 catalog 时会按以下顺序补齐上下文窗口和能力字段：
 
 1. `CODEX_GATEWAY_MODEL_METADATA` 指向的本地 metadata 文件。
-2. `~/.codex-mixin/model_metadata_litellm.json`，由 `refresh-metadata` 或安装时自动拉取 LiteLLM metadata 生成。
+2. `~/.codex-mixin/models_dev_api.json`，由 `refresh-metadata` 或安装时自动拉取 models.dev catalog 生成。
 3. 内置模型族正则规则，例如 Claude、DeepSeek、GPT、Kimi、GLM、MiniMax 等常见命名。
 
 生成的 catalog 会包含 `context_window`、`max_context_window`、`input_modalities`、`base_instructions` 和 `model_messages.instructions_template`，避免 Codex 解析模型目录时报缺字段。
@@ -664,7 +664,7 @@ OpenAI Chat Completions 兼容上游不接受 `tool` 消息内嵌图片，网关
 | Codex Mixin 配置 | `~/.codex-mixin/config.json` |
 | 本地网关日志 | `~/.codex-mixin/gateway.log`，轮转备份为 `gateway.log.1` |
 | 登录自启任务 | `~/Library/LaunchAgents/local.codex-mixin.{menu-launch,service}.plist` |
-| LiteLLM metadata 缓存 | `~/.codex-mixin/model_metadata_litellm.json` |
+| 模型 metadata 缓存 | `~/.codex-mixin/models_dev_api.json` |
 | 模型测速结果 | `~/.codex-mixin/model-benchmarks.json` |
 | Codex 配置 | `~/.codex/config.toml` |
 | Codex 配置备份 | `~/.codex/config.toml.codex-mixin.backup` |
@@ -1167,7 +1167,7 @@ Launching without arguments is the user-facing entry point. It opens the TUI and
 | Codex Mixin config | `~/.codex-mixin/config.json` |
 | Gateway log | `~/.codex-mixin/gateway.log`, with `gateway.log.1` as the rotated backup |
 | Login launch agents | `~/Library/LaunchAgents/local.codex-mixin.{menu-launch,service}.plist` |
-| LiteLLM metadata cache | `~/.codex-mixin/model_metadata_litellm.json` |
+| Model metadata cache | `~/.codex-mixin/models_dev_api.json` |
 | Codex config | `~/.codex/config.toml` |
 | Codex config backup | `~/.codex/config.toml.codex-mixin.backup` |
 | Codex auth | `~/.codex/auth.json` |

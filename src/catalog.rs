@@ -78,11 +78,13 @@ mod tests {
     #[test]
     fn applies_model_metadata_to_context_window_and_modalities() {
         let metadata = MetadataResolver::from_json(&json!({
-            "fireworks_ai/minimax-m3": {
-                "mode": "chat",
-                "max_input_tokens": 512000,
-                "max_output_tokens": 512000,
-                "supports_vision": true
+            "fireworks-ai": {
+                "models": {
+                    "minimax-m3": {
+                        "attachment": true,
+                        "limit": {"context": 512000, "output": 512000}
+                    }
+                }
             }
         }))
         .unwrap();
