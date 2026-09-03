@@ -7,10 +7,7 @@ use anyhow::Context;
 use clap::Args;
 use toml_edit::{DocumentMut, Item};
 
-use codex_mixin::catalog::{
-    codex_catalog_from_models_with_metadata,
-    codex_oauth_proxy_catalog_from_aggregated_models_with_metadata,
-};
+use codex_mixin::catalog::{codex_catalog_from_models_with_metadata, codex_oauth_proxy_catalog};
 use codex_mixin::config::GatewayConfig;
 use codex_mixin::history::{migrate_history_from_provider, migrate_history_to_provider};
 use codex_mixin::server::AppState;
@@ -132,11 +129,12 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
     super::super::progress_step("Loading model metadata");
     let metadata = load_model_metadata_resolver().await?;
     let catalog = if codex_oauth_proxy {
-        codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
+        codex_oauth_proxy_catalog(
             &models,
             gateway_config.default_context_window,
             template.as_ref(),
             &metadata,
+            None,
         )
     } else {
         codex_catalog_from_models_with_metadata(

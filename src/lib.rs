@@ -10,7 +10,6 @@ pub mod convert;
 pub(crate) mod ducx;
 pub mod error;
 pub mod fusion;
-pub mod fusion_tools;
 mod gateway;
 pub mod gateway_access;
 pub mod history;

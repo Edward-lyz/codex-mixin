@@ -7,8 +7,8 @@ use toml_edit::{DocumentMut, Item};
 
 use codex_mixin::catalog::{
     apply_web_search_capabilities, codex_catalog_from_models_with_metadata,
-    codex_oauth_proxy_catalog_from_aggregated_models_with_metadata, load_template_catalog,
-    migrate_managed_model_metadata, refresh_managed_oauth_catalog,
+    codex_oauth_proxy_catalog, load_template_catalog, migrate_managed_model_metadata,
+    refresh_managed_oauth_catalog,
 };
 use codex_mixin::config::GatewayConfig;
 use codex_mixin::server::AppState;
@@ -54,11 +54,12 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
     }
     let metadata = load_model_metadata_resolver().await?;
     let catalog = if oauth_proxy {
-        codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
+        codex_oauth_proxy_catalog(
             &models,
             gateway_config.default_context_window,
             template.as_ref(),
             &metadata,
+            None,
         )
     } else {
         codex_catalog_from_models_with_metadata(

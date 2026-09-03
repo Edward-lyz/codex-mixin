@@ -11,107 +11,47 @@ use super::{
     UPSTREAM_MODEL_MARKER,
 };
 
-pub fn codex_catalog_from_models(
-    models: &[ModelInfo],
-    default_context_window: u64,
-    template_catalog: Option<&Value>,
-) -> Value {
-    codex_catalog_from_models_with_options(
-        models,
-        default_context_window,
-        template_catalog,
-        false,
-        None,
-        None,
-    )
-}
-
-pub fn codex_oauth_proxy_catalog_from_models(
-    models: &[ModelInfo],
-    default_context_window: u64,
-    template_catalog: Option<&Value>,
-) -> Value {
-    codex_catalog_from_models_with_options(
-        models,
-        default_context_window,
-        template_catalog,
-        true,
-        None,
-        Some("custom"),
-    )
-}
-
 pub fn codex_catalog_from_models_with_metadata(
     models: &[ModelInfo],
     default_context_window: u64,
     template_catalog: Option<&Value>,
     metadata: &MetadataResolver,
 ) -> Value {
-    codex_catalog_from_models_with_options(
+    build_codex_catalog(
         models,
         default_context_window,
         template_catalog,
         false,
-        Some(metadata),
+        metadata,
         None,
     )
 }
 
-pub fn codex_oauth_proxy_catalog_from_models_with_metadata(
+/// Catalog for a Codex OAuth-proxy install: template models stay and gateway
+/// models are appended as suffixed variants (for example "gpt-5.5-custom").
+pub fn codex_oauth_proxy_catalog(
     models: &[ModelInfo],
     default_context_window: u64,
     template_catalog: Option<&Value>,
     metadata: &MetadataResolver,
+    provider_suffix: Option<&str>,
 ) -> Value {
-    codex_catalog_from_models_with_options(
+    build_codex_catalog(
         models,
         default_context_window,
         template_catalog,
         true,
-        Some(metadata),
-        Some("custom"),
+        metadata,
+        provider_suffix,
     )
 }
 
-pub fn codex_oauth_proxy_catalog_from_models_with_metadata_for_provider(
-    models: &[ModelInfo],
-    default_context_window: u64,
-    template_catalog: Option<&Value>,
-    metadata: &MetadataResolver,
-    provider_suffix: &str,
-) -> Value {
-    codex_catalog_from_models_with_options(
-        models,
-        default_context_window,
-        template_catalog,
-        true,
-        Some(metadata),
-        Some(provider_suffix),
-    )
-}
-
-pub fn codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
-    models: &[ModelInfo],
-    default_context_window: u64,
-    template_catalog: Option<&Value>,
-    metadata: &MetadataResolver,
-) -> Value {
-    codex_catalog_from_models_with_options(
-        models,
-        default_context_window,
-        template_catalog,
-        true,
-        Some(metadata),
-        None,
-    )
-}
-
-fn codex_catalog_from_models_with_options(
+fn build_codex_catalog(
     models: &[ModelInfo],
     default_context_window: u64,
     template_catalog: Option<&Value>,
     include_template_models: bool,
-    metadata: Option<&MetadataResolver>,
+    metadata: &MetadataResolver,
     provider_suffix: Option<&str>,
 ) -> Value {
     let template = template_catalog
@@ -192,11 +132,7 @@ fn codex_catalog_from_models_with_options(
             if item.get("base_instructions").is_none() {
                 item["base_instructions"] = json!(FALLBACK_BASE_INSTRUCTIONS);
             }
-            let metadata = metadata
-                .map(|resolver| resolver.resolve(&upstream_model_id, default_context_window))
-                .unwrap_or_else(|| {
-                    MetadataResolver::empty().resolve(&upstream_model_id, default_context_window)
-                });
+            let metadata = metadata.resolve(&upstream_model_id, default_context_window);
             let mut context_window = model.context_window.unwrap_or(metadata.context_window);
             // Only fall back to official GPT windows when the provider did not advertise one.
             // Provider-specific SSOT (for example OpenCode Go via models.dev) may intentionally

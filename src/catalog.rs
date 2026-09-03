@@ -7,12 +7,7 @@ mod generation;
 mod managed;
 mod template;
 
-pub use generation::{
-    codex_catalog_from_models, codex_catalog_from_models_with_metadata,
-    codex_oauth_proxy_catalog_from_aggregated_models_with_metadata,
-    codex_oauth_proxy_catalog_from_models, codex_oauth_proxy_catalog_from_models_with_metadata,
-    codex_oauth_proxy_catalog_from_models_with_metadata_for_provider,
-};
+pub use generation::{codex_catalog_from_models_with_metadata, codex_oauth_proxy_catalog};
 pub use managed::{migrate_managed_model_metadata, refresh_managed_oauth_catalog};
 pub use template::{apply_web_search_capabilities, load_template_catalog};
 
@@ -27,11 +22,8 @@ mod tests {
 
     use super::{
         CUSTOM_MODEL_MARKER, FALLBACK_BASE_INSTRUCTIONS, SUPPORTS_THINKING_MARKER,
-        UPSTREAM_MODEL_MARKER, apply_web_search_capabilities, codex_catalog_from_models,
-        codex_catalog_from_models_with_metadata,
-        codex_oauth_proxy_catalog_from_aggregated_models_with_metadata,
-        codex_oauth_proxy_catalog_from_models,
-        codex_oauth_proxy_catalog_from_models_with_metadata_for_provider,
+        UPSTREAM_MODEL_MARKER, apply_web_search_capabilities,
+        codex_catalog_from_models_with_metadata, codex_oauth_proxy_catalog,
         refresh_managed_oauth_catalog,
     };
 
@@ -53,7 +45,12 @@ mod tests {
             owned_by: Some("custom".to_owned()),
             ..ModelInfo::default()
         }];
-        let catalog = codex_catalog_from_models(&models, 1_000_000, None);
+        let catalog = codex_catalog_from_models_with_metadata(
+            &models,
+            1_000_000,
+            None,
+            &MetadataResolver::empty(),
+        );
         assert_eq!(catalog["models"][0]["slug"], "DeepSeek-V4-Flash");
         assert_eq!(
             catalog["models"][0]["additional_speed_tiers"],
@@ -118,7 +115,12 @@ mod tests {
             ..ModelInfo::default()
         }];
 
-        let catalog = codex_catalog_from_models(&models, 1_000_000, None);
+        let catalog = codex_catalog_from_models_with_metadata(
+            &models,
+            1_000_000,
+            None,
+            &MetadataResolver::empty(),
+        );
 
         assert_eq!(
             catalog["models"][0]["description"],
@@ -151,7 +153,12 @@ mod tests {
         })
         .collect::<Vec<_>>();
 
-        let catalog = codex_catalog_from_models(&models, 1_000_000, None);
+        let catalog = codex_catalog_from_models_with_metadata(
+            &models,
+            1_000_000,
+            None,
+            &MetadataResolver::empty(),
+        );
         let models = catalog["models"].as_array().unwrap();
         let sol = &models[0];
         assert_eq!(sol["default_reasoning_level"], "low");
@@ -208,7 +215,12 @@ mod tests {
         })
         .collect::<Vec<_>>();
 
-        let catalog = codex_catalog_from_models(&models, 1_000_000, None);
+        let catalog = codex_catalog_from_models_with_metadata(
+            &models,
+            1_000_000,
+            None,
+            &MetadataResolver::empty(),
+        );
         for model in catalog["models"].as_array().unwrap() {
             assert_eq!(
                 reasoning_efforts(model),
@@ -235,7 +247,12 @@ mod tests {
             ..ModelInfo::default()
         }];
 
-        let catalog = codex_catalog_from_models(&models, 1_000_000, Some(&template));
+        let catalog = codex_catalog_from_models_with_metadata(
+            &models,
+            1_000_000,
+            Some(&template),
+            &MetadataResolver::empty(),
+        );
         let model = &catalog["models"][0];
         assert_eq!(model["default_reasoning_level"], "none");
         assert_eq!(reasoning_efforts(model), ["none", "ultra"]);
@@ -252,7 +269,12 @@ mod tests {
             supports_web_search: Some(true),
             ..ModelInfo::default()
         }];
-        let catalog = codex_catalog_from_models(&models, 1_000_000, None);
+        let catalog = codex_catalog_from_models_with_metadata(
+            &models,
+            1_000_000,
+            None,
+            &MetadataResolver::empty(),
+        );
         assert_eq!(catalog["models"][0]["supports_search_tool"], false);
         assert_eq!(catalog["models"][0]["web_search_tool_type"], "text");
     }
@@ -275,7 +297,12 @@ mod tests {
             ..ModelInfo::default()
         }];
 
-        let catalog = codex_catalog_from_models(&models, 1_000_000, Some(&template));
+        let catalog = codex_catalog_from_models_with_metadata(
+            &models,
+            1_000_000,
+            Some(&template),
+            &MetadataResolver::empty(),
+        );
 
         assert_eq!(catalog["models"][0]["supports_search_tool"], false);
         assert!(catalog["models"][0].get("web_search_tool_type").is_none());
@@ -301,7 +328,12 @@ mod tests {
             ..ModelInfo::default()
         }];
 
-        let catalog = codex_catalog_from_models(&models, 1_000_000, Some(&template));
+        let catalog = codex_catalog_from_models_with_metadata(
+            &models,
+            1_000_000,
+            Some(&template),
+            &MetadataResolver::empty(),
+        );
         let model = &catalog["models"][0];
 
         for field in [
@@ -352,7 +384,13 @@ mod tests {
             owned_by: Some("custom".to_owned()),
             ..ModelInfo::default()
         }];
-        let catalog = codex_oauth_proxy_catalog_from_models(&models, 1_000_000, Some(&template));
+        let catalog = codex_oauth_proxy_catalog(
+            &models,
+            1_000_000,
+            Some(&template),
+            &MetadataResolver::empty(),
+            Some("custom"),
+        );
         assert_eq!(catalog["models"][0]["slug"], "gpt-5.5");
         assert_eq!(catalog["models"][1]["slug"], "gpt-5.5-custom");
         assert_eq!(catalog["models"][1]["display_name"], "gpt-5.5 (Custom)");
@@ -381,12 +419,12 @@ mod tests {
             ..ModelInfo::default()
         }];
         let metadata = MetadataResolver::empty();
-        let catalog = codex_oauth_proxy_catalog_from_models_with_metadata_for_provider(
+        let catalog = codex_oauth_proxy_catalog(
             &models,
             1_000_000,
             Some(&template),
             &metadata,
-            "baidu-oneapi",
+            Some("baidu-oneapi"),
         );
         assert_eq!(catalog["models"][0]["slug"], "gpt-5.5");
         assert_eq!(catalog["models"][1]["slug"], "gpt-5.5-baidu-oneapi");
@@ -410,12 +448,8 @@ mod tests {
         }];
         let metadata = MetadataResolver::empty();
 
-        let catalog = codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
-            &models,
-            1_000_000,
-            Some(&template),
-            &metadata,
-        );
+        let catalog =
+            codex_oauth_proxy_catalog(&models, 1_000_000, Some(&template), &metadata, None);
 
         assert_eq!(catalog["models"][1]["slug"], "gpt-5.6-sol-custom-2");
         assert_eq!(catalog["models"][1]["display_name"], "5.6 Sol · AIHub");
@@ -440,12 +474,8 @@ mod tests {
                 supports_thinking: Some(true),
                 ..ModelInfo::default()
             }];
-            let catalog = codex_oauth_proxy_catalog_from_aggregated_models_with_metadata(
-                &models,
-                1_000_000,
-                Some(&template),
-                &metadata,
-            );
+            let catalog =
+                codex_oauth_proxy_catalog(&models, 1_000_000, Some(&template), &metadata, None);
             assert_eq!(catalog["models"][1]["slug"], "gpt-5.6-luna-opencode-go");
             assert_eq!(catalog["models"][1][UPSTREAM_MODEL_MARKER], "gpt-5.6-luna");
             assert_eq!(catalog["models"][1]["context_window"], 1_050_000);
@@ -469,7 +499,13 @@ mod tests {
             context_window: Some(200_000),
             ..ModelInfo::default()
         }];
-        let catalog = codex_oauth_proxy_catalog_from_models(&models, 1_000_000, Some(&template));
+        let catalog = codex_oauth_proxy_catalog(
+            &models,
+            1_000_000,
+            Some(&template),
+            &MetadataResolver::empty(),
+            Some("custom"),
+        );
         assert_eq!(catalog["models"][1]["context_window"], 200_000);
         assert_eq!(catalog["models"][1]["max_context_window"], 200_000);
     }
