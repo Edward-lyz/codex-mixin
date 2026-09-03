@@ -5,16 +5,18 @@ use std::process::Command as ProcessCommand;
 
 use toml_edit::{DocumentMut, Item};
 
+use codex_mixin::anthropic::ModelInfo;
 use codex_mixin::catalog::{
     apply_web_search_capabilities, codex_catalog_from_models_with_metadata,
     codex_oauth_proxy_catalog, load_template_catalog, migrate_managed_model_metadata,
     refresh_managed_oauth_catalog,
 };
 use codex_mixin::config::GatewayConfig;
+use codex_mixin::provider::MetadataResolver;
 use codex_mixin::server::AppState;
 use codex_mixin::web_search::WebSearchCapabilities;
 
-use super::install::resolve_codex_cli;
+use super::bin::resolve_codex_cli;
 use super::managed_config::*;
 use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::metadata::load_model_metadata_resolver;
@@ -53,22 +55,13 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
         filter_official_catalog(template, gateway_config.official_selected_models.as_deref())?;
     }
     let metadata = load_model_metadata_resolver().await?;
-    let catalog = if oauth_proxy {
-        codex_oauth_proxy_catalog(
-            &models,
-            gateway_config.default_context_window,
-            template.as_ref(),
-            &metadata,
-            None,
-        )
-    } else {
-        codex_catalog_from_models_with_metadata(
-            &models,
-            gateway_config.default_context_window,
-            template.as_ref(),
-            &metadata,
-        )
-    };
+    let catalog = generated_codex_catalog(
+        &models,
+        gateway_config.default_context_window,
+        template.as_ref(),
+        &metadata,
+        oauth_proxy,
+    );
     let supported_models =
         WebSearchCapabilities::from_default_path(&gateway_config)?.supported_model_ids();
     if write_generated_managed_codex_catalog(&config_path, catalog, &supported_models)? {
@@ -111,6 +104,21 @@ pub(in crate::cli) fn managed_catalog_settings(
     let oauth_proxy = managed_oauth_proxy_mode(provider_id, provider)?;
     let catalog_path = managed_catalog_path(&doc, &config_path)?;
     Ok(Some((oauth_proxy, catalog_path)))
+}
+
+/// Build the managed Codex catalog for the selected install mode.
+pub(in crate::cli) fn generated_codex_catalog(
+    models: &[ModelInfo],
+    default_context_window: u64,
+    template: Option<&serde_json::Value>,
+    metadata: &MetadataResolver,
+    oauth_proxy: bool,
+) -> serde_json::Value {
+    if oauth_proxy {
+        codex_oauth_proxy_catalog(models, default_context_window, template, metadata, None)
+    } else {
+        codex_catalog_from_models_with_metadata(models, default_context_window, template, metadata)
+    }
 }
 
 #[derive(Clone, Debug, Eq, PartialEq)]
