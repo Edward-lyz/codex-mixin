@@ -6,6 +6,7 @@ use codex_mixin::config::{
 };
 use codex_mixin::provider::{
     BaiduAuthBridge, ProviderDefinition, ProviderModel, ProviderProtocol, ProviderQuotaParser,
+    spec_for,
 };
 use codex_mixin::provider_capabilities::ProviderCapabilities;
 use codex_mixin::web_search::WebSearchCapabilities;
@@ -137,6 +138,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                 json!({
                     "id": provider.id,
                     "kind": "configured",
+                    "icon": spec_for(provider.preset_id.as_deref()).icon,
                     "display_name": provider.display_name,
                     "enabled": provider.enabled,
                     "auxiliary_model_upstream": provider.auxiliary_model_upstream,
@@ -304,6 +306,7 @@ fn official_provider_view(
     json!({
         "id": "official",
         "kind": "official",
+        "icon": "openai",
         "display_name": "OpenAI",
         "enabled": true,
         "auxiliary_model_upstream": false,
