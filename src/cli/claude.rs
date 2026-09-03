@@ -8,6 +8,7 @@ use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::report_hook::reporting_enabled;
 use crate::cli::runtime::{load_runtime_metadata, pid_is_running};
 use codex_mixin::config::GatewayConfig;
+use codex_mixin::gateway_access::GatewayClient;
 use codex_mixin::provider::{ProviderDefinition, ProviderModel, catalog_model_slug};
 
 use super::official_models::selected_official_models;
@@ -291,7 +292,7 @@ fn install_claude_with_models(
     );
     env.insert(
         "ANTHROPIC_AUTH_TOKEN".to_owned(),
-        Value::String(claude_credential_value(gateway_config)?),
+        Value::String(gateway_config.require_client_key(GatewayClient::Claude)?),
     );
     env.insert(
         "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".to_owned(),
@@ -452,19 +453,6 @@ fn claude_picker_description_text(description: &str, context_window: Option<u64>
         context_window.to_string()
     };
     format!("{description} \u{b7} {context} context")
-}
-
-fn claude_credential_value(config: &GatewayConfig) -> anyhow::Result<String> {
-    let key = config
-        .gateway_client_keys
-        .get(codex_mixin::gateway_access::GatewayClient::Claude)
-        .ok_or_else(|| anyhow::anyhow!("Claude client key is missing"))?;
-    anyhow::ensure!(
-        !key.trim().is_empty(),
-        "Claude client key must not be empty"
-    );
-    anyhow::ensure!(key == key.trim(), "Claude client key has whitespace");
-    Ok(key.to_owned())
 }
 
 pub(in crate::cli) fn sync_installed_claude_client_key() -> anyhow::Result<()> {

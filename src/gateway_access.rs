@@ -25,6 +25,16 @@ impl GatewayClient {
             Self::Pi => "pi",
         }
     }
+
+    pub fn display_name(self) -> &'static str {
+        match self {
+            Self::Codex => "Codex",
+            Self::Claude => "Claude",
+            Self::Dsh => "DSH",
+            Self::OpenCode => "OpenCode",
+            Self::Pi => "Pi",
+        }
+    }
 }
 
 #[derive(Clone, Debug, Default, Deserialize, Serialize)]

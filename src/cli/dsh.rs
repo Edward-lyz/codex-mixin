@@ -7,9 +7,10 @@ use anyhow::Context;
 use serde_yaml::{Mapping, Value};
 
 use codex_mixin::config::GatewayConfig;
+use codex_mixin::gateway_access::GatewayClient;
 use codex_mixin::provider::catalog_model_slug;
 
-use super::atomic_file::write_atomic_if_changed;
+use super::atomic_file::{ensure_owner_only_dir, set_owner_only, write_atomic_if_changed};
 use super::official_models::selected_official_models;
 use super::runtime::{load_runtime_metadata, pid_is_running};
 
@@ -68,7 +69,7 @@ fn install_dsh_with_models(
         "no enabled upstream models are available; refresh or select models before installing to DSH"
     );
     let profile = build_dsh_provider_profile(&bind, models);
-    let credential_value = dsh_credential_value(gateway_config)?;
+    let credential_value = gateway_config.require_client_key(GatewayClient::Dsh)?;
 
     let settings_path = dsh_home.join("settings.yaml");
     let mut settings = read_yaml_document(&settings_path, "DSH settings")?;
@@ -313,16 +314,6 @@ fn build_dsh_provider_profile(bind: &SocketAddr, models: Vec<Value>) -> Value {
     Value::Mapping(profile)
 }
 
-fn dsh_credential_value(config: &GatewayConfig) -> anyhow::Result<String> {
-    let key = config
-        .gateway_client_keys
-        .get(codex_mixin::gateway_access::GatewayClient::Dsh)
-        .ok_or_else(|| anyhow::anyhow!("DSH client key is missing"))?;
-    anyhow::ensure!(!key.trim().is_empty(), "DSH client key must not be empty");
-    anyhow::ensure!(key == key.trim(), "DSH client key has whitespace");
-    Ok(key.to_owned())
-}
-
 pub(in crate::cli) fn sync_installed_dsh_client_key() -> anyhow::Result<()> {
     let dsh_home = resolve_dsh_home(None)?;
     let settings_path = dsh_home.join("settings.yaml");
@@ -375,28 +366,7 @@ fn write_yaml_owner_only(path: &Path, value: &Value) -> anyhow::Result<()> {
     let contents = serde_yaml::to_string(value)
         .with_context(|| format!("serialize DSH YAML {}", path.display()))?;
     write_atomic_if_changed(path, contents.as_bytes())?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let mut permissions = fs::metadata(path)?.permissions();
-        permissions.set_mode(0o600);
-        fs::set_permissions(path, permissions)?;
-    }
-    Ok(())
-}
-
-fn ensure_owner_only_dir(path: &Path) -> anyhow::Result<()> {
-    fs::create_dir_all(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let mut permissions = fs::metadata(path)?.permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(path, permissions)?;
-    }
-    Ok(())
+    set_owner_only(path)
 }
 
 #[cfg(test)]

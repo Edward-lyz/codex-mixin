@@ -59,6 +59,24 @@ impl GatewayConfig {
         Self::from_stored_config_value(stored_config)
     }
 
+    /// Fetch the stored gateway key for a client, validating its shape.
+    pub fn require_client_key(
+        &self,
+        client: crate::gateway_access::GatewayClient,
+    ) -> anyhow::Result<String> {
+        let name = client.display_name();
+        let key = self
+            .gateway_client_keys
+            .get(client)
+            .ok_or_else(|| anyhow!("{name} client key is missing"))?;
+        anyhow::ensure!(
+            !key.trim().is_empty(),
+            "{name} client key must not be empty"
+        );
+        anyhow::ensure!(key == key.trim(), "{name} client key has whitespace");
+        Ok(key.to_owned())
+    }
+
     fn from_stored_config_value(stored_config: StoredGatewayConfig) -> anyhow::Result<Self> {
         ensure_config_version(stored_config.config_version)?;
         if stored_config.providers.is_empty() {

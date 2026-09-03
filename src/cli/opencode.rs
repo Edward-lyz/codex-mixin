@@ -1,6 +1,5 @@
 use std::collections::HashSet;
 use std::fs;
-use std::io::Write;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
@@ -8,9 +7,10 @@ use anyhow::Context;
 use serde_json::{Map, Value, json};
 
 use codex_mixin::config::{GatewayConfig, stored_config_path};
+use codex_mixin::gateway_access::GatewayClient;
 use codex_mixin::provider::{ProviderModel, catalog_model_slug};
 
-use super::atomic_file::write_atomic_if_changed;
+use super::atomic_file::{set_owner_only, write_atomic_if_changed, write_owner_only};
 use super::official_models::selected_official_models;
 use super::report_hook::reporting_enabled;
 use super::runtime::{load_runtime_metadata, pid_is_running};
@@ -128,7 +128,7 @@ fn install_opencode_with_models(
         }),
     );
 
-    let gateway_key = gateway_credential(gateway_config)?;
+    let gateway_key = gateway_config.require_client_key(GatewayClient::OpenCode)?;
     write_owner_only(key_path, gateway_key.as_bytes())?;
     write_json_config(config_path, &document)?;
     sync_opencode_reporting_plugin(config_path, reporting_is_enabled)?;
@@ -307,19 +307,6 @@ fn opencode_reasoning_variants() -> Value {
             })
             .collect(),
     )
-}
-
-fn gateway_credential(config: &GatewayConfig) -> anyhow::Result<String> {
-    let key = config
-        .gateway_client_keys
-        .get(codex_mixin::gateway_access::GatewayClient::OpenCode)
-        .ok_or_else(|| anyhow::anyhow!("OpenCode client key is missing"))?;
-    anyhow::ensure!(
-        !key.trim().is_empty(),
-        "OpenCode client key must not be empty"
-    );
-    anyhow::ensure!(key == key.trim(), "OpenCode client key has whitespace");
-    Ok(key.to_owned())
 }
 
 pub(in crate::cli) fn sync_installed_opencode_client_key() -> anyhow::Result<()> {
@@ -504,51 +491,6 @@ fn write_json_config(path: &Path, document: &Value) -> anyhow::Result<()> {
     write_atomic_if_changed(path, &serde_json::to_vec_pretty(document)?)?;
     if !existed {
         set_owner_only(path)?;
-    }
-    Ok(())
-}
-
-fn write_owner_only(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
-    if path.exists() && fs::read(path)? == contents {
-        return set_owner_only(path);
-    }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or(OPENCODE_API_KEY_FILE);
-    let temporary_path = path.with_file_name(format!("{file_name}.tmp.{}", std::process::id()));
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-
-        options.mode(0o600);
-    }
-    let write_result = (|| -> anyhow::Result<()> {
-        let mut temporary = options.open(&temporary_path)?;
-        temporary.write_all(contents)?;
-        fs::rename(&temporary_path, path)?;
-        Ok(())
-    })();
-    if write_result.is_err() {
-        let _ = fs::remove_file(&temporary_path);
-    }
-    write_result?;
-    set_owner_only(path)
-}
-
-fn set_owner_only(path: &Path) -> anyhow::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-
-        let mut permissions = fs::metadata(path)?.permissions();
-        permissions.set_mode(0o600);
-        fs::set_permissions(path, permissions)?;
     }
     Ok(())
 }
