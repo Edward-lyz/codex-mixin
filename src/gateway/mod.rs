@@ -11,7 +11,6 @@ use crate::server::AppState;
 mod cache_shape;
 mod cache_usage;
 mod executor;
-mod images;
 mod plan;
 mod provider;
 mod responses;
@@ -23,10 +22,6 @@ pub(crate) use cache_shape::{
 };
 pub(crate) use cache_usage::{ProviderTokenUsage, TokenUsageAggregator};
 pub(crate) use executor::UpstreamExecutor;
-pub(crate) use images::{
-    ImageCompressionProfile, normalize_anthropic_images_blocking,
-    normalize_provider_images_blocking, normalize_provider_images_for_fallback,
-};
 pub(crate) use plan::{RequestPlan, UpstreamTarget};
 pub(crate) use provider::{ProviderResponseRequest, stream_provider_response};
 pub(crate) use responses::collect_response_stream;

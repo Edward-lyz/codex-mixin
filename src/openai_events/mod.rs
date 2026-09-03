@@ -8,7 +8,7 @@ use serde_json::{Value, json};
 use uuid::Uuid;
 
 use crate::convert::ToolNameMap;
-use crate::image_generation::ImageRouteRegistry;
+use crate::images::ImageRouteRegistry;
 use crate::sse::{SseDecoder, encode_event, encode_raw_event};
 
 mod anthropic;

@@ -11,7 +11,7 @@ pub mod fusion;
 mod gateway;
 pub mod gateway_access;
 pub mod history;
-mod image_generation;
+mod images;
 pub mod model_reasoning;
 pub mod openai_chat;
 pub mod openai_events;

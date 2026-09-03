@@ -11,9 +11,9 @@ pub(super) async fn messages(
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
     let body = crate::request_body::parse_json(body).await?;
-    let (body, _) = crate::gateway::normalize_anthropic_images_blocking(
+    let (body, _) = crate::images::normalize_anthropic_images_blocking(
         body,
-        crate::gateway::ImageCompressionProfile::Primary,
+        crate::images::ImageCompressionProfile::Primary,
     )
     .await?;
     let requested_model = body
@@ -71,9 +71,9 @@ pub(super) async fn messages(
         Err(error @ GatewayError::UpstreamStatus { status, .. })
             if status == StatusCode::PAYLOAD_TOO_LARGE =>
         {
-            let (fallback_body, stats) = crate::gateway::normalize_anthropic_images_blocking(
+            let (fallback_body, stats) = crate::images::normalize_anthropic_images_blocking(
                 body,
-                crate::gateway::ImageCompressionProfile::PayloadFallback,
+                crate::images::ImageCompressionProfile::PayloadFallback,
             )
             .await?;
             if stats.normalized_images == 0 || stats.saved_bytes == 0 {

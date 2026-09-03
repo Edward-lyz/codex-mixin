@@ -16,7 +16,7 @@ pub(super) async fn responses(
     let route = state.resolve_model_route(&requested_model).await?;
     log_responses_route(&requested_model, &route);
     if route == ResolvedModelRoute::Official {
-        let (body, _) = crate::gateway::normalize_provider_images_blocking(body).await?;
+        let (body, _) = crate::images::normalize_provider_images_blocking(body).await?;
         return forward_official_responses(&state, &headers, body).await;
     }
     let stream = stream_custom_responses(&state, &headers, body, route).await?;
@@ -124,7 +124,7 @@ async fn forward_official_responses(
     .await?;
     if upstream.status() == StatusCode::PAYLOAD_TOO_LARGE {
         let (fallback_body, stats) =
-            crate::gateway::normalize_provider_images_for_fallback(body).await?;
+            crate::images::normalize_provider_images_for_fallback(body).await?;
         if stats.normalized_images > 0 && stats.saved_bytes > 0 {
             tracing::warn!(
                 normalized_images = stats.normalized_images,
@@ -209,7 +209,7 @@ pub(crate) async fn stream_official_response(
     .await?;
     if upstream.status() == StatusCode::PAYLOAD_TOO_LARGE {
         let (fallback_body, stats) =
-            crate::gateway::normalize_provider_images_for_fallback(body.clone()).await?;
+            crate::images::normalize_provider_images_for_fallback(body.clone()).await?;
         if stats.normalized_images > 0 && stats.saved_bytes > 0 {
             tracing::warn!(
                 normalized_images = stats.normalized_images,

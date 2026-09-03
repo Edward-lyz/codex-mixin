@@ -33,7 +33,7 @@ use crate::gateway::{
     UpstreamExecutor,
 };
 use crate::gateway::{ResponseStream, UpstreamRouting};
-use crate::image_generation::ImageRouteRegistry;
+use crate::images::ImageRouteRegistry;
 use crate::provider::MetadataResolver;
 use crate::provider::capabilities::ProviderCapabilities;
 use crate::provider::{

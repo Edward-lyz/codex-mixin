@@ -4,13 +4,13 @@ use axum::http::HeaderMap;
 use bytes::Bytes;
 use futures_util::StreamExt;
 
-use super::images::{normalize_provider_images_blocking, normalize_provider_images_for_fallback};
 use super::{RequestPlan, UpstreamTarget};
 use crate::compaction::TOKEN_PREFIX;
 use crate::error::GatewayError;
 use crate::gateway::{
     ProviderResponseRequest, ResponseStream, UpstreamRouting, stream_provider_response,
 };
+use crate::images::{normalize_provider_images_blocking, normalize_provider_images_for_fallback};
 use crate::server::{AppState, stream_official_response};
 use crate::sse::{SseDecoder, encode_event, encode_raw_event, event_contains_response_metadata};
 
