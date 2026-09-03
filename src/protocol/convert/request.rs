@@ -3,7 +3,7 @@ use super::thinking::*;
 use super::tool_map::ToolNameMap;
 use super::tools::*;
 use super::*;
-use crate::model_reasoning::{AnthropicThinkingKind, anthropic_thinking_kind};
+use crate::protocol::model_reasoning::{AnthropicThinkingKind, anthropic_thinking_kind};
 
 #[derive(Clone, Debug)]
 pub struct ConvertedRequest {

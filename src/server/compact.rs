@@ -8,10 +8,10 @@ use serde_json::{Value, json};
 use url::Url;
 use uuid::Uuid;
 
-use crate::compaction::{self, CompactionSummary};
 use crate::error::GatewayError;
 use crate::gateway::ResolvedModelRoute;
 use crate::gateway::collect_response_with_headers;
+use crate::protocol::compaction::{self, CompactionSummary};
 
 use super::auth::{check_gateway_auth, forward_official_headers};
 use super::{AppState, *};
@@ -31,7 +31,7 @@ pub(super) async fn compact(
     body: Body,
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
-    let body = crate::request_body::parse_json(body).await?;
+    let body = crate::protocol::request_body::parse_json(body).await?;
     validate_compact_request(&body)?;
     let model = body
         .get("model")
@@ -237,7 +237,7 @@ async fn compact_custom_provider(
         });
         let events = [created, output_done, completed].into_iter().map(|event| {
             let event_name = event["type"].as_str().unwrap_or("response.completed");
-            crate::sse::encode_event(event_name, &event)
+            crate::protocol::sse::encode_event(event_name, &event)
                 .map_err(|error| std::io::Error::other(error.to_string()))
         });
         return Response::builder()
@@ -272,7 +272,7 @@ async fn forward_official_compact(
             .header(header::ACCEPT, "application/json, text/event-stream"),
         headers,
     );
-    let upstream = crate::request_body::send_json(request, body).await?;
+    let upstream = crate::protocol::request_body::send_json(request, body).await?;
     let status = upstream.status();
     let content_type = upstream
         .headers()
@@ -281,7 +281,7 @@ async fn forward_official_compact(
         .unwrap_or("application/json")
         .to_owned();
     if !status.is_success() {
-        let body = crate::request_body::read_error_text(upstream).await?;
+        let body = crate::protocol::request_body::read_error_text(upstream).await?;
         return Err(GatewayError::UpstreamStatus {
             status,
             message: format!("official compact endpoint returned {status}: {body}"),

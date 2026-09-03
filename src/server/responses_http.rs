@@ -7,7 +7,7 @@ pub(super) async fn responses(
     body: Body,
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
-    let body = crate::request_body::parse_json(body).await?;
+    let body = crate::protocol::request_body::parse_json(body).await?;
     let requested_model = body
         .get("model")
         .and_then(Value::as_str)
@@ -144,7 +144,7 @@ async fn forward_official_responses(
         .unwrap_or("text/event-stream")
         .to_owned();
     if !status.is_success() {
-        let body = crate::request_body::read_error_text(upstream).await?;
+        let body = crate::protocol::request_body::read_error_text(upstream).await?;
         return Err(GatewayError::UpstreamStatus {
             status,
             message: format!("official responses endpoint returned {status}: {body}"),
@@ -177,7 +177,7 @@ async fn send_official_responses(
             .header(header::ACCEPT, "text/event-stream"),
         headers,
     );
-    crate::request_body::send_json(request, body).await
+    crate::protocol::request_body::send_json(request, body).await
 }
 
 pub(super) fn normalize_official_responses_body(mut body: Value) -> Value {
@@ -223,7 +223,7 @@ pub(crate) async fn stream_official_response(
     }
     let status = upstream.status();
     if !status.is_success() {
-        let body = crate::request_body::read_error_text(upstream).await?;
+        let body = crate::protocol::request_body::read_error_text(upstream).await?;
         return Err(GatewayError::UpstreamStatus {
             status,
             message: format!("official responses endpoint returned {status}: {body}"),
@@ -241,7 +241,7 @@ pub(crate) async fn stream_official_response(
                 Err(error) => {
                     let event = encode_event(
                         "response.failed",
-                        &crate::sse::response_failed_payload(
+                        &crate::protocol::sse::response_failed_payload(
                             None,
                             Some(&model),
                             error.to_string(),

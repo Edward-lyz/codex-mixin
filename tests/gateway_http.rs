@@ -13,13 +13,13 @@ use base64::Engine;
 use codex_mixin::anthropic::ModelInfo;
 use codex_mixin::config::{GatewayConfig, ThinkingMode};
 use codex_mixin::fusion::{FusionProfile, PanelToolsConfig};
+use codex_mixin::protocol::sse::drain_events;
 use codex_mixin::provider::{
     ProviderModel, ProviderModelSource, ProviderProtocol, ProviderRegistry, ProviderRequestPolicy,
     apply_discovered_models, aws_bedrock_aksk_provider, aws_bedrock_provider, custom_provider,
     discover_provider_models,
 };
 use codex_mixin::server::{AppState, router};
-use codex_mixin::sse::drain_events;
 use codex_mixin::web_search::WebSearchCapabilities;
 use futures_util::future::join_all;
 use futures_util::{SinkExt, StreamExt};

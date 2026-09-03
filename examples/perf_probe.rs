@@ -2,9 +2,9 @@ use std::time::{Duration, Instant};
 
 use bytes::Bytes;
 use codex_mixin::config::{GatewayConfig, ThinkingMode};
-use codex_mixin::convert::{ToolNameMap, responses_to_anthropic};
+use codex_mixin::protocol::convert::{ToolNameMap, responses_to_anthropic};
+use codex_mixin::protocol::sse::SseDecoder;
 use codex_mixin::provider::custom_provider;
-use codex_mixin::sse::SseDecoder;
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 
@@ -98,7 +98,7 @@ fn main() {
 
     let started = Instant::now();
     let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(sse.clone()))]);
-    let output = codex_mixin::openai_events::map_anthropic_sse(
+    let output = codex_mixin::protocol::openai_events::map_anthropic_sse(
         upstream,
         json!({"model":"DeepSeek-V4-Flash","tools":[]}),
         ToolNameMap::default(),

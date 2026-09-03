@@ -216,7 +216,7 @@ pub(super) fn patch_final_event(
 pub(super) fn failed_event(model: &str, message: &str) -> Bytes {
     encode_event(
         "response.failed",
-        &crate::sse::response_failed_payload(None, Some(model), message, "server_error"),
+        &crate::protocol::sse::response_failed_payload(None, Some(model), message, "server_error"),
     )
     .expect("fusion failure event is serializable")
 }

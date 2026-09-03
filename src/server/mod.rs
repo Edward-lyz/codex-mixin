@@ -34,12 +34,12 @@ use crate::gateway::{
 };
 use crate::gateway::{ResponseStream, UpstreamRouting};
 use crate::images::ImageRouteRegistry;
+use crate::protocol::sse::{SseDecoder, encode_event};
 use crate::provider::MetadataResolver;
 use crate::provider::capabilities::ProviderCapabilities;
 use crate::provider::{
     ProviderRegistry, ProviderRuntime, ResolvedProviderModel, catalog_model_slug,
 };
-use crate::sse::{SseDecoder, encode_event};
 use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};
 
 mod anthropic_compat;

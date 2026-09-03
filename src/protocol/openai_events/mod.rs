@@ -7,9 +7,9 @@ use futures_util::{Stream, StreamExt};
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::convert::ToolNameMap;
 use crate::images::ImageRouteRegistry;
-use crate::sse::{SseDecoder, encode_event, encode_raw_event};
+use crate::protocol::convert::ToolNameMap;
+use crate::protocol::sse::{SseDecoder, encode_event, encode_raw_event};
 
 mod anthropic;
 mod openai_chat;

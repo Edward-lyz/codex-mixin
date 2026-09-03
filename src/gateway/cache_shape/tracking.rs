@@ -7,7 +7,7 @@ use futures_util::{Stream, StreamExt};
 use serde_json::Value;
 
 use crate::gateway::UpstreamRouting;
-use crate::sse::SseDecoder;
+use crate::protocol::sse::SseDecoder;
 
 use super::super::cache_usage::{ProviderTokenUsage, TokenUsageAggregator, UpstreamCacheUsage};
 use super::shape::{CacheShape, PrefixChanges, PrefixReport, PrefixState};

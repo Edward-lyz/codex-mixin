@@ -7,8 +7,8 @@ use reqwest::{Client, StatusCode, Url, header::HeaderMap};
 use serde_json::{Value, json};
 use tokio::sync::Semaphore;
 
+use crate::protocol::sse::SseDecoder;
 use crate::provider::{ProviderProtocol, ProviderRuntime};
-use crate::sse::SseDecoder;
 
 use super::types::{CapabilityStatus, ModelCapabilities, ProtocolCapabilities};
 

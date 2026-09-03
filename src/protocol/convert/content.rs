@@ -1,6 +1,6 @@
 use super::tools::upstream_client_tool_name;
 use super::*;
-use crate::compaction;
+use crate::protocol::compaction;
 
 const ANTHROPIC_THINKING_PREFIX: &str = "codex-mixin:anthropic-thinking:v1:";
 const BAIDU_UNSIGNED_THINKING_PREFIX: &str = "codex-mixin:baidu-unsigned-thinking:v1:";

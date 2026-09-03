@@ -297,7 +297,8 @@ impl AppState {
                 .apply_session_affinity(upstream_request, hash_key)
                 .header(header::ACCEPT, "text/event-stream");
             let response = if let Some(aws) = provider.aws_sigv4() {
-                let prepared = crate::request_body::prepare_signed_json(request.clone()).await?;
+                let prepared =
+                    crate::protocol::request_body::prepare_signed_json(request.clone()).await?;
                 let content_length = header::HeaderValue::from_str(&prepared.length.to_string())
                     .map_err(|error| GatewayError::Other(error.into()))?;
                 let mut request = upstream_request
@@ -317,7 +318,7 @@ impl AppState {
                     .await
                     .map_err(GatewayError::Http)
             } else {
-                crate::request_body::send_json(upstream_request, request.clone()).await
+                crate::protocol::request_body::send_json(upstream_request, request.clone()).await
             }
             .inspect_err(|error| {
                 tracing::error!(
@@ -342,7 +343,7 @@ impl AppState {
                 continue;
             }
             if !status.is_success() {
-                let body = crate::request_body::read_error_text(response).await?;
+                let body = crate::protocol::request_body::read_error_text(response).await?;
                 return Err(GatewayError::UpstreamStatus {
                     status,
                     message: format!(

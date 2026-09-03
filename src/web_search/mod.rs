@@ -7,8 +7,8 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use crate::anthropic::ModelInfo;
 use crate::config::{GatewayConfig, stored_config_path};
+use crate::protocol::sse::SseDecoder;
 use crate::provider::{ProviderProtocol, ProviderRegistry, ProviderRuntime};
-use crate::sse::SseDecoder;
 use anyhow::Context;
 use futures_util::{StreamExt, stream};
 use reqwest::Client;

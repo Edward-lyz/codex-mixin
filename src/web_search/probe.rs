@@ -175,10 +175,10 @@ pub(super) async fn probe_model_once(
     // must be rejected here instead of being cached as supported.
     let upstream =
         futures_util::stream::iter([Ok::<_, reqwest::Error>(bytes::Bytes::from(raw_response))]);
-    let mapped = crate::openai_events::map_anthropic_sse(
+    let mapped = crate::protocol::openai_events::map_anthropic_sse(
         upstream,
         json!({"model": upstream_model}),
-        crate::convert::ToolNameMap::default(),
+        crate::protocol::convert::ToolNameMap::default(),
     );
     tokio::pin!(mapped);
     let mut mapped_decoder = SseDecoder::default();

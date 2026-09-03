@@ -1,5 +1,5 @@
 use super::*;
-use crate::model_reasoning::AnthropicThinkingKind;
+use crate::protocol::model_reasoning::AnthropicThinkingKind;
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct ThinkingSettings {

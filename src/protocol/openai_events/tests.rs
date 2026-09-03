@@ -1,7 +1,7 @@
 use super::state::MapperState;
 use super::*;
 use crate::config::{GatewayConfig, ThinkingMode};
-use crate::sse::drain_events;
+use crate::protocol::sse::drain_events;
 use std::time::Duration;
 
 fn anthropic_config() -> GatewayConfig {
@@ -164,7 +164,8 @@ async fn preserves_anthropic_signed_thinking_as_replayable_reasoning() {
             {"type":"message","role":"user","content":"continue"}
         ]
     });
-    let converted = crate::convert::responses_to_anthropic(&request, &anthropic_config()).unwrap();
+    let converted =
+        crate::protocol::convert::responses_to_anthropic(&request, &anthropic_config()).unwrap();
     assert_eq!(
         converted.request.messages[0].content[0],
         crate::anthropic::ContentBlock::Thinking {
@@ -218,7 +219,7 @@ async fn preserves_baidu_unsigned_thinking_only_for_the_same_model() {
         "input":[done["item"].clone(),{"type":"message","role":"user","content":"continue"}]
     });
     let converted =
-        crate::convert::responses_to_anthropic(&same_model, &anthropic_config()).unwrap();
+        crate::protocol::convert::responses_to_anthropic(&same_model, &anthropic_config()).unwrap();
     assert_eq!(
         converted.request.messages[0].content[0],
         crate::anthropic::ContentBlock::Thinking {
@@ -233,7 +234,8 @@ async fn preserves_baidu_unsigned_thinking_only_for_the_same_model() {
         "input":[done["item"].clone(),{"type":"message","role":"user","content":"continue"}]
     });
     let converted =
-        crate::convert::responses_to_anthropic(&switched_model, &anthropic_config()).unwrap();
+        crate::protocol::convert::responses_to_anthropic(&switched_model, &anthropic_config())
+            .unwrap();
     assert_eq!(converted.request.messages.len(), 1);
     assert_eq!(converted.request.messages[0].role, "user");
 }
@@ -290,7 +292,8 @@ async fn preserves_anthropic_redacted_thinking_as_replayable_reasoning() {
             {"type":"message","role":"user","content":"continue"}
         ]
     });
-    let converted = crate::convert::responses_to_anthropic(&request, &anthropic_config()).unwrap();
+    let converted =
+        crate::protocol::convert::responses_to_anthropic(&request, &anthropic_config()).unwrap();
     assert_eq!(
         converted.request.messages[0].content[0],
         crate::anthropic::ContentBlock::RedactedThinking {

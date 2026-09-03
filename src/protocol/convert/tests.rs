@@ -79,7 +79,7 @@ fn accepts_dsh_message_items_without_responses_type() {
 
 #[test]
 fn compaction_metadata_does_not_change_anthropic_request() {
-    let summary = crate::compaction::CompactionSummary {
+    let summary = crate::protocol::compaction::CompactionSummary {
         goal: "Continue the task".to_owned(),
         constraints: Vec::new(),
         decisions: Vec::new(),
@@ -87,7 +87,7 @@ fn compaction_metadata_does_not_change_anthropic_request() {
         tool_results: Vec::new(),
         pending_work: vec!["Reply with CONTINUED".to_owned()],
     };
-    let token = crate::compaction::encode_for_test(
+    let token = crate::protocol::compaction::encode_for_test(
         "gpt-5.6-sol-baidu-oneapi",
         summary,
         &crate::config::ensure_compaction_secret().unwrap(),

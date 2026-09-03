@@ -1,12 +1,14 @@
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 
-use crate::convert::responses_to_anthropic_with_model_reasoning_and_thinking_kind;
 use crate::error::GatewayError;
 use crate::gateway::{CacheShape, observe_upstream_cache_usage, record_provider_prefix};
-use crate::model_reasoning::{anthropic_thinking_kind_with_advertised, prepare_upstream_reasoning};
-use crate::openai_chat::responses_to_openai_chat_streaming_with_model;
-use crate::openai_events::{
+use crate::protocol::convert::responses_to_anthropic_with_model_reasoning_and_thinking_kind;
+use crate::protocol::model_reasoning::{
+    anthropic_thinking_kind_with_advertised, prepare_upstream_reasoning,
+};
+use crate::protocol::openai_chat::responses_to_openai_chat_streaming_with_model;
+use crate::protocol::openai_events::{
     map_anthropic_sse_with_image_routes, map_openai_chat_sse_with_image_routes,
 };
 use crate::provider::ProviderProtocol;
@@ -126,20 +128,21 @@ pub(crate) async fn stream_provider_response(
                     routing.map(|routing| routing.hash_key.as_str()),
                 )
                 .header(reqwest::header::ACCEPT, "text/event-stream");
-            let upstream = crate::request_body::send_json(request, converted.request.clone())
-                .await
-                .inspect_err(|error| {
-                    tracing::error!(
-                        provider_id = provider.id(),
-                        catalog_slug = %catalog_slug,
-                        upstream_model_id = %upstream_model_id,
-                        error = %crate::error::format_error_chain(error),
-                        "provider chat completions request failed before receiving a response"
-                    );
-                })?;
+            let upstream =
+                crate::protocol::request_body::send_json(request, converted.request.clone())
+                    .await
+                    .inspect_err(|error| {
+                        tracing::error!(
+                            provider_id = provider.id(),
+                            catalog_slug = %catalog_slug,
+                            upstream_model_id = %upstream_model_id,
+                            error = %crate::error::format_error_chain(error),
+                            "provider chat completions request failed before receiving a response"
+                        );
+                    })?;
             let status = upstream.status();
             if !status.is_success() {
-                let body = crate::request_body::read_error_text(upstream).await?;
+                let body = crate::protocol::request_body::read_error_text(upstream).await?;
                 return Err(GatewayError::UpstreamStatus {
                     status,
                     message: format!(
@@ -181,7 +184,8 @@ pub(crate) async fn stream_provider_response(
                     routing.map(|routing| routing.hash_key.as_str()),
                 )
                 .header(reqwest::header::ACCEPT, "text/event-stream");
-            let upstream = crate::request_body::send_json(request, upstream_body.clone()).await;
+            let upstream =
+                crate::protocol::request_body::send_json(request, upstream_body.clone()).await;
             let upstream = upstream.inspect_err(|error| {
                 tracing::error!(
                     provider_id = provider.id(),
@@ -193,7 +197,7 @@ pub(crate) async fn stream_provider_response(
             })?;
             let status = upstream.status();
             if !status.is_success() {
-                let body = crate::request_body::read_error_text(upstream).await?;
+                let body = crate::protocol::request_body::read_error_text(upstream).await?;
                 return Err(GatewayError::UpstreamStatus {
                     status,
                     message: format!(

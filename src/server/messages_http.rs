@@ -10,7 +10,7 @@ pub(super) async fn messages(
     body: Body,
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
-    let body = crate::request_body::parse_json(body).await?;
+    let body = crate::protocol::request_body::parse_json(body).await?;
     let (body, _) = crate::images::normalize_anthropic_images_blocking(
         body,
         crate::images::ImageCompressionProfile::Primary,

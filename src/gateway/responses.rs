@@ -3,7 +3,7 @@ use futures_util::StreamExt;
 use serde_json::Value;
 
 use crate::error::GatewayError;
-use crate::sse::{
+use crate::protocol::sse::{
     SseDecoder, encode_event, encode_raw_event, event_contains_response_metadata,
     response_failed_payload,
 };

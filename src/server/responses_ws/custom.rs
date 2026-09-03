@@ -10,7 +10,7 @@ use super::super::auth::stable_oneapi_routing;
 use super::{ResponsesWsContext, take_custom_request_input};
 use crate::fusion::{FusionEngine, should_fuse_turn};
 use crate::gateway::{RequestPlan, ResolvedModelRoute, UpstreamExecutor};
-use crate::sse::SseDecoder;
+use crate::protocol::sse::SseDecoder;
 
 #[derive(Debug)]
 pub(super) struct CustomWebSocketState {

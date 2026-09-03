@@ -28,7 +28,7 @@ pub(super) async fn responses_ws(
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
     Ok(ws
-        .max_message_size(crate::request_body::MAX_REQUEST_BYTES)
+        .max_message_size(crate::protocol::request_body::MAX_REQUEST_BYTES)
         .on_upgrade(move |socket| handle_responses_ws(state, headers, socket))
         .into_response())
 }
@@ -186,9 +186,14 @@ async fn send_responses_ws_failure(
 ) -> anyhow::Result<()> {
     client_sender
         .send(AxumWsMessage::Text(
-            crate::sse::response_failed_payload(response_id, None, error.to_string(), code)
-                .to_string()
-                .into(),
+            crate::protocol::sse::response_failed_payload(
+                response_id,
+                None,
+                error.to_string(),
+                code,
+            )
+            .to_string()
+            .into(),
         ))
         .await?;
     Ok(())

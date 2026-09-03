@@ -1,6 +1,6 @@
 use super::state::{AssistantMessagePhase, MapperState, ThinkingBlock, ToolBlock, ToolBlockKind};
 use super::*;
-use crate::convert::{
+use crate::protocol::convert::{
     encode_anthropic_redacted_thinking, encode_anthropic_thinking, encode_baidu_unsigned_thinking,
 };
 

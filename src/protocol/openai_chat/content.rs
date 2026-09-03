@@ -1,5 +1,5 @@
 use super::*;
-use crate::compaction;
+use crate::protocol::compaction;
 
 /// Pointer left in a `tool` message once its images are relocated. The text is
 /// part of the provider-visible prompt, so it has to stay byte-stable.

@@ -15,8 +15,8 @@ use tokio::time::{Instant, timeout_at};
 use uuid::Uuid;
 
 use crate::config::stored_config_path;
+use crate::protocol::sse::SseDecoder;
 use crate::provider::{ProviderProtocol, ProviderQuotaParser, ProviderRuntime};
-use crate::sse::SseDecoder;
 
 mod manager;
 mod runner;

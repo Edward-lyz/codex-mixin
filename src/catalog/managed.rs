@@ -2,7 +2,7 @@ use std::collections::HashMap;
 
 use serde_json::{Value, json};
 
-use crate::model_reasoning::resolve_model_reasoning;
+use crate::protocol::model_reasoning::resolve_model_reasoning;
 
 use super::{
     CUSTOM_MODEL_MARKER, FALLBACK_BASE_INSTRUCTIONS, SUPPORTS_THINKING_MARKER,
