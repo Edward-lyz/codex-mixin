@@ -5,6 +5,7 @@
 - 修复经 aws-bedrock 走 Codex 时工具转换携带 `strict` 字段导致请求被拒的问题；Claude 模型按声明上下文窗口生效
 - 模型刷新时同步重绘已安装的 Claude Code、DSH、OpenCode 与 Pi 托管模型目录，无需重新执行连接
 - 所有 Provider 统一元数据补全：发现流程拉取完整 models.dev 目录，为自定义网关、Baidu OneAPI 与手动添加的模型模糊匹配上下文窗口和能力标志；本地元数据缓存作为离线兜底
+- 修复生成模型目录时透传 models.dev 的 `video`/`pdf` 等模态、导致 Codex 拒绝加载整个目录的问题
 
 <!-- codex-mixin:zh-Hans:end -->
 
@@ -15,6 +16,7 @@
 - 修正經 aws-bedrock 走 Codex 時工具轉換帶有 `strict` 欄位導致請求被拒的問題；Claude 模型依宣告的上下文視窗生效
 - 模型重新整理時同步重繪已安裝的 Claude Code、DSH、OpenCode 與 Pi 受管模型目錄，無需重新執行連線
 - 所有 Provider 的統一中繼資料補全：探索流程拉取完整 models.dev 目錄，為自訂閘道、Baidu OneAPI 與手動新增模型模糊比對上下文視窗與能力旗標；本地中繼資料快取作為離線備援
+- 修正產生模型目錄時透傳 models.dev 的 `video`/`pdf` 等模態、導致 Codex 拒絕載入整個目錄的問題
 
 <!-- codex-mixin:zh-Hant:end -->
 
@@ -25,6 +27,7 @@
 - Fix Codex-through-aws-bedrock failures caused by a `strict` field carried onto Anthropic tool objects, and honor declared Claude model context windows
 - Resync the managed model catalogs of installed Claude Code, DSH, OpenCode, and Pi on every model refresh without rerunning connect
 - Backfill model metadata for every provider: discovery fetches the full models.dev catalog and fuzzy-fills context windows and capability flags for custom gateways, Baidu OneAPI, and manually added models, with the local metadata cache as the offline fallback
+- Fix generated model catalogs leaking models.dev modalities such as `video` and `pdf`, which made Codex reject the whole catalog
 
 <!-- codex-mixin:en:end -->
 
