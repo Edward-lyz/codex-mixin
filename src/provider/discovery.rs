@@ -9,7 +9,8 @@ use serde_json::json;
 use crate::anthropic::{BaiduAvailableModelsResponse, ModelInfo, ModelsResponse};
 
 use super::resolver::{
-    enrich_models_with_models_dev, fetch_models_dev_provider_models, fill_missing_model_fields,
+    MetadataResolver, enrich_models_with_models_dev, fetch_models_dev_catalog,
+    fill_missing_model_fields, fill_model_gaps_with_resolver, provider_models_from_catalog,
 };
 use super::spec::{OPEN_CODE_GO_PRESET_ID, spec_for};
 use super::{
@@ -68,12 +69,22 @@ pub async fn discover_provider_models(
     let provider = ProviderRuntime::new(definition.clone(), &|name| std::env::var(name).ok())?;
     let native_headers = native_baidu_headers_if_needed(definition, &provider).await?;
     match &definition.model_source {
-        ProviderModelSource::Static => Ok(definition.cached_models.clone()),
+        ProviderModelSource::Static => {
+            let mut models = definition.cached_models.clone();
+            enrich_from_models_dev(
+                client,
+                definition,
+                &mut models,
+                enrich_models_with_models_dev,
+            )
+            .await;
+            Ok(models)
+        }
         ProviderModelSource::OpenAiCompatible { .. } => {
             discover_openai_models(client, definition, &provider).await
         }
         ProviderModelSource::BaiduOneApi => {
-            discover_baidu_models(client, &provider, native_headers.as_ref()).await
+            discover_baidu_models(client, definition, &provider, native_headers.as_ref()).await
         }
         ProviderModelSource::AwsBedrock => discover_aws_bedrock_models(client, definition).await,
     }
@@ -99,14 +110,7 @@ async fn discover_aws_bedrock_models(
         fetch_inference_profiles(client, &base_url, &control_auth, "SYSTEM_DEFINED", false).await?,
     );
     models.extend(fetch_foundation_models(client, &base_url, &control_auth).await?);
-    match fetch_models_dev_provider_models(client, "amazon-bedrock").await {
-        Ok(metadata) => enrich_bedrock_models(&mut models, &metadata),
-        Err(error) => tracing::warn!(
-            provider_id = %definition.id,
-            error = %format!("{error:#}"),
-            "failed to enrich AWS Bedrock models from models.dev"
-        ),
-    }
+    enrich_from_models_dev(client, definition, &mut models, enrich_bedrock_models).await;
     apply_bedrock_capability_hints(&mut models);
     normalize_models(&mut models);
     Ok(models)
@@ -332,16 +336,13 @@ async fn discover_openai_models(
             )
         })
         .collect::<Vec<_>>();
-    if let Some(models_dev_provider) = models_dev_provider_for(definition) {
-        match fetch_models_dev_provider_models(client, models_dev_provider).await {
-            Ok(metadata) => enrich_models_with_models_dev(&mut models, &metadata),
-            Err(error) => tracing::warn!(
-                provider_id = %definition.id,
-                error = %format!("{error:#}"),
-                "failed to enrich provider models from models.dev"
-            ),
-        }
-    }
+    enrich_from_models_dev(
+        client,
+        definition,
+        &mut models,
+        enrich_models_with_models_dev,
+    )
+    .await;
     apply_generic_capability_defaults(&mut models);
     normalize_models(&mut models);
     Ok(models)
@@ -353,6 +354,45 @@ fn models_dev_provider_for(definition: &ProviderDefinition) -> Option<&'static s
     }
     // OpenCode Go providers configured before preset stamping carry the id only.
     (definition.id == OPEN_CODE_GO_PRESET_ID).then_some(OPEN_CODE_GO_PRESET_ID)
+}
+
+/// Complete missing model limits and capabilities from models.dev.
+///
+/// Providers with a direct models.dev mapping get exact-id enrichment first;
+/// every provider then falls through to the fuzzy resolver so custom or
+/// renamed upstream ids still pick up their model family's metadata. When the
+/// live catalog fetch fails, the locally cached copy (refresh-metadata) keeps
+/// the fuzzy pass working offline.
+async fn enrich_from_models_dev(
+    client: &Client,
+    definition: &ProviderDefinition,
+    models: &mut [ProviderModel],
+    enrich_exact: fn(&mut [ProviderModel], &HashMap<String, ProviderModel>),
+) {
+    let resolver = match fetch_models_dev_catalog(client).await {
+        Ok(catalog) => {
+            if let Some(models_dev_provider) = models_dev_provider_for(definition) {
+                match provider_models_from_catalog(&catalog, models_dev_provider) {
+                    Some(metadata) => enrich_exact(models, &metadata),
+                    None => tracing::warn!(
+                        provider_id = %definition.id,
+                        models_dev_provider,
+                        "models.dev catalog does not include the mapped provider"
+                    ),
+                }
+            }
+            MetadataResolver::from_catalog(&catalog)
+        }
+        Err(error) => {
+            tracing::warn!(
+                provider_id = %definition.id,
+                error = %format!("{error:#}"),
+                "failed to fetch the models.dev catalog; falling back to the local cache"
+            );
+            MetadataResolver::from_default_files().unwrap_or_else(|_| MetadataResolver::empty())
+        }
+    };
+    fill_model_gaps_with_resolver(&resolver, models);
 }
 
 /// Permissive chat defaults for anything neither the provider nor models.dev
@@ -413,6 +453,7 @@ fn openai_model_to_provider_model(model: ModelInfo, is_openrouter: bool) -> Prov
 
 async fn discover_baidu_models(
     client: &Client,
+    definition: &ProviderDefinition,
     provider: &ProviderRuntime,
     native_headers: Option<&reqwest::header::HeaderMap>,
 ) -> anyhow::Result<Vec<ProviderModel>> {
@@ -447,6 +488,13 @@ async fn discover_baidu_models(
     for model in available.data {
         add_baidu_model(provider, model, &mut models, &mut model_indices);
     }
+    enrich_from_models_dev(
+        client,
+        definition,
+        &mut models,
+        enrich_models_with_models_dev,
+    )
+    .await;
     normalize_models(&mut models);
     Ok(models)
 }

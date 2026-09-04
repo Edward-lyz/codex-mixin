@@ -25,6 +25,8 @@ pub struct ModelMetadata {
     pub context_window: u64,
     pub max_output_tokens: Option<u64>,
     pub input_modalities: Vec<String>,
+    pub supports_image: Option<bool>,
+    pub supports_thinking: Option<bool>,
     pub source: String,
 }
 
@@ -42,7 +44,7 @@ struct MetadataEntry {
 }
 
 #[derive(Debug, Deserialize)]
-struct ModelsDevCatalog {
+pub(crate) struct ModelsDevCatalog {
     #[serde(flatten)]
     providers: BTreeMap<String, ModelsDevProvider>,
 }
@@ -93,6 +95,10 @@ impl MetadataResolver {
     pub fn from_json(value: &Value) -> anyhow::Result<Self> {
         let catalog: ModelsDevCatalog = serde_json::from_value(value.clone())
             .context("models.dev catalog has an unexpected shape")?;
+        Ok(Self::from_catalog(&catalog))
+    }
+
+    pub(crate) fn from_catalog(catalog: &ModelsDevCatalog) -> Self {
         let mut entries = Vec::new();
         for (provider_id, provider) in &catalog.providers {
             for (model_id, model) in &provider.models {
@@ -112,13 +118,15 @@ impl MetadataResolver {
                         context_window,
                         max_output_tokens: model.limit.as_ref().and_then(|limit| limit.output),
                         input_modalities: models_dev_input_modalities(model),
+                        supports_image: Some(model_supports_image(model)),
+                        supports_thinking: model.reasoning,
                         source: format!("models.dev:{key}"),
                     },
                     key,
                 });
             }
         }
-        Ok(Self::from_entries(entries))
+        Self::from_entries(entries)
     }
 
     pub fn from_json_file(path: &Path) -> anyhow::Result<Self> {
@@ -156,15 +164,24 @@ impl MetadataResolver {
         builtin_metadata(model, default_context_window)
     }
 
+    /// Fuzzy models.dev lookup without the built-in family fallback: None
+    /// means models.dev has no plausible match for this model id.
+    pub fn lookup(&self, model: &str) -> Option<&ModelMetadata> {
+        self.best_match(&token_variants(model))
+            .map(|entry| &entry.metadata)
+    }
+
     fn best_match(&self, query_variants: &[Vec<String>]) -> Option<&MetadataEntry> {
         let mut candidates = vec![false; self.entries.len()];
         for query in query_variants {
-            let Some(first_token) = query.first() else {
-                continue;
-            };
-            if let Some(indexes) = self.token_index.get(first_token) {
-                for &index in indexes {
-                    candidates[index] = true;
+            // Any shared token qualifies as a candidate: suffixed query ids
+            // ("claude-haiku-4-5-preview") must reach entries whose first
+            // token appears later in the query.
+            for token in query {
+                if let Some(indexes) = self.token_index.get(token) {
+                    for &index in indexes {
+                        candidates[index] = true;
+                    }
                 }
             }
         }
@@ -172,22 +189,27 @@ impl MetadataResolver {
             .iter()
             .enumerate()
             .filter(|(index, _)| candidates[*index])
-            .map(|(_, entry)| entry)
-            .filter(|entry| {
-                query_variants.iter().any(|query| {
-                    entry
-                        .token_variants
-                        .iter()
-                        .any(|candidate| has_contiguous_subsequence(candidate, query))
-                })
+            .filter_map(|(_, entry)| {
+                let score = query_variants
+                    .iter()
+                    .flat_map(|query| {
+                        entry
+                            .token_variants
+                            .iter()
+                            .filter_map(|candidate| match_score(candidate, query))
+                    })
+                    .max()?;
+                Some((score, entry))
             })
-            .min_by_key(|entry| {
+            .min_by_key(|(score, entry)| {
                 (
+                    std::cmp::Reverse(*score),
                     provider_priority(&entry.key),
                     entry.key.matches('/').count(),
                     entry.key.len(),
                 )
             })
+            .map(|(_, entry)| entry)
     }
 
     fn from_entries(entries: Vec<MetadataEntry>) -> Self {
@@ -323,6 +345,22 @@ fn has_contiguous_subsequence(candidate: &[String], query: &[String]) -> bool {
     candidate.windows(query.len()).any(|window| window == query)
 }
 
+/// Number of matched tokens when one id contains the other contiguously.
+///
+/// The score keeps "claude-haiku-4-5-preview" on the "claude-haiku-4-5" entry
+/// instead of a shorter "claude-haiku-4" sibling. Reverse containment (the
+/// entry inside a longer query) needs at least two tokens so single-token
+/// families do not grab every id sharing one word.
+fn match_score(entry_tokens: &[String], query: &[String]) -> Option<usize> {
+    if has_contiguous_subsequence(entry_tokens, query) {
+        return Some(query.len());
+    }
+    if entry_tokens.len() >= 2 && has_contiguous_subsequence(query, entry_tokens) {
+        return Some(entry_tokens.len());
+    }
+    None
+}
+
 fn provider_priority(key: &str) -> u8 {
     // Prefer first-party catalogs over aggregators when several entries match.
     let key = key.to_ascii_lowercase();
@@ -353,6 +391,8 @@ fn builtin_metadata(model: &str, default_context_window: u64) -> ModelMetadata {
                 } else {
                     vec!["text".to_owned()]
                 },
+                supports_image: Some(rule.vision),
+                supports_thinking: None,
                 source: format!("builtin:{}", rule.pattern),
             };
         }
@@ -361,49 +401,42 @@ fn builtin_metadata(model: &str, default_context_window: u64) -> ModelMetadata {
         context_window: default_context_window,
         max_output_tokens: None,
         input_modalities: vec!["text".to_owned()],
+        supports_image: None,
+        supports_thinking: None,
         source: "default".to_owned(),
     }
 }
 
-/// Fetch one provider's model capability metadata from models.dev.
+/// Fetch the complete models.dev catalog.
 ///
 /// Some provider catalogs return IDs only (OpenCode Go, DeepSeek) or omit
 /// capabilities entirely (AWS Bedrock control plane); models.dev supplies the
 /// missing limits and capability flags for those.
-pub(crate) async fn fetch_models_dev_provider_models(
-    client: &Client,
-    provider_id: &str,
-) -> anyhow::Result<HashMap<String, ProviderModel>> {
+pub(crate) async fn fetch_models_dev_catalog(client: &Client) -> anyhow::Result<ModelsDevCatalog> {
     let response = client
         .get(MODELS_DEV_API_URL)
         .header(reqwest::header::USER_AGENT, "codex-mixin")
         .send()
         .await
-        .with_context(|| format!("failed to request models.dev catalog for {provider_id}"))?;
+        .context("failed to request the models.dev catalog")?;
     let status = response.status();
     let body = response
         .text()
         .await
         .context("failed to read models.dev catalog body")?;
     if !status.is_success() {
-        return Err(anyhow!(
-            "models.dev catalog returned {status} for {provider_id}: {body}"
-        ));
+        return Err(anyhow!("models.dev catalog returned {status}: {body}"));
     }
-    parse_models_dev_provider_models(provider_id, &body)
+    serde_json::from_str(&body).context("models.dev catalog returned invalid JSON")
 }
 
-pub(crate) fn parse_models_dev_provider_models(
+/// One provider's models keyed by their models.dev ids, or None when the
+/// catalog does not list the provider.
+pub(crate) fn provider_models_from_catalog(
+    catalog: &ModelsDevCatalog,
     provider_id: &str,
-    body: &str,
-) -> anyhow::Result<HashMap<String, ProviderModel>> {
-    let catalog: ModelsDevCatalog =
-        serde_json::from_str(body).context("models.dev catalog returned invalid JSON")?;
-    let Some(provider) = catalog.providers.get(provider_id) else {
-        return Err(anyhow!(
-            "models.dev catalog does not include provider {provider_id}"
-        ));
-    };
+) -> Option<HashMap<String, ProviderModel>> {
+    let provider = catalog.providers.get(provider_id)?;
 
     let mut models = HashMap::with_capacity(provider.models.len());
     for (model_id, model) in &provider.models {
@@ -427,7 +460,7 @@ pub(crate) fn parse_models_dev_provider_models(
             },
         );
     }
-    Ok(models)
+    Some(models)
 }
 
 /// Fill fields the provider's own catalog left unset from models.dev data.
@@ -460,6 +493,45 @@ pub(crate) fn fill_missing_model_fields(model: &mut ProviderModel, source: &Prov
     }
     if model.supports_thinking.is_none() {
         model.supports_thinking = source.supports_thinking;
+    }
+}
+
+/// Fill limits and capability gaps through the fuzzy models.dev resolver.
+///
+/// This is the fallback for providers without a direct models.dev mapping
+/// (custom gateways, Baidu OneAPI, manual models): the resolver matches each
+/// model id against every models.dev entry, so renamed or suffixed upstream
+/// ids still find their family. Name and description stay untouched because a
+/// fuzzy match must not relabel a provider's model.
+pub(crate) fn fill_model_gaps_with_resolver(
+    resolver: &MetadataResolver,
+    models: &mut [ProviderModel],
+) {
+    if resolver.is_empty() {
+        return;
+    }
+    for model in models {
+        if model.context_window.is_some()
+            && model.supports_image.is_some()
+            && model.supports_thinking.is_some()
+        {
+            continue;
+        }
+        let matched = std::iter::once(model.id.as_str())
+            .chain(model.aliases.iter().map(String::as_str))
+            .find_map(|key| resolver.lookup(key));
+        let Some(metadata) = matched else {
+            continue;
+        };
+        if model.context_window.is_none() {
+            model.context_window = Some(metadata.context_window);
+        }
+        if model.supports_image.is_none() {
+            model.supports_image = metadata.supports_image;
+        }
+        if model.supports_thinking.is_none() {
+            model.supports_thinking = metadata.supports_thinking;
+        }
     }
 }
 
@@ -517,6 +589,59 @@ mod tests {
     }
 
     #[test]
+    fn fuzzy_gap_fill_completes_custom_provider_models() {
+        let resolver = MetadataResolver::from_json(&json!({
+            "anthropic": {
+                "models": {
+                    "claude-haiku-4-5": {
+                        "name": "Claude Haiku 4.5",
+                        "attachment": true,
+                        "reasoning": true,
+                        "limit": {"context": 200000, "output": 64000}
+                    }
+                }
+            }
+        }))
+        .unwrap();
+
+        let mut models = vec![
+            // Renamed upstream id with a version suffix still finds its family.
+            ProviderModel {
+                id: "claude-haiku-4-5-preview".to_owned(),
+                display_name: Some("My Haiku".to_owned()),
+                ..ProviderModel::default()
+            },
+            // Provider-declared values always win over models.dev.
+            ProviderModel {
+                id: "claude-haiku-4-5".to_owned(),
+                context_window: Some(123),
+                supports_image: Some(false),
+                ..ProviderModel::default()
+            },
+            // Unknown ids stay untouched.
+            ProviderModel {
+                id: "totally-unknown-model".to_owned(),
+                ..ProviderModel::default()
+            },
+        ];
+        fill_model_gaps_with_resolver(&resolver, &mut models);
+
+        assert_eq!(models[0].context_window, Some(200_000));
+        assert_eq!(models[0].supports_image, Some(true));
+        assert_eq!(models[0].supports_thinking, Some(true));
+        // A fuzzy match must not relabel the provider's model.
+        assert_eq!(models[0].display_name.as_deref(), Some("My Haiku"));
+
+        assert_eq!(models[1].context_window, Some(123));
+        assert_eq!(models[1].supports_image, Some(false));
+        assert_eq!(models[1].supports_thinking, Some(true));
+
+        assert_eq!(models[2].context_window, None);
+        assert_eq!(models[2].supports_image, None);
+        assert_eq!(models[2].supports_thinking, None);
+    }
+
+    #[test]
     fn prefers_first_party_entries_over_aggregators() {
         let resolver = MetadataResolver::from_json(&json!({
             "openrouter": {
@@ -535,6 +660,31 @@ mod tests {
         assert_eq!(
             resolver.resolve("claude-haiku-4-5", 1).context_window,
             200_000
+        );
+    }
+
+    #[test]
+    fn suffixed_ids_match_the_longest_family_entry() {
+        let resolver = MetadataResolver::from_json(&json!({
+            "anthropic": {
+                "models": {
+                    "claude-haiku-4": {"limit": {"context": 100000}},
+                    "claude-haiku-4-5": {"limit": {"context": 200000}}
+                }
+            }
+        }))
+        .unwrap();
+
+        assert_eq!(
+            resolver
+                .lookup("claude-haiku-4-5-20260101")
+                .unwrap()
+                .context_window,
+            200_000
+        );
+        assert_eq!(
+            resolver.lookup("claude-haiku-4").unwrap().context_window,
+            100_000
         );
     }
 
@@ -603,7 +753,8 @@ mod tests {
           }
         }"#;
 
-        let models = parse_models_dev_provider_models("opencode-go", body).unwrap();
+        let catalog: ModelsDevCatalog = serde_json::from_str(body).unwrap();
+        let models = provider_models_from_catalog(&catalog, "opencode-go").unwrap();
         let luna = models.get("gpt-5.6-luna").unwrap();
         assert_eq!(
             luna.display_name.as_deref(),

@@ -572,6 +572,8 @@ codex-mixin doctor --fix --restart-apps # 额外允许重启 ChatGPT/Codex App�
 
 生成的 catalog 会包含 `context_window`、`max_context_window`、`input_modalities`、`base_instructions` 和 `model_messages.instructions_template`，避免 Codex 解析模型目录时报缺字段。
 
+刷新供应商模型列表时，所有 Provider（包括自定义网关、Baidu OneAPI 和手动添加的模型）也会用同一份 models.dev 目录补齐缺失的上下文窗口、图像与 thinking 能力：有官方映射的 Provider（如 amazon-bedrock、deepseek）先做精确 ID 匹配，其余模型统一走模糊匹配 —— 带日期或渠道后缀的 ID（如 `claude-haiku-4-5-20260101`）会命中最长的同族条目。Provider 自己声明的字段永远优先，模糊匹配也不会改写模型名称。models.dev 拉取失败时回退到本地缓存。
+
 更新供应商或模型选择后，除 Codex 的 managed catalog 外，所有已安装的 Claude Code、DSH、OpenCode、Pi 集成也会一并重渲染各自的托管模型列表（网关启动、能力探测、`refresh-codex-catalog` 和 doctor 修复时触发）。未安装的框架不会被创建或改动。
 
 ### 图片生成
