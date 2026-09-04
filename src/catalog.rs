@@ -105,6 +105,36 @@ mod tests {
     }
 
     #[test]
+    fn video_modality_never_reaches_generated_catalog() {
+        // Reproduces the 0.5.6 field failure: a discovered model whose
+        // supports_image stayed None takes the metadata passthrough branch,
+        // and models.dev declares video for Gemini-class models. Codex
+        // rejects the whole catalog on any modality outside
+        // text/image/audio.
+        let metadata = MetadataResolver::from_json(&json!({
+            "google": {
+                "models": {
+                    "gemini-3-8-flash": {
+                        "modalities": {"input": ["text", "image", "video", "pdf"]},
+                        "limit": {"context": 1048576, "output": 65536}
+                    }
+                }
+            }
+        }))
+        .unwrap();
+        let models = vec![ModelInfo {
+            id: "Gemini 3.8 Flash".to_owned(),
+            owned_by: Some("custom".to_owned()),
+            ..ModelInfo::default()
+        }];
+        let catalog = codex_catalog_from_models_with_metadata(&models, 1_000_000, None, &metadata);
+        assert_eq!(
+            catalog["models"][0]["input_modalities"],
+            json!(["text", "image"])
+        );
+    }
+
+    #[test]
     fn provider_metadata_overrides_catalog_description_and_capabilities() {
         let models = vec![ModelInfo {
             id: "DeepSeek-V4-Flash".to_owned(),
