@@ -1,4 +1,31 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.5.6
+
+- 完善 Amazon Bedrock 接入：通过 SigV4 发现 Bedrock profile 与 foundation models，AK/SK 请求指向 Bedrock Runtime Anthropic 端点，并加密本地配置；兼容旧 API key 配置
+- 修复经 aws-bedrock 走 Codex 时工具转换携带 `strict` 字段导致请求被拒的问题；Claude 模型按声明上下文窗口生效
+- 模型刷新时同步重绘已安装的 Claude Code、DSH、OpenCode 与 Pi 托管模型目录，无需重新执行连接
+
+<!-- codex-mixin:zh-Hans:end -->
+
+<!-- codex-mixin:zh-Hant:start -->
+## v0.5.6
+
+- 完善 Amazon Bedrock 整合：透過 SigV4 探索 Bedrock profile 與 foundation models，AK/SK 請求指向 Bedrock Runtime Anthropic 端點，並加密本機設定；相容舊 API key 設定
+- 修正經 aws-bedrock 走 Codex 時工具轉換帶有 `strict` 欄位導致請求被拒的問題；Claude 模型依宣告的上下文視窗生效
+- 模型重新整理時同步重繪已安裝的 Claude Code、DSH、OpenCode 與 Pi 受管模型目錄，無需重新執行連線
+
+<!-- codex-mixin:zh-Hant:end -->
+
+<!-- codex-mixin:en:start -->
+## v0.5.6
+
+- Expand Amazon Bedrock support: discover Bedrock profiles and foundation models via SigV4, route AK/SK requests to the Bedrock Runtime Anthropic endpoint, and encrypt local configuration while keeping existing API-key configs compatible
+- Fix Codex-through-aws-bedrock failures caused by a `strict` field carried onto Anthropic tool objects, and honor declared Claude model context windows
+- Resync the managed model catalogs of installed Claude Code, DSH, OpenCode, and Pi on every model refresh without rerunning connect
+
+<!-- codex-mixin:en:end -->
+
+<!-- codex-mixin:zh-Hans:start -->
 ## v0.5.5
 
 - 完善 Provider 模型管理与测速，支持手动添加模型、设置上下文窗口、搜索筛选和刷新模型列表
