@@ -4,6 +4,7 @@
 - 完善 Amazon Bedrock 接入：通过 SigV4 发现 Bedrock profile 与 foundation models，AK/SK 请求指向 Bedrock Runtime Anthropic 端点，并加密本地配置；兼容旧 API key 配置
 - 修复经 aws-bedrock 走 Codex 时工具转换携带 `strict` 字段导致请求被拒的问题；Claude 模型按声明上下文窗口生效
 - 模型刷新时同步重绘已安装的 Claude Code、DSH、OpenCode 与 Pi 托管模型目录，无需重新执行连接
+- 所有 Provider 统一元数据补全：发现流程拉取完整 models.dev 目录，为自定义网关、Baidu OneAPI 与手动添加的模型模糊匹配上下文窗口和能力标志；本地元数据缓存作为离线兜底
 
 <!-- codex-mixin:zh-Hans:end -->
 
@@ -13,6 +14,7 @@
 - 完善 Amazon Bedrock 整合：透過 SigV4 探索 Bedrock profile 與 foundation models，AK/SK 請求指向 Bedrock Runtime Anthropic 端點，並加密本機設定；相容舊 API key 設定
 - 修正經 aws-bedrock 走 Codex 時工具轉換帶有 `strict` 欄位導致請求被拒的問題；Claude 模型依宣告的上下文視窗生效
 - 模型重新整理時同步重繪已安裝的 Claude Code、DSH、OpenCode 與 Pi 受管模型目錄，無需重新執行連線
+- 所有 Provider 的統一中繼資料補全：探索流程拉取完整 models.dev 目錄，為自訂閘道、Baidu OneAPI 與手動新增模型模糊比對上下文視窗與能力旗標；本地中繼資料快取作為離線備援
 
 <!-- codex-mixin:zh-Hant:end -->
 
@@ -22,6 +24,7 @@
 - Expand Amazon Bedrock support: discover Bedrock profiles and foundation models via SigV4, route AK/SK requests to the Bedrock Runtime Anthropic endpoint, and encrypt local configuration while keeping existing API-key configs compatible
 - Fix Codex-through-aws-bedrock failures caused by a `strict` field carried onto Anthropic tool objects, and honor declared Claude model context windows
 - Resync the managed model catalogs of installed Claude Code, DSH, OpenCode, and Pi on every model refresh without rerunning connect
+- Backfill model metadata for every provider: discovery fetches the full models.dev catalog and fuzzy-fills context windows and capability flags for custom gateways, Baidu OneAPI, and manually added models, with the local metadata cache as the offline fallback
 
 <!-- codex-mixin:en:end -->
 
