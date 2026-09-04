@@ -5,9 +5,9 @@ use anyhow::Context;
 use codex_mixin::config::GatewayConfig;
 use codex_mixin::provider::capabilities::ProviderCapabilities;
 use codex_mixin::provider::{
-    AWS_BEDROCK_DEFAULT_REGION, AWS_BEDROCK_MANTLE_SERVICE, AwsSigV4AuthConfig,
+    AWS_BEDROCK_DEFAULT_REGION, AWS_BEDROCK_RUNTIME_SERVICE, AwsSigV4AuthConfig,
     MANUAL_MODEL_CONTEXT_WINDOW, ProviderModelSource, apply_discovered_models,
-    aws_bedrock_mantle_base_url, discover_provider_models, redact_provider_error,
+    aws_bedrock_runtime_base_url, discover_provider_models, redact_provider_error,
 };
 use serde_json::json;
 
@@ -231,7 +231,7 @@ pub(crate) async fn test_provider(options: TestProviderOptions) -> anyhow::Resul
                 secret_access_key: String::new(),
                 session_token: None,
                 region: AWS_BEDROCK_DEFAULT_REGION.to_owned(),
-                service: AWS_BEDROCK_MANTLE_SERVICE.to_owned(),
+                service: AWS_BEDROCK_RUNTIME_SERVICE.to_owned(),
             });
         if let Some(value) = options.aws_access_key_id {
             aws.access_key_id = trim_required("AWS access key ID", value)?;
@@ -245,7 +245,7 @@ pub(crate) async fn test_provider(options: TestProviderOptions) -> anyhow::Resul
         if let Some(value) = options.aws_region {
             aws.region = trim_required("AWS region", value)?;
             if options.base_url.is_none() {
-                provider.base_url = aws_bedrock_mantle_base_url(&aws.region);
+                provider.base_url = aws_bedrock_runtime_base_url(&aws.region);
             }
         }
         provider.auth.api_key.clear();

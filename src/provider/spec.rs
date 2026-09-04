@@ -15,9 +15,19 @@ pub const AWS_BEDROCK_PRESET_ID: &str = "aws-bedrock";
 pub const AWS_BEDROCK_MANTLE_BASE_URL: &str = "https://bedrock-mantle.us-east-1.api.aws/anthropic";
 pub const AWS_BEDROCK_DEFAULT_REGION: &str = "us-east-1";
 pub const AWS_BEDROCK_MANTLE_SERVICE: &str = "bedrock-mantle";
+pub const AWS_BEDROCK_RUNTIME_SERVICE: &str = "bedrock";
 
 pub fn aws_bedrock_mantle_base_url(region: &str) -> String {
     format!("https://bedrock-mantle.{region}.api.aws/anthropic")
+}
+
+/// Anthropic-compatible Messages endpoint on the Bedrock runtime.
+///
+/// SigV4 (AK/SK) callers must invoke Claude here; the Mantle host only
+/// serves Bedrock API keys and answers 404 "model does not exist" for
+/// every Claude model when signed with SigV4.
+pub fn aws_bedrock_runtime_base_url(region: &str) -> String {
+    format!("https://bedrock-runtime.{region}.amazonaws.com/anthropic")
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -410,13 +420,13 @@ pub fn aws_bedrock_aksk_provider(
     let region = region.into();
     let mut provider = aws_bedrock_provider(id, "");
     provider.display_name = "Amazon Bedrock (AK/SK)".to_owned();
-    provider.base_url = aws_bedrock_mantle_base_url(&region);
+    provider.base_url = aws_bedrock_runtime_base_url(&region);
     provider.auth.aws_sigv4 = Some(AwsSigV4AuthConfig {
         access_key_id: access_key_id.into(),
         secret_access_key: secret_access_key.into(),
         session_token,
         region,
-        service: AWS_BEDROCK_MANTLE_SERVICE.to_owned(),
+        service: AWS_BEDROCK_RUNTIME_SERVICE.to_owned(),
     });
     provider.model_source = ProviderModelSource::AwsBedrock;
     provider
@@ -532,11 +542,11 @@ mod tests {
         assert_eq!(aws.secret_access_key, "secret-example");
         assert_eq!(aws.session_token.as_deref(), Some("session-example"));
         assert_eq!(aws.region, "eu-west-1");
-        assert_eq!(aws.service, "bedrock-mantle");
+        assert_eq!(aws.service, "bedrock");
         assert_eq!(provider.model_source, ProviderModelSource::AwsBedrock);
         assert_eq!(
             provider.base_url,
-            "https://bedrock-mantle.eu-west-1.api.aws/anthropic"
+            "https://bedrock-runtime.eu-west-1.amazonaws.com/anthropic"
         );
     }
 

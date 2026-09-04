@@ -50,6 +50,7 @@ pub(super) fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConf
         upgrade_opencode_go_responses_endpoint(&mut parsed);
         upgrade_baidu_image_generation_defaults(&mut parsed);
         upgrade_aws_bedrock_model_source(&mut parsed);
+        upgrade_aws_bedrock_sigv4_endpoint(&mut parsed);
         bootstrap_unrefreshed_selected_models(&mut parsed);
         backfill_data_report_executable(&mut parsed);
         return Ok(parsed);
@@ -101,6 +102,29 @@ fn upgrade_aws_bedrock_model_source(config: &mut StoredGatewayConfig) {
             && provider.model_source == ProviderModelSource::Static
         {
             provider.model_source = ProviderModelSource::AwsBedrock;
+        }
+    }
+}
+
+/// Move SigV4 (AK/SK) Bedrock providers off the Mantle host.
+///
+/// The preset used to point AK/SK providers at the Mantle Anthropic endpoint,
+/// which only serves Bedrock API keys and answers 404 for every Claude model
+/// when signed with SigV4. Rewrite only the untouched preset default; a
+/// customized base URL stays as the user's own choice.
+fn upgrade_aws_bedrock_sigv4_endpoint(config: &mut StoredGatewayConfig) {
+    for provider in &mut config.providers {
+        if provider.preset_id.as_deref() != Some("aws-bedrock") {
+            continue;
+        }
+        let Some(aws) = provider.auth.aws_sigv4.as_mut() else {
+            continue;
+        };
+        if aws.service == crate::provider::AWS_BEDROCK_MANTLE_SERVICE
+            && provider.base_url == crate::provider::aws_bedrock_mantle_base_url(&aws.region)
+        {
+            provider.base_url = crate::provider::aws_bedrock_runtime_base_url(&aws.region);
+            aws.service = crate::provider::AWS_BEDROCK_RUNTIME_SERVICE.to_owned();
         }
     }
 }
@@ -296,5 +320,56 @@ mod tests {
             config.providers[0].image_generation_path.as_deref(),
             Some("/v1/images/generations")
         );
+    }
+
+    #[test]
+    fn moves_sigv4_bedrock_provider_off_the_mantle_host() {
+        let mut config = StoredGatewayConfig::default();
+        let mut provider = crate::provider::aws_bedrock_aksk_provider(
+            "aws-bedrock",
+            "AKIDEXAMPLE",
+            "secret-example",
+            None,
+            "eu-west-1",
+        );
+        provider.base_url = crate::provider::aws_bedrock_mantle_base_url("eu-west-1");
+        if let Some(aws) = provider.auth.aws_sigv4.as_mut() {
+            aws.service = crate::provider::AWS_BEDROCK_MANTLE_SERVICE.to_owned();
+        }
+        config.providers.push(provider);
+
+        upgrade_aws_bedrock_sigv4_endpoint(&mut config);
+
+        let provider = &config.providers[0];
+        assert_eq!(
+            provider.base_url,
+            "https://bedrock-runtime.eu-west-1.amazonaws.com/anthropic"
+        );
+        let aws = provider.auth.aws_sigv4.as_ref().unwrap();
+        assert_eq!(aws.service, "bedrock");
+    }
+
+    #[test]
+    fn keeps_a_customized_sigv4_bedrock_base_url() {
+        let mut config = StoredGatewayConfig::default();
+        let mut provider = crate::provider::aws_bedrock_aksk_provider(
+            "aws-bedrock",
+            "AKIDEXAMPLE",
+            "secret-example",
+            None,
+            "eu-west-1",
+        );
+        provider.base_url = "https://proxy.example.com/anthropic".to_owned();
+        if let Some(aws) = provider.auth.aws_sigv4.as_mut() {
+            aws.service = crate::provider::AWS_BEDROCK_MANTLE_SERVICE.to_owned();
+        }
+        config.providers.push(provider);
+
+        upgrade_aws_bedrock_sigv4_endpoint(&mut config);
+
+        let provider = &config.providers[0];
+        assert_eq!(provider.base_url, "https://proxy.example.com/anthropic");
+        let aws = provider.auth.aws_sigv4.as_ref().unwrap();
+        assert_eq!(aws.service, "bedrock-mantle");
     }
 }

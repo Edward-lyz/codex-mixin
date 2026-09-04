@@ -262,11 +262,14 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 Baidu OneAPI 的额度接口必须同时填写额度用户名；CLI 和 App 都会在保存时校验。
 OpenCode Go 的额度显示需要额外填写工作区 ID 和 `opencode.ai` 的 `auth` cookie；
 这两个值可以在浏览器控制台里从 OpenCode Go dashboard 页面取得，cookie 过期后需要重新填写。
-`aws-bedrock` 使用 Amazon Bedrock Mantle 原生 Anthropic Messages 接口。新增 Provider 时填写
+`aws-bedrock` 使用 Amazon Bedrock 的原生 Anthropic Messages 接口。新增 Provider 时填写
 AWS Region、Access Key ID、Secret Access Key，以及可选的 Session Token；Codex Mixin 会按
-`bedrock-mantle` service 生成 SigV4 签名，并根据 Region 自动生成 Mantle URL。当前只支持显式
-输入 AK/SK，不读取 AWS SSO profile 或默认 credential chain。旧配置中的 Bedrock API key
-仍可继续使用，但新的 App 和 TUI 入口默认使用 AK/SK。
+`bedrock` service 生成 SigV4 签名，并根据 Region 自动生成 Bedrock runtime URL
+（`https://bedrock-runtime.{region}.amazonaws.com/anthropic`）。Mantle 域名只服务 Bedrock
+API key，对 SigV4 请求一律返回 404，因此 AK/SK provider 不再指向 Mantle；存量配置在下次
+读取时自动迁移到 runtime 端点。当前只支持显式输入 AK/SK，不读取 AWS SSO profile 或默认
+credential chain。旧配置中的 Bedrock API key 仍可继续使用（走 Mantle），但新的 App 和 TUI
+入口默认使用 AK/SK。
 模型刷新会通过 SigV4 读取 `ListInferenceProfiles(APPLICATION)`、
 `ListInferenceProfiles(SYSTEM_DEFINED)` 和 `ListFoundationModels`，再合并账号折扣 profile、
 官方跨区 profile 与当前 Region 的基础模型目录。
@@ -871,12 +874,15 @@ uses incomplete request bodies and does not run model inference.
 The Baidu OneAPI quota endpoint also requires a quota username; both the CLI and app validate it before saving.
 OpenCode Go quota display also requires a workspace ID and the `opencode.ai` `auth` cookie.
 Take both values from the OpenCode Go dashboard in a signed-in browser; refresh the cookie when it expires.
-`aws-bedrock` uses the Amazon Bedrock Mantle native Anthropic Messages endpoint. Enter an AWS
+`aws-bedrock` uses the native Anthropic Messages endpoint on Amazon Bedrock. Enter an AWS
 Region, Access Key ID, Secret Access Key, and an optional Session Token. Codex Mixin signs requests
-with SigV4 using the `bedrock-mantle` service and derives the Mantle URL from the Region. It currently
+with SigV4 using the `bedrock` service and derives the Bedrock runtime URL from the Region
+(`https://bedrock-runtime.{region}.amazonaws.com/anthropic`). The Mantle host only serves Bedrock
+API keys and answers 404 for SigV4 requests, so AK/SK providers no longer point at Mantle; stored
+configurations migrate to the runtime endpoint on the next load. It currently
 supports explicit AK/SK credentials only, not AWS SSO profiles or the default credential chain.
-Existing Bedrock API-key configurations remain compatible, while the app and TUI use AK/SK for new
-providers.
+Existing Bedrock API-key configurations remain compatible (they stay on Mantle), while the app and
+TUI use AK/SK for new providers.
 Model refresh signs and calls `ListInferenceProfiles(APPLICATION)`,
 `ListInferenceProfiles(SYSTEM_DEFINED)`, and `ListFoundationModels`, then merges account application
 profiles, AWS cross-Region profiles, and the Region's foundation-model catalog.

@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use codex_mixin::config::StoredGatewayConfig;
 use codex_mixin::provider::{
     AWS_BEDROCK_DEFAULT_REGION, AwsSigV4AuthConfig, ProviderModel, ProviderModelSource,
-    ProviderPreset, ProviderQuotaParser, aws_bedrock_aksk_provider, aws_bedrock_mantle_base_url,
+    ProviderPreset, ProviderQuotaParser, aws_bedrock_aksk_provider, aws_bedrock_runtime_base_url,
     catalog_model_slug,
 };
 
@@ -424,7 +424,7 @@ fn apply_aws_auth_options(
             secret_access_key: String::new(),
             session_token: None,
             region: AWS_BEDROCK_DEFAULT_REGION.to_owned(),
-            service: codex_mixin::provider::AWS_BEDROCK_MANTLE_SERVICE.to_owned(),
+            service: codex_mixin::provider::AWS_BEDROCK_RUNTIME_SERVICE.to_owned(),
         });
     if let Some(value) = &options.aws_access_key_id {
         aws.access_key_id = trim_required("AWS access key ID", value.clone())?;
@@ -440,7 +440,7 @@ fn apply_aws_auth_options(
     if let Some(value) = &options.aws_region {
         aws.region = trim_required("AWS region", value.clone())?;
         if options.base_url.is_none() {
-            provider.base_url = aws_bedrock_mantle_base_url(&aws.region);
+            provider.base_url = aws_bedrock_runtime_base_url(&aws.region);
         }
     }
     provider.auth.api_key.clear();

@@ -1604,7 +1604,7 @@ async fn routes_aws_bedrock_preset_through_mantle_messages() {
 }
 
 #[tokio::test]
-async fn signs_aws_bedrock_mantle_requests_with_aksk() {
+async fn signs_aws_bedrock_requests_with_aksk() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let mut config = test_config(upstream_url.clone());
     let mut provider = aws_bedrock_aksk_provider(
