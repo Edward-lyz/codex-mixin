@@ -393,7 +393,10 @@ pub(super) fn convert_function_tool(
         .filter(|schema| !schema.is_null())
         .cloned()
         .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
-    let mut converted = match description {
+    // Anthropic Messages tools carry only name/description/input_schema.
+    // The OpenAI "strict" flag is dropped: anthropic.com ignores unknown
+    // fields but Bedrock's Anthropic layer rejects them with 400.
+    let converted = match description {
         Some(description) => json!({
             "name": anthropic_name,
             "description": description,
@@ -404,9 +407,6 @@ pub(super) fn convert_function_tool(
             "input_schema": input_schema
         }),
     };
-    if let Some(strict) = tool.get("strict").and_then(Value::as_bool) {
-        converted["strict"] = json!(strict);
-    }
     Ok((converted, codex_name))
 }
 
@@ -424,7 +424,6 @@ pub(super) fn convert_custom_tool(
         json!({
             "name": upstream_name,
             "description": description,
-            "strict": true,
             "input_schema": {
                 "type": "object",
                 "properties": {"input": {"type": "string"}},

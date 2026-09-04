@@ -417,7 +417,7 @@ fn flattens_namespace_tools_for_anthropic() {
     });
     let converted = responses_to_anthropic(&body, &config()).unwrap();
     assert_eq!(converted.request.tools[0]["name"], "mcp__node_repl__js");
-    assert_eq!(converted.request.tools[0]["strict"], true);
+    assert!(converted.request.tools[0].get("strict").is_none());
     assert_eq!(
         converted.tool_names.to_codex_name("mcp__node_repl__js"),
         "js"
@@ -481,7 +481,7 @@ fn converts_custom_and_tool_search_tools_for_anthropic() {
         converted.request.tools[0]["input_schema"]["required"],
         json!(["input"])
     );
-    assert_eq!(converted.request.tools[0]["strict"], true);
+    assert!(converted.request.tools[0].get("strict").is_none());
     assert!(
         converted.request.tools[0]["description"]
             .as_str()
