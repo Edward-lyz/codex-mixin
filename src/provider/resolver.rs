@@ -243,9 +243,28 @@ fn codex_mixin_home() -> PathBuf {
     PathBuf::from(home).join(".codex-mixin")
 }
 
+/// Codex only deserializes these input modalities; any other value (for
+/// example `video` or `pdf` declared by models.dev) makes Codex reject the
+/// whole generated model catalog JSON.
+const CODEX_INPUT_MODALITIES: &[&str] = &["text", "image", "audio"];
+
 fn input_modalities(input_modalities: Option<Vec<String>>, supports_vision: bool) -> Vec<String> {
-    if let Some(modalities) = input_modalities.filter(|modalities| !modalities.is_empty()) {
-        return modalities;
+    if let Some(declared) = input_modalities {
+        let mut modalities: Vec<String> = Vec::new();
+        for modality in declared {
+            let Some(allowed) = CODEX_INPUT_MODALITIES
+                .iter()
+                .find(|allowed| modality.eq_ignore_ascii_case(allowed))
+            else {
+                continue;
+            };
+            if !modalities.iter().any(|existing| existing == allowed) {
+                modalities.push((*allowed).to_owned());
+            }
+        }
+        if !modalities.is_empty() {
+            return modalities;
+        }
     }
     if supports_vision {
         vec!["text".to_owned(), "image".to_owned()]
@@ -586,6 +605,34 @@ mod tests {
         let haiku = resolver.resolve("claude-haiku-4-5", 100_000);
         assert_eq!(haiku.context_window, 200_000);
         assert_eq!(haiku.input_modalities, ["text", "image"]);
+    }
+
+    #[test]
+    fn filters_modalities_codex_cannot_deserialize() {
+        let resolver = MetadataResolver::from_json(&json!({
+            "google": {
+                "models": {
+                    "gemini-video": {
+                        "modalities": {"input": ["text", "image", "video", "pdf"]},
+                        "limit": {"context": 1048576, "output": 65536}
+                    },
+                    "video-only": {
+                        "attachment": true,
+                        "modalities": {"input": ["video"]},
+                        "limit": {"context": 32768, "output": 8192}
+                    }
+                }
+            }
+        }))
+        .unwrap();
+
+        // Unknown modalities are dropped so Codex can parse the catalog.
+        let gemini = resolver.resolve("gemini-video", 100_000);
+        assert_eq!(gemini.input_modalities, ["text", "image"]);
+
+        // Nothing valid declared falls back to the vision flag.
+        let video_only = resolver.resolve("video-only", 100_000);
+        assert_eq!(video_only.input_modalities, ["text", "image"]);
     }
 
     #[test]
