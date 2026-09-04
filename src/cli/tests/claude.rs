@@ -290,6 +290,96 @@ fn claude_install_uses_dedicated_client_key_as_auth_token() {
 }
 
 #[test]
+fn sync_claude_models_refreshes_only_managed_settings() {
+    let directory = tempfile::tempdir().unwrap();
+    let settings = directory.path().join("settings.json");
+    let mut provider = ProviderPreset::BaiduOneApi.create("baidu", "provider-key");
+    provider.quota_username = Some("test-user".to_owned());
+    provider.selected_models = vec!["Claude Sonnet 5".to_owned()];
+    provider.cached_models = vec![ProviderModel {
+        id: "Claude Sonnet 5".to_owned(),
+        protocol: Some(ProviderProtocol::AnthropicMessages),
+        ..ProviderModel::default()
+    }];
+    let gateway_config = GatewayConfig {
+        bind: "127.0.0.1:8787".parse().unwrap(),
+        providers: vec![provider],
+        official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
+        codex_auth_path: directory.path().join("auth.json"),
+        gateway_api_key: Some("gateway-secret".to_owned()),
+        gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
+            claude: Some("claude-client-key".to_owned()),
+            ..Default::default()
+        },
+        accept_codex_oauth: false,
+        official_selected_models: None,
+        default_max_tokens: 4096,
+        default_context_window: 128_000,
+        request_timeout: std::time::Duration::from_secs(30),
+        thinking_mode: ThinkingMode::Auto,
+        enable_web_search_tool: false,
+        web_search_tool_type: "web_search".to_owned(),
+        web_search_max_uses: None,
+        fusion_profiles: Vec::new(),
+    };
+
+    // Missing settings file: nothing to refresh.
+    assert!(
+        !sync_claude_models(
+            Some(settings.clone()),
+            &gateway_config,
+            &[],
+            gateway_config.bind
+        )
+        .unwrap()
+    );
+    assert!(!settings.exists());
+
+    // Unmanaged settings: left untouched.
+    fs::write(&settings, r#"{"existing": true}"#).unwrap();
+    assert!(
+        !sync_claude_models(
+            Some(settings.clone()),
+            &gateway_config,
+            &[],
+            gateway_config.bind
+        )
+        .unwrap()
+    );
+    assert_eq!(
+        fs::read_to_string(&settings).unwrap(),
+        r#"{"existing": true}"#
+    );
+
+    install_claude_with_config(Some(settings.clone()), &gateway_config).unwrap();
+    assert!(
+        !sync_claude_models(
+            Some(settings.clone()),
+            &gateway_config,
+            &[],
+            gateway_config.bind
+        )
+        .unwrap()
+    );
+
+    let mut updated = gateway_config.clone();
+    updated.providers[0]
+        .selected_models
+        .push("Claude Opus 5".to_owned());
+    updated.providers[0].cached_models.push(ProviderModel {
+        id: "Claude Opus 5".to_owned(),
+        protocol: Some(ProviderProtocol::AnthropicMessages),
+        ..ProviderModel::default()
+    });
+    assert!(sync_claude_models(Some(settings.clone()), &updated, &[], updated.bind).unwrap());
+    assert!(
+        fs::read_to_string(&settings)
+            .unwrap()
+            .contains("Claude Opus 5-baidu")
+    );
+}
+
+#[test]
 fn claude_install_migrates_legacy_managed_env_backup() {
     let directory = tempfile::tempdir().unwrap();
     let settings = directory.path().join("settings.json");

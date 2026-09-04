@@ -41,7 +41,9 @@ pub(in crate::cli) fn install_opencode(config_path: Option<PathBuf>) -> anyhow::
             &gateway_config,
             &official_models,
             reporting_enabled()?,
+            true,
         )
+        .map(|_| ())
     })();
     super::rollback_new_client_key_on_error(result, client, key_existed)
 }
@@ -82,7 +84,8 @@ fn install_opencode_with_models(
     gateway_config: &GatewayConfig,
     official_models: &[ProviderModel],
     reporting_is_enabled: bool,
-) -> anyhow::Result<()> {
+    announce: bool,
+) -> anyhow::Result<bool> {
     let models = collect_opencode_models(gateway_config, official_models);
     anyhow::ensure!(
         !models.is_empty(),
@@ -127,15 +130,17 @@ fn install_opencode_with_models(
 
     let gateway_key = gateway_config.require_client_key(GatewayClient::OpenCode)?;
     write_owner_only(key_path, gateway_key.as_bytes())?;
-    write_json_config(config_path, &document)?;
+    let changed = write_json_config(config_path, &document)?;
     sync_opencode_reporting_plugin(config_path, reporting_is_enabled)?;
 
-    println!("OpenCode config updated: {}", config_path.display());
-    println!("OpenCode provider: {OPENCODE_PROVIDER_ID}");
-    println!("OpenCode protocol package: {OPENAI_RESPONSES_PACKAGE}");
-    println!("OpenCode base URL: http://{bind}/v1");
-    println!("reload required: restart OpenCode or start a new OpenCode session");
-    Ok(())
+    if announce {
+        println!("OpenCode config updated: {}", config_path.display());
+        println!("OpenCode provider: {OPENCODE_PROVIDER_ID}");
+        println!("OpenCode protocol package: {OPENAI_RESPONSES_PACKAGE}");
+        println!("OpenCode base URL: http://{bind}/v1");
+        println!("reload required: restart OpenCode or start a new OpenCode session");
+    }
+    Ok(changed)
 }
 
 fn uninstall_opencode_at(config_path: &Path, key_path: &Path) -> anyhow::Result<()> {
@@ -308,22 +313,8 @@ fn opencode_reasoning_variants() -> Value {
 
 pub(in crate::cli) fn sync_installed_opencode_client_key() -> anyhow::Result<()> {
     let config_path = resolve_opencode_config_path(None)?;
-    if !config_path.exists() {
-        return Ok(());
-    }
-    let raw = fs::read_to_string(&config_path)?;
-    if !raw.contains(OPENCODE_PROVIDER_NAME) {
-        return Ok(());
-    }
     let key_path = std::path::absolute(stored_config_path().with_file_name(OPENCODE_API_KEY_FILE))?;
-    let document = read_opencode_config(&config_path)?;
-    let key_reference = format!("{{file:{}}}", key_path.display());
-    if !document
-        .get("provider")
-        .and_then(Value::as_object)
-        .and_then(|providers| providers.get(OPENCODE_PROVIDER_ID))
-        .is_some_and(|provider| is_managed_provider(provider, &key_reference))
-    {
+    if !opencode_provider_is_managed(&config_path, &key_path)? {
         return Ok(());
     }
     let client_key = codex_mixin::config::ensure_gateway_client_key(
@@ -335,25 +326,68 @@ pub(in crate::cli) fn sync_installed_opencode_client_key() -> anyhow::Result<()>
 
 pub(in crate::cli) fn sync_installed_opencode_reporting() -> anyhow::Result<()> {
     let config_path = resolve_opencode_config_path(None)?;
-    if !config_path.exists() {
-        return Ok(());
-    }
-    let raw = fs::read_to_string(&config_path)?;
-    if !raw.contains(OPENCODE_PROVIDER_NAME) {
-        return Ok(());
-    }
     let key_path = std::path::absolute(stored_config_path().with_file_name(OPENCODE_API_KEY_FILE))?;
-    let document = read_opencode_config(&config_path)?;
-    let key_reference = format!("{{file:{}}}", key_path.display());
-    if !document
-        .get("provider")
-        .and_then(Value::as_object)
-        .and_then(|providers| providers.get(OPENCODE_PROVIDER_ID))
-        .is_some_and(|provider| is_managed_provider(provider, &key_reference))
-    {
+    if !opencode_provider_is_managed(&config_path, &key_path)? {
         return Ok(());
     }
     sync_opencode_reporting_plugin(&config_path, reporting_enabled()?)
+}
+
+/// Re-render the managed OpenCode provider entry from the current provider
+/// configuration. A missing or unmanaged OpenCode config is left untouched.
+pub(in crate::cli) fn sync_installed_opencode_models() -> anyhow::Result<bool> {
+    let gateway_config = GatewayConfig::from_stored_config()?;
+    let official_models = selected_official_models(&gateway_config)?;
+    let bind = effective_gateway_bind(&gateway_config)?;
+    let config_path = resolve_opencode_config_path(None)?;
+    let key_path = std::path::absolute(stored_config_path().with_file_name(OPENCODE_API_KEY_FILE))?;
+    sync_opencode_models(
+        &config_path,
+        &key_path,
+        bind,
+        &gateway_config,
+        &official_models,
+        reporting_enabled()?,
+    )
+}
+
+fn sync_opencode_models(
+    config_path: &Path,
+    key_path: &Path,
+    bind: SocketAddr,
+    gateway_config: &GatewayConfig,
+    official_models: &[ProviderModel],
+    reporting_is_enabled: bool,
+) -> anyhow::Result<bool> {
+    if !opencode_provider_is_managed(config_path, key_path)? {
+        return Ok(false);
+    }
+    install_opencode_with_models(
+        config_path,
+        key_path,
+        bind,
+        gateway_config,
+        official_models,
+        reporting_is_enabled,
+        false,
+    )
+}
+
+fn opencode_provider_is_managed(config_path: &Path, key_path: &Path) -> anyhow::Result<bool> {
+    if !config_path.exists() {
+        return Ok(false);
+    }
+    let raw = fs::read_to_string(config_path)?;
+    if !raw.contains(OPENCODE_PROVIDER_NAME) {
+        return Ok(false);
+    }
+    let document = read_opencode_config(config_path)?;
+    let key_reference = format!("{{file:{}}}", key_path.display());
+    Ok(document
+        .get("provider")
+        .and_then(Value::as_object)
+        .and_then(|providers| providers.get(OPENCODE_PROVIDER_ID))
+        .is_some_and(|provider| is_managed_provider(provider, &key_reference)))
 }
 
 fn sync_opencode_reporting_plugin(config_path: &Path, enabled: bool) -> anyhow::Result<()> {
@@ -483,13 +517,13 @@ fn read_opencode_config(path: &Path) -> anyhow::Result<Value> {
     })
 }
 
-fn write_json_config(path: &Path, document: &Value) -> anyhow::Result<()> {
+fn write_json_config(path: &Path, document: &Value) -> anyhow::Result<bool> {
     let existed = path.exists();
-    write_atomic_if_changed(path, &serde_json::to_vec_pretty(document)?)?;
+    let changed = write_atomic_if_changed(path, &serde_json::to_vec_pretty(document)?)?;
     if !existed {
         set_owner_only(path)?;
     }
-    Ok(())
+    Ok(changed)
 }
 
 #[cfg(test)]
@@ -568,6 +602,7 @@ mod tests {
             &config,
             &[official],
             false,
+            true,
         )
         .unwrap();
 
@@ -617,8 +652,16 @@ mod tests {
         let key_path = directory.path().join("opencode-api-key");
         let config = gateway_config(None);
 
-        install_opencode_with_models(&config_path, &key_path, config.bind, &config, &[], false)
-            .unwrap();
+        install_opencode_with_models(
+            &config_path,
+            &key_path,
+            config.bind,
+            &config,
+            &[],
+            false,
+            true,
+        )
+        .unwrap();
 
         let document: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
         assert_eq!(
@@ -626,6 +669,52 @@ mod tests {
             OPENAI_RESPONSES_PACKAGE
         );
         assert_eq!(fs::read_to_string(key_path).unwrap(), "opencode-client-key");
+    }
+
+    #[test]
+    fn sync_opencode_models_refreshes_only_a_managed_config() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = directory.path().join("opencode.json");
+        let key_path = directory.path().join("opencode-api-key");
+        let config = gateway_config(Some("gateway-secret"));
+
+        assert!(
+            !sync_opencode_models(&config_path, &key_path, config.bind, &config, &[], false)
+                .unwrap()
+        );
+        assert!(!config_path.exists());
+
+        install_opencode_with_models(
+            &config_path,
+            &key_path,
+            config.bind,
+            &config,
+            &[],
+            false,
+            true,
+        )
+        .unwrap();
+        assert!(
+            !sync_opencode_models(&config_path, &key_path, config.bind, &config, &[], false)
+                .unwrap()
+        );
+
+        let mut updated = gateway_config(Some("gateway-secret"));
+        updated.providers[0]
+            .selected_models
+            .push("second-model".to_owned());
+        updated.providers[0].cached_models.push(ProviderModel {
+            id: "second-model".to_owned(),
+            ..ProviderModel::default()
+        });
+        assert!(
+            sync_opencode_models(&config_path, &key_path, config.bind, &updated, &[], false)
+                .unwrap()
+        );
+        let document: Value = serde_json::from_slice(&fs::read(&config_path).unwrap()).unwrap();
+        assert!(
+            document["provider"][OPENCODE_PROVIDER_ID]["models"]["second-model-custom"].is_object()
+        );
     }
 
     #[test]
@@ -644,9 +733,16 @@ mod tests {
         let original = fs::read(&config_path).unwrap();
         let config = gateway_config(Some("gateway-secret"));
 
-        let error =
-            install_opencode_with_models(&config_path, &key_path, config.bind, &config, &[], false)
-                .unwrap_err();
+        let error = install_opencode_with_models(
+            &config_path,
+            &key_path,
+            config.bind,
+            &config,
+            &[],
+            false,
+            true,
+        )
+        .unwrap_err();
 
         assert!(error.to_string().contains("is not managed by Codex Mixin"));
         assert_eq!(fs::read(config_path).unwrap(), original);

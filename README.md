@@ -572,6 +572,8 @@ codex-mixin doctor --fix --restart-apps # 额外允许重启 ChatGPT/Codex App�
 
 生成的 catalog 会包含 `context_window`、`max_context_window`、`input_modalities`、`base_instructions` 和 `model_messages.instructions_template`，避免 Codex 解析模型目录时报缺字段。
 
+更新供应商或模型选择后，除 Codex 的 managed catalog 外，所有已安装的 Claude Code、DSH、OpenCode、Pi 集成也会一并重渲染各自的托管模型列表（网关启动、能力探测、`refresh-codex-catalog` 和 doctor 修复时触发）。未安装的框架不会被创建或改动。
+
 ### 图片生成
 
 - 官方 GPT：Codex 原生 `image_gen` extension 请求本地 `/v1/images/generations` 或 `/v1/images/edits` 后，Codex Mixin 使用 Codex OAuth 和 `chatgpt-account-id` 转发到官方图片后端。请求不会携带自定义 provider 的 API Key。
@@ -1031,6 +1033,8 @@ Uninstall reads the original provider from the config backup, or uses Codex's de
 To move from custom-only to official account mode, restore Codex from Apps first, sign in to Codex and open it once to generate the model cache, then choose `Official`. To move back, choose `Custom-only`; the current official login is backed up.
 
 Restart Codex Desktop after install or uninstall. Start a new session for Codex CLI.
+
+After providers or model selections change, Codex Mixin re-renders the managed model lists of every installed integration — Claude Code, DSH, OpenCode, and Pi — alongside the managed Codex catalog (triggered on gateway start, capability probing, `refresh-codex-catalog`, and doctor repair). Integrations that are not installed are never created or modified.
 
 ### Model Fusion
 

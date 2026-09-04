@@ -95,7 +95,15 @@ async fn apply_doctor_fix(fix: DoctorFix) -> anyhow::Result<String> {
         }
         DoctorFix::RefreshCodexCatalog => {
             refresh_default_managed_codex_catalog().await?;
-            Ok("managed model catalog refreshed".to_owned())
+            let refreshed_clients = crate::cli::sync_installed_client_models()?;
+            Ok(if refreshed_clients.is_empty() {
+                "managed model catalog refreshed".to_owned()
+            } else {
+                format!(
+                    "managed model catalog refreshed; client models refreshed: {}",
+                    refreshed_clients.join(", ")
+                )
+            })
         }
         #[cfg(target_os = "macos")]
         DoctorFix::RestartChatGptApp => restart_app_fix("ChatGPT").await,

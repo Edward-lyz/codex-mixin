@@ -34,20 +34,23 @@ mod update;
 use benchmark_proxy::{benchmark_start, benchmark_status};
 use claude::{
     claude_status, install_claude, sync_claude_hooks, sync_installed_claude_client_key,
-    uninstall_claude,
+    sync_installed_claude_models, uninstall_claude,
 };
 use codex::{
     InstallCodexOptions, install_codex, refresh_default_managed_codex_catalog,
     sync_installed_codex_client_key, uninstall_codex,
 };
 use doctor::doctor;
-use dsh::{install_dsh, sync_installed_dsh_client_key, uninstall_dsh};
+use dsh::{install_dsh, sync_installed_dsh_client_key, sync_installed_dsh_models, uninstall_dsh};
 use ducx_setup::ensure_managed_ducx;
 use fusion_config::{delete_fusion_profile, get_fusion_profile, set_fusion_profile};
 use maintenance::migrate_history;
 use metadata::{load_model_metadata_resolver, refresh_metadata};
-use opencode::{install_opencode, sync_installed_opencode_client_key, uninstall_opencode};
-use pi::{install_pi, sync_installed_pi_client_key, uninstall_pi};
+use opencode::{
+    install_opencode, sync_installed_opencode_client_key, sync_installed_opencode_models,
+    uninstall_opencode,
+};
+use pi::{install_pi, sync_installed_pi_client_key, sync_installed_pi_models, uninstall_pi};
 use providers::{
     AddProviderOptions, TestProviderOptions, UpdateProviderOptions, add_provider, discover_models,
     list_providers, probe_selected_models, remove_provider, reorder_providers, select_models,
@@ -88,6 +91,27 @@ fn rollback_new_client_key_on_error(
             )),
         },
     }
+}
+
+/// Re-render the managed model catalogs of every connected coding client
+/// (Claude Code, DSH, OpenCode, Pi) from the current provider configuration.
+/// Clients that are not installed stay untouched. Returns the display names
+/// of the clients whose configuration changed.
+pub(in crate::cli) fn sync_installed_client_models() -> anyhow::Result<Vec<&'static str>> {
+    let mut refreshed = Vec::new();
+    if sync_installed_claude_models()? {
+        refreshed.push("Claude Code");
+    }
+    if sync_installed_dsh_models()? {
+        refreshed.push("DSH");
+    }
+    if sync_installed_opencode_models()? {
+        refreshed.push("OpenCode");
+    }
+    if sync_installed_pi_models()? {
+        refreshed.push("Pi");
+    }
+    Ok(refreshed)
 }
 
 pub(super) async fn stage<T>(
@@ -643,7 +667,13 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             report_hook::sync_installation()
         }
         Command::ClaudeStatus { settings } => claude_status(settings),
-        Command::RefreshCodexCatalog => refresh_default_managed_codex_catalog().await,
+        Command::RefreshCodexCatalog => {
+            refresh_default_managed_codex_catalog().await?;
+            for client in sync_installed_client_models()? {
+                println!("{client} models refreshed; restart {client} to reload");
+            }
+            Ok(())
+        }
         Command::ProbeWebSearch { force, json } => probe_web_search(force, json).await,
     }
 }

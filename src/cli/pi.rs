@@ -42,7 +42,9 @@ pub(in crate::cli) fn install_pi(agent_dir: Option<PathBuf>) -> anyhow::Result<(
             &gateway_config,
             &official_models,
             reporting_enabled()?,
+            true,
         )
+        .map(|_| ())
     })();
     super::rollback_new_client_key_on_error(result, client, key_existed)
 }
@@ -78,7 +80,8 @@ fn install_pi_at(
     gateway_config: &GatewayConfig,
     official_models: &[ProviderModel],
     reporting_is_enabled: bool,
-) -> anyhow::Result<()> {
+    announce: bool,
+) -> anyhow::Result<bool> {
     let models = collect_pi_models(gateway_config, official_models);
     anyhow::ensure!(
         !models.is_empty(),
@@ -119,23 +122,25 @@ fn install_pi_at(
 
     let gateway_key = gateway_config.require_client_key(GatewayClient::Pi)?;
     write_owner_only(key_path, gateway_key.as_bytes())?;
-    write_json_config(models_path, &document)?;
+    let changed = write_json_config(models_path, &document)?;
     sync_pi_reporting_extension(extension_path, reporting_is_enabled)?;
 
-    println!("Pi models config updated: {}", models_path.display());
-    println!("Pi provider: {PI_PROVIDER_ID}");
-    println!("Pi API: {PI_API}");
-    println!("Pi base URL: http://{bind}/v1");
-    println!(
-        "Pi reporting hooks: {}",
-        if reporting_is_enabled {
-            "installed"
-        } else {
-            "disabled"
-        }
-    );
-    println!("reload required: run /reload in Pi or start a new Pi session");
-    Ok(())
+    if announce {
+        println!("Pi models config updated: {}", models_path.display());
+        println!("Pi provider: {PI_PROVIDER_ID}");
+        println!("Pi API: {PI_API}");
+        println!("Pi base URL: http://{bind}/v1");
+        println!(
+            "Pi reporting hooks: {}",
+            if reporting_is_enabled {
+                "installed"
+            } else {
+                "disabled"
+            }
+        );
+        println!("reload required: run /reload in Pi or start a new Pi session");
+    }
+    Ok(changed)
 }
 
 fn uninstall_pi_at(
@@ -312,18 +317,8 @@ fn shell_quote(value: &str) -> String {
 pub(in crate::cli) fn sync_installed_pi_client_key() -> anyhow::Result<()> {
     let agent_dir = resolve_pi_agent_dir(None)?;
     let models_path = agent_dir.join("models.json");
-    if !models_path.exists() {
-        return Ok(());
-    }
     let key_path = std::path::absolute(stored_config_path().with_file_name(PI_API_KEY_FILE))?;
-    let document = read_pi_models(&models_path)?;
-    let key_reference = pi_key_reference(&key_path);
-    if !document
-        .get("providers")
-        .and_then(Value::as_object)
-        .and_then(|providers| providers.get(PI_PROVIDER_ID))
-        .is_some_and(|provider| is_managed_provider(provider, &key_reference))
-    {
+    if !pi_provider_is_managed(&models_path, &key_path)? {
         return Ok(());
     }
     let client_key = codex_mixin::config::ensure_gateway_client_key(
@@ -337,22 +332,68 @@ pub(in crate::cli) fn sync_installed_pi_client_key() -> anyhow::Result<()> {
 pub(in crate::cli) fn sync_installed_pi_reporting() -> anyhow::Result<()> {
     let agent_dir = resolve_pi_agent_dir(None)?;
     let models_path = agent_dir.join("models.json");
-    if !models_path.exists() {
-        return Ok(());
-    }
     let key_path = std::path::absolute(stored_config_path().with_file_name(PI_API_KEY_FILE))?;
-    let document = read_pi_models(&models_path)?;
-    let key_reference = pi_key_reference(&key_path);
-    if !document
-        .get("providers")
-        .and_then(Value::as_object)
-        .and_then(|providers| providers.get(PI_PROVIDER_ID))
-        .is_some_and(|provider| is_managed_provider(provider, &key_reference))
-    {
+    if !pi_provider_is_managed(&models_path, &key_path)? {
         return Ok(());
     }
     let extension_path = agent_dir.join("extensions").join(PI_REPORT_EXTENSION_FILE);
     sync_pi_reporting_extension(&extension_path, reporting_enabled()?)
+}
+
+/// Re-render the managed Pi provider entry from the current provider
+/// configuration. A missing or unmanaged Pi agent dir is left untouched.
+pub(in crate::cli) fn sync_installed_pi_models() -> anyhow::Result<bool> {
+    let gateway_config = GatewayConfig::from_stored_config()?;
+    let official_models = selected_official_models(&gateway_config)?;
+    let bind = effective_gateway_bind(&gateway_config)?;
+    let agent_dir = resolve_pi_agent_dir(None)?;
+    let key_path = std::path::absolute(stored_config_path().with_file_name(PI_API_KEY_FILE))?;
+    sync_pi_models(
+        &agent_dir,
+        &key_path,
+        bind,
+        &gateway_config,
+        &official_models,
+        reporting_enabled()?,
+    )
+}
+
+fn sync_pi_models(
+    agent_dir: &Path,
+    key_path: &Path,
+    bind: SocketAddr,
+    gateway_config: &GatewayConfig,
+    official_models: &[ProviderModel],
+    reporting_is_enabled: bool,
+) -> anyhow::Result<bool> {
+    let models_path = agent_dir.join("models.json");
+    if !pi_provider_is_managed(&models_path, key_path)? {
+        return Ok(false);
+    }
+    let extension_path = agent_dir.join("extensions").join(PI_REPORT_EXTENSION_FILE);
+    install_pi_at(
+        &models_path,
+        key_path,
+        &extension_path,
+        bind,
+        gateway_config,
+        official_models,
+        reporting_is_enabled,
+        false,
+    )
+}
+
+fn pi_provider_is_managed(models_path: &Path, key_path: &Path) -> anyhow::Result<bool> {
+    if !models_path.exists() {
+        return Ok(false);
+    }
+    let document = read_pi_models(models_path)?;
+    let key_reference = pi_key_reference(key_path);
+    Ok(document
+        .get("providers")
+        .and_then(Value::as_object)
+        .and_then(|providers| providers.get(PI_PROVIDER_ID))
+        .is_some_and(|provider| is_managed_provider(provider, &key_reference)))
 }
 
 fn sync_pi_reporting_extension(path: &Path, enabled: bool) -> anyhow::Result<()> {
@@ -397,15 +438,15 @@ fn validate_pi_reporting_extension(path: &Path) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn write_json_config(path: &Path, document: &Value) -> anyhow::Result<()> {
+fn write_json_config(path: &Path, document: &Value) -> anyhow::Result<bool> {
     let existed = path.exists();
     let mut encoded = serde_json::to_vec_pretty(document)?;
     encoded.push(b'\n');
-    write_atomic_if_changed(path, &encoded)?;
+    let changed = write_atomic_if_changed(path, &encoded)?;
     if !existed {
         set_owner_only(path)?;
     }
-    Ok(())
+    Ok(changed)
 }
 
 const PI_REPORT_EXTENSION: &str = r#"// codex-mixin managed Pi DUCX reporting extension
@@ -568,6 +609,7 @@ mod tests {
             &gateway_config(),
             &[],
             true,
+            true,
         )
         .unwrap();
 
@@ -598,6 +640,50 @@ mod tests {
     }
 
     #[test]
+    fn sync_pi_models_refreshes_only_a_managed_agent_dir() {
+        let directory = tempfile::tempdir().unwrap();
+        let agent_dir = directory.path().to_owned();
+        let models_path = agent_dir.join("models.json");
+        let key_path = agent_dir.join("pi-api-key");
+        let config = gateway_config();
+
+        assert!(!sync_pi_models(&agent_dir, &key_path, config.bind, &config, &[], false).unwrap());
+        assert!(!models_path.exists());
+
+        let extension_path = agent_dir.join("extensions").join(PI_REPORT_EXTENSION_FILE);
+        install_pi_at(
+            &models_path,
+            &key_path,
+            &extension_path,
+            config.bind,
+            &config,
+            &[],
+            false,
+            true,
+        )
+        .unwrap();
+        assert!(!sync_pi_models(&agent_dir, &key_path, config.bind, &config, &[], false).unwrap());
+
+        let mut updated = gateway_config();
+        updated.providers[0]
+            .selected_models
+            .push("second-model".to_owned());
+        updated.providers[0].cached_models.push(ProviderModel {
+            id: "second-model".to_owned(),
+            ..ProviderModel::default()
+        });
+        assert!(sync_pi_models(&agent_dir, &key_path, config.bind, &updated, &[], false).unwrap());
+        let document: Value = serde_json::from_slice(&fs::read(&models_path).unwrap()).unwrap();
+        let model_ids: Vec<&str> = document["providers"][PI_PROVIDER_ID]["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .map(|model| model["id"].as_str().unwrap())
+            .collect();
+        assert!(model_ids.contains(&"second-model-custom"));
+    }
+
+    #[test]
     fn install_rejects_unmanaged_provider_and_extension_collisions() {
         let directory = tempfile::tempdir().unwrap();
         let models_path = directory.path().join("models.json");
@@ -620,6 +706,7 @@ mod tests {
             &gateway_config(),
             &[],
             true,
+            true,
         )
         .unwrap_err();
         assert!(error.to_string().contains("not managed by Codex Mixin"));
@@ -640,6 +727,7 @@ mod tests {
             gateway_config().bind,
             &gateway_config(),
             &[],
+            true,
             true,
         )
         .unwrap_err();

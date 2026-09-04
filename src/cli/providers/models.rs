@@ -189,6 +189,12 @@ pub(crate) async fn probe_selected_models(id: &str) -> anyhow::Result<()> {
     })?;
     super::super::progress_step("Refreshing Codex model catalog after capability probing");
     refresh_default_managed_codex_catalog().await?;
+    let refreshed_clients = crate::cli::sync_installed_client_models()?;
+    for client in &refreshed_clients {
+        super::super::progress_step(&format!(
+            "{client} models refreshed; restart {client} to reload"
+        ));
+    }
     super::super::progress_step(&format!(
         "Capability probing complete for {id}: {} models checked",
         summary.attempted

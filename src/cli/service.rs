@@ -117,6 +117,17 @@ pub(super) async fn start(
             "failed to refresh Codex model catalog"
         ),
     }
+    match crate::cli::sync_installed_client_models() {
+        Ok(refreshed) if !refreshed.is_empty() => tracing::info!(
+            clients = refreshed.join(", "),
+            "refreshed connected client model catalogs"
+        ),
+        Ok(_) => {}
+        Err(err) => tracing::warn!(
+            error = %format!("{err:#}"),
+            "failed to refresh connected client model catalogs"
+        ),
+    }
     let official_catalog_state = AppState::new(config.clone())?;
     let refresh_config = config.clone();
     let capabilities_config_path = config_path.clone();

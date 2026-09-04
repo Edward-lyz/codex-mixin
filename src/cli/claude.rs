@@ -96,7 +96,9 @@ pub(in crate::cli) fn install_claude(settings_path: Option<PathBuf>) -> anyhow::
             &gateway_config,
             &official_models,
             gateway_bind,
+            true,
         )
+        .map(|_| ())
     })();
     super::rollback_new_client_key_on_error(result, client, key_existed)
 }
@@ -106,7 +108,14 @@ pub(in crate::cli) fn install_claude_with_config(
     settings_path: Option<PathBuf>,
     gateway_config: &GatewayConfig,
 ) -> anyhow::Result<()> {
-    install_claude_with_models(settings_path, gateway_config, &[], gateway_config.bind)
+    install_claude_with_models(
+        settings_path,
+        gateway_config,
+        &[],
+        gateway_config.bind,
+        true,
+    )
+    .map(|_| ())
 }
 
 fn install_claude_with_models(
@@ -114,7 +123,8 @@ fn install_claude_with_models(
     gateway_config: &GatewayConfig,
     official_models: &[ProviderModel],
     gateway_bind: std::net::SocketAddr,
-) -> anyhow::Result<()> {
+    announce: bool,
+) -> anyhow::Result<bool> {
     let settings_path = resolve_claude_settings_path(settings_path)?;
     let (model_picker, default_model) = claude_model_picker(gateway_config, official_models)?;
     let managed_model_override_keys = Vec::<String>::new();
@@ -326,14 +336,47 @@ fn install_claude_with_models(
             "previous_model_overrides": previous_model_overrides
         }),
     );
-    write_atomic_if_changed(&settings_path, &serde_json::to_vec_pretty(&settings)?)?;
-    println!("claude code settings updated: {}", settings_path.display());
-    println!("ANTHROPIC_BASE_URL: {base_url}");
-    println!("claude code default model: {default_model}");
-    println!("claude code gateway auth: configured");
-    println!("claude code nonessential traffic: disabled");
-    println!("reload required: restart Claude Code or start a new session");
-    Ok(())
+    let changed = write_atomic_if_changed(&settings_path, &serde_json::to_vec_pretty(&settings)?)?;
+    if announce {
+        println!("claude code settings updated: {}", settings_path.display());
+        println!("ANTHROPIC_BASE_URL: {base_url}");
+        println!("claude code default model: {default_model}");
+        println!("claude code gateway auth: configured");
+        println!("claude code nonessential traffic: disabled");
+        println!("reload required: restart Claude Code or start a new session");
+    }
+    Ok(changed)
+}
+
+/// Re-render the managed Claude Code settings from the current provider
+/// configuration. A missing or unmanaged settings file is left untouched.
+pub(in crate::cli) fn sync_installed_claude_models() -> anyhow::Result<bool> {
+    let gateway_config = GatewayConfig::from_stored_config()?;
+    let official_models = selected_official_models(&gateway_config)?;
+    let gateway_bind = effective_gateway_bind(&gateway_config)?;
+    sync_claude_models(None, &gateway_config, &official_models, gateway_bind)
+}
+
+pub(in crate::cli) fn sync_claude_models(
+    settings_path: Option<PathBuf>,
+    gateway_config: &GatewayConfig,
+    official_models: &[ProviderModel],
+    gateway_bind: std::net::SocketAddr,
+) -> anyhow::Result<bool> {
+    let settings_path = resolve_claude_settings_path(settings_path)?;
+    if !settings_path.exists() {
+        return Ok(false);
+    }
+    if !fs::read_to_string(&settings_path)?.contains(MANAGED_CLAUDE_MARKER) {
+        return Ok(false);
+    }
+    install_claude_with_models(
+        Some(settings_path),
+        gateway_config,
+        official_models,
+        gateway_bind,
+        false,
+    )
 }
 
 fn claude_model_picker(

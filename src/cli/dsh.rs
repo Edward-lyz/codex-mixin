@@ -40,7 +40,7 @@ pub(in crate::cli) fn install_dsh(dsh_home: Option<PathBuf>) -> anyhow::Result<(
         let gateway_config = GatewayConfig::from_stored_config()?;
         let official_models = selected_official_models(&gateway_config)?;
         let bind = effective_gateway_bind(&gateway_config)?;
-        install_dsh_with_models(dsh_home, &gateway_config, &official_models, bind)
+        install_dsh_with_models(dsh_home, &gateway_config, &official_models, bind, true).map(|_| ())
     })();
     super::rollback_new_client_key_on_error(result, client, key_existed)
 }
@@ -50,7 +50,7 @@ pub(in crate::cli) fn install_dsh_with_config(
     dsh_home: Option<PathBuf>,
     gateway_config: &GatewayConfig,
 ) -> anyhow::Result<()> {
-    install_dsh_with_models(dsh_home, gateway_config, &[], gateway_config.bind)
+    install_dsh_with_models(dsh_home, gateway_config, &[], gateway_config.bind, true).map(|_| ())
 }
 
 fn install_dsh_with_models(
@@ -58,7 +58,8 @@ fn install_dsh_with_models(
     gateway_config: &GatewayConfig,
     official_models: &[codex_mixin::provider::ProviderModel],
     bind: std::net::SocketAddr,
-) -> anyhow::Result<()> {
+    announce: bool,
+) -> anyhow::Result<bool> {
     let dsh_home = resolve_dsh_home(dsh_home)?;
     ensure_owner_only_dir(&dsh_home)?;
     let models = collect_dsh_models(gateway_config, official_models);
@@ -95,14 +96,16 @@ fn install_dsh_with_models(
         Value::String(DSH_API_KEY_ENV.to_owned()),
         Value::String(credential_value),
     );
-    write_yaml_owner_only(&credentials_path, &credentials)?;
-    write_yaml_owner_only(&settings_path, &settings)?;
+    let credentials_changed = write_yaml_owner_only(&credentials_path, &credentials)?;
+    let settings_changed = write_yaml_owner_only(&settings_path, &settings)?;
 
-    println!("DSH settings updated: {}", settings_path.display());
-    println!("DSH provider: {DSH_PROVIDER_ID}");
-    println!("DSH base URL: http://{bind}/v1");
-    println!("reload required: restart DSH or start a new DSH session");
-    Ok(())
+    if announce {
+        println!("DSH settings updated: {}", settings_path.display());
+        println!("DSH provider: {DSH_PROVIDER_ID}");
+        println!("DSH base URL: http://{bind}/v1");
+        println!("reload required: restart DSH or start a new DSH session");
+    }
+    Ok(credentials_changed || settings_changed)
 }
 
 pub(in crate::cli) fn uninstall_dsh(dsh_home: Option<PathBuf>) -> anyhow::Result<()> {
@@ -314,23 +317,7 @@ fn build_dsh_provider_profile(bind: &SocketAddr, models: Vec<Value>) -> Value {
 
 pub(in crate::cli) fn sync_installed_dsh_client_key() -> anyhow::Result<()> {
     let dsh_home = resolve_dsh_home(None)?;
-    let settings_path = dsh_home.join("settings.yaml");
-    if !settings_path.exists() {
-        return Ok(());
-    }
-    let raw = fs::read_to_string(&settings_path)?;
-    if !raw.contains("displayName: Codex Mixin") {
-        return Ok(());
-    }
-    let settings = read_yaml_document(&settings_path, "DSH settings")?;
-    if settings
-        .get("llm-pi-ai")
-        .and_then(|value| value.get("providers"))
-        .and_then(|value| value.get(DSH_PROVIDER_ID))
-        .and_then(|provider| provider.get("displayName"))
-        .and_then(Value::as_str)
-        != Some("Codex Mixin")
-    {
+    if !dsh_provider_is_managed(&dsh_home)? {
         return Ok(());
     }
     let client_key = codex_mixin::config::ensure_gateway_client_key(
@@ -345,7 +332,49 @@ pub(in crate::cli) fn sync_installed_dsh_client_key() -> anyhow::Result<()> {
             Value::String(DSH_API_KEY_ENV.to_owned()),
             Value::String(client_key),
         );
-    write_yaml_owner_only(&credentials_path, &credentials)
+    write_yaml_owner_only(&credentials_path, &credentials)?;
+    Ok(())
+}
+
+/// Re-render the managed DSH provider profile from the current provider
+/// configuration. A missing or unmanaged DSH home is left untouched.
+pub(in crate::cli) fn sync_installed_dsh_models() -> anyhow::Result<bool> {
+    let gateway_config = GatewayConfig::from_stored_config()?;
+    let official_models = selected_official_models(&gateway_config)?;
+    let bind = effective_gateway_bind(&gateway_config)?;
+    sync_dsh_models(None, &gateway_config, &official_models, bind)
+}
+
+fn sync_dsh_models(
+    dsh_home: Option<PathBuf>,
+    gateway_config: &GatewayConfig,
+    official_models: &[codex_mixin::provider::ProviderModel],
+    bind: std::net::SocketAddr,
+) -> anyhow::Result<bool> {
+    let dsh_home = resolve_dsh_home(dsh_home)?;
+    if !dsh_provider_is_managed(&dsh_home)? {
+        return Ok(false);
+    }
+    install_dsh_with_models(Some(dsh_home), gateway_config, official_models, bind, false)
+}
+
+fn dsh_provider_is_managed(dsh_home: &Path) -> anyhow::Result<bool> {
+    let settings_path = dsh_home.join("settings.yaml");
+    if !settings_path.exists() {
+        return Ok(false);
+    }
+    let raw = fs::read_to_string(&settings_path)?;
+    if !raw.contains("displayName: Codex Mixin") {
+        return Ok(false);
+    }
+    let settings = read_yaml_document(&settings_path, "DSH settings")?;
+    Ok(settings
+        .get("llm-pi-ai")
+        .and_then(|value| value.get("providers"))
+        .and_then(|value| value.get(DSH_PROVIDER_ID))
+        .and_then(|provider| provider.get("displayName"))
+        .and_then(Value::as_str)
+        == Some("Codex Mixin"))
 }
 
 fn read_yaml_document(path: &Path, label: &str) -> anyhow::Result<Value> {
@@ -360,11 +389,12 @@ fn read_yaml_document(path: &Path, label: &str) -> anyhow::Result<Value> {
     serde_yaml::from_str(&raw).with_context(|| format!("parse {label} {}", path.display()))
 }
 
-fn write_yaml_owner_only(path: &Path, value: &Value) -> anyhow::Result<()> {
+fn write_yaml_owner_only(path: &Path, value: &Value) -> anyhow::Result<bool> {
     let contents = serde_yaml::to_string(value)
         .with_context(|| format!("serialize DSH YAML {}", path.display()))?;
-    write_atomic_if_changed(path, contents.as_bytes())?;
-    set_owner_only(path)
+    let changed = write_atomic_if_changed(path, contents.as_bytes())?;
+    set_owner_only(path)?;
+    Ok(changed)
 }
 
 #[cfg(test)]
@@ -531,6 +561,31 @@ mod tests {
             credentials[DSH_API_KEY_ENV].as_str().unwrap(),
             "dsh-client-key"
         );
+    }
+
+    #[test]
+    fn sync_dsh_models_refreshes_only_a_managed_home() {
+        let directory = tempfile::tempdir().unwrap();
+        let home = directory.path().join("dsh");
+        let config = gateway_config(Some("gateway-secret"), false, false);
+
+        assert!(!sync_dsh_models(Some(home.clone()), &config, &[], config.bind).unwrap());
+        assert!(!home.join("settings.yaml").exists());
+
+        install_dsh_with_models(Some(home.clone()), &config, &[], config.bind, true).unwrap();
+        assert!(!sync_dsh_models(Some(home.clone()), &config, &[], config.bind).unwrap());
+
+        let mut updated = gateway_config(Some("gateway-secret"), false, false);
+        updated.providers[0]
+            .selected_models
+            .push("second-model".to_owned());
+        updated.providers[0].cached_models.push(ProviderModel {
+            id: "second-model".to_owned(),
+            ..ProviderModel::default()
+        });
+        assert!(sync_dsh_models(Some(home.clone()), &updated, &[], updated.bind).unwrap());
+        let raw = fs::read_to_string(home.join("settings.yaml")).unwrap();
+        assert!(raw.contains("second-model-custom"));
     }
 
     #[test]
