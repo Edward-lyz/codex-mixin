@@ -88,13 +88,14 @@ private struct AboutView: View {
                         .font(.caption.monospaced().weight(.medium))
                     Text("Build \(model.info.build)")
                         .font(.caption2.monospaced())
-                        .foregroundStyle(.tertiary)
+                        .foregroundStyle(.secondary)
                 }
                 .foregroundStyle(.secondary)
             }
             .frame(width: 350)
             .frame(maxHeight: .infinity)
-            .background(.ultraThinMaterial)
+            .background(Color(nsColor: .textBackgroundColor))
+            .overlay(Rectangle().stroke(.separator))
 
             VStack(alignment: .leading, spacing: 10) {
                 Text("Codex Mixin")
@@ -164,22 +165,19 @@ final class AboutWindowController: NSWindowController, NSWindowDelegate {
         )
         let window = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 820, height: 460),
-            styleMask: [.titled, .closable, .fullSizeContentView],
+            styleMask: [.titled, .closable],
             backing: .buffered,
             defer: false
         )
         window.title = L10n.About.title
         window.titleVisibility = .hidden
-        window.titlebarAppearsTransparent = true
+        configureOpaqueWindow(window)
         window.isMovableByWindowBackground = true
         window.center()
         super.init(window: window)
         window.delegate = self
         window.contentViewController = NSHostingController(rootView: AboutView(model: model))
-        window.setFrame(
-            NSRect(origin: window.frame.origin, size: NSSize(width: 820, height: 460)),
-            display: false
-        )
+        window.setContentSize(NSSize(width: 820, height: 460))
         configurePersistentWindow(window)
     }
 

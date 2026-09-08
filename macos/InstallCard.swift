@@ -573,11 +573,12 @@ struct InstallCardExperienceView: View {
                 } label: {
                     Label(AppLocalization.string("installCard.share"), systemImage: "square.and.arrow.up")
                 }
-                .buttonStyle(.borderedProminent)
+                .liquidGlassProminentButton()
             }
         }
         .padding(28)
         .frame(minWidth: 720, minHeight: 520)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 }
 
@@ -668,6 +669,7 @@ final class InstallCardWindowController: NSWindowController, NSWindowDelegate {
         )
         window.title = AppLocalization.string("installCard.myMixinCard")
         window.minSize = NSSize(width: 720, height: 560)
+        configureOpaqueWindow(window)
         window.center()
 
         super.init(window: window)

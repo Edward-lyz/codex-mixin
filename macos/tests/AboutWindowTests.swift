@@ -60,7 +60,10 @@ struct AboutWindowTests {
 
         controller.model.openCard()
         precondition(shownCardWallpaperOffset == 2)
-        precondition(window.frame.size == NSSize(width: 820, height: 460))
+        precondition(
+            window.contentLayoutRect.size == NSSize(width: 820, height: 460),
+            "About window content must preserve the designed 820x460 layout"
+        )
         print("About window layout: passed")
     }
 

@@ -96,7 +96,7 @@ private struct InstallCodexView: View {
                     }
                 }
                 .keyboardShortcut(.defaultAction)
-                .buttonStyle(.borderedProminent)
+                .liquidGlassProminentButton()
                 .disabled(selectedMode == nil)
             }
             .padding(20)
@@ -141,6 +141,7 @@ func runInstallCodexPanel() -> CodexInstallMode? {
     )
     panel.title = "安装到 Codex"
     panel.level = .normal
+    configureOpaqueWindow(panel)
     panel.center()
     configurePersistentWindow(panel)
 

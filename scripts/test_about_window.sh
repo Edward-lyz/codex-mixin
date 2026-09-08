@@ -12,6 +12,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/Generated/L10n.swift" \
   "$ROOT_DIR/macos/Localization.swift" \
   "$ROOT_DIR/macos/ApplicationMenuSupport.swift" \
+  "$ROOT_DIR/macos/LiquidGlassSupport.swift" \
   -target "$SWIFT_ARCH-apple-macosx13.1" \
   "$ROOT_DIR/macos/InstallCard.swift" \
   "$ROOT_DIR/macos/AboutWindow.swift" \

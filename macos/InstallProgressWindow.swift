@@ -183,6 +183,7 @@ final class InstallProgressWindowController: NSWindowController, NSWindowDelegat
             defer: false
         )
         window.title = title
+        configureOpaqueWindow(window)
         super.init(window: window)
         window.delegate = self
         window.contentViewController = NSHostingController(rootView: InstallProgressView(model: model))

@@ -122,7 +122,14 @@ struct ProviderSettingsRootView: View {
                     .buttonStyle(.borderless)
                     .controlSize(.small)
                     .foregroundStyle(.secondary)
-                    .liquidGlass(in: RoundedRectangle(cornerRadius: 8, style: .continuous))
+                    .background(
+                        Color(nsColor: .controlBackgroundColor),
+                        in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+                    )
+                    .overlay {
+                        RoundedRectangle(cornerRadius: 8, style: .continuous)
+                            .stroke(.separator)
+                    }
                 }
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
@@ -159,9 +166,8 @@ struct ProviderSettingsRootView: View {
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .padding(.horizontal, 16)
                 .padding(.vertical, 10)
-                .background(.ultraThinMaterial)
             }
-            .background(.regularMaterial)
+            .background(Color(nsColor: .windowBackgroundColor))
             .clipShape(Rectangle())
             .navigationSplitViewColumnWidth(min: 300, ideal: 340, max: 400)
         } detail: {
@@ -208,7 +214,7 @@ struct ProviderSettingsRootView: View {
                     )
                 }
             }
-            .liquidGlassWindowBackground()
+            .background(Color(nsColor: .windowBackgroundColor))
         }
         .navigationTitle("供应商设置")
     }
@@ -242,7 +248,7 @@ private struct ProviderEmptyState: View {
             .multilineTextAlignment(.center)
             if isEmpty {
                 Button("新增 Provider", action: onAdd)
-                    .buttonStyle(.borderedProminent)
+                    .liquidGlassProminentButton()
                     .controlSize(.large)
                     .keyboardShortcut(.defaultAction)
             }
@@ -489,7 +495,7 @@ private struct ProviderActionBar: View {
             }
             .padding(.horizontal, 20)
             .padding(.vertical, 10)
-            .background(.bar)
+            .background(Color(nsColor: .windowBackgroundColor))
         }
     }
 }

@@ -12,6 +12,7 @@ LOCALIZATION_BUNDLE="$($ROOT_DIR/scripts/prepare_test_localization.sh)"
 xcrun swiftc \
   "$ROOT_DIR/macos/Generated/L10n.swift" \
   "$ROOT_DIR/macos/Localization.swift" \
+  "$ROOT_DIR/macos/LiquidGlassSupport.swift" \
   "$ROOT_DIR/macos/QuotaSupport.swift" \
   "$ROOT_DIR/macos/ProviderIconCache.swift" \
   "$ROOT_DIR/macos/ServiceMenuViews.swift" \

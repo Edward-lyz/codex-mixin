@@ -362,7 +362,7 @@ private struct ProviderUsageDashboardContent: View {
             if group.models.isEmpty {
             Text(model.tokenStatusTitle)
                 .font(.caption2)
-                .foregroundStyle(.tertiary)
+                .foregroundStyle(.secondary)
                 .frame(maxWidth: .infinity, alignment: .center)
                 .help(model.tokenStatusDetail ?? "")
             } else {
@@ -380,6 +380,7 @@ private struct ProviderUsageDashboardContent: View {
                                 )
                             }
                             .buttonStyle(.plain)
+                            .help(usage.modelID)
                             .accessibilityIdentifier("token-model-\(usage.modelID)")
                         }
                     }
@@ -506,16 +507,19 @@ private struct TokenModelDetail: View {
         }
         .padding(.horizontal, 10)
         .padding(.vertical, 8)
-        .background(.quaternary.opacity(0.35), in: RoundedRectangle(cornerRadius: 8))
+        .background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+        )
         .overlay {
-            RoundedRectangle(cornerRadius: 8)
-                .stroke(.separator.opacity(0.35))
+            RoundedRectangle(cornerRadius: 8, style: .continuous)
+                .stroke(.separator)
         }
     }
 
     private func metric(_ title: String, _ value: String) -> some View {
         VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.system(size: 8)).foregroundStyle(.tertiary)
+            Text(title).font(.system(size: 8)).foregroundStyle(.secondary)
             Text(value).font(.system(size: 10, weight: .semibold).monospacedDigit())
                 .lineLimit(1)
                 .frame(minWidth: 58, alignment: .leading)

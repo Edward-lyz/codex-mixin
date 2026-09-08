@@ -299,7 +299,7 @@ private struct FusionSettingsView: View {
                     .keyboardShortcut(.cancelAction)
                 Button("保存并重启网关", action: model.save)
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
+                    .liquidGlassProminentButton()
                     .disabled(!model.canSave)
             }
             .padding(20)
@@ -432,6 +432,7 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
         )
         window.title = "Fusion 设置"
         window.minSize = NSSize(width: 700, height: 580)
+        configureOpaqueWindow(window)
         window.center()
         super.init(window: window)
         window.delegate = self

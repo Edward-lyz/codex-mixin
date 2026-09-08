@@ -226,9 +226,11 @@ private struct AddProviderFormView: View {
                     .keyboardShortcut(.cancelAction)
                 Button(AppLocalization.string("settings.add"), action: submit)
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
+                    .liquidGlassProminentButton()
             }
             .padding(20)
+            .background(Color(nsColor: .windowBackgroundColor))
+            .overlay(Rectangle().stroke(.separator))
         }
         .frame(minWidth: 620, minHeight: 500)
         .background(Color(nsColor: .windowBackgroundColor))
@@ -260,6 +262,7 @@ func runAddProviderSheet(
         defer: false
     )
     sheet.title = AppLocalization.string("settings.addProvider")
+    configureOpaqueWindow(sheet)
     configurePersistentWindow(sheet)
 
     var submittedValues: AddProviderFormValues?

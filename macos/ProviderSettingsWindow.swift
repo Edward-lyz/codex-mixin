@@ -45,9 +45,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         window.title = "供应商设置"
         window.minSize = NSSize(width: 820, height: 580)
         window.toolbarStyle = .unified
-        if #available(macOS 26.0, *) {
-            window.titlebarAppearsTransparent = true
-        }
+        configureOpaqueWindow(window)
         window.center()
         super.init(window: window)
         window.delegate = self

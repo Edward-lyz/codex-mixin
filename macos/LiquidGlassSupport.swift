@@ -1,51 +1,40 @@
+import AppKit
 import SwiftUI
 
 extension View {
-    /// Applies the system Liquid Glass material to a card or control.
-    @ViewBuilder
-    func liquidGlass<S: Shape>(in shape: S, interactive: Bool = false) -> some View {
-#if compiler(>=6.2)
-        if #available(macOS 26.0, *) {
-            glassEffect(
-                interactive ? .regular.interactive() : .regular,
-                in: shape
-            )
-        } else {
-            background(.ultraThinMaterial, in: shape)
-                .overlay(shape.stroke(.separator.opacity(0.45), lineWidth: 0.5))
-        }
-#else
-        background(.ultraThinMaterial, in: shape)
-            .overlay(shape.stroke(.separator.opacity(0.45), lineWidth: 0.5))
-#endif
-    }
-
-    /// Extends a window's background underneath the transparent title bar.
-    @ViewBuilder
-    func liquidGlassWindowBackground() -> some View {
-#if compiler(>=6.2)
-        if #available(macOS 26.0, *) {
-            background(.ultraThinMaterial, ignoresSafeAreaEdges: .all)
-                .backgroundExtensionEffect()
-        } else {
-            background(.ultraThinMaterial, ignoresSafeAreaEdges: .all)
-        }
-#else
-        background(.ultraThinMaterial, ignoresSafeAreaEdges: .all)
-#endif
-    }
-
-    /// Keeps the primary action visually prominent before Liquid Glass is available.
-    @ViewBuilder
+    /// Keeps the primary action visually prominent, falling back to
+    /// `.borderedProminent` when Reduce Transparency is enabled.
     func liquidGlassProminentButton() -> some View {
+        modifier(LiquidGlassProminentButtonModifier())
+    }
+}
+
+private struct LiquidGlassProminentButtonModifier: ViewModifier {
+    @Environment(\.accessibilityReduceTransparency) private var reduceTransparency
+
+    @ViewBuilder
+    func body(content: Content) -> some View {
 #if compiler(>=6.2)
         if #available(macOS 26.0, *) {
-            buttonStyle(.glassProminent)
+            if reduceTransparency {
+                content.buttonStyle(.borderedProminent)
+            } else {
+                content.buttonStyle(.glassProminent)
+            }
         } else {
-            buttonStyle(.borderedProminent)
+            content.buttonStyle(.borderedProminent)
         }
 #else
-        buttonStyle(.borderedProminent)
+        content.buttonStyle(.borderedProminent)
 #endif
     }
+}
+
+/// Keeps a window fully opaque on the standard semantic background with a
+/// normal title bar instead of a transparent Liquid Glass one.
+func configureOpaqueWindow(_ window: NSWindow) {
+    window.isOpaque = true
+    window.backgroundColor = .windowBackgroundColor
+    window.titlebarAppearsTransparent = false
+    window.titlebarSeparatorStyle = .automatic
 }

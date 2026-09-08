@@ -347,6 +347,7 @@ struct MenuViewsLayoutTests {
         }
         precondition(hostedServiceView.model.detail == providerIssue)
         precondition(hostedServiceView.model.statusDetail == providerIssue)
+        writeDashboardSnapshots(dashboard)
         print("Provider dashboard layout and switching: passed")
     }
 
@@ -356,6 +357,59 @@ struct MenuViewsLayoutTests {
             if let toggle = try? requireSwitch(in: subview) { return toggle }
         }
         throw GatewayError.command("missing gateway toggle")
+    }
+}
+
+@MainActor
+private func writeDashboardSnapshots(_ dashboard: ProviderUsageDashboardView) {
+    guard let directory = ProcessInfo.processInfo.environment["MENU_DASHBOARD_SNAPSHOT_DIR"] else {
+        return
+    }
+    let outputURL = URL(fileURLWithPath: directory, isDirectory: true)
+    do {
+        try FileManager.default.createDirectory(at: outputURL, withIntermediateDirectories: true)
+    } catch {
+        preconditionFailure("menu snapshot directory could not be created: \(error)")
+    }
+
+    let window = NSWindow(
+        contentRect: NSRect(origin: .zero, size: NSSize(width: 336, height: dashboard.frame.height)),
+        styleMask: [.borderless],
+        backing: .buffered,
+        defer: false
+    )
+    window.contentView = dashboard
+    window.isOpaque = true
+    window.backgroundColor = .windowBackgroundColor
+    window.orderFrontRegardless()
+    dashboard.model.selectProvider("baidu-oneapi")
+
+    for (name, appearanceName) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
+        window.appearance = NSAppearance(named: appearanceName)
+        dashboard.model.selectedModelID = nil
+        dashboard.layoutSubtreeIfNeeded()
+        writeViewSnapshot(dashboard, to: outputURL.appendingPathComponent("menu-\(name)-collapsed.png"))
+
+        dashboard.model.selectModel("gpt-5.6-sol")
+        dashboard.layoutSubtreeIfNeeded()
+        writeViewSnapshot(dashboard, to: outputURL.appendingPathComponent("menu-\(name)-detail.png"))
+        dashboard.model.selectedModelID = nil
+    }
+    window.orderOut(nil)
+}
+
+private func writeViewSnapshot(_ view: NSView, to url: URL) {
+    guard let bitmap = view.bitmapImageRepForCachingDisplay(in: view.bounds) else {
+        preconditionFailure("menu snapshot bitmap must be available")
+    }
+    view.cacheDisplay(in: view.bounds, to: bitmap)
+    guard let data = bitmap.representation(using: .png, properties: [:]) else {
+        preconditionFailure("menu snapshot must encode as PNG")
+    }
+    do {
+        try data.write(to: url)
+    } catch {
+        preconditionFailure("menu snapshot could not be written: \(error)")
     }
 }
 

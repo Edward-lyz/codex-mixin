@@ -266,6 +266,7 @@ func showDiagnosticReport(title: String, report: String) {
     )
     window.title = localizedPrompt(title)
     window.minSize = NSSize(width: 620, height: 420)
+    configureOpaqueWindow(window)
     window.center()
     configurePersistentWindow(window)
     let close = { NSApp.stopModal(withCode: .cancel) }
@@ -322,7 +323,7 @@ private struct DiagnosticReportView: View {
                 Button(AppLocalization.string("appSupport.copyReport"), action: copy)
                 Button(AppLocalization.string("appSupport.close"), action: close)
                     .keyboardShortcut(.defaultAction)
-                    .buttonStyle(.borderedProminent)
+                    .liquidGlassProminentButton()
             }
         }
         .padding(24)

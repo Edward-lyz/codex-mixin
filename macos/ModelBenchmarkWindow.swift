@@ -675,7 +675,7 @@ struct ModelBenchmarkRootView: View {
                 Label("测速", systemImage: "speedometer")
             }
             .keyboardShortcut(.defaultAction)
-            .buttonStyle(.borderedProminent)
+            .liquidGlassProminentButton()
             .disabled(
                 model.isBusy || model.dirty || model.selectedVisibleCount == 0
                     || model.selectedProvider?.kind != .configured
@@ -714,7 +714,7 @@ struct ModelBenchmarkRootView: View {
                 } label: {
                     Label("保存模型选择", systemImage: "square.and.arrow.down")
                 }
-                .buttonStyle(.borderedProminent)
+                .liquidGlassProminentButton()
                 .disabled(!model.dirty || model.isBusy)
             }
 
@@ -1002,9 +1002,7 @@ final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate
         window.title = "模型选择与测速"
         window.minSize = NSSize(width: 920, height: 520)
         window.toolbarStyle = .unified
-        if #available(macOS 26.0, *) {
-            window.titlebarAppearsTransparent = true
-        }
+        configureOpaqueWindow(window)
         window.center()
         super.init(window: window)
         window.delegate = self
