@@ -122,6 +122,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/ProviderUsageDashboardView.swift" \
   "$ROOT_DIR/macos/MenuVisualSupport.swift" \
   "$ROOT_DIR/macos/LiquidGlassSupport.swift" \
+  "$ROOT_DIR/macos/ModelChangeNotification.swift" \
   "$ROOT_DIR/macos/ProviderSettingsView.swift" \
   "$ROOT_DIR/macos/AboutWindow.swift" \
   "$ROOT_DIR/macos/InstallCard.swift" \
@@ -139,6 +140,7 @@ xcrun swiftc \
   -framework CryptoKit \
   -framework Sparkle \
   -framework SwiftUI \
+  -framework UserNotifications \
   -o "$MACOS_DIR/CodexMixinMenu"
 chmod +x "$MACOS_DIR/CodexMixinMenu"
 

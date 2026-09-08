@@ -38,21 +38,26 @@ pub(super) const CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(
 pub(super) const OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 pub(super) const PROVIDER_MODEL_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 
+struct ProviderModelRefreshTarget {
+    id: String,
+    display_name: String,
+}
+
 async fn sync_all_provider_models_once() -> bool {
-    let Some(provider_ids) = provider_ids_or_log() else {
+    let Some(providers) = providers_or_log() else {
         return false;
     };
     let mut changed = false;
-    for provider_id in provider_ids {
-        changed |= sync_provider_models(provider_id).await;
+    for provider in providers {
+        changed |= sync_provider_models(provider).await;
     }
     refresh_client_models_after_change(changed).await;
     changed
 }
 
-fn provider_ids_or_log() -> Option<Vec<String>> {
-    match dynamic_provider_ids() {
-        Ok(provider_ids) => Some(provider_ids),
+fn providers_or_log() -> Option<Vec<ProviderModelRefreshTarget>> {
+    match dynamic_providers() {
+        Ok(providers) => Some(providers),
         Err(error) => {
             tracing::warn!(error = %format!("{error:#}"), "failed to load providers for model sync");
             None
@@ -72,25 +77,39 @@ async fn refresh_client_models_after_change(changed: bool) {
     }
 }
 
-fn dynamic_provider_ids() -> anyhow::Result<Vec<String>> {
-    let mut provider_ids: Vec<String> = load_stored_config()?
+fn dynamic_providers() -> anyhow::Result<Vec<ProviderModelRefreshTarget>> {
+    let mut providers: Vec<ProviderModelRefreshTarget> = load_stored_config()?
         .map(|stored| {
             stored
                 .providers
                 .into_iter()
                 .filter(|provider| !matches!(provider.model_source, ProviderModelSource::Static))
-                .map(|provider| provider.id)
+                .map(|provider| ProviderModelRefreshTarget {
+                    display_name: if provider.display_name.trim().is_empty() {
+                        provider.id.clone()
+                    } else {
+                        provider.display_name
+                    },
+                    id: provider.id,
+                })
                 .collect()
         })
         .unwrap_or_default();
     let config = GatewayConfig::from_stored_config()?;
     if config.accept_codex_oauth && config.codex_auth_path.is_file() {
-        provider_ids.insert(0, super::official_models::OFFICIAL_PROVIDER_ID.to_owned());
+        providers.insert(
+            0,
+            ProviderModelRefreshTarget {
+                id: super::official_models::OFFICIAL_PROVIDER_ID.to_owned(),
+                display_name: "OpenAI".to_owned(),
+            },
+        );
     }
-    Ok(provider_ids)
+    Ok(providers)
 }
 
-async fn sync_provider_models(provider_id: String) -> bool {
+async fn sync_provider_models(provider: ProviderModelRefreshTarget) -> bool {
+    let provider_id = provider.id;
     let changes = match super::providers::discover_models_with_output(&provider_id, true).await {
         Ok(changes) => changes,
         Err(error) => {
@@ -115,7 +134,7 @@ async fn sync_provider_models(provider_id: String) -> bool {
     if changes.added.is_empty() && changes.removed.is_empty() {
         return false;
     }
-    notify_model_changes(provider_id, changes).await;
+    notify_model_changes(provider_id, provider.display_name, changes).await;
     true
 }
 
@@ -141,29 +160,66 @@ async fn probe_auto_selected_models(
 #[cfg(target_os = "macos")]
 async fn notify_model_changes(
     provider_id: String,
+    provider_display_name: String,
     changes: codex_mixin::provider::ModelDiscoveryChanges,
 ) {
-    let Some(message) = model_notification_message(&changes) else {
+    let Some(content) = model_notification_content(&provider_display_name, &changes) else {
         return;
     };
-    let title = format!("Codex Mixin - {provider_id}");
+    let notification_provider_id = provider_id.clone();
     let notification = tokio::task::spawn_blocking(move || {
-        std::process::Command::new("/usr/bin/osascript")
-            .args([
-                "-e",
-                "on run argv\n display notification (item 2 of argv) with title (item 1 of argv)\nend run",
-                "--",
-                &title,
-                &message,
-            ])
-            .output()
+        deliver_model_notification(&notification_provider_id, &content)
     })
     .await;
+    log_model_notification_result(&provider_id, notification);
+}
+
+#[cfg(target_os = "macos")]
+fn deliver_model_notification(
+    provider_id: &str,
+    content: &ModelNotificationContent,
+) -> io::Result<std::process::Output> {
+    let helper = std::env::current_exe()
+        .ok()
+        .and_then(|executable| notification_helper_for(&executable))
+        .filter(|path| path.is_file());
+    if let Some(helper) = helper {
+        return std::process::Command::new(helper)
+            .args([
+                "--deliver-model-notification",
+                &content.title,
+                &content.subtitle,
+                &content.body,
+            ])
+            .output();
+    }
+    tracing::warn!(
+        provider_id,
+        "bundled notification helper unavailable; using generic macOS notification"
+    );
+    std::process::Command::new("/usr/bin/osascript")
+        .args([
+            "-e",
+            "on run argv\n display notification (item 3 of argv) with title (item 1 of argv) subtitle (item 2 of argv)\nend run",
+            "--",
+            &content.title,
+            &content.subtitle,
+            &content.body,
+        ])
+        .output()
+}
+
+#[cfg(target_os = "macos")]
+fn log_model_notification_result(
+    provider_id: &str,
+    notification: Result<io::Result<std::process::Output>, tokio::task::JoinError>,
+) {
     match notification {
         Ok(Ok(output)) if output.status.success() => {}
         Ok(Ok(output)) => tracing::warn!(
             provider_id,
             exit = ?output.status.code(),
+            stderr = %String::from_utf8_lossy(&output.stderr).trim(),
             "macOS model notification failed"
         ),
         Ok(Err(error)) => {
@@ -174,43 +230,118 @@ async fn notify_model_changes(
 }
 
 #[cfg(target_os = "macos")]
-fn model_notification_message(
+struct ModelNotificationContent {
+    title: String,
+    subtitle: String,
+    body: String,
+}
+
+#[cfg(target_os = "macos")]
+fn model_notification_content(
+    provider_display_name: &str,
     changes: &codex_mixin::provider::ModelDiscoveryChanges,
-) -> Option<String> {
-    let mut messages = Vec::new();
+) -> Option<ModelNotificationContent> {
+    let mut lines = Vec::new();
     if !changes.auto_selected.is_empty() {
-        messages.push(format!(
-            "已新增并完成探测：{}",
+        lines.push(format!(
+            "✓ 新增并探测 {} 个：{}",
+            changes.auto_selected.len(),
             summarize_models(&changes.auto_selected)
         ));
     }
     if !changes.removed.is_empty() {
-        messages.push(format!(
-            "已下线并移除：{}",
+        lines.push(format!(
+            "− 下线并移除 {} 个：{}",
+            changes.removed.len(),
             summarize_models(&changes.removed)
         ));
     }
-    (!messages.is_empty()).then(|| messages.join("; "))
+    (!lines.is_empty()).then(|| ModelNotificationContent {
+        title: "Codex Mixin".to_owned(),
+        subtitle: format!("{provider_display_name} · 模型列表已更新"),
+        body: lines.join("\n"),
+    })
 }
 
 #[cfg(target_os = "macos")]
 fn summarize_models(models: &[String]) -> String {
-    const DISPLAY_LIMIT: usize = 5;
+    const DISPLAY_LIMIT: usize = 3;
     let mut summary = models
         .iter()
         .take(DISPLAY_LIMIT)
         .cloned()
         .collect::<Vec<_>>()
-        .join(", ");
+        .join("、");
     if models.len() > DISPLAY_LIMIT {
-        summary.push_str(&format!(" 等 {} 个", models.len()));
+        summary.push_str(" 等");
     }
     summary
+}
+
+#[cfg(target_os = "macos")]
+fn notification_helper_for(current_executable: &Path) -> Option<PathBuf> {
+    let resources = current_executable.parent()?;
+    if resources.file_name()?.to_str()? != "Resources" {
+        return None;
+    }
+    let contents = resources.parent()?;
+    if contents.file_name()?.to_str()? != "Contents" {
+        return None;
+    }
+    Some(contents.join("MacOS/CodexMixinMenu"))
+}
+
+#[cfg(all(test, target_os = "macos"))]
+mod model_notification_tests {
+    use super::*;
+    use codex_mixin::provider::ModelDiscoveryChanges;
+
+    #[test]
+    fn formats_model_changes_for_native_notification_layout() {
+        let changes = ModelDiscoveryChanges {
+            added: vec!["gpt-5.6-luna".to_owned(), "gpt-6-astra".to_owned()],
+            auto_selected: vec!["gpt-5.6-luna".to_owned(), "gpt-6-astra".to_owned()],
+            removed: vec!["gpt-image-2".to_owned()],
+        };
+
+        let content = model_notification_content("我的常用模型", &changes)
+            .expect("model changes should produce notification content");
+        assert_eq!(content.title, "Codex Mixin");
+        assert_eq!(content.subtitle, "我的常用模型 · 模型列表已更新");
+        assert_eq!(
+            content.body,
+            "✓ 新增并探测 2 个：gpt-5.6-luna、gpt-6-astra\n− 下线并移除 1 个：gpt-image-2"
+        );
+    }
+
+    #[test]
+    fn truncates_long_model_lists_for_notification_banner() {
+        let models = ["one", "two", "three", "four"].map(str::to_owned).to_vec();
+
+        assert_eq!(summarize_models(&models), "one、two、three 等");
+    }
+
+    #[test]
+    fn finds_notification_helper_only_inside_app_resources() {
+        assert_eq!(
+            notification_helper_for(Path::new(
+                "/Applications/Codex Mixin.app/Contents/Resources/codex-mixin"
+            )),
+            Some(PathBuf::from(
+                "/Applications/Codex Mixin.app/Contents/MacOS/CodexMixinMenu"
+            ))
+        );
+        assert_eq!(
+            notification_helper_for(Path::new("/usr/local/bin/codex-mixin")),
+            None
+        );
+    }
 }
 
 #[cfg(not(target_os = "macos"))]
 async fn notify_model_changes(
     _provider_id: String,
+    _provider_display_name: String,
     _changes: codex_mixin::provider::ModelDiscoveryChanges,
 ) {
 }

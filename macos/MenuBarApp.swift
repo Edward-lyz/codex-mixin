@@ -232,6 +232,11 @@ struct CodexMixinApplication {
     static let delegate = AppDelegate()
 
     static func main() {
+        if let notificationExit = ModelChangeNotification.runIfRequested(
+            arguments: CommandLine.arguments
+        ) {
+            exit(notificationExit)
+        }
         if UpdateWatchdog.runIfRequested(arguments: CommandLine.arguments) {
             return
         }
