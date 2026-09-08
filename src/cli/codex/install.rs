@@ -169,7 +169,7 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
         Some(&client_key),
         codex_oauth_proxy,
     )?;
-    let serialized_config = format!("{MANAGED_CONFIG_HEADER}\n{doc}");
+    let serialized_config = serialize_managed_config(&doc);
     serialized_config.parse::<DocumentMut>()?;
     let expected_model_slugs = catalog
         .get("models")

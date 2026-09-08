@@ -155,6 +155,26 @@ pub(in crate::cli) fn is_managed_config(raw_config: &str) -> bool {
     raw_config.contains(MANAGED_CONFIG_MARKER)
 }
 
+pub(super) fn serialize_managed_config(doc: &DocumentMut) -> String {
+    let raw = doc.to_string();
+    let mut serialized = String::with_capacity(MANAGED_CONFIG_HEADER.len() + 1 + raw.len());
+    serialized.push_str(MANAGED_CONFIG_HEADER);
+    serialized.push('\n');
+    let mut in_preamble = true;
+    for line in raw.split_inclusive('\n') {
+        let trimmed = line.trim();
+        // Only scan leading comments: a matching line in a TOML string is user data.
+        if in_preamble && !trimmed.is_empty() && !trimmed.starts_with('#') {
+            in_preamble = false;
+        }
+        if in_preamble && trimmed == MANAGED_CONFIG_HEADER {
+            continue;
+        }
+        serialized.push_str(line);
+    }
+    serialized
+}
+
 pub(in crate::cli) fn managed_backup_path(config_path: &std::path::Path) -> PathBuf {
     sibling_path_with_extra_extension(config_path, "codex-mixin.backup")
 }
@@ -251,7 +271,7 @@ pub(in crate::cli) fn sync_installed_codex_client_key() -> anyhow::Result<()> {
         .and_then(Item::as_table_mut)
         .ok_or_else(|| anyhow::anyhow!("managed Codex provider table is missing"))?;
     set_client_key_header(provider, &client_key)?;
-    let serialized = format!("{MANAGED_CONFIG_HEADER}\n{doc}");
+    let serialized = serialize_managed_config(&doc);
     write_atomic_if_changed(&config_path, serialized.as_bytes())?;
     Ok(())
 }
@@ -331,4 +351,45 @@ pub(in crate::cli) fn sync_managed_codex_gateway_base_url(
     }
     provider["base_url"] = value(base_url);
     write_atomic_if_changed(&config_path, doc.to_string().as_bytes())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn managed_header_is_idempotent() {
+        let body = "# User settings\nmodel = \"example\" # Keep this\n";
+        let expected = format!("{MANAGED_CONFIG_HEADER}\n{body}");
+        for count in [0, 1, 20] {
+            let raw = format!(
+                "{}{body}",
+                format!("{MANAGED_CONFIG_HEADER}\n").repeat(count)
+            );
+            let mut doc = raw.parse::<DocumentMut>().unwrap();
+            for _ in 0..3 {
+                let serialized = serialize_managed_config(&doc);
+                assert_eq!(serialized, expected);
+                doc = serialized.parse().unwrap();
+            }
+        }
+    }
+
+    #[test]
+    fn managed_header_preserves_data() {
+        let raw = format!(
+            "# User note\r\n{MANAGED_CONFIG_HEADER}\r\n\r\n# Another note\r\n{MANAGED_CONFIG_HEADER}\r\ninstructions = '''\n{MANAGED_CONFIG_HEADER}\n'''\n"
+        );
+        let doc = raw.parse::<DocumentMut>().unwrap();
+        let serialized = serialize_managed_config(&doc);
+        let reparsed = serialized.parse::<DocumentMut>().unwrap();
+        assert_eq!(
+            reparsed["instructions"].as_str(),
+            doc["instructions"].as_str()
+        );
+        assert_eq!(serialized.matches(MANAGED_CONFIG_HEADER).count(), 2);
+        assert!(serialized.contains("# User note"));
+        assert!(serialized.contains("# Another note"));
+        assert_eq!(serialize_managed_config(&reparsed), serialized);
+    }
 }

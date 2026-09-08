@@ -110,4 +110,7 @@ async fn startup_does_not_wait_for_official_catalog_network() {
     child.kill().await.unwrap();
     child.wait().await.unwrap();
     proxy_task.abort();
+
+    let config = fs::read_to_string(codex_home.join("config.toml")).unwrap();
+    assert_eq!(config.matches("# codex-mixin managed config.").count(), 1);
 }
