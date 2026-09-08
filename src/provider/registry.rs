@@ -123,12 +123,15 @@ impl ProviderRuntime {
     }
 
     pub fn protocol_for_model(&self, model: &str) -> ProviderProtocol {
-        if let Some(protocol) = self
-            .definition
-            .cached_models
-            .iter()
-            .find(|candidate| candidate.id == model)
-            .and_then(|candidate| candidate.protocol)
+        if self.is_baidu_model_source() && model.trim().to_ascii_lowercase().starts_with("gpt-") {
+            ProviderProtocol::OpenAiResponses
+        } else if !self.is_baidu_model_source()
+            && let Some(protocol) = self
+                .definition
+                .cached_models
+                .iter()
+                .find(|candidate| candidate.id == model)
+                .and_then(|candidate| candidate.protocol)
         {
             protocol
         } else {
@@ -141,7 +144,9 @@ impl ProviderRuntime {
     }
 
     pub fn api_url_for_model(&self, model: &str) -> &Url {
-        if let Some(url) = self.model_api_urls.get(model) {
+        if !self.is_baidu_model_source()
+            && let Some(url) = self.model_api_urls.get(model)
+        {
             url
         } else if self.protocol_for_model(model) == ProviderProtocol::OpenAiResponses
             && let Some(url) = &self.openai_responses_url
@@ -637,21 +642,25 @@ mod tests {
     }
 
     #[test]
-    fn baidu_uses_cached_model_protocol_overrides() {
+    fn baidu_ignores_probed_responses_for_deepseek() {
         let mut provider = baidu_oneapi_provider("baidu", "test-key");
         provider.quota_username = Some("quota-user".to_owned());
         provider.cached_models = vec![ProviderModel {
-            id: "claude-opus".to_owned(),
-            protocol: Some(ProviderProtocol::OpenAiChat),
-            api_path: Some("/v1/chat/completions".to_owned()),
+            id: "DeepSeek-V4-Flash".to_owned(),
+            protocol: Some(ProviderProtocol::OpenAiResponses),
+            api_path: Some("/v1/responses".to_owned()),
             ..ProviderModel::default()
         }];
         let registry = ProviderRegistry::new(vec![provider]).unwrap();
         let runtime = registry.provider("baidu").unwrap();
 
         assert_eq!(
-            runtime.protocol_for_model("claude-opus"),
-            ProviderProtocol::OpenAiChat
+            runtime.protocol_for_model("DeepSeek-V4-Flash"),
+            ProviderProtocol::AnthropicMessages
+        );
+        assert_eq!(
+            runtime.api_url_for_model("DeepSeek-V4-Flash").as_str(),
+            "https://oneapi-comate.baidu-int.com/v1/messages"
         );
     }
 
@@ -780,28 +789,14 @@ mod tests {
     }
 
     #[test]
-    fn baidu_routes_models_by_cached_protocol() {
+    fn baidu_routes_gpt_to_responses_and_other_models_to_messages() {
         let mut provider = baidu_oneapi_provider("baidu-oneapi", "secret");
         provider.quota_username = Some("quota-user".to_owned());
-        provider.cached_models = vec![
-            ProviderModel {
-                id: "gpt-5.6-sol".to_owned(),
-                protocol: Some(ProviderProtocol::OpenAiResponses),
-                api_path: Some("/v1/responses".to_owned()),
-                ..ProviderModel::default()
-            },
-            ProviderModel {
-                id: "Claude Opus 4.6".to_owned(),
-                protocol: Some(ProviderProtocol::AnthropicMessages),
-                api_path: Some("/v1/messages".to_owned()),
-                ..ProviderModel::default()
-            },
-        ];
         let registry = ProviderRegistry::new(vec![provider]).unwrap();
         let runtime = registry.provider("baidu-oneapi").unwrap();
 
         assert_eq!(
-            runtime.protocol_for_model("gpt-5.6-sol"),
+            runtime.protocol_for_model("GPT-5.6-Sol"),
             ProviderProtocol::OpenAiResponses
         );
         assert_eq!(
