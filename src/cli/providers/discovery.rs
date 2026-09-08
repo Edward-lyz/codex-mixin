@@ -5,6 +5,7 @@ use anyhow::Context;
 use codex_mixin::anthropic::ModelsResponse;
 use codex_mixin::provider::{
     ProviderModelSource, ProviderProtocol, ProviderQuotaParser, ProviderRegistry,
+    redact_provider_error,
 };
 use futures_util::{StreamExt, stream};
 use serde_json::{Value, json};
@@ -158,6 +159,27 @@ pub(super) struct InferredCustomProviderEndpoint {
     pub(super) path_explicit: bool,
 }
 
+fn format_probe_failure(path: &str, error: &anyhow::Error) -> String {
+    let is_timeout = error.chain().any(|cause| {
+        cause
+            .downcast_ref::<reqwest::Error>()
+            .is_some_and(reqwest::Error::is_timeout)
+    });
+    let is_network_error = error
+        .chain()
+        .any(|cause| cause.downcast_ref::<reqwest::Error>().is_some());
+    if is_network_error {
+        let kind = if is_timeout {
+            "timeout"
+        } else {
+            "network error"
+        };
+        format!("{path}: {kind}: {error:#}")
+    } else {
+        format!("{path}: {error:#}")
+    }
+}
+
 pub(super) fn infer_custom_provider_endpoint(
     raw_url: &str,
 ) -> anyhow::Result<InferredCustomProviderEndpoint> {
@@ -257,56 +279,66 @@ pub(super) async fn detect_custom_provider_protocol(
     let client = reqwest::Client::builder()
         .timeout(CUSTOM_PROTOCOL_PROBE_TIMEOUT)
         .build()?;
-    let mut last_models_error = None;
+    let mut failures = Vec::new();
     let mut found_models_endpoint = false;
     for (models_path, versioned) in [("/v1/models", true), ("/models", false)] {
-        let models_url = endpoint_join(&provider.base_url, models_path)?;
-        let models_valid = match probe_custom_models_endpoint(&client, runtime, models_url).await {
-            Ok(valid) => valid,
+        let models_url = match endpoint_join(&provider.base_url, models_path) {
+            Ok(url) => url,
             Err(error) => {
-                last_models_error = Some(error);
-                false
+                failures.push(format_probe_failure(models_path, &error));
+                continue;
             }
         };
-        if !models_valid {
-            continue;
-        }
+        let model_id = match probe_custom_models_endpoint(&client, runtime, models_url).await {
+            Ok(model_id) => model_id,
+            Err(error) => {
+                failures.push(format_probe_failure(models_path, &error));
+                continue;
+            }
+        };
         found_models_endpoint = true;
-        for (protocol, api_path, body) in custom_protocol_probe_candidates(versioned) {
+        for (protocol, api_path, body) in
+            custom_protocol_probe_candidates(versioned, model_id.as_deref())
+        {
             let url = match endpoint_join(&provider.base_url, api_path) {
                 Ok(url) => url,
-                Err(_) => continue,
+                Err(error) => {
+                    failures.push(format_probe_failure(api_path, &error));
+                    continue;
+                }
             };
-            if protocol_endpoint_available(&client, runtime, protocol, url, &body).await {
-                return Ok(Some(InferredCustomProviderEndpoint {
-                    base_url: provider.base_url.clone(),
-                    protocol,
-                    api_path: api_path.to_owned(),
-                    models_path: models_path.to_owned(),
-                    path_explicit: false,
-                }));
+            match protocol_endpoint_available(&client, runtime, protocol, url, &body).await {
+                Ok(()) => {
+                    return Ok(Some(InferredCustomProviderEndpoint {
+                        base_url: provider.base_url.clone(),
+                        protocol,
+                        api_path: api_path.to_owned(),
+                        models_path: models_path.to_owned(),
+                        path_explicit: false,
+                    }));
+                }
+                Err(error) => failures.push(format_probe_failure(api_path, &error)),
             }
         }
     }
-    if found_models_endpoint {
-        anyhow::bail!(
-            "custom provider models endpoint is valid, but automatic protocol detection failed: \
-             no supported Responses, Messages, or Chat Completions endpoint responded within {} seconds",
-            CUSTOM_PROTOCOL_PROBE_TIMEOUT.as_secs()
-        );
-    }
-    if let Some(error) = last_models_error {
-        return Err(
-            error.context("custom provider automatic discovery failed for /v1/models and /models")
-        );
-    }
-    anyhow::bail!(
+
+    let heading = if found_models_endpoint {
+        "custom provider models endpoint is valid, but automatic protocol detection failed"
+    } else {
         "custom provider automatic discovery found neither a valid /v1/models nor /models endpoint"
-    )
+    };
+    let details = failures.join("; ");
+    let error = if details.is_empty() {
+        heading.to_owned()
+    } else {
+        format!("{heading}: {details}")
+    };
+    anyhow::bail!("{}", redact_provider_error(provider, &error));
 }
 
 fn custom_protocol_probe_candidates(
     versioned: bool,
+    model_id: Option<&str>,
 ) -> [(ProviderProtocol, &'static str, serde_json::Value); 3] {
     let (responses, messages, chat) = if versioned {
         ("/v1/responses", "/v1/messages", "/v1/chat/completions")
@@ -317,38 +349,35 @@ fn custom_protocol_probe_candidates(
         (
             ProviderProtocol::OpenAiResponses,
             responses,
-            protocol_probe_body(ProviderProtocol::OpenAiResponses),
+            protocol_probe_body(ProviderProtocol::OpenAiResponses, model_id),
         ),
         (
             ProviderProtocol::AnthropicMessages,
             messages,
-            protocol_probe_body(ProviderProtocol::AnthropicMessages),
+            protocol_probe_body(ProviderProtocol::AnthropicMessages, model_id),
         ),
         (
             ProviderProtocol::OpenAiChat,
             chat,
-            protocol_probe_body(ProviderProtocol::OpenAiChat),
+            protocol_probe_body(ProviderProtocol::OpenAiChat, model_id),
         ),
     ]
 }
 
-fn protocol_probe_body(protocol: ProviderProtocol) -> serde_json::Value {
+fn protocol_probe_body(protocol: ProviderProtocol, model_id: Option<&str>) -> serde_json::Value {
     // Incomplete bodies intentionally avoid paid generation. A real endpoint
     // still answers with 4xx validation or auth errors; missing routes 404.
-    match protocol {
-        ProviderProtocol::OpenAiResponses => json!({
-            "model": "codex-mixin-protocol-probe",
-            "stream": false
-        }),
-        ProviderProtocol::AnthropicMessages => json!({
-            "model": "codex-mixin-protocol-probe",
-            "max_tokens": 1
-        }),
-        ProviderProtocol::OpenAiChat => json!({
-            "model": "codex-mixin-protocol-probe",
-            "stream": false
-        }),
+    let mut body = match protocol {
+        ProviderProtocol::OpenAiResponses => json!({"stream": false}),
+        ProviderProtocol::AnthropicMessages => json!({"max_tokens": 1}),
+        ProviderProtocol::OpenAiChat => json!({"stream": false}),
+    };
+    if let Some(model_id) = model_id
+        && let Some(object) = body.as_object_mut()
+    {
+        object.insert("model".to_owned(), Value::String(model_id.to_owned()));
     }
+    body
 }
 
 async fn protocol_endpoint_available(
@@ -357,16 +386,17 @@ async fn protocol_endpoint_available(
     protocol: ProviderProtocol,
     url: reqwest::Url,
     body: &serde_json::Value,
-) -> bool {
+) -> anyhow::Result<()> {
+    let path = url.path().to_owned();
     let request = runtime
         .apply_auth_for_protocol(client.post(url), protocol)
         .header(reqwest::header::ACCEPT, "application/json")
         .timeout(CUSTOM_PROTOCOL_PROBE_TIMEOUT)
         .json(body);
-    let response = match request.send().await {
-        Ok(response) => response,
-        Err(_) => return false,
-    };
+    let response = request
+        .send()
+        .await
+        .with_context(|| format!("POST {path} for custom provider protocol probe"))?;
     let status = response.status().as_u16();
     let content_type = response
         .headers()
@@ -374,21 +404,25 @@ async fn protocol_endpoint_available(
         .and_then(|value| value.to_str().ok())
         .unwrap_or("")
         .to_owned();
-    let body = match response.text().await {
-        Ok(body) => body,
-        Err(_) => return false,
-    };
-    if matches!(status, 403 | 404 | 501 | 502 | 504) {
-        return false;
+    let response_body = response
+        .text()
+        .await
+        .with_context(|| format!("reading {path} protocol probe response"))?;
+    if !probe_response_matches(protocol, status, &content_type, &response_body) {
+        anyhow::bail!(
+            "HTTP {status} ({})",
+            response_summary(&content_type, &response_body)
+        );
     }
-    protocol_probe_body_matches(protocol, &content_type, &body)
+    Ok(())
 }
 
 async fn probe_custom_models_endpoint(
     client: &reqwest::Client,
     runtime: &codex_mixin::provider::ProviderRuntime,
     url: reqwest::Url,
-) -> anyhow::Result<bool> {
+) -> anyhow::Result<Option<String>> {
+    let path = url.path().to_owned();
     let response = runtime
         .apply_auth(client.get(url.clone()))
         .header(reqwest::header::ACCEPT, "application/json")
@@ -396,21 +430,49 @@ async fn probe_custom_models_endpoint(
         .await
         .with_context(|| format!("requesting custom provider models endpoint {url}"))?;
     let status = response.status();
-    let body = response.text().await?;
-    if is_json_api_error(&body) {
-        anyhow::bail!("custom provider models endpoint returned {status}: {body}");
-    }
+    let content_type = response
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .and_then(|value| value.to_str().ok())
+        .unwrap_or("")
+        .to_owned();
+    let body = response
+        .text()
+        .await
+        .with_context(|| format!("reading {path} models response"))?;
     if !status.is_success() {
-        return Ok(false);
+        anyhow::bail!(
+            "HTTP {} ({})",
+            status.as_u16(),
+            response_summary(&content_type, &body)
+        );
     }
-    let models: ModelsResponse = match serde_json::from_str(&body) {
+    let value: Value = match serde_json::from_str(&body) {
+        Ok(value) => value,
+        Err(_) => {
+            anyhow::bail!("HTTP {} (invalid models JSON response)", status.as_u16());
+        }
+    };
+    if is_json_api_error_value(&value) {
+        anyhow::bail!(
+            "HTTP {} ({})",
+            status.as_u16(),
+            response_summary(&content_type, &body)
+        );
+    }
+    let models: ModelsResponse = match serde_json::from_value(value) {
         Ok(models) => models,
-        Err(_) => return Ok(false),
+        Err(_) => {
+            anyhow::bail!("HTTP {} (invalid models JSON response)", status.as_u16());
+        }
     };
     if models.data.iter().any(|model| model.id.trim().is_empty()) {
-        return Ok(false);
+        anyhow::bail!(
+            "HTTP {} (models list contains an empty model ID)",
+            status.as_u16()
+        );
     }
-    Ok(true)
+    Ok(models.data.first().map(|model| model.id.clone()))
 }
 
 pub(super) fn protocol_probe_body_matches(
@@ -418,14 +480,7 @@ pub(super) fn protocol_probe_body_matches(
     content_type: &str,
     body: &str,
 ) -> bool {
-    let trimmed = body.trim_start();
-    if content_type
-        .split(';')
-        .next()
-        .is_some_and(|value| value.eq_ignore_ascii_case("text/html"))
-        || trimmed.starts_with("<!doctype html")
-        || trimmed.starts_with("<html")
-    {
+    if is_html_response(content_type, body) {
         return false;
     }
     let is_event_stream = content_type
@@ -448,6 +503,129 @@ pub(super) fn protocol_probe_body_matches(
     serde_json::from_str::<Value>(body)
         .ok()
         .is_some_and(|value| protocol_probe_value_matches(protocol, &value))
+}
+
+fn probe_response_matches(
+    protocol: ProviderProtocol,
+    status: u16,
+    content_type: &str,
+    body: &str,
+) -> bool {
+    if is_html_response(content_type, body) {
+        return false;
+    }
+    if matches!(status, 403 | 404 | 501 | 502 | 504) {
+        return false;
+    }
+    if status == 422 {
+        return probe_missing_field_matches(protocol, body)
+            || protocol_probe_body_matches(protocol, content_type, body);
+    }
+    protocol_probe_body_matches(protocol, content_type, body)
+}
+
+fn probe_missing_field_matches(protocol: ProviderProtocol, body: &str) -> bool {
+    let Ok(value) = serde_json::from_str::<Value>(body) else {
+        return false;
+    };
+    let Some(details) = value.get("detail").and_then(Value::as_array) else {
+        return false;
+    };
+    let required_fields = match protocol {
+        ProviderProtocol::OpenAiResponses => ["input", "model"].as_slice(),
+        ProviderProtocol::AnthropicMessages => ["messages", "model", "max_tokens"].as_slice(),
+        ProviderProtocol::OpenAiChat => ["messages", "model"].as_slice(),
+    };
+    details.iter().any(|detail| {
+        let missing_type = matches!(
+            detail.get("type").and_then(Value::as_str),
+            Some("missing" | "value_error.missing")
+        );
+        let Some(location) = detail.get("loc").and_then(Value::as_array) else {
+            return false;
+        };
+        missing_type
+            && location.len() == 2
+            && location[0].as_str() == Some("body")
+            && location[1]
+                .as_str()
+                .is_some_and(|field| required_fields.contains(&field))
+    })
+}
+
+fn response_summary(content_type: &str, body: &str) -> String {
+    if is_html_response(content_type, body) {
+        return "HTML response".to_owned();
+    }
+    let Ok(value) = serde_json::from_str::<Value>(body) else {
+        return if body.trim().is_empty() {
+            "empty response".to_owned()
+        } else {
+            "invalid JSON response".to_owned()
+        };
+    };
+    structured_response_summary(&value).unwrap_or_else(|| {
+        if value.is_object() {
+            "unrecognized JSON response".to_owned()
+        } else {
+            "unstructured response".to_owned()
+        }
+    })
+}
+
+fn structured_response_summary(value: &Value) -> Option<String> {
+    if let Some(error) = value.get("error").and_then(Value::as_object) {
+        let fields = ["type", "code", "message"]
+            .into_iter()
+            .filter_map(|field| {
+                error
+                    .get(field)
+                    .and_then(scalar_value_text)
+                    .map(|value| format!("{field}={value}"))
+            })
+            .collect::<Vec<_>>();
+        if !fields.is_empty() {
+            return Some(format!("error {}", fields.join(", ")));
+        }
+    }
+    let details = value.get("detail").and_then(Value::as_array)?;
+    let fields = details
+        .iter()
+        .filter_map(|detail| {
+            let detail_type = detail.get("type").and_then(Value::as_str)?;
+            let location = detail.get("loc").and_then(Value::as_array)?;
+            let location = location
+                .iter()
+                .filter_map(Value::as_str)
+                .collect::<Vec<_>>()
+                .join(".");
+            Some(format!("type={detail_type}, loc={location}"))
+        })
+        .collect::<Vec<_>>();
+    if fields.is_empty() {
+        None
+    } else {
+        Some(format!("detail [{}]", fields.join("; ")))
+    }
+}
+
+fn scalar_value_text(value: &Value) -> Option<String> {
+    match value {
+        Value::String(value) => Some(value.clone()),
+        Value::Number(value) => Some(value.to_string()),
+        Value::Bool(value) => Some(value.to_string()),
+        Value::Null | Value::Array(_) | Value::Object(_) => None,
+    }
+}
+
+fn is_html_response(content_type: &str, body: &str) -> bool {
+    let trimmed = body.trim_start();
+    content_type
+        .split(';')
+        .next()
+        .is_some_and(|value| value.eq_ignore_ascii_case("text/html"))
+        || trimmed.starts_with("<!doctype html")
+        || trimmed.starts_with("<html")
 }
 
 fn protocol_probe_value_matches(protocol: ProviderProtocol, value: &Value) -> bool {
@@ -490,12 +668,6 @@ fn protocol_probe_value_matches(protocol: ProviderProtocol, value: &Value) -> bo
                 && object.contains_key("choices")
         }
     }
-}
-
-fn is_json_api_error(body: &str) -> bool {
-    serde_json::from_str::<Value>(body)
-        .ok()
-        .is_some_and(|value| is_json_api_error_value(&value))
 }
 
 fn is_json_api_error_value(value: &Value) -> bool {
@@ -541,4 +713,79 @@ pub(super) fn apply_inferred_custom_endpoint(
     };
     provider.anthropic_version =
         (endpoint.protocol == ProviderProtocol::AnthropicMessages).then(|| "2023-06-01".to_owned());
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn probe_422_requires_exact_protocol_field() {
+        for (protocol, field) in [
+            (ProviderProtocol::OpenAiResponses, "input"),
+            (ProviderProtocol::OpenAiResponses, "model"),
+            (ProviderProtocol::AnthropicMessages, "messages"),
+            (ProviderProtocol::AnthropicMessages, "model"),
+            (ProviderProtocol::AnthropicMessages, "max_tokens"),
+            (ProviderProtocol::OpenAiChat, "messages"),
+            (ProviderProtocol::OpenAiChat, "model"),
+        ] {
+            let body = json!({
+                "detail": [{"type": "missing", "loc": ["body", field]}]
+            })
+            .to_string();
+            assert!(probe_response_matches(
+                protocol,
+                422,
+                "application/json",
+                &body
+            ));
+        }
+        assert!(probe_response_matches(
+            ProviderProtocol::OpenAiResponses,
+            422,
+            "application/json",
+            r#"{"detail":[{"type":"value_error.missing","loc":["body","input"]}]}"#
+        ));
+
+        for body in [
+            r#"{"detail":"input is required"}"#,
+            r#"{"detail":[{"type":"missing","loc":["body","messages"]}]}"#,
+            r#"{"detail":[{"type":"missing","loc":["body","input","nested"]}]}"#,
+            r#"{"status":"validation failed"}"#,
+        ] {
+            assert!(!probe_response_matches(
+                ProviderProtocol::OpenAiResponses,
+                422,
+                "application/json",
+                body
+            ));
+        }
+        assert!(!probe_response_matches(
+            ProviderProtocol::OpenAiResponses,
+            422,
+            "text/html",
+            r#"{"detail":[{"type":"missing","loc":["body","input"]}]}"#
+        ));
+        assert!(probe_response_matches(
+            ProviderProtocol::OpenAiResponses,
+            422,
+            "application/json",
+            r#"{"error":{"message":"missing input"}}"#
+        ));
+        assert!(probe_response_matches(
+            ProviderProtocol::OpenAiResponses,
+            500,
+            "application/json",
+            r#"{"error":{"message":"upstream failure"}}"#
+        ));
+        for status in [403, 404, 501, 502, 504] {
+            assert!(!probe_response_matches(
+                ProviderProtocol::OpenAiResponses,
+                status,
+                "application/json",
+                r#"{"error":{"message":"route unavailable"}}"#
+            ));
+        }
+    }
 }

@@ -461,6 +461,68 @@ fn infers_custom_provider_endpoints_without_exposing_protocol_fields() {
 }
 
 #[tokio::test]
+async fn uses_first_listed_model_for_litellm_responses_probe() {
+    use axum::extract::Json as JsonExtractor;
+    use axum::routing::post;
+
+    let app = Router::new()
+        .route(
+            "/v1/models",
+            get(|| async {
+                axum::Json(serde_json::json!({
+                    "data": [
+                        {"id": "litellm-real-model"},
+                        {"id": "litellm-second-model"}
+                    ]
+                }))
+            }),
+        )
+        .route(
+            "/v1/responses",
+            post(
+                |JsonExtractor(body): JsonExtractor<serde_json::Value>| async move {
+                    if body.get("model").and_then(serde_json::Value::as_str)
+                        == Some("codex-mixin-protocol-probe")
+                    {
+                        return (
+                            axum::http::StatusCode::FORBIDDEN,
+                            axum::Json(serde_json::json!({
+                                "error": {"message": "model is not available"}
+                            })),
+                        );
+                    }
+                    assert_eq!(
+                        body.get("model").and_then(serde_json::Value::as_str),
+                        Some("litellm-real-model")
+                    );
+                    assert!(body.get("input").is_none());
+                    (
+                        axum::http::StatusCode::BAD_REQUEST,
+                        axum::Json(serde_json::json!({
+                            "error": {"message": "missing input"}
+                        })),
+                    )
+                },
+            ),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let mut provider = codex_mixin::provider::custom_provider("community", "secret");
+    provider.base_url = format!("http://{address}");
+
+    let detected = detect_custom_provider_protocol(&provider)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(detected.protocol, ProviderProtocol::OpenAiResponses);
+    assert_eq!(detected.api_path, "/v1/responses");
+}
+
+#[tokio::test]
 async fn detects_responses_before_messages_and_chat_for_custom_providers() {
     use axum::routing::post;
     let app = Router::new()
@@ -573,7 +635,7 @@ async fn forbidden_protocol_probes_do_not_switch_custom_providers_to_messages() 
     tokio::spawn(async move {
         axum::serve(listener, app).await.unwrap();
     });
-    let mut provider = codex_mixin::provider::custom_provider("community", "secret");
+    let mut provider = codex_mixin::provider::custom_provider("community", "leak-secret");
     provider.base_url = format!("http://{address}");
 
     let error = detect_custom_provider_protocol(&provider)
@@ -582,14 +644,75 @@ async fn forbidden_protocol_probes_do_not_switch_custom_providers_to_messages() 
         .to_string();
     assert!(error.contains("models endpoint is valid"));
     assert!(error.contains("protocol detection failed"));
-    assert!(error.contains("within 30 seconds"));
+    assert!(error.contains("/v1/responses: HTTP 403"));
+    assert!(error.contains("/v1/messages: HTTP 403"));
+    assert!(error.contains("/v1/chat/completions: HTTP 403"));
+    assert!(!error.contains("timeout"));
+    assert_eq!(provider.protocol, ProviderProtocol::OpenAiResponses);
+    assert_eq!(provider.api_path, "/v1/responses");
+}
+
+#[tokio::test]
+async fn redacts_probe_error_at_limit() {
+    use axum::extract::OriginalUri;
+
+    // The probe prefix places the key at offset 7,994, across the 8,000-char limit.
+    let long_error_message = format!("{}leak-secret", "x".repeat(7_756));
+    let app = Router::new()
+        .route(
+            "/v1/models",
+            get(|| async { axum::Json(serde_json::json!({"data":[{"id":"model"}]})) }),
+        )
+        .fallback(move |OriginalUri(uri): OriginalUri| {
+            let long_error_message = long_error_message.clone();
+            async move {
+                let (status, message) = if uri.path() == "/v1/chat/completions" {
+                    (axum::http::StatusCode::FORBIDDEN, long_error_message)
+                } else {
+                    (
+                        axum::http::StatusCode::NOT_FOUND,
+                        "missing route".to_owned(),
+                    )
+                };
+                (
+                    status,
+                    axum::Json(serde_json::json!({
+                        "error": {"message": message}
+                    })),
+                )
+            }
+        });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let mut provider = codex_mixin::provider::custom_provider("community", "leak-secret");
+    provider.base_url = format!("http://{address}");
+
+    let error = detect_custom_provider_protocol(&provider)
+        .await
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("models endpoint is valid"));
+    assert!(error.contains("protocol detection failed"));
+    assert!(error.contains("/v1/responses: HTTP 404"));
+    assert!(error.contains("/v1/messages: HTTP 404"));
+    assert!(error.contains("/v1/chat/completions: HTTP 403"));
+    assert!(!error.contains("timeout"));
+    assert!(error.chars().count() <= 8_000);
+    assert!(!error.contains("leak-secret"));
+    assert!(!error.contains("leak"));
     assert_eq!(provider.protocol, ProviderProtocol::OpenAiResponses);
     assert_eq!(provider.api_path, "/v1/responses");
 }
 
 #[tokio::test]
 async fn falls_back_to_messages_when_responses_is_missing() {
+    use axum::extract::Json as JsonExtractor;
     use axum::routing::post;
+    let messages_body = Arc::new(Mutex::new(None));
+    let messages_body_for_handler = Arc::clone(&messages_body);
     let app = Router::new()
         .route(
             "/v1/models",
@@ -597,12 +720,20 @@ async fn falls_back_to_messages_when_responses_is_missing() {
         )
         .route(
             "/v1/messages",
-            post(|| async {
-                (
-                    axum::http::StatusCode::UNAUTHORIZED,
-                    axum::Json(serde_json::json!({"error":{"type":"authentication_error"}})),
-                )
-            }),
+            post(
+                move |JsonExtractor(body): JsonExtractor<serde_json::Value>| {
+                    let messages_body = Arc::clone(&messages_body_for_handler);
+                    async move {
+                        *messages_body.lock().unwrap() = Some(body);
+                        (
+                            axum::http::StatusCode::UNAUTHORIZED,
+                            axum::Json(
+                                serde_json::json!({"error":{"type":"authentication_error"}}),
+                            ),
+                        )
+                    }
+                },
+            ),
         )
         .route(
             "/v1/chat/completions",
@@ -628,11 +759,18 @@ async fn falls_back_to_messages_when_responses_is_missing() {
 
     assert_eq!(detected.protocol, ProviderProtocol::AnthropicMessages);
     assert_eq!(detected.api_path, "/v1/messages");
+    let body = messages_body.lock().unwrap().clone().unwrap();
+    assert_eq!(body["model"], "model");
+    assert_eq!(body["max_tokens"], 1);
+    assert!(body.get("messages").is_none());
 }
 
 #[tokio::test]
 async fn falls_back_to_chat_when_native_apis_are_missing() {
+    use axum::extract::Json as JsonExtractor;
     use axum::routing::post;
+    let chat_body = Arc::new(Mutex::new(None));
+    let chat_body_for_handler = Arc::clone(&chat_body);
     let app = Router::new()
         .route(
             "/v1/models",
@@ -640,12 +778,18 @@ async fn falls_back_to_chat_when_native_apis_are_missing() {
         )
         .route(
             "/v1/chat/completions",
-            post(|| async {
-                (
-                    axum::http::StatusCode::BAD_REQUEST,
-                    axum::Json(serde_json::json!({"error":{"message":"missing messages"}})),
-                )
-            }),
+            post(
+                move |JsonExtractor(body): JsonExtractor<serde_json::Value>| {
+                    let chat_body = Arc::clone(&chat_body_for_handler);
+                    async move {
+                        *chat_body.lock().unwrap() = Some(body);
+                        (
+                            axum::http::StatusCode::BAD_REQUEST,
+                            axum::Json(serde_json::json!({"error":{"message":"missing messages"}})),
+                        )
+                    }
+                },
+            ),
         );
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
@@ -662,6 +806,9 @@ async fn falls_back_to_chat_when_native_apis_are_missing() {
 
     assert_eq!(detected.protocol, ProviderProtocol::OpenAiChat);
     assert_eq!(detected.api_path, "/v1/chat/completions");
+    let body = chat_body.lock().unwrap().clone().unwrap();
+    assert_eq!(body["model"], "model");
+    assert!(body.get("messages").is_none());
 }
 
 #[tokio::test]
@@ -887,6 +1034,57 @@ fn protocol_probe_rejects_pages_and_accepts_protocol_errors() {
     ));
 }
 
+#[tokio::test]
+async fn omits_model_when_the_custom_models_list_is_empty() {
+    use axum::extract::Json as JsonExtractor;
+    use axum::routing::post;
+
+    let captured_body = Arc::new(Mutex::new(None));
+    let captured_body_for_handler = Arc::clone(&captured_body);
+    let app = Router::new()
+        .route(
+            "/v1/models",
+            get(|| async { axum::Json(serde_json::json!({"data": []})) }),
+        )
+        .route(
+            "/v1/responses",
+            post(
+                move |JsonExtractor(body): JsonExtractor<serde_json::Value>| {
+                    let captured_body = Arc::clone(&captured_body_for_handler);
+                    async move {
+                        *captured_body.lock().unwrap() = Some(body);
+                        (
+                            axum::http::StatusCode::UNPROCESSABLE_ENTITY,
+                            axum::Json(serde_json::json!({
+                                "detail": [{
+                                    "type": "missing",
+                                    "loc": ["body", "model"]
+                                }]
+                            })),
+                        )
+                    }
+                },
+            ),
+        );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let mut provider = codex_mixin::provider::custom_provider("community", "secret");
+    provider.base_url = format!("http://{address}");
+
+    let detected = detect_custom_provider_protocol(&provider)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(detected.protocol, ProviderProtocol::OpenAiResponses);
+    let body = captured_body.lock().unwrap().clone().unwrap();
+    assert!(body.get("model").is_none());
+    assert!(body.get("input").is_none());
+}
+
 #[test]
 fn model_selection_can_preserve_or_remove_an_unavailable_selected_model() {
     let mut provider = codex_mixin::provider::open_code_go_provider("provider", "key");
@@ -920,4 +1118,9 @@ fn discovery_errors_are_bounded_and_redact_the_provider_key() {
     assert!(!redacted.contains("secret-key"));
     assert!(redacted.contains("<redacted>"));
     assert_eq!(redacted.chars().count(), 8_000);
+
+    let boundary_error = format!("{}secret-key", "x".repeat(7_995));
+    let boundary_redacted = redact_provider_error(&provider, &boundary_error);
+    assert!(!boundary_redacted.contains("secre"));
+    assert_eq!(boundary_redacted.chars().count(), 8_000);
 }
