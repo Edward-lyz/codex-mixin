@@ -199,6 +199,21 @@ fn configure_openai_chat(config: &mut GatewayConfig, api_path: &str) {
     config.providers[0].api_path = api_path.to_owned();
 }
 
+fn configure_model_protocol(
+    config: &mut GatewayConfig,
+    model_id: &str,
+    protocol: ProviderProtocol,
+    api_path: &str,
+) {
+    let model = config.providers[0]
+        .cached_models
+        .iter_mut()
+        .find(|model| model.id == model_id)
+        .unwrap();
+    model.protocol = Some(protocol);
+    model.api_path = Some(api_path.to_owned());
+}
+
 async fn spawn_router(app: Router) -> String {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let addr = listener.local_addr().unwrap();
@@ -3478,6 +3493,12 @@ async fn routes_baidu_models_with_per_model_reasoning_capabilities() {
     configure_baidu_policy(&mut config);
     configure_custom_headers_from_env(&mut config);
     config.providers[0].model_source = ProviderModelSource::BaiduOneApi;
+    configure_model_protocol(
+        &mut config,
+        "gpt-5.6-sol",
+        ProviderProtocol::OpenAiResponses,
+        "/v1/responses",
+    );
     config.thinking_mode = ThinkingMode::Auto;
     config.providers[0]
         .cached_models
@@ -3589,6 +3610,12 @@ async fn converts_anthropic_messages_for_openai_responses_models() {
     configure_baidu_policy(&mut config);
     configure_custom_headers_from_env(&mut config);
     config.providers[0].model_source = ProviderModelSource::BaiduOneApi;
+    configure_model_protocol(
+        &mut config,
+        "gpt-5.6-sol",
+        ProviderProtocol::OpenAiResponses,
+        "/v1/responses",
+    );
     let gateway_url = spawn_gateway_with_config(config).await;
 
     let response = reqwest::Client::new()
@@ -4040,6 +4067,12 @@ async fn compacts_baidu_gpt_through_responses_provider() {
     configure_baidu_policy(&mut config);
     configure_custom_headers_from_env(&mut config);
     config.providers[0].model_source = ProviderModelSource::BaiduOneApi;
+    configure_model_protocol(
+        &mut config,
+        "gpt-5.6-sol",
+        ProviderProtocol::OpenAiResponses,
+        "/v1/responses",
+    );
     let gateway_url = spawn_gateway_with_config(config).await;
     let response = reqwest::Client::new()
         .post(format!("{gateway_url}/v1/responses/compact"))

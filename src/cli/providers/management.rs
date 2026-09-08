@@ -20,6 +20,7 @@ use super::{
     required_config, sync_imagegen_skill, trim_required,
 };
 
+#[allow(clippy::cognitive_complexity)]
 pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
     let preset = ProviderPreset::parse(options.preset.trim())?;
     let id = options.id.unwrap_or_else(|| preset.default_id().to_owned());
@@ -209,7 +210,10 @@ pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
     if let Some(protocol) = detected_protocol {
         println!("provider protocol detected: {id} ({protocol})");
     }
-    discover_models_with_output(&id, false).await?;
+    let changes = discover_models_with_output(&id, false).await?;
+    if !changes.auto_selected.is_empty() {
+        super::models::probe_new_models(&id, &changes.auto_selected, true).await?;
+    }
     Ok(())
 }
 

@@ -367,6 +367,13 @@ impl MapperState {
             let input = parsed_arguments
                 .get("input")
                 .and_then(Value::as_str)
+                .or_else(|| {
+                    parsed_arguments
+                        .get("input")
+                        .and_then(Value::as_object)
+                        .and_then(|input| input.get("input"))
+                        .and_then(Value::as_str)
+                })
                 .ok_or_else(|| {
                     format!("custom tool call {id} arguments must contain a string input field")
                 })?;

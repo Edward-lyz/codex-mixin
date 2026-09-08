@@ -15,8 +15,8 @@ use super::runner::*;
 use super::types::{BENCHMARK_FILE_VERSION, BENCHMARK_TTFT_UPSTREAM_MAX_TOKENS};
 use super::*;
 use crate::provider::{
-    ProviderModelSource, ProviderProtocol, ProviderQuotaParser, ProviderRegistry, ProviderRuntime,
-    custom_provider,
+    ProviderModel, ProviderModelSource, ProviderProtocol, ProviderQuotaParser, ProviderRegistry,
+    ProviderRuntime, custom_provider,
 };
 
 async fn spawn_benchmark_server(delay: Duration) -> ProviderRuntime {
@@ -186,6 +186,12 @@ async fn spawn_baidu_responses_benchmark_server() -> (ProviderRuntime, Arc<Mutex
         ProviderProtocol::AnthropicMessages,
     );
     provider.model_source = ProviderModelSource::BaiduOneApi;
+    provider.cached_models = vec![ProviderModel {
+        id: "gpt-5.6-sol".to_owned(),
+        protocol: Some(ProviderProtocol::OpenAiResponses),
+        api_path: Some("/v1/responses".to_owned()),
+        ..ProviderModel::default()
+    }];
     (runtime(provider), requests)
 }
 

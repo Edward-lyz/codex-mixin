@@ -555,6 +555,23 @@ async fn maps_valid_special_and_namespaced_tool_calls() {
         custom_body.contains("\"input\":\"*** Begin Patch\""),
         "{custom_body}"
     );
+    let mut nested_custom_names = ToolNameMap::default();
+    nested_custom_names
+        .insert_custom("apply_patch".to_owned(), "apply_patch".to_owned())
+        .unwrap();
+    let nested_custom_body = map_openai_tool_call(
+        tool_call(
+            Some("call_nested_custom"),
+            Some("apply_patch"),
+            r#"{"input":{"input":"*** Begin Patch"}}"#,
+        ),
+        nested_custom_names,
+    )
+    .await;
+    assert!(
+        nested_custom_body.contains("\"input\":\"*** Begin Patch\""),
+        "{nested_custom_body}"
+    );
 
     let mut search_names = ToolNameMap::default();
     search_names

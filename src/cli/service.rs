@@ -10,6 +10,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 use anyhow::Context;
 use codex_mixin::config::{GatewayConfig, load_stored_config, save_stored_config};
 use codex_mixin::provider::ProviderModelSource;
+use codex_mixin::provider::capabilities::ProviderCapabilities;
 use codex_mixin::server::{AppState, ServeExit, serve_on_listener_with_reload};
 use codex_mixin::web_search::WebSearchCapabilities;
 
@@ -51,8 +52,18 @@ async fn sync_all_provider_models_once() -> bool {
     for provider in providers {
         changed |= sync_provider_models(provider).await;
     }
+    probe_all_stale_selected_models().await;
     refresh_client_models_after_change(changed).await;
     changed
+}
+
+async fn probe_all_stale_selected_models() {
+    let Ok(config) = GatewayConfig::from_stored_config() else {
+        return;
+    };
+    for provider in config.providers {
+        probe_stale_selected_models(&provider.id).await;
+    }
 }
 
 fn providers_or_log() -> Option<Vec<ProviderModelRefreshTarget>> {
@@ -136,6 +147,55 @@ async fn sync_provider_models(provider: ProviderModelRefreshTarget) -> bool {
     }
     notify_model_changes(provider_id, provider.display_name, changes).await;
     true
+}
+
+#[allow(clippy::cognitive_complexity)]
+async fn probe_stale_selected_models(provider_id: &str) {
+    let config = match GatewayConfig::from_stored_config() {
+        Ok(config) => config,
+        Err(error) => {
+            tracing::warn!(provider_id, error = %format!("{error:#}"), "automatic capability probe could not load config");
+            return;
+        }
+    };
+    let Some(provider) = config
+        .providers
+        .iter()
+        .find(|provider| provider.id == provider_id)
+    else {
+        return;
+    };
+    let capabilities = match ProviderCapabilities::from_default_path(&config) {
+        Ok(capabilities) => capabilities,
+        Err(error) => {
+            tracing::warn!(provider_id, error = %format!("{error:#}"), "automatic capability probe could not load cache");
+            return;
+        }
+    };
+    let models = provider
+        .cached_models
+        .iter()
+        .filter(|model| {
+            provider
+                .selected_models
+                .iter()
+                .any(|selected| selected == &model.id)
+        })
+        .cloned()
+        .collect::<Vec<_>>();
+    let model_ids = match capabilities.models_needing_probe(provider, &models) {
+        Ok(model_ids) => model_ids,
+        Err(error) => {
+            tracing::warn!(provider_id, error = %format!("{error:#}"), "automatic capability probe could not inspect cache");
+            return;
+        }
+    };
+    if model_ids.is_empty() {
+        return;
+    }
+    if let Err(error) = super::providers::probe_new_models(provider_id, &model_ids, false).await {
+        tracing::warn!(provider_id, models = model_ids.join(","), error = %format!("{error:#}"), "automatic capability probe failed");
+    }
 }
 
 async fn probe_auto_selected_models(

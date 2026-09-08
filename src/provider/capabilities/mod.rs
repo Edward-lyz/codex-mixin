@@ -5,6 +5,7 @@ mod types;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
+use std::time::Duration;
 
 use anyhow::Context;
 use futures_util::{StreamExt, stream};
@@ -23,6 +24,7 @@ pub use types::{
 };
 
 type ProbeProgress = Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync>;
+pub const CAPABILITY_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 #[derive(Clone, Debug)]
 pub struct ProviderCapabilities {
@@ -68,6 +70,31 @@ impl ProviderCapabilities {
         if record.identity == ProviderIdentity::from_provider(provider) {
             annotate_models(&mut provider.cached_models, &record.models);
         }
+    }
+
+    pub fn models_needing_probe(
+        &self,
+        provider: &ProviderDefinition,
+        models: &[ProviderModel],
+    ) -> anyhow::Result<Vec<String>> {
+        let now = unix_milliseconds()?;
+        let ttl_ms = CAPABILITY_TTL.as_millis() as u64;
+        let Some(record) = self.file.providers.get(&provider.id) else {
+            return Ok(models.iter().map(|model| model.id.clone()).collect());
+        };
+        if record.identity != ProviderIdentity::from_provider(provider) {
+            return Ok(models.iter().map(|model| model.id.clone()).collect());
+        }
+        Ok(models
+            .iter()
+            .filter(|model| {
+                record
+                    .models
+                    .get(&model.id)
+                    .is_none_or(|capability| now.saturating_sub(capability.probed_at_ms) >= ttl_ms)
+            })
+            .map(|model| model.id.clone())
+            .collect())
     }
 
     pub async fn probe_provider(
@@ -335,6 +362,7 @@ fn merge_model_result(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::custom_provider;
 
     fn protocol_capabilities(tool_search: CapabilityStatus) -> ProtocolCapabilities {
         ProtocolCapabilities {
@@ -405,5 +433,52 @@ mod tests {
         );
 
         assert_eq!(models[0].supports_thinking, Some(true));
+    }
+
+    #[test]
+    fn selects_missing_and_expired_models_for_probe() {
+        let mut provider = custom_provider("custom", "secret");
+        provider.cached_models = ["fresh", "expired", "missing"]
+            .into_iter()
+            .map(|id| ProviderModel {
+                id: id.to_owned(),
+                ..ProviderModel::default()
+            })
+            .collect();
+        let now = unix_milliseconds().unwrap();
+        let result = |model: &str, probed_at_ms| ModelCapabilities {
+            model: model.to_owned(),
+            selected_protocol: Some(crate::provider::ProviderProtocol::OpenAiResponses),
+            selected_api_path: Some("/v1/responses".to_owned()),
+            protocols: vec![protocol_capabilities(CapabilityStatus::Supported)],
+            probed_at_ms,
+            last_probe_error: None,
+        };
+        let capabilities = ProviderCapabilities {
+            path: PathBuf::from("unused"),
+            file: CapabilityFile {
+                version: types::CAPABILITY_FILE_VERSION,
+                providers: BTreeMap::from([(
+                    provider.id.clone(),
+                    ProviderCapabilityRecord {
+                        identity: ProviderIdentity::from_provider(&provider),
+                        models: BTreeMap::from([
+                            ("fresh".to_owned(), result("fresh", now)),
+                            (
+                                "expired".to_owned(),
+                                result("expired", now - CAPABILITY_TTL.as_millis() as u64),
+                            ),
+                        ]),
+                    },
+                )]),
+            },
+        };
+
+        assert_eq!(
+            capabilities
+                .models_needing_probe(&provider, &provider.cached_models)
+                .unwrap(),
+            ["expired", "missing"]
+        );
     }
 }
