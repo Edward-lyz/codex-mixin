@@ -464,7 +464,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 id,
                 models,
                 model_contexts,
-            } => select_models(&id, models, model_contexts),
+            } => select_models(&id, models, model_contexts).await,
         },
         Command::Service { command } => match command {
             ServiceCommand::Start {

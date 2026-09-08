@@ -55,7 +55,7 @@ mod state;
 mod websocket_proxy;
 
 pub(crate) use responses_http::stream_official_response;
-pub use routes::{router, serve, serve_on_listener};
+pub use routes::{ServeExit, router, serve, serve_on_listener, serve_on_listener_with_reload};
 pub use state::{AnthropicByteStream, AppState};
 
 #[cfg(test)]

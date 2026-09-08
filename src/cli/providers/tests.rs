@@ -25,8 +25,10 @@ fn selecting_unknown_model_adds_it_with_safe_defaults() {
     provider.base_url = "https://example.test".to_owned();
 
     let contexts = BTreeMap::from([("hidden-model".to_owned(), 256_000)]);
-    apply_model_selection(&mut provider, vec!["hidden-model".to_owned()], &contexts).unwrap();
+    let newly_selected =
+        apply_model_selection(&mut provider, vec!["hidden-model".to_owned()], &contexts).unwrap();
 
+    assert_eq!(newly_selected, ["hidden-model"]);
     assert_eq!(provider.selected_models, ["hidden-model"]);
     let model = &provider.cached_models[0];
     assert!(model.manually_added);
@@ -37,8 +39,10 @@ fn selecting_unknown_model_adds_it_with_safe_defaults() {
     assert_eq!(model.supports_tool_search, Some(false));
     assert_eq!(model.supports_function_tools, Some(true));
 
-    apply_model_selection(&mut provider, Vec::new(), &BTreeMap::new()).unwrap();
+    let newly_selected =
+        apply_model_selection(&mut provider, Vec::new(), &BTreeMap::new()).unwrap();
 
+    assert!(newly_selected.is_empty());
     assert!(provider.selected_models.is_empty());
     assert!(provider.cached_models.is_empty());
 }

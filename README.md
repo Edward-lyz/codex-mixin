@@ -576,6 +576,8 @@ codex-mixin doctor --fix --restart-apps # 额外允许重启 ChatGPT/Codex App�
 
 更新供应商或模型选择后，除 Codex 的 managed catalog 外，所有已安装的 Claude Code、DSH、OpenCode、Pi 集成也会一并重渲染各自的托管模型列表（网关启动、能力探测、`refresh-codex-catalog` 和 doctor 修复时触发）。未安装的框架不会被创建或改动。
 
+网关启动后会立即刷新一次所有动态 Provider，之后每 30 秒轮询一次。单次新增 1–9 个模型时会自动加入选择并仅探测这些新增模型；单次新增达到 10 个时保留为待人工确认，避免异常接口批量污染选择。上游删除的模型会立即从缓存和选择中移除，不触发能力探测。手动加入或新选中的模型也会立即探测一次。模型集合变化后，网关会优雅重载内存路由并刷新所有已安装客户端的托管模型列表。macOS 还会为自动新增和下线发送系统通知。
+
 ### 图片生成
 
 - 官方 GPT：Codex 原生 `image_gen` extension 请求本地 `/v1/images/generations` 或 `/v1/images/edits` 后，Codex Mixin 使用 Codex OAuth 和 `chatgpt-account-id` 转发到官方图片后端。请求不会携带自定义 provider 的 API Key。
@@ -670,6 +672,7 @@ OpenAI Chat Completions 兼容上游不接受 `tool` 消息内嵌图片，网关
 | --- | --- |
 | Codex Mixin 配置 | `~/.codex-mixin/config.json` |
 | 本地网关日志 | `~/.codex-mixin/gateway.log`，轮转备份为 `gateway.log.1` |
+| macOS App 自启日志 | `~/.codex-mixin/macos-app.log` |
 | 登录自启任务 | `~/Library/LaunchAgents/local.codex-mixin.{menu-launch,service}.plist` |
 | 模型 metadata 缓存 | `~/.codex-mixin/models_dev_api.json` |
 | 模型测速结果 | `~/.codex-mixin/model-benchmarks.json` |
@@ -1178,6 +1181,7 @@ Launching without arguments is the user-facing entry point. It opens the TUI and
 | --- | --- |
 | Codex Mixin config | `~/.codex-mixin/config.json` |
 | Gateway log | `~/.codex-mixin/gateway.log`, with `gateway.log.1` as the rotated backup |
+| macOS app launch log | `~/.codex-mixin/macos-app.log` |
 | Login launch agents | `~/Library/LaunchAgents/local.codex-mixin.{menu-launch,service}.plist` |
 | Model metadata cache | `~/.codex-mixin/models_dev_api.json` |
 | Codex config | `~/.codex/config.toml` |

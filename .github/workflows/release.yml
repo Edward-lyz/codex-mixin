@@ -34,11 +34,11 @@ jobs:
             deb_arch: arm64
           - name: macos-x86_64
             os: macos
-            runner: macos-15-intel
+            runner: macos-26-intel
             target: x86_64-apple-darwin
           - name: macos-aarch64
             os: macos
-            runner: macos-15
+            runner: macos-26
             target: aarch64-apple-darwin
 
     steps:
@@ -78,6 +78,22 @@ jobs:
       - name: Verify static Linux CLI
         if: matrix.os == 'linux'
         run: ./scripts/verify-linux-static.sh "target/${{ matrix.target }}/release/codex-mixin"
+      - name: Select Xcode 26.6
+        if: matrix.os == 'macos'
+        shell: bash
+        run: |
+          xcode_path=/Applications/Xcode_26.6.app/Contents/Developer
+          if [[ ! -d "$xcode_path" ]]; then
+            echo "required Xcode is missing: $xcode_path" >&2
+            exit 1
+          fi
+          sudo xcode-select --switch "$xcode_path"
+          xcode_version="$(xcodebuild -version)"
+          if [[ "${xcode_version%%$'\n'*}" != "Xcode 26.6" ]]; then
+            echo "failed to select Xcode 26.6" >&2
+            echo "$xcode_version" >&2
+            exit 1
+          fi
       - name: Build macOS app
         if: matrix.os == 'macos'
         env:
@@ -85,6 +101,23 @@ jobs:
           MACOSX_DEPLOYMENT_TARGET: "13.1"
           CODEX_MIXIN_REFRESH_NASA_WALLPAPERS: "1"
         run: ./macos/build_app.sh
+      - name: Verify macOS SDK and Liquid Glass
+        if: matrix.os == 'macos'
+        shell: bash
+        run: |
+          menu_binary="dist/Codex Mixin.app/Contents/MacOS/CodexMixinMenu"
+          sdk_version="$(xcrun vtool -show-build "$menu_binary" | awk '$1 == "sdk" { print $2; exit }')"
+          if [[ "${sdk_version%%.*}" != "26" ]]; then
+            echo "expected macOS SDK 26, got ${sdk_version:-missing}" >&2
+            exit 1
+          fi
+          symbols="$(nm -u "$menu_binary")"
+          for symbol in glassEffect backgroundExtensionEffect; do
+            if [[ "$symbols" != *"$symbol"* ]]; then
+              echo "Liquid Glass symbol is missing from the macOS app: $symbol" >&2
+              exit 1
+            fi
+          done
       - name: Package CLI archive
         run: ./scripts/package-cli.sh "${{ matrix.target }}" "${{ steps.version.outputs.version }}" dist/release
       - name: Package Linux installer

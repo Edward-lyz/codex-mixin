@@ -167,6 +167,25 @@ impl ProviderCapabilities {
         current_config: &GatewayConfig,
         results: &[ModelCapabilities],
     ) -> anyhow::Result<()> {
+        self.update_provider_results(expected_provider, current_config, results, false)
+    }
+
+    pub fn merge_provider_results(
+        &mut self,
+        expected_provider: &ProviderDefinition,
+        current_config: &GatewayConfig,
+        results: &[ModelCapabilities],
+    ) -> anyhow::Result<()> {
+        self.update_provider_results(expected_provider, current_config, results, true)
+    }
+
+    fn update_provider_results(
+        &mut self,
+        expected_provider: &ProviderDefinition,
+        current_config: &GatewayConfig,
+        results: &[ModelCapabilities],
+        preserve_unprobed: bool,
+    ) -> anyhow::Result<()> {
         let current = current_config
             .providers
             .iter()
@@ -185,18 +204,20 @@ impl ProviderCapabilities {
                 .get(&provider_id)
                 .filter(|record| record.identity == expected_identity)
                 .map(|record| &record.models);
-            let models = results
-                .iter()
-                .map(|result| {
-                    let result = previous_models
-                        .and_then(|models| models.get(&result.model))
-                        .map_or_else(
-                            || result.clone(),
-                            |previous| merge_model_result(previous, result.clone()),
-                        );
-                    (result.model.clone(), result)
-                })
-                .collect();
+            let mut models = if preserve_unprobed {
+                previous_models.cloned().unwrap_or_default()
+            } else {
+                BTreeMap::new()
+            };
+            models.extend(results.iter().map(|result| {
+                let result = previous_models
+                    .and_then(|models| models.get(&result.model))
+                    .map_or_else(
+                        || result.clone(),
+                        |previous| merge_model_result(previous, result.clone()),
+                    );
+                (result.model.clone(), result)
+            }));
             file.providers.insert(
                 provider_id.clone(),
                 ProviderCapabilityRecord {

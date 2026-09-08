@@ -13,7 +13,10 @@ use std::time::Duration;
 use anyhow::{Context, bail};
 use reqwest::header::HeaderMap;
 
-pub use discovery::{apply_discovered_models, discover_provider_models, redact_provider_error};
+pub use discovery::{
+    AUTO_SELECT_NEW_MODEL_LIMIT, ModelDiscoveryChanges, apply_discovered_models,
+    discover_provider_models, redact_provider_error,
+};
 pub use quota::{QuotaUsageSummary, quota_usage};
 pub use registry::{ProviderRegistry, ProviderRuntime, ResolvedProviderModel, catalog_model_slug};
 pub use resolver::{

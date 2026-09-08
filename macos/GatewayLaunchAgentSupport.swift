@@ -47,30 +47,14 @@ extension AppDelegate {
 
     func installMenuLaunchAgent() throws {
         try FileManager.default.createDirectory(at: menuLaunchAgentPath().deletingLastPathComponent(), withIntermediateDirectories: true)
-        let plist = """
-        <?xml version="1.0" encoding="UTF-8"?>
-        <!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
-        <plist version="1.0">
-        <dict>
-          <key>Label</key>
-          <string>\(menuLaunchLabel)</string>
-          <key>ProgramArguments</key>
-          <array>
-            <string>/usr/bin/open</string>
-            <string>-g</string>
-            <string>\(xmlEscape(Bundle.main.bundleURL.path))</string>
-          </array>
-          <key>RunAtLoad</key>
-          <true/>
-          <key>ProcessType</key>
-          <string>Interactive</string>
-          <key>StandardOutPath</key>
-          <string>/dev/null</string>
-          <key>StandardErrorPath</key>
-          <string>/dev/null</string>
-        </dict>
-        </plist>
-        """
+        guard let executableURL = Bundle.main.executableURL else {
+            throw GatewayError.command("Codex Mixin app executable not found")
+        }
+        let plist = menuLaunchAgentPlist(
+            label: menuLaunchLabel,
+            executablePath: executableURL.path,
+            logPath: stateDir().appendingPathComponent("macos-app.log").path
+        )
         try plist.write(to: menuLaunchAgentPath(), atomically: true, encoding: .utf8)
     }
 

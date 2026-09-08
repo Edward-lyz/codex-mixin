@@ -548,10 +548,19 @@ fn add_baidu_model(
     }
 }
 
+pub const AUTO_SELECT_NEW_MODEL_LIMIT: usize = 10;
+
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
+pub struct ModelDiscoveryChanges {
+    pub added: Vec<String>,
+    pub removed: Vec<String>,
+    pub auto_selected: Vec<String>,
+}
+
 pub fn apply_discovered_models(
     provider: &mut ProviderDefinition,
     mut models: Vec<ProviderModel>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<ModelDiscoveryChanges> {
     let discovered_ids = models
         .iter()
         .map(|model| model.id.clone())
@@ -565,6 +574,7 @@ pub fn apply_discovered_models(
     );
     normalize_models(&mut models);
     let first_successful_refresh = provider.models_refreshed_at_ms.is_none();
+    let mut changes = ModelDiscoveryChanges::default();
     if first_successful_refresh {
         provider.selected_models = models
             .iter()
@@ -582,22 +592,34 @@ pub fn apply_discovered_models(
             .iter()
             .map(|model| model.id.as_str())
             .collect::<HashSet<_>>();
-        provider
-            .selected_models
-            .retain(|model| available_models.contains(model.as_str()));
-        // Refreshes preserve explicit user selection. New models remain visible for
-        // review, while models removed upstream leave the selection immediately.
-        provider.new_models = models
+        changes.added = models
             .iter()
             .filter(|model| !previous_models.contains(model.id.as_str()))
             .map(|model| model.id.clone())
             .collect();
+        changes.removed = provider
+            .cached_models
+            .iter()
+            .filter(|model| !model.manually_added && !available_models.contains(model.id.as_str()))
+            .map(|model| model.id.clone())
+            .collect();
+        provider
+            .selected_models
+            .retain(|model| available_models.contains(model.as_str()));
+        if !changes.added.is_empty() && changes.added.len() < AUTO_SELECT_NEW_MODEL_LIMIT {
+            provider
+                .selected_models
+                .extend(changes.added.iter().cloned());
+            changes.auto_selected = changes.added.clone();
+        }
+        provider.new_models = changes.added.clone();
     }
     provider.cached_models = models;
     provider.models_refreshed_at_ms =
         Some(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64);
     provider.models_refresh_error = None;
-    provider.validate()
+    provider.validate()?;
+    Ok(changes)
 }
 
 pub fn redact_provider_error(definition: &ProviderDefinition, error: &str) -> String {
@@ -782,7 +804,7 @@ mod tests {
 
         apply_discovered_models(&mut provider, vec![model("upstream")]).unwrap();
 
-        assert_eq!(provider.selected_models, ["manual"]);
+        assert_eq!(provider.selected_models, ["manual", "upstream"]);
         assert!(
             provider
                 .cached_models
@@ -813,7 +835,7 @@ mod tests {
     }
 
     #[test]
-    fn later_refresh_keeps_new_models_unselected_and_removes_unavailable_models() {
+    fn later_refresh_selects_small_new_model_batches_and_removes_unavailable_models() {
         let mut provider = crate::provider::custom_provider("custom", "key");
         provider.base_url = "https://example.test".to_owned();
         provider.models_refreshed_at_ms = Some(1);
@@ -822,7 +844,7 @@ mod tests {
 
         apply_discovered_models(&mut provider, vec![model("a"), model("new")]).unwrap();
 
-        assert_eq!(provider.selected_models, ["a"]);
+        assert_eq!(provider.selected_models, ["a", "new"]);
         assert_eq!(provider.new_models, ["new"]);
         assert_eq!(
             provider
@@ -835,7 +857,23 @@ mod tests {
     }
 
     #[test]
-    fn reappearing_model_stays_unselected_after_leaving_cached_models() {
+    fn later_refresh_does_not_auto_select_ten_new_models() {
+        let mut provider = crate::provider::custom_provider("custom", "key");
+        provider.base_url = "https://example.test".to_owned();
+        provider.models_refreshed_at_ms = Some(1);
+        provider.cached_models = vec![model("existing")];
+        provider.selected_models = vec!["existing".to_owned()];
+        let mut models = vec![model("existing")];
+        models.extend((0..10).map(|index| model(&format!("new-{index:02}"))));
+
+        apply_discovered_models(&mut provider, models).unwrap();
+
+        assert_eq!(provider.selected_models, ["existing"]);
+        assert_eq!(provider.new_models.len(), 10);
+    }
+
+    #[test]
+    fn reappearing_model_is_treated_as_a_new_available_model() {
         let mut provider = crate::provider::custom_provider("custom", "key");
         provider.base_url = "https://example.test".to_owned();
         provider.models_refreshed_at_ms = Some(1);
@@ -847,11 +885,11 @@ mod tests {
 
         // Upstream drops "flap" entirely.
         apply_discovered_models(&mut provider, vec![model("other")]).unwrap();
-        assert!(provider.selected_models.is_empty());
+        assert_eq!(provider.selected_models, ["other"]);
         assert_eq!(provider.new_models, ["other"]);
 
         apply_discovered_models(&mut provider, vec![model("flap"), model("other")]).unwrap();
-        assert!(provider.selected_models.is_empty());
+        assert_eq!(provider.selected_models, ["other", "flap"]);
         assert_eq!(provider.new_models, ["flap"]);
     }
 

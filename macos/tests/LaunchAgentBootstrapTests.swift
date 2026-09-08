@@ -17,6 +17,17 @@ private enum TestBootstrapError: Error, CustomStringConvertible {
 @main
 struct LaunchAgentBootstrapTests {
     static func main() async throws {
+        let menuPlist = menuLaunchAgentPlist(
+            label: "local.codex-mixin.menu-launch",
+            executablePath: "/Applications/Codex Mixin.app/Contents/MacOS/CodexMixinMenu",
+            logPath: "/Users/test/.codex-mixin/macos-app.log"
+        )
+        precondition(menuPlist.contains("CodexMixinMenu"))
+        precondition(!menuPlist.contains("<string>/usr/bin/open</string>"))
+        precondition(menuPlist.contains("<key>KeepAlive</key>"))
+        precondition(menuPlist.contains("<key>SuccessfulExit</key>"))
+        precondition(menuPlist.contains("macos-app.log"))
+
         var attempts = 0
         var delays = 0
         let output = try await retryLaunchAgentBootstrap(

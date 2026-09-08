@@ -6,8 +6,9 @@ use codex_mixin::config::GatewayConfig;
 use codex_mixin::provider::capabilities::ProviderCapabilities;
 use codex_mixin::provider::{
     AWS_BEDROCK_DEFAULT_REGION, AWS_BEDROCK_RUNTIME_SERVICE, AwsSigV4AuthConfig,
-    MANUAL_MODEL_CONTEXT_WINDOW, ProviderModelSource, apply_discovered_models,
-    aws_bedrock_runtime_base_url, discover_provider_models, redact_provider_error,
+    MANUAL_MODEL_CONTEXT_WINDOW, ModelDiscoveryChanges, ProviderModelSource,
+    apply_discovered_models, aws_bedrock_runtime_base_url, discover_provider_models,
+    redact_provider_error,
 };
 use serde_json::json;
 
@@ -24,20 +25,37 @@ use crate::cli::official_models::{
 use crate::cli::refresh_default_managed_codex_catalog;
 
 pub(crate) async fn discover_models(id: &str) -> anyhow::Result<()> {
-    discover_models_with_output(id, false).await
+    let changes = discover_models_with_output(id, false).await?;
+    if id == OFFICIAL_PROVIDER_ID {
+        if !changes.added.is_empty() || !changes.removed.is_empty() {
+            refresh_default_managed_codex_catalog().await?;
+            crate::cli::sync_installed_client_models()?;
+        }
+        return Ok(());
+    }
+    if !changes.auto_selected.is_empty() {
+        probe_new_models(id, &changes.auto_selected, true).await?;
+    }
+    Ok(())
 }
 
-pub(crate) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow::Result<()> {
+pub(crate) async fn discover_models_with_output(
+    id: &str,
+    quiet: bool,
+) -> anyhow::Result<ModelDiscoveryChanges> {
     if id == OFFICIAL_PROVIDER_ID {
         super::super::progress_step("Refreshing model list for provider official");
+        let previous_models = load_official_models()?;
         let count = refresh_official_models().await?;
+        let current_models = load_official_models()?;
+        let changes = apply_official_model_refresh(&previous_models, &current_models)?;
         super::super::progress_step(&format!(
             "Model refresh complete for official: {count} available"
         ));
         if !quiet {
             println!("provider models refreshed: official ({count} available)");
         }
-        return Ok(());
+        return Ok(changes);
     }
     let config = required_config()?;
     let provider = config
@@ -50,9 +68,13 @@ pub(crate) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow
         .timeout(Duration::from_secs(30))
         .build()?;
     super::super::progress_step(&format!("Refreshing model list for provider {id}"));
-    let quota_probe = async {
-        if provider.preset_id.as_deref() == Some("custom") && provider.quota_url.is_none() {
-            discover_custom_quota(&client, &provider).await
+    let quota_client = client.clone();
+    let quota_provider = provider.clone();
+    let quota_probe = async move {
+        if quota_provider.preset_id.as_deref() == Some("custom")
+            && quota_provider.quota_url.is_none()
+        {
+            discover_custom_quota(&quota_client, &quota_provider).await
         } else {
             Ok(None)
         }
@@ -107,7 +129,7 @@ pub(crate) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow
     capabilities.annotate_provider(&mut annotated_provider);
     let models = annotated_provider.cached_models;
     let count = models.len();
-    mutate_and_invalidate(|config| {
+    let changes = mutate_and_invalidate(|config| {
         let current = find_provider_mut(config, id)?;
         anyhow::ensure!(
             discovery_settings_match(current, &provider),
@@ -130,10 +152,80 @@ pub(crate) async fn discover_models_with_output(id: &str, quiet: bool) -> anyhow
             );
         }
     }
-    Ok(())
+    Ok(changes)
+}
+
+fn apply_official_model_refresh(
+    previous_models: &[codex_mixin::provider::ProviderModel],
+    current_models: &[codex_mixin::provider::ProviderModel],
+) -> anyhow::Result<ModelDiscoveryChanges> {
+    if previous_models.is_empty() {
+        return Ok(ModelDiscoveryChanges::default());
+    }
+    let previous_ids = previous_models
+        .iter()
+        .map(|model| model.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let current_ids = current_models
+        .iter()
+        .map(|model| model.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    let mut changes = ModelDiscoveryChanges {
+        added: current_models
+            .iter()
+            .filter(|model| !previous_ids.contains(model.id.as_str()))
+            .map(|model| model.id.clone())
+            .collect(),
+        removed: previous_models
+            .iter()
+            .filter(|model| !current_ids.contains(model.id.as_str()))
+            .map(|model| model.id.clone())
+            .collect(),
+        auto_selected: Vec::new(),
+    };
+    let auto_select = !changes.added.is_empty()
+        && changes.added.len() < codex_mixin::provider::AUTO_SELECT_NEW_MODEL_LIMIT;
+    mutate_and_invalidate(|config| {
+        if let Some(selected) = &mut config.official_selected_models {
+            selected.retain(|model| current_ids.contains(model.as_str()));
+            if auto_select {
+                selected.extend(changes.added.iter().cloned());
+            }
+        } else if !auto_select && !changes.added.is_empty() {
+            config.official_selected_models = Some(
+                previous_models
+                    .iter()
+                    .filter(|model| current_ids.contains(model.id.as_str()))
+                    .map(|model| model.id.clone())
+                    .collect(),
+            );
+        }
+        Ok(())
+    })?;
+    if auto_select {
+        changes.auto_selected = changes.added.clone();
+    }
+    Ok(changes)
 }
 
 pub(crate) async fn probe_selected_models(id: &str) -> anyhow::Result<()> {
+    probe_models(id, None, false, true).await
+}
+
+pub(crate) async fn probe_new_models(
+    id: &str,
+    model_ids: &[String],
+    refresh_clients: bool,
+) -> anyhow::Result<()> {
+    probe_models(id, Some(model_ids), true, refresh_clients).await
+}
+
+async fn probe_models(
+    id: &str,
+    model_ids: Option<&[String]>,
+    quiet: bool,
+    refresh_clients: bool,
+) -> anyhow::Result<()> {
     let config = required_config()?;
     let provider = config
         .providers
@@ -145,16 +237,21 @@ pub(crate) async fn probe_selected_models(id: &str) -> anyhow::Result<()> {
         .cached_models
         .iter()
         .filter(|model| {
-            provider
-                .selected_models
-                .iter()
-                .any(|selected| selected == &model.id)
+            model_ids.map_or_else(
+                || {
+                    provider
+                        .selected_models
+                        .iter()
+                        .any(|selected| selected == &model.id)
+                },
+                |requested| requested.iter().any(|requested| requested == &model.id),
+            )
         })
         .cloned()
         .collect::<Vec<_>>();
     anyhow::ensure!(
         !selected_models.is_empty(),
-        "provider {id} has no selected cached models; refresh the model list and select models first"
+        "provider {id} has no requested cached models to probe"
     );
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
@@ -177,7 +274,11 @@ pub(crate) async fn probe_selected_models(id: &str) -> anyhow::Result<()> {
     .await?;
     let runtime_config = GatewayConfig::from_stored_config()?;
     let mut capabilities = ProviderCapabilities::from_default_path(&runtime_config)?;
-    capabilities.replace_provider_results(&provider, &runtime_config, &summary.results)?;
+    if refresh_clients {
+        capabilities.replace_provider_results(&provider, &runtime_config, &summary.results)?;
+    } else {
+        capabilities.merge_provider_results(&provider, &runtime_config, &summary.results)?;
+    }
     mutate_and_invalidate(|config| {
         let current = find_provider_mut(config, id)?;
         anyhow::ensure!(
@@ -187,22 +288,26 @@ pub(crate) async fn probe_selected_models(id: &str) -> anyhow::Result<()> {
         capabilities.annotate_provider(current);
         current.validate()
     })?;
-    super::super::progress_step("Refreshing Codex model catalog after capability probing");
-    refresh_default_managed_codex_catalog().await?;
-    let refreshed_clients = crate::cli::sync_installed_client_models()?;
-    for client in &refreshed_clients {
-        super::super::progress_step(&format!(
-            "{client} models refreshed; restart {client} to reload"
-        ));
+    if refresh_clients {
+        super::super::progress_step("Refreshing Codex model catalog after capability probing");
+        refresh_default_managed_codex_catalog().await?;
+        let refreshed_clients = crate::cli::sync_installed_client_models()?;
+        for client in &refreshed_clients {
+            super::super::progress_step(&format!(
+                "{client} models refreshed; restart {client} to reload"
+            ));
+        }
     }
     super::super::progress_step(&format!(
         "Capability probing complete for {id}: {} models checked",
         summary.attempted
     ));
-    println!(
-        "provider capabilities probed: {id} ({} models checked)",
-        summary.attempted
-    );
+    if !quiet {
+        println!(
+            "provider capabilities probed: {id} ({} models checked)",
+            summary.attempted
+        );
+    }
     Ok(())
 }
 
@@ -313,7 +418,7 @@ pub(crate) async fn test_provider(options: TestProviderOptions) -> anyhow::Resul
     Ok(())
 }
 
-pub(crate) fn select_models(
+pub(crate) async fn select_models(
     id: &str,
     models: Vec<String>,
     model_contexts: Vec<String>,
@@ -341,10 +446,13 @@ pub(crate) fn select_models(
         println!("provider models selected: {id} ({selected_count})");
         return Ok(());
     }
-    mutate_and_invalidate(|config| {
+    let newly_selected = mutate_and_invalidate(|config| {
         ensure_has_providers(config)?;
         apply_model_selection(find_provider_mut(config, id)?, models, &model_contexts)
     })?;
+    if !newly_selected.is_empty() {
+        probe_new_models(id, &newly_selected, true).await?;
+    }
     println!("provider models selected: {id} ({selected_count})");
     Ok(())
 }
@@ -353,7 +461,17 @@ pub(super) fn apply_model_selection(
     provider: &mut codex_mixin::provider::ProviderDefinition,
     models: Vec<String>,
     model_contexts: &BTreeMap<String, u64>,
-) -> anyhow::Result<()> {
+) -> anyhow::Result<Vec<String>> {
+    let previous_selection = provider
+        .selected_models
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::HashSet<_>>();
+    let newly_selected = models
+        .iter()
+        .filter(|model| !previous_selection.contains(model.as_str()))
+        .cloned()
+        .collect::<Vec<_>>();
     let mut known = provider
         .cached_models
         .iter()
@@ -401,7 +519,8 @@ pub(super) fn apply_model_selection(
         .retain(|model| !model.manually_added || selected.contains(model.id.as_str()));
     provider.selected_models = models;
     provider.new_models.clear();
-    provider.validate()
+    provider.validate()?;
+    Ok(newly_selected)
 }
 
 fn parse_model_contexts(values: Vec<String>) -> anyhow::Result<BTreeMap<String, u64>> {

@@ -28,6 +28,45 @@ fn test_provider(base_url: String, model: &str) -> crate::provider::ProviderDefi
     provider
 }
 
+#[tokio::test]
+async fn model_change_signal_reloads_gateway_state() {
+    let directory = tempfile::tempdir().unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let config = GatewayConfig {
+        bind: listener.local_addr().unwrap(),
+        providers: Vec::new(),
+        official_responses_url: "https://example.invalid/responses".to_owned(),
+        codex_auth_path: directory.path().join("auth.json"),
+        gateway_api_key: None,
+        gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
+        accept_codex_oauth: false,
+        official_selected_models: None,
+        default_max_tokens: 8192,
+        default_context_window: 1_000_000,
+        request_timeout: Duration::from_secs(2),
+        thinking_mode: ThinkingMode::Off,
+        enable_web_search_tool: false,
+        web_search_tool_type: "web_search_20250305".to_owned(),
+        web_search_max_uses: Some(3),
+        fusion_profiles: Vec::new(),
+    };
+    let (reload_sender, reload_receiver) = tokio::sync::watch::channel(0_u64);
+    let server = tokio::spawn(serve_on_listener_with_reload(
+        config,
+        listener,
+        reload_receiver,
+    ));
+
+    reload_sender.send(1).unwrap();
+    let exit = tokio::time::timeout(Duration::from_secs(2), server)
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(exit, ServeExit::Reload);
+}
+
 #[test]
 fn provider_model_display_name_keeps_the_model_id_visible() {
     assert_eq!(

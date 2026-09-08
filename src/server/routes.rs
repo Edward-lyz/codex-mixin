@@ -7,6 +7,16 @@ use super::responses_ws::responses_ws;
 use super::*;
 use axum::extract::Query;
 use serde::Deserialize;
+use std::sync::{
+    Arc,
+    atomic::{AtomicBool, Ordering},
+};
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum ServeExit {
+    Shutdown,
+    Reload,
+}
 
 pub fn router(state: AppState) -> Router {
     Router::new()
@@ -38,9 +48,20 @@ pub async fn serve(config: GatewayConfig) -> anyhow::Result<()> {
 }
 
 pub async fn serve_on_listener(
-    mut config: GatewayConfig,
+    config: GatewayConfig,
     listener: tokio::net::TcpListener,
 ) -> anyhow::Result<()> {
+    let (_reload_sender, reload_receiver) = tokio::sync::watch::channel(0_u64);
+    serve_on_listener_with_reload(config, listener, reload_receiver)
+        .await
+        .map(|_| ())
+}
+
+pub async fn serve_on_listener_with_reload(
+    mut config: GatewayConfig,
+    listener: tokio::net::TcpListener,
+    mut reload: tokio::sync::watch::Receiver<u64>,
+) -> anyhow::Result<ServeExit> {
     let bind = listener.local_addr()?;
     config.bind = bind;
     let state = AppState::new(config)?;
@@ -79,6 +100,8 @@ pub async fn serve_on_listener(
     });
     #[cfg(unix)]
     let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let reload_requested = Arc::new(AtomicBool::new(false));
+    let shutdown_reload_requested = Arc::clone(&reload_requested);
     tracing::info!(%bind, "codex-mixin listening");
     let result = axum::serve(listener, router(state))
         .with_graceful_shutdown(async move {
@@ -86,9 +109,21 @@ pub async fn serve_on_listener(
             tokio::select! {
                 _ = tokio::signal::ctrl_c() => {}
                 _ = terminate.recv() => {}
+                result = reload.changed() => {
+                    if result.is_ok() {
+                        shutdown_reload_requested.store(true, Ordering::Release);
+                    }
+                }
             }
             #[cfg(not(unix))]
-            let _ = tokio::signal::ctrl_c().await;
+            tokio::select! {
+                _ = tokio::signal::ctrl_c() => {}
+                result = reload.changed() => {
+                    if result.is_ok() {
+                        shutdown_reload_requested.store(true, Ordering::Release);
+                    }
+                }
+            }
         })
         .await;
     if let Some(probe_task) = probe_task {
@@ -96,7 +131,11 @@ pub async fn serve_on_listener(
     }
     ducx_warmup_task.abort();
     result?;
-    Ok(())
+    Ok(if reload_requested.load(Ordering::Acquire) {
+        ServeExit::Reload
+    } else {
+        ServeExit::Shutdown
+    })
 }
 
 async fn healthz(State(state): State<AppState>) -> impl IntoResponse {
