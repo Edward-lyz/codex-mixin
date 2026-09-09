@@ -479,6 +479,15 @@ pub(super) async fn start(
     }
     let config_path = resolve_codex_config_path(None)?;
     sync_managed_codex_gateway_base_url(&config_path, actual_bind)?;
+    // Service start is an explicit client-integration point: push the current
+    // gateway client key into every installed client. A corrupted client must
+    // not block the gateway from starting; report it and continue.
+    if let Err(error) = super::sync_installed_client_keys() {
+        tracing::error!(
+            error = %format!("{error:#}"),
+            "failed to sync installed client gateway keys; run codex-mixin doctor to repair"
+        );
+    }
     let supported_models = WebSearchCapabilities::from_default_path(&config)?.supported_model_ids();
     log_codex_catalog_refresh_started(&config_path, "gateway_start", "capability_cache");
     match refresh_managed_codex_catalog_with_capabilities(&config_path, Some(&supported_models)) {

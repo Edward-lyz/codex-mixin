@@ -998,3 +998,33 @@ fn syncs_dynamic_gateway_port_to_managed_custom_provider() {
         Some("https://example.test/v1")
     );
 }
+
+#[test]
+fn corrupted_managed_config_surfaces_key_sync_error() {
+    // Regression for the client-key sync fix: corruption is surfaced so the
+    // doctor can report it, and a missing Codex config is a no-op. The global
+    // command dispatch no longer runs this sync, so unrelated queries cannot
+    // fail because a client config is corrupted.
+    let home = tempfile::tempdir().unwrap();
+    let config_path = home.path().join("config.toml");
+    fs::create_dir_all(config_path.parent().unwrap()).unwrap();
+    fs::write(
+        &config_path,
+        "codex-mixin managed config\nmodel_provider = [broken",
+    )
+    .unwrap();
+
+    let corrupted = sync_installed_codex_client_key(Some(config_path.clone()));
+    assert!(
+        corrupted.is_err(),
+        "corrupted managed config must surface a sync error, got {:?}",
+        corrupted
+    );
+
+    let missing = sync_installed_codex_client_key(Some(home.path().join("absent.toml")));
+    assert!(
+        missing.is_ok(),
+        "missing Codex config must be a no-op, got {:?}",
+        missing
+    );
+}

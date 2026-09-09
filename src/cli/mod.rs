@@ -97,6 +97,19 @@ fn rollback_new_client_key_on_error(
 /// (Claude Code, DSH, OpenCode, Pi) from the current provider configuration.
 /// Clients that are not installed stay untouched. Returns the display names
 /// of the clients whose configuration changed.
+/// Re-sync the gateway client key into every installed client's config.
+/// Called at client integration, key change, service start, and explicit
+/// repair -- not from the global command dispatch, so unrelated queries
+/// never fail because a client config is corrupted.
+pub(in crate::cli) fn sync_installed_client_keys() -> anyhow::Result<()> {
+    sync_installed_codex_client_key(None)?;
+    sync_installed_claude_client_key()?;
+    sync_installed_dsh_client_key()?;
+    sync_installed_opencode_client_key()?;
+    sync_installed_pi_client_key()?;
+    Ok(())
+}
+
 pub(in crate::cli) fn sync_installed_client_models() -> anyhow::Result<Vec<&'static str>> {
     let mut refreshed = Vec::new();
     if sync_installed_claude_models()? {
@@ -243,16 +256,6 @@ fn exit_with_command_error(
 
 #[allow(clippy::cognitive_complexity)]
 async fn run(cli: Cli) -> anyhow::Result<()> {
-    if !matches!(
-        &cli.command,
-        Some(Command::ReportHook { .. } | Command::ReportReplay { .. })
-    ) {
-        sync_installed_codex_client_key()?;
-        sync_installed_claude_client_key()?;
-        sync_installed_dsh_client_key()?;
-        sync_installed_opencode_client_key()?;
-        sync_installed_pi_client_key()?;
-    }
     match cli.command.unwrap_or(Command::Info { json: false }) {
         Command::ReportHook { event } => report_hook::run(&event).await,
         Command::ReportReplay {

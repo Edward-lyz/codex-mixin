@@ -236,6 +236,60 @@ pub(super) fn check_codex_integration(
         }
     }
 
+    // A managed config must carry the current gateway client key, or Codex
+    // requests are rejected at the gateway. Report corruption here instead of
+    // failing unrelated commands.
+    if let Some(table) = provider_table {
+        let stored_key = codex_mixin::config::GatewayConfig::from_stored_config()
+            .ok()
+            .and_then(|config| {
+                config
+                    .require_client_key(codex_mixin::gateway_access::GatewayClient::Codex)
+                    .ok()
+            });
+        if let Some(stored_key) = stored_key {
+            let configured_key = table
+                .get("http_headers")
+                .and_then(Item::as_inline_table)
+                .and_then(|headers| {
+                    headers.get(codex_mixin::gateway_access::CODEX_CLIENT_KEY_HEADER)
+                })
+                .and_then(toml_edit::Value::as_str);
+            match configured_key {
+                Some(key) if key == stored_key => {
+                    checks.push(DoctorCheck::new(
+                        "codex_client_key",
+                        "Codex gateway client key",
+                        DoctorStatus::Ok,
+                        "managed config carries the current gateway client key",
+                    ));
+                }
+                Some(_) => {
+                    checks.push(
+                        DoctorCheck::new(
+                            "codex_client_key",
+                            "Codex gateway client key",
+                            DoctorStatus::Error,
+                            "managed config carries a stale gateway client key; Codex requests will be rejected",
+                        )
+                        .hint("rerun codex-mixin connect codex to re-sync the client key"),
+                    );
+                }
+                None => {
+                    checks.push(
+                        DoctorCheck::new(
+                            "codex_client_key",
+                            "Codex gateway client key",
+                            DoctorStatus::Error,
+                            "managed config is missing the gateway client key header; Codex requests will be rejected",
+                        )
+                        .hint("rerun codex-mixin connect codex to re-sync the client key"),
+                    );
+                }
+            }
+        }
+    }
+
     let codex_home = match path.parent() {
         Some(parent) => parent.to_path_buf(),
         None => {

@@ -250,8 +250,10 @@ pub(in crate::cli) fn upsert_codex_config(
     Ok(())
 }
 
-pub(in crate::cli) fn sync_installed_codex_client_key() -> anyhow::Result<()> {
-    let config_path = resolve_codex_config_path(None)?;
+pub(in crate::cli) fn sync_installed_codex_client_key(
+    config_path: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let config_path = resolve_codex_config_path(config_path)?;
     if !config_path.exists() {
         return Ok(());
     }
