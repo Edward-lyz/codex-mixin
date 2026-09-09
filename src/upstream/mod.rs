@@ -94,7 +94,11 @@ impl UpstreamAccess {
             // DUCX acts as a header generator. Merge its native headers instead
             // of the stored key.
             let native = self.baidu_native_headers(provider).await?;
-            let base_request = self.client.post(provider.api_url().clone());
+            // Use the model-level endpoint like the OpenAI protocols so a
+            // per-model api_path is honored for Anthropic Messages too.
+            let base_request = self
+                .client
+                .post(provider.api_url_for_model(&request.model).clone());
             let mut upstream_request = match &native {
                 Some(native) => base_request.headers(native.clone()),
                 None if provider.aws_sigv4().is_some() => provider

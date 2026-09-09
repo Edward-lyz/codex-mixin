@@ -7072,3 +7072,44 @@ async fn perf_smoke_handles_parallel_streams() {
         "gateway mock throughput too low: {requests_per_second:.2} req/s in {elapsed:?}"
     );
 }
+
+#[tokio::test]
+async fn anthropic_messages_honors_model_level_upstream_endpoint() {
+    // Regression: the Anthropic Messages path must use the same model-level
+    // upstream endpoint as the OpenAI protocols, honoring a per-model api_path.
+    let hits = Arc::new(Mutex::new(Vec::<String>::new()));
+    let hits2 = Arc::clone(&hits);
+    let upstream = Router::new().route(
+        "/{*path}",
+        post(move |uri: OriginalUri| async move {
+            hits2.lock().unwrap().push(uri.path().to_owned());
+            Response::builder()
+                .header(header::CONTENT_TYPE, "text/event-stream")
+                .body(Body::from(text_sse()))
+                .unwrap()
+        }),
+    );
+    let upstream_url = spawn_router(upstream).await;
+    let mut config = test_config(upstream_url);
+    config.providers[0].cached_models[0].api_path =
+        Some("/v1/models/deepseek-v4/messages".to_owned());
+    config.providers[0].selected_models = vec!["DeepSeek-V4-Flash".to_owned()];
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&responses_request())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("response.completed"));
+    let hits = hits.lock().unwrap();
+    assert!(
+        hits.iter()
+            .any(|path| path == "/v1/models/deepseek-v4/messages"),
+        "expected the model-level Anthropic endpoint, upstream saw {hits:?}"
+    );
+}
