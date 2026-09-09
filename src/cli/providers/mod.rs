@@ -432,10 +432,6 @@ fn sync_imagegen_skill() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn invalidate_provider_capability_cache() -> anyhow::Result<()> {
-    ProviderCapabilities::clear_default_cache().map(|_| ())
-}
-
 fn discovery_settings_match(
     current: &codex_mixin::provider::ProviderDefinition,
     discovered_from: &codex_mixin::provider::ProviderDefinition,

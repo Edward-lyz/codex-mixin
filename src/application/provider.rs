@@ -3,8 +3,8 @@ use std::collections::{HashMap, HashSet};
 use crate::config::{StoredGatewayConfig, mutate_stored_config};
 use crate::provider::capabilities::ProviderCapabilities;
 use crate::provider::{
-    ModelDiscoveryChanges, ProviderDefinition, ProviderModel, ProviderPreset, ProviderQuotaParser,
-    apply_discovered_models, catalog_model_slug,
+    ModelDiscoveryChanges, ProviderDefinition, ProviderModel, ProviderPreset, ProviderProtocol,
+    ProviderQuotaParser, apply_discovered_models, catalog_model_slug,
 };
 use crate::web_search::WebSearchCapabilities;
 
@@ -89,6 +89,55 @@ pub fn commit_discovered_models(
     })?;
     WebSearchCapabilities::clear_default_cache()?;
     Ok(changes)
+}
+
+pub fn commit_detected_endpoint(
+    id: &str,
+    snapshot: &ProviderDefinition,
+    base_url: String,
+    protocol: ProviderProtocol,
+    api_path: String,
+    models_path: String,
+) -> Result<(), OperationError> {
+    mutate_stored_config(|config| {
+        apply_detected_endpoint(
+            config,
+            id,
+            snapshot,
+            base_url,
+            protocol,
+            api_path,
+            models_path,
+        )
+    })
+    .map_err(|source| OperationError::AfterCommit {
+        stage: "detected protocol persistence",
+        source,
+    })?;
+    invalidate_provider_caches()
+}
+
+#[allow(clippy::too_many_arguments)]
+fn apply_detected_endpoint(
+    config: &mut StoredGatewayConfig,
+    id: &str,
+    snapshot: &ProviderDefinition,
+    base_url: String,
+    protocol: ProviderProtocol,
+    api_path: String,
+    models_path: String,
+) -> anyhow::Result<()> {
+    let current = provider_mut(config, id)?;
+    anyhow::ensure!(
+        current == snapshot,
+        "provider {id} changed during protocol detection; retry"
+    );
+    current.base_url = base_url;
+    current.protocol = protocol;
+    current.api_path = api_path;
+    current.model_source =
+        crate::provider::ProviderModelSource::OpenAiCompatible { path: models_path };
+    current.validate()
 }
 
 fn ensure_refresh_snapshot(
@@ -413,5 +462,33 @@ mod tests {
 
         assert!(error.to_string().contains("changed during update"));
         assert_eq!(config.providers[0].display_name, "concurrent edit");
+    }
+
+    #[test]
+    fn protocol_detection_rejects_a_stale_snapshot() {
+        let snapshot = provider("provider");
+        let mut config = StoredGatewayConfig {
+            providers: vec![snapshot.clone()],
+            ..StoredGatewayConfig::default()
+        };
+        config.providers[0].base_url = "https://concurrent.example".to_owned();
+
+        let error = apply_detected_endpoint(
+            &mut config,
+            "provider",
+            &snapshot,
+            "https://detected.example".to_owned(),
+            ProviderProtocol::OpenAiChat,
+            "/v1/chat/completions".to_owned(),
+            "/v1/models".to_owned(),
+        )
+        .unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("changed during protocol detection")
+        );
+        assert_eq!(config.providers[0].base_url, "https://concurrent.example");
     }
 }

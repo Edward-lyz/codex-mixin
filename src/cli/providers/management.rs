@@ -1,5 +1,4 @@
 use codex_mixin::application::provider::after_provider_commit;
-use codex_mixin::config::mutate_stored_config;
 use codex_mixin::provider::{
     AWS_BEDROCK_DEFAULT_REGION, AwsSigV4AuthConfig, ProviderModel, ProviderModelSource,
     ProviderPreset, ProviderQuotaParser, aws_bedrock_aksk_provider, aws_bedrock_runtime_base_url,
@@ -14,7 +13,6 @@ use super::{
         apply_inferred_custom_endpoint, detect_custom_provider_protocol,
         infer_custom_provider_endpoint,
     },
-    find_provider_mut, invalidate_provider_capability_cache, invalidate_web_search_cache,
     normalize_base_url, normalize_currency, normalize_model_ids, normalize_path, parse_header_env,
     parse_protocol, parse_quota_parser, required_config, sync_imagegen_skill, trim_required,
 };
@@ -396,25 +394,14 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
             })?;
         if let Some(endpoint) = endpoint {
             detected_protocol = Some(super::protocol_name(endpoint.protocol).to_owned());
-            mutate_stored_config(|config| {
-                let current = find_provider_mut(config, &id)?;
-                apply_inferred_custom_endpoint(current, endpoint);
-                current.validate()
-            })
-            .map_err(|source| OperationError::AfterCommit {
-                stage: "detected protocol persistence",
-                source,
-            })?;
-            invalidate_web_search_cache().map_err(|source| OperationError::AfterCommit {
-                stage: "web search capability cache invalidation",
-                source,
-            })?;
-            invalidate_provider_capability_cache().map_err(|source| {
-                OperationError::AfterCommit {
-                    stage: "provider capability cache invalidation",
-                    source,
-                }
-            })?;
+            codex_mixin::application::provider::commit_detected_endpoint(
+                &id,
+                &provider,
+                endpoint.base_url,
+                endpoint.protocol,
+                endpoint.api_path,
+                endpoint.models_path,
+            )?;
         }
     }
     if let Err(source) = sync_imagegen_skill() {
