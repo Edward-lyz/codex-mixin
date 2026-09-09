@@ -7,12 +7,13 @@ use std::time::Duration;
 use bytes::Bytes;
 
 use super::auth::*;
-use super::state::{provider_model_display_name, read_codex_official_auth};
+use super::state::provider_model_display_name;
 use super::*;
 use crate::benchmark::ModelBenchmarkManager;
 use crate::config::ThinkingMode;
 use crate::provider::{ProviderModel, custom_provider};
 use crate::server::messages_http::normalize_message_request;
+use crate::upstream::read_codex_official_auth;
 
 fn test_provider(base_url: String, model: &str) -> crate::provider::ProviderDefinition {
     let mut provider = custom_provider("test-provider", "upstream-key");

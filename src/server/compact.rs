@@ -13,8 +13,9 @@ use crate::gateway::ResolvedModelRoute;
 use crate::gateway::collect_response_with_headers;
 use crate::protocol::compaction::{self, CompactionSummary};
 
-use super::auth::{check_gateway_auth, forward_official_headers};
+use super::auth::check_gateway_auth;
 use super::{AppState, *};
+use crate::upstream::forward_official_headers;
 
 const COMPACTION_INSTRUCTION: &str = r#"
 Summarize this conversation for continuation by another coding agent.
@@ -265,7 +266,8 @@ async fn forward_official_compact(
     url.set_path(&format!("{path}/responses/compact"));
     let request = forward_official_headers(
         state
-            .client
+            .upstream
+            .client()
             .post(url)
             .header(header::AUTHORIZATION, authorization)
             .header("chatgpt-account-id", account_id)

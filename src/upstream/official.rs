@@ -1,15 +1,68 @@
-use super::*;
+use std::time::{Duration, SystemTime};
+
+use axum::http::header;
+use axum::http::{HeaderMap, HeaderValue};
+use serde_json::Value;
+
+use super::UpstreamAccess;
+use crate::error::GatewayError;
 
 const OFFICIAL_MODELS_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
-impl AppState {
-    pub(crate) async fn official_auth(
-        &self,
-    ) -> anyhow::Result<(axum::http::HeaderValue, axum::http::HeaderValue)> {
+/// Headers the official backend understands from the Codex client. Kept at
+/// the transport boundary; the server forwards them verbatim.
+pub(crate) const FORWARDED_OFFICIAL_HEADERS: &[&str] = &[
+    "openai-beta",
+    "x-codex-installation-id",
+    "x-codex-beta-features",
+    "originator",
+    "x-codex-originator",
+    "x-openai-subagent",
+    "x-openai-memgen-request",
+    "x-codex-turn-state",
+    "x-codex-turn-metadata",
+    "x-codex-parent-thread-id",
+    "x-oai-attestation",
+    "x-responsesapi-include-timing-metrics",
+    "x-openai-internal-codex-responses-lite",
+    "openai-organization",
+    "openai-project",
+    "user-agent",
+    "accept-language",
+    "session-id",
+    "x-session-id",
+    "thread-id",
+    "x-client-request-id",
+    "x-request-id",
+    "x-codex-window-id",
+];
+
+pub(crate) struct CachedOfficialAuth {
+    modified_at: SystemTime,
+    file_len: u64,
+    authorization: HeaderValue,
+    account_id: HeaderValue,
+}
+
+pub(crate) fn forward_official_headers(
+    mut request: reqwest::RequestBuilder,
+    headers: &HeaderMap,
+) -> reqwest::RequestBuilder {
+    for &name in FORWARDED_OFFICIAL_HEADERS {
+        if let Some(value) = headers.get(name) {
+            request = request.header(name, value);
+        }
+    }
+    request
+}
+
+impl UpstreamAccess {
+    /// Read the official Codex auth pair from disk, cached by file mtime/size.
+    pub(crate) async fn official_auth(&self) -> anyhow::Result<(HeaderValue, HeaderValue)> {
         read_codex_official_auth(&self.config.codex_auth_path, &self.official_auth_cache).await
     }
 
-    pub async fn fetch_official_models_catalog(
+    pub(crate) async fn fetch_official_models_catalog(
         &self,
         client_version: &str,
     ) -> anyhow::Result<Value> {
@@ -20,7 +73,7 @@ impl AppState {
         .await
     }
 
-    async fn fetch_official_models_catalog_with_timeout(
+    pub(crate) async fn fetch_official_models_catalog_with_timeout(
         &self,
         client_version: &str,
         timeout: Duration,
@@ -50,11 +103,40 @@ impl AppState {
             .await
             .map_err(|_| anyhow::anyhow!("official models endpoint timed out"))?
     }
+
+    /// Send an official Responses request with auth and forwarded client
+    /// headers. Callers map status and wrap the byte stream.
+    pub(crate) async fn send_official_responses(
+        &self,
+        headers: &HeaderMap,
+        body: Value,
+    ) -> Result<reqwest::Response, GatewayError> {
+        let body = normalize_official_responses_body(body);
+        let (authorization, account_id) =
+            self.official_auth().await.map_err(GatewayError::Other)?;
+        let request = forward_official_headers(
+            self.client
+                .post(&self.config.official_responses_url)
+                .header(header::AUTHORIZATION, authorization)
+                .header("chatgpt-account-id", account_id)
+                .header(header::ACCEPT, "text/event-stream"),
+            headers,
+        );
+        crate::protocol::request_body::send_json(request, body).await
+    }
 }
+
+pub(crate) fn normalize_official_responses_body(mut body: Value) -> Value {
+    if let Some(body) = body.as_object_mut() {
+        body.remove("max_output_tokens");
+    }
+    body
+}
+
 pub(crate) async fn read_codex_official_auth(
     auth_path: &std::path::Path,
     cache: &tokio::sync::Mutex<Option<CachedOfficialAuth>>,
-) -> anyhow::Result<(axum::http::HeaderValue, axum::http::HeaderValue)> {
+) -> anyhow::Result<(HeaderValue, HeaderValue)> {
     let metadata = tokio::fs::metadata(auth_path).await.map_err(|err| {
         anyhow::anyhow!("read Codex auth metadata {}: {err}", auth_path.display())
     })?;
@@ -90,8 +172,8 @@ pub(crate) async fn read_codex_official_auth(
         .and_then(Value::as_str)
         .filter(|account_id| !account_id.is_empty())
         .ok_or_else(|| anyhow::anyhow!("Codex auth file does not contain account_id"))?;
-    let authorization: axum::http::HeaderValue = format!("Bearer {access_token}").parse()?;
-    let account_id: axum::http::HeaderValue = account_id.parse()?;
+    let authorization: HeaderValue = format!("Bearer {access_token}").parse()?;
+    let account_id: HeaderValue = account_id.parse()?;
     *cache = Some(CachedOfficialAuth {
         modified_at,
         file_len: metadata.len(),
@@ -127,8 +209,13 @@ mod tests {
     use axum::routing::get;
     use futures_util::stream;
 
+    use std::sync::Arc;
+
+    use bytes::Bytes;
+    use reqwest::Client;
+
     use super::*;
-    use crate::config::ThinkingMode;
+    use crate::config::{GatewayConfig, ThinkingMode};
 
     #[tokio::test]
     async fn official_models_timeout_covers_response_body() {
@@ -156,28 +243,34 @@ mod tests {
         )
         .await
         .unwrap();
-        let state = AppState::new(GatewayConfig {
-            bind: "127.0.0.1:0".parse().unwrap(),
-            providers: Vec::new(),
-            official_responses_url: format!("http://{address}/responses"),
-            codex_auth_path: auth_path,
-            gateway_api_key: None,
-            gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
-            accept_codex_oauth: true,
-            official_selected_models: None,
-            default_max_tokens: 8192,
-            default_context_window: 1_000_000,
-            request_timeout: Duration::from_secs(2),
-            thinking_mode: ThinkingMode::Off,
-            enable_web_search_tool: false,
-            web_search_tool_type: "web_search_20250305".to_owned(),
-            web_search_max_uses: Some(3),
-            fusion_profiles: Vec::new(),
-        })
-        .unwrap();
+        let client = Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+            .unwrap();
+        let access = UpstreamAccess::new(
+            Arc::new(GatewayConfig {
+                bind: "127.0.0.1:0".parse().unwrap(),
+                providers: Vec::new(),
+                official_responses_url: format!("http://{address}/responses"),
+                codex_auth_path: auth_path,
+                gateway_api_key: None,
+                gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
+                accept_codex_oauth: true,
+                official_selected_models: None,
+                default_max_tokens: 8192,
+                default_context_window: 1_000_000,
+                request_timeout: Duration::from_secs(2),
+                thinking_mode: ThinkingMode::Off,
+                enable_web_search_tool: false,
+                web_search_tool_type: "web_search_20250305".to_owned(),
+                web_search_max_uses: Some(3),
+                fusion_profiles: Vec::new(),
+            }),
+            client,
+        );
 
         let fetch =
-            state.fetch_official_models_catalog_with_timeout("0.148.0", Duration::from_millis(50));
+            access.fetch_official_models_catalog_with_timeout("0.148.0", Duration::from_millis(50));
         let error = tokio::time::timeout(Duration::from_millis(250), fetch)
             .await
             .expect("fetch did not enforce its own timeout")

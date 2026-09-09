@@ -13,6 +13,7 @@ pub mod protocol;
 pub mod provider;
 
 pub mod server;
+mod upstream;
 pub mod web_search;
 
 pub const CODEX_MIXIN_PROVIDER: &str = "codex-mixin";

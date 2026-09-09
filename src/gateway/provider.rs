@@ -116,7 +116,8 @@ pub(crate) async fn stream_provider_response(
                 CacheShape::from_openai_chat(&converted.request),
             );
             let base_request = state
-                .client
+                .upstream
+                .client()
                 .post(provider.api_url_for_model(&upstream_model_id).clone());
             let upstream_request = match &baidu_native {
                 Some(native) => base_request.headers(native.clone()),
@@ -172,7 +173,8 @@ pub(crate) async fn stream_provider_response(
                 CacheShape::from_openai_responses(&upstream_body),
             );
             let base_request = state
-                .client
+                .upstream
+                .client()
                 .post(provider.api_url_for_model(&upstream_model_id).clone());
             let upstream_request = match &baidu_native {
                 Some(native) => base_request.headers(native.clone()),

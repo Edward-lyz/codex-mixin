@@ -1,25 +1,18 @@
 use super::websocket_proxy::ProxyEnv;
 use super::*;
-use std::collections::HashMap;
+use std::sync::Arc;
+
+use crate::upstream::UpstreamAccess;
 
 mod catalog;
-mod ducx;
-mod official_auth;
 
 #[cfg(test)]
 pub(super) use catalog::provider_model_display_name;
-#[cfg(test)]
-pub(super) use official_auth::read_codex_official_auth;
 
-pub type AnthropicByteStream = BoxStream<'static, Result<Bytes, reqwest::Error>>;
+pub use crate::upstream::AnthropicByteStream;
+
 const CATALOG_SOURCE_CACHE_TTL: Duration = Duration::from_secs(60);
 const CATALOG_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(30);
-const ANTHROPIC_FAST_BETA: &str = "fast-mode-2026-02-01";
-
-enum AnthropicStreamDisposition {
-    Ready(AnthropicByteStream),
-    RetryHostedWebSearch,
-}
 
 struct CatalogSources {
     template: Option<Value>,
@@ -36,18 +29,12 @@ struct CachedCatalogResponse {
     body: Bytes,
 }
 
-pub(super) struct CachedOfficialAuth {
-    modified_at: SystemTime,
-    file_len: u64,
-    authorization: axum::http::HeaderValue,
-    account_id: axum::http::HeaderValue,
-}
-
 #[derive(Clone)]
 pub struct AppState {
     pub(crate) config: Arc<GatewayConfig>,
     pub(crate) providers: Arc<ProviderRegistry>,
-    pub(crate) client: Client,
+    /// Shared upstream transport and auth runtimes (official + DUCX).
+    pub(crate) upstream: Arc<UpstreamAccess>,
     websocket_proxy_env: ProxyEnv,
     pub(super) image_routes: ImageRouteRegistry,
     pub(super) benchmarks: ModelBenchmarkManager,
@@ -57,9 +44,6 @@ pub struct AppState {
     web_search_capabilities: WebSearchCapabilities,
     catalog_sources_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogSources>>>,
     catalog_response_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogResponse>>>,
-    official_auth_cache: Arc<tokio::sync::Mutex<Option<CachedOfficialAuth>>>,
-    ducx_runtimes:
-        Arc<tokio::sync::Mutex<HashMap<String, Arc<crate::provider::auth::ducx::DucxRuntime>>>>,
 }
 
 impl AppState {
@@ -133,10 +117,12 @@ impl AppState {
             .timeout(config.request_timeout)
             .pool_max_idle_per_host(64)
             .build()?;
+        let config = Arc::new(config);
+        let upstream = Arc::new(UpstreamAccess::new(Arc::clone(&config), client));
         Ok(Self {
-            config: Arc::new(config),
+            config,
             providers,
-            client,
+            upstream,
             websocket_proxy_env,
             image_routes: ImageRouteRegistry::default(),
             benchmarks: ModelBenchmarkManager::from_default_path(),
@@ -144,8 +130,6 @@ impl AppState {
             web_search_capabilities,
             catalog_sources_cache: Arc::new(tokio::sync::Mutex::new(None)),
             catalog_response_cache: Arc::new(tokio::sync::Mutex::new(None)),
-            official_auth_cache: Arc::new(tokio::sync::Mutex::new(None)),
-            ducx_runtimes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         })
     }
 
@@ -255,221 +239,53 @@ impl AppState {
             .ok_or_else(|| GatewayError::BadRequest(format!("model is not routable: {model}")))
     }
 
+    // ---- Upstream delegates (transport lives in crate::upstream) ----
+
     pub async fn send_anthropic_request(
         &self,
         provider: &ProviderRuntime,
         request: &MessageRequest,
         hash_key: Option<&str>,
     ) -> Result<AnthropicByteStream, GatewayError> {
-        let beta = if request.speed.as_deref() == Some("fast") {
-            Some(match provider.definition().anthropic_beta.as_deref() {
-                Some(configured)
-                    if configured
-                        .split(',')
-                        .any(|item| item.trim() == ANTHROPIC_FAST_BETA) =>
-                {
-                    configured.to_owned()
-                }
-                Some(configured) if !configured.trim().is_empty() => {
-                    format!("{configured},{ANTHROPIC_FAST_BETA}")
-                }
-                _ => ANTHROPIC_FAST_BETA.to_owned(),
-            })
-        } else {
-            provider.definition().anthropic_beta.clone()
-        };
-        let mut refreshed_ducx_auth = false;
-        loop {
-            // DUCX acts as a header generator. Merge its native headers instead
-            // of the stored key.
-            let native = self.baidu_native_headers(provider).await?;
-            let base_request = self.client.post(provider.api_url().clone());
-            let mut upstream_request = match &native {
-                Some(native) => base_request.headers(native.clone()),
-                None if provider.aws_sigv4().is_some() => provider.apply_protocol_headers(
-                    base_request,
-                    crate::provider::ProviderProtocol::AnthropicMessages,
-                ),
-                None => provider.apply_auth(base_request),
-            };
-            upstream_request = provider.apply_anthropic_beta(upstream_request, beta.as_deref());
-            let upstream_request = provider
-                .apply_session_affinity(upstream_request, hash_key)
-                .header(header::ACCEPT, "text/event-stream");
-            let response = if let Some(aws) = provider.aws_sigv4() {
-                let prepared =
-                    crate::protocol::request_body::prepare_signed_json(request.clone()).await?;
-                let content_length = header::HeaderValue::from_str(&prepared.length.to_string())
-                    .map_err(|error| GatewayError::Other(error.into()))?;
-                let mut request = upstream_request
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .header(header::CONTENT_LENGTH, content_length)
-                    .body(prepared.file)
-                    .build()
-                    .map_err(GatewayError::Http)?;
-                crate::provider::sign_aws_request(
-                    &mut request,
-                    aws,
-                    prepared.sha256,
-                    std::time::SystemTime::now(),
-                )?;
-                self.client
-                    .execute(request)
-                    .await
-                    .map_err(GatewayError::Http)
-            } else {
-                crate::protocol::request_body::send_json(upstream_request, request.clone()).await
-            }
-            .inspect_err(|error| {
-                tracing::error!(
-                    provider_id = provider.id(),
-                    upstream_model_id = %request.model,
-                    error = %crate::error::format_error_chain(error),
-                    "provider messages request failed before receiving a response"
-                );
-            })?;
-            let status = response.status();
-            if status == StatusCode::UNAUTHORIZED
-                && provider.uses_ducx_loopback()
-                && !refreshed_ducx_auth
-            {
-                tracing::warn!(
-                    provider_id = provider.id(),
-                    upstream_model_id = %request.model,
-                    "refreshing DUCX authentication after upstream rejected cached headers"
-                );
-                self.invalidate_ducx_headers(provider).await?;
-                refreshed_ducx_auth = true;
-                continue;
-            }
-            if !status.is_success() {
-                let body = crate::protocol::request_body::read_error_text(response).await?;
-                return Err(GatewayError::UpstreamStatus {
-                    status,
-                    message: format!(
-                        "provider {} messages endpoint returned {status}: {body}",
-                        provider.id()
-                    ),
-                });
-            }
-            return Ok(response.bytes_stream().boxed());
-        }
+        self.upstream
+            .send_anthropic_request(provider, request, hash_key)
+            .await
     }
 
     pub(crate) async fn anthropic_stream_with_web_search_retry(
         &self,
         provider: &ProviderRuntime,
-        mut request: MessageRequest,
+        request: MessageRequest,
         hash_key: Option<&str>,
     ) -> Result<AnthropicByteStream, GatewayError> {
-        let has_hosted_web_search = request.tools.iter().any(|tool| {
-            tool.get("name").and_then(Value::as_str) == Some("web_search")
-                && tool
-                    .get("type")
-                    .and_then(Value::as_str)
-                    .is_some_and(|tool_type| tool_type.starts_with("web_search_"))
-        });
-        let upstream = self
-            .send_anthropic_request(provider, &request, hash_key)
-            .await?;
-        if !has_hosted_web_search {
-            return Ok(upstream);
-        }
-        match inspect_anthropic_stream(upstream).await? {
-            AnthropicStreamDisposition::Ready(upstream) => Ok(upstream),
-            AnthropicStreamDisposition::RetryHostedWebSearch => {
-                tracing::warn!(
-                    model = %request.model,
-                    "retrying client-style web_search call as an Anthropic server tool"
-                );
-                request.tool_choice = Some(json!({"type":"tool","name":"web_search"}));
-                let retry_hash_key = hash_key.map(|_| Uuid::new_v4().to_string());
-                if let Some(retry_hash_key) = retry_hash_key.as_ref()
-                    && let Some(metadata) = request.metadata.as_mut().and_then(Value::as_object_mut)
-                {
-                    metadata.insert("session_id".to_owned(), json!(retry_hash_key));
-                }
-                let retry = self
-                    .send_anthropic_request(
-                        provider,
-                        &request,
-                        retry_hash_key.as_deref().or(hash_key),
-                    )
-                    .await?;
-                match inspect_anthropic_stream(retry).await? {
-                    AnthropicStreamDisposition::Ready(retry) => Ok(retry),
-                    AnthropicStreamDisposition::RetryHostedWebSearch => {
-                        Err(GatewayError::Upstream(format!(
-                            "model {} returned a client-style web_search call after a forced hosted-tool retry",
-                            request.model
-                        )))
-                    }
-                }
-            }
-        }
+        self.upstream
+            .anthropic_stream_with_web_search_retry(provider, request, hash_key)
+            .await
     }
-}
 
-async fn inspect_anthropic_stream(
-    mut upstream: AnthropicByteStream,
-) -> Result<AnthropicStreamDisposition, GatewayError> {
-    let mut buffered_chunks = Vec::new();
-    let mut decoder = SseDecoder::default();
-    while let Some(chunk) = upstream.next().await {
-        let chunk = chunk?;
-        let events = decoder.push(&chunk);
-        buffered_chunks.push(chunk);
-        let mut retry_hosted_web_search = None;
-        for event in events {
-            if event.data == "[DONE]" {
-                retry_hosted_web_search = Some(false);
-                break;
-            }
-            let Ok(payload) = serde_json::from_str::<Value>(&event.data) else {
-                continue;
-            };
-            match payload.get("type").and_then(Value::as_str) {
-                Some("content_block_start") => {
-                    let block = payload.get("content_block").unwrap_or(&Value::Null);
-                    match block.get("type").and_then(Value::as_str) {
-                        Some("tool_use") => {
-                            retry_hosted_web_search = Some(
-                                block.get("name").and_then(Value::as_str) == Some("web_search"),
-                            );
-                        }
-                        Some("server_tool_use") => retry_hosted_web_search = Some(false),
-                        _ => {}
-                    }
-                }
-                Some("content_block_delta") => {
-                    let delta = payload.get("delta").unwrap_or(&Value::Null);
-                    if delta.get("type").and_then(Value::as_str) == Some("text_delta")
-                        && delta
-                            .get("text")
-                            .and_then(Value::as_str)
-                            .is_some_and(|text| !text.is_empty())
-                    {
-                        retry_hosted_web_search = Some(false);
-                    }
-                }
-                Some("message_stop" | "error") => retry_hosted_web_search = Some(false),
-                _ => {}
-            }
-            if retry_hosted_web_search.is_some() {
-                break;
-            }
-        }
-        if let Some(retry_hosted_web_search) = retry_hosted_web_search {
-            if retry_hosted_web_search {
-                return Ok(AnthropicStreamDisposition::RetryHostedWebSearch);
-            }
-            let prefix = stream::iter(buffered_chunks.into_iter().map(Ok));
-            return Ok(AnthropicStreamDisposition::Ready(
-                prefix.chain(upstream).boxed(),
-            ));
-        }
+    pub(crate) async fn baidu_native_headers(
+        &self,
+        provider: &ProviderRuntime,
+    ) -> Result<Option<axum::http::HeaderMap>, GatewayError> {
+        self.upstream.baidu_native_headers(provider).await
     }
-    Ok(AnthropicStreamDisposition::Ready(
-        stream::iter(buffered_chunks.into_iter().map(Ok)).boxed(),
-    ))
+
+    pub(crate) async fn prewarm_ducx(&self) -> Result<(), GatewayError> {
+        self.upstream.prewarm_ducx(&self.providers).await
+    }
+
+    pub(crate) async fn official_auth(
+        &self,
+    ) -> anyhow::Result<(axum::http::HeaderValue, axum::http::HeaderValue)> {
+        self.upstream.official_auth().await
+    }
+
+    pub async fn fetch_official_models_catalog(
+        &self,
+        client_version: &str,
+    ) -> anyhow::Result<Value> {
+        self.upstream
+            .fetch_official_models_catalog(client_version)
+            .await
+    }
 }

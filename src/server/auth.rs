@@ -1,43 +1,5 @@
 use super::*;
 
-pub(super) const FORWARDED_OFFICIAL_HEADERS: &[&str] = &[
-    "openai-beta",
-    "x-codex-installation-id",
-    "x-codex-beta-features",
-    "originator",
-    "x-codex-originator",
-    "x-openai-subagent",
-    "x-openai-memgen-request",
-    "x-codex-turn-state",
-    "x-codex-turn-metadata",
-    "x-codex-parent-thread-id",
-    "x-oai-attestation",
-    "x-responsesapi-include-timing-metrics",
-    "x-openai-internal-codex-responses-lite",
-    "openai-organization",
-    "openai-project",
-    "user-agent",
-    "accept-language",
-    "session-id",
-    "x-session-id",
-    "thread-id",
-    "x-client-request-id",
-    "x-request-id",
-    "x-codex-window-id",
-];
-
-pub(super) fn forward_official_headers(
-    mut request: reqwest::RequestBuilder,
-    headers: &HeaderMap,
-) -> reqwest::RequestBuilder {
-    for &name in FORWARDED_OFFICIAL_HEADERS {
-        if let Some(value) = headers.get(name) {
-            request = request.header(name, value);
-        }
-    }
-    request
-}
-
 fn bearer_token(headers: &HeaderMap) -> Option<&str> {
     headers
         .get(header::AUTHORIZATION)

@@ -1,10 +1,21 @@
-use super::*;
+use std::path::PathBuf;
+use std::sync::Arc;
+
 use anyhow::Context;
 
-impl AppState {
-    pub(crate) async fn prewarm_ducx(&self) -> Result<(), GatewayError> {
-        let ducx_providers = self
-            .providers
+use super::UpstreamAccess;
+use crate::error::GatewayError;
+use crate::provider::auth::ducx::DucxRuntime;
+use crate::provider::{ProviderRegistry, ProviderRuntime};
+
+impl UpstreamAccess {
+    /// Warm up every enabled DUCX-loopback provider once before the gateway
+    /// starts serving: persist data-report tokens and mint native headers.
+    pub(crate) async fn prewarm_ducx(
+        &self,
+        providers: &ProviderRegistry,
+    ) -> Result<(), GatewayError> {
+        let ducx_providers = providers
             .providers()
             .iter()
             .filter(|provider| provider.definition().enabled && provider.uses_ducx_loopback())
@@ -68,7 +79,7 @@ impl AppState {
     async fn ducx_runtime_for(
         &self,
         provider: &ProviderRuntime,
-    ) -> Result<Arc<crate::provider::auth::ducx::DucxRuntime>, GatewayError> {
+    ) -> Result<Arc<DucxRuntime>, GatewayError> {
         let executable = provider
             .ducx_executable()
             .map(PathBuf::from)
@@ -84,7 +95,7 @@ impl AppState {
             return Ok(Arc::clone(runtime));
         }
         let runtime = Arc::new(
-            crate::provider::auth::ducx::DucxRuntime::spawn(executable)
+            DucxRuntime::spawn(executable)
                 .await
                 .map_err(GatewayError::Other)?,
         );
@@ -129,14 +140,18 @@ impl AppState {
 
 #[cfg(test)]
 mod tests {
+    use std::os::unix::fs::PermissionsExt as _;
+    use std::sync::Arc;
+    use std::time::Duration;
+
+    use reqwest::Client;
+
     use super::*;
     use crate::config::{GatewayConfig, ThinkingMode};
     use crate::provider::{BaiduAuthBridge, baidu_oneapi_provider};
-    use std::os::unix::fs::PermissionsExt as _;
-    use std::time::Duration;
 
     #[tokio::test]
-    async fn gateway_startup_prewarms_once_for_the_first_request() {
+    async fn prewarm_mints_ducx_headers_once_per_provider() {
         let directory = tempfile::tempdir().unwrap();
         let home = directory.path().join("home");
         let executable = home.join(".baidu-cx/baidu-cx/bin/ducx");
@@ -168,9 +183,9 @@ done
         provider.quota_username = Some("test-user".to_owned());
         provider.request_policy.baidu_auth_bridge = Some(BaiduAuthBridge::DucxLoopback);
         provider.request_policy.ducx_executable = Some(executable.clone());
-        let state = AppState::new(GatewayConfig {
+        let config = GatewayConfig {
             bind: "127.0.0.1:0".parse().unwrap(),
-            providers: vec![provider],
+            providers: vec![provider.clone()],
             official_responses_url: "https://example.invalid/responses".to_owned(),
             codex_auth_path: directory.path().join("auth.json"),
             gateway_api_key: None,
@@ -185,19 +200,20 @@ done
             web_search_tool_type: "web_search_20250305".to_owned(),
             web_search_max_uses: None,
             fusion_profiles: Vec::new(),
-        })
-        .unwrap();
+        };
+        let registry = ProviderRegistry::new(vec![provider]).unwrap();
+        let client = Client::builder()
+            .timeout(Duration::from_secs(3))
+            .build()
+            .unwrap();
+        let access = UpstreamAccess::new(Arc::new(config), client);
 
-        assert!(state.providers.providers()[0].uses_ducx_loopback());
-        assert_eq!(
-            state.providers.providers()[0].ducx_executable(),
-            Some(executable.as_path())
-        );
-        state.prewarm_ducx().await.unwrap();
+        assert!(registry.providers()[0].uses_ducx_loopback());
+        access.prewarm_ducx(&registry).await.unwrap();
         assert_eq!(std::fs::read_to_string(&marker).unwrap(), "warmup\n");
 
-        let provider = &state.providers.providers()[0];
-        state.ducx_native_headers(provider).await.unwrap();
-        assert_eq!(std::fs::read_to_string(marker).unwrap(), "warmup\n");
+        let provider = &registry.providers()[0];
+        access.ducx_native_headers(provider).await.unwrap();
+        assert_eq!(std::fs::read_to_string(&marker).unwrap(), "warmup\n");
     }
 }

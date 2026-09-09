@@ -1,4 +1,4 @@
-use super::auth::{check_gateway_auth, forward_official_headers, stable_oneapi_routing};
+use super::auth::{check_gateway_auth, stable_oneapi_routing};
 use super::*;
 
 pub(super) async fn responses(
@@ -113,15 +113,10 @@ async fn forward_official_responses(
     body: Value,
 ) -> Result<Response, GatewayError> {
     let observation = official_prefix_observation(state, headers, &body)?;
-    let (authorization, account_id) = state.official_auth().await.map_err(GatewayError::Other)?;
-    let mut upstream = send_official_responses(
-        state,
-        headers,
-        body.clone(),
-        authorization.clone(),
-        account_id.clone(),
-    )
-    .await?;
+    let mut upstream = state
+        .upstream
+        .send_official_responses(headers, body.clone())
+        .await?;
     if upstream.status() == StatusCode::PAYLOAD_TOO_LARGE {
         let (fallback_body, stats) =
             crate::images::normalize_provider_images_for_fallback(body).await?;
@@ -131,9 +126,10 @@ async fn forward_official_responses(
                 saved_image_bytes = stats.saved_bytes,
                 "retrying official responses request after 413 with aggressively compressed images"
             );
-            upstream =
-                send_official_responses(state, headers, fallback_body, authorization, account_id)
-                    .await?;
+            upstream = state
+                .upstream
+                .send_official_responses(headers, fallback_body)
+                .await?;
         }
     }
     let status = upstream.status();
@@ -160,33 +156,6 @@ async fn forward_official_responses(
         .map_err(|err| GatewayError::Other(err.into()))
 }
 
-async fn send_official_responses(
-    state: &AppState,
-    headers: &HeaderMap,
-    body: Value,
-    authorization: axum::http::HeaderValue,
-    account_id: axum::http::HeaderValue,
-) -> Result<reqwest::Response, GatewayError> {
-    let body = normalize_official_responses_body(body);
-    let request = forward_official_headers(
-        state
-            .client
-            .post(&state.config.official_responses_url)
-            .header(header::AUTHORIZATION, authorization)
-            .header("chatgpt-account-id", account_id)
-            .header(header::ACCEPT, "text/event-stream"),
-        headers,
-    );
-    crate::protocol::request_body::send_json(request, body).await
-}
-
-pub(super) fn normalize_official_responses_body(mut body: Value) -> Value {
-    if let Some(body) = body.as_object_mut() {
-        body.remove("max_output_tokens");
-    }
-    body
-}
-
 pub(crate) async fn stream_official_response(
     state: &AppState,
     headers: &HeaderMap,
@@ -198,15 +167,10 @@ pub(crate) async fn stream_official_response(
         .unwrap_or("official")
         .to_owned();
     let observation = official_prefix_observation(state, headers, body)?;
-    let (authorization, account_id) = state.official_auth().await.map_err(GatewayError::Other)?;
-    let mut upstream = send_official_responses(
-        state,
-        headers,
-        body.clone(),
-        authorization.clone(),
-        account_id.clone(),
-    )
-    .await?;
+    let mut upstream = state
+        .upstream
+        .send_official_responses(headers, body.clone())
+        .await?;
     if upstream.status() == StatusCode::PAYLOAD_TOO_LARGE {
         let (fallback_body, stats) =
             crate::images::normalize_provider_images_for_fallback(body.clone()).await?;
@@ -216,9 +180,10 @@ pub(crate) async fn stream_official_response(
                 saved_image_bytes = stats.saved_bytes,
                 "retrying official responses stream after 413 with aggressively compressed images"
             );
-            upstream =
-                send_official_responses(state, headers, fallback_body, authorization, account_id)
-                    .await?;
+            upstream = state
+                .upstream
+                .send_official_responses(headers, fallback_body)
+                .await?;
         }
     }
     let status = upstream.status();

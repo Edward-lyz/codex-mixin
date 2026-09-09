@@ -1,5 +1,6 @@
-use super::auth::{check_gateway_auth, forward_official_headers};
+use super::auth::check_gateway_auth;
 use super::*;
+use crate::upstream::forward_official_headers;
 
 pub(super) async fn image_generations(
     State(state): State<AppState>,
@@ -36,7 +37,8 @@ pub(super) async fn image_generations(
             .clone();
         let request = provider.apply_auth(
             state
-                .client
+                .upstream
+                .client()
                 .post(url)
                 .header(header::ACCEPT, "application/json"),
         );
@@ -51,7 +53,8 @@ pub(super) async fn image_generations(
             .clone();
         let request = provider.apply_auth(
             state
-                .client
+                .upstream
+                .client()
                 .post(url)
                 .header(header::ACCEPT, "application/json"),
         );
@@ -107,7 +110,8 @@ async fn forward_official_image_request(
     let (authorization, account_id) = state.official_auth().await.map_err(GatewayError::Other)?;
     let request = forward_official_headers(
         state
-            .client
+            .upstream
+            .client()
             .post(url)
             .header(header::AUTHORIZATION, authorization)
             .header("chatgpt-account-id", account_id)

@@ -1,6 +1,7 @@
-use super::auth::{check_gateway_auth, forward_official_headers};
+use super::auth::check_gateway_auth;
 use super::*;
 use crate::provider::ProviderProtocol;
+use crate::upstream::forward_official_headers;
 
 mod routing;
 mod transport;
@@ -79,7 +80,8 @@ pub(super) async fn realtime_call(
             set_official_call_query(&mut url, uri.query(), is_live);
             let upstream = forward_official_headers(
                 state
-                    .client
+                    .upstream
+                    .client()
                     .post(url)
                     .header(header::AUTHORIZATION, authorization)
                     .header("chatgpt-account-id", account_id),
@@ -104,7 +106,7 @@ pub(super) async fn realtime_call(
             let multipart = encode_realtime_multipart(&boundary, &sdp, &session);
             let request = forward_official_headers(
                 provider.apply_auth_for_protocol(
-                    state.client.post(url),
+                    state.upstream.client().post(url),
                     ProviderProtocol::OpenAiResponses,
                 ),
                 &headers,

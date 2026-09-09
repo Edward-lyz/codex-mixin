@@ -10,11 +10,11 @@ use tokio_tungstenite_proxy::tungstenite::Message as TungsteniteMessage;
 use tokio_tungstenite_proxy::tungstenite::client::IntoClientRequest;
 
 use super::super::AppState;
-use super::super::auth::FORWARDED_OFFICIAL_HEADERS;
 use super::super::websocket_proxy::connect_upstream_websocket;
 use super::{
     OfficialWebSocket, ResponsesWsContext, take_custom_request_input, tungstenite_to_axum_message,
 };
+use crate::upstream::FORWARDED_OFFICIAL_HEADERS;
 
 #[derive(Debug)]
 struct OfficialWebSocketRequestError {

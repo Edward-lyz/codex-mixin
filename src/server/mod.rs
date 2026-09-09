@@ -1,7 +1,5 @@
 use std::convert::Infallible;
-use std::path::PathBuf;
-use std::sync::Arc;
-use std::time::{Duration, Instant, SystemTime};
+use std::time::{Duration, Instant};
 
 use axum::body::Body;
 use axum::extract::ws::{Message as AxumWsMessage, WebSocket, WebSocketUpgrade};
@@ -11,7 +9,7 @@ use axum::response::{IntoResponse, Response};
 use axum::routing::{get, post};
 use axum::{Json, Router};
 use bytes::Bytes;
-use futures_util::stream::{self, BoxStream, SplitSink, SplitStream};
+use futures_util::stream::{BoxStream, SplitSink, SplitStream};
 use futures_util::{SinkExt, StreamExt};
 use reqwest::Client;
 use serde_json::{Value, json};
@@ -35,7 +33,7 @@ use crate::gateway::{
 };
 use crate::images::ImageRouteRegistry;
 use crate::protocol::ResponseStream;
-use crate::protocol::sse::{SseDecoder, encode_event};
+use crate::protocol::sse::encode_event;
 use crate::provider::MetadataResolver;
 use crate::provider::capabilities::ProviderCapabilities;
 use crate::provider::{
