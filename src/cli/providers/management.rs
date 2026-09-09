@@ -7,6 +7,8 @@ use codex_mixin::provider::{
     catalog_model_slug,
 };
 
+use codex_mixin::application::error::OperationError;
+
 use super::{
     AddProviderOptions, UpdateProviderOptions, apply_baidu_auth_options, data_report_sibling,
     discover_models_with_output,
@@ -190,7 +192,7 @@ pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
         .gateway_key
         .map(|key| trim_required("gateway key", key))
         .transpose()?;
-    mutate_and_invalidate_provider_capabilities(|config| {
+    if let Err(source) = mutate_and_invalidate_provider_capabilities(|config| {
         if config.providers.iter().any(|provider| provider.id == id) {
             anyhow::bail!("provider already exists: {id}");
         }
@@ -204,15 +206,41 @@ pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
         }
         config.providers.push(provider);
         Ok(())
-    })?;
-    sync_imagegen_skill()?;
+    }) {
+        return Err(OperationError::BeforeCommit { source }.into());
+    }
+    // The provider config is committed above; every later step must report
+    // itself as post-commit so the user knows the provider was saved.
+    if let Err(source) = sync_imagegen_skill() {
+        return Err(OperationError::AfterCommit {
+            stage: "imagegen skill sync",
+            source,
+        }
+        .into());
+    }
     println!("provider added: {id}");
     if let Some(protocol) = detected_protocol {
         println!("provider protocol detected: {id} ({protocol})");
     }
-    let changes = discover_models_with_output(&id, false).await?;
-    if !changes.auto_selected.is_empty() {
-        super::models::probe_new_models(&id, &changes.auto_selected, true).await?;
+    let changes = match discover_models_with_output(&id, false).await {
+        Ok(changes) => changes,
+        Err(source) => {
+            return Err(OperationError::AfterCommit {
+                stage: "model discovery",
+                source,
+            }
+            .into());
+        }
+    };
+    if !changes.auto_selected.is_empty()
+        && let Err(source) =
+            super::models::probe_new_models(&id, &changes.auto_selected, true).await
+    {
+        return Err(OperationError::AfterCommit {
+            stage: "model capability probe",
+            source,
+        }
+        .into());
     }
     Ok(())
 }
@@ -380,7 +408,13 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
             })?;
         }
     }
-    sync_imagegen_skill()?;
+    if let Err(source) = sync_imagegen_skill() {
+        return Err(OperationError::AfterCommit {
+            stage: "imagegen skill sync",
+            source,
+        }
+        .into());
+    }
     println!("provider updated: {id}");
     if let Some(protocol) = detected_protocol {
         println!("provider protocol detected: {id} ({protocol})");
@@ -391,8 +425,14 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
             .into_iter()
             .find(|provider| provider.id == id)
             .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?;
-        if provider.model_source != ProviderModelSource::BaiduOneApi {
-            discover_models_with_output(&id, false).await?;
+        if provider.model_source != ProviderModelSource::BaiduOneApi
+            && let Err(source) = discover_models_with_output(&id, false).await
+        {
+            return Err(OperationError::AfterCommit {
+                stage: "model discovery",
+                source,
+            }
+            .into());
         }
     }
     Ok(())

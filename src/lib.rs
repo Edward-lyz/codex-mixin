@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 pub mod anthropic;
+pub mod application;
 pub mod benchmark;
 pub mod catalog;
 pub mod config;
