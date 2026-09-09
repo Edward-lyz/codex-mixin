@@ -1,8 +1,8 @@
 use std::collections::BTreeSet;
 use std::fs;
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::report_hook::reporting_enabled;
@@ -16,33 +16,6 @@ use super::official_models::selected_official_models;
 pub(in crate::cli) const MANAGED_CLAUDE_MARKER: &str = codex_mixin::clients::claude::MANAGED_MARKER;
 const MANAGED_CLAUDE_HOOK_MARKER: &str = " report-hook --event ";
 const CLAUDE_EXTENDED_CONTEXT_WINDOW: u64 = 1_000_000;
-const LEGACY_MANAGED_CLAUDE_ENV_KEYS: &[&str] = &[
-    "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_MODEL",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-];
-const MANAGED_CLAUDE_ENV_KEYS: &[&str] = &[
-    "ANTHROPIC_BASE_URL",
-    "ANTHROPIC_AUTH_TOKEN",
-    "ANTHROPIC_MODEL",
-    "ANTHROPIC_DEFAULT_SONNET_MODEL",
-    "ANTHROPIC_DEFAULT_OPUS_MODEL",
-    "ANTHROPIC_DEFAULT_HAIKU_MODEL",
-    "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC",
-    "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT",
-    "DISABLE_LOGIN_COMMAND",
-];
-struct ClaudeSettingsBackup {
-    previous_env: Map<String, Value>,
-    previous_model: Option<Value>,
-    managed_env_keys: Vec<String>,
-    previous_model_overrides: Map<String, Value>,
-    managed_model_override_keys: Vec<String>,
-    previous_model_picker: Option<Value>,
-    manages_model_picker: bool,
-}
 
 pub(in crate::cli) fn default_claude_settings_path() -> PathBuf {
     std::env::var("HOME")
@@ -55,32 +28,6 @@ pub(in crate::cli) fn resolve_claude_settings_path(
 ) -> anyhow::Result<PathBuf> {
     std::path::absolute(settings_path.unwrap_or_else(default_claude_settings_path))
         .map_err(Into::into)
-}
-
-fn managed_claude_keys(
-    managed: &Value,
-    field: &str,
-    fallback: &[&str],
-    settings_path: &Path,
-) -> anyhow::Result<Vec<String>> {
-    match managed.get(field) {
-        None => Ok(fallback.iter().map(|key| (*key).to_owned()).collect()),
-        Some(Value::Array(keys)) => keys
-            .iter()
-            .map(|key| {
-                key.as_str().map(str::to_owned).ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Claude Code managed {field} entry must be a string: {}",
-                        settings_path.display()
-                    )
-                })
-            })
-            .collect(),
-        Some(_) => anyhow::bail!(
-            "Claude Code managed {field} must be an array: {}",
-            settings_path.display()
-        ),
-    }
 }
 
 pub(in crate::cli) fn install_claude(settings_path: Option<PathBuf>) -> anyhow::Result<()> {
@@ -124,216 +71,15 @@ fn install_claude_with_models(
 ) -> anyhow::Result<bool> {
     let settings_path = resolve_claude_settings_path(settings_path)?;
     let (model_picker, default_model) = claude_model_picker(gateway_config, official_models)?;
-    let managed_model_override_keys = Vec::<String>::new();
     let base_url = format!("http://{gateway_bind}");
-    let raw = if settings_path.exists() {
-        fs::read_to_string(&settings_path)?
-    } else {
-        String::new()
-    };
-    let mut settings: Value = if raw.trim().is_empty() {
-        json!({})
-    } else {
-        serde_json::from_str(&raw).map_err(|error| {
-            anyhow::anyhow!(
-                "invalid Claude Code settings {}: {error}",
-                settings_path.display()
-            )
-        })?
-    };
-    let object = settings.as_object_mut().ok_or_else(|| {
-        anyhow::anyhow!(
-            "Claude Code settings must be a JSON object: {}",
-            settings_path.display()
-        )
-    })?;
-    let existing_backup = object
-        .get("codex_mixin_managed")
-        .filter(|managed| {
-            managed.get("marker").and_then(Value::as_str) == Some(MANAGED_CLAUDE_MARKER)
-        })
-        .map(|managed| {
-            let previous_env = managed
-                .get("previous_env")
-                .and_then(Value::as_object)
-                .ok_or_else(|| {
-                    anyhow::anyhow!(
-                        "Claude Code managed settings have no previous env backup: {}",
-                        settings_path.display()
-                    )
-                })?
-                .clone();
-            let previous_model = managed
-                .get("previous_model")
-                .filter(|value| !value.is_null())
-                .cloned();
-            let previous_model_overrides = match managed.get("previous_model_overrides") {
-                None => Map::new(),
-                Some(Value::Object(overrides)) => overrides.clone(),
-                Some(_) => anyhow::bail!(
-                    "Claude Code managed previous model overrides must be an object: {}",
-                    settings_path.display()
-                ),
-            };
-            Ok::<_, anyhow::Error>(ClaudeSettingsBackup {
-                previous_env,
-                previous_model,
-                managed_env_keys: managed_claude_keys(
-                    managed,
-                    "env_keys",
-                    LEGACY_MANAGED_CLAUDE_ENV_KEYS,
-                    &settings_path,
-                )?,
-                previous_model_overrides,
-                managed_model_override_keys: managed_claude_keys(
-                    managed,
-                    "model_override_keys",
-                    &[],
-                    &settings_path,
-                )?,
-                previous_model_picker: managed
-                    .get("previous_model_picker")
-                    .filter(|value| !value.is_null())
-                    .cloned(),
-                manages_model_picker: managed.get("model_picker_managed").and_then(Value::as_bool)
-                    == Some(true),
-            })
-        })
-        .transpose()?;
-    object.remove("codex_mixin_managed");
-
-    let mut previous_env = existing_backup
-        .as_ref()
-        .map(|backup| backup.previous_env.clone())
-        .unwrap_or_default();
-    if let Some(env) = object.get_mut("env").and_then(Value::as_object_mut) {
-        let env_keys = existing_backup
-            .as_ref()
-            .map(|backup| backup.managed_env_keys.iter().cloned().collect())
-            .unwrap_or_else(BTreeSet::new)
-            .into_iter()
-            .chain(MANAGED_CLAUDE_ENV_KEYS.iter().map(|key| (*key).to_owned()))
-            .collect::<BTreeSet<_>>();
-        for key in env_keys {
-            let was_managed = existing_backup.as_ref().is_some_and(|backup| {
-                backup
-                    .managed_env_keys
-                    .iter()
-                    .any(|managed_key| managed_key == &key)
-            });
-            if let Some(value) = env.remove(&key)
-                && !was_managed
-            {
-                previous_env.insert(key, value);
-            }
-        }
-    } else if object.get("env").is_some() {
-        anyhow::bail!(
-            "Claude Code settings env must be a JSON object: {}",
-            settings_path.display()
-        );
-    }
-    let current_model = match object.remove("model") {
-        Some(Value::Null) | None => None,
-        Some(model) => Some(model),
-    };
-    let current_model_picker = object
-        .remove("modelPicker")
-        .filter(|value| !value.is_null());
-    let previous_model_picker = match &existing_backup {
-        Some(backup) if backup.manages_model_picker => backup.previous_model_picker.clone(),
-        _ => current_model_picker,
-    };
-    let previous_model = match &existing_backup {
-        Some(backup) => backup.previous_model.clone(),
-        None => current_model,
-    };
-    let mut previous_model_overrides = existing_backup
-        .as_ref()
-        .map(|backup| backup.previous_model_overrides.clone())
-        .unwrap_or_default();
-    let remove_model_overrides = if let Some(overrides) = object.get_mut("modelOverrides") {
-        let overrides = overrides.as_object_mut().ok_or_else(|| {
-            anyhow::anyhow!(
-                "Claude Code settings modelOverrides must be a JSON object: {}",
-                settings_path.display()
-            )
-        })?;
-        let keys = existing_backup
-            .as_ref()
-            .map(|backup| backup.managed_model_override_keys.iter().cloned().collect())
-            .unwrap_or_else(BTreeSet::new)
-            .into_iter()
-            .chain(managed_model_override_keys.iter().cloned())
-            .collect::<BTreeSet<_>>();
-        for key in keys {
-            let was_managed = existing_backup.as_ref().is_some_and(|backup| {
-                backup
-                    .managed_model_override_keys
-                    .iter()
-                    .any(|managed_key| managed_key == &key)
-            });
-            if let Some(value) = overrides.remove(&key)
-                && !was_managed
-            {
-                previous_model_overrides.insert(key, value);
-            }
-        }
-        overrides.is_empty()
-    } else {
-        false
-    };
-    if remove_model_overrides {
-        object.remove("modelOverrides");
-    }
-    let env = object
-        .entry("env")
-        .or_insert_with(|| json!({}))
-        .as_object_mut()
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Claude Code settings env must be a JSON object: {}",
-                settings_path.display()
-            )
-        })?;
-    env.insert(
-        "ANTHROPIC_BASE_URL".to_owned(),
-        Value::String(base_url.clone()),
-    );
-    env.insert(
-        "ANTHROPIC_AUTH_TOKEN".to_owned(),
-        Value::String(gateway_config.require_client_key(GatewayClient::Claude)?),
-    );
-    env.insert(
-        "CLAUDE_CODE_DISABLE_NONESSENTIAL_TRAFFIC".to_owned(),
-        Value::String("1".to_owned()),
-    );
-    env.insert(
-        "CLAUDE_CODE_DISABLE_UNKNOWN_MODEL_WINDOW_ENFORCEMENT".to_owned(),
-        Value::String("1".to_owned()),
-    );
-    env.insert(
-        "DISABLE_LOGIN_COMMAND".to_owned(),
-        Value::String("1".to_owned()),
-    );
-    object.insert("model".to_owned(), Value::String(default_model.clone()));
-    object.insert("modelPicker".to_owned(), model_picker);
-    object.insert(
-        "codex_mixin_managed".to_owned(),
-        json!({
-            "marker": MANAGED_CLAUDE_MARKER,
-            "env_keys": MANAGED_CLAUDE_ENV_KEYS,
-            "model_override_keys": managed_model_override_keys,
-            "base_url": base_url,
-            "model": default_model,
-            "model_picker_managed": true,
-            "previous_env": previous_env,
-            "previous_model": previous_model,
-            "previous_model_picker": previous_model_picker,
-            "previous_model_overrides": previous_model_overrides
-        }),
-    );
-    let changed = write_atomic_if_changed(&settings_path, &serde_json::to_vec_pretty(&settings)?)?;
+    let client_key = gateway_config.require_client_key(GatewayClient::Claude)?;
+    let changed = codex_mixin::clients::claude::install(
+        &settings_path,
+        &base_url,
+        &default_model,
+        model_picker,
+        &client_key,
+    )?;
     if announce {
         println!("claude code settings updated: {}", settings_path.display());
         println!("ANTHROPIC_BASE_URL: {base_url}");
