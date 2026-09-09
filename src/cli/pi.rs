@@ -4,19 +4,18 @@ use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
 use anyhow::Context;
-use serde_json::{Map, Value, json};
+use serde_json::{Value, json};
 
 use codex_mixin::config::{GatewayConfig, stored_config_path};
 use codex_mixin::gateway_access::GatewayClient;
 use codex_mixin::provider::{ProviderModel, catalog_model_slug};
 
-use super::atomic_file::{set_owner_only, write_atomic_if_changed, write_owner_only};
+use super::atomic_file::write_atomic_if_changed;
 use super::official_models::selected_official_models;
 use super::report_hook::reporting_enabled;
 use super::runtime::effective_gateway_bind;
 
 const PI_PROVIDER_ID: &str = "codex-mixin";
-const PI_PROVIDER_NAME: &str = "Codex Mixin";
 const PI_API: &str = "openai-responses";
 const PI_API_KEY_FILE: &str = "pi-api-key";
 const PI_REPORT_EXTENSION_FILE: &str = "codex-mixin-report.ts";
@@ -85,41 +84,10 @@ fn install_pi_at(
         "no enabled upstream models are available; refresh or select models before installing to Pi"
     );
 
-    let mut document = read_pi_models(models_path)?;
-    let root = document.as_object_mut().context(format!(
-        "Pi models config must be a JSON object: {}",
-        models_path.display()
-    ))?;
-    let providers = root
-        .entry("providers".to_owned())
-        .or_insert_with(|| Value::Object(Map::new()))
-        .as_object_mut()
-        .context(format!(
-            "Pi models config providers must be a JSON object: {}",
-            models_path.display()
-        ))?;
-    let key_reference = codex_mixin::clients::pi::key_reference(key_path);
-    if let Some(existing) = providers.get(PI_PROVIDER_ID) {
-        anyhow::ensure!(
-            codex_mixin::clients::pi::provider_is_managed(existing, key_path),
-            "Pi provider {PI_PROVIDER_ID} already exists and is not managed by Codex Mixin"
-        );
-    }
     validate_pi_reporting_extension(extension_path)?;
-    providers.insert(
-        PI_PROVIDER_ID.to_owned(),
-        json!({
-            "name": PI_PROVIDER_NAME,
-            "baseUrl": format!("http://{bind}/v1"),
-            "apiKey": key_reference,
-            "api": PI_API,
-            "models": models,
-        }),
-    );
-
     let gateway_key = gateway_config.require_client_key(GatewayClient::Pi)?;
-    write_owner_only(key_path, gateway_key.as_bytes())?;
-    let changed = write_json_config(models_path, &document)?;
+    let changed =
+        codex_mixin::clients::pi::install(models_path, key_path, bind, models, &gateway_key)?;
     sync_pi_reporting_extension(extension_path, reporting_is_enabled)?;
 
     if announce {
@@ -153,18 +121,6 @@ fn uninstall_pi_at(
     println!("Pi provider removed: {PI_PROVIDER_ID}");
     println!("reload required: run /reload in Pi or start a new Pi session");
     Ok(())
-}
-
-fn read_pi_models(path: &Path) -> anyhow::Result<Value> {
-    if !path.exists() {
-        return Ok(json!({"providers": {}}));
-    }
-    let raw = fs::read_to_string(path)
-        .with_context(|| format!("read Pi models config {}", path.display()))?;
-    if raw.trim().is_empty() {
-        return Ok(json!({"providers": {}}));
-    }
-    serde_json::from_str(&raw).with_context(|| format!("parse Pi models config {}", path.display()))
 }
 
 fn collect_pi_models(config: &GatewayConfig, official_models: &[ProviderModel]) -> Vec<Value> {
@@ -378,17 +334,6 @@ fn validate_pi_reporting_extension(path: &Path) -> anyhow::Result<()> {
         path.display()
     );
     Ok(())
-}
-
-fn write_json_config(path: &Path, document: &Value) -> anyhow::Result<bool> {
-    let existed = path.exists();
-    let mut encoded = serde_json::to_vec_pretty(document)?;
-    encoded.push(b'\n');
-    let changed = write_atomic_if_changed(path, &encoded)?;
-    if !existed {
-        set_owner_only(path)?;
-    }
-    Ok(changed)
 }
 
 const PI_REPORT_EXTENSION: &str = r#"// codex-mixin managed Pi DUCX reporting extension

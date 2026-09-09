@@ -10,14 +10,14 @@ use codex_mixin::config::{GatewayConfig, stored_config_path};
 use codex_mixin::gateway_access::GatewayClient;
 use codex_mixin::provider::{ProviderModel, catalog_model_slug};
 
-use super::atomic_file::{set_owner_only, write_atomic_if_changed, write_owner_only};
+use super::atomic_file::write_atomic_if_changed;
 use super::official_models::selected_official_models;
 use super::report_hook::reporting_enabled;
 use super::runtime::effective_gateway_bind;
 
 const OPENCODE_PROVIDER_ID: &str = "codex-mixin";
-const OPENCODE_PROVIDER_NAME: &str = "Codex Mixin";
 const OPENCODE_API_KEY_FILE: &str = "opencode-api-key";
+#[cfg(test)]
 const OPENCODE_SCHEMA: &str = "https://opencode.ai/config.json";
 const OPENAI_RESPONSES_PACKAGE: &str = "@ai-sdk/openai";
 const OPENCODE_REPORT_PLUGIN_FILE: &str = "codex-mixin-report.js";
@@ -89,45 +89,9 @@ fn install_opencode_with_models(
         "no enabled upstream models are available; refresh or select models before installing to OpenCode"
     );
 
-    let mut document = read_opencode_config(config_path)?;
-    let root = document.as_object_mut().context(format!(
-        "OpenCode config must be a JSON object: {}",
-        config_path.display()
-    ))?;
-    root.entry("$schema".to_owned())
-        .or_insert_with(|| Value::String(OPENCODE_SCHEMA.to_owned()));
-    let providers = root
-        .entry("provider".to_owned())
-        .or_insert_with(|| Value::Object(Map::new()))
-        .as_object_mut()
-        .context(format!(
-            "OpenCode config provider must be a JSON object: {}",
-            config_path.display()
-        ))?;
-    let key_reference = codex_mixin::clients::opencode::key_reference(key_path);
-    if let Some(existing) = providers.get(OPENCODE_PROVIDER_ID) {
-        anyhow::ensure!(
-            codex_mixin::clients::opencode::provider_is_managed(existing, key_path),
-            "OpenCode provider {OPENCODE_PROVIDER_ID} already exists and is not managed by Codex Mixin"
-        );
-    }
-
-    providers.insert(
-        OPENCODE_PROVIDER_ID.to_owned(),
-        json!({
-            "npm": OPENAI_RESPONSES_PACKAGE,
-            "name": OPENCODE_PROVIDER_NAME,
-            "options": {
-                "baseURL": format!("http://{bind}/v1"),
-                "apiKey": key_reference,
-            },
-            "models": models,
-        }),
-    );
-
     let gateway_key = gateway_config.require_client_key(GatewayClient::OpenCode)?;
-    write_owner_only(key_path, gateway_key.as_bytes())?;
-    let changed = write_json_config(config_path, &document)?;
+    let changed =
+        codex_mixin::clients::opencode::install(config_path, key_path, bind, models, &gateway_key)?;
     sync_opencode_reporting_plugin(config_path, reporting_is_enabled)?;
 
     if announce {
@@ -445,32 +409,6 @@ export const CodexMixinReport = async ({ client, directory }) => ({
   },
 });
 "#;
-
-fn read_opencode_config(path: &Path) -> anyhow::Result<Value> {
-    if !path.exists() {
-        return Ok(json!({"$schema": OPENCODE_SCHEMA}));
-    }
-    let raw = fs::read_to_string(path)
-        .with_context(|| format!("read OpenCode config {}", path.display()))?;
-    if raw.trim().is_empty() {
-        return Ok(json!({"$schema": OPENCODE_SCHEMA}));
-    }
-    serde_json::from_str(&raw).with_context(|| {
-        format!(
-            "parse OpenCode config as JSON {}; JSONC comments are not supported by this initial integration",
-            path.display()
-        )
-    })
-}
-
-fn write_json_config(path: &Path, document: &Value) -> anyhow::Result<bool> {
-    let existed = path.exists();
-    let changed = write_atomic_if_changed(path, &serde_json::to_vec_pretty(document)?)?;
-    if !existed {
-        set_owner_only(path)?;
-    }
-    Ok(changed)
-}
 
 #[cfg(test)]
 mod tests {
