@@ -254,27 +254,11 @@ pub(in crate::cli) fn sync_installed_codex_client_key(
     config_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
     let config_path = resolve_codex_config_path(config_path)?;
-    if !config_path.exists() {
-        return Ok(());
-    }
-    let raw = fs::read_to_string(&config_path)?;
-    if !is_managed_config(&raw) {
-        return Ok(());
-    }
-    let mut doc = raw.parse::<DocumentMut>()?;
-    let provider_id = managed_config_provider_id(&doc)?.to_owned();
-    let client_key = codex_mixin::config::ensure_gateway_client_key(
+    codex_mixin::application::client::sync_managed_client_key(
         codex_mixin::gateway_access::GatewayClient::Codex,
+        || codex_mixin::clients::codex::is_managed(&config_path),
+        |key| codex_mixin::clients::codex::sync_client_key(&config_path, key),
     )?;
-    let provider = doc
-        .get_mut("model_providers")
-        .and_then(Item::as_table_mut)
-        .and_then(|providers| providers.get_mut(&provider_id))
-        .and_then(Item::as_table_mut)
-        .ok_or_else(|| anyhow::anyhow!("managed Codex provider table is missing"))?;
-    set_client_key_header(provider, &client_key)?;
-    let serialized = serialize_managed_config(&doc);
-    write_atomic_if_changed(&config_path, serialized.as_bytes())?;
     Ok(())
 }
 

@@ -314,22 +314,11 @@ fn build_dsh_provider_profile(bind: &SocketAddr, models: Vec<Value>) -> Value {
 
 pub(in crate::cli) fn sync_installed_dsh_client_key() -> anyhow::Result<()> {
     let dsh_home = resolve_dsh_home(None)?;
-    if !dsh_provider_is_managed(&dsh_home)? {
-        return Ok(());
-    }
-    let client_key = codex_mixin::config::ensure_gateway_client_key(
-        codex_mixin::gateway_access::GatewayClient::Dsh,
+    codex_mixin::application::client::sync_managed_client_key(
+        GatewayClient::Dsh,
+        || codex_mixin::clients::dsh::is_managed(&dsh_home),
+        |key| codex_mixin::clients::dsh::sync_client_key(&dsh_home, key),
     )?;
-    let credentials_path = dsh_home.join(".credentials.yaml");
-    let mut credentials = read_yaml_document(&credentials_path, "DSH credentials")?;
-    credentials
-        .as_mapping_mut()
-        .context("DSH credentials must be a YAML mapping")?
-        .insert(
-            Value::String(DSH_API_KEY_ENV.to_owned()),
-            Value::String(client_key),
-        );
-    write_yaml_owner_only(&credentials_path, &credentials)?;
     Ok(())
 }
 
@@ -356,22 +345,7 @@ fn sync_dsh_models(
 }
 
 fn dsh_provider_is_managed(dsh_home: &Path) -> anyhow::Result<bool> {
-    let settings_path = dsh_home.join("settings.yaml");
-    if !settings_path.exists() {
-        return Ok(false);
-    }
-    let raw = fs::read_to_string(&settings_path)?;
-    if !raw.contains("displayName: Codex Mixin") {
-        return Ok(false);
-    }
-    let settings = read_yaml_document(&settings_path, "DSH settings")?;
-    Ok(settings
-        .get("llm-pi-ai")
-        .and_then(|value| value.get("providers"))
-        .and_then(|value| value.get(DSH_PROVIDER_ID))
-        .and_then(|provider| provider.get("displayName"))
-        .and_then(Value::as_str)
-        == Some("Codex Mixin"))
+    codex_mixin::clients::dsh::is_managed(dsh_home)
 }
 
 fn read_yaml_document(path: &Path, label: &str) -> anyhow::Result<Value> {

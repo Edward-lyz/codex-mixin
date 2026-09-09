@@ -21,6 +21,19 @@ pub async fn install_with_client_key_async<T>(
     finish_client_install(client, key_existed, install.await)
 }
 
+pub fn sync_managed_client_key(
+    client: GatewayClient,
+    is_managed: impl FnOnce() -> anyhow::Result<bool>,
+    sync: impl FnOnce(&str) -> anyhow::Result<()>,
+) -> anyhow::Result<bool> {
+    if !is_managed()? {
+        return Ok(false);
+    }
+    let key = ensure_gateway_client_key(client)?;
+    sync(&key)?;
+    Ok(true)
+}
+
 fn finish_client_install<T>(
     client: GatewayClient,
     key_existed: bool,

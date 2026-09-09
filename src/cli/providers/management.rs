@@ -1,11 +1,8 @@
-use std::collections::{HashMap, HashSet};
-
 use codex_mixin::application::provider::{after_provider_commit, commit_provider_change};
-use codex_mixin::config::{StoredGatewayConfig, mutate_stored_config};
+use codex_mixin::config::mutate_stored_config;
 use codex_mixin::provider::{
     AWS_BEDROCK_DEFAULT_REGION, AwsSigV4AuthConfig, ProviderModel, ProviderModelSource,
     ProviderPreset, ProviderQuotaParser, aws_bedrock_aksk_provider, aws_bedrock_runtime_base_url,
-    catalog_model_slug,
 };
 
 use codex_mixin::application::error::OperationError;
@@ -17,11 +14,9 @@ use super::{
         apply_inferred_custom_endpoint, detect_custom_provider_protocol,
         infer_custom_provider_endpoint,
     },
-    ensure_has_providers, find_provider_mut, invalidate_provider_capability_cache,
-    invalidate_web_search_cache, mutate_and_invalidate,
-    mutate_and_invalidate_provider_capabilities, normalize_base_url, normalize_currency,
-    normalize_model_ids, normalize_path, parse_header_env, parse_protocol, parse_quota_parser,
-    required_config, sync_imagegen_skill, trim_required,
+    find_provider_mut, invalidate_provider_capability_cache, invalidate_web_search_cache,
+    normalize_base_url, normalize_currency, normalize_model_ids, normalize_path, parse_header_env,
+    parse_protocol, parse_quota_parser, required_config, sync_imagegen_skill, trim_required,
 };
 
 #[allow(clippy::cognitive_complexity)]
@@ -270,7 +265,7 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
     let mut should_probe_protocol = false;
     commit_provider_change(|config| {
         if let Some(enabled) = options.auxiliary_model_upstream {
-            set_auxiliary_model_upstream(config, &id, enabled)?;
+            codex_mixin::application::provider::set_auxiliary_upstream(config, &id, enabled)?;
         }
         let provider = find_provider_mut(config, &id)?;
         if options.clear_key {
@@ -537,12 +532,8 @@ fn apply_aws_auth_options(
 }
 
 pub(crate) fn set_provider_enabled(id: &str, enabled: bool) -> anyhow::Result<()> {
-    mutate_and_invalidate(|config| {
-        ensure_has_providers(config)?;
-        find_provider_mut(config, id)?.enabled = enabled;
-        Ok(())
-    })?;
-    sync_imagegen_skill()?;
+    codex_mixin::application::provider::set_provider_enabled(id, enabled)?;
+    after_provider_commit("imagegen skill sync", sync_imagegen_skill)?;
     println!(
         "provider {}: {id}",
         if enabled { "enabled" } else { "disabled" }
@@ -551,13 +542,10 @@ pub(crate) fn set_provider_enabled(id: &str, enabled: bool) -> anyhow::Result<()
 }
 
 pub(crate) fn remove_provider(id: &str) -> anyhow::Result<()> {
-    let renames = mutate_and_invalidate_provider_capabilities(|config| {
-        ensure_has_providers(config)?;
-        remove_provider_from_config(config, id)
-    })?;
-    sync_imagegen_skill()?;
+    let change = codex_mixin::application::provider::remove_provider(id)?;
+    after_provider_commit("imagegen skill sync", sync_imagegen_skill)?;
     println!("provider removed: {id}");
-    for (old_id, new_id) in renames {
+    for (old_id, new_id) in change.renames {
         println!("provider renumbered: {old_id} -> {new_id}");
     }
     Ok(())
@@ -565,157 +553,7 @@ pub(crate) fn remove_provider(id: &str) -> anyhow::Result<()> {
 
 pub(crate) fn reorder_providers(ids: Vec<String>) -> anyhow::Result<()> {
     let order = ids.join(", ");
-    mutate_and_invalidate(|config| reorder_provider_ids(config, &ids))?;
+    codex_mixin::application::provider::reorder_providers(&ids)?;
     println!("provider order updated: {order}");
     Ok(())
-}
-
-pub(super) fn set_auxiliary_model_upstream(
-    config: &mut StoredGatewayConfig,
-    id: &str,
-    enabled: bool,
-) -> anyhow::Result<()> {
-    ensure_has_providers(config)?;
-    let selected_index = config
-        .providers
-        .iter()
-        .position(|provider| provider.id == id)
-        .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?;
-    if enabled {
-        for provider in &mut config.providers {
-            provider.auxiliary_model_upstream = false;
-        }
-    }
-    config.providers[selected_index].auxiliary_model_upstream = enabled;
-    Ok(())
-}
-
-pub(super) fn reorder_provider_ids(
-    config: &mut StoredGatewayConfig,
-    ids: &[String],
-) -> anyhow::Result<()> {
-    ensure_has_providers(config)?;
-    anyhow::ensure!(
-        ids.len() == config.providers.len(),
-        "provider reorder requires all {} provider IDs in the desired order",
-        config.providers.len()
-    );
-    let mut seen = HashSet::new();
-    for id in ids {
-        anyhow::ensure!(
-            seen.insert(id),
-            "provider reorder contains duplicate provider ID: {id}"
-        );
-        anyhow::ensure!(
-            config.providers.iter().any(|provider| provider.id == *id),
-            "unknown provider: {id}"
-        );
-    }
-    let mut reordered = Vec::with_capacity(config.providers.len());
-    let mut remaining = std::mem::take(&mut config.providers);
-    for id in ids {
-        let index = remaining
-            .iter()
-            .position(|provider| provider.id == *id)
-            .ok_or_else(|| anyhow::anyhow!("unknown or duplicate provider ID: {id}"))?;
-        reordered.push(remaining.remove(index));
-    }
-    config.providers = reordered;
-    Ok(())
-}
-
-pub(super) fn remove_provider_from_config(
-    config: &mut StoredGatewayConfig,
-    id: &str,
-) -> anyhow::Result<Vec<(String, String)>> {
-    let index = config
-        .providers
-        .iter()
-        .position(|provider| provider.id == id)
-        .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?;
-    let removed = config.providers.remove(index);
-    let Some(preset_id) = removed.preset_id else {
-        return Ok(Vec::new());
-    };
-    let preset = ProviderPreset::parse(&preset_id)?;
-    Ok(compact_generated_provider_ids(config, preset))
-}
-
-fn compact_generated_provider_ids(
-    config: &mut StoredGatewayConfig,
-    preset: ProviderPreset,
-) -> Vec<(String, String)> {
-    let base_id = preset.default_id();
-    let mut generated = config
-        .providers
-        .iter()
-        .enumerate()
-        .filter_map(|(index, provider)| {
-            (provider.preset_id.as_deref() == Some(preset.as_str()))
-                .then(|| generated_provider_ordinal(&provider.id, base_id))
-                .flatten()
-                .map(|ordinal| (ordinal, index))
-        })
-        .collect::<Vec<_>>();
-    generated.sort_unstable_by_key(|(ordinal, _)| *ordinal);
-
-    let renames = generated
-        .into_iter()
-        .enumerate()
-        .filter_map(|(position, (_, provider_index))| {
-            let new_id = if position == 0 {
-                base_id.to_owned()
-            } else {
-                format!("{base_id}-{}", position + 1)
-            };
-            let old_id = config.providers[provider_index].id.clone();
-            (old_id != new_id).then_some((provider_index, old_id, new_id))
-        })
-        .collect::<Vec<_>>();
-
-    let mut model_reference_renames = HashMap::new();
-    for (provider_index, old_id, new_id) in &renames {
-        let provider = &config.providers[*provider_index];
-        for upstream_model_id in provider
-            .selected_models
-            .iter()
-            .chain(provider.cached_models.iter().map(|model| &model.id))
-        {
-            model_reference_renames.insert(
-                catalog_model_slug(upstream_model_id, old_id),
-                catalog_model_slug(upstream_model_id, new_id),
-            );
-        }
-    }
-
-    for (provider_index, _, new_id) in &renames {
-        config.providers[*provider_index].id.clone_from(new_id);
-    }
-    for profile in &mut config.fusion_profiles {
-        for reference in profile
-            .panel_models
-            .iter_mut()
-            .chain([&mut profile.judge_model, &mut profile.final_model])
-        {
-            if let Some(new_reference) = model_reference_renames.get(reference) {
-                reference.clone_from(new_reference);
-            }
-        }
-    }
-
-    renames
-        .into_iter()
-        .map(|(_, old_id, new_id)| (old_id, new_id))
-        .collect()
-}
-
-fn generated_provider_ordinal(id: &str, base_id: &str) -> Option<usize> {
-    if id == base_id {
-        return Some(1);
-    }
-    id.strip_prefix(base_id)?
-        .strip_prefix('-')?
-        .parse::<usize>()
-        .ok()
-        .filter(|ordinal| *ordinal >= 2)
 }

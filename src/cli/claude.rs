@@ -13,7 +13,7 @@ use codex_mixin::provider::{ProviderDefinition, ProviderModel, catalog_model_slu
 
 use super::official_models::selected_official_models;
 
-pub(in crate::cli) const MANAGED_CLAUDE_MARKER: &str = "codex-mixin managed Claude Code";
+pub(in crate::cli) const MANAGED_CLAUDE_MARKER: &str = codex_mixin::clients::claude::MANAGED_MARKER;
 const MANAGED_CLAUDE_HOOK_MARKER: &str = " report-hook --event ";
 const CLAUDE_EXTENDED_CONTEXT_WINDOW: u64 = 1_000_000;
 const LEGACY_MANAGED_CLAUDE_ENV_KEYS: &[&str] = &[
@@ -500,34 +500,11 @@ fn claude_picker_description_text(description: &str, context_window: Option<u64>
 
 pub(in crate::cli) fn sync_installed_claude_client_key() -> anyhow::Result<()> {
     let settings_path = resolve_claude_settings_path(None)?;
-    if !settings_path.exists() {
-        return Ok(());
-    }
-    let raw = fs::read(&settings_path)?;
-    if !String::from_utf8_lossy(&raw).contains(MANAGED_CLAUDE_MARKER) {
-        return Ok(());
-    }
-    let mut settings: Value = serde_json::from_slice(&raw)?;
-    let object = settings
-        .as_object_mut()
-        .ok_or_else(|| anyhow::anyhow!("Claude Code settings must be a JSON object"))?;
-    if object
-        .get("codex_mixin_managed")
-        .and_then(|managed| managed.get("marker"))
-        .and_then(Value::as_str)
-        != Some(MANAGED_CLAUDE_MARKER)
-    {
-        return Ok(());
-    }
-    let client_key = codex_mixin::config::ensure_gateway_client_key(
-        codex_mixin::gateway_access::GatewayClient::Claude,
+    codex_mixin::application::client::sync_managed_client_key(
+        GatewayClient::Claude,
+        || codex_mixin::clients::claude::is_managed(&settings_path),
+        |key| codex_mixin::clients::claude::sync_client_key(&settings_path, key),
     )?;
-    object
-        .get_mut("env")
-        .and_then(Value::as_object_mut)
-        .ok_or_else(|| anyhow::anyhow!("managed Claude Code env is missing"))?
-        .insert("ANTHROPIC_AUTH_TOKEN".to_owned(), Value::String(client_key));
-    write_atomic_if_changed(&settings_path, &serde_json::to_vec_pretty(&settings)?)?;
     Ok(())
 }
 
@@ -600,155 +577,11 @@ pub(in crate::cli) fn sync_claude_hooks(settings_path: Option<PathBuf>) -> anyho
 
 pub(in crate::cli) fn uninstall_claude(settings_path: Option<PathBuf>) -> anyhow::Result<()> {
     let settings_path = resolve_claude_settings_path(settings_path)?;
-    if !settings_path.exists() {
-        anyhow::bail!(
-            "Claude Code settings are not managed by codex-mixin: {}",
-            settings_path.display()
-        );
-    }
-    let raw = fs::read_to_string(&settings_path)?;
-    let mut settings: Value = serde_json::from_str(&raw).map_err(|error| {
-        anyhow::anyhow!(
-            "invalid Claude Code settings {}: {error}",
-            settings_path.display()
-        )
-    })?;
-    let object = settings.as_object_mut().ok_or_else(|| {
-        anyhow::anyhow!(
-            "Claude Code settings must be a JSON object: {}",
-            settings_path.display()
-        )
-    })?;
-    let managed = object.remove("codex_mixin_managed");
-    if managed
-        .as_ref()
-        .and_then(|value| value.get("marker"))
-        .and_then(Value::as_str)
-        != Some(MANAGED_CLAUDE_MARKER)
-    {
-        anyhow::bail!(
-            "Claude Code settings are not managed by codex-mixin: {}",
-            settings_path.display()
-        );
-    }
-    let previous_env = managed
-        .as_ref()
-        .and_then(|value| value.get("previous_env"))
-        .and_then(Value::as_object)
-        .cloned()
-        .ok_or_else(|| {
-            anyhow::anyhow!(
-                "Claude Code managed settings have no previous env backup: {}",
-                settings_path.display()
-            )
-        })?;
-    let previous_model = managed
-        .as_ref()
-        .and_then(|value| value.get("previous_model"))
-        .filter(|value| !value.is_null())
-        .cloned();
-    let manages_model_picker = managed
-        .as_ref()
-        .and_then(|value| value.get("model_picker_managed"))
-        .and_then(Value::as_bool)
-        == Some(true);
-    let previous_model_picker = managed
-        .as_ref()
-        .and_then(|value| value.get("previous_model_picker"))
-        .filter(|value| !value.is_null())
-        .cloned();
-    let previous_model_overrides = match managed
-        .as_ref()
-        .and_then(|value| value.get("previous_model_overrides"))
-    {
-        None => Map::new(),
-        Some(Value::Object(overrides)) => overrides.clone(),
-        Some(_) => anyhow::bail!(
-            "Claude Code managed previous model overrides must be an object: {}",
-            settings_path.display()
-        ),
-    };
-    let model_override_keys = managed_claude_keys(
-        managed
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Claude Code managed settings are missing"))?,
-        "model_override_keys",
-        &[],
-        &settings_path,
-    )?;
-    let env_keys = managed_claude_keys(
-        managed
-            .as_ref()
-            .ok_or_else(|| anyhow::anyhow!("Claude Code managed settings are missing"))?,
-        "env_keys",
-        LEGACY_MANAGED_CLAUDE_ENV_KEYS,
-        &settings_path,
-    )?;
-    if let Some(env_value) = object.get_mut("env") {
-        let env = env_value.as_object_mut().ok_or_else(|| {
-            anyhow::anyhow!(
-                "Claude Code settings env must be a JSON object: {}",
-                settings_path.display()
-            )
-        })?;
-        for key in env_keys {
-            env.remove(&key);
-        }
-        env.extend(previous_env);
-        if env.is_empty() {
-            object.remove("env");
-        }
-    } else if !previous_env.is_empty() {
-        object.insert("env".to_owned(), Value::Object(previous_env));
-    }
-    let remove_model_overrides = if let Some(overrides) = object.get_mut("modelOverrides") {
-        let overrides = overrides.as_object_mut().ok_or_else(|| {
-            anyhow::anyhow!(
-                "Claude Code settings modelOverrides must be a JSON object: {}",
-                settings_path.display()
-            )
-        })?;
-        for key in model_override_keys {
-            overrides.remove(&key);
-        }
-        overrides.extend(previous_model_overrides);
-        overrides.is_empty()
-    } else if previous_model_overrides.is_empty() {
-        false
-    } else {
-        object.insert(
-            "modelOverrides".to_owned(),
-            Value::Object(previous_model_overrides),
-        );
-        false
-    };
-    if remove_model_overrides {
-        object.remove("modelOverrides");
-    }
-    match previous_model {
-        Some(previous_model) => {
-            object.insert("model".to_owned(), previous_model);
-        }
-        None => {
-            object.remove("model");
-        }
-    }
-    if manages_model_picker {
-        match previous_model_picker {
-            Some(previous) => {
-                object.insert("modelPicker".to_owned(), previous);
-            }
-            None => {
-                object.remove("modelPicker");
-            }
-        }
-    }
-    write_atomic_if_changed(&settings_path, &serde_json::to_vec_pretty(&settings)?)?;
+    codex_mixin::clients::claude::uninstall(&settings_path)?;
     println!("claude code settings restored: {}", settings_path.display());
     println!("managed Claude Code settings restored; restart Claude Code to apply");
     Ok(())
 }
-
 pub(in crate::cli) fn claude_status(settings_path: Option<PathBuf>) -> anyhow::Result<()> {
     let settings_path = resolve_claude_settings_path(settings_path)?;
     if !settings_path.exists() {

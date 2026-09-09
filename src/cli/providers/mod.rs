@@ -432,14 +432,6 @@ fn sync_imagegen_skill() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn mutate_and_invalidate_provider_capabilities<T>(
-    mutation: impl FnOnce(&mut StoredGatewayConfig) -> anyhow::Result<T>,
-) -> anyhow::Result<T> {
-    let result = mutate_and_invalidate(mutation)?;
-    invalidate_provider_capability_cache()?;
-    Ok(result)
-}
-
 fn invalidate_provider_capability_cache() -> anyhow::Result<()> {
     ProviderCapabilities::clear_default_cache().map(|_| ())
 }

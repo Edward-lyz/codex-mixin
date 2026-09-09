@@ -141,40 +141,7 @@ fn install_opencode_with_models(
 }
 
 fn uninstall_opencode_at(config_path: &Path, key_path: &Path) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        config_path.exists(),
-        "OpenCode config is not managed by Codex Mixin: {}",
-        config_path.display()
-    );
-    let mut document = read_opencode_config(config_path)?;
-    let root = document.as_object_mut().context(format!(
-        "OpenCode config must be a JSON object: {}",
-        config_path.display()
-    ))?;
-    let providers = root
-        .get_mut("provider")
-        .and_then(Value::as_object_mut)
-        .context(format!(
-            "OpenCode config has no provider object: {}",
-            config_path.display()
-        ))?;
-    let key_reference = format!("{{file:{}}}", key_path.display());
-    let provider = providers
-        .get(OPENCODE_PROVIDER_ID)
-        .context("OpenCode provider codex-mixin is not installed")?;
-    anyhow::ensure!(
-        is_managed_provider(provider, &key_reference),
-        "OpenCode provider {OPENCODE_PROVIDER_ID} is not managed by Codex Mixin"
-    );
-    providers.remove(OPENCODE_PROVIDER_ID);
-    if providers.is_empty() {
-        root.remove("provider");
-    }
-    write_json_config(config_path, &document)?;
-    if key_path.exists() {
-        fs::remove_file(key_path)
-            .with_context(|| format!("remove OpenCode gateway key {}", key_path.display()))?;
-    }
+    codex_mixin::clients::opencode::uninstall(config_path, key_path)?;
     sync_opencode_reporting_plugin(config_path, false)?;
 
     println!("OpenCode config restored: {}", config_path.display());
@@ -311,13 +278,14 @@ fn opencode_reasoning_variants() -> Value {
 pub(in crate::cli) fn sync_installed_opencode_client_key() -> anyhow::Result<()> {
     let config_path = resolve_opencode_config_path(None)?;
     let key_path = std::path::absolute(stored_config_path().with_file_name(OPENCODE_API_KEY_FILE))?;
-    if !opencode_provider_is_managed(&config_path, &key_path)? {
+    let synced = codex_mixin::application::client::sync_managed_client_key(
+        GatewayClient::OpenCode,
+        || codex_mixin::clients::opencode::is_managed(&config_path, &key_path),
+        |key| codex_mixin::clients::opencode::sync_client_key(&key_path, key),
+    )?;
+    if !synced {
         return Ok(());
     }
-    let client_key = codex_mixin::config::ensure_gateway_client_key(
-        codex_mixin::gateway_access::GatewayClient::OpenCode,
-    )?;
-    write_owner_only(&key_path, client_key.as_bytes())?;
     sync_opencode_reporting_plugin(&config_path, reporting_enabled()?)
 }
 
@@ -371,20 +339,7 @@ fn sync_opencode_models(
 }
 
 fn opencode_provider_is_managed(config_path: &Path, key_path: &Path) -> anyhow::Result<bool> {
-    if !config_path.exists() {
-        return Ok(false);
-    }
-    let raw = fs::read_to_string(config_path)?;
-    if !raw.contains(OPENCODE_PROVIDER_NAME) {
-        return Ok(false);
-    }
-    let document = read_opencode_config(config_path)?;
-    let key_reference = format!("{{file:{}}}", key_path.display());
-    Ok(document
-        .get("provider")
-        .and_then(Value::as_object)
-        .and_then(|providers| providers.get(OPENCODE_PROVIDER_ID))
-        .is_some_and(|provider| is_managed_provider(provider, &key_reference)))
+    codex_mixin::clients::opencode::is_managed(config_path, key_path)
 }
 
 fn sync_opencode_reporting_plugin(config_path: &Path, enabled: bool) -> anyhow::Result<()> {

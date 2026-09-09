@@ -141,15 +141,6 @@ fn quota_currency(value: &serde_json::Value) -> Option<String> {
     .map(str::to_ascii_uppercase)
 }
 
-pub(super) fn apply_discovered_quota(
-    provider: &mut codex_mixin::provider::ProviderDefinition,
-    discovered: &DiscoveredQuotaEndpoint,
-) {
-    provider.quota_url = Some(discovered.url.to_string());
-    provider.quota_parser = discovered.parser;
-    provider.quota_currency = discovered.currency.clone();
-}
-
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(super) struct InferredCustomProviderEndpoint {
     pub(super) base_url: String,

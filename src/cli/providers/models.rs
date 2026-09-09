@@ -7,17 +7,15 @@ use codex_mixin::provider::capabilities::ProviderCapabilities;
 use codex_mixin::provider::{
     AWS_BEDROCK_DEFAULT_REGION, AWS_BEDROCK_RUNTIME_SERVICE, AwsSigV4AuthConfig,
     MANUAL_MODEL_CONTEXT_WINDOW, ModelDiscoveryChanges, ProviderModelSource,
-    apply_discovered_models, aws_bedrock_runtime_base_url, discover_provider_models,
-    redact_provider_error,
+    aws_bedrock_runtime_base_url, discover_provider_models, redact_provider_error,
 };
 use serde_json::json;
 
 use super::{
-    TestProviderOptions, apply_baidu_auth_options, discovery::apply_discovered_quota,
-    discovery::apply_inferred_custom_endpoint, discovery::detect_custom_provider_protocol,
-    discovery::discover_custom_quota, discovery_settings_match, ensure_has_providers,
-    find_provider_mut, mutate_and_invalidate, normalize_base_url, normalize_model_ids,
-    required_config, trim_required,
+    TestProviderOptions, apply_baidu_auth_options, discovery::apply_inferred_custom_endpoint,
+    discovery::detect_custom_provider_protocol, discovery::discover_custom_quota,
+    discovery_settings_match, ensure_has_providers, find_provider_mut, mutate_and_invalidate,
+    normalize_base_url, normalize_model_ids, required_config, trim_required,
 };
 use crate::cli::official_models::{
     OFFICIAL_PROVIDER_ID, available_official_ids, load_official_models, refresh_official_models,
@@ -57,13 +55,7 @@ pub(crate) async fn discover_models_with_output(
         }
         return Ok(changes);
     }
-    let config = required_config()?;
-    let provider = config
-        .providers
-        .iter()
-        .find(|provider| provider.id == id)
-        .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?
-        .clone();
+    let provider = codex_mixin::application::provider::provider_for_refresh(id)?;
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?;
@@ -92,6 +84,13 @@ pub(crate) async fn discover_models_with_output(
             None
         }
     };
+    let quota_update = discovered_quota.as_ref().map(|quota| {
+        codex_mixin::application::provider::DiscoveredQuota {
+            url: quota.url.to_string(),
+            parser: quota.parser,
+            currency: quota.currency.clone(),
+        }
+    });
     let models = match models {
         Ok(models) => models,
         Err(error) => {
@@ -103,18 +102,12 @@ pub(crate) async fn discover_models_with_output(
                     .next()
                     .unwrap_or("model discovery failed")
             ));
-            mutate_and_invalidate(|config| {
-                let current = find_provider_mut(config, id)?;
-                anyhow::ensure!(
-                    discovery_settings_match(current, &provider),
-                    "provider {id} discovery settings changed during refresh; retry"
-                );
-                current.models_refresh_error = Some(stored_error);
-                if let Some(discovered_quota) = &discovered_quota {
-                    apply_discovered_quota(current, discovered_quota);
-                }
-                Ok(())
-            })?;
+            codex_mixin::application::provider::record_refresh_failure(
+                id,
+                &provider,
+                stored_error,
+                quota_update.as_ref(),
+            )?;
             return Err(error);
         }
     };
@@ -129,17 +122,12 @@ pub(crate) async fn discover_models_with_output(
     capabilities.annotate_provider(&mut annotated_provider);
     let models = annotated_provider.cached_models;
     let count = models.len();
-    let changes = mutate_and_invalidate(|config| {
-        let current = find_provider_mut(config, id)?;
-        anyhow::ensure!(
-            discovery_settings_match(current, &provider),
-            "provider {id} discovery settings changed during refresh; retry"
-        );
-        if let Some(discovered_quota) = &discovered_quota {
-            apply_discovered_quota(current, discovered_quota);
-        }
-        apply_discovered_models(current, models)
-    })?;
+    let changes = codex_mixin::application::provider::commit_discovered_models(
+        id,
+        &provider,
+        models,
+        quota_update.as_ref(),
+    )?;
     super::super::progress_step(&format!(
         "Model refresh complete for {id}: {count} available"
     ));

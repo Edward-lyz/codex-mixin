@@ -146,40 +146,7 @@ fn uninstall_pi_at(
     extension_path: &Path,
 ) -> anyhow::Result<()> {
     validate_pi_reporting_extension(extension_path)?;
-    anyhow::ensure!(
-        models_path.exists(),
-        "Pi models config is not managed by Codex Mixin: {}",
-        models_path.display()
-    );
-    let mut document = read_pi_models(models_path)?;
-    let root = document.as_object_mut().context(format!(
-        "Pi models config must be a JSON object: {}",
-        models_path.display()
-    ))?;
-    let providers = root
-        .get_mut("providers")
-        .and_then(Value::as_object_mut)
-        .context(format!(
-            "Pi models config has no providers object: {}",
-            models_path.display()
-        ))?;
-    let key_reference = pi_key_reference(key_path);
-    let provider = providers
-        .get(PI_PROVIDER_ID)
-        .context("Pi provider codex-mixin is not installed")?;
-    anyhow::ensure!(
-        is_managed_provider(provider, &key_reference),
-        "Pi provider {PI_PROVIDER_ID} is not managed by Codex Mixin"
-    );
-    providers.remove(PI_PROVIDER_ID);
-    if providers.is_empty() {
-        root.remove("providers");
-    }
-    write_json_config(models_path, &document)?;
-    if key_path.exists() {
-        fs::remove_file(key_path)
-            .with_context(|| format!("remove Pi gateway key {}", key_path.display()))?;
-    }
+    codex_mixin::clients::pi::uninstall(models_path, key_path)?;
     sync_pi_reporting_extension(extension_path, false)?;
 
     println!("Pi models config restored: {}", models_path.display());
@@ -315,13 +282,14 @@ pub(in crate::cli) fn sync_installed_pi_client_key() -> anyhow::Result<()> {
     let agent_dir = resolve_pi_agent_dir(None)?;
     let models_path = agent_dir.join("models.json");
     let key_path = std::path::absolute(stored_config_path().with_file_name(PI_API_KEY_FILE))?;
-    if !pi_provider_is_managed(&models_path, &key_path)? {
+    let synced = codex_mixin::application::client::sync_managed_client_key(
+        GatewayClient::Pi,
+        || codex_mixin::clients::pi::is_managed(&models_path, &key_path),
+        |key| codex_mixin::clients::pi::sync_client_key(&key_path, key),
+    )?;
+    if !synced {
         return Ok(());
     }
-    let client_key = codex_mixin::config::ensure_gateway_client_key(
-        codex_mixin::gateway_access::GatewayClient::Pi,
-    )?;
-    write_owner_only(&key_path, client_key.as_bytes())?;
     let extension_path = agent_dir.join("extensions").join(PI_REPORT_EXTENSION_FILE);
     sync_pi_reporting_extension(&extension_path, reporting_enabled()?)
 }
@@ -381,16 +349,7 @@ fn sync_pi_models(
 }
 
 fn pi_provider_is_managed(models_path: &Path, key_path: &Path) -> anyhow::Result<bool> {
-    if !models_path.exists() {
-        return Ok(false);
-    }
-    let document = read_pi_models(models_path)?;
-    let key_reference = pi_key_reference(key_path);
-    Ok(document
-        .get("providers")
-        .and_then(Value::as_object)
-        .and_then(|providers| providers.get(PI_PROVIDER_ID))
-        .is_some_and(|provider| is_managed_provider(provider, &key_reference)))
+    codex_mixin::clients::pi::is_managed(models_path, key_path)
 }
 
 fn sync_pi_reporting_extension(path: &Path, enabled: bool) -> anyhow::Result<()> {

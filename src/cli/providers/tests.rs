@@ -12,11 +12,11 @@ use super::discovery::{
     detect_custom_provider_protocol, discover_custom_quota, endpoint_join,
     infer_custom_provider_endpoint, protocol_probe_body_matches,
 };
-use super::management::{
-    remove_provider_from_config, reorder_provider_ids, set_auxiliary_model_upstream,
-};
 use super::models::apply_model_selection;
 use super::*;
+use codex_mixin::application::provider::{
+    remove_provider_config, reorder_provider_config, set_auxiliary_upstream,
+};
 use codex_mixin::provider::{ProviderModel, redact_provider_error};
 
 #[test]
@@ -314,7 +314,7 @@ fn reorders_provider_ids_without_changing_provider_data() {
         ..StoredGatewayConfig::default()
     };
 
-    reorder_provider_ids(&mut config, &["second".to_owned(), "first".to_owned()]).unwrap();
+    reorder_provider_config(&mut config, &["second".to_owned(), "first".to_owned()]).unwrap();
 
     assert_eq!(
         config
@@ -338,8 +338,10 @@ fn rejects_incomplete_or_duplicate_provider_orders() {
         ..StoredGatewayConfig::default()
     };
 
-    assert!(reorder_provider_ids(&mut config, &["first".to_owned()]).is_err());
-    assert!(reorder_provider_ids(&mut config, &["first".to_owned(), "first".to_owned()]).is_err());
+    assert!(reorder_provider_config(&mut config, &["first".to_owned()]).is_err());
+    assert!(
+        reorder_provider_config(&mut config, &["first".to_owned(), "first".to_owned()]).is_err()
+    );
     assert_eq!(
         config
             .providers
@@ -389,7 +391,7 @@ fn removing_a_generated_provider_compacts_ids_and_fusion_model_references() {
         ..StoredGatewayConfig::default()
     };
 
-    remove_provider_from_config(&mut config, "custom").unwrap();
+    remove_provider_config(&mut config, "custom").unwrap();
 
     assert_eq!(
         config
@@ -420,11 +422,11 @@ fn selecting_auxiliary_model_upstream_is_exclusive_and_can_be_cleared() {
         ..StoredGatewayConfig::default()
     };
 
-    set_auxiliary_model_upstream(&mut config, "first", true).unwrap();
+    set_auxiliary_upstream(&mut config, "first", true).unwrap();
     assert!(config.providers[0].auxiliary_model_upstream);
     assert!(!config.providers[1].auxiliary_model_upstream);
 
-    set_auxiliary_model_upstream(&mut config, "first", false).unwrap();
+    set_auxiliary_upstream(&mut config, "first", false).unwrap();
     assert!(
         config
             .providers
