@@ -2,33 +2,11 @@ use super::websocket_proxy::ProxyEnv;
 use super::*;
 use std::sync::Arc;
 
+use crate::catalog::CatalogService;
 use crate::gateway::GatewayExecutor;
 use crate::upstream::UpstreamAccess;
 
-mod catalog;
-
-#[cfg(test)]
-pub(super) use catalog::provider_model_display_name;
-
 pub use crate::upstream::AnthropicByteStream;
-
-const CATALOG_SOURCE_CACHE_TTL: Duration = Duration::from_secs(60);
-const CATALOG_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(30);
-
-struct CatalogSources {
-    template: Option<Value>,
-    metadata: MetadataResolver,
-}
-
-struct CachedCatalogSources {
-    loaded_at: Instant,
-    sources: Arc<CatalogSources>,
-}
-
-struct CachedCatalogResponse {
-    generated_at: Instant,
-    body: Bytes,
-}
 
 /// Composition of the components a server handler needs. It owns no upstream
 /// send logic, no auth runtime, and no routing; those live in `upstream` and
@@ -48,8 +26,8 @@ pub struct AppState {
     /// upstream prefix cache was lost.
     pub(crate) cache_shapes: Arc<CacheShapeTracker>,
     web_search_capabilities: WebSearchCapabilities,
-    catalog_sources_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogSources>>>,
-    catalog_response_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogResponse>>>,
+    /// Catalog generation, sources, and cached catalog responses.
+    pub(crate) catalog: Arc<CatalogService>,
 }
 
 impl AppState {
@@ -135,6 +113,11 @@ impl AppState {
             web_search_capabilities.clone(),
             image_routes.clone(),
         ));
+        let catalog = Arc::new(CatalogService::new(
+            Arc::clone(&config),
+            Arc::clone(&providers),
+            web_search_capabilities.clone(),
+        ));
         Ok(Self {
             config,
             providers,
@@ -145,8 +128,7 @@ impl AppState {
             benchmarks: ModelBenchmarkManager::from_default_path(),
             cache_shapes,
             web_search_capabilities,
-            catalog_sources_cache: Arc::new(tokio::sync::Mutex::new(None)),
-            catalog_response_cache: Arc::new(tokio::sync::Mutex::new(None)),
+            catalog,
         })
     }
 
@@ -169,6 +151,10 @@ impl AppState {
     }
 
     // ---- CLI-facing catalog and auth delegates (migrate with application) ----
+
+    pub async fn fetch_models(&self) -> Result<Vec<crate::anthropic::ModelInfo>, GatewayError> {
+        self.catalog.fetch_models().await
+    }
 
     pub async fn fetch_official_models_catalog(
         &self,

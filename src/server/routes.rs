@@ -179,7 +179,7 @@ async fn codex_model_catalog(
     headers: HeaderMap,
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
-    let body = state.catalog_response().await?;
+    let body = state.catalog.catalog_response().await?;
     Response::builder()
         .header(header::CONTENT_TYPE, "application/json")
         .body(Body::from(body))
@@ -207,7 +207,9 @@ async fn start_model_benchmarks(
             "model benchmark timeout must be between 1 and 300 seconds".to_owned(),
         ));
     }
-    let targets = state.benchmark_targets(&request.providers, &request.models)?;
+    let targets = state
+        .catalog
+        .benchmark_targets(&request.providers, &request.models)?;
     let snapshot = state
         .benchmarks
         .start(targets, timeout, request.target_output_tokens)

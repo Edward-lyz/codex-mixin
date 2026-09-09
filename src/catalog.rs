@@ -5,10 +5,14 @@ pub(super) const SUPPORTS_THINKING_MARKER: &str = "codex_mixin_supports_thinking
 
 mod generation;
 mod managed;
+mod service;
 mod template;
 
 pub use generation::{codex_catalog_from_models_with_metadata, codex_oauth_proxy_catalog};
 pub use managed::{migrate_managed_model_metadata, refresh_managed_oauth_catalog};
+pub(crate) use service::CatalogService;
+#[cfg(test)]
+pub(crate) use service::provider_model_display_name;
 pub use template::{apply_web_search_capabilities, load_template_catalog};
 
 #[cfg(test)]

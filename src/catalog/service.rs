@@ -1,6 +1,64 @@
-use super::*;
+//! Catalog service: model enumeration, benchmark targets, and the cached
+//! Codex catalog response. Owns the catalog caches that used to live on the
+//! server AppState; it never depends on the server or CLI layers.
 
-impl AppState {
+use std::sync::Arc;
+use std::time::{Duration, Instant};
+
+use bytes::Bytes;
+use serde_json::Value;
+
+use crate::anthropic::ModelInfo;
+use crate::benchmark::BenchmarkTarget;
+use crate::config::GatewayConfig;
+use crate::error::GatewayError;
+use crate::provider::{MetadataResolver, ProviderRegistry, catalog_model_slug};
+use crate::web_search::WebSearchCapabilities;
+
+use super::{codex_catalog_from_models_with_metadata, load_template_catalog};
+
+const CATALOG_SOURCE_CACHE_TTL: Duration = Duration::from_secs(60);
+const CATALOG_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(30);
+
+struct CatalogSources {
+    template: Option<Value>,
+    metadata: MetadataResolver,
+}
+
+struct CachedCatalogSources {
+    loaded_at: Instant,
+    sources: Arc<CatalogSources>,
+}
+
+struct CachedCatalogResponse {
+    generated_at: Instant,
+    body: Bytes,
+}
+
+#[derive(Clone)]
+pub(crate) struct CatalogService {
+    config: Arc<GatewayConfig>,
+    providers: Arc<ProviderRegistry>,
+    web_search_capabilities: WebSearchCapabilities,
+    sources_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogSources>>>,
+    response_cache: Arc<tokio::sync::Mutex<Option<CachedCatalogResponse>>>,
+}
+
+impl CatalogService {
+    pub(crate) fn new(
+        config: Arc<GatewayConfig>,
+        providers: Arc<ProviderRegistry>,
+        web_search_capabilities: WebSearchCapabilities,
+    ) -> Self {
+        Self {
+            config,
+            providers,
+            web_search_capabilities,
+            sources_cache: Arc::new(tokio::sync::Mutex::new(None)),
+            response_cache: Arc::new(tokio::sync::Mutex::new(None)),
+        }
+    }
+
     pub async fn fetch_models(&self) -> Result<Vec<ModelInfo>, GatewayError> {
         let mut models = Vec::new();
         for provider in self.providers.providers() {
@@ -131,7 +189,7 @@ impl AppState {
     }
 
     async fn catalog_sources(&self) -> Result<Arc<CatalogSources>, GatewayError> {
-        let mut cache = self.catalog_sources_cache.lock().await;
+        let mut cache = self.sources_cache.lock().await;
         if let Some(cached) = cache
             .as_ref()
             .filter(|cached| cached.loaded_at.elapsed() < CATALOG_SOURCE_CACHE_TTL)
@@ -155,7 +213,7 @@ impl AppState {
     }
 
     pub(crate) async fn catalog_response(&self) -> Result<Bytes, GatewayError> {
-        let mut cache = self.catalog_response_cache.lock().await;
+        let mut cache = self.response_cache.lock().await;
         if let Some(cached) = cache
             .as_ref()
             .filter(|cached| cached.generated_at.elapsed() < CATALOG_RESPONSE_CACHE_TTL)

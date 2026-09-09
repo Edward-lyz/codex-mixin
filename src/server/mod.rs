@@ -1,5 +1,4 @@
 use std::convert::Infallible;
-use std::time::{Duration, Instant};
 
 use axum::body::Body;
 use axum::extract::ws::{Message as AxumWsMessage, WebSocket, WebSocketUpgrade};
@@ -18,11 +17,7 @@ use tokio_tungstenite_proxy::{MaybeTlsStream, WebSocketStream};
 use tower_http::decompression::RequestDecompressionLayer;
 use uuid::Uuid;
 
-use crate::anthropic::ModelInfo;
-use crate::benchmark::{
-    BenchmarkSnapshotResponse, BenchmarkTarget, ModelBenchmarkManager, StartBenchmarkRequest,
-};
-use crate::catalog::{codex_catalog_from_models_with_metadata, load_template_catalog};
+use crate::benchmark::{BenchmarkSnapshotResponse, ModelBenchmarkManager, StartBenchmarkRequest};
 use crate::config::GatewayConfig;
 use crate::error::GatewayError;
 use crate::fusion::{FusionEngine, should_fuse_turn, validate_fusion_profiles};
@@ -31,9 +26,8 @@ use crate::gateway::{CacheShapeTracker, ProviderTokenUsage, RequestPlan, Resolve
 use crate::images::ImageRouteRegistry;
 use crate::protocol::ResponseStream;
 use crate::protocol::sse::encode_event;
-use crate::provider::MetadataResolver;
 use crate::provider::capabilities::ProviderCapabilities;
-use crate::provider::{ProviderRegistry, ProviderRuntime, catalog_model_slug};
+use crate::provider::{ProviderRegistry, ProviderRuntime};
 use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};
 
 pub(crate) mod auth;
