@@ -85,9 +85,7 @@ fn managed_claude_keys(
 
 pub(in crate::cli) fn install_claude(settings_path: Option<PathBuf>) -> anyhow::Result<()> {
     let client = codex_mixin::gateway_access::GatewayClient::Claude;
-    let key_existed = codex_mixin::config::gateway_client_key_exists(client)?;
-    codex_mixin::config::ensure_gateway_client_key(client)?;
-    let result = (|| {
+    codex_mixin::application::client::install_with_client_key(client, || {
         let gateway_config = GatewayConfig::from_stored_config()?;
         let official_models = selected_official_models(&gateway_config)?;
         let gateway_bind = effective_gateway_bind(&gateway_config)?;
@@ -99,8 +97,7 @@ pub(in crate::cli) fn install_claude(settings_path: Option<PathBuf>) -> anyhow::
             true,
         )
         .map(|_| ())
-    })();
-    super::rollback_new_client_key_on_error(result, client, key_existed)
+    })
 }
 
 #[cfg(test)]

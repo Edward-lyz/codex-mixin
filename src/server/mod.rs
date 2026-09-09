@@ -32,9 +32,11 @@ use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};
 
 pub(crate) mod auth;
 mod compact;
+mod error_response;
 mod images;
 mod messages_http;
 mod realtime;
+mod request_body;
 mod responses_http;
 mod responses_ws;
 mod routes;

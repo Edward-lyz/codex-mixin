@@ -1,6 +1,7 @@
 use std::collections::{HashMap, HashSet};
 
-use codex_mixin::config::StoredGatewayConfig;
+use codex_mixin::application::provider::{after_provider_commit, commit_provider_change};
+use codex_mixin::config::{StoredGatewayConfig, mutate_stored_config};
 use codex_mixin::provider::{
     AWS_BEDROCK_DEFAULT_REGION, AwsSigV4AuthConfig, ProviderModel, ProviderModelSource,
     ProviderPreset, ProviderQuotaParser, aws_bedrock_aksk_provider, aws_bedrock_runtime_base_url,
@@ -16,7 +17,8 @@ use super::{
         apply_inferred_custom_endpoint, detect_custom_provider_protocol,
         infer_custom_provider_endpoint,
     },
-    ensure_has_providers, find_provider_mut, mutate_and_invalidate,
+    ensure_has_providers, find_provider_mut, invalidate_provider_capability_cache,
+    invalidate_web_search_cache, mutate_and_invalidate,
     mutate_and_invalidate_provider_capabilities, normalize_base_url, normalize_currency,
     normalize_model_ids, normalize_path, parse_header_env, parse_protocol, parse_quota_parser,
     required_config, sync_imagegen_skill, trim_required,
@@ -192,7 +194,7 @@ pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
         .gateway_key
         .map(|key| trim_required("gateway key", key))
         .transpose()?;
-    if let Err(source) = mutate_and_invalidate_provider_capabilities(|config| {
+    commit_provider_change(|config| {
         if config.providers.iter().any(|provider| provider.id == id) {
             anyhow::bail!("provider already exists: {id}");
         }
@@ -206,9 +208,15 @@ pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
         }
         config.providers.push(provider);
         Ok(())
-    }) {
-        return Err(OperationError::BeforeCommit { source }.into());
-    }
+    })?;
+    after_provider_commit(
+        "web search capability cache invalidation",
+        invalidate_web_search_cache,
+    )?;
+    after_provider_commit(
+        "provider capability cache invalidation",
+        invalidate_provider_capability_cache,
+    )?;
     // The provider config is committed above; every later step must report
     // itself as post-commit so the user knows the provider was saved.
     if let Err(source) = sync_imagegen_skill() {
@@ -260,7 +268,7 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
     let user_set_models_path = options.models_path.is_some();
     let base_url_updated = options.base_url.is_some();
     let mut should_probe_protocol = false;
-    mutate_and_invalidate_provider_capabilities(|config| {
+    commit_provider_change(|config| {
         if let Some(enabled) = options.auxiliary_model_upstream {
             set_auxiliary_model_upstream(config, &id, enabled)?;
         }
@@ -392,19 +400,51 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
         }
         provider.validate()
     })?;
+    after_provider_commit(
+        "web search capability cache invalidation",
+        invalidate_web_search_cache,
+    )?;
+    after_provider_commit(
+        "provider capability cache invalidation",
+        invalidate_provider_capability_cache,
+    )?;
     let mut detected_protocol = None;
     if should_probe_protocol {
-        let provider = required_config()?
+        let provider = required_config()
+            .map_err(|source| OperationError::AfterCommit {
+                stage: "protocol detection configuration reload",
+                source,
+            })?
             .providers
             .into_iter()
             .find(|provider| provider.id == id)
             .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?;
-        if let Some(endpoint) = detect_custom_provider_protocol(&provider).await? {
+        let endpoint = detect_custom_provider_protocol(&provider)
+            .await
+            .map_err(|source| OperationError::AfterCommit {
+                stage: "protocol detection",
+                source,
+            })?;
+        if let Some(endpoint) = endpoint {
             detected_protocol = Some(super::protocol_name(endpoint.protocol).to_owned());
-            mutate_and_invalidate_provider_capabilities(|config| {
+            mutate_stored_config(|config| {
                 let current = find_provider_mut(config, &id)?;
                 apply_inferred_custom_endpoint(current, endpoint);
                 current.validate()
+            })
+            .map_err(|source| OperationError::AfterCommit {
+                stage: "detected protocol persistence",
+                source,
+            })?;
+            invalidate_web_search_cache().map_err(|source| OperationError::AfterCommit {
+                stage: "web search capability cache invalidation",
+                source,
+            })?;
+            invalidate_provider_capability_cache().map_err(|source| {
+                OperationError::AfterCommit {
+                    stage: "provider capability cache invalidation",
+                    source,
+                }
             })?;
         }
     }
@@ -420,7 +460,11 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
         println!("provider protocol detected: {id} ({protocol})");
     }
     if should_refresh_capabilities {
-        let provider = required_config()?
+        let provider = required_config()
+            .map_err(|source| OperationError::AfterCommit {
+                stage: "model discovery configuration reload",
+                source,
+            })?
             .providers
             .into_iter()
             .find(|provider| provider.id == id)

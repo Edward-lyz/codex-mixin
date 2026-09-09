@@ -1,21 +1,17 @@
-use std::io::{Seek, SeekFrom, Write};
+use std::io::{Seek, Write};
 
-use axum::body::Body;
 use futures_util::StreamExt;
 use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderValue};
 use serde::Serialize;
-use serde_json::Value;
-use tokio::io::{AsyncSeekExt, AsyncWriteExt};
 
 use crate::error::GatewayError;
 
 const MAX_UPSTREAM_ERROR_BYTES: usize = 64 * 1024;
-pub(crate) const MAX_REQUEST_BYTES: usize = 256 * 1024 * 1024;
 
-pub(crate) struct SignedJsonBody {
-    pub(crate) file: tokio::fs::File,
-    pub(crate) length: u64,
-    pub(crate) sha256: String,
+pub(super) struct SignedJsonBody {
+    pub(super) file: tokio::fs::File,
+    pub(super) length: u64,
+    pub(super) sha256: String,
 }
 
 struct DigestWriter<W> {
@@ -35,7 +31,7 @@ impl<W: Write> Write for DigestWriter<W> {
     }
 }
 
-pub(crate) async fn prepare_signed_json<T>(value: T) -> Result<SignedJsonBody, GatewayError>
+pub(super) async fn prepare_signed_json<T>(value: T) -> Result<SignedJsonBody, GatewayError>
 where
     T: Serialize + Send + 'static,
 {
@@ -48,7 +44,7 @@ where
         serde_json::to_writer(&mut writer, &value)?;
         writer.flush()?;
         let length = writer.inner.stream_position()?;
-        writer.inner.seek(SeekFrom::Start(0))?;
+        writer.inner.seek(std::io::SeekFrom::Start(0))?;
         let digest = writer.digest.finish();
         const HEX: &[u8; 16] = b"0123456789abcdef";
         let mut sha256 = String::with_capacity(digest.as_ref().len() * 2);
@@ -67,34 +63,6 @@ where
     .map_err(GatewayError::Other)
 }
 
-pub(crate) async fn parse_json(body: Body) -> Result<Value, GatewayError> {
-    parse_json_with_limit(body, MAX_REQUEST_BYTES).await
-}
-
-async fn parse_json_with_limit(body: Body, max_bytes: usize) -> Result<Value, GatewayError> {
-    let file = tempfile::tempfile().map_err(GatewayError::Io)?;
-    let mut file = tokio::fs::File::from_std(file);
-    let mut stream = body.into_data_stream();
-    let mut received = 0usize;
-    while let Some(chunk) = stream.next().await {
-        let chunk = chunk.map_err(|error| GatewayError::Other(error.into()))?;
-        received = received
-            .checked_add(chunk.len())
-            .ok_or(GatewayError::PayloadTooLarge)?;
-        if received > max_bytes {
-            return Err(GatewayError::PayloadTooLarge);
-        }
-        file.write_all(&chunk).await?;
-    }
-    file.flush().await?;
-    file.seek(SeekFrom::Start(0)).await?;
-    let file = file.into_std().await;
-    tokio::task::spawn_blocking(move || serde_json::from_reader(file))
-        .await
-        .map_err(|error| GatewayError::Other(error.into()))?
-        .map_err(GatewayError::Json)
-}
-
 pub(crate) async fn send_json<T>(
     request: reqwest::RequestBuilder,
     value: T,
@@ -106,7 +74,7 @@ where
         let mut file = tempfile::tempfile()?;
         serde_json::to_writer(&mut file, &value)?;
         let length = file.stream_position()?;
-        file.seek(SeekFrom::Start(0))?;
+        file.seek(std::io::SeekFrom::Start(0))?;
         Ok::<_, anyhow::Error>((file, length))
     })
     .await
@@ -146,18 +114,4 @@ pub(crate) async fn read_error_text(response: reqwest::Response) -> Result<Strin
         text.push_str(" [truncated]");
     }
     Ok(text)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-
-    #[tokio::test]
-    async fn rejects_request_bodies_above_the_explicit_limit() {
-        let body = Body::from("12345");
-        assert!(matches!(
-            parse_json_with_limit(body, 4).await,
-            Err(GatewayError::PayloadTooLarge)
-        ));
-    }
 }

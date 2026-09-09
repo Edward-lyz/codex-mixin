@@ -8,7 +8,6 @@
 //! sse: SSE encode/decode primitives shared by every stream.
 //! compaction: self-contained conversation-summary tokens that survive
 //! provider switches.
-//! request_body: request-body inspection helpers.
 //! model_reasoning: per-model reasoning-effort mapping.
 
 pub(crate) mod anthropic_compat;
@@ -17,7 +16,6 @@ pub mod convert;
 pub mod model_reasoning;
 pub mod openai_chat;
 pub mod openai_events;
-pub(crate) mod request_body;
 pub mod sse;
 
 use std::convert::Infallible;

@@ -34,15 +34,12 @@ fn resolve_dsh_home(dsh_home: Option<PathBuf>) -> anyhow::Result<PathBuf> {
 
 pub(in crate::cli) fn install_dsh(dsh_home: Option<PathBuf>) -> anyhow::Result<()> {
     let client = codex_mixin::gateway_access::GatewayClient::Dsh;
-    let key_existed = codex_mixin::config::gateway_client_key_exists(client)?;
-    codex_mixin::config::ensure_gateway_client_key(client)?;
-    let result = (|| {
+    codex_mixin::application::client::install_with_client_key(client, || {
         let gateway_config = GatewayConfig::from_stored_config()?;
         let official_models = selected_official_models(&gateway_config)?;
         let bind = effective_gateway_bind(&gateway_config)?;
         install_dsh_with_models(dsh_home, &gateway_config, &official_models, bind, true).map(|_| ())
-    })();
-    super::rollback_new_client_key_on_error(result, client, key_existed)
+    })
 }
 
 #[cfg(test)]

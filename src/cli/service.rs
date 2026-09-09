@@ -488,6 +488,10 @@ pub(super) async fn start(
             "failed to sync installed client gateway keys; run codex-mixin doctor to repair"
         );
     }
+    // Client sync can create and persist a missing dedicated key. Build every
+    // server state from that committed configuration while preserving the
+    // listener's actual address selected above.
+    config = codex_mixin::application::lifecycle::reload_for_listener(actual_bind)?;
     let supported_models = WebSearchCapabilities::from_default_path(&config)?.supported_model_ids();
     log_codex_catalog_refresh_started(&config_path, "gateway_start", "capability_cache");
     match refresh_managed_codex_catalog_with_capabilities(&config_path, Some(&supported_models)) {

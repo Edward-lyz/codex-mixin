@@ -15,7 +15,7 @@
 | `upstream` | 请求准备、上游传输、认证运行时、协议相关重试 | `provider`/`protocol`/`config` |
 | `catalog` | 目录生成、来源加载、目录缓存 | `provider`/`web_search`/`protocol` |
 | `provider` | 定义、校验、preset、能力与路由元数据 | 纯规则，不依赖上层 |
-| `protocol` | 请求转换、SSE 编解码、事件映射、协议数据 | 纯数据，不发送网络（`request_body` 例外） |
+| `protocol` | 请求转换、SSE 编解码、事件映射、协议数据 | 纯数据，不发送网络 |
 | `config` | 配置模型、迁移、校验、持久化 | 锁与原子替换 |
 | `clients`（新增） | 各编码客户端配置渲染、安装、同步、卸载 | 不依赖 server |
 
@@ -59,8 +59,8 @@ clippy 与测试仍是权威检查。当前规则：
 - 核心请求路径（gateway/upstream/provider/protocol/fusion/catalog/config/
   benchmark/web_search/images/application）不得引用 `crate::server`、
   `crate::cli` 或 `AppState`。
-- 协议转换与编解码模块不得执行网络发送；`protocol::request_body` 是刻意的
-  底层传输助手，豁免。
-- 库用例不得使用 clap/indicatif/ratatui/console/crossterm。
+- 协议转换与编解码模块不得执行网络发送；入站 Body 读取在 `server`，JSON
+  序列化与发送在 `upstream`。
+- 库用例不得使用 clap/indicatif/ratatui/console/crossterm 或终端打印。
 - 底层模块不得引用 `FusionEngine` 或网关执行器。
 - `server` 不得引用 `crate::cli`。

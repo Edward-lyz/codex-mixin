@@ -32,7 +32,7 @@ pub(super) async fn compact(
     body: Body,
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
-    let body = crate::protocol::request_body::parse_json(body).await?;
+    let body = super::request_body::parse_json(body).await?;
     validate_compact_request(&body)?;
     let model = body
         .get("model")
@@ -272,14 +272,13 @@ async fn forward_official_compact(
     let request = forward_official_headers(
         state
             .upstream
-            .client()
-            .post(url)
+            .request(reqwest::Method::POST, url)
             .header(header::AUTHORIZATION, authorization)
             .header("chatgpt-account-id", account_id)
             .header(header::ACCEPT, "application/json, text/event-stream"),
         headers,
     );
-    let upstream = crate::protocol::request_body::send_json(request, body).await?;
+    let upstream = crate::upstream::body::send_json(request, body).await?;
     let status = upstream.status();
     let content_type = upstream
         .headers()
@@ -288,7 +287,7 @@ async fn forward_official_compact(
         .unwrap_or("application/json")
         .to_owned();
     if !status.is_success() {
-        let body = crate::protocol::request_body::read_error_text(upstream).await?;
+        let body = crate::upstream::body::read_error_text(upstream).await?;
         return Err(GatewayError::UpstreamStatus {
             status,
             message: format!("official compact endpoint returned {status}: {body}"),

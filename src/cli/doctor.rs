@@ -1,4 +1,3 @@
-use std::fs;
 use std::path::Path;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
@@ -424,45 +423,40 @@ fn planned_fixes(checks: &[DoctorCheck]) -> Vec<DoctorFix> {
 }
 
 fn check_config_permissions(path: &Path) -> DoctorCheck {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        match fs::metadata(path) {
-            Ok(metadata) if metadata.permissions().mode() & 0o077 == 0 => DoctorCheck::new(
-                "config_permissions",
-                "Config permissions",
-                DoctorStatus::Ok,
-                format!("{:o}", metadata.permissions().mode() & 0o777),
-            ),
-            Ok(metadata) => DoctorCheck::new(
-                "config_permissions",
-                "Config permissions",
-                DoctorStatus::Warning,
-                "config file is readable by accounts other than the current user",
-            )
-            .detail(format!(
-                "current mode {:o}; recommend chmod 600 {}",
-                metadata.permissions().mode() & 0o777,
-                path.display()
-            ))
-            .fix(DoctorFix::FixConfigPermissions),
-            Err(error) => DoctorCheck::new(
-                "config_permissions",
-                "Config permissions",
-                DoctorStatus::Error,
-                "could not read config file permissions",
-            )
-            .detail(error.to_string()),
-        }
-    }
-    #[cfg(not(unix))]
-    {
-        DoctorCheck::new(
+    use codex_mixin::application::diagnostic::{FilePermissionStatus, config_permissions};
+
+    match config_permissions(path) {
+        Ok(FilePermissionStatus::Private) => DoctorCheck::new(
             "config_permissions",
             "Config permissions",
             DoctorStatus::Ok,
-            "this platform does not use Unix permission checks",
+            "owner-only access",
+        ),
+        Ok(FilePermissionStatus::TooOpen(mode)) => DoctorCheck::new(
+            "config_permissions",
+            "Config permissions",
+            DoctorStatus::Warning,
+            "config file is readable by accounts other than the current user",
         )
+        .detail(format!(
+            "current mode {:o}; recommend chmod 600 {}",
+            mode,
+            path.display()
+        ))
+        .fix(DoctorFix::FixConfigPermissions),
+        Ok(FilePermissionStatus::Missing) => DoctorCheck::new(
+            "config_permissions",
+            "Config permissions",
+            DoctorStatus::Error,
+            "config file is missing",
+        ),
+        Err(error) => DoctorCheck::new(
+            "config_permissions",
+            "Config permissions",
+            DoctorStatus::Error,
+            "could not read config file permissions",
+        )
+        .detail(error.to_string()),
     }
 }
 

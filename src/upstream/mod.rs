@@ -21,6 +21,7 @@ use crate::error::GatewayError;
 use crate::provider::auth::ducx::DucxRuntime;
 use crate::provider::{ProviderProtocol, ProviderRuntime};
 
+pub(crate) mod body;
 mod ducx;
 mod official;
 
@@ -59,8 +60,37 @@ impl UpstreamAccess {
         }
     }
 
-    pub(crate) fn client(&self) -> &Client {
-        &self.client
+    pub(crate) async fn send_provider_json<T>(
+        &self,
+        provider: &ProviderRuntime,
+        protocol: ProviderProtocol,
+        upstream_model_id: &str,
+        hash_key: Option<&str>,
+        native_headers: Option<&reqwest::header::HeaderMap>,
+        body: T,
+    ) -> Result<reqwest::Response, GatewayError>
+    where
+        T: serde::Serialize + Send + 'static,
+    {
+        let base = self
+            .client
+            .post(provider.api_url_for_model(upstream_model_id).clone());
+        let authenticated = match native_headers {
+            Some(headers) => base.headers(headers.clone()),
+            None => provider.apply_auth_for_protocol(base, protocol),
+        };
+        let request = provider
+            .apply_session_affinity(authenticated, hash_key)
+            .header(reqwest::header::ACCEPT, "text/event-stream");
+        body::send_json(request, body).await
+    }
+
+    pub(crate) fn request(
+        &self,
+        method: reqwest::Method,
+        url: reqwest::Url,
+    ) -> reqwest::RequestBuilder {
+        self.client.request(method, url)
     }
 
     /// Send a provider Anthropic Messages request and return its SSE byte
@@ -110,8 +140,7 @@ impl UpstreamAccess {
                 .apply_session_affinity(upstream_request, hash_key)
                 .header(header::ACCEPT, "text/event-stream");
             let response = if let Some(aws) = provider.aws_sigv4() {
-                let prepared =
-                    crate::protocol::request_body::prepare_signed_json(request.clone()).await?;
+                let prepared = body::prepare_signed_json(request.clone()).await?;
                 let content_length = header::HeaderValue::from_str(&prepared.length.to_string())
                     .map_err(|error| GatewayError::Other(error.into()))?;
                 let mut request = upstream_request
@@ -131,7 +160,7 @@ impl UpstreamAccess {
                     .await
                     .map_err(GatewayError::Http)
             } else {
-                crate::protocol::request_body::send_json(upstream_request, request.clone()).await
+                body::send_json(upstream_request, request.clone()).await
             }
             .inspect_err(|error| {
                 tracing::error!(
@@ -156,7 +185,7 @@ impl UpstreamAccess {
                 continue;
             }
             if !status.is_success() {
-                let body = crate::protocol::request_body::read_error_text(response).await?;
+                let body = body::read_error_text(response).await?;
                 return Err(GatewayError::UpstreamStatus {
                     status,
                     message: format!(

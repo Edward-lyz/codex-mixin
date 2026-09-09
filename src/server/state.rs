@@ -150,8 +150,6 @@ impl AppState {
             .await
     }
 
-    // ---- CLI-facing catalog and auth delegates (migrate with application) ----
-
     pub async fn fetch_models(&self) -> Result<Vec<crate::anthropic::ModelInfo>, GatewayError> {
         self.catalog.fetch_models().await
     }

@@ -122,7 +122,7 @@ impl UpstreamAccess {
                 .header(header::ACCEPT, "text/event-stream"),
             headers,
         );
-        crate::protocol::request_body::send_json(request, body).await
+        super::body::send_json(request, body).await
     }
 }
 

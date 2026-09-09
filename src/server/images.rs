@@ -38,8 +38,7 @@ pub(super) async fn image_generations(
         let request = provider.apply_auth(
             state
                 .upstream
-                .client()
-                .post(url)
+                .request(reqwest::Method::POST, url)
                 .header(header::ACCEPT, "application/json"),
         );
         let upstream = request.json(&body).send().await?;
@@ -54,8 +53,7 @@ pub(super) async fn image_generations(
         let request = provider.apply_auth(
             state
                 .upstream
-                .client()
-                .post(url)
+                .request(reqwest::Method::POST, url)
                 .header(header::ACCEPT, "application/json"),
         );
         let upstream = request.json(&body).send().await?;
@@ -115,8 +113,10 @@ async fn forward_official_image_request(
     let request = forward_official_headers(
         state
             .upstream
-            .client()
-            .post(url)
+            .request(
+                reqwest::Method::POST,
+                reqwest::Url::parse(&url).map_err(|error| GatewayError::Other(error.into()))?,
+            )
             .header(header::AUTHORIZATION, authorization)
             .header("chatgpt-account-id", account_id)
             .header(header::ACCEPT, "application/json"),

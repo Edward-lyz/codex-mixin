@@ -207,7 +207,7 @@ impl GatewayExecutor {
         }
         match plan.target {
             UpstreamTarget::Official => {
-                let stream = self.stream_official(headers, &plan.body.clone()).await?;
+                let stream = self.stream_official(headers, &plan.body).await?;
                 let stream = match plan.downstream_model {
                     Some(model) => rewrite_response_model(stream, model),
                     None => stream,
@@ -268,7 +268,7 @@ impl GatewayExecutor {
         }
         let status = upstream.status();
         if !status.is_success() {
-            let body = crate::protocol::request_body::read_error_text(upstream).await?;
+            let body = crate::upstream::body::read_error_text(upstream).await?;
             return Err(GatewayError::UpstreamStatus {
                 status,
                 message: format!("official responses endpoint returned {status}: {body}"),

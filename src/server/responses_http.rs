@@ -7,7 +7,7 @@ pub(super) async fn responses(
     body: Body,
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
-    let body = crate::protocol::request_body::parse_json(body).await?;
+    let body = super::request_body::parse_json(body).await?;
     let requested_model = body
         .get("model")
         .and_then(Value::as_str)
@@ -122,7 +122,7 @@ async fn forward_official_responses(
         .unwrap_or("text/event-stream")
         .to_owned();
     if !status.is_success() {
-        let body = crate::protocol::request_body::read_error_text(sent.response).await?;
+        let body = crate::upstream::body::read_error_text(sent.response).await?;
         return Err(GatewayError::UpstreamStatus {
             status,
             message: format!("official responses endpoint returned {status}: {body}"),

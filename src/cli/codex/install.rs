@@ -53,7 +53,6 @@ pub(in crate::cli) struct InstallCodexOptions {
 
 pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyhow::Result<()> {
     let client = codex_mixin::gateway_access::GatewayClient::Codex;
-    let key_existed = codex_mixin::config::gateway_client_key_exists(client)?;
     let config_path = resolve_codex_config_path(options.config_path.clone())?;
     let auth_mode = if options.codex_oauth_proxy {
         ManagedAuthMode::Official
@@ -61,17 +60,19 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
         ManagedAuthMode::CustomOnly
     };
     let auth_transaction = ManagedAuthTransaction::begin(&config_path, auth_mode)?;
-    let result = install_codex_inner(options).await;
-    let result = match result {
-        Ok(()) => auth_transaction.commit(),
-        Err(install_error) => match auth_transaction.rollback() {
-            Ok(()) => Err(install_error),
-            Err(rollback_error) => Err(anyhow::anyhow!(
-                "{install_error}; Codex auth rollback also failed: {rollback_error}"
-            )),
-        },
-    };
-    crate::cli::rollback_new_client_key_on_error(result, client, key_existed)
+    codex_mixin::application::client::install_with_client_key_async(client, async move {
+        let result = install_codex_inner(options).await;
+        match result {
+            Ok(()) => auth_transaction.commit(),
+            Err(install_error) => match auth_transaction.rollback() {
+                Ok(()) => Err(install_error),
+                Err(rollback_error) => Err(anyhow::anyhow!(
+                    "{install_error}; Codex auth rollback also failed: {rollback_error}"
+                )),
+            },
+        }
+    })
+    .await
 }
 
 async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()> {

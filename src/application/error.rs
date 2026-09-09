@@ -29,7 +29,15 @@ impl fmt::Display for OperationError {
     }
 }
 
-impl std::error::Error for OperationError {}
+impl std::error::Error for OperationError {
+    fn source(&self) -> Option<&(dyn std::error::Error + 'static)> {
+        match self {
+            Self::BeforeCommit { source } | Self::AfterCommit { source, .. } => {
+                Some(source.as_ref())
+            }
+        }
+    }
+}
 
 #[cfg(test)]
 mod tests {
@@ -69,5 +77,7 @@ mod tests {
         }
         .into();
         assert!(error.to_string().contains("configuration was saved"));
+        let chain = error.chain().map(ToString::to_string).collect::<Vec<_>>();
+        assert_eq!(chain.last().map(String::as_str), Some("boom"));
     }
 }

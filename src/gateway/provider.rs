@@ -116,35 +116,29 @@ pub(crate) async fn stream_provider_response(
                 routing,
                 CacheShape::from_openai_chat(&converted.request),
             );
-            let base_request = executor
+            let upstream = executor
                 .upstream
-                .client()
-                .post(provider.api_url_for_model(&upstream_model_id).clone());
-            let upstream_request = match &baidu_native {
-                Some(native) => base_request.headers(native.clone()),
-                None => provider.apply_auth_for_protocol(base_request, protocol),
-            };
-            let request = provider
-                .apply_session_affinity(
-                    upstream_request,
+                .send_provider_json(
+                    provider,
+                    protocol,
+                    &upstream_model_id,
                     routing.map(|routing| routing.hash_key.as_str()),
+                    baidu_native.as_ref(),
+                    converted.request.clone(),
                 )
-                .header(reqwest::header::ACCEPT, "text/event-stream");
-            let upstream =
-                crate::protocol::request_body::send_json(request, converted.request.clone())
-                    .await
-                    .inspect_err(|error| {
-                        tracing::error!(
-                            provider_id = provider.id(),
-                            catalog_slug = %catalog_slug,
-                            upstream_model_id = %upstream_model_id,
-                            error = %crate::error::format_error_chain(error),
-                            "provider chat completions request failed before receiving a response"
-                        );
-                    })?;
+                .await
+                .inspect_err(|error| {
+                    tracing::error!(
+                        provider_id = provider.id(),
+                        catalog_slug = %catalog_slug,
+                        upstream_model_id = %upstream_model_id,
+                        error = %crate::error::format_error_chain(error),
+                        "provider chat completions request failed before receiving a response"
+                    );
+                })?;
             let status = upstream.status();
             if !status.is_success() {
-                let body = crate::protocol::request_body::read_error_text(upstream).await?;
+                let body = crate::upstream::body::read_error_text(upstream).await?;
                 return Err(GatewayError::UpstreamStatus {
                     status,
                     message: format!(
@@ -173,22 +167,17 @@ pub(crate) async fn stream_provider_response(
                 routing,
                 CacheShape::from_openai_responses(&upstream_body),
             );
-            let base_request = executor
+            let upstream = executor
                 .upstream
-                .client()
-                .post(provider.api_url_for_model(&upstream_model_id).clone());
-            let upstream_request = match &baidu_native {
-                Some(native) => base_request.headers(native.clone()),
-                None => provider.apply_auth_for_protocol(base_request, protocol),
-            };
-            let request = provider
-                .apply_session_affinity(
-                    upstream_request,
+                .send_provider_json(
+                    provider,
+                    protocol,
+                    &upstream_model_id,
                     routing.map(|routing| routing.hash_key.as_str()),
+                    baidu_native.as_ref(),
+                    upstream_body.clone(),
                 )
-                .header(reqwest::header::ACCEPT, "text/event-stream");
-            let upstream =
-                crate::protocol::request_body::send_json(request, upstream_body.clone()).await;
+                .await;
             let upstream = upstream.inspect_err(|error| {
                 tracing::error!(
                     provider_id = provider.id(),
@@ -200,7 +189,7 @@ pub(crate) async fn stream_provider_response(
             })?;
             let status = upstream.status();
             if !status.is_success() {
-                let body = crate::protocol::request_body::read_error_text(upstream).await?;
+                let body = crate::upstream::body::read_error_text(upstream).await?;
                 return Err(GatewayError::UpstreamStatus {
                     status,
                     message: format!(

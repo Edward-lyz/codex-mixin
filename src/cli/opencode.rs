@@ -25,9 +25,7 @@ const OPENCODE_REPORT_PLUGIN_MARKER: &str = "codex-mixin managed DUCX reporting 
 
 pub(in crate::cli) fn install_opencode(config_path: Option<PathBuf>) -> anyhow::Result<()> {
     let client = codex_mixin::gateway_access::GatewayClient::OpenCode;
-    let key_existed = codex_mixin::config::gateway_client_key_exists(client)?;
-    codex_mixin::config::ensure_gateway_client_key(client)?;
-    let result = (|| {
+    codex_mixin::application::client::install_with_client_key(client, || {
         let gateway_config = GatewayConfig::from_stored_config()?;
         let official_models = selected_official_models(&gateway_config)?;
         let config_path = resolve_opencode_config_path(config_path)?;
@@ -44,8 +42,7 @@ pub(in crate::cli) fn install_opencode(config_path: Option<PathBuf>) -> anyhow::
             true,
         )
         .map(|_| ())
-    })();
-    super::rollback_new_client_key_on_error(result, client, key_existed)
+    })
 }
 
 pub(in crate::cli) fn uninstall_opencode(config_path: Option<PathBuf>) -> anyhow::Result<()> {

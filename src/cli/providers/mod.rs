@@ -114,7 +114,10 @@ pub(super) struct TestProviderOptions {
 pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
     let mut config = load_stored_config()?.unwrap_or_default();
     let runtime_config = GatewayConfig::from_stored_config()?;
-    let codex_install_mode = managed_codex_install_mode(&resolve_codex_config_path(None)?)?;
+    // Provider listing is a read-only query. A broken managed Codex config is
+    // reported by doctor and must not block configured-provider inspection.
+    let codex_install_mode =
+        managed_codex_install_mode(&resolve_codex_config_path(None)?).unwrap_or(None);
     let capabilities = ProviderCapabilities::from_default_path(&runtime_config)?;
     for provider in &mut config.providers {
         capabilities.annotate_provider(provider);
@@ -402,8 +405,12 @@ fn mutate_and_invalidate<T>(
     mutation: impl FnOnce(&mut StoredGatewayConfig) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     let result = mutate_stored_config(mutation)?;
-    WebSearchCapabilities::clear_default_cache()?;
+    invalidate_web_search_cache()?;
     Ok(result)
+}
+
+fn invalidate_web_search_cache() -> anyhow::Result<()> {
+    WebSearchCapabilities::clear_default_cache().map(|_| ())
 }
 
 fn sync_imagegen_skill() -> anyhow::Result<()> {
@@ -429,8 +436,12 @@ fn mutate_and_invalidate_provider_capabilities<T>(
     mutation: impl FnOnce(&mut StoredGatewayConfig) -> anyhow::Result<T>,
 ) -> anyhow::Result<T> {
     let result = mutate_and_invalidate(mutation)?;
-    ProviderCapabilities::clear_default_cache()?;
+    invalidate_provider_capability_cache()?;
     Ok(result)
+}
+
+fn invalidate_provider_capability_cache() -> anyhow::Result<()> {
+    ProviderCapabilities::clear_default_cache().map(|_| ())
 }
 
 fn discovery_settings_match(

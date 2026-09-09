@@ -4,6 +4,7 @@ pub mod anthropic;
 pub mod application;
 pub mod benchmark;
 pub mod catalog;
+pub mod clients;
 pub mod config;
 pub mod error;
 pub mod fusion;

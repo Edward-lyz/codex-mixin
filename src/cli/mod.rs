@@ -76,23 +76,6 @@ pub(super) fn next_step_line(message: &str) {
     }
 }
 
-fn rollback_new_client_key_on_error(
-    result: anyhow::Result<()>,
-    client: codex_mixin::gateway_access::GatewayClient,
-    key_existed: bool,
-) -> anyhow::Result<()> {
-    match result {
-        Ok(()) => Ok(()),
-        Err(error) if key_existed => Err(error),
-        Err(error) => match codex_mixin::config::revoke_gateway_client_key(client) {
-            Ok(()) => Err(error),
-            Err(revoke_error) => Err(anyhow::anyhow!(
-                "{error:#}; gateway client key rollback also failed: {revoke_error:#}"
-            )),
-        },
-    }
-}
-
 /// Re-render the managed model catalogs of every connected coding client
 /// (Claude Code, DSH, OpenCode, Pi) from the current provider configuration.
 /// Clients that are not installed stay untouched. Returns the display names

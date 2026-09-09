@@ -81,8 +81,7 @@ pub(super) async fn realtime_call(
             let upstream = forward_official_headers(
                 state
                     .upstream
-                    .client()
-                    .post(url)
+                    .request(reqwest::Method::POST, url)
                     .header(header::AUTHORIZATION, authorization)
                     .header("chatgpt-account-id", account_id),
                 &headers,
@@ -106,7 +105,7 @@ pub(super) async fn realtime_call(
             let multipart = encode_realtime_multipart(&boundary, &sdp, &session);
             let request = forward_official_headers(
                 provider.apply_auth_for_protocol(
-                    state.upstream.client().post(url),
+                    state.upstream.request(reqwest::Method::POST, url),
                     ProviderProtocol::OpenAiResponses,
                 ),
                 &headers,
