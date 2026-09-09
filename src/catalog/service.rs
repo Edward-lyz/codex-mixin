@@ -1,6 +1,6 @@
 //! Catalog service: model enumeration, benchmark targets, and the cached
 //! Codex catalog response. Owns the catalog caches that used to live on the
-//! server AppState; it never depends on the server or CLI layers.
+//! server composition; it never depends on the server or CLI layers.
 
 use std::sync::Arc;
 use std::time::{Duration, Instant};

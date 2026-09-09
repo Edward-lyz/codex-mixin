@@ -27,6 +27,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Check architecture boundaries
+        run: ./scripts/check_arch.sh
       - name: Run unit and integration tests
         run: cargo test --locked --all-targets
       - name: Run prompt cache prefix E2E
