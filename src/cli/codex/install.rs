@@ -136,7 +136,7 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
     let gateway_bind = effective_gateway_bind(&gateway_config)?;
     let gateway_base_url =
         normalize_base_url(base_url.unwrap_or_else(|| format!("http://{gateway_bind}/v1")))?;
-    let provider_id = managed_codex_provider_id(codex_oauth_proxy);
+    let provider_id = codex_mixin::clients::codex::provider_id(codex_oauth_proxy);
     let _config_lock = ManagedConfigLock::acquire(&paths.config)?;
     let raw_config = read_managed_config_for_install(&paths.config)?;
     let mut doc = if raw_config.trim().is_empty() {
@@ -161,7 +161,7 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
     } else {
         None
     };
-    upsert_codex_config(
+    codex_mixin::clients::codex::upsert(
         &mut doc,
         selected_model.as_deref(),
         &paths.catalog,
@@ -170,7 +170,7 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
         Some(&client_key),
         codex_oauth_proxy,
     )?;
-    let serialized_config = serialize_managed_config(&doc);
+    let serialized_config = codex_mixin::clients::codex::serialize(&doc);
     serialized_config.parse::<DocumentMut>()?;
     let expected_model_slugs = catalog
         .get("models")
@@ -280,14 +280,15 @@ pub(in crate::cli) fn uninstall_codex(
     } else {
         String::new()
     };
-    if !is_managed_config(&raw_config) {
+    if !codex_mixin::clients::codex::document_is_managed(&raw_config) {
         anyhow::bail!(
             "Codex config is not managed by codex-mixin: {}",
             config_path.display()
         );
     }
     let managed_doc = raw_config.parse::<DocumentMut>()?;
-    let managed_provider = managed_config_provider_id(&managed_doc)?.to_owned();
+    let managed_provider =
+        codex_mixin::clients::codex::managed_provider_id(&managed_doc)?.to_owned();
     let managed_catalog_path = managed_catalog_path(&managed_doc, &config_path)?;
     if let Some(explicit_catalog_path) = catalog_path {
         let explicit_catalog_path = absolute_path(explicit_catalog_path)?;
@@ -376,7 +377,7 @@ pub(in crate::cli) fn write_managed_codex_files(
     } else {
         None
     };
-    let created_restore_point = !is_managed_config(raw_config);
+    let created_restore_point = !codex_mixin::clients::codex::document_is_managed(raw_config);
     create_managed_config_restore_point(&paths.config, raw_config)?;
     println!("codex install step: restore point prepared; created={created_restore_point}");
     let install_result = (|| -> anyhow::Result<()> {

@@ -3,15 +3,9 @@ use std::fs::OpenOptions;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
-use toml_edit::{DocumentMut, InlineTable, Item, Table, Value, value};
-
-use codex_mixin::CODEX_MIXIN_PROVIDER;
+use toml_edit::{DocumentMut, Item, value};
 
 use crate::cli::atomic_file::write_atomic_if_changed;
-
-pub(in crate::cli) const MANAGED_CONFIG_MARKER: &str = "codex-mixin managed config";
-pub(in crate::cli) const MANAGED_CONFIG_HEADER: &str = "# codex-mixin managed config. Run `codex-mixin uninstall-codex` to restore the previous config.";
-pub(in crate::cli) const CUSTOM_ONLY_CODEX_PROVIDER: &str = "amazon-bedrock";
 
 #[derive(Debug, Eq, PartialEq)]
 pub(in crate::cli) struct CodexInstallPaths {
@@ -116,7 +110,7 @@ pub(in crate::cli) fn read_managed_config_for_install(
     } else {
         String::new()
     };
-    if is_managed_config(&raw_config) {
+    if codex_mixin::clients::codex::document_is_managed(&raw_config) {
         return Ok(raw_config);
     }
     let backup_path = managed_backup_path(config_path);
@@ -135,7 +129,7 @@ pub(in crate::cli) fn create_managed_config_restore_point(
     config_path: &Path,
     raw_config: &str,
 ) -> anyhow::Result<()> {
-    if is_managed_config(raw_config) {
+    if codex_mixin::clients::codex::document_is_managed(raw_config) {
         return Ok(());
     }
     let backup_path = managed_backup_path(config_path);
@@ -149,30 +143,6 @@ pub(in crate::cli) fn create_managed_config_restore_point(
         fs::write(&absent_marker_path, b"")?;
     }
     Ok(())
-}
-
-pub(in crate::cli) fn is_managed_config(raw_config: &str) -> bool {
-    raw_config.contains(MANAGED_CONFIG_MARKER)
-}
-
-pub(super) fn serialize_managed_config(doc: &DocumentMut) -> String {
-    let raw = doc.to_string();
-    let mut serialized = String::with_capacity(MANAGED_CONFIG_HEADER.len() + 1 + raw.len());
-    serialized.push_str(MANAGED_CONFIG_HEADER);
-    serialized.push('\n');
-    let mut in_preamble = true;
-    for line in raw.split_inclusive('\n') {
-        let trimmed = line.trim();
-        // Only scan leading comments: a matching line in a TOML string is user data.
-        if in_preamble && !trimmed.is_empty() && !trimmed.starts_with('#') {
-            in_preamble = false;
-        }
-        if in_preamble && trimmed == MANAGED_CONFIG_HEADER {
-            continue;
-        }
-        serialized.push_str(line);
-    }
-    serialized
 }
 
 pub(in crate::cli) fn managed_backup_path(config_path: &std::path::Path) -> PathBuf {
@@ -208,48 +178,6 @@ pub(in crate::cli) fn codex_home_path() -> PathBuf {
     )
 }
 
-pub(in crate::cli) fn upsert_codex_config(
-    doc: &mut DocumentMut,
-    default_model: Option<&str>,
-    catalog_path: &std::path::Path,
-    base_url: &str,
-    web_search: &str,
-    client_key: Option<&str>,
-    codex_oauth_proxy: bool,
-) -> anyhow::Result<()> {
-    let provider_id = managed_codex_provider_id(codex_oauth_proxy);
-    doc["model_catalog_json"] = value(catalog_path.to_string_lossy().to_string());
-    doc["model_provider"] = value(provider_id);
-    doc["web_search"] = value(web_search);
-    if let Some(model) = default_model {
-        doc["model"] = value(model);
-    }
-
-    if !doc.get("model_providers").is_some_and(Item::is_table) {
-        doc["model_providers"] = Item::Table(Table::new());
-    }
-    let providers = doc["model_providers"]
-        .as_table_mut()
-        .ok_or_else(|| anyhow::anyhow!("model_providers must be a TOML table"))?;
-    providers.remove(CODEX_MIXIN_PROVIDER);
-    if !codex_oauth_proxy {
-        providers.remove(CUSTOM_ONLY_CODEX_PROVIDER);
-    }
-    let mut provider_table = Table::new();
-    provider_table["base_url"] = value(base_url);
-    if let Some(client_key) = client_key {
-        set_client_key_header(&mut provider_table, client_key)?;
-    }
-    if codex_oauth_proxy {
-        provider_table["name"] = value("Codex Mixin");
-        provider_table["wire_api"] = value("responses");
-        provider_table["requires_openai_auth"] = value(true);
-        provider_table["supports_websockets"] = value(true);
-    }
-    providers.insert(provider_id, Item::Table(provider_table));
-    Ok(())
-}
-
 pub(in crate::cli) fn sync_installed_codex_client_key(
     config_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
@@ -262,52 +190,6 @@ pub(in crate::cli) fn sync_installed_codex_client_key(
     Ok(())
 }
 
-fn set_client_key_header(provider: &mut Table, client_key: &str) -> anyhow::Result<()> {
-    anyhow::ensure!(
-        !client_key.trim().is_empty(),
-        "Codex client key must not be empty"
-    );
-    anyhow::ensure!(
-        client_key == client_key.trim(),
-        "Codex client key has whitespace"
-    );
-    let headers = provider
-        .entry("http_headers")
-        .or_insert(Item::Value(Value::InlineTable(InlineTable::new())))
-        .as_inline_table_mut()
-        .ok_or_else(|| anyhow::anyhow!("managed Codex http_headers must be an inline table"))?;
-    headers.insert(
-        codex_mixin::gateway_access::CODEX_CLIENT_KEY_HEADER,
-        Value::from(client_key),
-    );
-    Ok(())
-}
-
-pub(in crate::cli) fn managed_codex_provider_id(codex_oauth_proxy: bool) -> &'static str {
-    if codex_oauth_proxy {
-        CODEX_MIXIN_PROVIDER
-    } else {
-        CUSTOM_ONLY_CODEX_PROVIDER
-    }
-}
-
-pub(in crate::cli) fn managed_config_provider_id(doc: &DocumentMut) -> anyhow::Result<&str> {
-    if let Some(provider_id) = doc.get("model_provider").and_then(Item::as_str) {
-        if provider_id == CODEX_MIXIN_PROVIDER || provider_id == CUSTOM_ONLY_CODEX_PROVIDER {
-            return Ok(provider_id);
-        }
-        anyhow::bail!("unsupported managed Codex provider: {provider_id}");
-    }
-    let providers = doc.get("model_providers").and_then(Item::as_table);
-    if providers.is_some_and(|providers| providers.contains_key(CUSTOM_ONLY_CODEX_PROVIDER)) {
-        return Ok(CUSTOM_ONLY_CODEX_PROVIDER);
-    }
-    if providers.is_some_and(|providers| providers.contains_key(CODEX_MIXIN_PROVIDER)) {
-        return Ok(CODEX_MIXIN_PROVIDER);
-    }
-    anyhow::bail!("managed Codex config has no supported provider table")
-}
-
 pub(in crate::cli) fn sync_managed_codex_gateway_base_url(
     config_path: &Path,
     bind: SocketAddr,
@@ -318,11 +200,11 @@ pub(in crate::cli) fn sync_managed_codex_gateway_base_url(
     }
     let _config_lock = ManagedConfigLock::acquire(&config_path)?;
     let raw_config = fs::read_to_string(&config_path)?;
-    if !is_managed_config(&raw_config) {
+    if !codex_mixin::clients::codex::document_is_managed(&raw_config) {
         return Ok(false);
     }
     let mut doc = raw_config.parse::<DocumentMut>()?;
-    let provider_id = managed_config_provider_id(&doc)?.to_owned();
+    let provider_id = codex_mixin::clients::codex::managed_provider_id(&doc)?.to_owned();
     let provider = doc
         .get_mut("model_providers")
         .and_then(Item::as_table_mut)
@@ -342,19 +224,17 @@ pub(in crate::cli) fn sync_managed_codex_gateway_base_url(
 #[cfg(test)]
 mod tests {
     use super::*;
+    use codex_mixin::clients::codex::MANAGED_HEADER;
 
     #[test]
     fn managed_header_is_idempotent() {
         let body = "# User settings\nmodel = \"example\" # Keep this\n";
-        let expected = format!("{MANAGED_CONFIG_HEADER}\n{body}");
+        let expected = format!("{MANAGED_HEADER}\n{body}");
         for count in [0, 1, 20] {
-            let raw = format!(
-                "{}{body}",
-                format!("{MANAGED_CONFIG_HEADER}\n").repeat(count)
-            );
+            let raw = format!("{}{body}", format!("{MANAGED_HEADER}\n").repeat(count));
             let mut doc = raw.parse::<DocumentMut>().unwrap();
             for _ in 0..3 {
-                let serialized = serialize_managed_config(&doc);
+                let serialized = codex_mixin::clients::codex::serialize(&doc);
                 assert_eq!(serialized, expected);
                 doc = serialized.parse().unwrap();
             }
@@ -364,18 +244,21 @@ mod tests {
     #[test]
     fn managed_header_preserves_data() {
         let raw = format!(
-            "# User note\r\n{MANAGED_CONFIG_HEADER}\r\n\r\n# Another note\r\n{MANAGED_CONFIG_HEADER}\r\ninstructions = '''\n{MANAGED_CONFIG_HEADER}\n'''\n"
+            "# User note\r\n{MANAGED_HEADER}\r\n\r\n# Another note\r\n{MANAGED_HEADER}\r\ninstructions = '''\n{MANAGED_HEADER}\n'''\n"
         );
         let doc = raw.parse::<DocumentMut>().unwrap();
-        let serialized = serialize_managed_config(&doc);
+        let serialized = codex_mixin::clients::codex::serialize(&doc);
         let reparsed = serialized.parse::<DocumentMut>().unwrap();
         assert_eq!(
             reparsed["instructions"].as_str(),
             doc["instructions"].as_str()
         );
-        assert_eq!(serialized.matches(MANAGED_CONFIG_HEADER).count(), 2);
+        assert_eq!(serialized.matches(MANAGED_HEADER).count(), 2);
         assert!(serialized.contains("# User note"));
         assert!(serialized.contains("# Another note"));
-        assert_eq!(serialize_managed_config(&reparsed), serialized);
+        assert_eq!(
+            codex_mixin::clients::codex::serialize(&reparsed),
+            serialized
+        );
     }
 }

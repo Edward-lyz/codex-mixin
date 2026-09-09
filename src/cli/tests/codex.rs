@@ -11,6 +11,10 @@ use clap::Parser;
 use toml_edit::DocumentMut;
 
 use codex_mixin::anthropic::ModelInfo;
+use codex_mixin::clients::codex::{
+    MANAGED_HEADER as MANAGED_CONFIG_HEADER, document_is_managed as is_managed_config,
+    upsert as upsert_codex_config,
+};
 use codex_mixin::config::{GatewayConfig, ThinkingMode};
 use codex_mixin::server::AppState;
 

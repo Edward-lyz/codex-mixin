@@ -88,11 +88,11 @@ pub(in crate::cli) fn managed_catalog_settings(
         return Ok(None);
     }
     let raw_config = fs::read_to_string(&config_path)?;
-    if !is_managed_config(&raw_config) {
+    if !codex_mixin::clients::codex::document_is_managed(&raw_config) {
         return Ok(None);
     }
     let doc = raw_config.parse::<DocumentMut>()?;
-    let provider_id = managed_config_provider_id(&doc)?;
+    let provider_id = codex_mixin::clients::codex::managed_provider_id(&doc)?;
     let provider = doc
         .get("model_providers")
         .and_then(Item::as_table)
@@ -174,7 +174,7 @@ pub(in crate::cli) fn write_generated_managed_codex_catalog(
     let config_path = absolute_path(config_path.to_path_buf())?;
     let _config_lock = ManagedConfigLock::acquire(&config_path)?;
     let raw_config = fs::read_to_string(&config_path)?;
-    if !is_managed_config(&raw_config) {
+    if !codex_mixin::clients::codex::document_is_managed(&raw_config) {
         return Ok(false);
     }
     let mut doc = raw_config.parse::<DocumentMut>()?;
@@ -239,11 +239,11 @@ fn refresh_managed_codex_catalog_with_source(
         return Ok(false);
     }
     let raw_config = fs::read_to_string(&config_path)?;
-    if !is_managed_config(&raw_config) {
+    if !codex_mixin::clients::codex::document_is_managed(&raw_config) {
         return Ok(false);
     }
     let mut doc = raw_config.parse::<DocumentMut>()?;
-    let provider_id = managed_config_provider_id(&doc)?;
+    let provider_id = codex_mixin::clients::codex::managed_provider_id(&doc)?;
     let provider = doc
         .get("model_providers")
         .and_then(Item::as_table)
@@ -292,7 +292,7 @@ fn managed_oauth_proxy_mode(
     provider_id: &str,
     provider: &toml_edit::Table,
 ) -> anyhow::Result<bool> {
-    if provider_id == CUSTOM_ONLY_CODEX_PROVIDER {
+    if provider_id == codex_mixin::clients::codex::CUSTOM_ONLY_PROVIDER {
         return Ok(false);
     }
     match provider.get("supports_websockets") {

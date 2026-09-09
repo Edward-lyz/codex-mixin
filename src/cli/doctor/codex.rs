@@ -8,8 +8,8 @@ use serde_json::Value;
 use toml_edit::{DocumentMut, Item};
 
 use super::super::codex::{
-    is_managed_catalog_model, is_managed_config, managed_catalog_path, managed_config_provider_id,
-    request_app_server, resolve_codex_cli, resolve_codex_config_path,
+    is_managed_catalog_model, managed_catalog_path, request_app_server, resolve_codex_cli,
+    resolve_codex_config_path,
 };
 use super::{DoctorCheck, DoctorFix, DoctorStatus, LiveGateway};
 
@@ -73,7 +73,7 @@ pub(super) fn check_codex_integration(
             return (checks, None);
         }
     };
-    if !is_managed_config(&raw) {
+    if !codex_mixin::clients::codex::document_is_managed(&raw) {
         checks.push(
             DoctorCheck::new(
                 "codex_config",
@@ -114,7 +114,7 @@ pub(super) fn check_codex_integration(
     };
 
     let effective_provider = doc.get("model_provider").and_then(Item::as_str);
-    let managed_provider = managed_config_provider_id(&doc).ok();
+    let managed_provider = codex_mixin::clients::codex::managed_provider_id(&doc).ok();
     if managed_provider.is_none() {
         checks.push(
             DoctorCheck::new(
