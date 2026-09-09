@@ -104,10 +104,10 @@ fn install_opencode_with_models(
             "OpenCode config provider must be a JSON object: {}",
             config_path.display()
         ))?;
-    let key_reference = format!("{{file:{}}}", key_path.display());
+    let key_reference = codex_mixin::clients::opencode::key_reference(key_path);
     if let Some(existing) = providers.get(OPENCODE_PROVIDER_ID) {
         anyhow::ensure!(
-            is_managed_provider(existing, &key_reference),
+            codex_mixin::clients::opencode::provider_is_managed(existing, key_path),
             "OpenCode provider {OPENCODE_PROVIDER_ID} already exists and is not managed by Codex Mixin"
         );
     }
@@ -148,12 +148,6 @@ fn uninstall_opencode_at(config_path: &Path, key_path: &Path) -> anyhow::Result<
     println!("OpenCode provider removed: {OPENCODE_PROVIDER_ID}");
     println!("reload required: restart OpenCode or start a new OpenCode session");
     Ok(())
-}
-
-fn is_managed_provider(provider: &Value, key_reference: &str) -> bool {
-    provider.get("name").and_then(Value::as_str) == Some(OPENCODE_PROVIDER_NAME)
-        && provider.get("npm").and_then(Value::as_str) == Some(OPENAI_RESPONSES_PACKAGE)
-        && provider.pointer("/options/apiKey").and_then(Value::as_str) == Some(key_reference)
 }
 
 fn collect_opencode_models(

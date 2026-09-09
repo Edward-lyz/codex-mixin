@@ -14,6 +14,18 @@ pub fn sync_client_key(key_path: &Path, client_key: &str) -> anyhow::Result<()> 
     Ok(())
 }
 
+pub fn key_reference(key_path: &Path) -> String {
+    let escaped_path = key_path.to_string_lossy().replace(char::from(39), "'\\''");
+    format!("!cat '{escaped_path}'")
+}
+
+pub fn provider_is_managed(provider: &Value, key_path: &Path) -> bool {
+    let key_reference = key_reference(key_path);
+    provider.get("name").and_then(Value::as_str) == Some(PROVIDER_NAME)
+        && provider.get("api").and_then(Value::as_str) == Some(API)
+        && provider.get("apiKey").and_then(Value::as_str) == Some(key_reference.as_str())
+}
+
 pub fn is_managed(models_path: &Path, key_path: &Path) -> anyhow::Result<bool> {
     if !models_path.exists() {
         return Ok(false);
@@ -24,17 +36,11 @@ pub fn is_managed(models_path: &Path, key_path: &Path) -> anyhow::Result<bool> {
     } else {
         serde_json::from_str(&raw)?
     };
-    let escaped_path = key_path.to_string_lossy().replace(char::from(39), "'\''");
-    let key_reference = format!("!cat '{escaped_path}'");
     Ok(document
         .get("providers")
         .and_then(Value::as_object)
         .and_then(|providers| providers.get(PROVIDER_ID))
-        .is_some_and(|provider| {
-            provider.get("name").and_then(Value::as_str) == Some(PROVIDER_NAME)
-                && provider.get("api").and_then(Value::as_str) == Some(API)
-                && provider.get("apiKey").and_then(Value::as_str) == Some(key_reference.as_str())
-        }))
+        .is_some_and(|provider| provider_is_managed(provider, key_path)))
 }
 
 pub fn uninstall(models_path: &Path, key_path: &Path) -> anyhow::Result<()> {
@@ -60,15 +66,11 @@ pub fn uninstall(models_path: &Path, key_path: &Path) -> anyhow::Result<()> {
             "Pi models config has no providers object: {}",
             models_path.display()
         ))?;
-    let escaped_path = key_path.to_string_lossy().replace(char::from(39), "'\''");
-    let key_reference = format!("!cat '{escaped_path}'");
     let provider = providers
         .get(PROVIDER_ID)
         .context("Pi provider codex-mixin is not installed")?;
     anyhow::ensure!(
-        provider.get("name").and_then(Value::as_str) == Some(PROVIDER_NAME)
-            && provider.get("api").and_then(Value::as_str) == Some(API)
-            && provider.get("apiKey").and_then(Value::as_str) == Some(key_reference.as_str()),
+        provider_is_managed(provider, key_path),
         "Pi provider {PROVIDER_ID} is not managed by Codex Mixin"
     );
     providers.remove(PROVIDER_ID);
@@ -83,4 +85,17 @@ pub fn uninstall(models_path: &Path, key_path: &Path) -> anyhow::Result<()> {
             .with_context(|| format!("remove Pi gateway key {}", key_path.display()))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn key_reference_shell_quotes_apostrophes() {
+        assert_eq!(
+            key_reference(Path::new("/tmp/pi's key")),
+            "!cat '/tmp/pi'\\''s key'"
+        );
+    }
 }

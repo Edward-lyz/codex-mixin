@@ -98,10 +98,10 @@ fn install_pi_at(
             "Pi models config providers must be a JSON object: {}",
             models_path.display()
         ))?;
-    let key_reference = pi_key_reference(key_path);
+    let key_reference = codex_mixin::clients::pi::key_reference(key_path);
     if let Some(existing) = providers.get(PI_PROVIDER_ID) {
         anyhow::ensure!(
-            is_managed_provider(existing, &key_reference),
+            codex_mixin::clients::pi::provider_is_managed(existing, key_path),
             "Pi provider {PI_PROVIDER_ID} already exists and is not managed by Codex Mixin"
         );
     }
@@ -165,12 +165,6 @@ fn read_pi_models(path: &Path) -> anyhow::Result<Value> {
         return Ok(json!({"providers": {}}));
     }
     serde_json::from_str(&raw).with_context(|| format!("parse Pi models config {}", path.display()))
-}
-
-fn is_managed_provider(provider: &Value, key_reference: &str) -> bool {
-    provider.get("name").and_then(Value::as_str) == Some(PI_PROVIDER_NAME)
-        && provider.get("api").and_then(Value::as_str) == Some(PI_API)
-        && provider.get("apiKey").and_then(Value::as_str) == Some(key_reference)
 }
 
 fn collect_pi_models(config: &GatewayConfig, official_models: &[ProviderModel]) -> Vec<Value> {
@@ -268,14 +262,6 @@ fn pi_model(id: String, name: String, model: &ProviderModel, config: &GatewayCon
 
 fn zero_cost() -> Value {
     json!({"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0})
-}
-
-fn pi_key_reference(key_path: &Path) -> String {
-    format!("!cat {}", shell_quote(&key_path.to_string_lossy()))
-}
-
-fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
 }
 
 pub(in crate::cli) fn sync_installed_pi_client_key() -> anyhow::Result<()> {

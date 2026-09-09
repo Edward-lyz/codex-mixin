@@ -120,6 +120,68 @@ pub fn set_provider_enabled(id: &str, enabled: bool) -> Result<(), OperationErro
     invalidate_provider_caches()
 }
 
+pub fn add_provider(
+    provider: ProviderDefinition,
+    gateway_api_key: Option<String>,
+) -> Result<(), OperationError> {
+    commit_provider_change(|config| add_provider_config(config, provider, gateway_api_key))?;
+    invalidate_provider_caches()
+}
+
+pub fn add_provider_config(
+    config: &mut StoredGatewayConfig,
+    provider: ProviderDefinition,
+    gateway_api_key: Option<String>,
+) -> anyhow::Result<()> {
+    let id = &provider.id;
+    anyhow::ensure!(
+        !config.providers.iter().any(|provider| &provider.id == id),
+        "provider already exists: {id}"
+    );
+    if gateway_api_key.is_some() {
+        config.gateway_api_key = gateway_api_key;
+    }
+    if provider.auxiliary_model_upstream {
+        for existing in &mut config.providers {
+            existing.auxiliary_model_upstream = false;
+        }
+    }
+    config.providers.push(provider);
+    Ok(())
+}
+
+pub fn update_provider(
+    id: &str,
+    snapshot: &ProviderDefinition,
+    provider: ProviderDefinition,
+    auxiliary_model_upstream: Option<bool>,
+) -> Result<(), OperationError> {
+    commit_provider_change(|config| {
+        update_provider_config(config, id, snapshot, provider, auxiliary_model_upstream)
+    })?;
+    invalidate_provider_caches()
+}
+
+pub fn update_provider_config(
+    config: &mut StoredGatewayConfig,
+    id: &str,
+    snapshot: &ProviderDefinition,
+    provider: ProviderDefinition,
+    auxiliary_model_upstream: Option<bool>,
+) -> anyhow::Result<()> {
+    require_providers(config)?;
+    let current = provider_mut(config, id)?;
+    anyhow::ensure!(
+        current == snapshot,
+        "provider {id} changed during update; retry"
+    );
+    *current = provider;
+    if let Some(enabled) = auxiliary_model_upstream {
+        set_auxiliary_upstream(config, id, enabled)?;
+    }
+    Ok(())
+}
+
 pub fn reorder_providers(ids: &[String]) -> Result<(), OperationError> {
     commit_provider_change(|config| reorder_provider_config(config, ids))?;
     invalidate_web_search_cache()
@@ -309,4 +371,47 @@ fn generated_provider_ordinal(id: &str, base_id: &str) -> Option<usize> {
         .parse::<usize>()
         .ok()
         .filter(|ordinal| *ordinal >= 2)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn provider(id: &str) -> ProviderDefinition {
+        ProviderPreset::DeepSeek.create(id.to_owned(), "secret".to_owned())
+    }
+
+    #[test]
+    fn add_provider_keeps_auxiliary_selection_exclusive() {
+        let mut config = StoredGatewayConfig::default();
+        let mut existing = provider("existing");
+        existing.auxiliary_model_upstream = true;
+        config.providers.push(existing);
+        let mut added = provider("added");
+        added.auxiliary_model_upstream = true;
+
+        add_provider_config(&mut config, added, Some("gateway".to_owned())).unwrap();
+
+        assert!(!config.providers[0].auxiliary_model_upstream);
+        assert!(config.providers[1].auxiliary_model_upstream);
+        assert_eq!(config.gateway_api_key.as_deref(), Some("gateway"));
+    }
+
+    #[test]
+    fn update_provider_rejects_a_stale_snapshot_without_overwriting() {
+        let snapshot = provider("provider");
+        let mut config = StoredGatewayConfig {
+            providers: vec![snapshot.clone()],
+            ..StoredGatewayConfig::default()
+        };
+        config.providers[0].display_name = "concurrent edit".to_owned();
+        let mut replacement = snapshot.clone();
+        replacement.display_name = "requested edit".to_owned();
+
+        let error = update_provider_config(&mut config, "provider", &snapshot, replacement, None)
+            .unwrap_err();
+
+        assert!(error.to_string().contains("changed during update"));
+        assert_eq!(config.providers[0].display_name, "concurrent edit");
+    }
 }

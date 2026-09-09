@@ -14,6 +14,18 @@ pub fn sync_client_key(key_path: &Path, client_key: &str) -> anyhow::Result<()> 
     Ok(())
 }
 
+pub fn key_reference(key_path: &Path) -> String {
+    format!("{{file:{}}}", key_path.display())
+}
+
+pub fn provider_is_managed(provider: &Value, key_path: &Path) -> bool {
+    let key_reference = key_reference(key_path);
+    provider.get("name").and_then(Value::as_str) == Some(PROVIDER_NAME)
+        && provider.get("npm").and_then(Value::as_str) == Some(RESPONSES_PACKAGE)
+        && provider.pointer("/options/apiKey").and_then(Value::as_str)
+            == Some(key_reference.as_str())
+}
+
 pub fn is_managed(config_path: &Path, key_path: &Path) -> anyhow::Result<bool> {
     if !config_path.exists() {
         return Ok(false);
@@ -23,17 +35,11 @@ pub fn is_managed(config_path: &Path, key_path: &Path) -> anyhow::Result<bool> {
         return Ok(false);
     }
     let document: Value = serde_json::from_str(&raw)?;
-    let key_reference = format!("{{file:{}}}", key_path.display());
     Ok(document
         .get("provider")
         .and_then(Value::as_object)
         .and_then(|providers| providers.get(PROVIDER_ID))
-        .is_some_and(|provider| {
-            provider.get("name").and_then(Value::as_str) == Some(PROVIDER_NAME)
-                && provider.get("npm").and_then(Value::as_str) == Some(RESPONSES_PACKAGE)
-                && provider.pointer("/options/apiKey").and_then(Value::as_str)
-                    == Some(key_reference.as_str())
-        }))
+        .is_some_and(|provider| provider_is_managed(provider, key_path)))
 }
 
 pub fn uninstall(config_path: &Path, key_path: &Path) -> anyhow::Result<()> {
@@ -59,15 +65,11 @@ pub fn uninstall(config_path: &Path, key_path: &Path) -> anyhow::Result<()> {
             "OpenCode config has no provider object: {}",
             config_path.display()
         ))?;
-    let key_reference = format!("{{file:{}}}", key_path.display());
     let provider = providers
         .get(PROVIDER_ID)
         .context("OpenCode provider codex-mixin is not installed")?;
     anyhow::ensure!(
-        provider.get("name").and_then(Value::as_str) == Some(PROVIDER_NAME)
-            && provider.get("npm").and_then(Value::as_str) == Some(RESPONSES_PACKAGE)
-            && provider.pointer("/options/apiKey").and_then(Value::as_str)
-                == Some(key_reference.as_str()),
+        provider_is_managed(provider, key_path),
         "OpenCode provider {PROVIDER_ID} is not managed by Codex Mixin"
     );
     providers.remove(PROVIDER_ID);

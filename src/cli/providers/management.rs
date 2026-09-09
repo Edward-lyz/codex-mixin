@@ -1,4 +1,4 @@
-use codex_mixin::application::provider::{after_provider_commit, commit_provider_change};
+use codex_mixin::application::provider::after_provider_commit;
 use codex_mixin::config::mutate_stored_config;
 use codex_mixin::provider::{
     AWS_BEDROCK_DEFAULT_REGION, AwsSigV4AuthConfig, ProviderModel, ProviderModelSource,
@@ -189,29 +189,7 @@ pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
         .gateway_key
         .map(|key| trim_required("gateway key", key))
         .transpose()?;
-    commit_provider_change(|config| {
-        if config.providers.iter().any(|provider| provider.id == id) {
-            anyhow::bail!("provider already exists: {id}");
-        }
-        if gateway_api_key.is_some() {
-            config.gateway_api_key = gateway_api_key;
-        }
-        if provider.auxiliary_model_upstream {
-            for existing_provider in &mut config.providers {
-                existing_provider.auxiliary_model_upstream = false;
-            }
-        }
-        config.providers.push(provider);
-        Ok(())
-    })?;
-    after_provider_commit(
-        "web search capability cache invalidation",
-        invalidate_web_search_cache,
-    )?;
-    after_provider_commit(
-        "provider capability cache invalidation",
-        invalidate_provider_capability_cache,
-    )?;
+    codex_mixin::application::provider::add_provider(provider, gateway_api_key)?;
     // The provider config is committed above; every later step must report
     // itself as post-commit so the user knows the provider was saved.
     if let Err(source) = sync_imagegen_skill() {
@@ -262,19 +240,17 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
     let user_set_api_path = options.api_path.is_some();
     let user_set_models_path = options.models_path.is_some();
     let base_url_updated = options.base_url.is_some();
-    let mut should_probe_protocol = false;
-    commit_provider_change(|config| {
-        if let Some(enabled) = options.auxiliary_model_upstream {
-            codex_mixin::application::provider::set_auxiliary_upstream(config, &id, enabled)?;
-        }
-        let provider = find_provider_mut(config, &id)?;
+    let snapshot = codex_mixin::application::provider::provider_for_refresh(&id)?;
+    let mut provider = snapshot.clone();
+    let should_probe_protocol;
+    {
         if options.clear_key {
             provider.auth.api_key.clear();
         } else if let Some(key) = &options.key {
             provider.auth.api_key = trim_required("key", key.clone())?;
             provider.auth.aws_sigv4 = None;
         }
-        apply_aws_auth_options(provider, &options)?;
+        apply_aws_auth_options(&mut provider, &options)?;
         if let Some(display_name) = options.display_name {
             provider.display_name = trim_required("display name", display_name)?;
         }
@@ -291,7 +267,7 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
             .as_ref()
             .is_some_and(|endpoint| endpoint.path_explicit);
         if let Some(endpoint) = inferred_endpoint {
-            apply_inferred_custom_endpoint(provider, endpoint);
+            apply_inferred_custom_endpoint(&mut provider, endpoint);
         } else if let Some(base_url) = options.base_url {
             provider.base_url = normalize_base_url(base_url)?;
         }
@@ -377,7 +353,7 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
                 .extend(header_env.clone());
         }
         apply_baidu_auth_options(
-            provider,
+            &mut provider,
             options.baidu_auth_bridge.as_deref(),
             options.ducx_executable,
         )?;
@@ -393,15 +369,13 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
                 .as_deref()
                 .and_then(data_report_sibling);
         }
-        provider.validate()
-    })?;
-    after_provider_commit(
-        "web search capability cache invalidation",
-        invalidate_web_search_cache,
-    )?;
-    after_provider_commit(
-        "provider capability cache invalidation",
-        invalidate_provider_capability_cache,
+        provider.validate()?;
+    }
+    codex_mixin::application::provider::update_provider(
+        &id,
+        &snapshot,
+        provider,
+        options.auxiliary_model_upstream,
     )?;
     let mut detected_protocol = None;
     if should_probe_protocol {
