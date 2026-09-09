@@ -76,7 +76,7 @@ async fn route_responses_ws(
             custom_state: &mut custom_state,
         };
         if matches!(
-            state.resolve_model_route(&model).await,
+            state.gateway.resolve_model_route(&model).await,
             Ok(ResolvedModelRoute::Official)
         ) {
             handle_official_ws_request(&mut context, body, &model).await?;
@@ -117,11 +117,10 @@ async fn handle_official_ws_request(
             }
         };
     let effective_body = effective_official_cache_body(&body, request_history.as_deref());
-    let observation = super::responses_http::official_prefix_observation(
-        context.state,
-        context.headers,
-        &effective_body,
-    )?;
+    let observation = context
+        .state
+        .gateway
+        .official_prefix_observation(context.headers, &effective_body)?;
     let mut usage_observer = observation.map(crate::gateway::UpstreamCacheObserver::new);
     let request_error = proxy_official_ws_request(
         context,

@@ -2,7 +2,9 @@ use futures_util::StreamExt;
 use serde_json::{Value, json};
 
 use crate::error::GatewayError;
-use crate::gateway::{CacheShape, observe_upstream_cache_usage, record_provider_prefix};
+use crate::gateway::{
+    CacheShape, GatewayExecutor, observe_upstream_cache_usage, record_provider_prefix,
+};
 use crate::protocol::convert::responses_to_anthropic_with_model_reasoning_and_thinking_kind;
 use crate::protocol::model_reasoning::{
     anthropic_thinking_kind_with_advertised, prepare_upstream_reasoning,
@@ -12,8 +14,6 @@ use crate::protocol::openai_events::{
     map_anthropic_sse_with_image_routes, map_openai_chat_sse_with_image_routes,
 };
 use crate::provider::ProviderProtocol;
-use crate::server::AppState;
-use crate::server::auth::require_ducx_client;
 
 use super::responses::map_openai_responses_sse;
 use super::{ResponseStream, UpstreamRouting};
@@ -29,7 +29,7 @@ pub(crate) struct ProviderResponseRequest<'a> {
 }
 
 pub(crate) async fn stream_provider_response(
-    state: &AppState,
+    executor: &GatewayExecutor,
     request: ProviderResponseRequest<'_>,
 ) -> Result<ResponseStream, GatewayError> {
     let ProviderResponseRequest {
@@ -41,20 +41,20 @@ pub(crate) async fn stream_provider_response(
         downstream_model,
         headers,
     } = request;
-    let provider = state
+    let provider = executor
         .providers
         .provider(provider_id)
         .ok_or_else(|| GatewayError::BadRequest(format!("unknown provider: {provider_id}")))?;
     let upstream_model_id = upstream_model_id.to_owned();
     let downstream_model = downstream_model.unwrap_or(catalog_slug).to_owned();
     let downstream_body = response_metadata_request(body, &downstream_model);
-    let web_search_enabled = state.web_search_enabled_for_custom_request(body);
+    let web_search_enabled = executor.web_search_enabled_for_custom_request(body);
     let protocol = provider.protocol_for_model(&upstream_model_id);
     let advertised_thinking = provider.model_supports_thinking(&upstream_model_id);
-    require_ducx_client(state, provider, headers)?;
+    executor.require_ducx_client(provider, headers)?;
     // Both managed auth cores mint native headers. Fetch once and inject at the
     // send sites instead of the stored placeholder key.
-    let baidu_native = state.baidu_native_headers(provider).await?;
+    let baidu_native = executor.upstream.baidu_native_headers(provider).await?;
     let stream = match protocol {
         ProviderProtocol::AnthropicMessages => {
             let auto_thinking_kind =
@@ -64,7 +64,7 @@ pub(crate) async fn stream_provider_response(
                 body,
                 Some(&upstream_model_id),
                 reasoning.as_ref(),
-                &state.config,
+                &executor.config,
                 web_search_enabled,
                 provider.uses_mcp_bridge_names(&upstream_model_id),
                 auto_thinking_kind,
@@ -76,14 +76,15 @@ pub(crate) async fn stream_provider_response(
                 converted.request.metadata = Some(json!({"session_id": routing.hash_key}));
             }
             let observation = record_provider_prefix(
-                &state.cache_shapes,
+                &executor.cache_shapes,
                 provider.id(),
                 catalog_slug,
                 &upstream_model_id,
                 routing,
                 CacheShape::from_anthropic(&converted.request),
             );
-            let upstream = state
+            let upstream = executor
+                .upstream
                 .anthropic_stream_with_web_search_retry(
                     provider,
                     converted.request,
@@ -95,7 +96,7 @@ pub(crate) async fn stream_provider_response(
                 upstream,
                 downstream_body,
                 converted.tool_names,
-                state.custom_image_routes(provider),
+                executor.custom_image_routes(provider),
                 provider.definition().preset_id.as_deref() == Some("baidu-oneapi"),
             )
             .boxed()
@@ -108,14 +109,14 @@ pub(crate) async fn stream_provider_response(
                 Some(&upstream_model_id),
             )?;
             let observation = record_provider_prefix(
-                &state.cache_shapes,
+                &executor.cache_shapes,
                 provider.id(),
                 catalog_slug,
                 &upstream_model_id,
                 routing,
                 CacheShape::from_openai_chat(&converted.request),
             );
-            let base_request = state
+            let base_request = executor
                 .upstream
                 .client()
                 .post(provider.api_url_for_model(&upstream_model_id).clone());
@@ -156,7 +157,7 @@ pub(crate) async fn stream_provider_response(
                 observe_upstream_cache_usage(upstream.bytes_stream(), observation),
                 downstream_body,
                 converted.tool_names,
-                state.custom_image_routes(provider),
+                executor.custom_image_routes(provider),
             )
             .boxed()
         }
@@ -165,14 +166,14 @@ pub(crate) async fn stream_provider_response(
             upstream_body["model"] = Value::String(upstream_model_id.clone());
             prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
             let observation = record_provider_prefix(
-                &state.cache_shapes,
+                &executor.cache_shapes,
                 provider.id(),
                 catalog_slug,
                 &upstream_model_id,
                 routing,
                 CacheShape::from_openai_responses(&upstream_body),
             );
-            let base_request = state
+            let base_request = executor
                 .upstream
                 .client()
                 .post(provider.api_url_for_model(&upstream_model_id).clone());

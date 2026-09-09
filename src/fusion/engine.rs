@@ -9,15 +9,15 @@ use super::*;
 
 #[derive(Clone)]
 pub struct FusionEngine {
-    state: AppState,
+    executor: GatewayExecutor,
     profile: FusionProfile,
     headers: HeaderMap,
 }
 
 impl FusionEngine {
-    pub fn new(state: &AppState, profile: &FusionProfile) -> Self {
+    pub(crate) fn new(executor: &GatewayExecutor, profile: &FusionProfile) -> Self {
         Self {
-            state: state.clone(),
+            executor: executor.clone(),
             profile: profile.clone(),
             headers: HeaderMap::new(),
         }
@@ -49,13 +49,13 @@ impl FusionEngine {
     ) -> Result<(ResponseStream, Value), GatewayError> {
         let fusion_model = self.profile.model_slug();
         let plan = fusion_request_plan(
-            &self.state,
+            &self.executor,
             &self.profile.final_model,
             body,
             routing,
             Some(fusion_model),
         )?;
-        UpstreamExecutor::new(&self.state)
+        self.executor
             .stream_and_return_body(plan, &self.headers)
             .await
     }
@@ -84,7 +84,7 @@ impl FusionEngine {
 
             let mut pending = FuturesUnordered::new();
             for (index, model) in self.profile.panel_models.iter().cloned().enumerate() {
-                let state = self.state.clone();
+                let gateway = self.executor.clone();
                 let profile = self.profile.clone();
                 let task = task.clone();
                 let executor = executor.clone();
@@ -95,7 +95,7 @@ impl FusionEngine {
                     let result = tokio::time::timeout(
                         timeout,
                         run_panel_model(
-                            &state,
+                            &gateway,
                             &profile,
                             &model,
                             &task,
@@ -159,7 +159,7 @@ impl FusionEngine {
                 let judge_result = tokio::time::timeout(
                     Duration::from_millis(self.profile.timeout_ms),
                     collect_fusion_response(
-                        &self.state,
+                        &self.executor,
                         &self.profile.judge_model,
                         judge_body,
                         &self.headers,
@@ -233,7 +233,7 @@ impl FusionEngine {
                 let visualization = match create_fusion_visualization(
                     &body,
                     &self.headers,
-                    &self.state.config.codex_auth_path,
+                    &self.executor.config.codex_auth_path,
                     &panel_details,
                     &judge_detail,
                 )
@@ -254,7 +254,7 @@ impl FusionEngine {
             }
 
             match stream_fusion_response(
-                &self.state,
+                &self.executor,
                 &self.profile.final_model,
                 final_body,
                 &self.headers,
@@ -317,22 +317,22 @@ impl FusionEngine {
 }
 
 pub(super) async fn run_panel_model(
-    state: &AppState,
+    executor: &GatewayExecutor,
     profile: &FusionProfile,
     model: &str,
     task: &str,
-    executor: Option<PanelToolExecutor>,
+    panel_tool_executor: Option<PanelToolExecutor>,
     headers: &HeaderMap,
     routing: Option<&UpstreamRouting>,
 ) -> Result<String, String> {
-    let mut body = panel_request(profile, model, task, executor.is_some());
+    let mut body = panel_request(profile, model, task, panel_tool_executor.is_some());
     let mut rounds = 0;
     let mut calls = 0;
     let mut tool_evidence = Vec::new();
     let mut conclusion_attempted = false;
     loop {
         let (collected, returned_body) =
-            collect_fusion_response_preserving_body(state, model, body, headers, routing)
+            collect_fusion_response_preserving_body(executor, model, body, headers, routing)
                 .await
                 .map_err(|error| error.to_string())?;
         body = returned_body;
@@ -355,7 +355,7 @@ pub(super) async fn run_panel_model(
             ));
         }
 
-        let Some(executor) = executor.as_ref() else {
+        let Some(panel_tool_executor) = panel_tool_executor.as_ref() else {
             return Err(format!("panel {model} requested unavailable tools"));
         };
         let input = body
@@ -375,10 +375,10 @@ pub(super) async fn run_panel_model(
                 .unwrap_or("{}");
             let output = if calls < profile.panel_tools.max_calls_per_model {
                 calls += 1;
-                let executor = executor.clone();
+                let panel_tool_executor = panel_tool_executor.clone();
                 let name = name.to_owned();
                 let arguments = arguments.to_owned();
-                tokio::task::spawn_blocking(move || executor.execute(&name, &arguments))
+                tokio::task::spawn_blocking(move || panel_tool_executor.execute(&name, &arguments))
                     .await
                     .map_err(|error| format!("panel tool task failed: {error}"))?
                     .unwrap_or_else(|error| format!("tool error: {error}"))
@@ -405,19 +405,19 @@ pub(super) async fn run_panel_model(
 }
 
 pub(super) async fn collect_fusion_response(
-    state: &AppState,
+    executor: &GatewayExecutor,
     model_reference: &str,
     body: Value,
     headers: &HeaderMap,
     routing: Option<&UpstreamRouting>,
 ) -> Result<crate::protocol::CollectedResponse, GatewayError> {
     let stream =
-        stream_fusion_response(state, model_reference, body, headers, routing, None).await?;
+        stream_fusion_response(executor, model_reference, body, headers, routing, None).await?;
     collect_response_stream(stream).await
 }
 
 async fn collect_fusion_response_preserving_body(
-    state: &AppState,
+    executor: &GatewayExecutor,
     model_reference: &str,
     body: Value,
     headers: &HeaderMap,
@@ -426,10 +426,8 @@ async fn collect_fusion_response_preserving_body(
     let original_model = body.get("model").cloned();
     let original_store = body.get("store").cloned();
     let original_max_output_tokens = body.get("max_output_tokens").cloned();
-    let plan = fusion_request_plan(state, model_reference, body, routing, None)?;
-    let (stream, mut body) = UpstreamExecutor::new(state)
-        .stream_and_return_body(plan, headers)
-        .await?;
+    let plan = fusion_request_plan(executor, model_reference, body, routing, None)?;
+    let (stream, mut body) = executor.stream_and_return_body(plan, headers).await?;
     restore_request_field(&mut body, "model", original_model);
     restore_request_field(&mut body, "store", original_store);
     restore_request_field(&mut body, "max_output_tokens", original_max_output_tokens);
@@ -438,7 +436,7 @@ async fn collect_fusion_response_preserving_body(
 }
 
 pub(super) async fn stream_fusion_response(
-    state: &AppState,
+    executor: &GatewayExecutor,
     model_reference: &str,
     body: Value,
     headers: &HeaderMap,
@@ -446,17 +444,17 @@ pub(super) async fn stream_fusion_response(
     downstream_model: Option<&str>,
 ) -> Result<ResponseStream, GatewayError> {
     let plan = fusion_request_plan(
-        state,
+        executor,
         model_reference,
         body,
         routing,
         downstream_model.map(str::to_owned),
     )?;
-    UpstreamExecutor::new(state).stream(plan, headers).await
+    executor.stream(plan, headers).await
 }
 
 fn fusion_request_plan(
-    state: &AppState,
+    executor: &GatewayExecutor,
     model_reference: &str,
     mut body: Value,
     routing: Option<&UpstreamRouting>,
@@ -473,7 +471,7 @@ fn fusion_request_plan(
             RequestPlan::official(body, downstream_model)
         }
         FusionModelProvider::Provider => {
-            let resolved = state.resolved_provider_model(&model)?;
+            let resolved = executor.resolved_provider_model(&model)?;
             RequestPlan::provider(
                 model,
                 resolved.provider.id().to_owned(),

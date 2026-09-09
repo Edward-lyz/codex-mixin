@@ -3,7 +3,6 @@ use serde_json::Value;
 
 use crate::error::GatewayError;
 use crate::protocol::{CollectedResponse, ResponseStream};
-use crate::server::AppState;
 
 mod cache_shape;
 mod cache_usage;
@@ -18,12 +17,13 @@ pub(crate) use cache_shape::{
     observe_upstream_cache_usage, record_provider_prefix,
 };
 pub(crate) use cache_usage::{ProviderTokenUsage, TokenUsageAggregator};
-pub(crate) use executor::UpstreamExecutor;
+pub(crate) use executor::GatewayExecutor;
 pub(crate) use plan::{RequestPlan, UpstreamTarget};
 pub(crate) use provider::{ProviderResponseRequest, stream_provider_response};
 pub(crate) use responses::collect_response_stream;
 pub(crate) use router::{
     AUTO_REVIEW_MODEL_SLUG, ModelRouter, ResolvedModelRoute, is_official_model_slug,
+    stable_oneapi_routing,
 };
 
 #[derive(Clone, Debug, Eq, PartialEq)]
@@ -33,7 +33,7 @@ pub(crate) struct UpstreamRouting {
 }
 
 pub(crate) async fn stream_response_with_headers(
-    state: &AppState,
+    executor: &GatewayExecutor,
     body: Value,
     headers: &HeaderMap,
 ) -> Result<ResponseStream, GatewayError> {
@@ -42,7 +42,7 @@ pub(crate) async fn stream_response_with_headers(
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?
         .to_owned();
-    let resolved = state.resolved_provider_model(&catalog_slug)?;
+    let resolved = executor.resolved_provider_model(&catalog_slug)?;
     let plan = RequestPlan::provider(
         catalog_slug,
         resolved.provider.id().to_owned(),
@@ -51,15 +51,15 @@ pub(crate) async fn stream_response_with_headers(
         None,
         None,
     )?;
-    UpstreamExecutor::new(state).stream(plan, headers).await
+    executor.stream(plan, headers).await
 }
 
 pub(crate) async fn collect_response_with_headers(
-    state: &AppState,
+    executor: &GatewayExecutor,
     mut body: Value,
     headers: &HeaderMap,
 ) -> Result<CollectedResponse, GatewayError> {
     body["stream"] = Value::Bool(true);
-    let stream = stream_response_with_headers(state, body, headers).await?;
+    let stream = stream_response_with_headers(executor, body, headers).await?;
     collect_response_stream(stream).await
 }

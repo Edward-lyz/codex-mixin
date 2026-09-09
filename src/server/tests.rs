@@ -140,7 +140,11 @@ async fn explicit_official_selection_rejects_unselected_models() {
     })
     .unwrap();
 
-    let error = state.resolve_model_route("gpt-5.5").await.unwrap_err();
+    let error = state
+        .gateway
+        .resolve_model_route("gpt-5.5")
+        .await
+        .unwrap_err();
 
     assert!(matches!(
         error,

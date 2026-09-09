@@ -9,7 +9,7 @@ use super::super::AppState;
 use super::super::auth::stable_oneapi_routing;
 use super::{ResponsesWsContext, take_custom_request_input};
 use crate::fusion::{FusionEngine, should_fuse_turn};
-use crate::gateway::{RequestPlan, ResolvedModelRoute, UpstreamExecutor};
+use crate::gateway::{RequestPlan, ResolvedModelRoute};
 use crate::protocol::sse::SseDecoder;
 
 #[derive(Debug)]
@@ -68,6 +68,7 @@ async fn proxy_custom_responses_ws(
         .ok_or_else(|| anyhow::anyhow!("custom request is missing model"))?
         .to_owned();
     let route = state
+        .gateway
         .resolve_model_route(&requested_model)
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -84,9 +85,7 @@ async fn proxy_custom_responses_ws(
         ResolvedModelRoute::Provider { .. } => {
             let plan =
                 RequestPlan::from_route(route.clone(), body, provider_routing.clone(), None)?;
-            let (stream, body) = UpstreamExecutor::new(state)
-                .stream_and_return_body(plan, headers)
-                .await?;
+            let (stream, body) = state.gateway.stream_and_return_body(plan, headers).await?;
             (stream, Some(body))
         }
         ResolvedModelRoute::Fusion { profile_id } => {
@@ -104,13 +103,13 @@ async fn proxy_custom_responses_ws(
                         .cloned()
                         .expect("validated custom request input"),
                 );
-                let stream = FusionEngine::new(state, &profile)
+                let stream = FusionEngine::new(state.gateway.as_ref(), &profile)
                     .with_headers(headers.clone())
                     .stream_with_routing(body, provider_routing);
                 (stream, None)
             } else {
                 body["stream"] = Value::Bool(true);
-                let (stream, body) = FusionEngine::new(state, &profile)
+                let (stream, body) = FusionEngine::new(state.gateway.as_ref(), &profile)
                     .with_headers(headers.clone())
                     .stream_final_continuation_and_body(body, provider_routing.as_ref())
                     .await?;
@@ -192,6 +191,7 @@ async fn expand_custom_websocket_history(
         .and_then(Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("custom request is missing model"))?;
     let route = app_state
+        .gateway
         .resolve_model_route(model)
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
@@ -222,6 +222,7 @@ async fn complete_custom_noop(
         .ok_or_else(|| anyhow::anyhow!("custom noop request is missing model"))?;
     let model = model.to_owned();
     let route = state
+        .gateway
         .resolve_model_route(&model)
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;

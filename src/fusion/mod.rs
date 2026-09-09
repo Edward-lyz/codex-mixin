@@ -11,11 +11,9 @@ use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
 use crate::error::GatewayError;
-use crate::gateway::{RequestPlan, UpstreamExecutor};
-use crate::gateway::{UpstreamRouting, collect_response_stream};
+use crate::gateway::{GatewayExecutor, RequestPlan, UpstreamRouting, collect_response_stream};
 use crate::protocol::ResponseStream;
 use crate::protocol::sse::{SseDecoder, encode_event, encode_raw_event};
-use crate::server::AppState;
 
 use self::tools::PanelToolExecutor;
 

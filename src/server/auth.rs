@@ -36,6 +36,7 @@ pub(super) async fn check_gateway_auth(
         return Err(GatewayError::Unauthorized);
     }
     let (authorization, _) = state
+        .upstream
         .official_auth()
         .await
         .map_err(|_| GatewayError::Unauthorized)?;

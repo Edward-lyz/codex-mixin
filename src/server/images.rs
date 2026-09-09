@@ -107,7 +107,11 @@ async fn forward_official_image_request(
     body: &Value,
     url: String,
 ) -> Result<Response, GatewayError> {
-    let (authorization, account_id) = state.official_auth().await.map_err(GatewayError::Other)?;
+    let (authorization, account_id) = state
+        .upstream
+        .official_auth()
+        .await
+        .map_err(GatewayError::Other)?;
     let request = forward_official_headers(
         state
             .upstream

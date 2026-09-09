@@ -144,7 +144,7 @@ async fn connect_official_responses_ws(
     let mut request = websocket_url.into_client_request()?;
     {
         let request_headers = request.headers_mut();
-        let (authorization, account_id) = state.official_auth().await?;
+        let (authorization, account_id) = state.upstream.official_auth().await?;
         request_headers.insert(header::AUTHORIZATION, authorization);
         request_headers.insert("chatgpt-account-id", account_id);
         for &name in FORWARDED_OFFICIAL_HEADERS {

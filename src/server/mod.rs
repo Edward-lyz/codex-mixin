@@ -18,7 +18,7 @@ use tokio_tungstenite_proxy::{MaybeTlsStream, WebSocketStream};
 use tower_http::decompression::RequestDecompressionLayer;
 use uuid::Uuid;
 
-use crate::anthropic::{MessageRequest, ModelInfo};
+use crate::anthropic::ModelInfo;
 use crate::benchmark::{
     BenchmarkSnapshotResponse, BenchmarkTarget, ModelBenchmarkManager, StartBenchmarkRequest,
 };
@@ -27,18 +27,13 @@ use crate::config::GatewayConfig;
 use crate::error::GatewayError;
 use crate::fusion::{FusionEngine, should_fuse_turn, validate_fusion_profiles};
 use crate::gateway::UpstreamRouting;
-use crate::gateway::{
-    CacheShapeTracker, ModelRouter, ProviderTokenUsage, RequestPlan, ResolvedModelRoute,
-    UpstreamExecutor,
-};
+use crate::gateway::{CacheShapeTracker, ProviderTokenUsage, RequestPlan, ResolvedModelRoute};
 use crate::images::ImageRouteRegistry;
 use crate::protocol::ResponseStream;
 use crate::protocol::sse::encode_event;
 use crate::provider::MetadataResolver;
 use crate::provider::capabilities::ProviderCapabilities;
-use crate::provider::{
-    ProviderRegistry, ProviderRuntime, ResolvedProviderModel, catalog_model_slug,
-};
+use crate::provider::{ProviderRegistry, ProviderRuntime, catalog_model_slug};
 use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};
 
 pub(crate) mod auth;
@@ -52,7 +47,6 @@ mod routes;
 mod state;
 mod websocket_proxy;
 
-pub(crate) use responses_http::stream_official_response;
 pub use routes::{ServeExit, router, serve, serve_on_listener, serve_on_listener_with_reload};
 pub use state::{AnthropicByteStream, AppState};
 

@@ -74,7 +74,7 @@ pub(super) async fn resolve_realtime_route<'a>(
     }
 
     if state.config.accept_codex_oauth
-        && let Ok((authorization, account_id)) = state.official_auth().await
+        && let Ok((authorization, account_id)) = state.upstream.official_auth().await
     {
         return Ok(RealtimeRoute::Official {
             authorization,

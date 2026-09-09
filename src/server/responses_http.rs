@@ -1,4 +1,4 @@
-use super::auth::{check_gateway_auth, stable_oneapi_routing};
+use super::auth::check_gateway_auth;
 use super::*;
 
 pub(super) async fn responses(
@@ -13,7 +13,7 @@ pub(super) async fn responses(
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?
         .to_owned();
-    let route = state.resolve_model_route(&requested_model).await?;
+    let route = state.gateway.resolve_model_route(&requested_model).await?;
     log_responses_route(&requested_model, &route);
     if route == ResolvedModelRoute::Official {
         let (body, _) = crate::images::normalize_provider_images_blocking(body).await?;
@@ -58,12 +58,12 @@ async fn stream_custom_responses(
     body: Value,
     route: ResolvedModelRoute,
 ) -> Result<ResponseStream, GatewayError> {
-    let provider_routing = stable_oneapi_routing(headers, &body)?;
+    let provider_routing = crate::gateway::stable_oneapi_routing(headers, &body)?;
     match route {
         ResolvedModelRoute::Official => unreachable!("official route returned above"),
         provider_route @ ResolvedModelRoute::Provider { .. } => {
             let plan = RequestPlan::from_route(provider_route, body, provider_routing, None)?;
-            UpstreamExecutor::new(state).stream(plan, headers).await
+            state.gateway.stream(plan, headers).await
         }
         ResolvedModelRoute::Fusion { profile_id } => {
             stream_fusion_responses(state, headers, body, provider_routing, profile_id).await
@@ -86,12 +86,12 @@ async fn stream_fusion_responses(
         .ok_or_else(|| GatewayError::BadRequest(format!("unknown fusion profile: {profile_id}")))?
         .clone();
     if should_fuse_turn(&body) {
-        Ok(FusionEngine::new(state, &profile)
+        Ok(FusionEngine::new(state.gateway.as_ref(), &profile)
             .with_headers(headers.clone())
             .stream_with_routing(body, provider_routing))
     } else {
         body["stream"] = Value::Bool(true);
-        FusionEngine::new(state, &profile)
+        FusionEngine::new(state.gateway.as_ref(), &profile)
             .with_headers(headers.clone())
             .stream_final_continuation(body, provider_routing.as_ref())
             .await
@@ -112,35 +112,17 @@ async fn forward_official_responses(
     headers: &HeaderMap,
     body: Value,
 ) -> Result<Response, GatewayError> {
-    let observation = official_prefix_observation(state, headers, &body)?;
-    let mut upstream = state
-        .upstream
-        .send_official_responses(headers, body.clone())
-        .await?;
-    if upstream.status() == StatusCode::PAYLOAD_TOO_LARGE {
-        let (fallback_body, stats) =
-            crate::images::normalize_provider_images_for_fallback(body).await?;
-        if stats.normalized_images > 0 && stats.saved_bytes > 0 {
-            tracing::warn!(
-                normalized_images = stats.normalized_images,
-                saved_image_bytes = stats.saved_bytes,
-                "retrying official responses request after 413 with aggressively compressed images"
-            );
-            upstream = state
-                .upstream
-                .send_official_responses(headers, fallback_body)
-                .await?;
-        }
-    }
-    let status = upstream.status();
-    let content_type = upstream
+    let sent = state.gateway.send_official(headers, body).await?;
+    let status = sent.response.status();
+    let content_type = sent
+        .response
         .headers()
         .get(header::CONTENT_TYPE)
         .and_then(|value| value.to_str().ok())
         .unwrap_or("text/event-stream")
         .to_owned();
     if !status.is_success() {
-        let body = crate::protocol::request_body::read_error_text(upstream).await?;
+        let body = crate::protocol::request_body::read_error_text(sent.response).await?;
         return Err(GatewayError::UpstreamStatus {
             status,
             message: format!("official responses endpoint returned {status}: {body}"),
@@ -151,94 +133,10 @@ async fn forward_official_responses(
         .header(header::CONTENT_TYPE, content_type)
         .header(header::CACHE_CONTROL, "no-cache")
         .body(Body::from_stream(
-            crate::gateway::observe_upstream_cache_usage(upstream.bytes_stream(), observation),
+            crate::gateway::observe_upstream_cache_usage(
+                sent.response.bytes_stream(),
+                sent.observation,
+            ),
         ))
         .map_err(|err| GatewayError::Other(err.into()))
-}
-
-pub(crate) async fn stream_official_response(
-    state: &AppState,
-    headers: &HeaderMap,
-    body: &Value,
-) -> Result<ResponseStream, GatewayError> {
-    let model = body
-        .get("model")
-        .and_then(Value::as_str)
-        .unwrap_or("official")
-        .to_owned();
-    let observation = official_prefix_observation(state, headers, body)?;
-    let mut upstream = state
-        .upstream
-        .send_official_responses(headers, body.clone())
-        .await?;
-    if upstream.status() == StatusCode::PAYLOAD_TOO_LARGE {
-        let (fallback_body, stats) =
-            crate::images::normalize_provider_images_for_fallback(body.clone()).await?;
-        if stats.normalized_images > 0 && stats.saved_bytes > 0 {
-            tracing::warn!(
-                normalized_images = stats.normalized_images,
-                saved_image_bytes = stats.saved_bytes,
-                "retrying official responses stream after 413 with aggressively compressed images"
-            );
-            upstream = state
-                .upstream
-                .send_official_responses(headers, fallback_body)
-                .await?;
-        }
-    }
-    let status = upstream.status();
-    if !status.is_success() {
-        let body = crate::protocol::request_body::read_error_text(upstream).await?;
-        return Err(GatewayError::UpstreamStatus {
-            status,
-            message: format!("official responses endpoint returned {status}: {body}"),
-        });
-    }
-    let stream = async_stream::stream! {
-        let upstream = crate::gateway::observe_upstream_cache_usage(
-            upstream.bytes_stream(),
-            observation,
-        );
-        tokio::pin!(upstream);
-        while let Some(chunk) = upstream.next().await {
-            match chunk {
-                Ok(bytes) => yield Ok::<Bytes, Infallible>(bytes),
-                Err(error) => {
-                    let event = encode_event(
-                        "response.failed",
-                        &crate::protocol::sse::response_failed_payload(
-                            None,
-                            Some(&model),
-                            error.to_string(),
-                            "server_error",
-                        ),
-                    )
-                    .expect("official failure event is serializable");
-                    yield Ok(event);
-                    break;
-                }
-            }
-        }
-    };
-    Ok(stream.boxed())
-}
-
-pub(super) fn official_prefix_observation(
-    state: &AppState,
-    headers: &HeaderMap,
-    body: &Value,
-) -> Result<Option<crate::gateway::PrefixObservation>, GatewayError> {
-    let model = body
-        .get("model")
-        .and_then(Value::as_str)
-        .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?;
-    let routing = stable_oneapi_routing(headers, body)?;
-    Ok(crate::gateway::record_provider_prefix(
-        &state.cache_shapes,
-        "official",
-        model,
-        model,
-        routing.as_ref(),
-        crate::gateway::CacheShape::from_openai_responses(body),
-    ))
 }

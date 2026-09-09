@@ -20,7 +20,7 @@ pub(super) async fn messages(
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?;
-    let route = state.resolve_model_route(requested_model).await?;
+    let route = state.gateway.resolve_model_route(requested_model).await?;
     if route == ResolvedModelRoute::Official {
         let request = normalize_message_request(&body, requested_model)?;
         let responses_body = crate::protocol::anthropic_compat::message_request_to_responses(
@@ -37,7 +37,9 @@ pub(super) async fn messages(
         )
         .await;
     }
-    let resolved = state.resolve_native_provider_model(requested_model)?;
+    let resolved = state
+        .gateway
+        .resolve_native_provider_model(requested_model)?;
     let provider = resolved.provider;
     let upstream_model_id = resolved.upstream_model_id;
     super::auth::require_ducx_client(&state, provider, &headers)?;
@@ -68,6 +70,7 @@ pub(super) async fn messages(
     }
     let hash_key = routing.map(|routing| routing.hash_key);
     let first = state
+        .upstream
         .anthropic_stream_with_web_search_retry(provider, request, hash_key.as_deref())
         .await;
     let upstream = match first {
@@ -92,6 +95,7 @@ pub(super) async fn messages(
             );
             let fallback_request = normalize_message_request(&fallback_body, upstream_model_id)?;
             state
+                .upstream
                 .anthropic_stream_with_web_search_retry(
                     provider,
                     fallback_request,
@@ -125,7 +129,7 @@ async fn responses_compatible_message(
     stream_requested: bool,
     plan: RequestPlan,
 ) -> Result<Response, GatewayError> {
-    let upstream = UpstreamExecutor::new(state).stream(plan, headers).await?;
+    let upstream = state.gateway.stream(plan, headers).await?;
     if stream_requested {
         let stream = crate::protocol::anthropic_compat::responses_to_anthropic_stream(
             upstream,

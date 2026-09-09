@@ -38,7 +38,7 @@ pub(super) async fn compact(
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("compact request missing model".to_owned()))?;
-    match state.resolve_model_route(model).await? {
+    match state.gateway.resolve_model_route(model).await? {
         ResolvedModelRoute::Official => forward_official_compact(&state, &headers, body).await,
         ResolvedModelRoute::Provider { .. } => {
             compact_custom_provider(&state, &headers, body).await
@@ -63,7 +63,7 @@ async fn compact_fusion(
         .map(|profile| profile.final_model.clone())
         .ok_or_else(|| GatewayError::BadRequest(format!("unknown fusion profile: {profile_id}")))?;
     body["model"] = Value::String(final_model.clone());
-    match state.resolve_model_route(&final_model).await? {
+    match state.gateway.resolve_model_route(&final_model).await? {
         ResolvedModelRoute::Official => forward_official_compact(state, headers, body).await,
         ResolvedModelRoute::Provider { .. } => compact_custom_provider(state, headers, body).await,
         ResolvedModelRoute::Fusion { .. } => Err(GatewayError::BadRequest(
@@ -154,7 +154,8 @@ async fn compact_custom_provider(
         } else {
             body.clone()
         };
-        let response = collect_response_with_headers(state, attempt_body, headers).await?;
+        let response =
+            collect_response_with_headers(state.gateway.as_ref(), attempt_body, headers).await?;
         let called_compaction_tool = response.output.iter().any(|item| {
             item.get("type").and_then(Value::as_str) == Some("function_call")
                 && item.get("name").and_then(Value::as_str) == Some(COMPACTION_TOOL_NAME)
@@ -255,7 +256,11 @@ async fn forward_official_compact(
     headers: &HeaderMap,
     body: Value,
 ) -> Result<Response, GatewayError> {
-    let (authorization, account_id) = state.official_auth().await.map_err(GatewayError::Other)?;
+    let (authorization, account_id) = state
+        .upstream
+        .official_auth()
+        .await
+        .map_err(GatewayError::Other)?;
     let mut url = Url::parse(&state.config.official_responses_url)
         .map_err(|error| GatewayError::Other(error.into()))?;
     let path = url.path().strip_suffix("/responses").ok_or_else(|| {
