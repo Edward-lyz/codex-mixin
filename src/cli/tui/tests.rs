@@ -53,6 +53,55 @@ fn custom_provider_form_builds_complete_cli_arguments() {
 }
 
 #[test]
+fn custom_provider_api_key_is_visible_and_masked_in_setup_and_add() {
+    for setup in [true, false] {
+        for (width, height) in [(80, 24), (100, 30)] {
+            let snapshot = Snapshot {
+                status: serde_json::json!({"configured": false}),
+                providers: Vec::new(),
+                codex_install_mode: None,
+                benchmark: None,
+                usage: Vec::new(),
+                models: Vec::new(),
+                fusion_profile: None,
+                refreshed_at: Instant::now(),
+            };
+            let mut app = App::new(snapshot, StartPage::Setup);
+            let mut form = AddProviderForm {
+                preset_index: PROVIDER_PRESETS
+                    .iter()
+                    .position(|preset| *preset == "custom")
+                    .unwrap(),
+                focus: 4,
+                ..AddProviderForm::default()
+            };
+            form.move_focus(1);
+            form.focused_text().unwrap().push_str("test-api-key");
+            assert_eq!(form.api_key, "test-api-key");
+            if setup {
+                app.setup.focus = form.focus;
+                app.setup.provider = form;
+            } else {
+                app.dialog = Some(Dialog::AddProvider(form));
+            }
+            let backend = ratatui::backend::TestBackend::new(width, height);
+            let mut terminal = Terminal::new(backend).unwrap();
+            terminal.draw(|frame| render(frame, &app)).unwrap();
+            let rendered = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(ratatui::buffer::Cell::symbol)
+                .collect::<String>();
+            assert!(rendered.contains("\u{203a} API key"));
+            assert!(rendered.contains("************"));
+            assert!(!rendered.contains("test-api-key"));
+        }
+    }
+}
+
+#[test]
 fn baidu_provider_form_submits_gui_parity_settings() {
     let form = AddProviderForm {
         api_key: "secret".to_owned(),

@@ -227,7 +227,8 @@ pub(super) fn render_setup(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App
                 true,
             ),
         ]);
-    } else {
+    }
+    if !is_aws_bedrock(provider.preset()) {
         lines.push(form_line(
             "API key",
             &provider.api_key,
@@ -1399,7 +1400,8 @@ pub(super) fn render_dialog(
                         true,
                     ),
                 ]);
-            } else {
+            }
+            if !is_aws_bedrock(form.preset()) {
                 lines.push(form_line("API key", &form.api_key, form.focus == 5, true));
             }
             if form.preset() == "baidu-oneapi" {
