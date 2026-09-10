@@ -420,6 +420,10 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             }
             appendProviderArgument(&update, "--display-name", displayName)
             appendProviderArgument(&update, "--base-url", baseURL)
+            update.append(contentsOf: [
+                "--protocol", model.protocolID,
+                "--api-path", apiPath(for: model.protocolID),
+            ])
             let websiteURL = model.websiteURL
                 .trimmingCharacters(in: .whitespacesAndNewlines)
             if !websiteURL.isEmpty || provider.websiteURL != nil {
@@ -471,6 +475,14 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 ) ? selectedBaiduBridge : nil,
             codexSkillChanged: auxiliaryModelUpstream != provider.auxiliaryModelUpstream
         )
+    }
+
+    private func apiPath(for protocolID: String) -> String {
+        switch protocolID {
+        case "anthropic_messages": return "/v1/messages"
+        case "open_ai_chat": return "/v1/chat/completions"
+        default: return "/v1/responses"
+        }
     }
 
     private func showBaiduBridgeReminderIfNeeded() {

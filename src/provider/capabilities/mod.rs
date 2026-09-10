@@ -279,8 +279,8 @@ fn annotate_models(
         let Some(capability) = capabilities.get(&model.id) else {
             continue;
         };
-        model.protocol = capability.selected_protocol;
-        model.api_path = capability.selected_api_path.clone();
+        model.protocol = None;
+        model.api_path = None;
         model.capabilities_probed_at_ms = Some(capability.probed_at_ms);
         model.capability_probe_error = capability.last_probe_error.clone();
         let Some(selected) = capability.selected() else {

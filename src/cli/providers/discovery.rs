@@ -13,7 +13,7 @@ use serde_json::{Value, json};
 use super::super::config_input::normalize_base_url;
 use codex_mixin::provider::{QuotaUsageSummary, quota_usage};
 
-const CUSTOM_PROTOCOL_PROBE_TIMEOUT: Duration = Duration::from_secs(30);
+const CUSTOM_PROTOCOL_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
 
 #[derive(Clone, Debug, PartialEq)]
 pub(super) struct DiscoveredQuotaEndpoint {
@@ -263,13 +263,22 @@ pub(super) fn infer_custom_provider_endpoint(
 pub(super) async fn detect_custom_provider_protocol(
     provider: &codex_mixin::provider::ProviderDefinition,
 ) -> anyhow::Result<Option<InferredCustomProviderEndpoint>> {
+    tokio::time::timeout(
+        CUSTOM_PROTOCOL_PROBE_TIMEOUT,
+        detect_custom_provider_protocol_inner(provider),
+    )
+    .await
+    .map_err(|_| anyhow::anyhow!("custom provider protocol detection timed out after 5 seconds"))?
+}
+
+async fn detect_custom_provider_protocol_inner(
+    provider: &codex_mixin::provider::ProviderDefinition,
+) -> anyhow::Result<Option<InferredCustomProviderEndpoint>> {
     let registry = ProviderRegistry::new(vec![provider.clone()])?;
     let runtime = registry
         .provider(&provider.id)
         .expect("newly constructed provider registry contains the custom provider");
-    let client = reqwest::Client::builder()
-        .timeout(CUSTOM_PROTOCOL_PROBE_TIMEOUT)
-        .build()?;
+    let client = reqwest::Client::builder().build()?;
     let mut failures = Vec::new();
     let mut found_models_endpoint = false;
     for (models_path, versioned) in [("/v1/models", true), ("/models", false)] {

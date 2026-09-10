@@ -420,7 +420,6 @@ func modelBenchmarkColumnDefinitions() -> [ModelBenchmarkColumnDefinition] {
         .init(id: "tps", title: "吞吐", width: 112, minimumWidth: 88, defaultAscending: false),
         .init(id: "context", title: "上下文", width: 104, minimumWidth: 84, defaultAscending: false),
         .init(id: "ratio", title: "倍率", width: 86, minimumWidth: 70, defaultAscending: true),
-        .init(id: "protocol", title: "协议", width: 108, minimumWidth: 90, defaultAscending: true),
         .init(id: "image", title: "图片", width: 72, minimumWidth: 62, defaultAscending: false),
         .init(id: "tool-search", title: "Tool Search", width: 104, minimumWidth: 92, defaultAscending: false),
         .init(id: "web-search", title: "Web Search", width: 104, minimumWidth: 92, defaultAscending: false),

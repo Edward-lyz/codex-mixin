@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::time::Duration;
 
 use anyhow::Context;
@@ -24,86 +23,26 @@ pub(super) async fn probe_model(
     request_limit: &Semaphore,
     native_headers: Option<&HeaderMap>,
 ) -> ModelCapabilities {
-    let (responses, messages, chat) = tokio::join!(
-        probe_protocol_candidates(
-            client,
-            provider,
-            model,
-            ProviderProtocol::OpenAiResponses,
-            request_limit,
-            native_headers,
-        ),
-        probe_protocol_candidates(
-            client,
-            provider,
-            model,
-            ProviderProtocol::AnthropicMessages,
-            request_limit,
-            native_headers,
-        ),
-        probe_protocol_candidates(
-            client,
-            provider,
-            model,
-            ProviderProtocol::OpenAiChat,
-            request_limit,
-            native_headers,
-        ),
-    );
-    let protocols = vec![responses, messages, chat];
-
-    let selected = select_protocol_override(&protocols);
+    let protocol = provider.protocol_for_model(model);
+    let selected = probe_protocol(
+        client,
+        provider,
+        model,
+        protocol,
+        provider.api_url_for_model(model).path(),
+        request_limit,
+        native_headers,
+    )
+    .await;
+    let supported = selected.baseline == CapabilityStatus::Supported;
     ModelCapabilities {
         model: model.to_owned(),
-        selected_protocol: selected.map(|candidate| candidate.protocol),
-        selected_api_path: selected.map(|candidate| candidate.api_path.clone()),
-        protocols,
+        selected_protocol: supported.then_some(selected.protocol),
+        selected_api_path: supported.then(|| selected.api_path.clone()),
+        protocols: vec![selected],
         probed_at_ms,
         last_probe_error: None,
     }
-}
-
-fn select_protocol_override(protocols: &[ProtocolCapabilities]) -> Option<&ProtocolCapabilities> {
-    for candidate in protocols {
-        match candidate.baseline {
-            CapabilityStatus::Supported => return Some(candidate),
-            CapabilityStatus::Unsupported => continue,
-            CapabilityStatus::Indeterminate => return None,
-        }
-    }
-    None
-}
-
-async fn probe_protocol_candidates(
-    client: &Client,
-    provider: &ProviderRuntime,
-    model: &str,
-    protocol: ProviderProtocol,
-    request_limit: &Semaphore,
-    native_headers: Option<&HeaderMap>,
-) -> ProtocolCapabilities {
-    let mut unsupported = None;
-    let mut indeterminate = None;
-    for api_path in candidate_paths(provider, protocol) {
-        let candidate = probe_protocol(
-            client,
-            provider,
-            model,
-            protocol,
-            &api_path,
-            request_limit,
-            native_headers,
-        )
-        .await;
-        match candidate.baseline {
-            CapabilityStatus::Supported => return candidate,
-            CapabilityStatus::Indeterminate => indeterminate = Some(candidate),
-            CapabilityStatus::Unsupported => unsupported = Some(candidate),
-        }
-    }
-    indeterminate
-        .or(unsupported)
-        .expect("every protocol has at least one endpoint candidate")
 }
 
 async fn probe_protocol(
@@ -481,32 +420,6 @@ fn classify_status(status: StatusCode) -> CapabilityStatus {
     }
 }
 
-fn candidate_paths(provider: &ProviderRuntime, protocol: ProviderProtocol) -> Vec<String> {
-    let configured = provider.definition().api_path.as_str();
-    let suffix = match protocol {
-        ProviderProtocol::OpenAiResponses => "responses",
-        ProviderProtocol::OpenAiChat => "chat/completions",
-        ProviderProtocol::AnthropicMessages => "messages",
-    };
-    let known_root = ["responses", "chat/completions", "messages"]
-        .into_iter()
-        .find_map(|known| configured.strip_suffix(known));
-    let root = known_root.unwrap_or("");
-    let mut candidates = vec![
-        format!("{root}{suffix}"),
-        format!("/v1/{suffix}"),
-        format!("/{suffix}"),
-    ];
-    if provider.definition().protocol == protocol
-        && (known_root.is_none() || configured.ends_with(suffix))
-    {
-        candidates.insert(0, configured.to_owned());
-    }
-    let mut seen = HashSet::new();
-    candidates.retain(|path| seen.insert(path.clone()));
-    candidates
-}
-
 fn endpoint_url(base_url: &str, path: &str) -> anyhow::Result<Url> {
     let path = if path.starts_with('/') {
         path.to_owned()
@@ -524,43 +437,6 @@ fn truncate(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    fn protocol_capability(
-        protocol: ProviderProtocol,
-        baseline: CapabilityStatus,
-    ) -> ProtocolCapabilities {
-        let api_path = match protocol {
-            ProviderProtocol::OpenAiResponses => "/v1/responses",
-            ProviderProtocol::AnthropicMessages => "/v1/messages",
-            ProviderProtocol::OpenAiChat => "/v1/chat/completions",
-        };
-        ProtocolCapabilities {
-            protocol,
-            api_path: api_path.to_owned(),
-            baseline,
-            image_input: CapabilityStatus::Indeterminate,
-            thinking: CapabilityStatus::Indeterminate,
-            function_tools: CapabilityStatus::Indeterminate,
-            tool_search: CapabilityStatus::Indeterminate,
-            web_search: CapabilityStatus::Indeterminate,
-            error: None,
-        }
-    }
-
-    #[test]
-    fn derives_sibling_protocol_paths_from_configured_endpoint() {
-        let mut provider = crate::provider::open_code_go_provider("opencode-go", "test-key");
-        provider.api_path = "/v1/chat/completions".to_owned();
-        let runtime = crate::provider::ProviderRegistry::new(vec![provider])
-            .unwrap()
-            .provider("opencode-go")
-            .unwrap()
-            .clone();
-        assert_eq!(
-            candidate_paths(&runtime, ProviderProtocol::OpenAiResponses)[0],
-            "/v1/responses"
-        );
-    }
 
     #[test]
     fn transient_http_failures_are_indeterminate() {
@@ -605,38 +481,6 @@ mod tests {
         assert_eq!(
             messages["thinking"],
             json!({"type": "enabled", "budget_tokens": 1024})
-        );
-    }
-
-    #[test]
-    fn protocol_override_requires_higher_priority_protocols_to_be_unsupported() {
-        let protocols = vec![
-            protocol_capability(
-                ProviderProtocol::OpenAiResponses,
-                CapabilityStatus::Indeterminate,
-            ),
-            protocol_capability(
-                ProviderProtocol::AnthropicMessages,
-                CapabilityStatus::Supported,
-            ),
-            protocol_capability(ProviderProtocol::OpenAiChat, CapabilityStatus::Supported),
-        ];
-        assert!(select_protocol_override(&protocols).is_none());
-
-        let protocols = vec![
-            protocol_capability(
-                ProviderProtocol::OpenAiResponses,
-                CapabilityStatus::Unsupported,
-            ),
-            protocol_capability(
-                ProviderProtocol::AnthropicMessages,
-                CapabilityStatus::Supported,
-            ),
-            protocol_capability(ProviderProtocol::OpenAiChat, CapabilityStatus::Supported),
-        ];
-        assert_eq!(
-            select_protocol_override(&protocols).map(|candidate| candidate.protocol),
-            Some(ProviderProtocol::AnthropicMessages)
         );
     }
 }

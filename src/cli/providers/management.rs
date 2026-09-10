@@ -169,6 +169,7 @@ pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
     }
     provider.auxiliary_model_upstream = options.auxiliary_model_upstream.unwrap_or(false);
     let mut detected_protocol = None;
+    let mut protocol_probe_error = None;
     // Baidu uses its curated protocol. Custom sites get a live protocol probe so
     // users do not have to know the path.
     if preset == ProviderPreset::Custom
@@ -177,12 +178,18 @@ pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
         && !user_set_models_path
         && !path_explicit
         && !has_static_models
-        && let Some(endpoint) = detect_custom_provider_protocol(&provider).await?
     {
-        detected_protocol = Some(super::protocol_name(endpoint.protocol).to_owned());
-        apply_inferred_custom_endpoint(&mut provider, endpoint);
+        match detect_custom_provider_protocol(&provider).await {
+            Ok(Some(endpoint)) => {
+                detected_protocol = Some(super::protocol_name(endpoint.protocol).to_owned());
+                apply_inferred_custom_endpoint(&mut provider, endpoint);
+            }
+            Ok(None) => {}
+            Err(error) => protocol_probe_error = Some(error),
+        }
     }
     provider.validate()?;
+    let configured_protocol = super::protocol_name(provider.protocol);
     let gateway_api_key = options
         .gateway_key
         .map(|key| trim_required("gateway key", key))
@@ -200,6 +207,12 @@ pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
     println!("provider added: {id}");
     if let Some(protocol) = detected_protocol {
         println!("provider protocol detected: {id} ({protocol})");
+    }
+    if let Some(error) = protocol_probe_error {
+        eprintln!(
+            "provider protocol detection failed for {id}; keeping {}: {error:#}",
+            configured_protocol
+        );
     }
     let changes = match discover_models_with_output(&id, false).await {
         Ok(changes) => changes,
@@ -376,6 +389,7 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
         options.auxiliary_model_upstream,
     )?;
     let mut detected_protocol = None;
+    let mut protocol_probe_error = None;
     if should_probe_protocol {
         let provider = required_config()
             .map_err(|source| OperationError::AfterCommit {
@@ -386,22 +400,20 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
             .into_iter()
             .find(|provider| provider.id == id)
             .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?;
-        let endpoint = detect_custom_provider_protocol(&provider)
-            .await
-            .map_err(|source| OperationError::AfterCommit {
-                stage: "protocol detection",
-                source,
-            })?;
-        if let Some(endpoint) = endpoint {
-            detected_protocol = Some(super::protocol_name(endpoint.protocol).to_owned());
-            codex_mixin::application::provider::commit_detected_endpoint(
-                &id,
-                &provider,
-                endpoint.base_url,
-                endpoint.protocol,
-                endpoint.api_path,
-                endpoint.models_path,
-            )?;
+        match detect_custom_provider_protocol(&provider).await {
+            Ok(Some(endpoint)) => {
+                detected_protocol = Some(super::protocol_name(endpoint.protocol).to_owned());
+                codex_mixin::application::provider::commit_detected_endpoint(
+                    &id,
+                    &provider,
+                    endpoint.base_url,
+                    endpoint.protocol,
+                    endpoint.api_path,
+                    endpoint.models_path,
+                )?;
+            }
+            Ok(None) => {}
+            Err(error) => protocol_probe_error = Some(error),
         }
     }
     if let Err(source) = sync_imagegen_skill() {
@@ -414,6 +426,11 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
     println!("provider updated: {id}");
     if let Some(protocol) = detected_protocol {
         println!("provider protocol detected: {id} ({protocol})");
+    }
+    if let Some(error) = protocol_probe_error {
+        eprintln!(
+            "provider protocol detection failed for {id}; keeping the configured endpoint: {error:#}"
+        );
     }
     if should_refresh_capabilities {
         let provider = required_config()

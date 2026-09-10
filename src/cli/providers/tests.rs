@@ -588,7 +588,7 @@ async fn detects_responses_before_messages_and_chat_for_custom_providers() {
 }
 
 #[tokio::test]
-async fn allows_slow_custom_protocol_probes() {
+async fn custom_protocol_detection_has_a_five_second_total_deadline() {
     use axum::routing::post;
     let app = Router::new()
         .route(
@@ -598,7 +598,7 @@ async fn allows_slow_custom_protocol_probes() {
         .route(
             "/v1/responses",
             post(|| async {
-                tokio::time::sleep(std::time::Duration::from_secs(6)).await;
+                tokio::time::sleep(std::time::Duration::from_secs(30)).await;
                 (
                     axum::http::StatusCode::BAD_REQUEST,
                     axum::Json(serde_json::json!({"error":{"message":"missing input"}})),
@@ -613,12 +613,14 @@ async fn allows_slow_custom_protocol_probes() {
     let mut provider = codex_mixin::provider::custom_provider("community", "secret");
     provider.base_url = format!("http://{address}");
 
-    let detected = detect_custom_provider_protocol(&provider)
+    let started = tokio::time::Instant::now();
+    let error = detect_custom_provider_protocol(&provider)
         .await
-        .unwrap()
-        .unwrap();
+        .unwrap_err()
+        .to_string();
 
-    assert_eq!(detected.protocol, ProviderProtocol::OpenAiResponses);
+    assert!(error.contains("timed out after 5 seconds"));
+    assert!(started.elapsed() < std::time::Duration::from_secs(6));
 }
 
 #[tokio::test]

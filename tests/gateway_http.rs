@@ -7074,9 +7074,7 @@ async fn perf_smoke_handles_parallel_streams() {
 }
 
 #[tokio::test]
-async fn anthropic_messages_honors_model_level_upstream_endpoint() {
-    // Regression: the Anthropic Messages path must use the same model-level
-    // upstream endpoint as the OpenAI protocols, honoring a per-model api_path.
+async fn anthropic_messages_ignores_legacy_model_level_endpoint() {
     let hits = Arc::new(Mutex::new(Vec::<String>::new()));
     let hits2 = Arc::clone(&hits);
     let upstream = Router::new().route(
@@ -7107,9 +7105,5 @@ async fn anthropic_messages_honors_model_level_upstream_endpoint() {
     let body = response.text().await.unwrap();
     assert!(body.contains("response.completed"));
     let hits = hits.lock().unwrap();
-    assert!(
-        hits.iter()
-            .any(|path| path == "/v1/models/deepseek-v4/messages"),
-        "expected the model-level Anthropic endpoint, upstream saw {hits:?}"
-    );
+    assert_eq!(hits.as_slice(), ["/v1/messages"]);
 }

@@ -254,7 +254,7 @@ struct ProviderSupportTests {
         precondition(
             benchmarkColumns.map(\.title)
                 == [
-                    "加入 Codex", "上游模型", "TTFT", "吞吐", "上下文", "倍率", "协议",
+        "加入 Codex", "上游模型", "TTFT", "吞吐", "上下文", "倍率",
                     "图片", "Tool Search", "Web Search", "Function Tools", "Thinking",
                 ]
         )

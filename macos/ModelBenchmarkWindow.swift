@@ -15,7 +15,6 @@ struct ModelBenchmarkTableRow: Identifiable {
     var tpsSortValue: Double? { result?.tps }
     var contextSortValue: UInt64? { model.contextWindow }
     var ratioSortValue: Double? { benchmarkRatioValue(model.ratio) }
-    var protocolSortValue: String? { model.protocolID }
     var imageSortValue: Int? { model.supportsImage.map { $0 ? 1 : 0 } }
     var toolSearchSortValue: Int? { model.supportsToolSearch.map { $0 ? 1 : 0 } }
     var webSearchSortValue: Int? { model.supportsWebSearch.map { $0 ? 1 : 0 } }
@@ -604,7 +603,6 @@ struct ModelBenchmarkRootView: View {
             throughputColumn
             contextColumn
             ratioColumn
-            protocolColumn
             capabilityColumns
         }
         .scrollContentBackground(.hidden)
@@ -815,14 +813,6 @@ struct ModelBenchmarkRootView: View {
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
         .width(min: 70, ideal: 86)
-    }
-
-    private var protocolColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
-        TableColumn("协议", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.protocolSortValue)) { row in
-            Text(protocolTitle(row.model.protocolID))
-                .help(row.model.capabilityProbeError ?? "")
-        }
-        .width(min: 90, ideal: 108)
     }
 
     @TableColumnBuilder<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>>
@@ -1046,15 +1036,6 @@ private func compareOptionalNumbers<T: BinaryInteger>(
 private func capabilityTitle(_ supported: Bool?) -> String {
     guard let supported else { return "-" }
     return supported ? "支持" : "不支持"
-}
-
-private func protocolTitle(_ protocolID: String?) -> String {
-    switch protocolID {
-    case "open_ai_responses": return "Responses"
-    case "open_ai_chat": return "Chat"
-    case "anthropic_messages": return "Messages"
-    default: return "-"
-    }
 }
 
 private func compareOptionalNumbers(

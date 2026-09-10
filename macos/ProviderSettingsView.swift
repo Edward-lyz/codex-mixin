@@ -17,6 +17,7 @@ final class ProviderSettingsModel: ObservableObject {
     @Published var codexInstallMode: ManagedCodexInstallMode?
     @Published var displayName = ""
     @Published var baseURL = ""
+    @Published var protocolID = "open_ai_responses"
     @Published var websiteURL = ""
     @Published var imageGenerationPath = ""
     @Published var apiKey = ""
@@ -53,6 +54,7 @@ final class ProviderSettingsModel: ObservableObject {
         }
         displayName = provider.displayName
         baseURL = provider.baseURL
+        protocolID = provider.protocolID
         websiteURL = provider.websiteURL ?? ""
         imageGenerationPath = provider.imageGenerationPath ?? ""
         apiKey = ""
@@ -335,6 +337,11 @@ private struct ProviderDetailForm: View {
                     if isCustom {
                         TextField("站点名称", text: $formState.displayName)
                         TextField("API 地址", text: $formState.baseURL)
+                        Picker("API 端点", selection: $formState.protocolID) {
+                            Text("Responses").tag("open_ai_responses")
+                            Text("Messages").tag("anthropic_messages")
+                            Text("Chat Completions").tag("open_ai_chat")
+                        }
                         TextField("官网地址", text: $formState.websiteURL)
                     } else if isAWSBedrock {
                         TextField("AWS Region", text: $formState.awsRegion)
