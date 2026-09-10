@@ -27,6 +27,21 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Install ripgrep
+        shell: bash
+        run: |
+          if command -v rg >/dev/null; then
+            exit 0
+          fi
+          if [[ "${RUNNER_OS}" == "Linux" ]]; then
+            sudo apt-get update
+            sudo apt-get install --yes ripgrep
+          elif [[ "${RUNNER_OS}" == "macOS" ]]; then
+            brew install ripgrep
+          else
+            echo "unsupported runner OS: ${RUNNER_OS}" >&2
+            exit 1
+          fi
       - name: Check architecture boundaries
         run: |
           ./scripts/check_arch.sh
