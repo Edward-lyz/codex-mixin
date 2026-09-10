@@ -6,34 +6,75 @@ struct ProcessOutputCollectorTests {
         let chunkSize = 2 * 1_024 * 1_024
         let process = Process()
         let outputPipe = Pipe()
+        let errorPipe = Pipe()
         process.executableURL = URL(fileURLWithPath: "/bin/sh")
         process.arguments = [
             "-c",
-            "yes o | head -c \(chunkSize); yes e | head -c \(chunkSize) >&2",
+            "printf '{\"ok\":true}'; printf 'models.dev warning\\n' >&2; yes o | head -c \(chunkSize); yes e | head -c \(chunkSize) >&2",
         ]
         process.standardOutput = outputPipe
-        process.standardError = outputPipe
+        process.standardError = errorPipe
 
-        let result = try runProcessCollectingMergedOutput(
+        let result = try runProcessCollectingOutput(
             process,
-            outputPipe: outputPipe
+            outputPipe: outputPipe,
+            errorPipe: errorPipe
         )
 
         precondition(result.terminationStatus == 0)
         precondition(
-            result.data.count == chunkSize * 2,
-            "collector should return complete stdout and stderr output"
+            String(decoding: result.stdoutData.prefix(11), as: UTF8.self) == "{\"ok\":true}",
+            "stdout should remain a standalone JSON document"
+        )
+        precondition(
+            String(decoding: result.stderrData.prefix(19), as: UTF8.self)
+                == "models.dev warning\n",
+            "stderr should not contaminate stdout"
+        )
+        precondition(
+            result.stdoutData.count == 11 + chunkSize,
+            "collector should return complete stdout output"
+        )
+        precondition(
+            result.stderrData.count == 19 + chunkSize,
+            "collector should return complete stderr output"
         )
 
+        let failedProcess = Process()
+        let failedOutputPipe = Pipe()
+        let failedErrorPipe = Pipe()
+        failedProcess.executableURL = URL(fileURLWithPath: "/bin/sh")
+        failedProcess.arguments = [
+            "-c",
+            "printf 'partial JSON'; printf 'upstream failure' >&2; exit 7",
+        ]
+        failedProcess.standardOutput = failedOutputPipe
+        failedProcess.standardError = failedErrorPipe
+        let failedResult = try runProcessCollectingOutput(
+            failedProcess,
+            outputPipe: failedOutputPipe,
+            errorPipe: failedErrorPipe
+        )
+        precondition(failedResult.terminationStatus == 7)
+        precondition(
+            String(decoding: failedResult.stdoutData, as: UTF8.self) == "partial JSON"
+        )
+        precondition(
+            String(decoding: failedResult.stderrData, as: UTF8.self) == "upstream failure"
+        )
+        precondition(processFailureMessage(failedResult) == "upstream failure\npartial JSON")
+
         let hangingProcess = Process()
-        let hangingPipe = Pipe()
+        let hangingOutputPipe = Pipe()
+        let hangingErrorPipe = Pipe()
         hangingProcess.executableURL = URL(fileURLWithPath: "/usr/bin/yes")
-        hangingProcess.standardOutput = FileHandle.nullDevice
-        hangingProcess.standardError = hangingPipe
+        hangingProcess.standardOutput = hangingOutputPipe
+        hangingProcess.standardError = hangingErrorPipe
         let timeoutStarted = Date()
-        let timedOutResult = try runProcessCollectingMergedOutput(
+        let timedOutResult = try runProcessCollectingOutput(
             hangingProcess,
-            outputPipe: hangingPipe,
+            outputPipe: hangingOutputPipe,
+            errorPipe: hangingErrorPipe,
             timeout: 1,
             killGrace: 1
         )
@@ -53,16 +94,14 @@ struct ProcessOutputCollectorTests {
         }
         streamingCollector.consume(Data("MIXIN_PRO".utf8))
         streamingCollector.consume(Data("GRESS first\nignored\nMIXIN_PROGRESS sec".utf8))
-        let streamedData = streamingCollector.finish(remainingData: [
+        streamingCollector.finish(remainingData: [
             Data("ond\nMIXIN_PROGRESS third".utf8),
         ])
         progressQueue.sync {}
 
         precondition(
-            String(decoding: streamedData, as: UTF8.self)
-                == "MIXIN_PROGRESS first\nignored\nMIXIN_PROGRESS second\nMIXIN_PROGRESS third"
+            progressLines == ["first", "second", "third"]
         )
-        precondition(progressLines == ["first", "second", "third"])
 
         let streamingProcess = Process()
         let streamingOutputPipe = Pipe()
@@ -70,7 +109,7 @@ struct ProcessOutputCollectorTests {
         streamingProcess.executableURL = URL(fileURLWithPath: "/bin/sh")
         streamingProcess.arguments = [
             "-c",
-            "yes o | head -c \(chunkSize); printf '\\nMIXIN_PROGRESS stdout-done\\n'; yes e | head -c \(chunkSize) >&2; printf '\\nMIXIN_PROGRESS stderr-done\\n' >&2",
+            "printf 'command result\\n'; yes o | head -c \(chunkSize); printf '\\nMIXIN_PROGRESS stdout-ignored\\n'; yes e | head -c \(chunkSize) >&2; printf '\\nMIXIN_PROGRESS stderr-done\\n' >&2",
         ]
         streamingProcess.standardOutput = streamingOutputPipe
         streamingProcess.standardError = streamingErrorPipe
@@ -90,8 +129,16 @@ struct ProcessOutputCollectorTests {
         progressQueue.sync {}
 
         precondition(streamingResult.terminationStatus == 0)
-        precondition(streamingResult.data.count > chunkSize * 2)
-        precondition(Set(processProgressLines) == ["stdout-done", "stderr-done"])
+        precondition(
+            String(decoding: streamingResult.stdoutData.prefix(15), as: UTF8.self)
+                == "command result\n"
+        )
+        precondition(streamingResult.stderrData.count > chunkSize)
+        precondition(processProgressLines == ["stderr-done"])
+        precondition(
+            !processProgressLines.contains("stdout-ignored"),
+            "stdout must not be interpreted as progress"
+        )
         print("Process output collector tests passed")
     }
 }

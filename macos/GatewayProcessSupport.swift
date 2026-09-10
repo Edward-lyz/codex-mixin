@@ -125,10 +125,11 @@ extension AppDelegate {
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
                 let outputPipe = Pipe()
+                let errorPipe = Pipe()
                 process.executableURL = URL(fileURLWithPath: executable)
                 process.arguments = arguments
                 process.standardOutput = outputPipe
-                process.standardError = outputPipe
+                process.standardError = errorPipe
                 var environment = ProcessInfo.processInfo.environment
                 let ignoredKeys = environment.keys.filter { key in
                     key.hasPrefix("CODEX_GATEWAY_")
@@ -140,12 +141,13 @@ extension AppDelegate {
                 }
                 process.environment = environment
                 do {
-                    let result = try runProcessCollectingMergedOutput(
+                    let result = try runProcessCollectingOutput(
                         process,
                         outputPipe: outputPipe,
+                        errorPipe: errorPipe,
                         timeout: 600
                     )
-                    let output = String(data: result.data, encoding: .utf8) ?? ""
+                    let output = String(decoding: result.stdoutData, as: UTF8.self)
                     let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
                     let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
                     if result.terminationStatus == 0 {
@@ -163,7 +165,7 @@ extension AppDelegate {
                             """,
                             directory: diagnosticDirectory
                         )
-                        continuation.resume(throwing: GatewayError.command(trimmed.isEmpty ? "exit \(result.terminationStatus)" : trimmed))
+                        continuation.resume(throwing: GatewayError.command(processFailureMessage(result)))
                     }
                 } catch {
                     let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
@@ -201,9 +203,13 @@ extension AppDelegate {
                         errorPipe: errorPipe,
                         collector: collector
                     )
-                    let text = String(decoding: result.data, as: UTF8.self)
-                    if result.terminationStatus == 0 { continuation.resume(returning: text.trimmingCharacters(in: .whitespacesAndNewlines)) }
-                    else { continuation.resume(throwing: GatewayError.command(text.isEmpty ? "exit \(result.terminationStatus)" : text)) }
+                    let output = String(decoding: result.stdoutData, as: UTF8.self)
+                    let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
+                    if result.terminationStatus == 0 {
+                        continuation.resume(returning: trimmed)
+                    } else {
+                        continuation.resume(throwing: GatewayError.command(processFailureMessage(result)))
+                    }
                 } catch { continuation.resume(throwing: error) }
             }
         }

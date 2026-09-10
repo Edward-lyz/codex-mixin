@@ -3,7 +3,34 @@ import Darwin
 
 struct ProcessOutputResult {
     let terminationStatus: Int32
-    let data: Data
+    let stdoutData: Data
+    let stderrData: Data
+}
+
+func processFailureMessage(_ result: ProcessOutputResult) -> String {
+    let stderr = String(decoding: result.stderrData, as: UTF8.self)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    let stdout = String(decoding: result.stdoutData, as: UTF8.self)
+        .trimmingCharacters(in: .whitespacesAndNewlines)
+    let output = [stderr, stdout].filter { !$0.isEmpty }
+    return output.isEmpty ? "exit \(result.terminationStatus)" : output.joined(separator: "\n")
+}
+
+private final class DataAccumulator {
+    private let lock = NSLock()
+    private var data = Data()
+
+    func append(_ newData: Data) {
+        lock.lock()
+        data.append(newData)
+        lock.unlock()
+    }
+
+    var value: Data {
+        lock.lock()
+        defer { lock.unlock() }
+        return data
+    }
 }
 
 private final class ProcessTimeout {
@@ -35,9 +62,10 @@ private final class ProcessTimeout {
     }
 }
 
-func runProcessCollectingMergedOutput(
+func runProcessCollectingOutput(
     _ process: Process,
     outputPipe: Pipe,
+    errorPipe: Pipe,
     timeout: TimeInterval = 0,
     killGrace: TimeInterval = 10
 ) throws -> ProcessOutputResult {
@@ -49,13 +77,33 @@ func runProcessCollectingMergedOutput(
     )
     defer { timeout.cancel() }
 
-    // Drain the pipe before waiting so a verbose child cannot block on a full buffer.
-    let data = outputPipe.fileHandleForReading.readDataToEndOfFile()
+    let stdout = DataAccumulator()
+    let stderr = DataAccumulator()
+    let drainGroup = DispatchGroup()
+    // Drain both independent pipes concurrently so either stream can exceed
+    // the OS pipe buffer without blocking the child process.
+    for (handle, accumulator) in [
+        (outputPipe.fileHandleForReading, stdout),
+        (errorPipe.fileHandleForReading, stderr),
+    ] {
+        drainGroup.enter()
+        DispatchQueue.global(qos: .userInitiated).async {
+            defer { drainGroup.leave() }
+            while true {
+                let data = handle.availableData
+                guard !data.isEmpty else { break }
+                accumulator.append(data)
+            }
+        }
+    }
+
     process.waitUntilExit()
+    drainGroup.wait()
 
     return ProcessOutputResult(
         terminationStatus: process.terminationStatus,
-        data: data
+        stdoutData: stdout.value,
+        stderrData: stderr.value
     )
 }
 
@@ -64,7 +112,6 @@ final class StreamingProcessOutputCollector {
     private let progressQueue: DispatchQueue
     private let onProgress: (String) -> Void
     private let progressPrefix: String?
-    private var combinedData = Data()
     private var pendingBuffer = ""
 
     init(
@@ -84,19 +131,17 @@ final class StreamingProcessOutputCollector {
         }
     }
 
-    func finish(remainingData: [Data]) -> Data {
+    func finish(remainingData: [Data]) {
         queue.sync {
             for data in remainingData where !data.isEmpty {
                 consumeOnQueue(data)
             }
             emitProgressOnQueue(pendingBuffer)
             pendingBuffer = ""
-            return combinedData
         }
     }
 
     private func consumeOnQueue(_ data: Data) {
-        combinedData.append(data)
         pendingBuffer += String(decoding: data, as: UTF8.self)
         let parts = pendingBuffer.components(separatedBy: .newlines)
         pendingBuffer = parts.last ?? ""
@@ -129,26 +174,36 @@ func runProcessCollectingStreamingOutput(
 ) throws -> ProcessOutputResult {
     try process.run()
 
+    let stdout = DataAccumulator()
+    let stderr = DataAccumulator()
     let drainGroup = DispatchGroup()
-    for handle in [
-        outputPipe.fileHandleForReading,
-        errorPipe.fileHandleForReading,
-    ] {
-        drainGroup.enter()
-        DispatchQueue.global(qos: .userInitiated).async {
-            defer { drainGroup.leave() }
-            while true {
-                let data = handle.availableData
-                guard !data.isEmpty else { break }
-                collector.consume(data)
-            }
+    // Streaming keeps progress on stderr while stdout remains the command result.
+    drainGroup.enter()
+    DispatchQueue.global(qos: .userInitiated).async {
+        defer { drainGroup.leave() }
+        while true {
+            let data = outputPipe.fileHandleForReading.availableData
+            guard !data.isEmpty else { break }
+            stdout.append(data)
+        }
+    }
+    drainGroup.enter()
+    DispatchQueue.global(qos: .userInitiated).async {
+        defer { drainGroup.leave() }
+        while true {
+            let data = errorPipe.fileHandleForReading.availableData
+            guard !data.isEmpty else { break }
+            stderr.append(data)
+            collector.consume(data)
         }
     }
 
     process.waitUntilExit()
     drainGroup.wait()
+    collector.finish(remainingData: [])
     return ProcessOutputResult(
         terminationStatus: process.terminationStatus,
-        data: collector.finish(remainingData: [])
+        stdoutData: stdout.value,
+        stderrData: stderr.value
     )
 }

@@ -34,7 +34,7 @@ pub(super) async fn ensure_managed_ducx() -> anyhow::Result<PathBuf> {
         install_managed_ducx(&home, &codex_home, &executable).await?;
     }
     if ducx_is_logged_in(&isolated_home) {
-        println!(
+        eprintln!(
             "Managed DUCX authentication is ready: {}",
             executable.display()
         );
@@ -47,7 +47,7 @@ pub(super) async fn ensure_managed_ducx() -> anyhow::Result<PathBuf> {
         codex_home.display(),
         executable.display()
     );
-    println!("\nDUCX login is required. Complete QR-code login in this terminal.");
+    eprintln!("\nDUCX login is required. Complete QR-code login in this terminal.");
     let mut child = Command::new(&executable)
         .arg("login")
         .env("HOME", &isolated_home)
@@ -70,7 +70,7 @@ pub(super) async fn ensure_managed_ducx() -> anyhow::Result<PathBuf> {
         ducx_is_logged_in(&isolated_home),
         "DUCX login completed without a valid authenticated session"
     );
-    println!("DUCX authentication completed.");
+    eprintln!("DUCX authentication completed.");
     Ok(executable)
 }
 
@@ -118,7 +118,7 @@ async fn install_managed_ducx(
     fs::create_dir_all(&download_dir)?;
     fs::set_permissions(&download_dir, fs::Permissions::from_mode(0o700))?;
     let archive_path = download_dir.join(&archive_name);
-    println!("Downloading managed DUCX {version} for {os} {architecture}...");
+    eprintln!("Downloading managed DUCX {version} for {os} {architecture}...");
     let status = Command::new("curl")
         .args(["--fail", "--location", "--progress-bar", "--output"])
         .arg(&archive_path)
@@ -179,7 +179,7 @@ async fn install_managed_ducx(
         "managed DUCX archive is missing bin/ducx at {}",
         executable.display()
     );
-    println!("Managed DUCX installed: {}", executable.display());
+    eprintln!("Managed DUCX installed: {}", executable.display());
     Ok(())
 }
 

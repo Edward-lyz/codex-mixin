@@ -467,7 +467,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             ConnectCommand::Codex(options) => install_codex(options).await,
             ConnectCommand::Ducx => {
                 let executable = ensure_managed_ducx().await?;
-                println!("managed ducx ready: {}", executable.display());
+                eprintln!("managed ducx ready: {}", executable.display());
                 Ok(())
             }
             ConnectCommand::Claude { settings_path } => {
