@@ -249,12 +249,11 @@ impl DucxRuntime {
 }
 
 async fn terminate_process_group(process_group_id: Option<u32>, child: &mut tokio::process::Child) {
-    if let Some(process_group_id) = process_group_id {
-        let group = format!("-{process_group_id}");
-        let _ = Command::new("/bin/kill")
-            .args(["-KILL", "--", &group])
-            .status()
-            .await;
+    if let Some(process_group_id) = process_group_id
+        && let Some(process_group_id) = rustix::process::Pid::from_raw(process_group_id as i32)
+    {
+        let _ =
+            rustix::process::kill_process_group(process_group_id, rustix::process::Signal::KILL);
     }
     let _ = child.kill().await;
     let _ = child.wait().await;
@@ -390,6 +389,19 @@ pub(crate) fn default_ducx_executable() -> Option<PathBuf> {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    fn process_is_running(pid: &str) -> bool {
+        let output = std::process::Command::new("/bin/ps")
+            .args(["-o", "stat=", "-p", pid])
+            .output()
+            .unwrap();
+        let state = String::from_utf8_lossy(&output.stdout);
+        output.status.success()
+            && state
+                .split_whitespace()
+                .next()
+                .is_some_and(|state| !state.starts_with('Z'))
+    }
 
     #[test]
     fn derives_managed_home_for_ducx_layout() {
@@ -544,15 +556,12 @@ wait
         );
         let descendant_pid = std::fs::read_to_string(home.join("descendant.pid")).unwrap();
         let descendant_pid = descendant_pid.trim();
-        let descendant_alive = std::process::Command::new("/bin/kill")
-            .args(["-0", descendant_pid])
-            .status()
-            .unwrap()
-            .success();
-        if descendant_alive {
-            let _ = std::process::Command::new("/bin/kill")
-                .args(["-KILL", descendant_pid])
-                .status();
+        let descendant_alive = process_is_running(descendant_pid);
+        if descendant_alive
+            && let Ok(process_id) = descendant_pid.parse::<i32>()
+            && let Some(process_id) = rustix::process::Pid::from_raw(process_id)
+        {
+            let _ = rustix::process::kill_process(process_id, rustix::process::Signal::KILL);
         }
 
         assert!(!descendant_alive, "DUCX warmup descendant remained alive");
