@@ -106,6 +106,8 @@
 "settings.forExampleCommunityAPI" = "For example: Community API";
 "settings.siteName" = "Site name";
 "settings.apiURL" = "API URL";
+"settings.apiURLPrompt" = "https://example.com or https://example.com/v1";
+"settings.apiURLHint" = "Enter the API base URL, such as https://example.com, https://example.com/v1, or https://example.com/api/v1. Include /v1 only when the upstream uses it. Full inference endpoints are also supported; do not enter /v1/models.";
 "settings.authBridge" = "Auth bridge";
 "settings.addProvider" = "Add Provider";
 "settings.addProvider2" = "Add Provider";

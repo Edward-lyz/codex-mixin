@@ -215,7 +215,9 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 
 1. 打开 `Codex Mixin.app`。
 2. 点击菜单栏图标，选择 `供应商设置...`。
-3. 选择 provider，填入 API Key。上游地址只填根地址，不要填 `/v1/messages` 或 `/v1/chat/completions`。
+3. 选择 provider，填入 API Key。自定义 provider 填写上游 API 根地址，例如
+   `https://example.com`、`https://example.com/v1` 或 `https://example.com/api/v1`；是否保留
+   `/v1` 以服务实际路径为准。也支持填写完整推理接口，但不要填写 `/v1/models`。
 4. 点击 `启动本地网关`。
 5. 点击 `安装到 Codex...`，明确选择“官方账号模式”或“仅自定义模型模式”。
 6. 重启 Codex App。
@@ -258,7 +260,8 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 | `opencode-go` | OpenAI Responses | `https://opencode.ai/zen/go` | `/v1/responses` | 无 | `/v1/models` | dashboard `/workspace/{id}/go` + `/billing` |
 | `aws-bedrock` | Anthropic Messages (Mantle) | `https://bedrock-mantle.us-east-1.api.aws/anthropic` | `/v1/messages` | 无 | AWS Bedrock control plane | 无默认值 |
 
-固定 preset 的上游地址和路径由 preset 管理；`custom` provider 会自动探测模型列表和响应接口，不发起有效模型推理。
+固定 preset 的上游地址和路径由 preset 管理；`custom` provider 的 Base URL 可包含服务实际使用的
+`/v1` 或 `/api/v1` 前缀，也可以直接填写完整推理接口，但不要填写 `/v1/models`。它会自动探测模型列表和响应接口，不发起有效模型推理。
 Baidu OneAPI 的额度接口必须同时填写额度用户名；CLI 和 App 都会在保存时校验。
 OpenCode Go 的额度显示需要额外填写工作区 ID 和 `opencode.ai` 的 `auth` cookie；
 这两个值可以在浏览器控制台里从 OpenCode Go dashboard 页面取得，cookie 过期后需要重新填写。
@@ -834,7 +837,7 @@ On first launch, it installs itself to the standard user-level location `~/.loca
 
 1. Open `Codex Mixin.app`.
 2. Open `Set Provider and Key...` from the menu bar.
-3. Choose a provider and enter your API key. Curated presets manage their paths; custom providers can set complete endpoint paths in Advanced Connection Settings.
+3. Choose a provider and enter your API key. For a custom provider, enter the upstream API base URL, such as `https://example.com`, `https://example.com/v1`, or `https://example.com/api/v1`. Include `/v1` only when the upstream uses it. Full inference endpoints are also supported; do not enter `/v1/models`.
 4. Click `Start Local Gateway`.
 5. Click `Install to Codex...`, then explicitly choose Official Account Mode or Custom Models Only.
 6. Restart Codex Desktop.
@@ -875,7 +878,9 @@ Click the top tabs or use `Tab` and `Shift-Tab` to change workspaces. The footer
 | `opencode-go` | OpenAI Responses | `https://opencode.ai/zen/go` | `/v1/responses` | None | `/v1/models` | Dashboard `/workspace/{id}/go` + `/billing` |
 | `aws-bedrock` | Anthropic Messages (Mantle) | `https://bedrock-mantle.us-east-1.api.aws/anthropic` | `/v1/messages` | None | AWS Bedrock control plane | None |
 
-Curated presets manage their upstream paths. Custom providers automatically probe versioned
+Curated presets manage their upstream paths. A custom provider's Base URL may include the upstream's
+actual `/v1` or `/api/v1` prefix. Full inference endpoints are also accepted, but do not enter
+`/v1/models`. Custom providers automatically probe versioned
 endpoints first and then retry the corresponding legacy paths without `/v1`; this protocol check
 uses incomplete request bodies and does not run model inference.
 The Baidu OneAPI quota endpoint also requires a quota username; both the CLI and app validate it before saving.

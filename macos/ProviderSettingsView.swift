@@ -336,7 +336,14 @@ private struct ProviderDetailForm: View {
                 } else {
                     if isCustom {
                         TextField("站点名称", text: $formState.displayName)
-                        TextField("API 地址", text: $formState.baseURL)
+                        TextField(
+                            AppLocalization.string("settings.apiURL"),
+                            text: $formState.baseURL,
+                            prompt: Text(AppLocalization.string("settings.apiURLPrompt"))
+                        )
+                        Text(AppLocalization.string("settings.apiURLHint"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         Picker("API 端点", selection: $formState.protocolID) {
                             Text("Responses").tag("open_ai_responses")
                             Text("Messages").tag("anthropic_messages")

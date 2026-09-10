@@ -157,8 +157,11 @@ private struct AddProviderFormView: View {
                         TextField(
                             AppLocalization.string("settings.apiURL"),
                             text: $model.baseURL,
-                            prompt: Text("https://example.com/v1")
+                            prompt: Text(AppLocalization.string("settings.apiURLPrompt"))
                         )
+                        Text(AppLocalization.string("settings.apiURLHint"))
+                            .font(.caption)
+                            .foregroundStyle(.secondary)
                         TextField("官网地址", text: $model.websiteURL, prompt: Text("https://example.com"))
                     }
                 }

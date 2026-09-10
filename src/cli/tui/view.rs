@@ -202,7 +202,12 @@ pub(super) fn render_setup(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App
                 form.focus == 2,
                 false,
             ),
-            form_line("Base URL", &provider.base_url, form.focus == 3, false),
+            form_line(
+                "Base URL (include /v1 if used)",
+                &provider.base_url,
+                form.focus == 3,
+                false,
+            ),
             form_line("Website", &provider.website_url, form.focus == 4, false),
         ]);
     } else if is_aws_bedrock(provider.preset()) {
@@ -1375,7 +1380,12 @@ pub(super) fn render_dialog(
             if form.preset() == "custom" {
                 lines.extend([
                     form_line("Display name", &form.display_name, form.focus == 2, false),
-                    form_line("Base URL", &form.base_url, form.focus == 3, false),
+                    form_line(
+                        "Base URL (include /v1 if used)",
+                        &form.base_url,
+                        form.focus == 3,
+                        false,
+                    ),
                     form_line("Website", &form.website_url, form.focus == 4, false),
                 ]);
             } else if is_aws_bedrock(form.preset()) {
@@ -1465,7 +1475,12 @@ pub(super) fn render_dialog(
             if form.preset == "custom" {
                 lines.extend([
                     form_line("Display name", &form.display_name, form.focus == 0, false),
-                    form_line("Base URL", &form.base_url, form.focus == 1, false),
+                    form_line(
+                        "Base URL (include /v1 if used)",
+                        &form.base_url,
+                        form.focus == 1,
+                        false,
+                    ),
                     form_line("Website", &form.website_url, form.focus == 2, false),
                 ]);
             } else if is_aws_bedrock(&form.preset) {

@@ -106,6 +106,8 @@
 "settings.forExampleCommunityAPI" = "例如：社区公益站";
 "settings.siteName" = "站点名称";
 "settings.apiURL" = "API 地址";
+"settings.apiURLPrompt" = "https://example.com 或 https://example.com/v1";
+"settings.apiURLHint" = "填写 API 根地址，例如 https://example.com、https://example.com/v1 或 https://example.com/api/v1。是否包含 /v1 以服务实际路径为准。也支持完整推理接口，但不要填写 /v1/models。";
 "settings.authBridge" = "认证桥接";
 "settings.addProvider" = "新增供应商";
 "settings.addProvider2" = "新增供应商";
