@@ -1,4 +1,61 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.6.0
+
+- 新增 Provider 模型自动同步：后台每 30 秒轮询各 Provider 的模型增删、自动探测新增模型能力，并在 macOS 发送带应用图标的变更通知
+- 新增 Fusion 时间轮换模式，按时间段把请求路由到不同模型，重叠时间段会被拒绝
+- macOS 把「供应商设置」与「模型测速」合并为「模型与服务」工作台，统一选中对象、草稿应用与问题处理入口
+- 自定义 Provider 可接管 `codex-auto-review` 辅助上游并按 Provider 指定模型；未配置辅助上游时仍走官方模型与官方额度
+- 模型能力改为自动发现：能力来自上游声明、models.dev 或实测探测，不再预置宽松默认值；自定义 Provider 的工具元数据按真实能力生成
+- 能力探测只请求配置好的 Provider 端点，且只在能力未知时执行，取消 7 天到期重探，减少冗余上游请求
+- 修复自定义 Provider 带候选模型列表时的协议与端点探测错误，以及过期探测结果仍被采用的问题
+- 修复 Baidu 预置路由，以及 Anthropic Messages 忽略模型级 `api_path` 的问题
+- 修复客户端密钥同步挂在全局命令分发上导致无关命令失败的问题，`doctor` 新增 `codex_client_key` 检查
+- 修复 `provider add` / `provider update` 提交后阶段失败的错误提示，改为「配置已保存，但 <阶段> 失败」
+- 修复托管 Codex 配置重复写入 header、`base_url` 未更新，以及 custom-only 模式遗留 `forced_login_method` 的问题
+- 修复 TUI 自定义 Provider 不显示 API key、macOS 工具窗口透明异常
+- 修复测速把 reasoning-only 与截断响应判为失败的问题，并补齐 Responses 工具探测缺失的 `type` 字段
+
+<!-- codex-mixin:zh-Hans:end -->
+
+<!-- codex-mixin:zh-Hant:start -->
+## v0.6.0
+
+- 新增 Provider 模型自動同步：背景每 30 秒輪詢各 Provider 的模型增刪、自動探測新增模型能力，並在 macOS 發送帶應用程式圖示的變更通知
+- 新增 Fusion 時間輪換模式，依時間區段把請求路由到不同模型，重疊時段會被拒絕
+- macOS 將「供應商設定」與「模型測速」合併為「模型與服務」工作台，統一選取對象、草稿套用與問題處理入口
+- 自訂 Provider 可接管 `codex-auto-review` 輔助上游並依 Provider 指定模型；未設定輔助上游時仍走官方模型與官方額度
+- 模型能力改為自動探索：能力來自上游宣告、models.dev 或實測探測，不再預設寬鬆值；自訂 Provider 的工具中繼資料依實際能力產生
+- 能力探測只請求已設定的 Provider 端點，且只在能力未知時執行，取消 7 天到期重探，減少多餘上游請求
+- 修正自訂 Provider 帶候選模型清單時的協定與端點探測錯誤，以及過期探測結果仍被採用的問題
+- 修正 Baidu 預設路由，以及 Anthropic Messages 忽略模型層級 `api_path` 的問題
+- 修正客戶端金鑰同步掛在全域命令分派上導致無關命令失敗的問題，`doctor` 新增 `codex_client_key` 檢查
+- 修正 `provider add` / `provider update` 提交後階段失敗的錯誤提示，改為「設定已儲存，但 <階段> 失敗」
+- 修正受管理的 Codex 設定重複寫入 header、`base_url` 未更新，以及 custom-only 模式殘留 `forced_login_method` 的問題
+- 修正 TUI 自訂 Provider 不顯示 API Key、macOS 工具視窗透明異常
+- 修正測速將 reasoning-only 與截斷回應判為失敗的問題，並補齊 Responses 工具探測缺少的 `type` 欄位
+
+<!-- codex-mixin:zh-Hant:end -->
+
+<!-- codex-mixin:en:start -->
+## v0.6.0
+
+- Add automatic provider model sync: poll every provider every 30 seconds for added and removed models, probe new models, and post a model change notification with the app icon on macOS
+- Add Fusion time rotation, routing requests to different models by time range and rejecting overlapping ranges
+- Merge Provider Settings and model benchmarking into one Models and Services workspace on macOS, with unified selection, draft apply, and issue handling
+- Let a custom provider own the `codex-auto-review` auxiliary upstream with a per-provider model, keeping the official model and quota when no auxiliary upstream is configured
+- Discover model capabilities automatically: flags now come from upstream declarations, models.dev, or live probes instead of permissive defaults, and custom-provider tool metadata follows the real capabilities
+- Probe only the configured provider endpoint and only models with unknown capabilities, removing the 7-day re-probe and cutting redundant upstream requests
+- Fix protocol and endpoint discovery for custom providers that list candidate models, and reject stale probe results
+- Fix Baidu preset routing and the Anthropic Messages path ignoring a model-level `api_path`
+- Fix client key sync running on global command dispatch, which made unrelated commands fail; add a `codex_client_key` check to `doctor`
+- Fix `provider add` / `provider update` error reporting to say "configuration was saved, but <stage> failed" for post-commit failures
+- Fix duplicate managed config headers, a stale `base_url`, and the leftover `forced_login_method` that made custom-only mode ignore its auth document
+- Fix the TUI hiding the API key for custom providers and transparent utility windows on macOS
+- Fix benchmarking counting reasoning-only and truncated responses as failures, and declare the tool type in the Responses function-tool probe
+
+<!-- codex-mixin:en:end -->
+
+<!-- codex-mixin:zh-Hans:start -->
 ## v0.5.6
 
 - 完善 Amazon Bedrock 接入：通过 SigV4 发现 Bedrock profile 与 foundation models，AK/SK 请求指向 Bedrock Runtime Anthropic 端点，并加密本地配置；兼容旧 API key 配置
