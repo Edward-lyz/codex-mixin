@@ -112,12 +112,10 @@ jobs:
             exit 1
           fi
           symbols="$(nm -u "$menu_binary")"
-          for symbol in glassEffect backgroundExtensionEffect; do
-            if [[ "$symbols" != *"$symbol"* ]]; then
-              echo "Liquid Glass symbol is missing from the macOS app: $symbol" >&2
-              exit 1
-            fi
-          done
+          if [[ "$symbols" != *"GlassProminentButtonStyle"* ]]; then
+            echo "Liquid Glass button style is missing from the macOS app" >&2
+            exit 1
+          fi
       - name: Package CLI archive
         run: ./scripts/package-cli.sh "${{ matrix.target }}" "${{ steps.version.outputs.version }}" dist/release
       - name: Package Linux installer
