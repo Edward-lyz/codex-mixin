@@ -1,18 +1,20 @@
 import Cocoa
 
+let providerSidebarMinimumWidth: CGFloat = 220
+let providerSidebarIdealWidth: CGFloat = 250
+let providerSidebarMaximumWidth: CGFloat = 300
+let providerModelTableMinimumWidth: CGFloat = 1_100
+let baiduProviderModelTableMinimumWidth: CGFloat = 1_190
+
+func modelTableMinimumWidth(includesRatio: Bool) -> CGFloat {
+    includesRatio ? baiduProviderModelTableMinimumWidth : providerModelTableMinimumWidth
+}
+
 func providerSettingsContentSize(for visibleFrame: NSRect) -> NSSize {
     adaptiveWindowContentSize(
         for: visibleFrame,
-        ideal: NSSize(width: 900, height: 680),
-        minimum: NSSize(width: 820, height: 580)
-    )
-}
-
-func modelBenchmarkContentSize(for visibleFrame: NSRect) -> NSSize {
-    adaptiveWindowContentSize(
-        for: visibleFrame,
-        ideal: NSSize(width: 1_180, height: 660),
-        minimum: NSSize(width: 920, height: 520)
+        ideal: NSSize(width: 1_180, height: 720),
+        minimum: NSSize(width: 960, height: 600)
     )
 }
 

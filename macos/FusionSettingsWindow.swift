@@ -17,6 +17,8 @@ final class FusionSettingsModel: ObservableObject {
     @Published var options: [FusionModelOption] = []
     @Published var selectedPanels: Set<String> = []
     @Published var profileID = "default"
+    @Published var mode = FusionSettingsMode.orchestration
+    @Published var timeRoutes: [FusionTimeRoute] = []
     @Published var judgeModel = ""
     @Published var finalModel = ""
     @Published var minSuccessful = "1"
@@ -43,6 +45,15 @@ final class FusionSettingsModel: ObservableObject {
         let trimmedProfileID = profileID.trimmingCharacters(in: .whitespacesAndNewlines)
         if trimmedProfileID.isEmpty || trimmedProfileID.contains("/") {
             return "Profile ID 不能为空且不能包含 /。"
+        }
+        if mode == .timeRotation {
+            if finalModel.isEmpty { return "请选择未覆盖时段使用的默认模型。" }
+            if finalModel.hasPrefix("mixin/fusion/")
+                || timeRoutes.contains(where: { $0.model.hasPrefix("mixin/fusion/") })
+            {
+                return "Fusion profile 不能递归引用 mixin/fusion/ 模型。"
+            }
+            return fusionTimeRouteValidationError(timeRoutes)
         }
         if !(1...8).contains(selectedPanels.count) {
             return "请选择 1–8 个 Panel 模型。"
@@ -81,6 +92,7 @@ final class FusionSettingsModel: ObservableObject {
                 var optionsByID = Dictionary(uniqueKeysWithValues: fetched.map { ($0.id, $0) })
                 let configuredIDs = loadedProfile.panelModels
                     + [loadedProfile.judgeModel, loadedProfile.finalModel]
+                    + loadedProfile.timeRoutes.map(\.model)
                 for id in configuredIDs where !id.isEmpty && !id.hasPrefix("mixin/fusion/") {
                     optionsByID[id] = optionsByID[id] ?? FusionModelOption(
                         id: id,
@@ -131,6 +143,34 @@ final class FusionSettingsModel: ObservableObject {
         refreshValidationStatus()
     }
 
+    func modeDidChange() {
+        if mode == .timeRotation, timeRoutes.isEmpty, let model = defaultScheduledModel {
+            timeRoutes = [FusionTimeRoute(
+                startMinute: 9 * 60,
+                endMinute: 18 * 60,
+                model: model
+            )]
+        }
+        refreshValidationStatus()
+    }
+
+    func addTimeRoute() {
+        guard timeRoutes.count < 24, let model = defaultScheduledModel else { return }
+        let startMinute = timeRoutes.last?.endMinute ?? 9 * 60
+        let endMinute = (startMinute + 4 * 60) % 1_440
+        timeRoutes.append(FusionTimeRoute(
+            startMinute: startMinute,
+            endMinute: endMinute,
+            model: model
+        ))
+        refreshValidationStatus()
+    }
+
+    func removeTimeRoute(_ id: UUID) {
+        timeRoutes.removeAll { $0.id == id }
+        refreshValidationStatus()
+    }
+
     func refreshValidationStatus(validMessage: String? = nil) {
         if let validationError {
             status = validationError
@@ -150,6 +190,8 @@ final class FusionSettingsModel: ObservableObject {
 
         var profile = loadedProfile
         profile.id = profileID.trimmingCharacters(in: .whitespacesAndNewlines)
+        profile.mode = mode
+        profile.timeRoutes = timeRoutes
         profile.panelModels = options.map(\.id).filter(selectedPanels.contains)
         profile.judgeModel = judgeModel
         profile.finalModel = finalModel
@@ -246,8 +288,15 @@ final class FusionSettingsModel: ObservableObject {
                 && loadedProfile.finalModel.isEmpty)
     }
 
+    private var defaultScheduledModel: String? {
+        if !finalModel.isEmpty { return finalModel }
+        return options.first(where: \.isAvailable)?.id
+    }
+
     private func applyLoadedProfile() {
         profileID = loadedProfile.id
+        mode = loadedProfile.mode
+        timeRoutes = loadedProfile.timeRoutes
         selectedPanels = Set(loadedProfile.panelModels)
         judgeModel = loadedProfile.judgeModel
         finalModel = loadedProfile.finalModel
@@ -261,39 +310,56 @@ final class FusionSettingsModel: ObservableObject {
 private struct FusionSettingsView: View {
     @ObservedObject var model: FusionSettingsModel
     let close: () -> Void
+    @State private var panelQuery = ""
+    @State private var showsAdvancedOptions = false
 
     var body: some View {
         VStack(spacing: 0) {
             Form {
                 profileSection
 
-                Section("Panel 模型（多选）") {
-                    FusionPanelList(model: model)
+                if model.mode == .orchestration {
+                    panelSection
+                    orchestrationSection
+                } else {
+                    timeRotationSection
                 }
 
-                orchestrationSection
                 advancedSection
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
+            .frame(maxWidth: 780, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
             .disabled(model.isBusy)
             .onChange(of: model.selectedPanels) { _ in model.refreshValidationStatus() }
             .onChange(of: model.judgeModel) { _ in model.refreshValidationStatus() }
             .onChange(of: model.finalModel) { _ in model.refreshValidationStatus() }
             .onChange(of: model.minSuccessful) { _ in model.refreshValidationStatus() }
             .onChange(of: model.timeoutMs) { _ in model.refreshValidationStatus() }
+            .onChange(of: model.mode) { _ in model.modeDidChange() }
+            .onChange(of: model.timeRoutes) { _ in model.refreshValidationStatus() }
 
             Divider()
             HStack(spacing: 10) {
-                Text(model.status)
-                    .font(.callout)
+                Image(systemName: model.validationError == nil ? "checkmark.circle" : "exclamationmark.triangle")
                     .foregroundStyle(model.statusColor)
-                    .lineLimit(2)
+                Text(model.status)
+                    .font(.caption)
+                    .foregroundStyle(model.statusColor)
+                    .lineLimit(1)
                 if model.isBusy {
                     ProgressView().controlSize(.small)
                 }
                 Spacer()
-                Button(L10n.Fusion.disableButton, action: model.disableFusion)
+                Menu {
+                    Button(L10n.Fusion.disableButton, action: model.disableFusion)
+                } label: {
+                    Image(systemName: "ellipsis.circle")
+                }
+                .menuStyle(.borderlessButton)
+                .help("更多 Fusion 操作")
+                .accessibilityLabel("更多 Fusion 操作")
                     .disabled(!model.canDisable)
                 Button("关闭", action: close)
                     .keyboardShortcut(.cancelAction)
@@ -302,7 +368,9 @@ private struct FusionSettingsView: View {
                     .liquidGlassProminentButton()
                     .disabled(!model.canSave)
             }
-            .padding(20)
+            .padding(.horizontal, 18)
+            .padding(.vertical, 12)
+            .background(Color(nsColor: .controlBackgroundColor))
         }
         .background(Color(nsColor: .windowBackgroundColor))
     }
@@ -311,10 +379,38 @@ private struct FusionSettingsView: View {
         Section {
             TextField("Profile ID", text: $model.profileID)
                 .onChange(of: model.profileID) { _ in model.refreshValidationStatus() }
+            Picker("运行模式", selection: $model.mode) {
+                ForEach(FusionSettingsMode.allCases) { mode in
+                    Text(mode.title).tag(mode)
+                }
+            }
+            .pickerStyle(.segmented)
         } header: {
             Text("Fusion 模型编排")
         } footer: {
-            Text("多个 Panel 模型并行分析，由 Judge 结构化对比，再由 Final 模型流式回答。")
+            Text(modeDescription)
+        }
+    }
+
+    private var modeDescription: String {
+        switch model.mode {
+        case .orchestration:
+            return "多个 Panel 模型并行分析，由 Judge 结构化对比，再由 Final 模型回答。"
+        case .timeRotation:
+            return "按 Mac 当前本地时间选择模型；未覆盖的时段使用默认模型。"
+        }
+    }
+
+    private var panelSection: some View {
+        Section {
+            TextField("搜索 Panel 模型", text: $panelQuery)
+                .textFieldStyle(.roundedBorder)
+            FusionPanelList(model: model, query: panelQuery)
+                .frame(minHeight: 160, idealHeight: 240, maxHeight: 280)
+        } header: {
+            Text("Panel 模型")
+        } footer: {
+            Text("已选择 \(model.selectedPanels.count) / 8 个；Panel 会并行执行。")
         }
     }
 
@@ -329,17 +425,101 @@ private struct FusionSettingsView: View {
         }
     }
 
+    private var timeRotationSection: some View {
+        Section {
+            Picker("默认模型", selection: $model.finalModel) {
+                modelOptions
+            }
+
+            ForEach($model.timeRoutes) { $route in
+                HStack(spacing: 8) {
+                    DatePicker(
+                        "开始",
+                        selection: timeBinding($route.startMinute),
+                        displayedComponents: .hourAndMinute
+                    )
+                    .labelsHidden()
+                    .frame(width: 92)
+                    Text("至")
+                        .foregroundStyle(.secondary)
+                    DatePicker(
+                        "结束",
+                        selection: timeBinding($route.endMinute),
+                        displayedComponents: .hourAndMinute
+                    )
+                    .labelsHidden()
+                    .frame(width: 92)
+                    Picker("模型", selection: $route.model) {
+                        modelOptions
+                    }
+                    .labelsHidden()
+                    .frame(maxWidth: .infinity)
+                    Button {
+                        model.removeTimeRoute(route.id)
+                    } label: {
+                        Image(systemName: "trash")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("删除时段")
+                    .accessibilityLabel("删除时段")
+                }
+            }
+
+            Button {
+                model.addTimeRoute()
+            } label: {
+                Label("添加时段", systemImage: "plus")
+            }
+            .disabled(model.timeRoutes.count >= 24 || model.options.isEmpty)
+        } header: {
+            Text("时段路由")
+        } footer: {
+            Text("开始时间包含、结束时间不包含；结束早于开始表示跨午夜。时段不能重叠。")
+        }
+    }
+
     private var advancedSection: some View {
         Section {
-            TextField("最少成功 Panel", text: $model.minSuccessful)
-            TextField("单模型超时 (ms)", text: $model.timeoutMs)
-            Toggle("在回答中显示 Panel / Judge 中间结果", isOn: $model.showIntermediateResults)
-            Toggle("允许 Panel 使用进程内只读工具", isOn: $model.panelToolsEnabled)
-        } header: {
-            Text("高级选项")
+            DisclosureGroup("高级选项", isExpanded: $showsAdvancedOptions) {
+                if model.mode == .orchestration {
+                    TextField("最少成功 Panel", text: $model.minSuccessful)
+                    TextField("单模型超时 (ms)", text: $model.timeoutMs)
+                    Toggle(
+                        "在回答中显示 Panel / Judge 中间结果",
+                        isOn: $model.showIntermediateResults
+                    )
+                    Toggle(
+                        "允许 Panel 使用进程内只读工具",
+                        isOn: $model.panelToolsEnabled
+                    )
+                } else {
+                    Text("时段轮转直接路由到当前模型，不运行 Panel 或 Judge。")
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+            }
         } footer: {
-            Text("Fusion 仅在 Plan 模式的新用户轮次运行；进入 Default 执行模式后，后续请求与工具结果续跑均直接交给 Final 模型。")
+            if model.mode == .orchestration {
+                Text("多模型编排仅在 Plan 模式的新用户轮次运行；后续请求直接交给 Final 模型。")
+            }
         }
+    }
+
+    private func timeBinding(_ minute: Binding<Int>) -> Binding<Date> {
+        Binding(
+            get: {
+                Calendar.current.date(
+                    bySettingHour: minute.wrappedValue / 60,
+                    minute: minute.wrappedValue % 60,
+                    second: 0,
+                    of: Date()
+                ) ?? Date()
+            },
+            set: { date in
+                let components = Calendar.current.dateComponents([.hour, .minute], from: date)
+                minute.wrappedValue = (components.hour ?? 0) * 60 + (components.minute ?? 0)
+            }
+        )
     }
 
     @ViewBuilder
@@ -353,30 +533,50 @@ private struct FusionSettingsView: View {
 
 private struct FusionPanelList: View {
     @ObservedObject var model: FusionSettingsModel
+    let query: String
 
     var body: some View {
-        if model.options.isEmpty {
+        if filteredOptions.isEmpty {
             VStack(spacing: 8) {
                 Image(systemName: "rectangle.3.group")
                     .font(.title2)
                     .foregroundStyle(.secondary)
-                Text(L10n.Fusion.noModels)
+                Text(model.options.isEmpty ? L10n.Fusion.noModels : "没有匹配的模型")
                     .multilineTextAlignment(.center)
             }
             .frame(maxWidth: .infinity, maxHeight: .infinity)
         } else {
-            ForEach(model.options, id: \.id) { option in
-                Button {
-                    model.togglePanel(option.id)
-                } label: {
-                    FusionPanelRow(
-                        option: option,
-                        isSelected: model.selectedPanels.contains(option.id)
-                    )
+            ScrollView {
+                LazyVStack(spacing: 0) {
+                    ForEach(Array(filteredOptions.enumerated()), id: \.element.id) { index, option in
+                        Button {
+                            model.togglePanel(option.id)
+                        } label: {
+                            FusionPanelRow(
+                                option: option,
+                                isSelected: model.selectedPanels.contains(option.id)
+                            )
+                            .padding(.horizontal, 4)
+                            .padding(.vertical, 8)
+                        }
+                        .buttonStyle(.plain)
+                        .disabled(model.isBusy)
+                        if index < filteredOptions.count - 1 {
+                            Divider().padding(.leading, 34)
+                        }
+                    }
                 }
-                .buttonStyle(.plain)
-                .disabled(model.isBusy)
             }
+            .scrollIndicators(.visible)
+        }
+    }
+
+    private var filteredOptions: [FusionModelOption] {
+        let query = query.trimmingCharacters(in: .whitespacesAndNewlines)
+        guard !query.isEmpty else { return model.options }
+        return model.options.filter {
+            $0.id.localizedCaseInsensitiveContains(query)
+                || $0.displayName.localizedCaseInsensitiveContains(query)
         }
     }
 }
@@ -425,13 +625,13 @@ final class FusionSettingsWindowController: NSWindowController, NSWindowDelegate
             deleteHandler: deleteHandler
         )
         let window = NSWindow(
-            contentRect: NSRect(x: 0, y: 0, width: 820, height: 700),
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 720),
             styleMask: [.titled, .closable, .miniaturizable, .resizable],
             backing: .buffered,
             defer: false
         )
         window.title = "Fusion 设置"
-        window.minSize = NSSize(width: 700, height: 580)
+        window.minSize = NSSize(width: 760, height: 620)
         configureOpaqueWindow(window)
         window.center()
         super.init(window: window)

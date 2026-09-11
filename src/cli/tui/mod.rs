@@ -504,6 +504,7 @@ struct EditProviderForm {
 struct FusionForm {
     profile_id: String,
     loaded_profile_id: Option<String>,
+    mode: String,
     panel_models: HashSet<String>,
     model_index: usize,
     judge_model: String,

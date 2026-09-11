@@ -1,4 +1,4 @@
-use std::collections::BTreeMap;
+use std::collections::{BTreeMap, HashSet};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -197,7 +197,7 @@ fn apply_official_model_refresh(
 }
 
 pub(crate) async fn probe_selected_models(id: &str) -> anyhow::Result<()> {
-    probe_models(id, None, false, true).await
+    probe_models(id, None, false, false, true).await
 }
 
 pub(crate) async fn probe_new_models(
@@ -205,13 +205,14 @@ pub(crate) async fn probe_new_models(
     model_ids: &[String],
     refresh_clients: bool,
 ) -> anyhow::Result<()> {
-    probe_models(id, Some(model_ids), true, refresh_clients).await
+    probe_models(id, Some(model_ids), true, true, refresh_clients).await
 }
 
 async fn probe_models(
     id: &str,
     model_ids: Option<&[String]>,
     quiet: bool,
+    fallback_only: bool,
     refresh_clients: bool,
 ) -> anyhow::Result<()> {
     let config = required_config()?;
@@ -221,7 +222,7 @@ async fn probe_models(
         .find(|provider| provider.id == id)
         .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?
         .clone();
-    let selected_models = provider
+    let mut selected_models = provider
         .cached_models
         .iter()
         .filter(|model| {
@@ -241,6 +242,18 @@ async fn probe_models(
         !selected_models.is_empty(),
         "provider {id} has no requested cached models to probe"
     );
+    if fallback_only {
+        let runtime_config = GatewayConfig::from_stored_config()?;
+        let capabilities = ProviderCapabilities::from_default_path(&runtime_config)?;
+        let model_ids = capabilities
+            .models_needing_probe(&provider, &selected_models)?
+            .into_iter()
+            .collect::<HashSet<_>>();
+        selected_models.retain(|model| model_ids.contains(&model.id));
+        if selected_models.is_empty() {
+            return Ok(());
+        }
+    }
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(30))
         .build()?;
@@ -473,11 +486,6 @@ pub(super) fn apply_model_selection(
                     id: model.clone(),
                     manually_added: true,
                     context_window: Some(MANUAL_MODEL_CONTEXT_WINDOW),
-                    supports_image: Some(false),
-                    supports_thinking: Some(true),
-                    supports_web_search: Some(false),
-                    supports_tool_search: Some(false),
-                    supports_function_tools: Some(true),
                     ..codex_mixin::provider::ProviderModel::default()
                 });
         }

@@ -1,5 +1,5 @@
 use super::analysis::*;
-use super::profile::FusionProfile;
+use super::profile::{FusionMode, FusionProfile};
 use super::prompts::*;
 use super::render::*;
 use super::routing::{FusionModelProvider, resolve_fusion_model};
@@ -48,9 +48,10 @@ impl FusionEngine {
         routing: Option<&UpstreamRouting>,
     ) -> Result<(ResponseStream, Value), GatewayError> {
         let fusion_model = self.profile.model_slug();
+        let active_model = self.profile.active_model_now();
         let plan = fusion_request_plan(
             &self.executor,
-            &self.profile.final_model,
+            active_model,
             body,
             routing,
             Some(fusion_model),
@@ -67,6 +68,34 @@ impl FusionEngine {
     ) -> ResponseStream {
         let stream = async_stream::stream! {
             let fusion_model = self.profile.model_slug();
+            if self.profile.mode == FusionMode::TimeRotation {
+                let active_model = self.profile.active_model_now().to_owned();
+                match stream_fusion_response(
+                    &self.executor,
+                    &active_model,
+                    body,
+                    &self.headers,
+                    routing.as_ref(),
+                    Some(&fusion_model),
+                )
+                .await
+                {
+                    Ok(mut active_stream) => {
+                        while let Some(chunk) = active_stream.next().await {
+                            yield chunk;
+                        }
+                    }
+                    Err(error) => {
+                        tracing::warn!(
+                            model = active_model,
+                            error = %error,
+                            "fusion time route failed"
+                        );
+                        yield Ok(failed_event(&fusion_model, &error.to_string()));
+                    }
+                }
+                return;
+            }
             let task = extract_user_task(&body);
             let cwd = extract_environment_cwd(&task);
             let executor = if self.profile.panel_tools.enabled {

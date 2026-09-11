@@ -20,7 +20,7 @@ use codex_mixin::application::provider::{
 use codex_mixin::provider::{ProviderModel, redact_provider_error};
 
 #[test]
-fn selecting_unknown_model_adds_it_with_safe_defaults() {
+fn selecting_unknown_model_leaves_capabilities_for_fallback_resolution() {
     let mut provider = codex_mixin::provider::custom_provider("custom", "key");
     provider.base_url = "https://example.test".to_owned();
 
@@ -33,11 +33,11 @@ fn selecting_unknown_model_adds_it_with_safe_defaults() {
     let model = &provider.cached_models[0];
     assert!(model.manually_added);
     assert_eq!(model.context_window, Some(256_000));
-    assert_eq!(model.supports_image, Some(false));
-    assert_eq!(model.supports_thinking, Some(true));
-    assert_eq!(model.supports_web_search, Some(false));
-    assert_eq!(model.supports_tool_search, Some(false));
-    assert_eq!(model.supports_function_tools, Some(true));
+    assert_eq!(model.supports_image, None);
+    assert_eq!(model.supports_thinking, None);
+    assert_eq!(model.supports_web_search, None);
+    assert_eq!(model.supports_tool_search, None);
+    assert_eq!(model.supports_function_tools, None);
 
     let newly_selected =
         apply_model_selection(&mut provider, Vec::new(), &BTreeMap::new()).unwrap();
@@ -376,6 +376,8 @@ fn removing_a_generated_provider_compacts_ids_and_fusion_model_references() {
         providers: vec![first, second, third],
         fusion_profiles: vec![FusionProfile {
             id: "review".to_owned(),
+            mode: Default::default(),
+            time_routes: Vec::new(),
             panel_models: vec![
                 "second-model-custom-2".to_owned(),
                 "third-model-custom-3".to_owned(),

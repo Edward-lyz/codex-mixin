@@ -1,6 +1,6 @@
 use super::probe::*;
-use super::storage::{capability_is_fresh, unix_seconds};
-use super::types::{CAPABILITY_FILE_VERSION, CAPABILITY_TTL, CapabilitySnapshot, UpstreamIdentity};
+use super::storage::unix_seconds;
+use super::types::{CAPABILITY_FILE_VERSION, CapabilitySnapshot, UpstreamIdentity};
 use super::*;
 
 fn test_config(upstream_base_url: &str) -> GatewayConfig {
@@ -35,26 +35,27 @@ fn test_config(upstream_base_url: &str) -> GatewayConfig {
 }
 
 #[test]
-fn caches_failed_probes_until_the_capability_ttl_expires() {
-    let probed_at = 1_000_000;
+fn cached_capabilities_do_not_expire() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("web-search-capabilities.json");
+    let config = test_config("https://one.example");
+    let capabilities = WebSearchCapabilities::load(path, &config).unwrap();
     let capability = ModelWebSearchCapability {
         model: "Claude Haiku 4.5-test-provider".to_owned(),
         provider_id: "test-provider".to_owned(),
         upstream_model: "Claude Haiku 4.5".to_owned(),
-        supported: false,
-        evidence: "probe failed".to_owned(),
-        error: Some("request timed out".to_owned()),
-        probed_at,
+        supported: true,
+        evidence: "old probe".to_owned(),
+        error: None,
+        probed_at: 1,
     };
+    capabilities
+        .models
+        .write()
+        .unwrap()
+        .insert("Claude Haiku 4.5-test-provider".to_owned(), capability);
 
-    assert!(capability_is_fresh(
-        &capability,
-        probed_at + CAPABILITY_TTL.as_secs() - 1
-    ));
-    assert!(!capability_is_fresh(
-        &capability,
-        probed_at + CAPABILITY_TTL.as_secs()
-    ));
+    assert!(capabilities.supports_model("Claude Haiku 4.5-test-provider"));
 }
 
 #[test]
@@ -119,7 +120,23 @@ fn verifies_flattened_release_answers() {
 fn capability_annotation_preserves_provider_hint_until_probe_finishes() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("web-search-capabilities.json");
-    let config = test_config("https://one.example");
+    let mut config = test_config("https://one.example");
+    config.providers[0].cached_models[0].supports_web_search = Some(true);
+    let cached = ModelWebSearchCapability {
+        model: "Claude Haiku 4.5-test-provider".to_owned(),
+        provider_id: "test-provider".to_owned(),
+        upstream_model: "Claude Haiku 4.5".to_owned(),
+        supported: false,
+        evidence: "old probe".to_owned(),
+        error: None,
+        probed_at: 1,
+    };
+    let snapshot = CapabilitySnapshot {
+        version: CAPABILITY_FILE_VERSION,
+        upstream: UpstreamIdentity::from_config(&config),
+        models: BTreeMap::from([(cached.model.clone(), cached)]),
+    };
+    fs::write(&path, serde_json::to_vec_pretty(&snapshot).unwrap()).unwrap();
     let capabilities = WebSearchCapabilities::load(path, &config).unwrap();
     let mut models = vec![ModelInfo {
         id: "Claude Haiku 4.5-test-provider".to_owned(),
@@ -129,6 +146,7 @@ fn capability_annotation_preserves_provider_hint_until_probe_finishes() {
 
     capabilities.annotate_models(&mut models);
 
+    assert!(capabilities.supports_model("Claude Haiku 4.5-test-provider"));
     assert_eq!(models[0].supports_web_search, Some(true));
 }
 

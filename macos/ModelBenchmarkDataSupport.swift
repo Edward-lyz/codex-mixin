@@ -95,10 +95,10 @@ func mergedBenchmarkResult(
         upstreamModel: result.upstreamModel,
         status: result.status,
         ttftMs: result.ttftMs,
-        generationMs: previous?.generationMs,
+        generationMs: nil,
         totalMs: result.totalMs,
         outputTokens: result.outputTokens,
-        tps: previous?.tps,
+        tps: nil,
         error: result.error
     )
 }

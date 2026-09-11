@@ -12,7 +12,7 @@ use axum::{Json, Router};
 use base64::Engine;
 use codex_mixin::anthropic::ModelInfo;
 use codex_mixin::config::{GatewayConfig, ThinkingMode};
-use codex_mixin::fusion::{FusionProfile, PanelToolsConfig};
+use codex_mixin::fusion::{FusionMode, FusionProfile, FusionTimeRoute, PanelToolsConfig};
 use codex_mixin::protocol::sse::drain_events;
 use codex_mixin::provider::{
     ProviderModel, ProviderModelSource, ProviderProtocol, ProviderRegistry, ProviderRequestPolicy,
@@ -1655,6 +1655,8 @@ async fn signs_aws_bedrock_requests_with_aksk() {
 fn fusion_profile() -> FusionProfile {
     FusionProfile {
         id: "default".to_owned(),
+        mode: Default::default(),
+        time_routes: Vec::new(),
         panel_models: vec!["panel-a-custom".to_owned(), "panel-b-custom".to_owned()],
         judge_model: "judge-custom".to_owned(),
         final_model: "final-custom".to_owned(),
@@ -3025,6 +3027,44 @@ async fn fusion_runs_only_in_plan_mode_then_routes_execution_to_final() {
 }
 
 #[tokio::test]
+async fn fusion_time_rotation_routes_directly_to_the_active_model() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    let mut profile = fusion_profile();
+    profile.mode = FusionMode::TimeRotation;
+    profile.time_routes = vec![
+        FusionTimeRoute {
+            start_minute: 0,
+            end_minute: 720,
+            model: "panel-a-custom".to_owned(),
+        },
+        FusionTimeRoute {
+            start_minute: 720,
+            end_minute: 0,
+            model: "panel-a-custom".to_owned(),
+        },
+    ];
+    config.fusion_profiles = vec![profile];
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&fusion_request())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let response_body = response.text().await.unwrap();
+    assert!(!response_body.contains("Fusion · Panel Results"));
+
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(captured[0]["model"], "panel-a");
+}
+
+#[tokio::test]
 async fn fusion_uses_codex_inline_visualization_when_thread_root_is_available() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let codex_home = tempfile::tempdir().unwrap();
@@ -3245,6 +3285,8 @@ async fn fusion_routes_models_across_official_and_upstream_providers() {
     .unwrap();
     config.fusion_profiles = vec![FusionProfile {
         id: "mixed".to_owned(),
+        mode: Default::default(),
+        time_routes: Vec::new(),
         panel_models: vec![
             "official:gpt-5.6-sol".to_owned(),
             "panel-a-custom".to_owned(),

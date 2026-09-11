@@ -80,12 +80,51 @@ mod tests {
     }
 
     #[test]
+    fn custom_models_use_direct_tools_and_self_review() {
+        let template = json!({
+            "models": [{
+                "slug": "gpt-5.4-mini",
+                "tool_mode": "code_mode_only",
+                "auto_review_model_override": null
+            }]
+        });
+        let models = vec![ModelInfo {
+            id: "deepseek-flash-deepseek".to_owned(),
+            owned_by: Some("deepseek".to_owned()),
+            supports_function_tools: Some(true),
+            ..ModelInfo::default()
+        }];
+
+        let catalog = codex_oauth_proxy_catalog(
+            &models,
+            1_000_000,
+            Some(&template),
+            &MetadataResolver::empty(),
+            Some("deepseek"),
+        );
+        let model = catalog["models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|model| model["slug"] == "deepseek-flash-deepseek")
+            .unwrap();
+
+        assert_eq!(catalog["models"][0]["tool_mode"], "code_mode_only");
+        assert!(model.get("tool_mode").is_none());
+        assert_eq!(
+            model["auto_review_model_override"],
+            "deepseek-flash-deepseek"
+        );
+    }
+
+    #[test]
     fn applies_model_metadata_to_context_window_and_modalities() {
         let metadata = MetadataResolver::from_json(&json!({
             "fireworks-ai": {
                 "models": {
                     "minimax-m3": {
                         "attachment": true,
+                        "modalities": {"input": ["text", "image"]},
                         "limit": {"context": 512000, "output": 512000}
                     }
                 }

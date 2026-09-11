@@ -52,17 +52,17 @@ async fn sync_all_provider_models_once() -> bool {
     for provider in providers {
         changed |= sync_provider_models(provider).await;
     }
-    probe_all_stale_selected_models().await;
+    probe_all_missing_selected_models().await;
     refresh_client_models_after_change(changed).await;
     changed
 }
 
-async fn probe_all_stale_selected_models() {
+async fn probe_all_missing_selected_models() {
     let Ok(config) = GatewayConfig::from_stored_config() else {
         return;
     };
     for provider in config.providers {
-        probe_stale_selected_models(&provider.id).await;
+        probe_missing_selected_models(&provider.id).await;
     }
 }
 
@@ -150,7 +150,7 @@ async fn sync_provider_models(provider: ProviderModelRefreshTarget) -> bool {
 }
 
 #[allow(clippy::cognitive_complexity)]
-async fn probe_stale_selected_models(provider_id: &str) {
+async fn probe_missing_selected_models(provider_id: &str) {
     let config = match GatewayConfig::from_stored_config() {
         Ok(config) => config,
         Err(error) => {

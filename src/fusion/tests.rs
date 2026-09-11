@@ -8,6 +8,8 @@ use super::*;
 fn profile() -> FusionProfile {
     FusionProfile {
         id: "default".to_owned(),
+        mode: Default::default(),
+        time_routes: Vec::new(),
         panel_models: vec!["a".to_owned(), "b".to_owned()],
         judge_model: "judge".to_owned(),
         final_model: "final".to_owned(),
@@ -33,6 +35,54 @@ fn validates_panel_bounds_recursion_and_minimum() {
     assert!(value.validate().is_err());
     value = profile();
     value.min_successful = 3;
+    assert!(value.validate().is_err());
+}
+
+#[test]
+fn time_rotation_selects_local_ranges_and_falls_back() {
+    let mut value = profile();
+    value.mode = FusionMode::TimeRotation;
+    value.final_model = "fallback".to_owned();
+    value.time_routes = vec![
+        FusionTimeRoute {
+            start_minute: 8 * 60,
+            end_minute: 18 * 60,
+            model: "day".to_owned(),
+        },
+        FusionTimeRoute {
+            start_minute: 22 * 60,
+            end_minute: 2 * 60,
+            model: "night".to_owned(),
+        },
+    ];
+
+    assert!(value.validate().is_ok());
+    assert_eq!(value.active_model_at_minute(9 * 60), "day");
+    assert_eq!(value.active_model_at_minute(23 * 60), "night");
+    assert_eq!(value.active_model_at_minute(60), "night");
+    assert_eq!(value.active_model_at_minute(20 * 60), "fallback");
+}
+
+#[test]
+fn time_rotation_rejects_overlapping_or_empty_ranges() {
+    let mut value = profile();
+    value.mode = FusionMode::TimeRotation;
+    value.time_routes = vec![
+        FusionTimeRoute {
+            start_minute: 8 * 60,
+            end_minute: 18 * 60,
+            model: "day".to_owned(),
+        },
+        FusionTimeRoute {
+            start_minute: 17 * 60,
+            end_minute: 20 * 60,
+            model: "evening".to_owned(),
+        },
+    ];
+    assert!(value.validate().is_err());
+
+    value.time_routes[1].start_minute = 18 * 60;
+    value.time_routes[1].end_minute = 18 * 60;
     assert!(value.validate().is_err());
 }
 

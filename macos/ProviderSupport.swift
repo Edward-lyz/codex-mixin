@@ -115,6 +115,69 @@ struct ProviderListResponse: Decodable {
     }
 }
 
+struct GatewayStatusProviderReadiness: Decodable {
+    let status: String
+    let routableModelCount: Int
+    let selectedModelCount: Int
+    let availableModelCount: Int
+    let unavailableSelectedModelCount: Int
+    let lastModelRefreshError: String?
+    let issues: [String]
+
+    enum CodingKeys: String, CodingKey {
+        case status
+        case routableModelCount = "routable_model_count"
+        case selectedModelCount = "selected_model_count"
+        case availableModelCount = "available_model_count"
+        case unavailableSelectedModelCount = "unavailable_selected_model_count"
+        case lastModelRefreshError = "last_model_refresh_error"
+        case issues
+    }
+}
+
+struct GatewayStatusProvider: Decodable {
+    let id: String
+    let displayName: String
+    let enabled: Bool
+    let readiness: GatewayStatusProviderReadiness
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case displayName = "display_name"
+        case enabled
+        case readiness
+    }
+}
+
+struct GatewayStatusSnapshot: Decodable {
+    let configured: Bool?
+    let gateway: String?
+    let endpoint: String?
+    let providerReadiness: String?
+    let providers: [GatewayStatusProvider]?
+
+    enum CodingKeys: String, CodingKey {
+        case configured
+        case gateway
+        case endpoint
+        case providerReadiness = "provider_readiness"
+        case providers
+    }
+
+    init(from decoder: Decoder) throws {
+        let values = try decoder.container(keyedBy: CodingKeys.self)
+        configured = try values.decodeIfPresent(Bool.self, forKey: .configured)
+        gateway = try values.decodeIfPresent(String.self, forKey: .gateway)
+        endpoint = try values.decodeIfPresent(String.self, forKey: .endpoint)
+        providerReadiness = try values.decodeIfPresent(String.self, forKey: .providerReadiness)
+        if gateway == "running" {
+            providers = try values.decode([GatewayStatusProvider].self, forKey: .providers)
+        } else {
+            providers = try? values.decode([GatewayStatusProvider].self, forKey: .providers)
+        }
+    }
+}
+
 enum ProviderKind: String, Decodable {
     case configured
     case official
@@ -370,19 +433,42 @@ func manuallyEnteredProviderModel(_ id: String) -> ProviderModelListItem {
             id: id,
             manuallyAdded: true,
             displayName: nil,
-            description: "用户手动指定；未通过模型列表或能力探测验证",
+            description: "用户手动指定；能力将由后台自动补齐",
             ratio: nil,
             priceType: nil,
             contextWindow: manuallyEnteredModelContextWindow,
             protocolID: nil,
-            supportsImage: false,
-            supportsThinking: true,
-            supportsWebSearch: false,
-            supportsToolSearch: false,
-            supportsFunctionTools: true,
+            supportsImage: nil,
+            supportsThinking: nil,
+            supportsWebSearch: nil,
+            supportsToolSearch: nil,
+            supportsFunctionTools: nil,
             capabilityProbeError: nil
         ),
         isAvailable: true,
+        isNew: false
+    )
+}
+
+func unavailableProviderModel(_ id: String) -> ProviderModelListItem {
+    ProviderModelListItem(
+        model: ProviderModelView(
+            id: id,
+            manuallyAdded: false,
+            displayName: nil,
+            description: "该已选模型不在当前模型列表中",
+            ratio: nil,
+            priceType: nil,
+            contextWindow: nil,
+            protocolID: nil,
+            supportsImage: nil,
+            supportsThinking: nil,
+            supportsWebSearch: nil,
+            supportsToolSearch: nil,
+            supportsFunctionTools: nil,
+            capabilityProbeError: nil
+        ),
+        isAvailable: false,
         isNew: false
     )
 }
@@ -393,8 +479,9 @@ func mergedProviderModelItems(
     excludingModelIDs: Set<String>
 ) -> [ProviderModelListItem] {
     let additional = additionalModelIDs.sorted().map(manuallyEnteredProviderModel)
+    let unavailable = provider.unavailableSelectedModels.sorted().map(unavailableProviderModel)
     var seenModelIDs = Set<String>()
-    return (provider.modelItems + additional).filter { model in
+    return (provider.modelItems + unavailable + additional).filter { model in
         !excludingModelIDs.contains(model.id) && seenModelIDs.insert(model.id).inserted
     }
 }
@@ -414,17 +501,13 @@ struct ModelBenchmarkColumnDefinition: Equatable {
 
 func modelBenchmarkColumnDefinitions() -> [ModelBenchmarkColumnDefinition] {
     [
-        .init(id: "selected", title: "加入 Codex", width: 94, minimumWidth: 86, defaultAscending: false),
-        .init(id: "model", title: "上游模型", width: 520, minimumWidth: 260, defaultAscending: true),
-        .init(id: "ttft", title: "TTFT", width: 104, minimumWidth: 82, defaultAscending: true),
-        .init(id: "tps", title: "吞吐", width: 112, minimumWidth: 88, defaultAscending: false),
+        .init(id: "selected", title: "Codex", width: 64, minimumWidth: 56, defaultAscending: false),
+        .init(id: "model", title: "模型", width: 520, minimumWidth: 260, defaultAscending: true),
+        .init(id: "ttft", title: "首 Token", width: 104, minimumWidth: 84, defaultAscending: true),
+        .init(id: "tps", title: "生成速度", width: 112, minimumWidth: 92, defaultAscending: false),
         .init(id: "context", title: "上下文", width: 104, minimumWidth: 84, defaultAscending: false),
         .init(id: "ratio", title: "倍率", width: 86, minimumWidth: 70, defaultAscending: true),
-        .init(id: "image", title: "图片", width: 72, minimumWidth: 62, defaultAscending: false),
-        .init(id: "tool-search", title: "Tool Search", width: 104, minimumWidth: 92, defaultAscending: false),
-        .init(id: "web-search", title: "Web Search", width: 104, minimumWidth: 92, defaultAscending: false),
-        .init(id: "function-tools", title: "Function Tools", width: 116, minimumWidth: 104, defaultAscending: false),
-        .init(id: "thinking", title: "Thinking", width: 88, minimumWidth: 78, defaultAscending: false),
+        .init(id: "capabilities", title: "能力", width: 170, minimumWidth: 150, defaultAscending: false),
     ]
 }
 
@@ -476,7 +559,11 @@ func providerModelSelections(
     additionalModelIDs: [String: Set<String>] = [:]
 ) -> [String: [String]] {
     Dictionary(uniqueKeysWithValues: providers.map { provider in
-        let modelIDs = (provider.modelItems.map(\.id) + Array(additionalModelIDs[provider.id] ?? []))
+        let modelIDs = (
+            provider.modelItems.map(\.id)
+                + provider.unavailableSelectedModels
+                + Array(additionalModelIDs[provider.id] ?? [])
+        )
             .filter { modelID in
                 selectedKeys.contains(
                     providerModelSelectionKey(providerID: provider.id, modelID: modelID)
@@ -510,6 +597,49 @@ func decodeProviderList(_ json: String) throws -> ProviderListResponse {
         return try JSONDecoder().decode(ProviderListResponse.self, from: Data(json.utf8))
     } catch {
         throw GatewayError.command("供应商列表 JSON 无法解析：\(error)")
+    }
+}
+
+func decodeGatewayStatus(_ json: String) throws -> GatewayStatusSnapshot {
+    do {
+        return try JSONDecoder().decode(GatewayStatusSnapshot.self, from: Data(json.utf8))
+    } catch {
+        throw GatewayError.command("网关状态 JSON 无法解析：\(error)")
+    }
+}
+
+func gatewayProviderIssueDetails(_ providers: [GatewayStatusProvider]) -> [String] {
+    providers.flatMap { provider -> [String] in
+        guard provider.enabled, provider.readiness.status == "degraded" else { return [] }
+        let readiness = provider.readiness
+        var details: [String] = []
+        if readiness.issues.contains("credentials_missing") {
+            details.append("\(provider.displayName)：尚未配置密钥")
+        }
+        if readiness.issues.contains("no_routable_models") {
+            if readiness.selectedModelCount == 0, readiness.availableModelCount > 0 {
+                details.append("\(provider.displayName)：还没有加入模型")
+            } else if readiness.availableModelCount == 0 {
+                details.append("\(provider.displayName)：尚未获取模型列表")
+            } else {
+                details.append("\(provider.displayName)：当前已选模型暂不可用")
+            }
+        }
+        if readiness.issues.contains("selected_models_unavailable"),
+           readiness.unavailableSelectedModelCount > 0,
+           readiness.routableModelCount > 0 {
+            details.append(
+                "\(provider.displayName)：\(readiness.unavailableSelectedModelCount) 个已选模型不在当前列表，其余 \(readiness.routableModelCount) 个可用"
+            )
+        }
+        if readiness.issues.contains("model_refresh_failed") {
+            let error = readiness.lastModelRefreshError?
+                .split(whereSeparator: \.isNewline)
+                .joined(separator: " ")
+            let suffix = error.flatMap { $0.isEmpty ? nil : "：\($0)" } ?? ""
+            details.append("\(provider.displayName)：模型列表更新失败\(suffix)")
+        }
+        return details.isEmpty ? ["\(provider.displayName)：配置需要处理"] : details
     }
 }
 

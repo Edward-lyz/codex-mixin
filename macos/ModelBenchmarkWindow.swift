@@ -1,6 +1,47 @@
 import Cocoa
 import SwiftUI
 
+private struct NativeSearchField: NSViewRepresentable {
+    @Binding var text: String
+    let placeholder: String
+
+    func makeCoordinator() -> Coordinator {
+        Coordinator(text: $text)
+    }
+
+    func makeNSView(context: Context) -> NSSearchField {
+        let searchField = NSSearchField()
+        searchField.placeholderString = placeholder
+        searchField.isBezeled = true
+        searchField.bezelStyle = .roundedBezel
+        searchField.focusRingType = .default
+        searchField.sendsSearchStringImmediately = true
+        searchField.target = context.coordinator
+        searchField.action = #selector(Coordinator.searchFieldChanged(_:))
+        return searchField
+    }
+
+    func updateNSView(_ searchField: NSSearchField, context: Context) {
+        context.coordinator.text = $text
+        searchField.placeholderString = placeholder
+        if searchField.stringValue != text {
+            searchField.stringValue = text
+        }
+    }
+
+    final class Coordinator: NSObject {
+        var text: Binding<String>
+
+        init(text: Binding<String>) {
+            self.text = text
+        }
+
+        @objc func searchFieldChanged(_ searchField: NSSearchField) {
+            text.wrappedValue = searchField.stringValue
+        }
+    }
+}
+
 struct ModelBenchmarkTableRow: Identifiable {
     let providerID: String
     let model: ProviderModelListItem
@@ -15,11 +56,23 @@ struct ModelBenchmarkTableRow: Identifiable {
     var tpsSortValue: Double? { result?.tps }
     var contextSortValue: UInt64? { model.contextWindow }
     var ratioSortValue: Double? { benchmarkRatioValue(model.ratio) }
-    var imageSortValue: Int? { model.supportsImage.map { $0 ? 1 : 0 } }
-    var toolSearchSortValue: Int? { model.supportsToolSearch.map { $0 ? 1 : 0 } }
-    var webSearchSortValue: Int? { model.supportsWebSearch.map { $0 ? 1 : 0 } }
-    var functionToolsSortValue: Int? { model.supportsFunctionTools.map { $0 ? 1 : 0 } }
-    var thinkingSortValue: Int? { model.supportsThinking.map { $0 ? 1 : 0 } }
+    var capabilitySortValue: Int {
+        [
+            model.supportsImage,
+            model.supportsThinking,
+            model.supportsFunctionTools,
+            model.supportsToolSearch,
+            model.supportsWebSearch,
+        ].reduce(0) { score, capability in
+            score + (capability == true ? 1 : 0)
+        }
+    }
+}
+
+struct ProviderModelSelectionUpdate {
+    let providerID: String
+    let modelIDs: [String]
+    let modelContexts: [String: UInt64]
 }
 
 @MainActor
@@ -30,8 +83,6 @@ final class ModelBenchmarkModel: ObservableObject {
     let saveSelectionsHandler: (
         [String: [String]], [String: [String: UInt64]], OperationProgress
     ) async throws -> Void
-    let discoverHandler: (String, @escaping (String) -> Void) async throws -> Void
-    let probeHandler: (String, @escaping (String) -> Void) async throws -> Void
 
     @Published var providers: [ProviderView] = []
     @Published var selectedProviderID: String?
@@ -43,15 +94,14 @@ final class ModelBenchmarkModel: ObservableObject {
     @Published var selectionFilter = "all"
     @Published var modeSelection = 1
     @Published var timeoutSeconds = 5
-    @Published var statusTitle = "请选择 Provider"
+    @Published var statusTitle = "请选择服务商"
     @Published var statusColor = Color(nsColor: .secondaryLabelColor)
     @Published var summary = "默认只测试首 token 延迟（TTFT）"
     @Published var determinateProgress: Double?
     @Published var snapshot: ModelBenchmarkSnapshot?
     @Published var isSavingSelections = false
     @Published var isLaunchingBenchmark = false
-    @Published var isDiscoveringModels = false
-    @Published var isProbingCapabilities = false
+    @Published var selectionConflictProviderIDs: Set<String> = []
 
     private(set) var resultCache: [String: ModelBenchmarkResult] = [:]
     private(set) var manualModelIDs: [String: Set<String>] = [:]
@@ -59,6 +109,7 @@ final class ModelBenchmarkModel: ObservableObject {
     private(set) var savedManualModelContexts: [String: [String: UInt64]] = [:]
     private(set) var removedManualModelIDs: [String: Set<String>] = [:]
     private var pollingTask: Task<Void, Never>?
+    var providerListDidLoad: ((ProviderListResponse, String?) -> Void)?
 
     init(
         startHandler: @escaping (Int, String, Int) async throws -> ModelBenchmarkSnapshot,
@@ -66,16 +117,12 @@ final class ModelBenchmarkModel: ObservableObject {
         loadProvidersHandler: @escaping () async throws -> ProviderListResponse,
         saveSelectionsHandler: @escaping (
             [String: [String]], [String: [String: UInt64]], OperationProgress
-        ) async throws -> Void,
-        discoverHandler: @escaping (String, @escaping (String) -> Void) async throws -> Void,
-        probeHandler: @escaping (String, @escaping (String) -> Void) async throws -> Void
+        ) async throws -> Void
     ) {
         self.startHandler = startHandler
         self.fetchHandler = fetchHandler
         self.loadProvidersHandler = loadProvidersHandler
         self.saveSelectionsHandler = saveSelectionsHandler
-        self.discoverHandler = discoverHandler
-        self.probeHandler = probeHandler
     }
 
     var selectedProvider: ProviderView? {
@@ -90,13 +137,29 @@ final class ModelBenchmarkModel: ObservableObject {
         selectedModelKeys != savedModelKeys || manualModelContexts != savedManualModelContexts
     }
 
+    var selectedProviderDirty: Bool {
+        guard let selectedProviderID else { return false }
+        return hasSelectionChanges(for: selectedProviderID)
+    }
+
+    var selectedProviderHasExternalChange: Bool {
+        selectedProviderID.map(selectionConflictProviderIDs.contains) == true
+    }
+
     var isBusy: Bool {
-        isSavingSelections || isLaunchingBenchmark || isDiscoveringModels || isProbingCapabilities
-            || snapshot?.status == "running"
+        isSavingSelections || isLaunchingBenchmark || snapshot?.status == "running"
     }
 
     var selectedVisibleCount: Int {
         visibleRows.filter { selectedModelKeys.contains($0.id) && $0.model.isAvailable }.count
+    }
+
+    var appliedModelCount: Int {
+        selectedProvider?.selectedModels.count ?? 0
+    }
+
+    var benchmarkActionTitle: String {
+        "测试已加入的 \(appliedModelCount) 个模型"
     }
 
     func stopPolling() {
@@ -111,6 +174,14 @@ final class ModelBenchmarkModel: ObservableObject {
         reloadProviders()
     }
 
+    func refreshFromGatewayForPresentation() async {
+        stopPolling()
+        await refreshFromGateway()
+        if snapshot?.status == "running" {
+            beginPolling()
+        }
+    }
+
     func selectProvider(_ providerID: String?) {
         selectedProviderID = providerID
         rebuildRows()
@@ -121,7 +192,7 @@ final class ModelBenchmarkModel: ObservableObject {
     }
 
     func setSelected(_ row: ModelBenchmarkTableRow, isSelected: Bool) {
-        guard row.model.isAvailable, !isBusy else { return }
+        guard !isBusy, row.model.isAvailable || !isSelected else { return }
         if isSelected {
             selectedModelKeys.insert(row.id)
         } else {
@@ -205,8 +276,81 @@ final class ModelBenchmarkModel: ObservableObject {
         }
     }
 
+    func selectionUpdate(for providerID: String) -> ProviderModelSelectionUpdate? {
+        guard hasSelectionChanges(for: providerID),
+              let provider = providers.first(where: { $0.id == providerID })
+        else {
+            return nil
+        }
+        let selections = providerModelSelections(
+            [provider],
+            selectedKeys: selectedModelKeys,
+            additionalModelIDs: manualModelIDs
+        )
+        let selectedContexts = (manualModelContexts[providerID] ?? [:]).filter { modelID, _ in
+            selectedModelKeys.contains(
+                providerModelSelectionKey(providerID: providerID, modelID: modelID)
+            )
+        }
+        return ProviderModelSelectionUpdate(
+            providerID: providerID,
+            modelIDs: selections[providerID] ?? [],
+            modelContexts: selectedContexts
+        )
+    }
+
+    func selectionChangeCounts(for providerID: String) -> (added: Int, removed: Int) {
+        let prefix = "\(providerID)\u{1f}"
+        let selected = Set(selectedModelKeys.filter { $0.hasPrefix(prefix) })
+        let saved = Set(savedModelKeys.filter { $0.hasPrefix(prefix) })
+        return (selected.subtracting(saved).count, saved.subtracting(selected).count)
+    }
+
+    func markSelectionSaved(for providerID: String) {
+        let prefix = "\(providerID)\u{1f}"
+        savedModelKeys = Set(savedModelKeys.filter { !$0.hasPrefix(prefix) })
+            .union(Set(selectedModelKeys.filter { $0.hasPrefix(prefix) }))
+        if let contexts = manualModelContexts[providerID], !contexts.isEmpty {
+            savedManualModelContexts[providerID] = contexts
+        } else {
+            savedManualModelContexts.removeValue(forKey: providerID)
+        }
+        selectionConflictProviderIDs.remove(providerID)
+    }
+
+    func discardSelectionDrafts() {
+        selectedModelKeys = savedModelKeys
+        manualModelIDs.removeAll()
+        removedManualModelIDs.removeAll()
+        manualModelContexts = savedManualModelContexts
+        selectionConflictProviderIDs.removeAll()
+        rebuildRows()
+    }
+
+    func discardSelectionDraft(for providerID: String) {
+        let prefix = "\(providerID)\u{1f}"
+        selectedModelKeys = Set(selectedModelKeys.filter { !$0.hasPrefix(prefix) })
+            .union(Set(savedModelKeys.filter { $0.hasPrefix(prefix) }))
+        manualModelIDs.removeValue(forKey: providerID)
+        removedManualModelIDs.removeValue(forKey: providerID)
+        if let contexts = savedManualModelContexts[providerID] {
+            manualModelContexts[providerID] = contexts
+        } else {
+            manualModelContexts.removeValue(forKey: providerID)
+        }
+        selectionConflictProviderIDs.remove(providerID)
+        rebuildRows()
+    }
+
+    func acknowledgeSelectedExternalChange() {
+        guard let selectedProviderID else { return }
+        selectionConflictProviderIDs.remove(selectedProviderID)
+    }
+
     func startBenchmark() {
-        guard let providerID = selectedProviderID, !isBusy, !dirty else { return }
+        guard let providerID = selectedProviderID, !isBusy, !selectedProviderDirty,
+              appliedModelCount > 0
+        else { return }
         let timeout = timeoutSeconds
         let targetOutputTokens = modeSelection
         UserDefaults.standard.set(timeout, forKey: "modelBenchmarkTimeoutSecondsV2")
@@ -231,50 +375,6 @@ final class ModelBenchmarkModel: ObservableObject {
         }
     }
 
-    func refreshModels() {
-        guard let provider = selectedProvider, provider.supportsModelRefresh, !isBusy, !dirty else { return }
-        let providerID = provider.id
-        let providerName = selectedProvider?.displayName ?? providerID
-        isDiscoveringModels = true
-        resetProgress()
-        setStatus("正在刷新 \(providerName) 的模型…", color: .secondary)
-        runStreaming {
-            try await self.discoverHandler(providerID) { progress in
-                Task { @MainActor in
-                    self.handleProgress(progress)
-                }
-            }
-        } onSuccess: {
-            try await self.loadProviders(selecting: providerID)
-            self.resetProgress(to: 1)
-            self.setStatus("已刷新 \(providerName) 的模型", color: .green)
-        } onFailure: { error in
-            self.resetProgress(to: 0)
-            self.presentFailure(title: "刷新模型失败", error: error)
-        }
-    }
-
-    func probeCapabilities() {
-        guard let provider = selectedProvider, provider.kind == .configured, !isBusy else { return }
-        isProbingCapabilities = true
-        resetProgress()
-        setStatus("正在探测 \(provider.displayName) 已加入 Codex 的模型…", color: .secondary)
-        runStreaming {
-            try await self.probeHandler(provider.id) { progress in
-                Task { @MainActor in
-                    self.handleProgress(progress)
-                }
-            }
-        } onSuccess: {
-            try await self.loadProviders(selecting: provider.id)
-            self.resetProgress(to: 1)
-            self.setStatus("已完成 \(provider.displayName) 已加入模型的能力探测", color: .green)
-        } onFailure: { error in
-            self.resetProgress(to: 0)
-            self.presentFailure(title: "探测模型能力失败", error: error)
-        }
-    }
-
     func reloadProviders(selecting providerID: String? = nil) {
         Task { @MainActor [weak self] in
             guard let self else { return }
@@ -284,6 +384,37 @@ final class ModelBenchmarkModel: ObservableObject {
                 handleProviderLoadFailure(error)
             }
         }
+    }
+
+    func applyProviderList(_ response: ProviderListResponse, selecting providerID: String?) {
+        let previousSelected = selectedModelKeys
+        let previousSaved = savedModelKeys
+        let changedKeys = previousSelected.union(previousSaved).filter {
+            previousSelected.contains($0) != previousSaved.contains($0)
+        }
+        providers = response.providers
+        reconcileManualModelState()
+        selectedProviderID = providerID ?? selectedProviderID
+            ?? providers.first(where: { $0.kind == .configured })?.id
+        let loadedSaved = selectedProviderModelKeys(providers)
+        for provider in providers where hasSelectionChanges(for: provider.id) {
+            let prefix = "\(provider.id)\u{1f}"
+            let previousProviderSaved = Set(previousSaved.filter { $0.hasPrefix(prefix) })
+            let loadedProviderSaved = Set(loadedSaved.filter { $0.hasPrefix(prefix) })
+            if previousProviderSaved != loadedProviderSaved {
+                selectionConflictProviderIDs.insert(provider.id)
+            }
+        }
+        savedModelKeys = loadedSaved
+        selectedModelKeys = loadedSaved
+        for key in changedKeys {
+            if previousSelected.contains(key) {
+                selectedModelKeys.insert(key)
+            } else {
+                selectedModelKeys.remove(key)
+            }
+        }
+        rebuildRows()
     }
 
     func rebuildRows(
@@ -312,6 +443,10 @@ final class ModelBenchmarkModel: ObservableObject {
             switch filter {
             case "selected": matchesFilter = selectedModelKeys.contains(key)
             case "new": matchesFilter = model.isNew
+            case "attention":
+                matchesFilter = !model.isAvailable
+                    || resultCache[key].map { $0.status == "failed" || $0.status == "timed_out" }
+                        == true
             default: matchesFilter = true
             }
             guard matchesQuery && matchesFilter else { return nil }
@@ -344,17 +479,18 @@ final class ModelBenchmarkModel: ObservableObject {
         }
     }
 
+    private func hasSelectionChanges(for providerID: String) -> Bool {
+        let prefix = "\(providerID)\u{1f}"
+        let selected = Set(selectedModelKeys.filter { $0.hasPrefix(prefix) })
+        let saved = Set(savedModelKeys.filter { $0.hasPrefix(prefix) })
+        return selected != saved
+            || manualModelContexts[providerID] != savedManualModelContexts[providerID]
+    }
+
     private func loadProviders(selecting providerID: String?) async throws {
         let response = try await loadProvidersHandler()
-        providers = response.providers
-        manualModelContexts = [:]
-        savedManualModelContexts = [:]
-        reconcileManualModelState()
-        selectedProviderID = providerID ?? selectedProviderID
-            ?? providers.first(where: { $0.kind == .configured })?.id
-        selectedModelKeys = selectedProviderModelKeys(providers)
-        savedModelKeys = selectedModelKeys
-        rebuildRows()
+        applyProviderList(response, selecting: providerID)
+        providerListDidLoad?(response, selectedProviderID)
     }
 
     private func handleProviderLoadFailure(_ error: Error) {
@@ -448,7 +584,6 @@ final class ModelBenchmarkModel: ObservableObject {
     }
 
     private func applySnapshotStatus() {
-        guard !isDiscoveringModels else { return }
         guard let currentSnapshot = snapshot else {
             setStatus("尚无测速结果", color: .secondary)
             summary = "默认只测试首 token 延迟（TTFT）"
@@ -473,7 +608,7 @@ final class ModelBenchmarkModel: ObservableObject {
             )
         case "completed":
             if providerResults.isEmpty {
-                setStatus("当前 Provider 尚未测速", color: .secondary)
+                setStatus("当前服务商尚未测速", color: .secondary)
             } else {
                 setStatus(
                     "测速完成：成功 \(completed)，超时 \(timedOut)，失败 \(failed)",
@@ -492,52 +627,22 @@ final class ModelBenchmarkModel: ObservableObject {
         }
     }
 
-    private func runStreaming(
-        _ operation: @escaping () async throws -> Void,
-        onSuccess: @escaping () async throws -> Void,
-        onFailure: @escaping (Error) -> Void
-    ) {
-        // The handler itself reports streaming progress; completion is centralized here.
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            defer {
-                isDiscoveringModels = false
-                isProbingCapabilities = false
-            }
-            do {
-                try await operation()
-                try await onSuccess()
-            } catch {
-                onFailure(error)
-            }
-        }
-    }
-
-    private func presentFailure(title: String, error: Error) {
-        presentBenchmarkError(title: title, message: localizedErrorDescription(error))
-    }
-
     private func setStatus(_ title: String, color: Color) {
         statusTitle = title
         statusColor = color
-    }
-
-    private func resetProgress(to value: Double? = nil) {
-        determinateProgress = value
-    }
-
-    private func handleProgress(_ rawProgress: String) {
-        statusTitle = localizedProgressLabel(rawProgress)
-        statusColor = .secondary
-        if let counts = modelCapabilityProbeCounts(rawProgress) {
-            determinateProgress = Double(counts.completed) / Double(counts.total)
-        }
     }
 
 }
 
 struct ModelBenchmarkRootView: View {
     @ObservedObject var model: ModelBenchmarkModel
+    var embedded = false
+    var onApplyChanges: (() -> Void)? = nil
+    var canApplyChanges = false
+    var applySummary: String? = nil
+    var hasExternalDraft = false
+    var isExternallyBusy = false
+    @State private var showsManualModelEntry = false
     @State private var sortOrder: [KeyPathComparator<ModelBenchmarkTableRow>] = [
         KeyPathComparator(\ModelBenchmarkTableRow.model.id, comparator: .localizedStandard),
     ]
@@ -549,7 +654,11 @@ struct ModelBenchmarkRootView: View {
 
             modelTableArea
             .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .background(Color.clear)
+            .background(Color(nsColor: .textBackgroundColor))
+            .overlay {
+                Rectangle()
+                    .strokeBorder(Color(nsColor: .separatorColor), lineWidth: 0.5)
+            }
 
             Divider()
             statusBar
@@ -567,6 +676,7 @@ struct ModelBenchmarkRootView: View {
         .onChange(of: model.selectionFilter) { _ in
             model.rebuildRows(sortOverride: sortOrder)
         }
+        .animation(.easeInOut(duration: 0.18), value: showsManualModelEntry)
     }
 
     @ViewBuilder
@@ -574,7 +684,15 @@ struct ModelBenchmarkRootView: View {
         if model.visibleRows.isEmpty {
             modelTableEmptyState
         } else {
-            modelTable
+            GeometryReader { geometry in
+                ScrollView(.horizontal, showsIndicators: true) {
+                    modelTable
+                        .frame(
+                            width: max(geometry.size.width, minimumModelTableWidth),
+                            height: geometry.size.height
+                        )
+                }
+            }
         }
     }
 
@@ -591,21 +709,40 @@ struct ModelBenchmarkRootView: View {
 
     private var emptyStateTitle: String {
         model.selectedProvider == nil
-            ? "没有可用的 Provider"
-            : "当前 Provider 没有模型"
+            ? "没有可用的服务商"
+            : "当前服务商没有模型"
     }
 
+    private var minimumModelTableWidth: CGFloat {
+        modelTableMinimumWidth(
+            includesRatio: model.selectedProvider?.presetID == "baidu-oneapi"
+        )
+    }
+
+    @ViewBuilder
     private var modelTable: some View {
-        Table(model.visibleRows, sortOrder: $sortOrder) {
-            selectedColumn
-            modelColumn
-            latencyColumn
-            throughputColumn
-            contextColumn
-            ratioColumn
-            capabilityColumns
+        if model.selectedProvider?.presetID == "baidu-oneapi" {
+            Table(model.visibleRows, sortOrder: $sortOrder) {
+                selectedColumn
+                modelColumn
+                latencyColumn
+                throughputColumn
+                contextColumn
+                ratioColumn
+                capabilityColumns
+            }
+            .scrollContentBackground(.hidden)
+        } else {
+            Table(model.visibleRows, sortOrder: $sortOrder) {
+                selectedColumn
+                modelColumn
+                latencyColumn
+                throughputColumn
+                contextColumn
+                capabilityColumns
+            }
+            .scrollContentBackground(.hidden)
         }
-        .scrollContentBackground(.hidden)
     }
 
     private var providerBinding: Binding<String?> {
@@ -630,108 +767,158 @@ struct ModelBenchmarkRootView: View {
     }
 
     private var benchmarkToolbar: some View {
-        HStack(spacing: 10) {
-            Picker("Provider", selection: providerBinding) {
-                ForEach(model.providerOptions, id: \.id) { option in
-                    Text(option.displayName).tag(Optional(option.id))
+        HStack(spacing: 8) {
+            if !embedded {
+                Picker("服务商", selection: providerBinding) {
+                    ForEach(model.providerOptions, id: \.id) { option in
+                        Text(option.displayName).tag(Optional(option.id))
+                    }
                 }
+                .labelsHidden()
+                .frame(width: 190)
             }
-            .labelsHidden()
-            .frame(width: 190)
 
-            Picker("测速模式", selection: modeBinding) {
-                Text("延迟（TTFT）").tag(1)
-                Text("完整（TTFT + 吞吐）").tag(100)
-            }
-            .labelsHidden()
-            .frame(width: 180)
-
-            Picker("超时", selection: timeoutBinding) {
-                ForEach([5, 10, 20, 30, 60], id: \.self) { seconds in
-                    Text("\(seconds) 秒").tag(seconds)
-                }
-            }
-            .labelsHidden()
-            .frame(width: 96)
-
-            Button(action: model.refreshModels) {
-                Label("刷新模型", systemImage: "arrow.clockwise")
-            }
-            .disabled(model.isBusy || model.dirty || model.selectedProvider?.supportsModelRefresh != true)
-
-            Button(action: model.probeCapabilities) {
-                Label("探测已加入模型", systemImage: "waveform.path.ecg")
-            }
-            .disabled(
-                model.isBusy || model.dirty || model.selectedVisibleCount == 0
-                    || model.selectedProvider?.kind != .configured
+            NativeSearchField(
+                text: searchBinding,
+                placeholder: "搜索当前服务商的模型"
             )
+            .frame(minWidth: 220, idealWidth: 320, maxWidth: 420)
+            .layoutPriority(1)
+            .accessibilityLabel("搜索当前服务商的模型")
 
-            Spacer()
-
-            Button(action: model.startBenchmark) {
-                Label("测速", systemImage: "speedometer")
-            }
-            .keyboardShortcut(.defaultAction)
-            .liquidGlassProminentButton()
-            .disabled(
-                model.isBusy || model.dirty || model.selectedVisibleCount == 0
-                    || model.selectedProvider?.kind != .configured
-            )
-        }
-        .padding(.horizontal, 20)
-        .padding(.top, 18)
-        .padding(.bottom, 12)
-    }
-
-    private var selectionToolbar: some View {
-        VStack(spacing: 8) {
-            HStack(spacing: 8) {
-                Image(systemName: "magnifyingglass")
-                    .foregroundStyle(.secondary)
-
-                TextField("搜索当前 Provider 的模型", text: searchBinding)
-                    .textFieldStyle(.roundedBorder)
-
+            Menu {
                 Picker("筛选", selection: filterBinding) {
                     Text("全部模型").tag("all")
                     Text("已加入 Codex").tag("selected")
                     Text("新增").tag("new")
+                    Text("需要处理").tag("attention")
                 }
-                .labelsHidden()
-                .frame(width: 150)
-
-                Button("全选", action: model.selectAllVisible)
-                    .disabled(model.isBusy || model.visibleRows.isEmpty)
-
-                Button("全不选", action: model.selectNoneVisible)
-                    .disabled(model.isBusy || model.visibleRows.isEmpty)
-
-                Button {
-                    model.saveSelections()
-                } label: {
-                    Label("保存模型选择", systemImage: "square.and.arrow.down")
-                }
-                .liquidGlassProminentButton()
-                .disabled(!model.dirty || model.isBusy)
+            } label: {
+                Label(filterTitle, systemImage: "line.3.horizontal.decrease")
             }
+            .menuStyle(.borderlessButton)
+            .fixedSize()
 
+            modelActionsMenu
+
+            Spacer()
+
+            primaryAction
+        }
+        .padding(.horizontal, 20)
+        .padding(.top, 14)
+        .padding(.bottom, 12)
+    }
+
+    @ViewBuilder
+    private var selectionToolbar: some View {
+        if showsManualModelEntry {
             HStack(spacing: 8) {
                 TextField("手动输入模型 ID（可不在 /v1/models 中）", text: $model.manualModelID)
                     .textFieldStyle(.roundedBorder)
                     .onSubmit(model.addManualModel)
                 Button("添加并选中", action: model.addManualModel)
                     .disabled(
-                        model.isBusy || model.selectedProvider?.kind != .configured
+                        model.isBusy || isExternallyBusy
+                            || model.selectedProvider?.kind != .configured
                             || model.manualModelID.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty
                     )
-                Text("默认：Thinking、Function Tools")
+                Text("能力将由后台自动补齐")
                     .font(.caption)
                     .foregroundStyle(.secondary)
+                Button {
+                    showsManualModelEntry = false
+                } label: {
+                    Image(systemName: "xmark")
+                }
+                .buttonStyle(.borderless)
+                .help("收起手动添加")
             }
+            .padding(.horizontal, 20)
+            .padding(.bottom, 12)
+            .transition(.move(edge: .top).combined(with: .opacity))
         }
-        .padding(.horizontal, 20)
-        .padding(.bottom, 12)
+    }
+
+    private var filterTitle: String {
+        switch model.selectionFilter {
+        case "selected": return "已加入"
+        case "new": return "新增"
+        case "attention": return "需处理"
+        default: return "全部"
+        }
+    }
+
+    private var modelActionsMenu: some View {
+        Menu {
+            Picker("测速内容", selection: modeBinding) {
+                Text("仅测试延迟（TTFT）").tag(1)
+                Text("测试延迟与吞吐").tag(100)
+            }
+
+            Picker("请求超时", selection: timeoutBinding) {
+                ForEach([5, 10, 20, 30, 60], id: \.self) { seconds in
+                    Text("\(seconds) 秒").tag(seconds)
+                }
+            }
+
+            Divider()
+
+            Button("全选当前结果", action: model.selectAllVisible)
+                .disabled(model.isBusy || isExternallyBusy || model.visibleRows.isEmpty)
+            Button("取消选择当前结果", action: model.selectNoneVisible)
+                .disabled(model.isBusy || isExternallyBusy || model.visibleRows.isEmpty)
+            Button("手动添加模型…") {
+                showsManualModelEntry = true
+            }
+            .disabled(model.isBusy || isExternallyBusy || model.selectedProvider?.kind != .configured)
+        } label: {
+            Image(systemName: "ellipsis.circle")
+        }
+        .menuStyle(.borderlessButton)
+        .help(benchmarkConfigurationSummary)
+        .accessibilityLabel("更多模型操作")
+    }
+
+    @ViewBuilder
+    private var primaryAction: some View {
+        if hasPendingChanges, let onApplyChanges {
+            Button(action: onApplyChanges) {
+                Label("应用更改", systemImage: "square.and.arrow.down")
+            }
+            .keyboardShortcut("s", modifiers: .command)
+            .liquidGlassProminentButton()
+            .disabled(!canApplyChanges)
+            .help(applySummary ?? "应用当前服务商的更改")
+        } else if onApplyChanges == nil, model.dirty {
+            Button {
+                model.saveSelections()
+            } label: {
+                Label("保存模型选择", systemImage: "square.and.arrow.down")
+            }
+            .liquidGlassProminentButton()
+            .disabled(model.isBusy)
+        } else {
+            Button(action: model.startBenchmark) {
+                Label(model.benchmarkActionTitle, systemImage: "speedometer")
+            }
+            .keyboardShortcut(.defaultAction)
+            .liquidGlassProminentButton()
+            .disabled(
+                model.isBusy || isExternallyBusy || model.appliedModelCount == 0
+                    || model.selectedProvider?.kind != .configured
+            )
+            .help(benchmarkConfigurationSummary)
+        }
+    }
+
+    private var hasPendingChanges: Bool {
+        hasExternalDraft || model.selectedProviderDirty
+    }
+
+    private var benchmarkConfigurationSummary: String {
+        let mode = model.modeSelection == 1 ? "仅测试延迟（TTFT）" : "测试延迟与吞吐"
+        return "\(mode)，请求超时 \(model.timeoutSeconds) 秒"
     }
 
     private var modeBinding: Binding<Int> {
@@ -749,17 +936,20 @@ struct ModelBenchmarkRootView: View {
     }
 
     private var selectedColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
-        TableColumn("加入 Codex", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.isSelectedSortValue)) { row in
+        TableColumn("Codex", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.isSelectedSortValue)) { row in
             Toggle("", isOn: selectionBinding(row))
                 .labelsHidden()
-                .disabled(!row.model.isAvailable || model.isBusy)
+                .disabled(
+                    (!row.model.isAvailable && !model.isSelected(row))
+                        || model.isBusy || isExternallyBusy
+                )
         }
-        .width(min: 82, ideal: 92)
+        .width(min: 56, ideal: 64)
     }
 
     private var modelColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
         TableColumn(
-            "上游模型",
+            "模型",
             sortUsing: KeyPathComparator(
                 \ModelBenchmarkTableRow.model.id,
                 comparator: .localizedStandard
@@ -767,11 +957,11 @@ struct ModelBenchmarkRootView: View {
         ) { row in
             modelCell(row)
         }
-        .width(min: 280, ideal: 460)
+        .width(min: 260, ideal: 520)
     }
 
     private var latencyColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
-        TableColumn("TTFT", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.ttftSortValue)) { row in
+        TableColumn("首 Token", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.ttftSortValue)) { row in
             latencyCell(row)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
@@ -779,11 +969,11 @@ struct ModelBenchmarkRootView: View {
     }
 
     private var throughputColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
-        TableColumn("吞吐", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.tpsSortValue)) { row in
+        TableColumn("生成速度", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.tpsSortValue)) { row in
             throughputCell(row)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .width(min: 90, ideal: 112)
+        .width(min: 92, ideal: 112)
     }
 
     private var contextColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
@@ -796,7 +986,7 @@ struct ModelBenchmarkRootView: View {
                     Text("K")
                         .foregroundStyle(.secondary)
                 }
-                .disabled(model.isBusy)
+                .disabled(model.isBusy || isExternallyBusy)
                 .help("手动模型上下文，单位 K；修改后保存模型选择")
             } else {
                 Text(row.model.contextWindow.map(formatContextWindow) ?? "-")
@@ -815,48 +1005,14 @@ struct ModelBenchmarkRootView: View {
         .width(min: 70, ideal: 86)
     }
 
-    @TableColumnBuilder<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>>
     private var capabilityColumns: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
-        imageColumn
-        toolSearchColumn
-        webSearchColumn
-        functionToolsColumn
-        thinkingColumn
-    }
-
-    private var imageColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
-        TableColumn("图片", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.imageSortValue)) { row in
-            capabilityCell(title: capabilityTitle(row.model.supportsImage), error: nil)
+        TableColumn(
+            "能力",
+            sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.capabilitySortValue)
+        ) { row in
+            capabilityCell(row)
         }
-        .width(min: 62, ideal: 72)
-    }
-
-    private var toolSearchColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
-        TableColumn("Tool Search", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.toolSearchSortValue)) { row in
-            capabilityCell(title: capabilityTitle(row.model.supportsToolSearch), error: row.model.capabilityProbeError)
-        }
-        .width(min: 94, ideal: 106)
-    }
-
-    private var webSearchColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
-        TableColumn("Web Search", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.webSearchSortValue)) { row in
-            capabilityCell(title: capabilityTitle(row.model.supportsWebSearch), error: row.model.capabilityProbeError)
-        }
-        .width(min: 94, ideal: 106)
-    }
-
-    private var functionToolsColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
-        TableColumn("Function Tools", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.functionToolsSortValue)) { row in
-            capabilityCell(title: capabilityTitle(row.model.supportsFunctionTools), error: row.model.capabilityProbeError)
-        }
-        .width(min: 108, ideal: 120)
-    }
-
-    private var thinkingColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
-        TableColumn("Thinking", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.thinkingSortValue)) { row in
-            capabilityCell(title: capabilityTitle(row.model.supportsThinking), error: nil)
-        }
-        .width(min: 80, ideal: 88)
+        .width(min: 150, ideal: 170)
     }
 
     private func selectionBinding(_ row: ModelBenchmarkTableRow) -> Binding<Bool> {
@@ -878,6 +1034,11 @@ struct ModelBenchmarkRootView: View {
         var suffixes: [String] = []
         if row.model.isNew { suffixes.append("新增") }
         if !row.model.isAvailable { suffixes.append("不可用") }
+        let isSaved = model.savedModelKeys.contains(row.id)
+        let isSelected = model.selectedModelKeys.contains(row.id)
+        if isSaved != isSelected {
+            suffixes.append(isSelected ? "待加入" : "待移除")
+        }
         let suffix = suffixes.isEmpty ? "" : " · \(suffixes.joined(separator: " / "))"
         return HStack(spacing: 6) {
             Text((displayName.map { "\(row.model.id) · \($0)" } ?? row.model.id) + suffix)
@@ -895,7 +1056,7 @@ struct ModelBenchmarkRootView: View {
                         .foregroundStyle(.secondary)
                 }
                 .buttonStyle(.borderless)
-                .disabled(model.isBusy)
+                .disabled(model.isBusy || isExternallyBusy)
                 .help("删除手动模型；保存模型选择后生效")
             }
         }
@@ -928,9 +1089,54 @@ struct ModelBenchmarkRootView: View {
             .help(row.model.priceType ?? "")
     }
 
-    private func capabilityCell(title: String, error: String?) -> some View {
-        Text(title)
-            .help(error ?? "")
+    private func capabilityCell(_ row: ModelBenchmarkTableRow) -> some View {
+        HStack(spacing: 8) {
+            capabilityIcon(
+                title: "图片输入",
+                systemImage: "photo",
+                supported: row.model.supportsImage,
+                error: row.model.capabilityProbeError
+            )
+            capabilityIcon(
+                title: "Thinking",
+                systemImage: "brain.head.profile",
+                supported: row.model.supportsThinking,
+                error: row.model.capabilityProbeError
+            )
+            capabilityIcon(
+                title: "Function Tools",
+                systemImage: "hammer",
+                supported: row.model.supportsFunctionTools,
+                error: row.model.capabilityProbeError
+            )
+            capabilityIcon(
+                title: "Tool Search",
+                systemImage: "magnifyingglass",
+                supported: row.model.supportsToolSearch,
+                error: row.model.capabilityProbeError
+            )
+            capabilityIcon(
+                title: "Web Search",
+                systemImage: "globe",
+                supported: row.model.supportsWebSearch,
+                error: row.model.capabilityProbeError
+            )
+        }
+    }
+
+    private func capabilityIcon(
+        title: String,
+        systemImage: String,
+        supported: Bool?,
+        error: String?
+    ) -> some View {
+        let description = capabilityDescription(title: title, supported: supported, error: error)
+        return Image(systemName: systemImage)
+            .frame(width: 18)
+            .foregroundStyle(capabilityColor(supported))
+            .opacity(supported == false ? 0.55 : 1)
+            .help(description)
+            .accessibilityLabel(description)
     }
 
     private var statusBar: some View {
@@ -939,7 +1145,7 @@ struct ModelBenchmarkRootView: View {
                 Text(model.summary)
                     .font(.caption)
                     .foregroundStyle(.secondary)
-                Text(model.statusTitle)
+                Text(pendingChangesStatus ?? model.statusTitle)
                     .font(.callout.weight(.medium))
                     .foregroundStyle(model.statusColor)
                     .lineLimit(1)
@@ -950,79 +1156,22 @@ struct ModelBenchmarkRootView: View {
                 ProgressView(value: model.determinateProgress ?? 0)
                     .progressViewStyle(.linear)
                     .frame(width: 220)
-            } else {
+            } else if model.isBusy {
                 ProgressView()
                     .controlSize(.small)
             }
         }
         .padding(.horizontal, 20)
-        .padding(.vertical, 12)
-    }
-}
-
-final class ModelBenchmarkWindowController: NSWindowController, NSWindowDelegate {
-    private let model: ModelBenchmarkModel
-
-    init(
-        startHandler: @escaping (Int, String, Int) async throws -> ModelBenchmarkSnapshot,
-        fetchHandler: @escaping () async throws -> ModelBenchmarkSnapshot?,
-        loadProvidersHandler: @escaping () async throws -> ProviderListResponse,
-        saveSelectionsHandler: @escaping (
-            [String: [String]], [String: [String: UInt64]], OperationProgress
-        ) async throws -> Void,
-        discoverHandler: @escaping (String, @escaping (String) -> Void) async throws -> Void,
-        probeHandler: @escaping (String, @escaping (String) -> Void) async throws -> Void
-    ) {
-        model = ModelBenchmarkModel(
-            startHandler: startHandler,
-            fetchHandler: fetchHandler,
-            loadProvidersHandler: loadProvidersHandler,
-            saveSelectionsHandler: saveSelectionsHandler,
-            discoverHandler: discoverHandler,
-            probeHandler: probeHandler
-        )
-        let visibleFrame = NSScreen.main?.visibleFrame
-            ?? NSRect(x: 0, y: 0, width: 1_280, height: 800)
-        let window = NSWindow(
-            contentRect: NSRect(origin: .zero, size: modelBenchmarkContentSize(for: visibleFrame)),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
-            backing: .buffered,
-            defer: false
-        )
-        window.title = "模型选择与测速"
-        window.minSize = NSSize(width: 920, height: 520)
-        window.toolbarStyle = .unified
-        configureOpaqueWindow(window)
-        window.center()
-        super.init(window: window)
-        window.delegate = self
-        installContent()
-        configurePersistentWindow(window)
+        .padding(.vertical, 8)
+        .background(Color(nsColor: .controlBackgroundColor))
     }
 
-    required init?(coder: NSCoder) {
-        fatalError("init(coder:) has not been implemented")
-    }
-
-    func present() {
-        showWindow(nil)
-        if let window {
-            presentPersistentWindow(window)
+    private var pendingChangesStatus: String? {
+        if isExternallyBusy {
+            return "正在更新当前服务商配置…"
         }
-        model.resetForPresentation()
-    }
-
-    func windowWillClose(_ notification: Notification) {
-        model.stopPolling()
-    }
-
-    private func installContent() {
-        let rootView = ModelBenchmarkRootView(model: model)
-        let hostingController = NSHostingController(rootView: rootView)
-        if #available(macOS 14.0, *) {
-            hostingController.sceneBridgingOptions = [.toolbars]
-        }
-        window?.contentViewController = hostingController
+        guard hasExternalDraft || model.selectedProviderDirty else { return nil }
+        return "先应用更改，再测试。测速不会自动保存选择。"
     }
 }
 
@@ -1033,9 +1182,23 @@ private func compareOptionalNumbers<T: BinaryInteger>(
     compareOptionalNumbers(left.map(Double.init), right.map(Double.init))
 }
 
-private func capabilityTitle(_ supported: Bool?) -> String {
-    guard let supported else { return "-" }
-    return supported ? "支持" : "不支持"
+private func capabilityDescription(title: String, supported: Bool?, error: String?) -> String {
+    let status: String
+    switch supported {
+    case true: status = "支持"
+    case false: status = "不支持"
+    case nil: status = "未知"
+    }
+    guard let error, !error.isEmpty else { return "\(title)：\(status)" }
+    return "\(title)：\(status)。能力探测：\(error)"
+}
+
+private func capabilityColor(_ supported: Bool?) -> Color {
+    switch supported {
+    case true: return .accentColor
+    case false: return Color(nsColor: .tertiaryLabelColor)
+    case nil: return .orange
+    }
 }
 
 private func compareOptionalNumbers(

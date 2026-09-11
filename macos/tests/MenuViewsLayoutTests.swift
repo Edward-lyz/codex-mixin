@@ -334,7 +334,7 @@ struct MenuViewsLayoutTests {
         precondition(quotaLabels == ["5h", "1 周", "月度", "余额"])
         let providerIssue = "Baidu OneAPI：模型 unreachable-model 当前不可达"
         let serviceView = serviceMenuView(
-            title: "本地网关运行中 · Provider 降级",
+            title: "本地服务运行中 · 1 个服务商需要处理",
             endpoint: "http://127.0.0.1:8787/v1",
             statusDetail: providerIssue,
             isRunning: true,

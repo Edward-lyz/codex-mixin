@@ -12,6 +12,7 @@ use crate::anthropic::ModelInfo;
 use crate::benchmark::BenchmarkTarget;
 use crate::config::GatewayConfig;
 use crate::error::GatewayError;
+use crate::fusion::FusionMode;
 use crate::provider::{MetadataResolver, ProviderRegistry, catalog_model_slug};
 use crate::web_search::WebSearchCapabilities;
 
@@ -163,21 +164,33 @@ impl CatalogService {
     fn append_fusion_models(&self, models: &mut Vec<ModelInfo>) {
         models.extend(self.config.fusion_profiles.iter().map(|profile| ModelInfo {
             id: profile.model_slug(),
-            display_name: Some(format!(
-                "Fusion ({}): {} → judge {}",
-                profile.id,
-                profile.panel_models.join("+"),
-                profile.judge_model
-            )),
+            display_name: Some(match profile.mode {
+                FusionMode::Orchestration => format!(
+                    "Fusion ({}): {} → judge {}",
+                    profile.id,
+                    profile.panel_models.join("+"),
+                    profile.judge_model
+                ),
+                FusionMode::TimeRotation => {
+                    format!("Fusion ({}): time rotation", profile.id)
+                }
+            }),
             object: Some("model".to_owned()),
             created: None,
             owned_by: Some("codex-mixin".to_owned()),
-            description: Some(format!(
-                "Fusion pipeline: {} panel models in parallel, judged by {}, finalized by {}",
-                profile.panel_models.len(),
-                profile.judge_model,
-                profile.final_model
-            )),
+            description: Some(match profile.mode {
+                FusionMode::Orchestration => format!(
+                    "Fusion pipeline: {} panel models in parallel, judged by {}, finalized by {}",
+                    profile.panel_models.len(),
+                    profile.judge_model,
+                    profile.final_model
+                ),
+                FusionMode::TimeRotation => format!(
+                    "Fusion time rotation: {} scheduled ranges, defaulting to {}",
+                    profile.time_routes.len(),
+                    profile.final_model
+                ),
+            }),
             ratio: None,
             price_type: None,
             context_window: None,

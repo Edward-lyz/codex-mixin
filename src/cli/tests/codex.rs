@@ -261,7 +261,7 @@ async fn oauth_install_falls_back_to_local_cache_when_official_fetch_fails() {
 
 #[test]
 fn custom_only_provider_uses_bedrock_identity_without_unsupported_overrides() {
-    let mut doc = DocumentMut::new();
+    let mut doc = r#"forced_login_method = "chatgpt""#.parse::<DocumentMut>().unwrap();
 
     upsert_codex_config(
         &mut doc,
@@ -285,12 +285,14 @@ fn custom_only_provider_uses_bedrock_identity_without_unsupported_overrides() {
     assert!(provider.get("wire_api").is_none());
     assert!(provider.get("requires_openai_auth").is_none());
     assert!(provider.get("supports_websockets").is_none());
+    assert!(doc.get("forced_login_method").is_none());
 }
 
 #[test]
 fn official_provider_preserves_existing_amazon_bedrock_override() {
     let mut doc = r#"
 model_provider = "amazon-bedrock"
+forced_login_method = "chatgpt"
 
 [model_providers.amazon-bedrock]
 base_url = "https://bedrock-runtime.us-west-2.amazonaws.com"
@@ -310,6 +312,7 @@ base_url = "https://bedrock-runtime.us-west-2.amazonaws.com"
     .unwrap();
 
     assert_eq!(doc["model_provider"].as_str(), Some("codex-mixin"));
+    assert_eq!(doc["forced_login_method"].as_str(), Some("chatgpt"));
     assert_eq!(
         doc["model_providers"]["amazon-bedrock"]["base_url"].as_str(),
         Some("https://bedrock-runtime.us-west-2.amazonaws.com")
@@ -1001,6 +1004,29 @@ fn syncs_dynamic_gateway_port_to_managed_custom_provider() {
         doc["model_providers"]["other"]["base_url"].as_str(),
         Some("https://example.test/v1")
     );
+}
+
+#[test]
+fn service_sync_migrates_custom_only_login_policy() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    fs::write(
+        &config_path,
+        format!(
+            "{MANAGED_CONFIG_HEADER}\nmodel_provider = \"amazon-bedrock\"\nforced_login_method = \"chatgpt\"\n\n[model_providers.amazon-bedrock]\nbase_url = \"http://127.0.0.1:8787/v1\"\n"
+        ),
+    )
+    .unwrap();
+
+    assert!(
+        sync_managed_codex_gateway_base_url(&config_path, "127.0.0.1:8787".parse().unwrap())
+            .unwrap()
+    );
+    let doc = fs::read_to_string(&config_path)
+        .unwrap()
+        .parse::<DocumentMut>()
+        .unwrap();
+    assert!(doc.get("forced_login_method").is_none());
 }
 
 #[test]

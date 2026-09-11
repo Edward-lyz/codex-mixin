@@ -110,16 +110,8 @@ extension AppDelegate {
                     _ = try await self.runGateway(["refresh-codex-catalog"])
                     await self.refreshStatusNow()
                     progress?.advance(to: 3)
-                }
-            )
-        }
-        providerSettingsWindowController?.present()
-    }
-
-    @objc func showModelBenchmark() {
-        if modelBenchmarkWindowController == nil {
-            modelBenchmarkWindowController = ModelBenchmarkWindowController(
-                startHandler: { [weak self] timeoutSeconds, providerID, targetOutputTokens in
+                },
+                benchmarkStartHandler: { [weak self] timeoutSeconds, providerID, targetOutputTokens in
                     guard let self else {
                         throw GatewayError.command("Codex Mixin 已退出")
                     }
@@ -135,12 +127,12 @@ extension AppDelegate {
                     }
                     return snapshot
                 },
-                fetchHandler: { [weak self] in
+                benchmarkFetchHandler: { [weak self] in
                     guard let self else {
                         throw GatewayError.command("Codex Mixin 已退出")
                     }
                     if self.serviceEndpoint == nil,
-                       let status = try? await self.runGateway(["status"])
+                       let status = try? await self.runGateway(["status", "--json"])
                     {
                         self.applyGatewayStatus(status)
                     }
@@ -151,74 +143,30 @@ extension AppDelegate {
                         targetOutputTokens: nil
                     )
                 },
-                loadProvidersHandler: { [weak self] in
+                saveModelSelectionHandler: { [weak self] update in
                     guard let self else {
                         throw GatewayError.command("Codex Mixin 已退出")
                     }
-                    return try decodeProviderList(
-                        try await self.runGateway(["providers", "list", "--json"])
-                    )
-                },
-                saveSelectionsHandler: { [weak self] selections, modelContexts, progress in
-                    guard let self else {
-                        throw GatewayError.command("Codex Mixin 已退出")
+                    var arguments = ["providers", "select", update.providerID]
+                    for modelID in update.modelIDs {
+                        arguments.append(contentsOf: ["--model", modelID])
                     }
-                    progress.advance(to: 0)
-                    for providerID in selections.keys.sorted() {
-                        var arguments = ["providers", "select", providerID]
-                        for modelID in selections[providerID] ?? [] {
-                            arguments.append(contentsOf: ["--model", modelID])
-                        }
-                        for (modelID, contextWindow) in (modelContexts[providerID] ?? [:]).sorted(by: {
-                            $0.key.localizedStandardCompare($1.key) == .orderedAscending
-                        }) {
-                            arguments.append(contentsOf: [
-                                "--model-context", "\(modelID)=\(contextWindow)",
-                            ])
-                        }
-                        _ = try await self.runGateway(arguments)
+                    for (modelID, contextWindow) in update.modelContexts.sorted(by: {
+                        $0.key.localizedStandardCompare($1.key) == .orderedAscending
+                    }) {
+                        arguments.append(contentsOf: [
+                            "--model-context", "\(modelID)=\(contextWindow)",
+                        ])
                     }
-                    self.serviceBusy = true
-                    self.serviceStatus = "正在应用模型选择..."
-                    self.serviceEndpoint = nil
-                    defer { self.serviceBusy = false }
-                    progress.advance(to: 1)
-                    try await self.restartGatewayProcess()
-                    let status = try await self.waitForGatewayStatus()
-                    self.applyGatewayStatus(status)
-                    progress.advance(to: 2)
-                    _ = try await self.runGateway(["refresh-codex-catalog"])
-                    await self.refreshStatusNow()
-                    progress.advance(to: 3)
-                },
-                discoverHandler: { [weak self] providerID, onProgress in
-                    guard let self else {
-                        throw GatewayError.command("Codex Mixin 已退出")
-                    }
-                    _ = try await self.runGatewayStreaming(
-                        ["providers", "discover", providerID],
-                        onProgress: onProgress
-                    )
-                },
-                probeHandler: { [weak self] providerID, onProgress in
-                    guard let self else {
-                        throw GatewayError.command("Codex Mixin 已退出")
-                    }
-                    _ = try await self.runGatewayStreaming(
-                        ["providers", "probe", providerID],
-                        onProgress: onProgress
-                    )
-                    self.serviceBusy = true
-                    self.serviceStatus = "正在应用模型能力..."
-                    self.serviceEndpoint = nil
-                    defer { self.serviceBusy = false }
-                    try await self.restartGatewayProcess()
-                    let status = try await self.waitForGatewayStatus()
-                    self.applyGatewayStatus(status)
+                    _ = try await self.runGateway(arguments)
                 }
             )
         }
-        modelBenchmarkWindowController?.present()
+        providerSettingsWindowController?.present()
+    }
+
+    @objc func showModelBenchmark() {
+        configureLogin()
     }
 
     @objc func showFusionSettings() {
@@ -267,7 +215,12 @@ extension AppDelegate {
     }
 
     @objc func manuallyReportSessions() {
-        guard !serviceBusy else { return }
+        guard !serviceBusy,
+              confirm(
+                  title: "手动上报全部本地 Session？",
+                  message: "此功能仅用于自动上报数据异常时的修复。一次性重放全部本地 Session 可能让上报数据和用量统计在短时间内突然升高。确认异常确实需要修复后再继续。"
+              )
+        else { return }
         serviceBusy = true
         serviceStatus = "正在准备 DUCX 全量上报..."
         serviceEndpoint = nil

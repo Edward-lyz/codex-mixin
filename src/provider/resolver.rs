@@ -118,7 +118,7 @@ impl MetadataResolver {
                         context_window,
                         max_output_tokens: model.limit.as_ref().and_then(|limit| limit.output),
                         input_modalities: models_dev_input_modalities(model),
-                        supports_image: Some(model_supports_image(model)),
+                        supports_image: model_supports_image(model),
                         supports_thinking: model.reasoning,
                         source: format!("models.dev:{key}"),
                     },
@@ -279,7 +279,7 @@ fn models_dev_input_modalities(model: &ModelsDevModel) -> Vec<String> {
         .as_ref()
         .map(|modalities| modalities.input.clone())
         .unwrap_or_default();
-    input_modalities(Some(declared), model.attachment == Some(true))
+    input_modalities(Some(declared), model_supports_image(model) == Some(true))
 }
 
 static DECIMAL_MODEL_VERSION: LazyLock<Regex> =
@@ -473,7 +473,7 @@ pub(crate) fn provider_models_from_catalog(
                     .limit
                     .as_ref()
                     .and_then(|limit| limit.context.or(limit.input)),
-                supports_image: Some(model_supports_image(model)),
+                supports_image: model_supports_image(model),
                 supports_thinking: model.reasoning,
                 ..ProviderModel::default()
             },
@@ -554,16 +554,17 @@ pub(crate) fn fill_model_gaps_with_resolver(
     }
 }
 
-fn model_supports_image(model: &ModelsDevModel) -> bool {
-    if model.attachment == Some(true) {
-        return true;
+fn model_supports_image(model: &ModelsDevModel) -> Option<bool> {
+    match model.modalities.as_ref() {
+        Some(modalities) => Some(
+            modalities
+                .input
+                .iter()
+                .any(|modality| modality.eq_ignore_ascii_case("image")),
+        ),
+        None if model.attachment == Some(false) => Some(false),
+        None => None,
     }
-    model.modalities.as_ref().is_some_and(|modalities| {
-        modalities
-            .input
-            .iter()
-            .any(|modality| modality.eq_ignore_ascii_case("image"))
-    })
 }
 
 #[cfg(test)]
@@ -589,6 +590,7 @@ mod tests {
                 "models": {
                     "claude-haiku-4-5": {
                         "attachment": true,
+                        "modalities": {"input": ["text", "image"]},
                         "limit": {"context": 200000, "output": 64000}
                     }
                 }
@@ -618,7 +620,11 @@ mod tests {
                     },
                     "video-only": {
                         "attachment": true,
-                        "modalities": {"input": ["video"]},
+                        "modalities": {"input": ["text", "video", "audio", "pdf"]},
+                        "limit": {"context": 32768, "output": 8192}
+                    },
+                    "attachment-only": {
+                        "attachment": true,
                         "limit": {"context": 32768, "output": 8192}
                     }
                 }
@@ -630,9 +636,15 @@ mod tests {
         let gemini = resolver.resolve("gemini-video", 100_000);
         assert_eq!(gemini.input_modalities, ["text", "image"]);
 
-        // Nothing valid declared falls back to the vision flag.
+        // Non-image attachments must not be classified as image input.
         let video_only = resolver.resolve("video-only", 100_000);
-        assert_eq!(video_only.input_modalities, ["text", "image"]);
+        assert_eq!(video_only.input_modalities, ["text", "audio"]);
+        assert_eq!(video_only.supports_image, Some(false));
+
+        // The generic attachment flag does not identify the attachment type.
+        let attachment_only = resolver.resolve("attachment-only", 100_000);
+        assert_eq!(attachment_only.input_modalities, ["text"]);
+        assert_eq!(attachment_only.supports_image, None);
     }
 
     #[test]
@@ -643,6 +655,7 @@ mod tests {
                     "claude-haiku-4-5": {
                         "name": "Claude Haiku 4.5",
                         "attachment": true,
+                        "modalities": {"input": ["text", "image"]},
                         "reasoning": true,
                         "limit": {"context": 200000, "output": 64000}
                     }

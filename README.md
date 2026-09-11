@@ -214,14 +214,14 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 #### 本地 Codex App 用户
 
 1. 打开 `Codex Mixin.app`。
-2. 点击菜单栏图标，选择 `供应商设置...`。
-3. 选择 provider，填入 API Key。自定义 provider 填写上游 API 根地址，例如
+2. 点击菜单栏图标，选择 `模型与服务...`。
+3. 选择服务商，展开连接设置并填入 API Key。自定义 provider 填写上游 API 根地址，例如
    `https://example.com`、`https://example.com/v1` 或 `https://example.com/api/v1`；是否保留
    `/v1` 以服务实际路径为准。也支持填写完整推理接口，但不要填写 `/v1/models`。
-4. 点击 `启动本地网关`。
-5. 点击 `安装到 Codex...`，明确选择“官方账号模式”或“仅自定义模型模式”。
-6. 重启 Codex App。
-7. 在 Codex 模型选择器里选择可用模型。
+4. 在同一窗口勾选要加入 Codex 的模型，点击 `应用更改`；需要时可直接测试已加入模型的响应速度。
+5. 点击 `启动本地网关`。
+6. 点击 `安装到 Codex...`，明确选择“官方账号模式”或“仅自定义模型模式”。
+7. 重启 Codex App，在 Codex 模型选择器里选择可用模型。
 
 界面和完整操作入口见上方 [Product tour](#product-tour--产品界面)。
 
@@ -469,10 +469,8 @@ base_url = "http://127.0.0.1:<自动分配端口>/v1"
 - `暂停本地网关`：停止当前后台网关。
 - `重启本地网关`：按当前登录自启设置重启服务。
 - `登录时启动并开启服务`：登录后同时打开菜单栏 App 和网关；开启时将当前 daemon 切换为 launchd 服务，关闭时将仍在运行的服务切回后台 daemon。
-- `刷新状态与额度`：刷新服务状态和额度进度条。
-- `供应商设置...`：新增、删除和启停 provider，填写 API Key、上游根地址和额度信息，并刷新上游模型缓存。
-- `模型选择与测速...`：搜索、筛选和勾选要加入 Codex 的模型。保存模型选择和测速是独立按钮；选择有改动时必须先保存，测速不会隐式保存或重启网关。刷新模型只更新模型目录；探测已加入模型会验证其高级能力。下方结果表按模型显示 TTFT、TPS、usage、总耗时和状态，可点击表头切换升降序。关闭窗口或退出 App 不会停止后台测速，但重开窗口会清空上次测速结果。
-- `Fusion 设置...`：选择 1–8 个 Panel 模型以及 Judge、Final 模型，并控制是否在回答中展示中间结果；也可以关闭 Fusion，从 Codex 模型选择器中移除对应虚拟模型。
+- `模型与服务...`：在一个窗口中新增、删除和启停服务商，填写连接与额度信息，搜索、筛选并勾选要加入 Codex 的模型。连接设置和当前服务商的模型选择通过一个 `应用更改` 提交，只重启一次网关。测速只覆盖已应用的模型，不会隐式保存草稿；模型行直接显示 TTFT 和 TPS。网关会在后台自动刷新模型列表，并仅对供应商和 models.dev 都未给出完整能力的模型探测一次；结果持久缓存，不按时间重复探测。窗口打开期间会自动呈现最新结果。关闭窗口不会停止后台测速，重开后会读取网关保存的测速进度。
+- `Fusion 设置...`：可以选择 Panel → Judge → Final 多模型编排，或按 Mac 本地时间为不同时段路由不同模型；也可以关闭 Fusion，从 Codex 模型选择器中移除对应虚拟模型。
 - `安装到 Codex...`：选择有账号或仅自定义模型模式；先确保网关已启动，再按实际动态端口生成模型目录并写入托管 Codex 配置。未检测到 `models_cache.json` 时默认选择仅自定义模型。
 - `从 Codex 恢复...`：恢复安装前备份并删除托管模型目录。
 - `关于 Codex Mixin...`：显示当前 App 版本、Build 号和 GitHub 仓库链接，可一键复制版本信息；还可以打开只在本机生成的互动 Mixin 卡片并保存或分享 PNG。每次打开关于页时会随机选择一张与上次不同的当月 NASA 背景，窗口打开期间保持不变；老用户的天数会从 `~/.codex-mixin` 最早的创建时间回迁，全新安装则从第一次记录开始。
@@ -485,7 +483,9 @@ base_url = "http://127.0.0.1:<自动分配端口>/v1"
 
 ### Fusion 多模型编排
 
-Fusion 虚拟模型使用 `Panel → Judge → Final` 三段式管线。打开菜单栏的 `Fusion 设置...` 或 TUI 的 Fusion 页面，选择 1–8 个并行 Panel 模型、一个 Judge 模型和一个 Final 模型；保存后，`mixin/fusion/<profile-id>` 会出现在 Codex 模型选择器中。不再使用时，在同一界面点击 `关闭 Fusion`，网关会删除该 profile 并在刷新 catalog 后把它从模型选择器中移除。
+Fusion 虚拟模型支持两种运行模式。`多模型编排` 使用 `Panel → Judge → Final` 三段式管线；`按时间轮转` 根据 Mac 当前本地时间直接路由到命中时段的模型，未覆盖时段使用默认模型。时段可以跨午夜，但不能相互重叠。保存后，`mixin/fusion/<profile-id>` 会出现在 Codex 模型选择器中。不再使用时，在同一界面关闭 Fusion，网关会删除该 profile 并刷新模型目录。
+
+菜单栏 App 可以编辑两种模式；TUI 当前只编辑多模型编排配置，遇到按时间轮转配置时会拒绝覆盖。
 
 Fusion 只在 Plan 模式的新用户轮次运行 Panel 和 Judge。切换到 Default 模式执行计划后，所有后续用户轮次与工具结果续跑都直接交给该 profile 的 Final 模型，避免在编码阶段重复分析。
 
@@ -575,7 +575,7 @@ codex-mixin doctor --fix --restart-apps # 额外允许重启 ChatGPT/Codex App�
 
 生成的 catalog 会包含 `context_window`、`max_context_window`、`input_modalities`、`base_instructions` 和 `model_messages.instructions_template`，避免 Codex 解析模型目录时报缺字段。
 
-刷新供应商模型列表时，所有 Provider（包括自定义网关、Baidu OneAPI 和手动添加的模型）也会用同一份 models.dev 目录补齐缺失的上下文窗口、图像与 thinking 能力：有官方映射的 Provider（如 amazon-bedrock、deepseek）先做精确 ID 匹配，其余模型统一走模糊匹配 —— 带日期或渠道后缀的 ID（如 `claude-haiku-4-5-20260101`）会命中最长的同族条目。Provider 自己声明的字段永远优先，模糊匹配也不会改写模型名称。models.dev 拉取失败时回退到本地缓存。
+刷新供应商模型列表时，所有 Provider（包括自定义网关、Baidu OneAPI 和手动添加的模型）也会用同一份 models.dev 目录补齐缺失的上下文窗口、图像与 thinking 能力：有官方映射的 Provider（如 amazon-bedrock、deepseek）先做精确 ID 匹配，其余模型统一走模糊匹配 —— 带日期或渠道后缀的 ID（如 `claude-haiku-4-5-20260101`）会命中最长的同族条目。Provider 自己声明的字段永远优先，模糊匹配也不会改写模型名称。只有 models.dev 明确列出 `image` 输入时才判定支持图片；`video`、`audio`、PDF 等附件类型不会混入图片能力。models.dev 拉取失败时回退到本地缓存。供应商和 models.dev 仍未补齐的能力才会探测一次并持久缓存，缓存不会因时间经过而自动失效；Provider 连接身份改变后才会重新探测。
 
 更新供应商或模型选择后，除 Codex 的 managed catalog 外，所有已安装的 Claude Code、DSH、OpenCode、Pi 集成也会一并重渲染各自的托管模型列表（网关启动、能力探测、`refresh-codex-catalog` 和 doctor 修复时触发）。未安装的框架不会被创建或改动。
 

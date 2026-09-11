@@ -1,5 +1,5 @@
 use super::probe::{fetch_release_reference, probe_model};
-use super::storage::{capability_is_fresh, default_capability_path, unix_seconds};
+use super::storage::{default_capability_path, unix_seconds};
 use super::types::*;
 use super::*;
 
@@ -19,7 +19,7 @@ impl WebSearchCapabilities {
 
     pub fn load(path: PathBuf, config: &GatewayConfig) -> anyhow::Result<Self> {
         let upstream = UpstreamIdentity::from_config(config);
-        let models = if path.exists() {
+        let mut models = if path.exists() {
             let raw =
                 fs::read_to_string(&path).with_context(|| format!("read {}", path.display()))?;
             let raw_value: Value =
@@ -48,6 +48,34 @@ impl WebSearchCapabilities {
         } else {
             BTreeMap::new()
         };
+        let resolved_at = unix_seconds()?;
+        for provider in config.providers.iter().filter(|provider| provider.enabled) {
+            for model_id in &provider.selected_models {
+                let Some(model) = provider
+                    .cached_models
+                    .iter()
+                    .find(|model| model.id == *model_id)
+                else {
+                    continue;
+                };
+                let Some(supported) = model.supports_web_search else {
+                    continue;
+                };
+                let catalog_model = catalog_model_slug(model_id, &provider.id);
+                models.insert(
+                    catalog_model.clone(),
+                    ModelWebSearchCapability {
+                        model: catalog_model,
+                        provider_id: provider.id.clone(),
+                        upstream_model: model_id.clone(),
+                        supported,
+                        evidence: "resolved capability metadata".to_owned(),
+                        error: None,
+                        probed_at: resolved_at,
+                    },
+                );
+            }
+        }
         Ok(Self {
             path: Arc::new(path),
             upstream,
@@ -56,27 +84,24 @@ impl WebSearchCapabilities {
     }
 
     pub fn supports_model(&self, model: &str) -> bool {
-        let now = unix_seconds().expect("system clock before Unix epoch");
         self.models
             .read()
             .expect("web search capability lock poisoned")
             .get(model)
-            .is_some_and(|capability| capability.supported && capability_is_fresh(capability, now))
+            .is_some_and(|capability| capability.supported)
     }
 
     pub fn annotate_models(&self, models: &mut [ModelInfo]) {
-        let now = unix_seconds().expect("system clock before Unix epoch");
         let capabilities = self
             .models
             .read()
             .expect("web search capability lock poisoned");
         for model in models {
-            if model.capabilities_probed_at_ms.is_some() {
+            if model.supports_web_search.is_some() {
                 continue;
             }
             if let Some(supported) = capabilities
                 .get(&model.id)
-                .filter(|capability| capability_is_fresh(capability, now))
                 .map(|capability| capability.supported)
             {
                 model.supports_web_search = Some(supported);
@@ -85,12 +110,11 @@ impl WebSearchCapabilities {
     }
 
     pub fn supported_model_ids(&self) -> HashSet<String> {
-        let now = unix_seconds().expect("system clock before Unix epoch");
         self.models
             .read()
             .expect("web search capability lock poisoned")
             .values()
-            .filter(|capability| capability.supported && capability_is_fresh(capability, now))
+            .filter(|capability| capability.supported)
             .map(|capability| capability.model.clone())
             .collect()
     }
@@ -113,6 +137,11 @@ impl WebSearchCapabilities {
     ) -> anyhow::Result<WebSearchProbeSummary> {
         let now = unix_seconds()?;
         let model_targets = probe_model_targets(models, providers);
+        let declared_models = models
+            .iter()
+            .filter(|model| model.supports_web_search.is_some())
+            .map(|model| model.id.clone())
+            .collect::<HashSet<_>>();
         let current_models = model_targets
             .iter()
             .map(|(model, _, _)| model.clone())
@@ -126,11 +155,8 @@ impl WebSearchCapabilities {
                 .iter()
                 .filter(|(model, _, _)| {
                     force
-                        || capabilities.get(model).is_none_or(|capability| {
-                            capability.error.is_some()
-                                || now.saturating_sub(capability.probed_at)
-                                    >= CAPABILITY_TTL.as_secs()
-                        })
+                        || (!declared_models.contains(model.as_str())
+                            && !capabilities.contains_key(model))
                 })
                 .cloned()
                 .collect::<Vec<_>>()

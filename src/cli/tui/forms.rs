@@ -582,6 +582,11 @@ impl FusionForm {
                 .clone()
                 .unwrap_or_else(|| "default".to_owned()),
             loaded_profile_id,
+            mode: profile
+                .and_then(|profile| profile.get("mode"))
+                .and_then(Value::as_str)
+                .unwrap_or("orchestration")
+                .to_owned(),
             panel_models,
             model_index: 0,
             judge_model,
@@ -621,6 +626,10 @@ impl FusionForm {
             "invalid Fusion profile ID"
         );
         anyhow::ensure!(
+            self.mode == "orchestration",
+            "time rotation profiles must be edited in the macOS Fusion settings window"
+        );
+        anyhow::ensure!(
             (1..=8).contains(&self.panel_models.len()),
             "select between 1 and 8 Panel models"
         );
@@ -639,6 +648,8 @@ impl FusionForm {
             .collect::<Vec<_>>();
         let profile = serde_json::json!({
             "id": id,
+            "mode": "orchestration",
+            "time_routes": [],
             "panel_models": ordered_panels,
             "judge_model": self.judge_model,
             "final_model": self.final_model,

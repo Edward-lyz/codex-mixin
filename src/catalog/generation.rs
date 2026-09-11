@@ -109,6 +109,14 @@ fn build_codex_catalog(
             });
             item["slug"] = json!(slug);
             item["display_name"] = json!(display_name);
+            // Official Codex templates opt some OpenAI models into a custom `exec`
+            // transport. Custom upstreams use the interoperable function transport.
+            if let Some(item) = item.as_object_mut() {
+                item.remove("tool_mode");
+            }
+            if owned_provider.is_some() {
+                item["auto_review_model_override"] = json!(slug);
+            }
             let mut description = model
                 .description
                 .clone()

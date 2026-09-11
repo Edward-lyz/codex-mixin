@@ -254,8 +254,8 @@ struct ProviderSupportTests {
         precondition(
             benchmarkColumns.map(\.title)
                 == [
-        "加入 Codex", "上游模型", "TTFT", "吞吐", "上下文", "倍率",
-                    "图片", "Tool Search", "Web Search", "Function Tools", "Thinking",
+                    "Codex", "模型", "首 Token", "生成速度", "上下文", "倍率",
+                    "能力",
                 ]
         )
         precondition(Set(benchmarkColumns.map(\.id)).count == benchmarkColumns.count)
@@ -272,6 +272,54 @@ struct ProviderSupportTests {
             ) == [
                 "Baidu OneAPI：模型 unreachable-model 当前不可达",
                 "AIHub：模型列表刷新失败：upstream returned 503",
+            ]
+        )
+        let gatewayStatus = try decodeGatewayStatus(
+            """
+            {
+              "gateway": "running",
+              "endpoint": "http://127.0.0.1:8920/v1",
+              "provider_readiness": "degraded",
+              "providers": [
+                {
+                  "id": "baidu-oneapi",
+                  "display_name": "Baidu OneAPI",
+                  "enabled": true,
+                  "readiness": {
+                    "status": "degraded",
+                    "routable_model_count": 3,
+                    "selected_model_count": 5,
+                    "available_model_count": 8,
+                    "unavailable_selected_model_count": 2,
+                    "last_model_refresh_error": "request failed\\nupstream returned 503",
+                    "issues": ["selected_models_unavailable", "model_refresh_failed"]
+                  }
+                },
+                {
+                  "id": "empty",
+                  "display_name": "Empty Service",
+                  "enabled": true,
+                  "readiness": {
+                    "status": "degraded",
+                    "routable_model_count": 0,
+                    "selected_model_count": 0,
+                    "available_model_count": 4,
+                    "unavailable_selected_model_count": 0,
+                    "last_model_refresh_error": null,
+                    "issues": ["no_routable_models"]
+                  }
+                }
+              ]
+            }
+            """
+        )
+        precondition(gatewayStatus.gateway == "running")
+        precondition(gatewayStatus.providers?.count == 2)
+        precondition(
+            gatewayProviderIssueDetails(gatewayStatus.providers ?? []) == [
+                "Baidu OneAPI：2 个已选模型不在当前列表，其余 3 个可用",
+                "Baidu OneAPI：模型列表更新失败：request failed upstream returned 503",
+                "Empty Service：还没有加入模型",
             ]
         )
         print("Provider model ratio support: passed")

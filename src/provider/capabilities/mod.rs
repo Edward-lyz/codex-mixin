@@ -5,7 +5,6 @@ mod types;
 use std::collections::BTreeMap;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use std::time::Duration;
 
 use anyhow::Context;
 use futures_util::{StreamExt, stream};
@@ -24,7 +23,6 @@ pub use types::{
 };
 
 type ProbeProgress = Arc<dyn Fn(usize, usize, usize, usize) + Send + Sync>;
-pub const CAPABILITY_TTL: Duration = Duration::from_secs(7 * 24 * 60 * 60);
 
 #[derive(Clone, Debug)]
 pub struct ProviderCapabilities {
@@ -77,21 +75,16 @@ impl ProviderCapabilities {
         provider: &ProviderDefinition,
         models: &[ProviderModel],
     ) -> anyhow::Result<Vec<String>> {
-        let now = unix_milliseconds()?;
-        let ttl_ms = CAPABILITY_TTL.as_millis() as u64;
-        let Some(record) = self.file.providers.get(&provider.id) else {
-            return Ok(models.iter().map(|model| model.id.clone()).collect());
-        };
-        if record.identity != ProviderIdentity::from_provider(provider) {
-            return Ok(models.iter().map(|model| model.id.clone()).collect());
-        }
+        let cached = self
+            .file
+            .providers
+            .get(&provider.id)
+            .filter(|record| record.identity == ProviderIdentity::from_provider(provider));
         Ok(models
             .iter()
             .filter(|model| {
-                record
-                    .models
-                    .get(&model.id)
-                    .is_none_or(|capability| now.saturating_sub(capability.probed_at_ms) >= ttl_ms)
+                model_has_unknown_capability(model)
+                    && cached.is_none_or(|record| !record.models.contains_key(&model.id))
             })
             .map(|model| model.id.clone())
             .collect())
@@ -279,8 +272,6 @@ fn annotate_models(
         let Some(capability) = capabilities.get(&model.id) else {
             continue;
         };
-        model.protocol = None;
-        model.api_path = None;
         model.capabilities_probed_at_ms = Some(capability.probed_at_ms);
         model.capability_probe_error = capability.last_probe_error.clone();
         let Some(selected) = capability.selected() else {
@@ -294,18 +285,33 @@ fn annotate_models(
             }
             continue;
         };
-        model.supports_image = selected.image_input.as_option_bool();
-        model.supports_thinking = selected
-            .thinking
-            .as_option_bool()
-            .or(model.supports_thinking);
-        model.supports_function_tools = selected.function_tools.as_option_bool();
-        model.supports_tool_search = selected.tool_search.as_option_bool();
-        model.supports_web_search = selected.web_search.as_option_bool();
+        model.supports_image = model
+            .supports_image
+            .or_else(|| selected.image_input.as_option_bool());
+        model.supports_thinking = model
+            .supports_thinking
+            .or_else(|| selected.thinking.as_option_bool());
+        model.supports_function_tools = model
+            .supports_function_tools
+            .or_else(|| selected.function_tools.as_option_bool());
+        model.supports_tool_search = model
+            .supports_tool_search
+            .or_else(|| selected.tool_search.as_option_bool());
+        model.supports_web_search = model
+            .supports_web_search
+            .or_else(|| selected.web_search.as_option_bool());
         if model.capability_probe_error.is_none() {
             model.capability_probe_error = selected.error.clone();
         }
     }
+}
+
+fn model_has_unknown_capability(model: &ProviderModel) -> bool {
+    model.supports_image.is_none()
+        || model.supports_thinking.is_none()
+        || model.supports_function_tools.is_none()
+        || model.supports_tool_search.is_none()
+        || model.supports_web_search.is_none()
 }
 
 fn merge_model_result(
@@ -409,9 +415,9 @@ mod tests {
     }
 
     #[test]
-    fn indeterminate_thinking_probe_preserves_advertised_support() {
+    fn probe_cache_only_fills_capabilities_missing_from_upstream_metadata() {
         let mut protocol = protocol_capabilities(CapabilityStatus::Supported);
-        protocol.thinking = CapabilityStatus::Indeterminate;
+        protocol.web_search = CapabilityStatus::Unsupported;
         let capabilities = ModelCapabilities {
             model: "model-a".to_owned(),
             selected_protocol: Some(crate::provider::ProviderProtocol::OpenAiResponses),
@@ -422,7 +428,11 @@ mod tests {
         };
         let model = crate::provider::ProviderModel {
             id: "model-a".to_owned(),
-            supports_thinking: Some(true),
+            supports_image: Some(false),
+            supports_thinking: Some(false),
+            supports_web_search: Some(true),
+            supports_tool_search: Some(false),
+            supports_function_tools: Some(false),
             ..Default::default()
         };
 
@@ -432,20 +442,35 @@ mod tests {
             &BTreeMap::from([("model-a".to_owned(), capabilities)]),
         );
 
-        assert_eq!(models[0].supports_thinking, Some(true));
+        assert_eq!(models[0].supports_image, Some(false));
+        assert_eq!(models[0].supports_thinking, Some(false));
+        assert_eq!(models[0].supports_web_search, Some(true));
+        assert_eq!(models[0].supports_tool_search, Some(false));
+        assert_eq!(models[0].supports_function_tools, Some(false));
     }
 
     #[test]
-    fn selects_missing_and_expired_models_for_probe() {
+    fn probes_only_unknown_models_without_a_cached_attempt() {
         let mut provider = custom_provider("custom", "secret");
-        provider.cached_models = ["fresh", "expired", "missing"]
-            .into_iter()
-            .map(|id| ProviderModel {
-                id: id.to_owned(),
+        provider.cached_models = vec![
+            ProviderModel {
+                id: "declared".to_owned(),
+                supports_image: Some(false),
+                supports_thinking: Some(true),
+                supports_web_search: Some(false),
+                supports_tool_search: Some(false),
+                supports_function_tools: Some(true),
                 ..ProviderModel::default()
-            })
-            .collect();
-        let now = unix_milliseconds().unwrap();
+            },
+            ProviderModel {
+                id: "already-probed".to_owned(),
+                ..ProviderModel::default()
+            },
+            ProviderModel {
+                id: "unknown".to_owned(),
+                ..ProviderModel::default()
+            },
+        ];
         let result = |model: &str, probed_at_ms| ModelCapabilities {
             model: model.to_owned(),
             selected_protocol: Some(crate::provider::ProviderProtocol::OpenAiResponses),
@@ -462,13 +487,10 @@ mod tests {
                     provider.id.clone(),
                     ProviderCapabilityRecord {
                         identity: ProviderIdentity::from_provider(&provider),
-                        models: BTreeMap::from([
-                            ("fresh".to_owned(), result("fresh", now)),
-                            (
-                                "expired".to_owned(),
-                                result("expired", now - CAPABILITY_TTL.as_millis() as u64),
-                            ),
-                        ]),
+                        models: BTreeMap::from([(
+                            "already-probed".to_owned(),
+                            result("already-probed", 1),
+                        )]),
                     },
                 )]),
             },
@@ -478,7 +500,7 @@ mod tests {
             capabilities
                 .models_needing_probe(&provider, &provider.cached_models)
                 .unwrap(),
-            ["expired", "missing"]
+            ["unknown"]
         );
     }
 }

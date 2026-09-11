@@ -165,6 +165,8 @@ mod tests {
     fn fusion_profile(id: &str) -> FusionProfile {
         FusionProfile {
             id: id.to_owned(),
+            mode: Default::default(),
+            time_routes: Vec::new(),
             panel_models: vec!["panel-provider".to_owned()],
             judge_model: "judge-provider".to_owned(),
             final_model: "final-provider".to_owned(),

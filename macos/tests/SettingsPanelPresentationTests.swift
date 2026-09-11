@@ -35,10 +35,6 @@ struct SettingsPanelPresentationTests {
 
         let model = AddProviderFormModel()
         precondition(
-            model.baiduAuthBridge == "disabled",
-            "Auth bridging must be disabled by default"
-        )
-        precondition(
             model.isBaiduOneAPI && !model.isCustom && !model.requiresQuotaCredentials,
             "Baidu fields must be active for the default preset"
         )

@@ -10,7 +10,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var providerUsageDashboardView: ProviderUsageDashboardView?
     var launchAtLoginMenuItem: NSMenuItem?
     var providerSettingsWindowController: ProviderSettingsWindowController?
-    var modelBenchmarkWindowController: ModelBenchmarkWindowController?
     var fusionSettingsWindowController: FusionSettingsWindowController?
     var aboutWindowController: AboutWindowController?
     var installCardWindowController: InstallCardWindowController?
@@ -118,15 +117,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateQuotaStatus(title: "额度：检查中...", detail: nil, progress: nil)
         updateTokenUsageStatus(title: "Token 使用：检查中...", detail: nil, progress: nil)
         menu.addItem(.separator())
+        menu.addItem(actionItem("模型与服务…", #selector(configureLogin), "square.grid.2x2"))
         launchAtLoginMenuItem = actionItem("登录时启动并开启服务", #selector(toggleLaunchAtLogin), "poweron")
         menu.addItem(launchAtLoginMenuItem!)
-        menu.addItem(actionItem("刷新状态与额度", #selector(refreshStatus), "arrow.clockwise"))
         menu.addItem(actionItem("健康检测和修复...", #selector(runAutomaticDoctor), "stethoscope"))
         menu.addItem(.separator())
-        menu.addItem(submenuItem("设置与模型", symbolName: "gearshape", items: [
-            actionItem("供应商设置...", #selector(configureLogin), "gearshape"),
-            actionItem("模型选择与测速...", #selector(showModelBenchmark), "speedometer")
-        ]))
         menu.addItem(submenuItem("高级", symbolName: "gearshape.2", items: [
             actionItem("Fusion 设置…", #selector(showFusionSettings), "rectangle.3.group"),
             actionItem("手动触发上报…", #selector(manuallyReportSessions), "arrow.triangle.2.circlepath"),
@@ -183,7 +178,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         guard let serviceStatusItem else { return }
         let title = serviceStatus
         let endpoint = serviceEndpoint
-        let statusDetail = serviceStatus.contains("降级") ? providerStatusDetail : nil
+        let statusDetail = serviceStatus.contains("需要处理") || serviceStatus.contains("失败")
+            ? providerStatusDetail
+            : nil
         let running = isRunning
         let busy = serviceBusy
         if let view = serviceStatusItem.view,
@@ -205,7 +202,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 isRunning: running,
                 isBusy: busy,
                 target: self,
-                action: #selector(AppDelegate.toggleGateway(_:))
+                action: #selector(AppDelegate.toggleGateway(_:)),
+                openSettings: { [weak self] in
+                    self?.configureLogin()
+                }
             )
         }
     }

@@ -404,6 +404,11 @@ fn compact_generated_provider_ids(
                 reference.clone_from(new_reference);
             }
         }
+        for route in &mut profile.time_routes {
+            if let Some(new_reference) = model_renames.get(&route.model) {
+                route.model.clone_from(new_reference);
+            }
+        }
     }
     Ok(renames
         .into_iter()

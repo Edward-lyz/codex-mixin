@@ -29,8 +29,8 @@ mod visualization;
 
 pub use engine::FusionEngine;
 pub use profile::{
-    FUSION_MODEL_PREFIX, FusionProfile, OFFICIAL_MODEL_PREFIX, PanelToolsConfig,
-    validate_fusion_model_references, validate_fusion_profiles,
+    FUSION_MODEL_PREFIX, FusionMode, FusionProfile, FusionTimeRoute, OFFICIAL_MODEL_PREFIX,
+    PanelToolsConfig, validate_fusion_model_references, validate_fusion_profiles,
 };
 pub use routing::should_fuse_turn;
 

@@ -598,6 +598,8 @@ mod tests {
             )],
             fusion_profiles: vec![FusionProfile {
                 id: "invalid".to_owned(),
+                mode: Default::default(),
+                time_routes: Vec::new(),
                 panel_models: vec!["missing-opencode-go".to_owned()],
                 judge_model: "glm-5.2-opencode-go".to_owned(),
                 final_model: "glm-5.2-opencode-go".to_owned(),
@@ -624,6 +626,8 @@ mod tests {
             providers: vec![crate::provider::open_code_go_provider("provider", "secret")],
             fusion_profiles: vec![FusionProfile {
                 id: "legacy".to_owned(),
+                mode: Default::default(),
+                time_routes: Vec::new(),
                 panel_models: vec!["panel-provider".to_owned()],
                 judge_model: "judge-provider".to_owned(),
                 final_model: "final-provider".to_owned(),

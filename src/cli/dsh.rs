@@ -291,6 +291,8 @@ mod tests {
             fusion_profiles: if fusion {
                 vec![codex_mixin::fusion::FusionProfile {
                     id: "default".to_owned(),
+                    mode: Default::default(),
+                    time_routes: Vec::new(),
                     panel_models: vec!["vision-model-custom".to_owned()],
                     judge_model: "vision-model-custom".to_owned(),
                     final_model: "vision-model-custom".to_owned(),

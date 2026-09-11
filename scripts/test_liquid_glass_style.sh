@@ -20,7 +20,6 @@ require_text "$SUPPORT_FILE" "window.isOpaque = true"
 
 for file in \
   macos/ProviderSettingsWindow.swift \
-  macos/ModelBenchmarkWindow.swift \
   macos/FusionSettingsWindow.swift \
   macos/SettingsPanel.swift \
   macos/InstallCodexPanel.swift \
@@ -46,10 +45,12 @@ then
   exit 1
 fi
 
-if [ "$(grep -Fc '.textFieldStyle(.roundedBorder)' "$ROOT_DIR/macos/ModelBenchmarkWindow.swift")" -ne 2 ]; then
-  echo "benchmark must retain two rounded-border input fields" >&2
+if [ "$(grep -Fc '.textFieldStyle(.roundedBorder)' "$ROOT_DIR/macos/ModelBenchmarkWindow.swift")" -ne 1 ]; then
+  echo "benchmark must retain one rounded-border manual input field" >&2
   exit 1
 fi
+
+require_text "$ROOT_DIR/macos/ModelBenchmarkWindow.swift" "NSSearchField"
 
 if grep -R -Fq --include='*.swift' --exclude='LiquidGlassSupport.swift' \
   '.background(.ultraThinMaterial)' "$ROOT_DIR/macos"

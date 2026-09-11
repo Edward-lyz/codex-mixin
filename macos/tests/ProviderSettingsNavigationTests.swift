@@ -11,13 +11,36 @@ struct ProviderSettingsNavigationTests {
         _ = NSApplication.shared
 
         testReloadPreservesSelectionAndDisablesEmptyDetails()
+        testBackgroundRefreshStopsWithWindow()
         testMutationIsBusyAndRestartsInOrder()
         testBaiduBridgeTestAndUpdateArguments()
         testAWSBedrockEndpointArguments()
         testReorderReloadsPersistedProviderState()
         testOneAPIFieldsStayWithTheirProvider()
+        testReadinessPresentationUsesConcreteReasons()
 
         print("Provider settings behavior: passed")
+    }
+
+    @MainActor
+    private static func testBackgroundRefreshStopsWithWindow() {
+        var loadCalls = 0
+        let controller = ProviderSettingsWindowController(
+            loadHandler: {
+                loadCalls += 1
+                return try providerList(ids: ["custom"])
+            },
+            runHandler: { _ in "" },
+            applyHandler: { _ in },
+            backgroundRefreshIntervalNanoseconds: 20_000_000
+        )
+        controller.present()
+        waitUntil { loadCalls >= 2 }
+
+        controller.window?.close()
+        let callsAfterClose = loadCalls
+        RunLoop.current.run(until: Date().addingTimeInterval(0.08))
+        precondition(loadCalls == callsAfterClose)
     }
 
     @MainActor
@@ -291,10 +314,63 @@ struct ProviderSettingsNavigationTests {
         controller.model.selectProvider("baidu-oneapi-2")
         precondition(controller.model.quotaUsername == "quota-user-2")
         precondition(controller.model.baiduAuthBridge == .ducxLoopback)
+        controller.model.quotaUsername = "edited-quota-user-2"
+        controller.model.apiKey = "unsaved-key"
+        precondition(controller.model.connectionDirty)
 
         controller.model.selectProvider("baidu-oneapi")
         precondition(controller.model.quotaUsername == "quota-user")
         precondition(controller.model.baiduAuthBridge == .disabled)
+
+        controller.model.selectProvider("baidu-oneapi-2")
+        precondition(controller.model.quotaUsername == "edited-quota-user-2")
+        precondition(controller.model.apiKey == "unsaved-key")
+    }
+
+    private static func testReadinessPresentationUsesConcreteReasons() {
+        let response = try! decodeProviderList(
+            """
+            {
+              "config_version": 1,
+              "gateway_auth_configured": false,
+              "providers": [{
+                "id": "custom",
+                "display_name": "Custom Service",
+                "enabled": true,
+                "auxiliary_model_upstream": false,
+                "preset_id": "custom",
+                "protocol": "open_ai_responses",
+                "base_url": "https://example.com",
+                "api_path": "/v1/responses",
+                "model_source": {"kind": "open_ai_compatible", "path": "/v1/models"},
+                "api_key_configured": true,
+                "quota_parser": "generic",
+                "selected_models": ["available", "missing"],
+                "new_models": [],
+                "unavailable_selected_models": ["missing"],
+                "cached_models": [{"id": "available"}],
+                "last_model_refresh_error": "upstream returned 503",
+                "readiness": "degraded",
+                "readiness_issues": ["selected_models_unavailable", "model_refresh_failed"],
+                "routable_model_count": 1
+              }]
+            }
+            """
+        )
+        let provider = response.providers[0]
+        let issues = providerIssuePresentations(for: provider)
+        precondition(issues.map(\.title) == [
+            "1 个已选模型不在当前列表",
+            "模型列表更新失败",
+        ])
+        precondition(issues[1].actionTitle == nil)
+        precondition(providerPrimaryStatus(provider) == "1 个已选模型不在当前列表")
+        precondition(readinessLabel("degraded") == "需要处理")
+        precondition(!selectedProviderStatus(
+            provider: provider,
+            providersEmpty: false,
+            codexInstallMode: nil
+        ).contains("降级"))
     }
 
     private static func providerList(ids: [String]) throws -> ProviderListResponse {

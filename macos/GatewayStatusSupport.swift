@@ -12,6 +12,20 @@ private struct GatewayHealthResponse: Decodable {
 
 extension AppDelegate {
     func applyGatewayStatus(_ status: String?) {
+        if let status,
+           status.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") {
+            do {
+                applyGatewayStatus(try decodeGatewayStatus(status))
+            } catch {
+                isRunning = false
+                serviceEndpoint = nil
+                providerStatusDetail = localizedErrorDescription(error)
+                serviceStatus = "网关状态检查失败"
+                updateStatusTitle()
+                updateActionStates()
+            }
+            return
+        }
         isRunning = status?.contains("gateway: running") == true
         let providerIssues = providerIssueDetails(fromGatewayStatus: status)
         providerStatusDetail = providerIssues.isEmpty
@@ -26,11 +40,39 @@ extension AppDelegate {
             .first(where: { $0.hasPrefix("endpoint: ") })
             .map { String($0.dropFirst("endpoint: ".count)) }
         if isRunning, providerReadiness == "degraded" {
-            serviceStatus = "本地网关运行中 · Provider 降级"
+            serviceStatus = "本地服务运行中 · 服务商需要处理"
         } else if isRunning, providerReadiness == "disabled" {
-            serviceStatus = "本地网关运行中 · 无启用 Provider"
+            serviceStatus = "本地服务运行中 · 无启用服务商"
         } else {
-            serviceStatus = isRunning ? "本地网关运行中" : "本地网关已停止"
+            serviceStatus = isRunning ? "本地服务运行中" : "本地服务已停止"
+        }
+        updateStatusTitle()
+        updateActionStates()
+    }
+
+    private func applyGatewayStatus(_ snapshot: GatewayStatusSnapshot) {
+        if snapshot.configured == false {
+            isRunning = false
+            serviceEndpoint = nil
+            providerStatusDetail = nil
+            serviceStatus = "等待配置上游 API"
+            updateStatusTitle()
+            updateActionStates()
+            return
+        }
+        isRunning = snapshot.gateway == "running"
+        serviceEndpoint = snapshot.endpoint
+        let problemProviders = snapshot.providers?.filter {
+            $0.enabled && $0.readiness.status == "degraded"
+        } ?? []
+        let issueDetails = gatewayProviderIssueDetails(problemProviders)
+        providerStatusDetail = issueDetails.isEmpty ? nil : issueDetails.joined(separator: "；")
+        if isRunning, !problemProviders.isEmpty {
+            serviceStatus = "本地服务运行中 · \(problemProviders.count) 个服务商需要处理"
+        } else if isRunning, snapshot.providerReadiness == "disabled" {
+            serviceStatus = "本地服务运行中 · 无启用服务商"
+        } else {
+            serviceStatus = isRunning ? "本地服务运行中" : "本地服务已停止"
         }
         updateStatusTitle()
         updateActionStates()
@@ -65,9 +107,14 @@ extension AppDelegate {
                 let health = try await checkGatewayHealth()
                 guard isCurrent() else { return }
                 applyHealthyGatewaySnapshot(health)
+                if health.providerReadiness == "degraded" {
+                    let status = try await runGateway(["status", "--json"])
+                    guard isCurrent() else { return }
+                    applyGatewayStatus(status)
+                }
             } catch {
                 do {
-                    let status = try await runGateway(["status"])
+                    let status = try await runGateway(["status", "--json"])
                     guard isCurrent() else { return }
                     applyGatewayStatus(status)
                 } catch {
@@ -79,7 +126,7 @@ extension AppDelegate {
         }
 
         do {
-            let status = try await runGateway(["status"])
+            let status = try await runGateway(["status", "--json"])
             guard isCurrent() else { return }
             applyGatewayStatus(status)
         } catch {
@@ -196,16 +243,18 @@ extension AppDelegate {
     private func applyHealthyGatewaySnapshot(_ health: GatewayHealthResponse) {
         isRunning = true
         if health.providerReadiness == "degraded" {
-            serviceStatus = "本地网关运行中 · Provider 降级"
+            if !serviceStatus.contains("服务商需要处理") {
+                serviceStatus = "本地服务运行中 · 服务商需要处理"
+            }
             if providerStatusDetail == nil {
-                providerStatusDetail = "Provider 配置或模型缓存需要处理"
+                providerStatusDetail = "服务商配置或模型列表需要处理"
             }
         } else if health.providerReadiness == "disabled" {
             providerStatusDetail = nil
-            serviceStatus = "本地网关运行中 · 无启用 Provider"
+            serviceStatus = "本地服务运行中 · 无启用服务商"
         } else {
             providerStatusDetail = nil
-            serviceStatus = "本地网关运行中"
+            serviceStatus = "本地服务运行中"
         }
         updateStatusTitle()
         updateActionStates()
@@ -220,7 +269,7 @@ extension AppDelegate {
         if missingConfiguration {
             serviceStatus = "等待配置上游 API"
         } else if message.contains("gateway not running") {
-            serviceStatus = "本地网关已停止"
+            serviceStatus = "本地服务已停止"
         } else {
             serviceStatus = "网关状态检查失败"
         }

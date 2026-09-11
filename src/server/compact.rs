@@ -60,7 +60,7 @@ async fn compact_fusion(
         .fusion_profiles
         .iter()
         .find(|profile| profile.id == profile_id)
-        .map(|profile| profile.final_model.clone())
+        .map(|profile| profile.active_model_now().to_owned())
         .ok_or_else(|| GatewayError::BadRequest(format!("unknown fusion profile: {profile_id}")))?;
     body["model"] = Value::String(final_model.clone());
     match state.gateway.resolve_model_route(&final_model).await? {

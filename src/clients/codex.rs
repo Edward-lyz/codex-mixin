@@ -41,6 +41,11 @@ pub fn upsert(
     codex_oauth_proxy: bool,
 ) -> anyhow::Result<()> {
     let provider_id = provider_id(codex_oauth_proxy);
+    if !codex_oauth_proxy {
+        // Custom-only mode authenticates through the managed Bedrock placeholder.
+        // A retained ChatGPT/API policy makes Codex ignore that auth document.
+        document.remove("forced_login_method");
+    }
     document["model_catalog_json"] = value(catalog_path.to_string_lossy().to_string());
     document["model_provider"] = value(provider_id);
     document["web_search"] = value(web_search);

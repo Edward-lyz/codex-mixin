@@ -14,7 +14,6 @@ struct AddProviderFormValues {
     let quotaUsername: String
     let quotaWorkspaceID: String
     let quotaAuthCookie: String
-    let baiduAuthBridge: String
 }
 
 struct AddProviderPreset: Identifiable {
@@ -45,7 +44,6 @@ final class AddProviderFormModel: ObservableObject {
     @Published var quotaUsername = ""
     @Published var quotaWorkspaceID = ""
     @Published var quotaAuthCookie = ""
-    @Published var baiduAuthBridge = "disabled"
 
     var isCustom: Bool { preset == "custom" }
     var isBaiduOneAPI: Bool { preset == "baidu-oneapi" }
@@ -117,8 +115,7 @@ final class AddProviderFormModel: ObservableObject {
             awsRegion: trimmedRegion,
             quotaUsername: trimmedUsername,
             quotaWorkspaceID: trimmedWorkspaceID,
-            quotaAuthCookie: trimmedAuthCookie,
-            baiduAuthBridge: baiduAuthBridge
+            quotaAuthCookie: trimmedAuthCookie
         )
     }
 }
@@ -197,11 +194,6 @@ private struct AddProviderFormView: View {
                             text: $model.quotaUsername,
                             prompt: Text(AppLocalization.string("settings.baiduOneAPIQuotaUsername"))
                         )
-                        Picker(AppLocalization.string("settings.authBridge"), selection: $model.baiduAuthBridge) {
-                            Text(AppLocalization.string("settings.disabledDefault")).tag("disabled")
-                            Text("DUCX 核心（loopback）").tag("ducx_loopback")
-                        }
-                        .help(AppLocalization.string("settings.ducxUsesACodexMixinManagedCopy"))
                     }
 
                     if model.requiresQuotaCredentials {

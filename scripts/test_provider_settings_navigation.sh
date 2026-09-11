@@ -21,6 +21,8 @@ xcrun swiftc \
   "$ROOT_DIR/macos/ProviderIconCache.swift" \
   "$ROOT_DIR/macos/ProviderWindowLayoutSupport.swift" \
   "$ROOT_DIR/macos/LiquidGlassSupport.swift" \
+  "$ROOT_DIR/macos/ModelBenchmarkDataSupport.swift" \
+  "$ROOT_DIR/macos/ModelBenchmarkWindow.swift" \
   "$ROOT_DIR/macos/ProviderSettingsView.swift" \
   "$ROOT_DIR/macos/AppOperationLogging.swift" \
   "$ROOT_DIR/macos/ProviderSettingsWindow.swift" \

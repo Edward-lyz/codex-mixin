@@ -148,7 +148,7 @@ pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
                     },
                 );
                 for issue in provider_readiness_issue_descriptions(&config.providers) {
-                    println!("{} {issue}", style("⚠").yellow());
+                    println!("{} {issue}", style("provider-issue:").yellow());
                 }
             }
             Ok(())

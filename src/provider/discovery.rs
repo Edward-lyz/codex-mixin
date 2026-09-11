@@ -111,7 +111,6 @@ async fn discover_aws_bedrock_models(
     );
     models.extend(fetch_foundation_models(client, &base_url, &control_auth).await?);
     enrich_from_models_dev(client, definition, &mut models, enrich_bedrock_models).await;
-    apply_bedrock_capability_hints(&mut models);
     normalize_models(&mut models);
     Ok(models)
 }
@@ -277,23 +276,6 @@ fn lookup_without_region_prefix<'metadata>(
     }
 }
 
-/// Bedrock Mantle exposes the Anthropic Messages API, so Claude models are
-/// the ones actually served through this preset. Their family capabilities
-/// are stable facts; other vendors stay unknown until probed.
-fn apply_bedrock_capability_hints(models: &mut [ProviderModel]) {
-    for model in models {
-        let claude = std::iter::once(model.id.as_str())
-            .chain(model.aliases.iter().map(String::as_str))
-            .chain(model.display_name.as_deref())
-            .any(|value| value.to_ascii_lowercase().contains("claude"));
-        if claude {
-            model.supports_image.get_or_insert(true);
-            model.supports_thinking.get_or_insert(true);
-            model.supports_function_tools.get_or_insert(true);
-        }
-    }
-}
-
 async fn native_baidu_headers_if_needed(
     definition: &ProviderDefinition,
     provider: &ProviderRuntime,
@@ -343,7 +325,6 @@ async fn discover_openai_models(
         enrich_models_with_models_dev,
     )
     .await;
-    apply_generic_capability_defaults(&mut models);
     normalize_models(&mut models);
     Ok(models)
 }
@@ -395,18 +376,6 @@ async fn enrich_from_models_dev(
     fill_model_gaps_with_resolver(&resolver, models);
 }
 
-/// Permissive chat defaults for anything neither the provider nor models.dev
-/// declared; live capability probes refine these later.
-fn apply_generic_capability_defaults(models: &mut [ProviderModel]) {
-    for model in models {
-        model.supports_image.get_or_insert(false);
-        model.supports_thinking.get_or_insert(true);
-        model.supports_web_search.get_or_insert(false);
-        model.supports_tool_search.get_or_insert(false);
-        model.supports_function_tools.get_or_insert(true);
-    }
-}
-
 fn openai_model_to_provider_model(model: ModelInfo, is_openrouter: bool) -> ProviderModel {
     let (supports_image, supports_thinking, supports_web_search, supports_function_tools) =
         if is_openrouter {
@@ -416,19 +385,34 @@ fn openai_model_to_provider_model(model: ModelInfo, is_openrouter: bool) -> Prov
                     .iter()
                     .any(|supported| supported == parameter)
             };
+            let parameters_declared = !model.supported_parameters.is_empty();
             (
-                Some(model.architecture.as_ref().is_some_and(|architecture| {
-                    architecture
-                        .input_modalities
-                        .iter()
-                        .any(|modality| modality == "image")
-                })),
-                Some(true),
-                Some(supports_parameter("web_search_options")),
-                Some(true),
+                model.supports_image.or_else(|| {
+                    model.architecture.as_ref().map(|architecture| {
+                        architecture
+                            .input_modalities
+                            .iter()
+                            .any(|modality| modality.eq_ignore_ascii_case("image"))
+                    })
+                }),
+                model.supports_thinking.or_else(|| {
+                    (parameters_declared || model.reasoning.is_some())
+                        .then(|| supports_parameter("reasoning") || model.reasoning.is_some())
+                }),
+                model.supports_web_search.or_else(|| {
+                    parameters_declared.then(|| supports_parameter("web_search_options"))
+                }),
+                model
+                    .supports_function_tools
+                    .or_else(|| parameters_declared.then(|| supports_parameter("tools"))),
             )
         } else {
-            (None, None, None, None)
+            (
+                model.supports_image,
+                model.supports_thinking,
+                model.supports_web_search,
+                model.supports_function_tools,
+            )
         };
     ProviderModel {
         id: model.id,
@@ -444,7 +428,7 @@ fn openai_model_to_provider_model(model: ModelInfo, is_openrouter: bool) -> Prov
         supports_image,
         supports_thinking,
         supports_web_search,
-        supports_tool_search: is_openrouter.then_some(false),
+        supports_tool_search: model.supports_tool_search,
         supports_function_tools,
         capability_probe_error: model.capability_probe_error,
         capabilities_probed_at_ms: model.capabilities_probed_at_ms,
@@ -686,7 +670,7 @@ mod tests {
     #[test]
     fn openrouter_declarations_populate_capabilities_without_a_probe() {
         let response: ModelsResponse = serde_json::from_str(
-            r#"{"data":[{"id":"vision-tool-model","name":"Vision Tool","context_length":128000,"architecture":{"input_modalities":["text","image"]},"supported_parameters":["tools","tool_choice","reasoning","web_search_options"],"reasoning":{}}]}"#,
+            r#"{"data":[{"id":"vision-tool-model","name":"Vision Tool","context_length":128000,"architecture":{"input_modalities":["text","image"]},"supported_parameters":["tools","tool_choice","reasoning","web_search_options"],"reasoning":{},"supports_tool_search":false}]}"#,
         )
         .unwrap();
 
@@ -702,33 +686,49 @@ mod tests {
     }
 
     #[test]
-    fn openrouter_models_without_declarations_get_safe_defaults() {
+    fn openrouter_models_without_declarations_remain_unknown() {
         let response: ModelsResponse =
             serde_json::from_str(r#"{"data":[{"id":"unknown"}]}"#).unwrap();
 
         let model = openai_model_to_provider_model(response.data.into_iter().next().unwrap(), true);
 
-        assert_eq!(model.supports_thinking, Some(true));
-        assert_eq!(model.supports_function_tools, Some(true));
-        assert_eq!(model.supports_image, Some(false));
-        assert_eq!(model.supports_web_search, Some(false));
-        assert_eq!(model.supports_tool_search, Some(false));
+        assert_eq!(model.supports_thinking, None);
+        assert_eq!(model.supports_function_tools, None);
+        assert_eq!(model.supports_image, None);
+        assert_eq!(model.supports_web_search, None);
+        assert_eq!(model.supports_tool_search, None);
     }
 
     #[test]
-    fn undeclared_openai_compatible_models_get_safe_defaults() {
+    fn undeclared_openai_compatible_models_remain_unknown() {
         let response: ModelsResponse =
             serde_json::from_str(r#"{"data":[{"id":"unknown"}]}"#).unwrap();
 
-        let mut model =
+        let model =
             openai_model_to_provider_model(response.data.into_iter().next().unwrap(), false);
-        apply_generic_capability_defaults(std::slice::from_mut(&mut model));
+
+        assert_eq!(model.supports_image, None);
+        assert_eq!(model.supports_thinking, None);
+        assert_eq!(model.supports_function_tools, None);
+        assert_eq!(model.supports_web_search, None);
+        assert_eq!(model.supports_tool_search, None);
+    }
+
+    #[test]
+    fn openai_compatible_provider_declarations_are_preserved() {
+        let response: ModelsResponse = serde_json::from_str(
+            r#"{"data":[{"id":"declared","supports_image":false,"supports_thinking":true,"supports_web_search":true,"supports_tool_search":false,"supports_function_tools":true}]}"#,
+        )
+        .unwrap();
+
+        let model =
+            openai_model_to_provider_model(response.data.into_iter().next().unwrap(), false);
 
         assert_eq!(model.supports_image, Some(false));
         assert_eq!(model.supports_thinking, Some(true));
-        assert_eq!(model.supports_function_tools, Some(true));
-        assert_eq!(model.supports_web_search, Some(false));
+        assert_eq!(model.supports_web_search, Some(true));
         assert_eq!(model.supports_tool_search, Some(false));
+        assert_eq!(model.supports_function_tools, Some(true));
     }
 
     #[test]
@@ -761,28 +761,6 @@ mod tests {
         assert_eq!(models[0].supports_thinking, Some(true));
         assert_eq!(models[1].context_window, Some(1_000_000));
         assert_eq!(models[1].supports_image, Some(true));
-    }
-
-    #[test]
-    fn bedrock_family_hints_cover_claude_but_not_other_vendors() {
-        let mut models = vec![
-            ProviderModel {
-                id: "anthropic.claude-haiku-4-5".to_owned(),
-                ..ProviderModel::default()
-            },
-            ProviderModel {
-                id: "meta.llama4-70b-instruct".to_owned(),
-                ..ProviderModel::default()
-            },
-        ];
-
-        apply_bedrock_capability_hints(&mut models);
-
-        assert_eq!(models[0].supports_thinking, Some(true));
-        assert_eq!(models[0].supports_function_tools, Some(true));
-        assert_eq!(models[0].supports_image, Some(true));
-        assert_eq!(models[1].supports_thinking, None);
-        assert_eq!(models[1].supports_function_tools, None);
     }
 
     #[test]

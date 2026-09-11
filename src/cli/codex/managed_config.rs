@@ -205,6 +205,10 @@ pub(in crate::cli) fn sync_managed_codex_gateway_base_url(
     }
     let mut doc = raw_config.parse::<DocumentMut>()?;
     let provider_id = codex_mixin::clients::codex::managed_provider_id(&doc)?.to_owned();
+    let mut changed = false;
+    if provider_id == codex_mixin::clients::codex::CUSTOM_ONLY_PROVIDER {
+        changed |= doc.remove("forced_login_method").is_some();
+    }
     let provider = doc
         .get_mut("model_providers")
         .and_then(Item::as_table_mut)
@@ -214,10 +218,13 @@ pub(in crate::cli) fn sync_managed_codex_gateway_base_url(
             anyhow::anyhow!("managed Codex config has no {provider_id} provider table")
         })?;
     let base_url = format!("http://{bind}/v1");
-    if provider.get("base_url").and_then(Item::as_str) == Some(base_url.as_str()) {
+    if provider.get("base_url").and_then(Item::as_str) != Some(base_url.as_str()) {
+        provider["base_url"] = value(base_url);
+        changed = true;
+    }
+    if !changed {
         return Ok(false);
     }
-    provider["base_url"] = value(base_url);
     write_atomic_if_changed(&config_path, doc.to_string().as_bytes())
 }
 

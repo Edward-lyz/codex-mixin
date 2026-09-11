@@ -17,7 +17,7 @@ final class GatewaySwitchControl: NSControl {
 
 func gatewayStatusColor(title: String, isRunning: Bool, isBusy: Bool) -> Color {
     if title.contains("失败") { return .red }
-    if title.contains("等待配置") || title.contains("降级") || title.contains("无启用") || isBusy {
+    if title.contains("等待配置") || title.contains("需要处理") || title.contains("无启用") || isBusy {
         return .orange
     }
     return isRunning ? .green : .gray
@@ -33,7 +33,7 @@ func gatewayStatusDetail(
     if let statusDetail, !statusDetail.isEmpty { return statusDetail }
     if let endpoint { return endpoint }
     if title.contains("失败") { return "请查看运行日志" }
-    if title.contains("等待配置") { return "请先设置供应商与 API Key" }
+    if title.contains("等待配置") { return "请先设置服务商与 API Key" }
     if isBusy { return "正在切换本地网关" }
     return isRunning ? "正在读取本地接口地址" : "网关当前未运行"
 }
@@ -89,6 +89,7 @@ final class ServiceMenuModel: ObservableObject {
 private struct ServiceMenuContent: View {
     @ObservedObject var model: ServiceMenuModel
     let toggle: (Bool) -> Void
+    let openSettings: () -> Void
     @State private var pulse = false
 
     var body: some View {
@@ -122,6 +123,13 @@ private struct ServiceMenuContent: View {
 
             Spacer(minLength: 8)
 
+            if model.statusDetail != nil {
+                Button("处理", action: openSettings)
+                    .buttonStyle(.link)
+                    .controlSize(.small)
+                    .accessibilityLabel("打开模型与服务设置")
+            }
+
             ZStack {
                 Toggle("本地网关", isOn: Binding(
                     get: { model.isRunning },
@@ -153,7 +161,7 @@ private struct ServiceMenuContent: View {
         model.isRunning
             && !model.title.contains("失败")
             && !model.title.contains("等待配置")
-            && !model.title.contains("降级")
+            && !model.title.contains("需要处理")
             && !model.title.contains("无启用")
             && !model.isBusy
             && !NSWorkspace.shared.accessibilityDisplayShouldReduceMotion
@@ -172,7 +180,8 @@ final class ServiceMenuHostingView: NSView {
         isRunning: Bool,
         isBusy: Bool,
         target: AnyObject?,
-        action: Selector
+        action: Selector,
+        openSettings: @escaping () -> Void
     ) {
         model = ServiceMenuModel(
             title: title,
@@ -189,7 +198,8 @@ final class ServiceMenuHostingView: NSView {
         bridgeControl.action = action
         hostingView = NSHostingView(rootView: ServiceMenuContent(
             model: model,
-            toggle: bridgeControl.activate
+            toggle: bridgeControl.activate,
+            openSettings: openSettings
         ))
         super.init(frame: NSRect(x: 0, y: 0, width: menuContentWidth, height: serviceMenuHeight))
         hostingView.frame = bounds
@@ -234,7 +244,8 @@ func serviceMenuView(
     isRunning: Bool,
     isBusy: Bool,
     target: AnyObject?,
-    action: Selector
+    action: Selector,
+    openSettings: @escaping () -> Void = {}
 ) -> NSView {
     ServiceMenuHostingView(
         title: title,
@@ -243,6 +254,7 @@ func serviceMenuView(
         isRunning: isRunning,
         isBusy: isBusy,
         target: target,
-        action: action
+        action: action,
+        openSettings: openSettings
     )
 }

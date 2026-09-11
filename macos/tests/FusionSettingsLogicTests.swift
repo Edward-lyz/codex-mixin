@@ -45,6 +45,8 @@ struct FusionSettingsLogicTests {
             """
         )
         precondition(legacy.id == "legacy")
+        precondition(legacy.mode == .orchestration)
+        precondition(legacy.timeRoutes.isEmpty)
         precondition(legacy.panelModels == ["model-a", "model-b"])
         precondition(legacy.minSuccessful == 2)
         precondition(legacy.maxCompletionTokens == 4096)
@@ -80,6 +82,40 @@ struct FusionSettingsLogicTests {
         precondition(current.panelMaxRounds == 12)
         precondition(current.panelMaxCallsPerModel == 33)
 
+        let scheduled = try FusionSettingsProfile.fromCLIJSON(
+            """
+            {
+              "profile": {
+                "id": "scheduled",
+                "mode": "time_rotation",
+                "time_routes": [
+                  {"start_minute": 480, "end_minute": 1080, "model": "model-a"},
+                  {"start_minute": 1320, "end_minute": 120, "model": "model-b"}
+                ],
+                "panel_models": [],
+                "judge_model": "",
+                "final_model": "model-c"
+              }
+            }
+            """
+        )
+        precondition(scheduled.mode == .timeRotation)
+        precondition(scheduled.timeRoutes.count == 2)
+        precondition(scheduled.timeRoutes[1].endMinute == 120)
+        precondition(fusionTimeRouteValidationError(scheduled.timeRoutes) == nil)
+        let scheduledRoundTrip = try FusionSettingsProfile.fromCLIJSON(
+            "{\"profile\":\(try scheduled.jsonString())}"
+        )
+        precondition(scheduledRoundTrip.mode == .timeRotation)
+        precondition(scheduledRoundTrip.timeRoutes == scheduled.timeRoutes)
+        var overlapping = scheduled.timeRoutes
+        overlapping.append(FusionTimeRoute(
+            startMinute: 1_000,
+            endMinute: 1_200,
+            model: "model-c"
+        ))
+        precondition(fusionTimeRouteValidationError(overlapping) == "时段不能重叠。")
+
         let roundTripSource = FusionSettingsProfile(
             id: "round-trip",
             panelModels: ["model-a", "model-b"],
@@ -98,6 +134,8 @@ struct FusionSettingsLogicTests {
             "{\"profile\":\(roundTripJSON)}"
         )
         precondition(roundTrip.id == roundTripSource.id)
+        precondition(roundTrip.mode == roundTripSource.mode)
+        precondition(roundTrip.timeRoutes == roundTripSource.timeRoutes)
         precondition(roundTrip.panelModels == roundTripSource.panelModels)
         precondition(roundTrip.judgeModel == roundTripSource.judgeModel)
         precondition(roundTrip.finalModel == roundTripSource.finalModel)
