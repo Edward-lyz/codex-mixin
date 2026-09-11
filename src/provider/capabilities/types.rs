@@ -4,7 +4,9 @@ use serde::{Deserialize, Serialize};
 
 use crate::provider::{ProviderAuthHeader, ProviderDefinition, ProviderProtocol};
 
-pub(super) const CAPABILITY_FILE_VERSION: u64 = 2;
+// Bumped whenever a probe payload changes, so cached results that came from the
+// previous payloads are re-probed instead of being trusted.
+pub(super) const CAPABILITY_FILE_VERSION: u64 = 3;
 pub(super) const PROBE_CONCURRENCY: usize = 4;
 pub(super) const PROBE_REQUEST_CONCURRENCY: usize = 8;
 

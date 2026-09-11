@@ -374,6 +374,40 @@ async fn benchmarks_baidu_gpt_through_responses_protocol() {
 }
 
 #[tokio::test]
+async fn a_truncated_reasoning_only_response_still_measures_ttft() {
+    let app = Router::new().route(
+        "/v1/responses",
+        post(|| async {
+            Body::from(concat!(
+                "data: {\"type\":\"response.created\",\"response\":{\"status\":\"in_progress\"}}\n\n",
+                "data: {\"type\":\"response.reasoning_summary_text.delta\",\"delta\":\"thinking\"}\n\n",
+                "data: {\"type\":\"response.incomplete\",\"response\":{\"status\":\"incomplete\",\"incomplete_details\":{\"reason\":\"max_output_tokens\"},\"usage\":{\"output_tokens\":256}}}\n\n"
+            ))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let provider = runtime(test_provider(
+        format!("http://{address}"),
+        ProviderProtocol::OpenAiResponses,
+    ));
+
+    let result = benchmark_model(
+        &Client::new(),
+        &target(&provider, "deepseek-flash"),
+        Duration::from_secs(1),
+        1,
+    )
+    .await
+    .unwrap();
+
+    assert_eq!(result.status, BenchmarkResultStatus::Completed);
+    assert!(result.ttft_ms.is_some());
+    assert!(result.error.is_none());
+}
+
+#[tokio::test]
 async fn ttft_only_sends_a_reasoning_budget_upstream() {
     let requests = Arc::new(Mutex::new(Vec::new()));
     let app = Router::new()

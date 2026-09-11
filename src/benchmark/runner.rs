@@ -367,7 +367,9 @@ pub(super) async fn benchmark_request(
                         return Err(attempt_failure(false, message, started, first_token_at));
                     }
                     match payload.get("type").and_then(Value::as_str) {
-                        Some("response.output_text.delta") => {
+                        // A reasoning model can stream reasoning deltas only, so every
+                        // streamed delta counts as upstream output.
+                        Some(event) if event.ends_with(".delta") => {
                             if payload
                                 .get("delta")
                                 .and_then(Value::as_str)
@@ -377,7 +379,9 @@ pub(super) async fn benchmark_request(
                                 last_token_at = Some(chunk_received_at);
                             }
                         }
-                        Some("response.completed") => {
+                        // The benchmark prompt runs until the output budget ends it, so
+                        // a truncated response finishes like a completed one.
+                        Some("response.completed" | "response.incomplete") => {
                             output_tokens = payload
                                 .pointer("/response/usage/output_tokens")
                                 .and_then(Value::as_u64)
@@ -389,7 +393,7 @@ pub(super) async fn benchmark_request(
                                 output_tokens,
                             );
                         }
-                        Some("response.failed" | "response.incomplete") => {
+                        Some("response.failed") => {
                             let message = payload
                                 .pointer("/response/error/message")
                                 .or_else(|| payload.pointer("/error/message"))

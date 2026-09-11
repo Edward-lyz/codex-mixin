@@ -202,7 +202,11 @@ fn responses_body(model: &str, feature: Option<ProbeFeature>) -> Value {
             body["reasoning"] = json!({"effort": "low"});
         }
         Some(ProbeFeature::FunctionTools) => {
-            body["tools"] = json!([function_tool()]);
+            let mut tool = function_tool();
+            // The Responses API requires an explicit tool type. Without it the
+            // upstream rejects the probe and function tools look unsupported.
+            tool["type"] = json!("function");
+            body["tools"] = json!([tool]);
             body["tool_choice"] = json!("auto");
         }
         Some(ProbeFeature::ToolSearch) => {
@@ -437,6 +441,15 @@ fn truncate(value: &str) -> String {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn the_responses_function_tool_probe_declares_its_tool_type() {
+        let body = responses_body("model-a", Some(ProbeFeature::FunctionTools));
+
+        assert_eq!(body["tools"][0]["type"], "function");
+        assert_eq!(body["tools"][0]["name"], "codex_mixin_probe_noop");
+        assert!(body["tools"][0]["parameters"].is_object());
+    }
 
     #[test]
     fn transient_http_failures_are_indeterminate() {
