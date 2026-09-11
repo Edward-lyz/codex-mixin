@@ -380,6 +380,11 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
                 .as_deref()
                 .and_then(data_report_sibling);
         }
+        if options.clear_auto_review_model {
+            provider.auto_review_model = None;
+        } else if let Some(model) = options.auto_review_model {
+            provider.auto_review_model = Some(trim_required("auto review model", model)?);
+        }
         provider.validate()?;
     }
     codex_mixin::application::provider::update_provider(

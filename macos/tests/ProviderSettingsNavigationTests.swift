@@ -15,6 +15,7 @@ struct ProviderSettingsNavigationTests {
         testMutationIsBusyAndRestartsInOrder()
         testBaiduBridgeTestAndUpdateArguments()
         testAWSBedrockEndpointArguments()
+        testAutoReviewModelArguments()
         testReorderReloadsPersistedProviderState()
         testOneAPIFieldsStayWithTheirProvider()
         testReadinessPresentationUsesConcreteReasons()
@@ -273,6 +274,43 @@ struct ProviderSettingsNavigationTests {
 
     @MainActor
     private static func testReorderReloadsPersistedProviderState() {
+        reorderReloadsPersistedProviderState()
+    }
+
+    @MainActor
+    private static func testAutoReviewModelArguments() {
+        var events: [String] = []
+        var loadCalls = 0
+        let controller = ProviderSettingsWindowController(
+            loadHandler: {
+                loadCalls += 1
+                return try providerList(
+                    ids: ["custom"],
+                    autoReviewModel: loadCalls == 1 ? nil : "model-1"
+                )
+            },
+            runHandler: { arguments in
+                events.append(arguments.joined(separator: "|"))
+                return ""
+            },
+            applyHandler: { _ in }
+        )
+        controller.present()
+        waitUntil { loadCalls == 1 && controller.model.selectedProviderID == "custom" }
+
+        controller.model.auxiliaryModelUpstream = true
+        controller.model.autoReviewModel = "model-1"
+        controller.saveProvider()
+        waitUntil { events.contains { $0.contains("--auto-review-model|model-1") } }
+        waitUntil { controller.model.selectedProvider?.autoReviewModel == "model-1" }
+
+        controller.model.autoReviewModel = ""
+        controller.saveProvider()
+        waitUntil { events.contains { $0.contains("--clear-auto-review-model") } }
+    }
+
+    @MainActor
+    private static func reorderReloadsPersistedProviderState() {
         var loadCalls = 0
         var events: [String] = []
         let controller = ProviderSettingsWindowController(
@@ -373,8 +411,13 @@ struct ProviderSettingsNavigationTests {
         ).contains("降级"))
     }
 
-    private static func providerList(ids: [String]) throws -> ProviderListResponse {
-        let providers = ids.map(providerJSON).joined(separator: ",")
+    private static func providerList(
+        ids: [String],
+        autoReviewModel: String? = nil
+    ) throws -> ProviderListResponse {
+        let providers = ids
+            .map { providerJSON(id: $0, autoReviewModel: autoReviewModel) }
+            .joined(separator: ",")
         let json = """
             {
               "config_version": 1,
@@ -385,7 +428,7 @@ struct ProviderSettingsNavigationTests {
         return try decodeProviderList(json)
     }
 
-    private static func providerJSON(id: String) -> String {
+    private static func providerJSON(id: String, autoReviewModel: String? = nil) -> String {
         let isBaidu = id.hasPrefix("baidu-oneapi")
         let isAWSBedrock = id == "aws-bedrock"
         let preset = isBaidu ? "baidu-oneapi" : isAWSBedrock ? "aws-bedrock" : "custom"
@@ -404,12 +447,15 @@ struct ProviderSettingsNavigationTests {
         let aws = isAWSBedrock
             ? ", \"aws_sigv4_configured\": true, \"aws_region\": \"us-east-1\", \"aws_session_token_configured\": false"
             : ""
+        let autoReview = autoReviewModel
+            .map { ", \"auto_review_model\": \"\($0)\"" } ?? ""
+        let selectedModels = autoReviewModel.map { "\"\($0)\"" } ?? ""
         return """
         {
           "id": "\(id)",
           "display_name": "\(id)",
           "enabled": true,
-          "auxiliary_model_upstream": false,
+          "auxiliary_model_upstream": false\(autoReview),
           "preset_id": "\(preset)",
           "protocol": "\(protocolID)",
           "base_url": "https://example.com",
@@ -417,7 +463,7 @@ struct ProviderSettingsNavigationTests {
           "model_source": \(modelSource),
           "api_key_configured": true\(aws),
           "quota_parser": "generic"\(bridge),
-          "selected_models": [],
+          "selected_models": [\(selectedModels)],
           "new_models": [],
           "unavailable_selected_models": [],
           "cached_models": [{"id": "model-1"}],

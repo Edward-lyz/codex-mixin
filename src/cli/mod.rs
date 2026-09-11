@@ -2,7 +2,9 @@ use std::io::{self, IsTerminal};
 use std::time::Instant;
 
 use clap::Parser;
-use codex_mixin::catalog::{codex_catalog_from_models_with_metadata, load_template_catalog};
+use codex_mixin::catalog::{
+    apply_auto_review_override, codex_catalog_from_models_with_metadata, load_template_catalog,
+};
 use codex_mixin::config::GatewayConfig;
 use codex_mixin::server::AppState;
 use console::style;
@@ -356,6 +358,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 baidu_auth_bridge,
                 ducx_executable,
                 baidu_code_report,
+                auto_review_model,
+                clear_auto_review_model,
             } => {
                 let ducx_executable = match (baidu_auth_bridge.as_deref(), &ducx_executable) {
                     (Some("ducx_loopback"), None) => Some(ensure_managed_ducx().await?),
@@ -394,6 +398,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     baidu_auth_bridge,
                     ducx_executable,
                     baidu_code_report,
+                    auto_review_model,
+                    clear_auto_review_model,
                 })
                 .await?;
                 report_hook::sync_installation()
@@ -594,12 +600,16 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 .await?;
             let template = load_template_catalog(template_catalog.as_deref())?;
             let metadata = load_model_metadata_resolver().await?;
-            let catalog = codex_catalog_from_models_with_metadata(
+            let mut catalog = codex_catalog_from_models_with_metadata(
                 &models,
                 config.default_context_window,
                 template.as_ref(),
                 &metadata,
             );
+            apply_auto_review_override(
+                &mut catalog,
+                codex_mixin::provider::auxiliary_auto_review_slug(&config.providers).as_deref(),
+            )?;
             println!("{}", serde_json::to_string_pretty(&catalog)?);
             Ok(())
         }

@@ -523,6 +523,15 @@ pub(super) enum ProviderCommand {
         ducx_executable: Option<PathBuf>,
         #[arg(long, value_name = "BOOL")]
         baidu_code_report: Option<bool>,
+        #[arg(
+            long,
+            value_name = "MODEL",
+            conflicts_with = "clear_auto_review_model",
+            help = "Upstream model that answers Codex auto review while this provider is the auxiliary upstream"
+        )]
+        auto_review_model: Option<String>,
+        #[arg(long, conflicts_with = "auto_review_model")]
+        clear_auto_review_model: bool,
     },
     /// Enable a provider.
     Enable { id: String },

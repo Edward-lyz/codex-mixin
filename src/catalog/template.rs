@@ -50,6 +50,45 @@ pub fn apply_web_search_capabilities(
     Ok(changed)
 }
 
+/// Point managed custom models at the auto review model of the auxiliary
+/// upstream. No slug keeps auto review on Codex's official review model.
+pub fn apply_auto_review_override(
+    catalog: &mut Value,
+    auto_review_slug: Option<&str>,
+) -> anyhow::Result<bool> {
+    let models = catalog
+        .get_mut("models")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| anyhow::anyhow!("Codex model catalog has no models array"))?;
+    let mut changed = false;
+    for model in models
+        .iter_mut()
+        .filter(|model| is_managed_custom_model(model))
+    {
+        let model = model
+            .as_object_mut()
+            .expect("Codex catalog model must be an object");
+        match auto_review_slug {
+            Some(slug) => {
+                if model
+                    .get("auto_review_model_override")
+                    .and_then(Value::as_str)
+                    != Some(slug)
+                {
+                    model.insert("auto_review_model_override".to_owned(), json!(slug));
+                    changed = true;
+                }
+            }
+            None => {
+                changed |= model
+                    .remove("auto_review_model_override")
+                    .is_some_and(|previous| !previous.is_null());
+            }
+        }
+    }
+    Ok(changed)
+}
+
 pub fn load_template_catalog(path: Option<&Path>) -> anyhow::Result<Option<Value>> {
     let path = match path {
         Some(path) => path.to_path_buf(),

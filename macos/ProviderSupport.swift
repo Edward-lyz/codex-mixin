@@ -196,6 +196,7 @@ struct ProviderView: Decodable {
     let displayName: String
     let enabled: Bool
     let auxiliaryModelUpstream: Bool
+    let autoReviewModel: String?
     let presetID: String?
     let protocolID: String
     let baseURL: String
@@ -231,6 +232,7 @@ struct ProviderView: Decodable {
         case displayName = "display_name"
         case enabled
         case auxiliaryModelUpstream = "auxiliary_model_upstream"
+        case autoReviewModel = "auto_review_model"
         case presetID = "preset_id"
         case protocolID = "protocol"
         case baseURL = "base_url"
@@ -268,6 +270,7 @@ struct ProviderView: Decodable {
         displayName = try values.decode(String.self, forKey: .displayName)
         enabled = try values.decode(Bool.self, forKey: .enabled)
         auxiliaryModelUpstream = try values.decode(Bool.self, forKey: .auxiliaryModelUpstream)
+        autoReviewModel = try values.decodeIfPresent(String.self, forKey: .autoReviewModel)
         presetID = try values.decodeIfPresent(String.self, forKey: .presetID)
         protocolID = try values.decode(String.self, forKey: .protocolID)
         baseURL = try values.decode(String.self, forKey: .baseURL)
@@ -310,7 +313,15 @@ struct ProviderView: Decodable {
     }
 
     var supportsAutoReview: Bool {
-        modelSource.kind == "baidu_oneapi" || cachedModels.contains { model in
+        if modelSource.kind == "baidu_oneapi" {
+            return true
+        }
+        // Any added model can answer auto review through an explicit choice;
+        // an upstream review model maps automatically.
+        if !selectedModels.isEmpty {
+            return true
+        }
+        return cachedModels.contains { model in
             switch model.id.trimmingCharacters(in: .whitespacesAndNewlines).lowercased() {
             case "codex-auto-review", "auto", "auto-baidu-oneapi":
                 true

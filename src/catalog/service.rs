@@ -16,7 +16,9 @@ use crate::fusion::FusionMode;
 use crate::provider::{MetadataResolver, ProviderRegistry, catalog_model_slug};
 use crate::web_search::WebSearchCapabilities;
 
-use super::{codex_catalog_from_models_with_metadata, load_template_catalog};
+use super::{
+    apply_auto_review_override, codex_catalog_from_models_with_metadata, load_template_catalog,
+};
 
 const CATALOG_SOURCE_CACHE_TTL: Duration = Duration::from_secs(60);
 const CATALOG_RESPONSE_CACHE_TTL: Duration = Duration::from_secs(30);
@@ -237,14 +239,16 @@ impl CatalogService {
         let models = self.fetch_models().await?;
         let sources = self.catalog_sources().await?;
         let default_context_window = self.config.default_context_window;
+        let auto_review_slug = crate::provider::auxiliary_auto_review_slug(&self.config.providers);
         let body = tokio::task::spawn_blocking(move || {
-            let catalog = codex_catalog_from_models_with_metadata(
+            let mut catalog = codex_catalog_from_models_with_metadata(
                 &models,
                 default_context_window,
                 sources.template.as_ref(),
                 &sources.metadata,
             );
-            serde_json::to_vec(&catalog).map(Bytes::from)
+            apply_auto_review_override(&mut catalog, auto_review_slug.as_deref())?;
+            Ok::<Bytes, anyhow::Error>(Bytes::from(serde_json::to_vec(&catalog)?))
         })
         .await
         .map_err(|error| anyhow::anyhow!("catalog response generator failed: {error}"))??;

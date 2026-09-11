@@ -515,6 +515,7 @@ pub(super) fn apply_model_selection(
         .retain(|model| !model.manually_added || selected.contains(model.id.as_str()));
     provider.selected_models = models;
     provider.new_models.clear();
+    provider.prune_stale_auto_review_model();
     provider.validate()?;
     Ok(newly_selected)
 }

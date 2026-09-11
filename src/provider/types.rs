@@ -178,6 +178,11 @@ pub struct ProviderDefinition {
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub auxiliary_model_upstream: bool,
+    /// Upstream model that answers Codex guardian auto review while this
+    /// provider owns the auxiliary upstream. Empty keeps auto review on the
+    /// official model.
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub auto_review_model: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub preset_id: Option<String>,
     pub protocol: ProviderProtocol,
@@ -376,7 +381,36 @@ impl ProviderDefinition {
                 self.id
             );
         }
+        if let Some(auto_review_model) = self.auto_review_model.as_deref().map(str::trim) {
+            ensure!(
+                !auto_review_model.is_empty(),
+                "provider {} auto review model must not be empty",
+                self.id
+            );
+            ensure!(
+                self.selected_models
+                    .iter()
+                    .any(|selected| selected.eq_ignore_ascii_case(auto_review_model)),
+                "provider {} auto review model {auto_review_model} is not one of its selected models",
+                self.id
+            );
+        }
         Ok(())
+    }
+
+    /// Drop an auto review model the provider no longer offers, so an upstream
+    /// model list change cannot invalidate the stored provider.
+    pub fn prune_stale_auto_review_model(&mut self) {
+        let Some(auto_review_model) = self.auto_review_model.as_deref().map(str::trim) else {
+            return;
+        };
+        if !self
+            .selected_models
+            .iter()
+            .any(|selected| selected.eq_ignore_ascii_case(auto_review_model))
+        {
+            self.auto_review_model = None;
+        }
     }
 
     pub fn readiness(&self) -> ProviderReadiness {
@@ -658,6 +692,22 @@ mod tests {
 
         provider.quota_username = Some("user@example.com".to_owned());
         provider.validate().unwrap();
+    }
+
+    #[test]
+    fn an_auto_review_model_must_be_one_of_the_selected_models() {
+        let mut provider = crate::provider::open_code_go_provider("auto-review", "key");
+        provider.auto_review_model = Some("glm-5.2".to_owned());
+        provider.validate().unwrap();
+
+        provider.auto_review_model = Some("not-selected".to_owned());
+        assert!(
+            provider
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("auto review model not-selected is not one of its selected models")
+        );
     }
 
     #[test]

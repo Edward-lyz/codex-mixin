@@ -159,6 +159,19 @@ func auxiliaryModelStatus(for provider: ProviderView, codexInstallMode: ManagedC
     }
 }
 
+/// Models that can answer Codex auto review for this provider.
+func autoReviewModelChoices(for provider: ProviderView) -> [String] {
+    let availableModels = Set(provider.cachedModels.map(\.id))
+    return provider.selectedModels.filter(availableModels.contains)
+}
+
+func autoReviewModelDetail(auxiliaryModelUpstream: Bool) -> String {
+    guard auxiliaryModelUpstream else {
+        return "需要先开启辅助模型上游；当前自动审查使用官方模型和额度"
+    }
+    return "留空表示自动：上游提供 codex-auto-review 时直接映射，否则请选择一个模型"
+}
+
 func selectedProviderStatus(provider: ProviderView?, providersEmpty: Bool, codexInstallMode: ManagedCodexInstallMode?) -> String {
     guard let provider else {
         return providersEmpty ? "等待新增服务商" : "请选择服务商"

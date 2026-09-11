@@ -760,7 +760,8 @@ fn capability_refresh_does_not_restore_stale_official_cache() {
     )
     .unwrap();
 
-    refresh_managed_codex_catalog_with_capabilities(&config_path, Some(&HashSet::new())).unwrap();
+    refresh_managed_codex_catalog_with_capabilities(&config_path, Some(&HashSet::new()), None)
+        .unwrap();
 
     let refreshed: serde_json::Value =
         serde_json::from_slice(&fs::read(catalog_path).unwrap()).unwrap();
@@ -870,8 +871,12 @@ fn refreshes_per_model_web_search_for_non_oauth_catalog() {
 
     let supported_models = HashSet::from(["Claude Haiku 4.5".to_owned()]);
     assert!(
-        refresh_managed_codex_catalog_with_capabilities(&config_path, Some(&supported_models))
-            .unwrap()
+        refresh_managed_codex_catalog_with_capabilities(
+            &config_path,
+            Some(&supported_models),
+            None
+        )
+        .unwrap()
     );
     let refreshed: serde_json::Value =
         serde_json::from_slice(&fs::read(catalog_path).unwrap()).unwrap();
@@ -907,7 +912,8 @@ fn generated_catalog_refresh_adds_new_fusion_models() {
     });
 
     assert!(
-        write_generated_managed_codex_catalog(&config_path, generated, &HashSet::new()).unwrap()
+        write_generated_managed_codex_catalog(&config_path, generated, &HashSet::new(), None)
+            .unwrap()
     );
     let refreshed_config = fs::read_to_string(&config_path)
         .unwrap()

@@ -46,6 +46,7 @@ pub(super) fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConf
         let mut parsed: StoredGatewayConfig = serde_json::from_value(document)?;
         ensure_config_version(u32::try_from(version).context("config_version is too large")?)?;
         upgrade_deepseek_quota_defaults(&mut parsed);
+        upgrade_deepseek_responses_endpoint(&mut parsed);
         upgrade_opencode_go_quota_defaults(&mut parsed);
         upgrade_opencode_go_responses_endpoint(&mut parsed);
         upgrade_baidu_image_generation_defaults(&mut parsed);
@@ -79,6 +80,7 @@ pub(super) fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConf
     }
     let mut migrated = migrate_legacy_config(serde_json::from_value(document)?)?;
     upgrade_deepseek_quota_defaults(&mut migrated);
+    upgrade_deepseek_responses_endpoint(&mut migrated);
     upgrade_opencode_go_quota_defaults(&mut migrated);
     upgrade_opencode_go_responses_endpoint(&mut migrated);
     bootstrap_unrefreshed_selected_models(&mut migrated);
@@ -199,6 +201,26 @@ fn upgrade_opencode_go_quota_defaults(config: &mut StoredGatewayConfig) {
         {
             provider.quota_parser = ProviderQuotaParser::OpenCodeGo;
             provider.quota_currency = Some("USD".to_owned());
+        }
+    }
+}
+/// Move DeepSeek providers onto the Responses endpoint.
+///
+/// The preset used chat completions, which drops native reasoning and rejects
+/// the Codex tool shapes. Only rewrite the untouched preset default; a
+/// customized endpoint stays as the user's own choice.
+fn upgrade_deepseek_responses_endpoint(config: &mut StoredGatewayConfig) {
+    for provider in &mut config.providers {
+        if provider.preset_id.as_deref() == Some("deepseek")
+            && provider.base_url == "https://api.deepseek.com"
+            && provider.protocol == ProviderProtocol::OpenAiChat
+            && matches!(
+                provider.api_path.as_str(),
+                "/chat/completions" | "/v1/chat/completions"
+            )
+        {
+            provider.protocol = ProviderProtocol::OpenAiResponses;
+            provider.api_path = "/v1/responses".to_owned();
         }
     }
 }

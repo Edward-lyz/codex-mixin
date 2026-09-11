@@ -1584,6 +1584,12 @@ pub(super) fn render_dialog(
                     form.focus == 9,
                     false,
                 ),
+                form_line(
+                    "Auto review model",
+                    &form.auto_review_model,
+                    form.focus == 19,
+                    false,
+                ),
                 Line::from(""),
                 Line::from("Empty secrets preserve them unless Clear is enabled."),
                 Line::from("[ SAVE ]  [ CANCEL ]   Tab/Up/Down field  Left/Right/Space choose"),

@@ -620,6 +620,16 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         var update = ["providers", "update", provider.id]
         update.append("--auxiliary-model-upstream")
         update.append(auxiliaryModelUpstream ? "true" : "false")
+        let autoReviewModel = model.autoReviewModel
+            .trimmingCharacters(in: .whitespacesAndNewlines)
+        if autoReviewModel.isEmpty {
+            if provider.autoReviewModel != nil {
+                update.append("--clear-auto-review-model")
+            }
+        } else {
+            update.append("--auto-review-model")
+            update.append(autoReviewModel)
+        }
         if provider.presetID == "aws-bedrock" {
             let region = model.awsRegion.trimmingCharacters(in: .whitespacesAndNewlines)
             let hasStoredCredentials = provider.awsSigV4Configured == true

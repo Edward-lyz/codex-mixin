@@ -95,6 +95,8 @@ pub(super) struct UpdateProviderOptions {
     pub(super) baidu_auth_bridge: Option<String>,
     pub(super) ducx_executable: Option<PathBuf>,
     pub(super) baidu_code_report: Option<bool>,
+    pub(super) auto_review_model: Option<String>,
+    pub(super) clear_auto_review_model: bool,
 }
 
 #[derive(Clone, Debug, Default)]
@@ -145,6 +147,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     "display_name": provider.display_name,
                     "enabled": provider.enabled,
                     "auxiliary_model_upstream": provider.auxiliary_model_upstream,
+                    "auto_review_model": provider.auto_review_model,
                     "preset_id": provider.preset_id,
                     "protocol": provider.protocol,
                     "base_url": provider.base_url,
@@ -313,6 +316,7 @@ fn official_provider_view(
         "display_name": "OpenAI",
         "enabled": true,
         "auxiliary_model_upstream": false,
+        "auto_review_model": null,
         "preset_id": null,
         "protocol": "open_ai_responses",
         "base_url": "https://chatgpt.com/backend-api/codex",

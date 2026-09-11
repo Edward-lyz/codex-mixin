@@ -13,7 +13,9 @@ pub use managed::{migrate_managed_model_metadata, refresh_managed_oauth_catalog}
 pub(crate) use service::CatalogService;
 #[cfg(test)]
 pub(crate) use service::provider_model_display_name;
-pub use template::{apply_web_search_capabilities, load_template_catalog};
+pub use template::{
+    apply_auto_review_override, apply_web_search_capabilities, load_template_catalog,
+};
 
 #[cfg(test)]
 mod tests {
@@ -26,7 +28,7 @@ mod tests {
 
     use super::{
         CUSTOM_MODEL_MARKER, FALLBACK_BASE_INSTRUCTIONS, SUPPORTS_THINKING_MARKER,
-        UPSTREAM_MODEL_MARKER, apply_web_search_capabilities,
+        UPSTREAM_MODEL_MARKER, apply_auto_review_override, apply_web_search_capabilities,
         codex_catalog_from_models_with_metadata, codex_oauth_proxy_catalog,
         refresh_managed_oauth_catalog,
     };
@@ -80,12 +82,12 @@ mod tests {
     }
 
     #[test]
-    fn custom_models_use_direct_tools_and_self_review() {
+    fn custom_models_drop_official_tool_and_review_settings() {
         let template = json!({
             "models": [{
                 "slug": "gpt-5.4-mini",
                 "tool_mode": "code_mode_only",
-                "auto_review_model_override": null
+                "auto_review_model_override": "codex-auto-review"
             }]
         });
         let models = vec![ModelInfo {
@@ -95,25 +97,47 @@ mod tests {
             ..ModelInfo::default()
         }];
 
-        let catalog = codex_oauth_proxy_catalog(
+        let mut catalog = codex_oauth_proxy_catalog(
             &models,
             1_000_000,
             Some(&template),
             &MetadataResolver::empty(),
             Some("deepseek"),
         );
-        let model = catalog["models"]
-            .as_array()
-            .unwrap()
-            .iter()
-            .find(|model| model["slug"] == "deepseek-flash-deepseek")
-            .unwrap();
+        let custom_model = |catalog: &Value| {
+            catalog["models"]
+                .as_array()
+                .unwrap()
+                .iter()
+                .find(|model| model["slug"] == "deepseek-flash-deepseek")
+                .cloned()
+                .unwrap()
+        };
 
+        // The official template entry keeps Code Mode and official review.
         assert_eq!(catalog["models"][0]["tool_mode"], "code_mode_only");
-        assert!(model.get("tool_mode").is_none());
+        assert!(custom_model(&catalog).get("tool_mode").is_none());
+        assert!(
+            custom_model(&catalog)
+                .get("auto_review_model_override")
+                .is_none()
+        );
+
+        assert!(apply_auto_review_override(&mut catalog, Some("deepseek-flash-deepseek")).unwrap());
         assert_eq!(
-            model["auto_review_model_override"],
+            custom_model(&catalog)["auto_review_model_override"],
             "deepseek-flash-deepseek"
+        );
+        assert_eq!(
+            catalog["models"][0]["auto_review_model_override"],
+            "codex-auto-review"
+        );
+
+        assert!(apply_auto_review_override(&mut catalog, None).unwrap());
+        assert!(
+            custom_model(&catalog)
+                .get("auto_review_model_override")
+                .is_none()
         );
     }
 

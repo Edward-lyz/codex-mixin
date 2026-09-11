@@ -391,6 +391,16 @@ impl ProviderRegistry {
         let provider = self.providers.iter().find(|provider| {
             provider.definition.enabled && provider.definition.auxiliary_model_upstream
         })?;
+        // An explicit auto review model wins: the upstream may host no model
+        // named after Codex's review slug.
+        if is_auto_review_model_id(upstream_model_id)
+            && let Some(configured) = configured_auto_review_model(&provider.definition)
+        {
+            let catalog_slug = catalog_model_slug(configured, provider.id());
+            return self
+                .resolve_known(&catalog_slug)
+                .filter(|resolved| resolved.model.is_some());
+        }
         if provider.is_baidu_model_source()
             && upstream_model_id
                 .trim()
@@ -531,6 +541,33 @@ pub fn catalog_model_slug(upstream_model_id: &str, provider_id: &str) -> String 
     format!("{upstream_model_id}-{provider_id}")
 }
 
+/// Catalog slug Codex must use for guardian auto review.
+///
+/// The auxiliary upstream owns auto review: an explicit choice wins, and a
+/// selected model already named after Codex's review slug maps automatically.
+/// No auxiliary upstream keeps auto review on the official model and quota.
+pub fn auxiliary_auto_review_slug(providers: &[ProviderDefinition]) -> Option<String> {
+    let provider = providers
+        .iter()
+        .find(|provider| provider.enabled && provider.auxiliary_model_upstream)?;
+    let model = configured_auto_review_model(provider).or_else(|| {
+        provider
+            .selected_models
+            .iter()
+            .find(|model| is_auto_review_model_id(model))
+            .map(String::as_str)
+    })?;
+    Some(catalog_model_slug(model, &provider.id))
+}
+
+fn configured_auto_review_model(provider: &ProviderDefinition) -> Option<&str> {
+    provider
+        .auto_review_model
+        .as_deref()
+        .map(str::trim)
+        .filter(|model| !model.is_empty())
+}
+
 fn insert_route(
     existing_providers: &[ProviderRuntime],
     current_provider: &ProviderRuntime,
@@ -652,6 +689,53 @@ mod tests {
         let resolved = resolved.unwrap();
         assert_eq!(resolved.upstream_model_id, "codex-auto-review");
         assert!(resolved.model.is_none());
+    }
+
+    #[test]
+    fn explicit_auto_review_model_routes_review_to_the_auxiliary_upstream() {
+        let mut provider = test_provider("deepseek");
+        provider.auxiliary_model_upstream = true;
+        provider.auto_review_model = Some("deepseek-flash".to_owned());
+        provider.selected_models = vec!["deepseek-flash".to_owned()];
+        provider.cached_models = vec![ProviderModel {
+            id: "deepseek-flash".to_owned(),
+            ..ProviderModel::default()
+        }];
+        provider.validate().unwrap();
+        let slug = auxiliary_auto_review_slug(std::slice::from_ref(&provider));
+        let registry = ProviderRegistry::new(vec![provider]).unwrap();
+
+        let resolved = registry
+            .resolve_auxiliary_model("codex-auto-review")
+            .unwrap();
+
+        assert_eq!(resolved.upstream_model_id, "deepseek-flash");
+        assert_eq!(resolved.catalog_slug, "deepseek-flash-deepseek");
+        assert_eq!(slug.as_deref(), Some("deepseek-flash-deepseek"));
+    }
+
+    #[test]
+    fn auto_review_stays_official_without_an_auxiliary_upstream() {
+        let mut provider = test_provider("deepseek");
+        provider.selected_models = vec!["deepseek-flash".to_owned()];
+        provider.auto_review_model = Some("deepseek-flash".to_owned());
+
+        assert_eq!(
+            auxiliary_auto_review_slug(std::slice::from_ref(&provider)),
+            None
+        );
+    }
+
+    #[test]
+    fn a_removed_model_clears_the_stored_auto_review_choice() {
+        let mut provider = test_provider("deepseek");
+        provider.selected_models = vec!["kept".to_owned()];
+        provider.auto_review_model = Some("gone".to_owned());
+
+        provider.prune_stale_auto_review_model();
+
+        assert_eq!(provider.auto_review_model, None);
+        assert!(provider.validate().is_ok());
     }
 
     #[test]
@@ -880,6 +964,7 @@ mod tests {
             display_name: id.to_owned(),
             enabled: true,
             auxiliary_model_upstream: false,
+            auto_review_model: None,
             preset_id: None,
             protocol: ProviderProtocol::OpenAiChat,
             base_url: "https://example.test".to_owned(),

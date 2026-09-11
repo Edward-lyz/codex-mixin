@@ -23,6 +23,7 @@ private struct ProviderConnectionDraft {
     let quotaWorkspaceID: String
     let quotaAuthCookie: String
     let auxiliaryModelUpstream: Bool
+    let autoReviewModel: String
     let baiduAuthBridge: BaiduAuthBridgeMode
     let baiduCodeReport: Bool
 }
@@ -50,6 +51,7 @@ final class ProviderSettingsModel: ObservableObject {
     @Published var quotaWorkspaceID = ""
     @Published var quotaAuthCookie = ""
     @Published var auxiliaryModelUpstream = false
+    @Published var autoReviewModel = ""
     @Published var baiduAuthBridge = BaiduAuthBridgeMode.disabled
     @Published var baiduCodeReport = false
     @Published var applyRetryProviderID: String?
@@ -99,6 +101,7 @@ final class ProviderSettingsModel: ObservableObject {
         if !draft.apiKey.trimmingCharacters(in: .whitespacesAndNewlines).isEmpty { return true }
         if draft.imageGenerationPath != (provider.imageGenerationPath ?? "") { return true }
         if draft.auxiliaryModelUpstream != provider.auxiliaryModelUpstream { return true }
+        if draft.autoReviewModel != (provider.autoReviewModel ?? "") { return true }
         if provider.presetID == "custom" {
             return draft.displayName != provider.displayName
                 || draft.baseURL != provider.baseURL
@@ -172,6 +175,7 @@ final class ProviderSettingsModel: ObservableObject {
                 quotaWorkspaceID: draft.quotaWorkspaceID,
                 quotaAuthCookie: "",
                 auxiliaryModelUpstream: draft.auxiliaryModelUpstream,
+                autoReviewModel: draft.autoReviewModel,
                 baiduAuthBridge: draft.baiduAuthBridge,
                 baiduCodeReport: draft.baiduCodeReport
             )
@@ -230,6 +234,7 @@ final class ProviderSettingsModel: ObservableObject {
             quotaWorkspaceID: provider.quotaWorkspaceID ?? "",
             quotaAuthCookie: "",
             auxiliaryModelUpstream: provider.auxiliaryModelUpstream,
+            autoReviewModel: provider.autoReviewModel ?? "",
             baiduAuthBridge: provider.effectiveBaiduAuthBridge ?? .disabled,
             baiduCodeReport: provider.baiduCodeReport == true
         ))
@@ -262,6 +267,7 @@ final class ProviderSettingsModel: ObservableObject {
             quotaWorkspaceID: quotaWorkspaceID,
             quotaAuthCookie: quotaAuthCookie,
             auxiliaryModelUpstream: auxiliaryModelUpstream,
+            autoReviewModel: autoReviewModel,
             baiduAuthBridge: baiduAuthBridge,
             baiduCodeReport: baiduCodeReport
         )
@@ -283,6 +289,7 @@ final class ProviderSettingsModel: ObservableObject {
         quotaWorkspaceID = draft.quotaWorkspaceID
         quotaAuthCookie = draft.quotaAuthCookie
         auxiliaryModelUpstream = draft.auxiliaryModelUpstream
+        autoReviewModel = draft.autoReviewModel
         baiduAuthBridge = draft.baiduAuthBridge
         baiduCodeReport = draft.baiduCodeReport
     }
@@ -295,6 +302,7 @@ final class ProviderSettingsModel: ObservableObject {
             provider.websiteURL ?? "",
             provider.imageGenerationPath ?? "",
             String(provider.auxiliaryModelUpstream),
+            provider.autoReviewModel ?? "",
             String(provider.apiKeyConfigured),
             String(provider.awsSigV4Configured == true),
             provider.awsRegion ?? "",
@@ -735,6 +743,26 @@ private struct ProviderDetailForm: View {
                                         for: provider,
                                         codexInstallMode: codexInstallMode
                                     ))
+                            }
+                            if provider.kind == .configured {
+                                advancedOptionDivider
+                                advancedOptionRow(
+                                    title: "自动审查模型",
+                                    detail: autoReviewModelDetail(
+                                        auxiliaryModelUpstream: formState.auxiliaryModelUpstream
+                                    )
+                                ) {
+                                    Picker("自动审查模型", selection: $formState.autoReviewModel) {
+                                        Text("自动").tag("")
+                                        ForEach(autoReviewModelChoices(for: provider), id: \.self) {
+                                            model in
+                                            Text(model).tag(model)
+                                        }
+                                    }
+                                    .labelsHidden()
+                                    .frame(width: 260)
+                                    .disabled(!formState.auxiliaryModelUpstream)
+                                }
                             }
                         }
                         .padding(.top, 10)

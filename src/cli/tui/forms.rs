@@ -328,16 +328,20 @@ impl EditProviderForm {
                 .get("auxiliary_model_upstream")
                 .and_then(Value::as_bool)
                 .unwrap_or(false),
+            auto_review_model: value_str(provider, "auto_review_model", "").to_owned(),
+            auto_review_model_configured: provider
+                .get("auto_review_model")
+                .is_some_and(|value| !value.is_null()),
         })
     }
 
     pub(super) fn active_fields(&self) -> &'static [usize] {
         match self.preset.as_str() {
-            "custom" => &[0, 1, 2, 3, 4, 5, 9],
-            "baidu-oneapi" => &[3, 4, 5, 6, 7, 8, 9],
-            "opencode-go" => &[3, 4, 5, 10, 11, 12, 9],
-            "aws-bedrock" => &[13, 14, 15, 16, 17, 18, 3, 9],
-            _ => &[3, 4, 5, 9],
+            "custom" => &[0, 1, 2, 3, 4, 5, 9, 19],
+            "baidu-oneapi" => &[3, 4, 5, 6, 7, 8, 9, 19],
+            "opencode-go" => &[3, 4, 5, 10, 11, 12, 9, 19],
+            "aws-bedrock" => &[13, 14, 15, 16, 17, 18, 3, 9, 19],
+            _ => &[3, 4, 5, 9, 19],
         }
     }
 
@@ -365,6 +369,7 @@ impl EditProviderForm {
             14 => Some(&mut self.aws_access_key_id),
             15 => Some(&mut self.aws_secret_access_key),
             16 => Some(&mut self.aws_session_token),
+            19 => Some(&mut self.auto_review_model),
             _ => None,
         }
     }
@@ -485,6 +490,16 @@ impl EditProviderForm {
             "--auxiliary-model-upstream".to_owned(),
             self.auxiliary_model_upstream.to_string(),
         ]);
+        if self.auto_review_model.trim().is_empty() {
+            if self.auto_review_model_configured {
+                args.push("--clear-auto-review-model".to_owned());
+            }
+        } else {
+            args.extend([
+                "--auto-review-model".to_owned(),
+                self.auto_review_model.trim().to_owned(),
+            ]);
+        }
         if self.preset == "baidu-oneapi" {
             anyhow::ensure!(
                 !self.quota_username.trim().is_empty(),

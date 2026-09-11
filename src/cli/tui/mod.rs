@@ -498,6 +498,8 @@ struct EditProviderForm {
     baidu_auth_bridge: usize,
     baidu_code_report: bool,
     auxiliary_model_upstream: bool,
+    auto_review_model: String,
+    auto_review_model_configured: bool,
 }
 
 #[derive(Debug)]

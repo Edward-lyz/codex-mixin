@@ -602,6 +602,7 @@ pub fn apply_discovered_models(
     provider.models_refreshed_at_ms =
         Some(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64);
     provider.models_refresh_error = None;
+    provider.prune_stale_auto_review_model();
     provider.validate()?;
     Ok(changes)
 }

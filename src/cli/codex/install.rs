@@ -18,6 +18,8 @@ use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::config_input::normalize_base_url;
 use crate::cli::metadata::load_model_metadata_resolver;
 use crate::cli::runtime::effective_gateway_bind;
+use codex_mixin::catalog::apply_auto_review_override;
+use codex_mixin::provider::auxiliary_auto_review_slug;
 
 #[derive(Debug, Args)]
 pub(in crate::cli) struct InstallCodexOptions {
@@ -125,13 +127,17 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
     }
     super::super::progress_step("Loading model metadata");
     let metadata = load_model_metadata_resolver().await?;
-    let catalog = generated_codex_catalog(
+    let mut catalog = generated_codex_catalog(
         &models,
         gateway_config.default_context_window,
         template.as_ref(),
         &metadata,
         codex_oauth_proxy,
     );
+    apply_auto_review_override(
+        &mut catalog,
+        auxiliary_auto_review_slug(&gateway_config.providers).as_deref(),
+    )?;
     let serialized_catalog = serde_json::to_vec_pretty(&catalog)?;
     let gateway_bind = effective_gateway_bind(&gateway_config)?;
     let gateway_base_url =

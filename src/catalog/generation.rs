@@ -109,13 +109,12 @@ fn build_codex_catalog(
             });
             item["slug"] = json!(slug);
             item["display_name"] = json!(display_name);
-            // Official Codex templates opt some OpenAI models into a custom `exec`
-            // transport. Custom upstreams use the interoperable function transport.
             if let Some(item) = item.as_object_mut() {
+                // Official Codex templates opt some OpenAI models into Code Mode's
+                // custom exec tool. Custom upstreams take function-shaped tools.
                 item.remove("tool_mode");
-            }
-            if owned_provider.is_some() {
-                item["auto_review_model_override"] = json!(slug);
+                // Auto review follows the auxiliary upstream, applied separately.
+                item.remove("auto_review_model_override");
             }
             let mut description = model
                 .description

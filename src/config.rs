@@ -449,6 +449,31 @@ mod tests {
     }
 
     #[test]
+    fn upgrades_existing_deepseek_provider_to_the_responses_endpoint() {
+        let mut provider = crate::provider::deepseek_provider("deepseek", "secret");
+        provider.protocol = ProviderProtocol::OpenAiChat;
+        provider.api_path = "/chat/completions".to_owned();
+        let mut customized = crate::provider::deepseek_provider("deepseek-proxy", "secret");
+        customized.protocol = ProviderProtocol::OpenAiChat;
+        customized.base_url = "https://proxy.example".to_owned();
+        customized.api_path = "/chat/completions".to_owned();
+        let stored = StoredGatewayConfig {
+            providers: vec![provider, customized],
+            ..StoredGatewayConfig::default()
+        };
+
+        let loaded = parse_stored_config(&serde_json::to_string(&stored).unwrap()).unwrap();
+
+        assert_eq!(
+            loaded.providers[0].protocol,
+            ProviderProtocol::OpenAiResponses
+        );
+        assert_eq!(loaded.providers[0].api_path, "/v1/responses");
+        assert_eq!(loaded.providers[1].protocol, ProviderProtocol::OpenAiChat);
+        assert_eq!(loaded.providers[1].api_path, "/chat/completions");
+    }
+
+    #[test]
     fn selected_models_bootstrap_an_unrefreshed_empty_cache() {
         let mut provider = crate::provider::baidu_oneapi_provider("baidu-oneapi", "secret");
         provider.quota_username = Some("user@example.com".to_owned());

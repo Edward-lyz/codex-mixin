@@ -165,8 +165,11 @@ Codex Mixin 的解法是：Codex 连到本机自动分配的 loopback 端口，�
 - **完整 Provider 控制面**：内置常用 preset，也支持自定义 OpenAI Responses、Chat Completions 和 Anthropic Messages 上游；密钥、DUCX 认证、额度、数据上报、辅助模型和生图路径都可配置。
 - **macOS 与 TUI 功能对齐**：本机使用原生菜单栏 App，Linux、SSH 和远端开发机使用支持鼠标与键盘的全屏 TUI；脚本继续使用稳定的 subcommand 和 `--json` 输出。
 - **模型选择、测速与观测**：统一完成模型发现、能力探测、多选和保存，持续展示 TTFT、TPS、Token、缓存命中、额度与运行日志。
+- **系统级模型变化通知**：后台自动刷新模型列表；模型新增或下线时，macOS 会发送系统通知提醒，无需手动打开设置检查。
 - **Fusion 与 Codex 原生能力**：Panel、Judge、Final 多模型编排可生成原生交互式 Review；官方和自定义模型都保留 Thinking、Web Search、图片生成与 prompt-cache 优化路径。
 - **本地、常驻、可恢复**：Rust 网关只监听 loopback，自动管理端口和后台服务；安装前备份 Codex 配置，卸载时恢复 provider、登录和历史索引。
+
+![macOS 系统级模型变化通知](docs/assets/APP-Notify.png)
 
 ### 快速安装
 
@@ -256,7 +259,7 @@ xattr -dr com.apple.quarantine "/Applications/Codex Mixin.app"
 | `custom` | OpenAI Responses 默认 | 用户填写 | `/v1/responses` | 可选，用户填写 | `/v1/models` | 自动探测常见只读端点 |
 | `baidu-oneapi` | Anthropic Messages | `https://oneapi-comate.baidu-int.com` | `/v1/messages` | `/v1/images/generations` | `POST /openapi/v2/available_models` | `/openapi/v3/user/quota` |
 | `openrouter` | OpenAI Chat Completions | `https://openrouter.ai/api` | `/v1/chat/completions` | 可选，用户填写 | `/v1/models` | `/v1/credits` |
-| `deepseek` | OpenAI Chat Completions | `https://api.deepseek.com` | `/chat/completions` | 可选，用户填写 | `/models` | 无默认值 |
+| `deepseek` | OpenAI Responses | `https://api.deepseek.com` | `/v1/responses` | 可选，用户填写 | `/models` | 无默认值 |
 | `opencode-go` | OpenAI Responses | `https://opencode.ai/zen/go` | `/v1/responses` | 无 | `/v1/models` | dashboard `/workspace/{id}/go` + `/billing` |
 | `aws-bedrock` | Anthropic Messages (Mantle) | `https://bedrock-mantle.us-east-1.api.aws/anthropic` | `/v1/messages` | 无 | AWS Bedrock control plane | 无默认值 |
 
@@ -313,7 +316,7 @@ managed settings 中的 SessionStart、UserPromptSubmit、Stop、SessionEnd
 示例：
 
 - OpenRouter 填 `https://openrouter.ai/api`，不要填 `/v1/chat/completions`。
-- DeepSeek 填 `https://api.deepseek.com`，不要填 `/chat/completions`。
+- DeepSeek 填 `https://api.deepseek.com`，不要填 `/v1/responses`。
 - Amazon Bedrock 填 AK/SK 和 Region；临时凭据再填写 Session Token。
 - 旧式或非标准网关也会在标准 `/v1` 接口失败后自动尝试去掉 `/v1` 的路径。
 
@@ -581,6 +584,8 @@ codex-mixin doctor --fix --restart-apps # 额外允许重启 ChatGPT/Codex App�
 
 网关启动后会立即刷新一次所有动态 Provider，之后每 30 秒轮询一次。单次新增 1–9 个模型时会自动加入选择并仅探测这些新增模型；单次新增达到 10 个时保留为待人工确认，避免异常接口批量污染选择。上游删除的模型会立即从缓存和选择中移除，不触发能力探测。手动加入或新选中的模型也会立即探测一次。模型集合变化后，网关会优雅重载内存路由并刷新所有已安装客户端的托管模型列表。macOS 还会为自动新增和下线发送系统通知。
 
+自动审查（Codex 的 `codex-auto-review`）跟随辅助模型上游：没有 Provider 勾选辅助模型上游时，审查继续使用官方模型和官方额度；勾选后，上游自带 `codex-auto-review` 的 Provider（例如 Baidu OneAPI）自动映射，其余 Provider 在连接页高级选项里选择一个已加入的模型。选中的模型会写进模型目录的 `auto_review_model_override`，也会被网关用于 `codex-auto-review` 请求；该模型被上游下线时选择自动清空，审查回到官方模型。
+
 ### 图片生成
 
 - 官方 GPT：Codex 原生 `image_gen` extension 请求本地 `/v1/images/generations` 或 `/v1/images/edits` 后，Codex Mixin 使用 Codex OAuth 和 `chatgpt-account-id` 转发到官方图片后端。请求不会携带自定义 provider 的 API Key。
@@ -787,8 +792,11 @@ Codex Mixin exposes a Responses-compatible endpoint on an automatically selected
 - **A complete Provider control plane:** use curated presets or custom OpenAI Responses, Chat Completions, and Anthropic Messages endpoints; manage credentials, DUCX auth, quota, reporting, auxiliary routing, and image generation explicitly.
 - **Native macOS and full-screen TUI:** local users get a menu bar app, while Linux, SSH, and remote machines get a mouse-enabled terminal workspace with the same operational coverage. Scripts retain stable subcommands and JSON output.
 - **Model selection and measurable performance:** discover, probe, select, and benchmark models with TTFT, output speed, token usage, cache state, quota, total latency, and actionable logs.
+- **System-level model change notifications:** the gateway refreshes model lists in the background and macOS notifies you when models are added or removed, without requiring a manual settings check.
 - **Fusion and native Codex capabilities:** orchestrate Panel, Judge, and Final models with an interactive Codex-native review while preserving Thinking, Web Search, image generation, and prompt-cache paths.
 - **Local, persistent, and reversible:** the Rust gateway binds to loopback, manages its port and daemon lifecycle, backs up Codex state before installation, and restores config, authentication, and history indexes on uninstall.
+
+![macOS system-level model change notification](docs/assets/APP-Notify.png)
 
 ### Install
 
@@ -874,7 +882,7 @@ Click the top tabs or use `Tab` and `Shift-Tab` to change workspaces. The footer
 | `custom` | OpenAI Responses by default | User provided | `/v1/responses` | Optional, user provided | `/v1/models` | Auto-detected from common read-only endpoints |
 | `baidu-oneapi` | Anthropic Messages | `https://oneapi-comate.baidu-int.com` | `/v1/messages` | `/v1/images/generations` | `POST /openapi/v2/available_models` | `/openapi/v3/user/quota` |
 | `openrouter` | OpenAI Chat Completions | `https://openrouter.ai/api` | `/v1/chat/completions` | Optional, user provided | `/v1/models` | `/v1/credits` |
-| `deepseek` | OpenAI Chat Completions | `https://api.deepseek.com` | `/chat/completions` | Optional, user provided | `/models` | None |
+| `deepseek` | OpenAI Responses | `https://api.deepseek.com` | `/v1/responses` | Optional, user provided | `/models` | None |
 | `opencode-go` | OpenAI Responses | `https://opencode.ai/zen/go` | `/v1/responses` | None | `/v1/models` | Dashboard `/workspace/{id}/go` + `/billing` |
 | `aws-bedrock` | Anthropic Messages (Mantle) | `https://bedrock-mantle.us-east-1.api.aws/anthropic` | `/v1/messages` | None | AWS Bedrock control plane | None |
 
@@ -1045,6 +1053,8 @@ To move from custom-only to official account mode, restore Codex from Apps first
 Restart Codex Desktop after install or uninstall. Start a new session for Codex CLI.
 
 After providers or model selections change, Codex Mixin re-renders the managed model lists of every installed integration — Claude Code, DSH, OpenCode, and Pi — alongside the managed Codex catalog (triggered on gateway start, capability probing, `refresh-codex-catalog`, and doctor repair). Integrations that are not installed are never created or modified.
+
+Auto review (Codex's `codex-auto-review`) follows the auxiliary model upstream. With no auxiliary provider selected, review keeps using the official model and its quota. With one selected, a provider that offers `codex-auto-review` upstream (for example Baidu OneAPI) maps automatically, and every other provider takes an added model chosen in the connection page's advanced options. The chosen model is written to `auto_review_model_override` in the model catalog and answers `codex-auto-review` requests at the gateway. If the upstream drops that model, the choice is cleared and review returns to the official model.
 
 ### Model Fusion
 

@@ -493,8 +493,13 @@ pub(super) async fn start(
     // listener's actual address selected above.
     config = codex_mixin::application::lifecycle::reload_for_listener(actual_bind)?;
     let supported_models = WebSearchCapabilities::from_default_path(&config)?.supported_model_ids();
+    let auto_review_slug = codex_mixin::provider::auxiliary_auto_review_slug(&config.providers);
     log_codex_catalog_refresh_started(&config_path, "gateway_start", "capability_cache");
-    match refresh_managed_codex_catalog_with_capabilities(&config_path, Some(&supported_models)) {
+    match refresh_managed_codex_catalog_with_capabilities(
+        &config_path,
+        Some(&supported_models),
+        auto_review_slug.as_deref(),
+    ) {
         Ok(changed) => {
             log_codex_catalog_refresh(&config_path, "gateway_start", "capability_cache", changed)
         }
@@ -565,12 +570,18 @@ pub(super) async fn start(
                 "capability_cache",
             );
             let refresh_result = GatewayConfig::from_stored_config()
-                .and_then(|current| WebSearchCapabilities::from_default_path(&current))
-                .map(|capabilities| capabilities.supported_model_ids())
-                .and_then(|supported_models| {
+                .and_then(|current| {
+                    let capabilities = WebSearchCapabilities::from_default_path(&current)?;
+                    Ok((
+                        capabilities.supported_model_ids(),
+                        codex_mixin::provider::auxiliary_auto_review_slug(&current.providers),
+                    ))
+                })
+                .and_then(|(supported_models, auto_review_slug)| {
                     refresh_managed_codex_catalog_with_capabilities(
                         &capabilities_config_path,
                         Some(&supported_models),
+                        auto_review_slug.as_deref(),
                     )
                 });
             match refresh_result {

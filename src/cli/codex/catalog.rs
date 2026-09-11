@@ -7,12 +7,12 @@ use toml_edit::{DocumentMut, Item};
 
 use codex_mixin::anthropic::ModelInfo;
 use codex_mixin::catalog::{
-    apply_web_search_capabilities, codex_catalog_from_models_with_metadata,
-    codex_oauth_proxy_catalog, load_template_catalog, migrate_managed_model_metadata,
-    refresh_managed_oauth_catalog,
+    apply_auto_review_override, apply_web_search_capabilities,
+    codex_catalog_from_models_with_metadata, codex_oauth_proxy_catalog, load_template_catalog,
+    migrate_managed_model_metadata, refresh_managed_oauth_catalog,
 };
 use codex_mixin::config::GatewayConfig;
-use codex_mixin::provider::MetadataResolver;
+use codex_mixin::provider::{MetadataResolver, auxiliary_auto_review_slug};
 use codex_mixin::server::AppState;
 use codex_mixin::web_search::WebSearchCapabilities;
 
@@ -64,7 +64,13 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
     );
     let supported_models =
         WebSearchCapabilities::from_default_path(&gateway_config)?.supported_model_ids();
-    if write_generated_managed_codex_catalog(&config_path, catalog, &supported_models)? {
+    let auto_review_slug = auxiliary_auto_review_slug(&gateway_config.providers);
+    if write_generated_managed_codex_catalog(
+        &config_path,
+        catalog,
+        &supported_models,
+        auto_review_slug.as_deref(),
+    )? {
         println!("Codex model catalog refreshed: {}", catalog_path.display());
     } else {
         println!(
@@ -170,6 +176,7 @@ pub(in crate::cli) fn write_generated_managed_codex_catalog(
     config_path: &Path,
     mut catalog: serde_json::Value,
     supported_web_search_models: &HashSet<String>,
+    auto_review_slug: Option<&str>,
 ) -> anyhow::Result<bool> {
     let config_path = absolute_path(config_path.to_path_buf())?;
     let _config_lock = ManagedConfigLock::acquire(&config_path)?;
@@ -180,6 +187,7 @@ pub(in crate::cli) fn write_generated_managed_codex_catalog(
     let mut doc = raw_config.parse::<DocumentMut>()?;
     let catalog_path = managed_catalog_path(&doc, &config_path)?;
     apply_web_search_capabilities(&mut catalog, supported_web_search_models)?;
+    apply_auto_review_override(&mut catalog, auto_review_slug)?;
     let config_changed = if remove_unavailable_default_model(&mut doc, &catalog) {
         write_atomic_if_changed(&config_path, doc.to_string().as_bytes())?
     } else {
@@ -203,25 +211,33 @@ pub(in crate::cli) fn refresh_managed_codex_catalog(config_path: &Path) -> anyho
         .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?
         .join("models_cache.json");
     let official_catalog = serde_json::from_slice(&fs::read(official_catalog_path)?)?;
-    refresh_managed_codex_catalog_from_official(config_path, &official_catalog, None)
+    refresh_managed_codex_catalog_from_official(config_path, &official_catalog, None, None)
 }
 
 pub(in crate::cli) fn refresh_managed_codex_catalog_with_capabilities(
     config_path: &Path,
     supported_web_search_models: Option<&HashSet<String>>,
+    auto_review_slug: Option<&str>,
 ) -> anyhow::Result<bool> {
-    refresh_managed_codex_catalog_with_source(config_path, None, supported_web_search_models)
+    refresh_managed_codex_catalog_with_source(
+        config_path,
+        None,
+        supported_web_search_models,
+        auto_review_slug,
+    )
 }
 
 pub(in crate::cli) fn refresh_managed_codex_catalog_from_official(
     config_path: &Path,
     official_catalog: &serde_json::Value,
     supported_web_search_models: Option<&HashSet<String>>,
+    auto_review_slug: Option<&str>,
 ) -> anyhow::Result<bool> {
     refresh_managed_codex_catalog_with_source(
         config_path,
         Some(official_catalog),
         supported_web_search_models,
+        auto_review_slug,
     )
 }
 
@@ -229,6 +245,7 @@ fn refresh_managed_codex_catalog_with_source(
     config_path: &Path,
     official_catalog: Option<&serde_json::Value>,
     supported_web_search_models: Option<&HashSet<String>>,
+    auto_review_slug: Option<&str>,
 ) -> anyhow::Result<bool> {
     let config_path = absolute_path(config_path.to_path_buf())?;
     if !config_path.exists() {
@@ -267,6 +284,7 @@ fn refresh_managed_codex_catalog_with_source(
     if let Some(supported_web_search_models) = supported_web_search_models {
         apply_web_search_capabilities(&mut refreshed, supported_web_search_models)?;
     }
+    apply_auto_review_override(&mut refreshed, auto_review_slug)?;
     let config_changed = if remove_unavailable_default_model(&mut doc, &refreshed) {
         write_atomic_if_changed(&config_path, doc.to_string().as_bytes())?
     } else {
@@ -367,10 +385,12 @@ pub(in crate::cli) async fn refresh_managed_official_codex_catalog(
         &mut official_catalog,
         gateway_config.official_selected_models.as_deref(),
     )?;
+    let auto_review_slug = auxiliary_auto_review_slug(&gateway_config.providers);
     refresh_managed_codex_catalog_from_official(
         config_path,
         &official_catalog,
         supported_web_search_models,
+        auto_review_slug.as_deref(),
     )
 }
 

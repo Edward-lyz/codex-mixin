@@ -165,6 +165,7 @@ impl ProviderSpec {
             display_name: self.display_name.to_owned(),
             enabled: true,
             auxiliary_model_upstream: false,
+            auto_review_model: None,
             preset_id: Some(self.id.to_owned()),
             protocol: self.protocol,
             base_url: self.base_url.to_owned(),
@@ -267,9 +268,11 @@ static SPECS: [ProviderSpec; 6] = [
         description: "DeepSeek official API",
         icon: "deepseek",
         website_url: None,
-        protocol: ProviderProtocol::OpenAiChat,
+        // DeepSeek's Responses endpoint keeps native reasoning and the Codex
+        // tool shapes; its chat-completions endpoint drops both.
+        protocol: ProviderProtocol::OpenAiResponses,
         base_url: "https://api.deepseek.com",
-        api_path: "/chat/completions",
+        api_path: "/v1/responses",
         anthropic_version: None,
         image_generation_path: None,
         model_source: ModelSourceSpec::OpenAiCompatible("/models"),
