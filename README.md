@@ -50,17 +50,17 @@ Codex Mixin offers a native menu bar app for macOS and a complete full-screen TU
   <tr>
     <td width="34%" align="center">
       <a href="docs/assets/APP-MainMenu.png"><img src="docs/assets/APP-MainMenu.png" alt="Codex Mixin macOS menu bar"></a><br>
-      <sub>Service lifecycle, quota, integrations, updates and logs</sub>
+      <sub>Service lifecycle, quota, token usage, integrations, updates and logs</sub>
     </td>
     <td width="66%" align="center">
-      <a href="docs/assets/APP-Provider-Set.png"><img src="docs/assets/APP-Provider-Set.png" alt="Codex Mixin provider settings"></a><br>
-      <sub>Provider credentials, DUCX authentication, reporting and upstream options</sub>
+      <a href="docs/assets/APP-ProviderSet.png"><img src="docs/assets/APP-ProviderSet.png" alt="Codex Mixin Models and Services connection settings"></a><br>
+      <sub>Models and Services · provider credentials, DUCX auth, auxiliary model and image path</sub>
     </td>
   </tr>
   <tr>
     <td colspan="2" align="center">
-      <a href="docs/assets/APP-model-test.png"><img src="docs/assets/APP-model-test.png" alt="Codex Mixin model benchmark results"></a><br>
-      <sub>Per-model TTFT, output speed, token usage, total latency and quota cost</sub>
+      <a href="docs/assets/APP-ProviderModelList.png"><img src="docs/assets/APP-ProviderModelList.png" alt="Codex Mixin Models and Services model list"></a><br>
+      <sub>Model list · selection, capability state, context window, TTFT and throughput</sub>
     </td>
   </tr>
 </table>
@@ -101,6 +101,19 @@ Run `codex-mixin` without arguments to open the mouse-enabled TUI. It covers fir
 </details>
 
 ### Native Fusion review and project identity
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <a href="docs/assets/APP-MultiModelFusion.png"><img src="docs/assets/APP-MultiModelFusion.png" alt="Fusion multi-model orchestration settings"></a><br>
+      <sub>Fusion · multi-model orchestration, 1–8 parallel Panel models with a Judge and a Final model</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="docs/assets/APP-TimeFusion.png"><img src="docs/assets/APP-TimeFusion.png" alt="Fusion time rotation settings"></a><br>
+      <sub>Fusion · time rotation by the Mac local clock, with a default model for uncovered hours</sub>
+    </td>
+  </tr>
+</table>
 
 <table>
   <tr>
