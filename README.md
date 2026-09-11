@@ -44,30 +44,74 @@ Codex Mixin 为本机 macOS 用户提供原生菜单栏 App，也为 Linux、SSH
 
 Codex Mixin offers a native menu bar app for macOS and a complete full-screen TUI for Linux, SSH, and remote development. Both surfaces operate the same config, gateway, and CLI contract.
 
-### macOS control center
+### Models and Services · 模型与服务
+
+On macOS, one window covers the whole workflow: pick a provider on the left, switch between connection settings and the model list on the right, then commit connection and model changes with a single `Apply Changes`.
+
+在 macOS 上，服务商连接、模型选择和测速合并到一个「模型与服务」窗口：左侧选择服务商，右侧在同一处切换连接设置和模型列表，两类修改通过一次「应用更改」提交，只重启一次网关。
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <a href="docs/assets/APP-ProviderSet.png"><img src="docs/assets/APP-ProviderSet.png" alt="Codex Mixin Models and Services connection settings"></a><br>
+      <sub>Connection · credentials, DUCX auth, auxiliary model, image path and advanced options</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="docs/assets/APP-ProviderModelList.png"><img src="docs/assets/APP-ProviderModelList.png" alt="Codex Mixin Models and Services model list"></a><br>
+      <sub>Models · selection, capability state, context window, TTFT and throughput</sub>
+    </td>
+  </tr>
+</table>
+
+### Menu bar and notifications · 菜单栏与系统通知
+
+The menu bar keeps service state, provider quota, token usage, and daily actions one click away. The gateway refreshes every provider model list in the background and posts a native macOS notification when a model appears or disappears, so you do not have to check settings by hand.
+
+菜单栏常驻显示本地服务状态、服务商额度、Token 用量与常用动作。网关在后台自动刷新各服务商的模型列表；模型新增或下线时直接发送 macOS 系统通知，不需要手动打开设置检查。
 
 <table>
   <tr>
     <td width="34%" align="center">
       <a href="docs/assets/APP-MainMenu.png"><img src="docs/assets/APP-MainMenu.png" alt="Codex Mixin macOS menu bar"></a><br>
-      <sub>Service lifecycle, quota, token usage, integrations, updates and logs</sub>
+      <sub>Menu bar · lifecycle, quota, token usage, updates and logs</sub>
     </td>
     <td width="66%" align="center">
-      <a href="docs/assets/APP-ProviderSet.png"><img src="docs/assets/APP-ProviderSet.png" alt="Codex Mixin Models and Services connection settings"></a><br>
-      <sub>Models and Services · provider credentials, DUCX auth, auxiliary model and image path</sub>
-    </td>
-  </tr>
-  <tr>
-    <td colspan="2" align="center">
-      <a href="docs/assets/APP-ProviderModelList.png"><img src="docs/assets/APP-ProviderModelList.png" alt="Codex Mixin Models and Services model list"></a><br>
-      <sub>Model list · selection, capability state, context window, TTFT and throughput</sub>
+      <a href="docs/assets/APP-Notify.png"><img src="docs/assets/APP-Notify.png" width="520" alt="macOS model change notification"></a><br>
+      <sub>Notification · models added or removed, with the provider display name and a compact summary</sub>
     </td>
   </tr>
 </table>
 
-### Full-screen terminal control deck
+### Fusion modes and native review · Fusion 双模式与原生 Review
+
+Fusion virtual models run in two modes. `Multi-model orchestration` executes a parallel `Panel → Judge → Final` pipeline, while `Time rotation` routes by the Mac local clock and falls back to a default model for uncovered hours.
+
+Fusion 虚拟模型支持两种运行模式。`多模型编排` 使用 `Panel → Judge → Final` 三段式管线并行分析；`按时间轮转` 按 Mac 本地时间为不同时段路由不同模型，未覆盖时段使用默认模型。两种模式都在菜单栏 App 的 Fusion 设置里编辑。
+
+<table>
+  <tr>
+    <td width="50%" align="center">
+      <a href="docs/assets/APP-MultiModelFusion.png"><img src="docs/assets/APP-MultiModelFusion.png" alt="Fusion multi-model orchestration settings"></a><br>
+      <sub>Multi-model orchestration · 1–8 parallel Panel models with a Judge and a Final model</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="docs/assets/APP-TimeFusion.png"><img src="docs/assets/APP-TimeFusion.png" alt="Fusion time rotation settings"></a><br>
+      <sub>Time rotation · per-range routing with a default model, without overlapping ranges</sub>
+    </td>
+  </tr>
+  <tr>
+    <td colspan="2" align="center">
+      <a href="docs/assets/fusion-review.png"><img src="docs/assets/fusion-review.png" width="720" alt="Interactive Fusion Review inside Codex"></a><br>
+      <sub>Native review · expandable Panel and Judge results rendered inside Codex</sub>
+    </td>
+  </tr>
+</table>
+
+### Full-screen terminal deck · 全屏终端控制台
 
 Run `codex-mixin` without arguments to open the mouse-enabled TUI. It covers first-run setup, Provider management, model selection, benchmarking, Fusion, application integrations, upgrades, repair and logs.
+
+不带参数运行 `codex-mixin` 会打开支持鼠标的全屏 TUI，覆盖首次配置、Provider 管理、模型选择、测速、Fusion、应用集成、升级、修复和日志。
 
 <details>
 <summary><b>Open the complete TUI gallery · 展开完整 TUI 页面</b></summary>
@@ -100,34 +144,6 @@ Run `codex-mixin` without arguments to open the mouse-enabled TUI. It covers fir
 </table>
 </details>
 
-### Native Fusion review and project identity
-
-<table>
-  <tr>
-    <td width="50%" align="center">
-      <a href="docs/assets/APP-MultiModelFusion.png"><img src="docs/assets/APP-MultiModelFusion.png" alt="Fusion multi-model orchestration settings"></a><br>
-      <sub>Fusion · multi-model orchestration, 1–8 parallel Panel models with a Judge and a Final model</sub>
-    </td>
-    <td width="50%" align="center">
-      <a href="docs/assets/APP-TimeFusion.png"><img src="docs/assets/APP-TimeFusion.png" alt="Fusion time rotation settings"></a><br>
-      <sub>Fusion · time rotation by the Mac local clock, with a default model for uncovered hours</sub>
-    </td>
-  </tr>
-</table>
-
-<table>
-  <tr>
-    <td width="62%" align="center">
-      <a href="docs/assets/fusion-review.png"><img src="docs/assets/fusion-review.png" alt="Interactive Fusion Review inside Codex"></a><br>
-      <sub>Fusion · Review uses Codex-native expandable Panel and Judge results</sub>
-    </td>
-    <td width="38%" align="center">
-      <a href="docs/assets/APP-About.png"><img src="docs/assets/APP-About.png" alt="Codex Mixin about window"></a><br>
-      <sub>Version, build, project link and local Mixin card</sub>
-    </td>
-  </tr>
-</table>
-
 ### Remote mobile model selection · 移动端远程选模型
 
 Mixin-managed custom models remain available when remotely creating a Codex task from mobile. Choose an official or custom model directly in the native new-task model picker, without returning to the development machine.
@@ -139,6 +155,17 @@ Mixin-managed custom models remain available when remotely creating a Codex task
   <sub>Mobile remote control · create a task with an official or Mixin-managed custom model</sub>
 </p>
 
+### About · 关于
+
+Version, build, the GitHub project link, and a locally generated interactive Mixin card all live on the About page; the card can be saved or shared.
+
+版本号、Build 号、GitHub 仓库链接和本机生成的互动 Mixin 卡片都在关于页；卡片可以保存或分享。
+
+<p align="center">
+  <a href="docs/assets/APP-About.png"><img src="docs/assets/APP-About.png" width="640" alt="Codex Mixin about window"></a><br>
+  <sub>About · version, build, project link and a local Mixin card you can save or share</sub>
+</p>
+
 ## 中文
 
 Codex Mixin 是一个 Rust 本地网关、CLI 和 macOS 菜单栏 App。它把 OpenRouter、DeepSeek、Baidu OneAPI 或其他 OpenAI Chat Completions / Anthropic Messages 兼容模型接入官方 Codex，同时保留官方 ChatGPT/OpenAI 账号路径、官方 GPT 模型、远程控制和 Codex 原生体验。
@@ -147,13 +174,14 @@ Codex Mixin 是一个 Rust 本地网关、CLI 和 macOS 菜单栏 App。它把 O
 
 ### 目录
 
+- [产品界面](#product-tour--产品界面)
 - [快速安装](#快速安装)
 - [快速使用](#快速使用)
 - [供应商预设](#供应商预设)
 - [安装到 Codex](#安装到-codex-的行为)
 - [Claude Code、DSH、OpenCode 与 Pi](#安装到-claude-code)
 - [Fusion 多模型编排](#fusion-多模型编排)
-- [CLI](#cli)
+- [CLI](#自动化-cli-参考)
 - [Prompt 缓存优化](#prompt-缓存优化)
 - [数据位置](#数据位置)
 - [常见问题](#常见问题)
@@ -178,11 +206,9 @@ Codex Mixin 的解法是：Codex 连到本机自动分配的 loopback 端口，�
 - **完整 Provider 控制面**：内置常用 preset，也支持自定义 OpenAI Responses、Chat Completions 和 Anthropic Messages 上游；密钥、DUCX 认证、额度、数据上报、辅助模型和生图路径都可配置。
 - **macOS 与 TUI 功能对齐**：本机使用原生菜单栏 App，Linux、SSH 和远端开发机使用支持鼠标与键盘的全屏 TUI；脚本继续使用稳定的 subcommand 和 `--json` 输出。
 - **模型选择、测速与观测**：统一完成模型发现、能力探测、多选和保存，持续展示 TTFT、TPS、Token、缓存命中、额度与运行日志。
-- **系统级模型变化通知**：后台自动刷新模型列表；模型新增或下线时，macOS 会发送系统通知提醒，无需手动打开设置检查。
+- **系统级模型变化通知**：后台自动刷新模型列表；模型新增或下线时，macOS 会发送系统通知提醒，无需手动打开设置检查（见[产品界面](#product-tour--产品界面)）。
 - **Fusion 与 Codex 原生能力**：Panel、Judge、Final 多模型编排可生成原生交互式 Review；官方和自定义模型都保留 Thinking、Web Search、图片生成与 prompt-cache 优化路径。
 - **本地、常驻、可恢复**：Rust 网关只监听 loopback，自动管理端口和后台服务；安装前备份 Codex 配置，卸载时恢复 provider、登录和历史索引。
-
-![macOS 系统级模型变化通知](docs/assets/APP-Notify.png)
 
 ### 快速安装
 
@@ -333,7 +359,7 @@ managed settings 中的 SessionStart、UserPromptSubmit、Stop、SessionEnd
 - Amazon Bedrock 填 AK/SK 和 Region；临时凭据再填写 Session Token。
 - 旧式或非标准网关也会在标准 `/v1` 接口失败后自动尝试去掉 `/v1` 的路径。
 
-Provider 设置界面见上方 [macOS control center](#macos-control-center)；远端用户可在同一 TUI workspace 中完成等价配置。
+Provider 设置界面见上方[模型与服务](#models-and-services--模型与服务)；远端用户可在同一 TUI workspace 中完成等价配置。
 
 ### 安装到 Claude Code
 
@@ -505,7 +531,7 @@ Fusion 虚拟模型支持两种运行模式。`多模型编排` 使用 `Panel �
 
 Fusion 只在 Plan 模式的新用户轮次运行 Panel 和 Judge。切换到 Default 模式执行计划后，所有后续用户轮次与工具结果续跑都直接交给该 profile 的 Final 模型，避免在编码阶段重复分析。
 
-交互效果见上方 [Native Fusion review](#native-fusion-review-and-project-identity)。
+交互效果见上方[产品界面](#product-tour--产品界面)。
 
 高级选项 `在回答中显示 Panel / Judge 中间结果` 默认开启，对应 stored config 中的 `show_intermediate_results: true`。开启后，Codex Mixin 会直接使用 Codex 原生 inline visualization：
 
@@ -805,11 +831,9 @@ Codex Mixin exposes a Responses-compatible endpoint on an automatically selected
 - **A complete Provider control plane:** use curated presets or custom OpenAI Responses, Chat Completions, and Anthropic Messages endpoints; manage credentials, DUCX auth, quota, reporting, auxiliary routing, and image generation explicitly.
 - **Native macOS and full-screen TUI:** local users get a menu bar app, while Linux, SSH, and remote machines get a mouse-enabled terminal workspace with the same operational coverage. Scripts retain stable subcommands and JSON output.
 - **Model selection and measurable performance:** discover, probe, select, and benchmark models with TTFT, output speed, token usage, cache state, quota, total latency, and actionable logs.
-- **System-level model change notifications:** the gateway refreshes model lists in the background and macOS notifies you when models are added or removed, without requiring a manual settings check.
+- **System-level model change notifications:** the gateway refreshes model lists in the background and macOS notifies you when models are added or removed, without requiring a manual settings check. See the [product tour](#product-tour--产品界面).
 - **Fusion and native Codex capabilities:** orchestrate Panel, Judge, and Final models with an interactive Codex-native review while preserving Thinking, Web Search, image generation, and prompt-cache paths.
 - **Local, persistent, and reversible:** the Rust gateway binds to loopback, manages its port and daemon lifecycle, backs up Codex state before installation, and restores config, authentication, and history indexes on uninstall.
-
-![macOS system-level model change notification](docs/assets/APP-Notify.png)
 
 ### Install
 
@@ -1075,7 +1099,7 @@ Fusion virtual models run a `Panel → Judge → Final` pipeline. Open `Fusion S
 
 Fusion runs Panel and Judge only for new user turns in Plan mode. After switching to Default mode to execute the plan, all later user turns and tool-result continuations go directly to the profile's Final model, avoiding repeated analysis during implementation.
 
-See the [native Fusion review](#native-fusion-review-and-project-identity) in the product tour above.
+See the [product tour](#product-tour--产品界面) for the Fusion settings and the native review above.
 
 `Show Panel / Judge intermediate results` is enabled by default and maps to `show_intermediate_results: true` in stored config. When enabled, Codex Mixin uses Codex's native inline visualization surface:
 
