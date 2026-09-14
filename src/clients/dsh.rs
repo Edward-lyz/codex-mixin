@@ -10,6 +10,48 @@ const PROVIDER_ID: &str = "codex-mixin";
 const API_KEY_ENV: &str = "CODEX_MIXIN_GATEWAY_API_KEY";
 const API_PROTOCOL: &str = "openai-responses";
 
+/// DSH `.credentials.yaml` layout version. DSH 0.1.5+ requires a versioned
+/// document whose only top-level keys are `version`, `refs`, and `records`;
+/// every credential reference nests under `refs`. Writing a bare top-level key
+/// makes DSH reject the whole file at load ("unknown top-level key").
+const CREDENTIALS_DOCUMENT_VERSION: i64 = 1;
+
+/// Insert or update one credential reference under the versioned `refs` section,
+/// creating the `version`/`refs` scaffolding when absent.
+fn set_credential_ref(credentials: &mut Value, key: &str, value: &str) -> anyhow::Result<()> {
+    let root = credentials
+        .as_mapping_mut()
+        .context("DSH credentials must be a YAML mapping")?;
+    root.entry(Value::String("version".to_owned()))
+        .or_insert_with(|| Value::Number(CREDENTIALS_DOCUMENT_VERSION.into()));
+    let refs = root
+        .entry(Value::String("refs".to_owned()))
+        .or_insert_with(|| Value::Mapping(Mapping::new()))
+        .as_mapping_mut()
+        .context("DSH credentials refs must be a YAML mapping")?;
+    refs.insert(
+        Value::String(key.to_owned()),
+        Value::String(value.to_owned()),
+    );
+    Ok(())
+}
+
+/// Remove one credential reference, clearing both the versioned `refs` entry and
+/// any pre-0.1.5 top-level entry left by an older codex-mixin.
+fn remove_credential_ref(credentials: &mut Value, key: &str) -> anyhow::Result<()> {
+    let root = credentials
+        .as_mapping_mut()
+        .context("DSH credentials must be a YAML mapping")?;
+    root.remove(Value::String(key.to_owned()));
+    if let Some(refs) = root
+        .get_mut(Value::String("refs".to_owned()))
+        .and_then(Value::as_mapping_mut)
+    {
+        refs.remove(Value::String(key.to_owned()));
+    }
+    Ok(())
+}
+
 pub fn install(
     dsh_home: &Path,
     bind: SocketAddr,
@@ -39,13 +81,7 @@ pub fn install(
 
     let credentials_path = dsh_home.join(".credentials.yaml");
     let mut credentials = read_yaml(&credentials_path, "DSH credentials")?;
-    credentials
-        .as_mapping_mut()
-        .context("DSH credentials must be a YAML mapping")?
-        .insert(
-            Value::String(API_KEY_ENV.to_owned()),
-            Value::String(client_key.to_owned()),
-        );
+    set_credential_ref(&mut credentials, API_KEY_ENV, client_key)?;
     let credentials_changed = write_yaml(&credentials_path, &credentials)?;
     let settings_changed = write_yaml(&settings_path, &settings)?;
     Ok(credentials_changed || settings_changed)
@@ -78,10 +114,7 @@ pub fn uninstall(dsh_home: &Path) -> anyhow::Result<()> {
         let credentials_path = dsh_home.join(".credentials.yaml");
         if credentials_path.exists() {
             let mut credentials = read_yaml(&credentials_path, "DSH credentials")?;
-            credentials
-                .as_mapping_mut()
-                .context("DSH credentials must be a YAML mapping")?
-                .remove(Value::String(API_KEY_ENV.to_owned()));
+            remove_credential_ref(&mut credentials, API_KEY_ENV)?;
             write_yaml(&credentials_path, &credentials)?;
         }
     }
@@ -122,13 +155,7 @@ pub fn is_managed(dsh_home: &Path) -> anyhow::Result<bool> {
 pub fn sync_client_key(dsh_home: &Path, client_key: &str) -> anyhow::Result<()> {
     let credentials_path = dsh_home.join(".credentials.yaml");
     let mut credentials = read_yaml(&credentials_path, "DSH credentials")?;
-    credentials
-        .as_mapping_mut()
-        .context("DSH credentials must be a YAML mapping")?
-        .insert(
-            Value::String(API_KEY_ENV.to_owned()),
-            Value::String(client_key.to_owned()),
-        );
+    set_credential_ref(&mut credentials, API_KEY_ENV, client_key)?;
     let contents = serde_yaml::to_string(&credentials)
         .with_context(|| format!("serialize DSH YAML {}", credentials_path.display()))?;
     write_atomic_if_changed(&credentials_path, contents.as_bytes())?;

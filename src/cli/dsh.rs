@@ -352,9 +352,13 @@ mod tests {
         let credentials: Value =
             serde_yaml::from_str(&fs::read_to_string(&credentials_path).unwrap()).unwrap();
         assert_eq!(
-            credentials[DSH_API_KEY_ENV].as_str().unwrap(),
+            credentials["refs"][DSH_API_KEY_ENV].as_str().unwrap(),
             "gateway-secret"
         );
+        // DSH 0.1.5+ rejects a document whose top-level keys are anything but
+        // version/refs/records; the key must nest under refs, never sit at the root.
+        assert!(credentials.get(DSH_API_KEY_ENV).is_none());
+        assert_eq!(credentials["version"].as_u64(), Some(1));
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
@@ -384,6 +388,12 @@ mod tests {
         let restored_credentials: Value =
             serde_yaml::from_str(&fs::read_to_string(&credentials_path).unwrap()).unwrap();
         assert!(restored_credentials.get(DSH_API_KEY_ENV).is_none());
+        assert!(
+            restored_credentials
+                .get("refs")
+                .and_then(|refs| refs.get(DSH_API_KEY_ENV))
+                .is_none()
+        );
     }
 
     #[test]
@@ -411,7 +421,7 @@ mod tests {
         )
         .unwrap();
         assert_eq!(
-            credentials[DSH_API_KEY_ENV].as_str().unwrap(),
+            credentials["refs"][DSH_API_KEY_ENV].as_str().unwrap(),
             "dsh-client-key"
         );
     }
