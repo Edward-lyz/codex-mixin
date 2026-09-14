@@ -249,14 +249,87 @@ async fn oauth_install_falls_back_to_local_cache_when_official_fetch_fails() {
         fusion_profiles: Vec::new(),
     })
     .unwrap();
+    let official_models_cache = dir.path().join("official-models.json");
 
-    let template = load_codex_install_template_online(&paths, true, &state, None)
+    let template = load_codex_install_template_online(&paths, true, &state, &official_models_cache)
         .await
         .unwrap()
         .unwrap();
 
     assert_eq!(template["models"][0]["slug"], "gpt-5.6-sol");
     assert_eq!(template["models"][0]["context_window"], 272_000);
+    assert!(!official_models_cache.exists());
+}
+
+#[tokio::test]
+async fn oauth_install_refreshes_existing_provider_list_from_live_catalog() {
+    let upstream = axum::Router::new().route(
+        "/backend-api/codex/models",
+        axum::routing::get(|| async {
+            axum::Json(serde_json::json!({
+                "models": [
+                    {"slug":"gpt-5.6-sol"},
+                    {"slug":"gpt-5.6-terra"},
+                    {"slug":"gpt-5.6-luna"},
+                    {"slug":"gpt-5.5"}
+                ]
+            }))
+        }),
+    );
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    tokio::spawn(async move {
+        axum::serve(listener, upstream).await.unwrap();
+    });
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let paths = resolve_codex_install_paths(Some(config_path), None).unwrap();
+    fs::write(
+        &paths.models_cache,
+        r#"{"client_version":"0.144.0","models":[{"slug":"gpt-5.5"}]}"#,
+    )
+    .unwrap();
+    let auth_path = dir.path().join("auth.json");
+    fs::write(
+        &auth_path,
+        r#"{"tokens":{"access_token":"secret","account_id":"account-one"}}"#,
+    )
+    .unwrap();
+    let state = AppState::new(GatewayConfig {
+        bind: "127.0.0.1:0".parse().unwrap(),
+        providers: Vec::new(),
+        official_responses_url: format!("http://{address}/backend-api/codex/responses"),
+        codex_auth_path: auth_path,
+        gateway_api_key: None,
+        gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys::default(),
+        accept_codex_oauth: true,
+        official_selected_models: None,
+        default_max_tokens: 8192,
+        default_context_window: 1_000_000,
+        request_timeout: Duration::from_secs(2),
+        thinking_mode: ThinkingMode::Off,
+        enable_web_search_tool: false,
+        web_search_tool_type: "web_search_20250305".to_owned(),
+        web_search_max_uses: Some(3),
+        fusion_profiles: Vec::new(),
+    })
+    .unwrap();
+    let official_models_cache = dir.path().join("official-models.json");
+    fs::write(
+        &official_models_cache,
+        r#"{"models":[{"slug":"gpt-5.6-terra"},{"slug":"gpt-5.6-luna"},{"slug":"gpt-5.5"}]}"#,
+    )
+    .unwrap();
+
+    let template = load_codex_install_template_online(&paths, true, &state, &official_models_cache)
+        .await
+        .unwrap()
+        .unwrap();
+
+    assert_eq!(template["models"].as_array().unwrap().len(), 4);
+    let cached: serde_json::Value =
+        serde_json::from_slice(&fs::read(&official_models_cache).unwrap()).unwrap();
+    assert_eq!(cached["models"].as_array().unwrap().len(), 4);
 }
 
 #[test]

@@ -17,6 +17,10 @@ use super::validate::validate_codex_install;
 use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::config_input::normalize_base_url;
 use crate::cli::metadata::load_model_metadata_resolver;
+use crate::cli::official_models::{
+    filter_official_catalog, load_official_models, official_models_cache_path,
+};
+use crate::cli::providers::apply_official_model_refresh;
 use crate::cli::runtime::effective_gateway_bind;
 use codex_mixin::catalog::apply_auto_review_override;
 use codex_mixin::provider::auxiliary_auto_review_slug;
@@ -110,16 +114,29 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
     let client_key = codex_mixin::config::ensure_gateway_client_key(
         codex_mixin::gateway_access::GatewayClient::Codex,
     )?;
-    let gateway_config = GatewayConfig::from_stored_config()?;
+    let mut gateway_config = GatewayConfig::from_stored_config()?;
+    let previous_official_models = if codex_oauth_proxy {
+        Some(load_official_models()?)
+    } else {
+        None
+    };
     let state = AppState::new(gateway_config.clone())?;
     super::super::progress_step("Loading Codex config template");
-    let template = load_codex_install_template_online(
+    let mut template = load_codex_install_template_online(
         &paths,
         codex_oauth_proxy,
         &state,
-        gateway_config.official_selected_models.as_deref(),
+        &official_models_cache_path(),
     )
     .await?;
+    if let Some(previous_official_models) = previous_official_models {
+        let current_official_models = load_official_models()?;
+        apply_official_model_refresh(&previous_official_models, &current_official_models)?;
+        gateway_config = GatewayConfig::from_stored_config()?;
+        if let Some(template) = &mut template {
+            filter_official_catalog(template, gateway_config.official_selected_models.as_deref())?;
+        }
+    }
     super::super::progress_step("Fetching available models");
     let models = state.fetch_models().await?;
     if models.is_empty() {

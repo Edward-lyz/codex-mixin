@@ -185,14 +185,11 @@ impl UpstreamAccess {
                 continue;
             }
             if !status.is_success() {
-                let body = body::read_error_text(response).await?;
-                return Err(GatewayError::UpstreamStatus {
-                    status,
-                    message: format!(
-                        "provider {} messages endpoint returned {status}: {body}",
-                        provider.id()
-                    ),
-                });
+                return Err(body::response_error(
+                    response,
+                    format!("provider {} messages endpoint", provider.id()),
+                )
+                .await?);
             }
             return Ok(response.bytes_stream().boxed());
         }

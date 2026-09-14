@@ -16,20 +16,15 @@ extension AppDelegate {
     }
 
     func waitForGatewayStatus() async throws -> String {
-        var lastError = "网关尚未报告健康状态"
-        for _ in 0..<20 {
-            do {
-                let status = try await runGateway(["status"])
-                if status.contains("gateway: running") {
-                    return status
-                }
-                lastError = status
-            } catch {
-                lastError = String(describing: error)
+        do {
+            return try await retryGatewayReadiness {
+                try await runGateway(["status"])
             }
-            try await Task.sleep(nanoseconds: 250_000_000)
+        } catch let error as GatewayReadinessTimeout {
+            throw GatewayError.command(
+                "网关启动后 \(gatewayReadinessAttemptLimit) 秒内未就绪：\(error.lastFailure)"
+            )
         }
-        throw GatewayError.command("网关启动后 5 秒内未就绪：\(lastError)")
     }
 
     func waitForGatewayStopped() async throws {

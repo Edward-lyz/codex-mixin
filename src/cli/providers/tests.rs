@@ -48,6 +48,23 @@ fn selecting_unknown_model_leaves_capabilities_for_fallback_resolution() {
 }
 
 #[test]
+fn materializing_selected_manual_model_schedules_capability_probe() {
+    let mut provider = codex_mixin::provider::custom_provider("custom", "key");
+    provider.base_url = "https://example.test".to_owned();
+    provider.selected_models = vec!["hidden-model".to_owned()];
+
+    let models_to_probe = apply_model_selection(
+        &mut provider,
+        vec!["hidden-model".to_owned()],
+        &BTreeMap::new(),
+    )
+    .unwrap();
+
+    assert_eq!(models_to_probe, ["hidden-model"]);
+    assert!(provider.cached_models[0].manually_added);
+}
+
+#[test]
 fn context_override_rejects_discovered_model() {
     let mut provider = codex_mixin::provider::custom_provider("custom", "key");
     provider

@@ -1841,7 +1841,16 @@ async fn isolates_http_and_websocket_routes_across_two_providers() {
                 let failing = body["model"] == "broken";
                 captured_alpha.lock().unwrap().push(body);
                 if failing {
-                    return (StatusCode::BAD_GATEWAY, "alpha failed").into_response();
+                    return (
+                        StatusCode::TOO_MANY_REQUESTS,
+                        axum::Json(json!({
+                            "error": {
+                                "message": "provider overloaded",
+                                "type": "429001"
+                            }
+                        })),
+                    )
+                        .into_response();
                 }
                 Response::builder()
                     .status(StatusCode::OK)
@@ -1956,16 +1965,17 @@ async fn isolates_http_and_websocket_routes_across_two_providers() {
     );
     let mut broken = responses_request();
     broken["model"] = json!("broken-alpha");
+    let broken_response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&broken)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(broken_response.status(), StatusCode::TOO_MANY_REQUESTS);
     assert_eq!(
-        client
-            .post(format!("{gateway_url}/v1/responses"))
-            .bearer_auth("gateway-key")
-            .json(&broken)
-            .send()
-            .await
-            .unwrap()
-            .status(),
-        StatusCode::BAD_GATEWAY
+        broken_response.json::<Value>().await.unwrap(),
+        json!({"error":{"message":"provider overloaded","type":"429001"}})
     );
     let mut beta_after_failure = responses_request();
     beta_after_failure["model"] = json!("shared-beta");
@@ -2425,10 +2435,7 @@ async fn returns_the_second_provider_413_without_a_third_attempt() {
 
     assert_eq!(response.status(), StatusCode::PAYLOAD_TOO_LARGE);
     assert_eq!(attempts.load(Ordering::SeqCst), 2);
-    assert_eq!(
-        response.json::<Value>().await.unwrap(),
-        json!({"error":{"message":"upstream request is too large"}})
-    );
+    assert_eq!(response.text().await.unwrap(), "still too large");
 }
 
 #[tokio::test]

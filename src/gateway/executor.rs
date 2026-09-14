@@ -268,11 +268,11 @@ impl GatewayExecutor {
         }
         let status = upstream.status();
         if !status.is_success() {
-            let body = crate::upstream::body::read_error_text(upstream).await?;
-            return Err(GatewayError::UpstreamStatus {
-                status,
-                message: format!("official responses endpoint returned {status}: {body}"),
-            });
+            return Err(crate::upstream::body::response_error(
+                upstream,
+                "official responses endpoint",
+            )
+            .await?);
         }
         let stream = async_stream::stream! {
             let upstream = crate::gateway::observe_upstream_cache_usage(

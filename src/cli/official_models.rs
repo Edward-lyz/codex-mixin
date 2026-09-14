@@ -31,8 +31,21 @@ pub(super) async fn refresh_official_models() -> anyhow::Result<usize> {
     refresh_official_models_to_path(&config, &client_version, &official_models_cache_path()).await
 }
 
-fn official_models_cache_path() -> PathBuf {
+pub(in crate::cli) fn official_models_cache_path() -> PathBuf {
     stored_config_path().with_file_name(OFFICIAL_MODELS_CACHE_FILE)
+}
+
+pub(in crate::cli) fn write_official_models_cache(
+    catalog: &Value,
+    cache_path: &Path,
+) -> anyhow::Result<usize> {
+    let model_count = official_models_from_catalog(catalog)?.len();
+    anyhow::ensure!(
+        model_count > 0,
+        "official models endpoint returned no visible models"
+    );
+    write_atomic_if_changed(cache_path, &serde_json::to_vec_pretty(catalog)?)?;
+    Ok(model_count)
 }
 
 fn load_official_models_from_paths(
@@ -57,13 +70,7 @@ async fn refresh_official_models_to_path(
 ) -> anyhow::Result<usize> {
     let state = AppState::new(config.clone())?;
     let catalog = state.fetch_official_models_catalog(client_version).await?;
-    let models = official_models_from_catalog(&catalog)?;
-    anyhow::ensure!(
-        !models.is_empty(),
-        "official models endpoint returned no visible models"
-    );
-    write_atomic_if_changed(cache_path, &serde_json::to_vec_pretty(&catalog)?)?;
-    Ok(models.len())
+    write_official_models_cache(&catalog, cache_path)
 }
 
 pub(super) fn selected_official_models(

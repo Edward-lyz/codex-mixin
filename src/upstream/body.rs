@@ -115,3 +115,18 @@ pub(crate) async fn read_error_text(response: reqwest::Response) -> Result<Strin
     }
     Ok(text)
 }
+
+pub(crate) async fn response_error(
+    response: reqwest::Response,
+    context: impl Into<String>,
+) -> Result<GatewayError, GatewayError> {
+    let status = response.status();
+    let content_type = response.headers().get(CONTENT_TYPE).cloned();
+    let body = read_error_text(response).await?;
+    Ok(GatewayError::UpstreamStatus {
+        status,
+        body,
+        content_type,
+        context: context.into(),
+    })
+}

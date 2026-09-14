@@ -143,7 +143,7 @@ pub(crate) async fn discover_models_with_output(
     Ok(changes)
 }
 
-fn apply_official_model_refresh(
+pub(in crate::cli) fn apply_official_model_refresh(
     previous_models: &[codex_mixin::provider::ProviderModel],
     current_models: &[codex_mixin::provider::ProviderModel],
 ) -> anyhow::Result<ModelDiscoveryChanges> {
@@ -447,12 +447,12 @@ pub(crate) async fn select_models(
         println!("provider models selected: {id} ({selected_count})");
         return Ok(());
     }
-    let newly_selected = mutate_and_invalidate(|config| {
+    let models_to_probe = mutate_and_invalidate(|config| {
         ensure_has_providers(config)?;
         apply_model_selection(find_provider_mut(config, id)?, models, &model_contexts)
     })?;
-    if !newly_selected.is_empty() {
-        probe_new_models(id, &newly_selected, true).await?;
+    if !models_to_probe.is_empty() {
+        probe_new_models(id, &models_to_probe, true).await?;
     }
     println!("provider models selected: {id} ({selected_count})");
     Ok(())
@@ -468,16 +468,18 @@ pub(super) fn apply_model_selection(
         .iter()
         .map(String::as_str)
         .collect::<std::collections::HashSet<_>>();
-    let newly_selected = models
-        .iter()
-        .filter(|model| !previous_selection.contains(model.as_str()))
-        .cloned()
-        .collect::<Vec<_>>();
     let mut known = provider
         .cached_models
         .iter()
         .map(|model| model.id.clone())
         .collect::<std::collections::HashSet<_>>();
+    let models_to_probe = models
+        .iter()
+        .filter(|model| {
+            !previous_selection.contains(model.as_str()) || !known.contains(model.as_str())
+        })
+        .cloned()
+        .collect::<Vec<_>>();
     for model in &models {
         if known.insert(model.clone()) {
             provider
@@ -517,7 +519,7 @@ pub(super) fn apply_model_selection(
     provider.new_models.clear();
     provider.prune_stale_auto_review_model();
     provider.validate()?;
-    Ok(newly_selected)
+    Ok(models_to_probe)
 }
 
 fn parse_model_contexts(values: Vec<String>) -> anyhow::Result<BTreeMap<String, u64>> {

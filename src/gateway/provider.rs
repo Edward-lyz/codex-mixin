@@ -138,14 +138,11 @@ pub(crate) async fn stream_provider_response(
                 })?;
             let status = upstream.status();
             if !status.is_success() {
-                let body = crate::upstream::body::read_error_text(upstream).await?;
-                return Err(GatewayError::UpstreamStatus {
-                    status,
-                    message: format!(
-                        "provider {} chat completions endpoint returned {status}: {body}",
-                        provider.id()
-                    ),
-                });
+                return Err(crate::upstream::body::response_error(
+                    upstream,
+                    format!("provider {} chat completions endpoint", provider.id()),
+                )
+                .await?);
             }
             map_openai_chat_sse_with_image_routes(
                 observe_upstream_cache_usage(upstream.bytes_stream(), observation),
@@ -189,14 +186,11 @@ pub(crate) async fn stream_provider_response(
             })?;
             let status = upstream.status();
             if !status.is_success() {
-                let body = crate::upstream::body::read_error_text(upstream).await?;
-                return Err(GatewayError::UpstreamStatus {
-                    status,
-                    message: format!(
-                        "provider {} responses endpoint returned {status}: {body}",
-                        provider.id()
-                    ),
-                });
+                return Err(crate::upstream::body::response_error(
+                    upstream,
+                    format!("provider {} responses endpoint", provider.id()),
+                )
+                .await?);
             }
             map_openai_responses_sse(
                 observe_upstream_cache_usage(upstream.bytes_stream(), observation),

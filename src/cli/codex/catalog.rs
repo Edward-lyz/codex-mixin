@@ -20,7 +20,7 @@ use super::bin::resolve_codex_cli;
 use super::managed_config::*;
 use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::metadata::load_model_metadata_resolver;
-use crate::cli::official_models::filter_official_catalog;
+use crate::cli::official_models::{filter_official_catalog, write_official_models_cache};
 
 pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::Result<()> {
     let config_path = resolve_codex_config_path(None)?;
@@ -40,7 +40,8 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
     let mut template = if oauth_proxy {
         let models_cache = codex_home.join("models_cache.json");
         let template =
-            load_preferred_official_catalog(&state, &models_cache, Some(&catalog_path)).await?;
+            load_preferred_official_catalog(&state, &models_cache, Some(&catalog_path), None)
+                .await?;
         if template.is_none() {
             anyhow::bail!(
                 "official Codex model cache is missing: {}. Open Codex once before refreshing Codex Mixin",
@@ -325,21 +326,23 @@ pub(in crate::cli) async fn load_codex_install_template_online(
     paths: &CodexInstallPaths,
     codex_oauth_proxy: bool,
     state: &AppState,
-    official_selected_models: Option<&[String]>,
+    official_models_cache: &Path,
 ) -> anyhow::Result<Option<serde_json::Value>> {
     if !codex_oauth_proxy {
         return Ok(None);
     }
-    let mut template =
-        load_preferred_official_catalog(state, &paths.models_cache, Some(&paths.catalog)).await?;
+    let template = load_preferred_official_catalog(
+        state,
+        &paths.models_cache,
+        Some(&paths.catalog),
+        Some(official_models_cache),
+    )
+    .await?;
     if template.is_none() {
         anyhow::bail!(
             "official Codex model cache is missing: {}. Open Codex once before installing Codex Mixin",
             paths.models_cache.display()
         );
-    }
-    if let Some(template) = &mut template {
-        filter_official_catalog(template, official_selected_models)?;
     }
     Ok(template)
 }
@@ -398,10 +401,16 @@ async fn load_preferred_official_catalog(
     state: &AppState,
     models_cache: &Path,
     managed_catalog: Option<&Path>,
+    new_install_cache: Option<&Path>,
 ) -> anyhow::Result<Option<serde_json::Value>> {
     if let Some(client_version) = resolve_codex_client_version(models_cache) {
         match state.fetch_official_models_catalog(&client_version).await {
-            Ok(catalog) => return Ok(Some(catalog)),
+            Ok(catalog) => {
+                if let Some(cache_path) = new_install_cache {
+                    write_official_models_cache(&catalog, cache_path)?;
+                }
+                return Ok(Some(catalog));
+            }
             Err(error) => {
                 tracing::warn!(error = %error, "failed to fetch official Codex model catalog");
             }

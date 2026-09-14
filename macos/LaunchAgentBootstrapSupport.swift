@@ -2,6 +2,12 @@ import Foundation
 
 private let launchAgentBootstrapRetryDelayNanoseconds: UInt64 = 500_000_000
 private let launchAgentBootstrapAttemptLimit = 10
+private let gatewayReadinessPollDelayNanoseconds: UInt64 = 1_000_000_000
+let gatewayReadinessAttemptLimit = 90
+
+struct GatewayReadinessTimeout: Error {
+    let lastFailure: String
+}
 
 func menuLaunchAgentPlist(
     label: String,
@@ -71,4 +77,30 @@ func retryLaunchAgentBootstrap(
             try await delay()
         }
     }
+}
+
+func retryGatewayReadiness(
+    maxAttempts: Int = gatewayReadinessAttemptLimit,
+    operation: () async throws -> String,
+    delay: () async throws -> Void = {
+        try await Task.sleep(nanoseconds: gatewayReadinessPollDelayNanoseconds)
+    }
+) async throws -> String {
+    let attemptLimit = max(1, maxAttempts)
+    var lastFailure = "gateway has not reported a healthy status"
+    for attempt in 1...attemptLimit {
+        do {
+            let status = try await operation()
+            if status.contains("gateway: running") {
+                return status
+            }
+            lastFailure = status
+        } catch {
+            lastFailure = String(describing: error)
+        }
+        if attempt < attemptLimit {
+            try await delay()
+        }
+    }
+    throw GatewayReadinessTimeout(lastFailure: lastFailure)
 }

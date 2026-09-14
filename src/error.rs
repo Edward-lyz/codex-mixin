@@ -11,8 +11,13 @@ pub enum GatewayError {
     PayloadTooLarge,
     #[error("upstream error: {0}")]
     Upstream(String),
-    #[error("upstream returned {status}: {message}")]
-    UpstreamStatus { status: StatusCode, message: String },
+    #[error("{context} returned {status}: {body}")]
+    UpstreamStatus {
+        status: StatusCode,
+        body: String,
+        content_type: Option<axum::http::HeaderValue>,
+        context: String,
+    },
     #[error(transparent)]
     Http(#[from] reqwest::Error),
     #[error(transparent)]

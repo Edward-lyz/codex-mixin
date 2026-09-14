@@ -122,11 +122,11 @@ async fn forward_official_responses(
         .unwrap_or("text/event-stream")
         .to_owned();
     if !status.is_success() {
-        let body = crate::upstream::body::read_error_text(sent.response).await?;
-        return Err(GatewayError::UpstreamStatus {
-            status,
-            message: format!("official responses endpoint returned {status}: {body}"),
-        });
+        return Err(crate::upstream::body::response_error(
+            sent.response,
+            "official responses endpoint",
+        )
+        .await?);
     }
     Response::builder()
         .status(status)

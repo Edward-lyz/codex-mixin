@@ -4,7 +4,7 @@ use std::path::{Path, PathBuf};
 use anyhow::{Context, ensure};
 
 const MANAGED_PREFIX: &str = "codex-mixin managed imagegen skill";
-const MANAGED_MARKER: &str = "codex-mixin managed imagegen skill v3";
+const MANAGED_MARKER: &str = "codex-mixin managed imagegen skill v4";
 const BACKUP_SUFFIX: &str = ".codex-mixin.bak";
 
 const MANAGED_SKILL: &str = r#"---
@@ -24,7 +24,7 @@ Run `python3 scripts/image_gen.py generate --prompt <prompt> --out <path>`. The 
 
 Image editing requires the built-in `image_gen` tool because the configured upstream only supports generation. If it is unavailable, report that the managed bridge does not support editing instead of approximating the edit with a new generation.
 
-<!-- codex-mixin managed imagegen skill v3 -->
+<!-- codex-mixin managed imagegen skill v4 -->
 "#;
 
 const MANAGED_WRAPPER: &str = r#"#!/usr/bin/env python3
@@ -67,18 +67,27 @@ def _parse_args() -> argparse.Namespace:
     return args
 
 
-def _gateway_config() -> tuple[str, str]:
-    config_path = Path(os.getenv("CODEX_MIXIN_CONFIG", "~/.codex-mixin/config.json")).expanduser()
+def _read_json_object(path: Path, label: str) -> dict:
     try:
-        config = json.loads(config_path.read_text(encoding="utf-8"))
+        value = json.loads(path.read_text(encoding="utf-8"))
     except FileNotFoundError:
-        _die(f"Codex Mixin config is missing: {config_path}")
+        _die(f"Codex Mixin {label} is missing: {path}")
     except (OSError, json.JSONDecodeError) as exc:
-        _die(f"Cannot read Codex Mixin config {config_path}: {exc}")
+        _die(f"Cannot read Codex Mixin {label} {path}: {exc}")
+    if not isinstance(value, dict):
+        _die(f"Codex Mixin {label} must contain a JSON object: {path}")
+    return value
 
-    bind = config.get("gateway_bind") or "127.0.0.1:8787"
+
+def _gateway_config() -> tuple[str, str]:
+    config_path = Path(os.getenv("CODEX_GATEWAY_CONFIG", "~/.codex-mixin/config.json")).expanduser()
+    runtime_path = Path(os.getenv("CODEX_GATEWAY_RUNTIME_FILE", str(config_path.with_name("runtime.json")))).expanduser()
+    config = _read_json_object(config_path, "config")
+    runtime = _read_json_object(runtime_path, "runtime metadata")
+
+    bind = runtime.get("bind")
     if not isinstance(bind, str) or not bind:
-        _die("Codex Mixin gateway_bind must be a non-empty string")
+        _die("Codex Mixin runtime bind must be a non-empty string")
     if bind.startswith("["):
         gateway_authority = bind
     elif bind.count(":") > 1:
@@ -175,7 +184,7 @@ def main() -> None:
 if __name__ == "__main__":
     main()
 
-# codex-mixin managed imagegen skill v3
+# codex-mixin managed imagegen skill v4
 "#;
 
 pub(in crate::cli) fn reconcile_imagegen_skill(
@@ -284,7 +293,52 @@ fn backup_path(path: &Path) -> PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use std::process::Command;
+
     use super::*;
+
+    #[test]
+    fn wrapper_uses_the_running_gateway_bind() {
+        let directory = tempfile::tempdir().unwrap();
+        let script_path = directory.path().join("image_gen.py");
+        let config_path = directory.path().join("config.json");
+        let runtime_path = directory.path().join("runtime.json");
+        fs::write(&script_path, MANAGED_WRAPPER).unwrap();
+        fs::write(
+            &config_path,
+            r#"{"gateway_bind":"127.0.0.1:8787","gateway_api_key":"secret"}"#,
+        )
+        .unwrap();
+        fs::write(
+            &runtime_path,
+            format!(
+                r#"{{"pid":{},"bind":"127.0.0.1:49123","started_at":1}}"#,
+                std::process::id()
+            ),
+        )
+        .unwrap();
+
+        let output = Command::new("python3")
+            .arg(&script_path)
+            .args(["generate", "--prompt", "test", "--dry-run"])
+            .env("HOME", directory.path())
+            .env("CODEX_GATEWAY_CONFIG", &config_path)
+            .env("CODEX_GATEWAY_RUNTIME_FILE", &runtime_path)
+            .env_remove("CODEX_MIXIN_CONFIG")
+            .output()
+            .unwrap();
+
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let dry_run: serde_json::Value = serde_json::from_slice(&output.stdout).unwrap();
+        assert_eq!(
+            dry_run["endpoint"],
+            "http://127.0.0.1:49123/v1/images/generations"
+        );
+    }
 
     #[test]
     fn installs_and_restores_managed_imagegen_skill() {
@@ -310,6 +364,8 @@ mod tests {
         assert_eq!(fs::read_to_string(&script_path).unwrap(), MANAGED_WRAPPER);
         assert!(!MANAGED_WRAPPER.contains("import openai"));
         assert!(!MANAGED_WRAPPER.contains("\"--model\""));
+        assert!(!MANAGED_WRAPPER.contains("127.0.0.1:8787"));
+        assert!(MANAGED_WRAPPER.contains("CODEX_GATEWAY_RUNTIME_FILE"));
         assert!(MANAGED_WRAPPER.contains("\"model\": \"gpt-image-2\""));
         assert_eq!(
             fs::read_to_string(backup_path(&script_path)).unwrap(),
@@ -318,12 +374,12 @@ mod tests {
 
         fs::write(
             &skill_path,
-            installed_skill.replace(MANAGED_MARKER, "codex-mixin managed imagegen skill v1"),
+            installed_skill.replace(MANAGED_MARKER, "codex-mixin managed imagegen skill v3"),
         )
         .unwrap();
         fs::write(
             &script_path,
-            MANAGED_WRAPPER.replace(MANAGED_MARKER, "codex-mixin managed imagegen skill v1"),
+            MANAGED_WRAPPER.replace(MANAGED_MARKER, "codex-mixin managed imagegen skill v3"),
         )
         .unwrap();
         assert!(reconcile_imagegen_skill(&root, true).unwrap());

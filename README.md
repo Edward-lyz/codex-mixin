@@ -337,6 +337,10 @@ Fusion、Web Search、画图和 Auto Review 产生的子请求走同一个统一
 选择的核心。上报 hook 与认证核心解耦：配置里单独保存 data-report 二进制路径，运行时
 不再读取 DUCX 的认证路径。
 
+上游返回 HTTP 错误时，Mixin 会把原始 status、`Content-Type` 和错误正文直接返回给客户端，
+例如上游 `429` 仍是 `429`，不会改写成含糊的 `502 upstream request failed`。只有连接超时、
+DNS 失败或连接被重置等没有上游 HTTP 响应的传输错误，才由 Mixin 返回 `502`。
+
 选择 DUCX 核心时，macOS App 会把独立副本下载到
 `~/.codex-mixin/ducx/home/`，不会直接执行官方安装脚本；下载完成后，
 独立 Terminal 会显示进度并执行托管副本的登录，扫码成功后自动关闭并继续保存。
@@ -619,6 +623,8 @@ codex-mixin doctor --fix --restart-apps # 额外允许重启 ChatGPT/Codex App�
 
 刷新供应商模型列表时，所有 Provider（包括自定义网关、Baidu OneAPI 和手动添加的模型）也会用同一份 models.dev 目录补齐缺失的上下文窗口、图像与 thinking 能力：有官方映射的 Provider（如 amazon-bedrock、deepseek）先做精确 ID 匹配，其余模型统一走模糊匹配 —— 带日期或渠道后缀的 ID（如 `claude-haiku-4-5-20260101`）会命中最长的同族条目。Provider 自己声明的字段永远优先，模糊匹配也不会改写模型名称。只有 models.dev 明确列出 `image` 输入时才判定支持图片；`video`、`audio`、PDF 等附件类型不会混入图片能力。models.dev 拉取失败时回退到本地缓存。供应商和 models.dev 仍未补齐的能力才会探测一次并持久缓存，缓存不会因时间经过而自动失效；Provider 连接身份改变后才会重新探测。
 
+models.dev 目录在进程内由所有 Provider 共享，并持久化到上述本地缓存；后台 30 秒的 Provider 刷新不会重复下载。远端目录最多每 3 小时检查一次，并携带 `ETag` / `Last-Modified` 做条件请求；未变化时服务端返回 `304`，不会重复下载目录正文。刷新失败后继续使用旧缓存，并至少等待 5 分钟再重试。
+
 更新供应商或模型选择后，除 Codex 的 managed catalog 外，所有已安装的 Claude Code、DSH、OpenCode、Pi 集成也会一并重渲染各自的托管模型列表（网关启动、能力探测、`refresh-codex-catalog` 和 doctor 修复时触发）。未安装的框架不会被创建或改动。
 
 网关启动后会立即刷新一次所有动态 Provider，之后每 30 秒轮询一次。单次新增 1–9 个模型时会自动加入选择并仅探测这些新增模型；单次新增达到 10 个时保留为待人工确认，避免异常接口批量污染选择。上游删除的模型会立即从缓存和选择中移除，不触发能力探测。手动加入或新选中的模型也会立即探测一次。模型集合变化后，网关会优雅重载内存路由并刷新所有已安装客户端的托管模型列表。macOS 还会为自动新增和下线发送系统通知。
@@ -633,7 +639,7 @@ codex-mixin doctor --fix --restart-apps # 额外允许重启 ChatGPT/Codex App�
 - 其他 provider：在设置窗口填写相对上游根地址的生图路径，例如 `/v1/images/generations`。接口需要接受 `gpt-image-2` 请求，并返回 `data[0].b64_json`。
 - 未配置上游生图路径：保留原 `image_gen.imagegen` 工具调用，由 Codex 原生 extension 继续走官方图片路径。
 
-当前自定义上游只代理纯文本生图。包含非空 `referenced_image_paths` 或正数 `num_last_images_to_include` 的图片编辑请求会明确失败，不会静默切换到其他后端。清空设置里的生图路径即可禁用自定义上游生图。
+启用自定义生图后，受管 imagegen Skill 脚本从 `~/.codex-mixin/runtime.json` 读取当前网关实际监听地址，因此自动换端口或端口冲突重选后无需重装 Skill。当前自定义上游只代理纯文本生图。包含非空 `referenced_image_paths` 或正数 `num_last_images_to_include` 的图片编辑请求会明确失败，不会静默切换到其他后端。清空设置里的生图路径即可禁用自定义上游生图。
 
 ### Thinking 与 Web Search
 

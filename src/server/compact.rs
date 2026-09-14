@@ -287,11 +287,9 @@ async fn forward_official_compact(
         .unwrap_or("application/json")
         .to_owned();
     if !status.is_success() {
-        let body = crate::upstream::body::read_error_text(upstream).await?;
-        return Err(GatewayError::UpstreamStatus {
-            status,
-            message: format!("official compact endpoint returned {status}: {body}"),
-        });
+        return Err(
+            crate::upstream::body::response_error(upstream, "official compact endpoint").await?,
+        );
     }
     Response::builder()
         .status(status)

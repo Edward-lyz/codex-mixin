@@ -60,6 +60,19 @@ struct LaunchAgentBootstrapTests {
             precondition(attempts == 1)
         }
 
+        attempts = 0
+        delays = 0
+        let delayedGateway = try await retryGatewayReadiness(
+            operation: {
+                attempts += 1
+                return attempts > 20 ? "gateway: running" : "gateway: stopped"
+            },
+            delay: { delays += 1 }
+        )
+        precondition(delayedGateway == "gateway: running")
+        precondition(attempts == 21)
+        precondition(delays == 20)
+
         print("LaunchAgent bootstrap retry: passed")
     }
 }
