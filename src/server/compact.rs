@@ -10,21 +10,16 @@ use uuid::Uuid;
 
 use crate::error::GatewayError;
 use crate::gateway::ResolvedModelRoute;
-use crate::gateway::collect_response_with_headers;
 use crate::protocol::compaction::{self, CompactionSummary};
 
 use super::auth::check_gateway_auth;
 use super::{AppState, *};
 use crate::upstream::forward_official_headers;
 
-const COMPACTION_INSTRUCTION: &str = r#"
-Summarize this conversation for continuation by another coding agent.
-Call submit_compaction exactly once with the conversation summary. Preserve concrete
-commands, file paths, unresolved errors, and decisions needed to continue the work.
-"#;
-
-const COMPACTION_TOOL_NAME: &str = "submit_compaction";
-const MAX_COMPACTION_ATTEMPTS: usize = 3;
+const LOCAL_TRANSCRIPT_MAX_JSON_BYTES: usize = 48 * 1024;
+const EARLIER_TEXT_OMITTED: &str = "[earlier text omitted]\n";
+const EMPTY_LOCAL_TRANSCRIPT: &str =
+    "No text messages were retained from the compacted conversation.";
 
 pub(super) async fn compact(
     State(state): State<AppState>,
@@ -40,9 +35,7 @@ pub(super) async fn compact(
         .ok_or_else(|| GatewayError::BadRequest("compact request missing model".to_owned()))?;
     match state.gateway.resolve_model_route(model).await? {
         ResolvedModelRoute::Official => forward_official_compact(&state, &headers, body).await,
-        ResolvedModelRoute::Provider { .. } => {
-            compact_custom_provider(&state, &headers, body).await
-        }
+        ResolvedModelRoute::Provider { .. } => compact_custom_provider(body),
         ResolvedModelRoute::Fusion { profile_id } => {
             compact_fusion(&state, &headers, body, &profile_id).await
         }
@@ -65,7 +58,7 @@ async fn compact_fusion(
     body["model"] = Value::String(final_model.clone());
     match state.gateway.resolve_model_route(&final_model).await? {
         ResolvedModelRoute::Official => forward_official_compact(state, headers, body).await,
-        ResolvedModelRoute::Provider { .. } => compact_custom_provider(state, headers, body).await,
+        ResolvedModelRoute::Provider { .. } => compact_custom_provider(body),
         ResolvedModelRoute::Fusion { .. } => Err(GatewayError::BadRequest(
             "fusion final model cannot reference another fusion profile".to_owned(),
         )),
@@ -93,115 +86,14 @@ fn validate_compact_request(body: &Value) -> Result<(), GatewayError> {
     }
 }
 
-async fn compact_custom_provider(
-    state: &AppState,
-    headers: &HeaderMap,
-    mut body: Value,
-) -> Result<Response, GatewayError> {
+fn compact_custom_provider(body: Value) -> Result<Response, GatewayError> {
     let model = body
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("compact request missing model".to_owned()))?
         .to_owned();
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
-    body["stream"] = Value::Bool(true);
-    body["max_output_tokens"] = Value::from(4096);
-    body["tools"] = json!([{
-        "type": "function",
-        "name": COMPACTION_TOOL_NAME,
-        "description": "Submit the conversation summary for continuation by another coding agent.",
-        "strict": true,
-        "parameters": {
-            "type": "object",
-            "additionalProperties": false,
-            "required": [
-                "goal",
-                "constraints",
-                "decisions",
-                "files",
-                "tool_results",
-                "pending_work"
-            ],
-            "properties": {
-                "goal": {"type": "string"},
-                "constraints": {"type": "array", "items": {"type": "string"}},
-                "decisions": {"type": "array", "items": {"type": "string"}},
-                "files": {"type": "array", "items": {"type": "string"}},
-                "tool_results": {"type": "array", "items": {"type": "string"}},
-                "pending_work": {"type": "array", "items": {"type": "string"}}
-            }
-        }
-    }]);
-    body["tool_choice"] = Value::String("required".to_owned());
-    body["parallel_tool_calls"] = Value::Bool(false);
-    body.as_object_mut()
-        .ok_or_else(|| GatewayError::BadRequest("compact request must be an object".to_owned()))?
-        .remove("previous_response_id");
-    let instructions = body
-        .get("instructions")
-        .and_then(Value::as_str)
-        .filter(|instructions| !instructions.is_empty())
-        .map_or_else(
-            || COMPACTION_INSTRUCTION.trim().to_owned(),
-            |instructions| format!("{instructions}\n\n{}", COMPACTION_INSTRUCTION.trim()),
-        );
-    body["instructions"] = Value::String(instructions);
-
-    let mut attempt = 1;
-    let response = loop {
-        let attempt_body = if attempt == MAX_COMPACTION_ATTEMPTS {
-            body.take()
-        } else {
-            body.clone()
-        };
-        let response =
-            collect_response_with_headers(state.gateway.as_ref(), attempt_body, headers).await?;
-        let called_compaction_tool = response.output.iter().any(|item| {
-            item.get("type").and_then(Value::as_str) == Some("function_call")
-                && item.get("name").and_then(Value::as_str) == Some(COMPACTION_TOOL_NAME)
-        });
-        if called_compaction_tool {
-            break response;
-        }
-        if attempt == MAX_COMPACTION_ATTEMPTS {
-            return Err(GatewayError::Upstream(
-                "compact provider did not call submit_compaction".to_owned(),
-            ));
-        }
-        tracing::warn!(
-            model,
-            attempt,
-            max_attempts = MAX_COMPACTION_ATTEMPTS,
-            "retrying compaction after provider omitted required tool call"
-        );
-        attempt += 1;
-    };
-    let mut compaction_calls = response.output.iter().filter(|item| {
-        item.get("type").and_then(Value::as_str) == Some("function_call")
-            && item.get("name").and_then(Value::as_str) == Some(COMPACTION_TOOL_NAME)
-    });
-    let compaction_call = compaction_calls.next().ok_or_else(|| {
-        GatewayError::Upstream("compact provider did not call submit_compaction".to_owned())
-    })?;
-    if compaction_calls.next().is_some() {
-        return Err(GatewayError::Upstream(
-            "compact provider called submit_compaction more than once".to_owned(),
-        ));
-    }
-    let arguments = compaction_call
-        .get("arguments")
-        .and_then(Value::as_str)
-        .ok_or_else(|| {
-            GatewayError::Upstream(
-                "compact provider returned non-string submit_compaction arguments".to_owned(),
-            )
-        })?;
-    let summary: CompactionSummary =
-        compaction::summary_from_value(serde_json::from_str(arguments).map_err(|error| {
-            GatewayError::Upstream(format!(
-                "compact provider returned invalid submit_compaction arguments: {error}"
-            ))
-        })?)?;
+    let summary = local_compaction_summary(&body, &model)?;
     let token = compaction::encode(&model, summary)?;
     let response_id = format!("resp_compact_{}", Uuid::new_v4().simple());
     let item_id = format!("cmp_{}", Uuid::new_v4().simple());
@@ -249,6 +141,158 @@ async fn compact_custom_provider(
             .map_err(|error| GatewayError::Other(error.into()));
     }
     Ok(Json(response).into_response())
+}
+
+fn local_compaction_summary(body: &Value, model: &str) -> Result<CompactionSummary, GatewayError> {
+    let input = body
+        .get("input")
+        .ok_or_else(|| GatewayError::BadRequest("compact request missing input".to_owned()))?;
+    let mut fragments = Vec::new();
+    match input {
+        Value::String(text) => push_fragment(&mut fragments, "user", text),
+        Value::Array(items) => {
+            for item in items {
+                append_local_fragment(item, model, &mut fragments)?;
+            }
+        }
+        _ => {
+            return Err(GatewayError::BadRequest(
+                "compact input must be a string or array".to_owned(),
+            ));
+        }
+    }
+    let transcript = retain_recent_fragments(&fragments, LOCAL_TRANSCRIPT_MAX_JSON_BYTES);
+    let transcript = fit_transcript_to_json_budget(transcript, LOCAL_TRANSCRIPT_MAX_JSON_BYTES)?;
+    Ok(CompactionSummary {
+        local_transcript: Some(transcript),
+        goal: String::new(),
+        constraints: Vec::new(),
+        decisions: Vec::new(),
+        files: Vec::new(),
+        tool_results: Vec::new(),
+        pending_work: Vec::new(),
+    })
+}
+
+fn append_local_fragment(
+    item: &Value,
+    model: &str,
+    fragments: &mut Vec<String>,
+) -> Result<(), GatewayError> {
+    let item_type = item.get("type").and_then(Value::as_str);
+    if item_type == Some("compaction") {
+        if let Some(token) = item
+            .get("encrypted_content")
+            .and_then(Value::as_str)
+            .filter(|token| token.starts_with(compaction::TOKEN_PREFIX))
+        {
+            let previous = compaction::decode(token, model)?;
+            push_fragment(
+                fragments,
+                "previous compacted context",
+                &compaction::summary_text(&previous),
+            );
+        }
+        return Ok(());
+    }
+    if item_type == Some("agent_message") {
+        if let Some(text) = content_text(item.get("content")) {
+            push_fragment(fragments, "agent", &text);
+        }
+        return Ok(());
+    }
+    if item_type.is_none() || item_type == Some("message") {
+        let Some(role @ ("user" | "assistant")) = item.get("role").and_then(Value::as_str) else {
+            return Ok(());
+        };
+        if let Some(text) = content_text(item.get("content")) {
+            push_fragment(fragments, role, &text);
+        }
+    }
+    Ok(())
+}
+
+fn content_text(content: Option<&Value>) -> Option<String> {
+    match content? {
+        Value::String(text) => (!text.is_empty()).then(|| text.clone()),
+        Value::Array(blocks) => {
+            let text = blocks
+                .iter()
+                .filter(|block| {
+                    matches!(
+                        block.get("type").and_then(Value::as_str),
+                        Some("input_text" | "output_text" | "text")
+                    )
+                })
+                .filter_map(|block| block.get("text").and_then(Value::as_str))
+                .filter(|text| !text.is_empty())
+                .collect::<Vec<_>>()
+                .join("\n");
+            (!text.is_empty()).then_some(text)
+        }
+        _ => None,
+    }
+}
+
+fn push_fragment(fragments: &mut Vec<String>, role: &str, text: &str) {
+    if !text.is_empty() {
+        fragments.push(format!("[{role}]\n{text}"));
+    }
+}
+
+fn retain_recent_fragments(fragments: &[String], max_bytes: usize) -> String {
+    let mut remaining = max_bytes;
+    let mut retained = Vec::new();
+    for fragment in fragments.iter().rev() {
+        let separator_bytes = usize::from(!retained.is_empty()) * 2;
+        if remaining <= separator_bytes {
+            break;
+        }
+        remaining -= separator_bytes;
+        if fragment.len() <= remaining {
+            retained.push(fragment.clone());
+            remaining -= fragment.len();
+            continue;
+        }
+        retained.push(truncate_tail(fragment, remaining));
+        break;
+    }
+    if retained.is_empty() {
+        return EMPTY_LOCAL_TRANSCRIPT.to_owned();
+    }
+    retained.reverse();
+    retained.join("\n\n")
+}
+
+fn truncate_tail(value: &str, max_bytes: usize) -> String {
+    if value.len() <= max_bytes {
+        return value.to_owned();
+    }
+    if max_bytes <= EARLIER_TEXT_OMITTED.len() {
+        return utf8_tail(value, max_bytes).to_owned();
+    }
+    format!(
+        "{EARLIER_TEXT_OMITTED}{}",
+        utf8_tail(value, max_bytes - EARLIER_TEXT_OMITTED.len())
+    )
+}
+
+fn fit_transcript_to_json_budget(
+    mut transcript: String,
+    max_bytes: usize,
+) -> Result<String, GatewayError> {
+    while serde_json::to_vec(&transcript)?.len() > max_bytes {
+        transcript = truncate_tail(&transcript, transcript.len().saturating_mul(3) / 4);
+    }
+    Ok(transcript)
+}
+
+fn utf8_tail(value: &str, max_bytes: usize) -> &str {
+    let mut start = value.len().saturating_sub(max_bytes);
+    while start < value.len() && !value.is_char_boundary(start) {
+        start += 1;
+    }
+    &value[start..]
 }
 
 async fn forward_official_compact(

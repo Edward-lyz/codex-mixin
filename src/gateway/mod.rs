@@ -1,8 +1,4 @@
-use axum::http::HeaderMap;
-use serde_json::Value;
-
-use crate::error::GatewayError;
-use crate::protocol::{CollectedResponse, ResponseStream};
+use crate::protocol::ResponseStream;
 
 mod cache_shape;
 mod cache_usage;
@@ -30,36 +26,4 @@ pub(crate) use router::{
 pub(crate) struct UpstreamRouting {
     pub session_id: String,
     pub hash_key: String,
-}
-
-pub(crate) async fn stream_response_with_headers(
-    executor: &GatewayExecutor,
-    body: Value,
-    headers: &HeaderMap,
-) -> Result<ResponseStream, GatewayError> {
-    let catalog_slug = body
-        .get("model")
-        .and_then(Value::as_str)
-        .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?
-        .to_owned();
-    let resolved = executor.resolved_provider_model(&catalog_slug)?;
-    let plan = RequestPlan::provider(
-        catalog_slug,
-        resolved.provider.id().to_owned(),
-        resolved.upstream_model_id.to_owned(),
-        body,
-        None,
-        None,
-    )?;
-    executor.stream(plan, headers).await
-}
-
-pub(crate) async fn collect_response_with_headers(
-    executor: &GatewayExecutor,
-    mut body: Value,
-    headers: &HeaderMap,
-) -> Result<CollectedResponse, GatewayError> {
-    body["stream"] = Value::Bool(true);
-    let stream = stream_response_with_headers(executor, body, headers).await?;
-    collect_response_stream(stream).await
 }

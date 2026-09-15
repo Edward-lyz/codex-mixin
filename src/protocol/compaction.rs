@@ -5,7 +5,6 @@ use base64::engine::general_purpose::URL_SAFE_NO_PAD;
 use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
-use serde_json::Value;
 
 use crate::config::ensure_compaction_secret;
 use crate::error::GatewayError;
@@ -16,6 +15,8 @@ pub(crate) const MAX_SUMMARY_BYTES: usize = 64 * 1024;
 #[derive(Clone, Debug, Deserialize, Serialize)]
 #[serde(deny_unknown_fields)]
 pub(crate) struct CompactionSummary {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub local_transcript: Option<String>,
     pub goal: String,
     pub constraints: Vec<String>,
     pub decisions: Vec<String>,
@@ -128,6 +129,11 @@ fn decode_with_secret(
 }
 
 pub(crate) fn summary_text(summary: &CompactionSummary) -> String {
+    if let Some(transcript) = summary.local_transcript.as_deref() {
+        return format!(
+            "[Locally compacted conversation; tool arguments, tool outputs, reasoning, and media were omitted]\n{transcript}\n[End locally compacted conversation]"
+        );
+    }
     format!(
         "[Conversation summary from codex-mixin compaction]\nGoal: {}\nConstraints: {}\nDecisions: {}\nFiles: {}\nTool results: {}\nPending work: {}\n[End conversation summary]",
         summary.goal,
@@ -155,24 +161,13 @@ fn unix_seconds() -> Result<u64, GatewayError> {
         .as_secs())
 }
 
-pub(crate) fn summary_from_value(value: Value) -> Result<CompactionSummary, GatewayError> {
-    let summary: CompactionSummary = serde_json::from_value(value).map_err(|error| {
-        GatewayError::BadRequest(format!("invalid compaction summary: {error}"))
-    })?;
-    if summary.goal.trim().is_empty() {
-        return Err(GatewayError::BadRequest(
-            "compaction summary goal must not be empty".to_owned(),
-        ));
-    }
-    Ok(summary)
-}
-
 #[cfg(test)]
 mod tests {
     use super::*;
 
     fn summary() -> CompactionSummary {
         CompactionSummary {
+            local_transcript: None,
             goal: "ship compact".to_owned(),
             constraints: vec!["no tools".to_owned()],
             decisions: vec!["same model".to_owned()],
@@ -203,7 +198,7 @@ mod tests {
                 .is_err()
         );
         assert!(
-            summary_from_value(serde_json::json!({
+            serde_json::from_value::<CompactionSummary>(serde_json::json!({
                 "goal": "x",
                 "constraints": [],
                 "decisions": [],

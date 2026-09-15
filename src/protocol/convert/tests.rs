@@ -80,6 +80,7 @@ fn accepts_dsh_message_items_without_responses_type() {
 #[test]
 fn compaction_metadata_does_not_change_anthropic_request() {
     let summary = crate::protocol::compaction::CompactionSummary {
+        local_transcript: None,
         goal: "Continue the task".to_owned(),
         constraints: Vec::new(),
         decisions: Vec::new(),

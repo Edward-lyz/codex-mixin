@@ -72,8 +72,6 @@ fn data_url_dimensions(image_url: &str) -> (u32, u32) {
 #[derive(Clone)]
 enum MockMode {
     Text,
-    Compact,
-    CompactRetry,
     Thinking,
     UnsignedThinking,
     Tool,
@@ -726,18 +724,6 @@ async fn mock_messages(
     let payload = match state.mode {
         MockMode::Text if is_fusion_panel => panel_report_sse(),
         MockMode::Text => text_sse(),
-        MockMode::CompactRetry if request_index == 0 => text_sse(),
-        MockMode::Compact | MockMode::CompactRetry => tool_sse(
-            "submit_compaction",
-            json!({
-                "goal":"continue task",
-                "constraints":["no tools"],
-                "decisions":["use compact"],
-                "files":["src/server/compact.rs"],
-                "tool_results":["tests passed"],
-                "pending_work":["run e2e"]
-            }),
-        ),
         MockMode::Thinking => thinking_sse(),
         MockMode::UnsignedThinking => unsigned_thinking_sse(),
         MockMode::Tool => tool_sse("exec_command", json!({"cmd":"pwd"})),
@@ -4003,16 +3989,21 @@ async fn ignores_compaction_trigger_for_custom_responses() {
 }
 
 #[tokio::test]
-async fn compacts_custom_provider_into_mixin_token() {
-    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Compact).await;
+async fn locally_compacts_custom_provider_and_omits_tool_payloads() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let gateway_url = spawn_gateway(upstream_url).await;
-    let response = reqwest::Client::new()
+    let client = reqwest::Client::new();
+    let response = client
         .post(format!("{gateway_url}/v1/responses/compact"))
         .bearer_auth("gateway-key")
         .json(&json!({
             "model": "Claude Sonnet 5-custom",
             "input": [
-                {"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"fix the parser"}]},
+                {"type":"function_call","call_id":"call-1","name":"exec_command","arguments":"{\"cmd\":\"cargo test\"}"},
+                {"type":"function_call_output","call_id":"call-1","output":"all tests passed"},
+                {"type":"reasoning","encrypted_content":"sensitive reasoning"},
+                {"type":"message","role":"assistant","content":[{"type":"output_text","text":"The parser fix is complete."}]}
             ]
         }))
         .send()
@@ -4030,60 +4021,31 @@ async fn compacts_custom_provider_into_mixin_token() {
             .unwrap()
             .starts_with("codex-mixin:compaction:v1:")
     );
+    assert!(requests.lock().unwrap().is_empty());
+
+    let token = body["output"][0]["encrypted_content"].clone();
+    let replay = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model": "Claude Sonnet 5-custom",
+            "stream": true,
+            "input": [
+                {"type":"compaction","encrypted_content":token},
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(replay.status(), StatusCode::OK);
     let request = requests.lock().unwrap()[0].clone();
-    assert_eq!(request["tools"].as_array().unwrap().len(), 1);
-    assert_eq!(request["tools"][0]["name"], "submit_compaction");
-    assert_eq!(request["tool_choice"]["type"], "any");
-    assert_eq!(request["tool_choice"]["disable_parallel_tool_use"], true);
-    assert_eq!(
-        request["system"][0]["text"],
-        "Summarize this conversation for continuation by another coding agent.\nCall submit_compaction exactly once with the conversation summary. Preserve concrete\ncommands, file paths, unresolved errors, and decisions needed to continue the work."
-    );
-}
-
-#[tokio::test]
-async fn rejects_plain_text_compact_output_without_the_required_function_call() {
-    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
-    let gateway_url = spawn_gateway(upstream_url).await;
-    let response = reqwest::Client::new()
-        .post(format!("{gateway_url}/v1/responses/compact"))
-        .bearer_auth("gateway-key")
-        .json(&json!({
-            "model": "Claude Sonnet 5-custom",
-            "input": "continue"
-        }))
-        .send()
-        .await
-        .unwrap();
-    assert_eq!(response.status(), StatusCode::BAD_GATEWAY);
-    assert!(
-        response
-            .text()
-            .await
-            .unwrap()
-            .contains("compact provider did not call submit_compaction")
-    );
-    assert_eq!(requests.lock().unwrap().len(), 3);
-}
-
-#[tokio::test]
-async fn retries_compaction_when_provider_omits_required_tool_call() {
-    let (upstream_url, requests) = spawn_mock_upstream(MockMode::CompactRetry).await;
-    let gateway_url = spawn_gateway(upstream_url).await;
-    let response = reqwest::Client::new()
-        .post(format!("{gateway_url}/v1/responses/compact"))
-        .bearer_auth("gateway-key")
-        .json(&json!({
-            "model": "Claude Sonnet 5-custom",
-            "input": "continue"
-        }))
-        .send()
-        .await
-        .unwrap();
-    let status = response.status();
-    let body = response.text().await.unwrap();
-    assert_eq!(status, StatusCode::OK, "unexpected response: {body}");
-    assert_eq!(requests.lock().unwrap().len(), 2);
+    let compacted = request["system"][0]["text"].as_str().unwrap();
+    assert!(compacted.contains("fix the parser"));
+    assert!(compacted.contains("The parser fix is complete."));
+    assert!(!compacted.contains("cargo test"));
+    assert!(!compacted.contains("all tests passed"));
+    assert!(!compacted.contains("sensitive reasoning"));
 }
 
 #[tokio::test]
@@ -4102,11 +4064,7 @@ async fn compacts_openai_chat_provider_into_mixin_token() {
     assert_eq!(response.status(), StatusCode::OK);
     let body: Value = response.json().await.unwrap();
     assert_eq!(body["output"][0]["type"], "compaction");
-    let request = requests.lock().unwrap()[0].clone();
-    assert_eq!(request["tools"].as_array().unwrap().len(), 1);
-    assert_eq!(request["tools"][0]["function"]["name"], "submit_compaction");
-    assert_eq!(request["tool_choice"], "required");
-    assert_eq!(request["parallel_tool_calls"], false);
+    assert!(requests.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
@@ -4133,10 +4091,7 @@ async fn compacts_baidu_gpt_through_responses_provider() {
     assert_eq!(response.status(), StatusCode::OK);
     let body: Value = response.json().await.unwrap();
     assert_eq!(body["output"][0]["type"], "compaction");
-    let request = requests.lock().unwrap()[0].clone();
-    assert_eq!(request["path"], "/v1/responses");
-    assert_eq!(request["body"]["model"], "gpt-5.6-sol");
-    assert_eq!(request["body"]["tool_choice"], "required");
+    assert!(requests.lock().unwrap().is_empty());
 }
 
 #[tokio::test]
