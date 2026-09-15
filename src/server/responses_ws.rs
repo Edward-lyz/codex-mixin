@@ -29,6 +29,7 @@ pub(super) async fn responses_ws(
     check_gateway_auth(&state, &headers).await?;
     Ok(ws
         .max_message_size(super::request_body::MAX_REQUEST_BYTES)
+        .max_frame_size(super::request_body::MAX_REQUEST_BYTES)
         .on_upgrade(move |socket| handle_responses_ws(state, headers, socket))
         .into_response())
 }
