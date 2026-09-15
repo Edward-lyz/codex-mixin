@@ -42,6 +42,8 @@ async fn startup_does_not_wait_for_official_catalog_network() {
     });
 
     let directory = tempfile::tempdir().unwrap();
+    let home = directory.path().join("home");
+    fs::create_dir_all(&home).unwrap();
     let gateway_config_path = directory.path().join("gateway.json");
     let runtime_path = directory.path().join("runtime.json");
     let codex_home = directory.path().join("codex");
@@ -87,6 +89,7 @@ async fn startup_does_not_wait_for_official_catalog_network() {
         .env("CODEX_GATEWAY_CONFIG", &gateway_config_path)
         .env("CODEX_GATEWAY_RUNTIME_FILE", &runtime_path)
         .env("CODEX_HOME", &codex_home)
+        .env("HOME", &home)
         .env("HTTPS_PROXY", &proxy_url)
         .env("https_proxy", &proxy_url)
         .env_remove("ALL_PROXY")
