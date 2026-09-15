@@ -392,6 +392,7 @@ pub(super) fn convert_function_tool(
         .or_else(|| tool.get("inputSchema"))
         .filter(|schema| !schema.is_null())
         .cloned()
+        .map(reshape_anthropic_input_schema)
         .unwrap_or_else(|| json!({"type": "object", "properties": {}}));
     // Anthropic Messages tools carry only name/description/input_schema.
     // The OpenAI "strict" flag is dropped: anthropic.com ignores unknown
@@ -408,6 +409,159 @@ pub(super) fn convert_function_tool(
         }),
     };
     Ok((converted, codex_name))
+}
+
+const ROOT_SCHEMA_COMBINATORS: [&str; 3] = ["oneOf", "anyOf", "allOf"];
+
+#[derive(Clone, Copy)]
+enum PropertyConstraint {
+    Conjunctive,
+    OneOf,
+    AnyOf,
+}
+
+#[derive(Default)]
+struct PropertyDefinitions {
+    conjunctive: Vec<Value>,
+    one_of: Vec<Value>,
+    any_of: Vec<Value>,
+}
+
+#[derive(Default)]
+struct RootSchemaProperties {
+    order: Vec<String>,
+    definitions: HashMap<String, PropertyDefinitions>,
+}
+
+impl RootSchemaProperties {
+    fn add(&mut self, properties: Option<&Value>, constraint: PropertyConstraint) {
+        let Some(properties) = properties.and_then(Value::as_object) else {
+            return;
+        };
+        for (name, schema) in properties {
+            let definitions = self.definitions.entry(name.clone()).or_insert_with(|| {
+                self.order.push(name.clone());
+                PropertyDefinitions::default()
+            });
+            let bucket = match constraint {
+                PropertyConstraint::Conjunctive => &mut definitions.conjunctive,
+                PropertyConstraint::OneOf => &mut definitions.one_of,
+                PropertyConstraint::AnyOf => &mut definitions.any_of,
+            };
+            if !bucket.contains(schema) {
+                bucket.push(schema.clone());
+            }
+        }
+    }
+
+    fn into_schema(mut self) -> Value {
+        let mut properties = serde_json::Map::new();
+        for name in self.order {
+            let Some(mut definitions) = self.definitions.remove(&name) else {
+                continue;
+            };
+            for alternatives in [&mut definitions.one_of, &mut definitions.any_of] {
+                if let Some(alternative) = combine_schemas(alternatives, "anyOf") {
+                    definitions.conjunctive.push(alternative);
+                }
+            }
+            if let Some(schema) = combine_schemas(&mut definitions.conjunctive, "allOf") {
+                properties.insert(name, schema);
+            }
+        }
+        Value::Object(properties)
+    }
+}
+
+fn combine_schemas(schemas: &mut Vec<Value>, keyword: &str) -> Option<Value> {
+    if schemas.len() == 1 {
+        return schemas.pop();
+    }
+    (!schemas.is_empty()).then(|| json!({keyword: std::mem::take(schemas)}))
+}
+
+fn schema_required_names(variants: &[Value], union: bool) -> HashSet<String> {
+    let mut requirements = variants.iter().filter_map(Value::as_object).map(|variant| {
+        variant
+            .get("required")
+            .and_then(Value::as_array)
+            .into_iter()
+            .flatten()
+            .filter_map(Value::as_str)
+            .map(str::to_owned)
+            .collect::<HashSet<_>>()
+    });
+    let Some(mut required) = requirements.next() else {
+        return HashSet::new();
+    };
+    for names in requirements {
+        if union {
+            required.extend(names);
+        } else {
+            required.retain(|name| names.contains(name));
+        }
+    }
+    required
+}
+
+fn reshape_anthropic_input_schema(schema: Value) -> Value {
+    let Value::Object(mut root) = schema else {
+        return schema;
+    };
+    let needs_flattening = ROOT_SCHEMA_COMBINATORS
+        .iter()
+        .any(|keyword| root.get(*keyword).is_some_and(Value::is_array));
+    if !needs_flattening {
+        root.entry("type").or_insert_with(|| json!("object"));
+        return Value::Object(root);
+    }
+
+    // Anthropic rejects combinators only at input_schema's root. Preserve
+    // property constraints under nested combinators, where Anthropic accepts
+    // them; only mutual exclusion between root alternatives is unavoidably lost.
+    let mut properties = RootSchemaProperties::default();
+    properties.add(root.get("properties"), PropertyConstraint::Conjunctive);
+    let mut required = root
+        .get("required")
+        .and_then(Value::as_array)
+        .into_iter()
+        .flatten()
+        .filter_map(Value::as_str)
+        .map(str::to_owned)
+        .collect::<HashSet<_>>();
+    for (keyword, constraint, union_required) in [
+        ("oneOf", PropertyConstraint::OneOf, false),
+        ("anyOf", PropertyConstraint::AnyOf, false),
+        ("allOf", PropertyConstraint::Conjunctive, true),
+    ] {
+        let Some(variants) = root.get(keyword).and_then(Value::as_array) else {
+            continue;
+        };
+        required.extend(schema_required_names(variants, union_required));
+        for variant in variants {
+            properties.add(variant.get("properties"), constraint);
+        }
+    }
+
+    for keyword in ROOT_SCHEMA_COMBINATORS {
+        root.remove(keyword);
+    }
+    root.insert("type".to_owned(), json!("object"));
+    root.insert("properties".to_owned(), properties.into_schema());
+    let ordered_required = root["properties"]
+        .as_object()
+        .into_iter()
+        .flat_map(|properties| properties.keys())
+        .filter(|name| required.contains(*name))
+        .cloned()
+        .map(Value::String)
+        .collect::<Vec<_>>();
+    if ordered_required.is_empty() {
+        root.remove("required");
+    } else {
+        root.insert("required".to_owned(), Value::Array(ordered_required));
+    }
+    Value::Object(root)
 }
 
 pub(super) fn convert_custom_tool(

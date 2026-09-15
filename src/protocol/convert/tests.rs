@@ -497,6 +497,133 @@ fn converts_custom_and_tool_search_tools_for_anthropic() {
 }
 
 #[test]
+fn flattens_root_one_of_tool_schema_for_anthropic() {
+    let body = json!({
+        "model": "m",
+        "stream": true,
+        "input": "hi",
+        "tools": [{
+            "type": "function",
+            "name": "connector",
+            "parameters": {
+                "oneOf": [
+                    {
+                        "type": "object",
+                        "properties": {
+                            "query": {"type": "string"},
+                            "mode": {"const": "read"}
+                        },
+                        "required": ["query", "mode"]
+                    },
+                    {
+                        "type": "object",
+                        "properties": {
+                            "body": {"type": "string"},
+                            "mode": {"const": "write"}
+                        },
+                        "required": ["body", "mode"]
+                    }
+                ]
+            }
+        }]
+    });
+
+    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let schema = &converted.request.tools[0]["input_schema"];
+
+    assert_eq!(schema["type"], "object");
+    assert!(schema.get("oneOf").is_none());
+    assert_eq!(schema["required"], json!(["mode"]));
+    assert_eq!(schema["properties"]["query"], json!({"type": "string"}));
+    assert_eq!(schema["properties"]["body"], json!({"type": "string"}));
+    assert_eq!(
+        schema["properties"]["mode"],
+        json!({"anyOf": [{"const": "read"}, {"const": "write"}]})
+    );
+}
+
+#[test]
+fn flattens_root_any_of_tool_schema_for_anthropic() {
+    let body = json!({
+        "model": "m",
+        "stream": true,
+        "input": "hi",
+        "tools": [{
+            "type": "function",
+            "name": "lookup",
+            "parameters": {
+                "anyOf": [
+                    {
+                        "properties": {
+                            "id": {"type": "integer"},
+                            "scope": {"const": "local"}
+                        },
+                        "required": ["scope"]
+                    },
+                    {
+                        "properties": {
+                            "name": {"type": "string"},
+                            "scope": {"const": "remote"}
+                        },
+                        "required": ["scope"]
+                    }
+                ]
+            }
+        }]
+    });
+
+    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let schema = &converted.request.tools[0]["input_schema"];
+
+    assert!(schema.get("anyOf").is_none());
+    assert_eq!(schema["required"], json!(["scope"]));
+    assert_eq!(
+        schema["properties"]["scope"],
+        json!({"anyOf": [{"const": "local"}, {"const": "remote"}]})
+    );
+}
+
+#[test]
+fn flattens_root_all_of_tool_schema_for_anthropic() {
+    let body = json!({
+        "model": "m",
+        "stream": true,
+        "input": "hi",
+        "tools": [{
+            "type": "function",
+            "name": "update",
+            "parameters": {
+                "properties": {"version": {"minimum": 1}},
+                "required": ["version"],
+                "allOf": [
+                    {
+                        "properties": {
+                            "id": {"type": "integer"},
+                            "version": {"type": "integer"}
+                        },
+                        "required": ["id"]
+                    },
+                    {
+                        "properties": {"body": {"type": "string"}},
+                        "required": ["body"]
+                    }
+                ]
+            }
+        }]
+    });
+
+    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let schema = &converted.request.tools[0]["input_schema"];
+
+    assert!(schema.get("allOf").is_none());
+    assert_eq!(schema["required"], json!(["body", "id", "version"]));
+    assert_eq!(
+        schema["properties"]["version"],
+        json!({"allOf": [{"minimum": 1}, {"type": "integer"}]})
+    );
+}
+
+#[test]
 fn converts_custom_and_tool_search_outputs_for_anthropic() {
     let body = json!({
         "model": "m",
