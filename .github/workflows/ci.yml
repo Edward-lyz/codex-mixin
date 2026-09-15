@@ -23,10 +23,17 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          components: rustfmt
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Run strict Clippy
+        run: |
+          cargo clippy --all-targets -- \
+            -D clippy::cognitive_complexity \
+            -D clippy::redundant_closure_for_method_calls \
+            -D clippy::redundant_pattern_matching \
+            -D warnings
       - name: Install ripgrep
         shell: bash
         run: |
