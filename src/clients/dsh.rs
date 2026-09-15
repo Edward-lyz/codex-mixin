@@ -9,12 +9,59 @@ use super::files::{ensure_owner_only_dir, set_owner_only, write_atomic_if_change
 const PROVIDER_ID: &str = "codex-mixin";
 const API_KEY_ENV: &str = "CODEX_MIXIN_GATEWAY_API_KEY";
 const API_PROTOCOL: &str = "openai-responses";
+const CREDENTIALS_VERSION_FIELD: &str = "version";
+const CREDENTIALS_REFS_FIELD: &str = "refs";
+const CREDENTIALS_RECORDS_FIELD: &str = "records";
 
 /// DSH `.credentials.yaml` layout version. DSH 0.1.5+ requires a versioned
 /// document whose only top-level keys are `version`, `refs`, and `records`;
 /// every credential reference nests under `refs`. Writing a bare top-level key
 /// makes DSH reject the whole file at load ("unknown top-level key").
 const CREDENTIALS_DOCUMENT_VERSION: i64 = 1;
+
+fn is_credential_ref_name(name: &str) -> bool {
+    let mut bytes = name.bytes();
+    bytes
+        .next()
+        .is_some_and(|byte| byte == b'_' || byte.is_ascii_alphabetic())
+        && bytes.all(|byte| byte == b'_' || byte.is_ascii_alphanumeric())
+}
+
+/// Upgrade a pre-release flat document by moving every credential reference
+/// under `refs`. Moving only our own key would stamp a mixed document as
+/// version 1 while leaving other flat keys at the root, which DSH rejects both
+/// at boot and during hot reload.
+fn migrate_flat_credentials(root: &mut Mapping) -> anyhow::Result<()> {
+    let version_key = Value::String(CREDENTIALS_VERSION_FIELD.to_owned());
+    if root.is_empty() || root.contains_key(&version_key) {
+        return Ok(());
+    }
+
+    for (key, value) in root.iter() {
+        let key = key
+            .as_str()
+            .context("flat DSH credential names must be strings")?;
+        anyhow::ensure!(
+            is_credential_ref_name(key),
+            "flat DSH credential name {key:?} is not a POSIX identifier"
+        );
+        let value = value
+            .as_str()
+            .with_context(|| format!("flat DSH credential {key:?} must be a string"))?;
+        anyhow::ensure!(!value.is_empty(), "flat DSH credential {key:?} is empty");
+    }
+
+    let refs = std::mem::take(root);
+    root.insert(
+        version_key,
+        Value::Number(CREDENTIALS_DOCUMENT_VERSION.into()),
+    );
+    root.insert(
+        Value::String(CREDENTIALS_REFS_FIELD.to_owned()),
+        Value::Mapping(refs),
+    );
+    Ok(())
+}
 
 /// Insert or update one credential reference under the versioned `refs` section,
 /// creating the `version`/`refs` scaffolding when absent.
@@ -25,17 +72,36 @@ const CREDENTIALS_DOCUMENT_VERSION: i64 = 1;
 /// Writing flat would therefore be silently dropped by a running DSH, so the
 /// versioned layout is the only form that works both at boot and live.
 fn set_credential_ref(credentials: &mut Value, key: &str, value: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(!value.is_empty(), "DSH credential {key:?} is empty");
     let root = credentials
         .as_mapping_mut()
         .context("DSH credentials must be a YAML mapping")?;
+    migrate_flat_credentials(root)?;
     // A pre-0.1.5 codex-mixin wrote the key at the document root, which DSH
     // rejects as an unknown top-level key. Drop it as part of moving the value
     // under `refs`, or the rewritten file stays unloadable.
     root.remove(Value::String(key.to_owned()));
-    root.entry(Value::String("version".to_owned()))
+    let version = root
+        .entry(Value::String(CREDENTIALS_VERSION_FIELD.to_owned()))
         .or_insert_with(|| Value::Number(CREDENTIALS_DOCUMENT_VERSION.into()));
+    anyhow::ensure!(
+        version.as_i64() == Some(CREDENTIALS_DOCUMENT_VERSION),
+        "unsupported DSH credentials version"
+    );
+    for field in root.keys() {
+        let field = field
+            .as_str()
+            .context("DSH credentials field names must be strings")?;
+        anyhow::ensure!(
+            matches!(
+                field,
+                CREDENTIALS_VERSION_FIELD | CREDENTIALS_REFS_FIELD | CREDENTIALS_RECORDS_FIELD
+            ),
+            "unknown DSH credentials field {field:?}"
+        );
+    }
     let refs_slot = root
-        .entry(Value::String("refs".to_owned()))
+        .entry(Value::String(CREDENTIALS_REFS_FIELD.to_owned()))
         .or_insert_with(|| Value::Mapping(Mapping::new()));
     // A file whose last reference was hand-removed keeps a childless `refs:`,
     // which parses as null rather than an empty mapping. Treat it as empty so

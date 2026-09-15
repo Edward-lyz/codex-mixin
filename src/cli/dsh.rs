@@ -516,12 +516,14 @@ mod tests {
     #[test]
     fn install_migrates_pre_0_1_5_flat_credential_to_refs() {
         let directory = tempfile::tempdir().unwrap();
-        // What a pre-0.1.5 codex-mixin left behind: the gateway key at the
-        // document root, which DSH rejects as an unknown top-level key.
+        // A real pre-release flat document has no version and may contain
+        // credentials owned by more than codex-mixin. Every entry must move;
+        // adding version/refs around only our key would make DSH reject the
+        // remaining root entry instead of migrating it at boot.
         let credentials_path = directory.path().join(".credentials.yaml");
         fs::write(
             &credentials_path,
-            "version: 1\nrefs:\n  INFOFLOW_APP_KEY: keep-me\nCODEX_MIXIN_GATEWAY_API_KEY: stale-root\n",
+            "INFOFLOW_APP_KEY: keep-me\nCODEX_MIXIN_GATEWAY_API_KEY: stale-root\n",
         )
         .unwrap();
         let config = gateway_config(Some("gateway-secret"), false, false);
@@ -540,6 +542,49 @@ mod tests {
             Some("keep-me")
         );
         assert_dsh_loadable(&credentials);
+    }
+
+    #[test]
+    fn install_repairs_legacy_root_key_in_a_versioned_document() {
+        let directory = tempfile::tempdir().unwrap();
+        let credentials_path = directory.path().join(".credentials.yaml");
+        fs::write(
+            &credentials_path,
+            "version: 1\nrefs:\n  INFOFLOW_APP_KEY: keep-me\nCODEX_MIXIN_GATEWAY_API_KEY: stale-root\n",
+        )
+        .unwrap();
+        let config = gateway_config(Some("gateway-secret"), false, false);
+
+        install_dsh_with_config(Some(directory.path().to_owned()), &config).unwrap();
+
+        let credentials: Value =
+            serde_yaml::from_str(&fs::read_to_string(&credentials_path).unwrap()).unwrap();
+        assert!(credentials.get(DSH_API_KEY_ENV).is_none());
+        assert_eq!(
+            credentials["refs"][DSH_API_KEY_ENV].as_str(),
+            Some("gateway-secret")
+        );
+        assert_eq!(
+            credentials["refs"]["INFOFLOW_APP_KEY"].as_str(),
+            Some("keep-me")
+        );
+        assert_dsh_loadable(&credentials);
+    }
+
+    #[test]
+    fn install_rejects_an_invalid_flat_document_without_overwriting_it() {
+        let directory = tempfile::tempdir().unwrap();
+        let credentials_path = directory.path().join(".credentials.yaml");
+        let invalid = "INFOFLOW_APP_KEY:\n  nested: not-a-secret-string\n";
+        fs::write(&credentials_path, invalid).unwrap();
+        let config = gateway_config(Some("gateway-secret"), false, false);
+
+        let error =
+            install_dsh_with_config(Some(directory.path().to_owned()), &config).unwrap_err();
+
+        assert!(error.to_string().contains("INFOFLOW_APP_KEY"));
+        assert_eq!(fs::read_to_string(credentials_path).unwrap(), invalid);
+        assert!(!directory.path().join("settings.yaml").exists());
     }
 
     #[test]
@@ -612,12 +657,16 @@ mod tests {
             .join("target")
             .join("dsh-credential-fixtures");
         fs::create_dir_all(&fixtures).unwrap();
-        let cases: [(&str, Option<&str>); 4] = [
+        let cases: [(&str, Option<&str>); 5] = [
             ("absent-file", None),
             ("empty-file", Some("")),
             ("childless-refs", Some("version: 1\nrefs:\n")),
             (
-                "flat-root-key",
+                "flat-document",
+                Some("INFOFLOW_APP_KEY: keep-me\nCODEX_MIXIN_GATEWAY_API_KEY: stale-root\n"),
+            ),
+            (
+                "versioned-root-key",
                 Some(
                     "version: 1\nrefs:\n  INFOFLOW_APP_KEY: keep-me\nCODEX_MIXIN_GATEWAY_API_KEY: stale-root\n",
                 ),
