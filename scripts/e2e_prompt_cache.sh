@@ -39,11 +39,21 @@ node "$repo_root/scripts/e2e_mock_provider.mjs" \
   openai beta-secret "$e2e_dir/chat.ndjson" "$chat_ready" 20 \
   >"$e2e_dir/chat.stdout" 2>&1 &
 chat_pid=$!
-for _ in {1..100}; do
+for _ in {1..400}; do
   [[ -s "$anthropic_ready" && -s "$chat_ready" ]] && break
+  if ! kill -0 "$anthropic_pid" 2>/dev/null || ! kill -0 "$chat_pid" 2>/dev/null; then
+    break
+  fi
   sleep 0.05
 done
-[[ -s "$anthropic_ready" && -s "$chat_ready" ]]
+if [[ ! -s "$anthropic_ready" || ! -s "$chat_ready" ]]; then
+  echo "mock providers did not become ready" >&2
+  echo "anthropic mock output:" >&2
+  sed -n '1,120p' "$e2e_dir/anthropic.stdout" >&2
+  echo "chat mock output:" >&2
+  sed -n '1,120p' "$e2e_dir/chat.stdout" >&2
+  exit 1
+fi
 anthropic_port="$(<"$anthropic_ready")"
 chat_port="$(<"$chat_ready")"
 
