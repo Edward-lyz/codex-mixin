@@ -2311,6 +2311,55 @@ async fn accepts_a_single_image_request_larger_than_sixteen_mib() {
 }
 
 #[tokio::test]
+async fn accepts_a_websocket_request_larger_than_sixteen_mib() {
+    let received_bytes = Arc::new(AtomicUsize::new(0));
+    let received_bytes_for_route = received_bytes.clone();
+    let upstream = Router::new().route(
+        "/v1/messages",
+        post(move |body: Body| {
+            let received_bytes = received_bytes_for_route.clone();
+            async move {
+                let body = axum::body::to_bytes(body, usize::MAX).await.unwrap();
+                received_bytes.store(body.len(), Ordering::SeqCst);
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/event-stream")
+                    .body(Body::from(text_sse()))
+                    .unwrap()
+            }
+        }),
+    );
+    let upstream_url = spawn_router(upstream).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut websocket_request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    websocket_request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(websocket_request).await.unwrap();
+    let mut body = responses_request();
+    body["type"] = json!("response.create");
+    body["input"].as_array_mut().unwrap().push(json!({
+        "type":"message",
+        "role":"user",
+        "content":[{
+            "type":"input_text",
+            "text":"x".repeat(16 * 1024 * 1024)
+        }]
+    }));
+    let body = body.to_string();
+    assert!(body.len() > 16 * 1024 * 1024);
+
+    socket.send(WsMessage::Text(body.into())).await.unwrap();
+
+    let frames = websocket_response_frames(&mut socket).await.join("\n");
+    assert!(frames.contains("\"type\":\"response.completed\""));
+    assert!(received_bytes.load(Ordering::SeqCst) > 16 * 1024 * 1024);
+}
+
+#[tokio::test]
 async fn retries_one_provider_413_with_the_payload_fallback_profile() {
     let attempts = Arc::new(AtomicUsize::new(0));
     let requests = Arc::new(Mutex::new(Vec::new()));
