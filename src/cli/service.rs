@@ -9,6 +9,7 @@ use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
 use codex_mixin::config::{GatewayConfig, load_stored_config, save_stored_config};
+use codex_mixin::gateway_access::GatewayClientKeys;
 use codex_mixin::provider::ProviderModelSource;
 use codex_mixin::provider::capabilities::ProviderCapabilities;
 use codex_mixin::server::{AppState, ServeExit, serve_on_listener_with_reload};
@@ -38,10 +39,73 @@ pub(super) use logging::rotate_gateway_log_if_needed;
 pub(super) const CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
 pub(super) const OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(60);
 pub(super) const PROVIDER_MODEL_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+/// How often the client-credential watch checks the stored configuration timestamp.
+const CLIENT_CREDENTIAL_WATCH_INTERVAL: Duration = Duration::from_secs(2);
 
 struct ProviderModelRefreshTarget {
     id: String,
     display_name: String,
+}
+
+/// Credential material a serving gateway authenticates requests against.
+///
+/// `connect remove <client>` revokes a client key and the next `connect` mints a
+/// fresh one, but a running gateway keeps the credentials it was started with.
+/// Without a reload it keeps rejecting the key it just handed the client, and
+/// every request from that client fails `401 unauthorized` until the gateway is
+/// restarted.
+type ClientCredentials = (Option<String>, GatewayClientKeys);
+
+fn stored_client_credentials() -> anyhow::Result<ClientCredentials> {
+    let stored = load_stored_config()?.unwrap_or_default();
+    Ok((stored.gateway_api_key, stored.gateway_client_keys))
+}
+
+/// Reload the gateway when the stored client credentials no longer match the
+/// ones it serves.
+///
+/// A `connect` command runs in its own process, so it can only report the key it
+/// wrote; the serving gateway has to notice the change itself. Reading the
+/// document is gated on the config file's timestamp, so a file nobody rewrote
+/// costs one `stat` per tick while a rotation reaches the gateway within a
+/// couple of seconds.
+fn spawn_client_credential_watch(
+    served: ClientCredentials,
+    stop: Arc<AtomicBool>,
+    reload: tokio::sync::watch::Sender<u64>,
+) -> std::io::Result<()> {
+    std::thread::Builder::new()
+        .name("client-credential-watch".to_owned())
+        .spawn(move || {
+            let mut credentials = served;
+            let mut fingerprint = config_fingerprint().ok().flatten();
+            while !stop.load(Ordering::Acquire) {
+                std::thread::sleep(CLIENT_CREDENTIAL_WATCH_INTERVAL);
+                if stop.load(Ordering::Acquire) {
+                    break;
+                }
+                let current = config_fingerprint().ok().flatten();
+                if current == fingerprint {
+                    continue;
+                }
+                fingerprint = current;
+                match stored_client_credentials() {
+                    Ok(next) if next != credentials => {
+                        credentials = next;
+                        tracing::info!(
+                            "gateway client credentials changed; reloading to serve the stored keys"
+                        );
+                        reload.send_modify(|revision| *revision = (*revision).wrapping_add(1));
+                    }
+                    Ok(_) => {}
+                    Err(error) => tracing::warn!(
+                        error = %format!("{error:#}"),
+                        "failed to read gateway client credentials"
+                    ),
+                }
+            }
+        })
+        .map(|_| ())
 }
 
 async fn sync_all_provider_models_once() -> bool {
@@ -525,6 +589,17 @@ pub(super) async fn start(
     let stop_provider_model_refresh = Arc::new(AtomicBool::new(false));
     let refresh_stop = Arc::clone(&stop_provider_model_refresh);
     let (reload_sender, mut reload_receiver) = tokio::sync::watch::channel(0_u64);
+    let served_credentials = (
+        config.gateway_api_key.clone(),
+        config.gateway_client_keys.clone(),
+    );
+    let stop_client_credential_watch = Arc::new(AtomicBool::new(false));
+    spawn_client_credential_watch(
+        served_credentials,
+        Arc::clone(&stop_client_credential_watch),
+        reload_sender.clone(),
+    )
+    .context("spawn client credential watch thread")?;
     let _provider_model_refresh_thread = std::thread::Builder::new()
         .name("provider-model-refresh".to_owned())
         .spawn(move || {
@@ -651,7 +726,7 @@ pub(super) async fn start(
                     version: Some(env!("CARGO_PKG_VERSION").to_owned()),
                     config_fingerprint: config_fingerprint()?,
                 })?;
-                tracing::info!(%actual_bind, "gateway state reloaded after provider model change");
+                tracing::info!(%actual_bind, "gateway state reloaded from stored configuration");
             }
             Err(error) => break Err(error),
         }
@@ -659,6 +734,7 @@ pub(super) async fn start(
     refresh_task.abort();
     official_refresh_task.abort();
     stop_provider_model_refresh.store(true, Ordering::Release);
+    stop_client_credential_watch.store(true, Ordering::Release);
     match &result {
         Ok(()) => tracing::info!(pid, "gateway stopped"),
         Err(error) => tracing::error!(

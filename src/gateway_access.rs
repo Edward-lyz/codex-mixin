@@ -37,7 +37,7 @@ impl GatewayClient {
     }
 }
 
-#[derive(Clone, Debug, Default, Deserialize, Serialize)]
+#[derive(Clone, Debug, Default, Deserialize, Eq, PartialEq, Serialize)]
 pub struct GatewayClientKeys {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub codex: Option<String>,
