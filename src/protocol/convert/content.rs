@@ -5,6 +5,11 @@ use crate::protocol::compaction;
 const ANTHROPIC_THINKING_PREFIX: &str = "codex-mixin:anthropic-thinking:v1:";
 const BAIDU_UNSIGNED_THINKING_PREFIX: &str = "codex-mixin:baidu-unsigned-thinking:v1:";
 
+pub(crate) fn is_gateway_thinking(encrypted_content: &str) -> bool {
+    encrypted_content.starts_with(ANTHROPIC_THINKING_PREFIX)
+        || encrypted_content.starts_with(BAIDU_UNSIGNED_THINKING_PREFIX)
+}
+
 pub(super) fn append_input_item(
     item: &Value,
     system: &mut Vec<ContentBlock>,

@@ -6,6 +6,7 @@ use serde_json::Value;
 
 use super::UpstreamAccess;
 use crate::error::GatewayError;
+use crate::protocol::convert::is_gateway_thinking;
 
 const OFFICIAL_MODELS_FETCH_TIMEOUT: Duration = Duration::from_secs(10);
 
@@ -129,8 +130,29 @@ impl UpstreamAccess {
 pub(crate) fn normalize_official_responses_body(mut body: Value) -> Value {
     if let Some(body) = body.as_object_mut() {
         body.remove("max_output_tokens");
+        if let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) {
+            input.retain(|item| !is_foreign_reasoning(item));
+        }
     }
     body
+}
+
+fn is_foreign_reasoning(item: &Value) -> bool {
+    if item.get("type").and_then(Value::as_str) != Some("reasoning") {
+        return false;
+    }
+    let has_content = match item.get("content") {
+        Some(Value::Array(content)) => !content.is_empty(),
+        Some(Value::String(content)) => !content.is_empty(),
+        Some(Value::Object(content)) => !content.is_empty(),
+        Some(Value::Bool(_) | Value::Number(_)) => true,
+        Some(Value::Null) | None => false,
+    };
+    has_content
+        || item
+            .get("encrypted_content")
+            .and_then(Value::as_str)
+            .is_some_and(is_gateway_thinking)
 }
 
 pub(crate) async fn read_codex_official_auth(
@@ -213,9 +235,70 @@ mod tests {
 
     use bytes::Bytes;
     use reqwest::Client;
+    use serde_json::json;
 
     use super::*;
     use crate::config::{GatewayConfig, ThinkingMode};
+
+    #[test]
+    fn drops_plaintext_reasoning_before_official_forwarding() {
+        let normalized = normalize_official_responses_body(json!({
+            "model": "gpt-6-astra",
+            "max_output_tokens": 4096,
+            "input": [
+                {
+                    "type": "reasoning",
+                    "content": [{"type": "reasoning_text", "text": "foreign"}]
+                },
+                {"type": "message", "role": "user", "content": "continue"}
+            ]
+        }));
+
+        assert!(normalized.get("max_output_tokens").is_none());
+        assert_eq!(
+            normalized["input"],
+            json!([{"type": "message", "role": "user", "content": "continue"}])
+        );
+    }
+
+    #[test]
+    fn drops_gateway_thinking_before_official_forwarding() {
+        let anthropic = crate::protocol::convert::encode_anthropic_thinking("thought", "signature");
+        let baidu = crate::protocol::convert::encode_baidu_unsigned_thinking(
+            "gpt-5.6-sol-baidu-oneapi",
+            "thought",
+        );
+        let normalized = normalize_official_responses_body(json!({
+            "input": [
+                {
+                    "type": "reasoning",
+                    "content": [],
+                    "encrypted_content": anthropic
+                },
+                {
+                    "type": "reasoning",
+                    "content": [],
+                    "encrypted_content": baidu
+                }
+            ]
+        }));
+
+        assert_eq!(normalized["input"], json!([]));
+    }
+
+    #[test]
+    fn preserves_official_opaque_reasoning() {
+        let official_reasoning = json!({
+            "type": "reasoning",
+            "content": [],
+            "encrypted_content": "gAAAAABofficial-opaque-payload"
+        });
+        let normalized = normalize_official_responses_body(json!({
+            "input": [official_reasoning.clone()]
+        }));
+
+        assert_eq!(normalized["input"], json!([official_reasoning]));
+    }
 
     #[tokio::test]
     async fn official_models_timeout_covers_response_body() {
