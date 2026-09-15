@@ -56,7 +56,7 @@ check_paths "core" "${CORE[@]}"
 check_paths "protocol" "${PROTO_CONVERT[@]}"
 check_paths "lower" "${LOWER[@]}"
 check_no_match "core must not reference crate::server" 'crate::server' "${CORE[@]}"
-check_no_match "core must not reference crate::cli" 'crate::cli' "${CORE[@]}"
+check_no_match "core must not reference crate::cli" 'crate::cli\b' "${CORE[@]}"
 check_no_match "core must not reference AppState" '\bAppState\b' "${CORE[@]}"
 check_no_match "protocol conversion must not send over the network" 'reqwest::Client|reqwest::blocking|Client::builder|\.send\(\)|\.post\(|\.execute\(' "${PROTO_CONVERT[@]}"
 check_no_match "application must not use clap" '\bclap::' src/application
@@ -68,7 +68,7 @@ check_no_match "clients must not print" '\b(print|println|eprint|eprintln)!' src
 check_no_match "lower layers must not reference FusionEngine" '\bFusionEngine\b' "${LOWER[@]}"
 check_no_match "provider rules must not reference gateway" 'crate::gateway::' src/provider
 check_no_match "protocol rules must not reference gateway or provider runtime" 'crate::gateway::|crate::provider::(ProviderRuntime|ProviderRegistry)' src/protocol
-check_no_match "server must not reference crate::cli" 'crate::cli' src/server
+check_no_match "server must not reference crate::cli" 'crate::cli\b' src/server
 
 if [ "$fail" -ne 0 ]; then
     echo "architecture boundary check failed"
