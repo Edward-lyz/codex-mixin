@@ -82,6 +82,11 @@ struct ModelBenchmarkResult: Decodable {
     }
 }
 
+func benchmarkProgressValue(_ snapshot: ModelBenchmarkSnapshot?) -> Double? {
+    guard let snapshot, snapshot.status == "running" else { return nil }
+    return Double(snapshot.results.count) / Double(max(snapshot.totalModels, 1))
+}
+
 func mergedBenchmarkResult(
     _ result: ModelBenchmarkResult,
     previous: ModelBenchmarkResult?,

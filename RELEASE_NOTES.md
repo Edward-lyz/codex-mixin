@@ -15,6 +15,7 @@
 - 修复 TUI 自定义 Provider 不显示 API key、macOS 工具窗口透明异常
 - 修复测速把 reasoning-only 与截断响应判为失败的问题，并补齐 Responses 工具探测缺失的 `type` 字段
 - 自定义模型 compact 改为本地确定性裁剪，保留最近的对话文本并移除工具参数、工具输出、reasoning 与图片，不再依赖上游模型调用摘要工具
+- 修复「模型与服务」测速结束后进度条仍停留在界面的问题，只在任务运行期间显示进度
 
 <!-- codex-mixin:zh-Hans:end -->
 
@@ -35,6 +36,7 @@
 - 修正 TUI 自訂 Provider 不顯示 API Key、macOS 工具視窗透明異常
 - 修正測速將 reasoning-only 與截斷回應判為失敗的問題，並補齊 Responses 工具探測缺少的 `type` 欄位
 - 自訂模型 compact 改為本機確定性裁剪，保留最近的對話文字並移除工具參數、工具輸出、reasoning 與圖片，不再依賴上游模型呼叫摘要工具
+- 修正「模型與服務」測速結束後進度列仍停留在介面的問題，只在任務執行期間顯示進度
 
 <!-- codex-mixin:zh-Hant:end -->
 
@@ -55,6 +57,7 @@
 - Fix the TUI hiding the API key for custom providers and transparent utility windows on macOS
 - Fix benchmarking counting reasoning-only and truncated responses as failures, and declare the tool type in the Responses function-tool probe
 - Make custom-model compaction deterministic and local: retain recent conversation text, remove tool arguments, tool outputs, reasoning, and images, and stop depending on an upstream summary tool call
+- Hide the Models and Services benchmark progress bar when its run finishes instead of leaving a completed bar on screen
 
 <!-- codex-mixin:en:end -->
 

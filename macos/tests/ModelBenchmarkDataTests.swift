@@ -64,6 +64,25 @@ struct ModelBenchmarkDataTests {
         precondition(result.generationMs == 100)
         precondition(result.tps == 12.5)
         precondition(snapshot.providerCosts.first?.estimatedCost == 0.25)
+        precondition(benchmarkProgressValue(snapshot) == nil)
+        let runningSnapshot = ModelBenchmarkSnapshot(
+            runId: snapshot.runId,
+            status: "running",
+            startedAt: snapshot.startedAt,
+            updatedAt: snapshot.updatedAt,
+            finishedAt: nil,
+            timeoutSeconds: snapshot.timeoutSeconds,
+            targetOutputTokens: snapshot.targetOutputTokens,
+            totalModels: 4,
+            currentModel: result.model,
+            results: [result],
+            error: nil,
+            estimatedCost: nil,
+            costCurrency: nil,
+            costError: nil,
+            providerCosts: []
+        )
+        precondition(benchmarkProgressValue(runningSnapshot) == 0.25)
 
         let provider = try decodeProviderList(
             """

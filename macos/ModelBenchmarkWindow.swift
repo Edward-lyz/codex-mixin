@@ -587,13 +587,13 @@ final class ModelBenchmarkModel: ObservableObject {
         guard let currentSnapshot = snapshot else {
             setStatus("尚无测速结果", color: .secondary)
             summary = "默认只测试首 token 延迟（TTFT）"
-            determinateProgress = 0
+            determinateProgress = nil
             return
         }
         let providerResults = currentSnapshot.results.filter {
             selectedProviderID == nil || $0.providerID == selectedProviderID
         }
-        determinateProgress = Double(currentSnapshot.results.count) / Double(max(currentSnapshot.totalModels, 1))
+        determinateProgress = benchmarkProgressValue(currentSnapshot)
         let mode = currentSnapshot.targetOutputTokens == 1 ? "延迟" : "完整"
         summary = "\(formatBenchmarkDate(currentSnapshot.startedAt)) · \(mode)测速 · 超时 \(currentSnapshot.timeoutSeconds) 秒"
         let completed = providerResults.filter { $0.status == "completed" }.count
