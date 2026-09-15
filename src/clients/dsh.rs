@@ -18,15 +18,32 @@ const CREDENTIALS_DOCUMENT_VERSION: i64 = 1;
 
 /// Insert or update one credential reference under the versioned `refs` section,
 /// creating the `version`/`refs` scaffolding when absent.
+///
+/// Every DSH release reads this layout: the versioned reader is present as far
+/// back as `dsh-v0.1.2-alpha.3`, and the flat top-level layout DSH calls
+/// "pre-release" is only upgraded at boot, never on the watcher's hot reload.
+/// Writing flat would therefore be silently dropped by a running DSH, so the
+/// versioned layout is the only form that works both at boot and live.
 fn set_credential_ref(credentials: &mut Value, key: &str, value: &str) -> anyhow::Result<()> {
     let root = credentials
         .as_mapping_mut()
         .context("DSH credentials must be a YAML mapping")?;
+    // A pre-0.1.5 codex-mixin wrote the key at the document root, which DSH
+    // rejects as an unknown top-level key. Drop it as part of moving the value
+    // under `refs`, or the rewritten file stays unloadable.
+    root.remove(Value::String(key.to_owned()));
     root.entry(Value::String("version".to_owned()))
         .or_insert_with(|| Value::Number(CREDENTIALS_DOCUMENT_VERSION.into()));
-    let refs = root
+    let refs_slot = root
         .entry(Value::String("refs".to_owned()))
-        .or_insert_with(|| Value::Mapping(Mapping::new()))
+        .or_insert_with(|| Value::Mapping(Mapping::new()));
+    // A file whose last reference was hand-removed keeps a childless `refs:`,
+    // which parses as null rather than an empty mapping. Treat it as empty so
+    // the write proceeds instead of bailing on a well-formed document.
+    if refs_slot.is_null() {
+        *refs_slot = Value::Mapping(Mapping::new());
+    }
+    let refs = refs_slot
         .as_mapping_mut()
         .context("DSH credentials refs must be a YAML mapping")?;
     refs.insert(

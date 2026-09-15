@@ -495,4 +495,142 @@ mod tests {
         let error = uninstall_dsh(Some(directory.path().to_owned())).unwrap_err();
         assert!(error.to_string().contains("not installed"));
     }
+
+    /// Every top-level key DSH admits in `.credentials.yaml`. Anything else
+    /// makes `parseCredentialsDocument` reject the whole document.
+    fn assert_dsh_loadable(credentials: &Value) {
+        assert_eq!(
+            credentials["version"].as_i64(),
+            Some(1),
+            "DSH requires an explicit version stamp"
+        );
+        for key in credentials.as_mapping().unwrap().keys() {
+            let key = key.as_str().unwrap();
+            assert!(
+                matches!(key, "version" | "refs" | "records"),
+                "unexpected top-level key {key}"
+            );
+        }
+    }
+
+    #[test]
+    fn install_migrates_pre_0_1_5_flat_credential_to_refs() {
+        let directory = tempfile::tempdir().unwrap();
+        // What a pre-0.1.5 codex-mixin left behind: the gateway key at the
+        // document root, which DSH rejects as an unknown top-level key.
+        let credentials_path = directory.path().join(".credentials.yaml");
+        fs::write(
+            &credentials_path,
+            "version: 1\nrefs:\n  INFOFLOW_APP_KEY: keep-me\nCODEX_MIXIN_GATEWAY_API_KEY: stale-root\n",
+        )
+        .unwrap();
+        let config = gateway_config(Some("gateway-secret"), false, false);
+
+        install_dsh_with_config(Some(directory.path().to_owned()), &config).unwrap();
+
+        let credentials: Value =
+            serde_yaml::from_str(&fs::read_to_string(&credentials_path).unwrap()).unwrap();
+        assert!(credentials.get(DSH_API_KEY_ENV).is_none());
+        assert_eq!(
+            credentials["refs"][DSH_API_KEY_ENV].as_str().unwrap(),
+            "gateway-secret"
+        );
+        assert_eq!(
+            credentials["refs"]["INFOFLOW_APP_KEY"].as_str(),
+            Some("keep-me")
+        );
+        assert_dsh_loadable(&credentials);
+    }
+
+    #[test]
+    fn install_treats_childless_refs_as_empty_mapping() {
+        let directory = tempfile::tempdir().unwrap();
+        // Hand-removing the last reference leaves a childless `refs:`, which
+        // YAML parses as null rather than an empty mapping.
+        let credentials_path = directory.path().join(".credentials.yaml");
+        fs::write(&credentials_path, "version: 1\nrefs:\n").unwrap();
+        let config = gateway_config(Some("gateway-secret"), false, false);
+
+        install_dsh_with_config(Some(directory.path().to_owned()), &config).unwrap();
+
+        let credentials: Value =
+            serde_yaml::from_str(&fs::read_to_string(&credentials_path).unwrap()).unwrap();
+        assert_eq!(
+            credentials["refs"][DSH_API_KEY_ENV].as_str().unwrap(),
+            "gateway-secret"
+        );
+        assert_dsh_loadable(&credentials);
+    }
+
+    #[test]
+    fn sync_client_key_writes_a_versioned_document_a_running_dsh_can_reload() {
+        let directory = tempfile::tempdir().unwrap();
+        // DSH upgrades the flat layout only in `loadInitial`; the watcher's
+        // `reconcileFromDisk` parses without migrating and warn-keeps the last
+        // good snapshot on failure. An empty file is a valid empty store, so a
+        // running DSH sits here happily — and a flat write would be silently
+        // dropped, leaving the gateway Unauthorized until DSH restarts.
+        let credentials_path = directory.path().join(".credentials.yaml");
+        fs::write(&credentials_path, "").unwrap();
+
+        codex_mixin::clients::dsh::sync_client_key(directory.path(), "rotated-key").unwrap();
+
+        let credentials: Value =
+            serde_yaml::from_str(&fs::read_to_string(&credentials_path).unwrap()).unwrap();
+        assert_eq!(
+            credentials["refs"][DSH_API_KEY_ENV].as_str().unwrap(),
+            "rotated-key"
+        );
+        assert!(credentials.get(DSH_API_KEY_ENV).is_none());
+        assert_dsh_loadable(&credentials);
+    }
+
+    #[test]
+    fn sync_client_key_creates_a_versioned_document_when_the_file_is_absent() {
+        let directory = tempfile::tempdir().unwrap();
+
+        codex_mixin::clients::dsh::sync_client_key(directory.path(), "fresh-key").unwrap();
+
+        let credentials: Value = serde_yaml::from_str(
+            &fs::read_to_string(directory.path().join(".credentials.yaml")).unwrap(),
+        )
+        .unwrap();
+        assert_eq!(
+            credentials["refs"][DSH_API_KEY_ENV].as_str().unwrap(),
+            "fresh-key"
+        );
+        assert_dsh_loadable(&credentials);
+    }
+
+    /// Emit every document shape `sync_client_key` / `install` can produce into
+    /// `target/dsh-credential-fixtures/`, so `scripts/e2e_dsh_credentials.sh`
+    /// can feed them to DSH's own `parseCredentialsDocument` instead of trusting
+    /// this file's transcription of DSH's rules.
+    #[test]
+    fn emits_credential_fixtures_for_the_dsh_parser_e2e() {
+        let fixtures = PathBuf::from(env!("CARGO_MANIFEST_DIR"))
+            .join("target")
+            .join("dsh-credential-fixtures");
+        fs::create_dir_all(&fixtures).unwrap();
+        let cases: [(&str, Option<&str>); 4] = [
+            ("absent-file", None),
+            ("empty-file", Some("")),
+            ("childless-refs", Some("version: 1\nrefs:\n")),
+            (
+                "flat-root-key",
+                Some(
+                    "version: 1\nrefs:\n  INFOFLOW_APP_KEY: keep-me\nCODEX_MIXIN_GATEWAY_API_KEY: stale-root\n",
+                ),
+            ),
+        ];
+        for (name, seed) in cases {
+            let directory = tempfile::tempdir().unwrap();
+            let credentials_path = directory.path().join(".credentials.yaml");
+            if let Some(seed) = seed {
+                fs::write(&credentials_path, seed).unwrap();
+            }
+            codex_mixin::clients::dsh::sync_client_key(directory.path(), "fixture-key").unwrap();
+            fs::copy(&credentials_path, fixtures.join(format!("{name}.yaml"))).unwrap();
+        }
+    }
 }
