@@ -696,14 +696,38 @@ private struct ProviderDetailForm: View {
                         VStack(spacing: 0) {
                             if isBaiduOneAPI {
                                 advancedOptionRow(title: "认证桥接") {
-                                    Picker("认证桥接", selection: $formState.baiduAuthBridge) {
-                                        Text(AppLocalization.string("settings.disabledDefault"))
-                                            .tag(BaiduAuthBridgeMode.disabled)
-                                        Text("DUCX 核心（loopback）")
-                                            .tag(BaiduAuthBridgeMode.ducxLoopback)
+                                    // A SwiftUI Picker inside this custom HStack
+                                    // row in a grouped Form does not present its
+                                    // pop-up on click; an explicit Menu of
+                                    // buttons is reliable in the same spot.
+                                    Menu {
+                                        Button {
+                                            formState.baiduAuthBridge = .disabled
+                                        } label: {
+                                            authBridgeMenuItemLabel(
+                                                AppLocalization.string("settings.disabledDefault"),
+                                                selected: formState.baiduAuthBridge == .disabled
+                                            )
+                                        }
+                                        Button {
+                                            formState.baiduAuthBridge = .ducxLoopback
+                                        } label: {
+                                            authBridgeMenuItemLabel(
+                                                "DUCX 核心（loopback）",
+                                                selected: formState.baiduAuthBridge == .ducxLoopback
+                                            )
+                                        }
+                                    } label: {
+                                        Text(authBridgeSelectionTitle(formState.baiduAuthBridge))
                                     }
-                                    .labelsHidden()
+                                    .menuStyle(.borderlessButton)
                                     .frame(width: 220)
+                                    // The Menu's visible label is only the current
+                                    // value, so name the setting for VoiceOver and
+                                    // expose the selection as the value, matching
+                                    // the Picker this replaced.
+                                    .accessibilityLabel("认证桥接")
+                                    .accessibilityValue(authBridgeSelectionTitle(formState.baiduAuthBridge))
                                 }
                                 advancedOptionDivider
                                 advancedOptionRow(title: "上报 AI 代码使用数据") {
@@ -752,16 +776,20 @@ private struct ProviderDetailForm: View {
                                         auxiliaryModelUpstream: formState.auxiliaryModelUpstream
                                     )
                                 ) {
-                                    Picker("自动审查模型", selection: $formState.autoReviewModel) {
-                                        Text("自动").tag("")
+                                    Menu {
+                                        Button("自动") { formState.autoReviewModel = "" }
                                         ForEach(autoReviewModelChoices(for: provider), id: \.self) {
                                             model in
-                                            Text(model).tag(model)
+                                            Button(model) { formState.autoReviewModel = model }
                                         }
+                                    } label: {
+                                        Text(formState.autoReviewModel.isEmpty ? "自动" : formState.autoReviewModel)
                                     }
-                                    .labelsHidden()
+                                    .menuStyle(.borderlessButton)
                                     .frame(width: 260)
                                     .disabled(!formState.auxiliaryModelUpstream)
+                                    .accessibilityLabel("自动审查模型")
+                                    .accessibilityValue(formState.autoReviewModel.isEmpty ? "自动" : formState.autoReviewModel)
                                 }
                             }
                         }
@@ -789,6 +817,22 @@ private struct ProviderDetailForm: View {
                 onTest: onTest,
                 onApplyChanges: onApplyChanges
             )
+        }
+    }
+
+    private func authBridgeSelectionTitle(_ mode: BaiduAuthBridgeMode) -> String {
+        switch mode {
+        case .disabled: return AppLocalization.string("settings.disabledDefault")
+        case .ducxLoopback: return "DUCX 核心（loopback）"
+        }
+    }
+
+    @ViewBuilder
+    private func authBridgeMenuItemLabel(_ title: String, selected: Bool) -> some View {
+        if selected {
+            Label(title, systemImage: "checkmark")
+        } else {
+            Text(title)
         }
     }
 
