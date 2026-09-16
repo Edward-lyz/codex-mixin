@@ -352,8 +352,10 @@ const mutatingTools = new Set(["apply_patch", "edit", "write"]);
 
 async function report(event, body) {
   const child = Bun.spawn([executable, "report-hook", "--event", event], {
-    stdin: JSON.stringify(body), stdout: "ignore", stderr: "ignore",
+    stdin: "pipe", stdout: "ignore", stderr: "ignore",
   });
+  child.stdin.write(JSON.stringify(body));
+  child.stdin.end();
   if (await child.exited !== 0) {
     throw new Error(`codex-mixin DUCX reporting failed for ${event}`);
   }
@@ -649,6 +651,10 @@ mod tests {
         assert!(plugin.contains("session.idle"));
         assert!(plugin.contains("tool.execute.before"));
         assert!(plugin.contains("tool.execute.after"));
+        assert!(plugin.contains("stdin: \"pipe\""));
+        assert!(plugin.contains("child.stdin.write(JSON.stringify(body))"));
+        assert!(plugin.contains("child.stdin.end()"));
+        assert!(!plugin.contains("stdin: JSON.stringify(body)"));
 
         sync_opencode_reporting_plugin(&config_path, false).unwrap();
         assert!(!plugin_path.exists());
