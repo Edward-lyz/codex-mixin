@@ -411,6 +411,13 @@ impl GatewayExecutor {
 async fn prepare_provider_body(
     mut body: serde_json::Value,
 ) -> Result<serde_json::Value, GatewayError> {
+    let rewritten_outputs = rewrite_named_unpaired_function_outputs(&mut body);
+    if rewritten_outputs > 0 {
+        tracing::info!(
+            rewritten_outputs,
+            "rewrote named function outputs without call ids as user messages"
+        );
+    }
     // Provider converters need only the authenticated token. Response item metadata is
     // meaningful to Codex but must not affect a custom provider continuation.
     if let Some(items) = body
@@ -440,6 +447,42 @@ async fn prepare_provider_body(
         );
     }
     Ok(body)
+}
+
+fn rewrite_named_unpaired_function_outputs(body: &mut serde_json::Value) -> usize {
+    let Some(items) = body
+        .get_mut("input")
+        .and_then(serde_json::Value::as_array_mut)
+    else {
+        return 0;
+    };
+    let mut rewritten = 0;
+    for item in items {
+        let Some(object) = item.as_object_mut() else {
+            continue;
+        };
+        if object.get("type").and_then(serde_json::Value::as_str) != Some("function_call_output")
+            || object
+                .get("call_id")
+                .is_some_and(|call_id| !call_id.is_null())
+            || !object
+                .get("name")
+                .and_then(serde_json::Value::as_str)
+                .is_some_and(|name| !name.is_empty())
+        {
+            continue;
+        }
+        let Some(output) = object.remove("output") else {
+            continue;
+        };
+        *item = serde_json::json!({
+            "type": "message",
+            "role": "user",
+            "content": output,
+        });
+        rewritten += 1;
+    }
+    rewritten
 }
 
 fn rewrite_response_model(mut stream: ResponseStream, downstream_model: String) -> ResponseStream {
@@ -474,4 +517,51 @@ fn rewrite_response_model(mut stream: ResponseStream, downstream_model: String) 
         }
     };
     rewritten.boxed()
+}
+
+#[cfg(test)]
+mod tests {
+    use super::rewrite_named_unpaired_function_outputs;
+    use serde_json::json;
+
+    #[test]
+    fn rewrites_named_function_output_without_call_id() {
+        let mut body = json!({
+            "input": [{
+                "type": "function_call_output",
+                "call_id": null,
+                "name": "send_message_to_thread",
+                "namespace": "codex_app",
+                "output": [{"type": "input_text", "text": "continue"}]
+            }]
+        });
+
+        assert_eq!(rewrite_named_unpaired_function_outputs(&mut body), 1);
+        assert_eq!(
+            body["input"],
+            json!([{
+                "type": "message",
+                "role": "user",
+                "content": [{"type": "input_text", "text": "continue"}]
+            }])
+        );
+    }
+
+    #[test]
+    fn preserves_paired_and_unnamed_function_outputs() {
+        let paired = json!({
+            "type": "function_call_output",
+            "call_id": "call_1",
+            "name": "exec_command",
+            "output": "done"
+        });
+        let unnamed = json!({
+            "type": "function_call_output",
+            "output": "not a named injection"
+        });
+        let mut body = json!({"input": [paired.clone(), unnamed.clone()]});
+
+        assert_eq!(rewrite_named_unpaired_function_outputs(&mut body), 0);
+        assert_eq!(body["input"], json!([paired, unnamed]));
+    }
 }

@@ -3688,6 +3688,123 @@ async fn routes_baidu_models_with_per_model_reasoning_capabilities() {
 }
 
 #[tokio::test]
+async fn rewrites_named_unpaired_function_output_for_responses_provider() {
+    let (upstream_url, requests) = spawn_baidu_protocol_upstream().await;
+    let mut config = test_config(upstream_url);
+    configure_custom_headers_from_env(&mut config);
+    config.providers[0].protocol = ProviderProtocol::OpenAiResponses;
+    config.providers[0].api_path = "/v1/responses".to_owned();
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut request = responses_request();
+    request["model"] = json!("gpt-5.6-sol-custom");
+    request["input"] = json!([{
+        "type": "function_call_output",
+        "name": "send_message_to_thread",
+        "namespace": "codex_app",
+        "output": "Start a delegated turn."
+    }]);
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let response_body = response.text().await.unwrap();
+    assert_eq!(
+        status,
+        StatusCode::OK,
+        "unexpected response: {response_body}"
+    );
+    {
+        let captured = requests.lock().unwrap();
+        assert_eq!(captured.len(), 1);
+        assert_eq!(
+            captured[0]["body"]["input"],
+            json!([{
+                "type": "message",
+                "role": "user",
+                "content": "Start a delegated turn."
+            }])
+        );
+    }
+
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut websocket_request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    websocket_request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(websocket_request).await.unwrap();
+    socket
+        .send(WsMessage::Text(
+            json!({
+                "type": "response.create",
+                "model": "gpt-5.6-sol-custom",
+                "input": [{
+                    "type": "function_call_output",
+                    "name": "send_message_to_thread",
+                    "namespace": "codex_app",
+                    "output": "Resume a delegated turn."
+                }]
+            })
+            .to_string()
+            .into(),
+        ))
+        .await
+        .unwrap();
+
+    let frames = websocket_response_frames(&mut socket).await.join("\n");
+    assert!(frames.contains("\"type\":\"response.completed\""));
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 2);
+    assert_eq!(
+        captured[1]["body"]["input"],
+        json!([{
+            "type": "message",
+            "role": "user",
+            "content": "Resume a delegated turn."
+        }])
+    );
+}
+
+#[tokio::test]
+async fn rewrites_named_unpaired_function_output_before_anthropic_conversion() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let mut request = responses_request();
+    request["input"] = json!([{
+        "type": "function_call_output",
+        "name": "send_message_to_thread",
+        "namespace": "codex_app",
+        "output": "Continue from another thread."
+    }]);
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(
+        captured[0]["messages"],
+        json!([{
+            "role": "user",
+            "content": [{"type": "text", "text": "Continue from another thread."}]
+        }])
+    );
+}
+
+#[tokio::test]
 async fn converts_anthropic_messages_for_openai_responses_models() {
     let (upstream_url, requests) = spawn_baidu_protocol_upstream().await;
     let mut config = test_config(upstream_url);
