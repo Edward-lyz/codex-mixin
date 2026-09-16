@@ -704,6 +704,7 @@ private struct ProviderDetailForm: View {
                                     }
                                     .labelsHidden()
                                     .frame(width: 220)
+                                    .flexiblePickerSizing()
                                 }
                                 advancedOptionDivider
                                 advancedOptionRow(title: "上报 AI 代码使用数据") {
@@ -761,6 +762,7 @@ private struct ProviderDetailForm: View {
                                     }
                                     .labelsHidden()
                                     .frame(width: 260)
+                                    .flexiblePickerSizing()
                                     .disabled(!formState.auxiliaryModelUpstream)
                                 }
                             }
@@ -961,6 +963,22 @@ private struct ProviderDetailForm: View {
         provider.quotaAuthCookieConfigured == true ? "已配置；留空保留" : "opencode.ai auth cookie"
     }
 
+}
+
+private extension View {
+    /// Restores the pre-macOS 26 width behavior for button-backed pickers.
+    @ViewBuilder
+    func flexiblePickerSizing() -> some View {
+#if compiler(>=6.2)
+        if #available(macOS 26.0, *) {
+            self.buttonSizing(.flexible)
+        } else {
+            self
+        }
+#else
+        self
+#endif
+    }
 }
 
 private struct ProviderActionBar: View {
