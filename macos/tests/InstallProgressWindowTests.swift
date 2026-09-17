@@ -20,7 +20,7 @@ struct InstallProgressWindowTests {
         )
         let replayText = formatDUCXReplayReport(replay)
         precondition(replayText.contains("上传成功：1"))
-        precondition(replayText.contains("[OK] 代码采纳 · baidu-oneapi · session-ok"))
+        precondition(replayText.contains("[OK] 用户请求 · baidu-oneapi · session-ok"))
         precondition(replayText.contains("上传失败，等待最后一次重试：1"))
         precondition(replayText.contains("[ERROR] 用户请求 · baidu-oneapi · session-failed"))
         precondition(replayText.contains("upload/query returned 500"))
