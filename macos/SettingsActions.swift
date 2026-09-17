@@ -219,6 +219,7 @@ extension AppDelegate {
         serviceBusy = true
         Task { @MainActor in
             defer { serviceBusy = false }
+            var replayStarted = false
             do {
                 let estimate = try decodeDUCXReplayEstimate(
                     try await runGateway([
@@ -232,6 +233,7 @@ extension AppDelegate {
                     title: "手动上报全部本地 Session？",
                     message: "预计上报 \(estimate.estimatedSessions) 个会话，共 \(estimate.estimatedReports) 次。此功能仅用于自动上报数据异常时的修复。确认异常确实需要修复后再继续。"
                 ) else { return }
+                replayStarted = true
                 serviceStatus = "正在准备 DUCX 全量上报..."
                 serviceEndpoint = nil
                 let replayReport = try await runOperationProgress(
@@ -271,6 +273,9 @@ extension AppDelegate {
                 )
             } catch {
                 await refreshStatusNow()
+                if !replayStarted {
+                    showAlert(title: "手动上报预估失败", message: error.localizedDescription)
+                }
             }
         }
     }
