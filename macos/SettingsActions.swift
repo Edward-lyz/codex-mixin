@@ -215,18 +215,25 @@ extension AppDelegate {
     }
 
     @objc func manuallyReportSessions() {
-        guard !serviceBusy,
-              confirm(
-                  title: "手动上报全部本地 Session？",
-                  message: "此功能仅用于自动上报数据异常时的修复。一次性重放全部本地 Session 可能让上报数据和用量统计在短时间内突然升高。确认异常确实需要修复后再继续。"
-              )
-        else { return }
+        guard !serviceBusy else { return }
         serviceBusy = true
-        serviceStatus = "正在准备 DUCX 全量上报..."
-        serviceEndpoint = nil
         Task { @MainActor in
             defer { serviceBusy = false }
             do {
+                let estimate = try decodeDUCXReplayEstimate(
+                    try await runGateway([
+                        "report-replay",
+                        "--all-sessions",
+                        "--estimate",
+                        "--json",
+                    ])
+                )
+                guard confirm(
+                    title: "手动上报全部本地 Session？",
+                    message: "预计上报 \(estimate.estimatedSessions) 个会话，共 \(estimate.estimatedReports) 次。此功能仅用于自动上报数据异常时的修复。确认异常确实需要修复后再继续。"
+                ) else { return }
+                serviceStatus = "正在准备 DUCX 全量上报..."
+                serviceEndpoint = nil
                 let replayReport = try await runOperationProgress(
                     title: "正在手动上报本地 Session",
                     phases: [

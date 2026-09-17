@@ -60,7 +60,13 @@ pub fn sync_installation_at(hooks_path: &Path, enabled: bool) -> anyhow::Result<
         .context("Codex hooks field is not an object")?;
 
     // Always strip our previously-installed managed commands first (idempotent).
-    for (event_name, _) in REPORT_EVENTS {
+    for event_name in [
+        "SessionStart",
+        "UserPromptSubmit",
+        "PreToolUse",
+        "PostToolUse",
+        "Stop",
+    ] {
         if let Some(groups) = hooks.get_mut(event_name).and_then(Value::as_array_mut) {
             for group in groups.iter_mut() {
                 if let Some(commands) = group.get_mut("hooks").and_then(Value::as_array_mut) {

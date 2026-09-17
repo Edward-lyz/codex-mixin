@@ -348,7 +348,6 @@ import { tmpdir } from "node:os";
 
 const executable = __MIXIN_EXECUTABLE__;
 const routes = new Map();
-const mutatingTools = new Set(["apply_patch", "edit", "write"]);
 
 async function report(event, body) {
   const child = Bun.spawn([executable, "report-hook", "--event", event], {
@@ -370,23 +369,6 @@ export const CodexMixinReport = async ({ client, directory }) => ({
       .map((part) => part.text).join("\n");
     await report("user-prompt-submit", {
       session_id: input.sessionID, model, cwd: directory, prompt, client: "opencode",
-    });
-  },
-  "tool.execute.before": async (input, output) => {
-    const model = routes.get(input.sessionID);
-    if (!model || !mutatingTools.has(input.tool)) return;
-    await report("pre-tool-use", {
-      session_id: input.sessionID, model, cwd: directory, tool_name: "apply_patch",
-      opencode_tool_name: input.tool, tool_input: output.args, client: "opencode",
-    });
-  },
-  "tool.execute.after": async (input, output) => {
-    const model = routes.get(input.sessionID);
-    if (!model || !mutatingTools.has(input.tool)) return;
-    await report("post-tool-use", {
-      session_id: input.sessionID, model, cwd: directory, tool_name: "apply_patch",
-      opencode_tool_name: input.tool, tool_input: input.args,
-      tool_output: output.output, client: "opencode",
     });
   },
   event: async ({ event }) => {
@@ -649,8 +631,8 @@ mod tests {
         assert!(plugin.contains(OPENCODE_REPORT_PLUGIN_MARKER));
         assert!(plugin.contains("chat.message"));
         assert!(plugin.contains("session.idle"));
-        assert!(plugin.contains("tool.execute.before"));
-        assert!(plugin.contains("tool.execute.after"));
+        assert!(!plugin.contains("tool.execute.before"));
+        assert!(!plugin.contains("tool.execute.after"));
         assert!(plugin.contains("stdin: \"pipe\""));
         assert!(plugin.contains("child.stdin.write(JSON.stringify(body))"));
         assert!(plugin.contains("child.stdin.end()"));

@@ -345,7 +345,6 @@ import { tmpdir } from "node:os";
 
 const executable = __MIXIN_EXECUTABLE__;
 const provider = "codex-mixin";
-const mutatingTools = new Set(["apply_patch", "edit", "write"]);
 
 function activeModel(ctx: ExtensionContext): string | undefined {
   return ctx.model?.provider === provider ? ctx.model.id : undefined;
@@ -385,27 +384,6 @@ export default function (pi: ExtensionAPI) {
     await report("user-prompt-submit", {
       session_id: ctx.sessionManager.getSessionId(), model, cwd: ctx.cwd,
       prompt: event.prompt, client: "pi",
-    });
-  });
-
-  pi.on("tool_call", async (event, ctx) => {
-    const model = activeModel(ctx);
-    if (!model || !mutatingTools.has(event.toolName)) return;
-    await report("pre-tool-use", {
-      session_id: ctx.sessionManager.getSessionId(), model, cwd: ctx.cwd,
-      tool_name: "apply_patch", pi_tool_name: event.toolName,
-      tool_input: event.input, client: "pi",
-    });
-  });
-
-  pi.on("tool_result", async (event, ctx) => {
-    const model = activeModel(ctx);
-    if (!model || !mutatingTools.has(event.toolName)) return;
-    await report("post-tool-use", {
-      session_id: ctx.sessionManager.getSessionId(), model, cwd: ctx.cwd,
-      tool_name: "apply_patch", pi_tool_name: event.toolName,
-      tool_input: event.input, tool_output: event.content,
-      is_error: event.isError, client: "pi",
     });
   });
 
@@ -513,8 +491,8 @@ mod tests {
         let extension = fs::read_to_string(&extension_path).unwrap();
         assert!(extension.contains(PI_REPORT_EXTENSION_MARKER));
         assert!(extension.contains("before_agent_start"));
-        assert!(extension.contains("tool_call"));
-        assert!(extension.contains("tool_result"));
+        assert!(!extension.contains("tool_call"));
+        assert!(!extension.contains("tool_result"));
         assert!(extension.contains("turn_end"));
 
         uninstall_pi_at(&models_path, &key_path, &extension_path).unwrap();

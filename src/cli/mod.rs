@@ -247,7 +247,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             all_sessions,
             prepare_warmup,
             json,
-        } => report_hook::replay(all_sessions, prepare_warmup, json).await,
+            estimate,
+        } => report_hook::replay(all_sessions, prepare_warmup, json, estimate).await,
         Command::Setup {
             preset,
             key,

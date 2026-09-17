@@ -300,7 +300,7 @@ pub(in crate::cli) fn sync_claude_hooks(settings_path: Option<PathBuf>) -> anyho
                 }
             }
         }
-        if enabled {
+        if enabled && !matches!(event_name, "PreToolUse" | "PostToolUse") {
             let executable = std::env::current_exe()?;
             hooks
                 .entry(event_name.to_owned())

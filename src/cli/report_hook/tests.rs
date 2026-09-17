@@ -28,15 +28,6 @@ fn reads_model_from_hook_body() {
 }
 
 #[test]
-fn filters_code_upload_to_apply_patch() {
-    assert!(is_apply_patch_tool(br#"{"tool_name":"apply_patch"}"#));
-    assert!(!is_apply_patch_tool(br#"{"tool_name":"Bash"}"#));
-    assert!(!is_apply_patch_tool(
-        br#"{"tool_name":"mcp__codex__apply_patch"}"#
-    ));
-}
-
-#[test]
 fn permits_session_scoped_uploads_only_after_a_successful_query() {
     let directory = tempfile::tempdir().unwrap();
     assert!(
@@ -174,6 +165,34 @@ fn report_queue_keeps_provider_identities_separate() {
 }
 
 #[test]
+fn report_queue_retries_once_then_discards() {
+    let directory = tempfile::tempdir().unwrap();
+    let body = br#"{"session_id":"session-1","model":"model-1","prompt":"hello"}"#;
+    enqueue_at(
+        directory.path(),
+        "user-prompt-submit",
+        "provider",
+        "turn-1",
+        body,
+    )
+    .unwrap();
+    let record = load_pending_at(directory.path()).unwrap().pop().unwrap();
+    assert!(super::queue::mark_failed_at(directory.path(), &record).unwrap());
+    let retry = load_pending_at(directory.path()).unwrap().pop().unwrap();
+    assert_eq!(retry.attempts, 1);
+    assert!(!super::queue::mark_failed_at(directory.path(), &retry).unwrap());
+    assert!(load_pending_at(directory.path()).unwrap().is_empty());
+}
+
+#[test]
+fn obsolete_code_reports_are_removed_from_queue() {
+    let directory = tempfile::tempdir().unwrap();
+    let body = br#"{"session_id":"session-1","model":"model-1"}"#;
+    enqueue_at(directory.path(), "pre-tool-use", "provider", "turn-1", body).unwrap();
+    assert!(load_pending_at(directory.path()).unwrap().is_empty());
+}
+
+#[test]
 fn local_session_replay_uses_the_last_user_message_before_each_turn() {
     let directory = tempfile::tempdir().unwrap();
     let session_path = directory.path().join("session.jsonl");
@@ -195,7 +214,9 @@ fn local_session_replay_uses_the_last_user_message_before_each_turn() {
     provider.selected_models = vec!["model-1".to_owned()];
 
     assert_eq!(
-        enqueue_session_file(&session_path, &[provider], directory.path()).unwrap(),
+        enqueue_session_file_with_mode(&session_path, &[provider], directory.path(), true)
+            .unwrap()
+            .queued,
         2
     );
     let pending = load_pending_at(directory.path()).unwrap();
@@ -216,15 +237,15 @@ fn partial_replay_json_preserves_successes_and_failures() {
         delivered: vec![ReplayEvent {
             provider_id: "baidu-oneapi".to_owned(),
             session_id: "session-ok".to_owned(),
-            event: "post-tool-use".to_owned(),
+            event: "user-prompt-submit".to_owned(),
         }],
         retained: vec![ReplayFailure {
             provider_id: "baidu-oneapi".to_owned(),
             session_id: "session-failed".to_owned(),
-            event: "post-tool-use".to_owned(),
-            error: "DUCX report endpoint upload/code/accept returned 500 Internal Server Error"
-                .to_owned(),
+            event: "user-prompt-submit".to_owned(),
+            error: "DUCX report endpoint upload/query returned 500 Internal Server Error".to_owned(),
         }],
+        discarded: Vec::new(),
     };
 
     let value = serde_json::to_value(report).unwrap();
@@ -235,6 +256,6 @@ fn partial_replay_json_preserves_successes_and_failures() {
         value["retained"][0]["error"]
             .as_str()
             .unwrap()
-            .contains("upload/code/accept returned 500")
+            .contains("upload/query returned 500")
     );
 }

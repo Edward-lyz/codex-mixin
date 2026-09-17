@@ -42,11 +42,39 @@ struct DUCXReplayReport: Decodable {
     let queuedFromLocalSessions: Int
     let delivered: [DUCXReplayEvent]
     let retained: [DUCXReplayFailure]
+    let discarded: [DUCXReplayFailure]
 
     private enum CodingKeys: String, CodingKey {
         case queuedFromLocalSessions = "queued_from_local_sessions"
         case delivered
         case retained
+        case discarded
+    }
+
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        queuedFromLocalSessions = try container.decode(Int.self, forKey: .queuedFromLocalSessions)
+        delivered = try container.decode([DUCXReplayEvent].self, forKey: .delivered)
+        retained = try container.decode([DUCXReplayFailure].self, forKey: .retained)
+        discarded = try container.decodeIfPresent([DUCXReplayFailure].self, forKey: .discarded) ?? []
+    }
+}
+
+struct DUCXReplayEstimate: Decodable {
+    let estimatedSessions: Int
+    let estimatedReports: Int
+
+    private enum CodingKeys: String, CodingKey {
+        case estimatedSessions = "estimated_sessions"
+        case estimatedReports = "estimated_reports"
+    }
+}
+
+func decodeDUCXReplayEstimate(_ output: String) throws -> DUCXReplayEstimate {
+    do {
+        return try JSONDecoder().decode(DUCXReplayEstimate.self, from: Data(output.utf8))
+    } catch {
+        throw GatewayError.command("DUCX 上报预估返回了无效 JSON：\(error)")
     }
 }
 
@@ -63,7 +91,8 @@ func formatDUCXReplayReport(_ report: DUCXReplayReport) -> String {
     var lines = [
         "本地 Session 新加入队列：\(report.queuedFromLocalSessions)",
         "上传成功：\(report.delivered.count)",
-        "上传失败并保留重试：\(report.retained.count)",
+        "上传失败，等待最后一次重试：\(report.retained.count)",
+        "超过重试次数并丢弃：\(report.discarded.count)",
         "",
     ]
     if report.delivered.isEmpty {

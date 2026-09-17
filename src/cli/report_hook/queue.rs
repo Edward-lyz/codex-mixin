@@ -22,6 +22,8 @@ pub(super) struct QueuedReport {
     pub(super) event: String,
     pub(super) provider_id: String,
     pub(super) hook_body: Value,
+    #[serde(default)]
+    pub(super) attempts: u8,
 }
 
 #[derive(Debug)]
@@ -76,6 +78,7 @@ pub(super) fn enqueue_at(
         event: event.to_owned(),
         provider_id: provider_id.to_owned(),
         hook_body,
+        attempts: 0,
     };
     let queue_path = state_directory
         .join(QUEUE_DIRECTORY)
@@ -121,6 +124,14 @@ pub(super) fn load_pending_at(state_directory: &Path) -> anyhow::Result<Vec<Queu
             "DUCX report queue filename does not match its record ID: {}",
             entry.path().display()
         );
+        // Queue upgrades remove events that the current reporting contract no
+        // longer sends (for example the retired code upload events).
+        if !matches!(record.event.as_str(), "user-prompt-submit" | "stop") {
+            fs::remove_file(entry.path()).with_context(|| {
+                format!("remove obsolete DUCX report {}", entry.path().display())
+            })?;
+            continue;
+        }
         let delivered_path = state_directory
             .join(DELIVERED_DIRECTORY)
             .join(format!("{}.delivered", record.id));
@@ -165,6 +176,33 @@ pub(super) fn mark_delivered_at(
         Err(error) => Err(error)
             .with_context(|| format!("remove delivered DUCX report {}", queue_path.display())),
     }
+}
+
+/// Record one failed delivery. The first failure is retained for one retry;
+/// subsequent failures are discarded so a permanently rejected event cannot
+/// remain in the queue forever.
+pub(super) fn mark_failed_at(
+    state_directory: &Path,
+    record: &QueuedReport,
+) -> anyhow::Result<bool> {
+    let queue_path = state_directory
+        .join(QUEUE_DIRECTORY)
+        .join(format!("{}.json", record.id));
+    if record.attempts >= 1 {
+        match fs::remove_file(&queue_path) {
+            Ok(()) => return Ok(false),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => return Ok(false),
+            Err(error) => {
+                return Err(error).with_context(|| {
+                    format!("discard failed DUCX report {}", queue_path.display())
+                });
+            }
+        }
+    }
+    let mut retry = record.clone();
+    retry.attempts = 1;
+    write_private_file(&queue_path, &serde_json::to_vec(&retry)?)?;
+    Ok(true)
 }
 
 pub(super) fn lock_at(state_directory: &Path) -> anyhow::Result<File> {

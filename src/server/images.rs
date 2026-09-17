@@ -35,12 +35,7 @@ pub(super) async fn image_generations(
                 ))
             })?
             .clone();
-        let request = provider.apply_auth(
-            state
-                .upstream
-                .request(reqwest::Method::POST, url)
-                .header(header::ACCEPT, "application/json"),
-        );
+        let request = provider_image_request(&state, provider, url).await?;
         let upstream = request.json(&body).send().await?;
         return proxy_image_response(upstream, &format!("provider {provider_id}")).await;
     }
@@ -50,12 +45,7 @@ pub(super) async fn image_generations(
             .image_generation_url()
             .expect("checked above")
             .clone();
-        let request = provider.apply_auth(
-            state
-                .upstream
-                .request(reqwest::Method::POST, url)
-                .header(header::ACCEPT, "application/json"),
-        );
+        let request = provider_image_request(&state, provider, url).await?;
         let upstream = request.json(&body).send().await?;
         return proxy_image_response(upstream, &format!("provider {}", provider.id())).await;
     }
@@ -71,6 +61,21 @@ pub(super) async fn image_generations(
         .official_image_generation_url()
         .map_err(GatewayError::Other)?;
     forward_official_image_request(&state, &headers, &body, url).await
+}
+
+async fn provider_image_request(
+    state: &AppState,
+    provider: &ProviderRuntime,
+    url: reqwest::Url,
+) -> Result<reqwest::RequestBuilder, GatewayError> {
+    let request = state
+        .upstream
+        .request(reqwest::Method::POST, url)
+        .header(header::ACCEPT, "application/json");
+    match state.upstream.baidu_native_headers(provider).await? {
+        Some(native) => Ok(request.headers(native)),
+        None => Ok(provider.apply_auth(request)),
+    }
 }
 
 pub(super) async fn image_edits(

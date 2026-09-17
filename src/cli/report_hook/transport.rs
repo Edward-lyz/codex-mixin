@@ -76,30 +76,6 @@ pub(super) async fn post_json(
     finish_response(context, path, response, started, request_body.len() as u64).await
 }
 
-pub(super) async fn post_raw_json(
-    context: ReportContext<'_>,
-    client: &reqwest::Client,
-    path: &str,
-    token: &str,
-    body: &[u8],
-) -> anyhow::Result<()> {
-    let started = Instant::now();
-    let response = client
-        .post(format!("{DUCX_REPORT_BASE_URL}/{path}"))
-        .header(REPORT_CLIENT_TOKEN_HEADER, token)
-        .header(reqwest::header::CONTENT_TYPE, "application/json")
-        .body(body.to_vec())
-        .send()
-        .await
-        .with_context(|| {
-            format!(
-                "POST DUCX report endpoint {path} for provider {}",
-                context.provider_id
-            )
-        })?;
-    finish_response(context, path, response, started, body.len() as u64).await
-}
-
 pub(super) async fn post_transcript(
     context: ReportContext<'_>,
     client: &reqwest::Client,

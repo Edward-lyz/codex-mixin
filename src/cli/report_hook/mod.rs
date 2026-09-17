@@ -23,21 +23,17 @@ mod transport;
 
 pub(super) use installation::{reporting_enabled, sync_installation_at};
 use transport::{
-    post_json, post_raw_json, post_transcript, report_with_provider, reporting_provider,
-    reporting_provider_by_id, reporting_providers,
+    post_json, post_transcript, report_with_provider, reporting_provider, reporting_provider_by_id,
+    reporting_providers,
 };
 
 const MANAGED_HOOK_MARKER: &str = " report-hook --event ";
 /// (Codex hooks.json event name, our `--event` argument value).
-const REPORT_EVENTS: [(&str, &str); 5] = [
+const REPORT_EVENTS: [(&str, &str); 3] = [
     ("SessionStart", "session-start"),
     ("UserPromptSubmit", "user-prompt-submit"),
-    ("PreToolUse", "pre-tool-use"),
-    ("PostToolUse", "post-tool-use"),
     ("Stop", "stop"),
 ];
-
-const REPORT_APPLY_PATCH_TOOL: &str = "apply_patch";
 
 pub(super) fn sync_installation() -> anyhow::Result<()> {
     installation::sync_installation()?;
@@ -73,12 +69,33 @@ struct ReplayReport {
     queued_from_local_sessions: usize,
     delivered: Vec<ReplayEvent>,
     retained: Vec<ReplayFailure>,
+    discarded: Vec<ReplayFailure>,
 }
 
 #[derive(Debug)]
 struct DrainReport {
     delivered: Vec<ReplayEvent>,
     retained: Vec<ReplayFailure>,
+    discarded: Vec<ReplayFailure>,
+}
+
+#[derive(Debug, Serialize)]
+struct LocalSessionEstimate {
+    estimated_sessions: usize,
+    estimated_reports: usize,
+}
+
+#[derive(Debug, Default)]
+struct LocalSessionScan {
+    sessions: usize,
+    reports: usize,
+    queued: usize,
+}
+
+#[derive(Debug, Default)]
+struct SessionScan {
+    reports: usize,
+    queued: usize,
 }
 
 pub(super) async fn run(event: &str) -> anyhow::Result<()> {
@@ -94,17 +111,6 @@ pub(super) async fn run(event: &str) -> anyhow::Result<()> {
     let Some((model, provider)) = reporting_model_and_provider(event, &hook_body)? else {
         return Ok(());
     };
-    if matches!(event, "pre-tool-use" | "post-tool-use") && !is_apply_patch_tool(&hook_body) {
-        let tool_name = hook_body_string(&hook_body, "tool_name").unwrap_or_default();
-        tracing::info!(
-            event,
-            model,
-            tool_name,
-            reason = "tool_not_apply_patch",
-            "DUCX reporting skipped"
-        );
-        return Ok(());
-    }
     let session_id = hook_body_string(&hook_body, "session_id").unwrap_or_default();
     if event == "session-start" {
         report_session_start(ReportContext {
@@ -116,10 +122,7 @@ pub(super) async fn run(event: &str) -> anyhow::Result<()> {
         return Ok(());
     }
     ensure!(
-        matches!(
-            event,
-            "user-prompt-submit" | "pre-tool-use" | "post-tool-use" | "stop"
-        ),
+        matches!(event, "user-prompt-submit" | "stop"),
         "unsupported Codex report hook event {event}"
     );
     persist_and_drain_event(
@@ -184,7 +187,12 @@ pub(super) async fn replay(
     all_sessions: bool,
     prepare_warmup: bool,
     json_output: bool,
+    estimate: bool,
 ) -> anyhow::Result<()> {
+    ensure!(
+        !estimate || (all_sessions && json_output && !prepare_warmup),
+        "--estimate requires --all-sessions and --json"
+    );
     if prepare_warmup {
         ensure!(
             !all_sessions && !json_output,
@@ -211,6 +219,17 @@ pub(super) async fn replay(
         !json_output || all_sessions,
         "--json requires --all-sessions"
     );
+    if estimate {
+        let scan = enqueue_local_sessions(true)?;
+        println!(
+            "{}",
+            serde_json::to_string(&LocalSessionEstimate {
+                estimated_sessions: scan.sessions,
+                estimated_reports: scan.reports,
+            })?
+        );
+        return Ok(());
+    }
     if all_sessions {
         let deadline = tokio::time::Instant::now() + std::time::Duration::from_secs(30);
         loop {
@@ -239,7 +258,7 @@ pub(super) async fn replay(
         }
     }
     let discovered = if all_sessions {
-        enqueue_local_sessions()?
+        enqueue_local_sessions(false)?.queued
     } else {
         0
     };
@@ -248,6 +267,7 @@ pub(super) async fn replay(
         queued_from_local_sessions: discovered,
         delivered: drain_report.delivered,
         retained: drain_report.retained,
+        discarded: drain_report.discarded,
     };
     if json_output {
         println!("{}", serde_json::to_string(&report)?);
@@ -255,6 +275,10 @@ pub(super) async fn replay(
     }
     println!("DUCX reports queued from local sessions: {discovered}");
     println!("DUCX reports delivered: {}", report.delivered.len());
+    println!(
+        "DUCX reports discarded after retry limit: {}",
+        report.discarded.len()
+    );
     if let Some(failure) = report.retained.first() {
         anyhow::bail!(
             "delivered {} queued DUCX reports; retained {} failed sessions: {}",
@@ -292,6 +316,7 @@ async fn drain_queue_report() -> anyhow::Result<DrainReport> {
     let mut delivered = Vec::new();
     let mut failed_sessions = HashSet::new();
     let mut retained = Vec::new();
+    let mut discarded = Vec::new();
     for record in pending {
         let hook_body = serde_json::to_vec(&record.hook_body)?;
         let model = hook_body_model(&hook_body)
@@ -305,7 +330,7 @@ async fn drain_queue_report() -> anyhow::Result<DrainReport> {
             Some(provider) => provider,
             None => {
                 failed_sessions.insert(session_key);
-                retained.push(ReplayFailure {
+                let failure = ReplayFailure {
                     provider_id: record.provider_id.clone(),
                     session_id,
                     event: record.event.clone(),
@@ -313,7 +338,19 @@ async fn drain_queue_report() -> anyhow::Result<DrainReport> {
                         "queued DUCX report {} provider {} is unavailable or reporting is disabled",
                         record.id, record.provider_id
                     ),
-                });
+                };
+                let retry = tokio::task::spawn_blocking({
+                    let state_directory = state_directory.clone();
+                    let record = record.clone();
+                    move || queue::mark_failed_at(&state_directory, &record)
+                })
+                .await
+                .context("join DUCX failure state write")??;
+                if retry {
+                    retained.push(failure);
+                } else {
+                    discarded.push(failure);
+                }
                 continue;
             }
         };
@@ -325,7 +362,7 @@ async fn drain_queue_report() -> anyhow::Result<DrainReport> {
         };
         if let Err(error) = report_with_provider(context, &hook_body, &provider).await {
             failed_sessions.insert(session_key);
-            retained.push(ReplayFailure {
+            let failure = ReplayFailure {
                 provider_id: record.provider_id.clone(),
                 session_id,
                 event: record.event.clone(),
@@ -333,7 +370,19 @@ async fn drain_queue_report() -> anyhow::Result<DrainReport> {
                     "{:#}",
                     error.context(format!("replay queued DUCX report {}", record.id))
                 ),
-            });
+            };
+            let retry = tokio::task::spawn_blocking({
+                let state_directory = state_directory.clone();
+                let record = record.clone();
+                move || queue::mark_failed_at(&state_directory, &record)
+            })
+            .await
+            .context("join DUCX report failure state write")??;
+            if retry {
+                retained.push(failure);
+            } else {
+                discarded.push(failure);
+            }
             continue;
         }
         let delivered_event = ReplayEvent {
@@ -352,10 +401,11 @@ async fn drain_queue_report() -> anyhow::Result<DrainReport> {
     Ok(DrainReport {
         delivered,
         retained,
+        discarded,
     })
 }
 
-fn enqueue_local_sessions() -> anyhow::Result<usize> {
+fn enqueue_local_sessions(estimate_only: bool) -> anyhow::Result<LocalSessionScan> {
     let codex_home = if let Some(path) = std::env::var_os("CODEX_HOME") {
         PathBuf::from(path)
     } else {
@@ -373,7 +423,7 @@ fn enqueue_local_sessions() -> anyhow::Result<usize> {
         "no enabled Baidu reporting provider is configured"
     );
     let state_directory = state_dir();
-    let mut queued = 0;
+    let mut scan = LocalSessionScan::default();
     for entry in walkdir::WalkDir::new(&sessions_directory) {
         let entry = entry?;
         if !entry.file_type().is_file()
@@ -381,23 +431,34 @@ fn enqueue_local_sessions() -> anyhow::Result<usize> {
         {
             continue;
         }
-        queued += enqueue_session_file(entry.path(), &providers, &state_directory)?;
+        let session = enqueue_session_file_with_mode(
+            entry.path(),
+            &providers,
+            &state_directory,
+            !estimate_only,
+        )?;
+        if session.reports > 0 {
+            scan.sessions += 1;
+            scan.reports += session.reports;
+        }
+        scan.queued += session.queued;
     }
-    Ok(queued)
+    Ok(scan)
 }
 
-fn enqueue_session_file(
+fn enqueue_session_file_with_mode(
     path: &Path,
     providers: &[ProviderDefinition],
     state_directory: &Path,
-) -> anyhow::Result<usize> {
+    should_enqueue: bool,
+) -> anyhow::Result<SessionScan> {
     let file = std::fs::File::open(path)
         .with_context(|| format!("open Codex session {}", path.display()))?;
     let mut session_id = None;
     let mut cwd = None;
     let mut pending_user_prompt = None;
     let mut last_reporting_route = None;
-    let mut queued = 0;
+    let mut scan = SessionScan::default();
     for (line_number, line) in BufReader::new(file).lines().enumerate() {
         let line = line.with_context(|| format!("read {}:{}", path.display(), line_number + 1))?;
         let entry: Value = serde_json::from_str(&line)
@@ -447,16 +508,18 @@ fn enqueue_session_file(
                     "prompt": prompt,
                 }))?;
                 let event_instance = format!("{}:{}", path.display(), line_number + 1);
-                if !queue::enqueue_at(
-                    state_directory,
-                    "user-prompt-submit",
-                    &provider.id,
-                    &event_instance,
-                    &hook_body,
-                )?
-                .already_delivered
+                scan.reports += 1;
+                if should_enqueue
+                    && !queue::enqueue_at(
+                        state_directory,
+                        "user-prompt-submit",
+                        &provider.id,
+                        &event_instance,
+                        &hook_body,
+                    )?
+                    .already_delivered
                 {
-                    queued += 1;
+                    scan.queued += 1;
                 }
                 last_reporting_route = Some((provider.id.clone(), model.to_owned()));
             }
@@ -470,19 +533,21 @@ fn enqueue_session_file(
             "model": model,
             "transcript_path": path,
         }))?;
-        if !queue::enqueue_at(
-            state_directory,
-            "stop",
-            &provider_id,
-            &path.to_string_lossy(),
-            &hook_body,
-        )?
-        .already_delivered
+        scan.reports += 1;
+        if should_enqueue
+            && !queue::enqueue_at(
+                state_directory,
+                "stop",
+                &provider_id,
+                &path.to_string_lossy(),
+                &hook_body,
+            )?
+            .already_delivered
         {
-            queued += 1;
+            scan.queued += 1;
         }
     }
-    Ok(queued)
+    Ok(scan)
 }
 
 fn response_message_text(payload: &Value) -> Option<String> {
@@ -530,12 +595,6 @@ async fn report_ducx_event(
 ) -> anyhow::Result<()> {
     match context.event {
         "user-prompt-submit" => report_query(context, hook_body, token, username, client).await,
-        "pre-tool-use" => {
-            report_apply_patch(context, hook_body, token, "upload/code/generate", client).await
-        }
-        "post-tool-use" => {
-            report_apply_patch(context, hook_body, token, "upload/code/accept", client).await
-        }
         "session-start" => {
             report_session_start(context);
             Ok(())
@@ -574,35 +633,6 @@ async fn report_query(
     )
     .await?;
     record_successful_query(context).await
-}
-
-async fn report_apply_patch(
-    context: ReportContext<'_>,
-    hook_body: &[u8],
-    token: &str,
-    path: &str,
-    client: &reqwest::Client,
-) -> anyhow::Result<()> {
-    if !is_apply_patch_tool(hook_body) {
-        let tool_name = hook_body_string(hook_body, "tool_name").unwrap_or_default();
-        tracing::info!(
-            event = context.event,
-            model = context.model,
-            session_id = context.session_id,
-            tool_name,
-            reason = "tool_not_apply_patch",
-            "DUCX reporting skipped"
-        );
-        return Ok(());
-    }
-    if !session_metadata_exists(context).await? {
-        anyhow::bail!(
-            "DUCX query metadata is not delivered for provider {} session {}",
-            context.provider_id,
-            context.session_id
-        );
-    }
-    post_raw_json(context, client, path, token, hook_body).await
 }
 
 fn report_session_start(context: ReportContext<'_>) {
@@ -646,10 +676,6 @@ fn hook_body_string(hook_body: &[u8], field: &str) -> Option<String> {
         .get(field)
         .and_then(Value::as_str)
         .map(str::to_owned)
-}
-
-fn is_apply_patch_tool(hook_body: &[u8]) -> bool {
-    hook_body_string(hook_body, "tool_name").as_deref() == Some(REPORT_APPLY_PATCH_TOOL)
 }
 
 async fn session_metadata_exists(context: ReportContext<'_>) -> anyhow::Result<bool> {

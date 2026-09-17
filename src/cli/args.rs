@@ -40,6 +40,8 @@ pub(super) enum Command {
         prepare_warmup: bool,
         #[arg(long)]
         json: bool,
+        #[arg(long)]
+        estimate: bool,
     },
     /// Add a provider, start the gateway, and print the next step.
     Setup {

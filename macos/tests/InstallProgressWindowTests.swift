@@ -16,14 +16,14 @@ struct InstallProgressWindowTests {
         )
 
         let replay = try! decodeDUCXReplayReport(
-            #"{"queued_from_local_sessions":3,"delivered":[{"provider_id":"baidu-oneapi","session_id":"session-ok","event":"post-tool-use"}],"retained":[{"provider_id":"baidu-oneapi","session_id":"session-failed","event":"post-tool-use","error":"upload/code/accept returned 500"}]}"#
+            #"{"queued_from_local_sessions":3,"delivered":[{"provider_id":"baidu-oneapi","session_id":"session-ok","event":"user-prompt-submit"}],"retained":[{"provider_id":"baidu-oneapi","session_id":"session-failed","event":"user-prompt-submit","error":"upload/query returned 500"}],"discarded":[]}"#
         )
         let replayText = formatDUCXReplayReport(replay)
         precondition(replayText.contains("上传成功：1"))
         precondition(replayText.contains("[OK] 代码采纳 · baidu-oneapi · session-ok"))
-        precondition(replayText.contains("上传失败并保留重试：1"))
-        precondition(replayText.contains("[ERROR] 代码采纳 · baidu-oneapi · session-failed"))
-        precondition(replayText.contains("upload/code/accept returned 500"))
+        precondition(replayText.contains("上传失败，等待最后一次重试：1"))
+        precondition(replayText.contains("[ERROR] 用户请求 · baidu-oneapi · session-failed"))
+        precondition(replayText.contains("upload/query returned 500"))
 
         let controller = InstallProgressWindowController(
             title: "测试进度",
