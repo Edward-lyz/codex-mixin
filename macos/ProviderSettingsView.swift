@@ -1050,12 +1050,21 @@ private struct ProviderDetailHeader: View {
                         .font(.caption.monospaced())
                     Text("· 已加入 \(provider.selectedModels.count) / 可选 \(provider.cachedModels.count)")
                         .font(.caption)
+                    Text("· \(lastRefreshText)")
+                        .font(.caption)
                 }
                 .foregroundStyle(.secondary)
                 .lineLimit(1)
             }
 
         }
+    }
+
+    private var lastRefreshText: String {
+        guard let milliseconds = provider.modelsRefreshedAtMilliseconds else {
+            return "尚未刷新"
+        }
+        return "上次刷新 \(formatProviderTimestamp(milliseconds))"
     }
 }
 

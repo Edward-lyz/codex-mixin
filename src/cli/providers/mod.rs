@@ -1,5 +1,6 @@
 use std::collections::{BTreeMap, HashSet};
 use std::path::PathBuf;
+use std::time::UNIX_EPOCH;
 
 use codex_mixin::config::{
     GatewayConfig, StoredGatewayConfig, load_stored_config, mutate_stored_config,
@@ -18,7 +19,7 @@ use super::codex::{
     resolve_codex_config_path,
 };
 use super::config_input::{normalize_base_url, trim_required};
-use super::official_models::load_official_models;
+use super::official_models::{load_official_models, official_models_cache_path};
 mod discovery;
 mod management;
 mod models;
@@ -338,12 +339,21 @@ fn official_provider_view(
         "new_models": [],
         "unavailable_selected_models": [],
         "cached_models": cached_models,
-        "models_refreshed_at_ms": null,
+        "models_refreshed_at_ms": official_models_refreshed_at_ms(),
         "last_model_refresh_error": null,
         "readiness": "healthy",
         "readiness_issues": [],
         "routable_model_count": routable_model_count,
     })
+}
+
+fn official_models_refreshed_at_ms() -> Option<u64> {
+    let modified = std::fs::metadata(official_models_cache_path())
+        .ok()?
+        .modified()
+        .ok()?;
+    let elapsed = modified.duration_since(UNIX_EPOCH).ok()?;
+    u64::try_from(elapsed.as_millis()).ok()
 }
 
 fn apply_baidu_auth_options(
