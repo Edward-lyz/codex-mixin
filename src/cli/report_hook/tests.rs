@@ -243,7 +243,8 @@ fn partial_replay_json_preserves_successes_and_failures() {
             provider_id: "baidu-oneapi".to_owned(),
             session_id: "session-failed".to_owned(),
             event: "user-prompt-submit".to_owned(),
-            error: "DUCX report endpoint upload/query returned 500 Internal Server Error".to_owned(),
+            error: "DUCX report endpoint upload/query returned 500 Internal Server Error"
+                .to_owned(),
         }],
         discarded: Vec::new(),
     };
