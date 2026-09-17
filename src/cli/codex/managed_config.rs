@@ -115,14 +115,37 @@ pub(in crate::cli) fn read_managed_config_for_install(
     }
     let backup_path = managed_backup_path(config_path);
     let absent_marker_path = managed_absent_marker_path(config_path);
-    if backup_path.exists() || absent_marker_path.exists() {
-        anyhow::bail!(
-            "existing codex-mixin restore point found but current config is not managed: {} or {}",
-            backup_path.display(),
-            absent_marker_path.display()
+    for restore_path in [backup_path, absent_marker_path] {
+        if !restore_path.exists() {
+            continue;
+        }
+        let archived_path = archive_stale_restore_point(config_path)?;
+        fs::rename(&restore_path, &archived_path)?;
+        eprintln!(
+            "codex install: archived stale restore point {} as {}",
+            restore_path.display(),
+            archived_path.display()
         );
     }
     Ok(raw_config)
+}
+
+fn archive_stale_restore_point(config_path: &Path) -> anyhow::Result<PathBuf> {
+    for index in 0..1000 {
+        let suffix = if index == 0 {
+            "codex-mixin.stale".to_owned()
+        } else {
+            format!("codex-mixin.stale.{index}")
+        };
+        let candidate = sibling_path_with_extra_extension(config_path, &suffix);
+        if !candidate.exists() {
+            return Ok(candidate);
+        }
+    }
+    anyhow::bail!(
+        "could not allocate a stale Codex restore point path for {}",
+        config_path.display()
+    )
 }
 
 pub(in crate::cli) fn create_managed_config_restore_point(
@@ -267,5 +290,26 @@ mod tests {
             codex_mixin::clients::codex::serialize(&reparsed),
             serialized
         );
+    }
+
+    #[test]
+    fn unmanaged_config_replaces_stale_restore_point() {
+        let directory = tempfile::tempdir().unwrap();
+        let config_path = directory.path().join("config.toml");
+        let backup_path = managed_backup_path(&config_path);
+        let current = "model_provider = \"openai\"\n";
+        let previous = "model_provider = \"custom\"\n";
+        fs::write(&config_path, current).unwrap();
+        fs::write(&backup_path, previous).unwrap();
+
+        let raw = read_managed_config_for_install(&config_path).unwrap();
+
+        assert_eq!(raw, current);
+        assert!(!backup_path.exists());
+        let stale_path = sibling_path_with_extra_extension(&config_path, "codex-mixin.stale");
+        assert_eq!(fs::read_to_string(stale_path).unwrap(), previous);
+
+        create_managed_config_restore_point(&config_path, &raw).unwrap();
+        assert_eq!(fs::read_to_string(backup_path).unwrap(), current);
     }
 }
