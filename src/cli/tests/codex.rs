@@ -29,7 +29,7 @@ fn managed_model_catalog_refreshes_promptly() {
     );
     assert_eq!(
         OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL,
-        std::time::Duration::from_secs(60)
+        std::time::Duration::from_secs(30)
     );
 }
 
