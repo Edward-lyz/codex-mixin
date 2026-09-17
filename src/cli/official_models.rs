@@ -1,5 +1,6 @@
 use std::collections::HashSet;
 use std::path::{Path, PathBuf};
+use std::time::SystemTime;
 
 use codex_mixin::catalog::load_template_catalog;
 use codex_mixin::config::{GatewayConfig, stored_config_path};
@@ -45,6 +46,9 @@ pub(in crate::cli) fn write_official_models_cache(
         "official models endpoint returned no visible models"
     );
     write_atomic_if_changed(cache_path, &serde_json::to_vec_pretty(catalog)?)?;
+    // A successful refresh can return the same catalog. Keep the timestamp
+    // meaningful for the provider UI instead of showing only content changes.
+    std::fs::File::open(cache_path)?.set_modified(SystemTime::now())?;
     Ok(model_count)
 }
 
