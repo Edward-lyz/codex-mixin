@@ -20,7 +20,9 @@ use super::bin::resolve_codex_cli;
 use super::managed_config::*;
 use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::metadata::load_model_metadata_resolver;
-use crate::cli::official_models::{filter_official_catalog, write_official_models_cache};
+use crate::cli::official_models::{
+    filter_official_catalog, official_models_cache_path, write_official_models_cache,
+};
 
 pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::Result<()> {
     let config_path = resolve_codex_config_path(None)?;
@@ -39,9 +41,15 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
         .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?;
     let mut template = if oauth_proxy {
         let models_cache = codex_home.join("models_cache.json");
-        let template =
-            load_preferred_official_catalog(&state, &models_cache, Some(&catalog_path), None)
-                .await?;
+        let official_cache = official_models_cache_path();
+        let template = load_preferred_official_catalog(
+            &state,
+            &models_cache,
+            Some(&catalog_path),
+            &official_cache,
+            None,
+        )
+        .await?;
         if template.is_none() {
             anyhow::bail!(
                 "official Codex model cache is missing: {}. Open Codex once before refreshing Codex Mixin",
@@ -335,6 +343,7 @@ pub(in crate::cli) async fn load_codex_install_template_online(
         state,
         &paths.models_cache,
         Some(&paths.catalog),
+        official_models_cache,
         Some(official_models_cache),
     )
     .await?;
@@ -383,6 +392,8 @@ pub(in crate::cli) async fn refresh_managed_official_codex_catalog(
     let client_version = resolve_codex_client_version(&models_cache)
         .ok_or_else(|| anyhow::anyhow!("Codex client version could not be determined"))?;
     let mut official_catalog = state.fetch_official_models_catalog(&client_version).await?;
+    let official_cache = official_models_cache_path();
+    cache_official_catalog(&official_catalog, &official_cache, None)?;
     let gateway_config = GatewayConfig::from_stored_config()?;
     filter_official_catalog(
         &mut official_catalog,
@@ -401,14 +412,13 @@ async fn load_preferred_official_catalog(
     state: &AppState,
     models_cache: &Path,
     managed_catalog: Option<&Path>,
+    official_cache: &Path,
     new_install_cache: Option<&Path>,
 ) -> anyhow::Result<Option<serde_json::Value>> {
     if let Some(client_version) = resolve_codex_client_version(models_cache) {
         match state.fetch_official_models_catalog(&client_version).await {
             Ok(catalog) => {
-                if let Some(cache_path) = new_install_cache {
-                    write_official_models_cache(&catalog, cache_path)?;
-                }
+                cache_official_catalog(&catalog, official_cache, new_install_cache)?;
                 return Ok(Some(catalog));
             }
             Err(error) => {
@@ -418,12 +428,29 @@ async fn load_preferred_official_catalog(
     } else {
         tracing::warn!("Codex client version could not be determined; using local model catalog");
     }
+    if let Some(catalog) = load_template_catalog(Some(official_cache))? {
+        return Ok(Some(catalog));
+    }
     if let Some(path) = managed_catalog
         && let Some(catalog) = load_current_official_catalog(path)?
     {
         return Ok(Some(catalog));
     }
     load_template_catalog(Some(models_cache))
+}
+
+fn cache_official_catalog(
+    catalog: &serde_json::Value,
+    official_cache: &Path,
+    additional_cache_path: Option<&Path>,
+) -> anyhow::Result<()> {
+    write_official_models_cache(catalog, official_cache)?;
+    if let Some(cache_path) = additional_cache_path
+        && cache_path != official_cache
+    {
+        write_official_models_cache(catalog, cache_path)?;
+    }
+    Ok(())
 }
 
 fn load_current_official_catalog(path: &Path) -> anyhow::Result<Option<serde_json::Value>> {

@@ -65,6 +65,7 @@ extension AppDelegate {
         let problemProviders = snapshot.providers?.filter {
             $0.enabled && $0.readiness.status == "degraded"
         } ?? []
+        notifyOfficialModelRefreshFailure(snapshot.providers ?? [])
         let issueDetails = gatewayProviderIssueDetails(problemProviders)
         providerStatusDetail = issueDetails.isEmpty ? nil : issueDetails.joined(separator: "；")
         if isRunning, !problemProviders.isEmpty {
@@ -76,6 +77,33 @@ extension AppDelegate {
         }
         updateStatusTitle()
         updateActionStates()
+    }
+
+    private func notifyOfficialModelRefreshFailure(_ providers: [GatewayStatusProvider]) {
+        let failures = providers.compactMap { provider -> String? in
+            guard provider.id == "official",
+                  provider.enabled,
+                  provider.readiness.issues.contains("model_refresh_failed")
+            else {
+                return nil
+            }
+            return provider.readiness.lastModelRefreshError ?? "未知错误"
+        }
+        let activeKeys: Set<String> = failures.isEmpty ? [] : ["official:error"]
+        presentedModelRefreshFailureKeys.formIntersection(activeKeys)
+        guard let error = failures.first,
+              let key = activeKeys.first,
+              presentedModelRefreshFailureKeys.insert(key).inserted
+        else {
+            return
+        }
+        DispatchQueue.main.async { [weak self] in
+            guard self != nil else { return }
+            showAlert(
+                title: "官方模型列表刷新失败",
+                message: "暂时继续使用上次成功获取的模型列表。网关会在后台自动重试。\n\n\(error)"
+            )
+        }
     }
 
     func refreshStatusNow() async {

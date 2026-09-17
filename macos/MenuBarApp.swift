@@ -41,6 +41,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var providerStatusDetail: String? {
         didSet { updateServiceStatusView() }
     }
+    var presentedModelRefreshFailureKeys = Set<String>()
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
