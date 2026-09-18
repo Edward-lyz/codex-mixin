@@ -229,6 +229,7 @@ struct MenuViewsLayoutTests {
         ])
         dashboard.updateQuotaUsages(usages + disabledQuota)
         dashboard.updateTokenUsages(tokenUsages + disabledTokenUsage)
+        flushDeferredMenuLayout()
         dashboard.layoutSubtreeIfNeeded()
         precondition(dashboard.model.selectedRange == .all)
         precondition(TokenUsageRange.day.commandArguments == ["usage", "--json", "--days", "1"])
@@ -249,8 +250,14 @@ struct MenuViewsLayoutTests {
         precondition(dashboard.model.selectedGroup?.models.count == 2)
         precondition(dashboard.model.selectedGroup?.models.first?.modelID == "gpt-5.6-sol")
         dashboard.model.selectModel("gpt-5.6-sol")
+        precondition(
+            dashboard.frame.height == collapsedHeight,
+            "row resize must be deferred off the menu display cycle, not applied synchronously"
+        )
+        flushDeferredMenuLayout()
         precondition(dashboard.frame.height > collapsedHeight)
         dashboard.model.selectModel("gpt-5.6-sol")
+        flushDeferredMenuLayout()
         precondition(dashboard.frame.height == collapsedHeight)
 
         let scrollingDashboard = ProviderUsageDashboardView()
@@ -286,6 +293,7 @@ struct MenuViewsLayoutTests {
             """
         ))
         proDashboard.model.selectModel("gpt-5.6-sol")
+        flushDeferredMenuLayout()
         precondition(
             proDashboard.frame.height >= 442,
             "three quota rows must keep their row spacing instead of compressing into the token range picker"
@@ -297,6 +305,7 @@ struct MenuViewsLayoutTests {
             #"{"provider_id":"official","quota_id":"quota.\#($0)","label":"Quota \#($0)","used":\#($0),"limit":100}"#
         }.joined(separator: ",")
         proDashboard.updateQuotaUsages(try parseProviderQuotaUsage("[\(manyQuotaRows)]"))
+        flushDeferredMenuLayout()
         proDashboard.layoutSubtreeIfNeeded()
         precondition(proDashboard.model.selectedGroup?.quotas.count == 8)
         precondition(
@@ -372,6 +381,7 @@ private func writeDashboardSnapshots(_ dashboard: ProviderUsageDashboardView) {
         preconditionFailure("menu snapshot directory could not be created: \(error)")
     }
 
+    flushDeferredMenuLayout()
     let window = NSWindow(
         contentRect: NSRect(origin: .zero, size: NSSize(width: 336, height: dashboard.frame.height)),
         styleMask: [.borderless],
@@ -387,10 +397,12 @@ private func writeDashboardSnapshots(_ dashboard: ProviderUsageDashboardView) {
     for (name, appearanceName) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
         window.appearance = NSAppearance(named: appearanceName)
         dashboard.model.selectedModelID = nil
+        flushDeferredMenuLayout()
         dashboard.layoutSubtreeIfNeeded()
         writeViewSnapshot(dashboard, to: outputURL.appendingPathComponent("menu-\(name)-collapsed.png"))
 
         dashboard.model.selectModel("gpt-5.6-sol")
+        flushDeferredMenuLayout()
         dashboard.layoutSubtreeIfNeeded()
         writeViewSnapshot(dashboard, to: outputURL.appendingPathComponent("menu-\(name)-detail.png"))
         dashboard.model.selectedModelID = nil
@@ -417,4 +429,12 @@ private func descendants<T: NSView>(of view: NSView, matching type: T.Type) -> [
     view.subviews.flatMap { child in
         (child as? T).map { [$0] } ?? descendants(of: child, matching: type)
     }
+}
+
+/// Drains pending main run-loop work so a deferred dashboard row resize is
+/// applied before the test inspects the view frame. The dashboard schedules
+/// its resize with `DispatchQueue.main.async` to avoid mutating geometry while
+/// the status-bar menu is committing its display cycle.
+private func flushDeferredMenuLayout() {
+    RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
 }
