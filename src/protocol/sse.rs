@@ -90,6 +90,14 @@ pub(crate) fn response_failed_payload(
     error_type: &str,
 ) -> Value {
     let error = json!({"message": message.into(), "type": error_type});
+    response_failed_payload_with_error(response_id, model, error)
+}
+
+pub(crate) fn response_failed_payload_with_error(
+    response_id: Option<String>,
+    model: Option<&str>,
+    error: Value,
+) -> Value {
     let mut response = json!({
         "id": response_id.unwrap_or_else(|| format!("resp_{}", uuid::Uuid::new_v4().simple())),
         "object": "response",

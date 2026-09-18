@@ -6287,7 +6287,7 @@ async fn discards_official_connection_after_failed_and_incomplete_responses() {
 }
 
 #[tokio::test]
-async fn terminates_wrapped_official_error_without_waiting_for_close_handshake() {
+async fn maps_official_websocket_error_to_terminal_failure() {
     let (gateway_url, official_requests, official_websocket_connections, _codex_home) =
         spawn_gateway_with_mock_official(
             OfficialWebSocketBehavior::ConnectionLimitThenComplete,
@@ -6316,8 +6316,9 @@ async fn terminates_wrapped_official_error_without_waiting_for_close_handshake()
         websocket_response_frames(&mut socket),
     )
     .await
-    .expect("wrapped error was not forwarded promptly")
+    .expect("official websocket error was not mapped to response.failed")
     .join("\n");
+    assert!(error_frames.contains("\"type\":\"response.failed\""));
     assert!(error_frames.contains("websocket_connection_limit_reached"));
 
     socket
@@ -6720,10 +6721,7 @@ where
                     .is_some_and(|event_type| {
                         matches!(
                             event_type.as_str(),
-                            "response.completed"
-                                | "response.failed"
-                                | "response.incomplete"
-                                | "error"
+                            "response.completed" | "response.failed" | "response.incomplete"
                         )
                     });
                 frames.push(text);

@@ -5,7 +5,7 @@ use axum::http::{HeaderMap, header};
 use futures_util::stream::SplitSink;
 use futures_util::{SinkExt, StreamExt};
 use memchr::memmem;
-use serde_json::Value;
+use serde_json::{Value, json};
 use tokio_tungstenite_proxy::tungstenite::Message as TungsteniteMessage;
 use tokio_tungstenite_proxy::tungstenite::client::IntoClientRequest;
 
@@ -295,7 +295,21 @@ async fn proxy_official_responses_ws(
                 });
             }
             message => {
-                if let Some(message) = tungstenite_to_axum_message(message) {
+                let client_message = if terminal_type.as_deref() == Some("error") {
+                    let error = official_websocket_error(event.as_ref());
+                    Some(AxumWsMessage::Text(
+                        crate::protocol::sse::response_failed_payload_with_error(
+                            response_id.clone(),
+                            body.get("model").and_then(Value::as_str),
+                            error,
+                        )
+                        .to_string()
+                        .into(),
+                    ))
+                } else {
+                    tungstenite_to_axum_message(message)
+                };
+                if let Some(message) = client_message {
                     response_started = true;
                     client_sender.send(message).await.map_err(|err| {
                         OfficialWebSocketRequestError {
@@ -334,6 +348,20 @@ async fn proxy_official_responses_ws(
                 items_added,
             });
         }
+    }
+}
+
+fn official_websocket_error(event: Option<&Value>) -> Value {
+    match event.and_then(|event| event.get("error")) {
+        Some(error @ Value::Object(_)) => error.clone(),
+        Some(Value::String(message)) => json!({"message": message, "type": "server_error"}),
+        _ => json!({
+            "message": event
+                .and_then(|event| event.get("message"))
+                .and_then(Value::as_str)
+                .unwrap_or("official responses websocket request failed"),
+            "type": "server_error"
+        }),
     }
 }
 

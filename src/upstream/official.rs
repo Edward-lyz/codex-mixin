@@ -2,7 +2,7 @@ use std::time::{Duration, SystemTime};
 
 use axum::http::header;
 use axum::http::{HeaderMap, HeaderValue};
-use serde_json::Value;
+use serde_json::{Value, json};
 
 use super::UpstreamAccess;
 use crate::error::GatewayError;
@@ -112,7 +112,7 @@ impl UpstreamAccess {
         headers: &HeaderMap,
         body: Value,
     ) -> Result<reqwest::Response, GatewayError> {
-        let body = normalize_official_responses_body(body);
+        let body = normalize_official_responses_body(body)?;
         let (authorization, account_id) =
             self.official_auth().await.map_err(GatewayError::Other)?;
         let request = forward_official_headers(
@@ -127,14 +127,45 @@ impl UpstreamAccess {
     }
 }
 
-pub(crate) fn normalize_official_responses_body(mut body: Value) -> Value {
+pub(crate) fn normalize_official_responses_body(mut body: Value) -> Result<Value, GatewayError> {
     if let Some(body) = body.as_object_mut() {
         body.remove("max_output_tokens");
         if let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) {
             input.retain(|item| !is_foreign_reasoning(item));
+            for item in input {
+                materialize_agent_message_content(item)?;
+            }
         }
     }
-    body
+    Ok(body)
+}
+
+fn materialize_agent_message_content(item: &mut Value) -> Result<(), GatewayError> {
+    if item.get("type").and_then(Value::as_str) != Some("agent_message") {
+        return Ok(());
+    }
+    let content = item
+        .get_mut("content")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| GatewayError::BadRequest("agent_message missing content".to_owned()))?;
+    for part in content {
+        // Codex collaboration stores local plaintext in this agent-only field.
+        // Other encrypted_content fields remain opaque.
+        if part.get("type").and_then(Value::as_str) != Some("encrypted_content") {
+            continue;
+        }
+        let text = part
+            .get("encrypted_content")
+            .and_then(Value::as_str)
+            .ok_or_else(|| {
+                GatewayError::BadRequest(
+                    "agent_message encrypted_content missing payload".to_owned(),
+                )
+            })?
+            .to_owned();
+        *part = json!({"type": "input_text", "text": text});
+    }
+    Ok(())
 }
 
 fn is_foreign_reasoning(item: &Value) -> bool {
@@ -252,7 +283,8 @@ mod tests {
                 },
                 {"type": "message", "role": "user", "content": "continue"}
             ]
-        }));
+        }))
+        .unwrap();
 
         assert!(normalized.get("max_output_tokens").is_none());
         assert_eq!(
@@ -281,7 +313,8 @@ mod tests {
                     "encrypted_content": baidu
                 }
             ]
-        }));
+        }))
+        .unwrap();
 
         assert_eq!(normalized["input"], json!([]));
     }
@@ -295,9 +328,53 @@ mod tests {
         });
         let normalized = normalize_official_responses_body(json!({
             "input": [official_reasoning.clone()]
-        }));
+        }))
+        .unwrap();
 
         assert_eq!(normalized["input"], json!([official_reasoning]));
+    }
+
+    #[test]
+    fn converts_plaintext_agent_message_before_official_forwarding() {
+        let normalized = normalize_official_responses_body(json!({
+            "input": [{
+                "type": "agent_message",
+                "author": "/root/worker",
+                "recipient": "/root",
+                "content": [
+                    {"type": "input_text", "text": "Message Type: MESSAGE\nPayload:\n"},
+                    {
+                        "type": "encrypted_content",
+                        "encrypted_content": "ordinary readable collaboration message"
+                    }
+                ]
+            }]
+        }))
+        .unwrap();
+
+        assert_eq!(
+            normalized["input"][0]["content"],
+            json!([
+                {"type": "input_text", "text": "Message Type: MESSAGE\nPayload:\n"},
+                {"type": "input_text", "text": "ordinary readable collaboration message"}
+            ])
+        );
+    }
+
+    #[test]
+    fn rejects_agent_message_without_plaintext_payload() {
+        let error = normalize_official_responses_body(json!({
+            "input": [{
+                "type": "agent_message",
+                "content": [{"type": "encrypted_content"}]
+            }]
+        }))
+        .unwrap_err();
+
+        assert_eq!(
+            error.to_string(),
+            "bad request: agent_message encrypted_content missing payload"
+        );
     }
 
     #[tokio::test]
