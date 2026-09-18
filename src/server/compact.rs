@@ -86,50 +86,23 @@ fn validate_compact_request(body: &Value) -> Result<(), GatewayError> {
     }
 }
 
-fn compact_custom_provider(body: Value) -> Result<Response, GatewayError> {
+pub(super) fn compact_custom_provider(body: Value) -> Result<Response, GatewayError> {
     let model = body
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("compact request missing model".to_owned()))?
         .to_owned();
+    compact_custom_provider_for_model(body, &model)
+}
+
+pub(super) fn compact_custom_provider_for_model(
+    body: Value,
+    response_model: &str,
+) -> Result<Response, GatewayError> {
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
-    let summary = local_compaction_summary(&body, &model)?;
-    let token = compaction::encode(&model, summary)?;
-    let response_id = format!("resp_compact_{}", Uuid::new_v4().simple());
-    let item_id = format!("cmp_{}", Uuid::new_v4().simple());
-    let response = json!({
-        "id": response_id,
-        "object": "response",
-        "created_at": unix_seconds()?,
-        "status": "completed",
-        "model": model,
-        "output": [{
-            "type": "compaction",
-            "id": item_id,
-            "created_by": "codex-mixin",
-            "encrypted_content": token
-        }]
-    });
+    let response = local_compaction_response(&body, response_model)?;
     if stream {
-        let item = response["output"][0].clone();
-        let created = json!({
-            "type": "response.created",
-            "response": {
-                "id": response["id"],
-                "object": "response",
-                "status": "in_progress",
-                "model": response["model"]
-            }
-        });
-        let output_done = json!({
-            "type": "response.output_item.done",
-            "item": item
-        });
-        let completed = json!({
-            "type": "response.completed",
-            "response": response
-        });
-        let events = [created, output_done, completed].into_iter().map(|event| {
+        let events = local_compaction_events(&response).into_iter().map(|event| {
             let event_name = event["type"].as_str().unwrap_or("response.completed");
             crate::protocol::sse::encode_event(event_name, &event)
                 .map_err(|error| std::io::Error::other(error.to_string()))
@@ -141,6 +114,97 @@ fn compact_custom_provider(body: Value) -> Result<Response, GatewayError> {
             .map_err(|error| GatewayError::Other(error.into()));
     }
     Ok(Json(response).into_response())
+}
+
+pub(super) fn local_compaction_response(
+    body: &Value,
+    response_model: &str,
+) -> Result<Value, GatewayError> {
+    let token_model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GatewayError::BadRequest("compact request missing model".to_owned()))?;
+    let summary = local_compaction_summary(body, token_model)?;
+    let token = compaction::encode(token_model, summary)?;
+    let response_id = format!("resp_compact_{}", Uuid::new_v4().simple());
+    let item_id = format!("cmp_{}", Uuid::new_v4().simple());
+    Ok(json!({
+        "id": response_id,
+        "object": "response",
+        "created_at": unix_seconds()?,
+        "status": "completed",
+        "model": response_model,
+        "output": [{
+            "type": "compaction",
+            "id": item_id,
+            "created_by": "codex-mixin",
+            "encrypted_content": token
+        }]
+    }))
+}
+
+pub(super) fn local_compaction_events(response: &Value) -> [Value; 3] {
+    let item = response["output"][0].clone();
+    [
+        json!({
+            "type": "response.created",
+            "response": {
+                "id": response["id"],
+                "object": "response",
+                "status": "in_progress",
+                "model": response["model"]
+            }
+        }),
+        json!({
+            "type": "response.output_item.done",
+            "item": item
+        }),
+        json!({
+            "type": "response.completed",
+            "response": response
+        }),
+    ]
+}
+
+pub(super) fn is_v2_compaction_request(body: &Value) -> bool {
+    body.get("input")
+        .and_then(Value::as_array)
+        .and_then(|input| input.last())
+        .and_then(|item| item.get("type"))
+        .and_then(Value::as_str)
+        == Some("compaction_trigger")
+}
+
+pub(super) async fn prepare_v2_custom_compaction(
+    state: &AppState,
+    body: &mut Value,
+    route: &ResolvedModelRoute,
+) -> Result<bool, GatewayError> {
+    match route {
+        ResolvedModelRoute::Official => Ok(false),
+        ResolvedModelRoute::Provider { .. } => Ok(true),
+        ResolvedModelRoute::Fusion { profile_id } => {
+            let final_model = state
+                .config
+                .fusion_profiles
+                .iter()
+                .find(|profile| profile.id == *profile_id)
+                .map(|profile| profile.active_model_now().to_owned())
+                .ok_or_else(|| {
+                    GatewayError::BadRequest(format!("unknown fusion profile: {profile_id}"))
+                })?;
+            match state.gateway.resolve_model_route(&final_model).await? {
+                ResolvedModelRoute::Official => Ok(false),
+                ResolvedModelRoute::Provider { .. } => {
+                    body["model"] = Value::String(final_model);
+                    Ok(true)
+                }
+                ResolvedModelRoute::Fusion { .. } => Err(GatewayError::BadRequest(
+                    "fusion final model cannot reference another fusion profile".to_owned(),
+                )),
+            }
+        }
+    }
 }
 
 fn local_compaction_summary(body: &Value, model: &str) -> Result<CompactionSummary, GatewayError> {

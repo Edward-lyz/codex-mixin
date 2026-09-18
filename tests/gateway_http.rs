@@ -4155,6 +4155,42 @@ async fn ignores_compaction_trigger_for_custom_responses() {
 }
 
 #[tokio::test]
+async fn locally_handles_v2_compaction_trigger_for_custom_responses() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model": "Claude Sonnet 5-custom",
+            "stream": true,
+            "input": [
+                {"type":"message","role":"user","content":[
+                    {"type":"input_text","text":"fix the parser"}
+                ]},
+                {"type":"message","role":"assistant","content":[
+                    {"type":"output_text","text":"The parser fix is complete."}
+                ]},
+                {"type":"compaction_trigger"}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+
+    let mut encoded = response.bytes().await.unwrap().to_vec();
+    let completed_items = drain_events(&mut encoded)
+        .into_iter()
+        .filter(|event| event.event.as_deref() == Some("response.output_item.done"))
+        .map(|event| serde_json::from_str::<Value>(&event.data).unwrap()["item"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(completed_items.len(), 1);
+    assert_eq!(completed_items[0]["type"], "compaction");
+    assert!(requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
 async fn locally_compacts_custom_provider_and_omits_tool_payloads() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let gateway_url = spawn_gateway(upstream_url).await;
@@ -4808,6 +4844,78 @@ async fn maps_custom_websocket_to_responses_frames() {
         requests[0]["metadata"]["session_id"],
         uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"websocket-session").to_string()
     );
+}
+
+#[tokio::test]
+async fn locally_handles_v2_compaction_trigger_on_custom_websocket() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let gateway_url = spawn_gateway(upstream_url).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    let compact = json!({
+        "type": "response.create",
+        "model": "Claude Sonnet 5-custom",
+        "input": [
+            {"type":"message","role":"user","content":[
+                {"type":"input_text","text":"fix the parser"}
+            ]},
+            {"type":"message","role":"assistant","content":[
+                {"type":"output_text","text":"The parser fix is complete."}
+            ]},
+            {"type":"compaction_trigger"}
+        ]
+    });
+    socket
+        .send(WsMessage::Text(compact.to_string().into()))
+        .await
+        .unwrap();
+
+    let frames = websocket_response_frames(&mut socket).await;
+    let completed_items = frames
+        .iter()
+        .filter_map(|frame| serde_json::from_str::<Value>(frame).ok())
+        .filter(|event| event["type"] == "response.output_item.done")
+        .map(|event| event["item"].clone())
+        .collect::<Vec<_>>();
+    assert_eq!(completed_items.len(), 1);
+    assert_eq!(completed_items[0]["type"], "compaction");
+    assert!(requests.lock().unwrap().is_empty());
+
+    let previous_response_id = frames
+        .iter()
+        .filter_map(|frame| serde_json::from_str::<Value>(frame).ok())
+        .find(|event| event["type"] == "response.completed")
+        .unwrap()["response"]["id"]
+        .clone();
+    let follow_up = json!({
+        "type": "response.create",
+        "model": "Claude Sonnet 5-custom",
+        "previous_response_id": previous_response_id,
+        "input": [{
+            "type": "message",
+            "role": "user",
+            "content": [{"type":"input_text","text":"continue"}]
+        }],
+        "tools": []
+    });
+    socket
+        .send(WsMessage::Text(follow_up.to_string().into()))
+        .await
+        .unwrap();
+    let follow_up_frames = websocket_response_frames(&mut socket).await.join("\n");
+    assert!(follow_up_frames.contains("\"type\":\"response.completed\""));
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    let compacted = requests[0]["system"][0]["text"].as_str().unwrap();
+    assert!(compacted.contains("fix the parser"));
+    assert!(compacted.contains("The parser fix is complete."));
 }
 
 #[tokio::test]

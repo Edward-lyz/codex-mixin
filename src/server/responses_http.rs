@@ -7,7 +7,7 @@ pub(super) async fn responses(
     body: Body,
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
-    let body = super::request_body::parse_json(body).await?;
+    let mut body = super::request_body::parse_json(body).await?;
     let requested_model = body
         .get("model")
         .and_then(Value::as_str)
@@ -15,6 +15,11 @@ pub(super) async fn responses(
         .to_owned();
     let route = state.gateway.resolve_model_route(&requested_model).await?;
     log_responses_route(&requested_model, &route);
+    if super::compact::is_v2_compaction_request(&body)
+        && super::compact::prepare_v2_custom_compaction(&state, &mut body, &route).await?
+    {
+        return super::compact::compact_custom_provider_for_model(body, &requested_model);
+    }
     if route == ResolvedModelRoute::Official {
         let (body, _) = crate::images::normalize_provider_images_blocking(body).await?;
         return forward_official_responses(&state, &headers, body).await;

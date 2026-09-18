@@ -7,6 +7,7 @@ use uuid::Uuid;
 
 use super::super::AppState;
 use super::super::auth::stable_oneapi_routing;
+use super::super::compact;
 use super::{ResponsesWsContext, take_custom_request_input};
 use crate::fusion::{FusionEngine, should_fuse_turn};
 use crate::gateway::{RequestPlan, ResolvedModelRoute};
@@ -25,6 +26,28 @@ pub(super) async fn run_custom_ws_request(
     body: &mut Value,
 ) -> anyhow::Result<Option<CustomWebSocketState>> {
     expand_custom_websocket_history(context.state, body, context.custom_state.take()).await?;
+    if compact::is_v2_compaction_request(body) {
+        let requested_model = body
+            .get("model")
+            .and_then(Value::as_str)
+            .ok_or_else(|| anyhow::anyhow!("custom request is missing model"))?
+            .to_owned();
+        let route = context
+            .state
+            .gateway
+            .resolve_model_route(&requested_model)
+            .await?;
+        if compact::prepare_v2_custom_compaction(context.state, body, &route).await? {
+            return complete_custom_compaction(
+                context.client_sender,
+                body.take(),
+                requested_model,
+                route,
+            )
+            .await
+            .map(Some);
+        }
+    }
     if is_noop_responses_ws_request(body) {
         return complete_custom_noop(context.state, context.client_sender, body.take())
             .await
@@ -38,6 +61,34 @@ pub(super) async fn run_custom_ws_request(
         body.take(),
     )
     .await
+}
+
+async fn complete_custom_compaction(
+    client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
+    body: Value,
+    model: String,
+    route: ResolvedModelRoute,
+) -> anyhow::Result<CustomWebSocketState> {
+    let response = compact::local_compaction_response(&body, &model)?;
+    for event in compact::local_compaction_events(&response) {
+        client_sender
+            .send(AxumWsMessage::Text(event.to_string().into()))
+            .await?;
+    }
+    let response_id = response["id"]
+        .as_str()
+        .ok_or_else(|| anyhow::anyhow!("local compaction response is missing its id"))?
+        .to_owned();
+    let history = response["output"]
+        .as_array()
+        .ok_or_else(|| anyhow::anyhow!("local compaction response is missing its output"))?
+        .clone();
+    Ok(CustomWebSocketState {
+        response_id,
+        model,
+        route,
+        history,
+    })
 }
 
 fn is_noop_responses_ws_request(body: &Value) -> bool {
