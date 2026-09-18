@@ -532,7 +532,7 @@ final class ProviderUsageDashboardView: FlippedMenuView {
     private let hostingView: NSHostingView<ProviderUsageDashboardContent>
     /// Tracks whether a coalesced row-height sync is already queued so repeated
     /// data refreshes collapse into a single deferred resize.
-    private var sizeSyncScheduled = false
+    private var heightSyncScheduled = false
 
     init() {
         hostingView = NSHostingView(rootView: ProviderUsageDashboardContent(model: model))
@@ -550,13 +550,13 @@ final class ProviderUsageDashboardView: FlippedMenuView {
     func updateQuotaStatus(title: String, detail: String?) {
         model.quotaStatusTitle = title
         model.quotaStatusDetail = detail
-        updateSize()
+        scheduleContentHeightUpdate()
     }
 
     func updateConfiguredProviders(_ providers: [ProviderDashboardProvider]) {
         model.configuredProviders = providers
         model.normalizeSelection()
-        updateSize()
+        scheduleContentHeightUpdate()
     }
 
     func refreshProviderIcons() {
@@ -568,13 +568,13 @@ final class ProviderUsageDashboardView: FlippedMenuView {
         model.quotaStatusTitle = L10n.Provider.quotaEmpty
         model.quotaStatusDetail = nil
         model.normalizeSelection()
-        updateSize()
+        scheduleContentHeightUpdate()
     }
 
     func updateTokenStatus(title: String, detail: String?) {
         model.tokenStatusTitle = title
         model.tokenStatusDetail = detail
-        updateSize()
+        scheduleContentHeightUpdate()
     }
 
     func updateTokenUsages(_ usages: [ProviderTokenUsage]) {
@@ -582,7 +582,7 @@ final class ProviderUsageDashboardView: FlippedMenuView {
         model.tokenStatusTitle = "Token 使用：暂无数据"
         model.tokenStatusDetail = nil
         model.normalizeSelection()
-        updateSize()
+        scheduleContentHeightUpdate()
     }
 
     var onRangeChange: ((TokenUsageRange) -> Void)? {
@@ -595,35 +595,28 @@ final class ProviderUsageDashboardView: FlippedMenuView {
         hostingView.autoresizingMask = [.width, .height]
         addSubview(hostingView)
         model.onContentHeightChange = { [weak self] _ in
-            self?.updateSize()
+            self?.scheduleContentHeightUpdate()
         }
     }
 
-    /// Requests a resize of the menu row to match the SwiftUI content height.
-    ///
-    /// This view is an `NSHostingView` embedded as the custom view of an item
-    /// in the open status-bar `NSMenu`. Data refreshes and selection changes
-    /// arrive on the main actor while the menu is being displayed, and mutating
-    /// the view frame in place re-enters AppKit's window layout during the
-    /// Core Animation commit (`-[NSWindow _postWindowNeedsLayout]`), which
-    /// raised an uncaught exception and aborted the app. Skip no-op updates and
-    /// coalesce the actual geometry change onto a fresh main run-loop turn so
-    /// the row height only ever changes at a safe, non-reentrant point.
-    private func updateSize() {
-        guard frame.height != model.contentHeight else { return }
-        guard !sizeSyncScheduled else { return }
-        sizeSyncScheduled = true
+    /// Defers custom-row height changes out of the synchronous SwiftUI callback
+    /// that requested them, while leaving the width managed by `NSMenu` intact.
+    private func scheduleContentHeightUpdate() {
+        let targetHeight = model.contentHeight
+        guard frame.height != targetHeight else { return }
+        guard !heightSyncScheduled else { return }
+        heightSyncScheduled = true
         DispatchQueue.main.async { [weak self] in
             guard let self else { return }
-            self.sizeSyncScheduled = false
-            self.applyContentSize()
+            self.heightSyncScheduled = false
+            self.applyContentHeight()
         }
     }
 
-    private func applyContentSize() {
-        let size = NSSize(width: menuContentWidth, height: model.contentHeight)
-        guard frame.size != size else { return }
-        frame.size = size
+    private func applyContentHeight() {
+        let targetHeight = model.contentHeight
+        guard frame.height != targetHeight else { return }
+        frame.size.height = targetHeight
         hostingView.frame = bounds
     }
 }

@@ -241,6 +241,8 @@ struct MenuViewsLayoutTests {
         precondition(requestedRange == .week)
         precondition(dashboard.model.selectedModelID == nil)
         precondition(dashboard.frame.width == 336)
+        let menuManagedWidth = dashboard.frame.width + 48
+        dashboard.frame.size.width = menuManagedWidth
         let collapsedHeight = dashboard.frame.height
         precondition(collapsedHeight < 334)
         precondition(dashboard.model.groups.count == 5)
@@ -254,7 +256,15 @@ struct MenuViewsLayoutTests {
             dashboard.frame.height == collapsedHeight,
             "row resize must be deferred off the menu display cycle, not applied synchronously"
         )
+        precondition(
+            dashboard.frame.width == menuManagedWidth,
+            "requesting a row-height sync must not change the menu-managed width synchronously"
+        )
         flushDeferredMenuLayout()
+        precondition(
+            dashboard.frame.width == menuManagedWidth,
+            "row-height sync must preserve the width managed by the menu"
+        )
         precondition(dashboard.frame.height > collapsedHeight)
         dashboard.model.selectModel("gpt-5.6-sol")
         flushDeferredMenuLayout()
