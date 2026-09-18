@@ -530,6 +530,9 @@ private struct TokenModelDetail: View {
 final class ProviderUsageDashboardView: FlippedMenuView {
     let model = ProviderUsageDashboardModel()
     private let hostingView: NSHostingView<ProviderUsageDashboardContent>
+    /// Tracks whether a coalesced row-height sync is already queued so repeated
+    /// data refreshes collapse into a single deferred resize.
+    private var sizeSyncScheduled = false
 
     init() {
         hostingView = NSHostingView(rootView: ProviderUsageDashboardContent(model: model))
@@ -596,8 +599,31 @@ final class ProviderUsageDashboardView: FlippedMenuView {
         }
     }
 
+    /// Requests a resize of the menu row to match the SwiftUI content height.
+    ///
+    /// This view is an `NSHostingView` embedded as the custom view of an item
+    /// in the open status-bar `NSMenu`. Data refreshes and selection changes
+    /// arrive on the main actor while the menu is being displayed, and mutating
+    /// the view frame in place re-enters AppKit's window layout during the
+    /// Core Animation commit (`-[NSWindow _postWindowNeedsLayout]`), which
+    /// raised an uncaught exception and aborted the app. Skip no-op updates and
+    /// coalesce the actual geometry change onto a fresh main run-loop turn so
+    /// the row height only ever changes at a safe, non-reentrant point.
     private func updateSize() {
-        frame.size = NSSize(width: menuContentWidth, height: model.contentHeight)
+        guard frame.height != model.contentHeight else { return }
+        guard !sizeSyncScheduled else { return }
+        sizeSyncScheduled = true
+        DispatchQueue.main.async { [weak self] in
+            guard let self else { return }
+            self.sizeSyncScheduled = false
+            self.applyContentSize()
+        }
+    }
+
+    private func applyContentSize() {
+        let size = NSSize(width: menuContentWidth, height: model.contentHeight)
+        guard frame.size != size else { return }
+        frame.size = size
         hostingView.frame = bounds
     }
 }
