@@ -2,6 +2,7 @@ import Cocoa
 import Darwin
 import Sparkle
 
+@MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let serviceLabel = "local.codex-mixin.service"
     let menuLaunchLabel = "local.codex-mixin.menu-launch"
@@ -14,7 +15,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var aboutWindowController: AboutWindowController?
     var installCardWindowController: InstallCardWindowController?
     let menuItemViewUpdater = MenuItemViewUpdater()
-    var timer: Timer?
+    var refreshTimer: RefreshTimerController?
+    var refreshLifecycleObservers: [NSObjectProtocol] = []
     var terminationInProgress = false
     var updateTerminationReady = false
     @MainActor var updaterController: SPUStandardUpdaterController?
@@ -58,11 +60,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             }
         }
         startGatewayAtLaunch()
-        timer = Timer.scheduledTimer(withTimeInterval: 10, repeats: true) { [weak self] _ in
-            Task { @MainActor in
-                await self?.refreshScheduledStatus()
-            }
-        }
+        installRefreshLifecycleObservers()
+        startRefreshTimer()
         if CommandLine.arguments.contains("--show-settings") {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.configureLogin()
@@ -73,6 +72,77 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.updaterController?.checkForUpdates(nil)
             }
         }
+    }
+
+    @MainActor
+    func startRefreshTimer() {
+        if refreshTimer == nil {
+            refreshTimer = RefreshTimerController { [weak self] in
+                guard let self else { return }
+                Task { @MainActor in
+                    await self.refreshScheduledStatus()
+                }
+            }
+        }
+        refreshTimer?.start()
+    }
+
+    @MainActor
+    func installRefreshLifecycleObservers() {
+        let workspaceCenter = NSWorkspace.shared.notificationCenter
+        for name in [
+            NSWorkspace.didWakeNotification,
+            NSWorkspace.sessionDidBecomeActiveNotification,
+        ] {
+            refreshLifecycleObservers.append(
+                workspaceCenter.addObserver(
+                    forName: name,
+                    object: nil,
+                    queue: .main
+                ) { [weak self] notification in
+                    let name = notification.name
+                    Task { @MainActor in
+                        self?.handleRefreshLifecycleEvent(name)
+                    }
+                }
+            )
+        }
+        refreshLifecycleObservers.append(
+            NotificationCenter.default.addObserver(
+                forName: NSApplication.didBecomeActiveNotification,
+                object: NSApp,
+                queue: .main
+            ) { [weak self] notification in
+                let name = notification.name
+                Task { @MainActor in
+                    self?.handleRefreshLifecycleEvent(name)
+                }
+            }
+        )
+    }
+
+    @MainActor
+    func handleRefreshLifecycleEvent(_ name: Notification.Name) {
+        appendDiagnosticLog("refresh lifecycle event: \(name.rawValue)")
+        quotaRefreshPolicy.reset()
+        startRefreshTimer()
+        Task { @MainActor [weak self] in
+            await self?.refreshStatusNow()
+        }
+    }
+
+    @MainActor
+    func removeRefreshLifecycleObservers() {
+        for observer in refreshLifecycleObservers {
+            NotificationCenter.default.removeObserver(observer)
+            NSWorkspace.shared.notificationCenter.removeObserver(observer)
+        }
+        refreshLifecycleObservers.removeAll()
+    }
+
+    func applicationWillTerminate(_ notification: Notification) {
+        refreshTimer?.stop()
+        removeRefreshLifecycleObservers()
     }
 
     func installApplicationMenu() {
@@ -229,6 +299,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 }
 
 @main
+@MainActor
 struct CodexMixinApplication {
     static let delegate = AppDelegate()
 
