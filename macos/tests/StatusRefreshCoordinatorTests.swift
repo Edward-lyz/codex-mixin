@@ -70,10 +70,25 @@ struct StatusRefreshCoordinatorTests {
         quotaPolicy.markAttempt(at: baseline)
         precondition(!quotaPolicy.isDue(at: baseline.addingTimeInterval(299)))
         precondition(quotaPolicy.isDue(at: baseline.addingTimeInterval(300)))
+        quotaPolicy.reset()
+        precondition(quotaPolicy.isDue(at: baseline.addingTimeInterval(1)))
 
         precondition(StatusRefreshScope.health.merged(with: .full) == .full)
         precondition(StatusRefreshScope.health.merged(with: .status) == .status)
         precondition(StatusRefreshScope.status.merged(with: .full) == .full)
         precondition(StatusRefreshScope.full.merged(with: .health) == .full)
+
+        var timerFires = 0
+        let refreshTimer = RefreshTimerController(interval: 0.01) {
+            timerFires += 1
+        }
+        refreshTimer.start()
+        precondition(refreshTimer.isRunning)
+        refreshTimer.fireForTesting()
+        precondition(timerFires == 1, "Refresh timer should invoke its handler")
+        refreshTimer.restart()
+        precondition(refreshTimer.isRunning)
+        refreshTimer.stop()
+        precondition(!refreshTimer.isRunning)
     }
 }

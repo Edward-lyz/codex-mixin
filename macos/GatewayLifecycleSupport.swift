@@ -122,7 +122,7 @@ extension AppDelegate {
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
         if updateTerminationReady {
-            timer?.invalidate()
+            refreshTimer?.stop()
             return .terminateNow
         }
         if terminationInProgress {
@@ -137,7 +137,7 @@ extension AppDelegate {
                 try await bootoutIfLoaded(launchDomainAndLabel())
                 _ = try await runGateway(["stop"])
                 try await waitForGatewayStopped()
-                timer?.invalidate()
+                refreshTimer?.stop()
                 sender.reply(toApplicationShouldTerminate: true)
             } catch {
                 terminationInProgress = false
