@@ -1,4 +1,5 @@
 use std::io::{self, IsTerminal};
+use std::path::PathBuf;
 use std::time::Instant;
 
 use clap::Parser;
@@ -34,7 +35,6 @@ mod runtime;
 mod service;
 mod setup;
 mod status;
-mod tui;
 mod update;
 
 use benchmark_proxy::{benchmark_start, benchmark_status};
@@ -197,10 +197,20 @@ fn secret_expanded_args() -> Vec<std::ffi::OsString> {
     std::env::args_os().collect()
 }
 
-pub(crate) async fn entrypoint() {
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InteractiveStart {
+    Dashboard,
+    Setup,
+}
+
+pub(crate) async fn entrypoint<Launch, LaunchFuture>(launch_interactive: Launch)
+where
+    Launch: FnOnce(InteractiveStart, Option<PathBuf>) -> LaunchFuture,
+    LaunchFuture: std::future::Future<Output = anyhow::Result<()>>,
+{
     let cli = Cli::parse_from(secret_expanded_args());
     let print_errors_to_stderr = matches!(&cli.command, Some(Command::ReportReplay { .. }));
-    let tui_start = requested_tui_start(
+    let interactive_start = requested_interactive_start(
         &cli,
         io::stdin().is_terminal() && io::stdout().is_terminal(),
     );
@@ -248,9 +258,9 @@ pub(crate) async fn entrypoint() {
             "gateway process starting"
         );
     }
-    let result = if let Some(start_page) = tui_start {
+    let result = if let Some(start_page) = interactive_start {
         match setup::install_cli_command() {
-            Ok(installed_path) => Box::pin(tui::run(start_page, installed_path)).await,
+            Ok(installed_path) => Box::pin(launch_interactive(start_page, installed_path)).await,
             Err(error) => Err(error),
         }
     } else {

@@ -6,6 +6,7 @@ TMP=$(mktemp -d)
 trap 'rm -rf "$TMP"' EXIT
 cp -R "$ROOT/src" "$TMP/src"
 mkdir -p "$TMP/scripts"
+mkdir -p "$TMP/macos" "$TMP/tui" "$TMP/windows"
 cp "$ROOT/scripts/check_arch.sh" "$TMP/scripts/check_arch.sh"
 
 expect_rejected() {
@@ -23,4 +24,5 @@ bash "$TMP/scripts/check_arch.sh" "$TMP" >/dev/null
 expect_rejected src/protocol/compaction.rs 'fn violation() { reqwest::Client::new().post("http://invalid").send(); }'
 expect_rejected src/config.rs 'use crate::server::AppState;'
 expect_rejected src/application/mod.rs 'fn violation() { println!("bad"); }'
+expect_rejected src/application/mod.rs 'use crate::tui;'
 echo "architecture negative checks OK"

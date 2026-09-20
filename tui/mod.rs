@@ -102,7 +102,7 @@ impl Page {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum StartPage {
+pub(crate) enum StartPage {
     Dashboard,
     Setup,
 }
@@ -607,7 +607,7 @@ enum Action {
 }
 
 #[allow(clippy::cognitive_complexity)]
-pub(super) async fn run(
+pub(crate) async fn run(
     start_page: StartPage,
     installed_cli_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {
