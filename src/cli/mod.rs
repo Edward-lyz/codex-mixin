@@ -59,7 +59,9 @@ use providers::{
     set_provider_enabled, test_provider, update_provider,
 };
 use service::{init_tracing, logs, restart, start, stop};
-use status::{export_config, models, probe_web_search, quota, show_config, status, usage};
+use status::{
+    export_config, import_config, models, probe_web_search, quota, show_config, status, usage,
+};
 
 fn progress_is_interactive() -> bool {
     io::stdout().is_terminal()
@@ -576,12 +578,18 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Quota { json, provider } => quota(json, provider.as_deref()).await,
         Command::Usage { json, days } => usage(json, days).await,
         Command::Config {
+            command,
             json,
             scope,
             export,
-        } => match export {
-            Some(path) => export_config(&path),
-            None => show_config(json, scope),
+        } => match (command, export) {
+            (Some(ConfigCommand::Export { path }), None) => export_config(&path),
+            (Some(ConfigCommand::Import { path }), None) => import_config(&path),
+            (None, Some(path)) => export_config(&path),
+            (None, None) => show_config(json, scope),
+            (Some(_), Some(_)) => {
+                anyhow::bail!("legacy --export cannot be combined with a config subcommand")
+            }
         },
         Command::Start {
             bind,

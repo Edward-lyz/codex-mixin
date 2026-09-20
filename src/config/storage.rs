@@ -15,6 +15,7 @@ use std::path::PathBuf;
 const CONFIG_ENCRYPTION: &str = "aes-256-gcm";
 const CONFIG_KEY_BYTES: usize = 32;
 const CONFIG_NONCE_BYTES: usize = 12;
+const MAX_CONFIG_BACKUP_BYTES: u64 = 16 * 1024 * 1024;
 
 #[derive(serde::Deserialize, serde::Serialize)]
 struct EncryptedConfig {
@@ -213,30 +214,95 @@ fn save_stored_config_to_path_unlocked(
 }
 
 pub fn export_stored_config(path: &std::path::Path) -> anyhow::Result<()> {
-    let stored_path = std::path::absolute(stored_config_path())?;
+    export_stored_config_from_path(&stored_config_path(), path)
+}
+
+fn export_stored_config_from_path(
+    stored_path: &std::path::Path,
+    path: &std::path::Path,
+) -> anyhow::Result<()> {
+    let stored_path = std::path::absolute(stored_path)?;
+    let path = std::path::absolute(path)?;
     anyhow::ensure!(
         path != stored_path && path != config_key_path(&stored_path)?,
-        "plaintext export cannot replace the encrypted config or its key"
+        "configuration backup cannot replace the encrypted config or its key"
     );
-    let config =
-        load_stored_config()?.ok_or_else(|| anyhow!("provider configuration is missing"))?;
-    let content = serde_json::to_vec_pretty(&config)?;
+    let mut config = load_stored_config_from_path(&stored_path)?
+        .ok_or_else(|| anyhow!("provider configuration is missing"))?;
+    // A persisted listener is machine-local runtime state. Let the target host
+    // ask the OS for an available port instead of importing a likely collision.
+    config.gateway_bind = None;
+    let content =
+        base64::engine::general_purpose::STANDARD.encode(serde_json::to_vec_pretty(&config)?);
     if let Some(parent) = path.parent() {
         fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
     }
+    let file_name = path
+        .file_name()
+        .and_then(|name| name.to_str())
+        .ok_or_else(|| anyhow!("invalid backup filename: {}", path.display()))?;
+    let temporary_path =
+        path.with_file_name(format!("{file_name}.tmp.{}", uuid::Uuid::new_v4().simple()));
     let mut file = fs::OpenOptions::new()
-        .create(true)
-        .truncate(true)
+        .create_new(true)
         .write(true)
-        .open(path)
-        .with_context(|| format!("open plaintext config export {}", path.display()))?;
+        .open(&temporary_path)
+        .with_context(|| format!("open configuration backup {}", temporary_path.display()))?;
     set_private_file_permissions(&file)?;
-    file.write_all(&content)
-        .with_context(|| format!("write plaintext config export {}", path.display()))?;
+    file.write_all(content.as_bytes())
+        .with_context(|| format!("write configuration backup {}", temporary_path.display()))?;
     file.write_all(b"\n")
-        .with_context(|| format!("write plaintext config export {}", path.display()))?;
+        .with_context(|| format!("write configuration backup {}", temporary_path.display()))?;
     file.sync_all()
-        .with_context(|| format!("sync plaintext config export {}", path.display()))
+        .with_context(|| format!("sync configuration backup {}", temporary_path.display()))?;
+    drop(file);
+    if let Err(error) = fs::rename(&temporary_path, &path) {
+        let _ = fs::remove_file(&temporary_path);
+        return Err(error).with_context(|| format!("replace {}", path.display()));
+    }
+    Ok(())
+}
+
+pub fn import_stored_config(path: &std::path::Path) -> anyhow::Result<PathBuf> {
+    let stored_path = stored_config_path();
+    import_stored_config_to_path(path, &stored_path)?;
+    Ok(stored_path)
+}
+
+fn import_stored_config_to_path(
+    path: &std::path::Path,
+    stored_path: &std::path::Path,
+) -> anyhow::Result<()> {
+    let path = std::path::absolute(path)?;
+    let stored_path = std::path::absolute(stored_path)?;
+    anyhow::ensure!(
+        path != stored_path && path != config_key_path(&stored_path)?,
+        "configuration backup must be separate from the encrypted config and its key"
+    );
+    let metadata = fs::metadata(&path)
+        .with_context(|| format!("read configuration backup metadata {}", path.display()))?;
+    anyhow::ensure!(
+        metadata.is_file(),
+        "configuration backup is not a file: {}",
+        path.display()
+    );
+    anyhow::ensure!(
+        metadata.len() <= MAX_CONFIG_BACKUP_BYTES,
+        "configuration backup exceeds {MAX_CONFIG_BACKUP_BYTES} bytes"
+    );
+    let encoded = fs::read_to_string(&path)
+        .with_context(|| format!("read configuration backup {}", path.display()))?;
+    anyhow::ensure!(!encoded.trim().is_empty(), "configuration backup is empty");
+    let decoded = base64::engine::general_purpose::STANDARD
+        .decode(encoded.trim())
+        .context("decode Base64 configuration backup")?;
+    let text = std::str::from_utf8(&decoded).context("decode configuration backup as UTF-8")?;
+    let config = parse_stored_config(text).context("parse configuration backup")?;
+    anyhow::ensure!(
+        !config.providers.is_empty(),
+        "configuration backup has no providers"
+    );
+    save_stored_config_to_path(&stored_path, &config)
 }
 
 fn config_key_path(path: &std::path::Path) -> anyhow::Result<PathBuf> {
@@ -393,4 +459,76 @@ fn set_private_file_permissions(file: &fs::File) -> anyhow::Result<()> {
         file.set_permissions(fs::Permissions::from_mode(0o600))?;
     }
     Ok(())
+}
+
+#[cfg(test)]
+mod backup_tests {
+    use super::*;
+
+    fn backup_config() -> StoredGatewayConfig {
+        StoredGatewayConfig {
+            gateway_bind: Some("127.0.0.1:18787".to_owned()),
+            gateway_api_key: Some("gateway-secret".to_owned()),
+            providers: vec![crate::provider::open_code_go_provider(
+                "opencode-go",
+                "provider-secret",
+            )],
+            ..StoredGatewayConfig::default()
+        }
+    }
+
+    #[test]
+    fn base64_backup_round_trips_without_machine_local_bind() {
+        let directory = tempfile::tempdir().unwrap();
+        let source = directory.path().join("source.json");
+        let backup = directory.path().join("backup.b64");
+        let destination = directory.path().join("destination.json");
+        save_stored_config_to_path(&source, &backup_config()).unwrap();
+
+        export_stored_config_from_path(&source, &backup).unwrap();
+
+        let encoded = fs::read_to_string(&backup).unwrap();
+        assert!(!encoded.contains("gateway-secret"));
+        assert!(!encoded.contains("provider-secret"));
+        #[cfg(unix)]
+        {
+            use std::os::unix::fs::PermissionsExt;
+            assert_eq!(
+                fs::metadata(&backup).unwrap().permissions().mode() & 0o777,
+                0o600
+            );
+        }
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(encoded.trim())
+            .unwrap();
+        let exported: StoredGatewayConfig = serde_json::from_slice(&decoded).unwrap();
+        assert_eq!(exported.gateway_bind, None);
+        assert_eq!(exported.gateway_api_key.as_deref(), Some("gateway-secret"));
+
+        import_stored_config_to_path(&backup, &destination).unwrap();
+
+        let imported = load_stored_config_from_path(&destination).unwrap().unwrap();
+        assert_eq!(imported.gateway_bind, None);
+        assert_eq!(imported.gateway_api_key.as_deref(), Some("gateway-secret"));
+        assert_eq!(imported.providers[0].auth.api_key, "provider-secret");
+    }
+
+    #[test]
+    fn invalid_backup_does_not_replace_existing_configuration() {
+        let directory = tempfile::tempdir().unwrap();
+        let backup = directory.path().join("invalid.b64");
+        let destination = directory.path().join("config.json");
+        save_stored_config_to_path(&destination, &backup_config()).unwrap();
+        fs::write(&backup, "not base64").unwrap();
+
+        let error = import_stored_config_to_path(&backup, &destination).unwrap_err();
+
+        assert!(
+            error
+                .to_string()
+                .contains("decode Base64 configuration backup")
+        );
+        let stored = load_stored_config_from_path(&destination).unwrap().unwrap();
+        assert_eq!(stored.gateway_api_key.as_deref(), Some("gateway-secret"));
+    }
 }

@@ -28,6 +28,12 @@ fn user_facing_command_groups_parse() {
     assert!(Cli::try_parse_from(["codex-mixin", "connect", "claude"]).is_ok());
     assert!(Cli::try_parse_from(["codex-mixin", "connect", "dsh"]).is_ok());
     assert!(
+        Cli::try_parse_from(["codex-mixin", "config", "export", "/tmp/mixin-backup.b64"]).is_ok()
+    );
+    assert!(
+        Cli::try_parse_from(["codex-mixin", "config", "import", "/tmp/mixin-backup.b64"]).is_ok()
+    );
+    assert!(
         Cli::try_parse_from([
             "codex-mixin",
             "connect",
@@ -107,7 +113,9 @@ fn top_level_help_only_lists_user_facing_commands() {
     Cli::command().write_long_help(&mut help).unwrap();
     let help = String::from_utf8(help).unwrap();
 
-    for command in ["setup", "provider", "service", "connect", "info", "doctor"] {
+    for command in [
+        "setup", "provider", "service", "connect", "config", "info", "doctor",
+    ] {
         assert!(help.contains(command), "missing {command} in help:\n{help}");
     }
     for legacy_command in ["install-codex", "serve", "migrate-history", "benchmark"] {

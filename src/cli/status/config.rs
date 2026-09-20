@@ -1,7 +1,8 @@
 use std::path::Path;
 
 use codex_mixin::config::{
-    GatewayConfig, export_stored_config, load_stored_config, stored_config_path,
+    GatewayConfig, export_stored_config, import_stored_config, load_stored_config,
+    stored_config_path,
 };
 
 use super::super::ConfigScope;
@@ -53,7 +54,17 @@ pub(crate) fn show_config(json_output: bool, scope: ConfigScope) -> anyhow::Resu
 pub(crate) fn export_config(path: &Path) -> anyhow::Result<()> {
     let path = std::path::absolute(path)?;
     export_stored_config(&path)?;
-    println!("plaintext configuration exported: {}", path.display());
+    println!("Base64 configuration backup exported: {}", path.display());
+    println!("warning: Base64 is not encryption; the backup contains provider credentials");
+    Ok(())
+}
+
+pub(crate) fn import_config(path: &Path) -> anyhow::Result<()> {
+    let path = std::path::absolute(path)?;
+    let stored_path = import_stored_config(&path)?;
+    println!("Base64 configuration backup imported: {}", path.display());
+    println!("encrypted configuration stored: {}", stored_path.display());
+    println!("next: codex-mixin service restart");
     Ok(())
 }
 

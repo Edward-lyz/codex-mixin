@@ -146,13 +146,15 @@ pub(super) enum Command {
         #[arg(long)]
         days: Option<u64>,
     },
-    #[command(hide = true)]
+    /// Back up, restore, or inspect the Codex Mixin configuration.
     Config {
+        #[command(subcommand)]
+        command: Option<ConfigCommand>,
         #[arg(long)]
         json: bool,
         #[arg(long, value_enum, default_value_t = ConfigScope::Effective)]
         scope: ConfigScope,
-        #[arg(long, value_name = "PATH")]
+        #[arg(long, value_name = "PATH", hide = true)]
         export: Option<PathBuf>,
     },
     #[command(hide = true)]
@@ -307,6 +309,14 @@ pub(super) enum ServiceCommand {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub(super) enum ConfigCommand {
+    /// Export a portable Base64 backup containing provider credentials.
+    Export { path: PathBuf },
+    /// Replace the current configuration from a Base64 backup.
+    Import { path: PathBuf },
 }
 
 #[derive(Debug, Subcommand)]

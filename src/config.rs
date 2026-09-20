@@ -12,7 +12,7 @@ mod migration;
 mod storage;
 pub use storage::{
     delete_stored_config, ensure_compaction_secret, ensure_gateway_client_key,
-    export_stored_config, gateway_client_key_exists, load_stored_config,
+    export_stored_config, gateway_client_key_exists, import_stored_config, load_stored_config,
     load_stored_config_from_path, mutate_stored_config, mutate_stored_config_at_path,
     revoke_gateway_client_key, save_stored_config, save_stored_config_to_path, stored_config_path,
 };

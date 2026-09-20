@@ -185,19 +185,60 @@ extension AppDelegate {
         }
     }
 
-    @objc func exportPlaintextConfig() {
+    @objc func exportConfigBackup() {
         let panel = NSSavePanel()
-        panel.title = "导出明文配置"
-        panel.message = "导出的 JSON 包含 API Key、AWS 凭据和本地访问密钥，请妥善保管。"
-        panel.nameFieldStringValue = "codex-mixin-config.json"
-        panel.allowedContentTypes = [.json]
+        panel.title = "导出配置备份"
+        panel.message = "备份使用 Base64 编码但未加密，包含 API Key、AWS 凭据和本地访问密钥，请妥善保管。"
+        panel.nameFieldStringValue = "codex-mixin-config.b64"
+        panel.allowedContentTypes = [UTType(filenameExtension: "b64") ?? .data]
         guard panel.runModal() == .OK, let destination = panel.url else { return }
         Task { @MainActor in
             do {
-                _ = try await runGateway(["config", "--export", destination.path])
-                showAlert(title: "配置已导出", message: "明文配置已保存到 \(destination.path)，文件权限为仅当前用户可读写。")
+                _ = try await runGateway(["config", "export", destination.path])
+                showAlert(
+                    title: "配置备份已导出",
+                    message: "Base64 备份已保存到 \(destination.path)，文件权限为仅当前用户可读写。Base64 不是加密，请勿公开分享。"
+                )
             } catch {
-                showAlert(title: "导出配置失败", message: String(describing: error))
+                showAlert(title: "导出配置备份失败", message: String(describing: error))
+            }
+        }
+    }
+
+    @objc func importConfigBackup() {
+        let panel = NSOpenPanel()
+        panel.title = "导入配置备份"
+        panel.message = "选择 Codex Mixin 导出的 Base64 配置备份。"
+        panel.allowedContentTypes = [UTType(filenameExtension: "b64") ?? .data]
+        panel.allowsMultipleSelection = false
+        panel.canChooseDirectories = false
+        guard panel.runModal() == .OK, let source = panel.url else { return }
+        guard confirm(
+            title: "导入配置备份？",
+            message: "这会替换当前 Provider、模型选择、Fusion 和凭据配置，然后重启本地网关。"
+        ) else { return }
+
+        serviceBusy = true
+        Task { @MainActor in
+            var imported = false
+            defer { serviceBusy = false }
+            do {
+                _ = try await runGateway(["config", "import", source.path])
+                imported = true
+                try await restartGatewayProcess()
+                let status = try await waitForGatewayStatus()
+                applyGatewayStatus(status)
+                await refreshStatusNow()
+                showAlert(
+                    title: "配置备份已导入",
+                    message: "配置已安全写入并应用，本地网关已重启。"
+                )
+            } catch {
+                showAlert(
+                    title: imported ? "配置已导入，但应用失败" : "导入配置备份失败",
+                    message: String(describing: error)
+                )
+                await refreshStatusNow()
             }
         }
     }
