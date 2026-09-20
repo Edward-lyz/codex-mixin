@@ -113,7 +113,7 @@ pub(in crate::cli) fn codex_command(path: &Path) -> ProcessCommand {
     let extension = path
         .extension()
         .and_then(|value| value.to_str())
-        .map(|value| value.to_ascii_lowercase());
+        .map(str::to_ascii_lowercase);
     let mut command = match extension.as_deref() {
         Some("cmd" | "bat") => {
             // `.cmd`/`.bat` must run through cmd.exe. Pass the script path as a
@@ -135,6 +135,6 @@ pub(in crate::cli) fn codex_command(path: &Path) -> ProcessCommand {
     };
     // Never let a background codex child (app-server/catalog/validate) pop a
     // console window when the gateway itself is windowless.
-    codex_mixin::platform::hide_console(&mut command);
+    codex_mixin::platform::prepare_background_command(&mut command);
     command
 }

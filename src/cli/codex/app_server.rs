@@ -1,6 +1,6 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Child, Command as ProcessCommand, Stdio};
+use std::process::{Child, Stdio};
 use std::time::Duration;
 
 use anyhow::Context;
@@ -33,24 +33,7 @@ pub(in crate::cli) fn request_app_server(
     let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<()>();
     let watchdog = std::thread::spawn(move || {
         if cancel_rx.recv_timeout(timeout).is_err() {
-            #[cfg(windows)]
-            {
-                let mut command = ProcessCommand::new("taskkill");
-                command
-                    .args(["/PID", &pid.to_string(), "/T", "/F"])
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null());
-                codex_mixin::platform::hide_console(&mut command);
-                let _ = command.status();
-            }
-            #[cfg(not(windows))]
-            {
-                let _ = ProcessCommand::new("kill")
-                    .args(["-9", &pid.to_string()])
-                    .stdout(Stdio::null())
-                    .stderr(Stdio::null())
-                    .status();
-            }
+            let _ = codex_mixin::platform::force_kill_process_tree(pid);
         }
     });
     let reply = exchange_app_server(&mut child, method, params, client_name);

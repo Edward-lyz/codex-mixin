@@ -18,6 +18,7 @@
 | `protocol` | 请求转换、SSE 编解码、事件映射、协议数据 | 纯数据，不发送网络 |
 | `config` | 配置模型、迁移、校验、持久化 | 锁与原子替换 |
 | `clients`（新增） | 各编码客户端配置渲染、安装、同步、卸载 | 不依赖 server |
+| `platform` | 路径、进程生命周期和私有文件权限的 OS adapter | 标准库与平台命令 |
 | `macos` / `tui` / `windows` | 平台壳层；渲染 UI 并调用稳定 CLI contract | CLI 子进程及公开 core 类型 |
 
 依赖方向是单向的：`cli -> application -> provider/config/catalog/clients`，

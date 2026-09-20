@@ -62,27 +62,13 @@ pub fn write_owner_only(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
     set_owner_only(path)
 }
 
-pub fn set_owner_only(_path: &Path) -> anyhow::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = fs::metadata(_path)?.permissions();
-        permissions.set_mode(0o600);
-        fs::set_permissions(_path, permissions)?;
-    }
-    Ok(())
+pub fn set_owner_only(path: &Path) -> anyhow::Result<()> {
+    crate::platform::restrict_owner_only_file(path)
 }
 
 pub fn ensure_owner_only_dir(path: &Path) -> anyhow::Result<()> {
     fs::create_dir_all(path)?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        let mut permissions = fs::metadata(path)?.permissions();
-        permissions.set_mode(0o700);
-        fs::set_permissions(path, permissions)?;
-    }
-    Ok(())
+    crate::platform::restrict_owner_only_dir(path)
 }
 
 #[cfg(test)]

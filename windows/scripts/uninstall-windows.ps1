@@ -34,17 +34,9 @@ if (Test-Path -LiteralPath $shortcutPath) {
   Remove-Item -LiteralPath $shortcutPath -Force
 }
 & reg.exe delete $runKey /v CodexMixin /f | Out-Null
+& (Join-Path $resolvedInstallRoot "update-user-path.ps1") -InstallRoot $resolvedInstallRoot -Remove
 if (Test-Path -LiteralPath $resolvedInstallRoot) {
   Remove-Item -LiteralPath $resolvedInstallRoot -Recurse -Force
-}
-
-# Remove the install directory from the user's PATH if the installer added it.
-$userPath = [Environment]::GetEnvironmentVariable("Path", "User")
-if ($userPath) {
-  $target = $resolvedInstallRoot.TrimEnd("\")
-  $kept = $userPath.Split(";", [StringSplitOptions]::RemoveEmptyEntries) |
-    Where-Object { $_.TrimEnd("\") -ne $target }
-  [Environment]::SetEnvironmentVariable("Path", ($kept -join ";"), "User")
 }
 
 Write-Host "Codex Mixin binaries and shortcut removed."

@@ -2,9 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 #[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
-#[cfg(unix)]
 use crate::cli::atomic_file::*;
 use crate::cli::update::{cli_release_target, release_version_from_redirect, replace_executable};
 use crate::cli::{runtime::*, service::*};

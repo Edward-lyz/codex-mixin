@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use codex_mixin::provider::ProviderPreset;
 
+use super::InteractiveStart;
 use super::codex::InstallCodexOptions;
-use super::tui;
 
 #[derive(Debug, Parser)]
 #[command(

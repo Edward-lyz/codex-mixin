@@ -99,6 +99,12 @@ Section "Install"
   SetOutPath "$INSTDIR"
   File /r "${STAGING}\*.*"
 
+  ClearErrors
+  ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\update-user-path.ps1" -InstallRoot "$INSTDIR"' $0
+  ${If} $0 != 0
+    Abort "Failed to add Codex Mixin to the current user PATH (exit $0)."
+  ${EndIf}
+
   CreateShortCut "$SMPROGRAMS\${APPNAME}.lnk" "$INSTDIR\${UI_EXE}" "" "$INSTDIR\${UI_EXE}" 0
 
   ; Ship the pre-signed uninstaller when provided; otherwise generate it here.
@@ -120,6 +126,7 @@ SectionEnd
 
 Section "Uninstall"
   Call un.StopRunning
+  ExecWait '"$SYSDIR\WindowsPowerShell\v1.0\powershell.exe" -NoProfile -NonInteractive -ExecutionPolicy Bypass -File "$INSTDIR\update-user-path.ps1" -InstallRoot "$INSTDIR" -Remove'
   Delete "$SMPROGRAMS\${APPNAME}.lnk"
   DeleteRegValue HKCU "Software\Microsoft\Windows\CurrentVersion\Run" "CodexMixin"
   RMDir /r "$INSTDIR"

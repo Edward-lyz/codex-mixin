@@ -21,67 +21,41 @@ impl UpstreamAccess {
             .filter(|provider| provider.definition().enabled && provider.uses_ducx_loopback())
             .collect::<Vec<_>>();
         for provider in ducx_providers {
-            if provider.baidu_code_report() {
-                let provider_id = provider.id().to_owned();
-                tracing::info!(
-                    provider_id = %provider_id,
-                    "starting DUCX data-report token warmup"
-                );
-                let runtime = self.ducx_runtime_for(provider).await?;
-                match runtime
-                    .report_client_token(self.config.request_timeout)
-                    .await
-                {
-                    Ok(token) => {
-                        tracing::info!(
-                            provider_id = %provider_id,
-                            "DUCX data-report token warmup captured a token"
-                        );
-                        let result = tokio::task::spawn_blocking(move || {
-                            crate::config::mutate_stored_config(|config| {
-                                let stored_provider = config
-                                    .providers
-                                    .iter_mut()
-                                    .find(|candidate| candidate.id == provider_id)
-                                    .with_context(|| {
-                                        format!(
-                                            "DUCX reporting provider disappeared: {provider_id}"
-                                        )
-                                    })?;
-                                anyhow::ensure!(
-                                    stored_provider.enabled
-                                        && stored_provider.request_policy.baidu_code_report
-                                        && stored_provider
-                                            .request_policy
-                                            .effective_baidu_auth_bridge()
-                                            == crate::provider::BaiduAuthBridge::DucxLoopback,
-                                    "DUCX reporting provider changed during warmup: {provider_id}"
-                                );
-                                stored_provider.request_policy.data_report_client_token =
-                                    Some(token);
-                                Ok(())
-                            })
-                        })
-                        .await
-                        .context("join DUCX report token persistence task");
-                        if let Err(error) = result.and_then(|inner| inner) {
-                            tracing::error!(
-                                error = %format!("{error:#}"),
-                                "failed to persist DUCX data-report client token"
-                            );
-                        }
-                    }
-                    Err(error) => {
-                        tracing::error!(
-                            error = %format!("{error:#}"),
-                            "failed to warm up DUCX data-report client token"
-                        );
-                    }
-                }
-            }
+            self.prewarm_ducx_report(provider).await?;
             self.ducx_native_headers(provider).await?;
         }
         Ok(())
+    }
+
+    async fn prewarm_ducx_report(&self, provider: &ProviderRuntime) -> Result<(), GatewayError> {
+        if !provider.baidu_code_report() {
+            return Ok(());
+        }
+        let provider_id = provider.id().to_owned();
+        tracing::info!(provider_id = %provider_id, "starting DUCX data-report token warmup");
+        let runtime = self.ducx_runtime_for(provider).await?;
+        let Some(token) = self.capture_report_token(&runtime).await else {
+            return Ok(());
+        };
+        tracing::info!(provider_id = %provider_id, "DUCX data-report token warmup captured a token");
+        persist_report_token_async(provider_id, token).await;
+        Ok(())
+    }
+
+    async fn capture_report_token(&self, runtime: &DucxRuntime) -> Option<String> {
+        match runtime
+            .report_client_token(self.config.request_timeout)
+            .await
+        {
+            Ok(token) => Some(token),
+            Err(error) => {
+                tracing::error!(
+                    error = %format!("{error:#}"),
+                    "failed to warm up DUCX data-report client token"
+                );
+                None
+            }
+        }
     }
 
     async fn ducx_runtime_for(
@@ -144,6 +118,38 @@ impl UpstreamAccess {
             Ok(None)
         }
     }
+}
+
+async fn persist_report_token_async(provider_id: String, token: String) {
+    let result =
+        tokio::task::spawn_blocking(move || persist_ducx_report_token(&provider_id, token))
+            .await
+            .context("join DUCX report token persistence task");
+    if let Err(error) = result.and_then(|inner| inner) {
+        tracing::error!(
+            error = %format!("{error:#}"),
+            "failed to persist DUCX data-report client token"
+        );
+    }
+}
+
+fn persist_ducx_report_token(provider_id: &str, token: String) -> anyhow::Result<()> {
+    crate::config::mutate_stored_config(|config| {
+        let stored_provider = config
+            .providers
+            .iter_mut()
+            .find(|candidate| candidate.id == provider_id)
+            .with_context(|| format!("DUCX reporting provider disappeared: {provider_id}"))?;
+        anyhow::ensure!(
+            stored_provider.enabled
+                && stored_provider.request_policy.baidu_code_report
+                && stored_provider.request_policy.effective_baidu_auth_bridge()
+                    == crate::provider::BaiduAuthBridge::DucxLoopback,
+            "DUCX reporting provider changed during warmup: {provider_id}"
+        );
+        stored_provider.request_policy.data_report_client_token = Some(token);
+        Ok(())
+    })
 }
 
 #[cfg(all(test, unix))]

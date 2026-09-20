@@ -10,14 +10,26 @@ jobs:
   rust:
     runs-on: windows-latest
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          components: rustfmt
+          components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - run: cargo fmt --all -- --check
-      - run: cargo check --locked
+      - name: Run strict Clippy
+        shell: bash
+        run: |
+          cargo clippy --locked --all-targets -- \
+            -D clippy::cognitive_complexity \
+            -D clippy::redundant_closure_for_method_calls \
+            -D clippy::redundant_pattern_matching \
+            -D warnings
+      - name: Check architecture boundaries
+        shell: bash
+        run: |
+          ./scripts/check_arch.sh
+          ./scripts/test_check_arch.sh
       - run: cargo test --locked --all-targets
       - run: cargo build --locked --release
 
@@ -27,7 +39,7 @@ jobs:
       run:
         working-directory: windows
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: subosito/flutter-action@v2
         with:
           channel: stable
@@ -42,7 +54,7 @@ jobs:
     runs-on: windows-latest
     needs: [rust, flutter]
     steps:
-      - uses: actions/checkout@v4
+      - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
@@ -56,33 +68,36 @@ jobs:
         shell: pwsh
       # Builds the Rust CLI + Flutter UI, assembles dist/codex-mixin-windows,
       # and produces the standard installer dist/CodexMixin-Setup.exe.
-      - run: powershell -ExecutionPolicy Bypass -File windows/scripts/package-windows.ps1
+      - name: Package and optionally sign Windows artifacts
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $options = @{}
+          $pfx = $null
+          if ($env:WINDOWS_CERT_PFX_BASE64) {
+            $pfx = Join-Path $env:RUNNER_TEMP 'codex-mixin.pfx'
+            [System.IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+            $options = @{
+              Sign = $true
+              CertificatePath = $pfx
+              CertificatePassword = $env:WINDOWS_CERT_PASSWORD
+            }
+          }
+          try {
+            & windows/scripts/package-windows.ps1 @options
+          } finally {
+            if ($pfx) { Remove-Item $pfx -Force -ErrorAction SilentlyContinue }
+          }
       # Fail the job if either executable is missing from the package.
       - shell: pwsh
         run: |
           if (-not (Test-Path 'dist/codex-mixin-windows/codex-mixin.exe')) { throw 'codex-mixin.exe missing from package' }
           if (-not (Test-Path 'dist/codex-mixin-windows/codex_mixin_ui.exe')) { throw 'codex_mixin_ui.exe missing from package' }
-      # Authenticode signing requires a certificate provided via repository
-      # secrets; it is skipped automatically when the secret is absent so forks
-      # and PRs still build. Provide WINDOWS_CERT_PFX_BASE64 + WINDOWS_CERT_PASSWORD
-      # to enable signed release artifacts.
-      - name: Sign executables
-        if: ${{ secrets.WINDOWS_CERT_PFX_BASE64 != '' }}
-        env:
-          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
-          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-        shell: pwsh
-        run: |
-          $pfx = [System.IO.Path]::Combine($env:RUNNER_TEMP, 'codex-mixin.pfx')
-          [System.IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
-          $signtool = Get-ChildItem 'C:/Program Files (x86)/Windows Kits/10/bin' -Recurse -Filter signtool.exe |
-            Where-Object { $_.FullName -like '*x64*' } | Select-Object -First 1
-          foreach ($exe in @('dist/codex-mixin-windows/codex-mixin.exe', 'dist/codex-mixin-windows/codex_mixin_ui.exe')) {
-            & $signtool.FullName sign /f $pfx /p $env:WINDOWS_CERT_PASSWORD /fd SHA256 /tr http://timestamp.digicert.com /td SHA256 $exe
-            & $signtool.FullName verify /pa $exe
-          }
-          Remove-Item $pfx -Force
-      - uses: actions/upload-artifact@v4
+          if (-not (Test-Path 'dist/CodexMixin-Setup.exe')) { throw 'Windows installer missing from package' }
+          if (-not (Test-Path 'dist/CodexMixin-Windows.zip')) { throw 'Windows portable archive missing from package' }
+      - uses: actions/upload-artifact@v7
         with:
           name: codex-mixin-windows
           path: dist

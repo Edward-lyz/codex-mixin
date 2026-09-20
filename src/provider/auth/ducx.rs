@@ -103,11 +103,7 @@ impl DucxRuntime {
         let mut command = Command::new(&executable);
         #[cfg(unix)]
         command.process_group(0);
-        // CREATE_NO_WINDOW: the managed DUCX child is a console app; without
-        // this it pops a console window on every warmup (the gateway has no
-        // console to inherit once detached).
-        #[cfg(windows)]
-        command.creation_flags(0x0800_0000);
+        crate::platform::prepare_background_tokio_command(&mut command);
         let mut child = command
             .arg("--user-prompt-submit")
             .env("HOME", &self.home)
@@ -228,8 +224,7 @@ impl DucxRuntime {
         command.process_group(0);
         // CREATE_NO_WINDOW: keep the DUCX header-capture child from popping a
         // console window on every request that needs Baidu auth.
-        #[cfg(windows)]
-        command.creation_flags(0x0800_0000);
+        crate::platform::prepare_background_tokio_command(&mut command);
         let mut child = command
             .args([
                 "-c",
@@ -278,13 +273,7 @@ async fn terminate_process_group(process_group_id: Option<u32>, child: &mut toki
     if let Some(pid) = process_group_id
         && child.try_wait().ok().flatten().is_none()
     {
-        let _ = Command::new("taskkill")
-            .args(["/PID", &pid.to_string(), "/T", "/F"])
-            .stdout(Stdio::null())
-            .stderr(Stdio::null())
-            .creation_flags(0x0800_0000)
-            .status()
-            .await;
+        let _ = crate::platform::force_kill_process_tree_async(pid).await;
     }
     let _ = child.kill().await;
     let _ = child.wait().await;

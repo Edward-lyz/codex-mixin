@@ -6,9 +6,6 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
-
 use codex_mixin::config::GatewayConfig;
 
 use super::super::runtime::{
@@ -159,19 +156,7 @@ pub(crate) fn start_daemon(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(unix)]
-    command.process_group(0);
-    #[cfg(windows)]
-    {
-        use std::os::windows::process::CommandExt;
-        // Detach the gateway from the launching console and process group, the
-        // Windows counterpart of the unix `process_group(0)` above. Without this
-        // the child inherits the launcher's console, so closing the UI or shell
-        // (or a Ctrl-C in it) can tear the gateway down. stdio is already null.
-        const DETACHED_PROCESS: u32 = 0x0000_0008;
-        const CREATE_NEW_PROCESS_GROUP: u32 = 0x0000_0200;
-        command.creation_flags(DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP);
-    }
+    codex_mixin::platform::prepare_daemon_command(&mut command);
     let child = command.spawn()?;
     let pid = child.id();
     let mut actual_bind = None;

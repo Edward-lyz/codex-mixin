@@ -40,7 +40,7 @@ check_no_match() {
 CORE=(
     src/gateway src/upstream src/provider src/protocol src/fusion
     src/catalog.rs src/catalog src/config.rs src/config src/benchmark
-    src/web_search src/images src/application src/clients
+    src/web_search src/images src/application src/clients src/platform
 )
 PROTO_CONVERT=(
     src/protocol/convert src/protocol/sse.rs src/protocol/openai_chat

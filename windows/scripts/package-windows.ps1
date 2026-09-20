@@ -3,14 +3,19 @@ param(
   [string]$Output = "$(Join-Path (Get-Location) 'dist\codex-mixin-windows')",
   # Path of the produced standard Windows installer (.exe).
   [string]$Installer = "$(Join-Path (Get-Location) 'dist\CodexMixin-Setup.exe')",
-  # 4-part installer version (x.x.x.x).
-  [string]$Version = "1.0.0.0",
+  # Portable zip containing the assembled app directory.
+  [string]$PortableArchive = "$(Join-Path (Get-Location) 'dist\CodexMixin-Windows.zip')",
+  # Product version. Defaults to the Rust package version.
+  [string]$Version = "",
   # Toggle Authenticode signing of the executables and the installer.
   [switch]$Sign,
   # Baidu signing tool and its options (only used when -Sign is set).
   [string]$SignTool = 'D:\work\Packet\sign\sign.exe',
   [int]$SignCert = 1,
   [string]$SignSha = 'sha256',
+  # Standard Authenticode certificate used by GitHub Actions releases.
+  [string]$CertificatePath = '',
+  [string]$CertificatePassword = '',
   # NSIS makensis.exe; auto-detected under Program Files when not provided.
   [string]$NsisPath = ''
 )
@@ -18,10 +23,30 @@ param(
 $ErrorActionPreference = "Stop"
 $repo = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
+if ([string]::IsNullOrWhiteSpace($Version)) {
+  $metadata = cargo metadata --format-version 1 --no-deps --manifest-path (Join-Path $repo "Cargo.toml") | ConvertFrom-Json
+  $Version = ($metadata.packages | Where-Object { $_.name -eq "codex-mixin" } | Select-Object -First 1).version
+}
+$numericVersion = ($Version -split "-", 2)[0]
+if ($numericVersion -notmatch '^\d+\.\d+\.\d+$') {
+  throw "Version must start with a three-part numeric semantic version: $Version"
+}
+$installerVersion = "$numericVersion.0"
 
 function Invoke-Sign {
   param([string]$Path)
   if (-not $Sign) { return }
+  if ($CertificatePath) {
+    if (-not (Test-Path -LiteralPath $CertificatePath)) { throw "Signing certificate not found: $CertificatePath" }
+    $signtool = Get-ChildItem 'C:/Program Files (x86)/Windows Kits/10/bin' -Recurse -Filter signtool.exe |
+      Where-Object { $_.FullName -like '*x64*' } | Select-Object -First 1
+    if (-not $signtool) { throw "signtool.exe was not found in the Windows SDK" }
+    & $signtool.FullName sign /f $CertificatePath /p $CertificatePassword /fd SHA256 /tr https://timestamp.digicert.com /td SHA256 $Path
+    if ($LASTEXITCODE -ne 0) { throw "Authenticode signing failed ($LASTEXITCODE): $Path" }
+    & $signtool.FullName verify /pa $Path
+    if ($LASTEXITCODE -ne 0) { throw "Authenticode verification failed ($LASTEXITCODE): $Path" }
+    return
+  }
   if (-not (Test-Path -LiteralPath $SignTool)) { throw "Signing requested but sign tool not found: $SignTool" }
   Write-Host "Signing $Path (cert=$SignCert sha=$SignSha)..."
   & $SignTool -c $SignCert -s $SignSha $Path
@@ -55,7 +80,7 @@ try {
     if ($LASTEXITCODE -ne 0) { throw "flutter analyze failed" }
     flutter test
     if ($LASTEXITCODE -ne 0) { throw "flutter test failed" }
-    flutter build windows --release
+    flutter build windows --release --build-name $numericVersion --build-number 1 --dart-define "CODEX_MIXIN_VERSION=$Version"
     if ($LASTEXITCODE -ne 0) { throw "flutter build failed" }
   } finally { Pop-Location }
 } finally { Pop-Location }
@@ -65,24 +90,14 @@ New-Item -ItemType Directory -Path $Output | Out-Null
 
 Copy-Item -LiteralPath (Join-Path $repo "target\release\codex-mixin.exe") -Destination $Output
 Copy-Item -Path (Join-Path $uiPublish "*") -Destination $Output -Recurse -Force
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install-windows.ps1") -Destination $Output
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "uninstall-windows.ps1") -Destination $Output
+Copy-Item -LiteralPath (Join-Path $PSScriptRoot "update-user-path.ps1") -Destination $Output
 
 $cliExe = Join-Path $Output "codex-mixin.exe"
 $uiExe = Join-Path $Output "codex_mixin_ui.exe"
 if (-not (Test-Path -LiteralPath $uiExe)) { throw "Windows UI executable was not included in the package" }
 if (-not (Test-Path -LiteralPath $cliExe)) { throw "Rust CLI executable was not included in the package" }
-
-# Bundle bzip2.exe (plus any DLLs it needs) so Windows tar.exe can open the
-# bzip2-compressed DUCX archive at runtime without Git Bash/MSYS2. Drop a
-# self-contained bzip2.exe under windows/vendor/; its whole folder is copied
-# next to the app executables and located via PATH by
-# src/cli/ducx_setup_windows.rs.
-$vendor = Join-Path $PSScriptRoot "..\vendor"
-if (Test-Path -LiteralPath $vendor) {
-  Copy-Item -Path (Join-Path $vendor "*") -Destination $Output -Recurse -Force
-}
-if (-not (Test-Path -LiteralPath (Join-Path $Output "bzip2.exe"))) {
-  throw "bzip2.exe missing from the package: place a self-contained bzip2.exe under windows/vendor/ (Windows tar.exe needs it to extract the DUCX .tar.bz2)"
-}
 
 # Sign every shipped executable and library before packaging so no bundled
 # binary is left unsigned (Flutter ships flutter_windows.dll and one DLL per
@@ -107,7 +122,7 @@ New-Item -ItemType Directory -Force -Path $installerDir | Out-Null
 if (Test-Path -LiteralPath $Installer) { Remove-Item -LiteralPath $Installer -Force }
 
 $nsisArgs = @(
-  "/DVERSION=$Version",
+  "/DVERSION=$installerVersion",
   "/DSTAGING=$Output",
   "/DOUTFILE=$Installer"
 )
@@ -124,7 +139,7 @@ if ($Sign) {
   if (Test-Path -LiteralPath $uninstallerOut) { Remove-Item -LiteralPath $uninstallerOut -Force }
   if (Test-Path -LiteralPath $genSetup) { Remove-Item -LiteralPath $genSetup -Force }
   $genArgs = @(
-    "/DVERSION=$Version",
+    "/DVERSION=$installerVersion",
     "/DSTAGING=$Output",
     "/DOUTFILE=$genSetup",
     "/DGEN_UNINSTALLER=1",
@@ -150,10 +165,17 @@ if ($presignedUninstaller) { Remove-Item -LiteralPath $presignedUninstaller -For
 # Sign the installer itself last so its embedded files stay untouched.
 Invoke-Sign -Path $Installer
 
+Write-Host "== Building portable archive: $PortableArchive =="
+$portableDir = Split-Path -Parent $PortableArchive
+New-Item -ItemType Directory -Force -Path $portableDir | Out-Null
+if (Test-Path -LiteralPath $PortableArchive) { Remove-Item -LiteralPath $PortableArchive -Force }
+Compress-Archive -Path (Join-Path $Output "*") -DestinationPath $PortableArchive -CompressionLevel Optimal
+
 Write-Host ""
 Write-Host "Done."
 Write-Host "  App directory : $Output"
 Write-Host "  Installer     : $Installer"
+Write-Host "  Portable      : $PortableArchive"
 Write-Host ("  Signed        : {0}" -f ($Sign.IsPresent))
 Write-Host "Users run the installer; it installs to %ProgramFiles%\Codex Mixin, adds a Start Menu shortcut and an Add/Remove Programs entry."
 

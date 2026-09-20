@@ -167,34 +167,27 @@ pub(super) async fn stage<T>(
 mod args;
 use args::*;
 
-/// Prefix marking an argument value that should be resolved from an environment
-/// variable instead of being read verbatim.
-#[cfg(windows)]
+/// Prefix marking a secret argument that is supplied through the child process
+/// environment instead of its observable command line.
 const SECRET_ENV_PREFIX: &str = "@env:";
 
-/// Expand `@env:NAME` argument values to the referenced environment variable so
-/// the Windows UI can pass credentials without exposing them on the process
-/// command line (same-user tooling can read a process command line on Windows).
-/// Windows-only: every other platform parses arguments verbatim, exactly like
-/// the pre-Windows baseline, so this cannot affect Unix/macOS behaviour.
-#[cfg(windows)]
-fn secret_expanded_args() -> Vec<std::ffi::OsString> {
-    std::env::args_os()
-        .map(|arg| {
-            if let Some(value) = arg.to_str()
-                && let Some(name) = value.strip_prefix(SECRET_ENV_PREFIX)
-                && let Some(resolved) = std::env::var_os(name)
-            {
-                return resolved;
-            }
-            arg
-        })
-        .collect()
+fn secret_expanded_args() -> anyhow::Result<Vec<std::ffi::OsString>> {
+    std::env::args_os().map(expand_secret_arg).collect()
 }
 
-#[cfg(not(windows))]
-fn secret_expanded_args() -> Vec<std::ffi::OsString> {
-    std::env::args_os().collect()
+fn expand_secret_arg(arg: std::ffi::OsString) -> anyhow::Result<std::ffi::OsString> {
+    let Some(value) = arg.to_str() else {
+        return Ok(arg);
+    };
+    let Some(name) = value.strip_prefix(SECRET_ENV_PREFIX) else {
+        return Ok(arg);
+    };
+    anyhow::ensure!(
+        !name.is_empty(),
+        "secret environment variable name is empty"
+    );
+    std::env::var_os(name)
+        .ok_or_else(|| anyhow::anyhow!("secret environment variable is not set: {name}"))
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -208,7 +201,11 @@ where
     Launch: FnOnce(InteractiveStart, Option<PathBuf>) -> LaunchFuture,
     LaunchFuture: std::future::Future<Output = anyhow::Result<()>>,
 {
-    let cli = Cli::parse_from(secret_expanded_args());
+    let args = secret_expanded_args().unwrap_or_else(|error| {
+        eprintln!("Error: {error:#}");
+        std::process::exit(2);
+    });
+    let cli = Cli::parse_from(args);
     let print_errors_to_stderr = matches!(&cli.command, Some(Command::ReportReplay { .. }));
     let interactive_start = requested_interactive_start(
         &cli,

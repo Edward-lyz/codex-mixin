@@ -32,27 +32,6 @@ pub(super) async fn ensure_managed_ducx() -> anyhow::Result<PathBuf> {
 }
 
 async fn install_native(install_home: &Path, executable: &Path) -> anyhow::Result<()> {
-    let tar = std::process::Command::new("where.exe")
-        .arg("tar.exe")
-        .output()
-        .context("locate Windows tar.exe")?;
-    ensure!(tar.status.success(), "Windows tar.exe is not available");
-    // Windows tar (bsdtar) has no built-in bzip2 filter; it shells out to an
-    // external `bzip2`. The Windows package ships bzip2.exe next to
-    // codex-mixin.exe, so locate it and expose its directory to the tar child
-    // via PATH. Fail fast (before the large download) when no bzip2 exists at
-    // all, so the user gets an actionable message instead of a tar filter error.
-    let bzip2_dir = bundled_bzip2_dir();
-    let bzip2_on_path = std::process::Command::new("where.exe")
-        .arg("bzip2.exe")
-        .output()
-        .map(|output| output.status.success())
-        .unwrap_or(false);
-    ensure!(
-        bzip2_dir.is_some() || bzip2_on_path,
-        "bzip2 is required to extract the DUCX archive but was not found; \
-         the Windows package must ship bzip2.exe next to codex-mixin.exe"
-    );
     let client = Client::builder()
         .timeout(Duration::from_secs(120))
         .build()
@@ -96,28 +75,18 @@ async fn install_native(install_home: &Path, executable: &Path) -> anyhow::Resul
     let root = install_home.join(".baidu-cx");
     let version_dir = root.join(format!("baidu-cx-windows-amd64-{version}"));
     tokio::fs::create_dir_all(&version_dir).await?;
-    let mut extract = Command::new("tar.exe");
-    extract
-        .args(["-xjf"])
-        .arg(&archive)
-        .arg("-C")
-        .arg(&version_dir);
-    if let Some(dir) = &bzip2_dir {
-        // Prepend the bundled bzip2 directory so tar.exe can spawn bzip2.exe.
-        let existing = std::env::var_os("PATH").unwrap_or_default();
-        let mut entries = vec![dir.clone()];
-        entries.extend(std::env::split_paths(&existing));
-        let joined = std::env::join_paths(entries).context("compose PATH for tar.exe")?;
-        extract.env("PATH", joined);
-    }
-    let status = extract
-        .status()
-        .await
-        .context("extract Windows DUCX archive with tar.exe")?;
-    ensure!(
-        status.success(),
-        "Windows DUCX archive extraction failed; ensure bzip2.exe is bundled next to codex-mixin.exe"
-    );
+    let archive_path = archive.clone();
+    let extract_dir = version_dir.clone();
+    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+        let archive = fs::File::open(&archive_path)
+            .with_context(|| format!("open Windows DUCX archive {}", archive_path.display()))?;
+        let decoder = bzip2::read::BzDecoder::new(archive);
+        tar::Archive::new(decoder)
+            .unpack(&extract_dir)
+            .with_context(|| format!("extract Windows DUCX archive to {}", extract_dir.display()))
+    })
+    .await
+    .context("join Windows DUCX archive extraction")??;
     let active = root.join("baidu-cx");
     if active.exists() {
         tokio::fs::remove_dir_all(&active).await?;
@@ -295,14 +264,4 @@ fn windows_terminal() -> Option<PathBuf> {
         );
     }
     candidates.into_iter().find(|path| path.is_file())
-}
-
-/// Directory of a `bzip2.exe` bundled alongside the running executable (the
-/// Windows package ships it next to `codex-mixin.exe`), if present. Returned so
-/// it can be prepended to the PATH of the `tar.exe` child that needs it to open
-/// the bzip2-compressed DUCX archive.
-fn bundled_bzip2_dir() -> Option<PathBuf> {
-    let exe = std::env::current_exe().ok()?;
-    let dir = exe.parent()?;
-    dir.join("bzip2.exe").is_file().then(|| dir.to_path_buf())
 }

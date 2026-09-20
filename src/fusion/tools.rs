@@ -416,7 +416,7 @@ fn command_output_with_deadline(command: &mut Command, timeout: Duration) -> io:
     #[cfg(unix)]
     command.process_group(0);
     // Keep rg/git from flashing a console window when the gateway is windowless.
-    crate::platform::hide_console(command);
+    crate::platform::prepare_background_command(command);
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -480,7 +480,7 @@ fn terminate_child_tree(child: &mut std::process::Child) -> io::Result<()> {
             .args(["/PID", &child.id().to_string(), "/T", "/F"])
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
-        crate::platform::hide_console(&mut command);
+        crate::platform::prepare_background_command(&mut command);
         let tree_killed = command
             .status()
             .map(|status| status.success())
