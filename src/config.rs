@@ -88,7 +88,7 @@ impl GatewayConfig {
         let bind = stored_config
             .gateway_bind
             .clone()
-            .unwrap_or_else(|| "127.0.0.1:8787".to_owned())
+            .unwrap_or_else(|| "127.0.0.1:0".to_owned())
             .parse()
             .context("invalid stored gateway bind")?;
         let mut fusion_profiles = stored_config.fusion_profiles;
@@ -260,6 +260,18 @@ mod tests {
                 0o600
             );
         }
+    }
+
+    #[test]
+    fn defaults_to_an_os_assigned_loopback_port() {
+        let stored = StoredGatewayConfig {
+            providers: vec![crate::provider::open_code_go_provider("provider", "secret")],
+            ..StoredGatewayConfig::default()
+        };
+
+        let config = GatewayConfig::from_stored_config_value(stored).unwrap();
+
+        assert_eq!(config.bind, "127.0.0.1:0".parse().unwrap());
     }
 
     #[test]

@@ -85,7 +85,7 @@ async fn startup_does_not_wait_for_official_catalog_network() {
 
     let proxy_url = format!("http://{proxy_address}");
     let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_codex-mixin"))
-        .args(["start", "--bind", "127.0.0.1:0"])
+        .arg("start")
         .env("CODEX_GATEWAY_CONFIG", &gateway_config_path)
         .env("CODEX_GATEWAY_RUNTIME_FILE", &runtime_path)
         .env("CODEX_HOME", &codex_home)
@@ -107,6 +107,13 @@ async fn startup_does_not_wait_for_official_catalog_network() {
         .expect("official catalog request did not reach the hanging proxy")
         .unwrap();
     let runtime = wait_for_runtime(&runtime_path).await;
+    let runtime_bind: std::net::SocketAddr = runtime.bind.parse().unwrap();
+    assert!(runtime_bind.ip().is_loopback());
+    assert_ne!(runtime_bind.port(), 0);
+    let stored = load_stored_config_from_path(&gateway_config_path)
+        .unwrap()
+        .unwrap();
+    assert_eq!(stored.gateway_bind.as_deref(), Some(runtime.bind.as_str()));
     let response = reqwest::Client::new()
         .get(format!("http://{}/healthz", runtime.bind))
         .send()
