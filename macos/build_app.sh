@@ -96,6 +96,7 @@ xcrun swiftc \
   -Xlinker '@executable_path/../Frameworks' \
   "$ROOT_DIR/macos/ApplicationMenuSupport.swift" \
   "$ROOT_DIR/macos/MenuBarApp.swift" \
+  "$ROOT_DIR/macos/RefreshTimerSupport.swift" \
   "$ROOT_DIR/macos/StatusRefreshCoordinator.swift" \
   "$ROOT_DIR/macos/ProcessOutputCollector.swift" \
   "$ROOT_DIR/macos/GatewayService.swift" \

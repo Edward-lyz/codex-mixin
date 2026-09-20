@@ -27,6 +27,10 @@ struct QuotaRefreshPolicy {
     mutating func markAttempt(at now: Date = Date()) {
         lastAttemptAt = now
     }
+
+    mutating func reset() {
+        lastAttemptAt = nil
+    }
 }
 
 final class StatusRefreshCoordinator {
