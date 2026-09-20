@@ -20,6 +20,7 @@
 <p align="center">
   <a href="#中文">中文</a> ·
   <a href="#english">English</a> ·
+  <a href="https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour">Product tour</a> ·
   <a href="https://github.com/Edward-lyz/codex-mixin/wiki">Wiki</a> ·
   <a href="https://github.com/Edward-lyz/codex-mixin/releases/latest">Download</a> ·
   <a href="https://github.com/Edward-lyz/codex-mixin/issues">Issues</a>
@@ -36,7 +37,31 @@
       <sub>Terminal · gateway, providers, quota, token usage, TTFT and throughput</sub>
     </td>
   </tr>
+  <tr>
+    <td width="50%" align="center">
+      <a href="docs/assets/APP-MainMenu.png"><img src="docs/assets/APP-MainMenu.png" alt="Codex Mixin macOS menu bar"></a><br>
+      <sub>Menu bar · lifecycle, quota, token usage, updates and logs</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="docs/assets/APP-ProviderModelList.png"><img src="docs/assets/APP-ProviderModelList.png" alt="Codex Mixin provider model list"></a><br>
+      <sub>Models and Services · discovery, capability state and selection</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="50%" align="center">
+      <a href="docs/assets/fusion-review.png"><img src="docs/assets/fusion-review.png" alt="Interactive Fusion Review inside Codex"></a><br>
+      <sub>Fusion · native Panel and Judge review rendered inside Codex</sub>
+    </td>
+    <td width="50%" align="center">
+      <a href="docs/assets/Mobile_Choice.PNG"><img src="docs/assets/Mobile_Choice.PNG" width="260" alt="Select a Codex Mixin model from mobile"></a><br>
+      <sub>Mobile · choose official or Mixin-managed models for remote tasks</sub>
+    </td>
+  </tr>
 </table>
+
+<p align="center">
+  <a href="https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour"><b>查看包含全部 macOS、TUI、Fusion 和移动端截图的 Product Tour</b></a>
+</p>
 
 ## 中文
 
@@ -79,6 +104,7 @@ Codex Mixin 不是 Codex 的二次发行版，也不重新打包官方 Codex App
 
 完整安装、配置和排障资料维护在 [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki)：
 
+- [产品展示](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour)
 - [安装](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) 与 [快速开始](https://github.com/Edward-lyz/codex-mixin/wiki/Quick-Start)
 - [配置备份与恢复](https://github.com/Edward-lyz/codex-mixin/wiki/Configuration-Backup-and-Restore)
 - [Provider 与模型](https://github.com/Edward-lyz/codex-mixin/wiki/Providers-and-Models)
@@ -105,7 +131,7 @@ Highlights include:
 - Encrypted local storage and portable Base64 configuration backups.
 - Reversible integrations for Codex, Claude Code, DSH, OpenCode, and Pi.
 
-See the [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki) for installation, tutorials, CLI reference, backup and restore, security, troubleshooting, and FAQs.
+See the [Product Tour](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour) for the complete macOS, TUI, Fusion, and mobile gallery. The [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki) contains installation, tutorials, CLI reference, backup and restore, security, troubleshooting, and FAQs.
 
 ## License
 
