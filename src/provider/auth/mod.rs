@@ -5,6 +5,8 @@
 //! its capture proxy, and environment-sourced custom headers.
 
 pub(crate) mod aws_sigv4;
+#[cfg(any(unix, windows))]
 pub(crate) mod capture;
+#[cfg(any(unix, windows))]
 pub(crate) mod ducx;
 pub(crate) mod external;

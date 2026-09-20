@@ -76,8 +76,9 @@ pub fn stored_config_path() -> PathBuf {
     {
         return PathBuf::from(path);
     }
-    let home = env::var("HOME").unwrap_or_else(|_| ".".to_owned());
-    PathBuf::from(home).join(".codex-mixin").join("config.json")
+    crate::platform::home_dir()
+        .join(".codex-mixin")
+        .join("config.json")
 }
 pub fn load_stored_config() -> anyhow::Result<Option<StoredGatewayConfig>> {
     load_stored_config_from_path(&stored_config_path())
@@ -377,20 +378,26 @@ pub fn delete_stored_config() -> anyhow::Result<bool> {
     }
     Ok(true)
 }
-fn set_private_dir_permissions(path: &std::path::Path) -> anyhow::Result<()> {
+fn set_private_dir_permissions(_path: &std::path::Path) -> anyhow::Result<()> {
+    // On unix, tighten the directory to the owner (0700). On Windows the config
+    // directory ACL is hardened once at install time
+    // (windows/scripts/install-windows.ps1), so this never runs icacls on the
+    // config-write path (which would spawn a console window on every write).
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-            .with_context(|| format!("chmod 700 {}", path.display()))?;
+        fs::set_permissions(_path, fs::Permissions::from_mode(0o700))
+            .with_context(|| format!("chmod 700 {}", _path.display()))?;
     }
     Ok(())
 }
-fn set_private_file_permissions(file: &fs::File) -> anyhow::Result<()> {
+fn set_private_file_permissions(_file: &fs::File) -> anyhow::Result<()> {
+    // On unix, tighten the file to the owner (0600). On Windows files inherit
+    // the install-time hardened config-directory ACL.
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(fs::Permissions::from_mode(0o600))?;
+        _file.set_permissions(fs::Permissions::from_mode(0o600))?;
     }
     Ok(())
 }

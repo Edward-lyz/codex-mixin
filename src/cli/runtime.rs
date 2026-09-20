@@ -166,22 +166,94 @@ pub(super) fn delete_runtime_metadata() -> anyhow::Result<()> {
 }
 
 pub(super) fn pid_is_running(pid: u32) -> anyhow::Result<bool> {
-    let status = ProcessCommand::new("kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-    Ok(status.success())
+    #[cfg(windows)]
+    {
+        // A bare PID is not enough on Windows: once the gateway exits the OS can
+        // hand its PID to an unrelated process, and stopping by PID alone would
+        // then `taskkill` that innocent process. The gateway is always this same
+        // executable, so additionally require the image name to match before we
+        // treat the PID as ours.
+        let image_name = std::env::current_exe()
+            .ok()
+            .and_then(|path| {
+                path.file_name()
+                    .map(|name| name.to_string_lossy().into_owned())
+            })
+            .unwrap_or_else(|| "codex-mixin.exe".to_owned());
+        let output = {
+            let mut command = ProcessCommand::new("tasklist");
+            command
+                .args([
+                    "/FI",
+                    &format!("PID eq {pid}"),
+                    "/FI",
+                    &format!("IMAGENAME eq {image_name}"),
+                    "/FO",
+                    "CSV",
+                    "/NH",
+                ])
+                .stdout(Stdio::piped())
+                .stderr(Stdio::null());
+            codex_mixin::platform::hide_console(&mut command);
+            command.output()?
+        };
+        Ok(String::from_utf8_lossy(&output.stdout).lines().any(|line| {
+            line.split("\",\"")
+                .nth(1)
+                .and_then(|value| value.trim_matches('"').parse::<u32>().ok())
+                == Some(pid)
+        }))
+    }
+    #[cfg(not(windows))]
+    {
+        let status = ProcessCommand::new("kill")
+            .arg("-0")
+            .arg(pid.to_string())
+            .stdout(Stdio::null())
+            .stderr(Stdio::null())
+            .status()?;
+        Ok(status.success())
+    }
 }
 
 pub(super) fn send_signal(pid: u32, signal: &str) -> anyhow::Result<()> {
-    let status = ProcessCommand::new("kill")
-        .arg(format!("-{signal}"))
-        .arg(pid.to_string())
-        .status()?;
-    if !status.success() {
-        anyhow::bail!("failed to send SIG{signal} to pid {pid}");
+    #[cfg(windows)]
+    {
+        if signal != "KILL" && signal != "TERM" {
+            anyhow::bail!("unsupported Windows process signal: {signal}");
+        }
+        let run_taskkill = |force: bool| -> std::io::Result<bool> {
+            let mut command = ProcessCommand::new("taskkill");
+            command.args(["/PID", &pid.to_string(), "/T"]);
+            if force {
+                command.arg("/F");
+            }
+            codex_mixin::platform::hide_console(&mut command);
+            command.status().map(|status| status.success())
+        };
+        // KILL forces immediately; TERM tries a soft close first. The gateway is
+        // detached with no console/window, so a soft close usually cannot be
+        // delivered ("this process can only be terminated forcefully"); fall back
+        // to a forced kill so stop and restart reliably succeed instead of
+        // failing and leaving the old config loaded.
+        let mut stopped = run_taskkill(signal == "KILL")?;
+        if !stopped {
+            stopped = run_taskkill(true)?;
+        }
+        if !stopped && pid_is_running(pid)? {
+            anyhow::bail!("failed to stop process {pid} with taskkill");
+        }
+        Ok(())
     }
-    Ok(())
+    #[cfg(not(windows))]
+    {
+        let status = ProcessCommand::new("kill")
+            .arg(format!("-{signal}"))
+            .arg(pid.to_string())
+            .status()?;
+        if !status.success() {
+            anyhow::bail!("failed to send SIG{signal} to pid {pid}");
+        }
+        Ok(())
+    }
 }

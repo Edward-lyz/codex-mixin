@@ -62,13 +62,13 @@ pub fn write_owner_only(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
     set_owner_only(path)
 }
 
-pub fn set_owner_only(path: &Path) -> anyhow::Result<()> {
+pub fn set_owner_only(_path: &Path) -> anyhow::Result<()> {
     #[cfg(unix)]
     {
         use std::os::unix::fs::PermissionsExt;
-        let mut permissions = fs::metadata(path)?.permissions();
+        let mut permissions = fs::metadata(_path)?.permissions();
         permissions.set_mode(0o600);
-        fs::set_permissions(path, permissions)?;
+        fs::set_permissions(_path, permissions)?;
     }
     Ok(())
 }

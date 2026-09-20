@@ -409,7 +409,7 @@ fn enqueue_local_sessions(estimate_only: bool) -> anyhow::Result<LocalSessionSca
     let codex_home = if let Some(path) = std::env::var_os("CODEX_HOME") {
         PathBuf::from(path)
     } else {
-        PathBuf::from(std::env::var_os("HOME").context("HOME is not set")?).join(".codex")
+        codex_mixin::platform::home_dir_required()?.join(".codex")
     };
     let sessions_directory = codex_home.join("sessions");
     ensure!(

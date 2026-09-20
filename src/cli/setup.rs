@@ -1,5 +1,6 @@
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
+#[cfg(unix)]
 use std::process::Command as ProcessCommand;
 
 use anyhow::Context;
@@ -41,9 +42,17 @@ fn install_cli_executable(source: &Path, target: &Path) -> anyhow::Result<bool> 
 }
 
 pub(super) fn install_cli_command() -> anyhow::Result<Option<PathBuf>> {
-    let home = std::env::var_os("HOME").context("HOME is required to install codex-mixin")?;
-    let bin = PathBuf::from(home).join(".local/bin");
-    let target = bin.join("codex-mixin");
+    let home = codex_mixin::platform::home_dir_required()?;
+    let bin = if cfg!(windows) {
+        home.join(".codex-mixin/bin")
+    } else {
+        home.join(".local/bin")
+    };
+    let target = bin.join(if cfg!(windows) {
+        "codex-mixin.exe"
+    } else {
+        "codex-mixin"
+    });
     let source = std::env::current_exe()?;
     install_cli_executable(&source, &target).map(|installed| installed.then_some(target))
 }
@@ -51,23 +60,65 @@ pub(super) fn install_cli_command() -> anyhow::Result<Option<PathBuf>> {
 fn read_secret(prompt: &str) -> anyhow::Result<String> {
     print!("{prompt}");
     io::stdout().flush()?;
+    #[cfg(windows)]
+    let value = read_secret_line_no_echo()?;
     #[cfg(unix)]
-    if !ProcessCommand::new("stty").arg("-echo").status()?.success() {
-        anyhow::bail!("failed to disable terminal echo for secret input")
-    }
-    let mut value = String::new();
-    let read_result = io::stdin().read_line(&mut value);
-    #[cfg(unix)]
-    if !ProcessCommand::new("stty").arg("echo").status()?.success() {
-        anyhow::bail!("failed to restore terminal echo after secret input")
-    }
+    let value = {
+        if !ProcessCommand::new("stty").arg("-echo").status()?.success() {
+            anyhow::bail!("failed to disable terminal echo for secret input")
+        }
+        let mut value = String::new();
+        let read_result = io::stdin().read_line(&mut value);
+        if !ProcessCommand::new("stty").arg("echo").status()?.success() {
+            anyhow::bail!("failed to restore terminal echo after secret input")
+        }
+        read_result?;
+        value
+    };
+    #[cfg(not(any(windows, unix)))]
+    let value = {
+        let mut value = String::new();
+        io::stdin().read_line(&mut value)?;
+        value
+    };
     println!();
-    read_result?;
     let value = value.trim().to_owned();
     if value.is_empty() {
         anyhow::bail!("API key cannot be empty")
     }
     Ok(value)
+}
+
+#[cfg(windows)]
+fn read_secret_line_no_echo() -> anyhow::Result<String> {
+    use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
+    use crossterm::terminal;
+
+    terminal::enable_raw_mode().context("enable terminal raw mode for secret input")?;
+    let result = (|| -> anyhow::Result<String> {
+        let mut value = String::new();
+        loop {
+            if let Event::Key(key) = event::read().context("read secret key event")? {
+                if key.kind == KeyEventKind::Release {
+                    continue;
+                }
+                match key.code {
+                    KeyCode::Enter => break,
+                    KeyCode::Char('c') if key.modifiers.contains(KeyModifiers::CONTROL) => {
+                        anyhow::bail!("secret input cancelled")
+                    }
+                    KeyCode::Char(character) => value.push(character),
+                    KeyCode::Backspace => {
+                        value.pop();
+                    }
+                    _ => {}
+                }
+            }
+        }
+        Ok(value)
+    })();
+    terminal::disable_raw_mode().context("restore terminal mode after secret input")?;
+    result
 }
 
 fn choose_setup_codex_mode(mode: Option<SetupCodexMode>) -> anyhow::Result<SetupCodexMode> {

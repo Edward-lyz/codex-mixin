@@ -378,7 +378,12 @@ fn apply_baidu_auth_options(
 
 fn data_report_sibling(executable: &std::path::Path) -> Option<PathBuf> {
     let install = executable.parent()?.parent()?;
-    Some(install.join("hooks/data-report"))
+    let name = if cfg!(windows) {
+        "data-report.exe"
+    } else {
+        "data-report"
+    };
+    Some(install.join("hooks").join(name))
 }
 
 fn parse_header_env(values: &[String]) -> anyhow::Result<BTreeMap<String, String>> {

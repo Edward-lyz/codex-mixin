@@ -23,12 +23,20 @@ impl UpstreamAccess {
         for provider in ducx_providers {
             if provider.baidu_code_report() {
                 let provider_id = provider.id().to_owned();
+                tracing::info!(
+                    provider_id = %provider_id,
+                    "starting DUCX data-report token warmup"
+                );
                 let runtime = self.ducx_runtime_for(provider).await?;
                 match runtime
                     .report_client_token(self.config.request_timeout)
                     .await
                 {
                     Ok(token) => {
+                        tracing::info!(
+                            provider_id = %provider_id,
+                            "DUCX data-report token warmup captured a token"
+                        );
                         let result = tokio::task::spawn_blocking(move || {
                             crate::config::mutate_stored_config(|config| {
                                 let stored_provider = config
@@ -138,7 +146,7 @@ impl UpstreamAccess {
     }
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::os::unix::fs::PermissionsExt as _;
     use std::sync::Arc;
