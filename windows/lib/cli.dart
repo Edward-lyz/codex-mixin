@@ -157,7 +157,4 @@ class MixinCli {
 
   String get stateDirectory =>
       '${Platform.environment['USERPROFILE'] ?? '.'}${Platform.pathSeparator}.codex-mixin';
-
-  String get downloadsDirectory =>
-      '${Platform.environment['USERPROFILE'] ?? '.'}${Platform.pathSeparator}Downloads';
 }

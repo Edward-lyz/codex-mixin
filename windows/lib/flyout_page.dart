@@ -5,6 +5,8 @@ import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'client_integrations.dart';
+import 'config_backups.dart';
 import 'controller.dart';
 import 'log.dart';
 import 'theme.dart';
@@ -34,17 +36,11 @@ class _FlyoutPageState extends State<FlyoutPage> with WindowListener {
   DateTime _ignoreBlurUntil = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _focusWatch;
 
-  static const _installActions = [
-    ('安装到 Codex...', Icons.file_download_outlined),
-    ('从 Codex 恢复...', Icons.restore),
-    ('安装到 Claude Code...', Icons.file_download_outlined),
-    ('从 Claude Code 恢复...', Icons.restore),
-    ('安装到 DSH...', Icons.file_download_outlined),
-    ('从 DSH 卸载...', Icons.restore),
-    ('安装到 OpenCode...', Icons.file_download_outlined),
-    ('从 OpenCode 卸载...', Icons.restore),
-    ('安装到 Pi...', Icons.file_download_outlined),
-    ('从 Pi 卸载...', Icons.restore),
+  static final _installActions = [
+    for (final client in clientIntegrations) ...[
+      ('${client.installLabel}...', Icons.file_download_outlined),
+      ('${client.removeLabel}...', Icons.restore),
+    ],
   ];
 
   @override
@@ -158,13 +154,30 @@ class _FlyoutPageState extends State<FlyoutPage> with WindowListener {
   }
 
   Future<void> _runAdvanced(String label) async {
+    String? backupPath;
+    if (label == '导入配置备份...') {
+      backupPath = await chooseBackupImportPath();
+      if (backupPath == null || !mounted) return;
+      final confirmed = await confirmAction(
+        context,
+        title: '导入配置备份？',
+        message: '这会替换 Provider、模型、Fusion 和凭据配置，然后重启本地网关。',
+      );
+      if (!confirmed || !mounted) return;
+    } else if (label == '导出配置备份...') {
+      backupPath = await chooseBackupExportPath();
+      if (backupPath == null || !mounted) return;
+    }
     setState(() => _busy = true);
+    final path = backupPath;
     final result = await runWithProgress(
       context,
       title: label,
-      action: (_) => label == '手动触发上报...'
-          ? widget.controller.reportReplay()
-          : widget.controller.exportConfig(),
+      action: (_) => switch (label) {
+        '手动触发上报...' => widget.controller.reportReplay(),
+        '导入配置备份...' => widget.controller.importConfig(path!),
+        _ => widget.controller.exportConfig(path!),
+      },
     );
     if (!mounted) return;
     setState(() => _busy = false);
@@ -190,25 +203,6 @@ class _FlyoutPageState extends State<FlyoutPage> with WindowListener {
     } catch (_) {}
   }
 
-  /// Non-Codex install/recover targets are not supported yet; show a simple
-  /// notice instead of running the CLI.
-  Future<void> _showUnsupported() async {
-    await showDialog<void>(
-      context: context,
-      builder: (context) => AlertDialog(
-        title: const Text('暂不支持', textAlign: TextAlign.center),
-        content: const Text('该平台暂不支持，敬请期待。', textAlign: TextAlign.center),
-        actionsAlignment: MainAxisAlignment.center,
-        actions: [
-          TextButton(
-            onPressed: () => Navigator.pop(context),
-            child: const Text('确定'),
-          ),
-        ],
-      ),
-    );
-  }
-
   Future<void> _tapAction(String label) async {
     if (_busy) return;
     UiLog.instance.info('flyout tap title=${widget.title} label=$label');
@@ -224,47 +218,29 @@ class _FlyoutPageState extends State<FlyoutPage> with WindowListener {
       case '安装与恢复':
         final index = _installActions.indexWhere((item) => item.$1 == label);
         if (index < 0) return;
-        final target = switch (index ~/ 2) {
-          0 => 'Codex',
-          1 => 'Claude Code',
-          2 => 'DSH',
-          3 => 'OpenCode',
-          _ => 'Pi',
-        };
-        final isInstall = index.isEven;
-        if (target != 'Codex') {
-          await _showUnsupported();
-          return;
-        }
-        if (target == 'Codex' && isInstall) {
+        final action = clientActionAt(index);
+        if (action.client.id == 'codex' && action.install) {
           await _sendMain('show_install', {'target': 'codex'});
           return;
         }
-        final command = switch (target) {
-          'Codex' =>
-            isInstall
-                ? ['connect', 'codex', '--custom-only']
-                : ['connect', 'remove', 'codex'],
-          'Claude Code' =>
-            isInstall ? ['connect', 'claude'] : ['connect', 'remove', 'claude'],
-          'DSH' =>
-            isInstall ? ['connect', 'dsh'] : ['connect', 'remove', 'dsh'],
-          'OpenCode' =>
-            isInstall
-                ? ['connect', 'opencode']
-                : ['connect', 'remove', 'opencode'],
-          _ => isInstall ? ['connect', 'pi'] : ['connect', 'remove', 'pi'],
-        };
-        await _runClient(label, command, confirmRestore: !isInstall);
+        await _runClient(
+          label,
+          action.install
+              ? action.client.installArguments
+              : action.client.removeArguments,
+          confirmRestore: !action.install,
+        );
       case '关于':
         if (label == '关于 Codex Mixin...') {
           showAboutDialog(
             context: context,
             applicationName: 'Codex Mixin',
-            applicationVersion: 'Windows 1.0.0',
+            applicationVersion: 'Windows $mixinVersion',
             applicationIcon: const Icon(Icons.terminal_rounded, size: 52),
             children: const [Text('连接自定义模型供应商到 Codex 的本地网关。')],
           );
+        } else if (label == '检查更新') {
+          await widget.controller.openReleasePage();
         } else if (label == '复制本地接口地址') {
           await widget.controller.copyEndpoint();
         } else if (label == '打开运行日志') {
@@ -282,11 +258,13 @@ class _FlyoutPageState extends State<FlyoutPage> with WindowListener {
     '高级' => const [
       ('Fusion 设置...', Icons.account_tree_outlined),
       ('手动触发上报...', Icons.sync_outlined),
-      ('导出明文配置...', Icons.file_upload_outlined),
+      ('导入配置备份...', Icons.file_download_outlined),
+      ('导出配置备份...', Icons.file_upload_outlined),
     ],
     '安装与恢复' => _installActions,
     _ => const [
       ('关于 Codex Mixin...', Icons.info_outline),
+      ('检查更新', Icons.system_update_alt),
       ('复制本地接口地址', Icons.link),
       ('打开运行日志', Icons.description_outlined),
       ('打开配置目录', Icons.folder_outlined),

@@ -299,14 +299,36 @@ class MixinController {
     await Process.start('explorer.exe', [dir.path]);
   }
 
-  Future<CliResult> exportConfig() async {
-    final path =
-        '${cli.downloadsDirectory}${Platform.pathSeparator}codex-mixin-config.json';
-    final result = await runAction('导出明文配置', ['config', '--export', path]);
-    if (File(path).existsSync()) {
+  Future<void> openReleasePage() async {
+    const url = 'https://github.com/Edward-lyz/codex-mixin/releases/latest';
+    try {
+      await Process.start('explorer.exe', [url]);
+      status = '已打开最新版本下载页面';
+      UiLog.instance.info('open release page: $url');
+    } catch (error, stack) {
+      status = '打开更新页面失败：$error';
+      UiLog.instance.error('open release page failed', error, stack);
+    }
+  }
+
+  Future<CliResult> exportConfig(String path) async {
+    final result = await runAction('导出配置备份', ['config', 'export', path]);
+    if (result.ok && File(path).existsSync()) {
       await Process.start('explorer.exe', ['/select,', path]);
     }
     return result;
+  }
+
+  Future<CliResult> importConfig(String path) async {
+    final imported = await runAction('导入配置备份', [
+      'config',
+      'import',
+      path,
+    ]);
+    if (!imported.ok) return imported;
+    final restarted = await runAction('应用导入配置', ['service', 'restart']);
+    await refresh(force: true);
+    return restarted.ok ? imported : restarted;
   }
 
   Future<CliResult> reportReplay() async {

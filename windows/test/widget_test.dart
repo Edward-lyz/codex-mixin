@@ -3,6 +3,8 @@ import 'package:flutter_test/flutter_test.dart';
 
 import 'package:codex_mixin_ui/controller.dart';
 import 'package:codex_mixin_ui/cli.dart';
+import 'package:codex_mixin_ui/client_integrations.dart';
+import 'package:codex_mixin_ui/config_backups.dart';
 import 'package:codex_mixin_ui/main.dart';
 import 'package:codex_mixin_ui/models.dart';
 import 'package:codex_mixin_ui/widgets.dart';
@@ -25,6 +27,34 @@ class _RecordingCli extends MixinCli {
 }
 
 void main() {
+  test('all desktop client integrations map to CLI commands', () {
+    expect(clientIntegrations.map((client) => client.id), [
+      'codex',
+      'claude',
+      'dsh',
+      'opencode',
+      'pi',
+    ]);
+    expect(clientIntegrations.last.installArguments, ['connect', 'pi']);
+    expect(clientIntegrations.last.removeArguments, [
+      'connect',
+      'remove',
+      'pi',
+    ]);
+  });
+
+  test('backup dialog script keeps the WinForms type on one line', () {
+    final script = buildBackupDialogScript(
+      'SaveFileDialog',
+      r"$dialog.Title = 'Export'",
+    );
+    expect(
+      script,
+      contains(r'$dialog = New-Object System.Windows.Forms.SaveFileDialog'),
+    );
+    expect(script, isNot(contains('System.Windows.Forms.\nSaveFileDialog')));
+  });
+
   test('decodes pretty-printed CLI JSON', () {
     final value =
         decodeCliJson('''

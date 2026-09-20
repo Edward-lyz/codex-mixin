@@ -1,8 +1,10 @@
 # Codex Mixin Windows 端
 
-Codex Mixin 的 Windows 桌面界面，使用 **Flutter** 构建，是 Rust 本地网关（`codex-mixin`）在 Windows 上的图形控制端，与仓库根目录 `macos/`（macOS 菜单栏 App）一一对应。
+Codex Mixin 的 Windows 桌面界面，使用 **Flutter** 构建，是 Rust 本地网关（`codex-mixin`）在 Windows 上的图形控制端。它与 `macos/`、`tui/` 一样是独立壳层，只消费 CLI JSON contract。
 
-界面本身不实现任何网关逻辑：它定位并调用真实的 `codex-mixin.exe`（优先用已安装包中的可执行文件，其次用仓库 `target/release/`），完成供应商管理、网关启停、模型选择与测速、以及接入/恢复 Codex 等操作。供应商图标复用 `macos/assets/providers` 下的 SVG，通过 `flutter_svg` 渲染。
+界面本身不实现任何网关逻辑：它定位并调用真实的 `codex-mixin.exe`（优先用已安装包中的可执行文件，其次用仓库 `target/release/`），完成供应商管理、网关启停、模型选择与测速、配置备份，以及 Codex、Claude Code、DSH、OpenCode、Pi 的接入与恢复。供应商图标复用 `macos/assets/providers` 下的 SVG，通过 `flutter_svg` 渲染。
+
+DUCX `.tar.bz2` 由 Rust core 直接解压，不依赖或捆绑第三方归档程序。
 
 ## 目录结构
 

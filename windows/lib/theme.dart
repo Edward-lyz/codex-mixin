@@ -4,6 +4,10 @@ import 'package:flutter_localizations/flutter_localizations.dart';
 /// Force Simplified Chinese for all built-in Material/Cupertino widgets (dialog
 /// buttons, tooltips, about box, etc.) so no English leaks into the UI.
 const mixinLocale = Locale('zh');
+const mixinVersion = String.fromEnvironment(
+  'CODEX_MIXIN_VERSION',
+  defaultValue: 'development build',
+);
 const mixinSupportedLocales = [Locale('zh'), Locale('en')];
 const mixinLocalizationsDelegates = <LocalizationsDelegate<dynamic>>[
   GlobalMaterialLocalizations.delegate,

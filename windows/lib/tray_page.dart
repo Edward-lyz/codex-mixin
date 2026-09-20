@@ -5,6 +5,8 @@ import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'client_integrations.dart';
+import 'config_backups.dart';
 import 'controller.dart';
 import 'log.dart';
 import 'models.dart';
@@ -149,27 +151,6 @@ class _TrayPageState extends State<TrayPage> with WindowListener {
     await _hide();
   }
 
-  /// Non-Codex install/recover targets are not supported yet; show a simple
-  /// notice instead of running the CLI.
-  Future<void> _showUnsupported() async {
-    await _withDialog(
-      () => showDialog<void>(
-        context: context,
-        builder: (context) => AlertDialog(
-          title: const Text('暂不支持', textAlign: TextAlign.center),
-          content: const Text('该平台暂不支持，敬请期待。', textAlign: TextAlign.center),
-          actionsAlignment: MainAxisAlignment.center,
-          actions: [
-            TextButton(
-              onPressed: () => Navigator.pop(context),
-              child: const Text('确定'),
-            ),
-          ],
-        ),
-      ),
-    );
-  }
-
   Future<void> _runClient(
     String title,
     List<String> args, {
@@ -200,6 +181,39 @@ class _TrayPageState extends State<TrayPage> with WindowListener {
     );
     if (!mounted) return;
     setState(() {});
+    await _refresh();
+  }
+
+  Future<void> _exportConfig() async {
+    final path = await chooseBackupExportPath();
+    if (path == null || !mounted) return;
+    await _withDialog(
+      () => runWithProgress(
+        context,
+        title: '导出配置备份',
+        action: (_) => _controller.exportConfig(path),
+      ),
+    );
+  }
+
+  Future<void> _importConfig() async {
+    final path = await chooseBackupImportPath();
+    if (path == null || !mounted) return;
+    final confirmed = await _withDialog(
+      () => confirmAction(
+        context,
+        title: '导入配置备份？',
+        message: '这会替换 Provider、模型、Fusion 和凭据配置，然后重启本地网关。',
+      ),
+    );
+    if (confirmed != true || !mounted) return;
+    await _withDialog(
+      () => runWithProgress(
+        context,
+        title: '导入配置备份',
+        action: (_) => _controller.importConfig(path),
+      ),
+    );
     await _refresh();
   }
 
@@ -817,45 +831,41 @@ class _TrayPageState extends State<TrayPage> with WindowListener {
             );
           }),
           _MenuAction(
+            Icons.file_download_outlined,
+            '导入配置备份',
+            _importConfig,
+          ),
+          _MenuAction(
             Icons.file_upload_outlined,
-            '导出明文配置',
-            _controller.exportConfig,
+            '导出配置备份',
+            _exportConfig,
           ),
         ]);
       }, chevron: true),
       _item(Icons.file_download_outlined, '安装与恢复', () {
         _openSubmenu('安装与恢复', [
-          _MenuAction(Icons.file_download_outlined, '安装到 Codex', _installCodex),
-          _MenuAction(
-            Icons.restore,
-            '从 Codex 恢复',
-            () => _runClient(
-              '从 Codex 恢复',
-              ['connect', 'remove', 'codex'],
-              confirmRestore: true,
-              confirmMessage: '会恢复安装前备份的 Codex 配置。',
+          for (final client in clientIntegrations) ...[
+            _MenuAction(
+              Icons.file_download_outlined,
+              client.installLabel,
+              client.id == 'codex'
+                  ? _installCodex
+                  : () => _runClient(
+                      client.installLabel,
+                      client.installArguments,
+                    ),
             ),
-          ),
-          _MenuAction(
-            Icons.file_download_outlined,
-            '安装到 Claude Code',
-            _showUnsupported,
-          ),
-          _MenuAction(Icons.restore, '从 Claude Code 恢复', _showUnsupported),
-          _MenuAction(
-            Icons.file_download_outlined,
-            '安装到 DSH',
-            _showUnsupported,
-          ),
-          _MenuAction(Icons.restore, '从 DSH 卸载', _showUnsupported),
-          _MenuAction(
-            Icons.file_download_outlined,
-            '安装到 OpenCode',
-            _showUnsupported,
-          ),
-          _MenuAction(Icons.restore, '从 OpenCode 卸载', _showUnsupported),
-          _MenuAction(Icons.file_download_outlined, '安装到 Pi', _showUnsupported),
-          _MenuAction(Icons.restore, '从 Pi 卸载', _showUnsupported),
+            _MenuAction(
+              Icons.restore,
+              client.removeLabel,
+              () => _runClient(
+                client.removeLabel,
+                client.removeArguments,
+                confirmRestore: true,
+                confirmMessage: '会恢复安装前备份的 ${client.displayName} 配置。',
+              ),
+            ),
+          ],
         ]);
       }, chevron: true),
       _item(Icons.info_outline, '关于', () {
@@ -865,13 +875,18 @@ class _TrayPageState extends State<TrayPage> with WindowListener {
               showAboutDialog(
                 context: context,
                 applicationName: 'Codex Mixin',
-                applicationVersion: 'Windows 1.0.0',
+                applicationVersion: 'Windows $mixinVersion',
                 applicationIcon: const Icon(Icons.terminal_rounded, size: 52),
                 children: const [Text('连接自定义模型供应商到 Codex 的本地网关。')],
               );
               return null;
             });
           }),
+          _MenuAction(
+            Icons.system_update_alt,
+            '检查更新',
+            _controller.openReleasePage,
+          ),
           _MenuAction(Icons.link, '复制本地接口地址', _controller.copyEndpoint),
           _MenuAction(
             Icons.description_outlined,
