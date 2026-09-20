@@ -1,7 +1,6 @@
 use std::collections::HashSet;
 use std::fs;
 use std::path::{Path, PathBuf};
-use std::process::Command as ProcessCommand;
 
 use toml_edit::{DocumentMut, Item};
 
@@ -16,7 +15,7 @@ use codex_mixin::provider::{MetadataResolver, auxiliary_auto_review_slug};
 use codex_mixin::server::AppState;
 use codex_mixin::web_search::WebSearchCapabilities;
 
-use super::bin::resolve_codex_cli;
+use super::bin::{codex_command, resolve_codex_cli};
 use super::managed_config::*;
 use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::metadata::load_model_metadata_resolver;
@@ -487,7 +486,7 @@ pub(in crate::cli) fn is_managed_catalog_model(model: &serde_json::Value) -> boo
 
 pub(in crate::cli) fn resolve_codex_client_version(models_cache: &Path) -> Option<String> {
     if let Ok(codex_cli) = resolve_codex_cli()
-        && let Ok(output) = ProcessCommand::new(codex_cli).arg("--version").output()
+        && let Ok(output) = codex_command(&codex_cli).arg("--version").output()
         && output.status.success()
         && let Some(version) = parse_codex_client_version(&String::from_utf8_lossy(&output.stdout))
     {

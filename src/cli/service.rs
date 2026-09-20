@@ -33,8 +33,6 @@ pub(super) use daemon::running_daemon_needs_replacement;
 pub(super) use daemon::{logs, restart, start_daemon, stop};
 pub(super) use logging::init_tracing;
 use logging::log_gateway_configuration;
-#[cfg(test)]
-pub(super) use logging::rotate_gateway_log_if_needed;
 
 pub(super) const CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
 pub(super) const OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);

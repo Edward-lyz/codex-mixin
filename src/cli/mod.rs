@@ -17,6 +17,10 @@ mod codex;
 mod config_input;
 mod doctor;
 mod dsh;
+#[cfg(unix)]
+mod ducx_setup;
+#[cfg(windows)]
+#[path = "ducx_setup_windows.rs"]
 mod ducx_setup;
 mod fusion_config;
 mod maintenance;
@@ -163,8 +167,38 @@ pub(super) async fn stage<T>(
 mod args;
 use args::*;
 
+/// Prefix marking an argument value that should be resolved from an environment
+/// variable instead of being read verbatim.
+#[cfg(windows)]
+const SECRET_ENV_PREFIX: &str = "@env:";
+
+/// Expand `@env:NAME` argument values to the referenced environment variable so
+/// the Windows UI can pass credentials without exposing them on the process
+/// command line (same-user tooling can read a process command line on Windows).
+/// Windows-only: every other platform parses arguments verbatim, exactly like
+/// the pre-Windows baseline, so this cannot affect Unix/macOS behaviour.
+#[cfg(windows)]
+fn secret_expanded_args() -> Vec<std::ffi::OsString> {
+    std::env::args_os()
+        .map(|arg| {
+            if let Some(value) = arg.to_str()
+                && let Some(name) = value.strip_prefix(SECRET_ENV_PREFIX)
+                && let Some(resolved) = std::env::var_os(name)
+            {
+                return resolved;
+            }
+            arg
+        })
+        .collect()
+}
+
+#[cfg(not(windows))]
+fn secret_expanded_args() -> Vec<std::ffi::OsString> {
+    std::env::args_os().collect()
+}
+
 pub(crate) async fn entrypoint() {
-    let cli = Cli::parse();
+    let cli = Cli::parse_from(secret_expanded_args());
     let print_errors_to_stderr = matches!(&cli.command, Some(Command::ReportReplay { .. }));
     let tui_start = requested_tui_start(
         &cli,
@@ -216,11 +250,11 @@ pub(crate) async fn entrypoint() {
     }
     let result = if let Some(start_page) = tui_start {
         match setup::install_cli_command() {
-            Ok(installed_path) => tui::run(start_page, installed_path).await,
+            Ok(installed_path) => Box::pin(tui::run(start_page, installed_path)).await,
             Err(error) => Err(error),
         }
     } else {
-        run(cli).await
+        Box::pin(run(cli)).await
     };
     if let Err(error) = result {
         exit_with_command_error(error, foreground_log_file.is_some(), print_errors_to_stderr);

@@ -4,3 +4,4 @@
 macos/Generated/
 *.log
 .DS_Store
+.vscode/

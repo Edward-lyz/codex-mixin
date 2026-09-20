@@ -1,0 +1,19 @@
+# Normalize all text files to LF in the repo (match GitHub upstream).
+* text=auto eol=lf
+
+# Windows shell scripts stay CRLF on checkout.
+*.ps1 text eol=crlf
+*.bat text eol=crlf
+*.cmd text eol=crlf
+
+# Binary assets — never touch.
+*.ico binary
+*.png binary
+*.jpg binary
+*.jpeg binary
+*.gif binary
+*.ttf binary
+*.otf binary
+*.zip binary
+*.bz2 binary
+*.gz binary

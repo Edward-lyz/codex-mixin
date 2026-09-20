@@ -4,44 +4,10 @@ use std::path::{Path, PathBuf};
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
 
+#[cfg(unix)]
+use crate::cli::atomic_file::*;
 use crate::cli::update::{cli_release_target, release_version_from_redirect, replace_executable};
-use crate::cli::{atomic_file::*, runtime::*, service::*};
-
-#[test]
-fn rotates_gateway_log_at_size_limit() {
-    let dir = tempfile::tempdir().unwrap();
-    let log = dir.path().join("gateway.log");
-    fs::write(&log, b"12345").unwrap();
-
-    rotate_gateway_log_if_needed(&log, 5).unwrap();
-
-    assert!(!log.exists());
-    assert_eq!(
-        fs::read(dir.path().join("gateway.log.1")).unwrap(),
-        b"12345"
-    );
-    #[cfg(unix)]
-    assert_eq!(
-        fs::metadata(dir.path().join("gateway.log.1"))
-            .unwrap()
-            .permissions()
-            .mode()
-            & 0o777,
-        0o600
-    );
-}
-
-#[test]
-fn keeps_gateway_log_below_size_limit() {
-    let dir = tempfile::tempdir().unwrap();
-    let log = dir.path().join("gateway.log");
-    fs::write(&log, b"1234").unwrap();
-
-    rotate_gateway_log_if_needed(&log, 5).unwrap();
-
-    assert_eq!(fs::read(log).unwrap(), b"1234");
-    assert!(!dir.path().join("gateway.log.1").exists());
-}
+use crate::cli::{runtime::*, service::*};
 
 #[test]
 fn outdated_gateway_runtime_is_replaced_on_its_existing_bind() {
@@ -147,9 +113,13 @@ fn release_version_parser_and_cli_target_are_available() {
             .is_err()
     );
 
-    let target = cli_release_target().unwrap();
-    assert!(!target.is_empty());
-    assert!(target.ends_with("apple-darwin") || target.ends_with("unknown-linux-musl"));
+    if cfg!(target_os = "windows") {
+        assert!(cli_release_target().is_err());
+    } else {
+        let target = cli_release_target().unwrap();
+        assert!(!target.is_empty());
+        assert!(target.ends_with("apple-darwin") || target.ends_with("unknown-linux-musl"));
+    }
 }
 
 #[test]

@@ -240,8 +240,7 @@ impl Snapshot {
 }
 
 async fn load_official_fusion_models() -> anyhow::Result<Vec<Value>> {
-    let home = std::env::var_os("HOME").context("HOME is required to load official models")?;
-    let cache = PathBuf::from(home).join(".codex/models_cache.json");
+    let cache = codex_mixin::platform::home_dir_required()?.join(".codex/models_cache.json");
     if !tokio::fs::try_exists(&cache).await? {
         return Ok(Vec::new());
     }

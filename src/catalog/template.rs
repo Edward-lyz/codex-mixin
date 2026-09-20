@@ -93,13 +93,9 @@ pub fn load_template_catalog(path: Option<&Path>) -> anyhow::Result<Option<Value
     let path = match path {
         Some(path) => path.to_path_buf(),
         None => {
-            let codex_home = std::env::var("CODEX_HOME").ok().map_or_else(
-                || {
-                    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_owned());
-                    PathBuf::from(home).join(".codex")
-                },
-                PathBuf::from,
-            );
+            let codex_home = std::env::var("CODEX_HOME")
+                .map(PathBuf::from)
+                .unwrap_or_else(|_| crate::platform::home_dir().join(".codex"));
             codex_home.join("models_cache.json")
         }
     };

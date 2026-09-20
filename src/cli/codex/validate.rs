@@ -3,8 +3,8 @@
 
 use std::collections::HashSet;
 use std::path::Path;
-use std::process::Command as ProcessCommand;
 
+use super::bin::codex_command;
 pub(in crate::cli) fn validate_codex_install(
     codex_cli: &Path,
     codex_home: &Path,
@@ -17,7 +17,7 @@ pub(in crate::cli) fn validate_codex_install(
         codex_home.display(),
         expected_model_slugs.len()
     );
-    let doctor = ProcessCommand::new(codex_cli)
+    let doctor = codex_command(codex_cli)
         .args(["doctor", "--json"])
         .env("CODEX_HOME", codex_home)
         .output()?;
@@ -31,15 +31,44 @@ pub(in crate::cli) fn validate_codex_install(
                     .collect::<String>()
             )
         })?;
-    let config_check = doctor_report
-        .pointer("/checks/config.load")
-        .ok_or_else(|| anyhow::anyhow!("Codex doctor report has no config.load check"))?;
+    let config_check = find_codex_config_load_check(&doctor_report).ok_or_else(|| {
+        anyhow::anyhow!("Codex doctor report has no config.load check: {doctor_report}")
+    })?;
     let config_status = config_check
         .get("status")
         .and_then(serde_json::Value::as_str)
         .ok_or_else(|| anyhow::anyhow!("Codex config.load check has no status: {config_check}"))?;
     if !codex_config_load_status_is_acceptable(Some(config_status)) {
-        anyhow::bail!("Codex config.load check failed: {config_check}");
+        // `codex doctor` reports config.load failures with an empty `details`
+        // object, so re-run `codex debug models` which prints the concrete
+        // deserialize/validation error (e.g. an unsupported provider field or a
+        // catalog schema mismatch) to stderr, and surface that reason.
+        println!("codex validation: doctor report={doctor_report}");
+        let reason = codex_command(codex_cli)
+            .args(["debug", "models"])
+            .env("CODEX_HOME", codex_home)
+            .output()
+            .ok()
+            .map(|output| {
+                String::from_utf8_lossy(&output.stderr)
+                    .lines()
+                    .find(|line| line.contains("Error") || line.contains("error"))
+                    .unwrap_or("")
+                    .chars()
+                    .take(1000)
+                    .collect::<String>()
+            })
+            .filter(|reason| !reason.trim().is_empty());
+        match reason {
+            Some(reason) => anyhow::bail!(
+                "Codex config.load check failed: {}; codex reported: {reason}",
+                describe_config_check(config_check)
+            ),
+            None => anyhow::bail!(
+                "Codex config.load check failed: {}",
+                describe_config_check(config_check)
+            ),
+        }
     }
     if config_status == "warning" {
         let warning_count = config_check
@@ -62,7 +91,7 @@ pub(in crate::cli) fn validate_codex_install(
     }
     println!("codex validation: doctor config.load {config_status}; provider={expected_provider}");
 
-    let models = ProcessCommand::new(codex_cli)
+    let models = codex_command(codex_cli)
         .args(["debug", "models"])
         .env("CODEX_HOME", codex_home)
         .output()?;
@@ -107,4 +136,65 @@ pub(in crate::cli) fn validate_codex_install(
 
 pub(in crate::cli) fn codex_config_load_status_is_acceptable(status: Option<&str>) -> bool {
     matches!(status, Some("ok" | "warning"))
+}
+
+/// Produce a compact, human-readable reason from a doctor `config.load` check so
+/// the surfaced error explains *why* Codex refused the config instead of dumping
+/// the whole JSON node into the UI.
+fn describe_config_check(check: &serde_json::Value) -> String {
+    let status = check
+        .get("status")
+        .and_then(serde_json::Value::as_str)
+        .unwrap_or("unknown");
+    let detail = check
+        .get("message")
+        .and_then(serde_json::Value::as_str)
+        .map(str::to_owned)
+        .or_else(|| {
+            check
+                .get("details")
+                .filter(|details| !details.is_null())
+                .map(|details| match details {
+                    serde_json::Value::Object(_) | serde_json::Value::Array(_) => {
+                        details.to_string()
+                    }
+                    other => other.to_string(),
+                })
+        })
+        .unwrap_or_default();
+    if detail.is_empty() || detail == "{}" || detail == "null" {
+        // Empty message/details are useless for diagnosis; fall back to the whole
+        // check node so the surfaced error still carries Codex's real reason.
+        format!("status={status}; {check}")
+    } else {
+        format!("status={status}; {detail}")
+    }
+}
+
+pub(in crate::cli) fn find_codex_config_load_check(
+    report: &serde_json::Value,
+) -> Option<&serde_json::Value> {
+    if let Some(check) = report.pointer("/checks/config.load") {
+        return Some(check);
+    }
+    let checks = report.get("checks")?;
+    if let Some(object) = checks.as_object() {
+        for (key, value) in object {
+            if key == "config.load" || key.ends_with("config.load") {
+                return Some(value);
+            }
+        }
+    }
+    if let Some(array) = checks.as_array() {
+        for check in array {
+            let id = check
+                .get("id")
+                .and_then(serde_json::Value::as_str)
+                .unwrap_or_default();
+            if id == "config.load" || id.ends_with("config.load") {
+                return Some(check);
+            }
+        }
+    }
+    None
 }

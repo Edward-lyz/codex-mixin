@@ -15,40 +15,44 @@ pub(in crate::cli) struct CodexInstallPaths {
 }
 
 pub(in crate::cli) struct ManagedConfigLock {
-    #[cfg(unix)]
     _file: fs::File,
 }
 
 impl ManagedConfigLock {
     pub(in crate::cli) fn acquire(config_path: &Path) -> anyhow::Result<Self> {
-        #[cfg(not(unix))]
-        {
-            let _ = config_path;
-            anyhow::bail!("managed Codex config locking requires Unix flock support");
+        if let Some(parent) = config_path.parent() {
+            fs::create_dir_all(parent)?;
         }
-
-        #[cfg(unix)]
-        {
-            if let Some(parent) = config_path.parent() {
-                fs::create_dir_all(parent)?;
-            }
-            // A sibling file keeps the lock inode stable while config writes use atomic rename.
-            let lock_path = sibling_path_with_extra_extension(config_path, "codex-mixin.lock");
-            let file = OpenOptions::new()
-                .create(true)
-                .truncate(false)
-                .read(true)
-                .write(true)
-                .open(&lock_path)?;
-            file.lock().map_err(|error| {
-                anyhow::anyhow!(
-                    "failed to lock managed Codex config {}: {error}",
-                    config_path.display()
-                )
-            })?;
-            Ok(Self { _file: file })
-        }
+        // A sibling file keeps the lock inode stable while config writes use atomic replacement.
+        let lock_path = sibling_path_with_extra_extension(config_path, "codex-mixin.lock");
+        let file = OpenOptions::new()
+            .create(true)
+            .truncate(false)
+            .read(true)
+            .write(true)
+            .open(&lock_path)?;
+        lock_file_exclusive(&file).map_err(|error| {
+            anyhow::anyhow!(
+                "failed to lock managed Codex config {}: {error}",
+                config_path.display()
+            )
+        })?;
+        Ok(Self { _file: file })
     }
+}
+
+// Unix keeps the baseline `std::fs::File::lock()` (advisory flock); other
+// platforms (Windows) have no flock, so use `fs2`'s cross-platform exclusive
+// lock. This keeps Unix/macOS behaviour identical to the pre-Windows baseline.
+#[cfg(unix)]
+fn lock_file_exclusive(file: &fs::File) -> std::io::Result<()> {
+    file.lock()
+}
+
+#[cfg(not(unix))]
+fn lock_file_exclusive(file: &fs::File) -> std::io::Result<()> {
+    use fs2::FileExt;
+    file.lock_exclusive()
 }
 
 pub(in crate::cli) fn resolve_codex_install_paths(
@@ -192,13 +196,9 @@ pub(in crate::cli) fn default_codex_config_path() -> PathBuf {
 }
 
 pub(in crate::cli) fn codex_home_path() -> PathBuf {
-    std::env::var("CODEX_HOME").ok().map_or_else(
-        || {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_owned());
-            PathBuf::from(home).join(".codex")
-        },
-        PathBuf::from,
-    )
+    std::env::var("CODEX_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| codex_mixin::platform::home_dir().join(".codex"))
 }
 
 pub(in crate::cli) fn sync_installed_codex_client_key(
@@ -229,7 +229,9 @@ pub(in crate::cli) fn sync_managed_codex_gateway_base_url(
     let mut doc = raw_config.parse::<DocumentMut>()?;
     let provider_id = codex_mixin::clients::codex::managed_provider_id(&doc)?.to_owned();
     let mut changed = false;
-    if provider_id == codex_mixin::clients::codex::CUSTOM_ONLY_PROVIDER {
+    if provider_id == codex_mixin::clients::codex::CUSTOM_ONLY_PROVIDER
+        || provider_id == codex_mixin::clients::codex::LEGACY_CUSTOM_ONLY_PROVIDER
+    {
         changed |= doc.remove("forced_login_method").is_some();
     }
     let provider = doc

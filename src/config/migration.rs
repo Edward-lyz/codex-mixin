@@ -176,7 +176,11 @@ fn backfill_data_report_executable(config: &mut StoredGatewayConfig) {
             .as_ref()
             .and_then(|executable| {
                 let install = executable.parent()?.parent()?;
-                Some(install.join("hooks/data-report"))
+                Some(install.join(if cfg!(windows) {
+                    "hooks/data-report.exe"
+                } else {
+                    "hooks/data-report"
+                }))
             });
     }
 }

@@ -18,9 +18,9 @@ const MANAGED_CLAUDE_HOOK_MARKER: &str = " report-hook --event ";
 const CLAUDE_EXTENDED_CONTEXT_WINDOW: u64 = 1_000_000;
 
 pub(in crate::cli) fn default_claude_settings_path() -> PathBuf {
-    std::env::var("HOME")
-        .map(|home| PathBuf::from(home).join(".claude").join("settings.json"))
-        .unwrap_or_else(|_| PathBuf::from(".claude/settings.json"))
+    codex_mixin::platform::home_dir()
+        .join(".claude")
+        .join("settings.json")
 }
 
 pub(in crate::cli) fn resolve_claude_settings_path(

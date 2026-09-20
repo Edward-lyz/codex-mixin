@@ -58,15 +58,10 @@ fn default_opencode_config_path() -> PathBuf {
     if let Some(path) = std::env::var_os("XDG_CONFIG_HOME").filter(|path| !path.is_empty()) {
         return PathBuf::from(path).join("opencode").join("opencode.json");
     }
-    std::env::var_os("HOME").map_or_else(
-        || PathBuf::from(".config/opencode/opencode.json"),
-        |home| {
-            PathBuf::from(home)
-                .join(".config")
-                .join("opencode")
-                .join("opencode.json")
-        },
-    )
+    codex_mixin::platform::home_dir()
+        .join(".config")
+        .join("opencode")
+        .join("opencode.json")
 }
 
 fn resolve_opencode_config_path(config_path: Option<PathBuf>) -> anyhow::Result<PathBuf> {

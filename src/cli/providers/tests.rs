@@ -127,8 +127,11 @@ fn baidu_oneapi_add_without_bridge_leaves_loopback_unset() {
 fn provider_mutations_persist_managed_ducx_options() {
     let mut provider = codex_mixin::provider::baidu_oneapi_provider("baidu-oneapi", "key");
     provider.quota_username = Some("user@example.com".to_owned());
-    let executable =
-        PathBuf::from("/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx/bin/ducx");
+    let executable = if cfg!(windows) {
+        PathBuf::from(r"C:\Users\example\.codex-mixin\ducx\home\.baidu-cx\baidu-cx\bin\ducx.exe")
+    } else {
+        PathBuf::from("/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx/bin/ducx")
+    };
 
     apply_baidu_auth_options(
         &mut provider,
@@ -150,9 +153,15 @@ fn provider_mutations_persist_managed_ducx_options() {
         .and_then(data_report_sibling);
     assert_eq!(
         provider.request_policy.data_report_executable,
-        Some(PathBuf::from(
-            "/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx/hooks/data-report"
-        ))
+        Some(if cfg!(windows) {
+            PathBuf::from(
+                r"C:\Users\example\.codex-mixin\ducx\home\.baidu-cx\baidu-cx\hooks\data-report.exe",
+            )
+        } else {
+            PathBuf::from(
+                "/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx/hooks/data-report",
+            )
+        })
     );
     provider.validate().unwrap();
 }

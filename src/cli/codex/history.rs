@@ -1,8 +1,11 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+#[cfg(windows)]
+use rusqlite::Connection;
 use serde_json::Value;
 use uuid::Uuid;
 
@@ -214,6 +217,15 @@ fn sqlite_table_exists(db_path: &Path, table: &str) -> anyhow::Result<bool> {
     Ok(sqlite_scalar_usize(db_path, &sql)? > 0)
 }
 
+#[cfg(windows)]
+fn sqlite_scalar_usize(db_path: &Path, sql: &str) -> anyhow::Result<usize> {
+    let connection = Connection::open(db_path)?;
+    connection.busy_timeout(std::time::Duration::from_secs(5))?;
+    let value = connection.query_row(sql, [], |row| row.get::<_, i64>(0))?;
+    usize::try_from(value).map_err(|_| anyhow::anyhow!("SQLite count is negative: {value}"))
+}
+
+#[cfg(not(windows))]
 fn sqlite_scalar_usize(db_path: &Path, sql: &str) -> anyhow::Result<usize> {
     let output = Command::new("sqlite3")
         .args(["-cmd", ".timeout 5000"])
@@ -231,6 +243,15 @@ fn sqlite_scalar_usize(db_path: &Path, sql: &str) -> anyhow::Result<usize> {
     Ok(text.trim().parse()?)
 }
 
+#[cfg(windows)]
+fn run_sqlite(db_path: &Path, sql: &str) -> anyhow::Result<()> {
+    let connection = Connection::open(db_path)?;
+    connection.busy_timeout(std::time::Duration::from_secs(5))?;
+    connection.execute_batch(sql)?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
 fn run_sqlite(db_path: &Path, sql: &str) -> anyhow::Result<()> {
     let output = Command::new("sqlite3")
         .args(["-cmd", ".timeout 5000"])

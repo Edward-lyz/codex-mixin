@@ -16,11 +16,11 @@ description: __DESCRIPTION__
 
 Read this file at `__SKILL_PATH__` before acting. Do not search for another imagegen Skill or inspect unrelated imagegen directories.
 
-For image generation, always run `python3 '__SCRIPT_PATH__'`. Do not call the built-in `image_gen` tool for generation: it bypasses Codex Mixin provider routing. Do not stop to ask for `OPENAI_API_KEY` or install Python packages.
+For image generation, always run `__PYTHON__ __SCRIPT_QUOTED__`. Do not call the built-in `image_gen` tool for generation: it bypasses Codex Mixin provider routing. Do not stop to ask for `OPENAI_API_KEY` or install Python packages.
 
 The CLI uses only the Python standard library and sends image requests through the local Codex Mixin gateway. Image generation uses the enabled provider marked for voice, automatic review, and other auxiliary tasks when that provider configures an image generation path. With no auxiliary provider selected, the gateway uses the official Codex image backend.
 
-Run `python3 scripts/image_gen.py generate --prompt <prompt> --out <path>`. The image model is fixed to `gpt-image-2` and cannot be overridden. Optional arguments include `--n`, `--size`, `--quality`, `--background`, `--output-format`, `--force`, and `--dry-run`. Put final assets in the user's requested location, or in the current project when no location is specified. Report the generated file paths.
+Run `__PYTHON__ scripts/image_gen.py generate --prompt <prompt> --out <path>`. The image model is fixed to `gpt-image-2` and cannot be overridden. Optional arguments include `--n`, `--size`, `--quality`, `--background`, `--output-format`, `--force`, and `--dry-run`. Put final assets in the user's requested location, or in the current project when no location is specified. Report the generated file paths.
 
 Image editing requires the built-in `image_gen` tool because the configured upstream only supports generation. If it is unavailable, report that the managed bridge does not support editing instead of approximating the edit with a new generation.
 
@@ -202,14 +202,35 @@ fn install_imagegen_skill(codex_home: &Path) -> anyhow::Result<bool> {
     let skill_dir = codex_home.join("skills/.system/imagegen");
     let skill_path = skill_dir.join("SKILL.md");
     let script_path = skill_dir.join("scripts/image_gen.py");
+    // Only Windows needs backslash->forward-slash normalization in the Skill
+    // markdown; on Unix this stays byte-identical to the pre-Windows baseline.
+    #[cfg(windows)]
+    let skill_path_text = skill_path.to_string_lossy().replace('\\', "/");
+    #[cfg(not(windows))]
+    let skill_path_text = skill_path.to_string_lossy().into_owned();
+    #[cfg(windows)]
+    let script_path_text = script_path.to_string_lossy().replace('\\', "/");
+    #[cfg(not(windows))]
+    let script_path_text = script_path.to_string_lossy().into_owned();
+    // Windows Python installs rarely expose `python3`; the `py` launcher is the
+    // documented cross-version entry point. Windows shells also do not treat
+    // single quotes as path delimiters, so quote the script path accordingly.
+    let (python_command, quote) = if cfg!(windows) {
+        ("py -3", '"')
+    } else {
+        ("python3", '\'')
+    };
+    let quoted_script = format!("{quote}{script_path_text}{quote}");
     let description = serde_json::to_string(&format!(
         "Read {}, then generate raster images through Codex Mixin.",
-        skill_path.display()
+        skill_path_text
     ))?;
     let managed_skill = MANAGED_SKILL
         .replace("__DESCRIPTION__", &description)
-        .replace("__SKILL_PATH__", &skill_path.to_string_lossy())
-        .replace("__SCRIPT_PATH__", &script_path.to_string_lossy());
+        .replace("__SKILL_PATH__", &skill_path_text)
+        .replace("__PYTHON__", python_command)
+        .replace("__SCRIPT_QUOTED__", &quoted_script)
+        .replace("__SCRIPT_PATH__", &script_path_text);
     if !skill_path.exists() && !script_path.exists() {
         return Ok(false);
     }
@@ -318,7 +339,19 @@ mod tests {
         )
         .unwrap();
 
-        let output = Command::new("python3")
+        // Invoke Python the same way the managed skill instructs: Windows
+        // installs expose the `py -3` launcher rather than a `python3` binary,
+        // while Unix uses `python3`. This mirrors `install_imagegen_skill` and
+        // keeps the assertions on the wrapper's real dry-run output unchanged.
+        #[cfg(windows)]
+        let mut command = {
+            let mut command = Command::new("py");
+            command.arg("-3");
+            command
+        };
+        #[cfg(not(windows))]
+        let mut command = Command::new("python3");
+        let output = command
             .arg(&script_path)
             .args(["generate", "--prompt", "test", "--dry-run"])
             .env("HOME", directory.path())
@@ -354,8 +387,8 @@ mod tests {
         assert!(reconcile_imagegen_skill(&root, true).unwrap());
         assert!(!reconcile_imagegen_skill(&root, true).unwrap());
         let installed_skill = fs::read_to_string(&skill_path).unwrap();
-        assert!(installed_skill.contains(&skill_path.display().to_string()));
-        assert!(installed_skill.contains(&script_path.display().to_string()));
+        assert!(installed_skill.contains(&skill_path.to_string_lossy().replace('\\', "/")));
+        assert!(installed_skill.contains(&script_path.to_string_lossy().replace('\\', "/")));
         assert!(!installed_skill.contains("__SKILL_PATH__"));
         assert!(!installed_skill.contains("__SCRIPT_PATH__"));
         assert!(installed_skill.contains("fixed to `gpt-image-2`"));
