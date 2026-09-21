@@ -16,6 +16,9 @@ jobs:
           toolchain: stable
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
+      - name: Install ripgrep
+        shell: pwsh
+        run: choco install ripgrep -y --no-progress
       - run: cargo fmt --all -- --check
       - name: Run strict Clippy
         shell: bash
