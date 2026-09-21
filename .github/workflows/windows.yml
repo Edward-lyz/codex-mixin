@@ -69,24 +69,30 @@ jobs:
       - name: Install NSIS
         run: choco install nsis -y --no-progress
         shell: pwsh
-      # Builds the Rust CLI + Flutter UI, assembles dist/codex-mixin-windows,
-      # and produces the standard installer dist/CodexMixin-Setup.exe.
+      # Builds the Rust CLI + Flutter UI and packages the standard installer and
+      # portable archive. Use the same relative dist\release layout as the
+      # Release workflow so this job exercises the release packaging paths.
       - name: Package and optionally sign Windows artifacts
         shell: pwsh
         env:
           WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
           WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
         run: |
-          $options = @{}
+          $version = ((cargo metadata --format-version 1 --no-deps | ConvertFrom-Json).packages |
+            Where-Object { $_.name -eq 'codex-mixin' } | Select-Object -First 1).version
+          $options = @{
+            Output = "dist\release\codex-mixin-$version-windows-x86_64"
+            Installer = "dist\release\codex-mixin-$version-windows-x86_64-setup.exe"
+            PortableArchive = "dist\release\codex-mixin-$version-windows-x86_64.zip"
+            Version = $version
+          }
           $pfx = $null
           if ($env:WINDOWS_CERT_PFX_BASE64) {
             $pfx = Join-Path $env:RUNNER_TEMP 'codex-mixin.pfx'
             [System.IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
-            $options = @{
-              Sign = $true
-              CertificatePath = $pfx
-              CertificatePassword = $env:WINDOWS_CERT_PASSWORD
-            }
+            $options.Sign = $true
+            $options.CertificatePath = $pfx
+            $options.CertificatePassword = $env:WINDOWS_CERT_PASSWORD
           }
           try {
             & windows/scripts/package-windows.ps1 @options
@@ -96,10 +102,13 @@ jobs:
       # Fail the job if either executable is missing from the package.
       - shell: pwsh
         run: |
-          if (-not (Test-Path 'dist/codex-mixin-windows/codex-mixin.exe')) { throw 'codex-mixin.exe missing from package' }
-          if (-not (Test-Path 'dist/codex-mixin-windows/codex_mixin_ui.exe')) { throw 'codex_mixin_ui.exe missing from package' }
-          if (-not (Test-Path 'dist/CodexMixin-Setup.exe')) { throw 'Windows installer missing from package' }
-          if (-not (Test-Path 'dist/CodexMixin-Windows.zip')) { throw 'Windows portable archive missing from package' }
+          $version = ((cargo metadata --format-version 1 --no-deps | ConvertFrom-Json).packages |
+            Where-Object { $_.name -eq 'codex-mixin' } | Select-Object -First 1).version
+          $app = "dist\release\codex-mixin-$version-windows-x86_64"
+          if (-not (Test-Path "$app\codex-mixin.exe")) { throw 'codex-mixin.exe missing from package' }
+          if (-not (Test-Path "$app\codex_mixin_ui.exe")) { throw 'codex_mixin_ui.exe missing from package' }
+          if (-not (Test-Path "dist\release\codex-mixin-$version-windows-x86_64-setup.exe")) { throw 'Windows installer missing from package' }
+          if (-not (Test-Path "dist\release\codex-mixin-$version-windows-x86_64.zip")) { throw 'Windows portable archive missing from package' }
       - uses: actions/upload-artifact@v7
         with:
           name: codex-mixin-windows
