@@ -1,6 +1,5 @@
 use std::time::Duration;
 
-use anyhow::Context;
 use futures_util::StreamExt;
 use reqwest::{Client, StatusCode, Url, header::HeaderMap};
 use serde_json::{Value, json};
@@ -29,7 +28,7 @@ pub(super) async fn probe_model(
         provider,
         model,
         protocol,
-        provider.api_url_for_model(model).path(),
+        provider.api_url_for_model(model),
         request_limit,
         native_headers,
     )
@@ -50,31 +49,16 @@ async fn probe_protocol(
     provider: &ProviderRuntime,
     model: &str,
     protocol: ProviderProtocol,
-    api_path: &str,
+    url: &Url,
     request_limit: &Semaphore,
     native_headers: Option<&HeaderMap>,
 ) -> ProtocolCapabilities {
-    let url = match endpoint_url(&provider.definition().base_url, api_path) {
-        Ok(url) => url,
-        Err(error) => {
-            return ProtocolCapabilities {
-                protocol,
-                api_path: api_path.to_owned(),
-                baseline: CapabilityStatus::Indeterminate,
-                image_input: CapabilityStatus::Indeterminate,
-                thinking: CapabilityStatus::Indeterminate,
-                function_tools: CapabilityStatus::Indeterminate,
-                tool_search: CapabilityStatus::Indeterminate,
-                web_search: CapabilityStatus::Indeterminate,
-                error: Some(error.to_string()),
-            };
-        }
-    };
+    let api_path = url.path();
     let baseline = send_probe(
         client,
         provider,
         protocol,
-        &url,
+        url,
         probe_body(protocol, model, None),
         request_limit,
         native_headers,
@@ -424,23 +408,78 @@ fn classify_status(status: StatusCode) -> CapabilityStatus {
     }
 }
 
-fn endpoint_url(base_url: &str, path: &str) -> anyhow::Result<Url> {
-    let path = if path.starts_with('/') {
-        path.to_owned()
-    } else {
-        format!("/{path}")
-    };
-    Url::parse(&format!("{}{path}", base_url.trim_end_matches('/')))
-        .context("construct provider capability probe URL")
-}
-
 fn truncate(value: &str) -> String {
     value.chars().take(500).collect()
 }
 
 #[cfg(test)]
 mod tests {
+    use std::sync::{Arc, Mutex};
+
+    use axum::{
+        Router,
+        extract::State,
+        http::{Uri, header},
+        response::IntoResponse,
+        routing::any,
+    };
+
     use super::*;
+    use crate::provider::{ProviderRegistry, custom_provider};
+
+    async fn record_probe_path(
+        State(paths): State<Arc<Mutex<Vec<String>>>>,
+        uri: Uri,
+    ) -> impl IntoResponse {
+        paths.lock().unwrap().push(uri.path().to_owned());
+        (
+            [(header::CONTENT_TYPE, "text/event-stream")],
+            "data: {\"type\":\"response.completed\"}\n\n",
+        )
+    }
+
+    #[tokio::test]
+    async fn capability_probe_does_not_repeat_base_path() {
+        let paths = Arc::new(Mutex::new(Vec::new()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new()
+            .fallback(any(record_probe_path))
+            .with_state(Arc::clone(&paths));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let mut definition = custom_provider("custom", "secret");
+        definition.base_url = format!("http://{address}/api/coding/v3");
+        definition.api_path = "/responses".to_owned();
+        definition.protocol = ProviderProtocol::OpenAiResponses;
+        let registry = ProviderRegistry::new(vec![definition]).unwrap();
+        let provider = registry.provider("custom").unwrap();
+        assert_eq!(
+            provider.api_url_for_model("glm-5.3-flash").path(),
+            "/api/coding/v3/responses"
+        );
+
+        let capabilities = probe_model(
+            &Client::new(),
+            provider,
+            "glm-5.3-flash",
+            1,
+            &Semaphore::new(6),
+            None,
+        )
+        .await;
+        server.abort();
+
+        assert_eq!(
+            capabilities.selected_protocol,
+            Some(ProviderProtocol::OpenAiResponses)
+        );
+        let paths = paths.lock().unwrap();
+        assert_eq!(paths.len(), 6);
+        assert!(paths.iter().all(|path| path == "/api/coding/v3/responses"));
+    }
 
     #[test]
     fn the_responses_function_tool_probe_declares_its_tool_type() {
