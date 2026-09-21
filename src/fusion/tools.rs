@@ -194,9 +194,9 @@ impl PanelToolExecutor {
             "--max-count",
             &MAX_GREP_MATCHES.to_string(),
             "--glob",
-            "!.git/**",
+            "!**/.git/**",
             "--glob",
-            "!target/**",
+            "!**/target/**",
         ]);
         if let Some(glob) = glob {
             command.arg("-g").arg(glob);
