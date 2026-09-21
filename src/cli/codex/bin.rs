@@ -3,7 +3,10 @@
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
+#[cfg(not(windows))]
 const CODEX_CLI_INSTALL_SCRIPT_URL: &str = "https://chatgpt.com/codex/install.sh";
+#[cfg(windows)]
+const CODEX_CLI_INSTALL_SCRIPT_URL: &str = "https://chatgpt.com/codex/install.ps1";
 
 pub(super) fn ensure_codex_cli_for_install() -> anyhow::Result<PathBuf> {
     match resolve_codex_cli() {
@@ -27,9 +30,23 @@ pub(super) fn ensure_codex_cli_for_install() -> anyhow::Result<PathBuf> {
 
 fn install_official_codex_cli() -> anyhow::Result<PathBuf> {
     #[cfg(windows)]
-    anyhow::bail!(
-        "automatic Codex CLI installation is not available on Windows; install Codex and set CODEX_CLI_PATH if needed"
-    );
+    {
+        use anyhow::Context;
+
+        println!(
+            "codex cli install: running the official Windows installer in non-interactive mode"
+        );
+        let status = official_windows_installer_command()
+            .status()
+            .context("failed to run the official Codex CLI Windows installer")?;
+        anyhow::ensure!(
+            status.success(),
+            "official Codex CLI Windows installer exited with {status}"
+        );
+        resolve_default_codex_cli().context(
+            "official Codex CLI Windows installer completed without creating a discoverable codex.exe",
+        )
+    }
 
     #[cfg(not(windows))]
     {
@@ -62,6 +79,26 @@ fn install_official_codex_cli() -> anyhow::Result<PathBuf> {
     }
 }
 
+#[cfg(windows)]
+fn official_windows_installer_command() -> ProcessCommand {
+    let mut command = ProcessCommand::new("powershell.exe");
+    command
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+        ])
+        .arg(format!(
+            "Invoke-RestMethod '{CODEX_CLI_INSTALL_SCRIPT_URL}' | Invoke-Expression"
+        ))
+        .env("CODEX_NON_INTERACTIVE", "true")
+        .env("CODEX_INSTALLER_USE_RELEASES_OPENAI_COM", "true");
+    codex_mixin::platform::prepare_background_command(&mut command);
+    command
+}
+
 pub(in crate::cli) fn resolve_codex_cli() -> anyhow::Result<PathBuf> {
     if let Some(path) = std::env::var_os("CODEX_CLI_PATH").map(PathBuf::from) {
         if path.is_file() {
@@ -72,41 +109,76 @@ pub(in crate::cli) fn resolve_codex_cli() -> anyhow::Result<PathBuf> {
             path.display()
         );
     }
-    for path in [
+    if let Some(path) = resolve_default_codex_cli() {
+        return Ok(path);
+    }
+    anyhow::bail!(
+        "Codex CLI was not found; set CODEX_CLI_PATH or install Codex before installing Codex Mixin"
+    )
+}
+
+fn resolve_default_codex_cli() -> Option<PathBuf> {
+    default_codex_cli_candidates()
+        .into_iter()
+        .chain(path_codex_cli_candidates())
+        .find(|path| path.is_file())
+}
+
+fn default_codex_cli_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    #[cfg(target_os = "macos")]
+    candidates.extend([
         PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex"),
         PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"),
-        PathBuf::from("C:/Program Files/OpenAI/Codex/codex.exe"),
-    ] {
-        if path.is_file() {
-            return Ok(path);
-        }
-    }
+    ]);
+    #[cfg(windows)]
+    candidates.extend(windows_codex_cli_candidates());
     if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
-        let local_bin_codex = PathBuf::from(home).join(".local/bin").join("codex");
-        if local_bin_codex.is_file() {
-            return Ok(local_bin_codex);
-        }
+        candidates.push(
+            PathBuf::from(home)
+                .join(".local/bin")
+                .join(if cfg!(windows) { "codex.exe" } else { "codex" }),
+        );
     }
-    if let Some(path) = std::env::var_os("PATH") {
-        for directory in std::env::split_paths(&path) {
-            let candidates = if cfg!(windows) {
+    candidates
+}
+
+#[cfg(windows)]
+fn windows_codex_cli_candidates() -> Vec<PathBuf> {
+    let mut candidates = Vec::new();
+    if let Some(install_dir) = std::env::var_os("CODEX_INSTALL_DIR") {
+        candidates.push(PathBuf::from(install_dir).join("codex.exe"));
+    }
+    if let Some(local_app_data) = std::env::var_os("LOCALAPPDATA") {
+        candidates.push(PathBuf::from(local_app_data).join("Programs/OpenAI/Codex/bin/codex.exe"));
+    }
+    if let Some(home) = std::env::var_os("USERPROFILE").or_else(|| std::env::var_os("HOME")) {
+        let current = PathBuf::from(home).join(".codex/packages/standalone/current");
+        candidates.push(current.join("bin/codex.exe"));
+        candidates.push(current.join("codex.exe"));
+    }
+    if let Some(app_data) = std::env::var_os("APPDATA") {
+        candidates.push(PathBuf::from(app_data).join("npm/codex.cmd"));
+    }
+    candidates.push(PathBuf::from("C:/Program Files/OpenAI/Codex/codex.exe"));
+    candidates
+}
+
+fn path_codex_cli_candidates() -> Vec<PathBuf> {
+    std::env::var_os("PATH")
+        .into_iter()
+        .flat_map(|path| std::env::split_paths(&path).collect::<Vec<_>>())
+        .flat_map(|directory| {
+            if cfg!(windows) {
                 ["codex.exe", "codex.cmd", "codex.bat", "codex.ps1"]
                     .into_iter()
                     .map(|name| directory.join(name))
                     .collect::<Vec<_>>()
             } else {
                 vec![directory.join("codex")]
-            };
-            for candidate in candidates {
-                if candidate.is_file() {
-                    return Ok(candidate);
-                }
             }
-        }
-    }
-    anyhow::bail!(
-        "Codex CLI was not found; set CODEX_CLI_PATH or install Codex before installing Codex Mixin"
-    )
+        })
+        .collect()
 }
 
 pub(in crate::cli) fn codex_command(path: &Path) -> ProcessCommand {
