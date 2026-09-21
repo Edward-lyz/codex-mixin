@@ -79,6 +79,9 @@ jobs:
         env:
           MACOSX_DEPLOYMENT_TARGET: "13.1"
         run: ./macos/build_app.sh
+      - name: Test macOS application icon appearance
+        if: runner.os == 'macOS'
+        run: ./scripts/test_application_icon.sh
       - name: Test macOS About window and install card
         if: runner.os == 'macOS'
         run: |

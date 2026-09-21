@@ -76,6 +76,7 @@ done
 /usr/libexec/PlistBuddy -c "Set :LSMinimumSystemVersion $MACOS_DEPLOYMENT_TARGET" "$CONTENTS_DIR/Info.plist"
 /usr/libexec/PlistBuddy -c "Set :SUFeedURL $SPARKLE_FEED_URL" "$CONTENTS_DIR/Info.plist"
 cp "$ROOT_DIR/macos/CodexMixin.icns" "$RESOURCES_DIR/CodexMixin.icns"
+cp "$ROOT_DIR/macos/CodexMixinDark.icns" "$RESOURCES_DIR/CodexMixinDark.icns"
 mkdir -p "$RESOURCES_DIR/Wallpapers"
 cp "$ROOT_DIR/macos/assets/nasa-wallpapers/"*.png "$RESOURCES_DIR/Wallpapers/"
 cp "$ROOT_DIR/macos/assets/nasa-wallpapers/manifest.json" "$RESOURCES_DIR/Wallpapers/"
@@ -95,6 +96,7 @@ xcrun swiftc \
   -Xlinker -rpath \
   -Xlinker '@executable_path/../Frameworks' \
   "$ROOT_DIR/macos/ApplicationMenuSupport.swift" \
+  "$ROOT_DIR/macos/ApplicationIconSupport.swift" \
   "$ROOT_DIR/macos/MenuBarApp.swift" \
   "$ROOT_DIR/macos/RefreshTimerSupport.swift" \
   "$ROOT_DIR/macos/StatusRefreshCoordinator.swift" \

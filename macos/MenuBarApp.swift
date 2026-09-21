@@ -6,6 +6,7 @@ import Sparkle
 final class AppDelegate: NSObject, NSApplicationDelegate {
     let serviceLabel = "local.codex-mixin.service"
     let menuLaunchLabel = "local.codex-mixin.menu-launch"
+    let applicationIconController = ApplicationIconController()
     var statusItem: NSStatusItem?
     var serviceStatusItem: NSMenuItem?
     var providerUsageDashboardView: ProviderUsageDashboardView?
@@ -47,6 +48,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        applicationIconController.start(application: NSApp)
         updaterController = SPUStandardUpdaterController(
             updaterDelegate: self,
             userDriverDelegate: nil
