@@ -1,4 +1,32 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.7.0
+
+### 功能新增
+
+- 新增 Windows 桌面端：网关与 CLI 原生支持 Windows，桌面壳覆盖托盘、供应商设置、Fusion 与客户端集成，交付标准安装器和便携 zip
+- 新增便携配置备份：把供应商设置与凭据导出为仅当前用户可读的 Base64 文件，CLI 与桌面端都能校验并原子导入
+- 网关默认端口改为动态分配：首次启动占用回环临时端口，不再假定 8787，并持久化该端点以保证客户端连接稳定
+- macOS 供应商设置页显示每个供应商最近一次模型刷新时间
+- macOS Dock 图标跟随系统外观切换，无需重启
+
+### 性能优化
+
+- 自定义模型 v2 compaction 触发在本地处理，不再转发上游
+- DUCX 上报丢弃过期的代码上传事件，失败记录只重试一次
+- Windows 下 workspace grep 跳过构建目录，不再扫描 target / build 树
+- macOS 菜单用量面板不再做无变化的重排，几何更新合并到下一轮 run loop
+
+### BUG 修复
+
+- 修复 macOS 菜单栏 App 反复重启：用量面板在菜单绘制周期内同步改尺寸触发 AppKit 重入异常；同时修复面板宽度被系统覆盖
+- 修复 macOS 唤醒后配额不刷新，以及手动 DUCX 回放估算失败不提示的问题
+- 修复跨供应商协作重放：本地 `agent_message` 先物化再转发官方，官方 WebSocket error 映射为 `response.failed` 以结束回合
+- 修复能力探测重复拼接 base path，导致带路径前缀的自定义供应商探测失败
+- 修复官方模型目录缓存不同步：成功响应同时写入 Mixin 与安装缓存，刷新失败保留上次缓存并只提示一次
+- 修复 Codex 配置残留还原点：当前配置非托管时归档旧还原点，并按当前配置重建
+- 修复 Windows 已存在文件无法原子替换，以及 CLI 启动栈不足（PE 默认 1 MiB，改为 8 MiB）
+- 修复 Windows 托管 DUCX 安装：大包分块重试下载、下载完整校验、从干净暂存目录激活，并在配置校验需要时按需安装官方 Codex CLI
+
 ## v0.6.1
 
 ### 功能新增
@@ -44,6 +72,34 @@
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v0.7.0
+
+### 功能新增
+
+- 新增 Windows 桌面端：閘道與 CLI 原生支援 Windows，桌面殼涵蓋系統匣、供應商設定、Fusion 與客戶端整合，交付標準安裝程式與可攜 zip
+- 新增可攜設定備份：把供應商設定與憑證匯出成僅目前使用者可讀的 Base64 檔案，CLI 與桌面端都能驗證並原子匯入
+- 閘道預設連接埠改為動態分配：首次啟動佔用回環臨時連接埠，不再假設 8787，並持久化該端點以維持客戶端連線穩定
+- macOS 供應商設定頁顯示每個供應商最近一次模型重新整理時間
+- macOS Dock 圖示跟隨系統外觀切換，不需重新啟動
+
+### 效能最佳化
+
+- 自訂模型 v2 compaction 觸發在本機處理，不再轉發上游
+- DUCX 上報丟棄過期的程式碼上傳事件，失敗記錄只重試一次
+- Windows 下的 workspace grep 跳過建置目錄，不再掃描 target / build 樹
+- macOS 選單用量面板不再做沒有變化的重排，幾何更新合併到下一輪 run loop
+
+### BUG 修正
+
+- 修正 macOS 選單列 App 反覆重啟：用量面板在選單繪製週期內同步改尺寸觸發 AppKit 重入例外；同時修正面板寬度被系統覆蓋
+- 修正 macOS 喚醒後額度不重新整理，以及手動 DUCX 回放估算失敗沒有提示的問題
+- 修正跨供應商協作重放：本機 `agent_message` 先具體化再轉發官方，官方 WebSocket error 映射為 `response.failed` 以結束回合
+- 修正能力探測重複串接 base path，導致帶路徑前綴的自訂供應商探測失敗
+- 修正官方模型目錄快取不同步：成功回應同時寫入 Mixin 與安裝快取，重新整理失敗保留上次快取並只提示一次
+- 修正 Codex 設定殘留還原點：目前設定非受管理時封存舊還原點，並依目前設定重建
+- 修正 Windows 既有檔案無法原子替換，以及 CLI 啟動堆疊不足（PE 預設 1 MiB，改為 8 MiB）
+- 修正 Windows 受管理 DUCX 安裝：大檔分塊重試下載、下載完整驗證、從乾淨暫存目錄啟用，並在設定驗證需要時按需安裝官方 Codex CLI
+
 ## v0.6.1
 
 ### 功能新增
@@ -89,6 +145,34 @@
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v0.7.0
+
+### Features
+
+- Add the Windows desktop app: the gateway and CLI now support Windows natively, and the desktop shell covers tray, Provider settings, Fusion, and client integrations, shipping a standard installer and a portable zip
+- Add portable configuration backups: export Provider settings and credentials as owner-only Base64 files that the CLI and both desktop apps validate and import atomically
+- Allocate the default gateway port dynamically: the first start uses a loopback ephemeral port instead of assuming 8787, and the selected endpoint is persisted so connected clients stay stable
+- Show the last successful model refresh time for every Provider in the macOS settings header
+- Follow the system appearance in the macOS Dock icon without relaunching
+
+### Performance
+
+- Handle v2 compaction triggers for custom models locally instead of forwarding them upstream
+- Drop obsolete code upload events from DUCX reporting and retry failed records only once
+- Skip build trees in the Windows workspace grep instead of scanning target and build directories
+- Stop no-op relayouts in the macOS menu usage panel and coalesce geometry updates onto the next run-loop turn
+
+### Bug fixes
+
+- Fix repeated restarts of the macOS menu bar app: resizing the usage panel inside the menu display cycle raised an AppKit re-entrancy exception; also fix the panel width being overwritten by the system
+- Fix stale quota after macOS wake and the missing error dialog when a manual DUCX replay estimate fails
+- Fix cross-provider collaboration replay by materializing local `agent_message` payloads before official forwarding and mapping official WebSocket error events to `response.failed`
+- Fix duplicated base paths in capability probes that broke custom Providers with a path prefix
+- Fix official model caches going out of sync: write every successful response to both the Mixin and installation caches, and keep the last cache with a single alert when refresh fails
+- Fix stale Codex config restore points by archiving leftover points when the current config is unmanaged and rebuilding from the current config
+- Fix Windows atomic replacement of existing files and the undersized CLI startup stack (raise the PE default from 1 MiB to 8 MiB)
+- Fix the managed DUCX setup on Windows: stream and retry the large archive, verify the completed download, activate from a clean staging directory, and install the official Codex CLI on demand when config validation needs it
+
 ## v0.6.1
 
 ### Features
