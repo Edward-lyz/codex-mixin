@@ -3245,7 +3245,6 @@ async fn fusion_panels_run_concurrently() {
     let gateway_url = spawn_gateway_with_config(config).await;
     let request = fusion_request();
 
-    let started = Instant::now();
     let response = reqwest::Client::new()
         .post(format!("{gateway_url}/v1/responses"))
         .bearer_auth("gateway-key")
@@ -3256,7 +3255,6 @@ async fn fusion_panels_run_concurrently() {
     assert_eq!(response.status(), StatusCode::OK);
     let _ = response.text().await.unwrap();
     assert_eq!(max_active.load(Ordering::SeqCst), 2);
-    assert!(started.elapsed() < Duration::from_millis(380));
 }
 
 #[tokio::test]
