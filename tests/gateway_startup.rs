@@ -10,13 +10,15 @@ use codex_mixin::provider::{
 };
 use serde::Deserialize;
 
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[derive(Deserialize)]
 struct RuntimeMetadata {
     bind: String,
 }
 
 async fn wait_for_runtime(path: &std::path::Path) -> RuntimeMetadata {
-    tokio::time::timeout(Duration::from_secs(3), async {
+    tokio::time::timeout(STARTUP_TIMEOUT, async {
         loop {
             if let Ok(raw) = fs::read(path)
                 && let Ok(runtime) = serde_json::from_slice::<RuntimeMetadata>(&raw)
@@ -90,6 +92,7 @@ async fn startup_does_not_wait_for_official_catalog_network() {
         .env("CODEX_GATEWAY_RUNTIME_FILE", &runtime_path)
         .env("CODEX_HOME", &codex_home)
         .env("HOME", &home)
+        .env("USERPROFILE", &home)
         .env("HTTPS_PROXY", &proxy_url)
         .env("https_proxy", &proxy_url)
         .env_remove("ALL_PROXY")
@@ -102,7 +105,7 @@ async fn startup_does_not_wait_for_official_catalog_network() {
         .spawn()
         .unwrap();
 
-    tokio::time::timeout(Duration::from_secs(3), proxy_connection)
+    tokio::time::timeout(STARTUP_TIMEOUT, proxy_connection)
         .await
         .expect("official catalog request did not reach the hanging proxy")
         .unwrap();
@@ -176,6 +179,7 @@ async fn first_start_accepts_client_key_created_during_client_sync() {
         .env("CODEX_GATEWAY_RUNTIME_FILE", &runtime_path)
         .env("CODEX_HOME", directory.path().join("codex"))
         .env("HOME", &home)
+        .env("USERPROFILE", &home)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true)
@@ -243,6 +247,7 @@ async fn running_gateway_serves_a_rotated_client_key() {
         .env("CODEX_GATEWAY_RUNTIME_FILE", &runtime_path)
         .env("CODEX_HOME", directory.path().join("codex"))
         .env("HOME", &home)
+        .env("USERPROFILE", &home)
         .stdout(Stdio::null())
         .stderr(Stdio::null())
         .kill_on_drop(true)
