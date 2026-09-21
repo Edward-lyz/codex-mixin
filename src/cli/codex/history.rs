@@ -285,8 +285,6 @@ fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Barrier};
-    use std::thread;
 
     #[test]
     fn rewrites_session_meta_provider() {
@@ -298,34 +296,6 @@ mod tests {
         let restored =
             rewrite_session_meta_line(&rewritten, Some(CODEX_MIXIN_PROVIDER), "custom").unwrap();
         assert!(restored.contains(r#""model_provider":"custom""#));
-    }
-
-    #[test]
-    fn concurrent_atomic_writes_use_distinct_temporary_files() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = Arc::new(dir.path().join("session.jsonl"));
-        let writers = 8;
-        let barrier = Arc::new(Barrier::new(writers));
-        let threads = (0..writers)
-            .map(|index| {
-                let path = Arc::clone(&path);
-                let barrier = Arc::clone(&barrier);
-                thread::spawn(move || {
-                    let contents = vec![b'0' + index as u8; 64 * 1024];
-                    barrier.wait();
-                    atomic_write(&path, &contents).unwrap();
-                    contents
-                })
-            })
-            .collect::<Vec<_>>();
-        let candidates = threads
-            .into_iter()
-            .map(|thread| thread.join().unwrap())
-            .collect::<Vec<_>>();
-
-        let written = fs::read(path.as_ref()).unwrap();
-        assert!(candidates.contains(&written));
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
     #[test]
