@@ -27,6 +27,16 @@
 - 修复 Windows 已存在文件无法原子替换，以及 CLI 启动栈不足（PE 默认 1 MiB，改为 8 MiB）
 - 修复 Windows 托管 DUCX 安装：大包分块重试下载、下载完整校验、从干净暂存目录激活，并在配置校验需要时按需安装官方 Codex CLI
 
+### 致谢
+
+Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码：
+
+- @yz-30 提交 Windows 支持基线，覆盖网关、CLI、Flutter UI 与打包脚本（PR #27）
+- @Corey-Wang 修复 macOS 菜单用量面板在菜单绘制周期内改尺寸引发 AppKit 重入、App 反复重启的问题（PR #25）
+- @LianshengLi 修复 macOS 唤醒后配额不刷新（PR #26），并反馈跨供应商协作重放无法结束回合的问题（#24）
+
+同时感谢 @zzknwafu、@tugang-baidu 等提交 issue 的同学，复现步骤和日志是定位问题的依据。
+
 ## v0.6.1
 
 ### 功能新增
@@ -100,6 +110,16 @@
 - 修正 Windows 既有檔案無法原子替換，以及 CLI 啟動堆疊不足（PE 預設 1 MiB，改為 8 MiB）
 - 修正 Windows 受管理 DUCX 安裝：大檔分塊重試下載、下載完整驗證、從乾淨暫存目錄啟用，並在設定驗證需要時按需安裝官方 Codex CLI
 
+### 致謝
+
+Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式碼：
+
+- @yz-30 提交 Windows 支援基線，涵蓋閘道、CLI、Flutter UI 與打包腳本（PR #27）
+- @Corey-Wang 修正 macOS 選單用量面板在選單繪製週期內改尺寸引發 AppKit 重入、App 反覆重啟的問題（PR #25）
+- @LianshengLi 修正 macOS 喚醒後額度不重新整理（PR #26），並回報跨供應商協作重放無法結束回合的問題（#24）
+
+同時感謝 @zzknwafu、@tugang-baidu 等提交 issue 的同學，重現步驟與日誌是定位問題的依據。
+
 ## v0.6.1
 
 ### 功能新增
@@ -172,6 +192,16 @@
 - Fix stale Codex config restore points by archiving leftover points when the current config is unmanaged and rebuilding from the current config
 - Fix Windows atomic replacement of existing files and the undersized CLI startup stack (raise the PE default from 1 MiB to 8 MiB)
 - Fix the managed DUCX setup on Windows: stream and retry the large archive, verify the completed download, activate from a clean staging directory, and install the official Codex CLI on demand when config validation needs it
+
+### Thanks
+
+The Windows desktop app started from a community PR, and v0.7.0 carries code from three developers:
+
+- @yz-30 contributed the Windows baseline: gateway, CLI, Flutter UI, and packaging scripts (PR #27)
+- @Corey-Wang fixed the AppKit re-entrancy crash that restarted the macOS menu bar app when the usage panel resized inside the menu display cycle (PR #25)
+- @LianshengLi fixed stale quota after macOS wake (PR #26) and reported the cross-provider collaboration replay issue that could not finish a turn (#24)
+
+Thanks also to @zzknwafu, @tugang-baidu, and everyone else who filed issues. Your reproduction steps and logs are what let us locate these problems.
 
 ## v0.6.1
 
