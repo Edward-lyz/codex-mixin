@@ -78,6 +78,7 @@ jobs:
         if: runner.os == 'macOS'
         env:
           MACOSX_DEPLOYMENT_TARGET: "13.1"
+          CODEX_MIXIN_REQUIRE_ADAPTIVE_ICON: "1"
         run: ./macos/build_app.sh
       - name: Verify macOS application icons
         if: runner.os == 'macOS'
@@ -102,3 +103,17 @@ jobs:
       - name: Test macOS status refresh coordination
         if: runner.os == 'macOS'
         run: ./scripts/test_status_refresh_coordinator.sh
+      - name: Package macOS development app
+        if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch'
+        run: |
+          test "$(uname -m)" = "arm64"
+          ditto -c -k --sequesterRsrc --keepParent \
+            "dist/Codex Mixin.app" \
+            "dist/codex-mixin-main-macos-arm64.zip"
+      - name: Upload macOS development app
+        if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch'
+        uses: actions/upload-artifact@v7
+        with:
+          name: codex-mixin-main-macos-arm64-${{ github.sha }}
+          path: dist/codex-mixin-main-macos-arm64.zip
+          if-no-files-found: error
