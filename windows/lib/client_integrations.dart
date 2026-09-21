@@ -14,7 +14,7 @@ class ClientIntegration {
   });
 
   String get installLabel => '安装到 $displayName';
-  String get removeLabel => '从 $displayName$removeVerb';
+  String get removeLabel => '从 $displayName $removeVerb';
 }
 
 const clientIntegrations = <ClientIntegration>[

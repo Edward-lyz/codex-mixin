@@ -66,7 +66,7 @@ pub fn send_process_signal(pid: u32, signal: &str) -> anyhow::Result<()> {
         if !stopped && windows_pid_is_running(pid, None)? {
             anyhow::bail!("failed to stop process {pid} with taskkill");
         }
-        return Ok(());
+        Ok(())
     }
     #[cfg(not(windows))]
     {
@@ -102,7 +102,7 @@ pub async fn force_kill_process_tree_async(pid: u32) -> std::io::Result<bool> {
             .stdout(Stdio::null())
             .stderr(Stdio::null());
         prepare_background_tokio_command(&mut command);
-        return command.status().await.map(|status| status.success());
+        command.status().await.map(|status| status.success())
     }
     #[cfg(not(windows))]
     force_kill_process_tree(pid)
