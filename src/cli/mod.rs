@@ -18,6 +18,7 @@ mod codex;
 mod config_input;
 mod doctor;
 mod dsh;
+mod ducx_session;
 #[cfg(unix)]
 mod ducx_setup;
 #[cfg(windows)]

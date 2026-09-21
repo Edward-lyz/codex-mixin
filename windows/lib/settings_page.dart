@@ -163,7 +163,7 @@ class _SettingsPageState extends State<SettingsPage> with WindowListener {
           // Adding/saving a Baidu provider can trigger an interactive DUCX
           // login in a separate window, so allow generous time before the
           // action is treated as hung.
-          timeout: const Duration(minutes: 8),
+          timeout: const Duration(minutes: 20),
           onProgress: onProgress,
         );
         if (result.ok) {

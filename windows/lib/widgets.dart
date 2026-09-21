@@ -492,6 +492,8 @@ String? _localizeCliLine(String text) {
     'Restoring pre-install config and auth state': '正在恢复安装前的配置与认证状态',
     'Restoring history sessions and SQLite state': '正在恢复历史会话与本地数据',
     'Preparing DUCX authentication': '正在准备 DUCX 身份认证',
+    'Downloading DUCX authentication package': '正在下载 DUCX 身份认证组件',
+    'Installing DUCX authentication package': '正在安装 DUCX 身份认证组件',
     'Preparing DUCX data-report': '正在准备 DUCX 额度上报',
     'Waiting for DUCX login': '正在等待 DUCX 登录',
     'DUCX login is required': '需要登录 DUCX',
@@ -500,6 +502,15 @@ String? _localizeCliLine(String text) {
     'Managed DUCX installed': '托管 DUCX 已安装',
   };
   if (stages.containsKey(text)) return stages[text];
+  final ducxDownload = RegExp(
+    r'^Downloading DUCX (\d+)(?:/(\d+))? MiB$',
+  ).firstMatch(text);
+  if (ducxDownload != null) {
+    final total = ducxDownload.group(2);
+    return total == null
+        ? '正在下载 DUCX：${ducxDownload.group(1)} MiB'
+        : '正在下载 DUCX：${ducxDownload.group(1)} / $total MiB';
+  }
 
   // Internal developer step/trace lines — hide from the user-facing report.
   if (text.startsWith('codex install step:') ||

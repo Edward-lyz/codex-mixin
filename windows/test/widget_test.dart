@@ -86,6 +86,10 @@ void main() {
       ),
       '正在写入 Codex 配置与模型目录',
     );
+    expect(
+      formatCliProgress('MIXIN_PROGRESS Downloading DUCX 64/132 MiB'),
+      '正在下载 DUCX：64 / 132 MiB',
+    );
   });
 
   test(

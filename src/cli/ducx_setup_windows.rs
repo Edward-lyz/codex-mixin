@@ -5,10 +5,17 @@ use std::process::Stdio;
 use std::time::Duration;
 
 use anyhow::{Context, ensure};
+use futures_util::StreamExt;
 use reqwest::Client;
+use tokio::io::AsyncWriteExt;
 use tokio::process::Command;
 
-const DOWNLOAD_BASE_URL: &str = "http://baidu-cc-client.bj.bcebos.com/baidu-cx";
+use super::ducx_session::is_logged_in;
+
+const DOWNLOAD_BASE_URL: &str = "https://baidu-cc-client.bj.bcebos.com/baidu-cx";
+const DOWNLOAD_ATTEMPTS: usize = 3;
+const DOWNLOAD_PROGRESS_INTERVAL: u64 = 16 * 1024 * 1024;
+const MINIMUM_ARCHIVE_SIZE: u64 = 20 * 1024 * 1024;
 
 pub(super) async fn ensure_managed_ducx() -> anyhow::Result<PathBuf> {
     let home =
@@ -33,19 +40,13 @@ pub(super) async fn ensure_managed_ducx() -> anyhow::Result<PathBuf> {
 
 async fn install_native(install_home: &Path, executable: &Path) -> anyhow::Result<()> {
     let client = Client::builder()
-        .timeout(Duration::from_secs(120))
+        .connect_timeout(Duration::from_secs(20))
+        .read_timeout(Duration::from_secs(60))
         .build()
         .context("create DUCX download client")?;
-    let version = client
-        .get(format!("{DOWNLOAD_BASE_URL}/baidu_cx_latest_version.txt"))
-        .send()
-        .await
-        .context("download DUCX version")?
-        .error_for_status()
-        .context("DUCX version request failed")?
-        .text()
-        .await
-        .context("read DUCX version")?
+    let version_url = format!("{DOWNLOAD_BASE_URL}/baidu_cx_latest_version.txt");
+    let version = download_text(&client, &version_url, "DUCX version")
+        .await?
         .trim()
         .to_owned();
     ensure!(
@@ -59,25 +60,30 @@ async fn install_native(install_home: &Path, executable: &Path) -> anyhow::Resul
     let download_dir = install_home.join("downloads");
     tokio::fs::create_dir_all(&download_dir).await?;
     let archive = download_dir.join(&archive_name);
-    let bytes = client
-        .get(format!("{DOWNLOAD_BASE_URL}/{archive_name}"))
-        .send()
-        .await
-        .context("download Windows DUCX archive")?
-        .error_for_status()
-        .context("Windows DUCX archive request failed")?
-        .bytes()
-        .await
-        .context("read Windows DUCX archive")?;
-    ensure!(!bytes.is_empty(), "Windows DUCX archive is empty");
-    tokio::fs::write(&archive, &bytes).await?;
+    super::progress_step("Downloading DUCX authentication package");
+    download_archive(
+        &client,
+        &format!("{DOWNLOAD_BASE_URL}/{archive_name}"),
+        &archive,
+    )
+    .await?;
+    ensure!(
+        tokio::fs::metadata(&archive).await?.len() >= MINIMUM_ARCHIVE_SIZE,
+        "Windows DUCX archive is unexpectedly small: {}",
+        archive.display()
+    );
 
     let root = install_home.join(".baidu-cx");
-    let version_dir = root.join(format!("baidu-cx-windows-amd64-{version}"));
-    tokio::fs::create_dir_all(&version_dir).await?;
+    tokio::fs::create_dir_all(&root).await?;
+    let staging = root.join(format!(".baidu-cx-staging-{}", std::process::id()));
+    if staging.exists() {
+        tokio::fs::remove_dir_all(&staging).await?;
+    }
+    tokio::fs::create_dir_all(&staging).await?;
+    super::progress_step("Installing DUCX authentication package");
     let archive_path = archive.clone();
-    let extract_dir = version_dir.clone();
-    tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
+    let extract_dir = staging.clone();
+    let extract_result = tokio::task::spawn_blocking(move || -> anyhow::Result<()> {
         let archive = fs::File::open(&archive_path)
             .with_context(|| format!("open Windows DUCX archive {}", archive_path.display()))?;
         let decoder = bzip2::read::BzDecoder::new(archive);
@@ -86,37 +92,136 @@ async fn install_native(install_home: &Path, executable: &Path) -> anyhow::Resul
             .with_context(|| format!("extract Windows DUCX archive to {}", extract_dir.display()))
     })
     .await
-    .context("join Windows DUCX archive extraction")??;
-    let active = root.join("baidu-cx");
-    if active.exists() {
-        tokio::fs::remove_dir_all(&active).await?;
+    .context("join Windows DUCX archive extraction")?;
+    if let Err(error) = extract_result {
+        let _ = tokio::fs::remove_dir_all(&staging).await;
+        return Err(error);
     }
-    copy_dir_all(&version_dir, &active).await?;
-    let codex = active.join("bin/baidu-codex.exe");
-    ensure!(
-        codex.is_file(),
-        "Windows DUCX archive is missing bin/baidu-codex.exe"
-    );
-    if !executable.is_file() {
-        tokio::fs::copy(&codex, executable).await?;
+    let activate_result = async {
+        let codex = staging.join("bin/baidu-codex.exe");
+        ensure!(
+            codex.is_file(),
+            "Windows DUCX archive is missing bin/baidu-codex.exe"
+        );
+        tokio::fs::copy(&codex, staging.join("bin/ducx.exe")).await?;
+        for name in ["config.toml", "auth.json", "hooks.json", "user.json"] {
+            let _ = tokio::fs::remove_file(staging.join(name)).await;
+        }
+        let active = root.join("baidu-cx");
+        if active.exists() {
+            tokio::fs::remove_dir_all(&active).await?;
+        }
+        tokio::fs::rename(&staging, &active)
+            .await
+            .context("activate the managed Windows DUCX installation")?;
+        ensure!(
+            executable.is_file(),
+            "Windows DUCX installation is missing {}",
+            executable.display()
+        );
+        Ok::<(), anyhow::Error>(())
     }
-    for name in ["config.toml", "auth.json", "hooks.json"] {
-        let _ = tokio::fs::remove_file(active.join(name)).await;
+    .await;
+    if let Err(error) = activate_result {
+        let _ = tokio::fs::remove_dir_all(&staging).await;
+        return Err(error);
     }
+    let _ = tokio::fs::remove_file(&archive).await;
     Ok(())
 }
 
-async fn copy_dir_all(source: &Path, target: &Path) -> anyhow::Result<()> {
-    tokio::fs::create_dir_all(target).await?;
-    let mut entries = tokio::fs::read_dir(source).await?;
-    while let Some(entry) = entries.next_entry().await? {
-        let source_path = entry.path();
-        let target_path = target.join(entry.file_name());
-        if entry.file_type().await?.is_dir() {
-            Box::pin(copy_dir_all(&source_path, &target_path)).await?;
-        } else {
-            tokio::fs::copy(source_path, target_path).await?;
+async fn download_text(client: &Client, url: &str, label: &str) -> anyhow::Result<String> {
+    let mut last_error = None;
+    for attempt in 1..=DOWNLOAD_ATTEMPTS {
+        let response = client
+            .get(url)
+            .send()
+            .await
+            .and_then(reqwest::Response::error_for_status);
+        match response {
+            Ok(response) => match response.text().await {
+                Ok(body) => return Ok(body),
+                Err(error) => last_error = Some(error),
+            },
+            Err(error) => last_error = Some(error),
         }
+        if attempt < DOWNLOAD_ATTEMPTS {
+            eprintln!("warning: {label} download attempt {attempt} failed; retrying");
+            tokio::time::sleep(Duration::from_secs(attempt as u64)).await;
+        }
+    }
+    Err(last_error.expect("at least one DUCX download attempt"))
+        .with_context(|| format!("download {label} after {DOWNLOAD_ATTEMPTS} attempts"))
+}
+
+async fn download_archive(client: &Client, url: &str, archive: &Path) -> anyhow::Result<()> {
+    let file_name = archive
+        .file_name()
+        .and_then(|name| name.to_str())
+        .context("Windows DUCX archive path has no file name")?;
+    let partial = archive.with_file_name(format!("{file_name}.part"));
+    let mut last_error = None;
+    for attempt in 1..=DOWNLOAD_ATTEMPTS {
+        let _ = tokio::fs::remove_file(&partial).await;
+        match download_archive_once(client, url, &partial).await {
+            Ok(()) => {
+                if archive.exists() {
+                    tokio::fs::remove_file(archive).await?;
+                }
+                tokio::fs::rename(&partial, archive).await?;
+                return Ok(());
+            }
+            Err(error) => last_error = Some(error),
+        }
+        let _ = tokio::fs::remove_file(&partial).await;
+        if attempt < DOWNLOAD_ATTEMPTS {
+            eprintln!("warning: DUCX archive download attempt {attempt} failed; retrying");
+            tokio::time::sleep(Duration::from_secs(attempt as u64)).await;
+        }
+    }
+    Err(last_error.expect("at least one DUCX archive download attempt"))
+        .context("download Windows DUCX archive after retries")
+}
+
+async fn download_archive_once(client: &Client, url: &str, partial: &Path) -> anyhow::Result<()> {
+    let response = client
+        .get(url)
+        .send()
+        .await
+        .context("download Windows DUCX archive")?
+        .error_for_status()
+        .context("Windows DUCX archive request failed")?;
+    let expected_bytes = response.content_length();
+    let mut stream = response.bytes_stream();
+    let mut file = tokio::fs::File::create(partial)
+        .await
+        .with_context(|| format!("create DUCX archive download {}", partial.display()))?;
+    let mut downloaded_bytes = 0_u64;
+    let mut next_progress = DOWNLOAD_PROGRESS_INTERVAL;
+    while let Some(chunk) = stream.next().await {
+        let chunk = chunk.context("read Windows DUCX archive response")?;
+        file.write_all(&chunk).await?;
+        downloaded_bytes += chunk.len() as u64;
+        if downloaded_bytes >= next_progress {
+            let downloaded_mib = downloaded_bytes / (1024 * 1024);
+            let total_mib = expected_bytes.map(|bytes| bytes.div_ceil(1024 * 1024));
+            match total_mib {
+                Some(total_mib) => super::progress_step(&format!(
+                    "Downloading DUCX {downloaded_mib}/{total_mib} MiB"
+                )),
+                None => super::progress_step(&format!("Downloading DUCX {downloaded_mib} MiB")),
+            }
+            next_progress = downloaded_bytes + DOWNLOAD_PROGRESS_INTERVAL;
+        }
+    }
+    file.flush().await?;
+    file.sync_all().await?;
+    ensure!(downloaded_bytes > 0, "Windows DUCX archive is empty");
+    if let Some(expected_bytes) = expected_bytes {
+        ensure!(
+            downloaded_bytes == expected_bytes,
+            "Windows DUCX archive is incomplete: downloaded {downloaded_bytes} of {expected_bytes} bytes"
+        );
     }
     Ok(())
 }
@@ -224,17 +329,6 @@ async fn ensure_logged_in(executable: &Path, home: &Path) -> anyhow::Result<()> 
         "DUCX login is required; complete the login in the DUCX window and save again"
     );
     Ok(())
-}
-
-fn is_logged_in(home: &Path) -> bool {
-    let login_dir = home.join(".comate/login-user");
-    fs::read_dir(&login_dir)
-        .map(|entries| {
-            entries
-                .filter_map(Result::ok)
-                .any(|entry| entry.file_type().is_ok_and(|kind| kind.is_file()))
-        })
-        .unwrap_or(false)
 }
 
 fn windows_home() -> Option<PathBuf> {
