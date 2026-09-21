@@ -4,10 +4,10 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
+use codex_mixin::CODEX_MIXIN_PROVIDER;
 #[cfg(windows)]
 use rusqlite::Connection;
 use serde_json::Value;
-use codex_mixin::CODEX_MIXIN_PROVIDER;
 
 #[derive(Clone, Debug, Default)]
 pub struct HistoryMigrationOutcome {
