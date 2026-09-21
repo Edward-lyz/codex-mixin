@@ -11,22 +11,7 @@ pub fn write_atomic_if_changed(path: &Path, contents: &[u8]) -> anyhow::Result<b
         .then(|| fs::metadata(path))
         .transpose()?
         .map(|metadata| metadata.permissions());
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("config");
-    let temporary_path = path.with_file_name(format!("{file_name}.tmp.{}", std::process::id()));
-    fs::write(&temporary_path, contents)?;
-    if let Some(permissions) = existing_permissions {
-        fs::set_permissions(&temporary_path, permissions)?;
-    }
-    if let Err(error) = fs::rename(&temporary_path, path) {
-        let _ = fs::remove_file(&temporary_path);
-        return Err(error.into());
-    }
+    replace_file_atomic(path, contents, existing_permissions, false)?;
     Ok(true)
 }
 
@@ -34,32 +19,33 @@ pub fn write_owner_only(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
     if path.exists() && fs::read(path)? == contents {
         return set_owner_only(path);
     }
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
+    replace_file_atomic(path, contents, None, true)
+}
+
+fn replace_file_atomic(
+    path: &Path,
+    contents: &[u8],
+    permissions: Option<fs::Permissions>,
+    owner_only: bool,
+) -> anyhow::Result<()> {
+    let parent = path
+        .parent()
+        .filter(|parent| !parent.as_os_str().is_empty())
+        .unwrap_or_else(|| Path::new("."));
+    fs::create_dir_all(parent)?;
+    let mut temporary = tempfile::NamedTempFile::new_in(parent)?;
+    temporary.write_all(contents)?;
+    if let Some(permissions) = permissions {
+        temporary.as_file().set_permissions(permissions)?;
     }
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("secret");
-    let temporary_path = path.with_file_name(format!("{file_name}.tmp.{}", std::process::id()));
-    let mut options = fs::OpenOptions::new();
-    options.write(true).create_new(true);
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::OpenOptionsExt;
-        options.mode(0o600);
+    if owner_only {
+        crate::platform::restrict_owner_only_file(temporary.path())?;
     }
-    let result = (|| -> anyhow::Result<()> {
-        let mut temporary = options.open(&temporary_path)?;
-        temporary.write_all(contents)?;
-        fs::rename(&temporary_path, path)?;
-        Ok(())
-    })();
-    if result.is_err() {
-        let _ = fs::remove_file(&temporary_path);
-    }
-    result?;
-    set_owner_only(path)
+    temporary.as_file().sync_all()?;
+    // TempPath::persist uses replace semantics on Windows and rename on Unix,
+    // so the destination is never deleted before the new file is ready.
+    temporary.into_temp_path().persist(path)?;
+    Ok(())
 }
 
 pub fn set_owner_only(path: &Path) -> anyhow::Result<()> {

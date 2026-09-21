@@ -7,8 +7,6 @@ use std::time::{SystemTime, UNIX_EPOCH};
 #[cfg(windows)]
 use rusqlite::Connection;
 use serde_json::Value;
-use uuid::Uuid;
-
 use codex_mixin::CODEX_MIXIN_PROVIDER;
 
 #[derive(Clone, Debug, Default)]
@@ -280,16 +278,7 @@ fn backup_file(path: &Path, codex_home: &Path, backup_root: &Path) -> anyhow::Re
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("session.jsonl");
-    let tmp = path.with_file_name(format!("{file_name}.tmp.{}", Uuid::new_v4().simple()));
-    fs::write(&tmp, bytes)?;
-    if let Err(error) = fs::rename(&tmp, path) {
-        let _ = fs::remove_file(&tmp);
-        return Err(error.into());
-    }
+    codex_mixin::clients::files::write_atomic_if_changed(path, bytes)?;
     Ok(())
 }
 
