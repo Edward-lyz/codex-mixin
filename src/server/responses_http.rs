@@ -8,6 +8,9 @@ pub(super) async fn responses(
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
     let mut body = super::request_body::parse_json(body).await?;
+    state
+        .gateway
+        .prepare_ambient_suggestion_request(&headers, &mut body)?;
     let requested_model = body
         .get("model")
         .and_then(Value::as_str)

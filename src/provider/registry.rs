@@ -295,6 +295,16 @@ impl ProviderRegistry {
             "multiple auxiliary model upstreams configured: {}",
             auxiliary_providers.join(", ")
         );
+        let ambient_providers = providers
+            .iter()
+            .filter(|provider| provider.ambient_suggestions_upstream)
+            .map(|provider| provider.id.as_str())
+            .collect::<Vec<_>>();
+        ensure!(
+            ambient_providers.len() <= 1,
+            "multiple ambient suggestions upstreams configured: {}",
+            ambient_providers.join(", ")
+        );
         let mut provider_ids = HashSet::with_capacity(providers.len());
         let mut runtimes = Vec::with_capacity(providers.len());
         let mut provider_indices = HashMap::with_capacity(providers.len());
@@ -364,6 +374,14 @@ impl ProviderRegistry {
             provider.definition().auxiliary_model_upstream
                 && provider.image_generation_url().is_some()
         })
+    }
+
+    /// Returns the designated provider even when disabled so callers can fail
+    /// closed instead of silently sending ambient requests to official models.
+    pub fn ambient_suggestions_provider(&self) -> Option<&ProviderRuntime> {
+        self.providers
+            .iter()
+            .find(|provider| provider.definition().ambient_suggestions_upstream)
     }
 
     pub fn has_enabled_auxiliary_model_upstream(&self) -> bool {
@@ -958,12 +976,45 @@ mod tests {
         );
     }
 
+    #[test]
+    fn rejects_multiple_ambient_suggestions_upstreams_even_when_disabled() {
+        let mut first = test_provider("first");
+        first.ambient_suggestions_upstream = true;
+        let mut second = test_provider("second");
+        second.ambient_suggestions_upstream = true;
+        second.enabled = false;
+
+        assert!(
+            ProviderRegistry::new(vec![first, second])
+                .unwrap_err()
+                .to_string()
+                .contains("multiple ambient suggestions upstreams configured: first, second")
+        );
+    }
+
+    #[test]
+    fn ambient_suggestions_provider_is_independent_and_preserves_disabled_selection() {
+        let mut auxiliary = test_provider("auxiliary");
+        auxiliary.auxiliary_model_upstream = true;
+        let mut ambient = test_provider("ambient");
+        ambient.ambient_suggestions_upstream = true;
+        ambient.enabled = false;
+        let registry = ProviderRegistry::new(vec![auxiliary, ambient]).unwrap();
+
+        let designated = registry.ambient_suggestions_provider().unwrap();
+        assert_eq!(designated.id(), "ambient");
+        assert!(!designated.definition().enabled);
+        assert!(!designated.definition().auxiliary_model_upstream);
+        assert!(registry.has_enabled_auxiliary_model_upstream());
+    }
+
     fn test_provider(id: &str) -> ProviderDefinition {
         ProviderDefinition {
             id: id.to_owned(),
             display_name: id.to_owned(),
             enabled: true,
             auxiliary_model_upstream: false,
+            ambient_suggestions_upstream: false,
             auto_review_model: None,
             preset_id: None,
             protocol: ProviderProtocol::OpenAiChat,

@@ -165,6 +165,7 @@ impl ProviderSpec {
             display_name: self.display_name.to_owned(),
             enabled: true,
             auxiliary_model_upstream: false,
+            ambient_suggestions_upstream: false,
             auto_review_model: None,
             preset_id: Some(self.id.to_owned()),
             protocol: self.protocol,

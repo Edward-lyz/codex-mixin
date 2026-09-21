@@ -1,5 +1,6 @@
 use crate::protocol::ResponseStream;
 
+mod ambient;
 mod cache_shape;
 mod cache_usage;
 mod executor;

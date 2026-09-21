@@ -47,6 +47,65 @@ fn user_facing_command_groups_parse() {
 }
 
 #[test]
+fn ambient_suggestions_upstream_requires_an_explicit_boolean_on_add_and_update() {
+    use crate::cli::args::{Command, ProviderCommand};
+
+    let added = Cli::try_parse_from([
+        "codex-mixin",
+        "provider",
+        "add",
+        "--preset",
+        "baidu-oneapi",
+        "--ambient-suggestions-upstream",
+        "true",
+    ])
+    .unwrap();
+    let Some(Command::Providers { command }) = added.command else {
+        panic!("expected provider command");
+    };
+    assert!(matches!(
+        *command,
+        ProviderCommand::Add {
+            ambient_suggestions_upstream: Some(true),
+            auxiliary_model_upstream: None,
+            ..
+        }
+    ));
+
+    let updated = Cli::try_parse_from([
+        "codex-mixin",
+        "provider",
+        "update",
+        "baidu-oneapi",
+        "--ambient-suggestions-upstream",
+        "false",
+    ])
+    .unwrap();
+    let Some(Command::Providers { command }) = updated.command else {
+        panic!("expected provider command");
+    };
+    assert!(matches!(
+        *command,
+        ProviderCommand::Update {
+            ambient_suggestions_upstream: Some(false),
+            auxiliary_model_upstream: None,
+            ..
+        }
+    ));
+
+    assert!(
+        Cli::try_parse_from([
+            "codex-mixin",
+            "provider",
+            "update",
+            "baidu-oneapi",
+            "--ambient-suggestions-upstream",
+        ])
+        .is_err()
+    );
+}
+
+#[test]
 fn no_tui_flag_preserves_plain_default_command() {
     let interactive = Cli::try_parse_from(["codex-mixin"]).unwrap();
     assert!(!interactive.no_tui);

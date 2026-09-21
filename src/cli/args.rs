@@ -413,6 +413,12 @@ pub(super) enum ProviderCommand {
         preset: CliProviderPreset,
         #[arg(long, value_name = "BOOL")]
         auxiliary_model_upstream: Option<bool>,
+        #[arg(
+            long,
+            value_name = "BOOL",
+            help = "Route Codex ambient suggestions and their safety checks through this provider"
+        )]
+        ambient_suggestions_upstream: Option<bool>,
         #[arg(long)]
         id: Option<String>,
         #[arg(long)]
@@ -469,6 +475,12 @@ pub(super) enum ProviderCommand {
         id: String,
         #[arg(long, value_name = "BOOL")]
         auxiliary_model_upstream: Option<bool>,
+        #[arg(
+            long,
+            value_name = "BOOL",
+            help = "Route Codex ambient suggestions and their safety checks through this provider"
+        )]
+        ambient_suggestions_upstream: Option<bool>,
         #[arg(long)]
         key: Option<String>,
         #[arg(long, conflicts_with = "key")]

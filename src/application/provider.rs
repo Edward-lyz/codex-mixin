@@ -195,6 +195,11 @@ pub fn add_provider_config(
             existing.auxiliary_model_upstream = false;
         }
     }
+    if provider.ambient_suggestions_upstream {
+        for existing in &mut config.providers {
+            existing.ambient_suggestions_upstream = false;
+        }
+    }
     config.providers.push(provider);
     Ok(())
 }
@@ -204,9 +209,17 @@ pub fn update_provider(
     snapshot: &ProviderDefinition,
     provider: ProviderDefinition,
     auxiliary_model_upstream: Option<bool>,
+    ambient_suggestions_upstream: Option<bool>,
 ) -> Result<(), OperationError> {
     commit_provider_change(|config| {
-        update_provider_config(config, id, snapshot, provider, auxiliary_model_upstream)
+        update_provider_config(
+            config,
+            id,
+            snapshot,
+            provider,
+            auxiliary_model_upstream,
+            ambient_suggestions_upstream,
+        )
     })?;
     invalidate_provider_caches()
 }
@@ -217,6 +230,7 @@ pub fn update_provider_config(
     snapshot: &ProviderDefinition,
     provider: ProviderDefinition,
     auxiliary_model_upstream: Option<bool>,
+    ambient_suggestions_upstream: Option<bool>,
 ) -> anyhow::Result<()> {
     require_providers(config)?;
     let current = provider_mut(config, id)?;
@@ -227,6 +241,9 @@ pub fn update_provider_config(
     *current = provider;
     if let Some(enabled) = auxiliary_model_upstream {
         set_auxiliary_upstream(config, id, enabled)?;
+    }
+    if let Some(enabled) = ambient_suggestions_upstream {
+        set_ambient_suggestions_upstream(config, id, enabled)?;
     }
     Ok(())
 }
@@ -262,6 +279,26 @@ pub fn set_auxiliary_upstream(
         }
     }
     config.providers[selected].auxiliary_model_upstream = enabled;
+    Ok(())
+}
+
+pub fn set_ambient_suggestions_upstream(
+    config: &mut StoredGatewayConfig,
+    id: &str,
+    enabled: bool,
+) -> anyhow::Result<()> {
+    require_providers(config)?;
+    let selected = config
+        .providers
+        .iter()
+        .position(|provider| provider.id == id)
+        .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?;
+    if enabled {
+        for provider in &mut config.providers {
+            provider.ambient_suggestions_upstream = false;
+        }
+    }
+    config.providers[selected].ambient_suggestions_upstream = enabled;
     Ok(())
 }
 
@@ -452,6 +489,83 @@ mod tests {
     }
 
     #[test]
+    fn add_provider_keeps_ambient_selection_exclusive_and_auxiliary_unchanged() {
+        let mut existing = provider("existing");
+        existing.auxiliary_model_upstream = true;
+        existing.ambient_suggestions_upstream = true;
+        let mut config = StoredGatewayConfig {
+            providers: vec![existing],
+            ..StoredGatewayConfig::default()
+        };
+        let mut added = provider("added");
+        added.ambient_suggestions_upstream = true;
+
+        add_provider_config(&mut config, added, None).unwrap();
+
+        assert!(!config.providers[0].ambient_suggestions_upstream);
+        assert!(config.providers[1].ambient_suggestions_upstream);
+        assert!(config.providers[0].auxiliary_model_upstream);
+        assert!(!config.providers[1].auxiliary_model_upstream);
+    }
+
+    #[test]
+    fn ambient_update_persists_exclusive_selection_and_preserves_unrelated_fields() {
+        use crate::config::{
+            load_stored_config_from_path, mutate_stored_config_at_path, save_stored_config_to_path,
+        };
+
+        let dir = tempfile::tempdir().unwrap();
+        let path = dir.path().join("config.json");
+        let first = provider("first");
+        let mut second = provider("second");
+        second.ambient_suggestions_upstream = true;
+        second.auxiliary_model_upstream = true;
+        let original = StoredGatewayConfig {
+            gateway_bind: Some("127.0.0.1:18787".to_owned()),
+            official_selected_models: Some(vec!["gpt-5.6-sol".to_owned()]),
+            providers: vec![first.clone(), second.clone()],
+            ..StoredGatewayConfig::default()
+        };
+        save_stored_config_to_path(&path, &original).unwrap();
+
+        mutate_stored_config_at_path(&path, |config| {
+            update_provider_config(config, "first", &first, first.clone(), None, Some(true))
+        })
+        .unwrap();
+
+        let loaded = load_stored_config_from_path(&path).unwrap().unwrap();
+        let mut expected_first = first;
+        expected_first.ambient_suggestions_upstream = true;
+        second.ambient_suggestions_upstream = false;
+        assert_eq!(loaded.providers, vec![expected_first.clone(), second]);
+        assert_eq!(loaded.gateway_bind, original.gateway_bind);
+        assert_eq!(
+            loaded.official_selected_models,
+            original.official_selected_models
+        );
+
+        mutate_stored_config_at_path(&path, |config| {
+            update_provider_config(
+                config,
+                "first",
+                &expected_first,
+                expected_first.clone(),
+                None,
+                Some(false),
+            )
+        })
+        .unwrap();
+        let cleared = load_stored_config_from_path(&path).unwrap().unwrap();
+        assert!(
+            cleared
+                .providers
+                .iter()
+                .all(|provider| !provider.ambient_suggestions_upstream)
+        );
+        assert!(cleared.providers[1].auxiliary_model_upstream);
+    }
+
+    #[test]
     fn update_provider_rejects_a_stale_snapshot_without_overwriting() {
         let snapshot = provider("provider");
         let mut config = StoredGatewayConfig {
@@ -462,8 +576,9 @@ mod tests {
         let mut replacement = snapshot.clone();
         replacement.display_name = "requested edit".to_owned();
 
-        let error = update_provider_config(&mut config, "provider", &snapshot, replacement, None)
-            .unwrap_err();
+        let error =
+            update_provider_config(&mut config, "provider", &snapshot, replacement, None, None)
+                .unwrap_err();
 
         assert!(error.to_string().contains("changed during update"));
         assert_eq!(config.providers[0].display_name, "concurrent edit");

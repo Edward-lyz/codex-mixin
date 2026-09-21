@@ -62,6 +62,19 @@ async fn route_responses_ws(
         if body.get("stream").is_none() {
             body["stream"] = Value::Bool(true);
         }
+        if let Err(error) = state
+            .gateway
+            .prepare_ambient_suggestion_request(&headers, &mut body)
+        {
+            send_responses_ws_failure(
+                &mut client_sender,
+                None,
+                error.to_string(),
+                "invalid_request_error",
+            )
+            .await?;
+            continue;
+        }
         let model = body
             .get("model")
             .and_then(Value::as_str)

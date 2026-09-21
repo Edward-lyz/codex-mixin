@@ -306,6 +306,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             ProviderCommand::Add {
                 preset,
                 auxiliary_model_upstream,
+                ambient_suggestions_upstream,
                 id,
                 key,
                 aws_access_key_id,
@@ -341,6 +342,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 add_provider(AddProviderOptions {
                     preset: preset.as_str().to_owned(),
                     auxiliary_model_upstream,
+                    ambient_suggestions_upstream,
                     id,
                     key,
                     aws_access_key_id,
@@ -373,6 +375,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             ProviderCommand::Update {
                 id,
                 auxiliary_model_upstream,
+                ambient_suggestions_upstream,
                 key,
                 clear_key,
                 aws_access_key_id,
@@ -413,6 +416,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 update_provider(UpdateProviderOptions {
                     id,
                     auxiliary_model_upstream,
+                    ambient_suggestions_upstream,
                     key,
                     clear_key,
                     aws_access_key_id,

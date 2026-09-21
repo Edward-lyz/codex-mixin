@@ -168,6 +168,7 @@ pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
             .and_then(data_report_sibling);
     }
     provider.auxiliary_model_upstream = options.auxiliary_model_upstream.unwrap_or(false);
+    provider.ambient_suggestions_upstream = options.ambient_suggestions_upstream.unwrap_or(false);
     let mut detected_protocol = None;
     let mut protocol_probe_error = None;
     // Baidu uses its curated protocol. Custom sites get a live protocol probe so
@@ -392,6 +393,7 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
         &snapshot,
         provider,
         options.auxiliary_model_upstream,
+        options.ambient_suggestions_upstream,
     )?;
     let mut detected_protocol = None;
     let mut protocol_probe_error = None;

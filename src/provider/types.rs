@@ -178,6 +178,10 @@ pub struct ProviderDefinition {
     pub enabled: bool,
     #[serde(default, skip_serializing_if = "is_false")]
     pub auxiliary_model_upstream: bool,
+    /// Provider for Codex ambient task suggestions and their safety checks.
+    /// Independent of the voice, image, and guardian auto review upstream.
+    #[serde(default, skip_serializing_if = "is_false")]
+    pub ambient_suggestions_upstream: bool,
     /// Upstream model that answers Codex guardian auto review while this
     /// provider owns the auxiliary upstream. Empty keeps auto review on the
     /// official model.
@@ -635,6 +639,21 @@ const fn is_false(value: &bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn ambient_suggestions_is_opt_in_and_round_trips() {
+        let mut provider = crate::provider::open_code_go_provider("provider", "key");
+        let legacy = serde_json::to_value(&provider).unwrap();
+        assert!(legacy.get("ambient_suggestions_upstream").is_none());
+        let decoded: ProviderDefinition = serde_json::from_value(legacy).unwrap();
+        assert!(!decoded.ambient_suggestions_upstream);
+
+        provider.ambient_suggestions_upstream = true;
+        let saved = serde_json::to_value(&provider).unwrap();
+        assert_eq!(saved["ambient_suggestions_upstream"], true);
+        let decoded: ProviderDefinition = serde_json::from_value(saved).unwrap();
+        assert_eq!(decoded, provider);
+    }
 
     #[test]
     fn readiness_reports_healthy_degraded_and_disabled_states() {

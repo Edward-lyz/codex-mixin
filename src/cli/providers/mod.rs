@@ -35,6 +35,7 @@ pub(super) use models::{
 pub(super) struct AddProviderOptions {
     pub(super) preset: String,
     pub(super) auxiliary_model_upstream: Option<bool>,
+    pub(super) ambient_suggestions_upstream: Option<bool>,
     pub(super) id: Option<String>,
     pub(super) key: Option<String>,
     pub(super) aws_access_key_id: Option<String>,
@@ -66,6 +67,7 @@ pub(super) struct AddProviderOptions {
 pub(super) struct UpdateProviderOptions {
     pub(super) id: String,
     pub(super) auxiliary_model_upstream: Option<bool>,
+    pub(super) ambient_suggestions_upstream: Option<bool>,
     pub(super) key: Option<String>,
     pub(super) clear_key: bool,
     pub(super) aws_access_key_id: Option<String>,
@@ -148,6 +150,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     "display_name": provider.display_name,
                     "enabled": provider.enabled,
                     "auxiliary_model_upstream": provider.auxiliary_model_upstream,
+                    "ambient_suggestions_upstream": provider.ambient_suggestions_upstream,
                     "auto_review_model": provider.auto_review_model,
                     "preset_id": provider.preset_id,
                     "protocol": provider.protocol,
@@ -317,6 +320,7 @@ fn official_provider_view(
         "display_name": "OpenAI",
         "enabled": true,
         "auxiliary_model_upstream": false,
+        "ambient_suggestions_upstream": false,
         "auto_review_model": null,
         "preset_id": null,
         "protocol": "open_ai_responses",

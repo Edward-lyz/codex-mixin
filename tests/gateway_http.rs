@@ -7129,6 +7129,923 @@ async fn auxiliary_provider_overrides_official_auto_review_http_backend() {
     assert!(official_requests.lock().unwrap().is_empty());
 }
 
+async fn ambient_suggestions_fixture() -> (
+    GatewayConfig,
+    Arc<Mutex<Vec<Value>>>,
+    Arc<Mutex<Vec<Value>>>,
+    tempfile::TempDir,
+) {
+    let (upstream_url, upstream_requests) = spawn_baidu_protocol_upstream().await;
+    let (official_url, official_requests, _, _, _, _) =
+        spawn_mock_official(OfficialWebSocketBehavior::Persistent).await;
+    let mut config = test_config(upstream_url);
+    configure_baidu_policy(&mut config);
+    configure_custom_headers_from_env(&mut config);
+    config.providers[0].model_source = ProviderModelSource::BaiduOneApi;
+    config.providers[0].ambient_suggestions_upstream = true;
+    for model in ["gpt-5.6-terra", "gpt-5.6-luna"] {
+        config.providers[0].cached_models.push(ProviderModel {
+            id: model.to_owned(),
+            protocol: Some(ProviderProtocol::OpenAiResponses),
+            api_path: Some("/v1/responses".to_owned()),
+            ..ProviderModel::default()
+        });
+        config.providers[0].selected_models.push(model.to_owned());
+    }
+    config.official_responses_url = format!("{official_url}/v1/responses");
+    let codex_home = tempfile::tempdir().unwrap();
+    config.codex_auth_path = codex_home.path().join("auth.json");
+    std::fs::write(
+        &config.codex_auth_path,
+        r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
+    )
+    .unwrap();
+    (config, upstream_requests, official_requests, codex_home)
+}
+
+fn ambient_suggestions_request(model: &str, trigger: &str) -> Value {
+    let mut request = responses_request();
+    request["model"] = json!(model);
+    request["client_metadata"] = json!({
+        "x-codex-turn-metadata": json!({
+            "turn_trigger": trigger,
+            "thread_id": "ambient-fixture-thread"
+        }).to_string()
+    });
+    request
+}
+
+struct AmbientSourceFixture {
+    config: GatewayConfig,
+    source_requests: Arc<Mutex<Vec<Value>>>,
+    default_requests: Arc<Mutex<Vec<Value>>>,
+    official_requests: Arc<Mutex<Vec<Value>>>,
+    _codex_home: tempfile::TempDir,
+}
+
+async fn ambient_source_fixture(with_default: bool) -> AmbientSourceFixture {
+    let (mut config, source_requests, official_requests, codex_home) =
+        ambient_suggestions_fixture().await;
+    let (default_url, default_requests) = spawn_baidu_protocol_upstream().await;
+    config.providers[0].ambient_suggestions_upstream = false;
+    let mut default_provider = config.providers[0].clone();
+    default_provider.id = "alternate".to_owned();
+    default_provider.base_url = default_url;
+    default_provider.ambient_suggestions_upstream = with_default;
+    config.providers.push(default_provider);
+    AmbientSourceFixture {
+        config,
+        source_requests,
+        default_requests,
+        official_requests,
+        _codex_home: codex_home,
+    }
+}
+
+fn ambient_source_request(model: &str, trigger: &str, source: Option<&str>) -> Value {
+    let mut request = ambient_suggestions_request(model, trigger);
+    if let Some(source) = source {
+        request["client_metadata"]["mixin_source_provider"] = json!(source);
+    }
+    request
+}
+
+#[tokio::test]
+async fn ambient_source_http_selects_source_before_ownerless_default() {
+    for with_default in [false, true] {
+        for (model, trigger) in [
+            ("gpt-5.6-terra", "ambient_suggestions"),
+            ("gpt-5.6-luna", "ambient_suggestion_safety"),
+            ("gpt-5.6-luna", "ambient_suggestions"),
+        ] {
+            let fixture = ambient_source_fixture(with_default).await;
+            let gateway_url = spawn_gateway_with_config(fixture.config).await;
+            let client = reqwest::Client::new();
+            let mut expected_counts = [0, 0, 0];
+            for (requested_model, source, target) in [
+                (model.to_owned(), Some("official"), 2),
+                (model.to_owned(), Some("custom"), 0),
+                (model.to_owned(), None, if with_default { 1 } else { 2 }),
+                (format!("{model}-custom"), Some("official"), 0),
+                (format!("{model}-custom"), Some("alternate"), 0),
+                (format!("{model}-alternate"), Some("custom"), 1),
+            ] {
+                let response = client
+                    .post(format!("{gateway_url}/v1/responses"))
+                    .bearer_auth("gateway-key")
+                    .json(&ambient_source_request(&requested_model, trigger, source))
+                    .send()
+                    .await
+                    .unwrap();
+                assert_eq!(
+                    response.status(),
+                    StatusCode::OK,
+                    "{requested_model}, source={source:?}, default={with_default}"
+                );
+                assert!(
+                    response
+                        .text()
+                        .await
+                        .unwrap()
+                        .contains("response.completed")
+                );
+                expected_counts[target] += 1;
+                assert_eq!(
+                    [
+                        fixture.source_requests.lock().unwrap().len(),
+                        fixture.default_requests.lock().unwrap().len(),
+                        fixture.official_requests.lock().unwrap().len(),
+                    ],
+                    expected_counts,
+                    "{requested_model}, source={source:?}, default={with_default}"
+                );
+            }
+
+            let source = fixture.source_requests.lock().unwrap();
+            assert_eq!(source.len(), 3, "{model}, default={with_default}");
+            assert!(source.iter().all(|request| {
+                request["path"] == "/v1/responses"
+                    && request["body"]["model"] == model
+                    && request["body"]["client_metadata"]
+                        .get("mixin_source_provider")
+                        .is_none()
+            }));
+            let default = fixture.default_requests.lock().unwrap();
+            assert_eq!(default.len(), 1 + usize::from(with_default));
+            assert!(default.iter().all(|request| {
+                request["path"] == "/v1/responses"
+                    && request["body"]["model"] == model
+                    && request["body"]["client_metadata"]
+                        .get("mixin_source_provider")
+                        .is_none()
+            }));
+            let official = fixture.official_requests.lock().unwrap();
+            assert_eq!(official.len(), 1 + usize::from(!with_default));
+            assert!(official.iter().all(|request| {
+                request["model"] == model
+                    && request["client_metadata"]
+                        .get("mixin_source_provider")
+                        .is_none()
+            }));
+        }
+    }
+}
+
+#[tokio::test]
+async fn ambient_source_websocket_routes_prewarm_and_continuations_per_request() {
+    for with_default in [false, true] {
+        for (model, trigger) in [
+            ("gpt-5.6-terra", "ambient_suggestions"),
+            ("gpt-5.6-luna", "ambient_suggestion_safety"),
+            ("gpt-5.6-luna", "ambient_suggestions"),
+        ] {
+            for (source_provider, explicit_provider) in [
+                (Some("official"), None),
+                (Some("custom"), None),
+                (None, None),
+                (Some("official"), Some("custom")),
+                (Some("custom"), Some("alternate")),
+            ] {
+                let fixture = ambient_source_fixture(with_default).await;
+                let gateway_url = spawn_gateway_with_config(fixture.config).await;
+                let mut upgrade = format!(
+                    "{}/v1/responses",
+                    gateway_url.replacen("http://", "ws://", 1)
+                )
+                .into_client_request()
+                .unwrap();
+                upgrade
+                    .headers_mut()
+                    .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+                let (mut socket, _) = connect_async(upgrade).await.unwrap();
+                let requested_model = explicit_provider
+                    .map(|provider| format!("{model}-{provider}"))
+                    .unwrap_or_else(|| model.to_owned());
+                let expected_provider =
+                    explicit_provider
+                        .or(source_provider)
+                        .unwrap_or(if with_default {
+                            "alternate"
+                        } else {
+                            "official"
+                        });
+                let mut previous_id = None;
+                for request_index in 0..3 {
+                    let mut body =
+                        ambient_source_request(&requested_model, trigger, source_provider);
+                    body["type"] = json!("response.create");
+                    if request_index == 0 {
+                        body["generate"] = json!(false);
+                        body["client_metadata"]["x-codex-turn-metadata"] = json!(
+                            json!({
+                                "thread_source": trigger,
+                                "request_kind": "prewarm",
+                                "thread_id": "ambient-source-prewarm"
+                            })
+                            .to_string()
+                        );
+                    } else {
+                        body["previous_response_id"] = previous_id.clone().unwrap();
+                        body["input"] = json!([]);
+                    }
+                    socket
+                        .send(WsMessage::Text(body.to_string().into()))
+                        .await
+                        .unwrap();
+                    let frames = tokio::time::timeout(
+                        Duration::from_secs(3),
+                        websocket_response_frames(&mut socket),
+                    )
+                    .await
+                    .unwrap();
+                    let completed = frames
+                        .iter()
+                        .filter_map(|frame| serde_json::from_str::<Value>(frame).ok())
+                        .find(|event| event["type"] == "response.completed")
+                        .unwrap_or_else(|| {
+                            panic!(
+                                "request {request_index}, source={source_provider:?}, \
+                                 explicit={explicit_provider:?}, default={with_default}: {frames:?}"
+                            )
+                        });
+                    previous_id = Some(completed["response"]["id"].clone());
+                    let generation_count = request_index;
+                    assert_eq!(
+                        fixture.source_requests.lock().unwrap().len(),
+                        if expected_provider == "custom" {
+                            generation_count
+                        } else {
+                            0
+                        }
+                    );
+                    assert_eq!(
+                        fixture.default_requests.lock().unwrap().len(),
+                        if expected_provider == "alternate" {
+                            generation_count
+                        } else {
+                            0
+                        }
+                    );
+                    assert_eq!(
+                        fixture.official_requests.lock().unwrap().len(),
+                        if expected_provider == "official" {
+                            request_index + 1
+                        } else {
+                            0
+                        }
+                    );
+                }
+
+                // A later independent turn on this socket has no source hint.
+                // Its route must come from the configured ownerless default.
+                let mut ownerless = ambient_suggestions_request(model, trigger);
+                ownerless["type"] = json!("response.create");
+                socket
+                    .send(WsMessage::Text(ownerless.to_string().into()))
+                    .await
+                    .unwrap();
+                let frames = tokio::time::timeout(
+                    Duration::from_secs(3),
+                    websocket_response_frames(&mut socket),
+                )
+                .await
+                .unwrap();
+                assert!(
+                    frames
+                        .join("\n")
+                        .contains("\"type\":\"response.completed\"")
+                );
+                socket.close(None).await.unwrap();
+
+                let source = fixture.source_requests.lock().unwrap();
+                assert_eq!(
+                    source.len(),
+                    if expected_provider == "custom" { 2 } else { 0 }
+                );
+                assert!(source.iter().all(|request| {
+                    request["path"] == "/v1/responses"
+                        && request["body"]["model"] == model
+                        && request["body"]["client_metadata"]
+                            .get("mixin_source_provider")
+                            .is_none()
+                }));
+                let default = fixture.default_requests.lock().unwrap();
+                assert_eq!(
+                    default.len(),
+                    if expected_provider == "alternate" {
+                        2
+                    } else {
+                        0
+                    } + usize::from(with_default)
+                );
+                assert!(default.iter().all(|request| {
+                    request["path"] == "/v1/responses"
+                        && request["body"]["model"] == model
+                        && request["body"]["client_metadata"]
+                            .get("mixin_source_provider")
+                            .is_none()
+                }));
+                let official = fixture.official_requests.lock().unwrap();
+                assert_eq!(
+                    official.len(),
+                    if expected_provider == "official" {
+                        3
+                    } else {
+                        0
+                    } + usize::from(!with_default)
+                );
+                assert!(official.iter().all(|request| {
+                    request["model"] == model
+                        && request["client_metadata"]
+                            .get("mixin_source_provider")
+                            .is_none()
+                }));
+            }
+        }
+    }
+}
+
+#[tokio::test]
+async fn ambient_source_invalid_or_unavailable_fails_closed_on_http_and_websocket() {
+    for with_default in [false, true] {
+        for (source, failure) in [
+            (json!(""), "empty"),
+            (json!(false), "non-string"),
+            (Value::Null, "null"),
+            (json!(" custom "), "whitespace"),
+            (json!("unknown-provider"), "unknown"),
+            (json!("custom"), "disabled"),
+            (json!("custom"), "missing-model"),
+            (json!("custom"), "unselected-model"),
+            (json!("official"), "official-disabled"),
+        ] {
+            let mut fixture = ambient_source_fixture(with_default).await;
+            match failure {
+                "disabled" => fixture.config.providers[0].enabled = false,
+                "missing-model" => fixture.config.providers[0]
+                    .cached_models
+                    .retain(|model| model.id != "gpt-5.6-luna"),
+                "unselected-model" => fixture.config.providers[0]
+                    .selected_models
+                    .retain(|model| model != "gpt-5.6-luna"),
+                "official-disabled" => fixture.config.accept_codex_oauth = false,
+                _ => {}
+            }
+            let gateway_url = spawn_gateway_with_config(fixture.config).await;
+            let mut body = ambient_suggestions_request("gpt-5.6-luna", "ambient_suggestion_safety");
+            body["client_metadata"]["mixin_source_provider"] = source;
+            let response = reqwest::Client::new()
+                .post(format!("{gateway_url}/v1/responses"))
+                .bearer_auth("gateway-key")
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{failure}");
+            let mut upgrade = format!(
+                "{}/v1/responses",
+                gateway_url.replacen("http://", "ws://", 1)
+            )
+            .into_client_request()
+            .unwrap();
+            upgrade
+                .headers_mut()
+                .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+            let (mut socket, _) = connect_async(upgrade).await.unwrap();
+            body["type"] = json!("response.create");
+            for prewarm in [true, false] {
+                if prewarm {
+                    body["generate"] = json!(false);
+                    body["client_metadata"]["x-codex-turn-metadata"] = json!(
+                        json!({
+                            "thread_source": "ambient_suggestion_safety",
+                            "request_kind": "prewarm"
+                        })
+                        .to_string()
+                    );
+                } else {
+                    body.as_object_mut().unwrap().remove("generate");
+                    body["client_metadata"]["x-codex-turn-metadata"] =
+                        json!(r#"{"turn_trigger":"ambient_suggestion_safety"}"#);
+                }
+                socket
+                    .send(WsMessage::Text(body.to_string().into()))
+                    .await
+                    .unwrap();
+                let frames = tokio::time::timeout(
+                    Duration::from_secs(3),
+                    websocket_response_frames(&mut socket),
+                )
+                .await
+                .unwrap();
+                assert!(
+                    frames.join("\n").contains("\"type\":\"response.failed\""),
+                    "{failure}, prewarm={prewarm}"
+                );
+            }
+            socket.close(None).await.unwrap();
+            assert!(
+                fixture.source_requests.lock().unwrap().is_empty(),
+                "{failure}"
+            );
+            assert!(
+                fixture.default_requests.lock().unwrap().is_empty(),
+                "{failure}"
+            );
+            assert!(
+                fixture.official_requests.lock().unwrap().is_empty(),
+                "{failure}"
+            );
+        }
+    }
+}
+
+#[tokio::test]
+async fn ambient_source_field_does_not_reroute_normal_user_requests() {
+    let fixture = ambient_source_fixture(true).await;
+    let gateway_url = spawn_gateway_with_config(fixture.config).await;
+    let mut upgrade = format!(
+        "{}/v1/responses",
+        gateway_url.replacen("http://", "ws://", 1)
+    )
+    .into_client_request()
+    .unwrap();
+    upgrade
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(upgrade).await.unwrap();
+    let client = reqwest::Client::new();
+    for source in [
+        json!("custom"),
+        json!("official"),
+        json!("unknown"),
+        json!(false),
+    ] {
+        for model in ["gpt-5.6-terra", "gpt-5.6-terra-custom"] {
+            let mut body = ambient_suggestions_request(model, "user");
+            body["client_metadata"]["mixin_source_provider"] = source.clone();
+            let response = client
+                .post(format!("{gateway_url}/v1/responses"))
+                .bearer_auth("gateway-key")
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(
+                response
+                    .text()
+                    .await
+                    .unwrap()
+                    .contains("response.completed")
+            );
+            body["type"] = json!("response.create");
+            socket
+                .send(WsMessage::Text(body.to_string().into()))
+                .await
+                .unwrap();
+            let frames = tokio::time::timeout(
+                Duration::from_secs(3),
+                websocket_response_frames(&mut socket),
+            )
+            .await
+            .unwrap();
+            assert!(
+                frames
+                    .join("\n")
+                    .contains("\"type\":\"response.completed\"")
+            );
+        }
+    }
+    socket.close(None).await.unwrap();
+    let source = fixture.source_requests.lock().unwrap();
+    assert_eq!(source.len(), 8);
+    assert!(source.iter().all(|request| {
+        request["path"] == "/v1/responses" && request["body"]["model"] == "gpt-5.6-terra"
+    }));
+    assert!(fixture.default_requests.lock().unwrap().is_empty());
+    let official = fixture.official_requests.lock().unwrap();
+    assert_eq!(official.len(), 8);
+    assert!(
+        official
+            .iter()
+            .all(|request| request["model"] == "gpt-5.6-terra")
+    );
+}
+
+#[tokio::test]
+async fn ambient_suggestions_http_routes_generation_and_safety_to_same_named_models() {
+    let (config, upstream_requests, official_requests, _codex_home) =
+        ambient_suggestions_fixture().await;
+    let gateway_url = spawn_gateway_with_config(config).await;
+    for (model, trigger) in [
+        ("gpt-5.6-terra", "ambient_suggestions"),
+        ("gpt-5.6-luna", "ambient_suggestion_safety"),
+        // First-plugin-connect generation also uses Luna, with the generation trigger.
+        ("gpt-5.6-luna", "ambient_suggestions"),
+    ] {
+        let response = reqwest::Client::new()
+            .post(format!("{gateway_url}/v1/responses"))
+            .bearer_auth("gateway-key")
+            .header("x-codex-turn-metadata", r#"{"turn_trigger":"user"}"#)
+            .json(&ambient_suggestions_request(model, trigger))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        assert!(
+            response
+                .text()
+                .await
+                .unwrap()
+                .contains("response.completed")
+        );
+    }
+    let requests = upstream_requests.lock().unwrap();
+    assert_eq!(requests.len(), 3);
+    assert_eq!(requests[0]["body"]["model"], "gpt-5.6-terra");
+    assert_eq!(requests[1]["body"]["model"], "gpt-5.6-luna");
+    assert_eq!(requests[2]["body"]["model"], "gpt-5.6-luna");
+    assert!(
+        requests
+            .iter()
+            .all(|request| request["path"] == "/v1/responses")
+    );
+    assert!(official_requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn ambient_suggestions_http_preserves_user_subagent_and_disabled_flag_routes() {
+    for enabled in [true, false] {
+        let (mut config, upstream_requests, official_requests, _codex_home) =
+            ambient_suggestions_fixture().await;
+        config.providers[0].ambient_suggestions_upstream = enabled;
+        let gateway_url = spawn_gateway_with_config(config).await;
+        let triggers: &[&str] = if enabled {
+            &["user", "subagent", "ambient_suggestion_task"]
+        } else {
+            &["ambient_suggestions", "ambient_suggestion_safety"]
+        };
+        for trigger in triggers {
+            let response = reqwest::Client::new()
+                .post(format!("{gateway_url}/v1/responses"))
+                .bearer_auth("gateway-key")
+                // Body metadata for this request must override a stale ambient header.
+                .header(
+                    "x-codex-turn-metadata",
+                    r#"{"turn_trigger":"ambient_suggestions"}"#,
+                )
+                .header("x-openai-subagent", "thread_spawn")
+                .json(&ambient_suggestions_request("gpt-5.6-terra", trigger))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(
+                response
+                    .text()
+                    .await
+                    .unwrap()
+                    .contains("response.completed")
+            );
+        }
+        assert!(upstream_requests.lock().unwrap().is_empty());
+        let requests = official_requests.lock().unwrap();
+        assert_eq!(requests.len(), triggers.len());
+        assert!(
+            requests
+                .iter()
+                .all(|request| request["model"] == "gpt-5.6-terra")
+        );
+    }
+}
+
+#[tokio::test]
+async fn ambient_suggestions_accepts_header_metadata_on_http_and_websocket() {
+    let (config, upstream_requests, official_requests, _codex_home) =
+        ambient_suggestions_fixture().await;
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut body = responses_request();
+    body["model"] = json!("gpt-5.6-luna");
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header(
+            "x-codex-turn-metadata",
+            r#"{"turn_trigger":"ambient_suggestion_safety"}"#,
+        )
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert!(
+        response
+            .text()
+            .await
+            .unwrap()
+            .contains("response.completed")
+    );
+
+    let mut upgrade = format!(
+        "{}/v1/responses",
+        gateway_url.replacen("http://", "ws://", 1)
+    )
+    .into_client_request()
+    .unwrap();
+    upgrade
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    upgrade.headers_mut().insert(
+        "x-codex-turn-metadata",
+        r#"{"turn_trigger":"ambient_suggestion_safety"}"#.parse().unwrap(),
+    );
+    let (mut socket, _) = connect_async(upgrade).await.unwrap();
+    body["type"] = json!("response.create");
+    socket
+        .send(WsMessage::Text(body.to_string().into()))
+        .await
+        .unwrap();
+    let frames = tokio::time::timeout(
+        Duration::from_secs(3),
+        websocket_response_frames(&mut socket),
+    )
+    .await
+    .unwrap();
+    assert!(
+        frames
+            .join("\n")
+            .contains("\"type\":\"response.completed\"")
+    );
+    socket.close(None).await.unwrap();
+    let requests = upstream_requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests
+            .iter()
+            .all(|request| request["body"]["model"] == "gpt-5.6-luna")
+    );
+    assert!(official_requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn ambient_suggestions_websocket_routes_continuations_and_rechecks_each_turn() {
+    let (config, upstream_requests, official_requests, _codex_home) =
+        ambient_suggestions_fixture().await;
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let mut upgrade = format!(
+        "{}/v1/responses",
+        gateway_url.replacen("http://", "ws://", 1)
+    )
+    .into_client_request()
+    .unwrap();
+    upgrade
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    upgrade.headers_mut().insert(
+        "x-codex-turn-metadata",
+        r#"{"turn_trigger":"ambient_suggestions"}"#.parse().unwrap(),
+    );
+    let (mut socket, _) = connect_async(upgrade).await.unwrap();
+    let mut previous_id = None;
+    for continuation in [false, true] {
+        let mut body = ambient_suggestions_request("gpt-5.6-terra", "ambient_suggestions");
+        body["type"] = json!("response.create");
+        if continuation {
+            body["previous_response_id"] = previous_id.clone().unwrap();
+            body["input"] = json!([{
+                "type":"message",
+                "role":"user",
+                "content":[{"type":"input_text","text":"continue"}]
+            }]);
+        }
+        socket
+            .send(WsMessage::Text(body.to_string().into()))
+            .await
+            .unwrap();
+        let frames = tokio::time::timeout(
+            Duration::from_secs(3),
+            websocket_response_frames(&mut socket),
+        )
+        .await
+        .unwrap();
+        let completed = frames
+            .iter()
+            .filter_map(|frame| serde_json::from_str::<Value>(frame).ok())
+            .find(|event| event["type"] == "response.completed")
+            .expect("ambient continuation must complete");
+        previous_id = Some(completed["response"]["id"].clone());
+    }
+    // Reuse the same upgraded socket for a normal turn. Its canonical body
+    // metadata must override the ambient header from the initial handshake.
+    let mut user = ambient_suggestions_request("gpt-5.6-terra", "user");
+    user["type"] = json!("response.create");
+    socket
+        .send(WsMessage::Text(user.to_string().into()))
+        .await
+        .unwrap();
+    let frames = tokio::time::timeout(
+        Duration::from_secs(3),
+        websocket_response_frames(&mut socket),
+    )
+    .await
+    .unwrap();
+    assert!(
+        frames
+            .join("\n")
+            .contains("\"type\":\"response.completed\"")
+    );
+    socket.close(None).await.unwrap();
+    let requests = upstream_requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests
+            .iter()
+            .all(|request| request["body"]["model"] == "gpt-5.6-terra")
+    );
+    assert!(
+        requests
+            .iter()
+            .all(|request| request["body"].get("previous_response_id").is_none())
+    );
+    let official = official_requests.lock().unwrap();
+    assert_eq!(official.len(), 1);
+    assert_eq!(official[0]["model"], "gpt-5.6-terra");
+}
+
+#[tokio::test]
+async fn ambient_suggestions_websocket_prewarm_stays_local_then_continues_on_provider() {
+    for (model, source) in [
+        ("gpt-5.6-terra", "ambient_suggestions"),
+        ("gpt-5.6-luna", "ambient_suggestion_safety"),
+        ("gpt-5.6-terra", "user"),
+    ] {
+        let (config, upstream_requests, official_requests, _codex_home) =
+            ambient_suggestions_fixture().await;
+        let gateway_url = spawn_gateway_with_config(config).await;
+        let mut upgrade = format!(
+            "{}/v1/responses",
+            gateway_url.replacen("http://", "ws://", 1)
+        )
+        .into_client_request()
+        .unwrap();
+        upgrade
+            .headers_mut()
+            .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+        let (mut socket, _) = connect_async(upgrade).await.unwrap();
+        let mut prewarm = responses_request();
+        prewarm["model"] = json!(model);
+        prewarm["type"] = json!("response.create");
+        prewarm["generate"] = json!(false);
+        prewarm["client_metadata"] = json!({
+            "x-codex-turn-metadata": json!({
+                "thread_source": source,
+                "request_kind": "prewarm",
+                "thread_id": "ambient-prewarm-fixture-thread"
+            }).to_string()
+        });
+        socket
+            .send(WsMessage::Text(prewarm.to_string().into()))
+            .await
+            .unwrap();
+        let frames = tokio::time::timeout(
+            Duration::from_secs(3),
+            websocket_response_frames(&mut socket),
+        )
+        .await
+        .unwrap();
+        let prewarm_completed = frames
+            .iter()
+            .filter_map(|frame| serde_json::from_str::<Value>(frame).ok())
+            .find(|event| event["type"] == "response.completed")
+            .expect("prewarm must complete");
+        assert!(
+            frames
+                .iter()
+                .all(|frame| !frame.contains("response.output_item.done"))
+        );
+        assert!(upstream_requests.lock().unwrap().is_empty(), "{source}");
+        assert_eq!(
+            official_requests.lock().unwrap().len(),
+            usize::from(source == "user"),
+            "{source}"
+        );
+
+        let mut generate = ambient_suggestions_request(model, source);
+        generate["type"] = json!("response.create");
+        generate["previous_response_id"] = prewarm_completed["response"]["id"].clone();
+        generate["input"] = json!([]);
+        socket
+            .send(WsMessage::Text(generate.to_string().into()))
+            .await
+            .unwrap();
+        let frames = tokio::time::timeout(
+            Duration::from_secs(3),
+            websocket_response_frames(&mut socket),
+        )
+        .await
+        .unwrap();
+        assert!(
+            frames
+                .join("\n")
+                .contains("\"type\":\"response.completed\""),
+            "{source}"
+        );
+        socket.close(None).await.unwrap();
+        if source == "user" {
+            assert!(upstream_requests.lock().unwrap().is_empty());
+            let official = official_requests.lock().unwrap();
+            assert_eq!(official.len(), 2);
+            assert_eq!(official[0]["generate"], false);
+            assert_eq!(
+                official[1]["previous_response_id"],
+                prewarm_completed["response"]["id"]
+            );
+        } else {
+            assert!(official_requests.lock().unwrap().is_empty());
+            let upstream = upstream_requests.lock().unwrap();
+            assert_eq!(upstream.len(), 1);
+            assert_eq!(upstream[0]["path"], "/v1/responses");
+            assert_eq!(upstream[0]["body"]["model"], model);
+            assert!(upstream[0]["body"].get("previous_response_id").is_none());
+            assert!(upstream[0]["body"]["input"].as_array().unwrap().len() >= 2);
+        }
+    }
+}
+
+#[tokio::test]
+async fn ambient_suggestions_unavailable_provider_fails_closed_on_http_and_websocket() {
+    for (model, failure) in [
+        ("gpt-5.6-terra", "disabled"),
+        ("gpt-5.6-terra", "missing-model"),
+        ("gpt-5.6-terra", "unselected-model"),
+        ("gpt-5.6-terra-custom", "disabled"),
+        ("gpt-5.6-terra-custom", "missing-model"),
+        ("gpt-5.6-terra-custom", "unselected-model"),
+    ] {
+        let (mut config, upstream_requests, official_requests, _codex_home) =
+            ambient_suggestions_fixture().await;
+        match failure {
+            "disabled" => config.providers[0].enabled = false,
+            "missing-model" => config.providers[0]
+                .cached_models
+                .retain(|model| model.id != "gpt-5.6-terra"),
+            "unselected-model" => config.providers[0]
+                .selected_models
+                .retain(|model| model != "gpt-5.6-terra"),
+            _ => unreachable!(),
+        }
+        let gateway_url = spawn_gateway_with_config(config).await;
+        let mut body = ambient_suggestions_request(model, "ambient_suggestions");
+        let response = reqwest::Client::new()
+            .post(format!("{gateway_url}/v1/responses"))
+            .bearer_auth("gateway-key")
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(
+            response.status(),
+            StatusCode::BAD_REQUEST,
+            "{model}: {failure}"
+        );
+        let mut upgrade = format!(
+            "{}/v1/responses",
+            gateway_url.replacen("http://", "ws://", 1)
+        )
+        .into_client_request()
+        .unwrap();
+        upgrade
+            .headers_mut()
+            .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+        let (mut socket, _) = connect_async(upgrade).await.unwrap();
+        body["type"] = json!("response.create");
+        socket
+            .send(WsMessage::Text(body.to_string().into()))
+            .await
+            .unwrap();
+        let frames = tokio::time::timeout(
+            Duration::from_secs(3),
+            websocket_response_frames(&mut socket),
+        )
+        .await
+        .unwrap();
+        assert!(
+            frames.join("\n").contains("\"type\":\"response.failed\""),
+            "{model}: {failure}"
+        );
+        socket.close(None).await.unwrap();
+        assert!(
+            upstream_requests.lock().unwrap().is_empty(),
+            "{model}: {failure}"
+        );
+        assert!(
+            official_requests.lock().unwrap().is_empty(),
+            "{model}: {failure}"
+        );
+    }
+}
+
 #[tokio::test]
 async fn baidu_auxiliary_routes_hidden_auto_review_model_id() {
     let (upstream_url, upstream_requests) = spawn_baidu_protocol_upstream().await;

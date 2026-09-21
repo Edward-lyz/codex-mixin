@@ -279,6 +279,7 @@ pub(super) async fn run(
         add_provider(AddProviderOptions {
             preset: preset.to_owned(),
             auxiliary_model_upstream: None,
+            ambient_suggestions_upstream: None,
             id: None,
             key: Some(key),
             aws_access_key_id: None,
