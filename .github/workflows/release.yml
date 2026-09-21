@@ -100,7 +100,11 @@ jobs:
           CARGO_BUILD_TARGET: ${{ matrix.target }}
           MACOSX_DEPLOYMENT_TARGET: "13.1"
           CODEX_MIXIN_REFRESH_NASA_WALLPAPERS: "1"
+          CODEX_MIXIN_REQUIRE_ADAPTIVE_ICON: "1"
         run: ./macos/build_app.sh
+      - name: Verify macOS application icons
+        if: matrix.os == 'macos'
+        run: ./scripts/verify_macos_app_icon.sh --require-adaptive
       - name: Verify macOS SDK and Liquid Glass
         if: matrix.os == 'macos'
         shell: bash

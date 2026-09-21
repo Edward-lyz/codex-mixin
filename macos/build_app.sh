@@ -13,6 +13,17 @@ TARGET_DIR="$ROOT_DIR/target/release"
 MACOS_DEPLOYMENT_TARGET="${MACOSX_DEPLOYMENT_TARGET:-13.1}"
 export MACOSX_DEPLOYMENT_TARGET="$MACOS_DEPLOYMENT_TARGET"
 CODE_SIGN_IDENTITY="${CODE_SIGN_IDENTITY:--}"
+ADAPTIVE_ICON_NAME="CodexMixin"
+ADAPTIVE_ICON_PACKAGE="$ROOT_DIR/macos/$ADAPTIVE_ICON_NAME.icon"
+REQUIRE_ADAPTIVE_ICON="${CODEX_MIXIN_REQUIRE_ADAPTIVE_ICON:-0}"
+
+case "$REQUIRE_ADAPTIVE_ICON" in
+  0|1) ;;
+  *)
+    echo "CODEX_MIXIN_REQUIRE_ADAPTIVE_ICON must be 0 or 1" >&2
+    exit 1
+    ;;
+esac
 
 if [[ "${CODEX_MIXIN_REFRESH_NASA_WALLPAPERS:-0}" == "1" ]]; then
   # The wallpapers are decorative and a usable set is committed, so a refresh
@@ -77,6 +88,54 @@ done
 /usr/libexec/PlistBuddy -c "Set :SUFeedURL $SPARKLE_FEED_URL" "$CONTENTS_DIR/Info.plist"
 cp "$ROOT_DIR/macos/CodexMixin.icns" "$RESOURCES_DIR/CodexMixin.icns"
 cp "$ROOT_DIR/macos/CodexMixinDark.icns" "$RESOURCES_DIR/CodexMixinDark.icns"
+
+ACTOOL_VERSION=""
+if xcrun --find actool >/dev/null 2>&1; then
+  ACTOOL_VERSION_OUTPUT="$(xcrun actool --version)"
+  ACTOOL_VERSION="$(printf '%s\n' "$ACTOOL_VERSION_OUTPUT" | awk '
+    /<key>short-bundle-version<\/key>/ {
+      getline
+      sub(/^.*<string>/, "")
+      sub(/<\/string>.*$/, "")
+      print
+      exit
+    }
+  ')"
+fi
+ACTOOL_MAJOR_VERSION="${ACTOOL_VERSION%%.*}"
+
+if [[ "$ACTOOL_MAJOR_VERSION" =~ ^[0-9]+$ ]] && (( ACTOOL_MAJOR_VERSION >= 26 )); then
+  ADAPTIVE_ICON_OUTPUT="$ROOT_DIR/target/adaptive-icon"
+  rm -rf "$ADAPTIVE_ICON_OUTPUT"
+  mkdir -p "$ADAPTIVE_ICON_OUTPUT"
+  xcrun actool "$ADAPTIVE_ICON_PACKAGE" \
+    --compile "$ADAPTIVE_ICON_OUTPUT" \
+    --output-format human-readable-text \
+    --notices \
+    --warnings \
+    --output-partial-info-plist "$ADAPTIVE_ICON_OUTPUT/assetcatalog_generated_info.plist" \
+    --app-icon "$ADAPTIVE_ICON_NAME" \
+    --include-all-app-icons \
+    --accent-color AccentColor \
+    --enable-on-demand-resources NO \
+    --development-region en \
+    --target-device mac \
+    --minimum-deployment-target 26.0 \
+    --platform macosx
+  if [[ ! -f "$ADAPTIVE_ICON_OUTPUT/Assets.car" ]]; then
+    echo "actool did not produce Assets.car" >&2
+    exit 1
+  fi
+  cp "$ADAPTIVE_ICON_OUTPUT/Assets.car" "$RESOURCES_DIR/Assets.car"
+else
+  if [[ "$REQUIRE_ADAPTIVE_ICON" == "1" ]]; then
+    echo "adaptive app icon requires Xcode 26 actool; found ${ACTOOL_VERSION:-none}" >&2
+    exit 1
+  fi
+  /usr/libexec/PlistBuddy -c "Delete :CFBundleIconName" "$CONTENTS_DIR/Info.plist"
+  echo "warning: Xcode 26 actool is unavailable; using static ICNS icons" >&2
+fi
+
 mkdir -p "$RESOURCES_DIR/Wallpapers"
 cp "$ROOT_DIR/macos/assets/nasa-wallpapers/"*.png "$RESOURCES_DIR/Wallpapers/"
 cp "$ROOT_DIR/macos/assets/nasa-wallpapers/manifest.json" "$RESOURCES_DIR/Wallpapers/"

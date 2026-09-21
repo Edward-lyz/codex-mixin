@@ -1,5 +1,5 @@
 param(
-  [string]$Source = "$(Join-Path $PSScriptRoot '..\..\macos\CodexMixin.png')"
+  [string]$Source = "$(Join-Path $PSScriptRoot '..\..\macos\CodexMixin.icon\Assets\CodexMixin.png')"
 )
 
 $ErrorActionPreference = "Stop"

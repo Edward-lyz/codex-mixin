@@ -4,7 +4,7 @@ set -euo pipefail
 ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 make_icns() {
   local icon_name="$1"
-  local source_png="$ROOT_DIR/macos/$icon_name.png"
+  local source_png="$ROOT_DIR/macos/CodexMixin.icon/Assets/$icon_name.png"
   local iconset_dir="$ROOT_DIR/target/$icon_name.iconset"
   local icns_path="$ROOT_DIR/macos/$icon_name.icns"
 

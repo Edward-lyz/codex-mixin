@@ -68,7 +68,7 @@ powershell -ExecutionPolicy Bypass -File windows/scripts/package-windows.ps1
 - `package-windows.ps1` — 打包主入口（构建 + 组装 + 生成安装器）。
 - `installer.nsi` — NSIS 安装器脚本，安装到 `%ProgramFiles%\Codex Mixin`（需管理员权限）；安装前会依据卸载注册表项里记录的位置，先卸载任意旧版本，再创建开始菜单快捷方式与卸载项。
 - `install-windows.ps1` / `uninstall-windows.ps1` — 免安装器的手动安装/卸载脚本；安装时把安装目录加入用户 PATH、并对 `~/.codex-mixin` 配置目录做一次性 ACL 加固，卸载时清理 PATH 与快捷方式。
-- `generate-windows-assets.ps1` — 从 `macos/CodexMixin.png` 生成 `.ico` 图标，并从 `macos/assets/providers/` 同步供应商 SVG 到 `windows/assets/providers/`；这些产物均不入库，由本脚本按需生成。
+- `generate-windows-assets.ps1` — 从 `macos/CodexMixin.icon/Assets/CodexMixin.png` 生成 `.ico` 图标，并从 `macos/assets/providers/` 同步供应商 SVG 到 `windows/assets/providers/`；这些产物均不入库，由本脚本按需生成。
 - `patch-window-manager.ps1` / `patch-multi-window-rounding.ps1` — 在 `flutter pub get` 后修补 `window_manager` / `desktop_multi_window` 插件的原生代码（窗口行为/圆角），需在 `flutter build` 前执行。
 
 ## 托盘行为

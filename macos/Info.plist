@@ -19,6 +19,8 @@
   <string>Codex Mixin</string>
   <key>CFBundleIconFile</key>
   <string>CodexMixin</string>
+  <key>CFBundleIconName</key>
+  <string>CodexMixin</string>
   <key>CFBundlePackageType</key>
   <string>APPL</string>
   <key>CFBundleShortVersionString</key>
