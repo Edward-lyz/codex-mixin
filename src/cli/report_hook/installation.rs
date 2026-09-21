@@ -23,8 +23,7 @@ pub fn reporting_enabled() -> anyhow::Result<bool> {
 
 pub fn sync_installation() -> anyhow::Result<()> {
     let enabled = reporting_enabled()?;
-    let home = std::env::var_os("HOME").context("HOME is not set")?;
-    let hooks_path = PathBuf::from(home).join(".codex/hooks.json");
+    let hooks_path = codex_mixin::platform::home_dir_required()?.join(".codex/hooks.json");
     sync_installation_at(&hooks_path, enabled)
 }
 
@@ -46,8 +45,18 @@ pub fn sync_installation_at(hooks_path: &Path, enabled: bool) -> anyhow::Result<
     lock.lock_exclusive()
         .with_context(|| format!("lock Codex hooks configuration {}", hooks_path.display()))?;
     let mut document = if hooks_path.exists() {
-        serde_json::from_slice::<Value>(&fs::read(hooks_path)?)
-            .with_context(|| format!("parse Codex hooks configuration {}", hooks_path.display()))?
+        let raw = fs::read(hooks_path)?;
+        // Codex (or a partial/interrupted write) can leave an empty or
+        // whitespace-only hooks.json. Treat that as a fresh document instead of
+        // failing the whole add-provider / install-codex flow with
+        // "expected value at line 1 column 1".
+        if raw.iter().all(u8::is_ascii_whitespace) {
+            serde_json::json!({ "hooks": {} })
+        } else {
+            serde_json::from_slice::<Value>(&raw).with_context(|| {
+                format!("parse Codex hooks configuration {}", hooks_path.display())
+            })?
+        }
     } else {
         serde_json::json!({ "hooks": {} })
     };
@@ -133,5 +142,46 @@ pub fn sync_installation_at(hooks_path: &Path, enabled: bool) -> anyhow::Result<
 }
 
 fn shell_quote(value: &str) -> String {
-    format!("'{}'", value.replace('\'', "'\\''"))
+    if cfg!(windows) {
+        // Codex on Windows resolves hook commands through the Windows shell,
+        // which does not treat single quotes as a path delimiter. Use double
+        // quotes and escape embedded quotes so paths with spaces still run.
+        format!("\"{}\"", value.replace('"', "\\\""))
+    } else {
+        format!("'{}'", value.replace('\'', "'\\''"))
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn empty_hooks_file_is_treated_as_fresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join("hooks.json");
+        // An empty file previously failed with "expected value at line 1".
+        std::fs::write(&hooks, b"").unwrap();
+        sync_installation_at(&hooks, false).unwrap();
+        let value: Value = serde_json::from_slice(&std::fs::read(&hooks).unwrap()).unwrap();
+        assert!(value.get("hooks").is_some());
+    }
+
+    #[test]
+    fn whitespace_only_hooks_file_is_treated_as_fresh() {
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join("hooks.json");
+        std::fs::write(&hooks, b"  \r\n\t").unwrap();
+        sync_installation_at(&hooks, false).unwrap();
+        let value: Value = serde_json::from_slice(&std::fs::read(&hooks).unwrap()).unwrap();
+        assert!(value.get("hooks").is_some());
+    }
+
+    #[test]
+    fn malformed_hooks_file_still_errors() {
+        let dir = tempfile::tempdir().unwrap();
+        let hooks = dir.path().join("hooks.json");
+        std::fs::write(&hooks, b"not json").unwrap();
+        assert!(sync_installation_at(&hooks, false).is_err());
+    }
 }

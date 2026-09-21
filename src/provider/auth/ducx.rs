@@ -7,6 +7,7 @@
 //! Mixin then injects those headers into its own upstream request.
 
 use std::io::Write as _;
+#[cfg(unix)]
 use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
@@ -100,10 +101,13 @@ impl DucxRuntime {
             "prompt": "codex-mixin report warmup"
         }))?;
         let mut command = Command::new(&executable);
+        #[cfg(unix)]
         command.process_group(0);
+        crate::platform::prepare_background_tokio_command(&mut command);
         let mut child = command
             .arg("--user-prompt-submit")
             .env("HOME", &self.home)
+            .env("USERPROFILE", &self.home)
             .env("CODEX_HOME", &codex_home)
             .env("DUCX_USERNAME", &username)
             .stdin(Stdio::piped())
@@ -201,7 +205,11 @@ impl DucxRuntime {
             .context("DUCX executable has no bin directory")?
             .parent()
             .context("DUCX executable has no install directory")?;
-        Ok(install.join("hooks/data-report"))
+        Ok(install.join(if cfg!(windows) {
+            "hooks/data-report.exe"
+        } else {
+            "hooks/data-report"
+        }))
     }
 
     async fn mint_headers(&self, timeout: Duration) -> anyhow::Result<HeaderMap> {
@@ -212,7 +220,11 @@ impl DucxRuntime {
         );
         let codex_home = self.home.join(".baidu-cx");
         let mut command = Command::new(&self.executable);
+        #[cfg(unix)]
         command.process_group(0);
+        // CREATE_NO_WINDOW: keep the DUCX header-capture child from popping a
+        // console window on every request that needs Baidu auth.
+        crate::platform::prepare_background_tokio_command(&mut command);
         let mut child = command
             .args([
                 "-c",
@@ -228,6 +240,7 @@ impl DucxRuntime {
             ])
             .current_dir(&self.home)
             .env("HOME", &self.home)
+            .env("USERPROFILE", &self.home)
             .env("CODEX_HOME", &codex_home)
             .env("BAIDU_CX_PLATFORM", DUCX_PLATFORM)
             .env("DISABLE_DUCX_CLI_UPDATE", "1")
@@ -249,11 +262,18 @@ impl DucxRuntime {
 }
 
 async fn terminate_process_group(process_group_id: Option<u32>, child: &mut tokio::process::Child) {
+    #[cfg(unix)]
     if let Some(process_group_id) = process_group_id
         && let Some(process_group_id) = rustix::process::Pid::from_raw(process_group_id as i32)
     {
         let _ =
             rustix::process::kill_process_group(process_group_id, rustix::process::Signal::KILL);
+    }
+    #[cfg(windows)]
+    if let Some(pid) = process_group_id
+        && child.try_wait().ok().flatten().is_none()
+    {
+        let _ = crate::platform::force_kill_process_tree_async(pid).await;
     }
     let _ = child.kill().await;
     let _ = child.wait().await;
@@ -287,6 +307,7 @@ fn patched_data_report(
             temporary_directory.display()
         )
     })?;
+    #[cfg(unix)]
     std::fs::set_permissions(temporary_directory, std::fs::Permissions::from_mode(0o700))
         .with_context(|| {
             format!(
@@ -294,8 +315,11 @@ fn patched_data_report(
                 temporary_directory.display()
             )
         })?;
-    let mut executable = tempfile::Builder::new()
-        .prefix(".codex-mixin-data-report-")
+    let mut builder = tempfile::Builder::new();
+    builder.prefix(".codex-mixin-data-report-");
+    #[cfg(windows)]
+    builder.suffix(".exe");
+    let mut executable = builder
         .tempfile_in(temporary_directory)
         .context("create isolated DUCX data-report executable")?;
     executable
@@ -304,6 +328,7 @@ fn patched_data_report(
     executable
         .flush()
         .context("flush isolated DUCX data-report executable")?;
+    #[cfg(unix)]
     executable
         .as_file()
         .set_permissions(std::fs::Permissions::from_mode(0o700))
@@ -377,19 +402,30 @@ fn managed_home(executable: &Path) -> anyhow::Result<PathBuf> {
 
 /// Default managed DUCX executable location under the Mixin-managed home.
 pub(crate) fn default_ducx_executable() -> Option<PathBuf> {
-    let home = std::env::var_os("HOME").map(PathBuf::from)?;
-    [
-        home.join(".codex-mixin/ducx/home/.baidu-cx/baidu-cx/bin/ducx"),
-        home.join(".codex-mixin/ducx/home/.baidu-cx/baidu-cx/bin/codex"),
-    ]
-    .into_iter()
-    .find(|path| path.is_file())
+    let home = if cfg!(windows) {
+        std::env::var_os("USERPROFILE")
+    } else {
+        std::env::var_os("HOME")
+    }
+    .map(PathBuf::from)?;
+    #[cfg(windows)]
+    let names = ["ducx.exe", "baidu-codex.exe"];
+    #[cfg(not(windows))]
+    let names = ["ducx", "codex"];
+    names
+        .into_iter()
+        .map(|name| {
+            home.join(".codex-mixin/ducx/home/.baidu-cx/baidu-cx/bin")
+                .join(name)
+        })
+        .find(|path| path.is_file())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
 
+    #[cfg(unix)]
     fn process_is_running(pid: &str) -> bool {
         let output = std::process::Command::new("/bin/ps")
             .args(["-o", "stat=", "-p", pid])
@@ -482,6 +518,7 @@ mod tests {
         assert!(error.to_string().contains("found 0"));
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn reports_data_report_early_exit_without_waiting_for_timeout() {
         let directory = tempfile::tempdir().unwrap();
@@ -517,6 +554,7 @@ mod tests {
         );
     }
 
+    #[cfg(unix)]
     #[tokio::test]
     async fn native_header_warmup_terminates_descendant_processes() {
         let directory = tempfile::tempdir().unwrap();

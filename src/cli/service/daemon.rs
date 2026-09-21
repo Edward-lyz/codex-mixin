@@ -6,9 +6,6 @@ use std::process::{Command as ProcessCommand, Stdio};
 use std::thread;
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
-
 use codex_mixin::config::GatewayConfig;
 
 use super::super::runtime::{
@@ -159,8 +156,7 @@ pub(crate) fn start_daemon(
         .stdin(Stdio::null())
         .stdout(Stdio::null())
         .stderr(Stdio::null());
-    #[cfg(unix)]
-    command.process_group(0);
+    codex_mixin::platform::prepare_daemon_command(&mut command);
     let child = command.spawn()?;
     let pid = child.id();
     let mut actual_bind = None;
@@ -337,16 +333,48 @@ pub(crate) fn logs(lines: usize, follow: bool) -> anyhow::Result<()> {
         anyhow::bail!("log file does not exist: {}", log_file.display());
     }
     if follow {
-        let status = ProcessCommand::new("tail")
-            .arg("-n")
-            .arg(lines.to_string())
-            .arg("-f")
-            .arg(&log_file)
-            .status()?;
-        if !status.success() {
-            anyhow::bail!("tail exited with status {status}");
+        #[cfg(windows)]
+        {
+            use std::io::Read;
+            let mut initial = String::new();
+            let mut file = fs::File::open(&log_file)?;
+            file.read_to_string(&mut initial)?;
+            let mut recent = initial.lines().rev().take(lines).collect::<Vec<_>>();
+            recent.reverse();
+            for line in recent {
+                println!("{line}");
+            }
+            let mut offset = fs::metadata(&log_file)?.len();
+            loop {
+                let metadata = fs::metadata(&log_file)?;
+                if metadata.len() < offset {
+                    offset = 0;
+                }
+                if metadata.len() > offset {
+                    let mut file = fs::File::open(&log_file)?;
+                    use std::io::{Seek, SeekFrom};
+                    file.seek(SeekFrom::Start(offset))?;
+                    let mut appended = String::new();
+                    file.read_to_string(&mut appended)?;
+                    print!("{appended}");
+                    offset = metadata.len();
+                }
+                thread::sleep(Duration::from_millis(250));
+            }
         }
-        return Ok(());
+        #[cfg(not(windows))]
+        {
+            let status = ProcessCommand::new("tail")
+                .arg("-n")
+                .arg(lines.to_string())
+                .arg("-f")
+                .arg(&log_file)
+                .status()?;
+            if !status.success() {
+                anyhow::bail!("tail exited with status {status}");
+            }
+            return Ok(());
+        }
     }
     let content = fs::read_to_string(&log_file)?;
     let lines = content.lines().rev().take(lines).collect::<Vec<_>>();
@@ -356,13 +384,12 @@ pub(crate) fn logs(lines: usize, follow: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-#[cfg(test)]
+#[cfg(all(test, unix))]
 mod tests {
     use std::io::{BufRead, BufReader};
 
     use super::*;
 
-    #[cfg(unix)]
     #[test]
     fn termination_timeout_forces_a_kill() {
         let mut child = ProcessCommand::new("sh")

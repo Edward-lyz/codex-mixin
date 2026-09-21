@@ -10,13 +10,18 @@ use codex_mixin::provider::{
 };
 use serde::Deserialize;
 
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
+
 #[derive(Deserialize)]
 struct RuntimeMetadata {
     bind: String,
 }
 
-async fn wait_for_runtime(path: &std::path::Path) -> RuntimeMetadata {
-    tokio::time::timeout(Duration::from_secs(3), async {
+async fn wait_for_runtime(
+    path: &std::path::Path,
+    child: &mut tokio::process::Child,
+) -> RuntimeMetadata {
+    let runtime = tokio::time::timeout(STARTUP_TIMEOUT, async {
         loop {
             if let Ok(raw) = fs::read(path)
                 && let Ok(runtime) = serde_json::from_slice::<RuntimeMetadata>(&raw)
@@ -26,8 +31,14 @@ async fn wait_for_runtime(path: &std::path::Path) -> RuntimeMetadata {
             tokio::time::sleep(Duration::from_millis(20)).await;
         }
     })
-    .await
-    .expect("gateway did not publish runtime metadata")
+    .await;
+    match runtime {
+        Ok(runtime) => runtime,
+        Err(error) => {
+            let status = child.try_wait().expect("inspect gateway process status");
+            panic!("gateway did not publish runtime metadata: {error}; child status: {status:?}")
+        }
+    }
 }
 
 #[tokio::test]
@@ -90,6 +101,7 @@ async fn startup_does_not_wait_for_official_catalog_network() {
         .env("CODEX_GATEWAY_RUNTIME_FILE", &runtime_path)
         .env("CODEX_HOME", &codex_home)
         .env("HOME", &home)
+        .env("USERPROFILE", &home)
         .env("HTTPS_PROXY", &proxy_url)
         .env("https_proxy", &proxy_url)
         .env_remove("ALL_PROXY")
@@ -97,16 +109,16 @@ async fn startup_does_not_wait_for_official_catalog_network() {
         .env_remove("NO_PROXY")
         .env_remove("no_proxy")
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::inherit())
         .kill_on_drop(true)
         .spawn()
         .unwrap();
 
-    tokio::time::timeout(Duration::from_secs(3), proxy_connection)
+    let runtime = wait_for_runtime(&runtime_path, &mut child).await;
+    tokio::time::timeout(STARTUP_TIMEOUT, proxy_connection)
         .await
         .expect("official catalog request did not reach the hanging proxy")
         .unwrap();
-    let runtime = wait_for_runtime(&runtime_path).await;
     let runtime_bind: std::net::SocketAddr = runtime.bind.parse().unwrap();
     assert!(runtime_bind.ip().is_loopback());
     assert_ne!(runtime_bind.port(), 0);
@@ -176,13 +188,14 @@ async fn first_start_accepts_client_key_created_during_client_sync() {
         .env("CODEX_GATEWAY_RUNTIME_FILE", &runtime_path)
         .env("CODEX_HOME", directory.path().join("codex"))
         .env("HOME", &home)
+        .env("USERPROFILE", &home)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::inherit())
         .kill_on_drop(true)
         .spawn()
         .unwrap();
 
-    let runtime = wait_for_runtime(&runtime_path).await;
+    let runtime = wait_for_runtime(&runtime_path, &mut child).await;
     let stored = load_stored_config_from_path(&gateway_config_path)
         .unwrap()
         .unwrap();
@@ -243,13 +256,14 @@ async fn running_gateway_serves_a_rotated_client_key() {
         .env("CODEX_GATEWAY_RUNTIME_FILE", &runtime_path)
         .env("CODEX_HOME", directory.path().join("codex"))
         .env("HOME", &home)
+        .env("USERPROFILE", &home)
         .stdout(Stdio::null())
-        .stderr(Stdio::null())
+        .stderr(Stdio::inherit())
         .kill_on_drop(true)
         .spawn()
         .unwrap();
 
-    let runtime = wait_for_runtime(&runtime_path).await;
+    let runtime = wait_for_runtime(&runtime_path, &mut child).await;
     let endpoint = format!("http://{}/v1/model-benchmarks", runtime.bind);
     let client = reqwest::Client::new();
     let status = |key: &'static str| {

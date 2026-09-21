@@ -773,8 +773,11 @@ mod tests {
         let mut provider = crate::provider::baidu_oneapi_provider("baidu-oneapi", "key");
         provider.quota_username = Some("user".to_owned());
         provider.request_policy.baidu_auth_bridge = Some(BaiduAuthBridge::DucxLoopback);
-        provider.request_policy.ducx_executable =
-            Some("/Users/example/.codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin/ducc".into());
+        provider.request_policy.ducx_executable = Some(if cfg!(windows) {
+            r"C:\Users\example\.codex-mixin\ducc\home\.baidu-cc\baidu-cc\bin\ducc".into()
+        } else {
+            "/Users/example/.codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin/ducc".into()
+        });
 
         assert!(
             provider

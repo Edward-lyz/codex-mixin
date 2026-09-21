@@ -239,9 +239,7 @@ fn ducx_report_home(provider: &ProviderDefinition) -> anyhow::Result<PathBuf> {
     if let Some(executable) = &provider.request_policy.ducx_executable {
         return ducx_home_from_executable(executable);
     }
-    let home = std::env::var_os("HOME")
-        .map(PathBuf::from)
-        .context("HOME is not set")?;
+    let home = codex_mixin::platform::home_dir_required()?;
     let managed_home = home.join(".codex-mixin/ducx/home");
     ensure!(
         managed_home.join(".comate/login-user").is_dir(),

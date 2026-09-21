@@ -1,7 +1,6 @@
 use clap::{CommandFactory, Parser};
 
-use crate::cli::tui::StartPage;
-use crate::cli::{Cli, requested_tui_start};
+use crate::cli::{Cli, InteractiveStart, expand_secret_arg, requested_interactive_start};
 
 #[test]
 fn user_facing_command_groups_parse() {
@@ -63,13 +62,28 @@ fn no_tui_flag_preserves_plain_default_command() {
 }
 
 #[test]
+fn secret_environment_references_fail_closed() {
+    assert_eq!(
+        expand_secret_arg("literal-secret".into()).unwrap(),
+        "literal-secret"
+    );
+    let error = expand_secret_arg("@env:CODEX_MIXIN_TEST_MISSING_SECRET_9F93".into())
+        .unwrap_err()
+        .to_string();
+    assert!(error.contains("CODEX_MIXIN_TEST_MISSING_SECRET_9F93"));
+}
+
+#[test]
 fn bare_setup_opens_the_same_tui_control_center() {
     let setup = Cli::try_parse_from(["codex-mixin", "setup"]).unwrap();
-    assert_eq!(requested_tui_start(&setup, true), Some(StartPage::Setup));
-    assert_eq!(requested_tui_start(&setup, false), None);
+    assert_eq!(
+        requested_interactive_start(&setup, true),
+        Some(InteractiveStart::Setup)
+    );
+    assert_eq!(requested_interactive_start(&setup, false), None);
 
     let plain = Cli::try_parse_from(["codex-mixin", "--no-tui", "setup"]).unwrap();
-    assert_eq!(requested_tui_start(&plain, true), None);
+    assert_eq!(requested_interactive_start(&plain, true), None);
 }
 
 #[test]

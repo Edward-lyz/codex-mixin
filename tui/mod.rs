@@ -102,7 +102,7 @@ impl Page {
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub(super) enum StartPage {
+pub(crate) enum StartPage {
     Dashboard,
     Setup,
 }
@@ -240,8 +240,7 @@ impl Snapshot {
 }
 
 async fn load_official_fusion_models() -> anyhow::Result<Vec<Value>> {
-    let home = std::env::var_os("HOME").context("HOME is required to load official models")?;
-    let cache = PathBuf::from(home).join(".codex/models_cache.json");
+    let cache = codex_mixin::platform::home_dir_required()?.join(".codex/models_cache.json");
     if !tokio::fs::try_exists(&cache).await? {
         return Ok(Vec::new());
     }
@@ -608,7 +607,7 @@ enum Action {
 }
 
 #[allow(clippy::cognitive_complexity)]
-pub(super) async fn run(
+pub(crate) async fn run(
     start_page: StartPage,
     installed_cli_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {

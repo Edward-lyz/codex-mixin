@@ -1,7 +1,9 @@
 #[cfg(target_os = "macos")]
 use std::time::{Duration, Instant};
 
-use codex_mixin::config::{GatewayConfig, stored_config_path};
+use codex_mixin::config::GatewayConfig;
+#[cfg(unix)]
+use codex_mixin::config::stored_config_path;
 
 use super::super::codex::{
     refresh_default_managed_codex_catalog, resolve_codex_config_path,

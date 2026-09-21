@@ -151,13 +151,9 @@ fn default_codex_auth_path() -> PathBuf {
 }
 
 fn codex_home_path() -> PathBuf {
-    std::env::var("CODEX_HOME").ok().map_or_else(
-        || {
-            let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_owned());
-            PathBuf::from(home).join(".codex")
-        },
-        PathBuf::from,
-    )
+    std::env::var("CODEX_HOME")
+        .map(PathBuf::from)
+        .unwrap_or_else(|_| crate::platform::home_dir().join(".codex"))
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
@@ -416,8 +412,11 @@ mod tests {
         let mut provider = crate::provider::baidu_oneapi_provider("baidu-oneapi", "secret");
         provider.quota_username = Some("user@example.com".to_owned());
         provider.request_policy.baidu_code_report = true;
-        provider.request_policy.ducx_executable =
-            Some("/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx/bin/ducx".into());
+        provider.request_policy.ducx_executable = Some(if cfg!(windows) {
+            r"C:\Users\example\.codex-mixin\ducx\home\.baidu-cx\baidu-cx\bin\ducx.exe".into()
+        } else {
+            "/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx/bin/ducx".into()
+        });
         let stored = StoredGatewayConfig {
             providers: vec![provider],
             ..StoredGatewayConfig::default()
@@ -427,9 +426,12 @@ mod tests {
 
         assert_eq!(
             loaded.providers[0].request_policy.data_report_executable,
-            Some(
+            Some(if cfg!(windows) {
+                r"C:\Users\example\.codex-mixin\ducx\home\.baidu-cx\baidu-cx\hooks\data-report.exe"
+                    .into()
+            } else {
                 "/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx/hooks/data-report".into()
-            )
+            })
         );
     }
 

@@ -55,11 +55,58 @@ fn install_command_accepts_explicit_custom_only_mode() {
 }
 
 #[test]
+fn codex_command_uses_the_required_windows_script_host() {
+    let cmd = codex_command(Path::new("C:/tools/codex.cmd"));
+    assert_eq!(cmd.get_program(), "cmd.exe");
+    assert_eq!(
+        cmd.get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>(),
+        ["/d", "/c", "C:/tools/codex.cmd"]
+            .map(str::to_owned)
+            .to_vec()
+    );
+
+    let powershell = codex_command(Path::new("C:/tools/codex.ps1"));
+    assert_eq!(powershell.get_program(), "powershell.exe");
+    assert_eq!(
+        powershell
+            .get_args()
+            .map(|value| value.to_string_lossy().into_owned())
+            .collect::<Vec<_>>(),
+        [
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-File",
+            "C:/tools/codex.ps1",
+        ]
+        .map(str::to_owned)
+        .to_vec()
+    );
+}
+
+#[test]
 fn codex_config_load_warning_is_acceptable_during_install_validation() {
     assert!(codex_config_load_status_is_acceptable(Some("ok")));
     assert!(codex_config_load_status_is_acceptable(Some("warning")));
     assert!(!codex_config_load_status_is_acceptable(Some("error")));
     assert!(!codex_config_load_status_is_acceptable(None));
+}
+
+#[test]
+fn finds_config_load_check_from_array_doctor_report() {
+    let report = serde_json::json!({
+        "checks": [
+            {
+                "id": "config.load",
+                "status": "error",
+                "details": {"notes": ["failed to load Codex config"]}
+            }
+        ]
+    });
+    let check = find_codex_config_load_check(&report).expect("check");
+    assert_eq!(check["status"], "error");
 }
 
 #[test]
@@ -348,14 +395,24 @@ fn custom_only_provider_uses_bedrock_identity_without_unsupported_overrides() {
     .unwrap();
 
     assert_eq!(doc["model"].as_str(), Some("DeepSeek-V4-Flash"));
-    assert_eq!(doc["model_provider"].as_str(), Some("amazon-bedrock"));
-    let provider = doc["model_providers"]["amazon-bedrock"].as_table().unwrap();
+    // Codex >= 0.135 reserves `amazon-bedrock`; custom-only now uses a dedicated
+    // provider id with a responses wire API and no official-login requirement.
+    assert_eq!(doc["model_provider"].as_str(), Some("codex-mixin-custom"));
+    let provider = doc["model_providers"]["codex-mixin-custom"]
+        .as_table()
+        .unwrap();
     assert_eq!(
         provider.get("base_url").and_then(|item| item.as_str()),
         Some("http://127.0.0.1:8787/v1")
     );
-    assert!(provider.get("name").is_none());
-    assert!(provider.get("wire_api").is_none());
+    assert_eq!(
+        provider.get("name").and_then(|item| item.as_str()),
+        Some("Codex Mixin")
+    );
+    assert_eq!(
+        provider.get("wire_api").and_then(|item| item.as_str()),
+        Some("responses")
+    );
     assert!(provider.get("requires_openai_auth").is_none());
     assert!(provider.get("supports_websockets").is_none());
     assert!(doc.get("forced_login_method").is_none());

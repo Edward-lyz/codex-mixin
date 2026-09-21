@@ -77,8 +77,9 @@ pub fn stored_config_path() -> PathBuf {
     {
         return PathBuf::from(path);
     }
-    let home = env::var("HOME").unwrap_or_else(|_| ".".to_owned());
-    PathBuf::from(home).join(".codex-mixin").join("config.json")
+    crate::platform::home_dir()
+        .join(".codex-mixin")
+        .join("config.json")
 }
 pub fn load_stored_config() -> anyhow::Result<Option<StoredGatewayConfig>> {
     load_stored_config_from_path(&stored_config_path())
@@ -156,7 +157,7 @@ fn backup_legacy_config_if_needed(path: &std::path::Path) -> anyhow::Result<()> 
         .write(true)
         .open(&backup_path)
         .with_context(|| format!("create legacy config backup {}", backup_path.display()))?;
-    set_private_file_permissions(&backup)?;
+    set_private_file_permissions(&backup_path)?;
     let encrypted = encrypt_config(path, raw.as_bytes())?;
     backup
         .write_all(&encrypted)
@@ -196,7 +197,7 @@ fn save_stored_config_to_path_unlocked(
         .write(true)
         .open(&temporary_path)
         .with_context(|| format!("open {}", temporary_path.display()))?;
-    set_private_file_permissions(&file)?;
+    set_private_file_permissions(&temporary_path)?;
     let plaintext = serde_json::to_vec_pretty(config)?;
     let content = encrypt_config(path, &plaintext)?;
     file.write_all(&content)
@@ -248,7 +249,7 @@ fn export_stored_config_from_path(
         .write(true)
         .open(&temporary_path)
         .with_context(|| format!("open configuration backup {}", temporary_path.display()))?;
-    set_private_file_permissions(&file)?;
+    set_private_file_permissions(&temporary_path)?;
     file.write_all(content.as_bytes())
         .with_context(|| format!("write configuration backup {}", temporary_path.display()))?;
     file.write_all(b"\n")
@@ -326,7 +327,7 @@ fn load_or_create_config_key(path: &std::path::Path) -> anyhow::Result<[u8; CONF
         .write(true)
         .open(&key_path)
         .with_context(|| format!("create config encryption key {}", key_path.display()))?;
-    set_private_file_permissions(&file)?;
+    set_private_file_permissions(&key_path)?;
     file.write_all(
         base64::engine::general_purpose::URL_SAFE_NO_PAD
             .encode(key)
@@ -427,7 +428,7 @@ fn lock_stored_config(path: &std::path::Path) -> anyhow::Result<fs::File> {
         .write(true)
         .open(&lock_path)
         .with_context(|| format!("open {}", lock_path.display()))?;
-    set_private_file_permissions(&lock)?;
+    set_private_file_permissions(&lock_path)?;
     FileExt::lock_exclusive(&lock).with_context(|| format!("lock {}", lock_path.display()))?;
     Ok(lock)
 }
@@ -444,21 +445,12 @@ pub fn delete_stored_config() -> anyhow::Result<bool> {
     Ok(true)
 }
 fn set_private_dir_permissions(path: &std::path::Path) -> anyhow::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o700))
-            .with_context(|| format!("chmod 700 {}", path.display()))?;
-    }
-    Ok(())
+    crate::platform::restrict_owner_only_dir(path)
+        .with_context(|| format!("restrict permissions for {}", path.display()))
 }
-fn set_private_file_permissions(file: &fs::File) -> anyhow::Result<()> {
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        file.set_permissions(fs::Permissions::from_mode(0o600))?;
-    }
-    Ok(())
+fn set_private_file_permissions(path: &std::path::Path) -> anyhow::Result<()> {
+    crate::platform::restrict_owner_only_file(path)
+        .with_context(|| format!("restrict permissions for {}", path.display()))
 }
 
 #[cfg(test)]

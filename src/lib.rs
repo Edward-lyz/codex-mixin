@@ -11,9 +11,9 @@ pub mod fusion;
 mod gateway;
 pub mod gateway_access;
 mod images;
+pub mod platform;
 pub mod protocol;
 pub mod provider;
-
 pub mod server;
 mod upstream;
 pub mod web_search;

@@ -272,8 +272,7 @@ pub fn default_metadata_cache_path() -> PathBuf {
 }
 
 fn codex_mixin_home() -> PathBuf {
-    let home = std::env::var("HOME").unwrap_or_else(|_| ".".to_owned());
-    PathBuf::from(home).join(".codex-mixin")
+    crate::platform::home_dir().join(".codex-mixin")
 }
 
 /// Codex only deserializes these input modalities; any other value (for

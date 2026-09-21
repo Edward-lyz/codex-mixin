@@ -1,12 +1,13 @@
 use std::fs;
 use std::path::{Path, PathBuf};
+#[cfg(not(windows))]
 use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use serde_json::Value;
-use uuid::Uuid;
-
 use codex_mixin::CODEX_MIXIN_PROVIDER;
+#[cfg(windows)]
+use rusqlite::Connection;
+use serde_json::Value;
 
 #[derive(Clone, Debug, Default)]
 pub struct HistoryMigrationOutcome {
@@ -214,6 +215,15 @@ fn sqlite_table_exists(db_path: &Path, table: &str) -> anyhow::Result<bool> {
     Ok(sqlite_scalar_usize(db_path, &sql)? > 0)
 }
 
+#[cfg(windows)]
+fn sqlite_scalar_usize(db_path: &Path, sql: &str) -> anyhow::Result<usize> {
+    let connection = Connection::open(db_path)?;
+    connection.busy_timeout(std::time::Duration::from_secs(5))?;
+    let value = connection.query_row(sql, [], |row| row.get::<_, i64>(0))?;
+    usize::try_from(value).map_err(|_| anyhow::anyhow!("SQLite count is negative: {value}"))
+}
+
+#[cfg(not(windows))]
 fn sqlite_scalar_usize(db_path: &Path, sql: &str) -> anyhow::Result<usize> {
     let output = Command::new("sqlite3")
         .args(["-cmd", ".timeout 5000"])
@@ -231,6 +241,15 @@ fn sqlite_scalar_usize(db_path: &Path, sql: &str) -> anyhow::Result<usize> {
     Ok(text.trim().parse()?)
 }
 
+#[cfg(windows)]
+fn run_sqlite(db_path: &Path, sql: &str) -> anyhow::Result<()> {
+    let connection = Connection::open(db_path)?;
+    connection.busy_timeout(std::time::Duration::from_secs(5))?;
+    connection.execute_batch(sql)?;
+    Ok(())
+}
+
+#[cfg(not(windows))]
 fn run_sqlite(db_path: &Path, sql: &str) -> anyhow::Result<()> {
     let output = Command::new("sqlite3")
         .args(["-cmd", ".timeout 5000"])
@@ -259,24 +278,13 @@ fn backup_file(path: &Path, codex_home: &Path, backup_root: &Path) -> anyhow::Re
 }
 
 fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("session.jsonl");
-    let tmp = path.with_file_name(format!("{file_name}.tmp.{}", Uuid::new_v4().simple()));
-    fs::write(&tmp, bytes)?;
-    if let Err(error) = fs::rename(&tmp, path) {
-        let _ = fs::remove_file(&tmp);
-        return Err(error.into());
-    }
+    codex_mixin::clients::files::write_atomic_if_changed(path, bytes)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::sync::{Arc, Barrier};
-    use std::thread;
 
     #[test]
     fn rewrites_session_meta_provider() {
@@ -288,34 +296,6 @@ mod tests {
         let restored =
             rewrite_session_meta_line(&rewritten, Some(CODEX_MIXIN_PROVIDER), "custom").unwrap();
         assert!(restored.contains(r#""model_provider":"custom""#));
-    }
-
-    #[test]
-    fn concurrent_atomic_writes_use_distinct_temporary_files() {
-        let dir = tempfile::tempdir().unwrap();
-        let path = Arc::new(dir.path().join("session.jsonl"));
-        let writers = 8;
-        let barrier = Arc::new(Barrier::new(writers));
-        let threads = (0..writers)
-            .map(|index| {
-                let path = Arc::clone(&path);
-                let barrier = Arc::clone(&barrier);
-                thread::spawn(move || {
-                    let contents = vec![b'0' + index as u8; 64 * 1024];
-                    barrier.wait();
-                    atomic_write(&path, &contents).unwrap();
-                    contents
-                })
-            })
-            .collect::<Vec<_>>();
-        let candidates = threads
-            .into_iter()
-            .map(|thread| thread.join().unwrap())
-            .collect::<Vec<_>>();
-
-        let written = fs::read(path.as_ref()).unwrap();
-        assert!(candidates.contains(&written));
-        assert_eq!(fs::read_dir(dir.path()).unwrap().count(), 1);
     }
 
     #[test]

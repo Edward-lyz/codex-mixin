@@ -57,10 +57,7 @@ fn default_pi_agent_dir() -> PathBuf {
     if let Some(path) = std::env::var_os("PI_CODING_AGENT_DIR").filter(|path| !path.is_empty()) {
         return PathBuf::from(path);
     }
-    std::env::var_os("HOME").map_or_else(
-        || PathBuf::from(".pi/agent"),
-        |home| PathBuf::from(home).join(".pi").join("agent"),
-    )
+    codex_mixin::platform::home_dir().join(".pi").join("agent")
 }
 
 fn resolve_pi_agent_dir(agent_dir: Option<PathBuf>) -> anyhow::Result<PathBuf> {

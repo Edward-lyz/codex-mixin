@@ -17,11 +17,7 @@ const DSH_API_KEY_ENV: &str = "CODEX_MIXIN_GATEWAY_API_KEY";
 pub(in crate::cli) fn default_dsh_home() -> PathBuf {
     std::env::var_os("DSH_HOME")
         .map(PathBuf::from)
-        .unwrap_or_else(|| {
-            std::env::var_os("HOME")
-                .map(|home| PathBuf::from(home).join(".dsh"))
-                .unwrap_or_else(|| PathBuf::from(".dsh"))
-        })
+        .unwrap_or_else(|| codex_mixin::platform::home_dir().join(".dsh"))
 }
 
 fn resolve_dsh_home(dsh_home: Option<PathBuf>) -> anyhow::Result<PathBuf> {

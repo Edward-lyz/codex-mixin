@@ -1,4 +1,5 @@
 use std::io::{self, IsTerminal};
+use std::path::PathBuf;
 use std::time::Instant;
 
 use clap::Parser;
@@ -17,6 +18,10 @@ mod codex;
 mod config_input;
 mod doctor;
 mod dsh;
+#[cfg(unix)]
+mod ducx_setup;
+#[cfg(windows)]
+#[path = "ducx_setup_windows.rs"]
 mod ducx_setup;
 mod fusion_config;
 mod maintenance;
@@ -30,7 +35,6 @@ mod runtime;
 mod service;
 mod setup;
 mod status;
-mod tui;
 mod update;
 
 use benchmark_proxy::{benchmark_start, benchmark_status};
@@ -163,10 +167,47 @@ pub(super) async fn stage<T>(
 mod args;
 use args::*;
 
-pub(crate) async fn entrypoint() {
-    let cli = Cli::parse();
+/// Prefix marking a secret argument that is supplied through the child process
+/// environment instead of its observable command line.
+const SECRET_ENV_PREFIX: &str = "@env:";
+
+fn secret_expanded_args() -> anyhow::Result<Vec<std::ffi::OsString>> {
+    std::env::args_os().map(expand_secret_arg).collect()
+}
+
+fn expand_secret_arg(arg: std::ffi::OsString) -> anyhow::Result<std::ffi::OsString> {
+    let Some(value) = arg.to_str() else {
+        return Ok(arg);
+    };
+    let Some(name) = value.strip_prefix(SECRET_ENV_PREFIX) else {
+        return Ok(arg);
+    };
+    anyhow::ensure!(
+        !name.is_empty(),
+        "secret environment variable name is empty"
+    );
+    std::env::var_os(name)
+        .ok_or_else(|| anyhow::anyhow!("secret environment variable is not set: {name}"))
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum InteractiveStart {
+    Dashboard,
+    Setup,
+}
+
+pub(crate) async fn entrypoint<Launch, LaunchFuture>(launch_interactive: Launch)
+where
+    Launch: FnOnce(InteractiveStart, Option<PathBuf>) -> LaunchFuture,
+    LaunchFuture: std::future::Future<Output = anyhow::Result<()>>,
+{
+    let args = secret_expanded_args().unwrap_or_else(|error| {
+        eprintln!("Error: {error:#}");
+        std::process::exit(2);
+    });
+    let cli = Cli::parse_from(args);
     let print_errors_to_stderr = matches!(&cli.command, Some(Command::ReportReplay { .. }));
-    let tui_start = requested_tui_start(
+    let interactive_start = requested_interactive_start(
         &cli,
         io::stdin().is_terminal() && io::stdout().is_terminal(),
     );
@@ -214,13 +255,13 @@ pub(crate) async fn entrypoint() {
             "gateway process starting"
         );
     }
-    let result = if let Some(start_page) = tui_start {
+    let result = if let Some(start_page) = interactive_start {
         match setup::install_cli_command() {
-            Ok(installed_path) => tui::run(start_page, installed_path).await,
+            Ok(installed_path) => Box::pin(launch_interactive(start_page, installed_path)).await,
             Err(error) => Err(error),
         }
     } else {
-        run(cli).await
+        Box::pin(run(cli)).await
     };
     if let Err(error) = result {
         exit_with_command_error(error, foreground_log_file.is_some(), print_errors_to_stderr);

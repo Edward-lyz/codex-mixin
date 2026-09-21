@@ -1,0 +1,107 @@
+name: Windows
+
+on:
+  workflow_dispatch:
+  pull_request:
+  push:
+    branches: [main]
+
+jobs:
+  rust:
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: rustfmt, clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Install ripgrep
+        shell: pwsh
+        run: choco install ripgrep -y --no-progress
+      - run: cargo fmt --all -- --check
+      - name: Run strict Clippy
+        shell: bash
+        run: |
+          cargo clippy --locked --all-targets -- \
+            -D clippy::cognitive_complexity \
+            -D clippy::redundant_closure_for_method_calls \
+            -D clippy::redundant_pattern_matching \
+            -D warnings
+      - name: Check architecture boundaries
+        shell: bash
+        run: |
+          ./scripts/check_arch.sh
+          ./scripts/test_check_arch.sh
+      - run: cargo test --locked --all-targets
+      - run: cargo build --locked --release
+
+  flutter:
+    runs-on: windows-latest
+    defaults:
+      run:
+        working-directory: windows
+    steps:
+      - uses: actions/checkout@v5
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - run: flutter pub get
+      - run: powershell -File scripts/generate-windows-assets.ps1
+      - run: powershell -File scripts/patch-window-manager.ps1 -UiRoot .
+      - run: flutter analyze
+      - run: flutter test
+      - run: flutter build windows --release
+
+  package:
+    runs-on: windows-latest
+    needs: [rust, flutter]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      # NSIS provides makensis for the standard installer built by the script.
+      - name: Install NSIS
+        run: choco install nsis -y --no-progress
+        shell: pwsh
+      # Builds the Rust CLI + Flutter UI, assembles dist/codex-mixin-windows,
+      # and produces the standard installer dist/CodexMixin-Setup.exe.
+      - name: Package and optionally sign Windows artifacts
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $options = @{}
+          $pfx = $null
+          if ($env:WINDOWS_CERT_PFX_BASE64) {
+            $pfx = Join-Path $env:RUNNER_TEMP 'codex-mixin.pfx'
+            [System.IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+            $options = @{
+              Sign = $true
+              CertificatePath = $pfx
+              CertificatePassword = $env:WINDOWS_CERT_PASSWORD
+            }
+          }
+          try {
+            & windows/scripts/package-windows.ps1 @options
+          } finally {
+            if ($pfx) { Remove-Item $pfx -Force -ErrorAction SilentlyContinue }
+          }
+      # Fail the job if either executable is missing from the package.
+      - shell: pwsh
+        run: |
+          if (-not (Test-Path 'dist/codex-mixin-windows/codex-mixin.exe')) { throw 'codex-mixin.exe missing from package' }
+          if (-not (Test-Path 'dist/codex-mixin-windows/codex_mixin_ui.exe')) { throw 'codex_mixin_ui.exe missing from package' }
+          if (-not (Test-Path 'dist/CodexMixin-Setup.exe')) { throw 'Windows installer missing from package' }
+          if (-not (Test-Path 'dist/CodexMixin-Windows.zip')) { throw 'Windows portable archive missing from package' }
+      - uses: actions/upload-artifact@v7
+        with:
+          name: codex-mixin-windows
+          path: dist
+          if-no-files-found: error

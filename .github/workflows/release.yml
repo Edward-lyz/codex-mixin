@@ -131,9 +131,86 @@ jobs:
           path: dist/release/*
           if-no-files-found: error
 
+  build-windows:
+    name: Build windows-x86_64
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          key: x86_64-pc-windows-msvc
+      - uses: subosito/flutter-action@v2
+        with:
+          channel: stable
+      - name: Install NSIS
+        shell: pwsh
+        run: choco install nsis -y --no-progress
+      - name: Resolve version
+        id: version
+        shell: pwsh
+        run: |
+          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
+            $tag = '${{ inputs.tag }}'
+          } else {
+            $tag = '${{ github.ref_name }}'
+          }
+          "version=$($tag.TrimStart('v'))" >> $env:GITHUB_OUTPUT
+      - name: Build, test, package, and optionally sign
+        shell: pwsh
+        env:
+          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
+          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $output = "dist\release\codex-mixin-$version-windows-x86_64"
+          $installer = "dist\release\codex-mixin-$version-windows-x86_64-setup.exe"
+          $portable = "dist\release\codex-mixin-$version-windows-x86_64.zip"
+          $options = @{
+            Output = $output
+            Installer = $installer
+            PortableArchive = $portable
+            Version = $version
+          }
+          $pfx = $null
+          if ($env:WINDOWS_CERT_PFX_BASE64) {
+            $pfx = Join-Path $env:RUNNER_TEMP 'codex-mixin.pfx'
+            [System.IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
+            $options.Sign = $true
+            $options.CertificatePath = $pfx
+            $options.CertificatePassword = $env:WINDOWS_CERT_PASSWORD
+          }
+          try {
+            & windows/scripts/package-windows.ps1 @options
+          } finally {
+            if ($pfx) { Remove-Item $pfx -Force -ErrorAction SilentlyContinue }
+          }
+      - name: Verify release artifacts
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          foreach ($path in @(
+            "dist\release\codex-mixin-$version-windows-x86_64-setup.exe",
+            "dist\release\codex-mixin-$version-windows-x86_64.zip"
+          )) {
+            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
+              throw "Missing Windows release artifact: $path"
+            }
+          }
+      - name: Upload artifacts
+        uses: actions/upload-artifact@v7
+        with:
+          name: codex-mixin-windows-x86_64
+          path: |
+            dist/release/*.exe
+            dist/release/*.zip
+          if-no-files-found: error
+
   publish:
     name: Publish release
-    needs: build
+    needs: [build, build-windows]
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v5

@@ -194,9 +194,9 @@ impl PanelToolExecutor {
             "--max-count",
             &MAX_GREP_MATCHES.to_string(),
             "--glob",
-            "!.git/**",
+            "!**/.git/**",
             "--glob",
-            "!target/**",
+            "!**/target/**",
         ]);
         if let Some(glob) = glob {
             command.arg("-g").arg(glob);
@@ -415,6 +415,8 @@ fn command_output_with_timeout(command: &mut Command) -> io::Result<Output> {
 fn command_output_with_deadline(command: &mut Command, timeout: Duration) -> io::Result<Output> {
     #[cfg(unix)]
     command.process_group(0);
+    // Keep rg/git from flashing a console window when the gateway is windowless.
+    crate::platform::prepare_background_command(command);
     let mut child = command
         .stdout(Stdio::piped())
         .stderr(Stdio::piped())
@@ -469,7 +471,21 @@ fn terminate_child_tree(child: &mut std::process::Child) -> io::Result<()> {
     }
     #[cfg(not(unix))]
     {
-        child.kill()
+        // Kill the whole tree, not just the direct child: a timed-out `rg`/`git`
+        // can have spawned grandchildren that a bare `Child::kill` would leak.
+        // `taskkill /T` walks the tree; fall back to the direct kill when
+        // taskkill is unavailable or reports failure.
+        let mut command = std::process::Command::new("taskkill");
+        command
+            .args(["/PID", &child.id().to_string(), "/T", "/F"])
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        crate::platform::prepare_background_command(&mut command);
+        let tree_killed = command
+            .status()
+            .map(|status| status.success())
+            .unwrap_or(false);
+        if tree_killed { Ok(()) } else { child.kill() }
     }
 }
 

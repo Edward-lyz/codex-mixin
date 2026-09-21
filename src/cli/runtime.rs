@@ -1,7 +1,6 @@
 use std::fs;
 use std::net::SocketAddr;
 use std::path::PathBuf;
-use std::process::{Command as ProcessCommand, Stdio};
 use std::time::UNIX_EPOCH;
 
 use serde::{Deserialize, Serialize};
@@ -166,22 +165,18 @@ pub(super) fn delete_runtime_metadata() -> anyhow::Result<()> {
 }
 
 pub(super) fn pid_is_running(pid: u32) -> anyhow::Result<bool> {
-    let status = ProcessCommand::new("kill")
-        .arg("-0")
-        .arg(pid.to_string())
-        .stdout(Stdio::null())
-        .stderr(Stdio::null())
-        .status()?;
-    Ok(status.success())
+    // On Windows a PID can be reused, so the adapter also verifies the image
+    // name before a later stop operation is allowed to target it.
+    let image_name = std::env::current_exe()
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| "codex-mixin.exe".to_owned());
+    codex_mixin::platform::pid_is_running(pid, &image_name).map_err(Into::into)
 }
 
 pub(super) fn send_signal(pid: u32, signal: &str) -> anyhow::Result<()> {
-    let status = ProcessCommand::new("kill")
-        .arg(format!("-{signal}"))
-        .arg(pid.to_string())
-        .status()?;
-    if !status.success() {
-        anyhow::bail!("failed to send SIG{signal} to pid {pid}");
-    }
-    Ok(())
+    codex_mixin::platform::send_process_signal(pid, signal)
 }

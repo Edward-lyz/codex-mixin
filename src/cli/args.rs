@@ -6,8 +6,8 @@ use std::path::PathBuf;
 use clap::{Parser, Subcommand, ValueEnum};
 use codex_mixin::provider::ProviderPreset;
 
+use super::InteractiveStart;
 use super::codex::InstallCodexOptions;
-use super::tui;
 
 #[derive(Debug, Parser)]
 #[command(
@@ -651,19 +651,22 @@ impl From<ProviderPreset> for CliProviderPreset {
     }
 }
 
-pub(super) fn requested_tui_start(cli: &Cli, interactive: bool) -> Option<tui::StartPage> {
+pub(super) fn requested_interactive_start(
+    cli: &Cli,
+    interactive: bool,
+) -> Option<InteractiveStart> {
     if cli.no_tui {
         None
     } else {
         match &cli.command {
-            None => Some(tui::StartPage::Dashboard),
+            None => Some(InteractiveStart::Dashboard),
             Some(Command::Setup {
                 preset: None,
                 key: None,
                 quota_username: None,
                 codex_mode: None,
                 no_start: false,
-            }) if interactive => Some(tui::StartPage::Setup),
+            }) if interactive => Some(InteractiveStart::Setup),
             _ => None,
         }
     }

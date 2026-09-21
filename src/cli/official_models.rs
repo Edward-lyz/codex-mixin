@@ -48,7 +48,10 @@ pub(in crate::cli) fn write_official_models_cache(
     write_atomic_if_changed(cache_path, &serde_json::to_vec_pretty(catalog)?)?;
     // A successful refresh can return the same catalog. Keep the timestamp
     // meaningful for the provider UI instead of showing only content changes.
-    std::fs::File::open(cache_path)?.set_modified(SystemTime::now())?;
+    std::fs::OpenOptions::new()
+        .write(true)
+        .open(cache_path)?
+        .set_modified(SystemTime::now())?;
     Ok(model_count)
 }
 

@@ -18,10 +18,17 @@
 | `protocol` | 请求转换、SSE 编解码、事件映射、协议数据 | 纯数据，不发送网络 |
 | `config` | 配置模型、迁移、校验、持久化 | 锁与原子替换 |
 | `clients`（新增） | 各编码客户端配置渲染、安装、同步、卸载 | 不依赖 server |
+| `platform` | 路径、进程生命周期和私有文件权限的 OS adapter | 标准库与平台命令 |
+| `macos` / `tui` / `windows` | 平台壳层；渲染 UI 并调用稳定 CLI contract | CLI 子进程及公开 core 类型 |
 
 依赖方向是单向的：`cli -> application -> provider/config/catalog/clients`，
 `server -> gateway -> upstream -> provider/protocol`。`gateway` 与 `fusion`
 不再引用 `server` 或 `AppState`。
+
+三个 UI 壳均位于仓库顶层。`src/main.rs` 是唯一的 composition root：它把
+CLI 解析出的抽象交互入口连接到 `tui`，core 和 CLI 模块不引用任何具体壳。
+macOS 与 Windows 壳通过带 `--no-tui` 的 CLI 子进程访问同一组用例与 JSON
+contract，平台 UI 不复制 provider、gateway 或 client integration 业务规则。
 
 ## 组件模型
 
@@ -64,3 +71,4 @@ clippy 与测试仍是权威检查。当前规则：
 - 库用例不得使用 clap/indicatif/ratatui/console/crossterm 或终端打印。
 - 底层模块不得引用 `FusionEngine` 或网关执行器。
 - `server` 不得引用 `crate::cli`。
+- core/CLI 不得引用具体 `tui` 壳；TUI 不得访问 CLI 私有实现。

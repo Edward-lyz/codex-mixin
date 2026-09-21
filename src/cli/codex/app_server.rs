@@ -1,10 +1,12 @@
 use std::io::{BufRead, BufReader, Write};
 use std::path::Path;
-use std::process::{Child, Command as ProcessCommand, Stdio};
+use std::process::{Child, Stdio};
 use std::time::Duration;
 
 use anyhow::Context;
 use serde_json::Value;
+
+use super::bin::codex_command;
 
 pub(in crate::cli) struct AppServerReply {
     pub(in crate::cli) initialize: Value,
@@ -19,7 +21,7 @@ pub(in crate::cli) fn request_app_server(
     timeout: Duration,
     client_name: &str,
 ) -> anyhow::Result<AppServerReply> {
-    let mut child = ProcessCommand::new(cli)
+    let mut child = codex_command(cli)
         .arg("app-server")
         .env("CODEX_HOME", codex_home)
         .stdin(Stdio::piped())
@@ -31,11 +33,7 @@ pub(in crate::cli) fn request_app_server(
     let (cancel_tx, cancel_rx) = std::sync::mpsc::channel::<()>();
     let watchdog = std::thread::spawn(move || {
         if cancel_rx.recv_timeout(timeout).is_err() {
-            let _ = ProcessCommand::new("kill")
-                .args(["-9", &pid.to_string()])
-                .stdout(Stdio::null())
-                .stderr(Stdio::null())
-                .status();
+            let _ = codex_mixin::platform::force_kill_process_tree(pid);
         }
     });
     let reply = exchange_app_server(&mut child, method, params, client_name);

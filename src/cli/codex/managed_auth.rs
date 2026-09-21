@@ -1,9 +1,5 @@
 use std::fs;
-use std::io::Write;
 use std::path::{Path, PathBuf};
-
-#[cfg(unix)]
-use std::os::unix::fs::{OpenOptionsExt, PermissionsExt};
 
 const MANAGED_AUTH_KEY_PREFIX: &str = "codex-mixin-local-";
 const MANAGED_BEDROCK_REGION: &str = "us-east-1";
@@ -277,34 +273,7 @@ fn remove_restore_points(paths: &ManagedAuthPaths) -> anyhow::Result<()> {
 }
 
 fn write_private_atomic(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
-    if let Some(parent) = path.parent() {
-        fs::create_dir_all(parent)?;
-    }
-    let file_name = path
-        .file_name()
-        .and_then(|name| name.to_str())
-        .unwrap_or("auth.json");
-    let temporary = path.with_file_name(format!(
-        "{file_name}.tmp.{}.{}",
-        std::process::id(),
-        uuid::Uuid::new_v4()
-    ));
-    let mut options = fs::OpenOptions::new();
-    options.create_new(true).write(true);
-    #[cfg(unix)]
-    options.mode(0o600);
-    let mut file = options.open(&temporary)?;
-    if let Err(error) = file.write_all(contents).and_then(|()| file.sync_all()) {
-        let _ = fs::remove_file(&temporary);
-        return Err(error.into());
-    }
-    #[cfg(unix)]
-    fs::set_permissions(&temporary, fs::Permissions::from_mode(0o600))?;
-    if let Err(error) = fs::rename(&temporary, path) {
-        let _ = fs::remove_file(&temporary);
-        return Err(error.into());
-    }
-    Ok(())
+    codex_mixin::clients::files::write_owner_only(path, contents)
 }
 
 fn sibling_path(path: &Path, suffix: &str) -> PathBuf {

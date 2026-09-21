@@ -1,0 +1,5 @@
+# Windows PE executables reserve a 1 MiB main-thread stack by default. Debug
+# builds can exhaust it while initializing the CLI before Tokio starts serving.
+# Match the 8 MiB stack available to the same cross-platform CLI on Unix hosts.
+[target.x86_64-pc-windows-msvc]
+rustflags = ["-C", "link-arg=/STACK:8388608"]

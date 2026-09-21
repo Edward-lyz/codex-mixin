@@ -19,4 +19,4 @@ pub(super) use managed_auth::*;
 pub(super) use managed_config::*;
 pub(super) use skill_guard::*;
 #[cfg(test)]
-pub(super) use validate::*;
+pub(super) use validate::{codex_config_load_status_is_acceptable, find_codex_config_load_check};
