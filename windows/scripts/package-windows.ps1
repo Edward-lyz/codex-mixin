@@ -22,6 +22,19 @@ param(
 
 $ErrorActionPreference = "Stop"
 $repo = Resolve-Path (Join-Path $PSScriptRoot "..\..")
+# makensis resolves relative paths in /D defines against the directory that
+# holds the .nsi script, so every destination must be absolute before it is
+# passed to NSIS. Callers may pass relative paths, for example the release
+# workflow writes into dist\release.
+function Resolve-AbsolutePath {
+  param([string]$Path)
+  if ([string]::IsNullOrWhiteSpace($Path)) { throw "Destination path must not be empty." }
+  if ([System.IO.Path]::IsPathRooted($Path)) { return [System.IO.Path]::GetFullPath($Path) }
+  return [System.IO.Path]::GetFullPath((Join-Path (Get-Location).Path $Path))
+}
+$Output = Resolve-AbsolutePath $Output
+$Installer = Resolve-AbsolutePath $Installer
+$PortableArchive = Resolve-AbsolutePath $PortableArchive
 $env:PATH = "$env:USERPROFILE\.cargo\bin;$env:PATH"
 if ([string]::IsNullOrWhiteSpace($Version)) {
   $metadata = cargo metadata --format-version 1 --no-deps --manifest-path (Join-Path $repo "Cargo.toml") | ConvertFrom-Json
@@ -116,6 +129,7 @@ Write-Host "== Building standard Windows installer (NSIS): $Installer =="
 $makensis = Resolve-MakeNsis
 $nsi = Join-Path $PSScriptRoot "installer.nsi"
 if (-not (Test-Path -LiteralPath $nsi)) { throw "NSIS script not found: $nsi" }
+if (-not (Test-Path -Path (Join-Path $Output "*"))) { throw "Staging directory is empty: $Output" }
 $iconFile = Join-Path $repo "windows\windows\runner\resources\app_icon.ico"
 $installerDir = Split-Path -Parent $Installer
 New-Item -ItemType Directory -Force -Path $installerDir | Out-Null
