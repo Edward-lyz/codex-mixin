@@ -79,15 +79,28 @@ pub fn commit_discovered_models(
     models: Vec<ProviderModel>,
     quota: Option<&DiscoveredQuota>,
 ) -> anyhow::Result<ModelDiscoveryChanges> {
-    let changes = mutate_stored_config(|config| {
+    let (changes, search_capabilities_changed) = mutate_stored_config(|config| {
         let current = provider_mut(config, id)?;
         ensure_refresh_snapshot(current, snapshot, id)?;
+        let previous_web_search = current
+            .cached_models
+            .iter()
+            .map(|model| (model.id.clone(), model.supports_web_search))
+            .collect::<std::collections::HashMap<_, _>>();
         if let Some(quota) = quota {
             apply_quota(current, quota);
         }
-        apply_discovered_models(current, models)
+        let changes = apply_discovered_models(current, models)?;
+        let search_capabilities_changed = !changes.added.is_empty()
+            || !changes.removed.is_empty()
+            || current.cached_models.iter().any(|model| {
+                previous_web_search.get(&model.id) != Some(&model.supports_web_search)
+            });
+        Ok((changes, search_capabilities_changed))
     })?;
-    WebSearchCapabilities::clear_default_cache()?;
+    if search_capabilities_changed {
+        WebSearchCapabilities::clear_default_cache()?;
+    }
     Ok(changes)
 }
 

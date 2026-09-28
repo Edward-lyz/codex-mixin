@@ -11,7 +11,9 @@ use futures_util::{StreamExt, stream};
 use reqwest::Client;
 
 use crate::config::GatewayConfig;
-use crate::provider::{ProviderDefinition, ProviderModel, ProviderModelSource, ProviderRegistry};
+use crate::provider::{
+    ProviderDefinition, ProviderModel, ProviderModelSource, ProviderProtocol, ProviderRegistry,
+};
 
 use storage::{default_capability_path, load_file, unix_milliseconds, update_file};
 use types::{
@@ -297,9 +299,14 @@ fn annotate_models(
         model.supports_tool_search = model
             .supports_tool_search
             .or_else(|| selected.tool_search.as_option_bool());
-        model.supports_web_search = model
-            .supports_web_search
-            .or_else(|| selected.web_search.as_option_bool());
+        // Anthropic-compatible gateways may accept a hosted-search tool but
+        // return it as an ordinary client tool call. The dedicated web-search
+        // probe checks for a complete server-side tool lifecycle.
+        if selected.protocol != ProviderProtocol::AnthropicMessages {
+            model.supports_web_search = model
+                .supports_web_search
+                .or_else(|| selected.web_search.as_option_bool());
+        }
         if model.capability_probe_error.is_none() {
             model.capability_probe_error = selected.error.clone();
         }
@@ -447,6 +454,34 @@ mod tests {
         assert_eq!(models[0].supports_web_search, Some(true));
         assert_eq!(models[0].supports_tool_search, Some(false));
         assert_eq!(models[0].supports_function_tools, Some(false));
+    }
+
+    #[test]
+    fn anthropic_tool_acceptance_does_not_claim_hosted_search() {
+        let mut protocol = protocol_capabilities(CapabilityStatus::Supported);
+        protocol.protocol = ProviderProtocol::AnthropicMessages;
+        protocol.api_path = "/v1/messages".to_owned();
+        protocol.web_search = CapabilityStatus::Supported;
+        let capability = ModelCapabilities {
+            model: "grok".to_owned(),
+            selected_protocol: Some(ProviderProtocol::AnthropicMessages),
+            selected_api_path: Some("/v1/messages".to_owned()),
+            protocols: vec![protocol],
+            probed_at_ms: 2,
+            last_probe_error: None,
+        };
+        let mut models = [ProviderModel {
+            id: "grok".to_owned(),
+            ..ProviderModel::default()
+        }];
+
+        annotate_models(
+            &mut models,
+            &BTreeMap::from([("grok".to_owned(), capability)]),
+        );
+
+        assert_eq!(models[0].supports_web_search, None);
+        assert_eq!(models[0].supports_image, Some(true));
     }
 
     #[test]

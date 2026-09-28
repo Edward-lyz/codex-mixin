@@ -517,7 +517,10 @@ fn add_baidu_model(
         context_window: Some(capability.context_window),
         supports_image: Some(capability.supports_image || declared_capability("image")),
         supports_thinking: Some(true),
-        supports_web_search: Some(declared_capability("web_search")),
+        // The endpoint currently ships an empty capability_set, so an absent
+        // token means "unknown", not "unsupported". Keeping it unknown lets the
+        // hosted-search probe decide for each model.
+        supports_web_search: declared_capability("web_search").then_some(true),
         supports_tool_search: Some(false),
         supports_function_tools: Some(true),
         ..ProviderModel::default()
@@ -642,6 +645,7 @@ fn normalize_models(models: &mut Vec<ProviderModel>) {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use crate::provider::ProviderRegistry;
 
     #[test]
     fn redacts_all_aws_credentials_from_provider_errors() {
@@ -666,6 +670,52 @@ mod tests {
             id: id.to_owned(),
             ..ProviderModel::default()
         }
+    }
+
+    fn baidu_model(id: &str, capability_set: &[&str]) -> crate::anthropic::BaiduAvailableModel {
+        crate::anthropic::BaiduAvailableModel {
+            model: id.to_owned(),
+            capability: Some(crate::anthropic::BaiduModelCapability {
+                supports_image: false,
+                supports_thinking: true,
+                context_window: 200_000,
+                ratio: "1x".to_owned(),
+                model_description: "test model".to_owned(),
+            }),
+            capability_set: capability_set
+                .iter()
+                .map(|capability| (*capability).to_owned())
+                .collect(),
+            price_type: "standard".to_owned(),
+        }
+    }
+
+    #[test]
+    fn baidu_capabilities_without_tokens_stay_unknown() {
+        let mut definition = crate::provider::custom_provider("baidu-oneapi", "secret");
+        definition.base_url = "http://127.0.0.1:1".to_owned();
+        let registry = ProviderRegistry::new(vec![definition]).unwrap();
+        let provider = registry.provider("baidu-oneapi").unwrap();
+
+        let mut models = Vec::new();
+        let mut indices = HashMap::new();
+        add_baidu_model(
+            provider,
+            baidu_model("Grok-4.7", &[]),
+            &mut models,
+            &mut indices,
+        );
+        add_baidu_model(
+            provider,
+            baidu_model("Opus 5", &["image", "web_search"]),
+            &mut models,
+            &mut indices,
+        );
+
+        assert_eq!(models[0].supports_web_search, None);
+        assert_eq!(models[0].supports_image, Some(false));
+        assert_eq!(models[1].supports_web_search, Some(true));
+        assert_eq!(models[1].supports_image, Some(true));
     }
 
     #[test]

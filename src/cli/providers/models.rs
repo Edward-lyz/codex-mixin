@@ -171,6 +171,9 @@ pub(in crate::cli) fn apply_official_model_refresh(
             .collect(),
         auto_selected: Vec::new(),
     };
+    if changes.added.is_empty() && changes.removed.is_empty() {
+        return Ok(changes);
+    }
     let auto_select = !changes.added.is_empty()
         && changes.added.len() < codex_mixin::provider::AUTO_SELECT_NEW_MODEL_LIMIT;
     mutate_and_invalidate(|config| {
