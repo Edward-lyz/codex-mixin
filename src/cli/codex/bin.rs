@@ -228,11 +228,10 @@ pub(in crate::cli) fn codex_command(path: &Path) -> ProcessCommand {
     command
 }
 
-#[cfg(test)]
+#[cfg(all(test, target_os = "macos"))]
 mod tests {
     use super::*;
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn app_bundle_candidates_find_the_codex_cli_layout() {
         let directory = tempfile::tempdir().unwrap();
@@ -248,7 +247,6 @@ mod tests {
         assert_eq!(resolved, Some(cli));
     }
 
-    #[cfg(target_os = "macos")]
     #[test]
     fn app_bundle_candidates_keep_the_legacy_layout() {
         let directory = tempfile::tempdir().unwrap();
