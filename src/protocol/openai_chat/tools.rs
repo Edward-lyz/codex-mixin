@@ -116,8 +116,21 @@ pub(super) fn convert_function_tool(
         .filter(|schema| !schema.is_null())
         .cloned()
         .unwrap_or_else(|| json!({"type":"object","properties":{}}));
-    if parameters.get("type").is_none() && parameters.get("oneOf").is_some() {
-        parameters["type"] = json!("object");
+    let root = parameters.as_object_mut().ok_or_else(|| {
+        GatewayError::BadRequest(format!(
+            "function tool {name} parameters must have type object"
+        ))
+    })?;
+    match root.get("type") {
+        None => {
+            root.insert("type".to_owned(), json!("object"));
+        }
+        Some(Value::String(kind)) if kind == "object" => {}
+        Some(_) => {
+            return Err(GatewayError::BadRequest(format!(
+                "function tool {name} parameters must have type object"
+            )));
+        }
     }
     let mut converted = json!({
         "type": "function",

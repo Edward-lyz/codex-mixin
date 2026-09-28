@@ -350,6 +350,51 @@ fn exposes_deferred_tools_to_chat_completions() {
 }
 
 #[test]
+fn historical_deferred_tool_has_object_parameters_for_chat_upstream() {
+    let converted = responses_to_openai_chat(&json!({
+        "model": "deepseek-chat",
+        "stream": true,
+        "input": [
+            {"role":"user","content":"summarize"},
+            {"type":"tool_search_output","call_id":"search_1","status":"completed","execution":"client","tools":[
+                {"type":"namespace","name":"mcp__example","tools":[{
+                    "type":"function","name":"lookup",
+                    "parameters":{"anyOf":[
+                        {"type":"object","properties":{"id":{"type":"string"}}},
+                        {"type":"object","properties":{"query":{"type":"string"}}}
+                    ]}
+                }]}
+            ]}
+        ]
+    }))
+    .unwrap();
+
+    assert_eq!(
+        converted.request["tools"][0]["function"]["parameters"]["type"],
+        "object"
+    );
+    assert!(converted.request["tools"][0]["function"]["parameters"]["anyOf"].is_array());
+}
+
+#[test]
+fn non_object_tool_parameters_fail_before_reaching_chat_upstream() {
+    let error = responses_to_openai_chat(&json!({
+        "model": "deepseek-chat",
+        "stream": true,
+        "input": "summarize",
+        "tools": [{"type":"function","name":"lookup","parameters":{"type":"string"}}]
+    }))
+    .unwrap_err();
+
+    assert!(error.to_string().contains("lookup"));
+    assert!(
+        error
+            .to_string()
+            .contains("parameters must have type object")
+    );
+}
+
+#[test]
 fn rejects_tools_chat_completions_cannot_execute() {
     let error = responses_to_openai_chat(&json!({
         "model": "deepseek-chat",

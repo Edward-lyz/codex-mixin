@@ -5355,6 +5355,54 @@ async fn preserves_steered_user_input_after_custom_tool_call() {
 }
 
 #[tokio::test]
+async fn websocket_converts_historical_tool_schema_before_oneapi_request() {
+    let (upstream_url, upstream_requests) = spawn_mock_openai_chat().await;
+    let mut config = test_config(upstream_url);
+    configure_openai_chat(&mut config, "/chat/completions");
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let websocket_url = gateway_url.replacen("http://", "ws://", 1);
+    let mut request = format!("{websocket_url}/v1/responses")
+        .into_client_request()
+        .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+
+    let mut body = responses_request();
+    body.as_object_mut().unwrap().remove("stream");
+    body["type"] = json!("response.create");
+    body["tools"] = json!([]);
+    body["input"].as_array_mut().unwrap().push(json!({
+        "type":"tool_search_output",
+        "call_id":"search_1",
+        "status":"completed",
+        "execution":"client",
+        "tools":[{"type":"function","name":"lookup","parameters":{
+            "anyOf":[{"type":"object","properties":{"id":{"type":"string"}}}]
+        }}]
+    }));
+    socket
+        .send(WsMessage::Text(body.to_string().into()))
+        .await
+        .unwrap();
+    assert!(
+        websocket_response_frames(&mut socket)
+            .await
+            .join("\n")
+            .contains("\"type\":\"response.completed\"")
+    );
+
+    let requests = upstream_requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["tools"][0]["function"]["name"], "lookup");
+    assert_eq!(
+        requests[0]["tools"][0]["function"]["parameters"]["type"],
+        "object"
+    );
+}
+
+#[tokio::test]
 async fn switches_between_official_and_custom_models_on_one_websocket() {
     let (upstream_url, upstream_requests) = spawn_mock_upstream(MockMode::Text).await;
     let (
