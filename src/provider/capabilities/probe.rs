@@ -14,6 +14,35 @@ const PROBE_TIMEOUT: Duration = Duration::from_secs(12);
 const PROBE_PROMPT: &str = "Reply with OK. Do not perform any action unless a tool is provided.";
 const IMAGE_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=";
 
+/// Upstreams with session affinity, such as Baidu OneAPI, reject `/v1/messages`
+/// probes without a stable client session. Every probe run shares one
+/// identifier: the routing hash travels as `metadata.session_id` and as the
+/// provider's affinity header, mirroring the gateway forwarding path.
+struct ProbeSession {
+    hash_key: String,
+}
+
+impl ProbeSession {
+    fn new() -> Self {
+        let session_id = format!("capability-probe-{}", uuid::Uuid::new_v4().simple());
+        Self {
+            hash_key: uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, session_id.as_bytes())
+                .to_string(),
+        }
+    }
+}
+
+/// Everything one probe run needs, built once per protocol so the baseline and
+/// feature requests share the same session.
+struct ProbeTarget<'a> {
+    provider: &'a ProviderRuntime,
+    protocol: ProviderProtocol,
+    url: &'a Url,
+    request_limit: &'a Semaphore,
+    native_headers: Option<&'a HeaderMap>,
+    session: Option<&'a ProbeSession>,
+}
+
 pub(super) async fn probe_model(
     client: &Client,
     provider: &ProviderRuntime,
@@ -54,16 +83,16 @@ async fn probe_protocol(
     native_headers: Option<&HeaderMap>,
 ) -> ProtocolCapabilities {
     let api_path = url.path();
-    let baseline = send_probe(
-        client,
+    let session = provider.uses_session_affinity().then(ProbeSession::new);
+    let target = ProbeTarget {
         provider,
         protocol,
         url,
-        probe_body(protocol, model, None),
         request_limit,
         native_headers,
-    )
-    .await;
+        session: session.as_ref(),
+    };
+    let baseline = send_probe(client, &target, probe_body(protocol, model, None)).await;
     if baseline.status != CapabilityStatus::Supported {
         return ProtocolCapabilities {
             protocol,
@@ -80,48 +109,28 @@ async fn probe_protocol(
     let (image, thinking, function_tools, tool_search, web_search) = tokio::join!(
         send_probe(
             client,
-            provider,
-            protocol,
-            url,
+            &target,
             probe_body(protocol, model, Some(ProbeFeature::Image)),
-            request_limit,
-            native_headers,
         ),
         send_probe(
             client,
-            provider,
-            protocol,
-            url,
+            &target,
             probe_body(protocol, model, Some(ProbeFeature::Thinking)),
-            request_limit,
-            native_headers,
         ),
         send_probe(
             client,
-            provider,
-            protocol,
-            url,
+            &target,
             probe_body(protocol, model, Some(ProbeFeature::FunctionTools)),
-            request_limit,
-            native_headers,
         ),
         send_probe(
             client,
-            provider,
-            protocol,
-            url,
+            &target,
             probe_body(protocol, model, Some(ProbeFeature::ToolSearch)),
-            request_limit,
-            native_headers,
         ),
         send_probe(
             client,
-            provider,
-            protocol,
-            url,
+            &target,
             probe_body(protocol, model, Some(ProbeFeature::WebSearch)),
-            request_limit,
-            native_headers,
         ),
     );
     let errors = [
@@ -260,7 +269,8 @@ fn messages_body(model: &str, feature: Option<ProbeFeature>) -> Value {
             ]);
         }
         Some(ProbeFeature::Thinking) => {
-            body["max_output_tokens"] = json!(1025);
+            // Anthropic requires max_tokens to exceed the thinking budget.
+            body["max_tokens"] = json!(1025);
             body["thinking"] = json!({"type": "enabled", "budget_tokens": 1024});
         }
         Some(ProbeFeature::FunctionTools) => {
@@ -304,33 +314,38 @@ impl ProbeOutcome {
     }
 }
 
-async fn send_probe(
-    client: &Client,
-    provider: &ProviderRuntime,
-    protocol: ProviderProtocol,
-    url: &Url,
-    body: Value,
-    request_limit: &Semaphore,
-    native_headers: Option<&HeaderMap>,
-) -> ProbeOutcome {
-    let permit = request_limit
+async fn send_probe(client: &Client, target: &ProbeTarget<'_>, mut body: Value) -> ProbeOutcome {
+    let permit = target
+        .request_limit
         .acquire()
         .await
         .expect("provider capability semaphore was closed");
-    let request = match native_headers {
-        Some(headers) => client.post(url.clone()).headers(headers.clone()),
-        None => provider.apply_auth_for_protocol(client.post(url.clone()), protocol),
+    if let Some(session) = target.session {
+        body["metadata"] = json!({"session_id": session.hash_key.as_str()});
     }
-    .json(&body)
-    .timeout(PROBE_TIMEOUT);
+    let request = match target.native_headers {
+        Some(headers) => client.post(target.url.clone()).headers(headers.clone()),
+        None => target
+            .provider
+            .apply_auth_for_protocol(client.post(target.url.clone()), target.protocol),
+    };
+    let request = target
+        .provider
+        .apply_session_affinity(
+            request,
+            target.session.map(|session| session.hash_key.as_str()),
+        )
+        .json(&body)
+        .timeout(PROBE_TIMEOUT);
     let outcome = match request.send().await {
         Ok(response) if response.status().is_success() => validate_probe_stream(response).await,
         Ok(response) => {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
             let detail = format!(
-                "{protocol:?} {} returned {status}: {}",
-                url.path(),
+                "{:?} {} returned {status}: {}",
+                target.protocol,
+                target.url.path(),
                 truncate(&body)
             );
             ProbeOutcome {
@@ -339,8 +354,9 @@ async fn send_probe(
             }
         }
         Err(error) => ProbeOutcome::indeterminate(format!(
-            "{protocol:?} {} request failed: {error}",
-            url.path()
+            "{:?} {} request failed: {error}",
+            target.protocol,
+            target.url.path()
         )),
     };
     drop(permit);
@@ -427,11 +443,35 @@ mod tests {
     use super::*;
     use crate::provider::{ProviderRegistry, custom_provider};
 
+    /// Affinity header and `metadata.session_id` captured per probe request.
+    type CapturedSessions = Arc<Mutex<Vec<(String, String)>>>;
+
     async fn record_probe_path(
         State(paths): State<Arc<Mutex<Vec<String>>>>,
         uri: Uri,
     ) -> impl IntoResponse {
         paths.lock().unwrap().push(uri.path().to_owned());
+        (
+            [(header::CONTENT_TYPE, "text/event-stream")],
+            "data: {\"type\":\"response.completed\"}\n\n",
+        )
+    }
+
+    async fn record_probe_session(
+        State(captured): State<CapturedSessions>,
+        headers: HeaderMap,
+        body: axum::body::Bytes,
+    ) -> impl IntoResponse {
+        let hash_key = headers
+            .get("x-hash-key")
+            .and_then(|value| value.to_str().ok())
+            .unwrap_or_default()
+            .to_owned();
+        let session_id = serde_json::from_slice::<Value>(&body)
+            .ok()
+            .and_then(|body| body["metadata"]["session_id"].as_str().map(str::to_owned))
+            .unwrap_or_default();
+        captured.lock().unwrap().push((hash_key, session_id));
         (
             [(header::CONTENT_TYPE, "text/event-stream")],
             "data: {\"type\":\"response.completed\"}\n\n",
@@ -479,6 +519,53 @@ mod tests {
         let paths = paths.lock().unwrap();
         assert_eq!(paths.len(), 6);
         assert!(paths.iter().all(|path| path == "/api/coding/v3/responses"));
+    }
+
+    #[tokio::test]
+    async fn session_affinity_probes_share_one_session() {
+        let captured = Arc::new(Mutex::new(Vec::new()));
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new()
+            .fallback(any(record_probe_session))
+            .with_state(Arc::clone(&captured));
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+
+        let mut definition = custom_provider("custom", "secret");
+        definition.base_url = format!("http://{address}");
+        definition.api_path = "/responses".to_owned();
+        definition.protocol = ProviderProtocol::OpenAiResponses;
+        definition.request_policy.session_affinity_header = Some("x-hash-key".to_owned());
+        let registry = ProviderRegistry::new(vec![definition]).unwrap();
+        let provider = registry.provider("custom").unwrap();
+
+        let capabilities = probe_model(
+            &Client::new(),
+            provider,
+            "model-a",
+            1,
+            &Semaphore::new(6),
+            None,
+        )
+        .await;
+        server.abort();
+
+        assert_eq!(
+            capabilities.selected_protocol,
+            Some(ProviderProtocol::OpenAiResponses)
+        );
+        let captured = captured.lock().unwrap();
+        assert_eq!(
+            captured.len(),
+            6,
+            "baseline and feature probes share one session"
+        );
+        let (hash_key, session_id) = captured.first().unwrap();
+        assert!(!hash_key.is_empty());
+        assert_eq!(hash_key, session_id);
+        assert!(captured.iter().all(|entry| entry.0 == *hash_key));
     }
 
     #[test]
@@ -534,5 +621,8 @@ mod tests {
             messages["thinking"],
             json!({"type": "enabled", "budget_tokens": 1024})
         );
+        // Anthropic rejects thinking when max_tokens does not exceed the budget.
+        assert_eq!(messages["max_tokens"], json!(1025));
+        assert!(messages.get("max_output_tokens").is_none());
     }
 }
