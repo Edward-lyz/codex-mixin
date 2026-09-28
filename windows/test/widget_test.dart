@@ -172,7 +172,7 @@ void main() {
     await tester.tap(find.text('模型'));
     await tester.pumpAndSettle();
     expect(find.text('刷新模型'), findsOneWidget);
-    expect(find.text('保存模型选择'), findsOneWidget);
+    expect(find.text('保存模型设置'), findsOneWidget);
     expect(find.text('测速'), findsOneWidget);
     expect(find.text('ernie-4.5'), findsOneWidget);
     expect(find.text('ernie-x1'), findsOneWidget);
