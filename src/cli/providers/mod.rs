@@ -181,6 +181,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                     "new_models": provider.new_models,
                     "unavailable_selected_models": unavailable_selected_models,
                     "cached_models": provider.cached_models,
+                    "model_context_overrides": provider.model_context_overrides,
                     "models_refreshed_at_ms": provider.models_refreshed_at_ms,
                     "last_model_refresh_error": provider.models_refresh_error,
                     "readiness": readiness.status,
@@ -293,8 +294,14 @@ fn official_provider_is_available(codex_install_mode: Option<&str>) -> bool {
 
 fn official_provider_view(
     config: &StoredGatewayConfig,
-    cached_models: Vec<ProviderModel>,
+    mut cached_models: Vec<ProviderModel>,
 ) -> serde_json::Value {
+    for model in &mut cached_models {
+        model.source_context_window = model.context_window;
+        if let Some(&context_window) = config.official_model_contexts.get(&model.id) {
+            model.context_window = Some(context_window);
+        }
+    }
     let available_models = cached_models
         .iter()
         .map(|model| model.id.as_str())
@@ -339,6 +346,7 @@ fn official_provider_view(
         "new_models": [],
         "unavailable_selected_models": [],
         "cached_models": cached_models,
+        "model_context_overrides": config.official_model_contexts,
         "models_refreshed_at_ms": official_models_refreshed_at_ms(),
         "last_model_refresh_error": null,
         "readiness": "healthy",

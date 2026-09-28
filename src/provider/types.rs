@@ -151,6 +151,8 @@ pub struct ProviderModel {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub context_window: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub source_context_window: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol: Option<ProviderProtocol>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_path: Option<String>,
@@ -218,6 +220,8 @@ pub struct ProviderDefinition {
     pub new_models: Vec<String>,
     #[serde(default)]
     pub cached_models: Vec<ProviderModel>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub model_context_overrides: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub models_refreshed_at_ms: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -233,6 +237,13 @@ impl ProviderDefinition {
             self.id
         );
         validate_base_url(&self.id, &self.base_url)?;
+        for (model, context_window) in &self.model_context_overrides {
+            ensure!(
+                *context_window > 0,
+                "provider {} model {model} context override must be greater than zero",
+                self.id
+            );
+        }
         validate_path(&self.id, "API", &self.api_path)?;
         if let ProviderModelSource::OpenAiCompatible { path } = &self.model_source {
             validate_path(&self.id, "models", path)?;

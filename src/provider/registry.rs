@@ -991,6 +991,7 @@ mod tests {
             selected_models: Vec::new(),
             new_models: Vec::new(),
             cached_models: Vec::new(),
+            model_context_overrides: BTreeMap::new(),
             models_refreshed_at_ms: None,
             models_refresh_error: None,
         }

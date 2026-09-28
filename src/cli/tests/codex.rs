@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
@@ -866,6 +866,67 @@ fn refreshes_managed_catalog_from_latest_official_catalog() {
 }
 
 #[test]
+fn official_context_override_persists_until_cleared() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let catalog_path = dir.path().join("mixin-models.json");
+    fs::write(
+        &config_path,
+        format!(
+            "{MANAGED_CONFIG_HEADER}\nmodel_catalog_json = {:?}\n\n[model_providers.codex-mixin]\nrequires_openai_auth = true\nsupports_websockets = true\n",
+            catalog_path.to_string_lossy()
+        ),
+    )
+    .unwrap();
+    fs::write(&catalog_path, r#"{"models":[]}"#).unwrap();
+    let official = serde_json::json!({"models": [{
+        "slug": "gpt-6-astra",
+        "context_window": 272_000,
+        "max_context_window": 872_000
+    }]});
+    let overrides = BTreeMap::from([("gpt-6-astra".to_owned(), 500_000)]);
+
+    assert!(
+        refresh_managed_codex_catalog_from_official(
+            &config_path,
+            &official,
+            None,
+            None,
+            &overrides,
+        )
+        .unwrap()
+    );
+    assert!(
+        !refresh_managed_codex_catalog_from_official(
+            &config_path,
+            &official,
+            None,
+            None,
+            &overrides,
+        )
+        .unwrap()
+    );
+    let catalog: serde_json::Value =
+        serde_json::from_slice(&fs::read(&catalog_path).unwrap()).unwrap();
+    assert_eq!(catalog["models"][0]["context_window"], 500_000);
+    assert_eq!(catalog["models"][0]["max_context_window"], 872_000);
+
+    assert!(
+        refresh_managed_codex_catalog_from_official(
+            &config_path,
+            &official,
+            None,
+            None,
+            &BTreeMap::new(),
+        )
+        .unwrap()
+    );
+    let restored: serde_json::Value =
+        serde_json::from_slice(&fs::read(&catalog_path).unwrap()).unwrap();
+    assert_eq!(restored["models"][0]["context_window"], 272_000);
+}
+
+#[test]
 fn capability_refresh_does_not_restore_stale_official_cache() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");
@@ -1042,7 +1103,13 @@ fn generated_catalog_refresh_adds_new_fusion_models() {
     });
 
     assert!(
-        write_generated_managed_codex_catalog(&config_path, generated, &HashSet::new(), None)
+        write_generated_managed_codex_catalog(
+            &config_path,
+            generated,
+            &HashSet::new(),
+            None,
+            None,
+        )
             .unwrap()
     );
     let refreshed_config = fs::read_to_string(&config_path)

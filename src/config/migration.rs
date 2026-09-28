@@ -315,6 +315,7 @@ fn migrate_legacy_config(legacy: LegacyStoredGatewayConfig) -> anyhow::Result<St
         gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
         compaction_secret: None,
         official_selected_models: None,
+        official_model_contexts: Default::default(),
         fusion_profiles: legacy.fusion_profiles,
         providers: vec![provider],
     })

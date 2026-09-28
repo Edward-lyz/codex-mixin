@@ -2,6 +2,7 @@ use std::collections::{BTreeMap, HashSet};
 use std::time::Duration;
 
 use anyhow::Context;
+use codex_mixin::catalog::apply_official_context_overrides;
 use codex_mixin::config::GatewayConfig;
 use codex_mixin::provider::capabilities::ProviderCapabilities;
 use codex_mixin::provider::{
@@ -18,7 +19,8 @@ use super::{
     normalize_base_url, normalize_model_ids, required_config, trim_required,
 };
 use crate::cli::official_models::{
-    OFFICIAL_PROVIDER_ID, available_official_ids, load_official_models, refresh_official_models,
+    OFFICIAL_PROVIDER_ID, available_official_ids, load_official_catalog, load_official_models,
+    refresh_official_models,
 };
 use crate::cli::refresh_default_managed_codex_catalog;
 
@@ -426,15 +428,19 @@ pub(crate) async fn select_models(
     id: &str,
     models: Vec<String>,
     model_contexts: Vec<String>,
+    clear_model_contexts: Vec<String>,
 ) -> anyhow::Result<()> {
     let models = normalize_model_ids(models)?;
     let model_contexts = parse_model_contexts(model_contexts)?;
+    let clear_model_contexts = normalize_model_ids(clear_model_contexts)?;
     let selected_count = models.len();
-    if id == OFFICIAL_PROVIDER_ID {
+    for model in &clear_model_contexts {
         anyhow::ensure!(
-            model_contexts.is_empty(),
-            "official model context windows cannot be overridden"
+            !model_contexts.contains_key(model),
+            "model context override is both set and cleared: {model}"
         );
+    }
+    if id == OFFICIAL_PROVIDER_ID {
         let available_models = load_official_models()?;
         let available_ids = available_official_ids(&available_models);
         for model in &models {
@@ -443,21 +449,57 @@ pub(crate) async fn select_models(
                 "official provider has no known model {model}; refresh the OpenAI model list first"
             );
         }
+        for model in model_contexts.keys() {
+            anyhow::ensure!(
+                available_ids.contains(model.as_str()),
+                "official provider has no known model {model}; refresh the OpenAI model list first"
+            );
+        }
+        if !model_contexts.is_empty() {
+            let mut catalog = load_official_catalog()?.context(
+                "official model catalog is missing; refresh the OpenAI model list first",
+            )?;
+            apply_official_context_overrides(&mut catalog, &model_contexts)?;
+        }
+        let context_only =
+            models.is_empty() && (!model_contexts.is_empty() || !clear_model_contexts.is_empty());
         mutate_and_invalidate(|config| {
-            config.official_selected_models = Some(models);
+            if !context_only {
+                config.official_selected_models = Some(models);
+            }
+            config.official_model_contexts.extend(model_contexts);
+            for model in clear_model_contexts {
+                config.official_model_contexts.remove(&model);
+            }
             Ok(())
         })?;
-        println!("provider models selected: {id} ({selected_count})");
+        if context_only {
+            println!("official model context windows updated");
+        } else {
+            println!("provider models selected: {id} ({selected_count})");
+        }
         return Ok(());
     }
+    let context_only =
+        models.is_empty() && (!model_contexts.is_empty() || !clear_model_contexts.is_empty());
     let models_to_probe = mutate_and_invalidate(|config| {
         ensure_has_providers(config)?;
-        apply_model_selection(find_provider_mut(config, id)?, models, &model_contexts)
+        let provider = find_provider_mut(config, id)?;
+        let selection = if context_only {
+            provider.selected_models.clone()
+        } else {
+            models
+        };
+        apply_model_selection(provider, selection, &model_contexts, &clear_model_contexts)
     })?;
     if !models_to_probe.is_empty() {
         probe_new_models(id, &models_to_probe, true).await?;
     }
-    println!("provider models selected: {id} ({selected_count})");
+    if context_only {
+        println!("provider model context windows updated: {id}");
+    } else {
+        println!("provider models selected: {id} ({selected_count})");
+    }
     Ok(())
 }
 
@@ -465,6 +507,7 @@ pub(super) fn apply_model_selection(
     provider: &mut codex_mixin::provider::ProviderDefinition,
     models: Vec<String>,
     model_contexts: &BTreeMap<String, u64>,
+    clear_model_contexts: &[String],
 ) -> anyhow::Result<Vec<String>> {
     let previous_selection = provider
         .selected_models
@@ -495,26 +538,34 @@ pub(super) fn apply_model_selection(
                 });
         }
     }
-    let selected = models
-        .iter()
-        .map(String::as_str)
-        .collect::<std::collections::HashSet<_>>();
+    for model_id in clear_model_contexts {
+        provider.model_context_overrides.remove(model_id);
+        if let Some(model) = provider
+            .cached_models
+            .iter_mut()
+            .find(|model| model.id == *model_id)
+        {
+            model.context_window = model.source_context_window;
+        }
+    }
     for (model_id, context_window) in model_contexts {
-        anyhow::ensure!(
-            selected.contains(model_id.as_str()),
-            "model context override targets unselected model {model_id}"
-        );
         let model = provider
             .cached_models
             .iter_mut()
             .find(|model| model.id == *model_id)
             .ok_or_else(|| anyhow::anyhow!("unknown model context override: {model_id}"))?;
-        anyhow::ensure!(
-            model.manually_added,
-            "model context can only be edited for manually added models: {model_id}"
-        );
+        if model.source_context_window.is_none() {
+            model.source_context_window = model.context_window;
+        }
         model.context_window = Some(*context_window);
+        provider
+            .model_context_overrides
+            .insert(model_id.clone(), *context_window);
     }
+    let selected = models
+        .iter()
+        .map(String::as_str)
+        .collect::<std::collections::HashSet<_>>();
     provider
         .cached_models
         .retain(|model| !model.manually_added || selected.contains(model.id.as_str()));

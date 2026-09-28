@@ -158,6 +158,9 @@ extension AppDelegate {
                             "--model-context", "\(modelID)=\(contextWindow)",
                         ])
                     }
+                    for modelID in update.clearedModelContexts {
+                        arguments.append(contentsOf: ["--clear-model-context", modelID])
+                    }
                     _ = try await self.runGateway(arguments)
                 }
             )

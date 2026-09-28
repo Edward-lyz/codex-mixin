@@ -9,7 +9,9 @@ mod service;
 mod template;
 
 pub use generation::{codex_catalog_from_models_with_metadata, codex_oauth_proxy_catalog};
-pub use managed::{migrate_managed_model_metadata, refresh_managed_oauth_catalog};
+pub use managed::{
+    apply_official_context_overrides, migrate_managed_model_metadata, refresh_managed_oauth_catalog,
+};
 pub(crate) use service::CatalogService;
 #[cfg(test)]
 pub(crate) use service::provider_model_display_name;
@@ -19,7 +21,7 @@ pub use template::{
 
 #[cfg(test)]
 mod tests {
-    use std::collections::HashSet;
+    use std::collections::{BTreeMap, HashSet};
 
     use serde_json::{Value, json};
 
@@ -28,9 +30,9 @@ mod tests {
 
     use super::{
         CUSTOM_MODEL_MARKER, FALLBACK_BASE_INSTRUCTIONS, SUPPORTS_THINKING_MARKER,
-        UPSTREAM_MODEL_MARKER, apply_auto_review_override, apply_web_search_capabilities,
-        codex_catalog_from_models_with_metadata, codex_oauth_proxy_catalog,
-        refresh_managed_oauth_catalog,
+        UPSTREAM_MODEL_MARKER, apply_auto_review_override, apply_official_context_overrides,
+        apply_web_search_capabilities, codex_catalog_from_models_with_metadata,
+        codex_oauth_proxy_catalog, refresh_managed_oauth_catalog,
     };
 
     fn reasoning_efforts(model: &Value) -> Vec<&str> {
@@ -40,6 +42,29 @@ mod tests {
             .iter()
             .map(|level| level["effort"].as_str().unwrap())
             .collect()
+    }
+
+    #[test]
+    fn official_context_override_survives_catalog_refresh() {
+        let official = json!({"models": [{
+            "slug": "gpt-6-astra",
+            "context_window": 272000,
+            "max_context_window": 872000
+        }]});
+        let managed = json!({"models": []});
+        let overrides = BTreeMap::from([("gpt-6-astra".to_owned(), 500000)]);
+
+        let mut refreshed = refresh_managed_oauth_catalog(&official, &managed).unwrap();
+        apply_official_context_overrides(&mut refreshed, &overrides).unwrap();
+
+        assert_eq!(refreshed["models"][0]["context_window"], 500000);
+        assert_eq!(refreshed["models"][0]["max_context_window"], 872000);
+        let mut next = refresh_managed_oauth_catalog(&official, &refreshed).unwrap();
+        apply_official_context_overrides(&mut next, &overrides).unwrap();
+        assert_eq!(next["models"][0]["context_window"], 500000);
+
+        let too_large = BTreeMap::from([("gpt-6-astra".to_owned(), 872001)]);
+        assert!(apply_official_context_overrides(&mut next, &too_large).is_err());
     }
 
     #[test]

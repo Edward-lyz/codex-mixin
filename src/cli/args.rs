@@ -589,6 +589,8 @@ pub(super) enum ProviderCommand {
         models: Vec<String>,
         #[arg(long = "model-context", value_name = "MODEL=TOKENS")]
         model_contexts: Vec<String>,
+        #[arg(long = "clear-model-context", value_name = "MODEL")]
+        clear_model_contexts: Vec<String>,
     },
 }
 

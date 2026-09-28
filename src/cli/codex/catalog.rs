@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::path::{Path, PathBuf};
 
@@ -6,11 +6,11 @@ use toml_edit::{DocumentMut, Item};
 
 use codex_mixin::anthropic::ModelInfo;
 use codex_mixin::catalog::{
-    apply_auto_review_override, apply_web_search_capabilities,
+    apply_auto_review_override, apply_official_context_overrides, apply_web_search_capabilities,
     codex_catalog_from_models_with_metadata, codex_oauth_proxy_catalog, load_template_catalog,
     migrate_managed_model_metadata, refresh_managed_oauth_catalog,
 };
-use codex_mixin::config::GatewayConfig;
+use codex_mixin::config::{GatewayConfig, load_stored_config};
 use codex_mixin::provider::{MetadataResolver, auxiliary_auto_review_slug};
 use codex_mixin::server::AppState;
 use codex_mixin::web_search::WebSearchCapabilities;
@@ -73,11 +73,14 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
     let supported_models =
         WebSearchCapabilities::from_default_path(&gateway_config)?.supported_model_ids();
     let auto_review_slug = auxiliary_auto_review_slug(&gateway_config.providers);
+    let stored_config = load_stored_config()?
+        .ok_or_else(|| anyhow::anyhow!("provider configuration is missing"))?;
     if write_generated_managed_codex_catalog(
         &config_path,
         catalog,
         &supported_models,
         auto_review_slug.as_deref(),
+        oauth_proxy.then_some(&stored_config.official_model_contexts),
     )? {
         println!("Codex model catalog refreshed: {}", catalog_path.display());
     } else {
@@ -185,6 +188,7 @@ pub(in crate::cli) fn write_generated_managed_codex_catalog(
     mut catalog: serde_json::Value,
     supported_web_search_models: &HashSet<String>,
     auto_review_slug: Option<&str>,
+    official_contexts: Option<&BTreeMap<String, u64>>,
 ) -> anyhow::Result<bool> {
     let config_path = absolute_path(config_path.to_path_buf())?;
     let _config_lock = ManagedConfigLock::acquire(&config_path)?;
@@ -196,6 +200,9 @@ pub(in crate::cli) fn write_generated_managed_codex_catalog(
     let catalog_path = managed_catalog_path(&doc, &config_path)?;
     apply_web_search_capabilities(&mut catalog, supported_web_search_models)?;
     apply_auto_review_override(&mut catalog, auto_review_slug)?;
+    if let Some(official_contexts) = official_contexts {
+        apply_official_context_overrides(&mut catalog, official_contexts)?;
+    }
     let config_changed = if remove_unavailable_default_model(&mut doc, &catalog) {
         write_atomic_if_changed(&config_path, doc.to_string().as_bytes())?
     } else {
@@ -219,7 +226,13 @@ pub(in crate::cli) fn refresh_managed_codex_catalog(config_path: &Path) -> anyho
         .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?
         .join("models_cache.json");
     let official_catalog = serde_json::from_slice(&fs::read(official_catalog_path)?)?;
-    refresh_managed_codex_catalog_from_official(config_path, &official_catalog, None, None)
+    refresh_managed_codex_catalog_from_official(
+        config_path,
+        &official_catalog,
+        None,
+        None,
+        &BTreeMap::new(),
+    )
 }
 
 pub(in crate::cli) fn refresh_managed_codex_catalog_with_capabilities(
@@ -232,6 +245,7 @@ pub(in crate::cli) fn refresh_managed_codex_catalog_with_capabilities(
         None,
         supported_web_search_models,
         auto_review_slug,
+        None,
     )
 }
 
@@ -240,12 +254,14 @@ pub(in crate::cli) fn refresh_managed_codex_catalog_from_official(
     official_catalog: &serde_json::Value,
     supported_web_search_models: Option<&HashSet<String>>,
     auto_review_slug: Option<&str>,
+    official_contexts: &BTreeMap<String, u64>,
 ) -> anyhow::Result<bool> {
     refresh_managed_codex_catalog_with_source(
         config_path,
         Some(official_catalog),
         supported_web_search_models,
         auto_review_slug,
+        Some(official_contexts),
     )
 }
 
@@ -254,6 +270,7 @@ fn refresh_managed_codex_catalog_with_source(
     official_catalog: Option<&serde_json::Value>,
     supported_web_search_models: Option<&HashSet<String>>,
     auto_review_slug: Option<&str>,
+    official_contexts: Option<&BTreeMap<String, u64>>,
 ) -> anyhow::Result<bool> {
     let config_path = absolute_path(config_path.to_path_buf())?;
     if !config_path.exists() {
@@ -293,6 +310,9 @@ fn refresh_managed_codex_catalog_with_source(
         apply_web_search_capabilities(&mut refreshed, supported_web_search_models)?;
     }
     apply_auto_review_override(&mut refreshed, auto_review_slug)?;
+    if let Some(official_contexts) = official_contexts {
+        apply_official_context_overrides(&mut refreshed, official_contexts)?;
+    }
     let config_changed = if remove_unavailable_default_model(&mut doc, &refreshed) {
         write_atomic_if_changed(&config_path, doc.to_string().as_bytes())?
     } else {
@@ -399,11 +419,14 @@ pub(in crate::cli) async fn refresh_managed_official_codex_catalog(
         gateway_config.official_selected_models.as_deref(),
     )?;
     let auto_review_slug = auxiliary_auto_review_slug(&gateway_config.providers);
+    let stored_config = load_stored_config()?
+        .ok_or_else(|| anyhow::anyhow!("provider configuration is missing"))?;
     refresh_managed_codex_catalog_from_official(
         config_path,
         &official_catalog,
         supported_web_search_models,
         auto_review_slug.as_deref(),
+        &stored_config.official_model_contexts,
     )
 }
 

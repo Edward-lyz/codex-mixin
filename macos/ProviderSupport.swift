@@ -220,6 +220,7 @@ struct ProviderView: Decodable {
     let newModels: [String]
     let unavailableSelectedModels: [String]
     let cachedModels: [ProviderModelView]
+    let modelContextOverrides: [String: UInt64]?
     let modelsRefreshedAtMilliseconds: UInt64?
     let lastModelRefreshError: String?
     let readiness: String
@@ -256,6 +257,7 @@ struct ProviderView: Decodable {
         case newModels = "new_models"
         case unavailableSelectedModels = "unavailable_selected_models"
         case cachedModels = "cached_models"
+        case modelContextOverrides = "model_context_overrides"
         case modelsRefreshedAtMilliseconds = "models_refreshed_at_ms"
         case lastModelRefreshError = "last_model_refresh_error"
         case readiness
@@ -297,6 +299,9 @@ struct ProviderView: Decodable {
         newModels = try values.decode([String].self, forKey: .newModels)
         unavailableSelectedModels = try values.decode([String].self, forKey: .unavailableSelectedModels)
         cachedModels = try values.decode([ProviderModelView].self, forKey: .cachedModels)
+        modelContextOverrides = try values.decodeIfPresent(
+            [String: UInt64].self, forKey: .modelContextOverrides
+        )
         modelsRefreshedAtMilliseconds = try values.decodeIfPresent(UInt64.self, forKey: .modelsRefreshedAtMilliseconds)
         lastModelRefreshError = try values.decodeIfPresent(String.self, forKey: .lastModelRefreshError)
         readiness = try values.decode(String.self, forKey: .readiness)
@@ -391,6 +396,7 @@ struct ProviderModelView: Decodable {
     let ratio: String?
     let priceType: String?
     let contextWindow: UInt64?
+    let sourceContextWindow: UInt64?
     let protocolID: String?
     let supportsImage: Bool?
     let supportsThinking: Bool?
@@ -407,6 +413,7 @@ struct ProviderModelView: Decodable {
         case ratio
         case priceType = "price_type"
         case contextWindow = "context_window"
+        case sourceContextWindow = "source_context_window"
         case protocolID = "protocol"
         case supportsImage = "supports_image"
         case supportsThinking = "supports_thinking"
@@ -429,6 +436,7 @@ struct ProviderModelListItem {
     var ratio: String? { model.ratio }
     var priceType: String? { model.priceType }
     var contextWindow: UInt64? { model.contextWindow }
+    var sourceContextWindow: UInt64? { model.sourceContextWindow }
     var protocolID: String? { model.protocolID }
     var supportsImage: Bool? { model.supportsImage }
     var supportsThinking: Bool? { model.supportsThinking }
@@ -448,6 +456,7 @@ func manuallyEnteredProviderModel(_ id: String) -> ProviderModelListItem {
             ratio: nil,
             priceType: nil,
             contextWindow: manuallyEnteredModelContextWindow,
+            sourceContextWindow: manuallyEnteredModelContextWindow,
             protocolID: nil,
             supportsImage: nil,
             supportsThinking: nil,
@@ -471,6 +480,7 @@ func unavailableProviderModel(_ id: String) -> ProviderModelListItem {
             ratio: nil,
             priceType: nil,
             contextWindow: nil,
+            sourceContextWindow: nil,
             protocolID: nil,
             supportsImage: nil,
             supportsThinking: nil,

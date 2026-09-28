@@ -15,9 +15,21 @@ pub(super) const OFFICIAL_PROVIDER_ID: &str = "official";
 const OFFICIAL_MODELS_CACHE_FILE: &str = "official-models.json";
 
 pub(super) fn load_official_models() -> anyhow::Result<Vec<ProviderModel>> {
+    load_official_catalog()?.map_or_else(
+        || Ok(Vec::new()),
+        |catalog| official_models_from_catalog(&catalog),
+    )
+}
+
+pub(super) fn load_official_catalog() -> anyhow::Result<Option<Value>> {
     let mixin_cache = official_models_cache_path();
     let codex_cache = resolve_codex_install_paths(None, None)?.models_cache;
-    load_official_models_from_paths(&mixin_cache, &codex_cache)
+    let cache = if mixin_cache.is_file() {
+        mixin_cache
+    } else {
+        codex_cache
+    };
+    load_template_catalog(Some(&cache))
 }
 
 pub(super) async fn refresh_official_models() -> anyhow::Result<usize> {
@@ -55,6 +67,7 @@ pub(in crate::cli) fn write_official_models_cache(
     Ok(model_count)
 }
 
+#[cfg(test)]
 fn load_official_models_from_paths(
     mixin_cache: &Path,
     codex_cache: &Path,

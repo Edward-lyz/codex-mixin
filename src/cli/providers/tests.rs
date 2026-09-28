@@ -25,8 +25,13 @@ fn selecting_unknown_model_leaves_capabilities_for_fallback_resolution() {
     provider.base_url = "https://example.test".to_owned();
 
     let contexts = BTreeMap::from([("hidden-model".to_owned(), 256_000)]);
-    let newly_selected =
-        apply_model_selection(&mut provider, vec!["hidden-model".to_owned()], &contexts).unwrap();
+    let newly_selected = apply_model_selection(
+        &mut provider,
+        vec!["hidden-model".to_owned()],
+        &contexts,
+        &[],
+    )
+    .unwrap();
 
     assert_eq!(newly_selected, ["hidden-model"]);
     assert_eq!(provider.selected_models, ["hidden-model"]);
@@ -40,7 +45,7 @@ fn selecting_unknown_model_leaves_capabilities_for_fallback_resolution() {
     assert_eq!(model.supports_function_tools, None);
 
     let newly_selected =
-        apply_model_selection(&mut provider, Vec::new(), &BTreeMap::new()).unwrap();
+        apply_model_selection(&mut provider, Vec::new(), &BTreeMap::new(), &[]).unwrap();
 
     assert!(newly_selected.is_empty());
     assert!(provider.selected_models.is_empty());
@@ -57,6 +62,7 @@ fn materializing_selected_manual_model_schedules_capability_probe() {
         &mut provider,
         vec!["hidden-model".to_owned()],
         &BTreeMap::new(),
+        &[],
     )
     .unwrap();
 
@@ -65,27 +71,47 @@ fn materializing_selected_manual_model_schedules_capability_probe() {
 }
 
 #[test]
-fn context_override_rejects_discovered_model() {
+fn discovered_model_context_override_can_be_restored() {
     let mut provider = codex_mixin::provider::custom_provider("custom", "key");
+    provider.base_url = "https://example.test".to_owned();
     provider
         .cached_models
         .push(codex_mixin::provider::ProviderModel {
             id: "discovered-model".to_owned(),
+            context_window: Some(128_000),
             ..codex_mixin::provider::ProviderModel::default()
         });
     let contexts = BTreeMap::from([("discovered-model".to_owned(), 256_000)]);
 
-    let error = apply_model_selection(
+    apply_model_selection(
         &mut provider,
         vec!["discovered-model".to_owned()],
         &contexts,
+        &[],
     )
-    .unwrap_err();
+    .unwrap();
+    assert_eq!(provider.cached_models[0].context_window, Some(256_000));
+    assert_eq!(
+        provider.cached_models[0].source_context_window,
+        Some(128_000)
+    );
+    assert_eq!(
+        provider.model_context_overrides["discovered-model"],
+        256_000
+    );
 
+    apply_model_selection(
+        &mut provider,
+        vec!["discovered-model".to_owned()],
+        &BTreeMap::new(),
+        &["discovered-model".to_owned()],
+    )
+    .unwrap();
+    assert_eq!(provider.cached_models[0].context_window, Some(128_000));
     assert!(
-        error
-            .to_string()
-            .contains("model context can only be edited for manually added models")
+        !provider
+            .model_context_overrides
+            .contains_key("discovered-model")
     );
 }
 
@@ -1135,12 +1161,19 @@ fn model_selection_can_preserve_or_remove_an_unavailable_selected_model() {
         &mut provider,
         vec!["glm-5.2".to_owned(), "temporarily-gone".to_owned()],
         &BTreeMap::new(),
+        &[],
     )
     .unwrap();
     assert_eq!(provider.selected_models, ["glm-5.2", "temporarily-gone"]);
     assert!(provider.new_models.is_empty());
 
-    apply_model_selection(&mut provider, vec!["glm-5.2".to_owned()], &BTreeMap::new()).unwrap();
+    apply_model_selection(
+        &mut provider,
+        vec!["glm-5.2".to_owned()],
+        &BTreeMap::new(),
+        &[],
+    )
+    .unwrap();
     assert_eq!(provider.selected_models, ["glm-5.2"]);
 }
 

@@ -1,4 +1,4 @@
-use std::collections::HashMap;
+use std::collections::{BTreeMap, HashMap};
 
 use serde_json::{Value, json};
 
@@ -82,6 +82,38 @@ pub fn refresh_managed_oauth_catalog(
 
     refreshed.insert("models".to_owned(), Value::Array(models));
     Ok(Value::Object(refreshed))
+}
+
+pub fn apply_official_context_overrides(
+    catalog: &mut Value,
+    overrides: &BTreeMap<String, u64>,
+) -> anyhow::Result<()> {
+    if overrides.is_empty() {
+        return Ok(());
+    }
+    let models = catalog
+        .get_mut("models")
+        .and_then(Value::as_array_mut)
+        .ok_or_else(|| anyhow::anyhow!("official Codex catalog has no models array"))?;
+    for model in models {
+        let Some(slug) = model.get("slug").and_then(Value::as_str) else {
+            continue;
+        };
+        let Some(&context_window) = overrides.get(slug) else {
+            continue;
+        };
+        let maximum = model
+            .get("max_context_window")
+            .and_then(Value::as_u64)
+            .or_else(|| model.get("context_window").and_then(Value::as_u64))
+            .ok_or_else(|| anyhow::anyhow!("official model {slug} has no context window"))?;
+        anyhow::ensure!(
+            context_window > 0 && context_window <= maximum,
+            "official model {slug} context window must be between 1 and {maximum}"
+        );
+        model["context_window"] = json!(context_window);
+    }
+    Ok(())
 }
 
 pub fn migrate_managed_model_metadata(catalog: &mut Value) -> anyhow::Result<bool> {

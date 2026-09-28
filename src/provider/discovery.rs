@@ -423,6 +423,7 @@ fn openai_model_to_provider_model(model: ModelInfo, is_openrouter: bool) -> Prov
         ratio: model.ratio,
         price_type: model.price_type,
         context_window: model.context_window,
+        source_context_window: model.context_window,
         protocol: model.protocol,
         api_path: model.api_path,
         supports_image,
@@ -560,6 +561,14 @@ pub fn apply_discovered_models(
             .cloned(),
     );
     normalize_models(&mut models);
+    for model in &mut models {
+        if model.source_context_window.is_none() {
+            model.source_context_window = model.context_window;
+        }
+        if let Some(&context_window) = provider.model_context_overrides.get(&model.id) {
+            model.context_window = Some(context_window);
+        }
+    }
     let first_successful_refresh = provider.models_refreshed_at_ms.is_none();
     let mut changes = ModelDiscoveryChanges::default();
     if first_successful_refresh {
@@ -670,6 +679,50 @@ mod tests {
             id: id.to_owned(),
             ..ProviderModel::default()
         }
+    }
+
+    #[test]
+    fn discovered_context_override_survives_refresh_and_can_be_cleared() {
+        let mut provider = crate::provider::custom_provider("custom", "key");
+        provider.base_url = "https://example.test".to_owned();
+        provider.models_refreshed_at_ms = Some(1);
+        provider.cached_models = vec![ProviderModel {
+            context_window: Some(100_000),
+            ..model("model-a")
+        }];
+        provider.selected_models = vec!["model-a".to_owned()];
+        provider
+            .model_context_overrides
+            .insert("model-a".to_owned(), 200_000);
+
+        apply_discovered_models(
+            &mut provider,
+            vec![ProviderModel {
+                context_window: Some(120_000),
+                ..model("model-a")
+            }],
+        )
+        .unwrap();
+        assert_eq!(provider.cached_models[0].context_window, Some(200_000));
+        assert_eq!(
+            provider.cached_models[0].source_context_window,
+            Some(120_000)
+        );
+
+        provider.model_context_overrides.clear();
+        apply_discovered_models(
+            &mut provider,
+            vec![ProviderModel {
+                context_window: Some(130_000),
+                ..model("model-a")
+            }],
+        )
+        .unwrap();
+        assert_eq!(provider.cached_models[0].context_window, Some(130_000));
+        assert_eq!(
+            provider.cached_models[0].source_context_window,
+            Some(130_000)
+        );
     }
 
     fn baidu_model(id: &str, capability_set: &[&str]) -> crate::anthropic::BaiduAvailableModel {

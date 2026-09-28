@@ -69,6 +69,7 @@ async fn startup_does_not_wait_for_official_catalog_network() {
             gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys::default(),
             compaction_secret: None,
             official_selected_models: None,
+            official_model_contexts: Default::default(),
             fusion_profiles: Vec::new(),
             providers: vec![open_code_go_provider("test-provider", "upstream-key")],
         },
@@ -171,6 +172,7 @@ async fn first_start_accepts_client_key_created_during_client_sync() {
             gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys::default(),
             compaction_secret: None,
             official_selected_models: Some(Vec::new()),
+            official_model_contexts: Default::default(),
             fusion_profiles: Vec::new(),
             providers: vec![provider],
         },
@@ -245,6 +247,7 @@ async fn running_gateway_serves_a_rotated_client_key() {
         },
         compaction_secret: None,
         official_selected_models: Some(Vec::new()),
+        official_model_contexts: Default::default(),
         fusion_profiles: Vec::new(),
         providers: vec![provider.clone()],
     };

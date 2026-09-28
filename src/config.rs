@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::net::SocketAddr;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -169,6 +170,8 @@ pub struct StoredGatewayConfig {
     pub compaction_secret: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub official_selected_models: Option<Vec<String>>,
+    #[serde(default, skip_serializing_if = "BTreeMap::is_empty")]
+    pub official_model_contexts: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fusion_profiles: Vec<FusionProfile>,
     pub providers: Vec<ProviderDefinition>,
@@ -183,6 +186,7 @@ impl Default for StoredGatewayConfig {
             gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
             compaction_secret: None,
             official_selected_models: None,
+            official_model_contexts: BTreeMap::new(),
             fusion_profiles: Vec::new(),
             providers: Vec::new(),
         }
@@ -226,6 +230,7 @@ mod tests {
             gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
             compaction_secret: None,
             official_selected_models: Some(vec!["gpt-5.6-sol".to_owned()]),
+            official_model_contexts: BTreeMap::from([("gpt-5.6-sol".to_owned(), 500_000)]),
             fusion_profiles: Vec::new(),
             providers: vec![crate::provider::open_code_go_provider(
                 "opencode-go",

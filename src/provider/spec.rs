@@ -190,6 +190,7 @@ impl ProviderSpec {
             selected_models,
             new_models: Vec::new(),
             cached_models,
+            model_context_overrides: Default::default(),
             models_refreshed_at_ms: None,
             models_refresh_error: None,
         }

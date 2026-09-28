@@ -62,13 +62,14 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             startHandler: benchmarkStartHandler,
             fetchHandler: benchmarkFetchHandler,
             loadProvidersHandler: loadHandler,
-            saveSelectionsHandler: { selections, contexts, progress in
+            saveSelectionsHandler: { selections, contexts, clearedContexts, progress in
                 progress.advance(to: 0)
                 for providerID in selections.keys.sorted() {
                     try await saveModelSelectionHandler(ProviderModelSelectionUpdate(
                         providerID: providerID,
                         modelIDs: selections[providerID] ?? [],
-                        modelContexts: contexts[providerID] ?? [:]
+                        modelContexts: contexts[providerID] ?? [:],
+                        clearedModelContexts: clearedContexts[providerID] ?? []
                     ))
                 }
                 try await applyHandler(progress)

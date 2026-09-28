@@ -73,6 +73,7 @@ struct ProviderModelSelectionUpdate {
     let providerID: String
     let modelIDs: [String]
     let modelContexts: [String: UInt64]
+    let clearedModelContexts: [String]
 }
 
 @MainActor
@@ -81,7 +82,7 @@ final class ModelBenchmarkModel: ObservableObject {
     let fetchHandler: () async throws -> ModelBenchmarkSnapshot?
     let loadProvidersHandler: () async throws -> ProviderListResponse
     let saveSelectionsHandler: (
-        [String: [String]], [String: [String: UInt64]], OperationProgress
+        [String: [String]], [String: [String: UInt64]], [String: [String]], OperationProgress
     ) async throws -> Void
 
     @Published var providers: [ProviderView] = []
@@ -105,8 +106,8 @@ final class ModelBenchmarkModel: ObservableObject {
 
     private(set) var resultCache: [String: ModelBenchmarkResult] = [:]
     private(set) var manualModelIDs: [String: Set<String>] = [:]
-    private(set) var manualModelContexts: [String: [String: UInt64]] = [:]
-    private(set) var savedManualModelContexts: [String: [String: UInt64]] = [:]
+    private(set) var modelContextOverrides: [String: [String: UInt64]] = [:]
+    private(set) var savedModelContextOverrides: [String: [String: UInt64]] = [:]
     private(set) var removedManualModelIDs: [String: Set<String>] = [:]
     private var pollingTask: Task<Void, Never>?
     var providerListDidLoad: ((ProviderListResponse, String?) -> Void)?
@@ -116,7 +117,7 @@ final class ModelBenchmarkModel: ObservableObject {
         fetchHandler: @escaping () async throws -> ModelBenchmarkSnapshot?,
         loadProvidersHandler: @escaping () async throws -> ProviderListResponse,
         saveSelectionsHandler: @escaping (
-            [String: [String]], [String: [String: UInt64]], OperationProgress
+            [String: [String]], [String: [String: UInt64]], [String: [String]], OperationProgress
         ) async throws -> Void
     ) {
         self.startHandler = startHandler
@@ -134,7 +135,7 @@ final class ModelBenchmarkModel: ObservableObject {
     }
 
     var dirty: Bool {
-        selectedModelKeys != savedModelKeys || manualModelContexts != savedManualModelContexts
+        selectedModelKeys != savedModelKeys || modelContextOverrides != savedModelContextOverrides
     }
 
     var selectedProviderDirty: Bool {
@@ -198,9 +199,9 @@ final class ModelBenchmarkModel: ObservableObject {
         } else {
             selectedModelKeys.remove(row.id)
             if row.model.manuallyAdded {
-                manualModelContexts[row.providerID]?.removeValue(forKey: row.model.id)
-                if manualModelContexts[row.providerID]?.isEmpty == true {
-                    manualModelContexts.removeValue(forKey: row.providerID)
+                modelContextOverrides[row.providerID]?.removeValue(forKey: row.model.id)
+                if modelContextOverrides[row.providerID]?.isEmpty == true {
+                    modelContextOverrides.removeValue(forKey: row.providerID)
                 }
             }
         }
@@ -222,7 +223,7 @@ final class ModelBenchmarkModel: ObservableObject {
         removedManualModelIDs[provider.id]?.remove(modelID)
         if !provider.modelItems.contains(where: { $0.id == modelID }) {
             manualModelIDs[provider.id, default: []].insert(modelID)
-            manualModelContexts[provider.id, default: [:]][modelID] = 128_000
+            modelContextOverrides[provider.id, default: [:]][modelID] = 128_000
         }
         selectedModelKeys.insert(key)
         manualModelID = ""
@@ -232,28 +233,44 @@ final class ModelBenchmarkModel: ObservableObject {
     func removeManualModel(_ row: ModelBenchmarkTableRow) {
         guard row.model.manuallyAdded, !isBusy else { return }
         manualModelIDs[row.providerID]?.remove(row.model.id)
-        manualModelContexts[row.providerID]?.removeValue(forKey: row.model.id)
-        if manualModelContexts[row.providerID]?.isEmpty == true {
-            manualModelContexts.removeValue(forKey: row.providerID)
+        modelContextOverrides[row.providerID]?.removeValue(forKey: row.model.id)
+        if modelContextOverrides[row.providerID]?.isEmpty == true {
+            modelContextOverrides.removeValue(forKey: row.providerID)
         }
         removedManualModelIDs[row.providerID, default: []].insert(row.model.id)
         selectedModelKeys.remove(row.id)
         rebuildRows()
     }
 
-    func manualModelContextK(_ row: ModelBenchmarkTableRow) -> UInt64 {
+    func contextK(for row: ModelBenchmarkTableRow) -> UInt64 {
         modelContextK(
-            fromTokens: manualModelContexts[row.providerID]?[row.model.id]
+            fromTokens: modelContextOverrides[row.providerID]?[row.model.id]
+                ?? (savedModelContextOverrides[row.providerID]?[row.model.id] != nil
+                    ? row.model.sourceContextWindow : nil)
                 ?? row.model.contextWindow
                 ?? 128_000
         )
     }
 
-    func setManualModelContextK(_ row: ModelBenchmarkTableRow, contextK: UInt64) {
-        guard row.model.manuallyAdded, !isBusy else { return }
-        manualModelContexts[row.providerID, default: [:]][row.model.id] = modelContextTokens(
+    func setModelContextK(_ row: ModelBenchmarkTableRow, contextK: UInt64) {
+        guard !isBusy else { return }
+        modelContextOverrides[row.providerID, default: [:]][row.model.id] = modelContextTokens(
             fromK: contextK
         )
+        rebuildRows()
+    }
+
+    func canRestoreModelContext(_ row: ModelBenchmarkTableRow) -> Bool {
+        row.model.sourceContextWindow != nil
+            && modelContextOverrides[row.providerID]?[row.model.id] != nil
+    }
+
+    func restoreModelContext(_ row: ModelBenchmarkTableRow) {
+        guard canRestoreModelContext(row), !isBusy else { return }
+        modelContextOverrides[row.providerID]?.removeValue(forKey: row.model.id)
+        if modelContextOverrides[row.providerID]?.isEmpty == true {
+            modelContextOverrides.removeValue(forKey: row.providerID)
+        }
         rebuildRows()
     }
 
@@ -287,15 +304,15 @@ final class ModelBenchmarkModel: ObservableObject {
             selectedKeys: selectedModelKeys,
             additionalModelIDs: manualModelIDs
         )
-        let selectedContexts = (manualModelContexts[providerID] ?? [:]).filter { modelID, _ in
-            selectedModelKeys.contains(
-                providerModelSelectionKey(providerID: providerID, modelID: modelID)
-            )
-        }
+        let selectedContexts = modelContextOverrides[providerID] ?? [:]
         return ProviderModelSelectionUpdate(
             providerID: providerID,
             modelIDs: selections[providerID] ?? [],
-            modelContexts: selectedContexts
+            modelContexts: selectedContexts,
+            clearedModelContexts: Array(
+                Set(savedModelContextOverrides[providerID]?.keys.map { $0 } ?? [])
+                    .subtracting(modelContextOverrides[providerID]?.keys.map { $0 } ?? [])
+            ).sorted()
         )
     }
 
@@ -310,10 +327,10 @@ final class ModelBenchmarkModel: ObservableObject {
         let prefix = "\(providerID)\u{1f}"
         savedModelKeys = Set(savedModelKeys.filter { !$0.hasPrefix(prefix) })
             .union(Set(selectedModelKeys.filter { $0.hasPrefix(prefix) }))
-        if let contexts = manualModelContexts[providerID], !contexts.isEmpty {
-            savedManualModelContexts[providerID] = contexts
+        if let contexts = modelContextOverrides[providerID], !contexts.isEmpty {
+            savedModelContextOverrides[providerID] = contexts
         } else {
-            savedManualModelContexts.removeValue(forKey: providerID)
+            savedModelContextOverrides.removeValue(forKey: providerID)
         }
         selectionConflictProviderIDs.remove(providerID)
     }
@@ -322,7 +339,7 @@ final class ModelBenchmarkModel: ObservableObject {
         selectedModelKeys = savedModelKeys
         manualModelIDs.removeAll()
         removedManualModelIDs.removeAll()
-        manualModelContexts = savedManualModelContexts
+        modelContextOverrides = savedModelContextOverrides
         selectionConflictProviderIDs.removeAll()
         rebuildRows()
     }
@@ -333,10 +350,10 @@ final class ModelBenchmarkModel: ObservableObject {
             .union(Set(savedModelKeys.filter { $0.hasPrefix(prefix) }))
         manualModelIDs.removeValue(forKey: providerID)
         removedManualModelIDs.removeValue(forKey: providerID)
-        if let contexts = savedManualModelContexts[providerID] {
-            manualModelContexts[providerID] = contexts
+        if let contexts = savedModelContextOverrides[providerID] {
+            modelContextOverrides[providerID] = contexts
         } else {
-            manualModelContexts.removeValue(forKey: providerID)
+            modelContextOverrides.removeValue(forKey: providerID)
         }
         selectionConflictProviderIDs.remove(providerID)
         rebuildRows()
@@ -389,10 +406,30 @@ final class ModelBenchmarkModel: ObservableObject {
     func applyProviderList(_ response: ProviderListResponse, selecting providerID: String?) {
         let previousSelected = selectedModelKeys
         let previousSaved = savedModelKeys
+        let previousDraftContexts = modelContextOverrides
+        let previousSavedContexts = savedModelContextOverrides
         let changedKeys = previousSelected.union(previousSaved).filter {
             previousSelected.contains($0) != previousSaved.contains($0)
         }
         providers = response.providers
+        for provider in providers {
+            let loaded = provider.modelContextOverrides ?? [:]
+            let previousSaved = previousSavedContexts[provider.id] ?? [:]
+            if (previousDraftContexts[provider.id] ?? [:]) == previousSaved {
+                if loaded.isEmpty {
+                    modelContextOverrides.removeValue(forKey: provider.id)
+                } else {
+                    modelContextOverrides[provider.id] = loaded
+                }
+            } else if loaded != previousSaved {
+                selectionConflictProviderIDs.insert(provider.id)
+            }
+            if loaded.isEmpty {
+                savedModelContextOverrides.removeValue(forKey: provider.id)
+            } else {
+                savedModelContextOverrides[provider.id] = loaded
+            }
+        }
         reconcileManualModelState()
         selectedProviderID = providerID ?? selectedProviderID
             ?? providers.first(where: { $0.kind == .configured })?.id
@@ -484,7 +521,7 @@ final class ModelBenchmarkModel: ObservableObject {
         let selected = Set(selectedModelKeys.filter { $0.hasPrefix(prefix) })
         let saved = Set(savedModelKeys.filter { $0.hasPrefix(prefix) })
         return selected != saved
-            || manualModelContexts[providerID] != savedManualModelContexts[providerID]
+            || modelContextOverrides[providerID] != savedModelContextOverrides[providerID]
     }
 
     private func loadProviders(selecting providerID: String?) async throws {
@@ -518,14 +555,12 @@ final class ModelBenchmarkModel: ObservableObject {
             selectedKeys: selectedModelKeys,
             additionalModelIDs: manualModelIDs
         )
-        let selectedContexts = Dictionary(uniqueKeysWithValues: manualModelContexts.compactMap {
-            providerID, contexts in
-            let selected = contexts.filter { modelID, _ in
-                selectedModelKeys.contains(
-                    providerModelSelectionKey(providerID: providerID, modelID: modelID)
-                )
-            }
-            return selected.isEmpty ? nil : (providerID, selected)
+        let selectedContexts = modelContextOverrides
+        let clearedContexts = Dictionary(uniqueKeysWithValues: providers.compactMap { provider in
+            let previous = Set(savedModelContextOverrides[provider.id]?.keys.map { $0 } ?? [])
+            let current = Set(modelContextOverrides[provider.id]?.keys.map { $0 } ?? [])
+            let cleared = Array(previous.subtracting(current)).sorted()
+            return cleared.isEmpty ? nil : (provider.id, cleared)
         })
         try await runOperationProgress(
             title: "正在保存模型选择",
@@ -534,10 +569,10 @@ final class ModelBenchmarkModel: ObservableObject {
             failureTitle: "✗ 保存失败",
             showFailureAlert: false
         ) { progress in
-            try await self.saveSelectionsHandler(selections, selectedContexts, progress)
+            try await self.saveSelectionsHandler(selections, selectedContexts, clearedContexts, progress)
         }
         savedModelKeys = selectedModelKeys
-        savedManualModelContexts = manualModelContexts
+        savedModelContextOverrides = modelContextOverrides
     }
 
     private func beginPolling() {
@@ -978,23 +1013,26 @@ struct ModelBenchmarkRootView: View {
 
     private var contextColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
         TableColumn("上下文", sortUsing: KeyPathComparator(\ModelBenchmarkTableRow.contextSortValue)) { row in
-            if row.model.manuallyAdded {
-                HStack(spacing: 2) {
-                    TextField("", value: manualContextBinding(row), format: .number)
-                        .textFieldStyle(.plain)
-                        .multilineTextAlignment(.trailing)
-                    Text("K")
-                        .foregroundStyle(.secondary)
-                }
-                .disabled(model.isBusy || isExternallyBusy)
-                .help("手动模型上下文，单位 K；修改后保存模型选择")
-            } else {
-                Text(row.model.contextWindow.map(formatContextWindow) ?? "-")
+            HStack(spacing: 2) {
+                TextField("", value: contextBinding(row), format: .number)
+                    .textFieldStyle(.plain)
+                    .multilineTextAlignment(.trailing)
+                Text("K")
                     .foregroundStyle(.secondary)
-                    .frame(maxWidth: .infinity, alignment: .trailing)
+                if model.canRestoreModelContext(row) {
+                    Button {
+                        model.restoreModelContext(row)
+                    } label: {
+                        Image(systemName: "arrow.uturn.backward")
+                    }
+                    .buttonStyle(.borderless)
+                    .help("还原为自动发现的上下文；保存后生效")
+                }
             }
+            .disabled(model.isBusy || isExternallyBusy || !row.model.isAvailable)
+            .help("模型上下文，单位 K；修改后保存")
         }
-        .width(min: 86, ideal: 104)
+        .width(min: 104, ideal: 124)
     }
 
     private var ratioColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
@@ -1022,10 +1060,10 @@ struct ModelBenchmarkRootView: View {
         )
     }
 
-    private func manualContextBinding(_ row: ModelBenchmarkTableRow) -> Binding<UInt64> {
+    private func contextBinding(_ row: ModelBenchmarkTableRow) -> Binding<UInt64> {
         Binding(
-            get: { model.manualModelContextK(row) },
-            set: { model.setManualModelContextK(row, contextK: $0) }
+            get: { model.contextK(for: row) },
+            set: { model.setModelContextK(row, contextK: $0) }
         )
     }
 
