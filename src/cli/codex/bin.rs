@@ -127,10 +127,9 @@ fn resolve_default_codex_cli() -> Option<PathBuf> {
 fn default_codex_cli_candidates() -> Vec<PathBuf> {
     let mut candidates = Vec::new();
     #[cfg(target_os = "macos")]
-    candidates.extend([
-        PathBuf::from("/Applications/ChatGPT.app/Contents/Resources/codex"),
-        PathBuf::from("/Applications/Codex.app/Contents/Resources/codex"),
-    ]);
+    for bundle in MACOS_APP_BUNDLES {
+        candidates.extend(app_bundle_codex_cli_candidates(Path::new(bundle)));
+    }
     #[cfg(windows)]
     candidates.extend(windows_codex_cli_candidates());
     if let Some(home) = std::env::var_os("HOME").or_else(|| std::env::var_os("USERPROFILE")) {
@@ -141,6 +140,24 @@ fn default_codex_cli_candidates() -> Vec<PathBuf> {
         );
     }
     candidates
+}
+
+#[cfg(target_os = "macos")]
+const MACOS_APP_BUNDLES: [&str; 2] = ["/Applications/ChatGPT.app", "/Applications/Codex.app"];
+
+/// Codex CLI paths inside a desktop app bundle, current layout first.
+///
+/// The ChatGPT app moved the bundled CLI from `Contents/Resources/codex` to
+/// `Contents/Resources/codex-cli/bin/codex` in 2026-09. Probing only the old
+/// path makes the gateway fall back to `models_cache.json`, which pins a stale
+/// client version and hides newer official models.
+#[cfg(target_os = "macos")]
+fn app_bundle_codex_cli_candidates(bundle: &Path) -> [PathBuf; 2] {
+    let resources = bundle.join("Contents/Resources");
+    [
+        resources.join("codex-cli").join("bin").join("codex"),
+        resources.join("codex"),
+    ]
 }
 
 #[cfg(windows)]
@@ -209,4 +226,41 @@ pub(in crate::cli) fn codex_command(path: &Path) -> ProcessCommand {
     // console window when the gateway itself is windowless.
     codex_mixin::platform::prepare_background_command(&mut command);
     command
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn app_bundle_candidates_find_the_codex_cli_layout() {
+        let directory = tempfile::tempdir().unwrap();
+        let bundle = directory.path().join("ChatGPT.app");
+        let cli = bundle.join("Contents/Resources/codex-cli/bin/codex");
+        std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
+        std::fs::write(&cli, b"").unwrap();
+
+        let resolved = app_bundle_codex_cli_candidates(&bundle)
+            .into_iter()
+            .find(|path| path.is_file());
+
+        assert_eq!(resolved, Some(cli));
+    }
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn app_bundle_candidates_keep_the_legacy_layout() {
+        let directory = tempfile::tempdir().unwrap();
+        let bundle = directory.path().join("Codex.app");
+        let cli = bundle.join("Contents/Resources/codex");
+        std::fs::create_dir_all(cli.parent().unwrap()).unwrap();
+        std::fs::write(&cli, b"").unwrap();
+
+        let resolved = app_bundle_codex_cli_candidates(&bundle)
+            .into_iter()
+            .find(|path| path.is_file());
+
+        assert_eq!(resolved, Some(cli));
+    }
 }

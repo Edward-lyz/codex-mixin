@@ -492,7 +492,7 @@ pub(in crate::cli) fn resolve_codex_client_version(models_cache: &Path) -> Optio
     {
         return Some(version);
     }
-    load_template_catalog(Some(models_cache))
+    let cached = load_template_catalog(Some(models_cache))
         .ok()
         .flatten()
         .and_then(|catalog| {
@@ -500,7 +500,14 @@ pub(in crate::cli) fn resolve_codex_client_version(models_cache: &Path) -> Optio
                 .get("client_version")
                 .and_then(serde_json::Value::as_str)
                 .map(str::to_owned)
-        })
+        });
+    if let Some(version) = cached.as_deref() {
+        tracing::warn!(
+            client_version = version,
+            "Codex CLI version could not be detected; falling back to the cached client version for official model refreshes"
+        );
+    }
+    cached
 }
 
 pub(in crate::cli) fn parse_codex_client_version(output: &str) -> Option<String> {
