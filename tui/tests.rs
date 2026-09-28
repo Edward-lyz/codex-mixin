@@ -18,6 +18,45 @@ fn snapshot_handles_unconfigured_status() {
 }
 
 #[test]
+fn model_context_actions_are_available_for_official_models() {
+    let snapshot = Snapshot {
+        status: serde_json::json!({"configured": true}),
+        providers: vec![serde_json::json!({
+            "id": "official",
+            "kind": "official",
+            "selected_models": ["gpt-6-astra"],
+            "cached_models": [{"id": "gpt-6-astra", "context_window": 272000,
+                "source_context_window": 272000}],
+            "model_context_overrides": {}
+        })],
+        codex_install_mode: Some("codex_oauth_proxy".to_owned()),
+        benchmark: None,
+        usage: Vec::new(),
+        models: Vec::new(),
+        fusion_profile: None,
+        refreshed_at: Instant::now(),
+    };
+    let mut app = App::new(snapshot, StartPage::Dashboard);
+    app.page = Page::Models;
+
+    assert_eq!(
+        handle_model_event(&mut app, KeyCode::Char('k')),
+        Action::EditModelContext
+    );
+    assert_eq!(
+        handle_model_event(&mut app, KeyCode::Char('X')),
+        Action::RestoreModelContext
+    );
+
+    app.dialog = Some(Dialog::ModelContext {
+        model_id: "gpt-6-astra".to_owned(),
+        value: "500000".to_owned(),
+    });
+    handle_dialog_event(&mut app, KeyCode::Backspace, KeyModifiers::NONE);
+    assert!(matches!(app.dialog, Some(Dialog::ModelContext { ref value, .. }) if value == "50000"));
+}
+
+#[test]
 fn provider_status_count_uses_readiness() {
     let providers = vec![
         serde_json::json!({"readiness": "healthy"}),

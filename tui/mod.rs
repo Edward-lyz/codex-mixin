@@ -36,7 +36,15 @@ const PROVIDER_ACTION_LABELS: [&str; 6] = [
     "t test",
     "m discover",
 ];
-const MODEL_ACTION_LABELS: [&str; 5] = ["[SAVE]", "[ALL]", "[NONE]", "[DISCOVER]", "[PROBE]"];
+const MODEL_ACTION_LABELS: [&str; 7] = [
+    "[SAVE]",
+    "[ALL]",
+    "[NONE]",
+    "[DISCOVER]",
+    "[PROBE]",
+    "[CONTEXT]",
+    "[RESTORE]",
+];
 const USAGE_RANGE_LABELS: [&str; 4] = ["[1D]", "[7D]", "[30D]", "[ALL]"];
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -377,6 +385,7 @@ enum Dialog {
     ConfirmRemove(String),
     ConfirmOperation(ConfirmOperation),
     ConfirmDisableFusion(String),
+    ModelContext { model_id: String, value: String },
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
@@ -574,6 +583,8 @@ enum Action {
     DiscoverModels,
     ProbeModels,
     ApplyModels,
+    EditModelContext,
+    RestoreModelContext,
     AddProvider,
     EditProvider,
     RemoveProvider,
@@ -835,6 +846,64 @@ pub(crate) async fn run(
                     app.load_model_draft();
                 }
             }
+            Action::EditModelContext => {
+                if let Some(model) = app.selected_models().get(app.model_index) {
+                    let model_id = model_id(model).to_owned();
+                    let value = model
+                        .get("context_window")
+                        .and_then(Value::as_u64)
+                        .unwrap_or(128_000)
+                        .to_string();
+                    app.dialog = Some(Dialog::ModelContext { model_id, value });
+                }
+            }
+            Action::RestoreModelContext => {
+                let provider_id = app
+                    .selected_provider()
+                    .and_then(|provider| provider.get("id"))
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+                let model = app.selected_models().get(app.model_index).copied();
+                if let (Some(provider_id), Some(model)) = (provider_id, model) {
+                    let model_id = model_id(model).to_owned();
+                    let has_source = model
+                        .get("source_context_window")
+                        .and_then(Value::as_u64)
+                        .is_some();
+                    let has_override = app.selected_provider().is_some_and(|provider| {
+                        provider
+                            .get("model_context_overrides")
+                            .and_then(|overrides| overrides.get(&model_id))
+                            .is_some()
+                    });
+                    if !has_source || !has_override {
+                        set_notice(
+                            &mut app,
+                            true,
+                            "This model has no restorable context override.",
+                        );
+                        continue;
+                    }
+                    let changed = run_owned_action(
+                        &mut terminal,
+                        &mut app,
+                        "Restoring model context",
+                        vec![
+                            "providers".to_owned(),
+                            "select".to_owned(),
+                            provider_id,
+                            "--clear-model-context".to_owned(),
+                            model_id,
+                        ],
+                        true,
+                    )
+                    .await
+                    .is_some();
+                    if changed {
+                        apply_provider_changes(&mut terminal, &mut app).await;
+                    }
+                }
+            }
             Action::SaveFusion => match app.fusion.args(&app.snapshot.models) {
                 Ok(args) => {
                     if run_owned_action(
@@ -924,6 +993,7 @@ pub(crate) async fn run(
                 app.load_model_draft();
             }
             Action::SubmitDialog => {
+                let model_context_dialog = matches!(app.dialog, Some(Dialog::ModelContext { .. }));
                 let submission = match app.dialog.as_ref() {
                     Some(Dialog::AddProvider(form)) => {
                         form.args().map(|args| ("Adding provider", args))
@@ -931,6 +1001,27 @@ pub(crate) async fn run(
                     Some(Dialog::EditProvider(form)) => {
                         form.args().map(|args| ("Saving provider", args))
                     }
+                    Some(Dialog::ModelContext { model_id, value }) => (|| {
+                        let tokens = value
+                            .parse::<u64>()
+                            .context("context must be a positive token count")?;
+                        anyhow::ensure!(tokens > 0, "context must be a positive token count");
+                        let provider_id = app
+                            .selected_provider()
+                            .and_then(|provider| provider.get("id"))
+                            .and_then(Value::as_str)
+                            .context("no provider selected")?;
+                        Ok((
+                            "Saving model context",
+                            vec![
+                                "providers".to_owned(),
+                                "select".to_owned(),
+                                provider_id.to_owned(),
+                                "--model-context".to_owned(),
+                                format!("{model_id}={tokens}"),
+                            ],
+                        ))
+                    })(),
                     _ => continue,
                 };
                 match submission {
@@ -942,7 +1033,9 @@ pub(crate) async fn run(
                         if changed {
                             apply_provider_changes(&mut terminal, &mut app).await;
                         }
-                        app.load_model_draft();
+                        if !model_context_dialog {
+                            app.load_model_draft();
+                        }
                     }
                     Err(error) => set_notice(&mut app, true, &error.to_string()),
                 }

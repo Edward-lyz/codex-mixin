@@ -1371,6 +1371,15 @@ pub(super) fn render_dialog(
                 )),
             ],
         ),
+        Dialog::ModelContext { model_id, value } => (
+            " Model context ",
+            vec![
+                Line::from(model_id.as_str()),
+                Line::from(format!("Tokens: {value}_")),
+                Line::from(""),
+                Line::from("Enter save    Esc cancel"),
+            ],
+        ),
         Dialog::AddProvider(form) => {
             let provider_id = form.provider_id();
             let mut lines = vec![
@@ -1669,7 +1678,7 @@ pub(super) fn render_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &Ap
             Page::Setup => "Up/Down field  Left/Right option  Enter setup  Tab workspace",
             Page::Providers => "a add  u edit  D delete  e enable  t test  m discover  K/J reorder",
             Page::Models => {
-                "[ ] provider  Up/Down row  Space/click toggle  a all  n none  s save  d discover"
+                "[ ] provider  Up/Down row  Space toggle  s save  k context  X restore  d discover"
             }
             Page::Benchmark => {
                 "[ ] provider  b/click run  -/+ timeout  ,/. output tokens  r refresh"

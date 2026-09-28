@@ -184,6 +184,8 @@ pub(super) fn handle_mouse_event(
                     }
                     Some(3) => Action::DiscoverModels,
                     Some(4) => Action::ProbeModels,
+                    Some(5) => Action::EditModelContext,
+                    Some(6) => Action::RestoreModelContext,
                     _ => Action::None,
                 };
             }
@@ -384,6 +386,12 @@ pub(super) fn handle_dialog_mouse_event(
                     return Action::DisableFusion;
                 }
                 app.dialog = None;
+            }
+            Action::None
+        }
+        Dialog::ModelContext { .. } => {
+            if content_row == 3 {
+                return Action::SubmitDialog;
             }
             Action::None
         }
@@ -607,6 +615,8 @@ pub(super) fn handle_model_event(app: &mut App, code: KeyCode) -> Action {
         KeyCode::Char('d') => return Action::DiscoverModels,
         KeyCode::Char('p') => return Action::ProbeModels,
         KeyCode::Char('s') => return Action::ApplyModels,
+        KeyCode::Char('k') => return Action::EditModelContext,
+        KeyCode::Char('X') => return Action::RestoreModelContext,
         _ => {}
     }
     Action::None
@@ -751,6 +761,19 @@ pub(super) fn handle_dialog_event(app: &mut App, code: KeyCode, modifiers: KeyMo
             }
             _ => Action::None,
         },
+        Dialog::ModelContext { value, .. } => {
+            if submit {
+                return Action::SubmitDialog;
+            }
+            match code {
+                KeyCode::Backspace => {
+                    value.pop();
+                }
+                KeyCode::Char(character) if character.is_ascii_digit() => value.push(character),
+                _ => {}
+            }
+            Action::None
+        }
         Dialog::AddProvider(form) => {
             if submit {
                 return Action::SubmitDialog;

@@ -43,6 +43,8 @@ class _SettingsPageState extends State<SettingsPage> with WindowListener {
   String _protocol = 'open_ai_responses';
   int _detailTab = 1;
   final Set<String> _selectedModels = {};
+  final Map<String, int> _modelContextDraft = {};
+  final Set<String> _clearedModelContexts = {};
   String _modelQuery = '';
   Timer? _refreshTimer;
 
@@ -137,6 +139,10 @@ class _SettingsPageState extends State<SettingsPage> with WindowListener {
     _selectedModels
       ..clear()
       ..addAll(provider.selectedModels);
+    _modelContextDraft
+      ..clear()
+      ..addAll(provider.modelContextOverrides);
+    _clearedModelContexts.clear();
     // Benchmark results belong to the previously selected provider; drop them
     // so a switch does not show stale numbers against the new model list.
     _benchPoll?.cancel();
@@ -464,10 +470,16 @@ class _SettingsPageState extends State<SettingsPage> with WindowListener {
 
   Future<void> _saveSelectedModels() async {
     final provider = _selected;
-    if (provider == null || provider.official) return;
+    if (provider == null) return;
     final args = ['provider', 'select', provider.id];
     for (final model in _selectedModels) {
       args.addAll(['--model', model]);
+    }
+    for (final entry in _modelContextDraft.entries) {
+      args.addAll(['--model-context', '${entry.key}=${entry.value}']);
+    }
+    for (final model in _clearedModelContexts) {
+      args.addAll(['--clear-model-context', model]);
     }
     final result = await _run('保存模型选择', args);
     if (!result.ok) return;
@@ -475,6 +487,52 @@ class _SettingsPageState extends State<SettingsPage> with WindowListener {
     await _controller.cli.run(['refresh-codex-catalog']);
     await _controller.refresh(force: true);
     if (mounted) setState(_loadSelectedIntoForm);
+  }
+
+  Future<void> _editModelContext(String modelId, int? current) async {
+    final controller = TextEditingController(text: current?.toString() ?? '128000');
+    final formKey = GlobalKey<FormState>();
+    final value = await showDialog<int>(
+      context: context,
+      builder: (context) => AlertDialog(
+        title: Text('$modelId 上下文'),
+        content: Form(
+          key: formKey,
+          child: TextFormField(
+            controller: controller,
+            autofocus: true,
+            keyboardType: TextInputType.number,
+            decoration: const InputDecoration(labelText: 'Token 数量'),
+            validator: (text) {
+              final parsed = int.tryParse(text?.trim() ?? '');
+              return parsed == null || parsed <= 0 ? '请输入正整数' : null;
+            },
+            onFieldSubmitted: (_) {
+              if (formKey.currentState!.validate()) {
+                Navigator.pop(context, int.parse(controller.text.trim()));
+              }
+            },
+          ),
+        ),
+        actions: [
+          TextButton(onPressed: () => Navigator.pop(context), child: const Text('取消')),
+          FilledButton(
+            onPressed: () {
+              if (formKey.currentState!.validate()) {
+                Navigator.pop(context, int.parse(controller.text.trim()));
+              }
+            },
+            child: const Text('确定'),
+          ),
+        ],
+      ),
+    );
+    controller.dispose();
+    if (value == null || !mounted) return;
+    setState(() {
+      _modelContextDraft[modelId] = value;
+      _clearedModelContexts.remove(modelId);
+    });
   }
 
   Future<void> _refreshModels() async {
@@ -1064,10 +1122,10 @@ class _SettingsPageState extends State<SettingsPage> with WindowListener {
                 ),
                 const SizedBox(width: 10),
                 FilledButton(
-                  onPressed: provider.official || _busy || _benchBusy
+                  onPressed: _busy || _benchBusy
                       ? null
                       : _saveSelectedModels,
-                  child: const Text('保存模型选择'),
+                  child: const Text('保存模型设置'),
                 ),
               ],
             );
@@ -1185,7 +1243,11 @@ class _SettingsPageState extends State<SettingsPage> with WindowListener {
     final ttft = result?['ttft_ms'];
     final tps = result?['tps'];
     final status = '${result?['status'] ?? ''}';
-    final contextWindow = model['context_window'];
+    final contextWindow = _modelContextDraft[id] ??
+        (_clearedModelContexts.contains(id)
+            ? model['source_context_window']
+            : model['context_window']);
+    final sourceContext = model['source_context_window'];
     final ratio = model['ratio'];
     return Padding(
       padding: const EdgeInsets.symmetric(vertical: 6),
@@ -1241,9 +1303,40 @@ class _SettingsPageState extends State<SettingsPage> with WindowListener {
           ),
           _statCell('首Token', ttft is num ? '$ttft ms' : '-'),
           _statCell('生成速度', tps is num ? '$tps tok/s' : '-'),
-          _statCell(
-            '上下文',
-            contextWindow is num ? '${(contextWindow / 1000).round()}K' : '-',
+          SizedBox(
+            width: 136,
+            child: Column(
+              crossAxisAlignment: CrossAxisAlignment.start,
+              children: [
+                const Text('上下文', style: TextStyle(color: muted, fontSize: 10)),
+                Row(
+                  children: [
+                    TextButton(
+                      onPressed: _busy || _benchBusy
+                          ? null
+                          : () => _editModelContext(
+                              id, (contextWindow as num?)?.toInt()),
+                      child: Text(contextWindow is num
+                          ? '${(contextWindow / 1000).round()}K'
+                          : '设置'),
+                    ),
+                    if (_modelContextDraft.containsKey(id) && sourceContext is num)
+                      IconButton(
+                        tooltip: '还原为发现值',
+                        icon: const Icon(Icons.restore, size: 18),
+                        onPressed: _busy || _benchBusy
+                            ? null
+                            : () => setState(() {
+                                _modelContextDraft.remove(id);
+                                if (provider.modelContextOverrides.containsKey(id)) {
+                                  _clearedModelContexts.add(id);
+                                }
+                              }),
+                      ),
+                  ],
+                ),
+              ],
+            ),
           ),
           _statCell('倍率', _ratioText(ratio)),
         ],

@@ -19,6 +19,7 @@ class ProviderModel {
   final bool awsSessionTokenConfigured;
   final List<String> selectedModels;
   final List<Map<String, dynamic>> cachedModels;
+  final Map<String, int> modelContextOverrides;
   final String readiness;
   final List<String> readinessIssues;
   final int routableModelCount;
@@ -51,6 +52,7 @@ class ProviderModel {
     required this.awsSessionTokenConfigured,
     required this.selectedModels,
     required this.cachedModels,
+    this.modelContextOverrides = const {},
     required this.readiness,
     required this.readinessIssues,
     required this.routableModelCount,
@@ -91,6 +93,8 @@ class ProviderModel {
       awsSessionTokenConfigured: json['aws_session_token_configured'] == true,
       selectedModels: strings('selected_models'),
       cachedModels: cached,
+      modelContextOverrides: (json['model_context_overrides'] as Map? ?? const {})
+          .map((key, value) => MapEntry('$key', (value as num).toInt())),
       readiness: '${json['readiness'] ?? 'unknown'}',
       readinessIssues: strings('readiness_issues'),
       routableModelCount: (json['routable_model_count'] as num?)?.toInt() ?? 0,
