@@ -22,6 +22,8 @@ pub use crate::provider::{
     ProviderAuthHeader as UpstreamAuthHeader, ProviderPreset, ProviderProtocol as UpstreamKind,
 };
 
+pub const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 64_000;
+
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ThinkingMode {
     Off,
@@ -103,7 +105,7 @@ impl GatewayConfig {
             gateway_client_keys: stored_config.gateway_client_keys,
             accept_codex_oauth: true,
             official_selected_models: stored_config.official_selected_models,
-            default_max_tokens: 8192,
+            default_max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
             default_context_window: 1_000_000,
             request_timeout: Duration::from_millis(600_000),
             thinking_mode: ThinkingMode::Auto,

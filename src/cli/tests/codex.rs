@@ -469,15 +469,14 @@ fn custom_auth_install_backs_up_and_uninstall_restores_existing_auth() {
 
     assert!(is_managed_fake_auth(&auth_path).unwrap());
     let fake: serde_json::Value = serde_json::from_slice(&fs::read(&auth_path).unwrap()).unwrap();
-    assert_eq!(fake["auth_mode"], "bedrockApiKey");
-    assert_eq!(fake["bedrock_api_key"]["region"], "us-east-1");
+    assert_eq!(fake["auth_mode"], "apikey");
     assert!(
-        fake["bedrock_api_key"]["api_key"]
+        fake["OPENAI_API_KEY"]
             .as_str()
             .unwrap()
             .starts_with("codex-mixin-local-")
     );
-    assert!(fake.get("OPENAI_API_KEY").is_none());
+    assert!(fake.get("bedrock_api_key").is_none());
     assert_eq!(fs::read(&backup_path).unwrap(), original);
     #[cfg(unix)]
     assert_eq!(
@@ -534,7 +533,13 @@ fn custom_auth_upgrade_replaces_legacy_fake_without_losing_restore_point() {
 
     let upgraded: serde_json::Value =
         serde_json::from_slice(&fs::read(&auth_path).unwrap()).unwrap();
-    assert_eq!(upgraded["auth_mode"], "bedrockApiKey");
+    assert_eq!(upgraded["auth_mode"], "apikey");
+    assert!(
+        upgraded["OPENAI_API_KEY"]
+            .as_str()
+            .unwrap()
+            .starts_with("codex-mixin-local-")
+    );
     assert_eq!(fs::read(&backup_path).unwrap(), original);
     assert_eq!(
         uninstall_managed_custom_auth(&config_path).unwrap(),

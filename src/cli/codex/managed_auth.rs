@@ -2,7 +2,6 @@ use std::fs;
 use std::path::{Path, PathBuf};
 
 const MANAGED_AUTH_KEY_PREFIX: &str = "codex-mixin-local-";
-const MANAGED_BEDROCK_REGION: &str = "us-east-1";
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(in crate::cli) enum ManagedAuthMode {
@@ -110,18 +109,12 @@ fn begin_custom_auth(paths: ManagedAuthPaths) -> anyhow::Result<ManagedAuthTrans
     paths.validate_restore_point()?;
     if paths.has_restore_point() {
         match managed_fake_auth_kind(&paths.auth)? {
-            Some(ManagedFakeAuthKind::Bedrock) => {
+            Some(ManagedFakeAuthKind::Bedrock | ManagedFakeAuthKind::LegacyApiKey) => {
+                let previous_fake = fs::read(&paths.auth)?;
+                write_managed_apikey_auth(&paths.auth)?;
                 return Ok(ManagedAuthTransaction {
                     paths,
-                    rollback: AuthRollback::None,
-                });
-            }
-            Some(ManagedFakeAuthKind::LegacyApiKey) => {
-                let legacy_fake = fs::read(&paths.auth)?;
-                write_managed_bedrock_auth(&paths.auth)?;
-                return Ok(ManagedAuthTransaction {
-                    paths,
-                    rollback: AuthRollback::RestoreUpgradedManagedFake(legacy_fake),
+                    rollback: AuthRollback::RestoreUpgradedManagedFake(previous_fake),
                 });
             }
             None => {}
@@ -133,7 +126,7 @@ fn begin_custom_auth(paths: ManagedAuthPaths) -> anyhow::Result<ManagedAuthTrans
     }
 
     create_auth_restore_point(&paths)?;
-    if let Err(error) = write_managed_bedrock_auth(&paths.auth) {
+    if let Err(error) = write_managed_apikey_auth(&paths.auth) {
         let cleanup = remove_restore_points(&paths);
         return match cleanup {
             Ok(()) => Err(error),
@@ -224,13 +217,10 @@ fn managed_fake_auth_kind(path: &Path) -> anyhow::Result<Option<ManagedFakeAuthK
     Ok(None)
 }
 
-fn write_managed_bedrock_auth(path: &Path) -> anyhow::Result<()> {
+fn write_managed_apikey_auth(path: &Path) -> anyhow::Result<()> {
     let fake_auth = serde_json::to_vec_pretty(&serde_json::json!({
-        "auth_mode": "bedrockApiKey",
-        "bedrock_api_key": {
-            "api_key": format!("{MANAGED_AUTH_KEY_PREFIX}{}", uuid::Uuid::new_v4()),
-            "region": MANAGED_BEDROCK_REGION,
-        },
+        "auth_mode": "apikey",
+        "OPENAI_API_KEY": format!("{MANAGED_AUTH_KEY_PREFIX}{}", uuid::Uuid::new_v4()),
     }))?;
     write_private_atomic(path, &fake_auth)
 }

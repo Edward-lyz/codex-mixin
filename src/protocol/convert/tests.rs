@@ -16,7 +16,7 @@ fn config() -> GatewayConfig {
         gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
         accept_codex_oauth: true,
         official_selected_models: None,
-        default_max_tokens: 8192,
+        default_max_tokens: crate::config::DEFAULT_MAX_OUTPUT_TOKENS,
         default_context_window: 1_000_000,
         request_timeout: Duration::from_secs(30),
         thinking_mode: ThinkingMode::Off,
@@ -25,6 +25,21 @@ fn config() -> GatewayConfig {
         web_search_max_uses: Some(3),
         fusion_profiles: Vec::new(),
     }
+}
+
+#[test]
+fn defaults_anthropic_output_budget_to_sixty_four_thousand_tokens() {
+    let converted = responses_to_anthropic(
+        &json!({
+            "model": "Claude Sonnet 5",
+            "stream": true,
+            "input": "analyze"
+        }),
+        &config(),
+    )
+    .unwrap();
+
+    assert_eq!(converted.request.max_tokens, 64_000);
 }
 
 #[test]
