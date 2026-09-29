@@ -1,11 +1,4 @@
 <!-- codex-mixin:zh-Hans:start -->
-## v0.7.1
-
-### BUG 修复
-
-- 修复 custom-only 用户升级后桌面端无法归档本地会话的问题：启动时自动把 Mixin 管理的旧 `bedrockApiKey` 占位认证迁移为桌面端可识别的 `apikey`，无需重新安装 Codex
-- 修复 Anthropic 请求未传 `max_output_tokens` 时默认输出上限过低的问题，默认预算提升到 512K，显式请求上限保持不变
-
 ## v0.7.0
 
 ### 功能新增
@@ -89,13 +82,6 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
-## v0.7.1
-
-### BUG 修正
-
-- 修正 custom-only 使用者升級後桌面端無法封存本機工作階段的問題：啟動時自動將 Mixin 管理的舊 `bedrockApiKey` 佔位驗證遷移為桌面端可識別的 `apikey`，不需重新安裝 Codex
-- 修正 Anthropic 請求未傳 `max_output_tokens` 時預設輸出上限過低的問題，預設預算提升至 512K，明確請求上限維持不變
-
 ## v0.7.0
 
 ### 功能新增
@@ -179,13 +165,6 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
-## v0.7.1
-
-### Bug fixes
-
-- Fix desktop archiving for custom-only users after upgrade by migrating Mixin-managed legacy `bedrockApiKey` placeholders to desktop-compatible `apikey` credentials at startup, without reinstalling Codex
-- Raise the default Anthropic output budget to 512K when `max_output_tokens` is omitted, while preserving explicit request limits
-
 ## v0.7.0
 
 ### Features
