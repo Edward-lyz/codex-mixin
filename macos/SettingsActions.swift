@@ -79,12 +79,12 @@ extension AppDelegate {
                     self.serviceStatus = "正在应用 Provider 配置..."
                     self.serviceEndpoint = nil
                     defer { self.serviceBusy = false }
+                    progress?.advance(to: 1)
+                    _ = try await self.runGateway(["config", "apply"])
                     let providers = try decodeProviderList(
                         try await self.runGateway(["providers", "list", "--json"])
                     )
                     if providers.providers.isEmpty {
-                        progress?.advance(to: 1)
-                        _ = try await self.runGateway(["service", "stop", "--managed", "--json"])
                         self.isRunning = false
                         self.serviceStatus = "等待配置上游 API"
                         self.serviceEndpoint = nil
@@ -98,11 +98,7 @@ extension AppDelegate {
                         progress?.advance(to: 3)
                         return
                     }
-                    progress?.advance(to: 1)
-                    let status = try await self.runGateway(["service", "restart", "--managed", "--json"])
-                    self.applyGatewayStatus(status)
                     progress?.advance(to: 2)
-                    _ = try await self.runGateway(["refresh-codex-catalog"])
                     await self.refreshStatusNow()
                     progress?.advance(to: 3)
                 },
@@ -283,10 +279,8 @@ extension AppDelegate {
         serviceEndpoint = nil
         defer { serviceBusy = false }
         progress.advance(to: 1)
-        let status = try await runGateway(["service", "restart", "--managed", "--json"])
-        applyGatewayStatus(status)
+        _ = try await runGateway(["config", "apply"])
         progress.advance(to: 2)
-        _ = try await runGateway(["refresh-codex-catalog"])
         await refreshStatusNow()
         progress.advance(to: 3)
     }

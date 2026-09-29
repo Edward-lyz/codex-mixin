@@ -312,6 +312,40 @@ fn backup_path(path: &Path) -> PathBuf {
     PathBuf::from(backup)
 }
 
+const GUARD_SKILL: &str = r#"---
+name: codex-mixin-skill-guardian
+description: Restore Codex Mixin managed Skill rewrites after Codex Desktop updates replace system Skills.
+---
+
+# Codex Mixin Skill Guardian
+
+Codex Mixin owns the managed ImageGen rewrite. The gateway reconciles it on every startup and after Provider configuration changes.
+
+If a Codex Desktop update replaces the official ImageGen Skill, restart Codex Mixin. The guardian restores the managed rewrite from the Codex Mixin binary without relying on this Skill file as the source of truth.
+
+Do not edit files under `.codex/skills/.system` manually. Change the managed template in Codex Mixin and rebuild the app instead.
+"#;
+
+pub fn reconcile_managed_skills(
+    codex_home: &Path,
+    auxiliary_provider_enabled: bool,
+) -> anyhow::Result<bool> {
+    let guard_path = codex_home
+        .join("skills")
+        .join("codex-mixin-skill-guardian")
+        .join("SKILL.md");
+    let guard_changed =
+        crate::clients::files::write_atomic_if_changed(&guard_path, GUARD_SKILL.as_bytes())
+            .with_context(|| {
+                format!(
+                    "failed to install skill guardian at {}",
+                    guard_path.display()
+                )
+            })?;
+    let imagegen_changed = reconcile_imagegen_skill(codex_home, auxiliary_provider_enabled)?;
+    Ok(guard_changed || imagegen_changed)
+}
+
 #[cfg(test)]
 mod tests {
     use std::process::Command;
@@ -433,38 +467,4 @@ mod tests {
         );
         fs::remove_dir_all(root).unwrap();
     }
-}
-
-const GUARD_SKILL: &str = r#"---
-name: codex-mixin-skill-guardian
-description: Restore Codex Mixin managed Skill rewrites after Codex Desktop updates replace system Skills.
----
-
-# Codex Mixin Skill Guardian
-
-Codex Mixin owns the managed ImageGen rewrite. The gateway reconciles it on every startup and after Provider configuration changes.
-
-If a Codex Desktop update replaces the official ImageGen Skill, restart Codex Mixin. The guardian restores the managed rewrite from the Codex Mixin binary without relying on this Skill file as the source of truth.
-
-Do not edit files under `.codex/skills/.system` manually. Change the managed template in Codex Mixin and rebuild the app instead.
-"#;
-
-pub fn reconcile_managed_skills(
-    codex_home: &Path,
-    auxiliary_provider_enabled: bool,
-) -> anyhow::Result<bool> {
-    let guard_path = codex_home
-        .join("skills")
-        .join("codex-mixin-skill-guardian")
-        .join("SKILL.md");
-    let guard_changed =
-        crate::clients::files::write_atomic_if_changed(&guard_path, GUARD_SKILL.as_bytes())
-            .with_context(|| {
-                format!(
-                    "failed to install skill guardian at {}",
-                    guard_path.display()
-                )
-            })?;
-    let imagegen_changed = reconcile_imagegen_skill(codex_home, auxiliary_provider_enabled)?;
-    Ok(guard_changed || imagegen_changed)
 }

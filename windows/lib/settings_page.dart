@@ -173,16 +173,12 @@ class _SettingsPageState extends State<SettingsPage> with WindowListener {
           onProgress: onProgress,
         );
         if (result.ok) {
-          // Best-effort restart so the runtime picks up the change. A restart
-          // hiccup must NOT mark the already-committed mutation as failed.
-          final restart = await _controller.cli.run([
-            'service',
-            'restart',
-            '--managed',
-            '--json',
-          ]);
-          if (!restart.ok) {
-            _controller.status = '$label成功，但重启网关失败：${restart.output}';
+          // Apply the saved configuration to the gateway and connected
+          // clients. A failure here must NOT mark the already-committed
+          // mutation as failed.
+          final applied = await _controller.cli.run(['config', 'apply']);
+          if (!applied.ok) {
+            _controller.status = '$label成功，但应用配置失败：${applied.output}';
           }
         }
         try {
@@ -500,14 +496,11 @@ class _SettingsPageState extends State<SettingsPage> with WindowListener {
     }
     final result = await _run('保存模型选择', args);
     if (!result.ok) return;
-    await _controller.cli.run([
-      'service',
-      'restart',
-      '--managed',
-      '--json',
-    ]);
-    await _controller.cli.run(['refresh-codex-catalog']);
+    final applied = await _controller.cli.run(['config', 'apply']);
     await _controller.refresh(force: true);
+    if (!applied.ok) {
+      _controller.status = '模型选择已保存，但应用配置失败：${applied.output}';
+    }
     if (mounted) setState(_loadSelectedIntoForm);
   }
 

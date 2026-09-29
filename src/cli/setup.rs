@@ -1,5 +1,4 @@
 use std::io::{self, IsTerminal, Write};
-use std::path::{Path, PathBuf};
 
 use anyhow::Context;
 use codex_mixin::config::load_stored_config;

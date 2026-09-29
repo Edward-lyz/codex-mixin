@@ -607,7 +607,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                     }
                     AutostartCommand::Status { json } => json,
                 };
-                let enabled = codex_mixin::platform::startup_service_is_installed();
+                let enabled = service::autostart_enabled().await?;
                 if json {
                     println!("{}", serde_json::json!({"enabled": enabled}));
                 } else {

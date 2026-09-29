@@ -1,7 +1,6 @@
 use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
-use std::process::Stdio;
 use std::sync::{
     Arc,
     atomic::{AtomicBool, Ordering},
@@ -9,12 +8,14 @@ use std::sync::{
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
+use codex_mixin::application::lifecycle::{
+    GatewayLifecycleAction, GatewayObservation, gateway_lifecycle_action,
+};
 use codex_mixin::config::{GatewayConfig, load_stored_config, save_stored_config};
 use codex_mixin::gateway_access::GatewayClientKeys;
 use codex_mixin::platform::{
-    install_startup_service, prepare_background_tokio_command, set_startup_service_enabled,
-    start_startup_service, startup_service_is_enabled, startup_service_is_installed,
-    startup_service_is_running, startup_service_needs_update, stop_startup_service,
+    StartupServiceSpec, StartupServiceStatus, install_startup_service, remove_startup_service,
+    start_startup_service, startup_service_status, stop_startup_service,
 };
 use codex_mixin::provider::ProviderModelSource;
 use codex_mixin::provider::capabilities::ProviderCapabilities;
@@ -30,6 +31,7 @@ use super::runtime::{
     RuntimeMetadata, RuntimeMetadataGuard, config_fingerprint, delete_runtime_metadata,
     load_runtime_metadata, pid_is_running, save_runtime_metadata,
 };
+use super::status::gateway_snapshot;
 
 mod daemon;
 mod logging;
@@ -39,170 +41,184 @@ const GATEWAY_READINESS_DELAY: Duration = Duration::from_secs(1);
 const GATEWAY_STOP_ATTEMPTS: usize = 20;
 const GATEWAY_STOP_DELAY: Duration = Duration::from_millis(250);
 
-/// Ensure the current gateway is running with the current CLI version and
-/// migrate an existing OS-managed service definition when needed.
-pub(crate) async fn ensure_ready() -> anyhow::Result<String> {
-    initialize_provider_models().await;
-    GatewayConfig::from_stored_config().context("load gateway configuration")?;
-    let executable = std::env::current_exe().context("resolve gateway executable")?;
-    let log_file = super::runtime::default_log_file_path();
-    let service_installed = startup_service_is_installed();
-    let service_needs_update = if service_installed {
-        startup_service_needs_update(&executable, &log_file)?
-    } else {
-        false
-    };
-    let service_running = if service_installed {
-        startup_service_is_running()?
-    } else {
-        false
-    };
-    let status = gateway_status().await.ok();
-    let gateway_running = status
-        .as_deref()
-        .is_some_and(|status| status.contains("gateway: running"));
-    let daemon_running = status
-        .as_deref()
-        .is_some_and(|status| status.contains("daemon: running"));
-    let gateway_version = status.as_deref().and_then(gateway_version);
-    let action = codex_mixin::application::lifecycle::gateway_lifecycle_action(
-        codex_mixin::application::lifecycle::GatewayLifecycleState {
-            gateway_running,
-            gateway_version,
-            daemon_running,
-            startup_service_installed: service_installed,
-            startup_service_running: service_running,
-            startup_service_needs_update: service_needs_update,
-            current_version: env!("CARGO_PKG_VERSION"),
-        },
-    );
+/// Run blocking OS-tool and process-control work off the async runtime.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
+) -> anyhow::Result<T> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .context("join gateway service task")?
+}
+
+/// Executable and log path the supervised gateway runs with.
+#[derive(Clone)]
+struct ServiceCommandLine {
+    executable: PathBuf,
+    log_file: PathBuf,
+}
+
+impl ServiceCommandLine {
+    fn current() -> anyhow::Result<Self> {
+        Ok(Self {
+            executable: std::env::current_exe().context("resolve gateway executable")?,
+            log_file: super::runtime::default_log_file_path(),
+        })
+    }
+
+    async fn status(&self) -> anyhow::Result<StartupServiceStatus> {
+        let command = self.clone();
+        blocking(move || startup_service_status(&command.spec())).await
+    }
+
+    async fn install(&self) -> anyhow::Result<()> {
+        let command = self.clone();
+        blocking(move || install_startup_service(&command.spec())).await
+    }
+
+    fn spec(&self) -> StartupServiceSpec<'_> {
+        StartupServiceSpec {
+            executable: &self.executable,
+            log_file: &self.log_file,
+        }
+    }
+}
+
+/// Leave exactly one gateway running with this CLI's version, migrating a
+/// daemon or stale startup definition under the service manager when the user
+/// enabled startup at login. Also performs first-run model discovery for
+/// providers that have never been refreshed.
+pub(crate) async fn ensure_ready() -> anyhow::Result<()> {
+    let config = GatewayConfig::from_stored_config().context("load gateway configuration")?;
+    initialize_provider_models(&config).await;
+    let command = ServiceCommandLine::current()?;
+    let service = command.status().await?;
+    let snapshot = gateway_snapshot(&config).await?;
+    let action = gateway_lifecycle_action(GatewayObservation {
+        gateway_healthy: snapshot.healthy(),
+        gateway_version: snapshot.running_version.as_deref(),
+        daemon_running: snapshot.daemon_running(),
+        service_installed: service.installed,
+        service_current: service.current,
+        service_loaded: service.loaded,
+        current_version: env!("CARGO_PKG_VERSION"),
+    });
     match action {
-        codex_mixin::application::lifecycle::GatewayLifecycleAction::KeepReady => {
-            return Ok(status.unwrap_or_default());
+        GatewayLifecycleAction::KeepReady => return Ok(()),
+        GatewayLifecycleAction::RestartManaged | GatewayLifecycleAction::StartManaged => {
+            restart_under_service(&command, service).await?;
         }
-        codex_mixin::application::lifecycle::GatewayLifecycleAction::Restart => {
-            restart_gateway(service_installed, &executable, &log_file).await?;
+        GatewayLifecycleAction::RestartDaemon => {
+            stop_all_gateways(service).await?;
+            start_gateway_daemon(config.clone()).await?;
         }
-        codex_mixin::application::lifecycle::GatewayLifecycleAction::StartManaged => {
-            if service_needs_update {
-                let autostart_enabled = startup_service_is_enabled();
-                install_startup_service(&executable, &log_file)?;
-                set_startup_service_enabled(autostart_enabled)?;
-            }
-            start_startup_service()?;
-        }
-        codex_mixin::application::lifecycle::GatewayLifecycleAction::StartDaemon => {
-            start_gateway_daemon()?;
-        }
+        GatewayLifecycleAction::StartDaemon => start_gateway_daemon(config.clone()).await?,
     }
-    wait_for_gateway_ready().await
+    wait_for_gateway_ready(&config).await
 }
 
-/// Install or update the OS startup service and start the gateway through it.
-pub(crate) async fn start_managed() -> anyhow::Result<String> {
-    GatewayConfig::from_stored_config().context("load gateway configuration")?;
-    let executable = std::env::current_exe().context("resolve gateway executable")?;
-    let log_file = super::runtime::default_log_file_path();
-    let service_installed = startup_service_is_installed();
-    let service_needs_update = if service_installed {
-        startup_service_needs_update(&executable, &log_file)?
-    } else {
-        false
-    };
-    if service_installed && !service_needs_update && startup_service_is_running()? {
-        return ensure_ready().await;
-    }
-    if service_installed && startup_service_is_running()? {
-        stop_startup_service()?;
-        stop(false)?;
-        wait_for_gateway_stopped().await?;
-    } else if load_runtime_metadata()?
-        .as_ref()
-        .map(|runtime| pid_is_running(runtime.pid))
-        .transpose()?
-        .unwrap_or(false)
-    {
-        stop(false)?;
-        wait_for_gateway_stopped().await?;
-    }
-    install_startup_service(&executable, &log_file)?;
-    if !service_installed {
-        set_startup_service_enabled(true)?;
-    }
-    start_startup_service()?;
-    wait_for_gateway_ready().await
+/// Start the gateway the way the user's autostart choice implies: through the
+/// service manager when startup at login is enabled, otherwise as a daemon.
+/// Never changes the autostart choice.
+pub(crate) async fn start_managed() -> anyhow::Result<()> {
+    ensure_ready().await
 }
 
-/// Stop the gateway while leaving the user's startup service installed.
+/// Stop every local gateway instance, keeping the startup definition.
 pub(crate) async fn stop_managed() -> anyhow::Result<()> {
-    if startup_service_is_installed() {
-        stop_startup_service()?;
+    let service = ServiceCommandLine::current()?.status().await?;
+    stop_all_gateways(service).await
+}
+
+/// Restart under the service manager when autostart is enabled, otherwise as
+/// a daemon, then wait for readiness.
+pub(crate) async fn restart_managed() -> anyhow::Result<()> {
+    let config = GatewayConfig::from_stored_config().context("load gateway configuration")?;
+    let command = ServiceCommandLine::current()?;
+    let service = command.status().await?;
+    if service.installed {
+        restart_under_service(&command, service).await?;
+    } else {
+        stop_all_gateways(service).await?;
+        start_gateway_daemon(config.clone()).await?;
     }
-    stop(false)?;
+    wait_for_gateway_ready(&config).await
+}
+
+/// Whether the gateway starts at login.
+pub(crate) async fn autostart_enabled() -> anyhow::Result<bool> {
+    Ok(ServiceCommandLine::current()?.status().await?.installed)
+}
+
+/// Enable or disable gateway startup at login. Enabling moves the gateway
+/// under the service manager and starts it; disabling removes the definition
+/// and keeps a previously running gateway running as a daemon.
+pub(crate) async fn set_autostart(enabled: bool) -> anyhow::Result<()> {
+    let command = ServiceCommandLine::current()?;
+    let service = command.status().await?;
+    if enabled {
+        let config = GatewayConfig::from_stored_config().context("load gateway configuration")?;
+        if service.installed && service.current {
+            return Ok(());
+        }
+        stop_all_gateways(service).await?;
+        command.install().await?;
+        blocking(start_startup_service).await?;
+        return wait_for_gateway_ready(&config).await;
+    }
+    if !service.installed && !service.loaded {
+        return Ok(());
+    }
+    let config = match load_stored_config()? {
+        Some(stored) if !stored.providers.is_empty() => Some(GatewayConfig::from_stored_config()?),
+        _ => None,
+    };
+    let supervised_gateway_running = match &config {
+        Some(config) => {
+            let snapshot = gateway_snapshot(config).await?;
+            snapshot.healthy() && !snapshot.daemon_running()
+        }
+        None => false,
+    };
+    blocking(remove_startup_service).await?;
+    let Some(config) = config.filter(|_| supervised_gateway_running) else {
+        return Ok(());
+    };
+    wait_for_gateway_stopped().await?;
+    start_gateway_daemon(config.clone()).await?;
+    wait_for_gateway_ready(&config).await
+}
+
+async fn restart_under_service(
+    command: &ServiceCommandLine,
+    service: StartupServiceStatus,
+) -> anyhow::Result<()> {
+    stop_all_gateways(service).await?;
+    if !service.current {
+        command.install().await?;
+    }
+    blocking(start_startup_service).await
+}
+
+/// Stop the service-manager job and any daemon or foreground gateway recorded
+/// in runtime metadata, then wait until no recorded gateway process remains.
+async fn stop_all_gateways(service: StartupServiceStatus) -> anyhow::Result<()> {
+    if service.installed || service.loaded {
+        blocking(stop_startup_service).await?;
+    }
+    blocking(|| daemon::stop_with_output(false, true)).await?;
     wait_for_gateway_stopped().await
 }
 
-/// Restart using the installed OS service, or the existing daemon when there
-/// is no managed startup service on this machine.
-pub(crate) async fn restart_managed() -> anyhow::Result<String> {
-    let executable = std::env::current_exe().context("resolve gateway executable")?;
-    let log_file = super::runtime::default_log_file_path();
-    let installed = startup_service_is_installed();
-    restart_gateway(installed, &executable, &log_file).await?;
-    wait_for_gateway_ready().await
+async fn start_gateway_daemon(config: GatewayConfig) -> anyhow::Result<()> {
+    blocking(move || start_daemon(None, None, &config, true)).await
 }
 
-/// Enable or disable launch-at-login while leaving the gateway process state
-/// unchanged.
-pub(crate) async fn set_autostart(enabled: bool) -> anyhow::Result<()> {
-    if enabled {
-        GatewayConfig::from_stored_config().context("load gateway configuration")?;
-        if !startup_service_is_installed() {
-            install_startup_service(
-                &std::env::current_exe().context("resolve gateway executable")?,
-                &super::runtime::default_log_file_path(),
-            )?;
-        }
-    } else if !startup_service_is_installed() {
-        return Ok(());
-    }
-    set_startup_service_enabled(enabled)
-}
-
-async fn restart_gateway(
-    service_installed: bool,
-    executable: &Path,
-    log_file: &Path,
-) -> anyhow::Result<()> {
-    if service_installed {
-        let autostart_enabled = startup_service_is_enabled();
-        stop_startup_service()?;
-        stop(false)?;
-        wait_for_gateway_stopped().await?;
-        install_startup_service(executable, log_file)?;
-        set_startup_service_enabled(autostart_enabled)?;
-        start_startup_service()?;
-        return Ok(());
-    }
-    stop(false)?;
-    wait_for_gateway_stopped().await?;
-    start_gateway_daemon()
-}
-
-fn start_gateway_daemon() -> anyhow::Result<()> {
-    let config = GatewayConfig::from_stored_config()?;
-    start_daemon(None, None, &config, true)
-}
-
-async fn initialize_provider_models() {
-    let Ok(config) = GatewayConfig::from_stored_config() else {
-        return;
-    };
-    for provider in config
-        .providers
-        .into_iter()
-        .filter(|provider| provider.enabled && provider.cached_models.is_empty())
-    {
+async fn initialize_provider_models(config: &GatewayConfig) {
+    for provider in config.providers.iter().filter(|provider| {
+        provider.enabled
+            && provider.cached_models.is_empty()
+            && provider.models_refreshed_at_ms.is_none()
+    }) {
         if let Err(error) = super::providers::discover_models_with_output(&provider.id, true).await
         {
             tracing::warn!(
@@ -214,30 +230,14 @@ async fn initialize_provider_models() {
     }
 }
 
-async fn gateway_status() -> anyhow::Result<String> {
-    let executable = std::env::current_exe().context("resolve gateway executable")?;
-    let mut command = tokio::process::Command::new(executable);
-    command.args(["--no-tui", "status"]);
-    command.stdout(Stdio::piped()).stderr(Stdio::piped());
-    prepare_background_tokio_command(&mut command);
-    let output = command.output().await.context("run gateway status")?;
-    let mut text = String::from_utf8_lossy(&output.stdout).into_owned();
-    if !output.status.success() {
-        let error = String::from_utf8_lossy(&output.stderr);
-        anyhow::bail!("gateway status failed: {}", error.trim());
-    }
-    if text.is_empty() {
-        text = String::from_utf8_lossy(&output.stderr).into_owned();
-    }
-    Ok(text)
-}
-
-async fn wait_for_gateway_ready() -> anyhow::Result<String> {
+async fn wait_for_gateway_ready(config: &GatewayConfig) -> anyhow::Result<()> {
     let mut last_failure = "gateway has not reported a healthy status".to_owned();
     for attempt in 0..GATEWAY_READINESS_ATTEMPTS {
-        match gateway_status().await {
-            Ok(status) if status.contains("gateway: running") => return Ok(status),
-            Ok(status) => last_failure = status,
+        match gateway_snapshot(config).await {
+            Ok(snapshot) => match snapshot.health_error {
+                None => return Ok(()),
+                Some(error) => last_failure = error,
+            },
             Err(error) => last_failure = format!("{error:#}"),
         }
         if attempt + 1 < GATEWAY_READINESS_ATTEMPTS {
@@ -249,21 +249,20 @@ async fn wait_for_gateway_ready() -> anyhow::Result<String> {
 
 async fn wait_for_gateway_stopped() -> anyhow::Result<()> {
     for _ in 0..GATEWAY_STOP_ATTEMPTS {
-        let Some(runtime) = load_runtime_metadata()? else {
-            return Ok(());
-        };
-        if !pid_is_running(runtime.pid)? {
+        let recorded = [
+            load_runtime_metadata()?.map(|runtime| runtime.pid),
+            super::runtime::load_daemon_metadata()?.map(|daemon| daemon.pid),
+        ];
+        let mut running = false;
+        for pid in recorded.into_iter().flatten() {
+            running |= pid_is_running(pid)?;
+        }
+        if !running {
             return Ok(());
         }
         tokio::time::sleep(GATEWAY_STOP_DELAY).await;
     }
     anyhow::bail!("gateway did not stop within 5 seconds; refusing to start a duplicate")
-}
-
-fn gateway_version(status: &str) -> Option<&str> {
-    status
-        .lines()
-        .find_map(|line| line.strip_prefix("gateway-version: "))
 }
 
 #[cfg(test)]

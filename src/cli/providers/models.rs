@@ -1,25 +1,11 @@
-use std::collections::{BTreeMap, HashSet};
-use std::time::Duration;
+use std::collections::BTreeMap;
 
 use anyhow::Context;
 use codex_mixin::catalog::apply_official_context_overrides;
-use codex_mixin::config::GatewayConfig;
-use codex_mixin::provider::capabilities::ProviderCapabilities;
-use codex_mixin::provider::{
-    AWS_BEDROCK_DEFAULT_REGION, AWS_BEDROCK_RUNTIME_SERVICE, AwsSigV4AuthConfig,
-    MANUAL_MODEL_CONTEXT_WINDOW, ModelDiscoveryChanges, ProviderModelSource,
-    aws_bedrock_runtime_base_url, discover_provider_models, redact_provider_error,
-};
+use codex_mixin::provider::{ModelDiscoveryChanges, redact_provider_error};
 use serde_json::json;
 
-pub(super) use codex_mixin::application::provider::models::apply_model_selection;
-
-use super::{
-    TestProviderOptions, apply_baidu_auth_options, discovery::apply_inferred_custom_endpoint,
-    discovery::detect_custom_provider_protocol, discovery::discover_custom_quota,
-    discovery_settings_match, ensure_has_providers, find_provider_mut, mutate_and_invalidate,
-    normalize_base_url, normalize_model_ids, required_config, trim_required,
-};
+use super::{TestProviderOptions, mutate_and_invalidate, normalize_model_ids};
 use crate::cli::official_models::{
     OFFICIAL_PROVIDER_ID, available_official_ids, load_official_catalog, load_official_models,
     refresh_official_models,

@@ -1,130 +1,105 @@
-use std::path::{Path, PathBuf};
-use std::process::Command;
+use std::path::PathBuf;
+use std::process::{Command, Output};
 
 use anyhow::{Context, bail};
 
-const SERVICE_NAME: &str = "codex-mixin.service";
+use super::definition::{
+    SYSTEMD_UNIT_NAME, render_systemd_unit, systemd_active_state, systemd_enabled_state,
+};
+use super::{StartupServiceSpec, StartupServiceStatus};
+
+pub(super) const SUPPORTED: bool = true;
 
 fn unit_path() -> anyhow::Result<PathBuf> {
-    let config_dir = std::env::var_os("XDG_CONFIG_HOME")
-        .filter(|value| !value.is_empty())
-        .map(PathBuf::from)
-        .unwrap_or(crate::platform::home_dir_required()?.join(".config"));
-    Ok(config_dir.join("systemd/user").join(SERVICE_NAME))
+    let config_dir = match std::env::var_os("XDG_CONFIG_HOME").filter(|value| !value.is_empty()) {
+        Some(value) => PathBuf::from(value),
+        None => crate::platform::home_dir_required()?.join(".config"),
+    };
+    Ok(config_dir.join("systemd/user").join(SYSTEMD_UNIT_NAME))
 }
 
-fn systemctl(args: &[&str]) -> anyhow::Result<std::process::Output> {
+fn systemctl(args: &[&str]) -> anyhow::Result<Output> {
     Command::new("systemctl")
-        .args(["--user"])
+        .arg("--user")
         .args(args)
+        .env("SYSTEMD_COLORS", "0")
         .output()
         .context("run systemctl --user")
 }
 
-pub(super) fn is_installed() -> bool {
-    unit_path().is_ok_and(|path| path.is_file())
-}
-
-pub(super) fn is_enabled() -> bool {
-    systemctl(&["is-enabled", SERVICE_NAME]).is_ok_and(|output| output.status.success())
-}
-
-pub(super) fn is_running() -> anyhow::Result<bool> {
-    let output = systemctl(&["is-active", SERVICE_NAME])?;
-    Ok(output.status.success())
-}
-
-pub(super) fn needs_update(executable: &Path, log_file: &Path) -> anyhow::Result<bool> {
-    let path = unit_path()?;
-    if !path.is_file() {
-        return Ok(true);
-    }
-    let content = std::fs::read_to_string(path).context("read gateway systemd unit")?;
-    let expected_exec = format!(
-        "ExecStart={} start --log-file {}",
-        systemd_quote(&executable.display().to_string()),
-        systemd_quote(&log_file.display().to_string())
-    );
-    Ok(!content.lines().any(|line| line == expected_exec)
-        || !content.contains("Restart=on-failure")
-        || !content.contains("WantedBy=default.target"))
-}
-
-pub(super) fn install(executable: &Path, log_file: &Path) -> anyhow::Result<()> {
-    let path = unit_path()?;
-    let parent = path.parent().context("systemd unit path has no parent")?;
-    std::fs::create_dir_all(parent).context("create systemd user unit directory")?;
-    let content = format!(
-        "[Unit]\nDescription=Codex Mixin Gateway\nAfter=network-online.target\n\n[Service]\nType=simple\nExecStart={} start --log-file {}\nRestart=on-failure\nRestartSec=10\nWorkingDirectory={}\nStandardOutput=append:{}\nStandardError=append:{}\n\n[Install]\nWantedBy=default.target\n",
-        systemd_quote(&executable.display().to_string()),
-        systemd_quote(&log_file.display().to_string()),
-        systemd_quote(&crate::platform::home_dir_required()?.display().to_string()),
-        systemd_quote(&log_file.display().to_string()),
-        systemd_quote(&log_file.display().to_string())
-    );
-    std::fs::write(path, content).context("write gateway systemd unit")?;
-    let output = systemctl(&["daemon-reload"])?;
-    ensure_success(output, "systemctl daemon-reload")
-}
-
-pub(super) fn start() -> anyhow::Result<()> {
-    let output = systemctl(&["start", SERVICE_NAME])?;
-    ensure_success(output, "systemctl start")
-}
-
-pub(super) fn stop() -> anyhow::Result<()> {
-    let output = systemctl(&["stop", SERVICE_NAME])?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let message = String::from_utf8_lossy(&output.stderr);
-    if message.contains("not loaded") || message.contains("not found") {
-        return Ok(());
-    }
-    bail!("systemctl stop failed: {}", message.trim())
-}
-
-pub(super) fn remove() -> anyhow::Result<()> {
-    if is_installed() {
-        set_enabled(false)?;
-    }
-    stop()?;
-    let path = unit_path()?;
-    if path.exists() {
-        std::fs::remove_file(path).context("remove gateway systemd unit")?;
-        let output = systemctl(&["daemon-reload"])?;
-        ensure_success(output, "systemctl daemon-reload")?;
-    }
-    Ok(())
-}
-
-pub(super) fn set_enabled(enabled: bool) -> anyhow::Result<()> {
-    let operation = if enabled { "enable" } else { "disable" };
-    let output = systemctl(&[operation, SERVICE_NAME])?;
-    ensure_success(output, &format!("systemctl {operation}"))
-}
-
-fn ensure_success(output: std::process::Output, operation: &str) -> anyhow::Result<()> {
+fn checked(args: &[&str]) -> anyhow::Result<()> {
+    let output = systemctl(args)?;
     if output.status.success() {
         return Ok(());
     }
     bail!(
-        "{operation} failed: {}",
+        "systemctl --user {} failed: {}",
+        args.join(" "),
         String::from_utf8_lossy(&output.stderr).trim()
     )
 }
 
-fn systemd_quote(value: &str) -> String {
-    let escaped = value.replace('\\', "\\\\").replace('"', "\\\"");
-    format!("\"{escaped}\"")
+fn state(query: &str, classify: fn(&str) -> Option<bool>) -> anyhow::Result<bool> {
+    let output = systemctl(&[query, SYSTEMD_UNIT_NAME])?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    classify(&stdout).with_context(|| {
+        format!(
+            "systemctl --user {query} returned an unknown state: {} {}",
+            stdout.trim(),
+            String::from_utf8_lossy(&output.stderr).trim()
+        )
+    })
 }
 
-#[cfg(test)]
-mod tests {
-    use super::systemd_quote;
+pub(super) fn status(spec: &StartupServiceSpec<'_>) -> anyhow::Result<StartupServiceStatus> {
+    let path = unit_path()?;
+    let content = match std::fs::read_to_string(&path) {
+        Ok(content) => content,
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
+            return Ok(StartupServiceStatus::default());
+        }
+        Err(error) => return Err(error).with_context(|| format!("read {}", path.display())),
+    };
+    let enabled = state("is-enabled", systemd_enabled_state)?;
+    let loaded = state("is-active", systemd_active_state)?;
+    // A unit the user disabled with systemctl means autostart is off.
+    Ok(StartupServiceStatus {
+        installed: enabled,
+        current: enabled && content == render_systemd_unit(spec)?,
+        loaded,
+    })
+}
 
-    #[test]
-    fn quotes_systemd_argument_values() {
-        assert_eq!(systemd_quote("/a path/a\\b\"c"), "\"/a path/a\\\\b\\\"c\"");
+pub(super) fn install(spec: &StartupServiceSpec<'_>) -> anyhow::Result<()> {
+    let path = unit_path()?;
+    let parent = path.parent().context("systemd unit path has no parent")?;
+    std::fs::create_dir_all(parent).context("create systemd user unit directory")?;
+    let temporary = path.with_extension("service.tmp");
+    std::fs::write(&temporary, render_systemd_unit(spec)?).context("write gateway systemd unit")?;
+    std::fs::rename(&temporary, &path).context("replace gateway systemd unit")?;
+    checked(&["daemon-reload"])?;
+    // Register for login without starting; starting is a separate intent.
+    checked(&["enable", SYSTEMD_UNIT_NAME])
+}
+
+pub(super) fn start() -> anyhow::Result<()> {
+    checked(&["start", SYSTEMD_UNIT_NAME])
+}
+
+pub(super) fn stop() -> anyhow::Result<()> {
+    let path = unit_path()?;
+    if !path.try_exists().context("inspect systemd user unit")? {
+        return Ok(());
     }
+    checked(&["stop", SYSTEMD_UNIT_NAME])
+}
+
+pub(super) fn remove() -> anyhow::Result<()> {
+    let path = unit_path()?;
+    if !path.try_exists().context("inspect systemd user unit")? {
+        return Ok(());
+    }
+    checked(&["disable", "--now", SYSTEMD_UNIT_NAME])?;
+    std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
+    checked(&["daemon-reload"])
 }

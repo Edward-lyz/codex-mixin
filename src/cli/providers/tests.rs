@@ -1,3 +1,4 @@
+use std::collections::BTreeMap;
 use std::sync::{
     Arc, Mutex,
     atomic::{AtomicUsize, Ordering},
@@ -8,16 +9,18 @@ use axum::http::{HeaderMap, header};
 use axum::routing::get;
 use codex_mixin::fusion::{FusionProfile, PanelToolsConfig};
 
-use super::discovery::{
+use super::*;
+use codex_mixin::application::provider::discovery::{
     detect_custom_provider_protocol, discover_custom_quota, endpoint_join,
     infer_custom_provider_endpoint, protocol_probe_body_matches,
 };
-use super::models::apply_model_selection;
-use super::*;
+use codex_mixin::application::provider::models::apply_model_selection;
 use codex_mixin::application::provider::{
     remove_provider_config, reorder_provider_config, set_auxiliary_upstream,
 };
-use codex_mixin::provider::{ProviderModel, apply_discovered_models, redact_provider_error};
+use codex_mixin::provider::{
+    BaiduAuthBridge, ProviderModel, apply_discovered_models, redact_provider_error,
+};
 
 #[test]
 fn delisted_model_context_does_not_block_next_selection() {
@@ -174,83 +177,6 @@ fn official_provider_view_is_reserved_and_read_only() {
     assert_eq!(provider["enabled"], true);
     assert_eq!(provider["selected_models"], json!(["gpt-5.6-sol"]));
     assert_eq!(provider["cached_models"][0]["id"], "gpt-5.6-sol");
-}
-
-#[test]
-fn baidu_oneapi_add_without_bridge_leaves_loopback_unset() {
-    let mut provider = codex_mixin::provider::baidu_oneapi_provider("baidu-oneapi", "key");
-
-    apply_baidu_auth_options(&mut provider, None, None).unwrap();
-
-    assert_eq!(provider.request_policy.baidu_auth_bridge, None);
-}
-
-#[test]
-fn provider_mutations_persist_managed_ducx_options() {
-    let mut provider = codex_mixin::provider::baidu_oneapi_provider("baidu-oneapi", "key");
-    provider.quota_username = Some("user@example.com".to_owned());
-    let executable = if cfg!(windows) {
-        PathBuf::from(r"C:\Users\example\.codex-mixin\ducx\home\.baidu-cx\baidu-cx\bin\ducx.exe")
-    } else {
-        PathBuf::from("/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx/bin/ducx")
-    };
-
-    apply_baidu_auth_options(
-        &mut provider,
-        Some("ducx_loopback"),
-        Some(executable.clone()),
-    )
-    .unwrap();
-
-    assert_eq!(
-        provider.request_policy.baidu_auth_bridge,
-        Some(BaiduAuthBridge::DucxLoopback)
-    );
-    assert_eq!(provider.request_policy.ducx_executable, Some(executable));
-    provider.request_policy.baidu_code_report = true;
-    provider.request_policy.data_report_executable = provider
-        .request_policy
-        .ducx_executable
-        .as_deref()
-        .and_then(data_report_sibling);
-    assert_eq!(
-        provider.request_policy.data_report_executable,
-        Some(if cfg!(windows) {
-            PathBuf::from(
-                r"C:\Users\example\.codex-mixin\ducx\home\.baidu-cx\baidu-cx\hooks\data-report.exe",
-            )
-        } else {
-            PathBuf::from(
-                "/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx/hooks/data-report",
-            )
-        })
-    );
-    provider.validate().unwrap();
-}
-
-#[test]
-fn parses_custom_header_environment_mappings() {
-    let mapping = parse_header_env(&[
-        "x-example-auth=EXAMPLE_AUTH".to_owned(),
-        "x-routing-token=ROUTING_TOKEN".to_owned(),
-    ])
-    .unwrap();
-
-    assert_eq!(mapping["x-example-auth"], "EXAMPLE_AUTH");
-    assert_eq!(mapping["x-routing-token"], "ROUTING_TOKEN");
-    assert!(parse_header_env(&["missing-separator".to_owned()]).is_err());
-}
-
-#[test]
-fn parses_opencode_go_quota_parser() {
-    assert_eq!(
-        parse_quota_parser("opencode_go").unwrap(),
-        ProviderQuotaParser::OpenCodeGo
-    );
-    assert_eq!(
-        parse_quota_parser("opencode-go").unwrap(),
-        ProviderQuotaParser::OpenCodeGo
-    );
 }
 
 #[tokio::test]

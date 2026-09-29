@@ -193,19 +193,17 @@ class _FusionPageState extends State<FusionPage> {
       '--replace-id',
       _loadedId,
     ]);
-    if (result.ok) {
-      await _controller.cli.run([
-        'service',
-        'restart',
-        '--managed',
-        '--json',
-      ]);
-      await _controller.cli.run(['refresh-codex-catalog']);
-    }
+    final applied = result.ok
+        ? await _controller.cli.run(['config', 'apply'])
+        : null;
     if (!mounted) return;
     setState(() {
       _busy = false;
-      _status = result.ok ? 'Fusion 已保存并重启网关' : '保存失败：${result.output}';
+      _status = !result.ok
+          ? '保存失败：${result.output}'
+          : applied!.ok
+          ? 'Fusion 已保存并应用'
+          : 'Fusion 已保存，但应用配置失败：${applied.output}';
       if (result.ok) _loadedId = _profileId.text.trim();
     });
   }
@@ -221,19 +219,17 @@ class _FusionPageState extends State<FusionPage> {
       '--id',
       _loadedId,
     ]);
-    if (result.ok) {
-      await _controller.cli.run([
-        'service',
-        'restart',
-        '--managed',
-        '--json',
-      ]);
-      await _controller.cli.run(['refresh-codex-catalog']);
-    }
+    final applied = result.ok
+        ? await _controller.cli.run(['config', 'apply'])
+        : null;
     if (!mounted) return;
     setState(() {
       _busy = false;
-      _status = result.ok ? 'Fusion 已关闭' : '关闭失败：${result.output}';
+      _status = !result.ok
+          ? '关闭失败：${result.output}'
+          : applied!.ok
+          ? 'Fusion 已关闭'
+          : 'Fusion 已关闭，但应用配置失败：${applied.output}';
       if (result.ok) {
         _panels.clear();
         _judge = '';

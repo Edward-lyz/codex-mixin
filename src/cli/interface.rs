@@ -18,6 +18,9 @@ pub(super) fn describe(json_output: bool) -> anyhow::Result<()> {
         "capabilities": {
             "structured_errors": true,
             "fusion_model_options": true,
+            "service_lifecycle": true,
+            "gateway_autostart": codex_mixin::platform::startup_service_supported(),
+            "config_apply": true,
             "cli_update": super::update::cli_release_target().is_ok(),
         },
     });

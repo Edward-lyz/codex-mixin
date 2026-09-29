@@ -16,9 +16,8 @@ pub use process::{
     send_process_signal,
 };
 pub use startup_service::{
-    install_startup_service, remove_startup_service, set_startup_service_enabled,
-    start_startup_service, startup_service_is_enabled, startup_service_is_installed,
-    startup_service_is_running, startup_service_needs_update, stop_startup_service,
+    StartupServiceSpec, StartupServiceStatus, install_startup_service, remove_startup_service,
+    start_startup_service, startup_service_status, startup_service_supported, stop_startup_service,
 };
 
 pub mod update;

@@ -3,7 +3,6 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
 use serde_json::{Map, Value, json};
 
 use codex_mixin::config::{GatewayConfig, stored_config_path};

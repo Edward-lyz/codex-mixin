@@ -28,9 +28,19 @@ extension AppDelegate {
                     }
                     return
                 }
+                if FileManager.default.fileExists(atPath: menuLaunchAgentPath().path) {
+                    try installMenuLaunchAgent()
+                }
                 let status = try await runGateway(["service", "ensure", "--json"])
                 applyGatewayStatus(status)
                 await refreshStatusNow()
+                Task { @MainActor in
+                    do {
+                        _ = try await runGateway(["refresh-codex-catalog"])
+                    } catch {
+                        showAlert(title: "刷新 Codex 模型失败", message: String(describing: error))
+                    }
+                }
             } catch {
                 isRunning = false
                 serviceStatus = "本地网关启动失败"

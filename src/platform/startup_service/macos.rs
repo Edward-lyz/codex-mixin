@@ -1,175 +1,191 @@
-use std::path::{Path, PathBuf};
+use std::path::PathBuf;
 use std::process::{Command, Output};
+use std::time::Duration;
 
 use anyhow::{Context, bail};
 
-const SERVICE_LABEL: &str = "local.codex-mixin.service";
-const THROTTLE_INTERVAL_SECONDS: u8 = 10;
+use super::definition::{LAUNCHD_LABEL, launchd_program, render_launchd_plist};
+use super::{StartupServiceSpec, StartupServiceStatus};
+
+pub(super) const SUPPORTED: bool = true;
+const BOOTSTRAP_ATTEMPTS: usize = 10;
+const BOOTSTRAP_RETRY_DELAY: Duration = Duration::from_millis(500);
 
 fn agent_path() -> anyhow::Result<PathBuf> {
     Ok(crate::platform::home_dir_required()?
         .join("Library/LaunchAgents")
-        .join(format!("{SERVICE_LABEL}.plist")))
+        .join(format!("{LAUNCHD_LABEL}.plist")))
 }
 
-fn service_target() -> anyhow::Result<String> {
-    let uid = Command::new("id")
+fn domain() -> anyhow::Result<String> {
+    let output = Command::new("/usr/bin/id")
         .arg("-u")
         .output()
         .context("resolve current macOS user ID")?;
-    anyhow::ensure!(uid.status.success(), "id -u failed while resolving user ID");
-    let uid = String::from_utf8(uid.stdout).context("decode current user ID")?;
+    anyhow::ensure!(
+        output.status.success(),
+        "id -u failed while resolving user ID"
+    );
+    let uid = String::from_utf8(output.stdout).context("decode current user ID")?;
     Ok(format!("gui/{}", uid.trim()))
 }
 
-fn run_launchctl(args: &[&str]) -> anyhow::Result<Output> {
+fn launchctl(args: &[&str]) -> anyhow::Result<Output> {
     Command::new("/bin/launchctl")
         .args(args)
         .output()
         .context("run launchctl")
 }
 
-fn is_loaded() -> anyhow::Result<bool> {
-    let target = format!("{}/{}", service_target()?, SERVICE_LABEL);
-    let output = run_launchctl(&["print", &target])?;
-    Ok(output.status.success())
+fn stderr(output: &Output) -> String {
+    String::from_utf8_lossy(&output.stderr).trim().to_owned()
 }
 
-pub(super) fn is_installed() -> bool {
-    agent_path().is_ok_and(|path| path.is_file())
-}
-
-pub(super) fn is_enabled() -> bool {
-    agent_path()
-        .and_then(|path| std::fs::read_to_string(path).context("read gateway LaunchAgent"))
-        .is_ok_and(|plist| plist.contains("<key>RunAtLoad</key>\n  <true/>"))
-}
-
-pub(super) fn is_running() -> anyhow::Result<bool> {
-    is_loaded()
-}
-
-pub(super) fn needs_update(executable: &Path, log_file: &Path) -> anyhow::Result<bool> {
-    let path = agent_path()?;
-    if !path.is_file() {
+fn is_loaded(domain: &str) -> anyhow::Result<bool> {
+    let output = launchctl(&["print", &format!("{domain}/{LAUNCHD_LABEL}")])?;
+    if output.status.success() {
         return Ok(true);
     }
-    let plist = std::fs::read_to_string(path).context("read gateway LaunchAgent")?;
-    let arguments = format!(
-        "<string>{}</string>\n    <string>start</string>\n    <string>--log-file</string>\n    <string>{}</string>",
-        xml_escape(&executable.display().to_string()),
-        xml_escape(&log_file.display().to_string())
-    );
-    Ok(!plist.contains(&arguments)
-        || !plist.contains("<key>RunAtLoad</key>\n  <true/>")
-        || !plist.contains("<key>SuccessfulExit</key>\n    <false/>")
-        || !plist.contains(&format!(
-            "<key>ThrottleInterval</key>\n  <integer>{THROTTLE_INTERVAL_SECONDS}</integer>"
-        ))
-        || !plist.contains("<key>ProcessType</key>\n  <string>Background</string>"))
+    // launchctl print exits 113 ("Could not find service") when the job is
+    // not loaded in the domain; launchctl messages are not localized.
+    if output.status.code() == Some(113)
+        || String::from_utf8_lossy(&output.stderr).contains("Could not find service")
+    {
+        return Ok(false);
+    }
+    bail!("launchctl print failed: {}", stderr(&output))
 }
 
-pub(super) fn install(executable: &Path, log_file: &Path) -> anyhow::Result<()> {
+fn read_plist_json(path: &std::path::Path) -> anyhow::Result<serde_json::Value> {
+    let output = Command::new("/usr/bin/plutil")
+        .args(["-convert", "json", "-o", "-", "--"])
+        .arg(path)
+        .output()
+        .context("run plutil on gateway LaunchAgent")?;
+    anyhow::ensure!(
+        output.status.success(),
+        "gateway LaunchAgent {} is not a valid property list: {}",
+        path.display(),
+        stderr(&output)
+    );
+    serde_json::from_slice(&output.stdout).context("decode gateway LaunchAgent")
+}
+
+fn is_executable_file(path: &std::path::Path) -> bool {
+    use std::os::unix::fs::PermissionsExt;
+    std::fs::metadata(path)
+        .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+}
+
+pub(super) fn status(spec: &StartupServiceSpec<'_>) -> anyhow::Result<StartupServiceStatus> {
+    let path = agent_path()?;
+    let installed = path
+        .try_exists()
+        .with_context(|| format!("inspect {}", path.display()))?;
+    let loaded = is_loaded(&domain()?)?;
+    let current = installed
+        && launchd_program(&read_plist_json(&path)?, spec)?
+            .is_some_and(|program| is_executable_file(std::path::Path::new(&program)));
+    Ok(StartupServiceStatus {
+        installed,
+        current,
+        loaded,
+    })
+}
+
+pub(super) fn install(spec: &StartupServiceSpec<'_>) -> anyhow::Result<()> {
+    let home = crate::platform::home_dir_required()?;
     let path = agent_path()?;
     let parent = path.parent().context("LaunchAgent path has no parent")?;
     std::fs::create_dir_all(parent).context("create LaunchAgents directory")?;
-    let state_dir = crate::platform::home_dir_required()?.join(".codex-mixin");
-    std::fs::create_dir_all(&state_dir).context("create gateway state directory")?;
-    let plist = format!(
-        "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n<!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n<plist version=\"1.0\">\n<dict>\n  <key>Label</key>\n  <string>{SERVICE_LABEL}</string>\n  <key>ProgramArguments</key>\n  <array>\n    <string>{}</string>\n    <string>start</string>\n    <string>--log-file</string>\n    <string>{}</string>\n  </array>\n  <key>RunAtLoad</key>\n  <true/>\n  <key>KeepAlive</key>\n  <dict>\n    <key>SuccessfulExit</key>\n    <false/>\n  </dict>\n  <key>ThrottleInterval</key>\n  <integer>{THROTTLE_INTERVAL_SECONDS}</integer>\n  <key>ProcessType</key>\n  <string>Background</string>\n  <key>StandardOutPath</key>\n  <string>/dev/null</string>\n  <key>StandardErrorPath</key>\n  <string>/dev/null</string>\n  <key>WorkingDirectory</key>\n  <string>{}</string>\n</dict>\n</plist>\n",
-        xml_escape(&executable.display().to_string()),
-        xml_escape(&log_file.display().to_string()),
-        xml_escape(&crate::platform::home_dir_required()?.display().to_string())
-    );
-    std::fs::write(path, plist).context("write gateway LaunchAgent")
+    let plist = render_launchd_plist(spec, &home)?;
+    let temporary = path.with_extension("plist.tmp");
+    std::fs::write(&temporary, plist).context("write gateway LaunchAgent")?;
+    std::fs::rename(&temporary, &path).context("replace gateway LaunchAgent")
 }
 
 pub(super) fn start() -> anyhow::Result<()> {
-    if is_loaded()? {
-        return Ok(());
-    }
-    let target = service_target()?;
-    let path = agent_path()?;
-    let output = run_launchctl(&["bootstrap", &target, &path.to_string_lossy()])?;
-    if output.status.success() {
-        return Ok(());
-    }
-    let message = String::from_utf8_lossy(&output.stderr);
-    if message.contains("Input/output error") {
-        std::thread::sleep(std::time::Duration::from_millis(500));
-        let retry = run_launchctl(&["bootstrap", &target, &path.to_string_lossy()])?;
+    let domain = domain()?;
+    if is_loaded(&domain)? {
+        let output = launchctl(&["kickstart", &format!("{domain}/{LAUNCHD_LABEL}")])?;
         anyhow::ensure!(
-            retry.status.success(),
-            "launchctl bootstrap failed: {}",
-            String::from_utf8_lossy(&retry.stderr).trim()
+            output.status.success(),
+            "launchctl kickstart failed: {}",
+            stderr(&output)
         );
         return Ok(());
     }
-    bail!("launchctl bootstrap failed: {}", message.trim())
+    let path = agent_path()?;
+    let path = path
+        .to_str()
+        .context("LaunchAgent path is not valid UTF-8")?;
+    let mut last_error = String::new();
+    for attempt in 0..BOOTSTRAP_ATTEMPTS {
+        let output = launchctl(&["bootstrap", &domain, path])?;
+        if output.status.success() {
+            return Ok(());
+        }
+        last_error = stderr(&output);
+        // Exit 5 (EIO) is transient while launchd still tears down a job
+        // with the same label.
+        if output.status.code() != Some(5) {
+            break;
+        }
+        if attempt + 1 < BOOTSTRAP_ATTEMPTS {
+            std::thread::sleep(BOOTSTRAP_RETRY_DELAY);
+        }
+    }
+    bail!("launchctl bootstrap failed: {last_error}")
 }
 
 pub(super) fn stop() -> anyhow::Result<()> {
-    let target = format!("{}/{}", service_target()?, SERVICE_LABEL);
-    let output = run_launchctl(&["bootout", &target])?;
-    if output.status.success() {
+    let domain = domain()?;
+    if !is_loaded(&domain)? {
         return Ok(());
     }
-    let message = String::from_utf8_lossy(&output.stderr);
-    if message.contains("No such process") || message.contains("Could not find service") {
+    let output = launchctl(&["bootout", &format!("{domain}/{LAUNCHD_LABEL}")])?;
+    if output.status.success() || !is_loaded(&domain)? {
         return Ok(());
     }
-    bail!("launchctl bootout failed: {}", message.trim())
+    bail!("launchctl bootout failed: {}", stderr(&output))
 }
 
 pub(super) fn remove() -> anyhow::Result<()> {
     stop()?;
     let path = agent_path()?;
-    if path.exists() {
-        std::fs::remove_file(path).context("remove gateway LaunchAgent")?;
+    match std::fs::remove_file(&path) {
+        Ok(()) => Ok(()),
+        Err(error) if error.kind() == std::io::ErrorKind::NotFound => Ok(()),
+        Err(error) => Err(error).with_context(|| format!("remove {}", path.display())),
     }
-    Ok(())
-}
-
-pub(super) fn set_enabled(enabled: bool) -> anyhow::Result<()> {
-    let path = agent_path()?;
-    let plist = std::fs::read_to_string(&path).context("read gateway LaunchAgent")?;
-    let (from, to) = if enabled {
-        (
-            "<key>RunAtLoad</key>\n  <false/>",
-            "<key>RunAtLoad</key>\n  <true/>",
-        )
-    } else {
-        (
-            "<key>RunAtLoad</key>\n  <true/>",
-            "<key>RunAtLoad</key>\n  <false/>",
-        )
-    };
-    anyhow::ensure!(
-        plist.contains(from) || plist.contains(to),
-        "gateway LaunchAgent has an invalid RunAtLoad setting"
-    );
-    if !plist.contains(to) {
-        std::fs::write(path, plist.replace(from, to))
-            .context("update gateway LaunchAgent autostart")?;
-    }
-    Ok(())
-}
-
-fn xml_escape(value: &str) -> String {
-    value
-        .replace('&', "&amp;")
-        .replace('<', "&lt;")
-        .replace('>', "&gt;")
-        .replace('"', "&quot;")
-        .replace('\'', "&apos;")
 }
 
 #[cfg(test)]
 mod tests {
-    use super::xml_escape;
+    use std::path::Path;
+
+    use super::super::definition::{launchd_program, render_launchd_plist};
+    use super::{StartupServiceSpec, read_plist_json};
 
     #[test]
-    fn escapes_launch_agent_xml_values() {
-        assert_eq!(xml_escape("a&b<'\""), "a&amp;b&lt;&apos;&quot;");
+    fn rendered_launch_agent_round_trips_through_plutil() {
+        let directory =
+            std::env::temp_dir().join(format!("codex-mixin-plist-{}", std::process::id()));
+        std::fs::create_dir_all(&directory).unwrap();
+        let executable = Path::new("/Applications/Codex Mixin.app/Contents/Resources/codex-mixin");
+        let log = Path::new("/Users/me/.codex-mixin/gateway & log.txt");
+        let spec = StartupServiceSpec {
+            executable,
+            log_file: log,
+        };
+        let path = directory.join("agent.plist");
+        std::fs::write(
+            &path,
+            render_launchd_plist(&spec, Path::new("/Users/me")).unwrap(),
+        )
+        .unwrap();
+        let program = launchd_program(&read_plist_json(&path).unwrap(), &spec).unwrap();
+        std::fs::remove_dir_all(&directory).unwrap();
+        assert_eq!(program.as_deref(), executable.to_str());
     }
 }
