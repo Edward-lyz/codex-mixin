@@ -7429,3 +7429,47 @@ async fn anthropic_messages_ignores_legacy_model_level_endpoint() {
     let hits = hits.lock().unwrap();
     assert_eq!(hits.as_slice(), ["/v1/messages"]);
 }
+
+#[tokio::test]
+async fn forwards_client_anthropic_beta_to_provider_messages() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    config.providers[0].anthropic_beta = Some("existing-beta".to_owned());
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+    let request = json!({
+        "model": "DeepSeek-V4-Flash-custom",
+        "max_tokens": 1024,
+        "stream": true,
+        "messages": [{"role": "user", "content": "say hi"}]
+    });
+
+    let enabled = client
+        .post(format!("{gateway_url}/v1/messages"))
+        .bearer_auth("gateway-key")
+        .header("anthropic-beta", "context-1m-2025-08-07")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(enabled.status(), StatusCode::OK);
+    let _ = enabled.text().await.unwrap();
+
+    let plain = client
+        .post(format!("{gateway_url}/v1/messages"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(plain.status(), StatusCode::OK);
+    let _ = plain.text().await.unwrap();
+
+    let captured = requests.lock().unwrap();
+    assert_eq!(captured.len(), 2);
+    assert_eq!(
+        captured[0]["__anthropic_beta"],
+        "existing-beta,context-1m-2025-08-07"
+    );
+    assert_eq!(captured[1]["__anthropic_beta"], "existing-beta");
+}

@@ -46,6 +46,7 @@ pub(super) async fn messages(
     let request = normalize_message_request(&body, upstream_model_id)?;
     let routing = stable_oneapi_routing(&headers, &body)?;
     let stream_requested = body_stream_requested(&body);
+    let client_beta = client_anthropic_beta(&headers);
     if provider.protocol_for_model(upstream_model_id) != ProviderProtocol::AnthropicMessages {
         let responses_body = crate::protocol::anthropic_compat::message_request_to_responses(
             &request,
@@ -71,7 +72,12 @@ pub(super) async fn messages(
     let hash_key = routing.map(|routing| routing.hash_key);
     let first = state
         .upstream
-        .anthropic_stream_with_web_search_retry(provider, request, hash_key.as_deref())
+        .anthropic_stream_with_web_search_retry(
+            provider,
+            request,
+            hash_key.as_deref(),
+            client_beta.as_deref(),
+        )
         .await;
     let upstream = match first {
         Ok(upstream) => upstream,
@@ -100,6 +106,7 @@ pub(super) async fn messages(
                     provider,
                     fallback_request,
                     hash_key.as_deref(),
+                    client_beta.as_deref(),
                 )
                 .await?
         }
@@ -152,6 +159,22 @@ async fn responses_compatible_message(
 
 fn body_stream_requested(body: &Value) -> bool {
     body.get("stream").and_then(Value::as_bool) == Some(true)
+}
+
+/// Betas an Anthropic-native client asked for, in header order.
+///
+/// Claude Code enables 1M context by sending `context-1m-2025-08-07` here, and
+/// provider hosts gate some models on that header, so it must reach the
+/// upstream instead of being dropped while the gateway rebuilds the request.
+fn client_anthropic_beta(headers: &HeaderMap) -> Option<String> {
+    let values = headers
+        .get_all("anthropic-beta")
+        .iter()
+        .filter_map(|value| value.to_str().ok())
+        .map(str::trim)
+        .filter(|value| !value.is_empty())
+        .collect::<Vec<_>>();
+    (!values.is_empty()).then(|| values.join(","))
 }
 
 pub(super) fn normalize_message_request(

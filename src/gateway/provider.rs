@@ -89,6 +89,7 @@ pub(crate) async fn stream_provider_response(
                     provider,
                     converted.request,
                     routing.map(|routing| routing.hash_key.as_str()),
+                    None,
                 )
                 .await?;
             let upstream = observe_upstream_cache_usage(upstream, observation);

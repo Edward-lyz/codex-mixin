@@ -101,8 +101,9 @@ impl UpstreamAccess {
         provider: &ProviderRuntime,
         request: &crate::anthropic::MessageRequest,
         hash_key: Option<&str>,
+        client_beta: Option<&str>,
     ) -> Result<AnthropicByteStream, GatewayError> {
-        let beta = if request.speed.as_deref() == Some("fast") {
+        let provider_beta = if request.speed.as_deref() == Some("fast") {
             Some(match provider.definition().anthropic_beta.as_deref() {
                 Some(configured)
                     if configured
@@ -119,6 +120,7 @@ impl UpstreamAccess {
         } else {
             provider.definition().anthropic_beta.clone()
         };
+        let beta = merge_anthropic_beta(provider_beta.as_deref(), client_beta);
         let mut refreshed_ducx_auth = false;
         loop {
             // DUCX acts as a header generator. Merge its native headers instead
@@ -202,6 +204,7 @@ impl UpstreamAccess {
         provider: &ProviderRuntime,
         mut request: crate::anthropic::MessageRequest,
         hash_key: Option<&str>,
+        client_beta: Option<&str>,
     ) -> Result<AnthropicByteStream, GatewayError> {
         let has_hosted_web_search = request.tools.iter().any(|tool| {
             tool.get("name").and_then(Value::as_str) == Some("web_search")
@@ -211,7 +214,7 @@ impl UpstreamAccess {
                     .is_some_and(|tool_type| tool_type.starts_with("web_search_"))
         });
         let upstream = self
-            .send_anthropic_request(provider, &request, hash_key)
+            .send_anthropic_request(provider, &request, hash_key, client_beta)
             .await?;
         if !has_hosted_web_search {
             return Ok(upstream);
@@ -235,6 +238,7 @@ impl UpstreamAccess {
                         provider,
                         &request,
                         retry_hash_key.as_deref().or(hash_key),
+                        client_beta,
                     )
                     .await?;
                 match inspect_anthropic_stream(retry).await? {
@@ -249,6 +253,23 @@ impl UpstreamAccess {
             }
         }
     }
+}
+
+/// Merge provider-configured Anthropic betas with the ones the client sent.
+///
+/// Values keep configuration order, drop blanks and repeats, and stay absent
+/// when neither side asked for a beta.
+fn merge_anthropic_beta(configured: Option<&str>, client: Option<&str>) -> Option<String> {
+    let mut merged: Vec<&str> = Vec::new();
+    for value in [configured, client].into_iter().flatten() {
+        for item in value.split(',') {
+            let item = item.trim();
+            if !item.is_empty() && !merged.contains(&item) {
+                merged.push(item);
+            }
+        }
+    }
+    (!merged.is_empty()).then(|| merged.join(","))
 }
 
 async fn inspect_anthropic_stream(
