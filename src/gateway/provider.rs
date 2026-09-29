@@ -60,43 +60,83 @@ pub(crate) async fn stream_provider_response(
             let auto_thinking_kind =
                 anthropic_thinking_kind_with_advertised(&upstream_model_id, advertised_thinking);
             let reasoning = upstream_reasoning(body, advertised_thinking);
-            let converted = responses_to_anthropic_with_model_reasoning_and_thinking_kind(
-                body,
-                Some(&upstream_model_id),
-                reasoning.as_ref(),
-                &executor.config,
-                web_search_enabled,
-                provider.uses_mcp_bridge_names(&upstream_model_id),
-                auto_thinking_kind,
+            let convert = |default_max_tokens| {
+                let mut converted = responses_to_anthropic_with_model_reasoning_and_thinking_kind(
+                    body,
+                    Some(&upstream_model_id),
+                    reasoning.as_ref(),
+                    &executor.config,
+                    default_max_tokens,
+                    web_search_enabled,
+                    provider.uses_mcp_bridge_names(&upstream_model_id),
+                    auto_thinking_kind,
+                )?;
+                if provider.uses_session_affinity()
+                    && let Some(routing) = routing
+                {
+                    converted.request.metadata = Some(json!({"session_id": routing.hash_key}));
+                }
+                Ok::<_, GatewayError>(converted)
+            };
+            let send = |converted: crate::protocol::convert::ConvertedRequest| async move {
+                let shape = CacheShape::from_anthropic(&converted.request);
+                let upstream = executor
+                    .upstream
+                    .anthropic_stream_with_web_search_retry(
+                        provider,
+                        converted.request,
+                        routing.map(|routing| routing.hash_key.as_str()),
+                        None,
+                    )
+                    .await?;
+                Ok::<_, GatewayError>((upstream, shape, converted.tool_names))
+            };
+            let default_max_tokens = executor.output_limits.default_for(
+                provider.id(),
+                &upstream_model_id,
+                executor.config.default_max_tokens,
             );
-            let mut converted = converted?;
-            if provider.uses_session_affinity()
-                && let Some(routing) = routing
-            {
-                converted.request.metadata = Some(json!({"session_id": routing.hash_key}));
-            }
+            let converted = convert(default_max_tokens)?;
+            let requested = converted.request.max_tokens;
+            let defaulted = converted.max_tokens_defaulted;
+            let (upstream, shape, tool_names) = match send(converted).await {
+                Err(GatewayError::UpstreamStatus {
+                    status,
+                    body: error_body,
+                    ..
+                }) if defaulted
+                    && status.is_client_error()
+                    && let Some(limit) =
+                        super::output_limit::output_limit_from_error(&error_body, requested) =>
+                {
+                    tracing::warn!(
+                        provider_id = provider.id(),
+                        upstream_model_id = %upstream_model_id,
+                        requested,
+                        limit,
+                        "provider rejected the default output budget; retrying with its limit"
+                    );
+                    let sent = send(convert(limit)?).await?;
+                    executor
+                        .output_limits
+                        .record(provider.id(), &upstream_model_id, limit);
+                    sent
+                }
+                result => result?,
+            };
             let observation = record_provider_prefix(
                 &executor.cache_shapes,
                 provider.id(),
                 catalog_slug,
                 &upstream_model_id,
                 routing,
-                CacheShape::from_anthropic(&converted.request),
+                shape,
             );
-            let upstream = executor
-                .upstream
-                .anthropic_stream_with_web_search_retry(
-                    provider,
-                    converted.request,
-                    routing.map(|routing| routing.hash_key.as_str()),
-                    None,
-                )
-                .await?;
             let upstream = observe_upstream_cache_usage(upstream, observation);
             map_anthropic_sse_with_image_routes(
                 upstream,
                 downstream_body,
-                converted.tool_names,
+                tool_names,
                 executor.custom_image_routes(provider),
                 provider.definition().preset_id.as_deref() == Some("baidu-oneapi"),
             )

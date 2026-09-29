@@ -9,6 +9,9 @@ use crate::protocol::model_reasoning::{AnthropicThinkingKind, anthropic_thinking
 pub struct ConvertedRequest {
     pub request: MessageRequest,
     pub tool_names: ToolNameMap,
+    /// The client omitted `max_output_tokens`, so `request.max_tokens` is the
+    /// gateway's default and may be lowered to the provider's limit.
+    pub max_tokens_defaulted: bool,
 }
 
 pub fn responses_to_anthropic(
@@ -73,6 +76,7 @@ fn responses_to_anthropic_with_model_and_thinking_kind(
         model_override,
         reasoning.as_ref(),
         config,
+        config.default_max_tokens,
         web_search_enabled,
         use_mcp_bridge_names,
         auto_thinking_kind,
@@ -84,6 +88,7 @@ pub(crate) fn responses_to_anthropic_with_model_reasoning_and_thinking_kind(
     model_override: Option<&str>,
     reasoning: Option<&Value>,
     config: &GatewayConfig,
+    default_max_tokens: u64,
     web_search_enabled: bool,
     use_mcp_bridge_names: bool,
     auto_thinking_kind: Option<AnthropicThinkingKind>,
@@ -96,10 +101,8 @@ pub(crate) fn responses_to_anthropic_with_model_reasoning_and_thinking_kind(
             .ok_or_else(|| GatewayError::BadRequest("missing model".to_owned()))?
             .to_owned(),
     };
-    let max_tokens = body
-        .get("max_output_tokens")
-        .and_then(Value::as_u64)
-        .unwrap_or(config.default_max_tokens);
+    let client_max_tokens = body.get("max_output_tokens").and_then(Value::as_u64);
+    let max_tokens = client_max_tokens.unwrap_or(default_max_tokens);
     let mut system = Vec::new();
     if let Some(instructions) = body
         .get("instructions")
@@ -187,6 +190,7 @@ pub(crate) fn responses_to_anthropic_with_model_reasoning_and_thinking_kind(
             metadata: None,
         },
         tool_names,
+        max_tokens_defaulted: client_max_tokens.is_none(),
     })
 }
 
