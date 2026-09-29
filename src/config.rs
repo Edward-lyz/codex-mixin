@@ -255,14 +255,7 @@ mod tests {
         );
         assert_eq!(loaded.providers[0].id, "opencode-go");
         assert!(!loaded.providers[0].auxiliary_model_upstream);
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                fs::metadata(path).unwrap().permissions().mode() & 0o777,
-                0o600
-            );
-        }
+        assert!(crate::platform::is_owner_only(&path).unwrap());
     }
 
     #[test]
@@ -419,11 +412,13 @@ mod tests {
         let mut provider = crate::provider::baidu_oneapi_provider("baidu-oneapi", "secret");
         provider.quota_username = Some("user@example.com".to_owned());
         provider.request_policy.baidu_code_report = true;
-        provider.request_policy.ducx_executable = Some(if cfg!(windows) {
-            r"C:\Users\example\.codex-mixin\ducx\home\.baidu-cx\baidu-cx\bin\ducx.exe".into()
-        } else {
-            "/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx/bin/ducx".into()
-        });
+        let install =
+            std::path::Path::new("/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx");
+        provider.request_policy.ducx_executable = Some(
+            install
+                .join("bin")
+                .join(crate::platform::executable_file_name("ducx")),
+        );
         let stored = StoredGatewayConfig {
             providers: vec![provider],
             ..StoredGatewayConfig::default()
@@ -433,12 +428,11 @@ mod tests {
 
         assert_eq!(
             loaded.providers[0].request_policy.data_report_executable,
-            Some(if cfg!(windows) {
-                r"C:\Users\example\.codex-mixin\ducx\home\.baidu-cx\baidu-cx\hooks\data-report.exe"
-                    .into()
-            } else {
-                "/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx/hooks/data-report".into()
-            })
+            Some(
+                install
+                    .join("hooks")
+                    .join(crate::platform::executable_file_name("data-report"))
+            )
         );
     }
 

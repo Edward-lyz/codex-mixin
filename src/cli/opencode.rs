@@ -480,14 +480,7 @@ mod tests {
             "GPT-5.6 Sol · OpenAI"
         );
         assert_eq!(fs::read_to_string(&key_path).unwrap(), "gateway-secret");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                fs::metadata(&key_path).unwrap().permissions().mode() & 0o777,
-                0o600
-            );
-        }
+        assert!(codex_mixin::platform::is_owner_only(&key_path).unwrap());
 
         uninstall_opencode_at(&config_path, &key_path).unwrap();
 

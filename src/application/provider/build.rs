@@ -662,13 +662,11 @@ mod tests {
     fn provider_mutations_persist_managed_ducx_options() {
         let mut provider = crate::provider::baidu_oneapi_provider("baidu-oneapi", "key");
         provider.quota_username = Some("user@example.com".to_owned());
-        let executable = if cfg!(windows) {
-            PathBuf::from(
-                r"C:\Users\example\.codex-mixin\ducx\home\.baidu-cx\baidu-cx\bin\ducx.exe",
-            )
-        } else {
-            PathBuf::from("/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx/bin/ducx")
-        };
+        let install =
+            std::path::Path::new("/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx");
+        let executable = install
+            .join("bin")
+            .join(crate::platform::executable_file_name("ducx"));
 
         apply_baidu_options(
             &mut provider,
@@ -686,15 +684,11 @@ mod tests {
         set_report_sibling(&mut provider);
         assert_eq!(
             provider.request_policy.data_report_executable,
-            Some(if cfg!(windows) {
-                PathBuf::from(
-                    r"C:\Users\example\.codex-mixin\ducx\home\.baidu-cx\baidu-cx\hooks\data-report.exe",
-                )
-            } else {
-                PathBuf::from(
-                    "/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx/hooks/data-report",
-                )
-            })
+            Some(
+                install
+                    .join("hooks")
+                    .join(crate::platform::executable_file_name("data-report"))
+            )
         );
         provider.validate().unwrap();
     }

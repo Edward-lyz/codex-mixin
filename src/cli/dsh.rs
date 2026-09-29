@@ -355,18 +355,7 @@ mod tests {
         // version/refs/records; the key must nest under refs, never sit at the root.
         assert!(credentials.get(DSH_API_KEY_ENV).is_none());
         assert_eq!(credentials["version"].as_u64(), Some(1));
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                fs::metadata(&credentials_path)
-                    .unwrap()
-                    .permissions()
-                    .mode()
-                    & 0o777,
-                0o600
-            );
-        }
+        assert!(codex_mixin::platform::is_owner_only(&credentials_path).unwrap());
 
         uninstall_dsh(Some(directory.path().to_owned())).unwrap();
 
