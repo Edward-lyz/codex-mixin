@@ -663,7 +663,7 @@ mod tests {
         let mut provider = crate::provider::baidu_oneapi_provider("baidu-oneapi", "key");
         provider.quota_username = Some("user@example.com".to_owned());
         let install =
-            std::path::Path::new("/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx");
+            std::env::temp_dir().join("example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx");
         let executable = install
             .join("bin")
             .join(crate::platform::executable_file_name("ducx"));

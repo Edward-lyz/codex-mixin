@@ -413,7 +413,7 @@ mod tests {
         provider.quota_username = Some("user@example.com".to_owned());
         provider.request_policy.baidu_code_report = true;
         let install =
-            std::path::Path::new("/Users/example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx");
+            std::env::temp_dir().join("example/.codex-mixin/ducx/home/.baidu-cx/baidu-cx");
         provider.request_policy.ducx_executable = Some(
             install
                 .join("bin")

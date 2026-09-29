@@ -328,24 +328,21 @@ pub(super) async fn run(
 mod tests {
     use super::*;
 
-    #[cfg(unix)]
     #[test]
     fn cli_install_replaces_target_and_preserves_executable_permissions() {
-        use std::os::unix::fs::PermissionsExt;
-
         let directory = tempfile::tempdir().unwrap();
         let source = directory.path().join("downloaded-codex-mixin");
         let target = directory.path().join("bin/codex-mixin");
         std::fs::write(&source, b"new binary").unwrap();
-        std::fs::set_permissions(&source, std::fs::Permissions::from_mode(0o755)).unwrap();
+        codex_mixin::platform::make_executable(&source).unwrap();
         std::fs::create_dir_all(target.parent().unwrap()).unwrap();
         std::fs::write(&target, b"old binary").unwrap();
 
         assert!(install_cli_executable(&source, &target).unwrap());
         assert_eq!(std::fs::read(&target).unwrap(), b"new binary");
         assert_eq!(
-            std::fs::metadata(&target).unwrap().permissions().mode() & 0o777,
-            0o755
+            std::fs::metadata(&target).unwrap().permissions(),
+            std::fs::metadata(&source).unwrap().permissions()
         );
     }
 

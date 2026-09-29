@@ -785,7 +785,8 @@ mod tests {
         provider.quota_username = Some("user".to_owned());
         provider.request_policy.baidu_auth_bridge = Some(BaiduAuthBridge::DucxLoopback);
         provider.request_policy.ducx_executable = Some(
-            std::path::Path::new("/Users/example/.codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin")
+            std::env::temp_dir()
+                .join("example/.codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin")
                 .join(crate::platform::executable_file_name("ducc")),
         );
 
