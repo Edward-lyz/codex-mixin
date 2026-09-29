@@ -23,7 +23,7 @@ extension AppDelegate {
                 ) { progress in
                     progress.advance(to: 0)
                     progress.advance(to: 1)
-                    let status = try await ensureGatewayReady()
+                    let status = try await runGateway(["service", "start", "--managed", "--json"])
                     progress.advance(to: 2)
                     applyGatewayStatus(status)
                     await refreshStatusNow()
@@ -57,9 +57,8 @@ extension AppDelegate {
                     failureAlertTitle: "重启服务失败"
                 ) { progress in
                     progress.advance(to: 0)
-                    try await restartGatewayProcess()
+                    let status = try await runGateway(["service", "restart", "--managed", "--json"])
                     progress.advance(to: 1)
-                    let status = try await waitForGatewayStatus()
                     progress.advance(to: 2)
                     applyGatewayStatus(status)
                     await refreshStatusNow()
@@ -93,10 +92,8 @@ extension AppDelegate {
                     failureAlertTitle: "停止服务失败"
                 ) { progress in
                     progress.advance(to: 0)
-                    try await bootoutIfLoaded(launchDomainAndLabel())
-                    _ = try? await runGateway(["stop"])
+                    _ = try await runGateway(["service", "stop", "--managed", "--json"])
                     progress.advance(to: 1)
-                    try await waitForGatewayStopped()
                     progress.advance(to: 2)
                     isRunning = false
                     providerStatusDetail = nil
@@ -116,41 +113,25 @@ extension AppDelegate {
             do {
                 try await runOperationProgress(
                     title: "正在更新登录自启",
-                    phases: [
-                        "更新 LaunchAgent",
-                        "应用网关状态",
-                        "完成",
-                    ],
+                    phases: ["更新登录启动", "应用网关状态", "完成"],
                     successTitle: "✓ 登录自启已更新",
                     failureTitle: "✗ 更新失败",
                     showFailureAlert: true,
                     failureAlertTitle: "更新登录自启失败"
                 ) { progress in
                     progress.advance(to: 0)
-                    if FileManager.default.fileExists(atPath: launchAgentPath().path) {
-                        let statusBefore = try? await runGateway(["status"])
-                        let wasRunning = statusBefore?.contains("gateway: running") == true
-                        try await bootoutIfLoaded(launchDomainAndLabel())
+                    let enabled = !FileManager.default.fileExists(atPath: menuLaunchAgentPath().path)
+                    _ = try await runGateway([
+                        "service", "autostart", enabled ? "enable" : "disable", "--json",
+                    ])
+                    progress.advance(to: 1)
+                    if enabled {
+                        try installMenuLaunchAgent()
+                    } else {
                         try await bootoutIfLoaded(menuLaunchDomainAndLabel())
-                        try FileManager.default.removeItem(at: launchAgentPath())
                         if FileManager.default.fileExists(atPath: menuLaunchAgentPath().path) {
                             try FileManager.default.removeItem(at: menuLaunchAgentPath())
                         }
-                        progress.advance(to: 1)
-                        if wasRunning && statusBefore?.contains("daemon: running") != true {
-                            try await waitForGatewayStopped()
-                            _ = try await runGateway(["start", "--daemon"])
-                            _ = try await waitForGatewayStatus()
-                        }
-                    } else {
-                        _ = try await runGateway(["config", "--json", "--scope", "effective"])
-                        try await bootoutIfLoaded(launchDomainAndLabel())
-                        _ = try await runGateway(["stop"])
-                        try await waitForGatewayStopped()
-                        try installLaunchAgent()
-                        progress.advance(to: 1)
-                        try await bootstrapLaunchAgent()
-                        _ = try await waitForGatewayStatus()
                     }
                     progress.advance(to: 2)
                     await refreshStatusNow()
@@ -168,20 +149,35 @@ extension AppDelegate {
     }
 
     @objc func openLogs() {
-        let logURL = stateDir().appendingPathComponent("gateway.log")
-        if !FileManager.default.fileExists(atPath: logURL.path) {
-            showAlert(title: "日志还不存在", message: "本地网关启动后会写入 \(logURL.path)。")
-            return
+        Task { @MainActor in
+            do {
+                let paths = try await interfacePaths()
+                guard let path = paths["gateway_log"], !path.isEmpty else {
+                    throw GatewayError.command("CLI did not return the gateway log path")
+                }
+                let logURL = URL(fileURLWithPath: path)
+                guard FileManager.default.fileExists(atPath: logURL.path) else {
+                    showAlert(title: "日志还不存在", message: "本地网关启动后会写入 \(logURL.path)。")
+                    return
+                }
+                NSWorkspace.shared.open(logURL)
+            } catch {
+                showAlert(title: "打开日志失败", message: String(describing: error))
+            }
         }
-        NSWorkspace.shared.open(logURL)
     }
 
     @objc func openConfigFolder() {
-        do {
-            try FileManager.default.createDirectory(at: stateDir(), withIntermediateDirectories: true)
-            NSWorkspace.shared.open(stateDir())
-        } catch {
-            showAlert(title: "打开配置目录失败", message: String(describing: error))
+        Task { @MainActor in
+            do {
+                let paths = try await interfacePaths()
+                guard let path = paths["state"], !path.isEmpty else {
+                    throw GatewayError.command("CLI did not return the state directory")
+                }
+                NSWorkspace.shared.open(URL(fileURLWithPath: path))
+            } catch {
+                showAlert(title: "打开配置目录失败", message: String(describing: error))
+            }
         }
     }
 
@@ -225,8 +221,7 @@ extension AppDelegate {
             do {
                 _ = try await runGateway(["config", "import", source.path])
                 imported = true
-                try await restartGatewayProcess()
-                let status = try await waitForGatewayStatus()
+                let status = try await runGateway(["service", "restart", "--managed", "--json"])
                 applyGatewayStatus(status)
                 await refreshStatusNow()
                 showAlert(

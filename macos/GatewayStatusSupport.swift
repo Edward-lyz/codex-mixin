@@ -12,42 +12,20 @@ private struct GatewayHealthResponse: Decodable {
 
 extension AppDelegate {
     func applyGatewayStatus(_ status: String?) {
-        if let status,
-           status.trimmingCharacters(in: .whitespacesAndNewlines).hasPrefix("{") {
-            do {
-                applyGatewayStatus(try decodeGatewayStatus(status))
-            } catch {
-                isRunning = false
-                serviceEndpoint = nil
-                providerStatusDetail = localizedErrorDescription(error)
-                serviceStatus = "网关状态检查失败"
-                updateStatusTitle()
-                updateActionStates()
-            }
+        guard let status else {
+            _ = applyGatewayStatusFailure(GatewayError.command("网关状态响应为空"))
             return
         }
-        isRunning = status?.contains("gateway: running") == true
-        let providerIssues = providerIssueDetails(fromGatewayStatus: status)
-        providerStatusDetail = providerIssues.isEmpty
-            ? nil
-            : providerIssues.joined(separator: "；")
-        let providerReadiness = status?
-            .split(separator: "\n")
-            .first(where: { $0.hasPrefix("provider-readiness: ") })
-            .map { String($0.dropFirst("provider-readiness: ".count)) }
-        serviceEndpoint = status?
-            .split(separator: "\n")
-            .first(where: { $0.hasPrefix("endpoint: ") })
-            .map { String($0.dropFirst("endpoint: ".count)) }
-        if isRunning, providerReadiness == "degraded" {
-            serviceStatus = "本地服务运行中 · 服务商需要处理"
-        } else if isRunning, providerReadiness == "disabled" {
-            serviceStatus = "本地服务运行中 · 无启用服务商"
-        } else {
-            serviceStatus = isRunning ? "本地服务运行中" : "本地服务已停止"
+        do {
+            applyGatewayStatus(try decodeGatewayStatus(status))
+        } catch {
+            isRunning = false
+            serviceEndpoint = nil
+            providerStatusDetail = localizedErrorDescription(error)
+            serviceStatus = "网关状态检查失败"
+            updateStatusTitle()
+            updateActionStates()
         }
-        updateStatusTitle()
-        updateActionStates()
     }
 
     private func applyGatewayStatus(_ snapshot: GatewayStatusSnapshot) {
@@ -289,24 +267,13 @@ extension AppDelegate {
     }
 
     @discardableResult
-    private func applyGatewayStatusFailure(_ error: Error) -> Bool {
-        let message = String(describing: error)
-        let missingConfiguration = isMissingGatewayConfiguration(error)
+    private func applyGatewayStatusFailure(_: Error) -> Bool {
         isRunning = false
         serviceEndpoint = nil
-        if missingConfiguration {
-            serviceStatus = "等待配置上游 API"
-        } else if message.contains("gateway not running") {
-            serviceStatus = "本地服务已停止"
-        } else {
-            serviceStatus = "网关状态检查失败"
-        }
+        serviceStatus = "网关状态检查失败"
         updateStatusTitle()
         updateActionStates()
-        if missingConfiguration {
-            updateQuotaStatus(title: "额度：等待配置", detail: nil, progress: nil)
-        }
-        return missingConfiguration
+        return false
     }
 
     func updateQuotaStatus(title: String, detail: String?, progress: Double?) {

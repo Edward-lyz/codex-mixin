@@ -20,6 +20,7 @@ use super::codex::{
 };
 use super::config_input::{normalize_base_url, trim_required};
 use super::official_models::{load_official_models, official_models_cache_path};
+use codex_mixin::application::provider::build::{AddProviderInput, UpdateProviderInput};
 mod discovery;
 mod management;
 mod models;
@@ -31,74 +32,8 @@ pub(super) use models::{
     probe_selected_models, select_models, test_provider,
 };
 
-#[derive(Clone, Debug)]
-pub(super) struct AddProviderOptions {
-    pub(super) preset: String,
-    pub(super) auxiliary_model_upstream: Option<bool>,
-    pub(super) id: Option<String>,
-    pub(super) key: Option<String>,
-    pub(super) aws_access_key_id: Option<String>,
-    pub(super) aws_secret_access_key: Option<String>,
-    pub(super) aws_session_token: Option<String>,
-    pub(super) aws_region: Option<String>,
-    pub(super) display_name: Option<String>,
-    pub(super) base_url: Option<String>,
-    pub(super) website_url: Option<String>,
-    pub(super) protocol: Option<String>,
-    pub(super) api_path: Option<String>,
-    pub(super) models_path: Option<String>,
-    pub(super) image_generation_path: Option<String>,
-    pub(super) quota_url: Option<String>,
-    pub(super) quota_username: Option<String>,
-    pub(super) quota_workspace_id: Option<String>,
-    pub(super) quota_auth_cookie: Option<String>,
-    pub(super) quota_currency: Option<String>,
-    pub(super) quota_parser: Option<String>,
-    pub(super) gateway_key: Option<String>,
-    pub(super) static_models: Vec<String>,
-    pub(super) header_env: Vec<String>,
-    pub(super) baidu_auth_bridge: Option<String>,
-    pub(super) ducx_executable: Option<PathBuf>,
-    pub(super) baidu_code_report: Option<bool>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub(super) struct UpdateProviderOptions {
-    pub(super) id: String,
-    pub(super) auxiliary_model_upstream: Option<bool>,
-    pub(super) key: Option<String>,
-    pub(super) clear_key: bool,
-    pub(super) aws_access_key_id: Option<String>,
-    pub(super) aws_secret_access_key: Option<String>,
-    pub(super) aws_session_token: Option<String>,
-    pub(super) aws_region: Option<String>,
-    pub(super) clear_aws_session_token: bool,
-    pub(super) clear_aws_credentials: bool,
-    pub(super) display_name: Option<String>,
-    pub(super) base_url: Option<String>,
-    pub(super) website_url: Option<String>,
-    pub(super) protocol: Option<String>,
-    pub(super) api_path: Option<String>,
-    pub(super) models_path: Option<String>,
-    pub(super) image_generation_path: Option<String>,
-    pub(super) clear_image_generation: bool,
-    pub(super) quota_url: Option<String>,
-    pub(super) clear_quota: bool,
-    pub(super) quota_username: Option<String>,
-    pub(super) quota_workspace_id: Option<String>,
-    pub(super) clear_quota_workspace_id: bool,
-    pub(super) quota_auth_cookie: Option<String>,
-    pub(super) clear_quota_auth_cookie: bool,
-    pub(super) quota_currency: Option<String>,
-    pub(super) quota_parser: Option<String>,
-    pub(super) header_env: Vec<String>,
-    pub(super) clear_header_env: bool,
-    pub(super) baidu_auth_bridge: Option<String>,
-    pub(super) ducx_executable: Option<PathBuf>,
-    pub(super) baidu_code_report: Option<bool>,
-    pub(super) auto_review_model: Option<String>,
-    pub(super) clear_auto_review_model: bool,
-}
+pub(super) type AddProviderOptions = AddProviderInput;
+pub(super) type UpdateProviderOptions = UpdateProviderInput;
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct TestProviderOptions {

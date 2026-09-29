@@ -823,25 +823,7 @@ pub(crate) async fn run(
                     .await
                     .is_some();
                     if saved {
-                        let restarted = run_action(
-                            &mut terminal,
-                            &mut app,
-                            "Restarting gateway",
-                            &["service", "restart"],
-                            true,
-                        )
-                        .await
-                        .is_some();
-                        if restarted {
-                            run_action(
-                                &mut terminal,
-                                &mut app,
-                                "Refreshing Codex model catalog",
-                                &["refresh-codex-catalog"],
-                                true,
-                            )
-                            .await;
-                        }
+                        apply_provider_changes(&mut terminal, &mut app).await;
                     }
                     app.load_model_draft();
                 }

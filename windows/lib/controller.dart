@@ -17,6 +17,7 @@ class MixinController {
   bool busy = false;
   String status = GatewaySnapshot.empty.status;
   String? gatewayLogPath;
+  String? stateDirectory;
   Future<void>? _refreshInFlight;
   Future<void> _actionTail = Future<void>.value();
 
@@ -39,6 +40,7 @@ class MixinController {
     final results = await Future.wait([
       cli.run(['provider', 'list', '--json']),
       cli.run(['service', 'status', '--json']),
+      cli.run(['interface', '--json']),
       cli.run(['quota', '--json']),
       cli.run([
         'usage',
@@ -48,16 +50,29 @@ class MixinController {
     ]);
     final providerResult = results[0];
     final statusResult = results[1];
-    final quotaResult = results[2];
-    final usageResult = results[3];
-    final providersJson =
-        decodeCliObject(providerResult.stdout) ??
-        decodeCliObject(providerResult.output);
+    final interfaceResult = results[2];
+    final quotaResult = results[3];
+    final usageResult = results[4];
+    final providersJson = decodeCliObject(providerResult.stdout);
     final statusJson = statusResult.ok
-        ? (decodeCliObject(statusResult.stdout) ??
-              decodeCliObject(statusResult.output))
+        ? decodeCliObject(statusResult.stdout)
         : null;
-    final providers = ((providersJson?['providers'] as List?) ?? const [])
+    final interfaceJson = interfaceResult.ok
+        ? decodeCliObject(interfaceResult.stdout)
+        : null;
+    final paths = interfaceJson?['paths'];
+    if (paths is Map) {
+      final statePath = paths['state'];
+      final gatewayPath = paths['gateway_log'];
+      if (statePath is String && statePath.isNotEmpty) {
+        stateDirectory = statePath;
+      }
+      if (gatewayPath is String && gatewayPath.isNotEmpty) {
+        gatewayLogPath = gatewayPath;
+      }
+    }
+    final providerRows = providersJson?['providers'];
+    final providers = (providerRows is List ? providerRows : const [])
         .whereType<Map>()
         .map(
           (value) => ProviderModel.fromJson(Map<String, dynamic>.from(value)),
@@ -68,10 +83,8 @@ class MixinController {
     final endpoint = statusJson?['endpoint'];
     final logPath = statusJson?['log'];
     if (logPath is String && logPath.isNotEmpty) gatewayLogPath = logPath;
-    final quota =
-        decodeCliJson(quotaResult.stdout) ?? decodeCliJson(quotaResult.output);
-    final usage =
-        decodeCliJson(usageResult.stdout) ?? decodeCliJson(usageResult.output);
+    final quota = decodeCliJson(quotaResult.stdout);
+    final usage = decodeCliJson(usageResult.stdout);
     final usageError = !usageResult.ok
         ? usageResult.output
         : usage is List
@@ -80,8 +93,16 @@ class MixinController {
     final String statusText;
     if (!providerResult.ok) {
       statusText = '读取供应商失败：${providerResult.output}';
+    } else if (providersJson == null || providerRows is! List) {
+      statusText = '供应商接口返回了无效 JSON';
     } else if (!statusResult.ok) {
       statusText = '网关状态查询失败：${statusResult.output}';
+    } else if (statusJson == null || statusJson['gateway'] is! String) {
+      statusText = '网关状态接口返回了无效 JSON';
+    } else if (!interfaceResult.ok) {
+      statusText = '读取应用信息失败：${interfaceResult.output}';
+    } else if (interfaceJson == null || interfaceJson['protocol_version'] != 1) {
+      statusText = '应用信息返回了无效 JSON';
     } else {
       statusText = providers.isEmpty ? '还没有供应商' : '配置已同步';
     }
@@ -178,37 +199,19 @@ class MixinController {
 
   Future<bool> _gatewayRunning() async {
     final status = await cli.run(['service', 'status', '--json']);
-    final json =
-        decodeCliObject(status.stdout) ?? decodeCliObject(status.output);
-    return json?['gateway'] == 'running';
+    final json = decodeCliObject(status.stdout);
+    if (!status.ok) throw FormatException(status.output);
+    if (json == null || json['gateway'] is! String) {
+      throw const FormatException('网关状态接口返回了无效 JSON');
+    }
+    return json['gateway'] == 'running';
   }
 
   Future<void> toggleGateway() async {
     if (snapshot.gatewayRunning) {
-      await runAction('停止网关', ['service', 'stop']);
+      await runAction('停止网关', ['service', 'stop', '--managed', '--json']);
     } else {
-      await runAction('启动网关', ['service', 'start']);
-      // The daemon publishes its runtime metadata a moment after `service
-      // start` returns; poll status briefly so the first refresh doesn't render
-      // a transient "gateway is not running" state.
-      var running = false;
-      for (var attempt = 0; attempt < 10; attempt++) {
-        if (await _gatewayRunning()) {
-          running = true;
-          break;
-        }
-        await Future<void>.delayed(const Duration(milliseconds: 300));
-      }
-      // A stale process can linger (alive PID but not serving), which makes
-      // `service start` believe it is already running and do nothing. Force a
-      // restart so the half-dead instance is replaced instead of deadlocking.
-      if (!running) {
-        await runAction('重启网关', ['service', 'restart']);
-        for (var attempt = 0; attempt < 10; attempt++) {
-          if (await _gatewayRunning()) break;
-          await Future<void>.delayed(const Duration(milliseconds: 300));
-        }
-      }
+      await runAction('启动网关', ['service', 'start', '--managed', '--json']);
     }
     await refresh(force: true);
   }
@@ -280,7 +283,7 @@ class MixinController {
     } else if (UiLog.instance.directoryPath.isNotEmpty) {
       dirPath = UiLog.instance.directoryPath;
     } else {
-      dirPath = cli.stateDirectory;
+      dirPath = UiLog.instance.directoryPath;
     }
     final dir = Directory(dirPath);
     if (dir.existsSync()) {
@@ -293,8 +296,16 @@ class MixinController {
   }
 
   Future<void> openConfigFolder() async {
-    final dir = Directory(cli.stateDirectory);
-    await dir.create(recursive: true);
+    final path = stateDirectory;
+    if (path == null || path.isEmpty) {
+      status = '无法读取配置目录路径';
+      return;
+    }
+    final dir = Directory(path);
+    if (!await dir.exists()) {
+      status = '配置目录还不存在';
+      return;
+    }
     UiLog.instance.info('open config folder: ${dir.path}');
     await Process.start('explorer.exe', [dir.path]);
   }
@@ -326,7 +337,12 @@ class MixinController {
       path,
     ]);
     if (!imported.ok) return imported;
-    final restarted = await runAction('应用导入配置', ['service', 'restart']);
+    final restarted = await runAction('应用导入配置', [
+      'service',
+      'restart',
+      '--managed',
+      '--json',
+    ]);
     await refresh(force: true);
     return restarted.ok ? imported : restarted;
   }
@@ -340,14 +356,24 @@ class MixinController {
     if (result.ok) return result;
     // Token likely missing: restart the gateway so a fresh startup warmup mints
     // it, give the warmup a moment to persist, then retry once.
-    await runAction('重启网关', ['service', 'restart']);
+    await runAction('重启网关', [
+      'service',
+      'restart',
+      '--managed',
+      '--json',
+    ]);
     await Future<void>.delayed(const Duration(seconds: 4));
     result = await runAction('手动触发上报', ['report-replay', '--all-sessions']);
     return result;
   }
 
   Future<void> restartGateway() async {
-    final result = await runAction('重启网关', ['service', 'restart']);
+    final result = await runAction('重启网关', [
+      'service',
+      'restart',
+      '--managed',
+      '--json',
+    ]);
     await refresh(force: true);
     if (!result.ok) {
       status = '重启网关失败：${result.output}';
@@ -359,7 +385,7 @@ class MixinController {
   /// up on the next sign-in, not just when the toggle is flipped.
   Future<void> startGatewayIfStopped() async {
     if (await _gatewayRunning()) return;
-    await runAction('启动网关', ['service', 'start']);
+    await runAction('启动网关', ['service', 'start', '--managed', '--json']);
     await refresh(force: true);
   }
 }

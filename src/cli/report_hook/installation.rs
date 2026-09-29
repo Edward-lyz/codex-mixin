@@ -104,17 +104,7 @@ pub fn sync_installation_at(hooks_path: &Path, enabled: bool) -> anyhow::Result<
     }
 
     if enabled {
-        let executable = if cfg!(target_os = "macos") {
-            let default_app =
-                PathBuf::from("/Applications/Codex Mixin.app/Contents/Resources/codex-mixin");
-            if default_app.is_file() {
-                default_app
-            } else {
-                std::env::current_exe().context("resolve codex-mixin executable")?
-            }
-        } else {
-            std::env::current_exe().context("resolve codex-mixin executable")?
-        };
+        let executable = codex_mixin::platform::installation::installed_cli_executable()?;
         let executable = shell_quote(&executable.to_string_lossy());
         for (event_name, event_argument) in REPORT_EVENTS {
             let group = serde_json::json!({
@@ -141,16 +131,7 @@ pub fn sync_installation_at(hooks_path: &Path, enabled: bool) -> anyhow::Result<
     Ok(())
 }
 
-fn shell_quote(value: &str) -> String {
-    if cfg!(windows) {
-        // Codex on Windows resolves hook commands through the Windows shell,
-        // which does not treat single quotes as a path delimiter. Use double
-        // quotes and escape embedded quotes so paths with spaces still run.
-        format!("\"{}\"", value.replace('"', "\\\""))
-    } else {
-        format!("'{}'", value.replace('\'', "'\\''"))
-    }
-}
+use codex_mixin::platform::installation::shell_quote;
 
 #[cfg(test)]
 mod tests {

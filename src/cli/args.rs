@@ -19,12 +19,20 @@ pub(super) struct Cli {
     /// Keep the plain CLI interface instead of opening the full-screen UI.
     #[arg(long, global = true)]
     pub(super) no_tui: bool,
+    /// Emit command failures as a JSON object on the final stderr line.
+    #[arg(long, global = true)]
+    pub(super) json_errors: bool,
     #[command(subcommand)]
     pub(super) command: Option<Command>,
 }
 
 #[derive(Debug, Subcommand)]
 pub(super) enum Command {
+    /// Describe the machine interface, supported capabilities, and resolved paths.
+    Interface {
+        #[arg(long)]
+        json: bool,
+    },
     /// Internal: report a Codex hook event to Baidu.
     #[command(hide = true)]
     ReportHook {
@@ -276,19 +284,33 @@ pub(super) enum Command {
 
 #[derive(Debug, Subcommand)]
 pub(super) enum ServiceCommand {
+    /// Ensure the gateway is ready, migrating an existing managed service when needed.
+    Ensure {
+        #[arg(long)]
+        json: bool,
+    },
     /// Start the gateway in the background by default.
     Start {
         #[arg(long)]
         bind: Option<SocketAddr>,
-        #[arg(long)]
+        #[arg(long, conflicts_with_all = ["managed", "json"])]
         foreground: bool,
         #[arg(long)]
         log_file: Option<PathBuf>,
+        /// Use the installed service manager, or the daemon when none is installed.
+        #[arg(long, conflicts_with_all = ["bind", "log_file"])]
+        managed: bool,
+        #[arg(long)]
+        json: bool,
     },
     /// Stop the background gateway.
     Stop {
-        #[arg(long)]
+        #[arg(long, conflicts_with = "managed")]
         force: bool,
+        #[arg(long)]
+        managed: bool,
+        #[arg(long)]
+        json: bool,
     },
     /// Restart the background gateway.
     Restart {
@@ -296,6 +318,15 @@ pub(super) enum ServiceCommand {
         bind: Option<SocketAddr>,
         #[arg(long)]
         log_file: Option<PathBuf>,
+        #[arg(long, conflicts_with_all = ["bind", "log_file"])]
+        managed: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Enable, disable, or inspect gateway startup at login.
+    Autostart {
+        #[command(subcommand)]
+        command: AutostartCommand,
     },
     /// Print or follow gateway logs.
     Logs {
@@ -312,7 +343,25 @@ pub(super) enum ServiceCommand {
 }
 
 #[derive(Debug, Subcommand)]
+pub(super) enum AutostartCommand {
+    Enable {
+        #[arg(long)]
+        json: bool,
+    },
+    Disable {
+        #[arg(long)]
+        json: bool,
+    },
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
 pub(super) enum ConfigCommand {
+    /// Apply saved configuration to the gateway and all connected client catalogs.
+    Apply,
     /// Export a portable Base64 backup containing provider credentials.
     Export { path: PathBuf },
     /// Replace the current configuration from a Base64 backup.
@@ -367,6 +416,11 @@ pub(super) enum ConnectCommand {
 
 #[derive(Debug, Subcommand)]
 pub(super) enum FusionCommand {
+    /// List available model references for a Fusion profile.
+    Models {
+        #[arg(long)]
+        json: bool,
+    },
     Get {
         #[arg(long)]
         id: Option<String>,

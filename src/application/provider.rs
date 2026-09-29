@@ -10,6 +10,11 @@ use crate::web_search::WebSearchCapabilities;
 
 use super::error::OperationError;
 
+pub mod build;
+pub mod discovery;
+pub mod models;
+pub mod skill;
+
 pub fn commit_provider_change<T>(
     mutation: impl FnOnce(&mut StoredGatewayConfig) -> anyhow::Result<T>,
 ) -> Result<T, OperationError> {

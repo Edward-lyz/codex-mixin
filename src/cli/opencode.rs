@@ -320,16 +320,7 @@ fn sync_opencode_reporting_plugin(config_path: &Path, enabled: bool) -> anyhow::
             "OpenCode reporting plugin path is not managed by Codex Mixin"
         );
     }
-    let executable = if cfg!(target_os = "macos") {
-        let app = PathBuf::from("/Applications/Codex Mixin.app/Contents/Resources/codex-mixin");
-        if app.is_file() {
-            app
-        } else {
-            std::env::current_exe().context("resolve codex-mixin executable")?
-        }
-    } else {
-        std::env::current_exe().context("resolve codex-mixin executable")?
-    };
+    let executable = codex_mixin::platform::installation::installed_cli_executable()?;
     let executable_json = serde_json::to_string(&executable.to_string_lossy())?;
     let plugin = OPENCODE_REPORT_PLUGIN.replace("__MIXIN_EXECUTABLE__", &executable_json);
     write_atomic_if_changed(&plugin_path, plugin.as_bytes())?;

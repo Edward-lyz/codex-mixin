@@ -12,6 +12,8 @@ use codex_mixin::provider::{
 };
 use serde_json::json;
 
+pub(super) use codex_mixin::application::provider::models::apply_model_selection;
+
 use super::{
     TestProviderOptions, apply_baidu_auth_options, discovery::apply_inferred_custom_endpoint,
     discovery::detect_custom_provider_protocol, discovery::discover_custom_quota,
@@ -57,92 +59,38 @@ pub(crate) async fn discover_models_with_output(
         }
         return Ok(changes);
     }
-    let provider = codex_mixin::application::provider::provider_for_refresh(id)?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?;
     super::super::progress_step(&format!("Refreshing model list for provider {id}"));
-    let quota_client = client.clone();
-    let quota_provider = provider.clone();
-    let quota_probe = async move {
-        if quota_provider.preset_id.as_deref() == Some("custom")
-            && quota_provider.quota_url.is_none()
-        {
-            discover_custom_quota(&quota_client, &quota_provider).await
-        } else {
-            Ok(None)
-        }
-    };
-    let (models, discovered_quota) =
-        tokio::join!(discover_provider_models(&client, &provider), quota_probe);
-    let discovered_quota = match discovered_quota {
-        Ok(discovered) => discovered,
-        Err(error) => {
-            tracing::warn!(
-                provider_id = provider.id,
-                error = %redact_provider_error(&provider, &format!("{error:#}")),
-                "custom quota discovery failed"
-            );
-            None
-        }
-    };
-    let quota_update = discovered_quota.as_ref().map(|quota| {
-        codex_mixin::application::provider::DiscoveredQuota {
-            url: quota.url.to_string(),
-            parser: quota.parser,
-            currency: quota.currency.clone(),
-        }
-    });
-    let models = match models {
-        Ok(models) => models,
-        Err(error) => {
-            let stored_error = redact_provider_error(&provider, &format!("{error:#}"));
-            super::super::progress_step(&format!(
-                "Model refresh failed for {id}: {}",
-                stored_error
-                    .lines()
-                    .next()
-                    .unwrap_or("model discovery failed")
-            ));
-            codex_mixin::application::provider::record_refresh_failure(
-                id,
-                &provider,
-                stored_error,
-                quota_update.as_ref(),
-            )?;
-            return Err(error);
-        }
-    };
+    let refreshed =
+        match codex_mixin::application::provider::discovery::refresh_provider_models(id).await {
+            Ok(refreshed) => refreshed,
+            Err(error) => {
+                if let Ok(provider) = codex_mixin::application::provider::provider_for_refresh(id) {
+                    let safe_error = redact_provider_error(&provider, &format!("{error:#}"));
+                    super::super::progress_step(&format!(
+                        "Model refresh failed for {id}: {}",
+                        safe_error
+                            .lines()
+                            .next()
+                            .unwrap_or("model discovery failed")
+                    ));
+                }
+                return Err(error);
+            }
+        };
     super::super::progress_step(&format!(
-        "Discovered {} models for provider {id}",
-        models.len()
-    ));
-    let runtime_config = GatewayConfig::from_stored_config()?;
-    let capabilities = ProviderCapabilities::from_default_path(&runtime_config)?;
-    let mut annotated_provider = provider.clone();
-    annotated_provider.cached_models = models;
-    capabilities.annotate_provider(&mut annotated_provider);
-    let models = annotated_provider.cached_models;
-    let count = models.len();
-    let changes = codex_mixin::application::provider::commit_discovered_models(
-        id,
-        &provider,
-        models,
-        quota_update.as_ref(),
-    )?;
-    super::super::progress_step(&format!(
-        "Model refresh complete for {id}: {count} available"
+        "Model refresh complete for {id}: {} available",
+        refreshed.model_count
     ));
     if !quiet {
-        println!("provider models refreshed: {id} ({count} available)");
-        if let Some(discovered_quota) = discovered_quota {
-            println!(
-                "provider quota endpoint detected: {id} ({})",
-                discovered_quota.url
-            );
+        println!(
+            "provider models refreshed: {id} ({} available)",
+            refreshed.model_count
+        );
+        if let Some(url) = refreshed.quota_url {
+            println!("provider quota endpoint detected: {id} ({url})");
         }
     }
-    Ok(changes)
+    Ok(refreshed.changes)
 }
 
 pub(in crate::cli) fn apply_official_model_refresh(
@@ -240,81 +188,14 @@ async fn probe_models(
     fallback_only: bool,
     refresh_clients: bool,
 ) -> anyhow::Result<()> {
-    let config = required_config()?;
-    let provider = config
-        .providers
-        .iter()
-        .find(|provider| provider.id == id)
-        .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?
-        .clone();
-    let mut selected_models = provider
-        .cached_models
-        .iter()
-        .filter(|model| {
-            model_ids.map_or_else(
-                || {
-                    provider
-                        .selected_models
-                        .iter()
-                        .any(|selected| selected == &model.id)
-                },
-                |requested| requested.iter().any(|requested| requested == &model.id),
-            )
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    anyhow::ensure!(
-        !selected_models.is_empty(),
-        "provider {id} has no requested cached models to probe"
-    );
-    if fallback_only {
-        let runtime_config = GatewayConfig::from_stored_config()?;
-        let capabilities = ProviderCapabilities::from_default_path(&runtime_config)?;
-        let model_ids = capabilities
-            .models_needing_probe(&provider, &selected_models)?
-            .into_iter()
-            .collect::<HashSet<_>>();
-        selected_models.retain(|model| model_ids.contains(&model.id));
-        if selected_models.is_empty() {
-            return Ok(());
-        }
-    }
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?;
-    super::super::progress_step(&format!(
-        "Probing {} selected models for provider {id}",
-        selected_models.len()
-    ));
-    let provider_id = provider.id.clone();
-    let summary = ProviderCapabilities::probe_provider_with_progress(
-        client,
-        &provider,
-        &selected_models,
-        Some(std::sync::Arc::new(move |done, total, supported, indeterminate| {
-            super::super::progress_step(&format!(
-                "Probing capabilities for {provider_id}: {done}/{total} complete ({supported} routed, {indeterminate} indeterminate)"
-            ));
-        })),
+    let summary = codex_mixin::application::provider::models::probe_provider_models(
+        id,
+        model_ids,
+        fallback_only,
+        refresh_clients,
     )
     .await?;
-    let runtime_config = GatewayConfig::from_stored_config()?;
-    let mut capabilities = ProviderCapabilities::from_default_path(&runtime_config)?;
-    if refresh_clients {
-        capabilities.replace_provider_results(&provider, &runtime_config, &summary.results)?;
-    } else {
-        capabilities.merge_provider_results(&provider, &runtime_config, &summary.results)?;
-    }
-    mutate_and_invalidate(|config| {
-        let current = find_provider_mut(config, id)?;
-        anyhow::ensure!(
-            discovery_settings_match(current, &provider),
-            "provider {id} settings changed during capability probing; retry"
-        );
-        capabilities.annotate_provider(current);
-        current.validate()
-    })?;
-    if refresh_clients {
+    if refresh_clients && summary.attempted > 0 {
         super::super::progress_step("Refreshing Codex model catalog after capability probing");
         refresh_default_managed_codex_catalog().await?;
         let refreshed_clients = crate::cli::sync_installed_client_models()?;
@@ -338,103 +219,38 @@ async fn probe_models(
 }
 
 pub(crate) async fn test_provider(options: TestProviderOptions) -> anyhow::Result<()> {
-    let id = options.id.as_str();
-    let config = required_config()?;
-    let stored_provider = config
-        .providers
-        .iter()
-        .find(|provider| provider.id == id)
-        .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?;
-    let mut provider = stored_provider.clone();
-    if let Some(key) = options.key {
-        provider.auth.api_key = trim_required("key", key)?;
-        provider.auth.aws_sigv4 = None;
-    }
-    let has_aws_override = options.aws_access_key_id.is_some()
-        || options.aws_secret_access_key.is_some()
-        || options.aws_session_token.is_some()
-        || options.aws_region.is_some();
-    if has_aws_override {
-        anyhow::ensure!(
-            provider.preset_id.as_deref() == Some("aws-bedrock"),
-            "AWS credential options require an aws-bedrock provider"
-        );
-        let mut aws = provider
-            .auth
-            .aws_sigv4
-            .take()
-            .unwrap_or(AwsSigV4AuthConfig {
-                access_key_id: String::new(),
-                secret_access_key: String::new(),
-                session_token: None,
-                region: AWS_BEDROCK_DEFAULT_REGION.to_owned(),
-                service: AWS_BEDROCK_RUNTIME_SERVICE.to_owned(),
-            });
-        if let Some(value) = options.aws_access_key_id {
-            aws.access_key_id = trim_required("AWS access key ID", value)?;
-        }
-        if let Some(value) = options.aws_secret_access_key {
-            aws.secret_access_key = trim_required("AWS secret access key", value)?;
-        }
-        if let Some(value) = options.aws_session_token {
-            aws.session_token = Some(trim_required("AWS session token", value)?);
-        }
-        if let Some(value) = options.aws_region {
-            aws.region = trim_required("AWS region", value)?;
-            if options.base_url.is_none() {
-                provider.base_url = aws_bedrock_runtime_base_url(&aws.region);
-            }
-        }
-        provider.auth.api_key.clear();
-        provider.auth.aws_sigv4 = Some(aws);
-    }
-    if let Some(base_url) = options.base_url {
-        provider.base_url = normalize_base_url(base_url)?;
-    }
-    apply_baidu_auth_options(
-        &mut provider,
-        options.baidu_auth_bridge.as_deref(),
-        options.ducx_executable,
-    )?;
-    if provider.preset_id.as_deref() == Some("custom")
-        && !matches!(&provider.model_source, ProviderModelSource::Static)
-    {
-        let endpoint = detect_custom_provider_protocol(&provider)
-            .await?
-            .ok_or_else(|| {
-                anyhow::anyhow!("custom provider endpoint detection returned no result")
-            })?;
-        apply_inferred_custom_endpoint(&mut provider, endpoint);
-    }
-    provider.validate()?;
-    let (mode, model_count) = match &provider.model_source {
-        ProviderModelSource::Static => ("configuration", provider.cached_models.len()),
-        _ => {
-            let client = reqwest::Client::builder()
-                .timeout(Duration::from_secs(10))
-                .build()?;
-            let models = discover_provider_models(&client, &provider)
-                .await
-                .with_context(|| {
-                    format!(
-                        "provider test failed for {id}; check the API key, base URL, and network"
-                    )
-                })?;
-            ("models_endpoint", models.len())
-        }
-    };
+    let id = options.id.clone();
+    let result = codex_mixin::application::provider::models::test_provider(
+        codex_mixin::application::provider::models::TestProviderInput {
+            id: options.id,
+            key: options.key,
+            aws_access_key_id: options.aws_access_key_id,
+            aws_secret_access_key: options.aws_secret_access_key,
+            aws_session_token: options.aws_session_token,
+            aws_region: options.aws_region,
+            base_url: options.base_url,
+            baidu_auth_bridge: options.baidu_auth_bridge,
+            ducx_executable: options.ducx_executable,
+        },
+    )
+    .await?;
+    let mode = result.mode;
+    let model_count = result.model_count;
     if options.json {
         println!(
             "{}",
             serde_json::to_string_pretty(&json!({
-                "provider_id": provider.id,
+                "provider_id": id,
                 "ok": true,
-                "mode": mode,
+                "mode": match mode {
+                    codex_mixin::application::provider::models::ProviderTestMode::Configuration => "configuration",
+                    codex_mixin::application::provider::models::ProviderTestMode::ModelsEndpoint => "models_endpoint",
+                },
                 "model_count": model_count,
                 "paid_inference_performed": false,
             }))?
         );
-    } else if mode == "configuration" {
+    } else if mode == codex_mixin::application::provider::models::ProviderTestMode::Configuration {
         println!(
             "provider test ok: {id} (static model source; configuration only, no paid inference)"
         );
@@ -502,16 +318,12 @@ pub(crate) async fn select_models(
     }
     let context_only =
         models.is_empty() && (!model_contexts.is_empty() || !clear_model_contexts.is_empty());
-    let models_to_probe = mutate_and_invalidate(|config| {
-        ensure_has_providers(config)?;
-        let provider = find_provider_mut(config, id)?;
-        let selection = if context_only {
-            provider.selected_models.clone()
-        } else {
-            models
-        };
-        apply_model_selection(provider, selection, &model_contexts, &clear_model_contexts)
-    })?;
+    let models_to_probe = codex_mixin::application::provider::models::select_provider_models(
+        id,
+        models,
+        model_contexts,
+        clear_model_contexts,
+    )?;
     if !models_to_probe.is_empty() {
         probe_new_models(id, &models_to_probe, true).await?;
     }
@@ -521,87 +333,6 @@ pub(crate) async fn select_models(
         println!("provider models selected: {id} ({selected_count})");
     }
     Ok(())
-}
-
-pub(super) fn apply_model_selection(
-    provider: &mut codex_mixin::provider::ProviderDefinition,
-    models: Vec<String>,
-    model_contexts: &BTreeMap<String, u64>,
-    clear_model_contexts: &[String],
-) -> anyhow::Result<Vec<String>> {
-    let previous_selection = provider
-        .selected_models
-        .iter()
-        .map(String::as_str)
-        .collect::<std::collections::HashSet<_>>();
-    let mut known = provider
-        .cached_models
-        .iter()
-        .map(|model| model.id.clone())
-        .collect::<std::collections::HashSet<_>>();
-    let models_to_probe = models
-        .iter()
-        .filter(|model| {
-            !previous_selection.contains(model.as_str()) || !known.contains(model.as_str())
-        })
-        .cloned()
-        .collect::<Vec<_>>();
-    for model in &models {
-        if known.insert(model.clone()) {
-            provider
-                .cached_models
-                .push(codex_mixin::provider::ProviderModel {
-                    id: model.clone(),
-                    manually_added: true,
-                    context_window: Some(MANUAL_MODEL_CONTEXT_WINDOW),
-                    ..codex_mixin::provider::ProviderModel::default()
-                });
-        }
-    }
-    for model_id in clear_model_contexts {
-        provider.model_context_overrides.remove(model_id);
-        if let Some(model) = provider
-            .cached_models
-            .iter_mut()
-            .find(|model| model.id == *model_id)
-        {
-            model.context_window = model.source_context_window;
-        }
-    }
-    for (model_id, context_window) in model_contexts {
-        let model = provider
-            .cached_models
-            .iter_mut()
-            .find(|model| model.id == *model_id)
-            .ok_or_else(|| anyhow::anyhow!("unknown model context override: {model_id}"))?;
-        if model.source_context_window.is_none() {
-            model.source_context_window = model.context_window;
-        }
-        model.context_window = Some(*context_window);
-        provider
-            .model_context_overrides
-            .insert(model_id.clone(), *context_window);
-    }
-    let selected = models
-        .iter()
-        .map(String::as_str)
-        .collect::<std::collections::HashSet<_>>();
-    provider
-        .cached_models
-        .retain(|model| !model.manually_added || selected.contains(model.id.as_str()));
-    let available_models = provider
-        .cached_models
-        .iter()
-        .map(|model| model.id.as_str())
-        .collect::<std::collections::HashSet<_>>();
-    provider
-        .model_context_overrides
-        .retain(|model, _| available_models.contains(model.as_str()));
-    provider.selected_models = models;
-    provider.new_models.clear();
-    provider.prune_stale_auto_review_model();
-    provider.validate()?;
-    Ok(models_to_probe)
 }
 
 fn parse_model_contexts(values: Vec<String>) -> anyhow::Result<BTreeMap<String, u64>> {

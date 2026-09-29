@@ -15,6 +15,7 @@ mod atomic_file;
 mod benchmark_proxy;
 mod claude;
 mod codex;
+mod config_apply;
 mod config_input;
 mod doctor;
 mod dsh;
@@ -25,6 +26,7 @@ mod ducx_setup;
 #[path = "ducx_setup_windows.rs"]
 mod ducx_setup;
 mod fusion_config;
+mod interface;
 mod maintenance;
 mod metadata;
 mod official_models;
@@ -202,11 +204,23 @@ where
     Launch: FnOnce(InteractiveStart, Option<PathBuf>) -> LaunchFuture,
     LaunchFuture: std::future::Future<Output = anyhow::Result<()>>,
 {
+    let json_errors = std::env::args_os().any(|arg| arg == "--json-errors");
     let args = secret_expanded_args().unwrap_or_else(|error| {
-        eprintln!("Error: {error:#}");
+        if json_errors {
+            eprintln!("{}", interface::argument_error(&format!("{error:#}")));
+        } else {
+            eprintln!("Error: {error:#}");
+        }
         std::process::exit(2);
     });
-    let cli = Cli::parse_from(args);
+    let cli = Cli::try_parse_from(args).unwrap_or_else(|error| {
+        if json_errors && error.use_stderr() {
+            eprintln!("{}", interface::argument_error(&error.to_string()));
+            std::process::exit(error.exit_code());
+        }
+        error.exit();
+    });
+    let json_errors = cli.json_errors;
     let print_errors_to_stderr = matches!(&cli.command, Some(Command::ReportReplay { .. }));
     let interactive_start = requested_interactive_start(
         &cli,
@@ -246,8 +260,12 @@ where
             )
         );
     if let Err(error) = init_tracing(foreground_log_file.as_deref(), quiet_parent_logs) {
-        eprintln!("Error: failed to initialize logging: {error:#}");
-        std::process::exit(1);
+        exit_with_command_error(
+            error.context("failed to initialize logging"),
+            false,
+            true,
+            json_errors,
+        );
     }
     if foreground_log_file.is_some() {
         tracing::info!(
@@ -266,7 +284,12 @@ where
         Box::pin(run(cli)).await
     };
     if let Err(error) = result {
-        exit_with_command_error(error, foreground_log_file.is_some(), print_errors_to_stderr);
+        exit_with_command_error(
+            error,
+            foreground_log_file.is_some(),
+            print_errors_to_stderr,
+            json_errors,
+        );
     }
 }
 
@@ -293,11 +316,14 @@ fn exit_with_command_error(
     error: anyhow::Error,
     has_foreground_log: bool,
     print_to_stderr: bool,
+    json_errors: bool,
 ) -> ! {
     if has_foreground_log {
         tracing::error!(error = %format!("{error:#}"), "command failed");
     }
-    if !has_foreground_log || print_to_stderr {
+    if json_errors {
+        eprintln!("{}", interface::command_error(&error));
+    } else if !has_foreground_log || print_to_stderr {
         eprintln!("Error: {error:#}");
     }
     std::process::exit(1);
@@ -306,6 +332,7 @@ fn exit_with_command_error(
 #[allow(clippy::cognitive_complexity)]
 async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command.unwrap_or(Command::Info { json: false }) {
+        Command::Interface { json } => interface::describe(json),
         Command::ReportHook { event } => report_hook::run(&event).await,
         Command::ReportReplay {
             all_sessions,
@@ -525,13 +552,72 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             } => select_models(&id, models, model_contexts, clear_model_contexts).await,
         },
         Command::Service { command } => match command {
+            ServiceCommand::Ensure { json } => {
+                service::ensure_ready().await?;
+                status(json).await
+            }
             ServiceCommand::Start {
                 bind,
                 foreground,
                 log_file,
-            } => start(bind, !foreground, log_file).await,
-            ServiceCommand::Stop { force } => stop(force),
-            ServiceCommand::Restart { bind, log_file } => restart(bind, log_file, false).await,
+                managed,
+                json,
+            } => {
+                if managed || (!foreground && bind.is_none() && log_file.is_none()) {
+                    service::start_managed().await?;
+                } else {
+                    start(bind, !foreground, log_file).await?;
+                }
+                if json { status(true).await } else { Ok(()) }
+            }
+            ServiceCommand::Stop {
+                force,
+                managed,
+                json,
+            } => {
+                if managed || !force {
+                    service::stop_managed().await?;
+                } else {
+                    stop(force)?;
+                }
+                if json { status(true).await } else { Ok(()) }
+            }
+            ServiceCommand::Restart {
+                bind,
+                log_file,
+                managed,
+                json,
+            } => {
+                if managed || (bind.is_none() && log_file.is_none()) {
+                    service::restart_managed().await?;
+                } else {
+                    restart(bind, log_file, json).await?;
+                }
+                if json { status(true).await } else { Ok(()) }
+            }
+            ServiceCommand::Autostart { command } => {
+                let json = match command {
+                    AutostartCommand::Enable { json } => {
+                        service::set_autostart(true).await?;
+                        json
+                    }
+                    AutostartCommand::Disable { json } => {
+                        service::set_autostart(false).await?;
+                        json
+                    }
+                    AutostartCommand::Status { json } => json,
+                };
+                let enabled = codex_mixin::platform::startup_service_is_installed();
+                if json {
+                    println!("{}", serde_json::json!({"enabled": enabled}));
+                } else {
+                    println!(
+                        "gateway autostart: {}",
+                        if enabled { "enabled" } else { "disabled" }
+                    );
+                }
+                Ok(())
+            }
             ServiceCommand::Logs { lines, follow } => logs(lines, follow),
             ServiceCommand::Status { json } => status(json).await,
         },
@@ -614,6 +700,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         },
         Command::Info { json } => status(json).await,
         Command::Fusion { command } => match command {
+            FusionCommand::Models { json } => fusion_config::model_options(json),
             FusionCommand::Get { id, json } => get_fusion_profile(id.as_deref(), json),
             FusionCommand::Set {
                 profile_json,
@@ -646,6 +733,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             scope,
             export,
         } => match (command, export) {
+            (Some(ConfigCommand::Apply), None) => config_apply::run().await,
             (Some(ConfigCommand::Export { path }), None) => export_config(&path),
             (Some(ConfigCommand::Import { path }), None) => import_config(&path),
             (None, Some(path)) => export_config(&path),

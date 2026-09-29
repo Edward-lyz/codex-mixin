@@ -1,7 +1,5 @@
 use std::io::{self, IsTerminal, Write};
 use std::path::{Path, PathBuf};
-#[cfg(unix)]
-use std::process::Command as ProcessCommand;
 
 use anyhow::Context;
 use codex_mixin::config::load_stored_config;
@@ -17,70 +15,14 @@ use super::providers::{
 use super::service::restart;
 use super::{CliProviderPreset, SetupCodexMode, next_step_line, progress_is_interactive, stage};
 
-fn install_cli_executable(source: &Path, target: &Path) -> anyhow::Result<bool> {
-    if source == target
-        || (target.exists() && std::fs::canonicalize(source)? == std::fs::canonicalize(target)?)
-    {
-        return Ok(false);
-    }
-    let parent = target
-        .parent()
-        .context("CLI installation target has no parent directory")?;
-    std::fs::create_dir_all(parent)?;
-    let file_name = target
-        .file_name()
-        .and_then(|name| name.to_str())
-        .context("CLI installation target has no valid file name")?;
-    let temporary = target.with_file_name(format!("{file_name}.tmp.{}", std::process::id()));
-    std::fs::copy(source, &temporary)?;
-    std::fs::set_permissions(&temporary, std::fs::metadata(source)?.permissions())?;
-    if let Err(error) = std::fs::rename(&temporary, target) {
-        let _ = std::fs::remove_file(&temporary);
-        return Err(error.into());
-    }
-    Ok(true)
-}
-
-pub(super) fn install_cli_command() -> anyhow::Result<Option<PathBuf>> {
-    let home = codex_mixin::platform::home_dir_required()?;
-    let bin = if cfg!(windows) {
-        home.join(".codex-mixin/bin")
-    } else {
-        home.join(".local/bin")
-    };
-    let target = bin.join(if cfg!(windows) {
-        "codex-mixin.exe"
-    } else {
-        "codex-mixin"
-    });
-    let source = std::env::current_exe()?;
-    install_cli_executable(&source, &target).map(|installed| installed.then_some(target))
-}
+pub(super) use codex_mixin::platform::installation::install_cli_command;
+#[cfg(test)]
+use codex_mixin::platform::installation::install_cli_executable;
 
 fn read_secret(prompt: &str) -> anyhow::Result<String> {
     print!("{prompt}");
     io::stdout().flush()?;
-    #[cfg(windows)]
     let value = read_secret_line_no_echo()?;
-    #[cfg(unix)]
-    let value = {
-        if !ProcessCommand::new("stty").arg("-echo").status()?.success() {
-            anyhow::bail!("failed to disable terminal echo for secret input")
-        }
-        let mut value = String::new();
-        let read_result = io::stdin().read_line(&mut value);
-        if !ProcessCommand::new("stty").arg("echo").status()?.success() {
-            anyhow::bail!("failed to restore terminal echo after secret input")
-        }
-        read_result?;
-        value
-    };
-    #[cfg(not(any(windows, unix)))]
-    let value = {
-        let mut value = String::new();
-        io::stdin().read_line(&mut value)?;
-        value
-    };
     println!();
     let value = value.trim().to_owned();
     if value.is_empty() {
@@ -89,7 +31,6 @@ fn read_secret(prompt: &str) -> anyhow::Result<String> {
     Ok(value)
 }
 
-#[cfg(windows)]
 fn read_secret_line_no_echo() -> anyhow::Result<String> {
     use crossterm::event::{self, Event, KeyCode, KeyEventKind, KeyModifiers};
     use crossterm::terminal;

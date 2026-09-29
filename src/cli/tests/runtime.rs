@@ -111,7 +111,7 @@ fn release_version_parser_and_cli_target_are_available() {
     );
 
     if cfg!(target_os = "windows") {
-        assert!(cli_release_target().is_err());
+        assert_eq!(cli_release_target().unwrap(), "x86_64-pc-windows-msvc");
     } else {
         let target = cli_release_target().unwrap();
         assert!(!target.is_empty());

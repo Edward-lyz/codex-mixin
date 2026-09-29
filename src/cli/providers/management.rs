@@ -1,220 +1,42 @@
 use codex_mixin::application::provider::after_provider_commit;
-use codex_mixin::provider::{
-    AWS_BEDROCK_DEFAULT_REGION, AwsSigV4AuthConfig, ProviderModel, ProviderModelSource,
-    ProviderPreset, ProviderQuotaParser, aws_bedrock_aksk_provider, aws_bedrock_runtime_base_url,
-};
+use codex_mixin::provider::ProviderModelSource;
 
 use codex_mixin::application::error::OperationError;
 
 use super::{
-    AddProviderOptions, UpdateProviderOptions, apply_baidu_auth_options, data_report_sibling,
-    discover_models_with_output,
-    discovery::{
-        apply_inferred_custom_endpoint, detect_custom_provider_protocol,
-        infer_custom_provider_endpoint,
-    },
-    normalize_base_url, normalize_currency, normalize_model_ids, normalize_path, parse_header_env,
-    parse_protocol, parse_quota_parser, required_config, sync_imagegen_skill, trim_required,
+    AddProviderOptions, UpdateProviderOptions, discover_models_with_output,
+    discovery::{apply_inferred_custom_endpoint, detect_custom_provider_protocol},
+    sync_imagegen_skill,
 };
 
-#[allow(clippy::cognitive_complexity)]
 pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
-    let preset = ProviderPreset::parse(options.preset.trim())?;
-    let id = options.id.unwrap_or_else(|| preset.default_id().to_owned());
-    let mut provider = if preset == ProviderPreset::AwsBedrock && options.key.is_none() {
-        let access_key_id = trim_required(
-            "AWS access key ID",
-            options
-                .aws_access_key_id
-                .ok_or_else(|| anyhow::anyhow!("aws-bedrock requires --aws-access-key-id"))?,
-        )?;
-        let secret_access_key = trim_required(
-            "AWS secret access key",
-            options
-                .aws_secret_access_key
-                .ok_or_else(|| anyhow::anyhow!("aws-bedrock requires --aws-secret-access-key"))?,
-        )?;
-        let session_token = options
-            .aws_session_token
-            .map(|value| trim_required("AWS session token", value))
-            .transpose()?;
-        let region = trim_required(
-            "AWS region",
-            options
-                .aws_region
-                .unwrap_or_else(|| AWS_BEDROCK_DEFAULT_REGION.to_owned()),
-        )?;
-        aws_bedrock_aksk_provider(
-            id.clone(),
-            access_key_id,
-            secret_access_key,
-            session_token,
-            region,
-        )
-    } else {
-        anyhow::ensure!(
-            options.aws_access_key_id.is_none()
-                && options.aws_secret_access_key.is_none()
-                && options.aws_session_token.is_none()
-                && options.aws_region.is_none(),
-            "AWS credential options require the aws-bedrock preset without --key"
-        );
-        preset.create(
-            id.clone(),
-            trim_required(
-                "key",
-                options
-                    .key
-                    .ok_or_else(|| anyhow::anyhow!("provider requires --key"))?,
-            )?,
-        )
-    };
-    if let Some(display_name) = options.display_name {
-        provider.display_name = trim_required("display name", display_name)?;
-    }
-    let user_set_protocol = options.protocol.is_some();
-    let user_set_api_path = options.api_path.is_some();
-    let user_set_models_path = options.models_path.is_some();
-    let has_static_models = !options.static_models.is_empty();
-    let inferred_endpoint = if preset == ProviderPreset::Custom {
-        options
-            .base_url
-            .as_deref()
-            .map(infer_custom_provider_endpoint)
-            .transpose()?
-    } else {
-        None
-    };
-    let path_explicit = inferred_endpoint
-        .as_ref()
-        .is_some_and(|endpoint| endpoint.path_explicit);
-    if let Some(endpoint) = inferred_endpoint {
-        apply_inferred_custom_endpoint(&mut provider, endpoint);
-    } else if let Some(base_url) = options.base_url {
-        provider.base_url = normalize_base_url(base_url)?;
-    }
-    if let Some(website_url) = options.website_url {
-        provider.website_url = Some(normalize_base_url(website_url)?);
-    }
-    if preset == ProviderPreset::Custom && provider.base_url.is_empty() {
-        anyhow::bail!("custom provider requires --base-url");
-    }
-    if let Some(protocol) = options.protocol {
-        provider.protocol = parse_protocol(&protocol)?;
-    }
-    if let Some(api_path) = options.api_path {
-        provider.api_path = normalize_path("API path", api_path)?;
-    }
-    if let Some(models_path) = options.models_path {
-        provider.model_source = ProviderModelSource::OpenAiCompatible {
-            path: normalize_path("models path", models_path)?,
-        };
-    }
-    if !options.static_models.is_empty() {
-        let models = normalize_model_ids(options.static_models)?;
-        provider.model_source = ProviderModelSource::Static;
-        provider.cached_models = models
-            .iter()
-            .map(|id| ProviderModel {
-                id: id.clone(),
-                ..ProviderModel::default()
-            })
-            .collect();
-        provider.selected_models = models;
-    }
-    if let Some(path) = options.image_generation_path {
-        provider.image_generation_path = Some(normalize_path("image generation path", path)?);
-    }
-    if let Some(quota_url) = options.quota_url {
-        provider.quota_url = Some(normalize_base_url(quota_url)?);
-    }
-    let has_opencode_go_quota_fields =
-        options.quota_workspace_id.is_some() || options.quota_auth_cookie.is_some();
-    if let Some(username) = options.quota_username {
-        provider.quota_username = Some(trim_required("quota username", username)?);
-    }
-    if let Some(workspace_id) = options.quota_workspace_id {
-        provider.quota_workspace_id = Some(trim_required("quota workspace ID", workspace_id)?);
-    }
-    if let Some(auth_cookie) = options.quota_auth_cookie {
-        provider.quota_auth_cookie = Some(trim_required("quota auth cookie", auth_cookie)?);
-    }
-    if let Some(currency) = options.quota_currency {
-        provider.quota_currency = Some(normalize_currency(currency)?);
-    }
-    if let Some(parser) = options.quota_parser {
-        provider.quota_parser = parse_quota_parser(&parser)?;
-    }
-    if provider.preset_id.as_deref() == Some("opencode-go") && has_opencode_go_quota_fields {
-        provider.quota_parser = ProviderQuotaParser::OpenCodeGo;
-        provider.quota_currency = Some("USD".to_owned());
-    }
-    provider.request_policy.custom_headers_from_env = parse_header_env(&options.header_env)?;
-    apply_baidu_auth_options(
-        &mut provider,
-        options.baidu_auth_bridge.as_deref(),
-        options.ducx_executable,
-    )?;
-    if let Some(report) = options.baidu_code_report {
-        provider.request_policy.baidu_code_report = report;
-    }
-    if provider.request_policy.baidu_code_report
-        && provider.request_policy.data_report_executable.is_none()
-    {
-        provider.request_policy.data_report_executable = provider
-            .request_policy
-            .ducx_executable
-            .as_deref()
-            .and_then(data_report_sibling);
-    }
-    provider.auxiliary_model_upstream = options.auxiliary_model_upstream.unwrap_or(false);
+    let mut prepared = codex_mixin::application::provider::build::create_provider(options)?;
     let mut detected_protocol = None;
     let mut protocol_probe_error = None;
-    // Baidu uses its curated protocol. Custom sites get a live protocol probe so
-    // users do not have to know the path.
-    if preset == ProviderPreset::Custom
-        && !user_set_protocol
-        && !user_set_api_path
-        && !user_set_models_path
-        && !path_explicit
-        && !has_static_models
-    {
-        match detect_custom_provider_protocol(&provider).await {
+    if prepared.should_probe_protocol {
+        match detect_custom_provider_protocol(&prepared.provider).await {
             Ok(Some(endpoint)) => {
                 detected_protocol = Some(super::protocol_name(endpoint.protocol).to_owned());
-                apply_inferred_custom_endpoint(&mut provider, endpoint);
+                apply_inferred_custom_endpoint(&mut prepared.provider, endpoint);
             }
             Ok(None) => {}
             Err(error) => protocol_probe_error = Some(error),
         }
     }
-    provider.validate()?;
-    let configured_protocol = super::protocol_name(provider.protocol);
-    let gateway_api_key = options
-        .gateway_key
-        .map(|key| trim_required("gateway key", key))
-        .transpose()?;
-    codex_mixin::application::provider::add_provider(provider, gateway_api_key)?;
-    // The provider config is committed above; every later step must report
-    // itself as post-commit so the user knows the provider was saved.
-    if let Err(source) = sync_imagegen_skill() {
-        return Err(OperationError::AfterCommit {
-            stage: "imagegen skill sync",
-            source,
-        }
-        .into());
-    }
-    println!("provider added: {id}");
+    let configured_protocol = super::protocol_name(prepared.provider.protocol);
+    codex_mixin::application::provider::add_provider(prepared.provider, prepared.gateway_api_key)?;
+    after_provider_commit("imagegen skill sync", sync_imagegen_skill)?;
+    println!("provider added: {}", prepared.id);
     if let Some(protocol) = detected_protocol {
-        println!("provider protocol detected: {id} ({protocol})");
+        println!("provider protocol detected: {} ({protocol})", prepared.id);
     }
     if let Some(error) = protocol_probe_error {
         eprintln!(
-            "provider protocol detection failed for {id}; keeping {}: {error:#}",
-            configured_protocol
+            "provider protocol detection failed for {}; keeping {}: {error:#}",
+            prepared.id, configured_protocol
         );
     }
-    let changes = match discover_models_with_output(&id, false).await {
+    let changes = match discover_models_with_output(&prepared.id, false).await {
         Ok(changes) => changes,
         Err(source) => {
             return Err(OperationError::AfterCommit {
@@ -224,210 +46,42 @@ pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<
             .into());
         }
     };
-    if !changes.auto_selected.is_empty()
-        && let Err(source) =
-            super::models::probe_new_models(&id, &changes.auto_selected, true).await
-    {
-        return Err(OperationError::AfterCommit {
-            stage: "model capability probe",
-            source,
-        }
-        .into());
+    if !changes.auto_selected.is_empty() {
+        super::models::probe_new_models(&prepared.id, &changes.auto_selected, true)
+            .await
+            .map_err(|source| OperationError::AfterCommit {
+                stage: "model capability probe",
+                source,
+            })?;
     }
     Ok(())
 }
 
-#[allow(clippy::cognitive_complexity)]
 pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::Result<()> {
-    let id = options.id.clone();
-    let should_refresh_capabilities = options.key.is_some()
-        || options.base_url.is_some()
-        || options.protocol.is_some()
-        || options.api_path.is_some()
-        || options.models_path.is_some()
-        || !options.header_env.is_empty();
-    let header_env = parse_header_env(&options.header_env)?;
-    let user_set_protocol = options.protocol.is_some();
-    let user_set_api_path = options.api_path.is_some();
-    let user_set_models_path = options.models_path.is_some();
-    let base_url_updated = options.base_url.is_some();
-    let snapshot = codex_mixin::application::provider::provider_for_refresh(&id)?;
-    let mut provider = snapshot.clone();
-    let should_probe_protocol;
-    {
-        if options.clear_key {
-            provider.auth.api_key.clear();
-        } else if let Some(key) = &options.key {
-            provider.auth.api_key = trim_required("key", key.clone())?;
-            provider.auth.aws_sigv4 = None;
-        }
-        apply_aws_auth_options(&mut provider, &options)?;
-        if let Some(display_name) = options.display_name {
-            provider.display_name = trim_required("display name", display_name)?;
-        }
-        let inferred_endpoint = if provider.preset_id.as_deref() == Some("custom") {
-            options
-                .base_url
-                .as_deref()
-                .map(infer_custom_provider_endpoint)
-                .transpose()?
-        } else {
-            None
-        };
-        let path_explicit = inferred_endpoint
-            .as_ref()
-            .is_some_and(|endpoint| endpoint.path_explicit);
-        if let Some(endpoint) = inferred_endpoint {
-            apply_inferred_custom_endpoint(&mut provider, endpoint);
-        } else if let Some(base_url) = options.base_url {
-            provider.base_url = normalize_base_url(base_url)?;
-        }
-        if let Some(website_url) = options.website_url {
-            provider.website_url = if website_url.trim().is_empty() {
-                None
-            } else {
-                Some(normalize_base_url(website_url)?)
-            };
-        }
-        if let Some(protocol) = options.protocol {
-            provider.protocol = super::parse_protocol(&protocol)?;
-        }
-        if let Some(api_path) = options.api_path {
-            provider.api_path = normalize_path("API path", api_path)?;
-        }
-        should_probe_protocol = provider.preset_id.as_deref() == Some("custom")
-            && base_url_updated
-            && !user_set_protocol
-            && !user_set_api_path
-            && !user_set_models_path
-            && !path_explicit;
-        if let Some(models_path) = options.models_path {
-            provider.model_source = ProviderModelSource::OpenAiCompatible {
-                path: normalize_path("models path", models_path)?,
-            };
-        }
-        if options.clear_image_generation {
-            provider.image_generation_path = None;
-        } else if let Some(path) = options.image_generation_path {
-            provider.image_generation_path = Some(normalize_path("image generation path", path)?);
-        }
-        if options.clear_quota {
-            provider.quota_url = None;
-            provider.quota_username = None;
-            provider.quota_workspace_id = None;
-            provider.quota_auth_cookie = None;
-            provider.quota_currency = None;
-            provider.quota_parser = match provider.preset_id.as_deref() {
-                Some("deepseek") => ProviderQuotaParser::DeepSeek,
-                Some("opencode-go") => ProviderQuotaParser::OpenCodeGo,
-                _ => ProviderQuotaParser::Generic,
-            };
-        } else {
-            if let Some(quota_url) = options.quota_url {
-                provider.quota_url = Some(normalize_base_url(quota_url)?);
-            }
-            if let Some(username) = options.quota_username {
-                provider.quota_username = Some(trim_required("quota username", username)?);
-            }
-            let has_opencode_go_quota_fields =
-                options.quota_workspace_id.is_some() || options.quota_auth_cookie.is_some();
-            if options.clear_quota_workspace_id {
-                provider.quota_workspace_id = None;
-            } else if let Some(workspace_id) = options.quota_workspace_id {
-                provider.quota_workspace_id =
-                    Some(trim_required("quota workspace ID", workspace_id)?);
-            }
-            if options.clear_quota_auth_cookie {
-                provider.quota_auth_cookie = None;
-            } else if let Some(auth_cookie) = options.quota_auth_cookie {
-                provider.quota_auth_cookie = Some(trim_required("quota auth cookie", auth_cookie)?);
-            }
-            if let Some(currency) = options.quota_currency {
-                provider.quota_currency = Some(normalize_currency(currency)?);
-            }
-            if let Some(parser) = options.quota_parser {
-                provider.quota_parser = parse_quota_parser(&parser)?;
-            }
-            if provider.preset_id.as_deref() == Some("opencode-go") && has_opencode_go_quota_fields
-            {
-                provider.quota_parser = ProviderQuotaParser::OpenCodeGo;
-                provider.quota_currency = Some("USD".to_owned());
-            }
-        }
-        if options.clear_header_env {
-            provider.request_policy.custom_headers_from_env.clear();
-        }
-        if !header_env.is_empty() {
-            provider
-                .request_policy
-                .custom_headers_from_env
-                .extend(header_env.clone());
-        }
-        apply_baidu_auth_options(
-            &mut provider,
-            options.baidu_auth_bridge.as_deref(),
-            options.ducx_executable,
-        )?;
-        if let Some(report) = options.baidu_code_report {
-            provider.request_policy.baidu_code_report = report;
-        }
-        if provider.request_policy.baidu_code_report
-            && provider.request_policy.data_report_executable.is_none()
-        {
-            provider.request_policy.data_report_executable = provider
-                .request_policy
-                .ducx_executable
-                .as_deref()
-                .and_then(data_report_sibling);
-        }
-        if options.clear_auto_review_model {
-            provider.auto_review_model = None;
-        } else if let Some(model) = options.auto_review_model {
-            provider.auto_review_model = Some(trim_required("auto review model", model)?);
-        }
-        provider.validate()?;
-    }
-    codex_mixin::application::provider::update_provider(
-        &id,
-        &snapshot,
-        provider,
-        options.auxiliary_model_upstream,
-    )?;
+    let mut prepared =
+        codex_mixin::application::provider::build::update_provider_from_input(options)?;
+    let id = prepared.id.clone();
     let mut detected_protocol = None;
     let mut protocol_probe_error = None;
-    if should_probe_protocol {
-        let provider = required_config()
-            .map_err(|source| OperationError::AfterCommit {
-                stage: "protocol detection configuration reload",
-                source,
-            })?
-            .providers
-            .into_iter()
-            .find(|provider| provider.id == id)
-            .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?;
-        match detect_custom_provider_protocol(&provider).await {
+    if prepared.should_probe_protocol {
+        match detect_custom_provider_protocol(&prepared.provider).await {
             Ok(Some(endpoint)) => {
                 detected_protocol = Some(super::protocol_name(endpoint.protocol).to_owned());
                 codex_mixin::application::provider::commit_detected_endpoint(
                     &id,
-                    &provider,
+                    &prepared.provider,
                     endpoint.base_url,
                     endpoint.protocol,
                     endpoint.api_path,
                     endpoint.models_path,
                 )?;
+                prepared.provider = codex_mixin::application::provider::provider_for_refresh(&id)?;
             }
             Ok(None) => {}
             Err(error) => protocol_probe_error = Some(error),
         }
     }
-    if let Err(source) = sync_imagegen_skill() {
-        return Err(OperationError::AfterCommit {
-            stage: "imagegen skill sync",
-            source,
-        }
-        .into());
-    }
+    after_provider_commit("imagegen skill sync", sync_imagegen_skill)?;
     println!("provider updated: {id}");
     if let Some(protocol) = detected_protocol {
         println!("provider protocol detected: {id} ({protocol})");
@@ -437,80 +91,16 @@ pub(crate) async fn update_provider(options: UpdateProviderOptions) -> anyhow::R
             "provider protocol detection failed for {id}; keeping the configured endpoint: {error:#}"
         );
     }
-    if should_refresh_capabilities {
-        let provider = required_config()
+    if prepared.should_refresh_capabilities
+        && prepared.provider.model_source != ProviderModelSource::BaiduOneApi
+    {
+        discover_models_with_output(&id, false)
+            .await
             .map_err(|source| OperationError::AfterCommit {
-                stage: "model discovery configuration reload",
-                source,
-            })?
-            .providers
-            .into_iter()
-            .find(|provider| provider.id == id)
-            .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?;
-        if provider.model_source != ProviderModelSource::BaiduOneApi
-            && let Err(source) = discover_models_with_output(&id, false).await
-        {
-            return Err(OperationError::AfterCommit {
                 stage: "model discovery",
                 source,
-            }
-            .into());
-        }
+            })?;
     }
-    Ok(())
-}
-
-fn apply_aws_auth_options(
-    provider: &mut codex_mixin::provider::ProviderDefinition,
-    options: &UpdateProviderOptions,
-) -> anyhow::Result<()> {
-    let has_update = options.aws_access_key_id.is_some()
-        || options.aws_secret_access_key.is_some()
-        || options.aws_session_token.is_some()
-        || options.aws_region.is_some()
-        || options.clear_aws_session_token
-        || options.clear_aws_credentials;
-    if !has_update {
-        return Ok(());
-    }
-    anyhow::ensure!(
-        provider.preset_id.as_deref() == Some("aws-bedrock"),
-        "AWS credential options require an aws-bedrock provider"
-    );
-    if options.clear_aws_credentials {
-        provider.auth.aws_sigv4 = None;
-        return Ok(());
-    }
-    let mut aws = provider
-        .auth
-        .aws_sigv4
-        .take()
-        .unwrap_or(AwsSigV4AuthConfig {
-            access_key_id: String::new(),
-            secret_access_key: String::new(),
-            session_token: None,
-            region: AWS_BEDROCK_DEFAULT_REGION.to_owned(),
-            service: codex_mixin::provider::AWS_BEDROCK_RUNTIME_SERVICE.to_owned(),
-        });
-    if let Some(value) = &options.aws_access_key_id {
-        aws.access_key_id = trim_required("AWS access key ID", value.clone())?;
-    }
-    if let Some(value) = &options.aws_secret_access_key {
-        aws.secret_access_key = trim_required("AWS secret access key", value.clone())?;
-    }
-    if options.clear_aws_session_token {
-        aws.session_token = None;
-    } else if let Some(value) = &options.aws_session_token {
-        aws.session_token = Some(trim_required("AWS session token", value.clone())?);
-    }
-    if let Some(value) = &options.aws_region {
-        aws.region = trim_required("AWS region", value.clone())?;
-        if options.base_url.is_none() {
-            provider.base_url = aws_bedrock_runtime_base_url(&aws.region);
-        }
-    }
-    provider.auth.api_key.clear();
-    provider.auth.aws_sigv4 = Some(aws);
     Ok(())
 }
 

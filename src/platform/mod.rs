@@ -6,6 +6,7 @@
 mod paths;
 mod permissions;
 mod process;
+mod startup_service;
 
 pub use paths::{home_dir, home_dir_required};
 pub use permissions::{restrict_owner_only_dir, restrict_owner_only_file};
@@ -14,3 +15,12 @@ pub use process::{
     prepare_background_command, prepare_background_tokio_command, prepare_daemon_command,
     send_process_signal,
 };
+pub use startup_service::{
+    install_startup_service, remove_startup_service, set_startup_service_enabled,
+    start_startup_service, startup_service_is_enabled, startup_service_is_installed,
+    startup_service_is_running, startup_service_needs_update, stop_startup_service,
+};
+
+pub mod update;
+
+pub mod installation;

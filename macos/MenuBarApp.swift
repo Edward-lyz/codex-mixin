@@ -4,7 +4,6 @@ import Sparkle
 
 @MainActor
 final class AppDelegate: NSObject, NSApplicationDelegate {
-    let serviceLabel = "local.codex-mixin.service"
     let menuLaunchLabel = "local.codex-mixin.menu-launch"
     let applicationIconController = ApplicationIconController()
     var statusItem: NSStatusItem?
@@ -286,7 +285,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func updateActionStates() {
         updateServiceStatusView()
-        launchAtLoginMenuItem?.state = FileManager.default.fileExists(atPath: launchAgentPath().path) ? .on : .off
+        launchAtLoginMenuItem?.state = FileManager.default.fileExists(atPath: menuLaunchAgentPath().path) ? .on : .off
     }
 
     @objc func toggleGateway(_ sender: GatewaySwitchControl) {

@@ -84,11 +84,7 @@ extension AppDelegate {
                     )
                     if providers.providers.isEmpty {
                         progress?.advance(to: 1)
-                        if FileManager.default.fileExists(atPath: self.launchAgentPath().path) {
-                            try await self.bootoutIfLoaded(self.launchDomainAndLabel())
-                        }
-                        _ = try await self.runGateway(["stop"])
-                        try await self.waitForGatewayStopped()
+                        _ = try await self.runGateway(["service", "stop", "--managed", "--json"])
                         self.isRunning = false
                         self.serviceStatus = "等待配置上游 API"
                         self.serviceEndpoint = nil
@@ -103,8 +99,7 @@ extension AppDelegate {
                         return
                     }
                     progress?.advance(to: 1)
-                    try await self.restartGatewayProcess()
-                    let status = try await self.waitForGatewayStatus()
+                    let status = try await self.runGateway(["service", "restart", "--managed", "--json"])
                     self.applyGatewayStatus(status)
                     progress?.advance(to: 2)
                     _ = try await self.runGateway(["refresh-codex-catalog"])
@@ -255,8 +250,7 @@ extension AppDelegate {
                     progress.advance(to: 0)
                     _ = try await runGateway(["report-replay", "--prepare-warmup"])
                     progress.advance(to: 1)
-                    try await restartGatewayProcess()
-                    let status = try await waitForGatewayStatus()
+                    let status = try await runGateway(["service", "restart", "--managed", "--json"])
                     applyGatewayStatus(status)
                     progress.advance(to: 2)
                     let report = try await runGateway([
@@ -289,8 +283,7 @@ extension AppDelegate {
         serviceEndpoint = nil
         defer { serviceBusy = false }
         progress.advance(to: 1)
-        try await restartGatewayProcess()
-        let status = try await waitForGatewayStatus()
+        let status = try await runGateway(["service", "restart", "--managed", "--json"])
         applyGatewayStatus(status)
         progress.advance(to: 2)
         _ = try await runGateway(["refresh-codex-catalog"])
@@ -299,13 +292,14 @@ extension AppDelegate {
     }
 
     func fetchFusionModelOptions() async throws -> [FusionModelOption] {
-        let data = Data(try await runGateway(["models", "--json"]).utf8)
+        let data = Data(try await runGateway(["fusion", "models", "--json"]).utf8)
         guard
-            let models = try JSONSerialization.jsonObject(with: data) as? [[String: Any]]
+            let response = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            let models = response["models"] as? [[String: Any]]
         else {
             throw FusionSettingsError.message("模型接口返回了无效 JSON")
         }
-        let upstream: [FusionModelOption] = models.compactMap { model -> FusionModelOption? in
+        return models.compactMap { model -> FusionModelOption? in
             guard
                 let id = model["id"] as? String,
                 !id.hasPrefix("mixin/fusion/")
@@ -314,33 +308,8 @@ extension AppDelegate {
                 id: id,
                 displayName: model["display_name"] as? String ?? id
             )
-        }
-        let official = try loadOfficialFusionModelOptions()
-        return (official + upstream).sorted {
+        }.sorted {
             $0.displayName.localizedStandardCompare($1.displayName) == .orderedAscending
-        }
-    }
-
-    func loadOfficialFusionModelOptions() throws -> [FusionModelOption] {
-        let cacheURL = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex/models_cache.json")
-        guard FileManager.default.fileExists(atPath: cacheURL.path) else { return [] }
-        let data = try Data(contentsOf: cacheURL)
-        guard
-            let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-            let models = object["models"] as? [[String: Any]]
-        else {
-            throw FusionSettingsError.message("OpenAI 官方模型缓存格式无效")
-        }
-        return models.compactMap { model -> FusionModelOption? in
-            guard
-                let slug = model["slug"] as? String,
-                (model["visibility"] as? String ?? "list") != "hide"
-            else { return nil }
-            return FusionModelOption(
-                id: "official:\(slug)",
-                displayName: "\(model["display_name"] as? String ?? slug) · OpenAI 官方"
-            )
         }
     }
 

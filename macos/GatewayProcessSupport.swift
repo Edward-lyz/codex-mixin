@@ -1,58 +1,6 @@
 import Cocoa
 
 extension AppDelegate {
-    func restartGatewayProcess() async throws {
-        if FileManager.default.fileExists(atPath: launchAgentPath().path) {
-            try await bootoutIfLoaded(launchDomainAndLabel())
-            _ = try await runGateway(["stop"])
-            try await waitForGatewayStopped()
-            try installLaunchAgent()
-            try await bootstrapLaunchAgent()
-            return
-        }
-        _ = try await runGateway(["stop"])
-        try await waitForGatewayStopped()
-        _ = try await runGateway(["start", "--daemon"])
-    }
-
-    func waitForGatewayStatus() async throws -> String {
-        do {
-            return try await retryGatewayReadiness {
-                try await runGateway(["status"])
-            }
-        } catch let error as GatewayReadinessTimeout {
-            throw GatewayError.command(
-                "网关启动后 \(gatewayReadinessAttemptLimit) 秒内未就绪：\(error.lastFailure)"
-            )
-        }
-    }
-
-    func waitForGatewayStopped() async throws {
-        let runtimeURL = stateDir().appendingPathComponent("runtime.json")
-        for _ in 0..<20 {
-            guard FileManager.default.fileExists(atPath: runtimeURL.path) else {
-                return
-            }
-            let data = try Data(contentsOf: runtimeURL)
-            guard
-                let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
-                let pid = object["pid"] as? NSNumber
-            else {
-                throw GatewayError.command("无法读取网关 runtime PID：\(runtimeURL.path)")
-            }
-            if kill(pid.int32Value, 0) != 0 {
-                let errorCode = errno
-                if errorCode == ESRCH {
-                    return
-                }
-                if errorCode != EPERM {
-                    throw GatewayError.command("检查网关进程 \(pid) 失败：errno \(errorCode)")
-                }
-            }
-            try await Task.sleep(nanoseconds: 250_000_000)
-        }
-        throw GatewayError.command("网关在 5 秒内未停止，可能存在不受 Codex Mixin 管理的进程。")
-    }
     func runGateway(_ arguments: [String]) async throws -> String {
         let cliArguments = ["--no-tui"] + arguments
         let operationID = String(UUID().uuidString.prefix(8))
@@ -88,6 +36,19 @@ extension AppDelegate {
         return try await runProcessStreaming(executable, ["--no-tui"] + arguments, onProgress: onProgress)
     }
 
+    func interfacePaths() async throws -> [String: String] {
+        let output = try await runGateway(["interface", "--json"])
+        let data = Data(output.utf8)
+        guard
+            let response = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            response["protocol_version"] as? Int == 1,
+            let rawPaths = response["paths"] as? [String: Any]
+        else {
+            throw GatewayError.command("CLI interface response has an invalid schema")
+        }
+        return rawPaths.compactMapValues { $0 as? String }
+    }
+
     func bootoutIfLoaded(_ domainAndLabel: String) async throws {
         do {
             _ = try await runProcess("/bin/launchctl", ["bootout", domainAndLabel])
@@ -96,15 +57,6 @@ extension AppDelegate {
             if !message.contains("No such process") && !message.contains("Could not find service") {
                 throw error
             }
-        }
-    }
-
-    func bootstrapLaunchAgent() async throws {
-        _ = try await retryLaunchAgentBootstrap {
-            try await runProcess(
-                "/bin/launchctl",
-                ["bootstrap", launchDomain(), launchAgentPath().path]
-            )
         }
     }
 
@@ -228,12 +180,6 @@ extension AppDelegate {
         appendAppDiagnosticLog(message, directory: stateDir())
     }
 
-    func launchAgentPath() -> URL {
-        FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent("Library/LaunchAgents")
-            .appendingPathComponent("\(serviceLabel).plist")
-    }
-
     func menuLaunchAgentPath() -> URL {
         FileManager.default.homeDirectoryForCurrentUser
             .appendingPathComponent("Library/LaunchAgents")
@@ -242,10 +188,6 @@ extension AppDelegate {
 
     func launchDomain() -> String {
         "gui/\(getuid())"
-    }
-
-    func launchDomainAndLabel() -> String {
-        "\(launchDomain())/\(serviceLabel)"
     }
 
     func menuLaunchDomainAndLabel() -> String {

@@ -175,7 +175,12 @@ class _SettingsPageState extends State<SettingsPage> with WindowListener {
         if (result.ok) {
           // Best-effort restart so the runtime picks up the change. A restart
           // hiccup must NOT mark the already-committed mutation as failed.
-          final restart = await _controller.cli.run(['service', 'restart']);
+          final restart = await _controller.cli.run([
+            'service',
+            'restart',
+            '--managed',
+            '--json',
+          ]);
           if (!restart.ok) {
             _controller.status = '$label成功，但重启网关失败：${restart.output}';
           }
@@ -495,7 +500,12 @@ class _SettingsPageState extends State<SettingsPage> with WindowListener {
     }
     final result = await _run('保存模型选择', args);
     if (!result.ok) return;
-    await _controller.cli.run(['service', 'restart']);
+    await _controller.cli.run([
+      'service',
+      'restart',
+      '--managed',
+      '--json',
+    ]);
     await _controller.cli.run(['refresh-codex-catalog']);
     await _controller.refresh(force: true);
     if (mounted) setState(_loadSelectedIntoForm);
