@@ -81,7 +81,7 @@ pub async fn install_version(version: &str, executable: &Path) -> anyhow::Result
         crate::platform::update::unpack_release(&archive, temp.path())?;
         let downloaded = temp
             .path()
-            .join(format!("codex-mixin{}", std::env::consts::EXE_SUFFIX));
+            .join(crate::platform::executable_file_name("codex-mixin"));
         anyhow::ensure!(
             downloaded.is_file(),
             "release archive has no CLI executable"

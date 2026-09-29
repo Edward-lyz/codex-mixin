@@ -173,7 +173,7 @@ extension AppDelegate {
     }
 
     func stateDir() -> URL {
-        FileManager.default.homeDirectoryForCurrentUser.appendingPathComponent(".codex-mixin")
+        appDataDirectory()
     }
 
     func appendDiagnosticLog(_ message: String) {

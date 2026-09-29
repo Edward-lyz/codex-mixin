@@ -202,25 +202,10 @@ fn install_imagegen_skill(codex_home: &Path) -> anyhow::Result<bool> {
     let skill_dir = codex_home.join("skills/.system/imagegen");
     let skill_path = skill_dir.join("SKILL.md");
     let script_path = skill_dir.join("scripts/image_gen.py");
-    // Only Windows needs backslash->forward-slash normalization in the Skill
-    // markdown; on Unix this stays byte-identical to the pre-Windows baseline.
-    #[cfg(windows)]
-    let skill_path_text = skill_path.to_string_lossy().replace('\\', "/");
-    #[cfg(not(windows))]
-    let skill_path_text = skill_path.to_string_lossy().into_owned();
-    #[cfg(windows)]
-    let script_path_text = script_path.to_string_lossy().replace('\\', "/");
-    #[cfg(not(windows))]
-    let script_path_text = script_path.to_string_lossy().into_owned();
-    // Windows Python installs rarely expose `python3`; the `py` launcher is the
-    // documented cross-version entry point. Windows shells also do not treat
-    // single quotes as path delimiters, so quote the script path accordingly.
-    let (python_command, quote) = if cfg!(windows) {
-        ("py -3", '"')
-    } else {
-        ("python3", '\'')
-    };
-    let quoted_script = format!("{quote}{script_path_text}{quote}");
+    let skill_path_text = crate::platform::portable_path_text(&skill_path);
+    let script_path_text = crate::platform::portable_path_text(&script_path);
+    let python_command = crate::platform::PYTHON_LAUNCHER;
+    let quoted_script = crate::platform::shell_quote(&script_path_text);
     let description = serde_json::to_string(&format!(
         "Read {}, then generate raster images through Codex Mixin.",
         skill_path_text
@@ -373,22 +358,14 @@ mod tests {
         )
         .unwrap();
 
-        // Invoke Python the same way the managed skill instructs: Windows
-        // installs expose the `py -3` launcher rather than a `python3` binary,
-        // while Unix uses `python3`. This mirrors `install_imagegen_skill` and
-        // keeps the assertions on the wrapper's real dry-run output unchanged.
-        #[cfg(windows)]
-        let mut command = {
-            let mut command = Command::new("py");
-            command.arg("-3");
-            command
-        };
-        #[cfg(not(windows))]
-        let mut command = Command::new("python3");
+        // Invoke Python the same way the managed skill instructs.
+        let mut launcher = crate::platform::PYTHON_LAUNCHER.split_whitespace();
+        let mut command = Command::new(launcher.next().unwrap());
+        command.args(launcher);
+        crate::platform::set_home_env(&mut command, directory.path());
         let output = command
             .arg(&script_path)
             .args(["generate", "--prompt", "test", "--dry-run"])
-            .env("HOME", directory.path())
             .env("CODEX_GATEWAY_CONFIG", &config_path)
             .env("CODEX_GATEWAY_RUNTIME_FILE", &runtime_path)
             .env_remove("CODEX_MIXIN_CONFIG")
@@ -466,5 +443,46 @@ mod tests {
             "upstream script\n"
         );
         fs::remove_dir_all(root).unwrap();
+    }
+
+    #[test]
+    fn installs_the_guard_outside_the_system_skill_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let imagegen_directory = directory.path().join("skills/.system/imagegen/scripts");
+        std::fs::create_dir_all(&imagegen_directory).unwrap();
+        std::fs::write(
+            directory.path().join("skills/.system/imagegen/SKILL.md"),
+            "official imagegen skill",
+        )
+        .unwrap();
+        std::fs::write(
+            imagegen_directory.join("image_gen.py"),
+            "official imagegen script",
+        )
+        .unwrap();
+        let changed = reconcile_managed_skills(directory.path(), true).unwrap();
+
+        assert!(changed);
+        assert!(
+            directory
+                .path()
+                .join("skills/codex-mixin-skill-guardian/SKILL.md")
+                .is_file()
+        );
+        assert!(
+            directory
+                .path()
+                .join("skills/.system/imagegen/SKILL.md")
+                .is_file()
+        );
+
+        let imagegen_skill = directory.path().join("skills/.system/imagegen/SKILL.md");
+        std::fs::write(&imagegen_skill, "replacement from desktop update").unwrap();
+        assert!(reconcile_managed_skills(directory.path(), true).unwrap());
+        assert!(
+            std::fs::read_to_string(imagegen_skill)
+                .unwrap()
+                .contains("codex-mixin managed imagegen skill v4")
+        );
     }
 }

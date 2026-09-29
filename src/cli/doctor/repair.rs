@@ -1,8 +1,4 @@
-#[cfg(target_os = "macos")]
-use std::time::{Duration, Instant};
-
 use codex_mixin::config::GatewayConfig;
-#[cfg(unix)]
 use codex_mixin::config::stored_config_path;
 
 use super::super::codex::{
@@ -71,17 +67,9 @@ async fn apply_doctor_fix(fix: DoctorFix) -> anyhow::Result<String> {
             Ok(format!("gateway started on {bind}"))
         }
         DoctorFix::FixConfigPermissions => {
-            #[cfg(unix)]
-            {
-                use std::os::unix::fs::PermissionsExt;
-                let path = stored_config_path();
-                std::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))?;
-                Ok(format!("chmod 600 applied to {}", path.display()))
-            }
-            #[cfg(not(unix))]
-            {
-                anyhow::bail!("automatic permission repair is not supported on this platform")
-            }
+            let path = stored_config_path();
+            codex_mixin::platform::restrict_owner_only_file(&path)?;
+            Ok(format!("owner-only access applied to {}", path.display()))
         }
         DoctorFix::SyncGatewayBaseUrl => {
             let config_path = resolve_codex_config_path(None)?;
@@ -107,46 +95,13 @@ async fn apply_doctor_fix(fix: DoctorFix) -> anyhow::Result<String> {
                 )
             })
         }
-        #[cfg(target_os = "macos")]
-        DoctorFix::RestartChatGptApp => restart_app_fix("ChatGPT").await,
-        #[cfg(target_os = "macos")]
-        DoctorFix::RestartCodexApp => restart_app_fix("Codex").await,
-    }
-}
-
-#[cfg(target_os = "macos")]
-async fn restart_app_fix(app: &'static str) -> anyhow::Result<String> {
-    tokio::task::spawn_blocking(move || restart_macos_app(app)).await?
-}
-
-#[cfg(target_os = "macos")]
-fn restart_macos_app(app: &str) -> anyhow::Result<String> {
-    let previous_pid = super::desktop::desktop_app_pid(app);
-    let quit = std::process::Command::new("osascript")
-        .args(["-e", &format!("quit app \"{app}\"")])
-        .status()?;
-    if !quit.success() {
-        anyhow::bail!("failed to quit {app}");
-    }
-    match previous_pid {
-        Some(pid) => {
-            let deadline = Instant::now() + Duration::from_secs(15);
-            while super::super::runtime::pid_is_running(pid).unwrap_or(false) {
-                if Instant::now() >= deadline {
-                    anyhow::bail!(
-                        "{app} did not exit within 15s (a window may be blocking quit); restart it manually"
-                    );
-                }
-                std::thread::sleep(Duration::from_millis(500));
-            }
+        DoctorFix::RestartChatGptApp | DoctorFix::RestartCodexApp => {
+            let app = fix
+                .desktop_app()
+                .ok_or_else(|| anyhow::anyhow!("fix does not name a desktop app"))?;
+            tokio::task::spawn_blocking(move || codex_mixin::platform::restart_desktop_app(app))
+                .await??;
+            Ok(format!("{app} restarted"))
         }
-        None => std::thread::sleep(Duration::from_secs(2)),
     }
-    let open = std::process::Command::new("open")
-        .args(["-a", app])
-        .status()?;
-    if !open.success() {
-        anyhow::bail!("failed to reopen {app}");
-    }
-    Ok(format!("{app} restarted"))
 }

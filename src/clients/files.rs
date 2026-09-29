@@ -1,11 +1,6 @@
 use std::fs;
 use std::io::Write;
 use std::path::Path;
-#[cfg(windows)]
-use std::sync::Mutex;
-
-#[cfg(windows)]
-static FILE_REPLACE_LOCK: Mutex<()> = Mutex::new(());
 
 pub fn write_atomic_if_changed(path: &Path, contents: &[u8]) -> anyhow::Result<bool> {
     if path.exists() && fs::read(path)? == contents {
@@ -47,26 +42,7 @@ fn replace_file_atomic(
         crate::platform::restrict_owner_only_file(temporary.path())?;
     }
     temporary.as_file().sync_all()?;
-    // TempPath::persist uses replace semantics on Windows and rename on Unix,
-    // so the destination is never deleted before the new file is ready.
-    persist_temp_path(temporary.into_temp_path(), path)?;
-    Ok(())
-}
-
-#[cfg(windows)]
-fn persist_temp_path(temporary: tempfile::TempPath, path: &Path) -> anyhow::Result<()> {
-    // MoveFileEx can reject simultaneous replacements even when every source
-    // handle is closed. Writes are a cold path, so serialize only this syscall.
-    let _guard = FILE_REPLACE_LOCK
-        .lock()
-        .unwrap_or_else(std::sync::PoisonError::into_inner);
-    temporary.persist(path)?;
-    Ok(())
-}
-
-#[cfg(not(windows))]
-fn persist_temp_path(temporary: tempfile::TempPath, path: &Path) -> anyhow::Result<()> {
-    temporary.persist(path)?;
+    crate::platform::persist_temp_path(temporary.into_temp_path(), path)?;
     Ok(())
 }
 

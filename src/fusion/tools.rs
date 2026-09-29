@@ -4,9 +4,6 @@ use std::path::{Component, Path, PathBuf};
 use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
-#[cfg(unix)]
-use std::os::unix::process::CommandExt;
-
 use regex::Regex;
 use serde_json::{Value, json};
 use wait_timeout::ChildExt;
@@ -413,8 +410,7 @@ fn command_output_with_timeout(command: &mut Command) -> io::Result<Output> {
 }
 
 fn command_output_with_deadline(command: &mut Command, timeout: Duration) -> io::Result<Output> {
-    #[cfg(unix)]
-    command.process_group(0);
+    crate::platform::isolate_process_group(command);
     // Keep rg/git from flashing a console window when the gateway is windowless.
     crate::platform::prepare_background_command(command);
     let mut child = command
@@ -455,38 +451,10 @@ fn command_output_with_deadline(command: &mut Command, timeout: Duration) -> io:
     })
 }
 
+/// Kill the whole tree, not just the direct child: a timed-out `rg`/`git`
+/// can have spawned grandchildren that a bare `Child::kill` would leak.
 fn terminate_child_tree(child: &mut std::process::Child) -> io::Result<()> {
-    #[cfg(unix)]
-    {
-        let result = rustix::process::kill_process_group(
-            rustix::process::Pid::from_child(child),
-            rustix::process::Signal::KILL,
-        );
-        if let Err(error) = result
-            && child.try_wait()?.is_none()
-        {
-            return Err(error.into());
-        }
-        Ok(())
-    }
-    #[cfg(not(unix))]
-    {
-        // Kill the whole tree, not just the direct child: a timed-out `rg`/`git`
-        // can have spawned grandchildren that a bare `Child::kill` would leak.
-        // `taskkill /T` walks the tree; fall back to the direct kill when
-        // taskkill is unavailable or reports failure.
-        let mut command = std::process::Command::new("taskkill");
-        command
-            .args(["/PID", &child.id().to_string(), "/T", "/F"])
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null());
-        crate::platform::prepare_background_command(&mut command);
-        let tree_killed = command
-            .status()
-            .map(|status| status.success())
-            .unwrap_or(false);
-        if tree_killed { Ok(()) } else { child.kill() }
-    }
+    crate::platform::terminate_isolated_child(child)
 }
 
 fn join_reader(reader: std::thread::JoinHandle<io::Result<Vec<u8>>>) -> io::Result<Vec<u8>> {
@@ -654,9 +622,13 @@ mod tests {
         fs::create_dir(&root).unwrap();
         fs::write(root.join("inside.txt"), "inside").unwrap();
         fs::write(base.path().join("outside.txt"), "outside").unwrap();
-        #[cfg(unix)]
-        std::os::unix::fs::symlink(base.path().join("outside.txt"), root.join("escape-link"))
-            .unwrap();
+        // Creating links can need privileges on Windows; test escapes where
+        // the account may create them.
+        let has_link = crate::platform::symlink_file(
+            &base.path().join("outside.txt"),
+            &root.join("escape-link"),
+        )
+        .is_ok();
         let executor = PanelToolExecutor::new(&root).unwrap();
         assert_eq!(
             executor
@@ -669,12 +641,13 @@ mod tests {
                 .execute("read_file", r#"{"path":"../outside.txt"}"#)
                 .is_err()
         );
-        #[cfg(unix)]
-        assert!(
-            executor
-                .execute("read_file", r#"{"path":"escape-link"}"#)
-                .is_err()
-        );
+        if has_link {
+            assert!(
+                executor
+                    .execute("read_file", r#"{"path":"escape-link"}"#)
+                    .is_err()
+            );
+        }
         assert!(
             executor
                 .execute("git_inspect", r#"{"subcommand":"checkout"}"#)

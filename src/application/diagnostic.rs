@@ -9,18 +9,11 @@ pub enum FilePermissionStatus {
 
 pub fn config_permissions(path: &Path) -> anyhow::Result<FilePermissionStatus> {
     match std::fs::metadata(path) {
-        #[cfg(unix)]
-        Ok(metadata) => {
-            use std::os::unix::fs::PermissionsExt;
-            let mode = metadata.permissions().mode() & 0o777;
-            Ok(if mode & 0o077 == 0 {
-                FilePermissionStatus::Private
-            } else {
-                FilePermissionStatus::TooOpen(mode)
-            })
-        }
-        #[cfg(not(unix))]
-        Ok(_) => Ok(FilePermissionStatus::Private),
+        Ok(metadata) => Ok(match crate::platform::owner_only_status(&metadata) {
+            crate::platform::OwnerOnlyStatus::TooOpen(mode) => FilePermissionStatus::TooOpen(mode),
+            crate::platform::OwnerOnlyStatus::Private
+            | crate::platform::OwnerOnlyStatus::NotApplicable => FilePermissionStatus::Private,
+        }),
         Err(error) if error.kind() == std::io::ErrorKind::NotFound => {
             Ok(FilePermissionStatus::Missing)
         }

@@ -97,7 +97,7 @@ func diagnosticSafeText(_ text: String) -> String {
 
 func appendAppDiagnosticLog(_ message: String, directory: URL) {
     appDiagnosticLogQueue.sync {
-        let logURL = directory.appendingPathComponent("gateway.log")
+        let logURL = directory.appendingPathComponent("app.log")
         do {
             try FileManager.default.createDirectory(
                 at: directory,

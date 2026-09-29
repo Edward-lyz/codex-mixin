@@ -54,10 +54,4 @@ pub fn installed_cli_executable() -> anyhow::Result<PathBuf> {
     std::env::current_exe().context("resolve codex-mixin executable")
 }
 
-pub fn shell_quote(value: &str) -> String {
-    if cfg!(windows) {
-        format!("\"{}\"", value.replace('"', "\\\""))
-    } else {
-        format!("'{}'", value.replace('\'', "'\\''"))
-    }
-}
+pub use super::shell::shell_quote;

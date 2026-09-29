@@ -171,6 +171,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/UpdateController.swift" \
   "$ROOT_DIR/macos/UpdateSupport.swift" \
   "$ROOT_DIR/macos/UpdateWatchdog.swift" \
+  "$ROOT_DIR/macos/AppDataDirectory.swift" \
   "$ROOT_DIR/macos/SettingsPanel.swift" \
   "$ROOT_DIR/macos/ProviderSupport.swift" \
   "$ROOT_DIR/macos/ProviderIconCache.swift" \

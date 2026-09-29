@@ -25,8 +25,8 @@ private func providerIconCacheURL(providerID: String, websiteURL: URL) -> URL {
     let hostComponent = (websiteURL.host ?? "site").unicodeScalars
         .map { allowed.contains($0) ? String($0) : "_" }
         .joined()
-    return FileManager.default.homeDirectoryForCurrentUser
-        .appendingPathComponent(".codex-mixin/provider-icons", isDirectory: true)
+    return appDataDirectory()
+        .appendingPathComponent("provider-icons", isDirectory: true)
         .appendingPathComponent("v2-\(providerComponent)-\(hostComponent).png")
 }
 

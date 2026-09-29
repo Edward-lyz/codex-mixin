@@ -202,8 +202,7 @@ enum UpdateWatchdog {
     }
 
     private static func run(arguments: [String]) {
-        let logDirectory = FileManager.default.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex-mixin")
+        let logDirectory = appDataDirectory()
         do {
             let parentPID = try requiredPID(in: arguments)
             let downloadURL = try requiredHTTPSURL(

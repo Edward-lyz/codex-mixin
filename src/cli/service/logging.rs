@@ -5,9 +5,6 @@ use std::io::IsTerminal;
 use std::path::{Path, PathBuf};
 use std::sync::Mutex;
 
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt;
-
 use codex_mixin::config::GatewayConfig;
 
 pub(super) const GATEWAY_LOG_MAX_BYTES: u64 = 50 * 1024 * 1024;
@@ -53,8 +50,7 @@ pub(crate) fn init_tracing(log_file: Option<&Path>, quiet_parent_logs: bool) -> 
             .create(true)
             .append(true)
             .open(log_file)?;
-        #[cfg(unix)]
-        fs::set_permissions(log_file, fs::Permissions::from_mode(0o600))?;
+        codex_mixin::platform::set_owner_only_mode(log_file)?;
         tracing_subscriber::fmt()
             .with_ansi(false)
             .with_thread_ids(false)
@@ -92,8 +88,7 @@ pub(crate) fn rotate_gateway_log_if_needed(path: &Path, max_bytes: u64) -> anyho
     if !path.exists() || fs::metadata(path)?.len() < max_bytes {
         return Ok(());
     }
-    #[cfg(unix)]
-    fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
+    codex_mixin::platform::set_owner_only_mode(path)?;
     let mut backup_name = path.as_os_str().to_os_string();
     backup_name.push(".1");
     let backup = PathBuf::from(backup_name);

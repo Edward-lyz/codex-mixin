@@ -14,7 +14,6 @@ mod repair;
 mod report;
 
 use codex::{check_codex_engine, check_codex_integration};
-#[cfg(target_os = "macos")]
 use desktop::check_desktop_apps;
 use gateway::{LiveGateway, check_gateway_models, check_gateway_runtime};
 use log::check_gateway_log;
@@ -50,9 +49,7 @@ enum DoctorFix {
     FixConfigPermissions,
     SyncGatewayBaseUrl,
     RefreshCodexCatalog,
-    #[cfg(target_os = "macos")]
     RestartChatGptApp,
-    #[cfg(target_os = "macos")]
     RestartCodexApp,
 }
 
@@ -60,14 +57,21 @@ impl DoctorFix {
     /// Restarting a desktop app can kill in-flight user sessions, so it is
     /// only applied when the user explicitly passes `--restart-apps`.
     fn requires_restart_opt_in(self) -> bool {
-        #[cfg(target_os = "macos")]
-        {
-            matches!(self, Self::RestartChatGptApp | Self::RestartCodexApp)
-        }
-        #[cfg(not(target_os = "macos"))]
-        {
-            let _ = self;
-            false
+        self.desktop_app().is_some()
+    }
+
+    /// Fix that restarts a Codex desktop app named by the platform adapter.
+    fn restart_desktop_app(app: &str) -> Option<Self> {
+        [Self::RestartChatGptApp, Self::RestartCodexApp]
+            .into_iter()
+            .find(|fix| fix.desktop_app() == Some(app))
+    }
+
+    fn desktop_app(self) -> Option<&'static str> {
+        match self {
+            Self::RestartChatGptApp => Some("ChatGPT"),
+            Self::RestartCodexApp => Some("Codex"),
+            _ => None,
         }
     }
 
@@ -78,9 +82,7 @@ impl DoctorFix {
             Self::FixConfigPermissions => "Tighten config file permissions to 600",
             Self::SyncGatewayBaseUrl => "Sync the managed Codex gateway base_url",
             Self::RefreshCodexCatalog => "Regenerate the managed model catalog",
-            #[cfg(target_os = "macos")]
             Self::RestartChatGptApp => "Restart the ChatGPT app to load the new config",
-            #[cfg(target_os = "macos")]
             Self::RestartCodexApp => "Restart the Codex app to load the new config",
         }
     }
@@ -363,7 +365,6 @@ async fn run_doctor_checks(options: DoctorCheckOptions) -> anyhow::Result<Doctor
         if options.check_codex_engine {
             checks.push(check_codex_engine(managed, options.codex_engine_timeout).await);
         }
-        #[cfg(target_os = "macos")]
         checks.extend(check_desktop_apps(&managed.config_path));
     }
 
@@ -468,7 +469,6 @@ mod tests {
     use std::time::Instant;
 
     use super::codex::{AppServerProbe, normalized_model_key};
-    use super::desktop::parse_ps_etime;
     use super::log::{GATEWAY_START_MARKER, count_error_lines};
     use super::providers::check_doctor_provider;
 
@@ -508,18 +508,6 @@ mod tests {
         assert!(started.elapsed() < Duration::from_millis(100));
         assert_eq!(check.status, DoctorStatus::Ok);
         assert!(check.message.contains("without contacting upstream"));
-    }
-
-    #[test]
-    fn parses_ps_etime_variants() {
-        assert_eq!(parse_ps_etime("05:20"), Some(Duration::from_secs(320)));
-        assert_eq!(parse_ps_etime("01:02:03"), Some(Duration::from_secs(3723)));
-        assert_eq!(
-            parse_ps_etime("2-01:02:03"),
-            Some(Duration::from_secs(2 * 86_400 + 3723))
-        );
-        assert_eq!(parse_ps_etime(""), None);
-        assert_eq!(parse_ps_etime("garbage"), None);
     }
 
     #[test]

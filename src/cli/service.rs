@@ -14,8 +14,9 @@ use codex_mixin::application::lifecycle::{
 use codex_mixin::config::{GatewayConfig, load_stored_config, save_stored_config};
 use codex_mixin::gateway_access::GatewayClientKeys;
 use codex_mixin::platform::{
-    StartupServiceSpec, StartupServiceStatus, install_startup_service, remove_startup_service,
-    start_startup_service, startup_service_status, stop_startup_service,
+    DesktopNotification, StartupServiceSpec, StartupServiceStatus, install_startup_service,
+    remove_startup_service, show_notification, start_startup_service, startup_service_status,
+    stop_startup_service,
 };
 use codex_mixin::provider::ProviderModelSource;
 use codex_mixin::provider::capabilities::ProviderCapabilities;
@@ -515,90 +516,32 @@ async fn probe_auto_selected_models(
     }
 }
 
-#[cfg(target_os = "macos")]
 async fn notify_model_changes(
     provider_id: String,
     provider_display_name: String,
     changes: codex_mixin::provider::ModelDiscoveryChanges,
 ) {
-    let Some(content) = model_notification_content(&provider_display_name, &changes) else {
+    let Some(notification) = model_notification(&provider_display_name, &changes) else {
         return;
     };
-    let notification_provider_id = provider_id.clone();
-    let notification = tokio::task::spawn_blocking(move || {
-        deliver_model_notification(&notification_provider_id, &content)
-    })
-    .await;
-    log_model_notification_result(&provider_id, notification);
-}
-
-#[cfg(target_os = "macos")]
-fn deliver_model_notification(
-    provider_id: &str,
-    content: &ModelNotificationContent,
-) -> io::Result<std::process::Output> {
-    let helper = std::env::current_exe()
-        .ok()
-        .and_then(|executable| notification_helper_for(&executable))
-        .filter(|path| path.is_file());
-    if let Some(helper) = helper {
-        return std::process::Command::new(helper)
-            .args([
-                "--deliver-model-notification",
-                &content.title,
-                &content.subtitle,
-                &content.body,
-            ])
-            .output();
-    }
-    tracing::warn!(
-        provider_id,
-        "bundled notification helper unavailable; using generic macOS notification"
-    );
-    std::process::Command::new("/usr/bin/osascript")
-        .args([
-            "-e",
-            "on run argv\n display notification (item 3 of argv) with title (item 1 of argv) subtitle (item 2 of argv)\nend run",
-            "--",
-            &content.title,
-            &content.subtitle,
-            &content.body,
-        ])
-        .output()
-}
-
-#[cfg(target_os = "macos")]
-fn log_model_notification_result(
-    provider_id: &str,
-    notification: Result<io::Result<std::process::Output>, tokio::task::JoinError>,
-) {
-    match notification {
-        Ok(Ok(output)) if output.status.success() => {}
-        Ok(Ok(output)) => tracing::warn!(
+    let delivery = tokio::task::spawn_blocking(move || show_notification(&notification)).await;
+    match delivery {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => tracing::warn!(
             provider_id,
-            exit = ?output.status.code(),
-            stderr = %String::from_utf8_lossy(&output.stderr).trim(),
-            "macOS model notification failed"
+            error = %format!("{error:#}"),
+            "model change notification failed"
         ),
-        Ok(Err(error)) => {
-            tracing::warn!(provider_id, error = %error, "macOS model notification failed")
+        Err(error) => {
+            tracing::warn!(provider_id, error = %error, "model change notification task failed")
         }
-        Err(error) => tracing::warn!(provider_id, error = %error, "macOS notification task failed"),
     }
 }
 
-#[cfg(target_os = "macos")]
-struct ModelNotificationContent {
-    title: String,
-    subtitle: String,
-    body: String,
-}
-
-#[cfg(target_os = "macos")]
-fn model_notification_content(
+fn model_notification(
     provider_display_name: &str,
     changes: &codex_mixin::provider::ModelDiscoveryChanges,
-) -> Option<ModelNotificationContent> {
+) -> Option<DesktopNotification> {
     let mut lines = Vec::new();
     if !changes.auto_selected.is_empty() {
         lines.push(format!(
@@ -614,14 +557,13 @@ fn model_notification_content(
             summarize_models(&changes.removed)
         ));
     }
-    (!lines.is_empty()).then(|| ModelNotificationContent {
+    (!lines.is_empty()).then(|| DesktopNotification {
         title: "Codex Mixin".to_owned(),
         subtitle: format!("{provider_display_name} · 模型列表已更新"),
         body: lines.join("\n"),
     })
 }
 
-#[cfg(target_os = "macos")]
 fn summarize_models(models: &[String]) -> String {
     const DISPLAY_LIMIT: usize = 3;
     let mut summary = models
@@ -634,74 +576,6 @@ fn summarize_models(models: &[String]) -> String {
         summary.push_str(" 等");
     }
     summary
-}
-
-#[cfg(target_os = "macos")]
-fn notification_helper_for(current_executable: &Path) -> Option<PathBuf> {
-    let resources = current_executable.parent()?;
-    if resources.file_name()?.to_str()? != "Resources" {
-        return None;
-    }
-    let contents = resources.parent()?;
-    if contents.file_name()?.to_str()? != "Contents" {
-        return None;
-    }
-    Some(contents.join("MacOS/CodexMixinMenu"))
-}
-
-#[cfg(all(test, target_os = "macos"))]
-mod model_notification_tests {
-    use super::*;
-    use codex_mixin::provider::ModelDiscoveryChanges;
-
-    #[test]
-    fn formats_model_changes_for_native_notification_layout() {
-        let changes = ModelDiscoveryChanges {
-            added: vec!["gpt-5.6-luna".to_owned(), "gpt-6-astra".to_owned()],
-            auto_selected: vec!["gpt-5.6-luna".to_owned(), "gpt-6-astra".to_owned()],
-            removed: vec!["gpt-image-2".to_owned()],
-        };
-
-        let content = model_notification_content("我的常用模型", &changes)
-            .expect("model changes should produce notification content");
-        assert_eq!(content.title, "Codex Mixin");
-        assert_eq!(content.subtitle, "我的常用模型 · 模型列表已更新");
-        assert_eq!(
-            content.body,
-            "✓ 新增并探测 2 个：gpt-5.6-luna、gpt-6-astra\n− 下线并移除 1 个：gpt-image-2"
-        );
-    }
-
-    #[test]
-    fn truncates_long_model_lists_for_notification_banner() {
-        let models = ["one", "two", "three", "four"].map(str::to_owned).to_vec();
-
-        assert_eq!(summarize_models(&models), "one、two、three 等");
-    }
-
-    #[test]
-    fn finds_notification_helper_only_inside_app_resources() {
-        assert_eq!(
-            notification_helper_for(Path::new(
-                "/Applications/Codex Mixin.app/Contents/Resources/codex-mixin"
-            )),
-            Some(PathBuf::from(
-                "/Applications/Codex Mixin.app/Contents/MacOS/CodexMixinMenu"
-            ))
-        );
-        assert_eq!(
-            notification_helper_for(Path::new("/usr/local/bin/codex-mixin")),
-            None
-        );
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-async fn notify_model_changes(
-    _provider_id: String,
-    _provider_display_name: String,
-    _changes: codex_mixin::provider::ModelDiscoveryChanges,
-) {
 }
 
 pub(super) fn persist_gateway_bind(bind: SocketAddr) -> anyhow::Result<bool> {
@@ -1082,5 +956,36 @@ mod model_refresh_target_tests {
                 .collect::<Vec<_>>(),
             ["enabled"]
         );
+    }
+}
+
+#[cfg(test)]
+mod model_notification_tests {
+    use super::*;
+    use codex_mixin::provider::ModelDiscoveryChanges;
+
+    #[test]
+    fn formats_model_changes_for_native_notification_layout() {
+        let changes = ModelDiscoveryChanges {
+            added: vec!["gpt-5.6-luna".to_owned(), "gpt-6-astra".to_owned()],
+            auto_selected: vec!["gpt-5.6-luna".to_owned(), "gpt-6-astra".to_owned()],
+            removed: vec!["gpt-image-2".to_owned()],
+        };
+
+        let content = model_notification("我的常用模型", &changes)
+            .expect("model changes should produce notification content");
+        assert_eq!(content.title, "Codex Mixin");
+        assert_eq!(content.subtitle, "我的常用模型 · 模型列表已更新");
+        assert_eq!(
+            content.body,
+            "✓ 新增并探测 2 个：gpt-5.6-luna、gpt-6-astra\n− 下线并移除 1 个：gpt-image-2"
+        );
+    }
+
+    #[test]
+    fn truncates_long_model_lists_for_notification_banner() {
+        let models = ["one", "two", "three", "four"].map(str::to_owned).to_vec();
+
+        assert_eq!(summarize_models(&models), "one、two、three 等");
     }
 }

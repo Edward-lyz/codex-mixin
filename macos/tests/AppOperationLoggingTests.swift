@@ -81,14 +81,14 @@ struct AppOperationLoggingTests {
         )
         appendAppDiagnosticLog("second step", directory: logDirectory)
         let log = try! String(
-            contentsOf: logDirectory.appendingPathComponent("gateway.log"),
+            contentsOf: logDirectory.appendingPathComponent("app.log"),
             encoding: .utf8
         )
         precondition(log.contains("APP_DIAGNOSTIC first step"))
         precondition(log.contains("APP_DIAGNOSTIC second step"))
         precondition(!log.contains("log-secret"))
         let permissions = try! FileManager.default.attributesOfItem(
-            atPath: logDirectory.appendingPathComponent("gateway.log").path
+            atPath: logDirectory.appendingPathComponent("app.log").path
         )[.posixPermissions] as! NSNumber
         precondition(permissions.intValue == 0o600)
         try? FileManager.default.removeItem(at: logDirectory)

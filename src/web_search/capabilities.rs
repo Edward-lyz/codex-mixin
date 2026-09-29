@@ -256,11 +256,7 @@ impl WebSearchCapabilities {
             .write(true)
             .open(&temporary_path)
             .with_context(|| format!("open {}", temporary_path.display()))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            file.set_permissions(fs::Permissions::from_mode(0o600))?;
-        }
+        crate::platform::set_owner_only_mode_on(&file)?;
         file.write_all(&serde_json::to_vec_pretty(&snapshot)?)?;
         file.write_all(b"\n")?;
         file.sync_all()?;

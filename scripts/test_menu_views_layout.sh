@@ -15,6 +15,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/LiquidGlassSupport.swift" \
   "$ROOT_DIR/macos/QuotaSupport.swift" \
   "$ROOT_DIR/macos/ProviderIconCache.swift" \
+  "$ROOT_DIR/macos/AppDataDirectory.swift" \
   "$ROOT_DIR/macos/ServiceMenuViews.swift" \
   "$ROOT_DIR/macos/ProviderUsageDashboardView.swift" \
   "$ROOT_DIR/macos/MenuVisualSupport.swift" \

@@ -223,10 +223,6 @@ pub(super) fn lock_at(state_directory: &Path) -> anyhow::Result<File> {
 fn write_private_file(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
     write_atomic_if_changed(path, contents)
         .with_context(|| format!("write DUCX report queue state {}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(path, fs::Permissions::from_mode(0o600))?;
-    }
+    codex_mixin::platform::set_owner_only_mode(path)?;
     Ok(())
 }

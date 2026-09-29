@@ -538,11 +538,7 @@ fn set_report_sibling(provider: &mut ProviderDefinition) {
             .as_deref()
             .and_then(|executable| {
                 let install = executable.parent()?.parent()?;
-                Some(install.join("hooks").join(if cfg!(windows) {
-                    "data-report.exe"
-                } else {
-                    "data-report"
-                }))
+                Some(install.join(crate::provider::auth::ducx::data_report_relative_path()))
             });
     }
 }

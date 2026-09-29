@@ -142,3 +142,136 @@ fn windows_pid_is_running(pid: u32, expected_image_name: Option<&str>) -> std::i
             == Some(pid)
     }))
 }
+
+/// Start the child in its own process group so the whole tree can be killed
+/// with [`kill_process_tree`]. Windows tracks the tree through taskkill.
+pub fn isolate_process_group(command: &mut Command) {
+    #[cfg(unix)]
+    {
+        use std::os::unix::process::CommandExt;
+        command.process_group(0);
+    }
+    #[cfg(not(unix))]
+    let _ = command;
+}
+
+/// Tokio counterpart of [`isolate_process_group`].
+pub fn isolate_tokio_process_group(command: &mut tokio::process::Command) {
+    #[cfg(unix)]
+    command.process_group(0);
+    #[cfg(not(unix))]
+    let _ = command;
+}
+
+/// Forcefully kill a child and every descendant it spawned. The child must
+/// have been started with [`isolate_process_group`]. Returns whether the
+/// tree kill was delivered; callers still reap the direct child.
+pub fn kill_process_tree(pid: u32) -> std::io::Result<()> {
+    #[cfg(unix)]
+    {
+        let pid = i32::try_from(pid)
+            .ok()
+            .and_then(rustix::process::Pid::from_raw)
+            .ok_or_else(|| std::io::Error::from(std::io::ErrorKind::InvalidInput))?;
+        rustix::process::kill_process_group(pid, rustix::process::Signal::KILL)
+            .map_err(std::io::Error::from)
+    }
+    #[cfg(windows)]
+    {
+        if terminate_windows_tree(pid, true)? {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(format!(
+                "taskkill could not stop process tree {pid}"
+            )))
+        }
+    }
+    #[cfg(not(any(unix, windows)))]
+    {
+        let _ = pid;
+        Err(std::io::Error::from(std::io::ErrorKind::Unsupported))
+    }
+}
+
+/// Async counterpart of [`kill_process_tree`].
+pub async fn kill_process_tree_async(pid: u32) -> std::io::Result<()> {
+    #[cfg(windows)]
+    {
+        if force_kill_process_tree_async(pid).await? {
+            Ok(())
+        } else {
+            Err(std::io::Error::other(format!(
+                "taskkill could not stop process tree {pid}"
+            )))
+        }
+    }
+    #[cfg(not(windows))]
+    kill_process_tree(pid)
+}
+
+/// Image name of the running executable, used to guard PID reuse.
+pub fn current_executable_image_name() -> String {
+    std::env::current_exe()
+        .ok()
+        .and_then(|path| {
+            path.file_name()
+                .map(|name| name.to_string_lossy().into_owned())
+        })
+        .unwrap_or_else(|| super::files::executable_file_name("codex-mixin"))
+}
+
+/// Shutdown requests the process honours: Ctrl-C everywhere, plus SIGTERM
+/// from service managers on Unix. Install before serving so a registration
+/// failure surfaces immediately.
+pub struct ShutdownSignal {
+    #[cfg(unix)]
+    terminate: tokio::signal::unix::Signal,
+}
+
+impl ShutdownSignal {
+    pub fn install() -> std::io::Result<Self> {
+        Ok(Self {
+            #[cfg(unix)]
+            terminate: tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?,
+        })
+    }
+
+    /// Resolve when a shutdown is requested.
+    pub async fn recv(&mut self) {
+        #[cfg(unix)]
+        tokio::select! {
+            _ = tokio::signal::ctrl_c() => {}
+            _ = self.terminate.recv() => {}
+        }
+        #[cfg(not(unix))]
+        let _ = tokio::signal::ctrl_c().await;
+    }
+}
+
+/// Kill a child started with [`isolate_tokio_process_group`] together with
+/// every descendant, then reap it. Unix signals the whole process group even
+/// after the leader exited, because descendants can outlive it. Windows only
+/// walks the tree while the child still runs, so a reused PID is never hit.
+pub async fn terminate_isolated_tokio_child(pid: Option<u32>, child: &mut tokio::process::Child) {
+    if let Some(pid) = pid {
+        #[cfg(unix)]
+        let _ = kill_process_tree(pid);
+        #[cfg(not(unix))]
+        if child.try_wait().ok().flatten().is_none() {
+            let _ = kill_process_tree_async(pid).await;
+        }
+    }
+    let _ = child.kill().await;
+    let _ = child.wait().await;
+}
+
+/// Blocking counterpart of [`terminate_isolated_tokio_child`] for a child
+/// started with [`isolate_process_group`]. Falls back to killing the direct
+/// child when the tree kill cannot be delivered; does not reap.
+pub fn terminate_isolated_child(child: &mut std::process::Child) -> std::io::Result<()> {
+    match kill_process_tree(child.id()) {
+        Ok(()) => Ok(()),
+        Err(_) if child.try_wait()?.is_some() => Ok(()),
+        Err(error) => child.kill().map_err(|_| error),
+    }
+}

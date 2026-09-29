@@ -20,10 +20,6 @@ mod config_input;
 mod doctor;
 mod dsh;
 mod ducx_session;
-#[cfg(unix)]
-mod ducx_setup;
-#[cfg(windows)]
-#[path = "ducx_setup_windows.rs"]
 mod ducx_setup;
 mod fusion_config;
 mod interface;
@@ -623,9 +619,13 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         },
         Command::Connect { command } => match command {
             ConnectCommand::Codex(options) => install_codex(options).await,
-            ConnectCommand::Ducx => {
+            ConnectCommand::Ducx { json } => {
                 let executable = ensure_managed_ducx().await?;
-                eprintln!("managed ducx ready: {}", executable.display());
+                if json {
+                    println!("{}", serde_json::json!({ "executable": executable }));
+                } else {
+                    eprintln!("managed ducx ready: {}", executable.display());
+                }
                 Ok(())
             }
             ConnectCommand::Claude { settings_path } => {

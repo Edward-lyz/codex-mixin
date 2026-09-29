@@ -373,7 +373,10 @@ pub(super) enum ConnectCommand {
     /// Install Codex integration.
     Codex(InstallCodexOptions),
     /// Install and sign in to the managed DUCX authentication carrier.
-    Ducx,
+    Ducx {
+        #[arg(long)]
+        json: bool,
+    },
     /// Install Claude Code integration.
     Claude {
         #[arg(long)]

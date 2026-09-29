@@ -167,13 +167,7 @@ pub(super) fn delete_runtime_metadata() -> anyhow::Result<()> {
 pub(super) fn pid_is_running(pid: u32) -> anyhow::Result<bool> {
     // On Windows a PID can be reused, so the adapter also verifies the image
     // name before a later stop operation is allowed to target it.
-    let image_name = std::env::current_exe()
-        .ok()
-        .and_then(|path| {
-            path.file_name()
-                .map(|name| name.to_string_lossy().into_owned())
-        })
-        .unwrap_or_else(|| "codex-mixin.exe".to_owned());
+    let image_name = codex_mixin::platform::current_executable_image_name();
     codex_mixin::platform::pid_is_running(pid, &image_name).map_err(Into::into)
 }
 

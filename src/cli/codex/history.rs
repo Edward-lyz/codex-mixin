@@ -1,11 +1,8 @@
 use std::fs;
 use std::path::{Path, PathBuf};
-#[cfg(not(windows))]
-use std::process::Command;
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use codex_mixin::CODEX_MIXIN_PROVIDER;
-#[cfg(windows)]
 use rusqlite::Connection;
 use serde_json::Value;
 
@@ -215,7 +212,6 @@ fn sqlite_table_exists(db_path: &Path, table: &str) -> anyhow::Result<bool> {
     Ok(sqlite_scalar_usize(db_path, &sql)? > 0)
 }
 
-#[cfg(windows)]
 fn sqlite_scalar_usize(db_path: &Path, sql: &str) -> anyhow::Result<usize> {
     let connection = Connection::open(db_path)?;
     connection.busy_timeout(std::time::Duration::from_secs(5))?;
@@ -223,48 +219,11 @@ fn sqlite_scalar_usize(db_path: &Path, sql: &str) -> anyhow::Result<usize> {
     usize::try_from(value).map_err(|_| anyhow::anyhow!("SQLite count is negative: {value}"))
 }
 
-#[cfg(not(windows))]
-fn sqlite_scalar_usize(db_path: &Path, sql: &str) -> anyhow::Result<usize> {
-    let output = Command::new("sqlite3")
-        .args(["-cmd", ".timeout 5000"])
-        .arg(db_path)
-        .arg(sql)
-        .output()?;
-    if !output.status.success() {
-        anyhow::bail!(
-            "sqlite3 failed for {}: {}",
-            db_path.display(),
-            String::from_utf8_lossy(&output.stderr)
-        );
-    }
-    let text = String::from_utf8(output.stdout)?;
-    Ok(text.trim().parse()?)
-}
-
-#[cfg(windows)]
 fn run_sqlite(db_path: &Path, sql: &str) -> anyhow::Result<()> {
     let connection = Connection::open(db_path)?;
     connection.busy_timeout(std::time::Duration::from_secs(5))?;
     connection.execute_batch(sql)?;
     Ok(())
-}
-
-#[cfg(not(windows))]
-fn run_sqlite(db_path: &Path, sql: &str) -> anyhow::Result<()> {
-    let output = Command::new("sqlite3")
-        .args(["-cmd", ".timeout 5000"])
-        .arg(db_path)
-        .arg(sql)
-        .output()?;
-    if output.status.success() {
-        Ok(())
-    } else {
-        anyhow::bail!(
-            "sqlite3 failed for {}: {}",
-            db_path.display(),
-            String::from_utf8_lossy(&output.stderr)
-        )
-    }
 }
 
 fn backup_file(path: &Path, codex_home: &Path, backup_root: &Path) -> anyhow::Result<()> {
