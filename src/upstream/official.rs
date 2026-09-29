@@ -2,7 +2,7 @@ use std::time::{Duration, SystemTime};
 
 use axum::http::header;
 use axum::http::{HeaderMap, HeaderValue};
-use serde_json::{Value, json};
+use serde_json::Value;
 
 use super::UpstreamAccess;
 use crate::error::GatewayError;
@@ -133,37 +133,34 @@ pub(crate) fn normalize_official_responses_body(mut body: Value) -> Result<Value
         if let Some(input) = body.get_mut("input").and_then(Value::as_array_mut) {
             input.retain(|item| !is_foreign_reasoning(item));
             for item in input {
-                materialize_agent_message_content(item)?;
+                validate_agent_message_content(item)?;
             }
         }
     }
     Ok(body)
 }
 
-fn materialize_agent_message_content(item: &mut Value) -> Result<(), GatewayError> {
+fn validate_agent_message_content(item: &Value) -> Result<(), GatewayError> {
     if item.get("type").and_then(Value::as_str) != Some("agent_message") {
         return Ok(());
     }
     let content = item
-        .get_mut("content")
-        .and_then(Value::as_array_mut)
+        .get("content")
+        .and_then(Value::as_array)
         .ok_or_else(|| GatewayError::BadRequest("agent_message missing content".to_owned()))?;
     for part in content {
-        // Codex collaboration stores local plaintext in this agent-only field.
-        // Other encrypted_content fields remain opaque.
+        // The official endpoint owns this envelope. Validate its shape, but
+        // never infer encryption from the payload or turn it into user text.
         if part.get("type").and_then(Value::as_str) != Some("encrypted_content") {
             continue;
         }
-        let text = part
-            .get("encrypted_content")
+        part.get("encrypted_content")
             .and_then(Value::as_str)
             .ok_or_else(|| {
                 GatewayError::BadRequest(
                     "agent_message encrypted_content missing payload".to_owned(),
                 )
-            })?
-            .to_owned();
-        *part = json!({"type": "input_text", "text": text});
+            })?;
     }
     Ok(())
 }
@@ -335,34 +332,38 @@ mod tests {
     }
 
     #[test]
-    fn converts_plaintext_agent_message_before_official_forwarding() {
-        let normalized = normalize_official_responses_body(json!({
-            "input": [{
-                "type": "agent_message",
-                "author": "/root/worker",
-                "recipient": "/root",
-                "content": [
-                    {"type": "input_text", "text": "Message Type: MESSAGE\nPayload:\n"},
-                    {
-                        "type": "encrypted_content",
-                        "encrypted_content": "ordinary readable collaboration message"
-                    }
-                ]
-            }]
-        }))
-        .unwrap();
-
-        assert_eq!(
-            normalized["input"][0]["content"],
-            json!([
-                {"type": "input_text", "text": "Message Type: MESSAGE\nPayload:\n"},
-                {"type": "input_text", "text": "ordinary readable collaboration message"}
-            ])
-        );
+    fn preserves_agent_envelopes_without_interpreting_the_payload() {
+        for payload in [
+            "ordinary readable collaboration message",
+            "gAAAAABsynthetic-opaque-payload",
+            "future-format:opaque",
+        ] {
+            let body = json!({
+                "tools": [{"type":"namespace", "name":"collaboration", "tools":[
+                    {"type":"function", "name":"spawn_agent", "parameters":{"properties":{
+                        "message":{"type":"string", "encrypted":true}
+                    }}}
+                ]}],
+                "tool_choice":{"type":"function", "namespace":"collaboration", "name":"spawn_agent"},
+                "input": [{
+                    "type": "agent_message",
+                    "author": "/root/worker",
+                    "recipient": "/root",
+                    "content": [
+                        {"type":"input_text", "text":"Message Type: MESSAGE\nPayload:\n"},
+                        {"type":"encrypted_content", "encrypted_content":payload}
+                    ]
+                }]
+            });
+            assert_eq!(
+                normalize_official_responses_body(body.clone()).unwrap(),
+                body
+            );
+        }
     }
 
     #[test]
-    fn rejects_agent_message_without_plaintext_payload() {
+    fn rejects_agent_message_without_payload() {
         let error = normalize_official_responses_body(json!({
             "input": [{
                 "type": "agent_message",
