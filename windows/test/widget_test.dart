@@ -11,6 +11,7 @@ import 'package:codex_mixin_ui/widgets.dart';
 
 class _RecordingCli extends MixinCli {
   final events = <String>[];
+  final calls = <List<String>>[];
 
   @override
   Future<CliResult> run(
@@ -19,6 +20,7 @@ class _RecordingCli extends MixinCli {
     void Function(String line)? onProgress,
   }) async {
     final label = args.first;
+    calls.add(args);
     events.add('start:$label');
     await Future<void>.delayed(Duration.zero);
     events.add('end:$label');
@@ -182,6 +184,49 @@ void main() {
     await tester.tap(find.byType(Checkbox).at(0));
     await tester.pump();
     expect(tester.widget<Checkbox>(find.byType(Checkbox).at(0)).value, isFalse);
+  });
+
+  testWidgets('saving skips a delisted model context override', (
+    WidgetTester tester,
+  ) async {
+    await tester.binding.setSurfaceSize(const Size(1200, 800));
+    addTearDown(() => tester.binding.setSurfaceSize(null));
+    final cli = _RecordingCli();
+    final controller = MixinController(cli: cli);
+    controller.snapshot = GatewaySnapshot(
+      providers: [
+        ProviderModel.fromJson({
+          'id': 'custom',
+          'display_name': 'Custom',
+          'kind': 'configured',
+          'selected_models': ['available'],
+          'cached_models': [
+            {'id': 'available'},
+          ],
+          'model_context_overrides': {'delisted': 300000},
+        }),
+      ],
+      gatewayRunning: false,
+      serviceTitle: '本地网关已停止',
+      serviceEndpoint: 'http://127.0.0.1:64088/v1',
+      quotaRows: const [],
+      usageRows: const [],
+      status: '配置已同步',
+    );
+    await tester.pumpWidget(
+      settingsApp(controller: controller, autoRefresh: false, closeHides: false),
+    );
+    await tester.pump();
+    await tester.tap(find.text('模型'));
+    await tester.pumpAndSettle();
+    await tester.tap(find.text('保存模型设置'));
+    await tester.pumpAndSettle();
+
+    final selection = cli.calls.firstWhere(
+      (args) => args.length > 2 && args[0] == 'provider' && args[1] == 'select',
+    );
+    expect(selection, containsAllInOrder(['--clear-model-context', 'delisted']));
+    expect(selection, isNot(contains('--model-context')));
   });
 
   testWidgets('supports compact and large settings layouts', (

@@ -415,14 +415,26 @@ final class ModelBenchmarkModel: ObservableObject {
         for provider in providers {
             let loaded = provider.modelContextOverrides ?? [:]
             let previousSaved = previousSavedContexts[provider.id] ?? [:]
+            let availableModelIDs = Set(provider.modelItems.map(\.id))
+                .union(manualModelIDs[provider.id] ?? [])
+            let validLoaded = loaded.filter { availableModelIDs.contains($0.key) }
+            let validDraft = (previousDraftContexts[provider.id] ?? [:])
+                .filter { availableModelIDs.contains($0.key) }
             if (previousDraftContexts[provider.id] ?? [:]) == previousSaved {
-                if loaded.isEmpty {
+                if validLoaded.isEmpty {
                     modelContextOverrides.removeValue(forKey: provider.id)
                 } else {
-                    modelContextOverrides[provider.id] = loaded
+                    modelContextOverrides[provider.id] = validLoaded
                 }
-            } else if loaded != previousSaved {
-                selectionConflictProviderIDs.insert(provider.id)
+            } else {
+                if validDraft.isEmpty {
+                    modelContextOverrides.removeValue(forKey: provider.id)
+                } else {
+                    modelContextOverrides[provider.id] = validDraft
+                }
+                if loaded != previousSaved {
+                    selectionConflictProviderIDs.insert(provider.id)
+                }
             }
             if loaded.isEmpty {
                 savedModelContextOverrides.removeValue(forKey: provider.id)

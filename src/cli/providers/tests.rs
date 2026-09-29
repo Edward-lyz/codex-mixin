@@ -17,7 +17,42 @@ use super::*;
 use codex_mixin::application::provider::{
     remove_provider_config, reorder_provider_config, set_auxiliary_upstream,
 };
-use codex_mixin::provider::{ProviderModel, redact_provider_error};
+use codex_mixin::provider::{ProviderModel, apply_discovered_models, redact_provider_error};
+
+#[test]
+fn delisted_model_context_does_not_block_next_selection() {
+    let mut provider = codex_mixin::provider::custom_provider("custom", "key");
+    provider.base_url = "https://example.test".to_owned();
+    provider.models_refreshed_at_ms = Some(1);
+    provider.cached_models = vec![ProviderModel {
+        id: "delisted".to_owned(),
+        context_window: Some(200_000),
+        ..ProviderModel::default()
+    }];
+    provider.selected_models = vec!["delisted".to_owned()];
+    provider
+        .model_context_overrides
+        .insert("delisted".to_owned(), 300_000);
+
+    apply_discovered_models(
+        &mut provider,
+        vec![ProviderModel {
+            id: "available".to_owned(),
+            context_window: Some(128_000),
+            ..ProviderModel::default()
+        }],
+    )
+    .unwrap();
+    assert!(!provider.model_context_overrides.contains_key("delisted"));
+    let submitted_contexts = provider.model_context_overrides.clone();
+    apply_model_selection(
+        &mut provider,
+        vec!["available".to_owned()],
+        &submitted_contexts,
+        &[],
+    )
+    .unwrap();
+}
 
 #[test]
 fn selecting_unknown_model_leaves_capabilities_for_fallback_resolution() {
@@ -50,6 +85,7 @@ fn selecting_unknown_model_leaves_capabilities_for_fallback_resolution() {
     assert!(newly_selected.is_empty());
     assert!(provider.selected_models.is_empty());
     assert!(provider.cached_models.is_empty());
+    assert!(provider.model_context_overrides.is_empty());
 }
 
 #[test]

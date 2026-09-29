@@ -569,6 +569,14 @@ pub(super) fn apply_model_selection(
     provider
         .cached_models
         .retain(|model| !model.manually_added || selected.contains(model.id.as_str()));
+    let available_models = provider
+        .cached_models
+        .iter()
+        .map(|model| model.id.as_str())
+        .collect::<std::collections::HashSet<_>>();
+    provider
+        .model_context_overrides
+        .retain(|model, _| available_models.contains(model.as_str()));
     provider.selected_models = models;
     provider.new_models.clear();
     provider.prune_stale_auto_review_model();

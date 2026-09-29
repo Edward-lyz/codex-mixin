@@ -569,6 +569,13 @@ pub fn apply_discovered_models(
             model.context_window = Some(context_window);
         }
     }
+    let available_models = models
+        .iter()
+        .map(|model| model.id.as_str())
+        .collect::<HashSet<_>>();
+    provider
+        .model_context_overrides
+        .retain(|model, _| available_models.contains(model.as_str()));
     let first_successful_refresh = provider.models_refreshed_at_ms.is_none();
     let mut changes = ModelDiscoveryChanges::default();
     if first_successful_refresh {
@@ -581,10 +588,6 @@ pub fn apply_discovered_models(
     } else {
         let previous_models = provider
             .cached_models
-            .iter()
-            .map(|model| model.id.as_str())
-            .collect::<HashSet<_>>();
-        let available_models = models
             .iter()
             .map(|model| model.id.as_str())
             .collect::<HashSet<_>>();

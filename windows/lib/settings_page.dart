@@ -471,14 +471,26 @@ class _SettingsPageState extends State<SettingsPage> with WindowListener {
   Future<void> _saveSelectedModels() async {
     final provider = _selected;
     if (provider == null) return;
+    final availableModels = provider.cachedModels.map((model) => '${model['id']}').toSet();
     final args = ['provider', 'select', provider.id];
-    for (final model in _selectedModels) {
+    for (final model in _selectedModels.where(availableModels.contains)) {
       args.addAll(['--model', model]);
     }
-    for (final entry in _modelContextDraft.entries) {
+    for (final entry in _modelContextDraft.entries.where(
+      (entry) => availableModels.contains(entry.key),
+    )) {
       args.addAll(['--model-context', '${entry.key}=${entry.value}']);
     }
-    for (final model in _clearedModelContexts) {
+    final clearedContexts = {
+      ..._clearedModelContexts,
+      ...provider.modelContextOverrides.keys.where(
+        (model) => !availableModels.contains(model),
+      ),
+      ..._modelContextDraft.keys.where(
+        (model) => !availableModels.contains(model),
+      ),
+    };
+    for (final model in clearedContexts) {
       args.addAll(['--clear-model-context', model]);
     }
     final result = await _run('保存模型选择', args);

@@ -141,6 +141,9 @@ struct ModelBenchmarkDataTests {
             additionalModelIDs: [provider.id: [manual.id]]
         )
         precondition(manualSelections[provider.id] == [manual.id])
+        try MainActor.assumeIsolated {
+            try testDelistedContextDraft()
+        }
 
         let cachedManualProvider = try decodeProviderList(
             """
@@ -248,5 +251,47 @@ struct ModelBenchmarkDataTests {
         precondition(complete.tps == current.tps)
         precondition(complete.error == current.error)
         print("Model benchmark DTO decode: passed")
+    }
+
+    @MainActor
+    private static func testDelistedContextDraft() throws {
+        func providerList(models: String, contexts: String) throws -> ProviderListResponse {
+            try decodeProviderList(
+                """
+                {"config_version":2,"gateway_auth_configured":false,"providers":[{
+                  "id":"custom","display_name":"Custom","enabled":true,
+                  "auxiliary_model_upstream":false,
+                  "protocol":"open_ai_responses","base_url":"https://example.test",
+                  "api_path":"/v1/responses","model_source":{"kind":"static"},
+                  "selected_models":["available"],"cached_models":\(models),
+                  "model_context_overrides":\(contexts),"new_models":[],
+                  "unavailable_selected_models":[],"api_key_configured":true,
+                  "quota_parser":"generic","readiness":"healthy",
+                  "readiness_issues":[],"routable_model_count":1
+                }]}
+                """
+            )
+        }
+        let before = try providerList(
+            models: "[{\"id\":\"delisted\"},{\"id\":\"available\"}]",
+            contexts: "{\"delisted\":300000}"
+        )
+        let after = try providerList(
+            models: "[{\"id\":\"available\"}]",
+            contexts: "{}"
+        )
+        let model = ModelBenchmarkModel(
+            startHandler: { _, _, _ in throw NSError(domain: "unused", code: 1) },
+            fetchHandler: { nil },
+            loadProvidersHandler: { after },
+            saveSelectionsHandler: { _, _, _, _ in }
+        )
+        model.applyProviderList(before, selecting: "custom")
+        guard let available = model.visibleRows.first(where: { $0.model.id == "available" }) else {
+            preconditionFailure("available model missing from draft")
+        }
+        model.setModelContextK(available, contextK: 256)
+        model.applyProviderList(after, selecting: "custom")
+        precondition(model.selectionUpdate(for: "custom")?.modelContexts == ["available": 256_000])
     }
 }
