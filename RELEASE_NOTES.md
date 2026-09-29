@@ -1,4 +1,28 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.7.1
+
+### 功能新增
+
+- 新增按模型持久化 context window 覆盖值，macOS、TUI 与 Windows 设置页可查看、编辑、恢复，并在模型移除后清理失效覆盖值
+- 改进 ChatGPT 内置 `codex-cli` 的发现与模型目录安装，兼容新版桌面端的 bundled CLI 布局
+
+### 性能优化
+
+- 能力探测请求复用 Provider session affinity，减少探测与实际请求之间的路由差异
+- 改进 hosted web search 能力识别，按 Provider 与模型实际能力生成目录信息
+
+### BUG 修复
+
+- 修复 OpenAI Chat Completions 工具参数未验证就转发的问题，提前拒绝无效 JSON Schema
+- 修复官方模型 agent message 原生包络被错误改写的问题，并在官方上游拒绝 opaque 内容时按兼容边界重试明文消息
+- 修复 Anthropic `anthropic-beta` 请求头未转发的问题
+- 修复 custom-only 用户升级后桌面端无法归档本地会话的问题：启动时自动把 Mixin 管理的旧 `bedrockApiKey` 占位认证迁移为桌面端可识别的 `apikey`
+- 修复 Anthropic 请求未传 `max_output_tokens` 时默认输出上限过低的问题，默认预算提升到 512K，显式请求上限保持不变
+
+### 致谢
+
+感谢 @Primer-Fan 继续修复官方模型消息包络兼容问题；感谢 @aklgu 与 @mimo-a 提交长输出和桌面端归档问题，并提供可复现的诊断信息。
+
 ## v0.7.0
 
 ### 功能新增
@@ -82,6 +106,30 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v0.7.1
+
+### 功能新增
+
+- 新增按模型持久化 context window 覆蓋值，macOS、TUI 與 Windows 設定頁可查看、編輯、恢復，並在模型移除後清理失效覆蓋值
+- 改進 ChatGPT 內建 `codex-cli` 的尋找與模型目錄安裝，兼容新版桌面端的 bundled CLI 佈局
+
+### 效能優化
+
+- 能力探測請求重用 Provider session affinity，減少探測與實際請求之間的路由差異
+- 改進 hosted web search 能力識別，按 Provider 與模型實際能力生成目錄資訊
+
+### BUG 修正
+
+- 修正 OpenAI Chat Completions 工具參數未驗證就轉發的問題，提前拒絕無效 JSON Schema
+- 修正官方模型 agent message 原生封套被錯誤改寫的問題，並在官方上游拒絕 opaque 內容時按相容邊界重試明文訊息
+- 修正 Anthropic `anthropic-beta` 請求標頭未轉發的問題
+- 修正 custom-only 使用者升級後桌面端無法封存本機工作階段的問題：啟動時自動將 Mixin 管理的舊 `bedrockApiKey` 佔位驗證遷移為桌面端可識別的 `apikey`
+- 修正 Anthropic 請求未傳 `max_output_tokens` 時預設輸出上限過低的問題，預設預算提升至 512K，明確請求上限維持不變
+
+### 致謝
+
+感謝 @Primer-Fan 持續修正官方模型訊息封套相容問題；感謝 @aklgu 與 @mimo-a 提交長輸出及桌面端封存問題，並提供可重現的診斷資訊。
+
 ## v0.7.0
 
 ### 功能新增
@@ -165,6 +213,30 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v0.7.1
+
+### Features
+
+- Add persistent per-model context-window overrides with view, edit, and restore controls in the macOS, TUI, and Windows settings surfaces; prune overrides when models are removed
+- Improve discovery of the ChatGPT bundled `codex-cli` and model-catalog installation for newer desktop layouts
+
+### Performance
+
+- Reuse Provider session affinity for capability probes so probe routing matches normal requests
+- Improve hosted web-search capability detection and expose catalog data from actual Provider and model capabilities
+
+### Bug fixes
+
+- Validate OpenAI Chat Completions tool parameters before forwarding and reject invalid JSON Schema early
+- Preserve native agent-message envelopes on the official route, with a compatibility retry using plaintext messages when the official upstream rejects opaque content
+- Forward the client `anthropic-beta` header to Anthropic Providers
+- Automatically migrate Mixin-managed legacy `bedrockApiKey` placeholders to desktop-compatible `apikey` credentials at startup, so custom-only users can archive local sessions after upgrading
+- Raise the default Anthropic output budget to 512K when `max_output_tokens` is omitted, while preserving explicit request limits
+
+### Thanks
+
+Thanks to @Primer-Fan for continuing to fix official-model message-envelope compatibility, and to @aklgu and @mimo-a for reporting the long-output and desktop-archive issues with reproducible diagnostics.
+
 ## v0.7.0
 
 ### Features
