@@ -192,6 +192,15 @@ pub(in crate::cli) fn is_managed_fake_auth(path: &Path) -> anyhow::Result<bool> 
     Ok(managed_fake_auth_kind(path)?.is_some())
 }
 
+pub(in crate::cli) fn migrate_managed_custom_auth(config_path: &Path) -> anyhow::Result<bool> {
+    let paths = ManagedAuthPaths::from_config(config_path)?;
+    if managed_fake_auth_kind(&paths.auth)? != Some(ManagedFakeAuthKind::Bedrock) {
+        return Ok(false);
+    }
+    write_managed_apikey_auth(&paths.auth)?;
+    Ok(true)
+}
+
 fn managed_fake_auth_kind(path: &Path) -> anyhow::Result<Option<ManagedFakeAuthKind>> {
     if !path.exists() {
         return Ok(None);

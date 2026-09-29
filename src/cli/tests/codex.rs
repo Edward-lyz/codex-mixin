@@ -549,6 +549,30 @@ fn custom_auth_upgrade_replaces_legacy_fake_without_losing_restore_point() {
 }
 
 #[test]
+fn managed_auth_migration_rewrites_bedrock_placeholder_in_place() {
+    let dir = tempfile::tempdir().unwrap();
+    let config_path = dir.path().join("config.toml");
+    let auth_path = dir.path().join("auth.json");
+    fs::write(
+        &auth_path,
+        br#"{"auth_mode":"bedrockApiKey","bedrock_api_key":{"api_key":"codex-mixin-local-old","region":"us-east-1"}}"#,
+    )
+    .unwrap();
+
+    assert!(migrate_managed_custom_auth(&config_path).unwrap());
+    let migrated: serde_json::Value =
+        serde_json::from_slice(&fs::read(&auth_path).unwrap()).unwrap();
+    assert_eq!(migrated["auth_mode"], "apikey");
+    assert!(
+        migrated["OPENAI_API_KEY"]
+            .as_str()
+            .unwrap()
+            .starts_with("codex-mixin-local-")
+    );
+    assert!(migrated.get("bedrock_api_key").is_none());
+}
+
+#[test]
 fn failed_custom_install_rolls_back_auth_and_restore_point() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("config.toml");

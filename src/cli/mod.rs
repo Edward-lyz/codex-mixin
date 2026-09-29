@@ -256,6 +256,7 @@ where
             "gateway process starting"
         );
     }
+    migrate_managed_codex_auth();
     let result = if let Some(start_page) = interactive_start {
         match setup::install_cli_command() {
             Ok(installed_path) => Box::pin(launch_interactive(start_page, installed_path)).await,
@@ -266,6 +267,25 @@ where
     };
     if let Err(error) = result {
         exit_with_command_error(error, foreground_log_file.is_some(), print_errors_to_stderr);
+    }
+}
+
+fn migrate_managed_codex_auth() {
+    let config_path = match codex::resolve_codex_config_path(None) {
+        Ok(path) => path,
+        Err(error) => {
+            tracing::warn!(
+                error = %format!("{error:#}"),
+                "managed Codex auth migration path could not be resolved"
+            );
+            return;
+        }
+    };
+    if let Err(error) = codex::migrate_managed_custom_auth(&config_path) {
+        tracing::warn!(
+            error = %format!("{error:#}"),
+            "managed Codex auth migration failed"
+        );
     }
 }
 

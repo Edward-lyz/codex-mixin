@@ -14,7 +14,6 @@ pub(super) use bin::*;
 pub(super) use catalog::*;
 pub(super) use imagegen_skill::*;
 pub(super) use install::*;
-#[cfg(test)]
 pub(super) use managed_auth::*;
 pub(super) use managed_config::*;
 pub(super) use skill_guard::*;
