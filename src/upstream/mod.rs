@@ -29,7 +29,7 @@ mod official;
 pub(crate) use official::read_codex_official_auth;
 pub(crate) use official::{
     CachedOfficialAuth, FORWARDED_OFFICIAL_HEADERS, forward_official_headers,
-    normalize_official_responses_body,
+    materialize_official_responses_body, normalize_official_responses_body,
 };
 
 pub type AnthropicByteStream = BoxStream<'static, Result<Bytes, reqwest::Error>>;

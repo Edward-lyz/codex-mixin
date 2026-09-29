@@ -121,10 +121,30 @@ enum OfficialWebSocketBehavior {
     CloseAfterCreated,
     CloseAfterCompletedWithCustomTool,
     CloseAfterCompletedWithCollaborationTool,
+    NativeAgentEnvelopeGate,
     TerminalFailuresBeforeRecovery,
     ConnectionLimitThenComplete,
     Silent,
     SlowHandshake,
+}
+
+fn has_native_agent_envelope(body: &Value) -> bool {
+    body.get("input")
+        .and_then(Value::as_array)
+        .is_some_and(|input| {
+            input.iter().any(|item| {
+                item.get("type").and_then(Value::as_str) == Some("agent_message")
+                    && item
+                        .get("content")
+                        .and_then(Value::as_array)
+                        .is_some_and(|content| {
+                            content.iter().any(|part| {
+                                part.get("type").and_then(Value::as_str)
+                                    == Some("encrypted_content")
+                            })
+                        })
+            })
+        })
 }
 
 fn test_config(upstream_base_url: String) -> GatewayConfig {
@@ -1030,6 +1050,25 @@ async fn mock_official_responses(
         }))
         .into_response();
     }
+    if matches!(
+        state.websocket_behavior,
+        OfficialWebSocketBehavior::NativeAgentEnvelopeGate
+    ) && has_native_agent_envelope(&body)
+    {
+        return Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "error": {
+                        "message": "encrypted_content could not be decrypted",
+                        "type": "invalid_request_error"
+                    }
+                })
+                .to_string(),
+            ))
+            .unwrap();
+    }
     Response::builder()
         .status(StatusCode::OK)
         .header(header::CONTENT_TYPE, "text/event-stream")
@@ -1124,6 +1163,10 @@ async fn serve_mock_official_websocket(
             .and_then(Value::as_str)
             .map(str::to_owned);
         let should_generate = body.get("generate").and_then(Value::as_bool) != Some(false);
+        let gated_native_envelope = matches!(
+            state.websocket_behavior,
+            OfficialWebSocketBehavior::NativeAgentEnvelopeGate
+        ) && has_native_agent_envelope(&body);
         let orphan_custom_tool_output = previous_response_id
             .is_none()
             .then(|| {
@@ -1153,7 +1196,9 @@ async fn serve_mock_official_websocket(
             requests.push(body);
             requests.len()
         };
-        if matches!(state.websocket_behavior, OfficialWebSocketBehavior::Silent) {
+        if gated_native_envelope
+            || matches!(state.websocket_behavior, OfficialWebSocketBehavior::Silent)
+        {
             while socket.next().await.is_some() {}
             return;
         }
@@ -7599,5 +7644,125 @@ async fn preserves_native_collaboration_schema_and_calls_after_reconnect() {
     assert_eq!(requests[1]["input"][1]["namespace"], "collaboration");
     assert_eq!(requests[1]["input"][1]["call_id"], "call_delegation");
     assert_eq!(requests[1]["input"][2]["output"], "child done");
+    assert_eq!(connections.load(Ordering::SeqCst), 2);
+}
+
+fn delegation_request() -> Value {
+    let mut body = responses_request();
+    body["model"] = json!("gpt-5.5");
+    body["input"].as_array_mut().unwrap().push(json!({
+        "type": "agent_message",
+        "author": "/root/worker",
+        "recipient": "/root",
+        "content": [
+            {"type":"input_text","text":"Message Type: MESSAGE\nPayload:\n"},
+            {"type":"encrypted_content","encrypted_content":"local plaintext task"}
+        ]
+    }));
+    body
+}
+
+#[tokio::test]
+async fn retries_official_http_with_materialized_agent_messages() {
+    let (gateway_url, official_requests, _, _codex_home) = spawn_gateway_with_mock_official(
+        OfficialWebSocketBehavior::NativeAgentEnvelopeGate,
+        Duration::from_secs(5),
+    )
+    .await;
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&delegation_request())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("response.completed"));
+
+    let captured = official_requests.lock().unwrap();
+    assert_eq!(captured.len(), 2);
+    assert_eq!(
+        captured[0]["input"][2]["content"][1]["type"],
+        "encrypted_content"
+    );
+    assert_eq!(captured[1]["input"][2]["content"][1]["type"], "input_text");
+    assert_eq!(
+        captured[1]["input"][2]["content"][1]["text"],
+        "local plaintext task"
+    );
+}
+
+#[tokio::test]
+async fn keeps_official_http_envelopes_when_the_request_succeeds() {
+    let (gateway_url, official_requests, _, _codex_home) = spawn_gateway_with_mock_official(
+        OfficialWebSocketBehavior::Persistent,
+        Duration::from_secs(5),
+    )
+    .await;
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&delegation_request())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let _ = response.text().await.unwrap();
+
+    let captured = official_requests.lock().unwrap();
+    assert_eq!(captured.len(), 1);
+    assert_eq!(
+        captured[0]["input"][2]["content"][1]["type"],
+        "encrypted_content"
+    );
+}
+
+#[tokio::test]
+async fn retries_official_websocket_with_materialized_agent_messages() {
+    let (gateway_url, official_requests, connections, _codex_home) =
+        spawn_gateway_with_mock_official(
+            OfficialWebSocketBehavior::NativeAgentEnvelopeGate,
+            Duration::from_millis(50),
+        )
+        .await;
+    let mut request = format!(
+        "{}/v1/responses",
+        gateway_url.replacen("http://", "ws://", 1)
+    )
+    .into_client_request()
+    .unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    let mut body = delegation_request();
+    body["type"] = json!("response.create");
+    socket
+        .send(WsMessage::Text(body.to_string().into()))
+        .await
+        .unwrap();
+
+    let frames = tokio::time::timeout(
+        Duration::from_secs(5),
+        websocket_response_frames(&mut socket),
+    )
+    .await
+    .expect("gateway did not retry the official websocket")
+    .join("\n");
+    assert!(frames.contains("\"type\":\"response.completed\""));
+    assert!(!frames.contains("\"type\":\"response.failed\""));
+
+    let captured = official_requests.lock().unwrap();
+    assert_eq!(captured.len(), 2);
+    assert_eq!(
+        captured[0]["input"][2]["content"][1]["type"],
+        "encrypted_content"
+    );
+    assert_eq!(captured[1]["input"][2]["content"][1]["type"], "input_text");
+    assert_eq!(
+        captured[1]["input"][2]["content"][1]["text"],
+        "local plaintext task"
+    );
     assert_eq!(connections.load(Ordering::SeqCst), 2);
 }

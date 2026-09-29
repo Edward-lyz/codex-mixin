@@ -101,10 +101,12 @@ pub(super) async fn proxy_official_ws_request(
             Err(error) if !error.response_started && retry_available => {
                 retry_available = false;
                 *context.official_socket = None;
+                let materialized = materialize_ws_retry_body(body)?;
                 tracing::warn!(
                     model,
                     error = %error.source,
-                    "reconnecting stale official responses websocket"
+                    materialized,
+                    "retrying official responses websocket before any response started"
                 );
             }
             Err(error) => {
@@ -113,6 +115,16 @@ pub(super) async fn proxy_official_ws_request(
             }
         }
     }
+}
+
+/// Replace the retry request with a plaintext-materialized body when it carries
+/// locally stored agent messages. Returns whether the body changed.
+fn materialize_ws_retry_body(body: &mut Value) -> anyhow::Result<bool> {
+    let Some(fallback) = crate::upstream::materialize_official_responses_body(body)? else {
+        return Ok(false);
+    };
+    *body = fallback;
+    Ok(true)
 }
 
 async fn connect_and_expand_official_request(
