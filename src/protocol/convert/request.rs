@@ -83,6 +83,8 @@ fn responses_to_anthropic_with_model_and_thinking_kind(
     )
 }
 
+// Each argument is an independent per-request conversion input.
+#[allow(clippy::too_many_arguments)]
 pub(crate) fn responses_to_anthropic_with_model_reasoning_and_thinking_kind(
     body: &Value,
     model_override: Option<&str>,
