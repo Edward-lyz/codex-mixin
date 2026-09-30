@@ -59,7 +59,9 @@ extension AppDelegate {
         } else if isRunning, snapshot.providerReadiness == "disabled" {
             serviceStatus = "本地服务运行中 · 无启用服务商"
         } else {
-            serviceStatus = isRunning ? "本地服务运行中" : "本地服务已停止"
+            serviceStatus = isRunning
+                ? "本地服务运行中"
+                : stoppedGatewayStatusTitle(codexStatus: codexIntegrationStatus)
         }
         if let reason = echFallbackReason {
             serviceStatus += " · ECH 已回退直连"
@@ -120,6 +122,13 @@ extension AppDelegate {
     ) async {
         let scope = pendingStatusRefreshScope ?? .full
         pendingStatusRefreshScope = nil
+        do {
+            _ = try await refreshCodexIntegrationStatus()
+        } catch {
+            appendDiagnosticLog(
+                "Codex integration status refresh failed: \(localizedErrorDescription(error))"
+            )
+        }
         if scope == .health {
             do {
                 let health = try await checkGatewayHealth()
@@ -168,7 +177,11 @@ extension AppDelegate {
             let dashboardProviders = providerList.providers.map {
                 ProviderDashboardProvider(
                     id: $0.id,
-                    displayName: $0.displayName,
+                    displayName: providerDisplayNameForGatewayState(
+                        $0.displayName,
+                        isGatewayRunning: isRunning,
+                        codexStatus: codexIntegrationStatus
+                    ),
                     isEnabled: $0.enabled,
                     websiteURL: $0.websiteURL
                 )
@@ -283,10 +296,15 @@ extension AppDelegate {
     }
 
     @discardableResult
-    private func applyGatewayStatusFailure(_: Error) -> Bool {
+    private func applyGatewayStatusFailure(_ error: Error) -> Bool {
         isRunning = false
         serviceEndpoint = nil
-        serviceStatus = "网关状态检查失败"
+        if codexIntegrationStatus?.isOfficialMode == true {
+            serviceStatus = stoppedGatewayStatusTitle(codexStatus: codexIntegrationStatus)
+        } else {
+            serviceStatus = "网关状态检查失败"
+            providerStatusDetail = localizedErrorDescription(error)
+        }
         updateStatusTitle()
         updateActionStates()
         return false

@@ -47,6 +47,15 @@ struct MenuViewsLayoutTests {
         let busyToggle = try requireSwitch(in: busyToggleView)
         precondition(!busyToggle.isOn)
         precondition(!busyToggle.isEnabled)
+        precondition(
+            gatewayStatusDetail(
+                title: "官方 Codex 模式",
+                endpoint: nil,
+                statusDetail: nil,
+                isRunning: false,
+                isBusy: false
+            ) == "GPT 直连官方 · Mixin 上游配置已保留"
+        )
 
         precondition(updateServiceMenuView(
             runningToggleView,
