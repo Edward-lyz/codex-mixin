@@ -5,6 +5,29 @@ use tokio_tungstenite_proxy::tungstenite::http::Uri;
 use tokio_tungstenite_proxy::tungstenite::proxy::ProxyConfig;
 use tokio_tungstenite_proxy::{MaybeTlsStream, WebSocketStream, client_async_tls_with_config};
 
+pub(super) fn log_official_websocket(
+    stream: &WebSocketStream<MaybeTlsStream<TcpStream>>,
+    host: &str,
+) -> anyhow::Result<()> {
+    let (socket, ech_accepted) = match stream.get_ref() {
+        MaybeTlsStream::Plain(socket) => (socket, false),
+        MaybeTlsStream::Rustls(tls) => (
+            tls.get_ref().0,
+            tls.get_ref().1.ech_status() == rustls::client::EchStatus::Accepted,
+        ),
+        _ => anyhow::bail!("unsupported official WebSocket TLS backend"),
+    };
+    let peer = socket.peer_addr().context("read official WebSocket peer")?;
+    let local = socket
+        .local_addr()
+        .context("read official WebSocket local address")?;
+    tracing::info!(event = "official_websocket_connected", host,
+        peer_ip = %peer.ip(), peer_port = peer.port(), local_ip = %local.ip(), local_port = local.port(),
+        ech_accepted, transport = if ech_accepted { "ech" } else { "non_ech" },
+        phase = "websocket_upgrade", "official WebSocket connected");
+    Ok(())
+}
+
 pub(super) async fn connect_official_websocket<R>(
     request: R,
     upstream: &crate::upstream::UpstreamAccess,
@@ -15,17 +38,20 @@ where
 {
     let request = request.into_client_request()?;
     let url = reqwest::Url::parse(&request.uri().to_string())?;
-    if let Some(tls) = upstream.official_tls(&url).await? {
-        return Ok(
-            tokio_tungstenite_proxy::client_async(request, MaybeTlsStream::Rustls(tls))
-                .await?
-                .0,
-        );
-    }
-    if upstream.official_is_direct() {
-        return connect_upstream_websocket(request, &ProxyEnv::default()).await;
-    }
-    connect_upstream_websocket(request, proxy_env).await
+    let stream = if let Some(tls) = upstream.official_tls(&url).await? {
+        tokio_tungstenite_proxy::client_async(request, MaybeTlsStream::Rustls(tls))
+            .await?
+            .0
+    } else if upstream.official_is_direct() {
+        connect_upstream_websocket(request, &ProxyEnv::default()).await?
+    } else {
+        connect_upstream_websocket(request, proxy_env).await?
+    };
+    log_official_websocket(
+        &stream,
+        url.host_str().context("official WebSocket has no host")?,
+    )?;
+    Ok(stream)
 }
 
 #[derive(Clone, Debug, Default)]

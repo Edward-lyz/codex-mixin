@@ -129,10 +129,9 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
     let state = AppState::new(gateway_config.clone())?;
     super::super::progress_step("Loading Codex config template");
     let mut template = load_codex_install_template_online(
-        &paths,
         codex_oauth_proxy,
-        &state,
         &official_models_cache_path(),
+        codex_mixin::catalog::official::OFFICIAL_CATALOG_URL,
     )
     .await?;
     if let Some(previous_official_models) = previous_official_models {

@@ -682,33 +682,6 @@ pub(super) async fn start(
     config = codex_mixin::application::lifecycle::reload_for_listener(actual_bind)?;
     let supported_models = WebSearchCapabilities::from_default_path(&config)?.supported_model_ids();
     let auto_review_slug = codex_mixin::provider::auxiliary_auto_review_slug(&config.providers);
-    log_codex_catalog_refresh_started(&config_path, "gateway_start", "capability_cache");
-    match refresh_managed_codex_catalog_with_capabilities(
-        &config_path,
-        Some(&supported_models),
-        auto_review_slug.as_deref(),
-    ) {
-        Ok(changed) => {
-            log_codex_catalog_refresh(&config_path, "gateway_start", "capability_cache", changed)
-        }
-        Err(err) => tracing::warn!(
-            trigger = "gateway_start",
-            source = "capability_cache",
-            error = %format!("{err:#}"),
-            "failed to refresh Codex model catalog"
-        ),
-    }
-    match crate::cli::sync_installed_client_models() {
-        Ok(refreshed) if !refreshed.is_empty() => tracing::info!(
-            clients = refreshed.join(", "),
-            "refreshed connected client model catalogs"
-        ),
-        Ok(_) => {}
-        Err(err) => tracing::warn!(
-            error = %format!("{err:#}"),
-            "failed to refresh connected client model catalogs"
-        ),
-    }
     let official_catalog_state = AppState::new(config.clone())?;
     let stop_provider_model_refresh = Arc::new(AtomicBool::new(false));
     let refresh_stop = Arc::clone(&stop_provider_model_refresh);
@@ -831,6 +804,50 @@ pub(super) async fn start(
         config_fingerprint: config_fingerprint()?,
     })?;
     let _runtime_guard = RuntimeMetadataGuard { pid };
+    let startup_config_path = config_path.clone();
+    // Catalog sync reads configuration repeatedly. On Windows each protected
+    // read can launch an ACL process; keep this off the readiness path.
+    let startup_catalog_task = tokio::task::spawn_blocking(move || {
+        log_codex_catalog_refresh_started(
+            &startup_config_path,
+            "gateway_start",
+            "capability_cache",
+        );
+        match refresh_managed_codex_catalog_with_capabilities(
+            &startup_config_path,
+            Some(&supported_models),
+            auto_review_slug.as_deref(),
+        ) {
+            Ok(changed) => log_codex_catalog_refresh(
+                &startup_config_path,
+                "gateway_start",
+                "capability_cache",
+                changed,
+            ),
+            Err(err) => tracing::warn!(
+                trigger = "gateway_start",
+                source = "capability_cache",
+                error = %format!("{err:#}"),
+                "failed to refresh Codex model catalog"
+            ),
+        }
+        match crate::cli::sync_installed_client_models() {
+            Ok(refreshed) if !refreshed.is_empty() => tracing::info!(
+                clients = refreshed.join(", "),
+                "refreshed connected client model catalogs"
+            ),
+            Ok(_) => {}
+            Err(err) => tracing::warn!(
+                error = %format!("{err:#}"),
+                "failed to refresh connected client model catalogs"
+            ),
+        }
+    });
+    let startup_catalog_task = tokio::spawn(async move {
+        if let Err(error) = startup_catalog_task.await {
+            tracing::error!(error = %error, "startup model catalog task failed");
+        }
+    });
     let mut serve_config = config;
     let mut serve_listener = listener;
     let result = loop {
@@ -857,6 +874,7 @@ pub(super) async fn start(
     };
     refresh_task.abort();
     official_refresh_task.abort();
+    startup_catalog_task.abort();
     stop_provider_model_refresh.store(true, Ordering::Release);
     stop_client_credential_watch.store(true, Ordering::Release);
     match &result {

@@ -101,9 +101,17 @@ pub struct ProviderRefreshResult {
 /// original discovery error is returned.
 pub async fn refresh_provider_models(id: &str) -> anyhow::Result<ProviderRefreshResult> {
     let provider = provider_for_refresh(id)?;
-    let client = reqwest::Client::builder()
-        .timeout(Duration::from_secs(30))
-        .build()?;
+    static DISCOVERY_CLIENT: std::sync::OnceLock<reqwest::Client> = std::sync::OnceLock::new();
+    let client = match DISCOVERY_CLIENT.get() {
+        Some(client) => client.clone(),
+        None => {
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(30))
+                .build()?;
+            let _ = DISCOVERY_CLIENT.set(client.clone());
+            client
+        }
+    };
     let quota_client = client.clone();
     let quota_provider = provider.clone();
     let quota_probe = async move {

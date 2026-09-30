@@ -5,11 +5,12 @@ use std::time::SystemTime;
 use codex_mixin::catalog::load_template_catalog;
 use codex_mixin::config::{GatewayConfig, stored_config_path};
 use codex_mixin::provider::{ProviderModel, ProviderProtocol};
-use codex_mixin::server::AppState;
 use serde_json::Value;
 
 use super::atomic_file::write_atomic_if_changed;
-use super::codex::{resolve_codex_client_version, resolve_codex_install_paths};
+use codex_mixin::catalog::official::{
+    OFFICIAL_CATALOG_TIMEOUT, OFFICIAL_CATALOG_URL, fetch_catalog, validate_catalog,
+};
 
 pub(super) const OFFICIAL_PROVIDER_ID: &str = "official";
 const OFFICIAL_MODELS_CACHE_FILE: &str = "official-models.json";
@@ -22,26 +23,11 @@ pub(super) fn load_official_models() -> anyhow::Result<Vec<ProviderModel>> {
 }
 
 pub(super) fn load_official_catalog() -> anyhow::Result<Option<Value>> {
-    let mixin_cache = official_models_cache_path();
-    let codex_cache = resolve_codex_install_paths(None, None)?.models_cache;
-    let cache = if mixin_cache.is_file() {
-        mixin_cache
-    } else {
-        codex_cache
-    };
-    load_template_catalog(Some(&cache))
+    load_template_catalog(Some(&official_models_cache_path()))
 }
 
 pub(super) async fn refresh_official_models() -> anyhow::Result<usize> {
-    let config = GatewayConfig::from_stored_config()?;
-    anyhow::ensure!(
-        config.accept_codex_oauth && config.codex_auth_path.is_file(),
-        "official provider requires a signed-in Codex account"
-    );
-    let codex_cache = resolve_codex_install_paths(None, None)?.models_cache;
-    let client_version = resolve_codex_client_version(&codex_cache)
-        .ok_or_else(|| anyhow::anyhow!("Codex client version could not be determined"))?;
-    refresh_official_models_to_path(&config, &client_version, &official_models_cache_path()).await
+    refresh_official_models_to_path(OFFICIAL_CATALOG_URL, &official_models_cache_path()).await
 }
 
 pub(in crate::cli) fn official_models_cache_path() -> PathBuf {
@@ -52,12 +38,15 @@ pub(in crate::cli) fn write_official_models_cache(
     catalog: &Value,
     cache_path: &Path,
 ) -> anyhow::Result<usize> {
+    validate_catalog(catalog)?;
     let model_count = official_models_from_catalog(catalog)?.len();
     anyhow::ensure!(
         model_count > 0,
-        "official models endpoint returned no visible models"
+        "Codex repository catalog returned no visible models"
     );
-    write_atomic_if_changed(cache_path, &serde_json::to_vec_pretty(catalog)?)?;
+    let mut cached = catalog.clone();
+    cached["codex_mixin_source"] = serde_json::json!(OFFICIAL_CATALOG_URL);
+    write_atomic_if_changed(cache_path, &serde_json::to_vec_pretty(&cached)?)?;
     // A successful refresh can return the same catalog. Keep the timestamp
     // meaningful for the provider UI instead of showing only content changes.
     std::fs::OpenOptions::new()
@@ -67,29 +56,12 @@ pub(in crate::cli) fn write_official_models_cache(
     Ok(model_count)
 }
 
-#[cfg(test)]
-fn load_official_models_from_paths(
-    mixin_cache: &Path,
-    codex_cache: &Path,
-) -> anyhow::Result<Vec<ProviderModel>> {
-    let cache = if mixin_cache.is_file() {
-        mixin_cache
-    } else {
-        codex_cache
-    };
-    load_template_catalog(Some(cache))?.map_or_else(
-        || Ok(Vec::new()),
-        |catalog| official_models_from_catalog(&catalog),
-    )
-}
-
 async fn refresh_official_models_to_path(
-    config: &GatewayConfig,
-    client_version: &str,
+    source_url: &str,
     cache_path: &Path,
 ) -> anyhow::Result<usize> {
-    let state = AppState::new(config.clone())?;
-    let catalog = state.fetch_official_models_catalog(client_version).await?;
+    let cached = load_template_catalog(Some(cache_path))?;
+    let catalog = fetch_catalog(source_url, OFFICIAL_CATALOG_TIMEOUT, cached.as_ref()).await?;
     write_official_models_cache(&catalog, cache_path)
 }
 
@@ -215,11 +187,9 @@ fn official_models_from_catalog(catalog: &Value) -> anyhow::Result<Vec<ProviderM
 
 #[cfg(test)]
 mod tests {
-    use std::time::Duration;
 
     use axum::Router;
     use axum::routing::get;
-    use codex_mixin::config::ThinkingMode;
     use serde_json::json;
 
     use super::*;
@@ -287,7 +257,13 @@ mod tests {
         )
         .unwrap();
 
-        let models = load_official_models_from_paths(&mixin_cache, &codex_cache).unwrap();
+        let models = load_template_catalog(Some(&mixin_cache))
+            .unwrap()
+            .map_or_else(
+                || Ok(Vec::new()),
+                |catalog| official_models_from_catalog(&catalog),
+            )
+            .unwrap();
 
         assert_eq!(models.len(), 1);
         assert_eq!(models[0].id, "gpt-5.6-sol");
@@ -305,41 +281,17 @@ mod tests {
             axum::serve(listener, upstream).await.unwrap();
         });
         let directory = tempfile::tempdir().unwrap();
-        let auth_path = directory.path().join("auth.json");
-        std::fs::write(
-            &auth_path,
-            r#"{"tokens":{"access_token":"secret","account_id":"account-one"}}"#,
-        )
-        .unwrap();
         let cache_path = directory.path().join("official-models.json");
-        let config = GatewayConfig {
-            bind: "127.0.0.1:0".parse().unwrap(),
-            providers: Vec::new(),
-            official_responses_url: format!("http://{address}/responses"),
-            codex_auth_path: auth_path,
-            gateway_api_key: None,
-            gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys::default(),
-            accept_codex_oauth: true,
-            official_ech_fallback_reason: None,
-            official_ech_proxy: false,
-            official_selected_models: Some(vec!["gpt-5.6-terra".to_owned()]),
-            default_max_tokens: 8192,
-            default_context_window: 1_000_000,
-            request_timeout: Duration::from_secs(2),
-            thinking_mode: ThinkingMode::Off,
-            enable_web_search_tool: false,
-            web_search_tool_type: "web_search_20250305".to_owned(),
-            web_search_max_uses: Some(3),
-            fusion_profiles: Vec::new(),
-        };
-
-        let count = refresh_official_models_to_path(&config, "0.148.0", &cache_path)
-            .await
-            .unwrap();
-        let models = load_official_models_from_paths(&cache_path, &cache_path).unwrap();
-
+        let count =
+            refresh_official_models_to_path(&format!("http://{address}/models"), &cache_path)
+                .await
+                .unwrap();
+        let cached = load_template_catalog(Some(&cache_path)).unwrap().unwrap();
+        let models = official_models_from_catalog(&cached).unwrap();
+        assert_eq!(cached["codex_mixin_source"], OFFICIAL_CATALOG_URL);
+        assert!(!directory.path().join("auth.json").exists());
+        assert!(!directory.path().join("models_cache.json").exists());
         assert_eq!(count, 1);
         assert_eq!(models[0].id, "gpt-5.6-sol");
-        assert_eq!(config.official_selected_models.unwrap(), ["gpt-5.6-terra"]);
     }
 }

@@ -156,7 +156,11 @@ async fn failed_streaming_connection_disables_without_replaying_body() {
         .unwrap();
     let upstream = transport(client.clone(), &path);
     let request = body::prepare_json(
-        client.post(format!("http://chatgpt.com:{}/responses", address.port())),
+        attach_trace(
+            client.post(format!("http://chatgpt.com:{}/responses", address.port())),
+            OfficialTransport::Ech(Uuid::new_v4()),
+        )
+        .unwrap(),
         json!({"model": "gpt-test"}),
     )
     .await
@@ -173,5 +177,40 @@ async fn failed_streaming_connection_disables_without_replaying_body() {
             .unwrap()
             .unwrap()
             .official_ech_proxy
+    );
+}
+
+#[tokio::test]
+async fn prepared_ech_request_survives_concurrent_disable() {
+    let directory = tempfile::tempdir().unwrap();
+    let path = directory.path().join("config.json");
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    drop(listener);
+    let client = Client::builder()
+        .no_proxy()
+        .resolve_to_addrs("chatgpt.com", &[address])
+        .build()
+        .unwrap();
+    let upstream = transport(client.clone(), &path);
+    let request = attach_trace(
+        client.post(format!("http://chatgpt.com:{}/responses", address.port())),
+        OfficialTransport::Ech(Uuid::new_v4()),
+    )
+    .unwrap();
+    let request = body::prepare_json(request, json!({"model": "gpt-test"}))
+        .await
+        .unwrap();
+    upstream
+        .official_ech
+        .disable(anyhow::anyhow!("another request failed"))
+        .await
+        .unwrap();
+    assert!(!upstream.official_ech_active());
+    let error = upstream.send_official(request).await.unwrap_err();
+    assert!(
+        error
+            .to_string()
+            .contains("streaming request was not replayed")
     );
 }

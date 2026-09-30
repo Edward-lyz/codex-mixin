@@ -431,7 +431,7 @@ async fn official_auth_cache_refreshes_and_does_not_hide_invalid_files() {
 }
 
 #[tokio::test]
-async fn fetches_official_models_with_codex_auth_and_client_version() {
+async fn fetches_repository_models_without_codex_auth_or_client_version() {
     let captured = Arc::new(Mutex::new(None));
     let captured_request = Arc::clone(&captured);
     let upstream =
@@ -444,21 +444,10 @@ async fn fetches_official_models_with_codex_auth_and_client_version() {
                 >| {
                     let captured_request = Arc::clone(&captured_request);
                     async move {
-                        *captured_request.lock().unwrap() = Some((
-                            headers
-                                .get(header::AUTHORIZATION)
-                                .unwrap()
-                                .to_str()
-                                .unwrap()
-                                .to_owned(),
-                            headers
-                                .get("chatgpt-account-id")
-                                .unwrap()
-                                .to_str()
-                                .unwrap()
-                                .to_owned(),
-                            query.get("client_version").unwrap().to_owned(),
-                        ));
+                        assert!(headers.get(header::AUTHORIZATION).is_none());
+                        assert!(headers.get("chatgpt-account-id").is_none());
+                        assert!(query.is_empty());
+                        *captured_request.lock().unwrap() = Some(true);
                         Json(json!({
                             "models": [{
                                 "slug": "gpt-5.6-sol",
@@ -509,19 +498,12 @@ async fn fetches_official_models_with_codex_auth_and_client_version() {
     .unwrap();
 
     let catalog = state
-        .fetch_official_models_catalog("0.144.4")
+        .fetch_official_models_catalog(&format!("http://{address}/backend-api/codex/models"))
         .await
         .unwrap();
 
     assert_eq!(catalog["models"][0]["context_window"], 272_000);
-    assert_eq!(
-        captured.lock().unwrap().as_ref().unwrap(),
-        &(
-            "Bearer secret".to_owned(),
-            "account-one".to_owned(),
-            "0.144.4".to_owned()
-        )
-    );
+    assert_eq!(*captured.lock().unwrap(), Some(true));
 }
 
 #[tokio::test]
