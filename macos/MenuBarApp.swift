@@ -18,8 +18,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let menuItemViewUpdater = MenuItemViewUpdater()
     var refreshTimer: RefreshTimerController?
     var refreshLifecycleObservers: [NSObjectProtocol] = []
-    var terminationInProgress = false
-    var updateTerminationReady = false
     @MainActor var updaterController: SPUStandardUpdaterController?
     var updateWatchdogLaunchGate = UpdateWatchdogLaunchGate()
     var isRunning = false
@@ -36,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         await self?.performStatusRefresh(isCurrent: isCurrent)
     }
     var pendingStatusRefreshScope: StatusRefreshScope?
+    var codexIntegrationStatus: CodexIntegrationStatus?
     var quotaRefreshPolicy = QuotaRefreshPolicy()
     var serviceStatus = "本地网关检查中..." {
         didSet { updateServiceStatusView() }
@@ -296,10 +295,44 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func toggleGateway(_ sender: GatewaySwitchControl) {
         sender.isEnabled = false
         sender.isBusy = true
-        if sender.isOn {
-            startService()
-        } else {
-            stopService()
+        Task { @MainActor in
+            do {
+                let codexStatus = try await refreshCodexIntegrationStatus()
+                if sender.isOn {
+                    if codexStatus.isOfficialMode {
+                        enableGatewayFromSwitch()
+                    } else {
+                        startService()
+                    }
+                    return
+                }
+
+                if !codexStatus.gatewayRequired {
+                    stopService()
+                    return
+                }
+
+                guard confirm(
+                    title: "切回纯官方 Codex 并停止 Mixin？",
+                    message: "将由 Codex Mixin CLI 恢复安装前的官方 Codex 配置与认证、停止本地网关，并重启 Codex App。当前 Codex 会话会中断；重新打开后 GPT 将直接连接官方服务。以后再次开启此开关时，会自动恢复当前 Mixin 接入模式并再次重启 Codex。"
+                ) else {
+                    sender.isOn = true
+                    sender.isBusy = false
+                    sender.isEnabled = true
+                    updateServiceStatusView()
+                    return
+                }
+                disableGatewayFromSwitch()
+            } catch {
+                sender.isOn.toggle()
+                sender.isBusy = false
+                sender.isEnabled = true
+                updateServiceStatusView()
+                showAlert(
+                    title: "无法确认 Codex 接入状态",
+                    message: "CLI 未能返回可靠的 Codex 接入状态；为避免中断 GPT 请求，没有执行服务切换：\(error)"
+                )
+            }
         }
     }
 

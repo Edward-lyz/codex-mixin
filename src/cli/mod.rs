@@ -818,6 +818,10 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             )
         }
         Command::CodexStatus { json } => codex::codex_status(json),
+        Command::CodexSwitch { target } => match target {
+            CodexSwitchTarget::Official => codex::switch_to_official().await,
+            CodexSwitchTarget::Mixin => codex::switch_to_mixin().await,
+        },
         Command::InstallClaude { settings } => {
             let hook_settings_path = settings.clone();
             install_claude(settings)?;

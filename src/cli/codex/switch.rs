@@ -5,7 +5,10 @@ use std::path::{Path, PathBuf};
 use serde::{Deserialize, Serialize};
 use toml_edit::DocumentMut;
 
-use super::resolve_codex_config_path;
+use super::{
+    InstallCodexOptions, install_codex, resolve_codex_config_path,
+    uninstall_codex_preserving_restore_mode,
+};
 
 const SWITCH_STATE_FILE: &str = "codex-switch.json";
 
@@ -21,6 +24,23 @@ pub(super) enum CodexIntegration {
 pub(super) enum ManagedCodexMode {
     CodexOauthProxy,
     CustomOnly,
+}
+
+impl ManagedCodexMode {
+    fn install_options(self) -> InstallCodexOptions {
+        InstallCodexOptions {
+            requested_model: None,
+            set_default: self == Self::CustomOnly,
+            codex_oauth_proxy: self == Self::CodexOauthProxy,
+            custom_only: self == Self::CustomOnly,
+            config_path: None,
+            catalog_path: None,
+            base_url: None,
+            web_search: "live".to_owned(),
+            env_key: None,
+            no_env_key: false,
+        }
+    }
 }
 
 #[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
@@ -42,7 +62,7 @@ pub(in crate::cli) struct CodexRequiresGatewayError;
 impl fmt::Display for CodexRequiresGatewayError {
     fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
         formatter.write_str(
-            "Codex is connected through the Mixin gateway; restore the official Codex configuration first, or pass --allow-codex-disconnect to force the stop",
+            "Codex is connected through the Mixin gateway; run `codex-mixin codex-switch official` first, or pass --allow-codex-disconnect to force the stop",
         )
     }
 }
@@ -95,6 +115,69 @@ fn ensure_codex_allows_gateway_stop_status(
     Ok(())
 }
 
+pub(in crate::cli) async fn switch_to_official() -> anyhow::Result<()> {
+    let before = current_codex_status()?;
+    anyhow::ensure!(
+        before.integration == CodexIntegration::Managed,
+        "Codex is not currently managed by Codex Mixin"
+    );
+    let mode = before
+        .mode
+        .ok_or_else(|| anyhow::anyhow!("managed Codex mode could not be determined"))?;
+    let previous_restore_mode = before.restore_mode;
+
+    super::super::progress_step("Saving the current Codex integration mode");
+    save_restore_mode(mode)?;
+    super::super::progress_step("Restoring the official Codex configuration and authentication");
+    if let Err(error) = uninstall_codex_preserving_restore_mode(None, None) {
+        rollback_restore_mode_if_still_managed(previous_restore_mode)?;
+        return Err(error);
+    }
+    codex_mixin::config::revoke_gateway_client_key(
+        codex_mixin::gateway_access::GatewayClient::Codex,
+    )?;
+
+    super::super::progress_step("Validating the official Codex configuration");
+    let restored = current_codex_status()?;
+    anyhow::ensure!(
+        restored.integration == CodexIntegration::Unmanaged && !restored.gateway_required,
+        "Codex configuration is still managed; the gateway remains running"
+    );
+
+    super::super::progress_step("Stopping the Mixin gateway");
+    super::super::service::stop_managed(true).await?;
+    Ok(())
+}
+
+pub(in crate::cli) async fn switch_to_mixin() -> anyhow::Result<()> {
+    let before = current_codex_status()?;
+    if before.integration == CodexIntegration::Managed {
+        clear_restore_mode()?;
+        return Ok(());
+    }
+    let mode = before
+        .restore_mode
+        .ok_or_else(|| anyhow::anyhow!("no previous managed Codex mode is available to restore"))?;
+
+    super::super::progress_step("Starting the Mixin gateway");
+    super::super::service::ensure_ready().await?;
+    super::super::progress_step("Restoring the previous Codex Mixin integration");
+    install_codex(mode.install_options()).await?;
+    super::super::progress_step("Validating the managed Codex configuration");
+    let restored = current_codex_status()?;
+    anyhow::ensure!(
+        restored.integration == CodexIntegration::Managed
+            && restored.mode == Some(mode)
+            && restored.gateway_required,
+        "Codex did not restore the previous Mixin integration mode"
+    );
+    Ok(())
+}
+
+pub(in crate::cli) fn clear_restore_mode() -> anyhow::Result<()> {
+    clear_restore_mode_at(&switch_state_path())
+}
+
 fn switch_state_path() -> PathBuf {
     super::super::runtime::state_dir().join(SWITCH_STATE_FILE)
 }
@@ -141,12 +224,37 @@ fn managed_mode(raw: &str) -> Option<ManagedCodexMode> {
     }
 }
 
+fn save_restore_mode(mode: ManagedCodexMode) -> anyhow::Result<()> {
+    let path = switch_state_path();
+    let serialized = serde_json::to_vec_pretty(&CodexSwitchState { restore_mode: mode })?;
+    codex_mixin::clients::files::write_owner_only(&path, &serialized)
+}
+
 fn load_restore_mode_at(path: &Path) -> anyhow::Result<Option<ManagedCodexMode>> {
     if !path.exists() {
         return Ok(None);
     }
     let state = serde_json::from_slice::<CodexSwitchState>(&fs::read(path)?)?;
     Ok(Some(state.restore_mode))
+}
+
+fn clear_restore_mode_at(path: &Path) -> anyhow::Result<()> {
+    if path.exists() {
+        fs::remove_file(path)?;
+    }
+    Ok(())
+}
+
+fn rollback_restore_mode_if_still_managed(
+    previous_restore_mode: Option<ManagedCodexMode>,
+) -> anyhow::Result<()> {
+    if current_codex_status()?.integration != CodexIntegration::Managed {
+        return Ok(());
+    }
+    match previous_restore_mode {
+        Some(mode) => save_restore_mode(mode),
+        None => clear_restore_mode(),
+    }
 }
 
 #[cfg(test)]
@@ -176,7 +284,7 @@ base_url = "http://127.0.0.1:8787/v1"
     }
 
     #[test]
-    fn official_status_reads_a_saved_restore_mode() {
+    fn official_status_retains_the_mode_needed_for_reconnect() {
         let directory = tempfile::tempdir().unwrap();
         let config = directory.path().join("config.toml");
         let state = directory.path().join(SWITCH_STATE_FILE);
@@ -217,6 +325,16 @@ base_url = "http://127.0.0.1:8787/v1"
         assert_eq!(status.integration, CodexIntegration::Managed);
         assert_eq!(status.mode, None);
         assert!(status.gateway_required);
+    }
+
+    #[test]
+    fn clearing_restore_mode_is_idempotent() {
+        let directory = tempfile::tempdir().unwrap();
+        let state = directory.path().join(SWITCH_STATE_FILE);
+        fs::write(&state, b"{}").unwrap();
+        clear_restore_mode_at(&state).unwrap();
+        clear_restore_mode_at(&state).unwrap();
+        assert!(!state.exists());
     }
 
     #[test]

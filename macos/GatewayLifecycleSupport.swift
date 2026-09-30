@@ -9,6 +9,16 @@ extension AppDelegate {
             defer { serviceBusy = false }
             do {
                 loadCachedProviderQuota()
+                let codexStatus = try await refreshCodexIntegrationStatus()
+                if codexStatus.isOfficialMode {
+                    isRunning = false
+                    serviceEndpoint = nil
+                    providerStatusDetail = nil
+                    serviceStatus = stoppedGatewayStatusTitle(codexStatus: codexStatus)
+                    updateStatusTitle()
+                    updateActionStates()
+                    return
+                }
                 let currentStatus = try await runGateway(["status", "--json"])
                 let snapshot = try decodeGatewayStatus(currentStatus)
                 if snapshot.configured == false {
@@ -57,31 +67,4 @@ extension AppDelegate {
         try await runGateway(["service", "ensure", "--json"])
     }
 
-    func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
-        if updateTerminationReady {
-            refreshTimer?.stop()
-            return .terminateNow
-        }
-        if terminationInProgress {
-            return .terminateLater
-        }
-        terminationInProgress = true
-        serviceBusy = true
-        serviceStatus = "正在停止本地网关..."
-        serviceEndpoint = nil
-        Task { @MainActor in
-            do {
-                _ = try await runGateway(["service", "stop", "--managed", "--json"])
-                refreshTimer?.stop()
-                sender.reply(toApplicationShouldTerminate: true)
-            } catch {
-                terminationInProgress = false
-                serviceBusy = false
-                await refreshStatusNow()
-                showAlert(title: "退出 Codex Mixin 失败", message: "本地网关未能停止：\(error)")
-                sender.reply(toApplicationShouldTerminate: false)
-            }
-        }
-        return .terminateLater
-    }
 }

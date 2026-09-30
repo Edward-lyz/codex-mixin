@@ -55,12 +55,14 @@ fn install_command_accepts_explicit_custom_only_mode() {
 }
 
 #[test]
-fn codex_status_and_gateway_stop_guard_have_a_stable_cli_surface() {
+fn codex_lifecycle_commands_have_a_stable_cli_surface() {
     assert!(Cli::try_parse_from(["codex-mixin", "codex-status", "--json"]).is_ok());
     assert!(
         Cli::try_parse_from(["codex-mixin", "stop", "--force", "--allow-codex-disconnect",])
             .is_ok()
     );
+    assert!(Cli::try_parse_from(["codex-mixin", "codex-switch", "official"]).is_ok());
+    assert!(Cli::try_parse_from(["codex-mixin", "codex-switch", "mixin"]).is_ok());
     assert!(
         Cli::try_parse_from([
             "codex-mixin",

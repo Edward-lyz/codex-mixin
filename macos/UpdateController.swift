@@ -24,13 +24,11 @@ extension AppDelegate: SPUUpdaterDelegate {
 
     @MainActor
     func updater(_ updater: SPUUpdater, willInstallUpdate updateItem: SUAppcastItem) {
-        updateTerminationReady = true
         startUpdateWatchdog(for: updateItem)
     }
 
     @MainActor
     func updater(_ updater: SPUUpdater, didAbortWithError error: Error) {
-        updateTerminationReady = false
         appendAppDiagnosticLog(
             "APP_UPDATE Sparkle aborted error=\(diagnosticErrorDescription(error))",
             directory: stateDir()
@@ -44,7 +42,6 @@ extension AppDelegate: SPUUpdaterDelegate {
         error: Error?
     ) {
         guard let error else { return }
-        updateTerminationReady = false
         appendAppDiagnosticLog(
             "APP_UPDATE Sparkle finished check=\(updateCheck.rawValue) error=\(diagnosticErrorDescription(error))",
             directory: stateDir()

@@ -19,6 +19,7 @@ pub(super) fn describe(json_output: bool) -> anyhow::Result<()> {
             "structured_errors": true,
             "fusion_model_options": true,
             "service_lifecycle": true,
+            "codex_lifecycle": true,
             "gateway_autostart": codex_mixin::platform::startup_service_supported(),
             "config_apply": true,
             "official_ech_proxy": true,

@@ -162,6 +162,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/ProcessOutputCollector.swift" \
   "$ROOT_DIR/macos/GatewayService.swift" \
   "$ROOT_DIR/macos/GatewayStatusSupport.swift" \
+  "$ROOT_DIR/macos/CodexGatewaySwitchSupport.swift" \
   "$ROOT_DIR/macos/GatewayLifecycleSupport.swift" \
   "$ROOT_DIR/macos/LaunchAgentBootstrapSupport.swift" \
   "$ROOT_DIR/macos/GatewayProcessSupport.swift" \

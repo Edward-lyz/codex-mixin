@@ -34,6 +34,7 @@ func gatewayStatusDetail(
     if let endpoint { return endpoint }
     if title.contains("失败") { return "请查看运行日志" }
     if title.contains("等待配置") { return "请先设置服务商与 API Key" }
+    if title == "官方 Codex 模式" { return "GPT 直连官方 · Mixin 上游配置已保留" }
     if isBusy { return "正在切换本地网关" }
     return isRunning ? "正在读取本地接口地址" : "网关当前未运行"
 }
