@@ -37,7 +37,10 @@ func decodeCodexIntegrationStatus(_ json: String) throws -> CodexIntegrationStat
 }
 
 func stoppedGatewayStatusTitle(codexStatus: CodexIntegrationStatus?) -> String {
-    codexStatus?.isOfficialMode == true ? "官方 Codex 模式" : "本地服务已停止"
+    guard let codexStatus else { return "本地服务已停止" }
+    if codexStatus.isOfficialMode { return "官方 Codex 模式" }
+    // A direct stop keeps Codex pointed at the local gateway.
+    return codexStatus.gatewayRequired ? "本地服务已停止 · Codex 仍指向 Mixin" : "本地服务已停止"
 }
 
 func providerDisplayNameForGatewayState(
@@ -50,6 +53,39 @@ func providerDisplayNameForGatewayState(
 }
 
 extension AppDelegate {
+    enum ManagedCodexStopChoice {
+        case restoreOfficial
+        case stopGatewayOnly
+        case cancel
+    }
+
+    @MainActor
+    func chooseManagedCodexStop() -> ManagedCodexStopChoice {
+        let alert = NSAlert()
+        alert.messageText = "Codex 正在使用 Mixin 网关"
+        alert.informativeText = """
+        恢复官方并停止：恢复安装前的官方 Codex 配置，停止网关并重启 Codex App。GPT 直连官方；再次开启时自动恢复当前 Mixin 接入模式。
+
+        仅停止网关：Codex 配置保持不变，也不重启 Codex。重新开启前，GPT 和自定义模型都不可用。
+        """
+        alert.alertStyle = .warning
+        alert.addButton(withTitle: "恢复官方并停止")
+        alert.addButton(withTitle: "仅停止网关")
+        let cancelButton = alert.addButton(withTitle: AppLocalization.string("appSupport.cancel"))
+        cancelButton.keyEquivalent = "\u{1b}"
+        presentPersistentWindow(alert.window)
+        let response = alert.runModal()
+        alert.window.close()
+        switch response {
+        case .alertFirstButtonReturn:
+            return .restoreOfficial
+        case .alertSecondButtonReturn:
+            return .stopGatewayOnly
+        default:
+            return .cancel
+        }
+    }
+
     func readCodexIntegrationStatus() async throws -> CodexIntegrationStatus {
         try decodeCodexIntegrationStatus(
             try await runGateway(["codex-status", "--json"])

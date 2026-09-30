@@ -312,17 +312,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     return
                 }
 
-                guard confirm(
-                    title: "切回纯官方 Codex 并停止 Mixin？",
-                    message: "将由 Codex Mixin CLI 恢复安装前的官方 Codex 配置与认证、停止本地网关，并重启 Codex App。当前 Codex 会话会中断；重新打开后 GPT 将直接连接官方服务。以后再次开启此开关时，会自动恢复当前 Mixin 接入模式并再次重启 Codex。"
-                ) else {
+                switch chooseManagedCodexStop() {
+                case .restoreOfficial:
+                    disableGatewayFromSwitch()
+                case .stopGatewayOnly:
+                    stopGateway(allowCodexDisconnect: true)
+                case .cancel:
                     sender.isOn = true
                     sender.isBusy = false
                     sender.isEnabled = true
                     updateServiceStatusView()
-                    return
                 }
-                disableGatewayFromSwitch()
             } catch {
                 sender.isOn.toggle()
                 sender.isBusy = false

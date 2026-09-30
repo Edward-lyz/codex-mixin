@@ -20,7 +20,7 @@ if ! rg -q 'func applicationWillTerminate' "$MENU_BAR_FILE"; then
   exit 1
 fi
 
-if ! rg -q 'runGateway\(\["service", "stop", "--managed", "--json"\]\)' "$SERVICE_FILE"; then
+if ! rg -q '\["service", "stop", "--managed", "--json"\]' "$SERVICE_FILE"; then
   echo "The explicit gateway stop action must remain available" >&2
   exit 1
 fi

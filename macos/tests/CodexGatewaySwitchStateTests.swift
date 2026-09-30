@@ -22,6 +22,9 @@ struct CodexGatewaySwitchStateTests {
         precondition(managed.gatewayRequired)
         precondition(managed.restoreMode == nil)
         precondition(!managed.isOfficialMode)
+        precondition(
+            stoppedGatewayStatusTitle(codexStatus: managed) == "本地服务已停止 · Codex 仍指向 Mixin"
+        )
 
         let official = try decodeCodexIntegrationStatus(
             """
