@@ -5209,16 +5209,19 @@ async fn retries_demoted_web_search_on_custom_websocket() {
         &config,
     )
     .unwrap();
+    // The Baidu catalog declares hosted search; it is recorded without probes.
     let mut models = vec![ModelInfo {
         id: "Claude Sonnet 5-custom".to_owned(),
+        supports_web_search: Some(true),
         ..ModelInfo::default()
     }];
     let registry = ProviderRegistry::new(config.providers.clone()).unwrap();
-    capabilities
+    let summary = capabilities
         .probe_models(&mut models, &config, &registry, true)
         .await
         .unwrap();
-    requests.lock().unwrap().clear();
+    assert_eq!(summary.attempted, 0);
+    assert!(requests.lock().unwrap().is_empty(), "no probe requests");
 
     let state = AppState::with_web_search_capabilities(config, capabilities).unwrap();
     let gateway_url = spawn_router(router(state)).await;

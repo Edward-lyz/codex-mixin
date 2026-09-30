@@ -132,6 +132,15 @@ pub async fn probe_provider_models(
     replace_results: bool,
 ) -> anyhow::Result<ProviderProbeSummary> {
     let provider = provider_for_refresh(id)?;
+    // Probes are paid completions. A provider whose catalog states real
+    // capabilities is trusted as-is and never probed.
+    if provider.declares_model_capabilities() {
+        tracing::info!(
+            provider_id = id,
+            "skipping capability probe: the provider catalog declares model capabilities"
+        );
+        return Ok(ProviderProbeSummary::default());
+    }
     let mut models = provider
         .cached_models
         .iter()

@@ -229,6 +229,14 @@ pub struct ProviderDefinition {
 }
 
 impl ProviderDefinition {
+    /// Whether this provider's model catalog declares real per-model
+    /// capabilities. Capability and web-search probes are paid completions,
+    /// so such providers are never probed.
+    pub fn declares_model_capabilities(&self) -> bool {
+        self.model_source == ProviderModelSource::BaiduOneApi
+            || crate::provider::spec_for(self.preset_id.as_deref()).declares_model_capabilities
+    }
+
     pub fn validate(&self) -> anyhow::Result<()> {
         validate_provider_id(&self.id)?;
         ensure!(
