@@ -89,7 +89,7 @@ mod tests {
     use std::process::Command;
 
     #[test]
-    fn private_acl_ignores_foreign_modules() {
+    fn private_acl_native_modules() {
         let directory = tempfile::tempdir().unwrap();
         let modules = directory.path().join("modules");
         let security = modules.join("Microsoft.PowerShell.Security").join("99.0.0");
