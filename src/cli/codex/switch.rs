@@ -102,14 +102,25 @@ pub(super) fn current_codex_status() -> anyhow::Result<CodexIntegrationStatus> {
 pub(in crate::cli) fn ensure_codex_allows_gateway_stop(
     allow_codex_disconnect: bool,
 ) -> anyhow::Result<()> {
-    ensure_codex_allows_gateway_stop_status(&current_codex_status()?, allow_codex_disconnect)
+    let config_path = resolve_codex_config_path(None)?;
+    ensure_gateway_stop_allowed_at(&config_path, &switch_state_path(), allow_codex_disconnect)
 }
 
-fn ensure_codex_allows_gateway_stop_status(
-    status: &CodexIntegrationStatus,
+fn ensure_gateway_stop_allowed_at(
+    config_path: &Path,
+    state_path: &Path,
     allow_codex_disconnect: bool,
 ) -> anyhow::Result<()> {
-    if !allow_codex_disconnect && status.gateway_required {
+    // The override is the recovery path, so unreadable Codex or switch state
+    // must not block it.
+    if allow_codex_disconnect {
+        return Ok(());
+    }
+    ensure_codex_allows_gateway_stop_status(&codex_status_from_paths(config_path, state_path)?)
+}
+
+fn ensure_codex_allows_gateway_stop_status(status: &CodexIntegrationStatus) -> anyhow::Result<()> {
+    if status.gateway_required {
         return Err(CodexRequiresGatewayError.into());
     }
     Ok(())
@@ -338,7 +349,7 @@ base_url = "http://127.0.0.1:8787/v1"
     }
 
     #[test]
-    fn gateway_stop_requires_an_explicit_disconnect_override() {
+    fn managed_codex_blocks_gateway_stop() {
         let status = CodexIntegrationStatus {
             integration: CodexIntegration::Managed,
             mode: Some(ManagedCodexMode::CustomOnly),
@@ -346,9 +357,8 @@ base_url = "http://127.0.0.1:8787/v1"
             restore_mode: None,
         };
 
-        let error = ensure_codex_allows_gateway_stop_status(&status, false).unwrap_err();
+        let error = ensure_codex_allows_gateway_stop_status(&status).unwrap_err();
         assert!(error.downcast_ref::<CodexRequiresGatewayError>().is_some());
-        ensure_codex_allows_gateway_stop_status(&status, true).unwrap();
     }
 
     #[test]
@@ -360,6 +370,17 @@ base_url = "http://127.0.0.1:8787/v1"
             restore_mode: Some(ManagedCodexMode::CodexOauthProxy),
         };
 
-        ensure_codex_allows_gateway_stop_status(&status, false).unwrap();
+        ensure_codex_allows_gateway_stop_status(&status).unwrap();
+    }
+
+    #[test]
+    fn disconnect_override_does_not_depend_on_readable_switch_state() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = directory.path().join("config.toml");
+        let state = directory.path().join(SWITCH_STATE_FILE);
+        fs::write(&state, b"not json").unwrap();
+
+        ensure_gateway_stop_allowed_at(&config, &state, true).unwrap();
+        assert!(ensure_gateway_stop_allowed_at(&config, &state, false).is_err());
     }
 }
