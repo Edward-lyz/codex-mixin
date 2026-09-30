@@ -52,6 +52,26 @@ fn install_command_accepts_explicit_custom_only_mode() {
 }
 
 #[test]
+fn codex_status_and_gateway_stop_guard_have_a_stable_cli_surface() {
+    assert!(Cli::try_parse_from(["codex-mixin", "codex-status", "--json"]).is_ok());
+    assert!(
+        Cli::try_parse_from(["codex-mixin", "stop", "--force", "--allow-codex-disconnect",])
+            .is_ok()
+    );
+    assert!(
+        Cli::try_parse_from([
+            "codex-mixin",
+            "service",
+            "stop",
+            "--managed",
+            "--allow-codex-disconnect",
+            "--json",
+        ])
+        .is_ok()
+    );
+}
+
+#[test]
 fn codex_command_uses_the_required_windows_script_host() {
     let cmd = codex_command(Path::new("C:/tools/codex.cmd"));
     assert_eq!(cmd.get_program(), "cmd.exe");

@@ -1,0 +1,247 @@
+use std::fmt;
+use std::fs;
+use std::path::{Path, PathBuf};
+
+use serde::{Deserialize, Serialize};
+use toml_edit::DocumentMut;
+
+use super::resolve_codex_config_path;
+
+const SWITCH_STATE_FILE: &str = "codex-switch.json";
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum CodexIntegration {
+    Unmanaged,
+    Managed,
+}
+
+#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq, Serialize)]
+#[serde(rename_all = "snake_case")]
+pub(super) enum ManagedCodexMode {
+    CodexOauthProxy,
+    CustomOnly,
+}
+
+#[derive(Clone, Debug, Deserialize, Eq, PartialEq, Serialize)]
+pub(super) struct CodexIntegrationStatus {
+    pub(super) integration: CodexIntegration,
+    pub(super) mode: Option<ManagedCodexMode>,
+    pub(super) gateway_required: bool,
+    pub(super) restore_mode: Option<ManagedCodexMode>,
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+struct CodexSwitchState {
+    restore_mode: ManagedCodexMode,
+}
+
+#[derive(Debug)]
+pub(in crate::cli) struct CodexRequiresGatewayError;
+
+impl fmt::Display for CodexRequiresGatewayError {
+    fn fmt(&self, formatter: &mut fmt::Formatter<'_>) -> fmt::Result {
+        formatter.write_str(
+            "Codex is connected through the Mixin gateway; restore the official Codex configuration first, or pass --allow-codex-disconnect to force the stop",
+        )
+    }
+}
+
+impl std::error::Error for CodexRequiresGatewayError {}
+
+pub(in crate::cli) fn codex_status(json_output: bool) -> anyhow::Result<()> {
+    let status = current_codex_status()?;
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&status)?);
+    } else {
+        println!(
+            "Codex integration: {}",
+            match status.integration {
+                CodexIntegration::Managed => "managed",
+                CodexIntegration::Unmanaged => "unmanaged",
+            }
+        );
+        println!(
+            "Mixin mode: {}",
+            status.mode.map(mode_name).unwrap_or("none")
+        );
+        println!("Gateway required: {}", status.gateway_required);
+        println!(
+            "Restore mode: {}",
+            status.restore_mode.map(mode_name).unwrap_or("none")
+        );
+    }
+    Ok(())
+}
+
+pub(super) fn current_codex_status() -> anyhow::Result<CodexIntegrationStatus> {
+    let config_path = resolve_codex_config_path(None)?;
+    codex_status_from_paths(&config_path, &switch_state_path())
+}
+
+pub(in crate::cli) fn ensure_codex_allows_gateway_stop(
+    allow_codex_disconnect: bool,
+) -> anyhow::Result<()> {
+    ensure_codex_allows_gateway_stop_status(&current_codex_status()?, allow_codex_disconnect)
+}
+
+fn ensure_codex_allows_gateway_stop_status(
+    status: &CodexIntegrationStatus,
+    allow_codex_disconnect: bool,
+) -> anyhow::Result<()> {
+    if !allow_codex_disconnect && status.gateway_required {
+        return Err(CodexRequiresGatewayError.into());
+    }
+    Ok(())
+}
+
+fn switch_state_path() -> PathBuf {
+    super::super::runtime::state_dir().join(SWITCH_STATE_FILE)
+}
+
+fn mode_name(mode: ManagedCodexMode) -> &'static str {
+    match mode {
+        ManagedCodexMode::CodexOauthProxy => "codex_oauth_proxy",
+        ManagedCodexMode::CustomOnly => "custom_only",
+    }
+}
+
+fn codex_status_from_paths(
+    config_path: &Path,
+    state_path: &Path,
+) -> anyhow::Result<CodexIntegrationStatus> {
+    let raw = if config_path.exists() {
+        fs::read_to_string(config_path)?
+    } else {
+        String::new()
+    };
+    let managed = codex_mixin::clients::codex::document_is_managed(&raw);
+    let mode = if managed { managed_mode(&raw) } else { None };
+    Ok(CodexIntegrationStatus {
+        integration: if managed {
+            CodexIntegration::Managed
+        } else {
+            CodexIntegration::Unmanaged
+        },
+        mode,
+        gateway_required: managed,
+        restore_mode: load_restore_mode_at(state_path)?,
+    })
+}
+
+fn managed_mode(raw: &str) -> Option<ManagedCodexMode> {
+    let document = raw.parse::<DocumentMut>().ok()?;
+    match codex_mixin::clients::codex::managed_provider_id(&document).ok()? {
+        codex_mixin::CODEX_MIXIN_PROVIDER => Some(ManagedCodexMode::CodexOauthProxy),
+        codex_mixin::clients::codex::CUSTOM_ONLY_PROVIDER
+        | codex_mixin::clients::codex::LEGACY_CUSTOM_ONLY_PROVIDER => {
+            Some(ManagedCodexMode::CustomOnly)
+        }
+        _ => None,
+    }
+}
+
+fn load_restore_mode_at(path: &Path) -> anyhow::Result<Option<ManagedCodexMode>> {
+    if !path.exists() {
+        return Ok(None);
+    }
+    let state = serde_json::from_slice::<CodexSwitchState>(&fs::read(path)?)?;
+    Ok(Some(state.restore_mode))
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn status_uses_the_rust_managed_config_parser() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = directory.path().join("config.toml");
+        let state = directory.path().join(SWITCH_STATE_FILE);
+        fs::write(
+            &config,
+            r#"model_provider = "codex-mixin"
+[model_providers.codex-mixin]
+base_url = "http://127.0.0.1:8787/v1"
+"#,
+        )
+        .unwrap();
+
+        let status = codex_status_from_paths(&config, &state).unwrap();
+
+        assert_eq!(status.integration, CodexIntegration::Managed);
+        assert_eq!(status.mode, Some(ManagedCodexMode::CodexOauthProxy));
+        assert!(status.gateway_required);
+        assert_eq!(status.restore_mode, None);
+    }
+
+    #[test]
+    fn official_status_reads_a_saved_restore_mode() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = directory.path().join("config.toml");
+        let state = directory.path().join(SWITCH_STATE_FILE);
+        fs::write(&config, "model_provider = \"openai\"\n").unwrap();
+        fs::write(
+            &state,
+            serde_json::to_vec(&CodexSwitchState {
+                restore_mode: ManagedCodexMode::CustomOnly,
+            })
+            .unwrap(),
+        )
+        .unwrap();
+
+        let status = codex_status_from_paths(&config, &state).unwrap();
+
+        assert_eq!(status.integration, CodexIntegration::Unmanaged);
+        assert_eq!(status.mode, None);
+        assert!(!status.gateway_required);
+        assert_eq!(status.restore_mode, Some(ManagedCodexMode::CustomOnly));
+    }
+
+    #[test]
+    fn unknown_managed_mode_still_requires_the_gateway() {
+        let directory = tempfile::tempdir().unwrap();
+        let config = directory.path().join("config.toml");
+        let state = directory.path().join(SWITCH_STATE_FILE);
+        fs::write(
+            &config,
+            format!(
+                "{}\nmodel_provider = \"future-mixin\"\n",
+                codex_mixin::clients::codex::MANAGED_HEADER
+            ),
+        )
+        .unwrap();
+
+        let status = codex_status_from_paths(&config, &state).unwrap();
+
+        assert_eq!(status.integration, CodexIntegration::Managed);
+        assert_eq!(status.mode, None);
+        assert!(status.gateway_required);
+    }
+
+    #[test]
+    fn gateway_stop_requires_an_explicit_disconnect_override() {
+        let status = CodexIntegrationStatus {
+            integration: CodexIntegration::Managed,
+            mode: Some(ManagedCodexMode::CustomOnly),
+            gateway_required: true,
+            restore_mode: None,
+        };
+
+        let error = ensure_codex_allows_gateway_stop_status(&status, false).unwrap_err();
+        assert!(error.downcast_ref::<CodexRequiresGatewayError>().is_some());
+        ensure_codex_allows_gateway_stop_status(&status, true).unwrap();
+    }
+
+    #[test]
+    fn gateway_stop_allows_an_official_codex_configuration() {
+        let status = CodexIntegrationStatus {
+            integration: CodexIntegration::Unmanaged,
+            mode: None,
+            gateway_required: false,
+            restore_mode: Some(ManagedCodexMode::CodexOauthProxy),
+        };
+
+        ensure_codex_allows_gateway_stop_status(&status, false).unwrap();
+    }
+}
