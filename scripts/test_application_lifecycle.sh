@@ -11,7 +11,7 @@ if rg -n 'applicationShouldTerminate' "$ROOT_DIR/macos" \
   --glob '*.swift' \
   --glob '!tests/**'
 then
-  echo "App termination must use AppKit's default lifecycle so the gateway keeps running" >&2
+  echo "Only the menu quit actions stop the gateway; Sparkle relaunches use AppKit's default lifecycle" >&2
   exit 1
 fi
 

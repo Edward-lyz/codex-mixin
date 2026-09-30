@@ -197,6 +197,40 @@ class _TrayPageState extends State<TrayPage> with WindowListener {
     );
   }
 
+  /// Quit is a real quit: stop the gateway even when a client still routes
+  /// through it. `restoreClients` first restores every managed client config.
+  Future<void> _quit({required bool restoreClients}) async {
+    final title = restoreClients ? '退出并恢复原配置' : '退出 Codex Mixin';
+    if (restoreClients) {
+      final confirmed = await _withDialog(
+        () => confirmAction(
+          context,
+          title: title,
+          message:
+              '会先把 Codex、Claude Code、DSH、OpenCode、Pi 中由 Codex Mixin 接管的配置恢复为安装前的状态，'
+              '再停止本地网关并退出。客户端需要重启或开新会话。',
+        ),
+      );
+      if (confirmed != true || !mounted) return;
+    }
+    final args = restoreClients
+        ? ['service', 'stop', '--managed', '--restore-clients', '--json']
+        : ['service', 'stop', '--managed', '--allow-codex-disconnect', '--json'];
+    final result = await _withDialog(
+      () => runWithProgress(
+        context,
+        title: title,
+        resultText: (result) => result.ok
+            ? '$title成功'
+            : '$title失败：${formatCliReport(result.output).trim().isEmpty ? '未返回具体原因' : formatCliReport(result.output).trim()}',
+        action: (onProgress) =>
+            _controller.runAction(title, args, onProgress: onProgress),
+      ),
+    );
+    if (result?.ok != true) return;
+    await _notifyMain('quit');
+  }
+
   Future<void> _importConfig() async {
     final path = await chooseBackupImportPath();
     if (path == null || !mounted) return;
@@ -914,7 +948,12 @@ class _TrayPageState extends State<TrayPage> with WindowListener {
       _item(
         Icons.power_settings_new,
         '退出 Codex Mixin',
-        () => _notifyMain('quit'),
+        () => _quit(restoreClients: false),
+      ),
+      _item(
+        Icons.restore,
+        '退出并恢复原配置',
+        () => _quit(restoreClients: true),
       ),
     ],
   );

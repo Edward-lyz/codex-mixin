@@ -207,7 +207,7 @@ extension AppDelegate {
     }
 
     @MainActor
-    private func restartRunningCodexDesktopApp() async throws -> String? {
+    func restartRunningCodexDesktopApp() async throws -> String? {
         guard let app = NSWorkspace.shared.runningApplications.first(where: {
             $0.bundleIdentifier == "com.openai.codex"
         }) else {

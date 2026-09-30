@@ -225,6 +225,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         ]))
         menu.addItem(.separator())
         menu.addItem(actionItem("退出 Codex Mixin", #selector(quit), "power"))
+        menu.addItem(actionItem("退出并恢复原配置...", #selector(quitAndRestore), "arrow.uturn.backward.circle"))
         updateActionStates()
         return menu
     }

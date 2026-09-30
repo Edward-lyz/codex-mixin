@@ -260,6 +260,7 @@ void main() {
     expect(find.text('安装与恢复'), findsOneWidget);
     expect(find.text('关于'), findsOneWidget);
     expect(find.text('退出 Codex Mixin'), findsOneWidget);
+    expect(find.text('退出并恢复原配置'), findsOneWidget);
     expect(tester.takeException(), isNull);
 
     await tester.binding.setSurfaceSize(null);
