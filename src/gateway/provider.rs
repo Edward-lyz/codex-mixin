@@ -74,7 +74,12 @@ pub(crate) async fn stream_provider_response(
                 if provider.uses_session_affinity()
                     && let Some(routing) = routing
                 {
-                    converted.request.metadata = Some(json!({"session_id": routing.hash_key}));
+                    // OneAPI's Anthropic-to-OpenAI conversion accepts only an
+                    // optional string `metadata.user_id`. `session_id` is a 400
+                    // ("Anthropic feature at \"metadata\" ... is not supported")
+                    // on models behind that conversion, such as GLM-5.3.
+                    // Session affinity still travels in `x-hash-key`.
+                    converted.request.metadata = Some(json!({"user_id": routing.hash_key}));
                 }
                 Ok::<_, GatewayError>(converted)
             };

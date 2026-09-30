@@ -154,7 +154,7 @@ pub(super) async fn benchmark_request(
     };
     if provider.uses_session_affinity() {
         body["metadata"] = json!({
-            "session_id": format!("benchmark-{}", Uuid::new_v4().simple())
+            "user_id": format!("benchmark-{}", Uuid::new_v4().simple())
         });
     }
     let request = provider.apply_auth_for_protocol(

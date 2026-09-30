@@ -109,7 +109,7 @@ pub(super) async fn probe_model_once(
     });
     if provider.uses_session_affinity() {
         body["metadata"] = json!({
-            "session_id": format!("web-search-probe-{}", uuid::Uuid::new_v4().simple())
+            "user_id": format!("web-search-probe-{}", uuid::Uuid::new_v4().simple())
         });
     }
     let native_headers = if provider.is_baidu_model_source() && provider.uses_ducx_loopback() {
