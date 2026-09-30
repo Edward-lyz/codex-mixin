@@ -154,12 +154,18 @@ impl AppState {
         self.catalog.fetch_models().await
     }
 
-    pub async fn fetch_official_models_catalog(
-        &self,
-        client_version: &str,
-    ) -> anyhow::Result<Value> {
-        self.upstream
-            .fetch_official_models_catalog(client_version)
-            .await
+    pub async fn fetch_official_models_catalog(&self, source_url: &str) -> anyhow::Result<Value> {
+        let cache_path = crate::config::stored_config_path().with_file_name("official-models.json");
+        let cached = match tokio::fs::read(&cache_path).await {
+            Ok(bytes) => Some(serde_json::from_slice::<Value>(&bytes)?),
+            Err(error) if error.kind() == std::io::ErrorKind::NotFound => None,
+            Err(error) => return Err(error.into()),
+        };
+        crate::catalog::official::fetch_catalog(
+            source_url,
+            crate::catalog::official::OFFICIAL_CATALOG_TIMEOUT,
+            cached.as_ref(),
+        )
+        .await
     }
 }

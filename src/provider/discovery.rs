@@ -1,4 +1,5 @@
 use std::collections::{HashMap, HashSet};
+use std::sync::{Mutex, OnceLock};
 use std::time::{SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
@@ -20,6 +21,20 @@ use super::{
 
 const EMPTY_SHA256: &str = "e3b0c44298fc1c149afbf4c8996fb92427ae41e4649b934ca495991b7852b855";
 const DEFAULT_SELECTED_MODEL_LIMIT: usize = 10;
+
+// Keep one raw response per provider, bounded for small gateway hosts. Matching
+// the resolved headers also invalidates env-based credentials without logging them.
+const MAX_MODEL_CACHE_BYTES: usize = 8 * 1024 * 1024;
+const MAX_MODEL_CACHE_ENTRIES: usize = 16;
+#[derive(Clone)]
+struct ModelsHttpCache {
+    url: reqwest::Url,
+    headers: reqwest::header::HeaderMap,
+    etag: Option<reqwest::header::HeaderValue>,
+    modified: Option<reqwest::header::HeaderValue>,
+    body: String,
+}
+static MODELS_HTTP_CACHE: OnceLock<Mutex<HashMap<String, ModelsHttpCache>>> = OnceLock::new();
 
 #[derive(Debug, Deserialize)]
 #[serde(rename_all = "camelCase")]
@@ -293,23 +308,7 @@ async fn discover_openai_models(
     definition: &ProviderDefinition,
     provider: &ProviderRuntime,
 ) -> anyhow::Result<Vec<ProviderModel>> {
-    let url = provider
-        .models_url()
-        .context("provider models URL is not configured")?
-        .clone();
-    let request_client =
-        crate::ech::provider_http_client(client, &url, std::time::Duration::from_secs(30)).await?;
-    let response = provider.apply_auth(request_client.get(url)).send().await?;
-    let status = response.status();
-    let body = response.text().await?;
-    if !status.is_success() {
-        anyhow::bail!(
-            "provider {} models endpoint returned {status}: {body}",
-            provider.id()
-        );
-    }
-    let models: ModelsResponse =
-        serde_json::from_str(&body).context("provider models endpoint returned invalid JSON")?;
+    let models = fetch_openai_catalog(client, provider).await?;
     let mut models = models
         .data
         .into_iter()
@@ -328,6 +327,117 @@ async fn discover_openai_models(
     )
     .await;
     normalize_models(&mut models);
+    Ok(models)
+}
+
+async fn fetch_openai_catalog(
+    client: &Client,
+    provider: &ProviderRuntime,
+) -> anyhow::Result<ModelsResponse> {
+    let url = provider
+        .models_url()
+        .context("provider models URL is not configured")?
+        .clone();
+    let request_client =
+        crate::ech::provider_http_client(client, &url, std::time::Duration::from_secs(30)).await?;
+    let mut request = provider.apply_auth(request_client.get(url)).build()?;
+    let request_headers = request.headers().clone();
+    let request_url = request.url().clone();
+    let cache = MODELS_HTTP_CACHE.get_or_init(|| Mutex::new(HashMap::new()));
+    let cached = {
+        let entries = cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("models HTTP cache lock poisoned"))?;
+        entries
+            .get(provider.id())
+            .filter(|entry| entry.url == request_url && entry.headers == request_headers)
+            .cloned()
+    };
+    if let Some(entry) = &cached {
+        if let Some(etag) = &entry.etag {
+            request
+                .headers_mut()
+                .insert(reqwest::header::IF_NONE_MATCH, etag.clone());
+        } else if let Some(modified) = &entry.modified {
+            request
+                .headers_mut()
+                .insert(reqwest::header::IF_MODIFIED_SINCE, modified.clone());
+        }
+    }
+    let response = request_client.execute(request).await?;
+    let status = response.status();
+    let response_headers = response.headers().clone();
+    let body = if status == reqwest::StatusCode::NOT_MODIFIED {
+        let entry =
+            cached.context("models endpoint returned 304 without a matching cached response")?;
+        tracing::info!(
+            event = "provider_models_not_modified",
+            provider_id = provider.id(),
+            status = 304,
+            "provider catalog unchanged; cached body reused"
+        );
+        entry.body
+    } else {
+        let body = response.text().await?;
+        if !status.is_success() {
+            anyhow::bail!(
+                "provider {} models endpoint returned {status}: {body}",
+                provider.id()
+            );
+        }
+        body
+    };
+    let models: ModelsResponse =
+        serde_json::from_str(&body).context("provider models endpoint returned invalid JSON")?;
+    if status != reqwest::StatusCode::NOT_MODIFIED {
+        let etag = response_headers.get(reqwest::header::ETAG).cloned();
+        let modified = response_headers
+            .get(reqwest::header::LAST_MODIFIED)
+            .cloned();
+        let no_store = response_headers
+            .get(reqwest::header::CACHE_CONTROL)
+            .and_then(|value| value.to_str().ok())
+            .is_some_and(|value| {
+                value
+                    .split(',')
+                    .any(|directive| directive.trim().eq_ignore_ascii_case("no-store"))
+            });
+        let mut entries = cache
+            .lock()
+            .map_err(|_| anyhow::anyhow!("models HTTP cache lock poisoned"))?;
+        entries.remove(provider.id());
+        if !no_store
+            && body.len() <= MAX_MODEL_CACHE_BYTES
+            && (etag.is_some() || modified.is_some())
+        {
+            if entries.len() >= MAX_MODEL_CACHE_ENTRIES
+                || entries
+                    .values()
+                    .map(|entry| entry.body.len())
+                    .sum::<usize>()
+                    + body.len()
+                    > MAX_MODEL_CACHE_BYTES
+            {
+                entries.clear();
+            }
+            entries.insert(
+                provider.id().to_owned(),
+                ModelsHttpCache {
+                    url: request_url,
+                    headers: request_headers,
+                    etag,
+                    modified,
+                    body,
+                },
+            );
+        }
+        tracing::info!(
+            event = "provider_models_downloaded",
+            provider_id = provider.id(),
+            status = status.as_u16(),
+            "provider model catalog downloaded"
+        );
+    }
     Ok(models)
 }
 
@@ -662,6 +772,69 @@ fn normalize_models(models: &mut Vec<ProviderModel>) {
 mod tests {
     use super::*;
     use crate::provider::ProviderRegistry;
+
+    #[tokio::test]
+    async fn conditional_models_reuses_body_and_invalidates_auth_and_url() {
+        use axum::response::IntoResponse;
+        use std::sync::atomic::{AtomicUsize, Ordering};
+        let count = std::sync::Arc::new(AtomicUsize::new(0));
+        let requests = count.clone();
+        let app = axum::Router::new().route(
+            "/{*path}",
+            axum::routing::get(move |headers: axum::http::HeaderMap| {
+                let requests = requests.clone();
+                async move {
+                    let phase = requests.fetch_add(1, Ordering::SeqCst);
+                    let validator = headers
+                        .get("if-none-match")
+                        .and_then(|value| value.to_str().ok());
+                    match phase {
+                        0 | 3 | 4 => assert_eq!(validator, None),
+                        1 | 2 => assert_eq!(validator, Some("\"v1\"")),
+                        _ => panic!("unexpected request"),
+                    }
+                    if phase == 1 {
+                        return axum::http::StatusCode::NOT_MODIFIED.into_response();
+                    }
+                    let id = if phase == 0 { "model-a" } else { "model-b" };
+                    (
+                        [("etag", "\"v1\"")],
+                        axum::Json(json!({"data":[{"id":id}]})),
+                    )
+                        .into_response()
+                }
+            }),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move {
+            axum::serve(listener, app).await.unwrap();
+        });
+        let client = Client::new();
+        let mut definition = crate::provider::custom_provider("conditional-model-test", "key-a");
+        definition.base_url = format!("http://{address}");
+        let runtime = ProviderRuntime::new(definition.clone(), &|_| None).unwrap();
+        assert_eq!(
+            fetch_openai_catalog(&client, &runtime).await.unwrap().data[0].id,
+            "model-a"
+        );
+        assert_eq!(
+            fetch_openai_catalog(&client, &runtime).await.unwrap().data[0].id,
+            "model-a"
+        );
+        assert_eq!(
+            fetch_openai_catalog(&client, &runtime).await.unwrap().data[0].id,
+            "model-b"
+        );
+        definition.auth = crate::provider::custom_provider("other", "key-b").auth;
+        let runtime = ProviderRuntime::new(definition.clone(), &|_| None).unwrap();
+        fetch_openai_catalog(&client, &runtime).await.unwrap();
+        definition.base_url = format!("http://{address}/new");
+        let runtime = ProviderRuntime::new(definition, &|_| None).unwrap();
+        fetch_openai_catalog(&client, &runtime).await.unwrap();
+        assert_eq!(count.load(Ordering::SeqCst), 5);
+        server.abort();
+    }
 
     #[test]
     fn redacts_all_aws_credentials_from_provider_errors() {

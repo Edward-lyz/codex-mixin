@@ -73,6 +73,8 @@ Codex Mixin 不是 Codex 的二次发行版，也不重新打包官方 Codex App
 ### 核心能力
 
 - 官方模型与自定义模型共存于 Codex 模型选择器，重名模型自动隔离，历史会话保持可用。
+- 官方模型清单直接同步 [OpenAI Codex 仓库的 models.json](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)，不依赖已安装 Codex CLI 的版本或缓存；保留模型选择和上下文配置。官方目录与动态 Provider 仍每 30 秒检查，GET 支持 ETag / Last-Modified 条件请求，未变化时复用缓存。
+- [官方 GPT ECH 访问（实验）](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access)：通过 `/plus` DoH 获取地址和 ECH 配置，记录握手与实际请求证据，失败自动关闭并回退直连。默认关闭，可与 TUN 共存；不保证 Azure 出口或绕过地区限制。
 - 支持 OpenAI Responses、Chat Completions、Anthropic Messages 和 AWS Bedrock 上游。
 - Windows 和 macOS 提供桌面控制面；Linux、SSH 和远端服务器提供全屏 TUI；所有平台共享可脚本化 CLI。
 - 统一完成 Provider 管理、模型发现、能力探测、上下文配置、测速、额度和 Token 观测。
@@ -111,6 +113,7 @@ Codex Mixin 不是 Codex 的二次发行版，也不重新打包官方 Codex App
 - [配置备份与恢复](https://github.com/Edward-lyz/codex-mixin/wiki/Configuration-Backup-and-Restore)
 - [Provider 与模型](https://github.com/Edward-lyz/codex-mixin/wiki/Providers-and-Models)
 - [客户端集成](https://github.com/Edward-lyz/codex-mixin/wiki/Client-Integrations) 与 [Fusion](https://github.com/Edward-lyz/codex-mixin/wiki/Fusion)
+- [官方模型清单](https://github.com/Edward-lyz/codex-mixin/wiki/Official-Model-Catalog) 与 [ECH、日志和 TUN](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access)
 - [CLI 参考](https://github.com/Edward-lyz/codex-mixin/wiki/CLI-Reference)
 - [排障](https://github.com/Edward-lyz/codex-mixin/wiki/Troubleshooting) 与 [常见问题](https://github.com/Edward-lyz/codex-mixin/wiki/FAQ)
 
@@ -125,6 +128,8 @@ It is not a fork or repackaging of Codex. Codex remains the primary interface. C
 Highlights include:
 
 - Official and custom models in one Codex model picker.
+- Official model metadata from [OpenAI's Codex repository](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json), without an installed Codex CLI or its model cache. Official and dynamic provider checks remain at 30 seconds, with ETag / Last-Modified GET revalidation when supported. Account access still depends on the service and plan.
+- [Experimental ECH access for official GPT](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access), with handshake and request logs, automatic direct fallback, and TUN compatibility. It is off by default and does not guarantee an Azure exit or access from restricted regions.
 - Windows and native macOS controls plus a complete Linux and SSH TUI.
 - OpenAI Responses, Chat Completions, Anthropic Messages, and AWS Bedrock support.
 - Provider discovery, capability probing, benchmarking, quota, token, TTFT, and throughput views.
@@ -138,12 +143,3 @@ See the [Product Tour](https://github.com/Edward-lyz/codex-mixin/wiki/Product-To
 ## License
 
 See [LICENSE](LICENSE) and [NOTICE](NOTICE).
-
-
-### ECH 代理访问官方 GPT（实验）
-
-在「高级 → 启用 ECH 代理访问 GPT」中可测试并启用 `/plus` DoH 与 ECH。
-默认关闭；连接失败自动关闭并回退到直连，UI 显示原因。
-仅作用于 mixin 承载的官方流量，不能据此保证 Azure 中继出口。
-CLI 使用 `codex-mixin --no-tui ech test --json` 检查连接。
-范围、失败行为和验证限制见 [ECH 功能说明](docs/ech-gpt.md)。

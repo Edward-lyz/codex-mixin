@@ -2,7 +2,6 @@ use std::collections::{BTreeMap, HashSet};
 use std::fs;
 use std::io;
 use std::path::{Path, PathBuf};
-use std::time::Duration;
 
 #[cfg(unix)]
 use std::os::unix::fs::PermissionsExt;
@@ -15,8 +14,6 @@ use codex_mixin::clients::codex::{
     MANAGED_HEADER as MANAGED_CONFIG_HEADER, document_is_managed as is_managed_config,
     upsert as upsert_codex_config,
 };
-use codex_mixin::config::{GatewayConfig, ThinkingMode};
-use codex_mixin::server::AppState;
 
 use crate::cli::Cli;
 use crate::cli::{codex::*, service::*};
@@ -221,29 +218,43 @@ fn explicit_relative_config_and_catalog_paths_become_absolute() {
     assert!(paths.models_cache.is_absolute());
 }
 
-#[test]
-fn oauth_install_missing_cache_creates_no_restore_marker_or_directory() {
+#[tokio::test]
+async fn oauth_install_missing_repository_and_cache_creates_no_restore_marker_or_directory() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("managed-codex").join("config.toml");
-    let paths = resolve_codex_install_paths(Some(config_path.clone()), None).unwrap();
 
-    let error = load_codex_install_template(&paths, true).unwrap_err();
+    let error = load_codex_install_template_online(
+        true,
+        &dir.path().join("official-models.json"),
+        "http://127.0.0.1:1/models.json",
+    )
+    .await
+    .unwrap_err();
 
-    assert!(error.to_string().contains("model cache is missing"));
+    assert!(error.to_string().contains("no Mixin cache exists"));
     assert!(!config_path.parent().unwrap().exists());
     assert!(!managed_backup_path(&config_path).exists());
     assert!(!managed_absent_marker_path(&config_path).exists());
 }
 
-#[test]
-fn custom_only_install_ignores_models_cache() {
+#[tokio::test]
+async fn custom_only_install_ignores_models_cache() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("managed-codex").join("config.toml");
     let paths = resolve_codex_install_paths(Some(config_path.clone()), None).unwrap();
     fs::create_dir_all(config_path.parent().unwrap()).unwrap();
     fs::write(&paths.models_cache, "not valid JSON").unwrap();
 
-    assert_eq!(load_codex_install_template(&paths, false).unwrap(), None);
+    assert_eq!(
+        load_codex_install_template_online(
+            false,
+            &dir.path().join("official-models.json"),
+            "http://127.0.0.1:1/models.json"
+        )
+        .await
+        .unwrap(),
+        None
+    );
 }
 
 #[tokio::test]
@@ -265,49 +276,25 @@ async fn oauth_install_falls_back_to_local_cache_when_official_fetch_fails() {
         r#"{"client_version":"0.144.0","models":[{"slug":"gpt-5.6-sol","context_window":272000}]}"#,
     )
     .unwrap();
-    let auth_path = dir.path().join("auth.json");
-    fs::write(
-        &auth_path,
-        r#"{"tokens":{"access_token":"secret","account_id":"account-one"}}"#,
-    )
-    .unwrap();
-    let state = AppState::new(GatewayConfig {
-        bind: "127.0.0.1:0".parse().unwrap(),
-        providers: vec![codex_mixin::provider::open_code_go_provider(
-            "test-provider",
-            "upstream-key",
-        )],
-        official_responses_url: format!("http://{address}/backend-api/codex/responses"),
-        codex_auth_path: auth_path,
-        gateway_api_key: None,
-        gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
-            claude: Some("claude-client-key".to_owned()),
-            ..Default::default()
-        },
-        accept_codex_oauth: true,
-        official_ech_fallback_reason: None,
-        official_ech_proxy: false,
-        official_selected_models: None,
-        default_max_tokens: 8192,
-        default_context_window: 1_000_000,
-        request_timeout: Duration::from_secs(2),
-        thinking_mode: ThinkingMode::Off,
-        enable_web_search_tool: false,
-        web_search_tool_type: "web_search_20250305".to_owned(),
-        web_search_max_uses: Some(3),
-        fusion_profiles: Vec::new(),
-    })
-    .unwrap();
     let official_models_cache = dir.path().join("official-models.json");
 
-    let template = load_codex_install_template_online(&paths, true, &state, &official_models_cache)
-        .await
-        .unwrap()
-        .unwrap();
+    fs::write(
+        &official_models_cache,
+        r#"{"models":[{"slug":"gpt-5.6-sol","context_window":272000}]}"#,
+    )
+    .unwrap();
+    let template = load_codex_install_template_online(
+        true,
+        &official_models_cache,
+        &format!("http://{address}/backend-api/codex/models"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
 
     assert_eq!(template["models"][0]["slug"], "gpt-5.6-sol");
     assert_eq!(template["models"][0]["context_window"], 272_000);
-    assert!(!official_models_cache.exists());
+    assert!(official_models_cache.exists());
 }
 
 #[tokio::test]
@@ -338,33 +325,6 @@ async fn oauth_install_refreshes_existing_provider_list_from_live_catalog() {
         r#"{"client_version":"0.144.0","models":[{"slug":"gpt-5.5"}]}"#,
     )
     .unwrap();
-    let auth_path = dir.path().join("auth.json");
-    fs::write(
-        &auth_path,
-        r#"{"tokens":{"access_token":"secret","account_id":"account-one"}}"#,
-    )
-    .unwrap();
-    let state = AppState::new(GatewayConfig {
-        bind: "127.0.0.1:0".parse().unwrap(),
-        providers: Vec::new(),
-        official_responses_url: format!("http://{address}/backend-api/codex/responses"),
-        codex_auth_path: auth_path,
-        gateway_api_key: None,
-        gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys::default(),
-        accept_codex_oauth: true,
-        official_ech_fallback_reason: None,
-        official_ech_proxy: false,
-        official_selected_models: None,
-        default_max_tokens: 8192,
-        default_context_window: 1_000_000,
-        request_timeout: Duration::from_secs(2),
-        thinking_mode: ThinkingMode::Off,
-        enable_web_search_tool: false,
-        web_search_tool_type: "web_search_20250305".to_owned(),
-        web_search_max_uses: Some(3),
-        fusion_profiles: Vec::new(),
-    })
-    .unwrap();
     let official_models_cache = dir.path().join("official-models.json");
     fs::write(
         &official_models_cache,
@@ -372,10 +332,14 @@ async fn oauth_install_refreshes_existing_provider_list_from_live_catalog() {
     )
     .unwrap();
 
-    let template = load_codex_install_template_online(&paths, true, &state, &official_models_cache)
-        .await
-        .unwrap()
-        .unwrap();
+    let template = load_codex_install_template_online(
+        true,
+        &official_models_cache,
+        &format!("http://{address}/backend-api/codex/models"),
+    )
+    .await
+    .unwrap()
+    .unwrap();
 
     assert_eq!(template["models"].as_array().unwrap().len(), 4);
     let cached: serde_json::Value =
@@ -1047,15 +1011,6 @@ fn reports_custom_only_mode_when_websockets_are_disabled() {
         managed_codex_install_mode(&config_path).unwrap(),
         Some("custom_only")
     );
-}
-
-#[test]
-fn parses_installed_codex_client_version() {
-    assert_eq!(
-        parse_codex_client_version("codex-cli 0.144.4\n").as_deref(),
-        Some("0.144.4")
-    );
-    assert_eq!(parse_codex_client_version("codex-cli unknown"), None);
 }
 
 #[test]

@@ -5,6 +5,7 @@ pub(super) const SUPPORTS_THINKING_MARKER: &str = "codex_mixin_supports_thinking
 
 mod generation;
 mod managed;
+pub mod official;
 mod service;
 mod template;
 
