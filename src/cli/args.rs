@@ -183,6 +183,8 @@ pub(super) enum Command {
     Stop {
         #[arg(long)]
         force: bool,
+        #[arg(long, help = "Stop even when Codex still routes through this gateway")]
+        allow_codex_disconnect: bool,
     },
     #[command(hide = true)]
     Restart {
@@ -260,6 +262,18 @@ pub(super) enum Command {
         #[arg(long)]
         catalog: Option<PathBuf>,
     },
+    /// Report how Codex is connected and whether it requires the local gateway.
+    #[command(name = "codex-status", hide = true)]
+    CodexStatus {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Safely switch Codex between its official route and the previous Mixin mode.
+    #[command(name = "codex-switch", hide = true)]
+    CodexSwitch {
+        #[arg(value_enum)]
+        target: CodexSwitchTarget,
+    },
     #[command(name = "install-claude", hide = true)]
     InstallClaude {
         #[arg(long)]
@@ -314,6 +328,8 @@ pub(super) enum ServiceCommand {
         force: bool,
         #[arg(long)]
         managed: bool,
+        #[arg(long, help = "Stop even when Codex still routes through this gateway")]
+        allow_codex_disconnect: bool,
         #[arg(long)]
         json: bool,
     },
@@ -345,6 +361,12 @@ pub(super) enum ServiceCommand {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(super) enum CodexSwitchTarget {
+    Official,
+    Mixin,
 }
 
 #[derive(Debug, Subcommand)]

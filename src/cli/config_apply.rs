@@ -10,7 +10,9 @@ pub(super) async fn run() -> anyhow::Result<()> {
         .is_none_or(|config| config.providers.is_empty())
     {
         super::progress_step("Stopping gateway without provider configuration");
-        super::service::stop_managed().await?;
+        // The provider change is already saved; a Codex stop guard failure must
+        // report after_commit so shells do not treat the save as rolled back.
+        after_provider_commit_async("gateway stop", super::service::stop_managed(false)).await?;
         return Ok(());
     }
     super::progress_step("Synchronizing reporting hooks");

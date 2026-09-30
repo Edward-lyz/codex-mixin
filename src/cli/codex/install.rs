@@ -59,6 +59,7 @@ pub(in crate::cli) struct InstallCodexOptions {
 
 pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyhow::Result<()> {
     let client = codex_mixin::gateway_access::GatewayClient::Codex;
+    let clears_switch_state = options.config_path.is_none();
     let config_path = resolve_codex_config_path(options.config_path.clone())?;
     let auth_mode = if options.codex_oauth_proxy {
         ManagedAuthMode::Official
@@ -66,19 +67,24 @@ pub(in crate::cli) async fn install_codex(options: InstallCodexOptions) -> anyho
         ManagedAuthMode::CustomOnly
     };
     let auth_transaction = ManagedAuthTransaction::begin(&config_path, auth_mode)?;
-    codex_mixin::application::client::install_with_client_key_async(client, async move {
-        let result = install_codex_inner(options).await;
-        match result {
-            Ok(()) => auth_transaction.commit(),
-            Err(install_error) => match auth_transaction.rollback() {
-                Ok(()) => Err(install_error),
-                Err(rollback_error) => Err(anyhow::anyhow!(
-                    "{install_error}; Codex auth rollback also failed: {rollback_error}"
-                )),
-            },
-        }
-    })
-    .await
+    let result =
+        codex_mixin::application::client::install_with_client_key_async(client, async move {
+            let result = install_codex_inner(options).await;
+            match result {
+                Ok(()) => auth_transaction.commit(),
+                Err(install_error) => match auth_transaction.rollback() {
+                    Ok(()) => Err(install_error),
+                    Err(rollback_error) => Err(anyhow::anyhow!(
+                        "{install_error}; Codex auth rollback also failed: {rollback_error}"
+                    )),
+                },
+            }
+        })
+        .await;
+    if result.is_ok() && clears_switch_state {
+        super::clear_restore_mode()?;
+    }
+    result
 }
 
 async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()> {
@@ -284,6 +290,18 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
 }
 
 pub(in crate::cli) fn uninstall_codex(
+    config_path: Option<PathBuf>,
+    catalog_path: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    let clears_switch_state = config_path.is_none();
+    uninstall_codex_preserving_restore_mode(config_path, catalog_path)?;
+    if clears_switch_state {
+        super::clear_restore_mode()?;
+    }
+    Ok(())
+}
+
+pub(in crate::cli) fn uninstall_codex_preserving_restore_mode(
     config_path: Option<PathBuf>,
     catalog_path: Option<PathBuf>,
 ) -> anyhow::Result<()> {

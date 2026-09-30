@@ -73,6 +73,12 @@ extension AppDelegate {
     }
 
     @objc func stopService() {
+        stopGateway(allowCodexDisconnect: false)
+    }
+
+    /// `allowCodexDisconnect` is the explicit "stop only" choice: Codex keeps
+    /// its Mixin config and cannot reach GPT until the gateway starts again.
+    func stopGateway(allowCodexDisconnect: Bool) {
         serviceStatus = "本地网关停止中..."
         serviceEndpoint = nil
         serviceBusy = true
@@ -92,12 +98,17 @@ extension AppDelegate {
                     failureAlertTitle: "停止服务失败"
                 ) { progress in
                     progress.advance(to: 0)
-                    _ = try await runGateway(["service", "stop", "--managed", "--json"])
+                    let arguments = allowCodexDisconnect
+                        ? ["service", "stop", "--managed", "--allow-codex-disconnect", "--json"]
+                        : ["service", "stop", "--managed", "--json"]
+                    _ = try await runGateway(arguments)
                     progress.advance(to: 1)
                     progress.advance(to: 2)
                     isRunning = false
                     providerStatusDetail = nil
-                    serviceStatus = "本地网关已停止"
+                    serviceStatus = allowCodexDisconnect
+                        ? stoppedGatewayStatusTitle(codexStatus: codexIntegrationStatus)
+                        : "本地网关已停止"
                     updateStatusTitle()
                 }
             } catch {

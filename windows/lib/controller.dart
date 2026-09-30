@@ -214,7 +214,17 @@ class MixinController {
 
   Future<void> toggleGateway() async {
     if (snapshot.gatewayRunning) {
-      await runAction('停止网关', ['service', 'stop', '--managed', '--json']);
+      final result = await runAction('停止网关', [
+        'service',
+        'stop',
+        '--managed',
+        '--json',
+      ]);
+      final error = decodeCliObject(result.stderr)?['error'];
+      if (error is Map && error['code'] == 'codex_requires_gateway') {
+        status = '停止网关失败：Codex 仍通过 Mixin 网关连接 GPT。'
+            '请先在“安装与恢复”中从 Codex 恢复，再停止网关。';
+      }
     } else {
       await runAction('启动网关', ['service', 'start', '--managed', '--json']);
     }

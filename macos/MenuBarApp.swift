@@ -18,8 +18,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let menuItemViewUpdater = MenuItemViewUpdater()
     var refreshTimer: RefreshTimerController?
     var refreshLifecycleObservers: [NSObjectProtocol] = []
-    var terminationInProgress = false
-    var updateTerminationReady = false
     @MainActor var updaterController: SPUStandardUpdaterController?
     var updateWatchdogLaunchGate = UpdateWatchdogLaunchGate()
     var isRunning = false
@@ -36,6 +34,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         await self?.performStatusRefresh(isCurrent: isCurrent)
     }
     var pendingStatusRefreshScope: StatusRefreshScope?
+    var codexIntegrationStatus: CodexIntegrationStatus?
     var quotaRefreshPolicy = QuotaRefreshPolicy()
     var serviceStatus = "本地网关检查中..." {
         didSet { updateServiceStatusView() }
@@ -296,10 +295,53 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     @objc func toggleGateway(_ sender: GatewaySwitchControl) {
         sender.isEnabled = false
         sender.isBusy = true
-        if sender.isOn {
-            startService()
-        } else {
-            stopService()
+        Task { @MainActor in
+            do {
+                let codexStatus = try await refreshCodexIntegrationStatus()
+                if sender.isOn {
+                    if codexStatus.isOfficialMode {
+                        enableGatewayFromSwitch()
+                    } else {
+                        startService()
+                    }
+                    return
+                }
+
+                if !codexStatus.gatewayRequired {
+                    stopService()
+                    return
+                }
+
+                switch chooseManagedCodexStop() {
+                case .restoreOfficial:
+                    disableGatewayFromSwitch()
+                case .stopGatewayOnly:
+                    stopGateway(allowCodexDisconnect: true)
+                case .cancel:
+                    sender.isOn = true
+                    sender.isBusy = false
+                    sender.isEnabled = true
+                    updateServiceStatusView()
+                }
+            } catch {
+                // Starting the gateway is safe without Codex state; only a stop
+                // needs it to avoid disconnecting a managed Codex.
+                if sender.isOn {
+                    appendDiagnosticLog(
+                        "Codex integration status unavailable; starting gateway: \(localizedErrorDescription(error))"
+                    )
+                    startService()
+                    return
+                }
+                sender.isOn = true
+                sender.isBusy = false
+                sender.isEnabled = true
+                updateServiceStatusView()
+                showAlert(
+                    title: "无法确认 Codex 接入状态",
+                    message: "CLI 未能返回可靠的 Codex 接入状态；为避免中断 GPT 请求，没有执行服务切换：\(error)"
+                )
+            }
         }
     }
 

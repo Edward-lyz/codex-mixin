@@ -100,9 +100,12 @@ jobs:
       - name: Test macOS operation progress window
         if: runner.os == 'macOS'
         run: ./scripts/test_install_progress_window.sh
-      - name: Test macOS status refresh coordination
+      - name: Test macOS lifecycle and status refresh coordination
         if: runner.os == 'macOS'
-        run: ./scripts/test_status_refresh_coordinator.sh
+        run: |
+          ./scripts/test_application_lifecycle.sh
+          ./scripts/test_codex_gateway_switch_state.sh
+          ./scripts/test_status_refresh_coordinator.sh
       - name: Package macOS development app
         if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch'
         run: |

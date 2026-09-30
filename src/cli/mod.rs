@@ -570,11 +570,13 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             ServiceCommand::Stop {
                 force,
                 managed,
+                allow_codex_disconnect,
                 json,
             } => {
                 if managed || !force {
-                    service::stop_managed().await?;
+                    service::stop_managed(allow_codex_disconnect).await?;
                 } else {
+                    codex::ensure_codex_allows_gateway_stop(allow_codex_disconnect)?;
                     stop(force)?;
                 }
                 if json { status(true).await } else { Ok(()) }
@@ -749,7 +751,13 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             daemon,
             log_file,
         } => start(bind, daemon, log_file).await,
-        Command::Stop { force } => stop(force),
+        Command::Stop {
+            force,
+            allow_codex_disconnect,
+        } => {
+            codex::ensure_codex_allows_gateway_stop(allow_codex_disconnect)?;
+            stop(force)
+        }
         Command::Restart { bind, log_file } => restart(bind, log_file, false).await,
         Command::Logs { lines, follow } => logs(lines, follow),
         Command::Serve { bind } => start(bind, false, None).await,
@@ -809,6 +817,11 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 codex_mixin::gateway_access::GatewayClient::Codex,
             )
         }
+        Command::CodexStatus { json } => codex::codex_status(json),
+        Command::CodexSwitch { target } => match target {
+            CodexSwitchTarget::Official => codex::switch_to_official().await,
+            CodexSwitchTarget::Mixin => codex::switch_to_mixin().await,
+        },
         Command::InstallClaude { settings } => {
             let hook_settings_path = settings.clone();
             install_claude(settings)?;

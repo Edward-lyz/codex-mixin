@@ -19,6 +19,7 @@ pub(super) fn describe(json_output: bool) -> anyhow::Result<()> {
             "structured_errors": true,
             "fusion_model_options": true,
             "service_lifecycle": true,
+            "codex_lifecycle": true,
             "gateway_autostart": codex_mixin::platform::startup_service_supported(),
             "config_apply": true,
             "official_ech_proxy": true,
@@ -35,12 +36,19 @@ pub(super) fn describe(json_output: bool) -> anyhow::Result<()> {
 }
 
 pub(super) fn command_error(error: &anyhow::Error) -> Value {
-    let (code, committed, stage) = match error.downcast_ref::<OperationError>() {
-        Some(OperationError::BeforeCommit { .. }) => ("before_commit", Some(false), None),
-        Some(OperationError::AfterCommit { stage, .. }) => {
-            ("after_commit", Some(true), Some(*stage))
+    let (code, committed, stage) = if error
+        .downcast_ref::<super::codex::CodexRequiresGatewayError>()
+        .is_some()
+    {
+        ("codex_requires_gateway", Some(false), None)
+    } else {
+        match error.downcast_ref::<OperationError>() {
+            Some(OperationError::BeforeCommit { .. }) => ("before_commit", Some(false), None),
+            Some(OperationError::AfterCommit { stage, .. }) => {
+                ("after_commit", Some(true), Some(*stage))
+            }
+            None => ("operation_failed", None, None),
         }
-        None => ("operation_failed", None, None),
     };
     json!({
         "protocol_version": PROTOCOL_VERSION,
@@ -92,5 +100,13 @@ mod tests {
     fn unknown_errors_do_not_claim_rollback() {
         let value = command_error(&anyhow::anyhow!("unknown operation failure"));
         assert!(value["error"]["committed"].is_null());
+    }
+
+    #[test]
+    fn gateway_guard_has_a_stable_machine_error_code() {
+        let error = anyhow::Error::new(super::super::codex::CodexRequiresGatewayError);
+        let value = command_error(&error);
+        assert_eq!(value["error"]["code"], "codex_requires_gateway");
+        assert_eq!(value["error"]["committed"], false);
     }
 }
