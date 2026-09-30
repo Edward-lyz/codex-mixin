@@ -6,6 +6,7 @@ TEST_BINARY="$(mktemp -d)/update-watchdog-tests"
 
 xcrun swiftc \
   "$ROOT_DIR/macos/UpdateWatchdog.swift" \
+  "$ROOT_DIR/macos/AppDataDirectory.swift" \
   "$ROOT_DIR/macos/tests/UpdateWatchdogTests.swift" \
   -framework Cocoa \
   -framework CryptoKit \

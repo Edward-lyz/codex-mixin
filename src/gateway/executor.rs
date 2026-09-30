@@ -42,6 +42,7 @@ pub(crate) struct GatewayExecutor {
     pub(crate) providers: Arc<ProviderRegistry>,
     pub(crate) upstream: Arc<UpstreamAccess>,
     pub(crate) cache_shapes: Arc<CacheShapeTracker>,
+    pub(crate) output_limits: Arc<super::output_limit::OutputLimitMemory>,
     web_search_capabilities: WebSearchCapabilities,
     image_routes: ImageRouteRegistry,
 }
@@ -67,6 +68,7 @@ impl GatewayExecutor {
             providers,
             upstream,
             cache_shapes,
+            output_limits: Arc::default(),
             web_search_capabilities,
             image_routes,
         }

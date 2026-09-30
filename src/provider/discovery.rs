@@ -519,8 +519,8 @@ fn add_baidu_model(
         supports_image: Some(capability.supports_image || declared_capability("image")),
         supports_thinking: Some(true),
         // The endpoint currently ships an empty capability_set, so an absent
-        // token means "unknown", not "unsupported". Keeping it unknown lets the
-        // hosted-search probe decide for each model.
+        // token means "unknown", not "unsupported". The catalog is never
+        // probed; earlier web-search probe results still apply.
         supports_web_search: declared_capability("web_search").then_some(true),
         supports_tool_search: Some(false),
         supports_function_tools: Some(true),

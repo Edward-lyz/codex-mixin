@@ -27,7 +27,7 @@ pub(crate) use quota::summarize_quota_json;
 pub(crate) use usage::usage;
 
 pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
-    if load_stored_config()?.is_none() {
+    if load_stored_config()?.is_none_or(|config| config.providers.is_empty()) {
         if json_output {
             println!(
                 "{}",
@@ -45,6 +45,113 @@ pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
         return Ok(());
     }
     let config = GatewayConfig::from_stored_config()?;
+    let snapshot = gateway_snapshot(&config).await?;
+    let GatewaySnapshot {
+        daemon: metadata,
+        daemon_status,
+        running_version,
+        bind,
+        healthz: url,
+        health_error,
+    } = snapshot;
+    if let Some(error) = health_error {
+        return print_gateway_unavailable(
+            json_output,
+            daemon_status,
+            metadata.as_ref(),
+            &url,
+            &config,
+            Some(error),
+        );
+    }
+    let gateway_version = running_version.as_deref().unwrap_or("unknown");
+    let endpoint = format!("http://{bind}/v1");
+    let readiness = provider_readiness_summary(&config.providers);
+    if json_output {
+        println!(
+            "{}",
+            serde_json::to_string_pretty(&serde_json::json!({
+                "daemon": daemon_status,
+                "pid": metadata.as_ref().map(|metadata| metadata.pid),
+                "log": metadata.as_ref().map(|metadata| metadata.log_file.clone()),
+                "gateway": "running",
+                "gateway_version": gateway_version,
+                "bind": bind,
+                "healthz": url,
+                "endpoint": endpoint,
+                "provider_readiness": readiness.0,
+                "provider_counts": {
+                    "total": config.providers.len(),
+                    "healthy": readiness.1,
+                    "degraded": readiness.2,
+                    "disabled": readiness.3,
+                },
+                "providers": provider_readiness_values(&config.providers),
+            }))?
+        );
+        return Ok(());
+    }
+    println!("daemon: {}", daemon_status.replace('_', " "));
+    if let Some(metadata) = &metadata {
+        println!("pid: {}", metadata.pid);
+        println!("log: {}", metadata.log_file.display());
+    }
+    println!("{} {gateway_version}", style("gateway-version:").dim());
+    println!("{} {}", style("gateway:").dim(), style("running").green());
+    println!("{} {url}", style("healthz:").dim());
+    println!("{} {endpoint}", style("endpoint:").dim());
+    let readiness_styled = match readiness.0 {
+        "healthy" => style("healthy").green(),
+        "degraded" => style("degraded").yellow(),
+        _ => style("disabled").red(),
+    };
+    println!("{} {readiness_styled}", style("provider-readiness:").dim());
+    println!(
+        "{} {} total, {} healthy, {} degraded, {} disabled",
+        style("providers:").dim(),
+        config.providers.len(),
+        style(readiness.1).green(),
+        if readiness.2 > 0 {
+            style(readiness.2).yellow()
+        } else {
+            style(readiness.2).dim()
+        },
+        if readiness.3 > 0 {
+            style(readiness.3).red()
+        } else {
+            style(readiness.3).dim()
+        },
+    );
+    for issue in provider_readiness_issue_descriptions(&config.providers) {
+        println!("{} {issue}", style("provider-issue:").yellow());
+    }
+    Ok(())
+}
+
+/// Typed view of the local gateway process and its health endpoint, shared
+/// by `status` rendering and service lifecycle decisions.
+pub(super) struct GatewaySnapshot {
+    pub(super) daemon: Option<DaemonMetadata>,
+    pub(super) daemon_status: &'static str,
+    /// Version reported by the live runtime metadata, if any.
+    pub(super) running_version: Option<String>,
+    pub(super) bind: std::net::SocketAddr,
+    pub(super) healthz: String,
+    /// `None` when `/healthz` answered with success.
+    pub(super) health_error: Option<String>,
+}
+
+impl GatewaySnapshot {
+    pub(super) fn healthy(&self) -> bool {
+        self.health_error.is_none()
+    }
+
+    pub(super) fn daemon_running(&self) -> bool {
+        self.daemon_status == "running"
+    }
+}
+
+pub(super) async fn gateway_snapshot(config: &GatewayConfig) -> anyhow::Result<GatewaySnapshot> {
     let metadata = load_daemon_metadata()?;
     let runtime = load_runtime_metadata()?;
     let daemon_status = match &metadata {
@@ -52,127 +159,38 @@ pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
         Some(_) => "stale",
         None => "not_started",
     };
-    let runtime_running = runtime
-        .as_ref()
-        .map(|metadata| pid_is_running(metadata.pid))
-        .transpose()?
-        .unwrap_or(false);
-    let bind = if runtime_running {
-        runtime.as_ref().expect("live runtime metadata").bind
-    } else {
-        metadata
-            .as_ref()
-            .map_or(config.bind, |metadata| metadata.bind)
+    let live_runtime = match runtime {
+        Some(runtime) if pid_is_running(runtime.pid)? => Some(runtime),
+        _ => None,
     };
-    let url = format!("http://{bind}/healthz");
+    let bind = match (&live_runtime, &metadata) {
+        (Some(runtime), _) => runtime.bind,
+        (None, Some(metadata)) => metadata.bind,
+        (None, None) => config.bind,
+    };
+    let healthz = format!("http://{bind}/healthz");
     let response = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()?
-        .get(&url)
+        .get(&healthz)
         .send()
         .await;
-    match response {
-        Ok(response) if response.status().is_success() => {
-            let endpoint = format!("http://{bind}/v1");
-            let readiness = provider_readiness_summary(&config.providers);
-            if json_output {
-                println!(
-                    "{}",
-                    serde_json::to_string_pretty(&serde_json::json!({
-                        "daemon": daemon_status,
-                        "pid": metadata.as_ref().map(|metadata| metadata.pid),
-                        "log": metadata.as_ref().map(|metadata| metadata.log_file.clone()),
-                        "gateway": "running",
-                        "gateway_version": if runtime_running {
-                            runtime
-                                .as_ref()
-                                .and_then(|metadata| metadata.version.as_deref())
-                                .unwrap_or("unknown")
-                        } else {
-                            "unknown"
-                        },
-                        "bind": bind,
-                        "healthz": url,
-                        "endpoint": endpoint,
-                        "provider_readiness": readiness.0,
-                        "provider_counts": {
-                            "total": config.providers.len(),
-                            "healthy": readiness.1,
-                            "degraded": readiness.2,
-                            "disabled": readiness.3,
-                        },
-                        "providers": provider_readiness_values(&config.providers),
-                    }))?
-                );
-            } else {
-                println!("daemon: {}", daemon_status.replace('_', " "));
-                if let Some(metadata) = &metadata {
-                    println!("pid: {}", metadata.pid);
-                    println!("log: {}", metadata.log_file.display());
-                }
-                println!(
-                    "{} {}",
-                    style("gateway-version:").dim(),
-                    if runtime_running {
-                        runtime
-                            .as_ref()
-                            .and_then(|metadata| metadata.version.as_deref())
-                            .unwrap_or("unknown")
-                    } else {
-                        "unknown"
-                    }
-                );
-                println!("{} {}", style("gateway:").dim(), style("running").green());
-                println!("{} {url}", style("healthz:").dim());
-                println!("{} {endpoint}", style("endpoint:").dim());
-                let readiness_styled = match readiness.0 {
-                    "healthy" => style("healthy").green(),
-                    "degraded" => style("degraded").yellow(),
-                    _ => style("disabled").red(),
-                };
-                println!("{} {readiness_styled}", style("provider-readiness:").dim());
-                println!(
-                    "{} {} total, {} healthy, {} degraded, {} disabled",
-                    style("providers:").dim(),
-                    config.providers.len(),
-                    style(readiness.1).green(),
-                    if readiness.2 > 0 {
-                        style(readiness.2).yellow()
-                    } else {
-                        style(readiness.2).dim()
-                    },
-                    if readiness.3 > 0 {
-                        style(readiness.3).red()
-                    } else {
-                        style(readiness.3).dim()
-                    },
-                );
-                for issue in provider_readiness_issue_descriptions(&config.providers) {
-                    println!("{} {issue}", style("provider-issue:").yellow());
-                }
-            }
-            Ok(())
-        }
-        Ok(response) => print_gateway_unavailable(
-            json_output,
-            daemon_status,
-            metadata.as_ref(),
-            &url,
-            &config,
-            Some(format!(
-                "gateway unhealthy: {url} returned {}",
-                response.status()
-            )),
-        ),
-        Err(err) => print_gateway_unavailable(
-            json_output,
-            daemon_status,
-            metadata.as_ref(),
-            &url,
-            &config,
-            Some(format!("gateway not running at {url}: {err}")),
-        ),
-    }
+    let health_error = match response {
+        Ok(response) if response.status().is_success() => None,
+        Ok(response) => Some(format!(
+            "gateway unhealthy: {healthz} returned {}",
+            response.status()
+        )),
+        Err(err) => Some(format!("gateway not running at {healthz}: {err}")),
+    };
+    Ok(GatewaySnapshot {
+        daemon: metadata,
+        daemon_status,
+        running_version: live_runtime.and_then(|runtime| runtime.version),
+        bind,
+        healthz,
+        health_error,
+    })
 }
 
 fn print_gateway_unavailable(

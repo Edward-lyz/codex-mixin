@@ -3,6 +3,7 @@ use crate::protocol::ResponseStream;
 mod cache_shape;
 mod cache_usage;
 mod executor;
+mod output_limit;
 mod plan;
 mod provider;
 mod responses;

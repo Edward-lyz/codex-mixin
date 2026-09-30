@@ -19,6 +19,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/SettingsPanel.swift" \
   "$ROOT_DIR/macos/ProviderSupport.swift" \
   "$ROOT_DIR/macos/ProviderIconCache.swift" \
+  "$ROOT_DIR/macos/AppDataDirectory.swift" \
   "$ROOT_DIR/macos/ProviderWindowLayoutSupport.swift" \
   "$ROOT_DIR/macos/LiquidGlassSupport.swift" \
   "$ROOT_DIR/macos/ModelBenchmarkDataSupport.swift" \

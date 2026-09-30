@@ -75,8 +75,7 @@ final class CardIdentityStore {
     private static func defaultEarliestHistoryDate(
         fileManager: FileManager = .default
     ) -> Date? {
-        let stateDirectory = fileManager.homeDirectoryForCurrentUser
-            .appendingPathComponent(".codex-mixin", isDirectory: true)
+        let stateDirectory = appDataDirectory(fileManager: fileManager)
         guard fileManager.fileExists(atPath: stateDirectory.path) else {
             return nil
         }

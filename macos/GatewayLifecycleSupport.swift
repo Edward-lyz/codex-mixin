@@ -9,10 +9,9 @@ extension AppDelegate {
             defer { serviceBusy = false }
             do {
                 loadCachedProviderQuota()
-                do {
-                    _ = try await runGateway(["config", "--json", "--scope", "effective"])
-                } catch {
-                    guard isMissingGatewayConfiguration(error) else { throw error }
+                let currentStatus = try await runGateway(["status", "--json"])
+                let snapshot = try decodeGatewayStatus(currentStatus)
+                if snapshot.configured == false {
                     isRunning = false
                     serviceStatus = "等待配置上游 API"
                     serviceEndpoint = nil
@@ -29,10 +28,10 @@ extension AppDelegate {
                     }
                     return
                 }
-                if FileManager.default.fileExists(atPath: launchAgentPath().path) {
+                if FileManager.default.fileExists(atPath: menuLaunchAgentPath().path) {
                     try installMenuLaunchAgent()
                 }
-                let status = try await ensureGatewayReady()
+                let status = try await runGateway(["service", "ensure", "--json"])
                 applyGatewayStatus(status)
                 await refreshStatusNow()
                 Task { @MainActor in
@@ -55,69 +54,7 @@ extension AppDelegate {
     }
 
     func ensureGatewayReady() async throws -> String {
-        await initializeProviderModelsIfNeeded()
-        if let status = try? await runGateway(["status"]), status.contains("gateway: running") {
-            let launchAgentInstalled = FileManager.default.fileExists(atPath: launchAgentPath().path)
-            var launchAgentNeedsMigration = false
-            if launchAgentInstalled {
-                launchAgentNeedsMigration = try launchAgentNeedsUpdate()
-            }
-            let gatewayVersion = status
-                .split(separator: "\n")
-                .first(where: { $0.hasPrefix("gateway-version: ") })
-                .map { String($0.dropFirst("gateway-version: ".count)) }
-            if gatewayVersion != appVersion()
-                || (launchAgentInstalled
-                    && (status.contains("daemon: running") || launchAgentNeedsMigration)) {
-                try await restartGatewayProcess()
-                return try await waitForGatewayStatus()
-            }
-            return status
-        }
-        _ = try await runGateway(["config", "--json", "--scope", "effective"])
-        if FileManager.default.fileExists(atPath: launchAgentPath().path) {
-            if (try? await runProcess("/bin/launchctl", ["print", launchDomainAndLabel()])) != nil,
-                let status = try? await waitForGatewayStatus()
-            {
-                return status
-            }
-            try await bootoutIfLoaded(launchDomainAndLabel())
-            try await waitForGatewayStopped()
-            try installLaunchAgent()
-            try await bootstrapLaunchAgent()
-        } else {
-            _ = try await runGateway(["start", "--daemon"])
-        }
-        return try await waitForGatewayStatus()
-    }
-
-    func initializeProviderModelsIfNeeded() async {
-        do {
-            let response = try decodeProviderList(
-                try await runGateway(["providers", "list", "--json"])
-            )
-            for provider in response.providers where provider.needsInitialModelDiscovery {
-                serviceStatus = "正在迁移 \(provider.displayName) 模型配置..."
-                do {
-                    _ = try await runGateway(["providers", "discover", provider.id])
-                } catch {
-                    appendDiagnosticLog(
-                        "Initial model discovery failed for \(provider.id)\n"
-                            + localizedErrorDescription(error)
-                    )
-                }
-            }
-        } catch {
-            appendDiagnosticLog(
-                "Initial Provider migration check failed\n" + localizedErrorDescription(error)
-            )
-        }
-    }
-
-    func isMissingGatewayConfiguration(_ error: Error) -> Bool {
-        let message = String(describing: error)
-        return message.contains("provider configuration is missing")
-            || message.contains("provider configuration is empty")
+        try await runGateway(["service", "ensure", "--json"])
     }
 
     func applicationShouldTerminate(_ sender: NSApplication) -> NSApplication.TerminateReply {
@@ -134,9 +71,7 @@ extension AppDelegate {
         serviceEndpoint = nil
         Task { @MainActor in
             do {
-                try await bootoutIfLoaded(launchDomainAndLabel())
-                _ = try await runGateway(["stop"])
-                try await waitForGatewayStopped()
+                _ = try await runGateway(["service", "stop", "--managed", "--json"])
                 refreshTimer?.stop()
                 sender.reply(toApplicationShouldTerminate: true)
             } catch {

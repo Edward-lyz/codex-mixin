@@ -31,7 +31,7 @@ impl ManagedConfigLock {
             .read(true)
             .write(true)
             .open(&lock_path)?;
-        lock_file_exclusive(&file).map_err(|error| {
+        codex_mixin::platform::lock_exclusive(&file).map_err(|error| {
             anyhow::anyhow!(
                 "failed to lock managed Codex config {}: {error}",
                 config_path.display()
@@ -39,20 +39,6 @@ impl ManagedConfigLock {
         })?;
         Ok(Self { _file: file })
     }
-}
-
-// Unix keeps the baseline `std::fs::File::lock()` (advisory flock); other
-// platforms (Windows) have no flock, so use `fs2`'s cross-platform exclusive
-// lock. This keeps Unix/macOS behaviour identical to the pre-Windows baseline.
-#[cfg(unix)]
-fn lock_file_exclusive(file: &fs::File) -> std::io::Result<()> {
-    file.lock()
-}
-
-#[cfg(not(unix))]
-fn lock_file_exclusive(file: &fs::File) -> std::io::Result<()> {
-    use fs2::FileExt;
-    file.lock_exclusive()
 }
 
 pub(in crate::cli) fn resolve_codex_install_paths(

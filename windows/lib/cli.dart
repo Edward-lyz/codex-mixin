@@ -18,14 +18,9 @@ dynamic decodeCliJson(String output) {
   if (value.isEmpty) return null;
   try {
     return jsonDecode(value);
-  } catch (_) {}
-  for (var index = 0; index < value.length; index++) {
-    if (value[index] != '{' && value[index] != '[') continue;
-    try {
-      return jsonDecode(value.substring(index));
-    } catch (_) {}
+  } on FormatException {
+    return null;
   }
-  return null;
 }
 
 Map<String, dynamic>? decodeCliObject(String output) {
@@ -155,6 +150,4 @@ class MixinCli {
     );
   }
 
-  String get stateDirectory =>
-      '${Platform.environment['USERPROFILE'] ?? '.'}${Platform.pathSeparator}.codex-mixin';
 }

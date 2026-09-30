@@ -831,8 +831,8 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         }
         switch mode {
         case .ducxLoopback:
-            setBusy(true, status: "请在终端完成 DUCX 下载与扫码登录…")
-            return try await setupDucxInTerminal()
+            setBusy(true, status: "正在准备 DUCX；如需登录，请在弹出的终端完成扫码…")
+            return try await setupManagedDucx(run: runHandler)
         case .disabled:
             throw GatewayError.command("关闭认证桥接不需要安装客户端。")
         }

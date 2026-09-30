@@ -1,5 +1,4 @@
 import 'dart:convert';
-import 'dart:io';
 
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
@@ -64,7 +63,11 @@ class _FusionPageState extends State<FusionPage> {
       'get',
       '--json',
     ]);
-    final modelsResult = await _controller.cli.run(['models', '--json']);
+    final modelsResult = await _controller.cli.run([
+      'fusion',
+      'models',
+      '--json',
+    ]);
     if (!mounted) return;
     // Distinguish a real read failure from "no models"; otherwise a CLI/config
     // error would be silently shown as an empty model list.
@@ -76,18 +79,30 @@ class _FusionPageState extends State<FusionPage> {
       });
       return;
     }
-    final envelope = decodeCliObject(profileResult.stdout) ?? const {};
-    final profile = envelope['profile'];
-    final models = decodeCliJson(modelsResult.stdout);
-    final options = <FusionOption>[];
-    if (models is List) {
-      for (final raw in models.whereType<Map>()) {
-        final id = '${raw['id'] ?? ''}';
-        if (id.isEmpty || id.startsWith('mixin/fusion/')) continue;
-        options.add(FusionOption(id, '${raw['display_name'] ?? id}'));
-      }
+    final envelope = decodeCliObject(profileResult.stdout);
+    if (envelope == null || !envelope.containsKey('profile')) {
+      setState(() {
+        _busy = false;
+        _status = 'Fusion 配置接口返回了无效 JSON';
+      });
+      return;
     }
-    options.addAll(_officialOptions());
+    final profile = envelope['profile'];
+    final modelsEnvelope = decodeCliObject(modelsResult.stdout);
+    final models = modelsEnvelope?['models'];
+    if (modelsEnvelope == null || models is! List) {
+      setState(() {
+        _busy = false;
+        _status = 'Fusion 模型接口返回了无效 JSON';
+      });
+      return;
+    }
+    final options = <FusionOption>[];
+    for (final raw in models.whereType<Map>()) {
+      final id = '${raw['id'] ?? ''}';
+      if (id.isEmpty || id.startsWith('mixin/fusion/')) continue;
+      options.add(FusionOption(id, '${raw['display_name'] ?? id}'));
+    }
     options.sort((a, b) => a.displayName.compareTo(b.displayName));
     final storedPanels = profile is Map
         ? ((profile['panel_models'] as List?) ?? const [])
@@ -126,30 +141,6 @@ class _FusionPageState extends State<FusionPage> {
       _busy = false;
       _status = options.isEmpty ? '还没有可用模型' : '已加载 Fusion 配置';
     });
-  }
-
-  List<FusionOption> _officialOptions() {
-    final cache = File(
-      '${Platform.environment['USERPROFILE'] ?? '.'}${Platform.pathSeparator}.codex${Platform.pathSeparator}models_cache.json',
-    );
-    if (!cache.existsSync()) return const [];
-    final decoded = decodeCliJson(cache.readAsStringSync());
-    if (decoded is! Map) return const [];
-    final models = decoded['models'];
-    if (models is! List) return const [];
-    return models
-        .whereType<Map>()
-        .map((model) {
-          final slug = '${model['slug'] ?? ''}';
-          final hidden = '${model['visibility'] ?? 'list'}' == 'hide';
-          if (slug.isEmpty || hidden) return null;
-          return FusionOption(
-            'official:$slug',
-            '${model['display_name'] ?? slug} · OpenAI 官方',
-          );
-        })
-        .whereType<FusionOption>()
-        .toList();
   }
 
   String? get _validationError {
@@ -201,14 +192,17 @@ class _FusionPageState extends State<FusionPage> {
       '--replace-id',
       _loadedId,
     ]);
-    if (result.ok) {
-      await _controller.cli.run(['service', 'restart']);
-      await _controller.cli.run(['refresh-codex-catalog']);
-    }
+    final applied = result.ok
+        ? await _controller.cli.run(['config', 'apply'])
+        : null;
     if (!mounted) return;
     setState(() {
       _busy = false;
-      _status = result.ok ? 'Fusion 已保存并重启网关' : '保存失败：${result.output}';
+      _status = !result.ok
+          ? '保存失败：${result.output}'
+          : applied!.ok
+          ? 'Fusion 已保存并应用'
+          : 'Fusion 已保存，但应用配置失败：${applied.output}';
       if (result.ok) _loadedId = _profileId.text.trim();
     });
   }
@@ -224,14 +218,17 @@ class _FusionPageState extends State<FusionPage> {
       '--id',
       _loadedId,
     ]);
-    if (result.ok) {
-      await _controller.cli.run(['service', 'restart']);
-      await _controller.cli.run(['refresh-codex-catalog']);
-    }
+    final applied = result.ok
+        ? await _controller.cli.run(['config', 'apply'])
+        : null;
     if (!mounted) return;
     setState(() {
       _busy = false;
-      _status = result.ok ? 'Fusion 已关闭' : '关闭失败：${result.output}';
+      _status = !result.ok
+          ? '关闭失败：${result.output}'
+          : applied!.ok
+          ? 'Fusion 已关闭'
+          : 'Fusion 已关闭，但应用配置失败：${applied.output}';
       if (result.ok) {
         _panels.clear();
         _judge = '';

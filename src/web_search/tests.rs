@@ -207,3 +207,26 @@ async fn persists_prunes_and_invalidates_capabilities() {
     let invalidated = WebSearchCapabilities::load(path, &config).unwrap();
     assert!(invalidated.results().is_empty());
 }
+
+#[tokio::test]
+async fn never_probes_providers_that_declare_capabilities_even_when_forced() {
+    let directory = tempfile::tempdir().unwrap();
+    // Port 9 refuses connections, so an attempted probe would record a failure.
+    let mut config = test_config("http://127.0.0.1:9");
+    config.providers[0].preset_id = Some("openrouter".to_owned());
+    let capabilities =
+        WebSearchCapabilities::load(directory.path().join("web-search.json"), &config).unwrap();
+    let mut models = vec![ModelInfo {
+        id: "Claude Haiku 4.5-test-provider".to_owned(),
+        ..ModelInfo::default()
+    }];
+    let registry = ProviderRegistry::new(config.providers.clone()).unwrap();
+
+    let summary = capabilities
+        .probe_models(&mut models, &config, &registry, true)
+        .await
+        .unwrap();
+
+    assert_eq!(summary.attempted, 0);
+    assert_eq!(summary.failed, 0);
+}

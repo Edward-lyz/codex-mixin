@@ -5,7 +5,6 @@ use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
 use anyhow::Context;
-use codex_mixin::provider::catalog_model_slug;
 use crossterm::cursor::{Hide, Show};
 use crossterm::event::{DisableMouseCapture, EnableMouseCapture};
 use crossterm::execute;
@@ -172,45 +171,16 @@ impl Snapshot {
         } else {
             Vec::new()
         };
-        let mut models = providers
-            .iter()
-            .filter(|provider| value_str(provider, "kind", "") == "configured")
-            .filter(|provider| {
-                provider
-                    .get("enabled")
-                    .and_then(Value::as_bool)
-                    .unwrap_or(false)
-            })
-            .flat_map(|provider| {
-                let provider_id = value_str(provider, "id", "");
-                let cached = provider
-                    .get("cached_models")
-                    .and_then(Value::as_array)
-                    .map(Vec::as_slice)
-                    .unwrap_or_default();
-                provider
-                    .get("selected_models")
-                    .and_then(Value::as_array)
-                    .map(Vec::as_slice)
-                    .unwrap_or_default()
-                    .iter()
-                    .filter_map(Value::as_str)
-                    .map(move |model_id| {
-                        let display_name = cached
-                            .iter()
-                            .find(|model| value_str(model, "id", "") == model_id)
-                            .map(|model| value_str(model, "display_name", model_id))
-                            .unwrap_or(model_id);
-                        serde_json::json!({
-                            "id": catalog_model_slug(model_id, provider_id),
-                            "display_name": display_name,
-                        })
-                    })
-            })
-            .collect::<Vec<_>>();
-        if configured {
-            models.extend(load_official_fusion_models().await?);
-        }
+        let models = if configured {
+            run_json(&["fusion", "models", "--json"])
+                .await?
+                .get("models")
+                .and_then(Value::as_array)
+                .context("fusion models output does not contain a models array")?
+                .clone()
+        } else {
+            Vec::new()
+        };
         let fusion_profile = provider_document
             .get("fusion_profile")
             .cloned()
@@ -245,29 +215,6 @@ impl Snapshot {
             .and_then(Value::as_str)
             == Some("running")
     }
-}
-
-async fn load_official_fusion_models() -> anyhow::Result<Vec<Value>> {
-    let cache = codex_mixin::platform::home_dir_required()?.join(".codex/models_cache.json");
-    if !tokio::fs::try_exists(&cache).await? {
-        return Ok(Vec::new());
-    }
-    let document: Value = serde_json::from_slice(&tokio::fs::read(&cache).await?)?;
-    let models = document
-        .get("models")
-        .and_then(Value::as_array)
-        .context("official models cache does not contain a models array")?;
-    Ok(models
-        .iter()
-        .filter(|model| value_str(model, "visibility", "list") != "hide")
-        .filter_map(|model| {
-            let slug = model.get("slug").and_then(Value::as_str)?;
-            Some(serde_json::json!({
-                "id": format!("official:{slug}"),
-                "display_name": value_str(model, "display_name", slug),
-            }))
-        })
-        .collect())
 }
 
 struct App {
@@ -823,25 +770,7 @@ pub(crate) async fn run(
                     .await
                     .is_some();
                     if saved {
-                        let restarted = run_action(
-                            &mut terminal,
-                            &mut app,
-                            "Restarting gateway",
-                            &["service", "restart"],
-                            true,
-                        )
-                        .await
-                        .is_some();
-                        if restarted {
-                            run_action(
-                                &mut terminal,
-                                &mut app,
-                                "Refreshing Codex model catalog",
-                                &["refresh-codex-catalog"],
-                                true,
-                            )
-                            .await;
-                        }
+                        apply_provider_changes(&mut terminal, &mut app).await;
                     }
                     app.load_model_draft();
                 }

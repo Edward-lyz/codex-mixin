@@ -171,13 +171,8 @@ async fn write_visualization(
     tokio::fs::write(&path, fragment)
         .await
         .map_err(|error| format!("write {}: {error}", path.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        tokio::fs::set_permissions(&path, std::fs::Permissions::from_mode(0o600))
-            .await
-            .map_err(|error| format!("set permissions on {}: {error}", path.display()))?;
-    }
+    crate::platform::set_owner_only_mode(&path)
+        .map_err(|error| format!("set permissions on {}: {error}", path.display()))?;
 
     Ok(FusionDetail {
         title: VISUALIZATION_TITLE.to_owned(),

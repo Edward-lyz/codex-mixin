@@ -229,6 +229,14 @@ pub struct ProviderDefinition {
 }
 
 impl ProviderDefinition {
+    /// Whether this provider's model catalog declares real per-model
+    /// capabilities. Capability and web-search probes are paid completions,
+    /// so such providers are never probed.
+    pub fn declares_model_capabilities(&self) -> bool {
+        self.model_source == ProviderModelSource::BaiduOneApi
+            || crate::provider::spec_for(self.preset_id.as_deref()).declares_model_capabilities
+    }
+
     pub fn validate(&self) -> anyhow::Result<()> {
         validate_provider_id(&self.id)?;
         ensure!(
@@ -784,11 +792,11 @@ mod tests {
         let mut provider = crate::provider::baidu_oneapi_provider("baidu-oneapi", "key");
         provider.quota_username = Some("user".to_owned());
         provider.request_policy.baidu_auth_bridge = Some(BaiduAuthBridge::DucxLoopback);
-        provider.request_policy.ducx_executable = Some(if cfg!(windows) {
-            r"C:\Users\example\.codex-mixin\ducc\home\.baidu-cc\baidu-cc\bin\ducc".into()
-        } else {
-            "/Users/example/.codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin/ducc".into()
-        });
+        provider.request_policy.ducx_executable = Some(
+            std::env::temp_dir()
+                .join("example/.codex-mixin/ducc/home/.baidu-cc/baidu-cc/bin")
+                .join(crate::platform::executable_file_name("ducc")),
+        );
 
         assert!(
             provider

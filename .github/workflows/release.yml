@@ -191,6 +191,17 @@ jobs:
           } finally {
             if ($pfx) { Remove-Item $pfx -Force -ErrorAction SilentlyContinue }
           }
+      - name: Package standalone Windows CLI
+        shell: pwsh
+        run: |
+          $version = '${{ steps.version.outputs.version }}'
+          $name = "codex-mixin-cli-$version-x86_64-pc-windows-msvc"
+          $stage = Join-Path $env:RUNNER_TEMP $name
+          New-Item -ItemType Directory -Force -Path $stage | Out-Null
+          Copy-Item "dist/release/codex-mixin-$version-windows-x86_64/codex-mixin.exe" $stage
+          Copy-Item README.md, LICENSE, NOTICE $stage
+          tar -czf "dist/release/$name.tar.gz" -C $env:RUNNER_TEMP $name
+          if ($LASTEXITCODE -ne 0) { throw 'Windows CLI packaging failed' }
       - name: Verify release artifacts
         shell: pwsh
         run: |
@@ -210,6 +221,7 @@ jobs:
           path: |
             dist/release/*.exe
             dist/release/*.zip
+            dist/release/*.tar.gz
           if-no-files-found: error
 
   publish:

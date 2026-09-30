@@ -10,10 +10,10 @@ use codex_mixin::server::AppState;
 
 use super::bin::ensure_codex_cli_for_install;
 use super::catalog::*;
-use super::imagegen_skill::{reconcile_imagegen_skill, restore_imagegen_skill};
 use super::managed_auth::*;
 use super::managed_config::*;
 use super::validate::validate_codex_install;
+use super::{reconcile_imagegen_skill, restore_imagegen_skill};
 use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::config_input::normalize_base_url;
 use crate::cli::metadata::load_model_metadata_resolver;

@@ -7,8 +7,6 @@
 //! Mixin then injects those headers into its own upstream request.
 
 use std::io::Write as _;
-#[cfg(unix)]
-use std::os::unix::fs::PermissionsExt as _;
 use std::path::{Path, PathBuf};
 use std::process::Stdio;
 use std::time::{Duration, Instant};
@@ -101,13 +99,11 @@ impl DucxRuntime {
             "prompt": "codex-mixin report warmup"
         }))?;
         let mut command = Command::new(&executable);
-        #[cfg(unix)]
-        command.process_group(0);
+        crate::platform::isolate_tokio_process_group(&mut command);
         crate::platform::prepare_background_tokio_command(&mut command);
+        crate::platform::set_tokio_home_env(&mut command, &self.home);
         let mut child = command
             .arg("--user-prompt-submit")
-            .env("HOME", &self.home)
-            .env("USERPROFILE", &self.home)
             .env("CODEX_HOME", &codex_home)
             .env("DUCX_USERNAME", &username)
             .stdin(Stdio::piped())
@@ -155,7 +151,7 @@ impl DucxRuntime {
             ),
             status = child.wait() => {
                 let status = status.context("wait for DUCX data-report warmup")?;
-                terminate_process_group(process_group_id, &mut child).await;
+                crate::platform::terminate_isolated_tokio_child(process_group_id, &mut child).await;
                 let stderr = stderr_task
                     .await
                     .context("join DUCX data-report stderr task")??;
@@ -170,7 +166,7 @@ impl DucxRuntime {
         let captured = match capture_result {
             Ok(captured) => captured,
             Err(error) => {
-                terminate_process_group(process_group_id, &mut child).await;
+                crate::platform::terminate_isolated_tokio_child(process_group_id, &mut child).await;
                 let stderr = stderr_task
                     .await
                     .context("join DUCX data-report stderr task")??;
@@ -190,7 +186,7 @@ impl DucxRuntime {
             .to_str()
             .context("DUCX data-report client token is not valid UTF-8")?
             .to_owned();
-        terminate_process_group(process_group_id, &mut child).await;
+        crate::platform::terminate_isolated_tokio_child(process_group_id, &mut child).await;
         let _ = stderr_task.await;
         executable
             .close()
@@ -205,11 +201,7 @@ impl DucxRuntime {
             .context("DUCX executable has no bin directory")?
             .parent()
             .context("DUCX executable has no install directory")?;
-        Ok(install.join(if cfg!(windows) {
-            "hooks/data-report.exe"
-        } else {
-            "hooks/data-report"
-        }))
+        Ok(install.join(data_report_relative_path()))
     }
 
     async fn mint_headers(&self, timeout: Duration) -> anyhow::Result<HeaderMap> {
@@ -220,11 +212,11 @@ impl DucxRuntime {
         );
         let codex_home = self.home.join(".baidu-cx");
         let mut command = Command::new(&self.executable);
-        #[cfg(unix)]
-        command.process_group(0);
-        // CREATE_NO_WINDOW: keep the DUCX header-capture child from popping a
-        // console window on every request that needs Baidu auth.
+        crate::platform::isolate_tokio_process_group(&mut command);
+        // Keep the DUCX header-capture child from popping a console window on
+        // every request that needs Baidu auth.
         crate::platform::prepare_background_tokio_command(&mut command);
+        crate::platform::set_tokio_home_env(&mut command, &self.home);
         let mut child = command
             .args([
                 "-c",
@@ -239,8 +231,6 @@ impl DucxRuntime {
                 "codex-mixin auth warmup, reply ok",
             ])
             .current_dir(&self.home)
-            .env("HOME", &self.home)
-            .env("USERPROFILE", &self.home)
             .env("CODEX_HOME", &codex_home)
             .env("BAIDU_CX_PLATFORM", DUCX_PLATFORM)
             .env("DISABLE_DUCX_CLI_UPDATE", "1")
@@ -256,27 +246,9 @@ impl DucxRuntime {
             .capture(timeout)
             .await
             .context("DUCX did not emit an authenticated request before the capture proxy closed");
-        terminate_process_group(process_group_id, &mut child).await;
+        crate::platform::terminate_isolated_tokio_child(process_group_id, &mut child).await;
         capture_result
     }
-}
-
-async fn terminate_process_group(process_group_id: Option<u32>, child: &mut tokio::process::Child) {
-    #[cfg(unix)]
-    if let Some(process_group_id) = process_group_id
-        && let Some(process_group_id) = rustix::process::Pid::from_raw(process_group_id as i32)
-    {
-        let _ =
-            rustix::process::kill_process_group(process_group_id, rustix::process::Signal::KILL);
-    }
-    #[cfg(windows)]
-    if let Some(pid) = process_group_id
-        && child.try_wait().ok().flatten().is_none()
-    {
-        let _ = crate::platform::force_kill_process_tree_async(pid).await;
-    }
-    let _ = child.kill().await;
-    let _ = child.wait().await;
 }
 
 fn patched_data_report(
@@ -307,18 +279,15 @@ fn patched_data_report(
             temporary_directory.display()
         )
     })?;
-    #[cfg(unix)]
-    std::fs::set_permissions(temporary_directory, std::fs::Permissions::from_mode(0o700))
-        .with_context(|| {
-            format!(
-                "secure DUCX temporary directory {}",
-                temporary_directory.display()
-            )
-        })?;
+    crate::platform::set_owner_only_dir_mode(temporary_directory).with_context(|| {
+        format!(
+            "secure DUCX temporary directory {}",
+            temporary_directory.display()
+        )
+    })?;
     let mut builder = tempfile::Builder::new();
     builder.prefix(".codex-mixin-data-report-");
-    #[cfg(windows)]
-    builder.suffix(".exe");
+    builder.suffix(crate::platform::EXECUTABLE_SUFFIX);
     let mut executable = builder
         .tempfile_in(temporary_directory)
         .context("create isolated DUCX data-report executable")?;
@@ -328,33 +297,17 @@ fn patched_data_report(
     executable
         .flush()
         .context("flush isolated DUCX data-report executable")?;
-    #[cfg(unix)]
-    executable
-        .as_file()
-        .set_permissions(std::fs::Permissions::from_mode(0o700))
+    crate::platform::make_private_executable_on(executable.as_file())
         .context("make isolated DUCX data-report executable")?;
     Ok(executable.into_temp_path())
 }
 
-#[cfg(target_os = "macos")]
 async fn resign_executable(path: &Path) -> anyhow::Result<()> {
-    let output = Command::new("/usr/bin/codesign")
-        .args(["--force", "--sign", "-"])
-        .arg(path)
-        .output()
+    let path = path.to_owned();
+    tokio::task::spawn_blocking(move || crate::platform::prepare_modified_executable(&path))
         .await
-        .context("start codesign for isolated DUCX data-report")?;
-    ensure!(
-        output.status.success(),
-        "codesign isolated DUCX data-report failed: {}",
-        String::from_utf8_lossy(&output.stderr).trim()
-    );
-    Ok(())
-}
-
-#[cfg(not(target_os = "macos"))]
-async fn resign_executable(_path: &Path) -> anyhow::Result<()> {
-    Ok(())
+        .context("join isolated DUCX data-report signing")?
+        .context("sign isolated DUCX data-report")
 }
 
 fn managed_username(home: &Path) -> anyhow::Result<String> {
@@ -400,29 +353,32 @@ fn managed_home(executable: &Path) -> anyhow::Result<PathBuf> {
         .to_owned())
 }
 
+/// Path of the data-report hook relative to a DUCX install directory.
+pub(crate) fn data_report_relative_path() -> PathBuf {
+    Path::new("hooks").join(crate::platform::executable_file_name("data-report"))
+}
+
+/// Launcher names inside a DUCX package `bin` directory, preferred first.
+/// `ducx` is the managed entry point; packages ship the same launcher as
+/// `baidu-codex` and `codex`.
+pub(crate) const DUCX_LAUNCHER_STEMS: [&str; 3] = ["ducx", "baidu-codex", "codex"];
+
 /// Default managed DUCX executable location under the Mixin-managed home.
 pub(crate) fn default_ducx_executable() -> Option<PathBuf> {
-    let home = if cfg!(windows) {
-        std::env::var_os("USERPROFILE")
-    } else {
-        std::env::var_os("HOME")
-    }
-    .map(PathBuf::from)?;
-    #[cfg(windows)]
-    let names = ["ducx.exe", "baidu-codex.exe"];
-    #[cfg(not(windows))]
-    let names = ["ducx", "codex"];
-    names
+    let bin = crate::platform::home_dir_required()
+        .ok()?
+        .join(".codex-mixin/ducx/home/.baidu-cx/baidu-cx/bin");
+    DUCX_LAUNCHER_STEMS
         .into_iter()
-        .map(|name| {
-            home.join(".codex-mixin/ducx/home/.baidu-cx/baidu-cx/bin")
-                .join(name)
-        })
+        .map(|stem| bin.join(crate::platform::executable_file_name(stem)))
         .find(|path| path.is_file())
 }
 
 #[cfg(test)]
 mod tests {
+    #[cfg(unix)]
+    use std::os::unix::fs::PermissionsExt as _;
+
     use super::*;
 
     #[cfg(unix)]

@@ -150,6 +150,9 @@ pub struct ProviderSpec {
     pub quota_url: Option<&'static str>,
     pub quota_currency: Option<&'static str>,
     pub quota_parser: ProviderQuotaParser,
+    /// The provider's model catalog states each model's real capabilities, so
+    /// the gateway trusts it and never sends paid probe requests.
+    pub declares_model_capabilities: bool,
     /// Catalog seeded at creation so a new provider routes before the first
     /// successful model refresh.
     seed_models: fn() -> Vec<ProviderModel>,
@@ -217,6 +220,7 @@ static SPECS: [ProviderSpec; 6] = [
         quota_url: None,
         quota_currency: None,
         quota_parser: ProviderQuotaParser::Generic,
+        declares_model_capabilities: false,
         seed_models: Vec::new,
         request_policy: ProviderRequestPolicy::default,
     },
@@ -239,6 +243,7 @@ static SPECS: [ProviderSpec; 6] = [
         quota_url: Some("https://oneapi-comate.baidu-int.com/openapi/v3/user/quota"),
         quota_currency: Some("CNY"),
         quota_parser: ProviderQuotaParser::BaiduOneApi,
+        declares_model_capabilities: true,
         seed_models: Vec::new,
         request_policy: baidu_request_policy,
     },
@@ -259,6 +264,7 @@ static SPECS: [ProviderSpec; 6] = [
         quota_url: Some("https://openrouter.ai/api/v1/credits"),
         quota_currency: Some("USD"),
         quota_parser: ProviderQuotaParser::OpenRouter,
+        declares_model_capabilities: true,
         seed_models: Vec::new,
         request_policy: ProviderRequestPolicy::default,
     },
@@ -281,6 +287,7 @@ static SPECS: [ProviderSpec; 6] = [
         quota_url: Some("https://api.deepseek.com/user/balance"),
         quota_currency: None,
         quota_parser: ProviderQuotaParser::DeepSeek,
+        declares_model_capabilities: false,
         seed_models: Vec::new,
         request_policy: ProviderRequestPolicy::default,
     },
@@ -303,6 +310,7 @@ static SPECS: [ProviderSpec; 6] = [
         quota_url: None,
         quota_currency: Some("USD"),
         quota_parser: ProviderQuotaParser::OpenCodeGo,
+        declares_model_capabilities: true,
         seed_models: open_code_go_seed_models,
         request_policy: ProviderRequestPolicy::default,
     },
@@ -323,6 +331,7 @@ static SPECS: [ProviderSpec; 6] = [
         quota_url: None,
         quota_currency: Some("USD"),
         quota_parser: ProviderQuotaParser::Generic,
+        declares_model_capabilities: false,
         seed_models: bedrock_seed_models,
         request_policy: ProviderRequestPolicy::default,
     },
@@ -566,5 +575,14 @@ mod tests {
             }
             provider.validate().unwrap();
         }
+    }
+
+    #[test]
+    fn capability_catalog_presets_are_trusted_without_probes() {
+        assert!(openrouter_provider("openrouter", "key").declares_model_capabilities());
+        assert!(baidu_oneapi_provider("baidu-oneapi", "key").declares_model_capabilities());
+        assert!(open_code_go_provider("opencode-go", "key").declares_model_capabilities());
+        assert!(!custom_provider("custom", "key").declares_model_capabilities());
+        assert!(!deepseek_provider("deepseek", "key").declares_model_capabilities());
     }
 }

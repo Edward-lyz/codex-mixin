@@ -208,36 +208,14 @@ pub(super) async fn run_owned_action(
 }
 
 pub(super) async fn apply_provider_changes(terminal: &mut TerminalSession, app: &mut App) {
-    if app.snapshot.providers.is_empty() {
-        run_action(
-            terminal,
-            app,
-            "Stopping gateway without providers",
-            &["service", "stop"],
-            true,
-        )
-        .await;
-        return;
-    }
-    let restarted = run_action(
+    run_action(
         terminal,
         app,
-        "Applying provider configuration",
-        &["service", "restart"],
+        "Applying saved configuration",
+        &["config", "apply"],
         true,
     )
-    .await
-    .is_some();
-    if restarted && app.snapshot.codex_install_mode.is_some() {
-        run_action(
-            terminal,
-            app,
-            "Refreshing Codex model catalog",
-            &["refresh-codex-catalog"],
-            true,
-        )
-        .await;
-    }
+    .await;
 }
 
 pub(super) fn selected_configured_provider_id(app: &App) -> Option<String> {

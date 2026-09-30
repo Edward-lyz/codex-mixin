@@ -18,17 +18,50 @@
 | `protocol` | 请求转换、SSE 编解码、事件映射、协议数据 | 纯数据，不发送网络 |
 | `config` | 配置模型、迁移、校验、持久化 | 锁与原子替换 |
 | `clients`（新增） | 各编码客户端配置渲染、安装、同步、卸载 | 不依赖 server |
-| `platform` | 路径、进程生命周期和私有文件权限的 OS adapter | 标准库与平台命令 |
+| `platform` | 全部操作系统差异：路径与 home 变量、进程组与进程树、文件权限与锁、开机自启服务、桌面通知与桌面 App、终端窗口、代码签名、Codex CLI 位置、包目标名 | 标准库与平台命令 |
 | `macos` / `tui` / `windows` | 平台壳层；渲染 UI 并调用稳定 CLI contract | CLI 子进程及公开 core 类型 |
 
 依赖方向是单向的：`cli -> application -> provider/config/catalog/clients`，
 `server -> gateway -> upstream -> provider/protocol`。`gateway` 与 `fusion`
 不再引用 `server` 或 `AppState`。
 
+## 平台无关的核心
+
+`src/platform` 之外的生产代码（库、CLI、TUI）不含任何平台条件编译、平台
+工具名、平台路径或平台环境变量。核心只表达意图，例如“把子进程放进独立进程
+组”“以当前用户私有权限写文件”“登录后自动启动网关”“显示一条桌面通知”
+“在终端窗口完成扫码登录”，由 `platform` 在 macOS（launchd、plutil、
+codesign、osascript）、Linux（systemd --user、notify-send）与 Windows
+（计划任务、taskkill、ACL、Windows Terminal）上分别实现。
+
+`tests/platform_neutral_core.rs` 扫描 `src/` 与 `tui/` 中 `src/platform`
+以外的生产代码，发现 `cfg(unix|windows|target_os)`、`std::os::*`、`.exe`、
+`launchctl`、`USERPROFILE`、`/usr/`、权限位等平台片段即失败。测试专用代码
+（`#[cfg(test)]` 项与 `tests.rs`）可以按平台准备 fixture。
+
+## 壳与 CLI 的契约
+
 三个 UI 壳均位于仓库顶层。`src/main.rs` 是唯一的 composition root：它把
 CLI 解析出的抽象交互入口连接到 `tui`，core 和 CLI 模块不引用任何具体壳。
 macOS 与 Windows 壳通过带 `--no-tui` 的 CLI 子进程访问同一组用例与 JSON
-contract，平台 UI 不复制 provider、gateway 或 client integration 业务规则。
+contract，平台 UI 不复制 provider、gateway 或 client integration 业务规则，
+也不读写 CLI 状态目录中的任何文件。壳自己的数据（诊断日志、额度展示缓存、
+图标缓存）放在各自的原生目录（macOS 为 `~/Library/Application Support/Codex Mixin`，
+Windows 为 `%LOCALAPPDATA%\CodexMixin`）。
+
+| 命令 | 用途 |
+|---|---|
+| `interface --json` | 协议版本、CLI 版本、状态/配置/日志路径与能力开关 |
+| `--json-errors` | 失败时 stderr 最后一行为 `{protocol_version, error:{code, message, committed, stage}}` |
+| `service status\|ensure --json` | 网关状态；`ensure` 按版本、自启设置与服务定义收敛到唯一的当前网关 |
+| `service start\|stop\|restart --managed --json` | 启停；自启已开启时经系统服务管理器，否则为后台 daemon |
+| `service autostart enable\|disable\|status --json` | 网关登录自启（launchd / systemd --user / 计划任务） |
+| `config apply` | 保存后的整体生效：无 provider 时停网关，否则重启并同步 Codex 与各客户端目录 |
+| `fusion models --json` | Fusion 可选模型（含 `official:<slug>`） |
+| `connect ducx --json` | 安装并登录托管 DUCX；无终端时由 CLI 打开终端窗口扫码，返回可执行文件路径 |
+
+启停规则由 Rust 负责：自启定义存在即表示自启开启；启动、停止、重启、升级与
+服务定义迁移都不改变这一设置；GUI 超时不代表 CLI 操作已停止。
 
 ## 组件模型
 

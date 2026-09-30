@@ -3,7 +3,6 @@ use std::fs;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 
-use anyhow::Context;
 use serde_json::{Map, Value, json};
 
 use codex_mixin::config::{GatewayConfig, stored_config_path};
@@ -320,16 +319,7 @@ fn sync_opencode_reporting_plugin(config_path: &Path, enabled: bool) -> anyhow::
             "OpenCode reporting plugin path is not managed by Codex Mixin"
         );
     }
-    let executable = if cfg!(target_os = "macos") {
-        let app = PathBuf::from("/Applications/Codex Mixin.app/Contents/Resources/codex-mixin");
-        if app.is_file() {
-            app
-        } else {
-            std::env::current_exe().context("resolve codex-mixin executable")?
-        }
-    } else {
-        std::env::current_exe().context("resolve codex-mixin executable")?
-    };
+    let executable = codex_mixin::platform::installation::installed_cli_executable()?;
     let executable_json = serde_json::to_string(&executable.to_string_lossy())?;
     let plugin = OPENCODE_REPORT_PLUGIN.replace("__MIXIN_EXECUTABLE__", &executable_json);
     write_atomic_if_changed(&plugin_path, plugin.as_bytes())?;
@@ -490,14 +480,7 @@ mod tests {
             "GPT-5.6 Sol · OpenAI"
         );
         assert_eq!(fs::read_to_string(&key_path).unwrap(), "gateway-secret");
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                fs::metadata(&key_path).unwrap().permissions().mode() & 0o777,
-                0o600
-            );
-        }
+        assert!(codex_mixin::platform::is_owner_only(&key_path).unwrap());
 
         uninstall_opencode_at(&config_path, &key_path).unwrap();
 

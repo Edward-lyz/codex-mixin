@@ -366,11 +366,7 @@ pub(super) fn save_snapshot(path: &Path, snapshot: &ModelBenchmarkSnapshot) -> a
         anyhow::anyhow!("benchmark result path has no parent: {}", path.display())
     })?;
     fs::create_dir_all(parent).with_context(|| format!("create {}", parent.display()))?;
-    #[cfg(unix)]
-    {
-        use std::os::unix::fs::PermissionsExt;
-        fs::set_permissions(parent, fs::Permissions::from_mode(0o700))?;
-    }
+    crate::platform::set_owner_only_dir_mode(parent)?;
     let file_name = path
         .file_name()
         .and_then(|name| name.to_str())
@@ -382,11 +378,7 @@ pub(super) fn save_snapshot(path: &Path, snapshot: &ModelBenchmarkSnapshot) -> a
             .create_new(true)
             .write(true)
             .open(&temporary_path)?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            file.set_permissions(fs::Permissions::from_mode(0o600))?;
-        }
+        crate::platform::set_owner_only_mode_on(&file)?;
         serde_json::to_writer_pretty(&mut file, snapshot)?;
         file.write_all(b"\n")?;
         file.sync_all()?;

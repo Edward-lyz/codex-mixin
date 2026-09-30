@@ -482,14 +482,7 @@ mod backup_tests {
         let encoded = fs::read_to_string(&backup).unwrap();
         assert!(!encoded.contains("gateway-secret"));
         assert!(!encoded.contains("provider-secret"));
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            assert_eq!(
-                fs::metadata(&backup).unwrap().permissions().mode() & 0o777,
-                0o600
-            );
-        }
+        assert!(crate::platform::is_owner_only(&backup).unwrap());
         let decoded = base64::engine::general_purpose::STANDARD
             .decode(encoded.trim())
             .unwrap();

@@ -15,6 +15,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/LiquidGlassSupport.swift" \
   -target "$SWIFT_ARCH-apple-macosx13.1" \
   "$ROOT_DIR/macos/InstallCard.swift" \
+  "$ROOT_DIR/macos/AppDataDirectory.swift" \
   "$ROOT_DIR/macos/tests/InstallCardTests.swift" \
   -framework Cocoa \
   -framework CryptoKit \

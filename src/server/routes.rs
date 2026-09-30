@@ -102,26 +102,14 @@ pub async fn serve_on_listener_with_reload(
             }
         })
     });
-    #[cfg(unix)]
-    let mut terminate = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate())?;
+    let mut shutdown = crate::platform::ShutdownSignal::install()?;
     let reload_requested = Arc::new(AtomicBool::new(false));
     let shutdown_reload_requested = Arc::clone(&reload_requested);
     tracing::info!(%bind, "codex-mixin listening");
     let result = axum::serve(listener, router(state))
         .with_graceful_shutdown(async move {
-            #[cfg(unix)]
             tokio::select! {
-                _ = tokio::signal::ctrl_c() => {}
-                _ = terminate.recv() => {}
-                result = reload.changed() => {
-                    if result.is_ok() {
-                        shutdown_reload_requested.store(true, Ordering::Release);
-                    }
-                }
-            }
-            #[cfg(not(unix))]
-            tokio::select! {
-                _ = tokio::signal::ctrl_c() => {}
+                () = shutdown.recv() => {}
                 result = reload.changed() => {
                     if result.is_ok() {
                         shutdown_reload_requested.store(true, Ordering::Release);

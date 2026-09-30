@@ -303,16 +303,7 @@ fn sync_pi_reporting_extension(path: &Path, enabled: bool) -> anyhow::Result<()>
         return Ok(());
     }
 
-    let executable = if cfg!(target_os = "macos") {
-        let app = PathBuf::from("/Applications/Codex Mixin.app/Contents/Resources/codex-mixin");
-        if app.is_file() {
-            app
-        } else {
-            std::env::current_exe().context("resolve codex-mixin executable")?
-        }
-    } else {
-        std::env::current_exe().context("resolve codex-mixin executable")?
-    };
+    let executable = codex_mixin::platform::installation::installed_cli_executable()?;
     let executable_json = serde_json::to_string(&executable.to_string_lossy())?;
     let extension = PI_REPORT_EXTENSION.replace("__MIXIN_EXECUTABLE__", &executable_json);
     write_atomic_if_changed(path, extension.as_bytes())?;

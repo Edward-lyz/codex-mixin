@@ -8,8 +8,16 @@ use std::sync::{
 use std::time::{Duration, SystemTime, UNIX_EPOCH};
 
 use anyhow::Context;
+use codex_mixin::application::lifecycle::{
+    GatewayLifecycleAction, GatewayObservation, gateway_lifecycle_action,
+};
 use codex_mixin::config::{GatewayConfig, load_stored_config, save_stored_config};
 use codex_mixin::gateway_access::GatewayClientKeys;
+use codex_mixin::platform::{
+    DesktopNotification, StartupServiceSpec, StartupServiceStatus, install_startup_service,
+    remove_startup_service, show_notification, start_startup_service, startup_service_status,
+    stop_startup_service,
+};
 use codex_mixin::provider::ProviderModelSource;
 use codex_mixin::provider::capabilities::ProviderCapabilities;
 use codex_mixin::server::{AppState, ServeExit, serve_on_listener_with_reload};
@@ -24,9 +32,239 @@ use super::runtime::{
     RuntimeMetadata, RuntimeMetadataGuard, config_fingerprint, delete_runtime_metadata,
     load_runtime_metadata, pid_is_running, save_runtime_metadata,
 };
+use super::status::gateway_snapshot;
 
 mod daemon;
 mod logging;
+
+const GATEWAY_READINESS_ATTEMPTS: usize = 90;
+const GATEWAY_READINESS_DELAY: Duration = Duration::from_secs(1);
+const GATEWAY_STOP_ATTEMPTS: usize = 20;
+const GATEWAY_STOP_DELAY: Duration = Duration::from_millis(250);
+
+/// Run blocking OS-tool and process-control work off the async runtime.
+async fn blocking<T: Send + 'static>(
+    work: impl FnOnce() -> anyhow::Result<T> + Send + 'static,
+) -> anyhow::Result<T> {
+    tokio::task::spawn_blocking(work)
+        .await
+        .context("join gateway service task")?
+}
+
+/// Executable and log path the supervised gateway runs with.
+#[derive(Clone)]
+struct ServiceCommandLine {
+    executable: PathBuf,
+    log_file: PathBuf,
+}
+
+impl ServiceCommandLine {
+    fn current() -> anyhow::Result<Self> {
+        Ok(Self {
+            executable: std::env::current_exe().context("resolve gateway executable")?,
+            log_file: super::runtime::default_log_file_path(),
+        })
+    }
+
+    async fn status(&self) -> anyhow::Result<StartupServiceStatus> {
+        let command = self.clone();
+        blocking(move || startup_service_status(&command.spec())).await
+    }
+
+    async fn install(&self) -> anyhow::Result<()> {
+        let command = self.clone();
+        blocking(move || install_startup_service(&command.spec())).await
+    }
+
+    fn spec(&self) -> StartupServiceSpec<'_> {
+        StartupServiceSpec {
+            executable: &self.executable,
+            log_file: &self.log_file,
+        }
+    }
+}
+
+/// Leave exactly one gateway running with this CLI's version, migrating a
+/// daemon or stale startup definition under the service manager when the user
+/// enabled startup at login. Also performs first-run model discovery for
+/// providers that have never been refreshed.
+pub(crate) async fn ensure_ready() -> anyhow::Result<()> {
+    let config = GatewayConfig::from_stored_config().context("load gateway configuration")?;
+    initialize_provider_models(&config).await;
+    let command = ServiceCommandLine::current()?;
+    let service = command.status().await?;
+    let snapshot = gateway_snapshot(&config).await?;
+    let action = gateway_lifecycle_action(GatewayObservation {
+        gateway_healthy: snapshot.healthy(),
+        gateway_version: snapshot.running_version.as_deref(),
+        daemon_running: snapshot.daemon_running(),
+        service_installed: service.installed,
+        service_current: service.current,
+        service_loaded: service.loaded,
+        current_version: env!("CARGO_PKG_VERSION"),
+    });
+    match action {
+        GatewayLifecycleAction::KeepReady => return Ok(()),
+        GatewayLifecycleAction::RestartManaged | GatewayLifecycleAction::StartManaged => {
+            restart_under_service(&command, service).await?;
+        }
+        GatewayLifecycleAction::RestartDaemon => {
+            stop_all_gateways(service).await?;
+            start_gateway_daemon(config.clone()).await?;
+        }
+        GatewayLifecycleAction::StartDaemon => start_gateway_daemon(config.clone()).await?,
+    }
+    wait_for_gateway_ready(&config).await
+}
+
+/// Start the gateway the way the user's autostart choice implies: through the
+/// service manager when startup at login is enabled, otherwise as a daemon.
+/// Never changes the autostart choice.
+pub(crate) async fn start_managed() -> anyhow::Result<()> {
+    ensure_ready().await
+}
+
+/// Stop every local gateway instance, keeping the startup definition.
+pub(crate) async fn stop_managed() -> anyhow::Result<()> {
+    let service = ServiceCommandLine::current()?.status().await?;
+    stop_all_gateways(service).await
+}
+
+/// Restart under the service manager when autostart is enabled, otherwise as
+/// a daemon, then wait for readiness.
+pub(crate) async fn restart_managed() -> anyhow::Result<()> {
+    let config = GatewayConfig::from_stored_config().context("load gateway configuration")?;
+    let command = ServiceCommandLine::current()?;
+    let service = command.status().await?;
+    if service.installed {
+        restart_under_service(&command, service).await?;
+    } else {
+        stop_all_gateways(service).await?;
+        start_gateway_daemon(config.clone()).await?;
+    }
+    wait_for_gateway_ready(&config).await
+}
+
+/// Whether the gateway starts at login.
+pub(crate) async fn autostart_enabled() -> anyhow::Result<bool> {
+    Ok(ServiceCommandLine::current()?.status().await?.installed)
+}
+
+/// Enable or disable gateway startup at login. Enabling moves the gateway
+/// under the service manager and starts it; disabling removes the definition
+/// and keeps a previously running gateway running as a daemon.
+pub(crate) async fn set_autostart(enabled: bool) -> anyhow::Result<()> {
+    let command = ServiceCommandLine::current()?;
+    let service = command.status().await?;
+    if enabled {
+        let config = GatewayConfig::from_stored_config().context("load gateway configuration")?;
+        if service.installed && service.current {
+            return Ok(());
+        }
+        stop_all_gateways(service).await?;
+        command.install().await?;
+        blocking(start_startup_service).await?;
+        return wait_for_gateway_ready(&config).await;
+    }
+    if !service.installed && !service.loaded {
+        return Ok(());
+    }
+    let config = match load_stored_config()? {
+        Some(stored) if !stored.providers.is_empty() => Some(GatewayConfig::from_stored_config()?),
+        _ => None,
+    };
+    let supervised_gateway_running = match &config {
+        Some(config) => {
+            let snapshot = gateway_snapshot(config).await?;
+            snapshot.healthy() && !snapshot.daemon_running()
+        }
+        None => false,
+    };
+    blocking(remove_startup_service).await?;
+    let Some(config) = config.filter(|_| supervised_gateway_running) else {
+        return Ok(());
+    };
+    wait_for_gateway_stopped().await?;
+    start_gateway_daemon(config.clone()).await?;
+    wait_for_gateway_ready(&config).await
+}
+
+async fn restart_under_service(
+    command: &ServiceCommandLine,
+    service: StartupServiceStatus,
+) -> anyhow::Result<()> {
+    stop_all_gateways(service).await?;
+    if !service.current {
+        command.install().await?;
+    }
+    blocking(start_startup_service).await
+}
+
+/// Stop the service-manager job and any daemon or foreground gateway recorded
+/// in runtime metadata, then wait until no recorded gateway process remains.
+async fn stop_all_gateways(service: StartupServiceStatus) -> anyhow::Result<()> {
+    if service.installed || service.loaded {
+        blocking(stop_startup_service).await?;
+    }
+    blocking(|| daemon::stop_with_output(false, true)).await?;
+    wait_for_gateway_stopped().await
+}
+
+async fn start_gateway_daemon(config: GatewayConfig) -> anyhow::Result<()> {
+    blocking(move || start_daemon(None, None, &config, true)).await
+}
+
+async fn initialize_provider_models(config: &GatewayConfig) {
+    for provider in config.providers.iter().filter(|provider| {
+        provider.enabled
+            && provider.cached_models.is_empty()
+            && provider.models_refreshed_at_ms.is_none()
+    }) {
+        if let Err(error) = super::providers::discover_models_with_output(&provider.id, true).await
+        {
+            tracing::warn!(
+                provider_id = %provider.id,
+                error = %format!("{error:#}"),
+                "initial provider model discovery failed"
+            );
+        }
+    }
+}
+
+async fn wait_for_gateway_ready(config: &GatewayConfig) -> anyhow::Result<()> {
+    let mut last_failure = "gateway has not reported a healthy status".to_owned();
+    for attempt in 0..GATEWAY_READINESS_ATTEMPTS {
+        match gateway_snapshot(config).await {
+            Ok(snapshot) => match snapshot.health_error {
+                None => return Ok(()),
+                Some(error) => last_failure = error,
+            },
+            Err(error) => last_failure = format!("{error:#}"),
+        }
+        if attempt + 1 < GATEWAY_READINESS_ATTEMPTS {
+            tokio::time::sleep(GATEWAY_READINESS_DELAY).await;
+        }
+    }
+    anyhow::bail!("gateway did not become ready within 90 seconds: {last_failure}")
+}
+
+async fn wait_for_gateway_stopped() -> anyhow::Result<()> {
+    for _ in 0..GATEWAY_STOP_ATTEMPTS {
+        let recorded = [
+            load_runtime_metadata()?.map(|runtime| runtime.pid),
+            super::runtime::load_daemon_metadata()?.map(|daemon| daemon.pid),
+        ];
+        let mut running = false;
+        for pid in recorded.into_iter().flatten() {
+            running |= pid_is_running(pid)?;
+        }
+        if !running {
+            return Ok(());
+        }
+        tokio::time::sleep(GATEWAY_STOP_DELAY).await;
+    }
+    anyhow::bail!("gateway did not stop within 5 seconds; refusing to start a duplicate")
+}
 
 #[cfg(test)]
 pub(super) use daemon::running_daemon_needs_replacement;
@@ -278,90 +516,32 @@ async fn probe_auto_selected_models(
     }
 }
 
-#[cfg(target_os = "macos")]
 async fn notify_model_changes(
     provider_id: String,
     provider_display_name: String,
     changes: codex_mixin::provider::ModelDiscoveryChanges,
 ) {
-    let Some(content) = model_notification_content(&provider_display_name, &changes) else {
+    let Some(notification) = model_notification(&provider_display_name, &changes) else {
         return;
     };
-    let notification_provider_id = provider_id.clone();
-    let notification = tokio::task::spawn_blocking(move || {
-        deliver_model_notification(&notification_provider_id, &content)
-    })
-    .await;
-    log_model_notification_result(&provider_id, notification);
-}
-
-#[cfg(target_os = "macos")]
-fn deliver_model_notification(
-    provider_id: &str,
-    content: &ModelNotificationContent,
-) -> io::Result<std::process::Output> {
-    let helper = std::env::current_exe()
-        .ok()
-        .and_then(|executable| notification_helper_for(&executable))
-        .filter(|path| path.is_file());
-    if let Some(helper) = helper {
-        return std::process::Command::new(helper)
-            .args([
-                "--deliver-model-notification",
-                &content.title,
-                &content.subtitle,
-                &content.body,
-            ])
-            .output();
-    }
-    tracing::warn!(
-        provider_id,
-        "bundled notification helper unavailable; using generic macOS notification"
-    );
-    std::process::Command::new("/usr/bin/osascript")
-        .args([
-            "-e",
-            "on run argv\n display notification (item 3 of argv) with title (item 1 of argv) subtitle (item 2 of argv)\nend run",
-            "--",
-            &content.title,
-            &content.subtitle,
-            &content.body,
-        ])
-        .output()
-}
-
-#[cfg(target_os = "macos")]
-fn log_model_notification_result(
-    provider_id: &str,
-    notification: Result<io::Result<std::process::Output>, tokio::task::JoinError>,
-) {
-    match notification {
-        Ok(Ok(output)) if output.status.success() => {}
-        Ok(Ok(output)) => tracing::warn!(
+    let delivery = tokio::task::spawn_blocking(move || show_notification(&notification)).await;
+    match delivery {
+        Ok(Ok(_)) => {}
+        Ok(Err(error)) => tracing::warn!(
             provider_id,
-            exit = ?output.status.code(),
-            stderr = %String::from_utf8_lossy(&output.stderr).trim(),
-            "macOS model notification failed"
+            error = %format!("{error:#}"),
+            "model change notification failed"
         ),
-        Ok(Err(error)) => {
-            tracing::warn!(provider_id, error = %error, "macOS model notification failed")
+        Err(error) => {
+            tracing::warn!(provider_id, error = %error, "model change notification task failed")
         }
-        Err(error) => tracing::warn!(provider_id, error = %error, "macOS notification task failed"),
     }
 }
 
-#[cfg(target_os = "macos")]
-struct ModelNotificationContent {
-    title: String,
-    subtitle: String,
-    body: String,
-}
-
-#[cfg(target_os = "macos")]
-fn model_notification_content(
+fn model_notification(
     provider_display_name: &str,
     changes: &codex_mixin::provider::ModelDiscoveryChanges,
-) -> Option<ModelNotificationContent> {
+) -> Option<DesktopNotification> {
     let mut lines = Vec::new();
     if !changes.auto_selected.is_empty() {
         lines.push(format!(
@@ -377,14 +557,13 @@ fn model_notification_content(
             summarize_models(&changes.removed)
         ));
     }
-    (!lines.is_empty()).then(|| ModelNotificationContent {
+    (!lines.is_empty()).then(|| DesktopNotification {
         title: "Codex Mixin".to_owned(),
         subtitle: format!("{provider_display_name} · 模型列表已更新"),
         body: lines.join("\n"),
     })
 }
 
-#[cfg(target_os = "macos")]
 fn summarize_models(models: &[String]) -> String {
     const DISPLAY_LIMIT: usize = 3;
     let mut summary = models
@@ -397,74 +576,6 @@ fn summarize_models(models: &[String]) -> String {
         summary.push_str(" 等");
     }
     summary
-}
-
-#[cfg(target_os = "macos")]
-fn notification_helper_for(current_executable: &Path) -> Option<PathBuf> {
-    let resources = current_executable.parent()?;
-    if resources.file_name()?.to_str()? != "Resources" {
-        return None;
-    }
-    let contents = resources.parent()?;
-    if contents.file_name()?.to_str()? != "Contents" {
-        return None;
-    }
-    Some(contents.join("MacOS/CodexMixinMenu"))
-}
-
-#[cfg(all(test, target_os = "macos"))]
-mod model_notification_tests {
-    use super::*;
-    use codex_mixin::provider::ModelDiscoveryChanges;
-
-    #[test]
-    fn formats_model_changes_for_native_notification_layout() {
-        let changes = ModelDiscoveryChanges {
-            added: vec!["gpt-5.6-luna".to_owned(), "gpt-6-astra".to_owned()],
-            auto_selected: vec!["gpt-5.6-luna".to_owned(), "gpt-6-astra".to_owned()],
-            removed: vec!["gpt-image-2".to_owned()],
-        };
-
-        let content = model_notification_content("我的常用模型", &changes)
-            .expect("model changes should produce notification content");
-        assert_eq!(content.title, "Codex Mixin");
-        assert_eq!(content.subtitle, "我的常用模型 · 模型列表已更新");
-        assert_eq!(
-            content.body,
-            "✓ 新增并探测 2 个：gpt-5.6-luna、gpt-6-astra\n− 下线并移除 1 个：gpt-image-2"
-        );
-    }
-
-    #[test]
-    fn truncates_long_model_lists_for_notification_banner() {
-        let models = ["one", "two", "three", "four"].map(str::to_owned).to_vec();
-
-        assert_eq!(summarize_models(&models), "one、two、three 等");
-    }
-
-    #[test]
-    fn finds_notification_helper_only_inside_app_resources() {
-        assert_eq!(
-            notification_helper_for(Path::new(
-                "/Applications/Codex Mixin.app/Contents/Resources/codex-mixin"
-            )),
-            Some(PathBuf::from(
-                "/Applications/Codex Mixin.app/Contents/MacOS/CodexMixinMenu"
-            ))
-        );
-        assert_eq!(
-            notification_helper_for(Path::new("/usr/local/bin/codex-mixin")),
-            None
-        );
-    }
-}
-
-#[cfg(not(target_os = "macos"))]
-async fn notify_model_changes(
-    _provider_id: String,
-    _provider_display_name: String,
-    _changes: codex_mixin::provider::ModelDiscoveryChanges,
-) {
 }
 
 pub(super) fn persist_gateway_bind(bind: SocketAddr) -> anyhow::Result<bool> {
@@ -811,7 +922,6 @@ fn log_codex_catalog_refresh(config_path: &Path, trigger: &str, source: &str, ch
         ),
     }
 }
-
 fn providers_or_log() -> Option<Vec<ProviderModelRefreshTarget>> {
     match dynamic_providers() {
         Ok(providers) => Some(providers),
@@ -845,5 +955,36 @@ mod model_refresh_target_tests {
                 .collect::<Vec<_>>(),
             ["enabled"]
         );
+    }
+}
+
+#[cfg(test)]
+mod model_notification_tests {
+    use super::*;
+    use codex_mixin::provider::ModelDiscoveryChanges;
+
+    #[test]
+    fn formats_model_changes_for_native_notification_layout() {
+        let changes = ModelDiscoveryChanges {
+            added: vec!["gpt-5.6-luna".to_owned(), "gpt-6-astra".to_owned()],
+            auto_selected: vec!["gpt-5.6-luna".to_owned(), "gpt-6-astra".to_owned()],
+            removed: vec!["gpt-image-2".to_owned()],
+        };
+
+        let content = model_notification("我的常用模型", &changes)
+            .expect("model changes should produce notification content");
+        assert_eq!(content.title, "Codex Mixin");
+        assert_eq!(content.subtitle, "我的常用模型 · 模型列表已更新");
+        assert_eq!(
+            content.body,
+            "✓ 新增并探测 2 个：gpt-5.6-luna、gpt-6-astra\n− 下线并移除 1 个：gpt-image-2"
+        );
+    }
+
+    #[test]
+    fn truncates_long_model_lists_for_notification_banner() {
+        let models = ["one", "two", "three", "four"].map(str::to_owned).to_vec();
+
+        assert_eq!(summarize_models(&models), "one、two、three 等");
     }
 }

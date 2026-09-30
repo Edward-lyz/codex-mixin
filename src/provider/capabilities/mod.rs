@@ -77,6 +77,9 @@ impl ProviderCapabilities {
         provider: &ProviderDefinition,
         models: &[ProviderModel],
     ) -> anyhow::Result<Vec<String>> {
+        if provider.declares_model_capabilities() {
+            return Ok(Vec::new());
+        }
         let cached = self
             .file
             .providers

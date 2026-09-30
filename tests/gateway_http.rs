@@ -3608,6 +3608,80 @@ async fn maps_fast_service_tier_to_anthropic_request_and_beta() {
     );
 }
 
+/// A host that caps output at 262144 tokens rejects larger budgets with a
+/// message naming its ceiling, as Baidu OneAPI does for GLM-5.3.
+async fn spawn_output_limited_upstream() -> (String, Arc<Mutex<Vec<u64>>>) {
+    let budgets = Arc::new(Mutex::new(Vec::new()));
+    let seen = Arc::clone(&budgets);
+    let app = Router::new().route(
+        "/v1/messages",
+        post(move |Json(body): Json<Value>| {
+            let seen = Arc::clone(&seen);
+            async move {
+                let max_tokens = body["max_tokens"].as_u64().unwrap();
+                seen.lock().unwrap().push(max_tokens);
+                if max_tokens > 262_144 {
+                    return (
+                        StatusCode::BAD_REQUEST,
+                        Json(json!({"error":{"type":"invalid_request_error",
+                            "message": format!("Range of max_tokens should be [1, 262144], got {max_tokens}")}})),
+                    )
+                        .into_response();
+                }
+                Response::builder()
+                    .status(StatusCode::OK)
+                    .header(header::CONTENT_TYPE, "text/event-stream")
+                    .body(Body::from(text_sse()))
+                    .unwrap()
+            }
+        }),
+    );
+    (spawn_router(app).await, budgets)
+}
+
+#[tokio::test]
+async fn learns_the_provider_output_limit_when_the_default_budget_is_rejected() {
+    let (upstream_url, budgets) = spawn_output_limited_upstream().await;
+    let mut config = test_config(upstream_url);
+    config.default_max_tokens = codex_mixin::config::DEFAULT_MAX_OUTPUT_TOKENS;
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+    for _ in 0..2 {
+        let response = client
+            .post(format!("{gateway_url}/v1/responses"))
+            .bearer_auth("gateway-key")
+            .json(&responses_request())
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let _ = response.text().await.unwrap();
+    }
+    assert_eq!(
+        *budgets.lock().unwrap(),
+        [
+            codex_mixin::config::DEFAULT_MAX_OUTPUT_TOKENS,
+            262_144,
+            262_144
+        ]
+    );
+
+    let mut explicit = responses_request();
+    explicit["max_output_tokens"] = json!(300_000);
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&explicit)
+        .send()
+        .await
+        .unwrap();
+    assert!(
+        !response.status().is_success(),
+        "explicit client limits are never rewritten"
+    );
+    assert_eq!(budgets.lock().unwrap().last(), Some(&300_000));
+}
+
 #[tokio::test]
 async fn maps_stable_session_to_anthropic_metadata() {
     let upstream_url = spawn_session_required_upstream().await;
@@ -5135,16 +5209,19 @@ async fn retries_demoted_web_search_on_custom_websocket() {
         &config,
     )
     .unwrap();
+    // The Baidu catalog declares hosted search; it is recorded without probes.
     let mut models = vec![ModelInfo {
         id: "Claude Sonnet 5-custom".to_owned(),
+        supports_web_search: Some(true),
         ..ModelInfo::default()
     }];
     let registry = ProviderRegistry::new(config.providers.clone()).unwrap();
-    capabilities
+    let summary = capabilities
         .probe_models(&mut models, &config, &registry, true)
         .await
         .unwrap();
-    requests.lock().unwrap().clear();
+    assert_eq!(summary.attempted, 0);
+    assert!(requests.lock().unwrap().is_empty(), "no probe requests");
 
     let state = AppState::with_web_search_capabilities(config, capabilities).unwrap();
     let gateway_url = spawn_router(router(state)).await;

@@ -789,7 +789,7 @@ fn query_payload(hook_body: &[u8], username: &str) -> Value {
         "query": hook.get("prompt").and_then(Value::as_str).unwrap_or(""),
         "model": hook.get("model").and_then(Value::as_str).unwrap_or(""),
         "repo": repo.unwrap_or_default(),
-        "os": std::env::consts::OS,
+        "os": codex_mixin::platform::os_name(),
         "arch": "",
         "version": ""
     })

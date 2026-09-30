@@ -153,6 +153,9 @@ impl WebSearchCapabilities {
                 .expect("web search capability lock poisoned");
             model_targets
                 .iter()
+                // Probes are paid completions; providers whose catalog states
+                // real capabilities are never probed, even when forced.
+                .filter(|(_, provider, _)| !provider.definition().declares_model_capabilities())
                 .filter(|(model, _, _)| {
                     force
                         || (!declared_models.contains(model.as_str())
@@ -161,6 +164,10 @@ impl WebSearchCapabilities {
                 .cloned()
                 .collect::<Vec<_>>()
         };
+        let declared_support = models
+            .iter()
+            .filter_map(|model| Some((model.id.as_str(), model.supports_web_search?)))
+            .collect::<std::collections::HashMap<_, _>>();
         let pruned = {
             let mut capabilities = self
                 .models
@@ -168,7 +175,34 @@ impl WebSearchCapabilities {
                 .expect("web search capability lock poisoned");
             let previous_len = capabilities.len();
             capabilities.retain(|model, _| current_models.contains(model));
-            capabilities.len() != previous_len
+            let mut changed = capabilities.len() != previous_len;
+            // A catalog-declared capability is recorded as-is, without a probe.
+            for (model, provider, upstream_model) in &model_targets {
+                let Some(&supported) = declared_support.get(model.as_str()) else {
+                    continue;
+                };
+                if !provider.definition().declares_model_capabilities()
+                    || capabilities
+                        .get(model)
+                        .is_some_and(|known| known.supported == supported && known.error.is_none())
+                {
+                    continue;
+                }
+                capabilities.insert(
+                    model.clone(),
+                    ModelWebSearchCapability {
+                        model: model.clone(),
+                        provider_id: provider.id().to_owned(),
+                        upstream_model: upstream_model.clone(),
+                        supported,
+                        evidence: "provider_catalog".to_owned(),
+                        error: None,
+                        probed_at: now,
+                    },
+                );
+                changed = true;
+            }
+            changed
         };
         let attempted = candidates.len();
         if !candidates.is_empty() {
@@ -256,11 +290,7 @@ impl WebSearchCapabilities {
             .write(true)
             .open(&temporary_path)
             .with_context(|| format!("open {}", temporary_path.display()))?;
-        #[cfg(unix)]
-        {
-            use std::os::unix::fs::PermissionsExt;
-            file.set_permissions(fs::Permissions::from_mode(0o600))?;
-        }
+        crate::platform::set_owner_only_mode_on(&file)?;
         file.write_all(&serde_json::to_vec_pretty(&snapshot)?)?;
         file.write_all(b"\n")?;
         file.sync_all()?;

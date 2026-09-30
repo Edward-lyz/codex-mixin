@@ -1,4 +1,4 @@
-use std::collections::{BTreeMap, HashSet};
+use std::collections::HashSet;
 use std::path::PathBuf;
 use std::time::UNIX_EPOCH;
 
@@ -6,10 +6,7 @@ use codex_mixin::config::{
     GatewayConfig, StoredGatewayConfig, load_stored_config, mutate_stored_config,
 };
 use codex_mixin::provider::capabilities::ProviderCapabilities;
-use codex_mixin::provider::{
-    BaiduAuthBridge, ProviderDefinition, ProviderModel, ProviderProtocol, ProviderQuotaParser,
-    spec_for,
-};
+use codex_mixin::provider::{ProviderModel, ProviderProtocol, spec_for};
 use codex_mixin::web_search::WebSearchCapabilities;
 use console::style;
 use serde_json::json;
@@ -18,8 +15,9 @@ use super::codex::{
     codex_home_path, managed_codex_install_mode, reconcile_managed_skills,
     resolve_codex_config_path,
 };
-use super::config_input::{normalize_base_url, trim_required};
+use super::config_input::trim_required;
 use super::official_models::{load_official_models, official_models_cache_path};
+use codex_mixin::application::provider::build::{AddProviderInput, UpdateProviderInput};
 mod discovery;
 mod management;
 mod models;
@@ -31,74 +29,8 @@ pub(super) use models::{
     probe_selected_models, select_models, test_provider,
 };
 
-#[derive(Clone, Debug)]
-pub(super) struct AddProviderOptions {
-    pub(super) preset: String,
-    pub(super) auxiliary_model_upstream: Option<bool>,
-    pub(super) id: Option<String>,
-    pub(super) key: Option<String>,
-    pub(super) aws_access_key_id: Option<String>,
-    pub(super) aws_secret_access_key: Option<String>,
-    pub(super) aws_session_token: Option<String>,
-    pub(super) aws_region: Option<String>,
-    pub(super) display_name: Option<String>,
-    pub(super) base_url: Option<String>,
-    pub(super) website_url: Option<String>,
-    pub(super) protocol: Option<String>,
-    pub(super) api_path: Option<String>,
-    pub(super) models_path: Option<String>,
-    pub(super) image_generation_path: Option<String>,
-    pub(super) quota_url: Option<String>,
-    pub(super) quota_username: Option<String>,
-    pub(super) quota_workspace_id: Option<String>,
-    pub(super) quota_auth_cookie: Option<String>,
-    pub(super) quota_currency: Option<String>,
-    pub(super) quota_parser: Option<String>,
-    pub(super) gateway_key: Option<String>,
-    pub(super) static_models: Vec<String>,
-    pub(super) header_env: Vec<String>,
-    pub(super) baidu_auth_bridge: Option<String>,
-    pub(super) ducx_executable: Option<PathBuf>,
-    pub(super) baidu_code_report: Option<bool>,
-}
-
-#[derive(Clone, Debug, Default)]
-pub(super) struct UpdateProviderOptions {
-    pub(super) id: String,
-    pub(super) auxiliary_model_upstream: Option<bool>,
-    pub(super) key: Option<String>,
-    pub(super) clear_key: bool,
-    pub(super) aws_access_key_id: Option<String>,
-    pub(super) aws_secret_access_key: Option<String>,
-    pub(super) aws_session_token: Option<String>,
-    pub(super) aws_region: Option<String>,
-    pub(super) clear_aws_session_token: bool,
-    pub(super) clear_aws_credentials: bool,
-    pub(super) display_name: Option<String>,
-    pub(super) base_url: Option<String>,
-    pub(super) website_url: Option<String>,
-    pub(super) protocol: Option<String>,
-    pub(super) api_path: Option<String>,
-    pub(super) models_path: Option<String>,
-    pub(super) image_generation_path: Option<String>,
-    pub(super) clear_image_generation: bool,
-    pub(super) quota_url: Option<String>,
-    pub(super) clear_quota: bool,
-    pub(super) quota_username: Option<String>,
-    pub(super) quota_workspace_id: Option<String>,
-    pub(super) clear_quota_workspace_id: bool,
-    pub(super) quota_auth_cookie: Option<String>,
-    pub(super) clear_quota_auth_cookie: bool,
-    pub(super) quota_currency: Option<String>,
-    pub(super) quota_parser: Option<String>,
-    pub(super) header_env: Vec<String>,
-    pub(super) clear_header_env: bool,
-    pub(super) baidu_auth_bridge: Option<String>,
-    pub(super) ducx_executable: Option<PathBuf>,
-    pub(super) baidu_code_report: Option<bool>,
-    pub(super) auto_review_model: Option<String>,
-    pub(super) clear_auto_review_model: bool,
-}
+pub(super) type AddProviderOptions = AddProviderInput;
+pub(super) type UpdateProviderOptions = UpdateProviderInput;
 
 #[derive(Clone, Debug, Default)]
 pub(super) struct TestProviderOptions {
@@ -364,68 +296,8 @@ fn official_models_refreshed_at_ms() -> Option<u64> {
     u64::try_from(elapsed.as_millis()).ok()
 }
 
-fn apply_baidu_auth_options(
-    provider: &mut ProviderDefinition,
-    bridge: Option<&str>,
-    ducx_executable: Option<PathBuf>,
-) -> anyhow::Result<()> {
-    if let Some(bridge) = bridge {
-        provider.request_policy.baidu_auth_bridge = Some(match bridge {
-            "disabled" => BaiduAuthBridge::Disabled,
-            "ducx_loopback" => BaiduAuthBridge::DucxLoopback,
-            other => anyhow::bail!(
-                "invalid Baidu auth bridge {other}; expected disabled or ducx_loopback"
-            ),
-        });
-    }
-    if let Some(executable) = ducx_executable {
-        provider.request_policy.ducx_executable = Some(executable);
-    }
-    Ok(())
-}
-
-fn data_report_sibling(executable: &std::path::Path) -> Option<PathBuf> {
-    let install = executable.parent()?.parent()?;
-    let name = if cfg!(windows) {
-        "data-report.exe"
-    } else {
-        "data-report"
-    };
-    Some(install.join("hooks").join(name))
-}
-
-fn parse_header_env(values: &[String]) -> anyhow::Result<BTreeMap<String, String>> {
-    values
-        .iter()
-        .map(|value| {
-            let (header, variable) = value.split_once('=').ok_or_else(|| {
-                anyhow::anyhow!("custom header mapping must use NAME=ENV_VAR: {value}")
-            })?;
-            Ok((header.trim().to_owned(), variable.trim().to_owned()))
-        })
-        .collect()
-}
-
 fn required_config() -> anyhow::Result<StoredGatewayConfig> {
     load_stored_config()?.ok_or_else(|| anyhow::anyhow!("provider configuration is missing"))
-}
-
-fn ensure_has_providers(config: &StoredGatewayConfig) -> anyhow::Result<()> {
-    if config.providers.is_empty() {
-        anyhow::bail!("provider configuration is missing");
-    }
-    Ok(())
-}
-
-fn find_provider_mut<'a>(
-    config: &'a mut StoredGatewayConfig,
-    id: &str,
-) -> anyhow::Result<&'a mut codex_mixin::provider::ProviderDefinition> {
-    config
-        .providers
-        .iter_mut()
-        .find(|provider| provider.id == id)
-        .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))
 }
 
 fn mutate_and_invalidate<T>(
@@ -459,61 +331,12 @@ fn sync_imagegen_skill() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn discovery_settings_match(
-    current: &codex_mixin::provider::ProviderDefinition,
-    discovered_from: &codex_mixin::provider::ProviderDefinition,
-) -> bool {
-    current.base_url == discovered_from.base_url
-        && current.model_source == discovered_from.model_source
-        && current.auth == discovered_from.auth
-}
-
-fn parse_protocol(value: &str) -> anyhow::Result<ProviderProtocol> {
-    match value.trim() {
-        "anthropic_messages" | "anthropic" => Ok(ProviderProtocol::AnthropicMessages),
-        "open_ai_chat" | "openai_chat" | "chat" => Ok(ProviderProtocol::OpenAiChat),
-        "open_ai_responses" | "openai_responses" | "responses" => {
-            Ok(ProviderProtocol::OpenAiResponses)
-        }
-        other => anyhow::bail!("unsupported provider protocol: {other}"),
-    }
-}
-
 fn protocol_name(protocol: ProviderProtocol) -> &'static str {
     match protocol {
         ProviderProtocol::AnthropicMessages => "anthropic_messages",
         ProviderProtocol::OpenAiChat => "open_ai_chat",
         ProviderProtocol::OpenAiResponses => "open_ai_responses",
     }
-}
-
-fn parse_quota_parser(value: &str) -> anyhow::Result<ProviderQuotaParser> {
-    match value.trim() {
-        "generic" => Ok(ProviderQuotaParser::Generic),
-        "baidu_oneapi" | "baidu-oneapi" => Ok(ProviderQuotaParser::BaiduOneApi),
-        "openrouter" => Ok(ProviderQuotaParser::OpenRouter),
-        "deepseek" => Ok(ProviderQuotaParser::DeepSeek),
-        "opencode_go" | "opencode-go" => Ok(ProviderQuotaParser::OpenCodeGo),
-        other => anyhow::bail!("unsupported quota parser: {other}"),
-    }
-}
-
-fn normalize_currency(value: String) -> anyhow::Result<String> {
-    let currency = trim_required("quota currency", value)?.to_ascii_uppercase();
-    anyhow::ensure!(
-        currency.len() == 3 && currency.bytes().all(|byte| byte.is_ascii_uppercase()),
-        "quota currency must be a three-letter code"
-    );
-    Ok(currency)
-}
-
-fn normalize_path(label: &str, value: String) -> anyhow::Result<String> {
-    let value = trim_required(label, value)?;
-    Ok(if value.starts_with('/') {
-        value
-    } else {
-        format!("/{value}")
-    })
 }
 
 fn normalize_model_ids(models: Vec<String>) -> anyhow::Result<Vec<String>> {

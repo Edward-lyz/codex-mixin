@@ -1,5 +1,6 @@
 use std::fs;
 use std::fs::OpenOptions;
+use std::io::{Read, Seek, SeekFrom, Write};
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::process::{Command as ProcessCommand, Stdio};
@@ -332,56 +333,83 @@ pub(crate) fn logs(lines: usize, follow: bool) -> anyhow::Result<()> {
     if !log_file.exists() {
         anyhow::bail!("log file does not exist: {}", log_file.display());
     }
-    if follow {
-        #[cfg(windows)]
-        {
-            use std::io::Read;
-            let mut initial = String::new();
+    let (recent, mut offset) = read_last_lines(&log_file, lines)?;
+    let mut stdout = std::io::stdout().lock();
+    stdout.write_all(&recent)?;
+    stdout.flush()?;
+    if !follow {
+        return Ok(());
+    }
+    drop(stdout);
+    loop {
+        let length = fs::metadata(&log_file)?.len();
+        if length < offset {
+            // The log rotated; follow the new file from its start.
+            offset = 0;
+        }
+        if length > offset {
             let mut file = fs::File::open(&log_file)?;
-            file.read_to_string(&mut initial)?;
-            let mut recent = initial.lines().rev().take(lines).collect::<Vec<_>>();
-            recent.reverse();
-            for line in recent {
-                println!("{line}");
-            }
-            let mut offset = fs::metadata(&log_file)?.len();
-            loop {
-                let metadata = fs::metadata(&log_file)?;
-                if metadata.len() < offset {
-                    offset = 0;
-                }
-                if metadata.len() > offset {
-                    let mut file = fs::File::open(&log_file)?;
-                    use std::io::{Seek, SeekFrom};
-                    file.seek(SeekFrom::Start(offset))?;
-                    let mut appended = String::new();
-                    file.read_to_string(&mut appended)?;
-                    print!("{appended}");
-                    offset = metadata.len();
-                }
-                thread::sleep(Duration::from_millis(250));
-            }
+            file.seek(SeekFrom::Start(offset))?;
+            let copied = std::io::copy(&mut file.take(length - offset), &mut std::io::stdout())?;
+            offset += copied;
         }
-        #[cfg(not(windows))]
-        {
-            let status = ProcessCommand::new("tail")
-                .arg("-n")
-                .arg(lines.to_string())
-                .arg("-f")
-                .arg(&log_file)
-                .status()?;
-            if !status.success() {
-                anyhow::bail!("tail exited with status {status}");
-            }
-            return Ok(());
+        thread::sleep(LOG_FOLLOW_INTERVAL);
+    }
+}
+
+const LOG_FOLLOW_INTERVAL: Duration = Duration::from_millis(250);
+const LOG_TAIL_CHUNK: u64 = 64 * 1024;
+
+/// Read the last `lines` lines of a file without loading the whole file, and
+/// return them with the file length they end at.
+fn read_last_lines(path: &Path, lines: usize) -> anyhow::Result<(Vec<u8>, u64)> {
+    let mut file = fs::File::open(path)?;
+    let length = file.metadata()?.len();
+    let mut start = length;
+    let mut tail = Vec::new();
+    while start > 0 {
+        let chunk = LOG_TAIL_CHUNK.min(start);
+        start -= chunk;
+        file.seek(SeekFrom::Start(start))?;
+        let mut buffer = vec![0; usize::try_from(chunk)?];
+        file.read_exact(&mut buffer)?;
+        buffer.extend_from_slice(&tail);
+        tail = buffer;
+        let body = tail.strip_suffix(b"\n").unwrap_or(&tail);
+        if memchr::memchr_iter(b'\n', body).count() >= lines {
+            break;
         }
     }
-    let content = fs::read_to_string(&log_file)?;
-    let lines = content.lines().rev().take(lines).collect::<Vec<_>>();
-    for line in lines.into_iter().rev() {
-        println!("{line}");
+    let body = tail.strip_suffix(b"\n").unwrap_or(&tail);
+    let cut = memchr::memrchr_iter(b'\n', body)
+        .nth(lines.saturating_sub(1))
+        .filter(|_| lines > 0)
+        .map_or(if lines == 0 { tail.len() } else { 0 }, |index| index + 1);
+    Ok((tail.split_off(cut), length))
+}
+
+#[cfg(test)]
+mod log_tests {
+    use super::*;
+
+    #[test]
+    fn reads_only_the_requested_trailing_lines() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("gateway.log");
+        let content = (0..20_000)
+            .map(|line| format!("line {line}\n"))
+            .collect::<String>();
+        fs::write(&path, &content).unwrap();
+
+        let (tail, offset) = read_last_lines(&path, 3).unwrap();
+        assert_eq!(tail, b"line 19997\nline 19998\nline 19999\n");
+        assert_eq!(offset, content.len() as u64);
+        assert_eq!(read_last_lines(&path, 0).unwrap().0, b"");
+        assert_eq!(
+            read_last_lines(&path, 50_000).unwrap().0,
+            content.as_bytes()
+        );
     }
-    Ok(())
 }
 
 #[cfg(all(test, unix))]
