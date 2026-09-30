@@ -330,6 +330,11 @@ pub(super) enum ServiceCommand {
         managed: bool,
         #[arg(long, help = "Stop even when Codex still routes through this gateway")]
         allow_codex_disconnect: bool,
+        #[arg(
+            long,
+            help = "Restore every client config that routes through this gateway before stopping"
+        )]
+        restore_clients: bool,
         #[arg(long)]
         json: bool,
     },

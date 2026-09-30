@@ -328,6 +328,10 @@ pub(in crate::cli) fn uninstall_claude(settings_path: Option<PathBuf>) -> anyhow
     println!("managed Claude Code settings restored; restart Claude Code to apply");
     Ok(())
 }
+
+pub(in crate::cli) fn claude_is_installed() -> anyhow::Result<bool> {
+    codex_mixin::clients::claude::is_managed(&resolve_claude_settings_path(None)?)
+}
 pub(in crate::cli) fn claude_status(settings_path: Option<PathBuf>) -> anyhow::Result<()> {
     let settings_path = resolve_claude_settings_path(settings_path)?;
     if !settings_path.exists() {

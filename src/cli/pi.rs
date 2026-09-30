@@ -53,6 +53,12 @@ pub(in crate::cli) fn uninstall_pi(agent_dir: Option<PathBuf>) -> anyhow::Result
     uninstall_pi_at(&models_path, &key_path, &extension_path)
 }
 
+pub(in crate::cli) fn pi_is_installed() -> anyhow::Result<bool> {
+    let models_path = resolve_pi_agent_dir(None)?.join("models.json");
+    let key_path = std::path::absolute(stored_config_path().with_file_name(PI_API_KEY_FILE))?;
+    codex_mixin::clients::pi::is_managed(&models_path, &key_path)
+}
+
 fn default_pi_agent_dir() -> PathBuf {
     if let Some(path) = std::env::var_os("PI_CODING_AGENT_DIR").filter(|path| !path.is_empty()) {
         return PathBuf::from(path);

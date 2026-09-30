@@ -344,6 +344,7 @@ enum ConfirmOperation {
     UninstallPi,
     Update,
     Repair,
+    QuitAndRestore,
 }
 
 impl ConfirmOperation {
@@ -356,6 +357,7 @@ impl ConfirmOperation {
             Self::UninstallPi => "Remove Pi integration",
             Self::Update => "Update Codex Mixin",
             Self::Repair => "Repair configuration",
+            Self::QuitAndRestore => "Quit and restore configs",
         }
     }
 
@@ -374,6 +376,9 @@ impl ConfirmOperation {
                 "Replace this CLI with the latest GitHub release and restart the gateway."
             }
             Self::Repair => "Run doctor --fix --quick and apply safe repairs.",
+            Self::QuitAndRestore => {
+                "Restore every client config managed by codex-mixin, stop the gateway, and quit."
+            }
         }
     }
 }
@@ -554,6 +559,7 @@ enum Action {
     ConfirmUninstallPi,
     ConfirmUpdate,
     ConfirmRepair,
+    ConfirmQuitAndRestore,
     RunConfirmedOperation,
     RefreshCatalog,
     ShowLogs,
@@ -1143,6 +1149,9 @@ pub(crate) async fn run(
             Action::ConfirmRepair => {
                 app.dialog = Some(Dialog::ConfirmOperation(ConfirmOperation::Repair));
             }
+            Action::ConfirmQuitAndRestore => {
+                app.dialog = Some(Dialog::ConfirmOperation(ConfirmOperation::QuitAndRestore));
+            }
             Action::RunConfirmedOperation => {
                 let operation = match app.dialog.take() {
                     Some(Dialog::ConfirmOperation(operation)) => operation,
@@ -1180,8 +1189,20 @@ pub(crate) async fn run(
                         &["doctor", "--fix", "--quick"][..],
                         true,
                     ),
+                    ConfirmOperation::QuitAndRestore => (
+                        "Restoring client configs and stopping gateway",
+                        &["service", "stop", "--restore-clients"][..],
+                        false,
+                    ),
                 };
                 let output = run_action(&mut terminal, &mut app, label, args, refresh_after).await;
+                if operation == ConfirmOperation::QuitAndRestore {
+                    // Stay open on failure so the error notice is visible.
+                    if output.is_some() {
+                        break;
+                    }
+                    continue;
+                }
                 if operation == ConfirmOperation::Repair
                     && let Some(output) = output
                 {

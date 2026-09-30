@@ -71,6 +71,17 @@ fn codex_lifecycle_commands_have_a_stable_cli_surface() {
         ])
         .is_ok()
     );
+    assert!(
+        Cli::try_parse_from([
+            "codex-mixin",
+            "service",
+            "stop",
+            "--managed",
+            "--restore-clients",
+            "--json",
+        ])
+        .is_ok()
+    );
 }
 
 #[test]

@@ -24,6 +24,10 @@ fn resolve_dsh_home(dsh_home: Option<PathBuf>) -> anyhow::Result<PathBuf> {
     std::path::absolute(dsh_home.unwrap_or_else(default_dsh_home)).map_err(Into::into)
 }
 
+pub(in crate::cli) fn dsh_is_installed() -> anyhow::Result<bool> {
+    codex_mixin::clients::dsh::is_managed(&resolve_dsh_home(None)?)
+}
+
 pub(in crate::cli) fn install_dsh(dsh_home: Option<PathBuf>) -> anyhow::Result<()> {
     let client = codex_mixin::gateway_access::GatewayClient::Dsh;
     codex_mixin::application::client::install_with_client_key(client, || {

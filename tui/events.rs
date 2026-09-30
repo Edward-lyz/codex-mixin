@@ -39,6 +39,7 @@ pub(super) fn handle_event(app: &mut App, event: Event) -> Action {
     }
     match key.code {
         KeyCode::Char('q') => Action::Quit,
+        KeyCode::Char('Q') => Action::ConfirmQuitAndRestore,
         KeyCode::Char('?') => {
             app.help_visible = true;
             Action::None

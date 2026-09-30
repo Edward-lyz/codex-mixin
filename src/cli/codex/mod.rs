@@ -19,8 +19,8 @@ pub(super) use managed_auth::*;
 pub(super) use managed_config::*;
 pub(super) use switch::clear_restore_mode;
 pub(in crate::cli) use switch::{
-    CodexRequiresGatewayError, codex_status, ensure_codex_allows_gateway_stop, switch_to_mixin,
-    switch_to_official,
+    CodexRequiresGatewayError, codex_status, ensure_codex_allows_gateway_stop,
+    restore_codex_for_quit, switch_to_mixin, switch_to_official,
 };
 #[cfg(test)]
 pub(super) use validate::{codex_config_load_status_is_acceptable, find_codex_config_load_check};

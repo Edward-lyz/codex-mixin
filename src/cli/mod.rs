@@ -118,6 +118,81 @@ pub(in crate::cli) fn sync_installed_client_models() -> anyhow::Result<Vec<&'sta
     Ok(refreshed)
 }
 
+fn remove_client_integration(
+    target: &str,
+    settings_path: Option<PathBuf>,
+    dsh_home: Option<PathBuf>,
+    opencode_config: Option<PathBuf>,
+    pi_agent_dir: Option<PathBuf>,
+) -> anyhow::Result<()> {
+    match target {
+        "codex" => {
+            uninstall_codex(None, None)?;
+            codex_mixin::config::revoke_gateway_client_key(
+                codex_mixin::gateway_access::GatewayClient::Codex,
+            )
+        }
+        "claude" => {
+            let hook_settings_path = settings_path.clone();
+            uninstall_claude(settings_path)?;
+            codex_mixin::config::revoke_gateway_client_key(
+                codex_mixin::gateway_access::GatewayClient::Claude,
+            )?;
+            sync_claude_hooks(hook_settings_path)?;
+            report_hook::sync_installation()
+        }
+        "dsh" => {
+            let hooks_path = dsh_home
+                .clone()
+                .unwrap_or_else(dsh::default_dsh_home)
+                .join("hooks.json");
+            uninstall_dsh(dsh_home)?;
+            codex_mixin::config::revoke_gateway_client_key(
+                codex_mixin::gateway_access::GatewayClient::Dsh,
+            )?;
+            report_hook::sync_installation_at(&hooks_path, report_hook::reporting_enabled()?)?;
+            report_hook::sync_installation()
+        }
+        "opencode" => {
+            uninstall_opencode(opencode_config)?;
+            codex_mixin::config::revoke_gateway_client_key(
+                codex_mixin::gateway_access::GatewayClient::OpenCode,
+            )
+        }
+        "pi" => {
+            uninstall_pi(pi_agent_dir)?;
+            codex_mixin::config::revoke_gateway_client_key(
+                codex_mixin::gateway_access::GatewayClient::Pi,
+            )
+        }
+        _ => anyhow::bail!("unknown client integration: {target}"),
+    }
+}
+
+type InstalledCheck = fn() -> anyhow::Result<bool>;
+
+/// Restore every client integration that still points at the gateway, so a
+/// restoring quit leaves no client broken. Stops at the first failure.
+fn restore_managed_clients() -> anyhow::Result<Vec<&'static str>> {
+    let mut restored = Vec::new();
+    if codex::restore_codex_for_quit()? {
+        restored.push("Codex");
+    }
+    let clients: [(&str, &'static str, InstalledCheck); 4] = [
+        ("claude", "Claude Code", claude::claude_is_installed),
+        ("dsh", "DSH", dsh::dsh_is_installed),
+        ("opencode", "OpenCode", opencode::opencode_is_installed),
+        ("pi", "Pi", pi::pi_is_installed),
+    ];
+    for (target, name, is_installed) in clients {
+        if is_installed()? {
+            remove_client_integration(target, None, None, None, None)?;
+            restored.push(name);
+        }
+    }
+    Ok(restored)
+}
+
 pub(super) async fn stage<T>(
     label: &str,
     future: impl std::future::Future<Output = anyhow::Result<T>>,
@@ -571,8 +646,14 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 force,
                 managed,
                 allow_codex_disconnect,
+                restore_clients,
                 json,
             } => {
+                if restore_clients {
+                    for client in restore_managed_clients()? {
+                        progress_step(&format!("Restored {client} configuration"));
+                    }
+                }
                 if managed || !force {
                     service::stop_managed(allow_codex_disconnect).await?;
                 } else {
@@ -655,51 +736,13 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 dsh_home,
                 opencode_config,
                 pi_agent_dir,
-            } => match target.as_str() {
-                "codex" => {
-                    uninstall_codex(None, None)?;
-                    codex_mixin::config::revoke_gateway_client_key(
-                        codex_mixin::gateway_access::GatewayClient::Codex,
-                    )
-                }
-                "claude" => {
-                    let hook_settings_path = settings_path.clone();
-                    uninstall_claude(settings_path)?;
-                    codex_mixin::config::revoke_gateway_client_key(
-                        codex_mixin::gateway_access::GatewayClient::Claude,
-                    )?;
-                    sync_claude_hooks(hook_settings_path)?;
-                    report_hook::sync_installation()
-                }
-                "dsh" => {
-                    let hooks_path = dsh_home
-                        .clone()
-                        .unwrap_or_else(dsh::default_dsh_home)
-                        .join("hooks.json");
-                    uninstall_dsh(dsh_home)?;
-                    codex_mixin::config::revoke_gateway_client_key(
-                        codex_mixin::gateway_access::GatewayClient::Dsh,
-                    )?;
-                    report_hook::sync_installation_at(
-                        &hooks_path,
-                        report_hook::reporting_enabled()?,
-                    )?;
-                    report_hook::sync_installation()
-                }
-                "opencode" => {
-                    uninstall_opencode(opencode_config)?;
-                    codex_mixin::config::revoke_gateway_client_key(
-                        codex_mixin::gateway_access::GatewayClient::OpenCode,
-                    )
-                }
-                "pi" => {
-                    uninstall_pi(pi_agent_dir)?;
-                    codex_mixin::config::revoke_gateway_client_key(
-                        codex_mixin::gateway_access::GatewayClient::Pi,
-                    )
-                }
-                _ => unreachable!("clap validates connect target"),
-            },
+            } => remove_client_integration(
+                &target,
+                settings_path,
+                dsh_home,
+                opencode_config,
+                pi_agent_dir,
+            ),
         },
         Command::Info { json } => status(json).await,
         Command::Ech { command } => ech::run(command).await,

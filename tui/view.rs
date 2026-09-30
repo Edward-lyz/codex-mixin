@@ -1774,7 +1774,7 @@ pub(super) fn render_help(frame: &mut ratatui::Frame<'_>, area: Rect) {
             Line::from("r                    Refresh status"),
             Line::from("s / R                Start-stop / restart gateway"),
             Line::from("x                    Run quick doctor"),
-            Line::from("q                    Quit"),
+            Line::from("q / Q                Quit / restore configs, stop gateway, quit"),
             Line::from(""),
             Line::from(Span::styled(
                 "Press any key to close",

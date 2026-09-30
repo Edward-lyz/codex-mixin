@@ -50,6 +50,12 @@ pub(in crate::cli) fn uninstall_opencode(config_path: Option<PathBuf>) -> anyhow
     uninstall_opencode_at(&config_path, &key_path)
 }
 
+pub(in crate::cli) fn opencode_is_installed() -> anyhow::Result<bool> {
+    let config_path = resolve_opencode_config_path(None)?;
+    let key_path = std::path::absolute(stored_config_path().with_file_name(OPENCODE_API_KEY_FILE))?;
+    codex_mixin::clients::opencode::is_managed(&config_path, &key_path)
+}
+
 fn default_opencode_config_path() -> PathBuf {
     if let Some(path) = std::env::var_os("OPENCODE_CONFIG").filter(|path| !path.is_empty()) {
         return PathBuf::from(path);

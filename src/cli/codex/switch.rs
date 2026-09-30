@@ -6,7 +6,7 @@ use serde::{Deserialize, Serialize};
 use toml_edit::DocumentMut;
 
 use super::{
-    InstallCodexOptions, install_codex, resolve_codex_config_path,
+    InstallCodexOptions, install_codex, resolve_codex_config_path, uninstall_codex,
     uninstall_codex_preserving_restore_mode,
 };
 
@@ -187,6 +187,26 @@ pub(in crate::cli) async fn switch_to_mixin() -> anyhow::Result<()> {
 
 pub(in crate::cli) fn clear_restore_mode() -> anyhow::Result<()> {
     clear_restore_mode_at(&switch_state_path())
+}
+
+/// Undo every Mixin change to Codex before a restoring quit. Returns whether
+/// anything was restored.
+pub(in crate::cli) fn restore_codex_for_quit() -> anyhow::Result<bool> {
+    let status = current_codex_status()?;
+    if status.integration == CodexIntegration::Managed {
+        uninstall_codex(None, None)?;
+        codex_mixin::config::revoke_gateway_client_key(
+            codex_mixin::gateway_access::GatewayClient::Codex,
+        )?;
+        return Ok(true);
+    }
+    // Official mode keeps the Mixin mode for the next switch-on; a restoring
+    // quit means the user leaves Mixin, so drop it too.
+    if status.restore_mode.is_some() {
+        clear_restore_mode()?;
+        return Ok(true);
+    }
+    Ok(false)
 }
 
 fn switch_state_path() -> PathBuf {

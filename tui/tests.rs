@@ -711,3 +711,28 @@ fn setup_workspace_renders_at_eighty_by_twenty_four() {
     assert!(rendered.contains("LOCAL AI ROUTING CONTROL DECK"));
     assert!(rendered.contains(" Logs "));
 }
+
+#[test]
+fn shift_q_asks_to_restore_configs_before_quitting() {
+    let snapshot = Snapshot {
+        status: serde_json::json!({"configured": true, "gateway": "running"}),
+        providers: Vec::new(),
+        codex_install_mode: None,
+        benchmark: None,
+        usage: Vec::new(),
+        models: Vec::new(),
+        fusion_profile: None,
+        refreshed_at: Instant::now(),
+    };
+    let mut app = App::new(snapshot, StartPage::Dashboard);
+    let key = |code| Event::Key(crossterm::event::KeyEvent::new(code, KeyModifiers::SHIFT));
+
+    assert_eq!(
+        handle_event(&mut app, key(KeyCode::Char('Q'))),
+        Action::ConfirmQuitAndRestore
+    );
+    assert_eq!(
+        handle_event(&mut app, key(KeyCode::Char('q'))),
+        Action::Quit
+    );
+}
