@@ -1,8 +1,10 @@
+use std::io::Read;
 use std::path::PathBuf;
-use std::process::{Command, Output};
+use std::process::{Command, Output, Stdio};
 use std::time::Duration;
 
 use anyhow::{Context, bail};
+use wait_timeout::ChildExt;
 
 use super::definition::{LAUNCHD_LABEL, launchd_program, render_launchd_plist};
 use super::{StartupServiceSpec, StartupServiceStatus};
@@ -10,6 +12,8 @@ use super::{StartupServiceSpec, StartupServiceStatus};
 pub(super) const SUPPORTED: bool = true;
 const BOOTSTRAP_ATTEMPTS: usize = 10;
 const BOOTSTRAP_RETRY_DELAY: Duration = Duration::from_millis(500);
+const VERSION_CHECK_TIMEOUT: Duration = Duration::from_secs(2);
+const MAX_VERSION_OUTPUT_BYTES: u64 = 256;
 
 fn agent_path() -> anyhow::Result<PathBuf> {
     Ok(crate::platform::home_dir_required()?
@@ -71,10 +75,33 @@ fn read_plist_json(path: &std::path::Path) -> anyhow::Result<serde_json::Value> 
     serde_json::from_slice(&output.stdout).context("decode gateway LaunchAgent")
 }
 
-fn is_executable_file(path: &std::path::Path) -> bool {
+fn is_current_program(path: &std::path::Path) -> anyhow::Result<bool> {
     use std::os::unix::fs::PermissionsExt;
-    std::fs::metadata(path)
+    if !std::fs::metadata(path)
         .is_ok_and(|metadata| metadata.is_file() && metadata.permissions().mode() & 0o111 != 0)
+    {
+        return Ok(false);
+    }
+    // Alternate CLI copies are valid only when they report this version.
+    // A file sink avoids blocking on a full stdout pipe before the timeout.
+    let output = tempfile::NamedTempFile::new()?;
+    let mut child = Command::new(path)
+        .arg("--version")
+        .stdin(Stdio::null())
+        .stdout(output.as_file().try_clone()?)
+        .stderr(Stdio::null())
+        .spawn()
+        .context("check LaunchAgent CLI version")?;
+    let Some(status) = child.wait_timeout(VERSION_CHECK_TIMEOUT)? else {
+        child.kill().context("stop timed-out CLI version check")?;
+        child.wait().context("reap CLI version check")?;
+        return Ok(false);
+    };
+    let mut version = String::new();
+    std::fs::File::open(output.path())?
+        .take(MAX_VERSION_OUTPUT_BYTES)
+        .read_to_string(&mut version)?;
+    Ok(status.success() && version.trim() == format!("codex-mixin {}", env!("CARGO_PKG_VERSION")))
 }
 
 pub(super) fn status(spec: &StartupServiceSpec<'_>) -> anyhow::Result<StartupServiceStatus> {
@@ -83,9 +110,14 @@ pub(super) fn status(spec: &StartupServiceSpec<'_>) -> anyhow::Result<StartupSer
         .try_exists()
         .with_context(|| format!("inspect {}", path.display()))?;
     let loaded = is_loaded(&domain()?)?;
-    let current = installed
-        && launchd_program(&read_plist_json(&path)?, spec)?
-            .is_some_and(|program| is_executable_file(std::path::Path::new(&program)));
+    let current = if installed {
+        match launchd_program(&read_plist_json(&path)?, spec)? {
+            Some(program) => is_current_program(std::path::Path::new(&program))?,
+            None => false,
+        }
+    } else {
+        false
+    };
     Ok(StartupServiceStatus {
         installed,
         current,
@@ -168,6 +200,40 @@ mod tests {
     use super::{StartupServiceSpec, read_plist_json};
 
     #[test]
+    fn rejects_old_cli_version() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("old-codex-mixin");
+        std::fs::write(&executable, "#!/bin/sh\necho 'codex-mixin 0.0.0'\n").unwrap();
+        crate::platform::make_executable(&executable).unwrap();
+        assert!(!super::is_current_program(&executable).unwrap());
+    }
+
+    #[test]
+    fn accepts_current_cli_copy() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("codex-mixin");
+        std::fs::write(
+            &executable,
+            format!(
+                "#!/bin/sh\necho 'codex-mixin {}'\n",
+                env!("CARGO_PKG_VERSION")
+            ),
+        )
+        .unwrap();
+        crate::platform::make_executable(&executable).unwrap();
+        assert!(super::is_current_program(&executable).unwrap());
+    }
+
+    #[test]
+    fn bounds_cli_version_check() {
+        let directory = tempfile::tempdir().unwrap();
+        let executable = directory.path().join("codex-mixin");
+        std::fs::write(&executable, "#!/bin/sh\nexec sleep 30\n").unwrap();
+        crate::platform::make_executable(&executable).unwrap();
+        assert!(!super::is_current_program(&executable).unwrap());
+    }
+
+    #[test]
     fn rendered_launch_agent_round_trips_through_plutil() {
         let directory =
             std::env::temp_dir().join(format!("codex-mixin-plist-{}", std::process::id()));
@@ -177,6 +243,8 @@ mod tests {
         let spec = StartupServiceSpec {
             executable,
             log_file: log,
+            config_path: Path::new("/Users/me/custom config.json"),
+            codex_home: Path::new("/Users/me/custom codex"),
         };
         let path = directory.join("agent.plist");
         std::fs::write(

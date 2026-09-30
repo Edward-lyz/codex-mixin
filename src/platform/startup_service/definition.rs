@@ -17,6 +17,20 @@ pub(super) const WINDOWS_TASK_NAME: &str = "Codex Mixin Gateway";
 pub struct StartupServiceSpec<'a> {
     pub executable: &'a Path,
     pub log_file: &'a Path,
+    pub config_path: &'a Path,
+    pub codex_home: &'a Path,
+}
+
+fn gateway_environment<'a>(
+    spec: &StartupServiceSpec<'a>,
+) -> anyhow::Result<[(&'static str, &'a str); 2]> {
+    Ok([
+        (
+            "CODEX_GATEWAY_CONFIG",
+            utf8_path("gateway config", spec.config_path)?,
+        ),
+        ("CODEX_HOME", utf8_path("Codex home", spec.codex_home)?),
+    ])
 }
 
 fn utf8_path<'a>(label: &str, path: &'a Path) -> anyhow::Result<&'a str> {
@@ -61,12 +75,22 @@ pub(super) fn render_launchd_plist(
         .map(|argument| format!("    <string>{}</string>\n", xml_escape(argument)))
         .collect::<String>();
     let working_directory = xml_escape(utf8_path("working directory", working_directory)?);
+    let environment = gateway_environment(spec)?
+        .iter()
+        .map(|(name, value)| {
+            format!(
+                "    <key>{name}</key>\n    <string>{}</string>\n",
+                xml_escape(value)
+            )
+        })
+        .collect::<String>();
     Ok(format!(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
 <plist version=\"1.0\">\n<dict>\n\
   <key>Label</key>\n  <string>{LAUNCHD_LABEL}</string>\n\
   <key>ProgramArguments</key>\n  <array>\n{arguments}  </array>\n\
+  <key>EnvironmentVariables</key>\n  <dict>\n{environment}  </dict>\n\
   <key>RunAtLoad</key>\n  <true/>\n\
   <key>KeepAlive</key>\n  <dict>\n    <key>SuccessfulExit</key>\n    <false/>\n  </dict>\n\
   <key>ThrottleInterval</key>\n  <integer>{LAUNCHD_THROTTLE_SECONDS}</integer>\n\
@@ -97,7 +121,11 @@ pub(super) fn launchd_program(
             .iter()
             .zip([start, log_flag, log_file])
             .all(|(actual, expected)| actual.as_str() == Some(expected));
+    let environment_matches = gateway_environment(spec)?
+        .iter()
+        .all(|(name, value)| plist["EnvironmentVariables"][name].as_str() == Some(*value));
     let matches = arguments_match
+        && environment_matches
         && plist["Label"].as_str() == Some(LAUNCHD_LABEL)
         && plist["RunAtLoad"].as_bool() == Some(true)
         && plist["KeepAlive"]["SuccessfulExit"].as_bool() == Some(false)
@@ -134,9 +162,20 @@ pub(super) fn render_systemd_unit(spec: &StartupServiceSpec<'_>) -> anyhow::Resu
         .map(|argument| systemd_exec_argument(argument))
         .collect::<Vec<_>>()
         .join(" ");
+    // Environment= expands percent specifiers, but dollar signs are literal.
+    let environment = gateway_environment(spec)?
+        .iter()
+        .map(|(name, value)| {
+            let escaped = value
+                .replace('\\', "\\\\")
+                .replace('"', "\\\"")
+                .replace('%', "%%");
+            format!("Environment=\"{name}={escaped}\"\n")
+        })
+        .collect::<String>();
     Ok(format!(
         "[Unit]\nDescription=Codex Mixin Gateway\nAfter=network-online.target\n\n\
-[Service]\nType=simple\nExecStart={exec_start}\nRestart=on-failure\nRestartSec=10\n\
+[Service]\nType=simple\n{environment}ExecStart={exec_start}\nRestart=on-failure\nRestartSec=10\n\
 WorkingDirectory=%h\n\n[Install]\nWantedBy=default.target\n"
     ))
 }
@@ -163,24 +202,26 @@ pub(super) fn systemd_enabled_state(stdout: &str) -> Option<bool> {
 
 // ---------------------------------------------------------------- Windows
 
-/// Quote one argument for the Windows command-line parser used by the Rust
-/// runtime. Paths cannot contain `"`, so rejecting it keeps quoting simple.
-fn windows_argument(value: &str) -> anyhow::Result<String> {
-    if value.contains('"') {
-        bail!("Windows startup path contains a double quote");
-    }
-    let trailing_backslashes = value.len() - value.trim_end_matches('\\').len();
-    Ok(format!("\"{value}{}\"", "\\".repeat(trailing_backslashes)))
-}
-
 /// The scheduled task runs the gateway under a headless console host so the
-/// console-subsystem CLI does not open a window at every logon.
+/// console-subsystem CLI does not open a window at every logon. PowerShell
+/// supplies the persisted environment; UTF-16 encoding avoids shell expansion.
 pub(super) fn windows_task_arguments(spec: &StartupServiceSpec<'_>) -> anyhow::Result<String> {
-    let [executable, start, log_flag, log_file] = gateway_arguments(spec)?;
+    let mut script = String::from("$ErrorActionPreference = 'Stop'; ");
+    for (name, value) in gateway_environment(spec)? {
+        script.push_str(&format!(
+            "$env:{name} = {}; ",
+            crate::platform::shell::powershell_quote(value)
+        ));
+    }
+    script.push_str("& ");
+    for argument in gateway_arguments(spec)? {
+        script.push_str(&crate::platform::shell::powershell_quote(argument));
+        script.push(' ');
+    }
+    script.push_str("; exit $LASTEXITCODE");
     Ok(format!(
-        "--headless {} {start} {log_flag} {}",
-        windows_argument(executable)?,
-        windows_argument(log_file)?
+        "--headless {}",
+        crate::platform::shell::encoded_command(&script)
     ))
 }
 
@@ -227,14 +268,28 @@ pub(super) fn windows_task_is_running(task: &WindowsTaskInfo) -> bool {
 
 #[cfg(test)]
 mod tests {
+    use base64::Engine;
     use std::path::PathBuf;
 
     use super::*;
+
+    #[test]
+    fn startup_preserves_config_paths() {
+        let executable = Path::new("/home/me/codex-mixin");
+        let log = Path::new("/home/me/gateway.log");
+        let spec = spec(executable, log);
+        let launchd = render_launchd_plist(&spec, Path::new("/home/me")).unwrap();
+        assert!(launchd.contains("CODEX_GATEWAY_CONFIG"));
+        let systemd = render_systemd_unit(&spec).unwrap();
+        assert!(systemd.contains("CODEX_GATEWAY_CONFIG"));
+    }
 
     fn spec<'a>(executable: &'a Path, log_file: &'a Path) -> StartupServiceSpec<'a> {
         StartupServiceSpec {
             executable,
             log_file,
+            config_path: Path::new("/home/me/custom config.json"),
+            codex_home: Path::new("/home/me/custom codex"),
         }
     }
 
@@ -257,6 +312,7 @@ mod tests {
             "ThrottleInterval": 10,
             "ProcessType": "Background",
             "StandardOutPath": "/dev/null",
+            "EnvironmentVariables": {"CODEX_GATEWAY_CONFIG":"/home/me/custom config.json", "CODEX_HOME":"/home/me/custom codex"},
         })
     }
 
@@ -288,6 +344,10 @@ mod tests {
         let mut not_at_load = current;
         not_at_load["RunAtLoad"] = serde_json::json!(false);
         assert_eq!(launchd_program(&not_at_load, &spec).unwrap(), None);
+        let mut wrong_config = other_copy;
+        wrong_config["EnvironmentVariables"]["CODEX_GATEWAY_CONFIG"] =
+            serde_json::json!("/tmp/another.json");
+        assert_eq!(launchd_program(&wrong_config, &spec).unwrap(), None);
     }
 
     #[test]
@@ -332,12 +392,28 @@ mod tests {
     fn windows_task_arguments_quote_paths_for_the_headless_host() {
         let executable = PathBuf::from(r"C:\Users\Me Too\.codex-mixin\bin\codex-mixin.exe");
         let log = PathBuf::from(r"C:\Users\Me Too\.codex-mixin\gateway.log");
-        assert_eq!(
-            windows_task_arguments(&spec(&executable, &log)).unwrap(),
-            r#"--headless "C:\Users\Me Too\.codex-mixin\bin\codex-mixin.exe" start --log-file "C:\Users\Me Too\.codex-mixin\gateway.log""#
-        );
-        assert_eq!(windows_argument(r"C:\dir\").unwrap(), r#""C:\dir\\""#);
-        assert!(windows_argument("C:\\a\"b").is_err());
+        let arguments = windows_task_arguments(&spec(&executable, &log)).unwrap();
+        let encoded = arguments.rsplit(' ').next().unwrap();
+        let bytes = base64::engine::general_purpose::STANDARD
+            .decode(encoded)
+            .unwrap();
+        let script = String::from_utf16(
+            &bytes
+                .as_chunks::<2>()
+                .0
+                .iter()
+                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                .collect::<Vec<_>>(),
+        )
+        .unwrap();
+        assert!(script.contains("$env:CODEX_GATEWAY_CONFIG = '/home/me/custom config.json';"));
+        assert!(script.contains("$env:CODEX_HOME = '/home/me/custom codex';"));
+        assert!(script.contains(&format!(
+            "& '{}' 'start' '--log-file' '{}'",
+            executable.display(),
+            log.display()
+        )));
+        assert!(script.ends_with("exit $LASTEXITCODE"));
     }
 
     fn task(arguments: String) -> WindowsTaskInfo {
@@ -372,7 +448,8 @@ mod tests {
         other_user.user_id = "someone".to_owned();
         assert!(!windows_task_is_current(&other_user, &host, &spec).unwrap());
 
-        let stale = task(arguments.replace("codex-mixin.exe", "old.exe"));
+        let old_executable = Path::new(r"C:\bin\old.exe");
+        let stale = task(windows_task_arguments(&self::spec(old_executable, &log)).unwrap());
         assert!(!windows_task_is_current(&stale, &host, &spec).unwrap());
 
         let decoded: WindowsTaskInfo = serde_json::from_str(

@@ -56,6 +56,8 @@ async fn blocking<T: Send + 'static>(
 struct ServiceCommandLine {
     executable: PathBuf,
     log_file: PathBuf,
+    config_path: PathBuf,
+    codex_home: PathBuf,
 }
 
 impl ServiceCommandLine {
@@ -63,6 +65,8 @@ impl ServiceCommandLine {
         Ok(Self {
             executable: std::env::current_exe().context("resolve gateway executable")?,
             log_file: super::runtime::default_log_file_path(),
+            config_path: std::path::absolute(codex_mixin::config::stored_config_path())?,
+            codex_home: std::path::absolute(codex_home_path())?,
         })
     }
 
@@ -80,6 +84,8 @@ impl ServiceCommandLine {
         StartupServiceSpec {
             executable: &self.executable,
             log_file: &self.log_file,
+            config_path: &self.config_path,
+            codex_home: &self.codex_home,
         }
     }
 }
@@ -157,10 +163,10 @@ pub(crate) async fn set_autostart(enabled: bool) -> anyhow::Result<()> {
     let command = ServiceCommandLine::current()?;
     let service = command.status().await?;
     if enabled {
-        let config = GatewayConfig::from_stored_config().context("load gateway configuration")?;
         if service.installed && service.current {
-            return Ok(());
+            return ensure_ready().await;
         }
+        let config = GatewayConfig::from_stored_config().context("load gateway configuration")?;
         stop_all_gateways(service).await?;
         command.install().await?;
         blocking(start_startup_service).await?;
@@ -236,7 +242,16 @@ async fn wait_for_gateway_ready(config: &GatewayConfig) -> anyhow::Result<()> {
     for attempt in 0..GATEWAY_READINESS_ATTEMPTS {
         match gateway_snapshot(config).await {
             Ok(snapshot) => match snapshot.health_error {
-                None => return Ok(()),
+                None if snapshot.running_version.as_deref() == Some(env!("CARGO_PKG_VERSION")) => {
+                    return Ok(());
+                }
+                None => {
+                    last_failure = format!(
+                        "gateway version is {}; expected {}",
+                        snapshot.running_version.as_deref().unwrap_or("unknown"),
+                        env!("CARGO_PKG_VERSION")
+                    )
+                }
                 Some(error) => last_failure = error,
             },
             Err(error) => last_failure = format!("{error:#}"),
