@@ -922,6 +922,15 @@ fn log_codex_catalog_refresh(config_path: &Path, trigger: &str, source: &str, ch
         ),
     }
 }
+fn providers_or_log() -> Option<Vec<ProviderModelRefreshTarget>> {
+    match dynamic_providers() {
+        Ok(providers) => Some(providers),
+        Err(error) => {
+            tracing::warn!(error = %format!("{error:#}"), "failed to load providers for model sync");
+            None
+        }
+    }
+}
 
 fn providers_or_log() -> Option<Vec<ProviderModelRefreshTarget>> {
     match dynamic_providers() {
@@ -987,5 +996,31 @@ mod model_notification_tests {
         let models = ["one", "two", "three", "four"].map(str::to_owned).to_vec();
 
         assert_eq!(summarize_models(&models), "one、two、three 等");
+    }
+}
+
+#[cfg(test)]
+mod model_refresh_target_tests {
+    use super::*;
+
+    #[test]
+    fn background_refresh_skips_disabled_and_static_providers() {
+        let mut enabled = codex_mixin::provider::custom_provider("enabled", "key");
+        enabled.enabled = true;
+        let mut disabled = codex_mixin::provider::custom_provider("openrouter", "key");
+        disabled.enabled = false;
+        let mut static_models = codex_mixin::provider::custom_provider("static", "key");
+        static_models.enabled = true;
+        static_models.model_source = ProviderModelSource::Static;
+
+        let targets = model_refresh_targets(&[enabled, disabled, static_models]);
+
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| target.id.as_str())
+                .collect::<Vec<_>>(),
+            ["enabled"]
+        );
     }
 }

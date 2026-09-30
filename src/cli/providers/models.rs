@@ -147,7 +147,7 @@ pub(crate) async fn probe_new_models(
     model_ids: &[String],
     refresh_clients: bool,
 ) -> anyhow::Result<()> {
-    let enabled = required_config()?
+    let enabled = super::required_config()?
         .providers
         .iter()
         .find(|provider| provider.id == id)
