@@ -205,11 +205,31 @@ pub(crate) async fn probe_selected_models(id: &str) -> anyhow::Result<()> {
     probe_models(id, None, false, false, true).await
 }
 
+/// Probe newly added or selected models automatically. Probes are paid
+/// completions, so a disabled provider is skipped; its selected models are
+/// probed by the gateway once the provider is enabled again.
 pub(crate) async fn probe_new_models(
     id: &str,
     model_ids: &[String],
     refresh_clients: bool,
 ) -> anyhow::Result<()> {
+    let enabled = required_config()?
+        .providers
+        .iter()
+        .find(|provider| provider.id == id)
+        .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?
+        .enabled;
+    if !enabled {
+        tracing::info!(
+            provider_id = id,
+            models = model_ids.join(","),
+            "skipping automatic capability probe for a disabled provider"
+        );
+        super::super::progress_step(&format!(
+            "Skipping capability probing for disabled provider {id}"
+        ));
+        return Ok(());
+    }
     probe_models(id, Some(model_ids), true, true, refresh_clients).await
 }
 

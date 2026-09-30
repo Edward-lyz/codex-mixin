@@ -123,19 +123,32 @@ async fn probe_all_missing_selected_models() {
     let Ok(config) = GatewayConfig::from_stored_config() else {
         return;
     };
-    for provider in config.providers {
+    // Probes send real completions, so a disabled provider never spends the
+    // user's balance in the background.
+    for provider in config.providers.iter().filter(|provider| provider.enabled) {
         probe_missing_selected_models(&provider.id).await;
     }
 }
 
-fn providers_or_log() -> Option<Vec<ProviderModelRefreshTarget>> {
-    match dynamic_providers() {
-        Ok(providers) => Some(providers),
-        Err(error) => {
-            tracing::warn!(error = %format!("{error:#}"), "failed to load providers for model sync");
-            None
-        }
-    }
+/// Providers the background loop refreshes. Disabled providers are skipped
+/// entirely: refreshing would auto-select new models and probe them with
+/// paid requests against an account the user switched off.
+fn model_refresh_targets(
+    providers: &[codex_mixin::provider::ProviderDefinition],
+) -> Vec<ProviderModelRefreshTarget> {
+    providers
+        .iter()
+        .filter(|provider| provider.enabled)
+        .filter(|provider| !matches!(provider.model_source, ProviderModelSource::Static))
+        .map(|provider| ProviderModelRefreshTarget {
+            display_name: if provider.display_name.trim().is_empty() {
+                provider.id.clone()
+            } else {
+                provider.display_name.clone()
+            },
+            id: provider.id.clone(),
+        })
+        .collect()
 }
 
 async fn refresh_client_models_after_change(changed: bool) {
@@ -151,22 +164,8 @@ async fn refresh_client_models_after_change(changed: bool) {
 }
 
 fn dynamic_providers() -> anyhow::Result<Vec<ProviderModelRefreshTarget>> {
-    let mut providers: Vec<ProviderModelRefreshTarget> = load_stored_config()?
-        .map(|stored| {
-            stored
-                .providers
-                .into_iter()
-                .filter(|provider| !matches!(provider.model_source, ProviderModelSource::Static))
-                .map(|provider| ProviderModelRefreshTarget {
-                    display_name: if provider.display_name.trim().is_empty() {
-                        provider.id.clone()
-                    } else {
-                        provider.display_name
-                    },
-                    id: provider.id,
-                })
-                .collect()
-        })
+    let mut providers = load_stored_config()?
+        .map(|stored| model_refresh_targets(&stored.providers))
         .unwrap_or_default();
     let config = GatewayConfig::from_stored_config()?;
     if config.accept_codex_oauth && config.codex_auth_path.is_file() {
@@ -810,5 +809,41 @@ fn log_codex_catalog_refresh(config_path: &Path, trigger: &str, source: &str, ch
             error = %format!("{error:#}"),
             "Codex model catalog refreshed but summary could not be read"
         ),
+    }
+}
+
+fn providers_or_log() -> Option<Vec<ProviderModelRefreshTarget>> {
+    match dynamic_providers() {
+        Ok(providers) => Some(providers),
+        Err(error) => {
+            tracing::warn!(error = %format!("{error:#}"), "failed to load providers for model sync");
+            None
+        }
+    }
+}
+
+#[cfg(test)]
+mod model_refresh_target_tests {
+    use super::*;
+
+    #[test]
+    fn background_refresh_skips_disabled_and_static_providers() {
+        let mut enabled = codex_mixin::provider::custom_provider("enabled", "key");
+        enabled.enabled = true;
+        let mut disabled = codex_mixin::provider::custom_provider("openrouter", "key");
+        disabled.enabled = false;
+        let mut static_models = codex_mixin::provider::custom_provider("static", "key");
+        static_models.enabled = true;
+        static_models.model_source = ProviderModelSource::Static;
+
+        let targets = model_refresh_targets(&[enabled, disabled, static_models]);
+
+        assert_eq!(
+            targets
+                .iter()
+                .map(|target| target.id.as_str())
+                .collect::<Vec<_>>(),
+            ["enabled"]
+        );
     }
 }
