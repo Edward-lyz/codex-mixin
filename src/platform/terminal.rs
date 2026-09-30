@@ -34,8 +34,41 @@ fn environment<'a>(command: &TerminalCommand<'a>) -> Vec<(&'a str, &'a Path)> {
     home.chain(command.environment.iter().copied()).collect()
 }
 
+#[cfg(unix)]
 fn quoted(value: &str) -> String {
     super::shell_quote(value)
+}
+
+#[cfg(any(windows, test))]
+fn windows_script(command: &TerminalCommand<'_>) -> anyhow::Result<String> {
+    use super::shell::powershell_quote;
+    // Windows PowerShell 5 reads UTF-8 scripts correctly only with a BOM.
+    let mut script = String::from(
+        "\u{feff}$ErrorActionPreference = 'Stop'\r\n[Console]::OutputEncoding = [Text.Encoding]::UTF8\r\n",
+    );
+    for (key, value) in environment(command) {
+        anyhow::ensure!(
+            !key.is_empty()
+                && key
+                    .chars()
+                    .all(|character| character.is_ascii_alphanumeric() || character == '_'),
+            "invalid terminal environment variable: {key}"
+        );
+        script.push_str(&format!(
+            "$env:{key} = {}\r\n",
+            powershell_quote(&value.to_string_lossy())
+        ));
+    }
+    script.push_str(&format!(
+        "& {}",
+        powershell_quote(&command.program.to_string_lossy())
+    ));
+    for argument in command.arguments {
+        script.push(' ');
+        script.push_str(&powershell_quote(argument));
+    }
+    script.push_str("\r\nexit $LASTEXITCODE\r\n");
+    Ok(script)
 }
 
 #[cfg(windows)]
@@ -49,30 +82,40 @@ mod implementation {
         // file avoids fragile nested-quote parsing, and exporting variables
         // inside it matters because wt.exe hands the command to an already
         // running host that does not inherit the wt.exe environment.
-        let launcher = command.script_directory.join("codex-mixin-terminal.bat");
-        let mut script = String::from("@echo off\r\nchcp 65001 >nul\r\n");
-        for (key, value) in environment(command) {
-            script.push_str(&format!("set \"{key}={}\"\r\n", value.display()));
-        }
-        script.push_str(&quoted(&command.program.to_string_lossy()));
-        for argument in command.arguments {
-            script.push(' ');
-            script.push_str(argument);
-        }
-        script.push_str("\r\n");
-        std::fs::write(&launcher, script).context("write terminal launcher")?;
+        let launcher = command.script_directory.join("codex-mixin-terminal.ps1");
+        std::fs::write(&launcher, windows_script(command)?).context("write terminal launcher")?;
         if let Some(terminal) = windows_terminal() {
             // `-w new` opens a new foreground window instead of a tab in a
             // possibly minimized host, so the user notices it.
             std::process::Command::new(terminal)
-                .args(["-w", "new", "--title", command.title, "cmd", "/c"])
+                .args([
+                    "-w",
+                    "new",
+                    "--title",
+                    command.title,
+                    "powershell.exe",
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                ])
                 .arg(&launcher)
                 .spawn()
                 .context("open Windows Terminal")?;
         } else {
-            std::process::Command::new("cmd")
-                .args(["/c", "start", command.title])
+            use std::os::windows::process::CommandExt;
+            const CREATE_NEW_CONSOLE: u32 = 0x0000_0010;
+            std::process::Command::new("powershell.exe")
+                .args([
+                    "-NoLogo",
+                    "-NoProfile",
+                    "-ExecutionPolicy",
+                    "Bypass",
+                    "-File",
+                ])
                 .arg(&launcher)
+                .creation_flags(CREATE_NEW_CONSOLE)
                 .spawn()
                 .context("open a console window")?;
         }
@@ -100,6 +143,27 @@ mod implementation {
             );
         }
         candidates.into_iter().find(|path| path.is_file())
+    }
+}
+
+#[cfg(test)]
+mod windows_script_tests {
+    use super::*;
+
+    #[test]
+    fn windows_launcher_quotes_paths() {
+        let script = windows_script(&TerminalCommand {
+            title: "Login",
+            script_directory: Path::new("/tmp"),
+            home: Some(Path::new("C:/O'Neil/$HOME/%PATH%/home")),
+            environment: &[],
+            program: Path::new("C:/O'Neil/$HOME/%PATH%/ducx.exe"),
+            arguments: &["a b", "$(exit 7)"],
+        })
+        .unwrap();
+        assert!(script.starts_with('\u{feff}'));
+        assert!(script.contains("$env:HOME = 'C:/O''Neil/$HOME/%PATH%/home'"));
+        assert!(script.contains("& 'C:/O''Neil/$HOME/%PATH%/ducx.exe' 'a b' '$(exit 7)'"));
     }
 }
 

@@ -27,7 +27,6 @@ use transport::{
     reporting_providers,
 };
 
-const MANAGED_HOOK_MARKER: &str = " report-hook --event ";
 /// (Codex hooks.json event name, our `--event` argument value).
 const REPORT_EVENTS: [(&str, &str); 3] = [
     ("SessionStart", "session-start"),

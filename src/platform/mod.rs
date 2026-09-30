@@ -40,7 +40,9 @@ pub use process::{
     prepare_background_tokio_command, prepare_daemon_command, send_process_signal,
     terminate_isolated_child, terminate_isolated_tokio_child,
 };
-pub use shell::{PYTHON_LAUNCHER, portable_path_text, shell_quote};
+pub use shell::{
+    PYTHON_LAUNCHER, is_report_hook_command, portable_path_text, report_hook_command, shell_quote,
+};
 pub use signing::prepare_modified_executable;
 pub use startup_service::{
     StartupServiceSpec, StartupServiceStatus, install_startup_service, remove_startup_service,

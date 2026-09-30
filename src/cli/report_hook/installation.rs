@@ -5,7 +5,7 @@ use anyhow::Context;
 use fs2::FileExt;
 use serde_json::Value;
 
-use super::{MANAGED_HOOK_MARKER, REPORT_EVENTS};
+use super::REPORT_EVENTS;
 
 use crate::cli::atomic_file::write_atomic_if_changed;
 use codex_mixin::config::load_stored_config;
@@ -83,7 +83,7 @@ pub fn sync_installation_at(hooks_path: &Path, enabled: bool) -> anyhow::Result<
                         !command
                             .get("command")
                             .and_then(Value::as_str)
-                            .is_some_and(|value| value.contains(MANAGED_HOOK_MARKER))
+                            .is_some_and(codex_mixin::platform::is_report_hook_command)
                     });
                 }
             }
@@ -105,12 +105,11 @@ pub fn sync_installation_at(hooks_path: &Path, enabled: bool) -> anyhow::Result<
 
     if enabled {
         let executable = codex_mixin::platform::installation::installed_cli_executable()?;
-        let executable = shell_quote(&executable.to_string_lossy());
         for (event_name, event_argument) in REPORT_EVENTS {
             let group = serde_json::json!({
                 "hooks": [{
                     "type": "command",
-                    "command": format!("{executable} report-hook --event {event_argument}"),
+                    "command": codex_mixin::platform::report_hook_command(&executable, event_argument),
                     "timeout": 30,
                     "statusMessage": "Reporting Baidu AI code usage"
                 }]
@@ -131,11 +130,30 @@ pub fn sync_installation_at(hooks_path: &Path, enabled: bool) -> anyhow::Result<
     Ok(())
 }
 
-use codex_mixin::platform::installation::shell_quote;
-
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn removes_encoded_managed_hooks() {
+        use base64::Engine;
+        let directory = tempfile::tempdir().unwrap();
+        let hooks = directory.path().join("hooks.json");
+        let script = "& 'C:/codex-mixin.exe' report-hook --event 'stop'; exit $LASTEXITCODE";
+        let encoded = base64::engine::general_purpose::STANDARD.encode(
+            script
+                .encode_utf16()
+                .flat_map(u16::to_le_bytes)
+                .collect::<Vec<_>>(),
+        );
+        let command = format!(
+            "powershell.exe -NoLogo -NoProfile -NonInteractive -ExecutionPolicy Bypass -EncodedCommand {encoded}"
+        );
+        fs::write(&hooks, serde_json::to_vec(&serde_json::json!({"hooks":{"Stop":[{"hooks":[{"type":"command","command":command}]}]}})).unwrap()).unwrap();
+        sync_installation_at(&hooks, false).unwrap();
+        let document: Value = serde_json::from_slice(&fs::read(&hooks).unwrap()).unwrap();
+        assert_eq!(document["hooks"], serde_json::json!({}));
+    }
 
     #[test]
     fn empty_hooks_file_is_treated_as_fresh() {
