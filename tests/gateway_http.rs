@@ -448,7 +448,7 @@ async fn spawn_session_required_upstream() -> String {
                 .get("x-hash-key")
                 .and_then(|value| value.to_str().ok())
                 .filter(|value| uuid::Uuid::parse_str(value).is_ok());
-            if body["metadata"]["session_id"].as_str() != hash_key {
+            if body["metadata"]["user_id"].as_str() != hash_key {
                 return (
                     StatusCode::BAD_REQUEST,
                     Json(json!({"error":{"code":"SESSION_REQUIRED"}})),
@@ -4973,7 +4973,7 @@ async fn maps_custom_websocket_to_responses_frames() {
     assert_eq!(requests.len(), 2);
     assert_eq!(requests[0]["model"], "DeepSeek-V4-Flash");
     assert_eq!(
-        requests[0]["metadata"]["session_id"],
+        requests[0]["metadata"]["user_id"],
         uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, b"websocket-session").to_string()
     );
 }
@@ -5258,16 +5258,16 @@ async fn retries_demoted_web_search_on_custom_websocket() {
     let upstream_requests = requests.lock().unwrap();
     assert_eq!(upstream_requests.len(), 2);
     assert_eq!(
-        upstream_requests[0]["metadata"]["session_id"],
+        upstream_requests[0]["metadata"]["user_id"],
         upstream_requests[0]["__x_hash_key"]
     );
     assert_eq!(
-        upstream_requests[1]["metadata"]["session_id"],
+        upstream_requests[1]["metadata"]["user_id"],
         upstream_requests[1]["__x_hash_key"]
     );
     assert_ne!(
-        upstream_requests[0]["metadata"]["session_id"],
-        upstream_requests[1]["metadata"]["session_id"]
+        upstream_requests[0]["metadata"]["user_id"],
+        upstream_requests[1]["metadata"]["user_id"]
     );
     assert_eq!(upstream_requests[1]["tool_choice"]["name"], "web_search");
     assert!(

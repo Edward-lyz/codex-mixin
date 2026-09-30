@@ -53,6 +53,9 @@ pub(crate) fn output_limit_from_error(message: &str, requested: u64) -> Option<u
         "max_output_tokens",
         "max tokens",
         "output tokens",
+        // Baidu OneAPI: "Requested token count exceeds the configured maximum
+        // output length of 131072 tokens." No max_tokens spelling.
+        "output length",
     ]
     .iter()
     .any(|needle| lower.contains(needle));
@@ -100,6 +103,10 @@ mod tests {
             (
                 r#"{"error":{"type":"invalid_request_error","message":"max_tokens is too large: 512000. This model supports at most 64000 completion tokens"}}"#,
                 64_000,
+            ),
+            (
+                "Requested token count exceeds the configured maximum output length of 131072 tokens. (request id: abc) (request id: def)",
+                131_072,
             ),
         ] {
             assert_eq!(
