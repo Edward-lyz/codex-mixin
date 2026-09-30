@@ -10,7 +10,7 @@ pub(super) async fn run() -> anyhow::Result<()> {
         .is_none_or(|config| config.providers.is_empty())
     {
         super::progress_step("Stopping gateway without provider configuration");
-        super::service::stop_managed().await?;
+        super::service::stop_managed(false).await?;
         return Ok(());
     }
     super::progress_step("Synchronizing reporting hooks");

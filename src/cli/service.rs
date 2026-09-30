@@ -131,7 +131,8 @@ pub(crate) async fn start_managed() -> anyhow::Result<()> {
 }
 
 /// Stop every local gateway instance, keeping the startup definition.
-pub(crate) async fn stop_managed() -> anyhow::Result<()> {
+pub(crate) async fn stop_managed(allow_codex_disconnect: bool) -> anyhow::Result<()> {
+    super::codex::ensure_codex_allows_gateway_stop(allow_codex_disconnect)?;
     let service = ServiceCommandLine::current()?.status().await?;
     stop_all_gateways(service).await
 }
