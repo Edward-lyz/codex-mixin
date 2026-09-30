@@ -32,45 +32,91 @@ pub fn restrict_owner_only_dir(path: &Path) -> anyhow::Result<()> {
 fn restrict_windows_acl(path: &Path, directory: bool) -> anyhow::Result<()> {
     use anyhow::Context;
     use std::process::{Command, Stdio};
-
-    let mut identity = Command::new("whoami.exe");
-    identity.args(["/user", "/fo", "csv", "/nh"]);
-    super::prepare_background_command(&mut identity);
-    let output = identity
-        .output()
-        .context("resolve current Windows user SID")?;
-    anyhow::ensure!(
-        output.status.success(),
-        "whoami failed while resolving user SID"
-    );
-    let line = String::from_utf8(output.stdout).context("decode current Windows user SID")?;
-    let sid = line
-        .trim()
-        .trim_matches('"')
-        .rsplit_once("\",\"")
-        .map(|(_, sid)| sid.trim_matches('"'))
-        .filter(|sid| sid.starts_with("S-1-"))
-        .context("whoami returned an invalid Windows user SID")?;
-    let inheritance = if directory { "(OI)(CI)F" } else { "F" };
-    let mut command = Command::new("icacls.exe");
+    // A fresh DACL removes explicit grants too; disabling inheritance alone
+    // leaves an existing Everyone/Users rule able to read private credentials.
+    const SCRIPT: &str = r#"
+$ErrorActionPreference = 'Stop'
+$owner = [Security.Principal.WindowsIdentity]::GetCurrent().User
+$directory = $env:CODEX_MIXIN_ACL_DIRECTORY -eq 'true'
+if ($directory) {
+    $acl = [System.Security.AccessControl.DirectorySecurity]::new()
+    $inheritance = [Security.AccessControl.InheritanceFlags]'ContainerInherit,ObjectInherit'
+} else {
+    $acl = [System.Security.AccessControl.FileSecurity]::new()
+    $inheritance = [Security.AccessControl.InheritanceFlags]::None
+}
+$acl.SetAccessRuleProtection($true, $false)
+foreach ($value in @($owner.Value, 'S-1-5-18', 'S-1-5-32-544')) {
+    $sid = [System.Security.Principal.SecurityIdentifier]::new($value)
+    $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, [Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
+    $acl.AddAccessRule($rule)
+}
+Set-Acl -LiteralPath $env:CODEX_MIXIN_ACL_PATH -AclObject $acl
+"#;
+    let mut command = Command::new("powershell.exe");
     command
-        .arg(path)
         .args([
-            "/inheritance:r",
-            "/grant:r",
-            &format!("*{sid}:{inheritance}"),
-            &format!("*S-1-5-18:{inheritance}"),
-            &format!("*S-1-5-32-544:{inheritance}"),
+            "-NoLogo",
+            "-NoProfile",
+            "-NonInteractive",
+            "-Command",
+            SCRIPT,
         ])
+        .env("CODEX_MIXIN_ACL_PATH", path)
+        .env(
+            "CODEX_MIXIN_ACL_DIRECTORY",
+            if directory { "true" } else { "false" },
+        )
         .stdout(Stdio::null())
         .stderr(Stdio::piped());
     super::prepare_background_command(&mut command);
-    let output = command.output().context("apply private Windows ACL")?;
+    let output = command.output().context("replace private Windows ACL")?;
     anyhow::ensure!(
         output.status.success(),
-        "icacls failed for {}: {}",
+        "private Windows ACL replacement failed for {}: {}",
         path.display(),
         String::from_utf8_lossy(&output.stderr).trim()
     );
     Ok(())
+}
+
+#[cfg(all(test, windows))]
+mod tests {
+    use super::*;
+    use std::process::Command;
+
+    #[test]
+    fn private_acl_removes_public() {
+        let directory = tempfile::tempdir().unwrap();
+        let file = directory.path().join("private.txt");
+        std::fs::write(&file, b"private").unwrap();
+        for (path, is_directory) in [(file.as_path(), false), (directory.path(), true)] {
+            let mut grant = Command::new("icacls.exe");
+            grant.arg(path).args(["/grant", "*S-1-1-0:(R)"]);
+            crate::platform::prepare_background_command(&mut grant);
+            assert!(grant.output().unwrap().status.success());
+            restrict_windows_acl(path, is_directory).unwrap();
+            const CHECK: &str = r#"
+$ErrorActionPreference = 'Stop'
+$acl = Get-Acl -LiteralPath $env:CODEX_MIXIN_ACL_PATH
+$allowed = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544')
+if (-not $acl.AreAccessRulesProtected) { throw 'ACL inheritance is still enabled' }
+foreach ($rule in $acl.Access) {
+    $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
+    if ($sid -notin $allowed) { throw "Unexpected principal $sid" }
+}
+"#;
+            let mut check = Command::new("powershell.exe");
+            check
+                .args(["-NoProfile", "-NonInteractive", "-Command", CHECK])
+                .env("CODEX_MIXIN_ACL_PATH", path);
+            crate::platform::prepare_background_command(&mut check);
+            let output = check.output().unwrap();
+            assert!(
+                output.status.success(),
+                "{}",
+                String::from_utf8_lossy(&output.stderr)
+            );
+        }
+    }
 }
