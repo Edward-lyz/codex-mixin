@@ -324,7 +324,16 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                     updateServiceStatusView()
                 }
             } catch {
-                sender.isOn.toggle()
+                // Starting the gateway is safe without Codex state; only a stop
+                // needs it to avoid disconnecting a managed Codex.
+                if sender.isOn {
+                    appendDiagnosticLog(
+                        "Codex integration status unavailable; starting gateway: \(localizedErrorDescription(error))"
+                    )
+                    startService()
+                    return
+                }
+                sender.isOn = true
                 sender.isBusy = false
                 sender.isEnabled = true
                 updateServiceStatusView()

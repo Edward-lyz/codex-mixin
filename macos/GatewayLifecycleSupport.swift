@@ -9,8 +9,17 @@ extension AppDelegate {
             defer { serviceBusy = false }
             do {
                 loadCachedProviderQuota()
-                let codexStatus = try await refreshCodexIntegrationStatus()
-                if codexStatus.isOfficialMode {
+                // Unreadable Codex state must not leave a managed Codex without
+                // its gateway, so launch continues with the normal start path.
+                var codexStatus: CodexIntegrationStatus?
+                do {
+                    codexStatus = try await refreshCodexIntegrationStatus()
+                } catch {
+                    appendDiagnosticLog(
+                        "Codex integration status unavailable at launch: \(localizedErrorDescription(error))"
+                    )
+                }
+                if let codexStatus, codexStatus.isOfficialMode {
                     isRunning = false
                     serviceEndpoint = nil
                     providerStatusDetail = nil
