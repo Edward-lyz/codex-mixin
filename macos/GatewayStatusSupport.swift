@@ -122,12 +122,16 @@ extension AppDelegate {
     ) async {
         let scope = pendingStatusRefreshScope ?? .full
         pendingStatusRefreshScope = nil
-        do {
-            _ = try await refreshCodexIntegrationStatus()
-        } catch {
-            appendDiagnosticLog(
-                "Codex integration status refresh failed: \(localizedErrorDescription(error))"
-            )
+        // Health ticks run every 10 s over HTTP; skip the extra CLI process there
+        // and reuse the Codex status from the last status or full refresh.
+        if scope != .health {
+            do {
+                _ = try await refreshCodexIntegrationStatus()
+            } catch {
+                appendDiagnosticLog(
+                    "Codex integration status refresh failed: \(localizedErrorDescription(error))"
+                )
+            }
         }
         if scope == .health {
             do {
