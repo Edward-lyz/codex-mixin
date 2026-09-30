@@ -21,6 +21,7 @@ const CONNECT_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Clone)]
 pub(crate) struct EchConnection {
+    pub(crate) transport_id: uuid::Uuid,
     pub(crate) client: Client,
     pub(crate) tls: Arc<ClientConfig>,
     pub(crate) addresses: Vec<SocketAddr>,
@@ -172,6 +173,7 @@ impl OfficialEch {
             .build()
             .context("build official ECH HTTP client")?;
         let connection = EchConnection {
+            transport_id: uuid::Uuid::new_v4(),
             client,
             tls: Arc::new(tls),
             addresses: resolution.addresses,
@@ -179,6 +181,9 @@ impl OfficialEch {
         };
         // Prove ECH acceptance before any credential or model body is sent.
         connect_tls(host, &connection, false).await?;
+        tracing::info!(event = "ech_client_ready", host, transport_id = %connection.transport_id,
+            doh_url = PLUS_DOH, dns_address_count = connection.addresses.len(),
+            dns_ttl_seconds = resolution.ttl, "official ECH client ready");
         cache.insert(host.to_owned(), connection.clone());
         Ok(connection)
     }
@@ -236,6 +241,26 @@ pub(crate) async fn connect_tls(
                 stream.get_ref().1.ech_status() == EchStatus::Accepted,
                 "server did not accept ECH"
             );
+            let peer = stream
+                .get_ref()
+                .0
+                .peer_addr()
+                .context("read ECH peer address")?;
+            let local = stream
+                .get_ref()
+                .0
+                .local_addr()
+                .context("read ECH local address")?;
+            let alpn = stream
+                .get_ref()
+                .1
+                .alpn_protocol()
+                .map(String::from_utf8_lossy);
+            tracing::info!(event = "ech_tls_accepted", host, transport_id = %connection.transport_id,
+                peer_ip = %peer.ip(), peer_port = peer.port(), local_ip = %local.ip(),
+                ech_accepted = true, alpn = ?alpn,
+                connection_kind = if websocket { "websocket" } else { "preflight" },
+                "server accepted ECH TLS handshake");
             Ok::<_, anyhow::Error>((stream, *address))
         };
         match tokio::time::timeout(CONNECT_TIMEOUT, attempt).await {

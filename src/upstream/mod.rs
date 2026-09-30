@@ -26,6 +26,8 @@ mod ducx;
 #[cfg(test)]
 mod ech_tests;
 mod official;
+pub(crate) mod transport_log;
+use transport_log::{OfficialTransport, TransportTrace, attach_trace, take_trace};
 
 #[cfg(test)]
 pub(crate) use official::read_codex_official_auth;
@@ -114,9 +116,9 @@ impl UpstreamAccess {
         self.official_ech.disabled() || self.config.official_ech_fallback_reason.is_some()
     }
 
-    async fn official_default_client(&self) -> Result<Client, GatewayError> {
+    async fn official_default_client(&self) -> Result<(Client, OfficialTransport), GatewayError> {
         if !self.official_is_direct() {
-            return Ok(self.client.clone());
+            return Ok((self.client.clone(), OfficialTransport::Default));
         }
         let client = self
             .official_direct_client
@@ -129,7 +131,7 @@ impl UpstreamAccess {
                     .build()
             })
             .await?;
-        Ok(client.clone())
+        Ok((client.clone(), OfficialTransport::DirectFallback))
     }
 
     pub(crate) async fn official_request(
@@ -147,7 +149,13 @@ impl UpstreamAccess {
             .map_err(anyhow::Error::from)
             .and_then(|result| result);
             match attempt {
-                Ok(connection) => return Ok(connection.client.request(method, url)),
+                Ok(connection) => {
+                    return attach_trace(
+                        connection.client.request(method, url),
+                        OfficialTransport::Ech(connection.transport_id),
+                    )
+                    .map_err(GatewayError::Http);
+                }
                 Err(error) => self
                     .official_ech
                     .disable(error)
@@ -155,7 +163,8 @@ impl UpstreamAccess {
                     .map_err(GatewayError::Other)?,
             }
         }
-        Ok(self.official_default_client().await?.request(method, url))
+        let (client, transport) = self.official_default_client().await?;
+        attach_trace(client.request(method, url), transport).map_err(GatewayError::Http)
     }
 
     pub(crate) async fn send_official(
@@ -163,21 +172,30 @@ impl UpstreamAccess {
         request: reqwest::RequestBuilder,
     ) -> Result<reqwest::Response, GatewayError> {
         let (client, request) = request.build_split();
-        let request = request?;
-        let official = crate::ech::is_official_url(request.url());
+        let (request, trace) = take_trace(request?)?;
+        let official = trace.is_some() || crate::ech::is_official_url(request.url());
+        let trace =
+            trace.or_else(|| official.then(|| TransportTrace::new(OfficialTransport::Untracked)));
         let retry = request.try_clone();
-        let result = client.execute(request).await;
+        let result = match trace {
+            Some(trace) => trace.execute(&client, request).await,
+            None => client.execute(request).await,
+        };
         match result {
-            Err(error) if official && self.official_ech_active() && error.is_connect() => {
+            Err(error) if trace.is_some_and(TransportTrace::uses_ech) && error.is_connect() => {
                 self.official_ech
                     .disable(error.without_url().into())
                     .await
                     .map_err(GatewayError::Other)?;
                 if let Some(retry) = retry {
-                    return self
-                        .official_default_client()
-                        .await?
-                        .execute(retry)
+                    let trace = trace
+                        .ok_or_else(|| {
+                            GatewayError::Other(anyhow::anyhow!("ECH request trace is missing"))
+                        })?
+                        .direct_retry();
+                    let (client, _) = self.official_default_client().await?;
+                    return trace
+                        .execute(&client, retry)
                         .await
                         .map_err(GatewayError::Http);
                 }

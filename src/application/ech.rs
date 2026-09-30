@@ -6,6 +6,9 @@ use serde::Serialize;
 
 use crate::config::{load_stored_config, mutate_stored_config};
 use crate::ech::{OfficialEch, PLUS_DOH};
+use crate::upstream::transport_log::{
+    OfficialTransport, TransportTrace, attach_trace_for, take_trace,
+};
 
 #[derive(Serialize)]
 pub struct EchStatus {
@@ -104,10 +107,15 @@ async fn probe_host(host: &'static str) -> EchProbe {
             .connection(&url, Duration::from_secs(20))
             .await?;
         addresses.clone_from(&connection.addresses);
-        let response = connection
-            .client
-            .get(url)
-            .send()
+        let builder = attach_trace_for(
+            connection.client.get(url),
+            TransportTrace::diagnostic(OfficialTransport::Ech(connection.transport_id)),
+        )?;
+        let (client, request) = builder.build_split();
+        let (request, trace) = take_trace(request?)?;
+        let response = trace
+            .context("ECH diagnostic request trace is missing")?
+            .execute(&client, request)
             .await
             .context("unauthenticated official models check over ECH")?;
         let peer = response
