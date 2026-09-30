@@ -22,6 +22,8 @@ fn test_config(upstream_base_url: &str) -> GatewayConfig {
         gateway_api_key: None,
         gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
         accept_codex_oauth: false,
+        official_ech_fallback_reason: None,
+        official_ech_proxy: false,
         official_selected_models: None,
         default_max_tokens: 8192,
         default_context_window: 1_000_000,

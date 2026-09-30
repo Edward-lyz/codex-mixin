@@ -109,6 +109,12 @@ impl ProviderCapabilities {
         models: &[ProviderModel],
         progress: Option<ProbeProgress>,
     ) -> anyhow::Result<ProviderProbeSummary> {
+        let client = crate::ech::provider_http_client(
+            &client,
+            &reqwest::Url::parse(&provider.base_url)?,
+            std::time::Duration::from_secs(30),
+        )
+        .await?;
         let mut definition = provider.clone();
         definition.cached_models = models.to_vec();
         let registry = ProviderRegistry::new(vec![definition])?;

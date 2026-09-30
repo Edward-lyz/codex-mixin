@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 import 'client_integrations.dart';
 import 'config_backups.dart';
 import 'controller.dart';
+import 'ech_settings.dart';
 import 'log.dart';
 import 'models.dart';
 import 'theme.dart';
@@ -378,6 +379,11 @@ class _TrayPageState extends State<TrayPage> with WindowListener {
               _snapshot.serviceTitle,
               style: const TextStyle(fontSize: 14, fontWeight: FontWeight.w700),
             ),
+            if (_snapshot.status.startsWith('ECH 已自动关闭'))
+              Tooltip(message: _snapshot.status, child: const Text(
+                'ECH 连接失败，已自动关闭；高级菜单可查看原因',
+                style: TextStyle(color: orange, fontSize: 11),
+              )),
             const SizedBox(height: 1),
             Text(
               _snapshot.gatewayRunning ? _snapshot.serviceEndpoint : '网关当前未运行',
@@ -809,6 +815,10 @@ class _TrayPageState extends State<TrayPage> with WindowListener {
       const Divider(height: 12),
       _item(Icons.settings_suggest_outlined, '高级', () {
         _openSubmenu('高级', [
+          _MenuAction(_snapshot.officialEchEnabled ? Icons.check : Icons.network_check, echSettingsTitle, () async {
+            await _withDialog(() => showEchSettings(context, _controller));
+            await _refresh();
+          }),
           _MenuAction(
             Icons.account_tree_outlined,
             'Fusion 设置',

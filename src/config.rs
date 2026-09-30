@@ -37,6 +37,8 @@ pub struct GatewayConfig {
     pub bind: SocketAddr,
     pub providers: Vec<ProviderDefinition>,
     pub official_responses_url: String,
+    pub official_ech_proxy: bool,
+    pub official_ech_fallback_reason: Option<String>,
     pub codex_auth_path: PathBuf,
     pub gateway_api_key: Option<String>,
     pub gateway_client_keys: crate::gateway_access::GatewayClientKeys,
@@ -104,6 +106,8 @@ impl GatewayConfig {
             gateway_api_key: stored_config.gateway_api_key,
             gateway_client_keys: stored_config.gateway_client_keys,
             accept_codex_oauth: true,
+            official_ech_fallback_reason: stored_config.official_ech_fallback_reason,
+            official_ech_proxy: stored_config.official_ech_proxy,
             official_selected_models: stored_config.official_selected_models,
             default_max_tokens: DEFAULT_MAX_OUTPUT_TOKENS,
             default_context_window: 1_000_000,
@@ -161,6 +165,10 @@ fn codex_home_path() -> PathBuf {
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub struct StoredGatewayConfig {
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub official_ech_fallback_reason: Option<String>,
+    #[serde(default)]
+    pub official_ech_proxy: bool,
     pub config_version: u32,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gateway_bind: Option<String>,
@@ -187,6 +195,8 @@ impl Default for StoredGatewayConfig {
             gateway_api_key: None,
             gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
             compaction_secret: None,
+            official_ech_fallback_reason: None,
+            official_ech_proxy: false,
             official_selected_models: None,
             official_model_contexts: BTreeMap::new(),
             fusion_profiles: Vec::new(),
@@ -231,6 +241,8 @@ mod tests {
             gateway_api_key: Some("local-key".to_owned()),
             gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
             compaction_secret: None,
+            official_ech_fallback_reason: None,
+            official_ech_proxy: false,
             official_selected_models: Some(vec!["gpt-5.6-sol".to_owned()]),
             official_model_contexts: BTreeMap::from([("gpt-5.6-sol".to_owned(), 500_000)]),
             fusion_profiles: Vec::new(),
@@ -704,6 +716,8 @@ mod tests {
             gateway_api_key: None,
             gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
             accept_codex_oauth: true,
+            official_ech_fallback_reason: None,
+            official_ech_proxy: false,
             official_selected_models: None,
             default_max_tokens: 8192,
             default_context_window: 1_000_000,

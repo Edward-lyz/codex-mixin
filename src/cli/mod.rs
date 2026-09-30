@@ -21,6 +21,7 @@ mod doctor;
 mod dsh;
 mod ducx_session;
 mod ducx_setup;
+mod ech;
 mod fusion_config;
 mod interface;
 mod maintenance;
@@ -699,6 +700,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             },
         },
         Command::Info { json } => status(json).await,
+        Command::Ech { command } => ech::run(command).await,
         Command::Fusion { command } => match command {
             FusionCommand::Models { json } => fusion_config::model_options(json),
             FusionCommand::Get { id, json } => get_fusion_profile(id.as_deref(), json),

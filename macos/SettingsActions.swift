@@ -163,6 +163,48 @@ extension AppDelegate {
         configureLogin()
     }
 
+    @objc func configureEchAccess() {
+        guard !serviceBusy else { return }
+        serviceBusy = true
+        Task { @MainActor in
+            defer { serviceBusy = false }
+            do {
+                let output = try await runGateway(["ech", "status", "--json"])
+                guard let data = output.data(using: .utf8),
+                      let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                      let enabled = object["enabled"] as? Bool
+                else { throw GatewayError.command("ECH 状态接口返回了无效 JSON") }
+                NSApp.activate(ignoringOtherApps: true)
+                let alert = NSAlert()
+                alert.messageText = "启用 ECH 代理访问 GPT"
+                alert.informativeText = "当前：\(enabled ? "已启用" : "未启用")\n仅接管本地网关的官方 GPT 请求。使用 edge.1molchuan.top/plus 的 IPv4 和 ECH 配置，保留端到端 TLS。ECH 连接失败会自动关闭并回退到直连。\n\n启用会先测试连接，再保存设置并重启网关。ECH 成功不能证明中继出口位于 Azure；不影响浏览器登录或第三方 Provider。"
+                if let reason = object["fallback_reason"] as? String {
+                    alert.informativeText += "\n\n已自动回退到直连：\(reason)"
+                }
+                alert.addButton(withTitle: enabled ? "关闭并应用" : "启用并测试")
+                alert.addButton(withTitle: "仅测试连接")
+                alert.addButton(withTitle: "取消")
+                let choice = alert.runModal()
+                guard choice != .alertThirdButtonReturn else { return }
+                let command = choice == .alertSecondButtonReturn ? "test" : (enabled ? "disable" : "enable")
+                try await runOperationProgress(
+                    title: "ECH 代理访问 GPT",
+                    phases: ["检查并应用 ECH 连接", "刷新服务状态"],
+                    showFailureAlert: false,
+                    failureAlertTitle: "ECH 操作失败"
+                ) { progress in
+                    progress.advance(to: 0)
+                    let report = try await runGateway(["ech", command])
+                    progress.advance(to: 1)
+                    await refreshStatusNow()
+                    showDiagnosticReport(title: "ECH 代理访问 GPT", report: report)
+                }
+            } catch {
+                showAlert(title: "ECH 操作失败", message: String(describing: error))
+            }
+        }
+    }
+
     @objc func showFusionSettings() {
         if fusionSettingsWindowController == nil {
             fusionSettingsWindowController = FusionSettingsWindowController(

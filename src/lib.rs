@@ -6,6 +6,7 @@ pub mod benchmark;
 pub mod catalog;
 pub mod clients;
 pub mod config;
+mod ech;
 pub mod error;
 pub mod fusion;
 mod gateway;

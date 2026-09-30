@@ -76,6 +76,7 @@ pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
                 "log": metadata.as_ref().map(|metadata| metadata.log_file.clone()),
                 "gateway": "running",
                 "gateway_version": gateway_version,
+                "official_ech": codex_mixin::application::ech::status()?,
                 "bind": bind,
                 "healthz": url,
                 "endpoint": endpoint,

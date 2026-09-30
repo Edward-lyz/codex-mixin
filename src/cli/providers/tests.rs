@@ -157,6 +157,8 @@ fn discovered_model_context_override_can_be_restored() {
 #[test]
 fn official_provider_view_is_reserved_and_read_only() {
     let config = StoredGatewayConfig {
+        official_ech_fallback_reason: None,
+        official_ech_proxy: false,
         official_selected_models: Some(vec!["gpt-5.6-sol".to_owned()]),
         ..StoredGatewayConfig::default()
     };

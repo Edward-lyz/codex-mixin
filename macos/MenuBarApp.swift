@@ -10,6 +10,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var serviceStatusItem: NSMenuItem?
     var providerUsageDashboardView: ProviderUsageDashboardView?
     var launchAtLoginMenuItem: NSMenuItem?
+    var echMenuItem: NSMenuItem?
     var providerSettingsWindowController: ProviderSettingsWindowController?
     var fusionSettingsWindowController: FusionSettingsWindowController?
     var aboutWindowController: AboutWindowController?
@@ -28,6 +29,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             updateServiceStatusView()
         }
     }
+    var echFallbackReason: String?
+    var presentedEchFallbackReason: String?
     var automaticDoctorBusy = false
     lazy var statusRefreshCoordinator = StatusRefreshCoordinator { [weak self] isCurrent in
         await self?.performStatusRefresh(isCurrent: isCurrent)
@@ -194,7 +197,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         menu.addItem(launchAtLoginMenuItem!)
         menu.addItem(actionItem("健康检测和修复...", #selector(runAutomaticDoctor), "stethoscope"))
         menu.addItem(.separator())
+        echMenuItem = actionItem("启用 ECH 代理访问 GPT", #selector(configureEchAccess), "network")
         menu.addItem(submenuItem("高级", symbolName: "gearshape.2", items: [
+            echMenuItem!,
             actionItem("Fusion 设置…", #selector(showFusionSettings), "rectangle.3.group"),
             actionItem("手动触发上报…", #selector(manuallyReportSessions), "arrow.triangle.2.circlepath"),
             actionItem("导入配置备份…", #selector(importConfigBackup), "square.and.arrow.down"),

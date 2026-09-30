@@ -78,17 +78,17 @@ pub(super) async fn realtime_call(
                 .map_err(|_| GatewayError::BadRequest("invalid official Codex URL".to_owned()))?
                 .extend(["realtime", "calls"]);
             set_official_call_query(&mut url, uri.query(), is_live);
-            let upstream = forward_official_headers(
+            let request = forward_official_headers(
                 state
                     .upstream
-                    .request(reqwest::Method::POST, url)
+                    .official_request(reqwest::Method::POST, url)
+                    .await?
                     .header(header::AUTHORIZATION, authorization)
                     .header("chatgpt-account-id", account_id),
                 &headers,
             )
-            .json(&json!({"sdp": sdp, "session": session}))
-            .send()
-            .await?;
+            .json(&json!({"sdp": sdp, "session": session}));
+            let upstream = state.upstream.send_official(request).await?;
             (upstream, None)
         }
         RealtimeRoute::Provider {
@@ -105,7 +105,7 @@ pub(super) async fn realtime_call(
             let multipart = encode_realtime_multipart(&boundary, &sdp, &session);
             let request = forward_official_headers(
                 provider.apply_auth_for_protocol(
-                    state.upstream.request(reqwest::Method::POST, url),
+                    state.upstream.request(reqwest::Method::POST, url).await?,
                     ProviderProtocol::OpenAiResponses,
                 ),
                 &headers,
@@ -115,7 +115,10 @@ pub(super) async fn realtime_call(
                 format!("multipart/form-data; boundary={boundary}"),
             )
             .body(multipart);
-            (request.send().await?, Some(provider.id()))
+            (
+                state.upstream.send_official(request).await?,
+                Some(provider.id()),
+            )
         }
     };
     let status = upstream.status();

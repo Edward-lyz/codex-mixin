@@ -82,14 +82,13 @@ impl UpstreamAccess {
         let url = official_models_url(&self.config.official_responses_url, client_version)?;
         let (authorization, account_id) = self.official_auth().await?;
         let fetch_catalog = async {
-            let response = self
-                .client
-                .get(url)
+            let request = self
+                .official_request(reqwest::Method::GET, url)
+                .await?
                 .header(header::AUTHORIZATION, authorization)
                 .header("chatgpt-account-id", account_id)
-                .header(header::ACCEPT, "application/json")
-                .send()
-                .await?;
+                .header(header::ACCEPT, "application/json");
+            let response = self.send_official(request).await?;
             let status = response.status();
             if !status.is_success() {
                 anyhow::bail!("official models endpoint returned {status}");
@@ -140,14 +139,19 @@ impl UpstreamAccess {
         let (authorization, account_id) =
             self.official_auth().await.map_err(GatewayError::Other)?;
         let request = forward_official_headers(
-            self.client
-                .post(&self.config.official_responses_url)
-                .header(header::AUTHORIZATION, authorization)
-                .header("chatgpt-account-id", account_id)
-                .header(header::ACCEPT, "text/event-stream"),
+            self.official_request(
+                reqwest::Method::POST,
+                reqwest::Url::parse(&self.config.official_responses_url)
+                    .map_err(|error| GatewayError::Other(error.into()))?,
+            )
+            .await?
+            .header(header::AUTHORIZATION, authorization)
+            .header("chatgpt-account-id", account_id)
+            .header(header::ACCEPT, "text/event-stream"),
             headers,
         );
-        super::body::send_json(request, body).await
+        let request = super::body::prepare_json(request, body).await?;
+        self.send_official(request).await
     }
 }
 
@@ -489,6 +493,8 @@ mod tests {
                 gateway_api_key: None,
                 gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
                 accept_codex_oauth: true,
+                official_ech_fallback_reason: None,
+                official_ech_proxy: false,
                 official_selected_models: None,
                 default_max_tokens: 8192,
                 default_context_window: 1_000_000,

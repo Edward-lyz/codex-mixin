@@ -320,6 +320,8 @@ mod tests {
             gateway_api_key: None,
             gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys::default(),
             accept_codex_oauth: true,
+            official_ech_fallback_reason: None,
+            official_ech_proxy: false,
             official_selected_models: Some(vec!["gpt-5.6-terra".to_owned()]),
             default_max_tokens: 8192,
             default_context_window: 1_000_000,

@@ -5,6 +5,29 @@ use tokio_tungstenite_proxy::tungstenite::http::Uri;
 use tokio_tungstenite_proxy::tungstenite::proxy::ProxyConfig;
 use tokio_tungstenite_proxy::{MaybeTlsStream, WebSocketStream, client_async_tls_with_config};
 
+pub(super) async fn connect_official_websocket<R>(
+    request: R,
+    upstream: &crate::upstream::UpstreamAccess,
+    proxy_env: &ProxyEnv,
+) -> anyhow::Result<WebSocketStream<MaybeTlsStream<TcpStream>>>
+where
+    R: IntoClientRequest + Unpin,
+{
+    let request = request.into_client_request()?;
+    let url = reqwest::Url::parse(&request.uri().to_string())?;
+    if let Some(tls) = upstream.official_tls(&url).await? {
+        return Ok(
+            tokio_tungstenite_proxy::client_async(request, MaybeTlsStream::Rustls(tls))
+                .await?
+                .0,
+        );
+    }
+    if upstream.official_is_direct() {
+        return connect_upstream_websocket(request, &ProxyEnv::default()).await;
+    }
+    connect_upstream_websocket(request, proxy_env).await
+}
+
 #[derive(Clone, Debug, Default)]
 pub(super) struct ProxyEnv {
     http_proxy: Option<String>,
@@ -70,7 +93,17 @@ where
             .await
             .context("failed to connect to websocket upstream")?,
     };
-    let (stream, _) = client_async_tls_with_config(request, socket, None, None)
+    // Keep the existing ring transport explicit: ECH adds a second provider.
+    let tls = rustls::ClientConfig::builder_with_provider(std::sync::Arc::new(
+        rustls::crypto::ring::default_provider(),
+    ))
+    .with_safe_default_protocol_versions()?
+    .with_root_certificates(rustls::RootCertStore {
+        roots: webpki_roots::TLS_SERVER_ROOTS.to_vec(),
+    })
+    .with_no_client_auth();
+    let connector = tokio_tungstenite_proxy::Connector::Rustls(std::sync::Arc::new(tls));
+    let (stream, _) = client_async_tls_with_config(request, socket, None, Some(connector))
         .await
         .context("websocket handshake failed")?;
     Ok(stream)

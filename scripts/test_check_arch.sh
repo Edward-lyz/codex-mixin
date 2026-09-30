@@ -23,6 +23,7 @@ expect_rejected() {
 bash "$TMP/scripts/check_arch.sh" "$TMP" >/dev/null
 expect_rejected src/protocol/compaction.rs 'fn violation() { reqwest::Client::new().post("http://invalid").send(); }'
 expect_rejected src/config.rs 'use crate::server::AppState;'
+expect_rejected src/ech.rs 'use crate::server::AppState;'
 expect_rejected src/application/mod.rs 'fn violation() { println!("bad"); }'
 expect_rejected src/application/mod.rs 'use crate::tui;'
 echo "architecture negative checks OK"

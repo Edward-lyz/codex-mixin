@@ -3,7 +3,7 @@ use super::routing::{
     RealtimeRoute, official_codex_base_url, official_live_sideband_url, parse_custom_call_id,
     provider_realtime_url, resolve_realtime_route, set_mapped_query,
 };
-use super::websocket_proxy::connect_upstream_websocket;
+use super::websocket_proxy::{connect_official_websocket, connect_upstream_websocket};
 use super::{AppState, GatewayError, ProviderRuntime};
 use crate::upstream::FORWARDED_OFFICIAL_HEADERS;
 use axum::extract::ws::{Message as AxumWsMessage, WebSocket, WebSocketUpgrade};
@@ -147,6 +147,8 @@ async fn connect_realtime_ws(
             (url, RealtimeWebsocketAuth::Provider(provider))
         }
     };
+    let uses_official_ech = matches!(&auth, RealtimeWebsocketAuth::Official { .. })
+        || crate::ech::is_official_url(&url);
     let websocket_scheme = match url.scheme() {
         "http" => "ws",
         "https" => "wss",
@@ -176,10 +178,13 @@ async fn connect_realtime_ws(
             }
         }
     }
-    let upstream = tokio::time::timeout(
-        state.config.request_timeout,
-        connect_upstream_websocket(request, state.websocket_proxy_env()),
-    )
+    let upstream = tokio::time::timeout(state.config.request_timeout, async {
+        if uses_official_ech {
+            connect_official_websocket(request, &state.upstream, state.websocket_proxy_env()).await
+        } else {
+            connect_upstream_websocket(request, state.websocket_proxy_env()).await
+        }
+    })
     .await
     .map_err(|_| {
         anyhow::anyhow!(

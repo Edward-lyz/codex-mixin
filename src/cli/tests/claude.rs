@@ -40,6 +40,8 @@ fn claude_install_writes_base_url_and_uninstall_restores_settings() {
             ..Default::default()
         },
         accept_codex_oauth: false,
+        official_ech_fallback_reason: None,
+        official_ech_proxy: false,
         official_selected_models: None,
         default_max_tokens: 4096,
         default_context_window: 128_000,
@@ -241,6 +243,8 @@ fn claude_install_uses_dedicated_client_key_as_auth_token() {
             ..Default::default()
         },
         accept_codex_oauth: false,
+        official_ech_fallback_reason: None,
+        official_ech_proxy: false,
         official_selected_models: None,
         default_max_tokens: 4096,
         default_context_window: 128_000,
@@ -312,6 +316,8 @@ fn sync_claude_models_refreshes_only_managed_settings() {
             ..Default::default()
         },
         accept_codex_oauth: false,
+        official_ech_fallback_reason: None,
+        official_ech_proxy: false,
         official_selected_models: None,
         default_max_tokens: 4096,
         default_context_window: 128_000,
@@ -402,6 +408,8 @@ fn claude_install_migrates_legacy_managed_env_backup() {
             ..Default::default()
         },
         accept_codex_oauth: false,
+        official_ech_fallback_reason: None,
+        official_ech_proxy: false,
         official_selected_models: None,
         default_max_tokens: 4096,
         default_context_window: 128_000,
@@ -492,6 +500,8 @@ fn claude_install_accepts_any_routable_model_protocol() {
             ..Default::default()
         },
         accept_codex_oauth: false,
+        official_ech_fallback_reason: None,
+        official_ech_proxy: false,
         official_selected_models: None,
         default_max_tokens: 4096,
         default_context_window: 128_000,
@@ -558,6 +568,8 @@ fn claude_install_marks_extended_context_models_without_family_mappings() {
             ..Default::default()
         },
         accept_codex_oauth: false,
+        official_ech_fallback_reason: None,
+        official_ech_proxy: false,
         official_selected_models: None,
         default_max_tokens: 4096,
         default_context_window: 128_000,

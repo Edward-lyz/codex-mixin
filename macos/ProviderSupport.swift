@@ -149,11 +149,17 @@ struct GatewayStatusProvider: Decodable {
     }
 }
 
+struct OfficialEchStatus: Decodable {
+    let enabled: Bool
+    let fallback_reason: String?
+}
+
 struct GatewayStatusSnapshot: Decodable {
     let configured: Bool?
     let gateway: String?
     let endpoint: String?
     let providerReadiness: String?
+    let officialEch: OfficialEchStatus?
     let providers: [GatewayStatusProvider]?
 
     enum CodingKeys: String, CodingKey {
@@ -161,6 +167,7 @@ struct GatewayStatusSnapshot: Decodable {
         case gateway
         case endpoint
         case providerReadiness = "provider_readiness"
+        case officialEch = "official_ech"
         case providers
     }
 
@@ -170,6 +177,7 @@ struct GatewayStatusSnapshot: Decodable {
         gateway = try values.decodeIfPresent(String.self, forKey: .gateway)
         endpoint = try values.decodeIfPresent(String.self, forKey: .endpoint)
         providerReadiness = try values.decodeIfPresent(String.self, forKey: .providerReadiness)
+        officialEch = try values.decodeIfPresent(OfficialEchStatus.self, forKey: .officialEch)
         if gateway == "running" {
             providers = try values.decode([GatewayStatusProvider].self, forKey: .providers)
         } else {

@@ -36,7 +36,7 @@ pub(super) async fn image_generations(
             })?
             .clone();
         let request = provider_image_request(&state, provider, url).await?;
-        let upstream = request.json(&body).send().await?;
+        let upstream = state.upstream.send_official(request.json(&body)).await?;
         return proxy_image_response(upstream, &format!("provider {provider_id}")).await;
     }
 
@@ -46,7 +46,7 @@ pub(super) async fn image_generations(
             .expect("checked above")
             .clone();
         let request = provider_image_request(&state, provider, url).await?;
-        let upstream = request.json(&body).send().await?;
+        let upstream = state.upstream.send_official(request.json(&body)).await?;
         return proxy_image_response(upstream, &format!("provider {}", provider.id())).await;
     }
 
@@ -71,6 +71,7 @@ async fn provider_image_request(
     let request = state
         .upstream
         .request(reqwest::Method::POST, url)
+        .await?
         .header(header::ACCEPT, "application/json");
     match state.upstream.baidu_native_headers(provider).await? {
         Some(native) => Ok(request.headers(native)),
@@ -118,16 +119,17 @@ async fn forward_official_image_request(
     let request = forward_official_headers(
         state
             .upstream
-            .request(
+            .official_request(
                 reqwest::Method::POST,
                 reqwest::Url::parse(&url).map_err(|error| GatewayError::Other(error.into()))?,
             )
+            .await?
             .header(header::AUTHORIZATION, authorization)
             .header("chatgpt-account-id", account_id)
             .header(header::ACCEPT, "application/json"),
         headers,
     );
-    let upstream = request.json(body).send().await?;
+    let upstream = state.upstream.send_official(request.json(body)).await?;
     proxy_image_response(upstream, "official").await
 }
 

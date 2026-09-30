@@ -176,6 +176,7 @@ class GatewaySnapshot {
   final List<ProviderModel> providers;
   final bool gatewayRunning;
   final String serviceTitle;
+  final bool officialEchEnabled;
   final String serviceEndpoint;
   final List<Map<String, dynamic>> quotaRows;
   final List<Map<String, dynamic>> usageRows;
@@ -186,6 +187,7 @@ class GatewaySnapshot {
     required this.providers,
     required this.gatewayRunning,
     required this.serviceTitle,
+    this.officialEchEnabled = false,
     required this.serviceEndpoint,
     required this.quotaRows,
     required this.usageRows,

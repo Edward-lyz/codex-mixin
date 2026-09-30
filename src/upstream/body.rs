@@ -63,10 +63,10 @@ where
     .map_err(GatewayError::Other)
 }
 
-pub(crate) async fn send_json<T>(
+pub(crate) async fn prepare_json<T>(
     request: reqwest::RequestBuilder,
     value: T,
-) -> Result<reqwest::Response, GatewayError>
+) -> Result<reqwest::RequestBuilder, GatewayError>
 where
     T: Serialize + Send + 'static,
 {
@@ -82,13 +82,10 @@ where
     .map_err(GatewayError::Other)?;
     let content_length = HeaderValue::from_str(&length.to_string())
         .map_err(|error| GatewayError::Other(error.into()))?;
-    request
+    Ok(request
         .header(CONTENT_TYPE, "application/json")
         .header(CONTENT_LENGTH, content_length)
-        .body(tokio::fs::File::from_std(file))
-        .send()
-        .await
-        .map_err(GatewayError::Http)
+        .body(tokio::fs::File::from_std(file)))
 }
 
 pub(crate) async fn read_error_text(response: reqwest::Response) -> Result<String, GatewayError> {

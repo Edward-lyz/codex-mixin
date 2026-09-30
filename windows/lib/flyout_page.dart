@@ -8,6 +8,7 @@ import 'package:window_manager/window_manager.dart';
 import 'client_integrations.dart';
 import 'config_backups.dart';
 import 'controller.dart';
+import 'ech_settings.dart';
 import 'log.dart';
 import 'theme.dart';
 import 'widgets.dart';
@@ -210,7 +211,15 @@ class _FlyoutPageState extends State<FlyoutPage> with WindowListener {
       case '设置与模型':
         await _sendMain('show_main');
       case '高级':
-        if (label == 'Fusion 设置...') {
+        if (label == echSettingsTitle) {
+          setState(() => _busy = true);
+          await _growForReport();
+          if (!mounted) return;
+          await showEchSettings(context, widget.controller);
+          if (!mounted) return;
+          setState(() => _busy = false);
+          await _close();
+        } else if (label == 'Fusion 设置...') {
           await _sendMain('show_fusion');
         } else {
           await _runAdvanced(label);
@@ -256,6 +265,7 @@ class _FlyoutPageState extends State<FlyoutPage> with WindowListener {
       ('供应商设置...', Icons.settings_outlined),
     ],
     '高级' => const [
+      (echSettingsTitle, Icons.network_check),
       ('Fusion 设置...', Icons.account_tree_outlined),
       ('手动触发上报...', Icons.sync_outlined),
       ('导入配置备份...', Icons.file_download_outlined),

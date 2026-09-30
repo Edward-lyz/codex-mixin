@@ -380,13 +380,15 @@ async fn forward_official_compact(
     let request = forward_official_headers(
         state
             .upstream
-            .request(reqwest::Method::POST, url)
+            .official_request(reqwest::Method::POST, url)
+            .await?
             .header(header::AUTHORIZATION, authorization)
             .header("chatgpt-account-id", account_id)
             .header(header::ACCEPT, "application/json, text/event-stream"),
         headers,
     );
-    let upstream = crate::upstream::body::send_json(request, body).await?;
+    let request = crate::upstream::body::prepare_json(request, body).await?;
+    let upstream = state.upstream.send_official(request).await?;
     let status = upstream.status();
     let content_type = upstream
         .headers()

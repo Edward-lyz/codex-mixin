@@ -90,6 +90,8 @@ class MixinController {
         : usage is List
         ? null
         : 'usage 返回了无法解析的数据';
+    final ech = statusJson?['official_ech'];
+    final echReason = ech is Map ? ech['fallback_reason'] : null;
     final String statusText;
     if (!providerResult.ok) {
       statusText = '读取供应商失败：${providerResult.output}';
@@ -104,14 +106,17 @@ class MixinController {
     } else if (interfaceJson == null || interfaceJson['protocol_version'] != 1) {
       statusText = '应用信息返回了无效 JSON';
     } else {
-      statusText = providers.isEmpty ? '还没有供应商' : '配置已同步';
+      statusText = echReason is String
+          ? 'ECH 已自动关闭并回退到直连：$echReason'
+          : (providers.isEmpty ? '还没有供应商' : '配置已同步');
     }
     snapshot = GatewaySnapshot(
       providers: providers,
       gatewayRunning: gatewayRunning,
       serviceTitle: gatewayRunning
-          ? '本地网关运行中'
+          ? (echReason is String ? '本地网关运行中 · ECH 已回退直连' : '本地网关运行中')
           : (statusResult.ok ? '本地网关已停止' : '无法连接本地网关'),
+      officialEchEnabled: ech is Map && ech['enabled'] == true,
       serviceEndpoint: endpoint is String && endpoint.isNotEmpty
           ? endpoint
           // Do not keep showing a previous endpoint when the status query

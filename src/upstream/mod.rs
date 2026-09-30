@@ -23,6 +23,8 @@ use crate::provider::{ProviderProtocol, ProviderRuntime};
 
 pub(crate) mod body;
 mod ducx;
+#[cfg(test)]
+mod ech_tests;
 mod official;
 
 #[cfg(test)]
@@ -46,6 +48,8 @@ enum AnthropicStreamDisposition {
 pub(crate) struct UpstreamAccess {
     config: Arc<GatewayConfig>,
     client: Client,
+    official_ech: Arc<crate::ech::OfficialEch>,
+    official_direct_client: Arc<tokio::sync::OnceCell<Client>>,
     official_auth_cache: Arc<tokio::sync::Mutex<Option<CachedOfficialAuth>>>,
     ducx_runtimes: Arc<tokio::sync::Mutex<HashMap<String, Arc<DucxRuntime>>>>,
 }
@@ -55,6 +59,8 @@ impl UpstreamAccess {
         Self {
             config,
             client,
+            official_ech: Arc::new(crate::ech::OfficialEch::default()),
+            official_direct_client: Arc::new(tokio::sync::OnceCell::new()),
             official_auth_cache: Arc::new(tokio::sync::Mutex::new(None)),
             ducx_runtimes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
         }
@@ -73,8 +79,11 @@ impl UpstreamAccess {
         T: serde::Serialize + Send + 'static,
     {
         let base = self
-            .client
-            .post(provider.api_url_for_model(upstream_model_id).clone());
+            .request(
+                reqwest::Method::POST,
+                provider.api_url_for_model(upstream_model_id).clone(),
+            )
+            .await?;
         let authenticated = match native_headers {
             Some(headers) => base.headers(headers.clone()),
             None => provider.apply_auth_for_protocol(base, protocol),
@@ -82,15 +91,131 @@ impl UpstreamAccess {
         let request = provider
             .apply_session_affinity(authenticated, hash_key)
             .header(reqwest::header::ACCEPT, "text/event-stream");
-        body::send_json(request, body).await
+        let request = body::prepare_json(request, body).await?;
+        self.send_official(request).await
     }
 
-    pub(crate) fn request(
+    pub(crate) async fn request(
         &self,
         method: reqwest::Method,
         url: reqwest::Url,
-    ) -> reqwest::RequestBuilder {
-        self.client.request(method, url)
+    ) -> Result<reqwest::RequestBuilder, GatewayError> {
+        if crate::ech::is_official_url(&url) {
+            return self.official_request(method, url).await;
+        }
+        Ok(self.client.request(method, url))
+    }
+
+    pub(crate) fn official_ech_active(&self) -> bool {
+        self.config.official_ech_proxy && !self.official_ech.disabled()
+    }
+
+    pub(crate) fn official_is_direct(&self) -> bool {
+        self.official_ech.disabled() || self.config.official_ech_fallback_reason.is_some()
+    }
+
+    async fn official_default_client(&self) -> Result<Client, GatewayError> {
+        if !self.official_is_direct() {
+            return Ok(self.client.clone());
+        }
+        let client = self
+            .official_direct_client
+            .get_or_try_init(|| async {
+                Client::builder()
+                    .no_proxy()
+                    .redirect(reqwest::redirect::Policy::none())
+                    .connect_timeout(std::time::Duration::from_secs(10))
+                    .timeout(self.config.request_timeout)
+                    .build()
+            })
+            .await?;
+        Ok(client.clone())
+    }
+
+    pub(crate) async fn official_request(
+        &self,
+        method: reqwest::Method,
+        url: reqwest::Url,
+    ) -> Result<reqwest::RequestBuilder, GatewayError> {
+        if self.official_ech_active() {
+            let attempt = tokio::time::timeout(
+                std::time::Duration::from_secs(20),
+                self.official_ech
+                    .connection(&url, self.config.request_timeout),
+            )
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(|result| result);
+            match attempt {
+                Ok(connection) => return Ok(connection.client.request(method, url)),
+                Err(error) => self
+                    .official_ech
+                    .disable(error)
+                    .await
+                    .map_err(GatewayError::Other)?,
+            }
+        }
+        Ok(self.official_default_client().await?.request(method, url))
+    }
+
+    pub(crate) async fn send_official(
+        &self,
+        request: reqwest::RequestBuilder,
+    ) -> Result<reqwest::Response, GatewayError> {
+        let (client, request) = request.build_split();
+        let request = request?;
+        let official = crate::ech::is_official_url(request.url());
+        let retry = request.try_clone();
+        let result = client.execute(request).await;
+        match result {
+            Err(error) if official && self.official_ech_active() && error.is_connect() => {
+                self.official_ech
+                    .disable(error.without_url().into())
+                    .await
+                    .map_err(GatewayError::Other)?;
+                if let Some(retry) = retry {
+                    return self
+                        .official_default_client()
+                        .await?
+                        .execute(retry)
+                        .await
+                        .map_err(GatewayError::Http);
+                }
+                Err(GatewayError::Other(anyhow::anyhow!(
+                    "ECH connection failed and was disabled; streaming request was not replayed, retry using direct access"
+                )))
+            }
+            other => other.map_err(GatewayError::Http),
+        }
+    }
+
+    pub(crate) async fn official_tls(
+        &self,
+        url: &reqwest::Url,
+    ) -> anyhow::Result<Option<tokio_rustls::client::TlsStream<tokio::net::TcpStream>>> {
+        if !self.official_ech_active() {
+            return Ok(None);
+        }
+        let connect = async {
+            let connection = self
+                .official_ech
+                .connection(url, self.config.request_timeout)
+                .await?;
+            let host = crate::ech::official_host(url)?;
+            let (stream, _) = crate::ech::connect_tls(host, &connection, true).await?;
+            Ok::<_, anyhow::Error>(stream)
+        };
+        match tokio::time::timeout(std::time::Duration::from_secs(20), connect)
+            .await
+            .map_err(anyhow::Error::from)
+            .and_then(|result| result)
+        {
+            Ok(stream) => Ok(Some(stream)),
+            Err(error) => {
+                self.official_ech.disable(error).await?;
+                Ok(None)
+            }
+        }
     }
 
     /// Send a provider Anthropic Messages request and return its SSE byte
@@ -129,8 +254,11 @@ impl UpstreamAccess {
             // Use the model-level endpoint like the OpenAI protocols so a
             // per-model api_path is honored for Anthropic Messages too.
             let base_request = self
-                .client
-                .post(provider.api_url_for_model(&request.model).clone());
+                .request(
+                    reqwest::Method::POST,
+                    provider.api_url_for_model(&request.model).clone(),
+                )
+                .await?;
             let mut upstream_request = match &native {
                 Some(native) => base_request.headers(native.clone()),
                 None if provider.aws_sigv4().is_some() => provider
@@ -162,7 +290,8 @@ impl UpstreamAccess {
                     .await
                     .map_err(GatewayError::Http)
             } else {
-                body::send_json(upstream_request, request.clone()).await
+                let prepared = body::prepare_json(upstream_request, request.clone()).await?;
+                self.send_official(prepared).await
             }
             .inspect_err(|error| {
                 tracing::error!(

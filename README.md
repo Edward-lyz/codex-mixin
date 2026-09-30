@@ -138,3 +138,12 @@ See the [Product Tour](https://github.com/Edward-lyz/codex-mixin/wiki/Product-To
 ## License
 
 See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+
+### ECH 代理访问官方 GPT（实验）
+
+在「高级 → 启用 ECH 代理访问 GPT」中可测试并启用 `/plus` DoH 与 ECH。
+默认关闭；连接失败自动关闭并回退到直连，UI 显示原因。
+仅作用于 mixin 承载的官方流量，不能据此保证 Azure 中继出口。
+CLI 使用 `codex-mixin --no-tui ech test --json` 检查连接。
+范围、失败行为和验证限制见 [ECH 功能说明](docs/ech-gpt.md)。

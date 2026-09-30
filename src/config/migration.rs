@@ -310,6 +310,8 @@ fn migrate_legacy_config(legacy: LegacyStoredGatewayConfig) -> anyhow::Result<St
         gateway_api_key: legacy.gateway_api_key,
         gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
         compaction_secret: None,
+        official_ech_fallback_reason: None,
+        official_ech_proxy: false,
         official_selected_models: None,
         official_model_contexts: Default::default(),
         fusion_profiles: legacy.fusion_profiles,

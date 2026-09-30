@@ -75,6 +75,11 @@ pub(super) enum Command {
         #[arg(long, help = "Configure the provider without starting the gateway")]
         no_start: bool,
     },
+    /// Configure experimental ECH access to official GPT via /plus DoH.
+    Ech {
+        #[command(subcommand)]
+        command: EchCommand,
+    },
     /// Update this CLI from the latest GitHub release and restart the gateway.
     Update,
     /// Configure model providers and select their models.
@@ -729,4 +734,22 @@ pub(super) fn requested_interactive_start(
             _ => None,
         }
     }
+}
+
+#[derive(Debug, Subcommand)]
+pub(super) enum EchCommand {
+    /// Enable ECH after testing; failed tests restore direct official access.
+    Enable,
+    /// Disable ECH and restore the previous official transport.
+    Disable,
+    /// Read the saved setting; this does not access the network.
+    Status {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Test DNS and TLS without sending credentials or model requests.
+    Test {
+        #[arg(long)]
+        json: bool,
+    },
 }

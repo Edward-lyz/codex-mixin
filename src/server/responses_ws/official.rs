@@ -10,7 +10,7 @@ use tokio_tungstenite_proxy::tungstenite::Message as TungsteniteMessage;
 use tokio_tungstenite_proxy::tungstenite::client::IntoClientRequest;
 
 use super::super::AppState;
-use super::super::websocket_proxy::connect_upstream_websocket;
+use super::super::websocket_proxy::connect_official_websocket;
 use super::{
     OfficialWebSocket, ResponsesWsContext, take_custom_request_input, tungstenite_to_axum_message,
 };
@@ -167,7 +167,7 @@ async fn connect_official_responses_ws(
     }
     let official_socket = tokio::time::timeout(
         state.config.request_timeout,
-        connect_upstream_websocket(request, state.websocket_proxy_env()),
+        connect_official_websocket(request, &state.upstream, state.websocket_proxy_env()),
     )
     .await
     .map_err(|_| {

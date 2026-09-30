@@ -214,6 +214,8 @@ fn test_config(official_responses_url: String, codex_auth_path: PathBuf) -> Gate
         gateway_api_key: Some("gateway-key".to_owned()),
         gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys::default(),
         accept_codex_oauth: true,
+        official_ech_fallback_reason: None,
+        official_ech_proxy: false,
         official_selected_models: None,
         default_max_tokens: 8192,
         default_context_window: 1_000_000,

@@ -285,6 +285,8 @@ async fn oauth_install_falls_back_to_local_cache_when_official_fetch_fails() {
             ..Default::default()
         },
         accept_codex_oauth: true,
+        official_ech_fallback_reason: None,
+        official_ech_proxy: false,
         official_selected_models: None,
         default_max_tokens: 8192,
         default_context_window: 1_000_000,
@@ -350,6 +352,8 @@ async fn oauth_install_refreshes_existing_provider_list_from_live_catalog() {
         gateway_api_key: None,
         gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys::default(),
         accept_codex_oauth: true,
+        official_ech_fallback_reason: None,
+        official_ech_proxy: false,
         official_selected_models: None,
         default_max_tokens: 8192,
         default_context_window: 1_000_000,

@@ -29,6 +29,14 @@ extension AppDelegate {
     }
 
     private func applyGatewayStatus(_ snapshot: GatewayStatusSnapshot) {
+        echMenuItem?.state = snapshot.officialEch?.enabled == true ? .on : .off
+        echFallbackReason = snapshot.officialEch?.fallback_reason
+        if let reason = echFallbackReason, reason != presentedEchFallbackReason {
+            presentedEchFallbackReason = reason
+            showAlert(title: "ECH 已自动关闭", message: "官方请求已回退到直连。\n\n\(reason)")
+        } else if echFallbackReason == nil {
+            presentedEchFallbackReason = nil
+        }
         if snapshot.configured == false {
             isRunning = false
             serviceEndpoint = nil
@@ -52,6 +60,10 @@ extension AppDelegate {
             serviceStatus = "本地服务运行中 · 无启用服务商"
         } else {
             serviceStatus = isRunning ? "本地服务运行中" : "本地服务已停止"
+        }
+        if let reason = echFallbackReason {
+            serviceStatus += " · ECH 已回退直连"
+            providerStatusDetail = [providerStatusDetail, reason].compactMap { $0 }.joined(separator: "；")
         }
         updateStatusTitle()
         updateActionStates()
@@ -261,6 +273,10 @@ extension AppDelegate {
         } else {
             providerStatusDetail = nil
             serviceStatus = "本地服务运行中"
+        }
+        if let reason = echFallbackReason {
+            serviceStatus += " · ECH 已回退直连"
+            providerStatusDetail = reason
         }
         updateStatusTitle()
         updateActionStates()
