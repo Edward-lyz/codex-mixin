@@ -22,7 +22,10 @@ pub(crate) async fn discover_models(id: &str) -> anyhow::Result<()> {
         return Ok(());
     }
     if !changes.auto_selected.is_empty() {
-        probe_new_models(id, &changes.auto_selected, true).await?;
+        probe_new_models(id, &changes.auto_selected, false).await?;
+    }
+    if !changes.added.is_empty() || !changes.removed.is_empty() {
+        sync_model_clients().await?;
     }
     Ok(())
 }
@@ -181,15 +184,8 @@ async fn probe_models(
         refresh_clients,
     )
     .await?;
-    if refresh_clients && summary.attempted > 0 {
-        super::super::progress_step("Refreshing Codex model catalog after capability probing");
-        refresh_default_managed_codex_catalog().await?;
-        let refreshed_clients = crate::cli::sync_installed_client_models()?;
-        for client in &refreshed_clients {
-            super::super::progress_step(&format!(
-                "{client} models refreshed; restart {client} to reload"
-            ));
-        }
+    if refresh_clients {
+        sync_model_clients().await?;
     }
     super::super::progress_step(&format!(
         "Capability probing complete for {id}: {} models checked",
@@ -200,6 +196,25 @@ async fn probe_models(
             "provider capabilities probed: {id} ({} models checked)",
             summary.attempted
         );
+    }
+    Ok(())
+}
+
+async fn sync_model_clients() -> anyhow::Result<()> {
+    super::super::progress_step("Refreshing connected client model catalogs");
+    codex_mixin::application::provider::after_provider_commit_async(
+        "Codex model catalog synchronization",
+        refresh_default_managed_codex_catalog(),
+    )
+    .await?;
+    let refreshed_clients = codex_mixin::application::provider::after_provider_commit(
+        "client model synchronization",
+        crate::cli::sync_installed_client_models,
+    )?;
+    for client in &refreshed_clients {
+        super::super::progress_step(&format!(
+            "{client} models refreshed; restart {client} to reload"
+        ));
     }
     Ok(())
 }
@@ -300,7 +315,7 @@ pub(crate) async fn select_models(
         } else {
             println!("provider models selected: {id} ({selected_count})");
         }
-        return Ok(());
+        return sync_model_clients().await;
     }
     let context_only =
         models.is_empty() && (!model_contexts.is_empty() || !clear_model_contexts.is_empty());
@@ -311,8 +326,9 @@ pub(crate) async fn select_models(
         clear_model_contexts,
     )?;
     if !models_to_probe.is_empty() {
-        probe_new_models(id, &models_to_probe, true).await?;
+        probe_new_models(id, &models_to_probe, false).await?;
     }
+    sync_model_clients().await?;
     if context_only {
         println!("provider model context windows updated: {id}");
     } else {

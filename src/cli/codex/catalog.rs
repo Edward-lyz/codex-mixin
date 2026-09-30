@@ -31,10 +31,8 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
     };
     let gateway_config = GatewayConfig::from_stored_config()?;
     let state = AppState::new(gateway_config.clone())?;
+    // An explicit empty selection must clear the managed catalog too.
     let models = state.fetch_models().await?;
-    if models.is_empty() {
-        anyhow::bail!("upstream /v1/models returned no models");
-    }
     let codex_home = config_path
         .parent()
         .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?;
