@@ -5,17 +5,13 @@
 </p>
 
 <p align="center">
-  <a href="https://github.com/Edward-lyz/codex-mixin/actions/workflows/ci.yml"><img alt="CI" src="https://github.com/Edward-lyz/codex-mixin/actions/workflows/ci.yml/badge.svg"></a>
-  <a href="https://github.com/Edward-lyz/codex-mixin/actions/workflows/windows.yml"><img alt="Windows CI" src="https://github.com/Edward-lyz/codex-mixin/actions/workflows/windows.yml/badge.svg"></a>
   <a href="https://github.com/Edward-lyz/codex-mixin/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Edward-lyz/codex-mixin?sort=semver"></a>
   <a href="https://github.com/Edward-lyz/codex-mixin/releases"><img alt="Windows, macOS, and Linux" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue"></a>
   <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Source%20Code%20Viewing%201.0-lightgrey"></a>
-  <img alt="Rust" src="https://img.shields.io/badge/Rust-local%20gateway-orange">
 </p>
 
 <p align="center">
   <b>Custom providers and official Codex, managed from one local control plane.</b><br>
-  <sub>Windows desktop app · native macOS menu bar app · full-screen TUI · reversible local gateway</sub>
 </p>
 
 <p align="center">
@@ -66,28 +62,24 @@
 
 ## 中文
 
-Codex Mixin 是一个跨平台 Rust 本地网关和 CLI，并提供 Windows 桌面 App、原生 macOS 菜单栏 App 与全屏 TUI。它把 OpenRouter、DeepSeek、Baidu OneAPI、AWS Bedrock 或其他兼容 OpenAI / Anthropic 协议的模型接入官方 Codex，同时保留官方 ChatGPT/OpenAI 账号路径、GPT 模型、远程控制和 Codex 原生体验。
-
-Codex Mixin 不是 Codex 的二次发行版，也不重新打包官方 Codex App。Codex 仍然是主入口；Codex Mixin 负责模型接入、协议转换、模型目录、配置托管、后台服务、额度与性能观测。
+Codex Mixin 是一个跨平台的 Rust 本地网关，提供 Windows 桌面 App、原生 macOS 菜单栏 App 与终端下的全屏 TUI。它把 OpenRouter、DeepSeek、Baidu OneAPI、AWS Bedrock 或其他兼容 OpenAI / Anthropic 协议的模型接入官方 Codex，同时保留官方 ChatGPT/OpenAI 账号路径、GPT 模型、远程控制和 Codex 原生体验。
 
 ### 核心能力
 
-- 官方模型与自定义模型共存于 Codex 模型选择器，重名模型自动隔离，历史会话保持可用。
-- 官方模型清单直接同步 [OpenAI Codex 仓库的 models.json](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)，不依赖已安装 Codex CLI 的版本或缓存；保留模型选择和上下文配置。官方目录与动态 Provider 仍每 30 秒检查，GET 支持 ETag / Last-Modified 条件请求，未变化时复用缓存。
-- [官方 GPT ECH 访问（实验）](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access)：通过 `/plus` DoH 获取地址和 ECH 配置，记录握手与实际请求证据，失败自动关闭并回退直连。默认关闭，可与 TUN 共存；不保证 Azure 出口或绕过地区限制。
-- 支持 OpenAI Responses、Chat Completions、Anthropic Messages 和 AWS Bedrock 上游。
-- Windows 和 macOS 提供桌面控制面；Linux、SSH 和远端服务器提供全屏 TUI；所有平台共享可脚本化 CLI。
-- 统一完成 Provider 管理、模型发现、能力探测、上下文配置、测速、额度和 Token 观测。
-- Fusion 支持多模型 `Panel → Judge → Final` 编排和按时间轮转，并生成 Codex 原生 Review。
-- 本地网关只监听 loopback，默认由操作系统动态分配端口，并把实际端点同步给已连接客户端。
-- 配置以加密形式落盘，可导出为 Base64 备份并在另一台机器一键导入。
-- Codex、Claude Code、DSH、OpenCode 和 Pi 的集成均可安装、同步和恢复。
+- 官方模型与自定义模型共存于 Codex 模型选择器，重名模型自动隔离，历史会话会自动迁移。
+- 官方模型清单直接同步 [OpenAI 官方模型列表](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)，每 30 秒检查一次官方模型清单和自定义模型清单，支持缓存复用，模型变更时会弹出系统提示，切换模型快人一步。
+- [官方 GPT ECH 访问（实验）](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access)：通过中继DoH 获取地址和 ECH 配置，选择最优 IP 节点，以及固定 Azure IP 访问 OpenAI 端点，避免风控并在网络受限的前提下直接访问 GPT。
+- 支持 OpenAI Responses、Chat Completions、Anthropic Messages 等协议互相无损转换。
+- 支持全平台使用，并根据平台不同提供不同的 UI 层级。
+- 自动完成供应商管理、模型发现、能力探测、上下文配置、测速、额度和 Token 监测。
+- 模型融合支持多模型编排，提升整体表现；以及按时间轮转，一个模型名称下，按时间路由至不同模型（适用于波峰-波谷计价用户）
+- 配置加密，可导出为 Base64 备份并在另一台机器一键导入，无需繁琐重新配置
+- 目前支持的框架有：Codex、Claude Code、DSH、OpenCode 和 Pi 。
 
 ### 产品形态
 
 | 组件 | 作用 |
 | --- | --- |
-| Rust gateway | 协议转换、鉴权、流式转发、模型路由、Fusion 和观测 |
 | macOS App | 菜单栏状态、Provider 与模型管理、测速、配置备份、更新和修复 |
 | Windows App | 系统托盘、Provider 与模型管理、测速、配置备份、客户端接入和修复 |
 | TUI | 面向 Linux、SSH 和远端环境的完整终端控制台 |
@@ -102,7 +94,6 @@ Codex Mixin 不是 Codex 的二次发行版，也不重新打包官方 Codex App
 | DeepSeek | OpenAI Chat Completions |
 | OpenCode Go | OpenAI Responses |
 | AWS Bedrock | Anthropic Messages |
-| Custom | OpenAI Responses、Chat Completions 或 Anthropic Messages |
 
 ### 文档
 
@@ -117,28 +108,53 @@ Codex Mixin 不是 Codex 的二次发行版，也不重新打包官方 Codex App
 - [CLI 参考](https://github.com/Edward-lyz/codex-mixin/wiki/CLI-Reference)
 - [排障](https://github.com/Edward-lyz/codex-mixin/wiki/Troubleshooting) 与 [常见问题](https://github.com/Edward-lyz/codex-mixin/wiki/FAQ)
 
-> Base64 仅是编码，不是加密。配置备份包含 Provider API Key、AWS 凭据和本地访问密钥，请按敏感文件保管。
-
 ## English
 
-Codex Mixin is a cross-platform Rust local gateway and CLI with a Windows desktop app, a native macOS menu bar app, and a full-screen TUI. It connects OpenRouter, DeepSeek, Baidu OneAPI, AWS Bedrock, and other OpenAI- or Anthropic-compatible providers to official Codex while preserving ChatGPT sign-in, official GPT models, remote control, and the native Codex experience.
+Codex Mixin is a cross-platform local gateway built in Rust. It provides a Windows desktop app, a native macOS menu bar app, and a full-screen terminal UI. It connects OpenRouter, DeepSeek, Baidu OneAPI, AWS Bedrock, and other OpenAI- or Anthropic-compatible providers to official Codex while preserving official ChatGPT/OpenAI account access, GPT models, remote control, and the native Codex experience.
 
-It is not a fork or repackaging of Codex. Codex remains the primary interface. Codex Mixin supplies provider routing, protocol conversion, model catalogs, reversible configuration management, background service control, quota reporting, and performance observability.
+### Core features
 
-Highlights include:
+- Official and custom models share the Codex model picker. Models with the same name are kept separate, and existing conversations migrate automatically.
+- Model catalogs sync directly from the [official OpenAI model list](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json). Official and custom catalogs are checked every 30 seconds, with cache reuse when supported. System notifications alert you to model changes so you can switch sooner.
+- [Experimental ECH access for official GPT](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access): query the relay service's DoH endpoint for addresses and ECH configuration, then connect to official OpenAI endpoints with ECH. Availability depends on the service and network; a fixed Azure exit, avoidance of service risk controls, and access from restricted networks are not guaranteed.
+- Convert between OpenAI Responses, Chat Completions, and Anthropic Messages while preserving supported protocol semantics.
+- Cross-platform support, with interfaces suited to each platform.
+- Automatic provider management, model discovery, capability probing, context configuration, benchmarking, quota monitoring, and token usage tracking.
+- Fusion combines multiple models to improve overall results. Time-based rotation routes one model name to different upstream models at different times, which is useful for peak and off-peak pricing.
+- Encrypted configuration can be exported as a Base64 backup and imported on another machine without repeating setup.
+- Supported clients include Codex, Claude Code, DSH, OpenCode, and Pi.
 
-- Official and custom models in one Codex model picker.
-- Official model metadata from [OpenAI's Codex repository](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json), without an installed Codex CLI or its model cache. Official and dynamic provider checks remain at 30 seconds, with ETag / Last-Modified GET revalidation when supported. Account access still depends on the service and plan.
-- [Experimental ECH access for official GPT](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access), with handshake and request logs, automatic direct fallback, and TUN compatibility. It is off by default and does not guarantee an Azure exit or access from restricted regions.
-- Windows and native macOS controls plus a complete Linux and SSH TUI.
-- OpenAI Responses, Chat Completions, Anthropic Messages, and AWS Bedrock support.
-- Provider discovery, capability probing, benchmarking, quota, token, TTFT, and throughput views.
-- Multi-model and time-rotation Fusion workflows with native Codex Review output.
-- Loopback-only gateway endpoints with OS-assigned ports and automatic client synchronization.
-- Encrypted local storage and portable Base64 configuration backups.
-- Reversible integrations for Codex, Claude Code, DSH, OpenCode, and Pi.
+### Product interfaces
 
-See the [Product Tour](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour) for the complete macOS, TUI, Fusion, and mobile gallery. The [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki) contains installation, tutorials, CLI reference, backup and restore, security, troubleshooting, and FAQs.
+| Component | Purpose |
+| --- | --- |
+| macOS App | Menu bar status, provider and model management, benchmarking, configuration backups, updates, and repair |
+| Windows App | System tray, provider and model management, benchmarking, configuration backups, client integration, and repair |
+| TUI | A complete terminal console for Linux, SSH, and remote environments |
+| CLI | Shared cross-platform core with stable subcommands, JSON contracts, and background service management |
+
+### Built-in providers
+
+| Provider | Main protocols |
+| --- | --- |
+| Baidu OneAPI | Anthropic Messages / OpenAI Responses |
+| OpenRouter | OpenAI Chat Completions |
+| DeepSeek | OpenAI Chat Completions |
+| OpenCode Go | OpenAI Responses |
+| AWS Bedrock | Anthropic Messages |
+
+### Documentation
+
+Installation, configuration, and troubleshooting guides are maintained in the [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki):
+
+- [Product Tour](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour)
+- [Installation](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) and [Quick Start](https://github.com/Edward-lyz/codex-mixin/wiki/Quick-Start)
+- [Configuration Backup and Restore](https://github.com/Edward-lyz/codex-mixin/wiki/Configuration-Backup-and-Restore)
+- [Providers and Models](https://github.com/Edward-lyz/codex-mixin/wiki/Providers-and-Models)
+- [Client Integrations](https://github.com/Edward-lyz/codex-mixin/wiki/Client-Integrations) and [Fusion](https://github.com/Edward-lyz/codex-mixin/wiki/Fusion)
+- [Official Model Catalog](https://github.com/Edward-lyz/codex-mixin/wiki/Official-Model-Catalog) and [ECH, Logs, and TUN](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access)
+- [CLI Reference](https://github.com/Edward-lyz/codex-mixin/wiki/CLI-Reference)
+- [Troubleshooting](https://github.com/Edward-lyz/codex-mixin/wiki/Troubleshooting) and [FAQ](https://github.com/Edward-lyz/codex-mixin/wiki/FAQ)
 
 ## License
 
