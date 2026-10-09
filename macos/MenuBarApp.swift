@@ -181,6 +181,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await self?.refreshTokenUsage(for: range)
             }
         }
+        providerUsageController.onRequestRefresh = { [weak self] in
+            Task { @MainActor in
+                await self?.refreshRequestUsage()
+            }
+        }
         serviceStatusItem = serviceItem
         providerUsageWindowController = providerUsageController
         menu.addItem(serviceItem)

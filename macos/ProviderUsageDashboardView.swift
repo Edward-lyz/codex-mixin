@@ -845,6 +845,7 @@ final class ProviderUsageWindowController: NSWindowController {
         if let window {
             presentPersistentWindow(window)
         }
+        model.onRequestRefresh?()
     }
 
     func updateQuotaStatus(title: String, detail: String?) {

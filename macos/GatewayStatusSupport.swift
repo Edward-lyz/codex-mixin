@@ -373,4 +373,16 @@ extension AppDelegate {
             )
         }
     }
+
+    @MainActor
+    func refreshRequestUsage() async {
+        do {
+            let json = try await runGateway(["request-usage", "--json", "--limit", "100"])
+            providerUsageWindowController?.updateRequestRows(try parseRequestUsage(json))
+        } catch {
+            providerUsageWindowController?.updateRequestStatus(
+                "请求明细：不可用（\(localizedErrorDescription(error))）"
+            )
+        }
+    }
 }
