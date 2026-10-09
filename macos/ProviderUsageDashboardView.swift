@@ -520,32 +520,11 @@ private struct ProviderUsageDashboardContent: View {
                     .padding(.vertical, 24)
                     .help(model.tokenStatusDetail ?? "")
             } else {
-                let total = group.models.reduce(UInt64(0)) { $0 + $1.totalTokens }
-                let maximumTokens = group.models.map(\.totalTokens).max() ?? 0
-                ScrollView(.vertical) {
-                    VStack(spacing: 0) {
-                        ForEach(Array(group.models.enumerated()), id: \.element.modelID) { index, usage in
-                            Button {
-                                model.selectModel(usage.modelID)
-                            } label: {
-                                ModelRankingRow(
-                                    usage: usage,
-                                    seriesColor: usageSeriesColor(index),
-                                    totalTokens: total,
-                                    maximumTokens: maximumTokens,
-                                    selected: usage.modelID == model.selectedModelID
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .help(usage.modelID)
-                            .accessibilityIdentifier("token-model-\(usage.modelID)")
-                            Divider()
-                        }
-                    }
-                }
-                .scrollIndicators(.automatic)
-                .frame(maxHeight: 340)
-
+                ModelUsageChart(
+                    models: group.models,
+                    selectedModelID: model.selectedModelID,
+                    onSelect: model.selectModel
+                )
                 if let selectedModel = model.selectedModel {
                     TokenModelDetail(usage: selectedModel)
                 }
@@ -727,71 +706,82 @@ private struct UsageStatStrip: View {
     }
 }
 
-private struct ModelRankingRow: View {
-    let usage: ProviderTokenUsage
-    let seriesColor: Color
-    let totalTokens: UInt64
-    let maximumTokens: UInt64
-    let selected: Bool
+/// Vertical bar chart of per-model token usage, mirroring magpie's model
+/// breakdown: value label on top, proportional bar, model name below. Scrolls
+/// horizontally once the bars overflow the window width.
+private struct ModelUsageChart: View {
+    let models: [ProviderTokenUsage]
+    let selectedModelID: String?
+    let onSelect: (String) -> Void
+
+    private let barWidth: CGFloat = 54
+    private let chartHeight: CGFloat = 168
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            HStack(spacing: 8) {
-                Circle().fill(seriesColor).frame(width: 8, height: 8)
-                Text(usage.modelID)
-                    .font(.callout.weight(selected ? .semibold : .medium))
-                    .lineLimit(1)
-                    .truncationMode(.middle)
-                Spacer(minLength: 12)
-                Text(formatGroupedCount(usage.totalTokens))
-                    .font(.callout.monospacedDigit().weight(.semibold))
-            }
-            GeometryReader { geo in
-                ZStack(alignment: .leading) {
-                    Capsule().fill(Color.secondary.opacity(0.12))
-                    Capsule().fill(seriesColor).frame(width: barWidth(geo.size.width))
+        let maximumTokens = models.map(\.totalTokens).max() ?? 0
+        ScrollView(.horizontal) {
+            HStack(alignment: .bottom, spacing: 20) {
+                ForEach(Array(models.enumerated()), id: \.element.modelID) { index, usage in
+                    ModelUsageBar(
+                        usage: usage,
+                        seriesColor: usageSeriesColor(index),
+                        maximumTokens: maximumTokens,
+                        chartHeight: chartHeight,
+                        selected: usage.modelID == selectedModelID,
+                        onSelect: onSelect
+                    )
+                    .frame(width: barWidth)
                 }
             }
-            .frame(height: 4)
-            Text(subline)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
+            .padding(.horizontal, 6)
+            .padding(.top, 6)
+        }
+        .scrollIndicators(.visible)
+    }
+}
+
+private struct ModelUsageBar: View {
+    let usage: ProviderTokenUsage
+    let seriesColor: Color
+    let maximumTokens: UInt64
+    let chartHeight: CGFloat
+    let selected: Bool
+    let onSelect: (String) -> Void
+
+    var body: some View {
+        VStack(spacing: 6) {
+            Text(formatTokenCount(usage.totalTokens))
+                .font(.caption2.monospacedDigit().weight(.medium))
+                .foregroundStyle(selected ? .primary : .secondary)
                 .lineLimit(1)
+                .fixedSize()
+            RoundedRectangle(cornerRadius: 5, style: .continuous)
+                .fill(seriesColor.opacity(selected ? 1 : 0.72))
+                .frame(width: 30, height: barHeight)
+                .frame(height: chartHeight, alignment: .bottom)
+            Text(usage.modelID)
+                .font(.caption2)
+                .foregroundStyle(selected ? .primary : .secondary)
+                .lineLimit(2)
+                .multilineTextAlignment(.center)
+                .frame(height: 30, alignment: .top)
         }
-        .padding(.vertical, 10)
-        .padding(.horizontal, 4)
-        .background(selected ? Color.secondary.opacity(0.06) : .clear)
         .contentShape(Rectangle())
+        .onTapGesture { onSelect(usage.modelID) }
+        .help(usage.modelID)
+        .accessibilityIdentifier("token-model-\(usage.modelID)")
     }
 
-    private var subline: String {
-        var parts = ["\(usage.requestCount) 个请求"]
-        if let hit = usage.cacheHitPercent {
-            parts.append(String(format: "命中率 %.0f%%", hit))
-        }
-        if totalTokens > 0 {
-            let share = Double(usage.totalTokens) / Double(totalTokens) * 100
-            parts.append(String(format: "占比 %.0f%%", share))
-        }
-        return parts.joined(separator: " · ")
-    }
-
-    private func barWidth(_ total: CGFloat) -> CGFloat {
-        guard maximumTokens > 0 else { return 0 }
-        return max(2, total * CGFloat(Double(usage.totalTokens) / Double(maximumTokens)))
+    private var barHeight: CGFloat {
+        guard maximumTokens > 0 else { return 4 }
+        let ratio = Double(usage.totalTokens) / Double(maximumTokens)
+        return max(4, chartHeight * CGFloat(ratio))
     }
 }
 
 private func usageSeriesColor(_ index: Int) -> Color {
     let palette: [Color] = [.accentColor, .teal, .green, .orange, .purple, .pink, .indigo, .mint]
     return palette[index % palette.count]
-}
-
-private func formatGroupedCount(_ count: UInt64) -> String {
-    let formatter = NumberFormatter()
-    formatter.numberStyle = .decimal
-    formatter.groupingSeparator = ","
-    return formatter.string(from: NSNumber(value: count)) ?? "\(count)"
 }
 
 private let reqColTime: CGFloat = 84
