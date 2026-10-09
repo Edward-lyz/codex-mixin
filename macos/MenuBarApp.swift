@@ -182,9 +182,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await self?.refreshTokenUsage(for: range)
             }
         }
-        providerUsageController.onRequestRefresh = { [weak self] in
+        providerUsageController.onRequestPage = { [weak self] providerID, before in
             Task { @MainActor in
-                await self?.refreshRequestUsage()
+                await self?.refreshRequestUsage(providerID: providerID, before: before)
             }
         }
         serviceStatusItem = serviceItem

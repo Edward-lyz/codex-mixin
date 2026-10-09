@@ -210,11 +210,14 @@ func tokenUsageDetail(_ usage: ProviderTokenUsage) -> String {
 final class ProviderUsageDashboardModel: ObservableObject {
     var onRangeChange: ((TokenUsageRange) -> Void)?
     var onContentHeightChange: ((CGFloat) -> Void)?
-    var onRequestRefresh: (() -> Void)?
+    /// Asks for one page of the provider's request ledger older than `before`.
+    var onRequestPage: ((_ providerID: String, _ before: Int64?) -> Void)?
     @Published var configuredProviders: [ProviderDashboardProvider] = []
     @Published var quotaUsages: [ProviderQuotaUsage] = []
     @Published var tokenUsages: [ProviderTokenUsage] = []
     @Published var requestRows: [RequestUsageRow] = []
+    @Published var requestHasMore = true
+    @Published var requestLoading = false
     @Published var requestStatus = "请求明细：检查中..."
     @Published var quotaStatusTitle = "额度：检查中..."
     @Published var quotaStatusDetail: String?
@@ -275,7 +278,34 @@ final class ProviderUsageDashboardModel: ObservableObject {
     func selectProvider(_ providerID: String) {
         selectedProviderID = providerID
         selectedModelID = nil
+        loadRequests(reset: true)
         onContentHeightChange?(contentHeight)
+    }
+
+    /// Loads the first page (`reset`) or the next older page for the
+    /// selected provider; a page already in flight blocks further paging.
+    func loadRequests(reset: Bool) {
+        guard let providerID = selectedProviderID else { return }
+        if reset {
+            requestRows = []
+            requestHasMore = true
+            requestLoading = false
+            requestStatus = "请求明细：检查中..."
+        }
+        guard requestHasMore, !requestLoading else { return }
+        requestLoading = true
+        onRequestPage?(providerID, requestRows.last?.id)
+    }
+
+    func appendRequestPage(providerID: String, rows: [RequestUsageRow]) {
+        // Drop pages for a provider the user has already left.
+        guard providerID == selectedProviderID else { return }
+        // A reset can race a page in flight; keep only rows older than ours.
+        let lastID = requestRows.last?.id ?? .max
+        requestRows.append(contentsOf: rows.filter { $0.id < lastID })
+        requestHasMore = rows.count >= requestPageSize
+        requestLoading = false
+        requestStatus = "请求明细：暂无数据"
     }
 
     func selectModel(_ modelID: String) {
@@ -389,18 +419,23 @@ private struct ProviderUsageDashboardContent: View {
     }
 
     private func requestSection(_ group: ProviderUsageGroup) -> some View {
-        let rows = model.requestRows.filter { $0.providerID == group.providerID }
-        return VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 14) {
             Text("请求明细")
                 .font(.system(size: 15, weight: .semibold))
-            if rows.isEmpty {
-                Text(model.requestRows.isEmpty ? model.requestStatus : "最近没有该供应商的请求")
+            if model.requestRows.isEmpty {
+                Text(model.requestLoading ? "请求明细：加载中..." : model.requestStatus)
                     .font(.callout)
                     .foregroundStyle(.secondary)
                     .frame(maxWidth: .infinity, alignment: .center)
                     .padding(.vertical, 24)
             } else {
-                RequestUsageTable(rows: rows)
+                RequestUsageTable(rows: model.requestRows) {
+                    model.loadRequests(reset: false)
+                }
+                Text(model.requestLoading ? "加载中..." : (model.requestHasMore ? "" : "已显示全部请求"))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
             }
         }
     }
@@ -578,15 +613,18 @@ private struct ModelUsageTable: View {
                 HStack(spacing: 12) {
                     Text(usage.modelID).lineLimit(1).truncationMode(.middle)
                         .frame(maxWidth: .infinity, alignment: .leading)
-                    GeometryReader { geo in
-                        Capsule().fill(usageSeriesColor(index).opacity(0.8))
-                            .frame(
-                                width: max(2, geo.size.width * Double(usage.totalTokens) / Double(total)),
-                                height: 4
-                            )
-                            .frame(maxHeight: .infinity, alignment: .center)
+                    let share = Double(usage.totalTokens) / Double(total)
+                    HStack(spacing: 8) {
+                        GeometryReader { geo in
+                            Capsule().fill(usageSeriesColor(index).opacity(0.8))
+                                .frame(width: max(2, geo.size.width * share), height: 4)
+                                .frame(maxHeight: .infinity, alignment: .center)
+                        }
+                        Text(formatSharePercent(share))
+                            .foregroundStyle(.secondary)
+                            .frame(width: 44, alignment: .trailing)
                     }
-                    .frame(width: 90)
+                    .frame(width: 130)
                     metricCells(
                         formatTokenCount(usage.totalTokens),
                         "\(usage.requestCount)",
@@ -604,7 +642,7 @@ private struct ModelUsageTable: View {
     private var header: some View {
         HStack(spacing: 12) {
             Text("模型").frame(maxWidth: .infinity, alignment: .leading)
-            Text("占比").frame(width: 90, alignment: .leading)
+            Text("占比").frame(width: 130, alignment: .leading)
             metricCells("Token", "请求", "缓存", "TTFT", "吞吐")
         }
         .font(.caption.weight(.medium))
@@ -880,6 +918,7 @@ private let reqColTPS: CGFloat = 86
 
 private struct RequestUsageTable: View {
     let rows: [RequestUsageRow]
+    let onReachEnd: () -> Void
 
     var body: some View {
         // The page scrolls as a whole, so the table lays out inline.
@@ -888,6 +927,9 @@ private struct RequestUsageTable: View {
             ForEach(rows) { row in
                 Divider()
                 RequestUsageRowView(row: row)
+                    .onAppear {
+                        if row.id == rows.last?.id { onReachEnd() }
+                    }
             }
         }
     }
@@ -1161,7 +1203,7 @@ final class ProviderUsageWindowController: NSWindowController {
         if let window {
             presentPersistentWindow(window)
         }
-        model.onRequestRefresh?()
+        model.loadRequests(reset: true)
     }
 
     func updateQuotaStatus(title: String, detail: String?) {
@@ -1202,19 +1244,28 @@ final class ProviderUsageWindowController: NSWindowController {
         set { model.onRangeChange = newValue }
     }
 
-    var onRequestRefresh: (() -> Void)? {
-        get { model.onRequestRefresh }
-        set { model.onRequestRefresh = newValue }
+    var onRequestPage: ((_ providerID: String, _ before: Int64?) -> Void)? {
+        get { model.onRequestPage }
+        set { model.onRequestPage = newValue }
     }
 
-    func updateRequestRows(_ rows: [RequestUsageRow]) {
-        model.requestRows = rows
-        model.requestStatus = "请求明细：暂无数据"
+    func appendRequestPage(providerID: String, rows: [RequestUsageRow]) {
+        model.appendRequestPage(providerID: providerID, rows: rows)
     }
 
     func updateRequestStatus(_ status: String) {
         model.requestStatus = status
+        model.requestLoading = false
     }
+}
+
+/// Rows per request-ledger page; a shorter page means the ledger is exhausted.
+let requestPageSize = 100
+
+func formatSharePercent(_ share: Double) -> String {
+    let percent = share * 100
+    if percent > 0, percent < 0.1 { return "<0.1%" }
+    return String(format: "%.1f%%", percent)
 }
 
 func formatTokenCount(_ count: UInt64) -> String {

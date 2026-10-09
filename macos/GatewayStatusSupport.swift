@@ -379,10 +379,19 @@ extension AppDelegate {
     }
 
     @MainActor
-    func refreshRequestUsage() async {
+    func refreshRequestUsage(providerID: String, before: Int64?) async {
+        var arguments = [
+            "request-usage", "--json", "--limit", "\(requestPageSize)", "--provider", providerID,
+        ]
+        if let before {
+            arguments += ["--before", "\(before)"]
+        }
         do {
-            let json = try await runGateway(["request-usage", "--json", "--limit", "100"])
-            providerUsageWindowController?.updateRequestRows(try parseRequestUsage(json))
+            let json = try await runGateway(arguments)
+            providerUsageWindowController?.appendRequestPage(
+                providerID: providerID,
+                rows: try parseRequestUsage(json)
+            )
         } catch {
             providerUsageWindowController?.updateRequestStatus(
                 "请求明细：不可用（\(localizedErrorDescription(error))）"
