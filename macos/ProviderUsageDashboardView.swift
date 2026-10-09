@@ -64,19 +64,6 @@ enum TokenUsageRange: String, CaseIterable, Identifiable {
     }
 }
 
-enum UsageDashboardTab: String, CaseIterable, Identifiable {
-    case overview
-    case requests
-
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .overview: return "概览"
-        case .requests: return "请求"
-        }
-    }
-}
-
 struct RequestUsageRow: Decodable, Identifiable {
     let id: Int64
     let recordedAtMs: UInt64
@@ -229,7 +216,6 @@ final class ProviderUsageDashboardModel: ObservableObject {
     @Published var tokenUsages: [ProviderTokenUsage] = []
     @Published var requestRows: [RequestUsageRow] = []
     @Published var requestStatus = "请求明细：检查中..."
-    @Published var selectedTab = UsageDashboardTab.overview
     @Published var quotaStatusTitle = "额度：检查中..."
     @Published var quotaStatusDetail: String?
     @Published var tokenStatusTitle = "Token 使用：检查中..."
@@ -304,14 +290,6 @@ final class ProviderUsageDashboardModel: ObservableObject {
         onRangeChange?(range)
         onContentHeightChange?(contentHeight)
     }
-
-    func selectTab(_ tab: UsageDashboardTab) {
-        guard tab != selectedTab else { return }
-        selectedTab = tab
-        if tab == .requests {
-            onRequestRefresh?()
-        }
-    }
 }
 
 private struct ProviderUsageDashboardContent: View {
@@ -342,37 +320,27 @@ private struct ProviderUsageDashboardContent: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    /// Magpie-style window: navigation sidebar on the left, a titled page
-    /// with stats and sections on the right.
+    /// Magpie-style window: provider sidebar on the left, one scrolling page
+    /// on the right with stats, the model breakdown, then request details.
     private var windowBody: some View {
         HStack(spacing: 0) {
             UsageSidebar(model: model)
                 .frame(width: 196)
             Divider()
-            if model.selectedTab == .requests {
-                // The request table scrolls itself, so it fills the pane.
-                VStack(alignment: .leading, spacing: 24) {
+            ScrollView(.vertical) {
+                VStack(alignment: .leading, spacing: 32) {
                     pageHeader
-                    requestList
+                    if let group = model.selectedGroup {
+                        UsageStatStrip(group: group)
+                        modelRanking(group)
+                        requestSection(group)
+                    } else {
+                        emptyOverview
+                    }
                 }
                 .padding(.horizontal, 28)
                 .padding(.vertical, 24)
-                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
-            } else {
-                ScrollView(.vertical) {
-                    VStack(alignment: .leading, spacing: 28) {
-                        pageHeader
-                        if let group = model.selectedGroup {
-                            UsageStatStrip(group: group)
-                            modelRanking(group)
-                        } else {
-                            emptyOverview
-                        }
-                    }
-                    .padding(.horizontal, 28)
-                    .padding(.vertical, 24)
-                    .frame(maxWidth: .infinity, alignment: .topLeading)
-                }
+                .frame(maxWidth: .infinity, alignment: .topLeading)
             }
         }
         .frame(minWidth: 760, maxWidth: .infinity, minHeight: 480, maxHeight: .infinity)
@@ -380,19 +348,16 @@ private struct ProviderUsageDashboardContent: View {
     }
 
     private var pageHeader: some View {
-        let requests = model.selectedTab == .requests
-        return HStack(alignment: .center) {
+        HStack(alignment: .center) {
             VStack(alignment: .leading, spacing: 4) {
-                Text(requests ? "请求" : (model.selectedGroup?.displayName ?? "用量"))
+                Text(model.selectedGroup?.displayName ?? "用量")
                     .font(.system(size: 22, weight: .semibold))
-                Text(requests ? "每次 turn 的缓存、首字延迟与吞吐" : "Token、缓存与速度")
+                Text("Token、缓存与速度")
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
             Spacer()
-            if !requests {
-                rangePicker
-            }
+            rangePicker
         }
     }
 
@@ -423,20 +388,20 @@ private struct ProviderUsageDashboardContent: View {
         .frame(width: 220)
     }
 
-    @ViewBuilder
-    private var requestList: some View {
-        if model.requestRows.isEmpty {
-            VStack(spacing: 8) {
-                Image(systemName: "list.bullet.rectangle")
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-                Text(model.requestStatus)
+    private func requestSection(_ group: ProviderUsageGroup) -> some View {
+        let rows = model.requestRows.filter { $0.providerID == group.providerID }
+        return VStack(alignment: .leading, spacing: 14) {
+            Text("请求明细")
+                .font(.system(size: 15, weight: .semibold))
+            if rows.isEmpty {
+                Text(model.requestRows.isEmpty ? model.requestStatus : "最近没有该供应商的请求")
                     .font(.callout)
                     .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 24)
+            } else {
+                RequestUsageTable(rows: rows)
             }
-            .frame(maxWidth: .infinity, minHeight: 320)
-        } else {
-            RequestUsageTable(rows: model.requestRows)
         }
     }
 
@@ -545,33 +510,20 @@ private struct ProviderUsageDashboardContent: View {
     }
 }
 
-/// Left navigation column: view switch on top, provider list below.
+/// Left navigation column listing providers.
 private struct UsageSidebar: View {
     @ObservedObject var model: ProviderUsageDashboardModel
 
     var body: some View {
         VStack(alignment: .leading, spacing: 2) {
-            sectionTitle("视图")
-            ForEach(UsageDashboardTab.allCases) { tab in
-                sidebarRow(selected: model.selectedTab == tab) {
-                    Image(systemName: tab == .overview ? "chart.bar" : "list.bullet")
-                        .frame(width: 18)
-                    Text(tab.title)
-                } action: {
-                    model.selectTab(tab)
-                }
-            }
-            sectionTitle("供应商").padding(.top, 16)
+            sectionTitle("供应商")
             ScrollView(.vertical) {
                 VStack(spacing: 2) {
                     ForEach(model.groups, id: \.providerID) { group in
-                        let selected = model.selectedTab == .overview
-                            && group.providerID == model.selectedProviderID
-                        sidebarRow(selected: selected) {
+                        sidebarRow(selected: group.providerID == model.selectedProviderID) {
                             ProviderLogoView(group: group).frame(width: 18, height: 18)
                             Text(group.displayName).lineLimit(1).truncationMode(.tail)
                         } action: {
-                            model.selectTab(.overview)
                             model.selectProvider(group.providerID)
                         }
                         .accessibilityIdentifier("provider-tab-\(group.providerID)")
@@ -930,22 +882,14 @@ private struct RequestUsageTable: View {
     let rows: [RequestUsageRow]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 24) {
-            RequestSummaryStrip(rows: rows)
-            VStack(alignment: .leading, spacing: 0) {
-                requestHeader
+        // The page scrolls as a whole, so the table lays out inline.
+        LazyVStack(alignment: .leading, spacing: 0) {
+            requestHeader
+            ForEach(rows) { row in
                 Divider()
-                ScrollView(.vertical) {
-                    LazyVStack(spacing: 0) {
-                        ForEach(rows) { row in
-                            RequestUsageRowView(row: row)
-                            Divider()
-                        }
-                    }
-                }
+                RequestUsageRowView(row: row)
             }
         }
-        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
     private var requestHeader: some View {
@@ -994,64 +938,6 @@ private struct RequestUsageRowView: View {
         .font(.system(size: 12).monospacedDigit())
         .padding(.vertical, 8)
         .help(row.prefixState.map { "缓存状态：\($0)" } ?? "")
-    }
-}
-
-private struct RequestSummaryStrip: View {
-    let rows: [RequestUsageRow]
-
-    var body: some View {
-        HStack(alignment: .top, spacing: 0) {
-            StatChip(title: "请求数", value: "\(rows.count)")
-            Divider().frame(height: 40).padding(.horizontal, 10)
-            StatChip(title: "中位 TTFT", value: medianTTFT)
-            Divider().frame(height: 40).padding(.horizontal, 10)
-            StatChip(title: "平均吞吐", value: averageThroughput)
-            Divider().frame(height: 40).padding(.horizontal, 10)
-            StatChip(title: "缓存命中", value: cacheHitRate)
-        }
-    }
-
-    private var medianTTFT: String {
-        let values = rows.compactMap(\.ttftMs).sorted()
-        guard !values.isEmpty else { return "—" }
-        let mid = values.count / 2
-        let median = values.count.isMultiple(of: 2)
-            ? (values[mid - 1] + values[mid]) / 2
-            : values[mid]
-        return String(format: "%.0f ms", median)
-    }
-
-    private var averageThroughput: String {
-        let values = rows.compactMap(\.outputTPS)
-        guard !values.isEmpty else { return "—" }
-        let mean = values.reduce(0, +) / Double(values.count)
-        return "\(formatThroughput(mean)) t/s"
-    }
-
-    private var cacheHitRate: String {
-        let cache = rows.reduce(UInt64(0)) { $0 + $1.cacheReadTokens }
-        let base = rows.reduce(UInt64(0)) { $0 + $1.inputTokens + $1.cacheReadTokens }
-        guard base > 0 else { return "—" }
-        return String(format: "%.0f%%", Double(cache) / Double(base) * 100)
-    }
-}
-
-private struct StatChip: View {
-    let title: String
-    let value: String
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
-            Text(title)
-                .font(.caption)
-                .foregroundStyle(.secondary)
-            Text(value)
-                .font(.system(size: 26, weight: .semibold).monospacedDigit())
-                .lineLimit(1)
-                .minimumScaleFactor(0.6)
-        }
-        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -1256,7 +1142,7 @@ final class ProviderUsageWindowController: NSWindowController {
             backing: .buffered,
             defer: false
         )
-        window.title = "使用与性能"
+        window.title = "用量与会话"
         window.minSize = NSSize(width: 760, height: 520)
         window.toolbarStyle = .unified
         configureOpaqueWindow(window)
