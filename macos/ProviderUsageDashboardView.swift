@@ -257,6 +257,7 @@ final class ProviderUsageDashboardModel: ObservableObject {
     var onRequestPage: ((_ providerID: String, _ before: Int64?) -> Void)?
     var onActivityRefresh: ((_ providerID: String, _ range: TokenUsageRange) -> Void)?
     @Published var activity: UsageActivity?
+    @Published var activityError: String?
     @Published var configuredProviders: [ProviderDashboardProvider] = []
     @Published var quotaUsages: [ProviderQuotaUsage] = []
     @Published var tokenUsages: [ProviderTokenUsage] = []
@@ -331,6 +332,7 @@ final class ProviderUsageDashboardModel: ObservableObject {
     func refreshActivity() {
         guard let providerID = selectedProviderID else { return }
         activity = nil
+        activityError = nil
         onActivityRefresh?(providerID, selectedRange)
     }
 
@@ -420,9 +422,20 @@ private struct ProviderUsageDashboardContent: View {
                     pageHeader
                     if let group = model.selectedGroup {
                         UsageStatStrip(group: group)
+                        if let activity = model.activity {
+                            HourlyUsageChart(
+                                hourly: activity.hourly,
+                                modelOrder: group.models.map(\.modelID)
+                            )
+                        } else if let error = model.activityError {
+                            Text(error).font(.callout).foregroundStyle(.secondary)
+                        }
                         modelRanking(group)
                         if let clients = model.activity?.clients, !clients.isEmpty {
                             ClientUsageTable(clients: clients)
+                        }
+                        if let daily = model.activity?.daily {
+                            UsageHeatmap(daily: daily)
                         }
                         requestSection(group)
                     } else {
@@ -1059,6 +1072,144 @@ private struct RequestClientBadge: View {
     }
 }
 
+/// Last 24 hours as stacked bars per hour, coloured like the model chart.
+private struct HourlyUsageChart: View {
+    let hourly: [UsageActivity.Hourly]
+    let modelOrder: [String]
+
+    private static let hourMillis: UInt64 = 3_600_000
+    private let chartHeight: CGFloat = 110
+
+    var body: some View {
+        let currentHour = UInt64(Date().timeIntervalSince1970 * 1000) / Self.hourMillis
+        let hours = (0..<24).map { (currentHour - 23 + UInt64($0)) * Self.hourMillis }
+        let buckets = Dictionary(grouping: hourly, by: \.hourStartMs)
+        let peak = max(buckets.values.map { $0.reduce(0) { $0 &+ $1.totalTokens } }.max() ?? 0, 1)
+        VStack(alignment: .leading, spacing: 14) {
+            Text("24 小时").font(.system(size: 15, weight: .semibold))
+            HStack(alignment: .bottom, spacing: 4) {
+                ForEach(hours, id: \.self) { hour in
+                    column(buckets[hour] ?? [], hour: hour, peak: peak)
+                }
+            }
+        }
+    }
+
+    private func column(_ models: [UsageActivity.Hourly], hour: UInt64, peak: UInt64) -> some View {
+        let ordered = models.sorted { seriesIndex($0.modelId) < seriesIndex($1.modelId) }
+        let total = models.reduce(UInt64(0)) { $0 &+ $1.totalTokens }
+        let requests = models.reduce(UInt64(0)) { $0 &+ $1.requestCount }
+        let date = Date(timeIntervalSince1970: Double(hour) / 1000)
+        let label = Self.hourFormatter.string(from: date)
+        return VStack(spacing: 4) {
+            VStack(spacing: 1) {
+                // Largest model sits at the bottom of the stack.
+                ForEach(ordered.reversed(), id: \.modelId) { bucket in
+                    Rectangle()
+                        .fill(color(bucket.modelId))
+                        .frame(height: chartHeight * CGFloat(bucket.totalTokens) / CGFloat(peak))
+                }
+                Rectangle().fill(Color.secondary.opacity(0.15)).frame(height: 2)
+            }
+            .clipShape(RoundedRectangle(cornerRadius: 3, style: .continuous))
+            .frame(maxWidth: .infinity)
+            .frame(height: chartHeight, alignment: .bottom)
+            Text(Calendar.current.component(.hour, from: date) % 6 == 0 ? label : " ")
+                .font(.system(size: 9).monospacedDigit())
+                .foregroundStyle(.secondary)
+                .fixedSize()
+        }
+        .help("\(label) · \(formatTokenCount(total)) Token · \(requests) 请求")
+    }
+
+    private static let hourFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "HH:00"
+        return formatter
+    }()
+
+    private func seriesIndex(_ modelID: String) -> Int {
+        modelOrder.firstIndex(of: modelID) ?? modelOrder.count
+    }
+
+    private func color(_ modelID: String) -> Color {
+        guard let index = modelOrder.firstIndex(of: modelID) else { return .gray }
+        return usageSeriesColor(index)
+    }
+}
+
+/// One year of daily totals laid out like a contribution graph: one column
+/// per week, Sunday on top. Days are UTC, matching the daily aggregate.
+private struct UsageHeatmap: View {
+    let daily: [UsageActivity.Daily]
+
+    private static let weeks = 53
+    private let cell: CGFloat = 11
+    private let gap: CGFloat = 3
+
+    var body: some View {
+        let today = UInt64(Date().timeIntervalSince1970) / 86_400
+        // Unix day 0 was a Thursday, so (day + 4) % 7 is 0 on Sundays.
+        let firstDay = today - (today + 4) % 7 - UInt64(Self.weeks - 1) * 7
+        let byDay = Dictionary(daily.map { ($0.day, $0) }, uniquingKeysWith: { first, _ in first })
+        let peak = max(daily.map(\.totalTokens).max() ?? 0, 1)
+        VStack(alignment: .leading, spacing: 14) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("活跃度").font(.system(size: 15, weight: .semibold))
+                Spacer()
+                Text("近一年 \(daily.filter { $0.requestCount > 0 }.count) 天有请求")
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+            }
+            HStack(alignment: .top, spacing: gap) {
+                ForEach(0..<Self.weeks, id: \.self) { week in
+                    VStack(spacing: gap) {
+                        ForEach(0..<7, id: \.self) { weekday in
+                            let day = firstDay + UInt64(week * 7 + weekday)
+                            square(day: day, usage: byDay[day], peak: peak, future: day > today)
+                        }
+                    }
+                    // Columns share the pane width; squares follow.
+                    .frame(maxWidth: .infinity)
+                }
+            }
+            HStack(spacing: gap) {
+                Text("少").font(.caption2).foregroundStyle(.secondary)
+                ForEach(0..<5, id: \.self) { level in
+                    RoundedRectangle(cornerRadius: 2).fill(levelColor(level))
+                        .frame(width: cell, height: cell)
+                }
+                Text("多").font(.caption2).foregroundStyle(.secondary)
+            }
+        }
+    }
+
+    private func square(
+        day: UInt64, usage: UsageActivity.Daily?, peak: UInt64, future: Bool
+    ) -> some View {
+        let tokens = usage?.totalTokens ?? 0
+        // Square-root scaling keeps light days visible next to a heavy peak.
+        let level = tokens == 0 ? 0 : 1 + min(3, Int(sqrt(Double(tokens) / Double(peak)) * 4))
+        return RoundedRectangle(cornerRadius: 2)
+            .fill(future ? Color.clear : levelColor(level))
+            .aspectRatio(1, contentMode: .fit)
+            .help("\(Self.dayFormatter.string(from: Date(timeIntervalSince1970: Double(day) * 86_400))) · \(formatTokenCount(tokens)) Token · \(usage?.requestCount ?? 0) 请求")
+    }
+
+    private func levelColor(_ level: Int) -> Color {
+        level == 0
+            ? Color.secondary.opacity(0.12)
+            : Color.accentColor.opacity(0.25 + 0.25 * Double(level - 1))
+    }
+
+    private static let dayFormatter: DateFormatter = {
+        let formatter = DateFormatter()
+        formatter.dateFormat = "yyyy-MM-dd"
+        formatter.timeZone = TimeZone(identifier: "UTC")
+        return formatter
+    }()
+}
+
 /// Per-client breakdown, the magpie "by client" section.
 private struct ClientUsageTable: View {
     let clients: [UsageActivity.Client]
@@ -1388,6 +1539,11 @@ final class ProviderUsageWindowController: NSWindowController {
 
     func updateActivity(providerID: String, range: TokenUsageRange, activity: UsageActivity) {
         model.updateActivity(providerID: providerID, range: range, activity: activity)
+    }
+
+    func updateActivityError(providerID: String, _ message: String) {
+        guard providerID == model.selectedProviderID else { return }
+        model.activityError = message
     }
 
     func updateRequestStatus(_ status: String) {

@@ -399,8 +399,8 @@ extension AppDelegate {
         }
     }
 
-    /// Activity failures only hide the activity sections; the rest of the
-    /// page keeps working, so the error goes to the log.
+    /// Activity failures replace the activity sections with the error; the
+    /// rest of the page keeps working.
     @MainActor
     func refreshUsageActivity(providerID: String, range: TokenUsageRange) async {
         var arguments = ["usage-activity", "--json", "--provider", providerID]
@@ -415,7 +415,10 @@ extension AppDelegate {
                 activity: try parseUsageActivity(json)
             )
         } catch {
-            NSLog("usage activity unavailable: %@", localizedErrorDescription(error))
+            providerUsageWindowController?.updateActivityError(
+                providerID: providerID,
+                "用量活动：不可用（\(localizedErrorDescription(error))）"
+            )
         }
     }
 }
