@@ -9,7 +9,9 @@ use serde_json::Value;
 use crate::gateway::UpstreamRouting;
 use crate::protocol::sse::SseDecoder;
 
-use super::super::cache_usage::{ProviderTokenUsage, TokenUsageAggregator, UpstreamCacheUsage};
+use super::super::cache_usage::{
+    ProviderRequestUsage, ProviderTokenUsage, TokenUsageAggregator, UpstreamCacheUsage,
+};
 use super::shape::{CacheShape, PrefixChanges, PrefixReport, PrefixState};
 
 /// Sessions retained for prefix diagnostics. Codex drives one session per
@@ -217,6 +219,7 @@ pub(crate) fn record_provider_prefix(
         total_bytes: report.total_bytes,
         reused_turns: report.reused_turns,
         total_turns: report.total_turns,
+        session_id: Some(routing.hash_key.clone()),
         usage: tracker.usage(),
         started_at: Instant::now(),
     })
@@ -245,6 +248,7 @@ pub(crate) struct PrefixObservation {
     pub(super) total_bytes: usize,
     pub(super) reused_turns: usize,
     pub(super) total_turns: usize,
+    pub(super) session_id: Option<String>,
     pub(super) usage: Arc<TokenUsageAggregator>,
     pub(super) started_at: Instant,
 }
@@ -301,8 +305,25 @@ impl PrefixObservation {
     /// the only case that warrants a warning, because nothing on this side can
     /// fix it and it otherwise looks like a gateway bug.
     pub(crate) fn report_upstream_cache(&self, usage: &UpstreamCacheUsage) {
-        self.usage
-            .record(&self.provider_id, &self.upstream_model_id, usage);
+        self.usage.record_request(ProviderRequestUsage {
+            id: 0,
+            recorded_at_ms: 0,
+            client_id: "unknown".to_owned(),
+            session_id: self.session_id.clone(),
+            provider_id: self.provider_id.clone(),
+            model_id: self.upstream_model_id.clone(),
+            input_tokens: usage.input_tokens.unwrap_or(0),
+            cache_read_tokens: usage.cache_read_tokens.unwrap_or(0),
+            cache_creation_tokens: usage.cache_creation_tokens.unwrap_or(0),
+            output_tokens: usage.output_tokens.unwrap_or(0),
+            ttft_micros: usage.ttft_micros,
+            generation_micros: usage.generation_micros,
+            prefix_state: Some(self.state.as_str().to_owned()),
+            changed_regions: (!self.changed_regions.is_empty())
+                .then(|| self.changed_regions.clone()),
+            reused_turns: self.reused_turns as u64,
+            total_turns: self.total_turns as u64,
+        });
         let cache_read_tokens = usage.cache_read_tokens.unwrap_or(0);
         let uncached_input_tokens = usage.input_tokens.unwrap_or(0);
         let prompt_tokens = cache_read_tokens.saturating_add(uncached_input_tokens);

@@ -11,6 +11,63 @@ use serde_json::Value;
 
 const MAX_RECORDED_TTFT_MICROS: u64 = 50_000_000;
 const MIN_RECORDED_OUTPUT_TOKENS: u64 = 100;
+const REQUEST_USAGE_RETENTION_MILLIS: u64 = 30 * 86_400_000;
+const MAX_REQUEST_USAGE_ROWS: i64 = 50_000;
+const REQUEST_USAGE_PRUNE_INTERVAL: i64 = 256;
+
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct ProviderRequestUsage {
+    pub(crate) id: i64,
+    pub(crate) recorded_at_ms: u64,
+    pub(crate) client_id: String,
+    pub(crate) session_id: Option<String>,
+    pub(crate) provider_id: String,
+    pub(crate) model_id: String,
+    pub(crate) input_tokens: u64,
+    pub(crate) cache_read_tokens: u64,
+    pub(crate) cache_creation_tokens: u64,
+    pub(crate) output_tokens: u64,
+    pub(crate) ttft_micros: Option<u64>,
+    pub(crate) generation_micros: Option<u64>,
+    pub(crate) prefix_state: Option<String>,
+    pub(crate) changed_regions: Option<String>,
+    pub(crate) reused_turns: u64,
+    pub(crate) total_turns: u64,
+}
+
+impl ProviderRequestUsage {
+    fn from_usage(provider_id: &str, model_id: &str, usage: &UpstreamCacheUsage) -> Self {
+        Self {
+            id: 0,
+            recorded_at_ms: 0,
+            client_id: "unknown".to_owned(),
+            session_id: None,
+            provider_id: provider_id.to_owned(),
+            model_id: model_id.to_owned(),
+            input_tokens: usage.input_tokens.unwrap_or(0),
+            cache_read_tokens: usage.cache_read_tokens.unwrap_or(0),
+            cache_creation_tokens: usage.cache_creation_tokens.unwrap_or(0),
+            output_tokens: usage.output_tokens.unwrap_or(0),
+            ttft_micros: usage.ttft_micros,
+            generation_micros: usage.generation_micros,
+            prefix_state: None,
+            changed_regions: None,
+            reused_turns: 0,
+            total_turns: 0,
+        }
+    }
+
+    fn usage(&self) -> UpstreamCacheUsage {
+        UpstreamCacheUsage {
+            input_tokens: Some(self.input_tokens),
+            cache_read_tokens: Some(self.cache_read_tokens),
+            cache_creation_tokens: Some(self.cache_creation_tokens),
+            output_tokens: Some(self.output_tokens),
+            ttft_micros: self.ttft_micros,
+            generation_micros: self.generation_micros,
+        }
+    }
+}
 
 /// Provider-level token and prompt cache counters observed on upstream
 /// responses, kept compact so the menu can visualize usage without retaining
@@ -53,6 +110,38 @@ struct TokenUsageState {
 
 fn current_unix_day() -> anyhow::Result<u64> {
     Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_secs() / 86_400)
+}
+
+fn current_unix_millis() -> anyhow::Result<u64> {
+    Ok(SystemTime::now().duration_since(UNIX_EPOCH)?.as_millis() as u64)
+}
+
+fn ensure_request_usage_table(connection: &Connection) -> anyhow::Result<()> {
+    connection.execute_batch(
+        "CREATE TABLE IF NOT EXISTS request_usage (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            recorded_at_ms INTEGER NOT NULL,
+            client_id TEXT NOT NULL,
+            session_id TEXT,
+            provider_id TEXT NOT NULL,
+            model_id TEXT NOT NULL,
+            input_tokens INTEGER NOT NULL,
+            cache_read_tokens INTEGER NOT NULL,
+            cache_creation_tokens INTEGER NOT NULL,
+            output_tokens INTEGER NOT NULL,
+            ttft_micros INTEGER,
+            generation_micros INTEGER,
+            prefix_state TEXT,
+            changed_regions TEXT,
+            reused_turns INTEGER NOT NULL,
+            total_turns INTEGER NOT NULL
+        );
+        CREATE INDEX IF NOT EXISTS request_usage_recorded_at
+            ON request_usage(recorded_at_ms DESC);
+        CREATE INDEX IF NOT EXISTS request_usage_client_time
+            ON request_usage(client_id, recorded_at_ms DESC);",
+    )?;
+    Ok(())
 }
 
 fn ensure_timing_columns(connection: &Connection, table: &str) -> anyhow::Result<()> {
@@ -122,6 +211,7 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
             PRIMARY KEY (day, provider_id, model_id)
         )",
     )?;
+    ensure_request_usage_table(&connection)?;
     ensure_timing_columns(&connection, "token_usage")?;
     ensure_timing_columns(&connection, "token_usage_daily")?;
     let mut statement = connection.prepare(
@@ -201,12 +291,7 @@ fn load_persisted_usage(path: &Path) -> anyhow::Result<TokenUsageState> {
     })
 }
 
-fn persist_usage_delta(
-    path: &Path,
-    provider_id: &str,
-    model_id: &str,
-    usage: &UpstreamCacheUsage,
-) -> anyhow::Result<()> {
+fn persist_usage_delta(path: &Path, request: &ProviderRequestUsage) -> anyhow::Result<()> {
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -252,11 +337,15 @@ fn persist_usage_delta(
             PRIMARY KEY (day, provider_id, model_id)
          )",
     )?;
+    ensure_request_usage_table(&connection)?;
     ensure_timing_columns(&connection, "token_usage")?;
     ensure_timing_columns(&connection, "token_usage_daily")?;
     let day = current_unix_day()?;
     let transaction = connection.transaction()?;
-    let timing_recorded = is_representative_timing_sample(usage);
+    let usage = request.usage();
+    let provider_id = &request.provider_id;
+    let model_id = &request.model_id;
+    let timing_recorded = is_representative_timing_sample(&usage);
     let output_tps = match (usage.output_tokens, usage.generation_micros) {
         (Some(tokens), Some(micros)) if timing_recorded && micros > 0 => {
             tokens as f64 * 1_000_000.0 / micros as f64
@@ -348,6 +437,48 @@ fn persist_usage_delta(
             u64::from(output_tps > 0.0),
         ],
     )?;
+    transaction.execute(
+        "INSERT INTO request_usage (
+            recorded_at_ms, client_id, session_id, provider_id, model_id,
+            input_tokens, cache_read_tokens, cache_creation_tokens, output_tokens,
+            ttft_micros, generation_micros, prefix_state, changed_regions,
+            reused_turns, total_turns
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15)",
+        params![
+            request.recorded_at_ms,
+            request.client_id,
+            request.session_id,
+            request.provider_id,
+            request.model_id,
+            request.input_tokens,
+            request.cache_read_tokens,
+            request.cache_creation_tokens,
+            request.output_tokens,
+            request.ttft_micros,
+            request.generation_micros,
+            request.prefix_state,
+            request.changed_regions,
+            request.reused_turns,
+            request.total_turns,
+        ],
+    )?;
+    let row_id = transaction.last_insert_rowid();
+    if row_id % REQUEST_USAGE_PRUNE_INTERVAL == 0 {
+        let cutoff = request
+            .recorded_at_ms
+            .saturating_sub(REQUEST_USAGE_RETENTION_MILLIS);
+        transaction.execute(
+            "DELETE FROM request_usage WHERE recorded_at_ms < ?1",
+            [cutoff],
+        )?;
+        transaction.execute(
+            "DELETE FROM request_usage
+             WHERE id <= COALESCE((
+                SELECT id FROM request_usage ORDER BY id DESC LIMIT 1 OFFSET ?1
+             ), 0)",
+            [MAX_REQUEST_USAGE_ROWS],
+        )?;
+    }
     transaction.commit().map_err(Into::into)
 }
 
@@ -374,34 +505,98 @@ impl TokenUsageAggregator {
     }
 
     pub(crate) fn record(&self, provider_id: &str, model_id: &str, usage: &UpstreamCacheUsage) {
+        self.record_request(ProviderRequestUsage::from_usage(
+            provider_id,
+            model_id,
+            usage,
+        ));
+    }
+
+    pub(crate) fn record_request(&self, mut request: ProviderRequestUsage) {
+        let usage = request.usage();
+        let provider_id = &request.provider_id;
+        let model_id = &request.model_id;
         let mut state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
         let entry = state
             .entries
             .entry((provider_id.to_owned(), model_id.to_owned()))
             .or_default();
-        add_usage(entry, provider_id, model_id, usage);
+        add_usage(entry, provider_id, model_id, &usage);
         match current_unix_day() {
             Ok(day) => {
                 let daily_entry = state
                     .daily_entries
                     .entry((day, provider_id.to_owned(), model_id.to_owned()))
                     .or_default();
-                add_usage(daily_entry, provider_id, model_id, usage);
+                add_usage(daily_entry, provider_id, model_id, &usage);
             }
             Err(error) => {
                 tracing::error!(error = %error, "system clock cannot represent token usage day");
             }
         }
+        drop(state);
+        if request.recorded_at_ms == 0 {
+            let Ok(recorded_at_ms) = current_unix_millis().inspect_err(|error| {
+                tracing::error!(%error, "system clock cannot timestamp request usage");
+            }) else {
+                return;
+            };
+            request.recorded_at_ms = recorded_at_ms;
+        }
         if let Some(path) = self.persist_path.clone() {
-            let provider_id = provider_id.to_owned();
-            let model_id = model_id.to_owned();
-            let usage = *usage;
             tokio::task::spawn_blocking(move || {
-                if let Err(error) = persist_usage_delta(&path, &provider_id, &model_id, &usage) {
+                if let Err(error) = persist_usage_delta(&path, &request) {
                     tracing::warn!(error = %error, "failed to persist token usage");
                 }
             });
         }
+    }
+
+    pub(crate) fn request_snapshot(
+        &self,
+        limit: u64,
+        before: Option<i64>,
+    ) -> anyhow::Result<Vec<ProviderRequestUsage>> {
+        anyhow::ensure!(
+            (1..=500).contains(&limit),
+            "request usage limit must be between 1 and 500"
+        );
+        let Some(path) = &self.persist_path else {
+            return Ok(Vec::new());
+        };
+        let connection = Connection::open(path)?;
+        ensure_request_usage_table(&connection)?;
+        let mut statement = connection.prepare(
+            "SELECT id, recorded_at_ms, client_id, session_id, provider_id, model_id,
+                    input_tokens, cache_read_tokens, cache_creation_tokens, output_tokens,
+                    ttft_micros, generation_micros, prefix_state, changed_regions,
+                    reused_turns, total_turns
+             FROM request_usage
+             WHERE (?1 IS NULL OR id < ?1)
+             ORDER BY id DESC
+             LIMIT ?2",
+        )?;
+        let rows = statement.query_map(params![before, limit], |row| {
+            Ok(ProviderRequestUsage {
+                id: row.get(0)?,
+                recorded_at_ms: row.get(1)?,
+                client_id: row.get(2)?,
+                session_id: row.get(3)?,
+                provider_id: row.get(4)?,
+                model_id: row.get(5)?,
+                input_tokens: row.get(6)?,
+                cache_read_tokens: row.get(7)?,
+                cache_creation_tokens: row.get(8)?,
+                output_tokens: row.get(9)?,
+                ttft_micros: row.get(10)?,
+                generation_micros: row.get(11)?,
+                prefix_state: row.get(12)?,
+                changed_regions: row.get(13)?,
+                reused_turns: row.get(14)?,
+                total_turns: row.get(15)?,
+            })
+        })?;
+        rows.collect::<Result<Vec<_>, _>>().map_err(Into::into)
     }
 
     pub(crate) fn snapshot(&self) -> Vec<ProviderTokenUsage> {
@@ -615,5 +810,43 @@ impl UpstreamCacheUsage {
             .into_iter()
             .flatten()
             .any(|value| value > 0)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn request_usage_is_paged_newest_first() {
+        let directory = tempdir().unwrap();
+        let path = directory.path().join("usage.sqlite3");
+        let usage = UpstreamCacheUsage {
+            input_tokens: Some(10),
+            cache_read_tokens: Some(90),
+            output_tokens: Some(20),
+            ttft_micros: Some(125_000),
+            generation_micros: Some(400_000),
+            ..Default::default()
+        };
+        for (recorded_at_ms, client_id) in [(100, "codex"), (200, "claude")] {
+            let mut request = ProviderRequestUsage::from_usage("provider", "model", &usage);
+            request.recorded_at_ms = recorded_at_ms;
+            request.client_id = client_id.to_owned();
+            persist_usage_delta(&path, &request).unwrap();
+        }
+        let aggregator = TokenUsageAggregator {
+            state: Mutex::new(TokenUsageState::default()),
+            persist_path: Some(path),
+        };
+
+        let latest = aggregator.request_snapshot(1, None).unwrap();
+        assert_eq!(latest.len(), 1);
+        assert_eq!(latest[0].client_id, "claude");
+        assert_eq!(latest[0].cache_read_tokens, 90);
+        let older = aggregator.request_snapshot(10, Some(latest[0].id)).unwrap();
+        assert_eq!(older.len(), 1);
+        assert_eq!(older[0].client_id, "codex");
     }
 }

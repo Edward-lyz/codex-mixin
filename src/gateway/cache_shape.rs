@@ -582,6 +582,7 @@ mod tests {
             total_bytes,
             reused_turns: 40,
             total_turns: 41,
+            session_id: Some("session".to_owned()),
             usage: Arc::new(TokenUsageAggregator::default()),
             started_at: std::time::Instant::now(),
         }
