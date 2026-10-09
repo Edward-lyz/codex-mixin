@@ -84,6 +84,13 @@ pub struct ModelInfo {
         skip_serializing_if = "Option::is_none"
     )]
     pub context_window: Option<u64>,
+    #[serde(
+        default,
+        alias = "max_tokens",
+        alias = "max_completion_tokens",
+        skip_serializing_if = "Option::is_none"
+    )]
+    pub max_output_tokens: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol: Option<crate::provider::ProviderProtocol>,
     #[serde(default, skip_serializing_if = "Option::is_none")]

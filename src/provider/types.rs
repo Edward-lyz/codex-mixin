@@ -153,6 +153,8 @@ pub struct ProviderModel {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub source_context_window: Option<u64>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub max_output_tokens: Option<u64>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub protocol: Option<ProviderProtocol>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub api_path: Option<String>,
@@ -392,6 +394,16 @@ impl ProviderDefinition {
             .map(|model| model.id.as_str())
             .collect::<Vec<_>>();
         ensure_unique_model_ids(&self.id, "cached", &cached_ids)?;
+        for model in &self.cached_models {
+            if let Some(max_output_tokens) = model.max_output_tokens {
+                ensure!(
+                    max_output_tokens > 0,
+                    "provider {} model {} output limit must be greater than zero",
+                    self.id,
+                    model.id
+                );
+            }
+        }
         let cached_ids = cached_ids.into_iter().collect::<HashSet<_>>();
         for model_id in &self.new_models {
             ensure!(
@@ -654,6 +666,20 @@ const fn is_false(value: &bool) -> bool {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn rejects_zero_model_output_limit() {
+        let mut provider = crate::provider::open_code_go_provider("provider", "key");
+        provider.cached_models[0].max_output_tokens = Some(0);
+
+        assert!(
+            provider
+                .validate()
+                .unwrap_err()
+                .to_string()
+                .contains("output limit must be greater than zero")
+        );
+    }
 
     #[test]
     fn readiness_reports_healthy_degraded_and_disabled_states() {

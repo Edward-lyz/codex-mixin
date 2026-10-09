@@ -30,7 +30,7 @@ fn config() -> GatewayConfig {
 }
 
 #[test]
-fn defaults_anthropic_output_budget_to_five_hundred_twelve_thousand_tokens() {
+fn defaults_unknown_anthropic_output_budget_to_sixteen_thousand_tokens() {
     let converted = responses_to_anthropic(
         &json!({
             "model": "Claude Sonnet 5",
@@ -41,7 +41,7 @@ fn defaults_anthropic_output_budget_to_five_hundred_twelve_thousand_tokens() {
     )
     .unwrap();
 
-    assert_eq!(converted.request.max_tokens, 512_000);
+    assert_eq!(converted.request.max_tokens, 16_384);
 }
 
 #[test]

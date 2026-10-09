@@ -93,6 +93,7 @@ impl CatalogService {
                     ratio: model.ratio.clone(),
                     price_type: model.price_type.clone(),
                     context_window: model.context_window,
+                    max_output_tokens: model.max_output_tokens,
                     protocol: model.protocol,
                     api_path: model.api_path.clone(),
                     supports_image: model.supports_image,

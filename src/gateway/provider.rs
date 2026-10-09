@@ -96,10 +96,13 @@ pub(crate) async fn stream_provider_response(
                     .await?;
                 Ok::<_, GatewayError>((upstream, shape, converted.tool_names))
             };
+            let declared_max_tokens = provider
+                .model_max_output_tokens(&upstream_model_id)
+                .unwrap_or(executor.config.default_max_tokens);
             let default_max_tokens = executor.output_limits.default_for(
                 provider.id(),
                 &upstream_model_id,
-                executor.config.default_max_tokens,
+                declared_max_tokens,
             );
             let converted = convert(default_max_tokens)?;
             let requested = converted.request.max_tokens;

@@ -536,6 +536,7 @@ fn openai_model_to_provider_model(model: ModelInfo, is_openrouter: bool) -> Prov
         price_type: model.price_type,
         context_window: model.context_window,
         source_context_window: model.context_window,
+        max_output_tokens: model.max_output_tokens,
         protocol: model.protocol,
         api_path: model.api_path,
         supports_image,

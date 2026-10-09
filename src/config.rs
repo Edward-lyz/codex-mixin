@@ -22,7 +22,7 @@ pub use crate::provider::{
     ProviderAuthHeader as UpstreamAuthHeader, ProviderPreset, ProviderProtocol as UpstreamKind,
 };
 
-pub const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 512_000;
+pub const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 16_384;
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ThinkingMode {

@@ -911,6 +911,7 @@ pub(crate) fn provider_models_from_catalog(
                     .limit
                     .as_ref()
                     .and_then(|limit| limit.context.or(limit.input)),
+                max_output_tokens: model.limit.as_ref().and_then(|limit| limit.output),
                 supports_image: model_supports_image(model),
                 supports_thinking: model.reasoning,
                 ..ProviderModel::default()
@@ -945,6 +946,9 @@ pub(crate) fn fill_missing_model_fields(model: &mut ProviderModel, source: &Prov
     if model.context_window.is_none() {
         model.context_window = source.context_window;
     }
+    if model.max_output_tokens.is_none() {
+        model.max_output_tokens = source.max_output_tokens;
+    }
     if model.supports_image.is_none() {
         model.supports_image = source.supports_image;
     }
@@ -969,6 +973,7 @@ pub(crate) fn fill_model_gaps_with_resolver(
     }
     for model in models {
         if model.context_window.is_some()
+            && model.max_output_tokens.is_some()
             && model.supports_image.is_some()
             && model.supports_thinking.is_some()
         {
@@ -982,6 +987,9 @@ pub(crate) fn fill_model_gaps_with_resolver(
         };
         if model.context_window.is_none() {
             model.context_window = Some(metadata.context_window);
+        }
+        if model.max_output_tokens.is_none() {
+            model.max_output_tokens = metadata.max_output_tokens;
         }
         if model.supports_image.is_none() {
             model.supports_image = metadata.supports_image;
@@ -1131,16 +1139,19 @@ mod tests {
         fill_model_gaps_with_resolver(&resolver, &mut models);
 
         assert_eq!(models[0].context_window, Some(200_000));
+        assert_eq!(models[0].max_output_tokens, Some(64_000));
         assert_eq!(models[0].supports_image, Some(true));
         assert_eq!(models[0].supports_thinking, Some(true));
         // A fuzzy match must not relabel the provider's model.
         assert_eq!(models[0].display_name.as_deref(), Some("My Haiku"));
 
         assert_eq!(models[1].context_window, Some(123));
+        assert_eq!(models[1].max_output_tokens, Some(64_000));
         assert_eq!(models[1].supports_image, Some(false));
         assert_eq!(models[1].supports_thinking, Some(true));
 
         assert_eq!(models[2].context_window, None);
+        assert_eq!(models[2].max_output_tokens, None);
         assert_eq!(models[2].supports_image, None);
         assert_eq!(models[2].supports_thinking, None);
     }
@@ -1265,11 +1276,13 @@ mod tests {
             Some("GPT-5.6 Luna (2x usage)")
         );
         assert_eq!(luna.context_window, Some(1_050_000));
+        assert_eq!(luna.max_output_tokens, Some(128_000));
         assert_eq!(luna.supports_image, Some(true));
         assert_eq!(luna.supports_thinking, Some(true));
 
         let glm = models.get("glm-5.2").unwrap();
         assert_eq!(glm.context_window, Some(1_000_000));
+        assert_eq!(glm.max_output_tokens, Some(131_072));
         assert_eq!(glm.supports_image, Some(false));
         assert_eq!(glm.supports_thinking, Some(true));
     }
@@ -1283,6 +1296,7 @@ mod tests {
                 display_name: Some("GPT-5.6 Luna (2x usage)".to_owned()),
                 description: Some("from models.dev".to_owned()),
                 context_window: Some(1_050_000),
+                max_output_tokens: Some(128_000),
                 supports_image: Some(true),
                 supports_thinking: Some(true),
                 ..ProviderModel::default()
@@ -1291,6 +1305,7 @@ mod tests {
         let mut models = vec![ProviderModel {
             id: "gpt-5.6-luna".to_owned(),
             context_window: Some(42),
+            max_output_tokens: Some(32_000),
             ..ProviderModel::default()
         }];
 
@@ -1303,6 +1318,7 @@ mod tests {
         assert_eq!(models[0].description.as_deref(), Some("from models.dev"));
         // The provider-declared window wins over the models.dev value.
         assert_eq!(models[0].context_window, Some(42));
+        assert_eq!(models[0].max_output_tokens, Some(32_000));
         assert_eq!(models[0].supports_image, Some(true));
         assert_eq!(models[0].supports_thinking, Some(true));
     }

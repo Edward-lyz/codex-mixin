@@ -263,6 +263,23 @@ impl ProviderRuntime {
             .and_then(|candidate| candidate.supports_thinking)
     }
 
+    pub fn model_max_output_tokens(&self, model: &str) -> Option<u64> {
+        self.definition
+            .cached_models
+            .iter()
+            .find(|candidate| candidate.id.eq_ignore_ascii_case(model))
+            .and_then(|candidate| {
+                candidate
+                    .max_output_tokens
+                    .filter(|output| *output > 0)
+                    .map(|output| {
+                        candidate
+                            .context_window
+                            .map_or(output, |context| output.min(context))
+                    })
+            })
+    }
+
     pub fn is_baidu_model_source(&self) -> bool {
         self.definition.model_source == ProviderModelSource::BaiduOneApi
     }
@@ -760,6 +777,23 @@ mod tests {
                 .collect::<Vec<_>>(),
             vec!["glm-5.2-opencode-go"]
         );
+    }
+
+    #[test]
+    fn model_output_limit_stays_within_context_window() {
+        let mut provider = test_provider("custom");
+        provider.selected_models = vec!["model".to_owned()];
+        provider.cached_models = vec![ProviderModel {
+            id: "model".to_owned(),
+            context_window: Some(64_000),
+            max_output_tokens: Some(128_000),
+            ..ProviderModel::default()
+        }];
+        let registry = ProviderRegistry::new(vec![provider]).unwrap();
+        let runtime = registry.provider("custom").unwrap();
+
+        assert_eq!(runtime.model_max_output_tokens("MODEL"), Some(64_000));
+        assert_eq!(runtime.model_max_output_tokens("unknown"), None);
     }
 
     #[test]

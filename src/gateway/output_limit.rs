@@ -1,11 +1,10 @@
 //! Provider-specific output-token ceilings learned at runtime.
 //!
-//! When a client omits `max_output_tokens`, the gateway asks Anthropic
-//! Messages providers for its generous default. Hosts cap the same model
-//! differently (Baidu OneAPI serves GLM-5.3 with a 256K ceiling while other
-//! hosts allow more or less), so no static table is correct. The first
-//! rejection that names the ceiling teaches the gateway the real limit for
-//! that provider model; later requests use it directly.
+//! When a client omits `max_output_tokens`, the gateway first uses the model
+//! ceiling supplied by the provider or models.dev, then the conservative
+//! unknown-model default. Hosts can still cap the same model differently, so
+//! a rejection that names a smaller ceiling teaches the gateway that
+//! provider-model limit for later requests.
 
 use std::collections::HashMap;
 use std::sync::Mutex;
@@ -21,7 +20,7 @@ pub(crate) struct OutputLimitMemory {
 
 impl OutputLimitMemory {
     /// Default `max_tokens` for a provider model: the learned ceiling when it
-    /// is lower than the configured default.
+    /// is lower than the resolved model capability or unknown-model default.
     pub(crate) fn default_for(&self, provider_id: &str, model: &str, configured: u64) -> u64 {
         let limits = self
             .limits

@@ -3645,7 +3645,7 @@ async fn spawn_output_limited_upstream() -> (String, Arc<Mutex<Vec<u64>>>) {
 async fn learns_the_provider_output_limit_when_the_default_budget_is_rejected() {
     let (upstream_url, budgets) = spawn_output_limited_upstream().await;
     let mut config = test_config(upstream_url);
-    config.default_max_tokens = codex_mixin::config::DEFAULT_MAX_OUTPUT_TOKENS;
+    config.default_max_tokens = 512_000;
     let gateway_url = spawn_gateway_with_config(config).await;
     let client = reqwest::Client::new();
     for _ in 0..2 {
@@ -3659,14 +3659,7 @@ async fn learns_the_provider_output_limit_when_the_default_budget_is_rejected() 
         assert_eq!(response.status(), StatusCode::OK);
         let _ = response.text().await.unwrap();
     }
-    assert_eq!(
-        *budgets.lock().unwrap(),
-        [
-            codex_mixin::config::DEFAULT_MAX_OUTPUT_TOKENS,
-            262_144,
-            262_144
-        ]
-    );
+    assert_eq!(*budgets.lock().unwrap(), [512_000, 262_144, 262_144]);
 
     let mut explicit = responses_request();
     explicit["max_output_tokens"] = json!(300_000);
@@ -3682,6 +3675,26 @@ async fn learns_the_provider_output_limit_when_the_default_budget_is_rejected() 
         "explicit client limits are never rewritten"
     );
     assert_eq!(budgets.lock().unwrap().last(), Some(&300_000));
+}
+
+#[tokio::test]
+async fn uses_provider_model_output_limit_before_sending() {
+    let (upstream_url, budgets) = spawn_output_limited_upstream().await;
+    let mut config = test_config(upstream_url);
+    config.default_max_tokens = codex_mixin::config::DEFAULT_MAX_OUTPUT_TOKENS;
+    config.providers[0].cached_models[0].max_output_tokens = Some(131_072);
+    let gateway_url = spawn_gateway_with_config(config).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&responses_request())
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(*budgets.lock().unwrap(), [131_072]);
 }
 
 #[tokio::test]
