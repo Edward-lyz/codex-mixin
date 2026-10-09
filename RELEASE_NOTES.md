@@ -1,4 +1,29 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.7.2
+
+### 功能
+
+- 新增实验性 ECH 代理功能，支持通过 ECH 代理使用反代 IP 访问官方 GPT（适用于无代理软件场景提升访问稳定程度）
+- 官方模型目录直接同步，不依赖 Codex 更新
+- 支持停止网关前恢复 Codex、Claude Code、DSH、OpenCode 和 Pi 配置；macOS、Windows 和 TUI 支持「退出并恢复原配置」。
+
+### 性能
+
+- 模型目录使用 `ETag` / `Last-Modified`，减少重复下载。
+- 停用的 Provider 和已声明能力的模型不再执行付费探测。
+- 模型同步移出网关启动流程；macOS 健康检查不再重复启动 `codex-status`。
+
+### BUG 修复
+
+- DUCX 获取认证信息不再创建可上报的模型回合。
+- 修复 Codex 状态异常时网关无法安全启动或停止的问题。
+- 修复 Windows 路径、PowerShell hook、私有 ACL 和更新后使用旧 CLI 重启网关的问题。
+- 修复 Anthropic 输出上限不兼容及模型级 `api_path` 未生效的问题。
+
+### 致谢
+
+感谢 @DearTransH、@WuHao 参与 Codex 网关保护和 macOS 切换流程的实现；感谢所有帮助验证 ECH、模型目录、Windows 和 DUCX 问题的用户。
+
 ## v0.7.1
 
 ### 功能新增
@@ -106,6 +131,31 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v0.7.2
+
+### 功能
+
+- 新增實驗性 ECH 代理功能，支援透過 ECH 代理使用反代 IP 存取官方 GPT（適用於無代理軟體場景提升存取穩定程度）
+- 官方模型目錄直接同步，不依賴 Codex 更新
+- 支援停止閘道前恢復 Codex、Claude Code、DSH、OpenCode 和 Pi 設定；macOS、Windows 和 TUI 支援「退出並恢復原配置」。
+
+### 效能
+
+- 模型目錄使用 `ETag` / `Last-Modified`，減少重複下載。
+- 停用的 Provider 和已宣告能力的模型不再執行付費探測。
+- 模型同步移出閘道啟動流程；macOS 健康檢查不再重複啟動 `codex-status`。
+
+### BUG 修正
+
+- DUCX 取得驗證資訊不再建立可上報的模型回合。
+- 修正 Codex 狀態異常時閘道無法安全啟動或停止的問題。
+- 修正 Windows 路徑、PowerShell hook、私有 ACL，以及更新後使用舊 CLI 重啟閘道的問題。
+- 修正 Anthropic 輸出上限不相容及模型級 `api_path` 未生效的問題。
+
+### 致謝
+
+感謝 @DearTransH、@WuHao 參與 Codex 閘道保護和 macOS 切換流程的實作；感謝所有協助驗證 ECH、模型目錄、Windows 和 DUCX 問題的使用者。
+
 ## v0.7.1
 
 ### 功能新增
@@ -213,6 +263,31 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v0.7.2
+
+### Features
+
+- Add experimental ECH proxy access for official GPT through a relay IP, improving access stability where proxy software is unavailable
+- Sync the official model catalog directly without relying on Codex updates
+- Restore Codex, Claude Code, DSH, OpenCode, and Pi configuration before stopping the gateway; macOS, Windows, and the TUI support “Quit and restore original configuration”
+
+### Performance
+
+- Use `ETag` / `Last-Modified` for model catalogs to reduce repeated downloads
+- Skip paid probes for disabled Providers and models with declared capabilities
+- Move model synchronization off the gateway startup path; macOS health checks no longer start `codex-status` repeatedly
+
+### Bug fixes
+
+- Prevent DUCX authentication capture from creating a reportable model turn
+- Fix unsafe gateway start and stop behavior when Codex status is unavailable or inconsistent
+- Fix Windows paths, PowerShell hooks, private ACLs, and gateway restarts that continued using the old CLI after an update
+- Fix Anthropic output-limit incompatibility and model-level `api_path` handling
+
+### Thanks
+
+Thanks to @DearTransH and @WuHao for contributing to Codex gateway protection and macOS switching, and to everyone who helped validate ECH, model catalog, Windows, and DUCX issues.
+
 ## v0.7.1
 
 ### Features
