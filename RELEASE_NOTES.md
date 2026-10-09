@@ -18,11 +18,12 @@
 - DUCX 获取认证信息不再创建可上报的模型回合。
 - 修复 Codex 状态异常时网关无法安全启动或停止的问题。
 - 修复 Windows 路径、PowerShell hook、私有 ACL 和更新后使用旧 CLI 重启网关的问题。
-- 修复 Anthropic 输出上限不兼容及模型级 `api_path` 未生效的问题。
+- 修复 Anthropic 输出上限不兼容及模型级 `api_path` 未生效的问题；支持识别百度 OneAPI 的 `maximum output length` 错误并按真实上限重试。
+- 修复百度 OneAPI 的 GLM-5.3 请求因 `metadata.session_id` 导致 400 的问题，改用 `metadata.user_id` 保持 session affinity。
 
 ### 致谢
 
-感谢 @DearTransH、@WuHao 参与 Codex 网关保护和 macOS 切换流程的实现；感谢所有帮助验证 ECH、模型目录、Windows 和 DUCX 问题的用户。
+感谢 @DearTransH、@WuHao 参与 Codex 网关保护和 macOS 切换流程的实现；感谢 @Oldknife365 提交百度 OneAPI / GLM-5.3 兼容修复（PR #42）；感谢所有帮助验证 ECH、模型目录、Windows 和 DUCX 问题的用户。
 
 ## v0.7.1
 
@@ -150,11 +151,12 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 - DUCX 取得驗證資訊不再建立可上報的模型回合。
 - 修正 Codex 狀態異常時閘道無法安全啟動或停止的問題。
 - 修正 Windows 路徑、PowerShell hook、私有 ACL，以及更新後使用舊 CLI 重啟閘道的問題。
-- 修正 Anthropic 輸出上限不相容及模型級 `api_path` 未生效的問題。
+- 修正 Anthropic 輸出上限不相容及模型級 `api_path` 未生效的問題；支援識別百度 OneAPI 的 `maximum output length` 錯誤並按實際上限重試。
+- 修正百度 OneAPI 的 GLM-5.3 請求因 `metadata.session_id` 導致 400 的問題，改用 `metadata.user_id` 維持 session affinity。
 
 ### 致謝
 
-感謝 @DearTransH、@WuHao 參與 Codex 閘道保護和 macOS 切換流程的實作；感謝所有協助驗證 ECH、模型目錄、Windows 和 DUCX 問題的使用者。
+感謝 @DearTransH、@WuHao 參與 Codex 閘道保護和 macOS 切換流程的實作；感謝 @Oldknife365 提交百度 OneAPI / GLM-5.3 相容修正（PR #42）；感謝所有協助驗證 ECH、模型目錄、Windows 和 DUCX 問題的使用者。
 
 ## v0.7.1
 
@@ -282,11 +284,12 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 - Prevent DUCX authentication capture from creating a reportable model turn
 - Fix unsafe gateway start and stop behavior when Codex status is unavailable or inconsistent
 - Fix Windows paths, PowerShell hooks, private ACLs, and gateway restarts that continued using the old CLI after an update
-- Fix Anthropic output-limit incompatibility and model-level `api_path` handling
+- Fix Anthropic output-limit incompatibility and model-level `api_path` handling; recognize Baidu OneAPI's `maximum output length` errors and retry with the actual limit
+- Fix GLM-5.3 requests through Baidu OneAPI returning 400 because of `metadata.session_id`; use `metadata.user_id` while preserving session affinity
 
 ### Thanks
 
-Thanks to @DearTransH and @WuHao for contributing to Codex gateway protection and macOS switching, and to everyone who helped validate ECH, model catalog, Windows, and DUCX issues.
+Thanks to @DearTransH and @WuHao for contributing to Codex gateway protection and macOS switching; thanks to @Oldknife365 for the Baidu OneAPI / GLM-5.3 compatibility fix in PR #42; and thanks to everyone who helped validate ECH, model catalog, Windows, and DUCX issues.
 
 ## v0.7.1
 
