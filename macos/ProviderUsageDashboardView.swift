@@ -319,44 +319,15 @@ private struct ProviderUsageDashboardContent: View {
     let compact: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: compact ? 8 : 16) {
-            if !compact {
-                tabPicker
-            }
-            if !compact, model.selectedTab == .requests {
-                requestList
-            } else {
-                overview
-            }
-        }
-        .padding(compact ? 10 : 20)
-        .frame(
-            minWidth: compact ? menuContentWidth : 720,
-            maxWidth: compact ? menuContentWidth : .infinity,
-            minHeight: compact ? model.contentHeight : 480,
-            maxHeight: compact ? model.contentHeight : .infinity,
-            alignment: .topLeading
-        )
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    private var tabPicker: some View {
-        Picker("视图", selection: Binding(
-            get: { model.selectedTab },
-            set: model.selectTab
-        )) {
-            ForEach(UsageDashboardTab.allCases) { tab in
-                Text(tab.title).tag(tab)
-            }
-        }
-        .labelsHidden()
-        .pickerStyle(.segmented)
-        .frame(maxWidth: 220)
-    }
-
-    @ViewBuilder
-    private var overview: some View {
         if compact {
+            menuBody
+        } else {
+            windowBody
+        }
+    }
+
+    private var menuBody: some View {
+        VStack(alignment: .leading, spacing: 8) {
             providerTabs
             Divider()
             if let group = model.selectedGroup {
@@ -365,24 +336,63 @@ private struct ProviderUsageDashboardContent: View {
             } else {
                 emptyOverview
             }
-        } else {
-            windowOverview
         }
+        .padding(10)
+        .frame(width: menuContentWidth, height: model.contentHeight, alignment: .topLeading)
+        .background(Color(nsColor: .windowBackgroundColor))
     }
 
-    @ViewBuilder
-    private var windowOverview: some View {
-        if let group = model.selectedGroup {
-            HStack(alignment: .center) {
-                providerTabs
-                Spacer()
+    /// Magpie-style window: navigation sidebar on the left, a titled page
+    /// with stats and sections on the right.
+    private var windowBody: some View {
+        HStack(spacing: 0) {
+            UsageSidebar(model: model)
+                .frame(width: 196)
+            Divider()
+            if model.selectedTab == .requests {
+                // The request table scrolls itself, so it fills the pane.
+                VStack(alignment: .leading, spacing: 24) {
+                    pageHeader
+                    requestList
+                }
+                .padding(.horizontal, 28)
+                .padding(.vertical, 24)
+                .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+            } else {
+                ScrollView(.vertical) {
+                    VStack(alignment: .leading, spacing: 28) {
+                        pageHeader
+                        if let group = model.selectedGroup {
+                            UsageStatStrip(group: group)
+                            modelRanking(group)
+                        } else {
+                            emptyOverview
+                        }
+                    }
+                    .padding(.horizontal, 28)
+                    .padding(.vertical, 24)
+                    .frame(maxWidth: .infinity, alignment: .topLeading)
+                }
+            }
+        }
+        .frame(minWidth: 760, maxWidth: .infinity, minHeight: 480, maxHeight: .infinity)
+        .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var pageHeader: some View {
+        let requests = model.selectedTab == .requests
+        return HStack(alignment: .center) {
+            VStack(alignment: .leading, spacing: 4) {
+                Text(requests ? "请求" : (model.selectedGroup?.displayName ?? "用量"))
+                    .font(.system(size: 22, weight: .semibold))
+                Text(requests ? "每次 turn 的缓存、首字延迟与吞吐" : "Token、缓存与速度")
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            Spacer()
+            if !requests {
                 rangePicker
             }
-            UsageStatStrip(group: group)
-            Divider()
-            modelRanking(group)
-        } else {
-            emptyOverview
         }
     }
 
@@ -410,7 +420,7 @@ private struct ProviderUsageDashboardContent: View {
         }
         .labelsHidden()
         .pickerStyle(.segmented)
-        .frame(maxWidth: 260)
+        .frame(width: 220)
     }
 
     @ViewBuilder
@@ -424,7 +434,7 @@ private struct ProviderUsageDashboardContent: View {
                     .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .frame(maxWidth: .infinity, minHeight: 320)
         } else {
             RequestUsageTable(rows: model.requestRows)
         }
@@ -509,9 +519,9 @@ private struct ProviderUsageDashboardContent: View {
 
     @ViewBuilder
     private func modelRanking(_ group: ProviderUsageGroup) -> some View {
-        VStack(alignment: .leading, spacing: 10) {
+        VStack(alignment: .leading, spacing: 14) {
             Text("按模型")
-                .font(.headline)
+                .font(.system(size: 15, weight: .semibold))
             if group.models.isEmpty {
                 Text(model.tokenStatusTitle)
                     .font(.callout)
@@ -528,9 +538,137 @@ private struct ProviderUsageDashboardContent: View {
                 if let selectedModel = model.selectedModel {
                     TokenModelDetail(usage: selectedModel)
                 }
+                ModelUsageTable(models: group.models)
             }
         }
         .frame(maxWidth: .infinity, alignment: .leading)
+    }
+}
+
+/// Left navigation column: view switch on top, provider list below.
+private struct UsageSidebar: View {
+    @ObservedObject var model: ProviderUsageDashboardModel
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 2) {
+            sectionTitle("视图")
+            ForEach(UsageDashboardTab.allCases) { tab in
+                sidebarRow(selected: model.selectedTab == tab) {
+                    Image(systemName: tab == .overview ? "chart.bar" : "list.bullet")
+                        .frame(width: 18)
+                    Text(tab.title)
+                } action: {
+                    model.selectTab(tab)
+                }
+            }
+            sectionTitle("供应商").padding(.top, 16)
+            ScrollView(.vertical) {
+                VStack(spacing: 2) {
+                    ForEach(model.groups, id: \.providerID) { group in
+                        let selected = model.selectedTab == .overview
+                            && group.providerID == model.selectedProviderID
+                        sidebarRow(selected: selected) {
+                            ProviderLogoView(group: group).frame(width: 18, height: 18)
+                            Text(group.displayName).lineLimit(1).truncationMode(.tail)
+                        } action: {
+                            model.selectTab(.overview)
+                            model.selectProvider(group.providerID)
+                        }
+                        .accessibilityIdentifier("provider-tab-\(group.providerID)")
+                    }
+                }
+            }
+            .scrollIndicators(.hidden)
+        }
+        .padding(.horizontal, 10)
+        .padding(.vertical, 16)
+        .frame(maxHeight: .infinity, alignment: .top)
+    }
+
+    private func sectionTitle(_ title: String) -> some View {
+        Text(title)
+            .font(.caption.weight(.medium))
+            .foregroundStyle(.secondary)
+            .padding(.horizontal, 8)
+            .padding(.bottom, 4)
+    }
+
+    private func sidebarRow<Label: View>(
+        selected: Bool,
+        @ViewBuilder label: () -> Label,
+        action: @escaping () -> Void
+    ) -> some View {
+        Button(action: action) {
+            HStack(spacing: 8) { label() }
+                .font(.system(size: 13, weight: selected ? .semibold : .regular))
+                .padding(.horizontal, 8)
+                .frame(maxWidth: .infinity, minHeight: 28, alignment: .leading)
+                .background(
+                    Color.primary.opacity(selected ? 0.08 : 0),
+                    in: RoundedRectangle(cornerRadius: 6, style: .continuous)
+                )
+                .contentShape(Rectangle())
+        }
+        .buttonStyle(.plain)
+    }
+}
+
+/// Per-model table under the chart: share bar plus the turn metrics.
+private struct ModelUsageTable: View {
+    let models: [ProviderTokenUsage]
+
+    var body: some View {
+        let total = max(models.reduce(UInt64(0)) { $0 + $1.totalTokens }, 1)
+        VStack(spacing: 0) {
+            header
+            ForEach(Array(models.enumerated()), id: \.element.modelID) { index, usage in
+                Divider()
+                HStack(spacing: 12) {
+                    Text(usage.modelID).lineLimit(1).truncationMode(.middle)
+                        .frame(maxWidth: .infinity, alignment: .leading)
+                    GeometryReader { geo in
+                        Capsule().fill(usageSeriesColor(index).opacity(0.8))
+                            .frame(
+                                width: max(2, geo.size.width * Double(usage.totalTokens) / Double(total)),
+                                height: 4
+                            )
+                            .frame(maxHeight: .infinity, alignment: .center)
+                    }
+                    .frame(width: 90)
+                    metricCells(
+                        formatTokenCount(usage.totalTokens),
+                        "\(usage.requestCount)",
+                        usage.cacheHitPercent.map { String(format: "%.1f%%", $0) } ?? "—",
+                        usage.averageTTFTMs.map { String(format: "%.0f ms", $0) } ?? "—",
+                        usage.outputTPS.map(formatThroughput) ?? "—"
+                    )
+                }
+                .font(.system(size: 12).monospacedDigit())
+                .padding(.vertical, 8)
+            }
+        }
+    }
+
+    private var header: some View {
+        HStack(spacing: 12) {
+            Text("模型").frame(maxWidth: .infinity, alignment: .leading)
+            Text("占比").frame(width: 90, alignment: .leading)
+            metricCells("Token", "请求", "缓存", "TTFT", "吞吐")
+        }
+        .font(.caption.weight(.medium))
+        .foregroundStyle(.secondary)
+        .padding(.bottom, 8)
+    }
+
+    @ViewBuilder
+    private func metricCells(
+        _ tokens: String, _ requests: String, _ cache: String, _ ttft: String, _ tps: String
+    ) -> some View {
+        Text(tokens).frame(width: 64, alignment: .trailing)
+        Text(requests).frame(width: 52, alignment: .trailing)
+        Text(cache).frame(width: 56, alignment: .trailing)
+        Text(ttft).frame(width: 64, alignment: .trailing)
+        Text(tps).frame(width: 52, alignment: .trailing)
     }
 }
 
@@ -714,29 +852,27 @@ private struct ModelUsageChart: View {
     let selectedModelID: String?
     let onSelect: (String) -> Void
 
-    private let barWidth: CGFloat = 54
-    private let chartHeight: CGFloat = 168
+    // The chart shows the top models across the full width; the table below
+    // lists every model, so the tail does not need horizontal scrolling.
+    private let maxBars = 10
+    private let chartHeight: CGFloat = 140
 
     var body: some View {
         let maximumTokens = models.map(\.totalTokens).max() ?? 0
-        ScrollView(.horizontal) {
-            HStack(alignment: .bottom, spacing: 20) {
-                ForEach(Array(models.enumerated()), id: \.element.modelID) { index, usage in
-                    ModelUsageBar(
-                        usage: usage,
-                        seriesColor: usageSeriesColor(index),
-                        maximumTokens: maximumTokens,
-                        chartHeight: chartHeight,
-                        selected: usage.modelID == selectedModelID,
-                        onSelect: onSelect
-                    )
-                    .frame(width: barWidth)
-                }
+        HStack(alignment: .bottom, spacing: 12) {
+            ForEach(Array(models.prefix(maxBars).enumerated()), id: \.element.modelID) { index, usage in
+                ModelUsageBar(
+                    usage: usage,
+                    seriesColor: usageSeriesColor(index),
+                    maximumTokens: maximumTokens,
+                    chartHeight: chartHeight,
+                    selected: usage.modelID == selectedModelID,
+                    onSelect: onSelect
+                )
+                .frame(maxWidth: 120)
             }
-            .padding(.horizontal, 6)
-            .padding(.top, 6)
         }
-        .scrollIndicators(.visible)
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
