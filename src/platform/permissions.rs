@@ -51,7 +51,13 @@ foreach ($value in @($owner.Value, 'S-1-5-18', 'S-1-5-32-544')) {
     $rule = [System.Security.AccessControl.FileSystemAccessRule]::new($sid, [Security.AccessControl.FileSystemRights]::FullControl, $inheritance, [Security.AccessControl.PropagationFlags]::None, [Security.AccessControl.AccessControlType]::Allow)
     $acl.AddAccessRule($rule)
 }
-Set-Acl -LiteralPath $env:CODEX_MIXIN_ACL_PATH -AclObject $acl
+# Set-Acl copies all security sections and can require SeSecurityPrivilege
+# for the untouched SACL. Persist only the DACL changes made above.
+if ($directory) {
+    ([System.IO.DirectoryInfo]::new($env:CODEX_MIXIN_ACL_PATH)).SetAccessControl($acl)
+} else {
+    ([System.IO.FileInfo]::new($env:CODEX_MIXIN_ACL_PATH)).SetAccessControl($acl)
+}
 "#;
     let mut command = Command::new("powershell.exe");
     command
@@ -87,6 +93,75 @@ Set-Acl -LiteralPath $env:CODEX_MIXIN_ACL_PATH -AclObject $acl
 mod tests {
     use super::*;
     use std::process::Command;
+
+    #[test]
+    fn private_acl_without_sacl_priv() {
+        // Hosted Windows runners have admin privileges. Remove the audit
+        // privilege before spawning the real test to reproduce a desktop user.
+        const SCRIPT: &str = r#"
+$ErrorActionPreference = 'Stop'
+Add-Type -TypeDefinition @'
+using System;
+using System.ComponentModel;
+using System.Runtime.InteropServices;
+public static class AuditPrivilege {
+    private const uint TokenQueryAndAdjustPrivileges = 0x28;
+    private const uint PrivilegeRemoved = 4;
+    private const int ErrorNotAllAssigned = 1300;
+    [StructLayout(LayoutKind.Sequential, Pack = 4)]
+    private struct TokenPrivileges {
+        public uint Count;
+        public long Luid;
+        public uint Attributes;
+    }
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool OpenProcessToken(IntPtr process, uint access, out IntPtr token);
+    [DllImport("advapi32.dll", CharSet = CharSet.Unicode, SetLastError = true)]
+    private static extern bool LookupPrivilegeValue(string system, string name, out long luid);
+    [DllImport("advapi32.dll", SetLastError = true)]
+    private static extern bool AdjustTokenPrivileges(IntPtr token, bool disableAll, ref TokenPrivileges privileges, uint length, IntPtr previous, IntPtr returned);
+    [DllImport("kernel32.dll", SetLastError = true)]
+    private static extern bool CloseHandle(IntPtr handle);
+    public static void Remove() {
+        IntPtr token;
+        if (!OpenProcessToken(new IntPtr(-1), TokenQueryAndAdjustPrivileges, out token))
+            throw new Win32Exception(Marshal.GetLastWin32Error());
+        try {
+            long luid;
+            if (!LookupPrivilegeValue(null, "SeSecurityPrivilege", out luid))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            var privileges = new TokenPrivileges { Count = 1, Luid = luid, Attributes = PrivilegeRemoved };
+            if (!AdjustTokenPrivileges(token, false, ref privileges, 0, IntPtr.Zero, IntPtr.Zero))
+                throw new Win32Exception(Marshal.GetLastWin32Error());
+            int error = Marshal.GetLastWin32Error();
+            // ERROR_NOT_ALL_ASSIGNED means the ordinary user lacks it already.
+            if (error != 0 && error != ErrorNotAllAssigned) throw new Win32Exception(error);
+        } finally { CloseHandle(token); }
+    }
+}
+'@
+[AuditPrivilege]::Remove()
+$privileges = & whoami.exe /priv /fo csv
+if ($LASTEXITCODE -ne 0) { throw 'Cannot inspect token privileges' }
+if ($privileges -match 'SeSecurityPrivilege') { throw 'Audit privilege still present' }
+& $env:CODEX_MIXIN_ACL_TEST_EXE --exact platform::permissions::tests::private_acl_removes_public --nocapture
+exit $LASTEXITCODE
+"#;
+        let mut command = Command::new("powershell.exe");
+        command
+            .args(["-NoProfile", "-NonInteractive", "-Command", SCRIPT])
+            .env_remove("PSModulePath")
+            .env("CODEX_MIXIN_ACL_TEST_EXE", std::env::current_exe().unwrap());
+        crate::platform::prepare_background_command(&mut command);
+        let output = command.output().unwrap();
+        assert!(
+            output.status.success(),
+            "ACL test without audit privilege failed:\n{}\n{}",
+            String::from_utf8_lossy(&output.stdout),
+            String::from_utf8_lossy(&output.stderr)
+        );
+        assert!(String::from_utf8_lossy(&output.stdout).contains("running 1 test"));
+    }
 
     #[test]
     fn private_acl_native_modules() {
@@ -154,14 +229,19 @@ mod tests {
             crate::platform::prepare_background_command(&mut grant);
             assert!(grant.output().unwrap().status.success());
             restrict_windows_acl(path, is_directory).unwrap();
+            // Config reads on exit reapply permissions to an already protected
+            // directory; Set-Acl's SACL retry fails specifically on this repeat.
+            restrict_windows_acl(path, is_directory).unwrap();
             const CHECK: &str = r#"
 $ErrorActionPreference = 'Stop'
 $acl = Get-Acl -LiteralPath $env:CODEX_MIXIN_ACL_PATH
 $allowed = @([Security.Principal.WindowsIdentity]::GetCurrent().User.Value, 'S-1-5-18', 'S-1-5-32-544')
 if (-not $acl.AreAccessRulesProtected) { throw 'ACL inheritance is still enabled' }
+if ($acl.Access.Count -ne 3) { throw 'Expected exactly three private grants' }
 foreach ($rule in $acl.Access) {
     $sid = $rule.IdentityReference.Translate([Security.Principal.SecurityIdentifier]).Value
     if ($sid -notin $allowed) { throw "Unexpected principal $sid" }
+    if ($rule.AccessControlType -ne 'Allow' -or $rule.FileSystemRights -ne 'FullControl') { throw "Incorrect private grant for $sid" }
 }
 "#;
             let mut check = Command::new("powershell.exe");
