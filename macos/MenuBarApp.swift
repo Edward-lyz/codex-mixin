@@ -196,15 +196,15 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         providerUsageItem.view = providerUsageView
         providerUsageDashboardView = providerUsageView
         menu.addItem(providerUsageItem)
-        menu.addItem(actionItem("使用与性能…", #selector(showProviderUsage), "chart.bar.xaxis"))
         updateQuotaStatus(title: "额度：检查中...", detail: nil, progress: nil)
         updateTokenUsageStatus(title: "Token 使用：检查中...", detail: nil, progress: nil)
         menu.addItem(.separator())
         menu.addItem(actionItem("模型与服务…", #selector(configureLogin), "square.grid.2x2"))
-        launchAtLoginMenuItem = actionItem("登录时启动并开启服务", #selector(toggleLaunchAtLogin), "poweron")
-        menu.addItem(launchAtLoginMenuItem!)
+        menu.addItem(actionItem("用量与会话…", #selector(showProviderUsage), "chart.bar.xaxis"))
         menu.addItem(actionItem("健康检测和修复...", #selector(runAutomaticDoctor), "stethoscope"))
         menu.addItem(.separator())
+        launchAtLoginMenuItem = actionItem("登录时启动并开启服务", #selector(toggleLaunchAtLogin), "poweron")
+        menu.addItem(launchAtLoginMenuItem!)
         echMenuItem = actionItem("启用 ECH 代理访问 GPT", #selector(configureEchAccess), "network")
         menu.addItem(submenuItem("高级", symbolName: "gearshape.2", items: [
             echMenuItem!,
@@ -233,8 +233,8 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             actionItem("打开配置目录", #selector(openConfigFolder), "folder")
         ]))
         menu.addItem(.separator())
-        menu.addItem(actionItem("退出 Codex Mixin", #selector(quit), "power"))
         menu.addItem(actionItem("退出并恢复原配置...", #selector(quitAndRestore), "arrow.uturn.backward.circle"))
+        menu.addItem(actionItem("退出 Codex Mixin", #selector(quit), "power"))
         updateActionStates()
         return menu
     }
