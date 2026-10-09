@@ -398,4 +398,24 @@ extension AppDelegate {
             )
         }
     }
+
+    /// Activity failures only hide the activity sections; the rest of the
+    /// page keeps working, so the error goes to the log.
+    @MainActor
+    func refreshUsageActivity(providerID: String, range: TokenUsageRange) async {
+        var arguments = ["usage-activity", "--json", "--provider", providerID]
+        if let days = range.days {
+            arguments += ["--days", "\(days)"]
+        }
+        do {
+            let json = try await runGateway(arguments)
+            providerUsageWindowController?.updateActivity(
+                providerID: providerID,
+                range: range,
+                activity: try parseUsageActivity(json)
+            )
+        } catch {
+            NSLog("usage activity unavailable: %@", localizedErrorDescription(error))
+        }
+    }
 }

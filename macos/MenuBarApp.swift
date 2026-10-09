@@ -187,6 +187,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await self?.refreshRequestUsage(providerID: providerID, before: before)
             }
         }
+        providerUsageController.onActivityRefresh = { [weak self] providerID, range in
+            Task { @MainActor in
+                await self?.refreshUsageActivity(providerID: providerID, range: range)
+            }
+        }
         serviceStatusItem = serviceItem
         providerUsageWindowController = providerUsageController
         menu.addItem(serviceItem)

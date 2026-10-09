@@ -106,6 +106,49 @@ func parseRequestUsage(_ rawJSON: String) throws -> [RequestUsageRow] {
     }
 }
 
+/// `usage-activity` payload: 24h by hour and model, a year of UTC days, and
+/// per-client totals over the selected range.
+struct UsageActivity: Decodable {
+    struct Hourly: Decodable {
+        let hourStartMs: UInt64
+        let modelId: String
+        let requestCount: UInt64
+        let totalTokens: UInt64
+    }
+    struct Daily: Decodable {
+        let day: UInt64
+        let requestCount: UInt64
+        let totalTokens: UInt64
+    }
+    struct Client: Decodable {
+        let clientId: String
+        let requestCount: UInt64
+        let inputTokens: UInt64
+        let cacheReadTokens: UInt64
+        let cacheCreationTokens: UInt64
+        let outputTokens: UInt64
+        let averageTtftMs: Double?
+        let outputTps: Double?
+
+        var totalTokens: UInt64 {
+            inputTokens &+ cacheReadTokens &+ cacheCreationTokens &+ outputTokens
+        }
+    }
+    let hourly: [Hourly]
+    let daily: [Daily]
+    let clients: [Client]
+}
+
+func parseUsageActivity(_ rawJSON: String) throws -> UsageActivity {
+    let decoder = JSONDecoder()
+    decoder.keyDecodingStrategy = .convertFromSnakeCase
+    do {
+        return try decoder.decode(UsageActivity.self, from: Data(rawJSON.utf8))
+    } catch {
+        throw GatewayError.command("用量活动 JSON 无法解析：\(error)")
+    }
+}
+
 private func providerLogoAssetName(_ providerID: String) -> String {
     let normalized = providerID.lowercased()
     if normalized.contains("baidu") { return "baidu" }
@@ -212,6 +255,8 @@ final class ProviderUsageDashboardModel: ObservableObject {
     var onContentHeightChange: ((CGFloat) -> Void)?
     /// Asks for one page of the provider's request ledger older than `before`.
     var onRequestPage: ((_ providerID: String, _ before: Int64?) -> Void)?
+    var onActivityRefresh: ((_ providerID: String, _ range: TokenUsageRange) -> Void)?
+    @Published var activity: UsageActivity?
     @Published var configuredProviders: [ProviderDashboardProvider] = []
     @Published var quotaUsages: [ProviderQuotaUsage] = []
     @Published var tokenUsages: [ProviderTokenUsage] = []
@@ -279,7 +324,19 @@ final class ProviderUsageDashboardModel: ObservableObject {
         selectedProviderID = providerID
         selectedModelID = nil
         loadRequests(reset: true)
+        refreshActivity()
         onContentHeightChange?(contentHeight)
+    }
+
+    func refreshActivity() {
+        guard let providerID = selectedProviderID else { return }
+        activity = nil
+        onActivityRefresh?(providerID, selectedRange)
+    }
+
+    func updateActivity(providerID: String, range: TokenUsageRange, activity: UsageActivity) {
+        guard providerID == selectedProviderID, range == selectedRange else { return }
+        self.activity = activity
     }
 
     /// Loads the first page (`reset`) or the next older page for the
@@ -318,6 +375,7 @@ final class ProviderUsageDashboardModel: ObservableObject {
         selectedRange = range
         selectedModelID = nil
         onRangeChange?(range)
+        refreshActivity()
         onContentHeightChange?(contentHeight)
     }
 }
@@ -363,6 +421,9 @@ private struct ProviderUsageDashboardContent: View {
                     if let group = model.selectedGroup {
                         UsageStatStrip(group: group)
                         modelRanking(group)
+                        if let clients = model.activity?.clients, !clients.isEmpty {
+                            ClientUsageTable(clients: clients)
+                        }
                         requestSection(group)
                     } else {
                         emptyOverview
@@ -998,6 +1059,72 @@ private struct RequestClientBadge: View {
     }
 }
 
+/// Per-client breakdown, the magpie "by client" section.
+private struct ClientUsageTable: View {
+    let clients: [UsageActivity.Client]
+
+    var body: some View {
+        let total = max(clients.reduce(UInt64(0)) { $0 &+ $1.totalTokens }, 1)
+        VStack(alignment: .leading, spacing: 14) {
+            Text("按客户端").font(.system(size: 15, weight: .semibold))
+            VStack(spacing: 0) {
+                row(
+                    Text("客户端"), Text("占比"), "Token", "请求", "缓存", "TTFT", "吞吐"
+                )
+                .font(.caption.weight(.medium))
+                .foregroundStyle(.secondary)
+                .padding(.bottom, 8)
+                ForEach(clients, id: \.clientId) { client in
+                    Divider()
+                    let share = Double(client.totalTokens) / Double(total)
+                    row(
+                        RequestClientBadge(clientID: client.clientId),
+                        HStack(spacing: 8) {
+                            GeometryReader { geo in
+                                Capsule().fill(clientBadgeColor(client.clientId).opacity(0.8))
+                                    .frame(width: max(2, geo.size.width * share), height: 4)
+                                    .frame(maxHeight: .infinity, alignment: .center)
+                            }
+                            Text(formatSharePercent(share))
+                                .foregroundStyle(.secondary)
+                                .frame(width: 44, alignment: .trailing)
+                        },
+                        formatTokenCount(client.totalTokens),
+                        "\(client.requestCount)",
+                        cacheHit(client),
+                        client.averageTtftMs.map { String(format: "%.0f ms", $0) } ?? "—",
+                        client.outputTps.map(formatThroughput) ?? "—"
+                    )
+                    .font(.system(size: 12).monospacedDigit())
+                    .padding(.vertical, 8)
+                }
+            }
+        }
+    }
+
+    private func cacheHit(_ client: UsageActivity.Client) -> String {
+        let base = client.inputTokens &+ client.cacheReadTokens
+        guard base > 0 else { return "—" }
+        return String(format: "%.1f%%", Double(client.cacheReadTokens) / Double(base) * 100)
+    }
+
+    // Same column widths as the model table so the two sections line up.
+    private func row<Name: View, Share: View>(
+        _ name: Name, _ share: Share,
+        _ tokens: String, _ requests: String, _ cache: String, _ ttft: String, _ tps: String
+    ) -> some View {
+        HStack(spacing: 12) {
+            name.frame(maxWidth: .infinity, alignment: .leading)
+            share.frame(width: 130, alignment: .leading)
+            Text(tokens).frame(width: 64, alignment: .trailing)
+            Text(requests).frame(width: 52, alignment: .trailing)
+            Text(cache).frame(width: 56, alignment: .trailing)
+            Text(ttft).frame(width: 64, alignment: .trailing)
+            Text(tps).frame(width: 52, alignment: .trailing)
+        }
+    }
+}
+
 private func clientDisplayLabel(_ clientID: String) -> String {
     let trimmed = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
     if trimmed.isEmpty || trimmed.lowercased() == "unknown" { return "未知" }
@@ -1204,6 +1331,7 @@ final class ProviderUsageWindowController: NSWindowController {
             presentPersistentWindow(window)
         }
         model.loadRequests(reset: true)
+        model.refreshActivity()
     }
 
     func updateQuotaStatus(title: String, detail: String?) {
@@ -1251,6 +1379,15 @@ final class ProviderUsageWindowController: NSWindowController {
 
     func appendRequestPage(providerID: String, rows: [RequestUsageRow]) {
         model.appendRequestPage(providerID: providerID, rows: rows)
+    }
+
+    var onActivityRefresh: ((_ providerID: String, _ range: TokenUsageRange) -> Void)? {
+        get { model.onActivityRefresh }
+        set { model.onActivityRefresh = newValue }
+    }
+
+    func updateActivity(providerID: String, range: TokenUsageRange, activity: UsageActivity) {
+        model.updateActivity(providerID: providerID, range: range, activity: activity)
     }
 
     func updateRequestStatus(_ status: String) {
