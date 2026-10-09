@@ -1,48 +1,19 @@
-//! Shared one-shot header capture for Baidu auth-carrier CLIs.
+//! One-shot header capture for the DUCX data-report helper.
 //!
-//! Auth carriers are treated as header generators. The listener accepts direct
-//! loopback endpoint requests and can proxy legacy carriers that honor HTTP
-//! proxy variables. It stops before the warmup request reaches OneAPI.
+//! The listener accepts the patched helper's direct loopback request and can
+//! proxy any prerequisite HTTP traffic. It stops the report before upload.
 
 use std::sync::Arc;
 
 use anyhow::{Context, ensure};
-use reqwest::header::{HeaderMap, HeaderName, HeaderValue};
+use reqwest::header::{HeaderMap, HeaderValue};
 use tokio::io::{AsyncReadExt, AsyncWriteExt};
 use tokio::net::{TcpListener, TcpStream};
 use tokio::sync::{Mutex, oneshot};
 use tokio::task::JoinHandle;
 
-pub(crate) const NATIVE_HEADER: &str = "comate_custom_header";
 pub(crate) const REPORT_CLIENT_TOKEN_HEADER: &str = "x-auth-client-token";
 const MAX_PROXY_HEAD: usize = 64 * 1024;
-
-#[derive(Clone, Copy)]
-pub(crate) enum CaptureTrigger {
-    NativeHeader,
-    ReportClientToken,
-}
-
-impl CaptureTrigger {
-    fn is_present(self, headers: &HeaderMap) -> bool {
-        match self {
-            Self::NativeHeader => headers.contains_key(NATIVE_HEADER),
-            Self::ReportClientToken => headers.contains_key(REPORT_CLIENT_TOKEN_HEADER),
-        }
-    }
-}
-
-/// Headers worth forwarding from the carrier request onto Mixin's own request.
-/// Everything else (transport, host, content-length) is rebuilt by Mixin.
-fn is_capturable_header(name: &str) -> bool {
-    let lower = name.to_ascii_lowercase();
-    lower == NATIVE_HEADER
-        || lower == REPORT_CLIENT_TOKEN_HEADER
-        || lower == "authorization"
-        || lower == "x-api-key"
-        || lower.starts_with("x-baidu")
-        || lower.starts_with("comate")
-}
 
 pub(crate) struct CaptureProxy {
     pub(crate) addr: std::net::SocketAddr,
@@ -51,7 +22,7 @@ pub(crate) struct CaptureProxy {
 }
 
 impl CaptureProxy {
-    pub(crate) async fn start(trigger: CaptureTrigger) -> anyhow::Result<Self> {
+    pub(crate) async fn start() -> anyhow::Result<Self> {
         let listener = TcpListener::bind("127.0.0.1:0")
             .await
             .context("bind auth header capture proxy")?;
@@ -67,7 +38,7 @@ impl CaptureProxy {
                 };
                 let sender = Arc::clone(&sender);
                 tokio::spawn(async move {
-                    if let Err(error) = proxy_connection(client, sender, trigger).await {
+                    if let Err(error) = proxy_connection(client, sender).await {
                         tracing::debug!(error = %format!("{error:#}"), "auth header proxy connection ended");
                     }
                 });
@@ -86,8 +57,8 @@ impl CaptureProxy {
     ) -> anyhow::Result<HeaderMap> {
         let captured = tokio::time::timeout(timeout, &mut self.captured)
             .await
-            .context("auth carrier did not emit an authenticated request in time")?
-            .context("auth capture proxy closed before capturing native headers")?;
+            .context("DUCX data-report did not emit a client token in time")?
+            .context("DUCX data-report capture closed before receiving a client token")?;
         self.accept_task.abort();
         let _ = (&mut self.accept_task).await;
         Ok(captured)
@@ -103,7 +74,6 @@ impl Drop for CaptureProxy {
 async fn proxy_connection(
     mut client: TcpStream,
     sender: Arc<Mutex<Option<oneshot::Sender<HeaderMap>>>>,
-    trigger: CaptureTrigger,
 ) -> anyhow::Result<()> {
     let (head, leftover) = read_head(&mut client).await?;
     let head_text = String::from_utf8_lossy(&head);
@@ -123,22 +93,19 @@ async fn proxy_connection(
             break;
         }
         if let Some((name, value)) = line.split_once(':')
-            && is_capturable_header(name.trim())
-            && let (Ok(name), Ok(value)) = (
-                HeaderName::from_bytes(name.trim().as_bytes()),
-                HeaderValue::from_str(value.trim()),
-            )
+            && name.trim().eq_ignore_ascii_case(REPORT_CLIENT_TOKEN_HEADER)
+            && let Ok(value) = HeaderValue::from_str(value.trim())
         {
-            header_map.insert(name, value);
+            header_map.insert(REPORT_CLIENT_TOKEN_HEADER, value);
         }
     }
-    if trigger.is_present(&header_map) {
+    if header_map.contains_key(REPORT_CLIENT_TOKEN_HEADER) {
         let mut slot = sender.lock().await;
         if let Some(sender) = slot.take() {
             let _ = sender.send(header_map);
         }
-        // The carrier CLI is only used as a header generator. Stop the warmup
-        // turn before it can reach the real OneAPI and consume quota.
+        // The helper is only used to recover its client token. Stop this
+        // synthetic event before it can reach the reporting service.
         return Ok(());
     }
     if sender.lock().await.is_none() {
@@ -261,24 +228,14 @@ mod tests {
     }
 
     #[test]
-    fn only_login_derived_headers_are_capturable() {
-        assert!(is_capturable_header("comate_custom_header"));
-        assert!(is_capturable_header("x-auth-client-token"));
-        assert!(is_capturable_header("Authorization"));
-        assert!(is_capturable_header("x-api-key"));
-        assert!(!is_capturable_header("content-length"));
-        assert!(!is_capturable_header("host"));
-    }
-
-    #[test]
-    fn report_client_token_trigger_requires_the_report_header() {
+    fn report_client_token_is_the_only_capture_trigger() {
         let mut headers = HeaderMap::new();
-        assert!(!CaptureTrigger::ReportClientToken.is_present(&headers));
+        assert!(!headers.contains_key(REPORT_CLIENT_TOKEN_HEADER));
         headers.insert(
             REPORT_CLIENT_TOKEN_HEADER,
             HeaderValue::from_static("token"),
         );
-        assert!(CaptureTrigger::ReportClientToken.is_present(&headers));
+        assert!(headers.contains_key(REPORT_CLIENT_TOKEN_HEADER));
     }
 
     #[tokio::test]
@@ -297,9 +254,7 @@ mod tests {
             }
         });
 
-        let proxy = CaptureProxy::start(CaptureTrigger::NativeHeader)
-            .await
-            .unwrap();
+        let proxy = CaptureProxy::start().await.unwrap();
         let request = format!(
             "POST http://{origin_addr}/v1/responses HTTP/1.1\r\nHost: {origin_addr}\r\nContent-Length: 0\r\nConnection: close\r\n\r\n"
         );
@@ -311,12 +266,10 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn proxy_captures_native_header_without_forwarding() {
-        let proxy = CaptureProxy::start(CaptureTrigger::NativeHeader)
-            .await
-            .unwrap();
+    async fn proxy_captures_report_token_without_forwarding() {
+        let proxy = CaptureProxy::start().await.unwrap();
         let addr = proxy.addr;
-        let request = "POST http://oneapi.invalid/v1/responses HTTP/1.1\r\nHost: oneapi.invalid\r\ncomate_custom_header: native-value\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
+        let request = "POST /report HTTP/1.1\r\nHost: 127.0.0.1\r\nx-auth-client-token: report-token\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
         let mut client = TcpStream::connect(proxy.addr).await.unwrap();
         client.write_all(request.as_bytes()).await.unwrap();
         let mut response = Vec::new();
@@ -326,22 +279,10 @@ mod tests {
             .capture(std::time::Duration::from_secs(1))
             .await
             .unwrap();
-        assert_eq!(captured.get(NATIVE_HEADER).unwrap(), "native-value");
+        assert_eq!(
+            captured.get(REPORT_CLIENT_TOKEN_HEADER).unwrap(),
+            "report-token"
+        );
         assert!(TcpStream::connect(addr).await.is_err());
-    }
-
-    #[tokio::test]
-    async fn server_captures_native_header_from_origin_form_request() {
-        let proxy = CaptureProxy::start(CaptureTrigger::NativeHeader)
-            .await
-            .unwrap();
-        let request = "POST /v1/responses HTTP/1.1\r\nHost: 127.0.0.1\r\ncomate_custom_header: native-value\r\nContent-Length: 0\r\nConnection: close\r\n\r\n";
-        let mut client = TcpStream::connect(proxy.addr).await.unwrap();
-        client.write_all(request.as_bytes()).await.unwrap();
-        let captured = proxy
-            .capture(std::time::Duration::from_secs(1))
-            .await
-            .unwrap();
-        assert_eq!(captured.get(NATIVE_HEADER).unwrap(), "native-value");
     }
 }

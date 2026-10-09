@@ -2,6 +2,7 @@ use std::io::{self, IsTerminal};
 use std::path::PathBuf;
 use std::time::Instant;
 
+use anyhow::Context;
 use clap::Parser;
 use codex_mixin::catalog::{
     apply_auto_review_override, codex_catalog_from_models_with_metadata, load_template_catalog,
@@ -10,6 +11,8 @@ use codex_mixin::config::GatewayConfig;
 use codex_mixin::server::AppState;
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
+
+use crate::ducx_auth_carrier::{DucxAuthCarrier, PREFIX, VERSION};
 
 mod atomic_file;
 mod benchmark_proxy;
@@ -69,6 +72,28 @@ use status::{
 
 fn progress_is_interactive() -> bool {
     io::stdout().is_terminal()
+}
+
+fn print_ducx_auth_carrier() -> anyhow::Result<()> {
+    let model_token = std::env::var("ONEAPI_AUTH_TOKEN")
+        .context("DUCX auth carrier is missing ONEAPI_AUTH_TOKEN")?;
+    let custom_header = std::env::var("COMATE_CUSTOM_HEADER")
+        .context("DUCX auth carrier is missing COMATE_CUSTOM_HEADER")?;
+    anyhow::ensure!(
+        !model_token.is_empty(),
+        "DUCX auth carrier received an empty model token"
+    );
+    anyhow::ensure!(
+        !custom_header.is_empty(),
+        "DUCX auth carrier received an empty custom header"
+    );
+    let payload = DucxAuthCarrier {
+        version: VERSION,
+        model_token,
+        custom_header,
+    };
+    println!("{PREFIX}{}", serde_json::to_string(&payload)?);
+    Ok(())
 }
 
 pub(super) fn progress_step(message: &str) {
@@ -293,6 +318,7 @@ where
         error.exit();
     });
     let json_errors = cli.json_errors;
+    let ducx_auth_carrier = matches!(&cli.command, Some(Command::DucxAuthCarrier));
     let print_errors_to_stderr = matches!(&cli.command, Some(Command::ReportReplay { .. }));
     let interactive_start = requested_interactive_start(
         &cli,
@@ -346,7 +372,9 @@ where
             "gateway process starting"
         );
     }
-    migrate_managed_codex_auth();
+    if !ducx_auth_carrier {
+        migrate_managed_codex_auth();
+    }
     let result = if let Some(start_page) = interactive_start {
         match setup::install_cli_command() {
             Ok(installed_path) => Box::pin(launch_interactive(start_page, installed_path)).await,
@@ -405,6 +433,7 @@ fn exit_with_command_error(
 async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command.unwrap_or(Command::Info { json: false }) {
         Command::Interface { json } => interface::describe(json),
+        Command::DucxAuthCarrier => print_ducx_auth_carrier(),
         Command::ReportHook { event } => report_hook::run(&event).await,
         Command::ReportReplay {
             all_sessions,

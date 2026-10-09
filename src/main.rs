@@ -1,6 +1,7 @@
 #![forbid(unsafe_code)]
 
 mod cli;
+mod ducx_auth_carrier;
 #[path = "../tui/mod.rs"]
 mod tui;
 

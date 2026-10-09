@@ -33,6 +33,9 @@ pub(super) enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Internal: return DUCX-injected authentication to the parent gateway.
+    #[command(name = "ducx-auth-carrier", hide = true)]
+    DucxAuthCarrier,
     /// Internal: report a Codex hook event to Baidu.
     #[command(hide = true)]
     ReportHook {

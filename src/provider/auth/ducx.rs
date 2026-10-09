@@ -1,10 +1,9 @@
 //! Managed DUCX authentication capture.
 //!
 //! DUCX is Baidu's Codex fork. Its default model proxy mints a per-session
-//! `comate_custom_header` (and bearer token) from the login state. We override
-//! its OneAPI base URL with a one-shot loopback endpoint, let DUCX perform its
-//! real auth handshake, and capture the native headers from its warmup request.
-//! Mixin then injects those headers into its own upstream request.
+//! `comate_custom_header` (and bearer token) from the login state. We ask the
+//! DUCX wrapper to launch Mixin's internal carrier without creating a model
+//! turn, then reconstruct the native headers from its versioned pipe output.
 
 use std::io::Write as _;
 use std::path::{Path, PathBuf};
@@ -12,18 +11,21 @@ use std::process::Stdio;
 use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
-use reqwest::header::HeaderMap;
+use reqwest::header::{AUTHORIZATION, HeaderMap, HeaderName, HeaderValue};
 use serde_json::json;
-use tokio::io::{AsyncReadExt, AsyncWriteExt};
+use tokio::io::{AsyncBufReadExt, AsyncReadExt, AsyncWriteExt, BufReader};
 use tokio::process::Command;
 use tokio::sync::Mutex;
 
-use super::capture::{CaptureProxy, CaptureTrigger, REPORT_CLIENT_TOKEN_HEADER};
+use super::capture::{CaptureProxy, REPORT_CLIENT_TOKEN_HEADER};
+use crate::ducx_auth_carrier::{DucxAuthCarrier, PREFIX, VERSION};
 
 /// DUCX platform identity required for the comate source-auth handshake.
 const DUCX_PLATFORM: &str = "AIIDE-terminal";
 const DATA_REPORT_BASE_URL: &[u8] = b"http://ducc-data.baidu-int.com:8501";
 const DATA_REPORT_STDERR_LIMIT: u64 = 8 * 1024;
+const AUTH_CARRIER_STDOUT_LIMIT: u64 = 8 * 1024;
+const NATIVE_HEADER: &str = "comate_custom_header";
 /// Captured headers are refreshed on demand after one minute. No background
 /// process runs while the gateway is idle.
 const HEADER_TTL: Duration = Duration::from_secs(60);
@@ -81,7 +83,7 @@ impl DucxRuntime {
             data_report.display()
         );
         let username = managed_username(&self.home)?;
-        let proxy = CaptureProxy::start(CaptureTrigger::ReportClientToken).await?;
+        let proxy = CaptureProxy::start().await?;
         let patch_source = data_report.clone();
         let patch_directory = self.home.join(".baidu-cx/tmp");
         let capture_addr = proxy.addr;
@@ -205,11 +207,7 @@ impl DucxRuntime {
     }
 
     async fn mint_headers(&self, timeout: Duration) -> anyhow::Result<HeaderMap> {
-        let proxy = CaptureProxy::start(CaptureTrigger::NativeHeader).await?;
-        let base_url_override = format!(
-            "model_providers.oneapi.base_url=\"http://{}/v1\"",
-            proxy.addr
-        );
+        let carrier_executable = std::env::current_exe().context("resolve DUCX auth carrier")?;
         let codex_home = self.home.join(".baidu-cx");
         let mut command = Command::new(&self.executable);
         crate::platform::isolate_tokio_process_group(&mut command);
@@ -218,37 +216,66 @@ impl DucxRuntime {
         crate::platform::prepare_background_tokio_command(&mut command);
         crate::platform::set_tokio_home_env(&mut command, &self.home);
         let mut child = command
-            .args([
-                "-c",
-                &base_url_override,
-                "--disable",
-                "hooks",
-                "--disable",
-                "plugins",
-                "exec",
-                "--skip-git-repo-check",
-                "--dangerously-bypass-approvals-and-sandbox",
-                "codex-mixin auth warmup, reply ok",
-            ])
+            .args(["--disable", "hooks", "--disable", "plugins", "sandbox"])
+            .arg(carrier_executable)
+            .arg("ducx-auth-carrier")
             .current_dir(&self.home)
             .env("CODEX_HOME", &codex_home)
             .env("BAIDU_CX_PLATFORM", DUCX_PLATFORM)
             .env("DISABLE_DUCX_CLI_UPDATE", "1")
             .env("DISABLE_BAIDU_CLAUDE_UPDATE", "1")
             .stdin(Stdio::null())
-            .stdout(Stdio::null())
+            .stdout(Stdio::piped())
             .stderr(Stdio::null())
             .kill_on_drop(true)
             .spawn()
             .with_context(|| format!("start managed DUCX {}", self.executable.display()))?;
         let process_group_id = child.id();
-        let capture_result = proxy
-            .capture(timeout)
-            .await
-            .context("DUCX did not emit an authenticated request before the capture proxy closed");
+        let stdout = child
+            .stdout
+            .take()
+            .context("capture DUCX auth carrier output")?;
+        let capture_result = capture_auth_carrier(stdout, timeout).await;
         crate::platform::terminate_isolated_tokio_child(process_group_id, &mut child).await;
         capture_result
     }
+}
+
+async fn capture_auth_carrier(
+    stdout: tokio::process::ChildStdout,
+    timeout: Duration,
+) -> anyhow::Result<HeaderMap> {
+    let capture = async {
+        let mut lines = BufReader::new(stdout.take(AUTH_CARRIER_STDOUT_LIMIT)).lines();
+        while let Some(line) = lines.next_line().await? {
+            let Some(payload) = line.strip_prefix(PREFIX) else {
+                continue;
+            };
+            let output: DucxAuthCarrier =
+                serde_json::from_str(payload).context("parse DUCX auth carrier output")?;
+            ensure!(
+                output.version == VERSION,
+                "unsupported DUCX auth carrier version {}",
+                output.version
+            );
+            ensure!(
+                !output.model_token.is_empty() && !output.custom_header.is_empty(),
+                "DUCX auth carrier returned empty credentials"
+            );
+            let mut headers = HeaderMap::new();
+            let authorization = HeaderValue::from_str(&format!("Bearer {}", output.model_token))
+                .context("DUCX model token is not a valid HTTP header value")?;
+            let custom_header = HeaderValue::from_str(&output.custom_header)
+                .context("DUCX custom header is not a valid HTTP header value")?;
+            headers.insert(AUTHORIZATION, authorization);
+            headers.insert(HeaderName::from_static(NATIVE_HEADER), custom_header);
+            return Ok(headers);
+        }
+        anyhow::bail!("DUCX auth carrier exited without credentials")
+    };
+    tokio::time::timeout(timeout, capture)
+        .await
+        .context("DUCX auth carrier did not return credentials in time")?
 }
 
 fn patched_data_report(
@@ -405,11 +432,8 @@ mod tests {
     }
 
     #[test]
-    fn native_header_is_captured_from_shared_proxy() {
-        assert_eq!(
-            crate::provider::auth::capture::NATIVE_HEADER,
-            "comate_custom_header"
-        );
+    fn native_header_name_matches_ducx_config() {
+        assert_eq!(NATIVE_HEADER, "comate_custom_header");
     }
 
     #[tokio::test]
@@ -512,7 +536,7 @@ mod tests {
 
     #[cfg(unix)]
     #[tokio::test]
-    async fn native_header_warmup_terminates_descendant_processes() {
+    async fn native_header_capture_avoids_reportable_turn() {
         let directory = tempfile::tempdir().unwrap();
         let home = directory.path().join("home");
         let executable = home.join(".baidu-cx/baidu-cx/bin/ducx");
@@ -523,16 +547,23 @@ mod tests {
 /bin/sleep 30 &
 descendant=$!
 printf '%s' "$descendant" > "$HOME/descendant.pid"
+uses_sandbox=false
+uses_carrier=false
 for argument in "$@"; do
   case "$argument" in
-    model_providers.oneapi.base_url=*)
-      url=$(printf '%s' "$argument" | /usr/bin/sed -E 's/^[^"]*"([^"]+)".*/\1/')
+    sandbox)
+      uses_sandbox=true
+      ;;
+    ducx-auth-carrier)
+      uses_carrier=true
+      ;;
+    exec)
+      printf 'reported\n' >> "$HOME/report-count"
       ;;
   esac
 done
-/usr/bin/curl --silent --max-time 2 \
-  --header 'comate_custom_header: fixture' \
-  --data '{}' "$url/responses" >/dev/null 2>&1 || true
+[ "$uses_sandbox" = true ] && [ "$uses_carrier" = true ] || exit 7
+printf '%s\n' 'CODEX_MIXIN_DUCX_AUTH_V1={"version":1,"model_token":"model-token","custom_header":"fixture"}'
 wait
 "#,
         )
@@ -544,9 +575,11 @@ wait
             .native_headers(Duration::from_secs(3))
             .await
             .unwrap();
-        assert_eq!(
-            headers[crate::provider::auth::capture::NATIVE_HEADER],
-            "fixture"
+        assert_eq!(headers[NATIVE_HEADER], "fixture");
+        assert_eq!(headers[AUTHORIZATION], "Bearer model-token");
+        assert!(
+            !home.join("report-count").exists(),
+            "DUCX header capture created a reportable turn"
         );
         let descendant_pid = std::fs::read_to_string(home.join("descendant.pid")).unwrap();
         let descendant_pid = descendant_pid.trim();

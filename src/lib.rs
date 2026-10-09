@@ -6,6 +6,7 @@ pub mod benchmark;
 pub mod catalog;
 pub mod clients;
 pub mod config;
+mod ducx_auth_carrier;
 mod ech;
 pub mod error;
 pub mod fusion;

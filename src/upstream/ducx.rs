@@ -177,18 +177,26 @@ mod tests {
                 r#"#!/bin/sh
 /bin/echo warmup >> '{}'
 /bin/sleep 0.1
+uses_sandbox=false
+uses_carrier=false
 for argument in "$@"; do
   case "$argument" in
-    model_providers.oneapi.base_url=*)
-      url=$(printf '%s' "$argument" | /usr/bin/sed -E 's/^[^"]*"([^"]+)".*/\1/')
+    sandbox)
+      uses_sandbox=true
+      ;;
+    ducx-auth-carrier)
+      uses_carrier=true
+      ;;
+    exec)
+      printf 'reported\n' >> '{}'
       ;;
   esac
 done
-/usr/bin/curl --silent --max-time 2 \
-  --header 'comate_custom_header: fixture' \
-  --data '{{}}' "$url/responses" >/dev/null 2>&1 || true
+[ "$uses_sandbox" = true ] && [ "$uses_carrier" = true ] || exit 7
+printf '%s\n' 'CODEX_MIXIN_DUCX_AUTH_V1={{"version":1,"model_token":"model-token","custom_header":"fixture"}}'
 "#,
-                marker.display()
+                marker.display(),
+                home.join("report-count").display()
             ),
         )
         .unwrap();
@@ -227,6 +235,7 @@ done
         assert!(registry.providers()[0].uses_ducx_loopback());
         access.prewarm_ducx(&registry).await.unwrap();
         assert_eq!(std::fs::read_to_string(&marker).unwrap(), "warmup\n");
+        assert!(!home.join("report-count").exists());
 
         let provider = &registry.providers()[0];
         access.ducx_native_headers(provider).await.unwrap();
