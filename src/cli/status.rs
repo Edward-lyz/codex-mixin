@@ -13,6 +13,7 @@ mod opencode_go;
 mod quota;
 mod request_usage;
 mod usage;
+mod usage_activity;
 
 #[cfg(test)]
 pub(crate) use config::redacted_providers;
@@ -27,6 +28,7 @@ pub(crate) use quota::quota;
 pub(crate) use quota::summarize_quota_json;
 pub(crate) use request_usage::request_usage;
 pub(crate) use usage::usage;
+pub(crate) use usage_activity::usage_activity;
 
 pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
     if load_stored_config()?.is_none_or(|config| config.providers.is_empty()) {

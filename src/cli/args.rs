@@ -156,6 +156,15 @@ pub(super) enum Command {
         provider: Option<String>,
     },
     #[command(hide = true)]
+    UsageActivity {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        provider: String,
+        #[arg(long)]
+        days: Option<u64>,
+    },
+    #[command(hide = true)]
     Usage {
         #[arg(long)]
         json: bool,
