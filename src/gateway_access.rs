@@ -16,7 +16,7 @@ pub enum GatewayClient {
 }
 
 impl GatewayClient {
-    fn as_str(self) -> &'static str {
+    pub fn id(self) -> &'static str {
         match self {
             Self::Codex => "codex",
             Self::Claude => "claude",
@@ -107,7 +107,7 @@ pub fn generate_client_key(client: GatewayClient) -> anyhow::Result<String> {
         .map_err(|_| anyhow::anyhow!("generate gateway client key"))?;
     Ok(format!(
         "cmc1_{}_{}",
-        client.as_str(),
+        client.id(),
         base64::engine::general_purpose::URL_SAFE_NO_PAD.encode(bytes)
     ))
 }
@@ -129,6 +129,7 @@ mod tests {
         headers.clear();
         headers.insert(header::AUTHORIZATION, "Bearer claude-key".parse().unwrap());
         assert_eq!(keys.authenticate(&headers), Some(GatewayClient::Claude));
+        assert_eq!(GatewayClient::Claude.id(), "claude");
         headers.insert(header::AUTHORIZATION, "Bearer copied-key".parse().unwrap());
         assert_eq!(keys.authenticate(&headers), None);
 

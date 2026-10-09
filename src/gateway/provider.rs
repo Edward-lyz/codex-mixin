@@ -134,6 +134,7 @@ pub(crate) async fn stream_provider_response(
             };
             let observation = record_provider_prefix(
                 &executor.cache_shapes,
+                executor.client_id(headers),
                 provider.id(),
                 catalog_slug,
                 &upstream_model_id,
@@ -159,6 +160,7 @@ pub(crate) async fn stream_provider_response(
             )?;
             let observation = record_provider_prefix(
                 &executor.cache_shapes,
+                executor.client_id(headers),
                 provider.id(),
                 catalog_slug,
                 &upstream_model_id,
@@ -207,6 +209,7 @@ pub(crate) async fn stream_provider_response(
             prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
             let observation = record_provider_prefix(
                 &executor.cache_shapes,
+                executor.client_id(headers),
                 provider.id(),
                 catalog_slug,
                 &upstream_model_id,

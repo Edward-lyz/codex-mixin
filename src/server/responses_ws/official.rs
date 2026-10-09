@@ -473,6 +473,7 @@ mod tests {
         };
         let observation = record_provider_prefix(
             &tracker,
+            "codex",
             "official",
             "gpt-5.6-sol",
             "gpt-5.6-sol",

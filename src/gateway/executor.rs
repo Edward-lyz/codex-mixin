@@ -116,6 +116,13 @@ impl GatewayExecutor {
         custom_result
     }
 
+    pub(crate) fn client_id(&self, headers: &HeaderMap) -> &'static str {
+        self.config
+            .gateway_client_keys
+            .authenticate(headers)
+            .map_or("unknown", crate::gateway_access::GatewayClient::id)
+    }
+
     pub(crate) fn resolved_provider_model(
         &self,
         catalog_slug: &str,
@@ -349,6 +356,7 @@ impl GatewayExecutor {
         let routing = stable_oneapi_routing(headers, body)?;
         Ok(record_provider_prefix(
             &self.cache_shapes,
+            self.client_id(headers),
             "official",
             model,
             model,

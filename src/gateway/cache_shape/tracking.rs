@@ -135,6 +135,7 @@ impl CacheShapeTracker {
 /// append-only turns stay at debug.
 pub(crate) fn record_provider_prefix(
     tracker: &CacheShapeTracker,
+    client_id: &str,
     provider_id: &str,
     catalog_slug: &str,
     upstream_model_id: &str,
@@ -149,7 +150,22 @@ pub(crate) fn record_provider_prefix(
             protocol = shape.protocol,
             "provider request has no session key, so prefix cache tracking is unavailable"
         );
-        return None;
+        return Some(PrefixObservation {
+            provider_id: provider_id.to_owned(),
+            catalog_slug: catalog_slug.to_owned(),
+            upstream_model_id: upstream_model_id.to_owned(),
+            protocol: shape.protocol,
+            state: PrefixState::ColdStart,
+            changed_regions: String::new(),
+            stable_prefix_bytes: 0,
+            total_bytes: shape.total_bytes(),
+            reused_turns: 0,
+            total_turns: shape.turns.len(),
+            client_id: client_id.to_owned(),
+            session_id: None,
+            usage: tracker.usage(),
+            started_at: Instant::now(),
+        });
     };
     // Fusion panels and judges share one Codex session while sending different
     // prompts, so the tracked key has to include the upstream model.
@@ -219,6 +235,7 @@ pub(crate) fn record_provider_prefix(
         total_bytes: report.total_bytes,
         reused_turns: report.reused_turns,
         total_turns: report.total_turns,
+        client_id: client_id.to_owned(),
         session_id: Some(routing.hash_key.clone()),
         usage: tracker.usage(),
         started_at: Instant::now(),
@@ -248,6 +265,7 @@ pub(crate) struct PrefixObservation {
     pub(super) total_bytes: usize,
     pub(super) reused_turns: usize,
     pub(super) total_turns: usize,
+    pub(super) client_id: String,
     pub(super) session_id: Option<String>,
     pub(super) usage: Arc<TokenUsageAggregator>,
     pub(super) started_at: Instant,
@@ -308,7 +326,7 @@ impl PrefixObservation {
         self.usage.record_request(ProviderRequestUsage {
             id: 0,
             recorded_at_ms: 0,
-            client_id: "unknown".to_owned(),
+            client_id: self.client_id.clone(),
             session_id: self.session_id.clone(),
             provider_id: self.provider_id.clone(),
             model_id: self.upstream_model_id.clone(),
@@ -318,8 +336,11 @@ impl PrefixObservation {
             output_tokens: usage.output_tokens.unwrap_or(0),
             ttft_micros: usage.ttft_micros,
             generation_micros: usage.generation_micros,
-            prefix_state: Some(self.state.as_str().to_owned()),
-            changed_regions: (!self.changed_regions.is_empty())
+            prefix_state: self
+                .session_id
+                .as_ref()
+                .map(|_| self.state.as_str().to_owned()),
+            changed_regions: (self.session_id.is_some() && !self.changed_regions.is_empty())
                 .then(|| self.changed_regions.clone()),
             reused_turns: self.reused_turns as u64,
             total_turns: self.total_turns as u64,

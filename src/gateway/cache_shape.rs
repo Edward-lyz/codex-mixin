@@ -582,6 +582,7 @@ mod tests {
             total_bytes,
             reused_turns: 40,
             total_turns: 41,
+            client_id: "codex".to_owned(),
             session_id: Some("session".to_owned()),
             usage: Arc::new(TokenUsageAggregator::default()),
             started_at: std::time::Instant::now(),
@@ -924,6 +925,7 @@ mod tests {
         };
         let observation = record_provider_prefix(
             &tracker,
+            "codex",
             "official",
             "gpt-5.6-sol",
             "gpt-5.6-sol",
@@ -951,5 +953,29 @@ mod tests {
         assert_eq!(usage[0].input_tokens, 40);
         assert_eq!(usage[0].cache_read_tokens, 80);
         assert_eq!(usage[0].output_tokens, 30);
+    }
+
+    #[test]
+    fn usage_observation_does_not_require_a_session_key() {
+        let tracker = CacheShapeTracker::default();
+        let request = json!({
+            "model": "provider-model",
+            "input": [{"type":"message","role":"user","content":"hello"}]
+        });
+
+        let observation = record_provider_prefix(
+            &tracker,
+            "claude",
+            "provider",
+            "provider-model",
+            "provider-model",
+            None,
+            CacheShape::from_openai_responses(&request),
+        )
+        .unwrap();
+
+        assert_eq!(observation.client_id, "claude");
+        assert!(observation.session_id.is_none());
+        assert_eq!(observation.total_turns, 1);
     }
 }
