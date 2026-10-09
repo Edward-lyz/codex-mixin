@@ -991,7 +991,7 @@ struct ModelBenchmarkRootView: View {
                         || model.isBusy || isExternallyBusy
                 )
         }
-        .width(min: 56, ideal: 64)
+        .width(48)
     }
 
     private var modelColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
@@ -1004,7 +1004,8 @@ struct ModelBenchmarkRootView: View {
         ) { row in
             modelCell(row)
         }
-        .width(min: 260, ideal: 520)
+        // Keep metadata visible; only the model name consumes spare window width.
+        .width(min: 120, ideal: 180, max: .infinity)
     }
 
     private var latencyColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
@@ -1012,7 +1013,7 @@ struct ModelBenchmarkRootView: View {
             latencyCell(row)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .width(min: 84, ideal: 104)
+        .width(72)
     }
 
     private var throughputColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
@@ -1020,7 +1021,7 @@ struct ModelBenchmarkRootView: View {
             throughputCell(row)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .width(min: 92, ideal: 112)
+        .width(80)
     }
 
     private var contextColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
@@ -1044,7 +1045,7 @@ struct ModelBenchmarkRootView: View {
             .disabled(model.isBusy || isExternallyBusy || !row.model.isAvailable)
             .help("模型上下文，单位 K；修改后保存")
         }
-        .width(min: 104, ideal: 124)
+        .width(96)
     }
 
     private var ratioColumn: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
@@ -1052,7 +1053,7 @@ struct ModelBenchmarkRootView: View {
             ratioCell(row)
                 .frame(maxWidth: .infinity, alignment: .trailing)
         }
-        .width(min: 70, ideal: 86)
+        .width(64)
     }
 
     private var capabilityColumns: some TableColumnContent<ModelBenchmarkTableRow, KeyPathComparator<ModelBenchmarkTableRow>> {
@@ -1062,7 +1063,7 @@ struct ModelBenchmarkRootView: View {
         ) { row in
             capabilityCell(row)
         }
-        .width(min: 150, ideal: 170)
+        .width(130)
     }
 
     private func selectionBinding(_ row: ModelBenchmarkTableRow) -> Binding<Bool> {
@@ -1096,7 +1097,8 @@ struct ModelBenchmarkRootView: View {
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .foregroundStyle(row.model.isAvailable ? .primary : .secondary)
-                .help(row.model.description ?? row.model.id)
+                .help(([row.model.id, displayName, row.model.description].compactMap { $0 }).joined(separator: "\n"))
+                .frame(maxWidth: .infinity, alignment: .leading)
             Spacer(minLength: 4)
             if row.model.manuallyAdded {
                 Button {

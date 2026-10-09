@@ -3,8 +3,8 @@ import Cocoa
 let providerSidebarMinimumWidth: CGFloat = 220
 let providerSidebarIdealWidth: CGFloat = 250
 let providerSidebarMaximumWidth: CGFloat = 300
-let providerModelTableMinimumWidth: CGFloat = 1_100
-let baiduProviderModelTableMinimumWidth: CGFloat = 1_190
+let providerModelTableMinimumWidth: CGFloat = 710
+let baiduProviderModelTableMinimumWidth: CGFloat = 790
 
 func modelTableMinimumWidth(includesRatio: Bool) -> CGFloat {
     includesRatio ? baiduProviderModelTableMinimumWidth : providerModelTableMinimumWidth

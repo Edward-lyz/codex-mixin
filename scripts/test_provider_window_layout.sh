@@ -10,7 +10,15 @@ LOCALIZATION_BUNDLE="$($ROOT_DIR/scripts/prepare_test_localization.sh)"
 xcrun swiftc \
   "$ROOT_DIR/macos/Generated/L10n.swift" \
   "$ROOT_DIR/macos/Localization.swift" \
+  "$ROOT_DIR/macos/ApplicationMenuSupport.swift" \
+  "$ROOT_DIR/macos/UpdateSupport.swift" \
+  "$ROOT_DIR/macos/LiquidGlassSupport.swift" \
+  "$ROOT_DIR/macos/AppSupport.swift" \
+  "$ROOT_DIR/macos/InstallProgressWindow.swift" \
+  "$ROOT_DIR/macos/ProviderSupport.swift" \
   "$ROOT_DIR/macos/ProviderWindowLayoutSupport.swift" \
+  "$ROOT_DIR/macos/ModelBenchmarkDataSupport.swift" \
+  "$ROOT_DIR/macos/ModelBenchmarkWindow.swift" \
   "$ROOT_DIR/macos/tests/ProviderWindowLayoutTests.swift" \
   -framework Cocoa \
   -o "$TEST_BINARY"
