@@ -11,6 +11,7 @@ use super::runtime::*;
 mod config;
 mod opencode_go;
 mod quota;
+mod request_usage;
 mod usage;
 
 #[cfg(test)]
@@ -24,6 +25,7 @@ pub(crate) use opencode_go::{
 pub(crate) use quota::quota;
 #[cfg(test)]
 pub(crate) use quota::summarize_quota_json;
+pub(crate) use request_usage::request_usage;
 pub(crate) use usage::usage;
 
 pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {

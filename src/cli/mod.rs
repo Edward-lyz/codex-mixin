@@ -67,7 +67,8 @@ use providers::{
 };
 use service::{init_tracing, logs, restart, start, stop};
 use status::{
-    export_config, import_config, models, probe_web_search, quota, show_config, status, usage,
+    export_config, import_config, models, probe_web_search, quota, request_usage, show_config,
+    status, usage,
 };
 
 fn progress_is_interactive() -> bool {
@@ -803,6 +804,11 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Models { json } => models(json).await,
         Command::Quota { json, provider } => quota(json, provider.as_deref()).await,
         Command::Usage { json, days } => usage(json, days).await,
+        Command::RequestUsage {
+            json,
+            limit,
+            before,
+        } => request_usage(json, limit, before).await,
         Command::Config {
             command,
             json,

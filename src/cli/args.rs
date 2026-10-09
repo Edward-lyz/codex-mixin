@@ -162,6 +162,15 @@ pub(super) enum Command {
         #[arg(long)]
         days: Option<u64>,
     },
+    #[command(hide = true)]
+    RequestUsage {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        limit: Option<u64>,
+        #[arg(long)]
+        before: Option<i64>,
+    },
     /// Back up, restore, or inspect the Codex Mixin configuration.
     Config {
         #[command(subcommand)]
