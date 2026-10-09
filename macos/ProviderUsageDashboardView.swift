@@ -356,26 +356,61 @@ private struct ProviderUsageDashboardContent: View {
 
     @ViewBuilder
     private var overview: some View {
-        providerTabs
-        Divider()
-        if let group = model.selectedGroup {
-            providerSummary(group)
-            quotaContent(group)
-            if !compact {
-                tokenContent(group)
+        if compact {
+            providerTabs
+            Divider()
+            if let group = model.selectedGroup {
+                providerSummary(group)
+                quotaContent(group)
+            } else {
+                emptyOverview
             }
         } else {
-            VStack(spacing: 8) {
-                Image(systemName: "chart.bar.xaxis")
-                    .font(.title2)
-                    .foregroundStyle(.secondary)
-                Text(model.tokenStatusTitle)
-                    .font(.headline)
-                    .multilineTextAlignment(.center)
-            }
-            .frame(maxWidth: .infinity, maxHeight: .infinity)
-            .help(model.tokenStatusDetail ?? model.quotaStatusDetail ?? "")
+            windowOverview
         }
+    }
+
+    @ViewBuilder
+    private var windowOverview: some View {
+        if let group = model.selectedGroup {
+            HStack(alignment: .center) {
+                providerTabs
+                Spacer()
+                rangePicker
+            }
+            UsageStatStrip(group: group)
+            Divider()
+            modelRanking(group)
+        } else {
+            emptyOverview
+        }
+    }
+
+    private var emptyOverview: some View {
+        VStack(spacing: 8) {
+            Image(systemName: "chart.bar.xaxis")
+                .font(.title2)
+                .foregroundStyle(.secondary)
+            Text(model.tokenStatusTitle)
+                .font(.headline)
+                .multilineTextAlignment(.center)
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+        .help(model.tokenStatusDetail ?? model.quotaStatusDetail ?? "")
+    }
+
+    private var rangePicker: some View {
+        Picker("统计口径", selection: Binding(
+            get: { model.selectedRange },
+            set: model.selectRange
+        )) {
+            ForEach(TokenUsageRange.allCases) { range in
+                Text(range.title).tag(range)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 260)
     }
 
     @ViewBuilder
@@ -473,25 +508,10 @@ private struct ProviderUsageDashboardContent: View {
     }
 
     @ViewBuilder
-    private func tokenContent(_ group: ProviderUsageGroup) -> some View {
-        VStack(alignment: .leading, spacing: 12) {
-            HStack(alignment: .firstTextBaseline) {
-                Text("模型用量")
-                    .font(.headline)
-                Spacer()
-                Picker("统计口径", selection: Binding(
-                    get: { model.selectedRange },
-                    set: model.selectRange
-                )) {
-                    ForEach(TokenUsageRange.allCases) { range in
-                        Text(range.title).tag(range)
-                    }
-                }
-                .labelsHidden()
-                .pickerStyle(.segmented)
-                .frame(maxWidth: 260)
-            }
-
+    private func modelRanking(_ group: ProviderUsageGroup) -> some View {
+        VStack(alignment: .leading, spacing: 10) {
+            Text("按模型")
+                .font(.headline)
             if group.models.isEmpty {
                 Text(model.tokenStatusTitle)
                     .font(.callout)
@@ -500,15 +520,18 @@ private struct ProviderUsageDashboardContent: View {
                     .padding(.vertical, 24)
                     .help(model.tokenStatusDetail ?? "")
             } else {
+                let total = group.models.reduce(UInt64(0)) { $0 + $1.totalTokens }
                 let maximumTokens = group.models.map(\.totalTokens).max() ?? 0
                 ScrollView(.vertical) {
-                    VStack(spacing: 6) {
-                        ForEach(group.models, id: \.modelID) { usage in
+                    VStack(spacing: 0) {
+                        ForEach(Array(group.models.enumerated()), id: \.element.modelID) { index, usage in
                             Button {
                                 model.selectModel(usage.modelID)
                             } label: {
-                                ModelUsageBar(
+                                ModelRankingRow(
                                     usage: usage,
+                                    seriesColor: usageSeriesColor(index),
+                                    totalTokens: total,
                                     maximumTokens: maximumTokens,
                                     selected: usage.modelID == model.selectedModelID
                                 )
@@ -516,17 +539,19 @@ private struct ProviderUsageDashboardContent: View {
                             .buttonStyle(.plain)
                             .help(usage.modelID)
                             .accessibilityIdentifier("token-model-\(usage.modelID)")
+                            Divider()
                         }
                     }
                 }
                 .scrollIndicators(.automatic)
-                .frame(maxHeight: 280)
+                .frame(maxHeight: 340)
 
                 if let selectedModel = model.selectedModel {
                     TokenModelDetail(usage: selectedModel)
                 }
             }
         }
+        .frame(maxWidth: .infinity, alignment: .leading)
     }
 }
 
@@ -604,46 +629,169 @@ private struct QuotaCard: View {
     }
 }
 
-private struct ModelUsageBar: View {
+private struct UsageStatStrip: View {
+    let group: ProviderUsageGroup
+
+    var body: some View {
+        HStack(alignment: .top, spacing: 0) {
+            statCell(label: "Token", value: formatTokenCount(totalTokens), detail: tokenBreakdown)
+            cellDivider
+            statCell(label: "请求", value: "\(requestCount)", detail: nil)
+            cellDivider
+            cacheCell
+            cellDivider
+            statCell(label: "输出速度", value: speedValue, detail: ttftDetail)
+        }
+    }
+
+    private var cellDivider: some View {
+        Divider().frame(height: 46).padding(.horizontal, 10)
+    }
+
+    private func statCell(label: String, value: String, detail: String?) -> some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text(label).font(.caption).foregroundStyle(.secondary)
+            Text(value)
+                .font(.system(size: 26, weight: .semibold).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            if let detail {
+                Text(detail).font(.caption2).foregroundStyle(.secondary).lineLimit(1)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var cacheCell: some View {
+        VStack(alignment: .leading, spacing: 6) {
+            Text("缓存命中率").font(.caption).foregroundStyle(.secondary)
+            Text(cacheHitValue)
+                .font(.system(size: 26, weight: .semibold).monospacedDigit())
+            if let ratio = cacheHitRatio {
+                GeometryReader { geo in
+                    ZStack(alignment: .leading) {
+                        Capsule().fill(Color.secondary.opacity(0.15))
+                        Capsule().fill(Color.green).frame(width: geo.size.width * ratio)
+                    }
+                }
+                .frame(height: 4)
+            } else {
+                Color.clear.frame(height: 4)
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private var totalTokens: UInt64 { group.models.reduce(0) { $0 + $1.totalTokens } }
+    private var requestCount: UInt64 { group.models.reduce(0) { $0 + $1.requestCount } }
+    private var totalInput: UInt64 { group.models.reduce(0) { $0 + $1.inputTokens } }
+    private var totalOutput: UInt64 { group.models.reduce(0) { $0 + $1.outputTokens } }
+    private var totalCacheRead: UInt64 { group.models.reduce(0) { $0 + $1.cacheReadTokens } }
+
+    private var tokenBreakdown: String {
+        "输入 \(formatTokenCount(totalInput)) · 输出 \(formatTokenCount(totalOutput)) · 缓存 \(formatTokenCount(totalCacheRead))"
+    }
+
+    private var cacheHitRatio: Double? {
+        let base = totalInput + totalCacheRead
+        guard base > 0 else { return nil }
+        return Double(totalCacheRead) / Double(base)
+    }
+
+    private var cacheHitValue: String {
+        cacheHitRatio.map { String(format: "%.1f%%", $0 * 100) } ?? "—"
+    }
+
+    private var speedValue: String {
+        let weighted = group.models.compactMap { usage -> (Double, Double)? in
+            guard let tps = usage.outputTPS, usage.outputTokens > 0 else { return nil }
+            return (tps, Double(usage.outputTokens))
+        }
+        let weight = weighted.reduce(0) { $0 + $1.1 }
+        guard weight > 0 else { return "—" }
+        let average = weighted.reduce(0) { $0 + $1.0 * $1.1 } / weight
+        return "\(Int(average.rounded())) token/秒"
+    }
+
+    private var ttftDetail: String? {
+        let weighted = group.models.compactMap { usage -> (Double, Double)? in
+            guard let ttft = usage.averageTTFTMs, usage.requestCount > 0 else { return nil }
+            return (ttft, Double(usage.requestCount))
+        }
+        let weight = weighted.reduce(0) { $0 + $1.1 }
+        guard weight > 0 else { return nil }
+        let average = weighted.reduce(0) { $0 + $1.0 * $1.1 } / weight
+        return average >= 1_000
+            ? String(format: "首字平均 %.1f 秒", average / 1_000)
+            : String(format: "首字平均 %.0f ms", average)
+    }
+}
+
+private struct ModelRankingRow: View {
     let usage: ProviderTokenUsage
+    let seriesColor: Color
+    let totalTokens: UInt64
     let maximumTokens: UInt64
     let selected: Bool
 
     var body: some View {
-        HStack(spacing: 12) {
-            Text(usage.modelID)
-                .font(.callout.weight(selected ? .semibold : .regular))
-                .foregroundStyle(selected ? Color.accentColor : Color.primary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(width: 180, alignment: .leading)
+        VStack(alignment: .leading, spacing: 6) {
+            HStack(spacing: 8) {
+                Circle().fill(seriesColor).frame(width: 8, height: 8)
+                Text(usage.modelID)
+                    .font(.callout.weight(selected ? .semibold : .medium))
+                    .lineLimit(1)
+                    .truncationMode(.middle)
+                Spacer(minLength: 12)
+                Text(formatGroupedCount(usage.totalTokens))
+                    .font(.callout.monospacedDigit().weight(.semibold))
+            }
             GeometryReader { geo in
                 ZStack(alignment: .leading) {
                     Capsule().fill(Color.secondary.opacity(0.12))
-                    Capsule()
-                        .fill(Color.accentColor.opacity(selected ? 1 : 0.8))
-                        .frame(width: barWidth(geo.size.width))
+                    Capsule().fill(seriesColor).frame(width: barWidth(geo.size.width))
                 }
             }
-            .frame(height: 10)
-            Text(formatTokenCount(usage.totalTokens))
-                .font(.callout.monospacedDigit())
-                .foregroundStyle(selected ? Color.primary : Color.secondary)
-                .frame(width: 76, alignment: .trailing)
+            .frame(height: 4)
+            Text(subline)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+                .lineLimit(1)
         }
-        .padding(.vertical, 6)
-        .padding(.horizontal, 10)
-        .background(
-            selected ? Color.accentColor.opacity(0.08) : Color.clear,
-            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-        )
+        .padding(.vertical, 10)
+        .padding(.horizontal, 4)
+        .background(selected ? Color.secondary.opacity(0.06) : .clear)
         .contentShape(Rectangle())
+    }
+
+    private var subline: String {
+        var parts = ["\(usage.requestCount) 个请求"]
+        if let hit = usage.cacheHitPercent {
+            parts.append(String(format: "命中率 %.0f%%", hit))
+        }
+        if totalTokens > 0 {
+            let share = Double(usage.totalTokens) / Double(totalTokens) * 100
+            parts.append(String(format: "占比 %.0f%%", share))
+        }
+        return parts.joined(separator: " · ")
     }
 
     private func barWidth(_ total: CGFloat) -> CGFloat {
         guard maximumTokens > 0 else { return 0 }
-        return max(4, total * CGFloat(Double(usage.totalTokens) / Double(maximumTokens)))
+        return max(2, total * CGFloat(Double(usage.totalTokens) / Double(maximumTokens)))
     }
+}
+
+private func usageSeriesColor(_ index: Int) -> Color {
+    let palette: [Color] = [.accentColor, .teal, .green, .orange, .purple, .pink, .indigo, .mint]
+    return palette[index % palette.count]
+}
+
+private func formatGroupedCount(_ count: UInt64) -> String {
+    let formatter = NumberFormatter()
+    formatter.numberStyle = .decimal
+    formatter.groupingSeparator = ","
+    return formatter.string(from: NSNumber(value: count)) ?? "\(count)"
 }
 
 private let reqColTime: CGFloat = 84
