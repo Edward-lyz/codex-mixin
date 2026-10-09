@@ -24,6 +24,7 @@ use crate::fusion::{FusionEngine, should_fuse_turn, validate_fusion_profiles};
 use crate::gateway::UpstreamRouting;
 use crate::gateway::{
     CacheShapeTracker, ProviderRequestUsage, ProviderTokenUsage, RequestPlan, ResolvedModelRoute,
+    UsageActivity,
 };
 use crate::images::ImageRouteRegistry;
 use crate::protocol::ResponseStream;

@@ -13,7 +13,9 @@ pub(crate) use cache_shape::{
     CacheShape, CacheShapeTracker, PrefixObservation, UpstreamCacheObserver,
     observe_upstream_cache_usage, record_provider_prefix,
 };
-pub(crate) use cache_usage::{ProviderRequestUsage, ProviderTokenUsage, TokenUsageAggregator};
+pub(crate) use cache_usage::{
+    ProviderRequestUsage, ProviderTokenUsage, TokenUsageAggregator, UsageActivity,
+};
 pub(crate) use executor::GatewayExecutor;
 pub(crate) use plan::{RequestPlan, UpstreamTarget};
 pub(crate) use provider::{ProviderResponseRequest, stream_provider_response};

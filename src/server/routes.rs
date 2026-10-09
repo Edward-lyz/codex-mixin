@@ -29,6 +29,7 @@ pub fn router(state: AppState) -> Router {
         )
         .route("/v1/usage", get(token_usage))
         .route("/v1/request-usage", get(request_usage))
+        .route("/v1/usage-activity", get(usage_activity))
         .route("/v1/responses", get(responses_ws).post(responses))
         .route("/v1/responses/compact", post(compact))
         .route("/v1/messages", post(super::messages_http::messages))
@@ -267,4 +268,31 @@ struct RequestUsageQuery {
     limit: Option<u64>,
     before: Option<i64>,
     provider_id: Option<String>,
+}
+
+async fn usage_activity(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<UsageActivityQuery>,
+) -> Result<Json<UsageActivity>, GatewayError> {
+    check_gateway_auth(&state, &headers).await?;
+    if query.days.is_some_and(|days| !(1..=3_650).contains(&days)) {
+        return Err(GatewayError::BadRequest(
+            "usage days must be between 1 and 3650".to_owned(),
+        ));
+    }
+    let aggregator = state.cache_shapes.usage();
+    let activity = tokio::task::spawn_blocking(move || {
+        aggregator.activity_snapshot(&query.provider_id, query.days)
+    })
+    .await
+    .map_err(|error| GatewayError::Other(error.into()))?
+    .map_err(GatewayError::Other)?;
+    Ok(Json(activity))
+}
+
+#[derive(Deserialize)]
+struct UsageActivityQuery {
+    provider_id: String,
+    days: Option<u64>,
 }

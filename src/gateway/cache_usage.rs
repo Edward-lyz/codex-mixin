@@ -9,6 +9,10 @@ use rusqlite::{Connection, params};
 use serde::Serialize;
 use serde_json::Value;
 
+mod activity;
+
+pub(crate) use activity::UsageActivity;
+
 const MAX_RECORDED_TTFT_MICROS: u64 = 50_000_000;
 const MIN_RECORDED_OUTPUT_TOKENS: u64 = 100;
 const REQUEST_USAGE_RETENTION_MILLIS: u64 = 30 * 86_400_000;
