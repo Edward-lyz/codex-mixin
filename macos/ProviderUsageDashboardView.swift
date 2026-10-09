@@ -319,7 +319,7 @@ private struct ProviderUsageDashboardContent: View {
     let compact: Bool
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 8) {
+        VStack(alignment: .leading, spacing: compact ? 8 : 16) {
             if !compact {
                 tabPicker
             }
@@ -329,7 +329,7 @@ private struct ProviderUsageDashboardContent: View {
                 overview
             }
         }
-        .padding(10)
+        .padding(compact ? 10 : 20)
         .frame(
             minWidth: compact ? menuContentWidth : 720,
             maxWidth: compact ? menuContentWidth : .infinity,
@@ -441,7 +441,7 @@ private struct ProviderUsageDashboardContent: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .help(model.quotaStatusDetail ?? "")
-        } else {
+        } else if compact {
             let quotaRows = VStack(spacing: providerQuotaRowSpacing) {
                 ForEach(Array(group.quotas.enumerated()), id: \.offset) { _, usage in
                     ProviderQuotaRow(usage: usage, multiple: group.quotas.count > 1)
@@ -459,39 +459,55 @@ private struct ProviderUsageDashboardContent: View {
                 }
             }
             .frame(height: providerQuotaSectionHeight(group.quotas.count))
+        } else {
+            LazyVGrid(
+                columns: [GridItem(.adaptive(minimum: 220), spacing: 12, alignment: .top)],
+                alignment: .leading,
+                spacing: 12
+            ) {
+                ForEach(Array(group.quotas.enumerated()), id: \.offset) { _, usage in
+                    QuotaCard(usage: usage, multiple: group.quotas.count > 1)
+                }
+            }
         }
     }
 
     @ViewBuilder
     private func tokenContent(_ group: ProviderUsageGroup) -> some View {
-        VStack(spacing: 7) {
-            Picker("统计口径", selection: Binding(
-                get: { model.selectedRange },
-                set: model.selectRange
-            )) {
-                ForEach(TokenUsageRange.allCases) { range in
-                    Text(range.title).tag(range)
+        VStack(alignment: .leading, spacing: 12) {
+            HStack(alignment: .firstTextBaseline) {
+                Text("模型用量")
+                    .font(.headline)
+                Spacer()
+                Picker("统计口径", selection: Binding(
+                    get: { model.selectedRange },
+                    set: model.selectRange
+                )) {
+                    ForEach(TokenUsageRange.allCases) { range in
+                        Text(range.title).tag(range)
+                    }
                 }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .frame(maxWidth: 260)
             }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .controlSize(.mini)
 
             if group.models.isEmpty {
-            Text(model.tokenStatusTitle)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .help(model.tokenStatusDetail ?? "")
+                Text(model.tokenStatusTitle)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+                    .frame(maxWidth: .infinity, alignment: .center)
+                    .padding(.vertical, 24)
+                    .help(model.tokenStatusDetail ?? "")
             } else {
                 let maximumTokens = group.models.map(\.totalTokens).max() ?? 0
-                ScrollView(.horizontal) {
-                    HStack(alignment: .bottom, spacing: 3) {
+                ScrollView(.vertical) {
+                    VStack(spacing: 6) {
                         ForEach(group.models, id: \.modelID) { usage in
                             Button {
                                 model.selectModel(usage.modelID)
                             } label: {
-                                TokenModelColumn(
+                                ModelUsageBar(
                                     usage: usage,
                                     maximumTokens: maximumTokens,
                                     selected: usage.modelID == model.selectedModelID
@@ -502,10 +518,9 @@ private struct ProviderUsageDashboardContent: View {
                             .accessibilityIdentifier("token-model-\(usage.modelID)")
                         }
                     }
-                    .padding(.horizontal, 4)
                 }
-                .scrollIndicators(.hidden)
-                .frame(height: 104)
+                .scrollIndicators(.automatic)
+                .frame(maxHeight: 280)
 
                 if let selectedModel = model.selectedModel {
                     TokenModelDetail(usage: selectedModel)
@@ -552,50 +567,82 @@ private struct ProviderQuotaRow: View {
     }
 }
 
-private struct TokenModelColumn: View {
-    let usage: ProviderTokenUsage
-    let maximumTokens: UInt64
-    let selected: Bool
+private struct QuotaCard: View {
+    let usage: ProviderQuotaUsage
+    let multiple: Bool
 
     var body: some View {
-        VStack(spacing: 4) {
-            Text(formatTokenCount(usage.totalTokens))
-                .font(.system(size: 9, weight: selected ? .semibold : .medium).monospacedDigit())
-                .foregroundStyle(selected ? Color.primary : Color.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .frame(width: 47)
-            TokenVerticalBar(usage: usage, maximumTokens: maximumTokens, selected: selected)
-            Text(usage.modelID)
-                .font(.system(size: 9, weight: selected ? .semibold : .regular))
-                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
+        VStack(alignment: .leading, spacing: 8) {
+            Text(providerQuotaLabel(usage, multiple: multiple))
+                .font(.caption.weight(.semibold))
+                .foregroundStyle(.secondary)
                 .lineLimit(1)
                 .truncationMode(.middle)
-                .frame(width: 47)
+            Text(providerQuotaText(usage))
+                .font(.title3.weight(.semibold).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+            if let used = usage.used, let limit = usage.limit, limit > 0 {
+                ProgressView(value: min(max(used / limit, 0), 1))
+                    .tint(.accentColor)
+            } else {
+                Color.clear.frame(height: 4)
+            }
         }
-        .contentShape(Rectangle())
+        .padding(.horizontal, 14)
+        .padding(.vertical, 12)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(.separator)
+        }
+        .help(usage.error ?? "")
     }
 }
 
-private struct TokenVerticalBar: View {
+private struct ModelUsageBar: View {
     let usage: ProviderTokenUsage
     let maximumTokens: UInt64
     let selected: Bool
 
     var body: some View {
-        VStack {
-            Spacer(minLength: 0)
-            Capsule()
-                .fill(Color.accentColor.opacity(selected ? 1 : 0.78))
-                .frame(width: selected ? 9 : 7, height: barHeight)
+        HStack(spacing: 12) {
+            Text(usage.modelID)
+                .font(.callout.weight(selected ? .semibold : .regular))
+                .foregroundStyle(selected ? Color.accentColor : Color.primary)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .frame(width: 180, alignment: .leading)
+            GeometryReader { geo in
+                ZStack(alignment: .leading) {
+                    Capsule().fill(Color.secondary.opacity(0.12))
+                    Capsule()
+                        .fill(Color.accentColor.opacity(selected ? 1 : 0.8))
+                        .frame(width: barWidth(geo.size.width))
+                }
+            }
+            .frame(height: 10)
+            Text(formatTokenCount(usage.totalTokens))
+                .font(.callout.monospacedDigit())
+                .foregroundStyle(selected ? Color.primary : Color.secondary)
+                .frame(width: 76, alignment: .trailing)
         }
-        .frame(width: 11, height: 66)
+        .padding(.vertical, 6)
+        .padding(.horizontal, 10)
+        .background(
+            selected ? Color.accentColor.opacity(0.08) : Color.clear,
+            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
+        )
+        .contentShape(Rectangle())
     }
 
-    private var barHeight: CGFloat {
-        maximumTokens == 0
-            ? 0
-            : max(3, 66 * CGFloat(Double(usage.totalTokens) / Double(maximumTokens)))
+    private func barWidth(_ total: CGFloat) -> CGFloat {
+        guard maximumTokens > 0 else { return 0 }
+        return max(4, total * CGFloat(Double(usage.totalTokens) / Double(maximumTokens)))
     }
 }
 
