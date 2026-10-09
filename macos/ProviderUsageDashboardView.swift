@@ -646,70 +646,195 @@ private struct ModelUsageBar: View {
     }
 }
 
+private let reqColTime: CGFloat = 84
+private let reqColClient: CGFloat = 96
+private let reqColNum: CGFloat = 70
+private let reqColTTFT: CGFloat = 68
+private let reqColTPS: CGFloat = 86
+
 private struct RequestUsageTable: View {
     let rows: [RequestUsageRow]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            header
-            Divider()
-            ScrollView(.vertical) {
-                LazyVStack(spacing: 0) {
-                    ForEach(rows) { row in
-                        RequestUsageRowView(row: row)
-                        Divider()
+        VStack(alignment: .leading, spacing: 14) {
+            RequestSummaryStrip(rows: rows)
+            VStack(alignment: .leading, spacing: 0) {
+                requestHeader
+                Divider()
+                ScrollView(.vertical) {
+                    LazyVStack(spacing: 0) {
+                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
+                            RequestUsageRowView(row: row, even: index.isMultiple(of: 2))
+                        }
                     }
                 }
+            }
+            .background(
+                Color(nsColor: .controlBackgroundColor),
+                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+            )
+            .overlay {
+                RoundedRectangle(cornerRadius: 12, style: .continuous)
+                    .stroke(.separator)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
     }
 
-    private var header: some View {
-        HStack(spacing: 8) {
-            Text("时间").frame(width: 72, alignment: .leading)
-            Text("客户端").frame(width: 72, alignment: .leading)
+    private var requestHeader: some View {
+        HStack(spacing: 10) {
+            Text("时间").frame(width: reqColTime, alignment: .leading)
+            Text("客户端").frame(width: reqColClient, alignment: .leading)
             Text("模型").frame(maxWidth: .infinity, alignment: .leading)
-            Text("输入").frame(width: 64, alignment: .trailing)
-            Text("缓存").frame(width: 64, alignment: .trailing)
-            Text("输出").frame(width: 64, alignment: .trailing)
-            Text("TTFT").frame(width: 64, alignment: .trailing)
-            Text("吞吐").frame(width: 72, alignment: .trailing)
+            Text("输入").frame(width: reqColNum, alignment: .trailing)
+            Text("缓存").frame(width: reqColNum, alignment: .trailing)
+            Text("输出").frame(width: reqColNum, alignment: .trailing)
+            Text("TTFT").frame(width: reqColTTFT, alignment: .trailing)
+            Text("吞吐 t/s").frame(width: reqColTPS, alignment: .trailing)
         }
-        .font(.caption2.weight(.semibold))
+        .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
-        .padding(.vertical, 6)
+        .padding(.horizontal, 12)
+        .padding(.vertical, 9)
     }
 }
 
 private struct RequestUsageRowView: View {
     let row: RequestUsageRow
+    let even: Bool
 
     var body: some View {
-        HStack(spacing: 8) {
+        HStack(spacing: 10) {
             Text(requestTimeLabel(row.recordedAtMs))
-                .frame(width: 72, alignment: .leading)
-            Text(row.clientID)
-                .frame(width: 72, alignment: .leading)
-                .lineLimit(1)
-                .truncationMode(.middle)
+                .foregroundStyle(.secondary)
+                .frame(width: reqColTime, alignment: .leading)
+            RequestClientBadge(clientID: row.clientID)
+                .frame(width: reqColClient, alignment: .leading)
             Text(row.modelID)
                 .frame(maxWidth: .infinity, alignment: .leading)
                 .lineLimit(1)
                 .truncationMode(.middle)
                 .help("\(row.providerID)/\(row.modelID)")
-            Text(formatTokenCount(row.inputTokens)).frame(width: 64, alignment: .trailing)
-            Text(formatTokenCount(row.cacheReadTokens)).frame(width: 64, alignment: .trailing)
-            Text(formatTokenCount(row.outputTokens)).frame(width: 64, alignment: .trailing)
+            Text(formatTokenCount(row.inputTokens)).frame(width: reqColNum, alignment: .trailing)
+            Text(formatTokenCount(row.cacheReadTokens))
+                .foregroundStyle(row.cacheReadTokens > 0 ? Color.accentColor : Color.secondary)
+                .frame(width: reqColNum, alignment: .trailing)
+            Text(formatTokenCount(row.outputTokens)).frame(width: reqColNum, alignment: .trailing)
             Text(row.ttftMs.map { String(format: "%.0fms", $0) } ?? "—")
-                .frame(width: 64, alignment: .trailing)
-            Text(row.outputTPS.map { String(format: "%.1f", $0) } ?? "—")
-                .frame(width: 72, alignment: .trailing)
+                .foregroundStyle(.secondary)
+                .frame(width: reqColTTFT, alignment: .trailing)
+            Text(row.outputTPS.map(formatThroughput) ?? "—")
+                .frame(width: reqColTPS, alignment: .trailing)
         }
-        .font(.system(size: 11).monospacedDigit())
-        .padding(.vertical, 5)
+        .font(.system(size: 12).monospacedDigit())
+        .padding(.horizontal, 12)
+        .padding(.vertical, 7)
+        .background(even ? Color.clear : Color.secondary.opacity(0.06))
         .help(row.prefixState.map { "缓存状态：\($0)" } ?? "")
     }
+}
+
+private struct RequestSummaryStrip: View {
+    let rows: [RequestUsageRow]
+
+    var body: some View {
+        HStack(spacing: 12) {
+            StatChip(title: "请求数", value: "\(rows.count)")
+            StatChip(title: "中位 TTFT", value: medianTTFT)
+            StatChip(title: "平均吞吐", value: averageThroughput)
+            StatChip(title: "缓存命中", value: cacheHitRate)
+        }
+    }
+
+    private var medianTTFT: String {
+        let values = rows.compactMap(\.ttftMs).sorted()
+        guard !values.isEmpty else { return "—" }
+        let mid = values.count / 2
+        let median = values.count.isMultiple(of: 2)
+            ? (values[mid - 1] + values[mid]) / 2
+            : values[mid]
+        return String(format: "%.0f ms", median)
+    }
+
+    private var averageThroughput: String {
+        let values = rows.compactMap(\.outputTPS)
+        guard !values.isEmpty else { return "—" }
+        let mean = values.reduce(0, +) / Double(values.count)
+        return "\(formatThroughput(mean)) t/s"
+    }
+
+    private var cacheHitRate: String {
+        let cache = rows.reduce(UInt64(0)) { $0 + $1.cacheReadTokens }
+        let base = rows.reduce(UInt64(0)) { $0 + $1.inputTokens + $1.cacheReadTokens }
+        guard base > 0 else { return "—" }
+        return String(format: "%.0f%%", Double(cache) / Double(base) * 100)
+    }
+}
+
+private struct StatChip: View {
+    let title: String
+    let value: String
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 4) {
+            Text(title)
+                .font(.caption2)
+                .foregroundStyle(.secondary)
+            Text(value)
+                .font(.title3.weight(.semibold).monospacedDigit())
+                .lineLimit(1)
+                .minimumScaleFactor(0.6)
+        }
+        .padding(.horizontal, 14)
+        .padding(.vertical, 10)
+        .frame(maxWidth: .infinity, alignment: .leading)
+        .background(
+            Color(nsColor: .controlBackgroundColor),
+            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
+        )
+        .overlay {
+            RoundedRectangle(cornerRadius: 12, style: .continuous)
+                .stroke(.separator)
+        }
+    }
+}
+
+private struct RequestClientBadge: View {
+    let clientID: String
+
+    var body: some View {
+        Text(clientDisplayLabel(clientID))
+            .font(.caption2.weight(.medium))
+            .lineLimit(1)
+            .truncationMode(.tail)
+            .padding(.horizontal, 8)
+            .padding(.vertical, 3)
+            .background(clientBadgeColor(clientID).opacity(0.16), in: Capsule())
+            .foregroundStyle(clientBadgeColor(clientID))
+    }
+}
+
+private func clientDisplayLabel(_ clientID: String) -> String {
+    let trimmed = clientID.trimmingCharacters(in: .whitespacesAndNewlines)
+    if trimmed.isEmpty || trimmed.lowercased() == "unknown" { return "未知" }
+    return trimmed
+}
+
+private func clientBadgeColor(_ clientID: String) -> Color {
+    switch clientID.lowercased() {
+    case "codex": return Color(red: 0.10, green: 0.68, blue: 0.56)
+    case "claude": return Color(red: 0.80, green: 0.45, blue: 0.18)
+    case "dsh", "deepseek": return Color(red: 0.34, green: 0.53, blue: 1)
+    case "opencode": return Color(red: 0.42, green: 0.44, blue: 0.95)
+    case "pi": return Color(red: 0.85, green: 0.33, blue: 0.57)
+    default: return .secondary
+    }
+}
+
+private func formatThroughput(_ value: Double) -> String {
+    if value >= 1_000 { return String(format: "%.1fk", value / 1_000) }
+    if value >= 100 { return String(format: "%.0f", value) }
+    return String(format: "%.1f", value)
 }
 
 private func requestTimeLabel(_ recordedAtMs: UInt64) -> String {
