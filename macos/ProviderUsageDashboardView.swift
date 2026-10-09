@@ -64,6 +64,61 @@ enum TokenUsageRange: String, CaseIterable, Identifiable {
     }
 }
 
+enum UsageDashboardTab: String, CaseIterable, Identifiable {
+    case overview
+    case requests
+
+    var id: String { rawValue }
+    var title: String {
+        switch self {
+        case .overview: return "概览"
+        case .requests: return "请求"
+        }
+    }
+}
+
+struct RequestUsageRow: Decodable, Identifiable {
+    let id: Int64
+    let recordedAtMs: UInt64
+    let clientID: String
+    let providerID: String
+    let modelID: String
+    let inputTokens: UInt64
+    let cacheReadTokens: UInt64
+    let outputTokens: UInt64
+    let ttftMicros: UInt64?
+    let generationMicros: UInt64?
+    let prefixState: String?
+
+    enum CodingKeys: String, CodingKey {
+        case id
+        case recordedAtMs = "recorded_at_ms"
+        case clientID = "client_id"
+        case providerID = "provider_id"
+        case modelID = "model_id"
+        case inputTokens = "input_tokens"
+        case cacheReadTokens = "cache_read_tokens"
+        case outputTokens = "output_tokens"
+        case ttftMicros = "ttft_micros"
+        case generationMicros = "generation_micros"
+        case prefixState = "prefix_state"
+    }
+
+    var ttftMs: Double? { ttftMicros.map { Double($0) / 1_000.0 } }
+    var outputTPS: Double? {
+        guard let micros = generationMicros, micros > 0 else { return nil }
+        return Double(outputTokens) * 1_000_000.0 / Double(micros)
+    }
+}
+
+func parseRequestUsage(_ rawJSON: String) throws -> [RequestUsageRow] {
+    do {
+        return try JSONDecoder().decode([RequestUsageRow].self, from: Data(rawJSON.utf8))
+    } catch {
+        throw GatewayError.command("请求用量 JSON 无法解析：\(error)")
+    }
+}
+
 private func providerLogoAssetName(_ providerID: String) -> String {
     let normalized = providerID.lowercased()
     if normalized.contains("baidu") { return "baidu" }
@@ -168,9 +223,13 @@ func tokenUsageDetail(_ usage: ProviderTokenUsage) -> String {
 final class ProviderUsageDashboardModel: ObservableObject {
     var onRangeChange: ((TokenUsageRange) -> Void)?
     var onContentHeightChange: ((CGFloat) -> Void)?
+    var onRequestRefresh: (() -> Void)?
     @Published var configuredProviders: [ProviderDashboardProvider] = []
     @Published var quotaUsages: [ProviderQuotaUsage] = []
     @Published var tokenUsages: [ProviderTokenUsage] = []
+    @Published var requestRows: [RequestUsageRow] = []
+    @Published var requestStatus = "请求明细：检查中..."
+    @Published var selectedTab = UsageDashboardTab.overview
     @Published var quotaStatusTitle = "额度：检查中..."
     @Published var quotaStatusDetail: String?
     @Published var tokenStatusTitle = "Token 使用：检查中..."
@@ -245,6 +304,14 @@ final class ProviderUsageDashboardModel: ObservableObject {
         onRangeChange?(range)
         onContentHeightChange?(contentHeight)
     }
+
+    func selectTab(_ tab: UsageDashboardTab) {
+        guard tab != selectedTab else { return }
+        selectedTab = tab
+        if tab == .requests {
+            onRequestRefresh?()
+        }
+    }
 }
 
 private struct ProviderUsageDashboardContent: View {
@@ -253,24 +320,13 @@ private struct ProviderUsageDashboardContent: View {
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
-            providerTabs
-            Divider()
-
-            if let group = model.selectedGroup {
-                providerSummary(group)
-                quotaContent(group)
-                tokenContent(group)
+            if !compact {
+                tabPicker
+            }
+            if !compact, model.selectedTab == .requests {
+                requestList
             } else {
-                VStack(spacing: 8) {
-                    Image(systemName: "chart.bar.xaxis")
-                        .font(.title2)
-                        .foregroundStyle(.secondary)
-                    Text(model.tokenStatusTitle)
-                        .font(.headline)
-                        .multilineTextAlignment(.center)
-                }
-                .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .help(model.tokenStatusDetail ?? model.quotaStatusDetail ?? "")
+                overview
             }
         }
         .padding(10)
@@ -282,6 +338,59 @@ private struct ProviderUsageDashboardContent: View {
             alignment: .topLeading
         )
         .background(Color(nsColor: .windowBackgroundColor))
+    }
+
+    private var tabPicker: some View {
+        Picker("视图", selection: Binding(
+            get: { model.selectedTab },
+            set: model.selectTab
+        )) {
+            ForEach(UsageDashboardTab.allCases) { tab in
+                Text(tab.title).tag(tab)
+            }
+        }
+        .labelsHidden()
+        .pickerStyle(.segmented)
+        .frame(maxWidth: 220)
+    }
+
+    @ViewBuilder
+    private var overview: some View {
+        providerTabs
+        Divider()
+        if let group = model.selectedGroup {
+            providerSummary(group)
+            quotaContent(group)
+            tokenContent(group)
+        } else {
+            VStack(spacing: 8) {
+                Image(systemName: "chart.bar.xaxis")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                Text(model.tokenStatusTitle)
+                    .font(.headline)
+                    .multilineTextAlignment(.center)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+            .help(model.tokenStatusDetail ?? model.quotaStatusDetail ?? "")
+        }
+    }
+
+    @ViewBuilder
+    private var requestList: some View {
+        if model.requestRows.isEmpty {
+            VStack(spacing: 8) {
+                Image(systemName: "list.bullet.rectangle")
+                    .font(.title2)
+                    .foregroundStyle(.secondary)
+                Text(model.requestStatus)
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            .frame(maxWidth: .infinity, maxHeight: .infinity)
+        } else {
+            RequestUsageTable(rows: model.requestRows)
+        }
     }
 
     private var providerTabs: some View {
@@ -486,6 +595,79 @@ private struct TokenVerticalBar: View {
             ? 0
             : max(3, 66 * CGFloat(Double(usage.totalTokens) / Double(maximumTokens)))
     }
+}
+
+private struct RequestUsageTable: View {
+    let rows: [RequestUsageRow]
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 0) {
+            header
+            Divider()
+            ScrollView(.vertical) {
+                LazyVStack(spacing: 0) {
+                    ForEach(rows) { row in
+                        RequestUsageRowView(row: row)
+                        Divider()
+                    }
+                }
+            }
+        }
+        .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
+    }
+
+    private var header: some View {
+        HStack(spacing: 8) {
+            Text("时间").frame(width: 72, alignment: .leading)
+            Text("客户端").frame(width: 72, alignment: .leading)
+            Text("模型").frame(maxWidth: .infinity, alignment: .leading)
+            Text("输入").frame(width: 64, alignment: .trailing)
+            Text("缓存").frame(width: 64, alignment: .trailing)
+            Text("输出").frame(width: 64, alignment: .trailing)
+            Text("TTFT").frame(width: 64, alignment: .trailing)
+            Text("吞吐").frame(width: 72, alignment: .trailing)
+        }
+        .font(.caption2.weight(.semibold))
+        .foregroundStyle(.secondary)
+        .padding(.vertical, 6)
+    }
+}
+
+private struct RequestUsageRowView: View {
+    let row: RequestUsageRow
+
+    var body: some View {
+        HStack(spacing: 8) {
+            Text(requestTimeLabel(row.recordedAtMs))
+                .frame(width: 72, alignment: .leading)
+            Text(row.clientID)
+                .frame(width: 72, alignment: .leading)
+                .lineLimit(1)
+                .truncationMode(.middle)
+            Text(row.modelID)
+                .frame(maxWidth: .infinity, alignment: .leading)
+                .lineLimit(1)
+                .truncationMode(.middle)
+                .help("\(row.providerID)/\(row.modelID)")
+            Text(formatTokenCount(row.inputTokens)).frame(width: 64, alignment: .trailing)
+            Text(formatTokenCount(row.cacheReadTokens)).frame(width: 64, alignment: .trailing)
+            Text(formatTokenCount(row.outputTokens)).frame(width: 64, alignment: .trailing)
+            Text(row.ttftMs.map { String(format: "%.0fms", $0) } ?? "—")
+                .frame(width: 64, alignment: .trailing)
+            Text(row.outputTPS.map { String(format: "%.1f", $0) } ?? "—")
+                .frame(width: 72, alignment: .trailing)
+        }
+        .font(.system(size: 11).monospacedDigit())
+        .padding(.vertical, 5)
+        .help(row.prefixState.map { "缓存状态：\($0)" } ?? "")
+    }
+}
+
+private func requestTimeLabel(_ recordedAtMs: UInt64) -> String {
+    let date = Date(timeIntervalSince1970: Double(recordedAtMs) / 1_000.0)
+    let formatter = DateFormatter()
+    formatter.dateFormat = "MM-dd HH:mm"
+    return formatter.string(from: date)
 }
 
 private struct TokenModelDetail: View {
@@ -701,6 +883,20 @@ final class ProviderUsageWindowController: NSWindowController {
     var onRangeChange: ((TokenUsageRange) -> Void)? {
         get { model.onRangeChange }
         set { model.onRangeChange = newValue }
+    }
+
+    var onRequestRefresh: (() -> Void)? {
+        get { model.onRequestRefresh }
+        set { model.onRequestRefresh = newValue }
+    }
+
+    func updateRequestRows(_ rows: [RequestUsageRow]) {
+        model.requestRows = rows
+        model.requestStatus = "请求明细：暂无数据"
+    }
+
+    func updateRequestStatus(_ status: String) {
+        model.requestStatus = status
     }
 }
 
