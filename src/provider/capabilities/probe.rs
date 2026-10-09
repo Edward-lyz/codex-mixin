@@ -16,7 +16,7 @@ const IMAGE_DATA_URL: &str = "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEA
 
 /// Upstreams with session affinity, such as Baidu OneAPI, reject `/v1/messages`
 /// probes without a stable client session. Every probe run shares one
-/// identifier: the routing hash travels as `metadata.session_id` and as the
+/// identifier: the routing hash travels as `metadata.user_id` and as the
 /// provider's affinity header, mirroring the gateway forwarding path.
 struct ProbeSession {
     hash_key: String,
@@ -321,7 +321,7 @@ async fn send_probe(client: &Client, target: &ProbeTarget<'_>, mut body: Value) 
         .await
         .expect("provider capability semaphore was closed");
     if let Some(session) = target.session {
-        body["metadata"] = json!({"session_id": session.hash_key.as_str()});
+        body["metadata"] = json!({"user_id": session.hash_key.as_str()});
     }
     let request = match target.native_headers {
         Some(headers) => client.post(target.url.clone()).headers(headers.clone()),
@@ -443,7 +443,7 @@ mod tests {
     use super::*;
     use crate::provider::{ProviderRegistry, custom_provider};
 
-    /// Affinity header and `metadata.session_id` captured per probe request.
+    /// Affinity header and `metadata.user_id` captured per probe request.
     type CapturedSessions = Arc<Mutex<Vec<(String, String)>>>;
 
     async fn record_probe_path(
@@ -469,7 +469,7 @@ mod tests {
             .to_owned();
         let session_id = serde_json::from_slice::<Value>(&body)
             .ok()
-            .and_then(|body| body["metadata"]["session_id"].as_str().map(str::to_owned))
+            .and_then(|body| body["metadata"]["user_id"].as_str().map(str::to_owned))
             .unwrap_or_default();
         captured.lock().unwrap().push((hash_key, session_id));
         (

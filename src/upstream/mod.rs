@@ -378,7 +378,7 @@ impl UpstreamAccess {
                 if let Some(retry_hash_key) = retry_hash_key.as_ref()
                     && let Some(metadata) = request.metadata.as_mut().and_then(Value::as_object_mut)
                 {
-                    metadata.insert("session_id".to_owned(), json!(retry_hash_key));
+                    metadata.insert("user_id".to_owned(), json!(retry_hash_key));
                 }
                 let retry = self
                     .send_anthropic_request(
