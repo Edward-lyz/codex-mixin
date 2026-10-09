@@ -173,7 +173,7 @@ extension AppDelegate {
         // cannot hide the local token history on a fresh app launch.
         let providersTask = Task { try await runGateway(["providers", "list", "--json"]) }
         let quotaTask = Task { try await runGateway(["quota", "--json"]) }
-        let usageRange = providerUsageDashboardView?.model.selectedRange ?? .all
+        let usageRange = providerUsageWindowController?.model.selectedRange ?? .all
         let usageTask = Task { try await runGateway(usageRange.commandArguments) }
         do {
             let providerList = try decodeProviderList(await providersTask.value)
@@ -191,7 +191,7 @@ extension AppDelegate {
                 )
             }
             await MainActor.run {
-                providerUsageDashboardView?.updateConfiguredProviders(dashboardProviders)
+                providerUsageWindowController?.updateConfiguredProviders(dashboardProviders)
             }
             Task { [weak self] in
                 guard let self else { return }
@@ -203,7 +203,7 @@ extension AppDelegate {
                             websiteURL: websiteURL
                         ) {
                             await MainActor.run {
-                                self.providerUsageDashboardView?.refreshProviderIcons()
+                                self.providerUsageWindowController?.refreshProviderIcons()
                             }
                         }
                     } catch {
@@ -315,11 +315,11 @@ extension AppDelegate {
     }
 
     func updateQuotaStatus(title: String, detail: String?, progress: Double?) {
-        providerUsageDashboardView?.updateQuotaStatus(title: title, detail: detail)
+        providerUsageWindowController?.updateQuotaStatus(title: title, detail: detail)
     }
 
     func updateProviderQuotaStatus(_ usages: [ProviderQuotaUsage]) {
-        providerUsageDashboardView?.updateQuotaUsages(usages)
+        providerUsageWindowController?.updateQuotaUsages(usages)
     }
 
     func loadCachedProviderQuota() {
@@ -351,21 +351,21 @@ extension AppDelegate {
     }
 
     func updateTokenUsageStatus(title: String, detail: String?, progress: Double?) {
-        providerUsageDashboardView?.updateTokenStatus(title: title, detail: detail)
+        providerUsageWindowController?.updateTokenStatus(title: title, detail: detail)
     }
 
     func updateProviderTokenUsageStatus(_ usages: [ProviderTokenUsage]) {
-        providerUsageDashboardView?.updateTokenUsages(usages)
+        providerUsageWindowController?.updateTokenUsages(usages)
     }
 
     @MainActor
     func refreshTokenUsage(for range: TokenUsageRange) async {
         do {
             let usage = try await runGateway(range.commandArguments)
-            guard providerUsageDashboardView?.model.selectedRange == range else { return }
+            guard providerUsageWindowController?.model.selectedRange == range else { return }
             updateProviderTokenUsageStatus(try parseProviderTokenUsage(usage))
         } catch {
-            guard providerUsageDashboardView?.model.selectedRange == range else { return }
+            guard providerUsageWindowController?.model.selectedRange == range else { return }
             updateTokenUsageStatus(
                 title: "Token 使用：不可用",
                 detail: localizedErrorDescription(error),

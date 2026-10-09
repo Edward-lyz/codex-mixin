@@ -8,7 +8,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     let applicationIconController = ApplicationIconController()
     var statusItem: NSStatusItem?
     var serviceStatusItem: NSMenuItem?
-    var providerUsageDashboardView: ProviderUsageDashboardView?
+    var providerUsageWindowController: ProviderUsageWindowController?
     var launchAtLoginMenuItem: NSMenuItem?
     var echMenuItem: NSMenuItem?
     var providerSettingsWindowController: ProviderSettingsWindowController?
@@ -175,19 +175,17 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let menu = NSMenu()
         menu.delegate = menuItemViewUpdater
         let serviceItem = NSMenuItem(title: serviceStatus, action: nil, keyEquivalent: "")
-        let providerUsageItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
-        let providerUsageView = ProviderUsageDashboardView()
-        providerUsageView.onRangeChange = { [weak self] range in
+        let providerUsageController = ProviderUsageWindowController()
+        providerUsageController.onRangeChange = { [weak self] range in
             Task { @MainActor in
                 await self?.refreshTokenUsage(for: range)
             }
         }
-        providerUsageItem.view = providerUsageView
         serviceStatusItem = serviceItem
-        providerUsageDashboardView = providerUsageView
+        providerUsageWindowController = providerUsageController
         menu.addItem(serviceItem)
         updateServiceStatusView()
-        menu.addItem(providerUsageItem)
+        menu.addItem(actionItem("使用与性能…", #selector(showProviderUsage), "chart.bar.xaxis"))
         updateQuotaStatus(title: "额度：检查中...", detail: nil, progress: nil)
         updateTokenUsageStatus(title: "Token 使用：检查中...", detail: nil, progress: nil)
         menu.addItem(.separator())
@@ -235,6 +233,10 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         item.target = self
         item.image = menuItemImage(symbolName)
         return item
+    }
+
+    @objc func showProviderUsage() {
+        providerUsageWindowController?.present()
     }
 
     func submenuItem(_ title: String, symbolName: String, items: [NSMenuItem]) -> NSMenuItem {

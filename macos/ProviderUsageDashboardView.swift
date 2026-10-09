@@ -249,6 +249,7 @@ final class ProviderUsageDashboardModel: ObservableObject {
 
 private struct ProviderUsageDashboardContent: View {
     @ObservedObject var model: ProviderUsageDashboardModel
+    let compact: Bool
 
     var body: some View {
         VStack(alignment: .leading, spacing: 8) {
@@ -273,7 +274,13 @@ private struct ProviderUsageDashboardContent: View {
             }
         }
         .padding(10)
-        .frame(width: menuContentWidth, height: model.contentHeight, alignment: .topLeading)
+        .frame(
+            minWidth: compact ? menuContentWidth : 720,
+            maxWidth: compact ? menuContentWidth : .infinity,
+            minHeight: compact ? model.contentHeight : 480,
+            maxHeight: compact ? model.contentHeight : .infinity,
+            alignment: .topLeading
+        )
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
@@ -535,13 +542,13 @@ final class ProviderUsageDashboardView: FlippedMenuView {
     private var heightSyncScheduled = false
 
     init() {
-        hostingView = NSHostingView(rootView: ProviderUsageDashboardContent(model: model))
+        hostingView = NSHostingView(rootView: ProviderUsageDashboardContent(model: model, compact: true))
         super.init(frame: NSRect(x: 0, y: 0, width: menuContentWidth, height: providerDashboardMinimumHeight))
         installHostingView()
     }
 
     required init?(coder: NSCoder) {
-        hostingView = NSHostingView(rootView: ProviderUsageDashboardContent(model: model))
+        hostingView = NSHostingView(rootView: ProviderUsageDashboardContent(model: model, compact: true))
         super.init(coder: coder)
         frame.size = NSSize(width: menuContentWidth, height: providerDashboardMinimumHeight)
         installHostingView()
@@ -560,7 +567,7 @@ final class ProviderUsageDashboardView: FlippedMenuView {
     }
 
     func refreshProviderIcons() {
-        hostingView.rootView = ProviderUsageDashboardContent(model: model)
+        hostingView.rootView = ProviderUsageDashboardContent(model: model, compact: true)
     }
 
     func updateQuotaUsages(_ usages: [ProviderQuotaUsage]) {
@@ -618,6 +625,82 @@ final class ProviderUsageDashboardView: FlippedMenuView {
         guard frame.height != targetHeight else { return }
         frame.size.height = targetHeight
         hostingView.frame = bounds
+    }
+}
+
+final class ProviderUsageWindowController: NSWindowController {
+    let model: ProviderUsageDashboardModel
+    private let hostingController: NSHostingController<ProviderUsageDashboardContent>
+
+    init() {
+        let model = ProviderUsageDashboardModel()
+        self.model = model
+        hostingController = NSHostingController(
+            rootView: ProviderUsageDashboardContent(model: model, compact: false)
+        )
+        let window = NSWindow(
+            contentRect: NSRect(x: 0, y: 0, width: 900, height: 620),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = "使用与性能"
+        window.minSize = NSSize(width: 760, height: 520)
+        window.toolbarStyle = .unified
+        configureOpaqueWindow(window)
+        window.contentViewController = hostingController
+        window.center()
+        super.init(window: window)
+        configurePersistentWindow(window)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func present() {
+        showWindow(nil)
+        if let window {
+            presentPersistentWindow(window)
+        }
+    }
+
+    func updateQuotaStatus(title: String, detail: String?) {
+        model.quotaStatusTitle = title
+        model.quotaStatusDetail = detail
+    }
+
+    func updateConfiguredProviders(_ providers: [ProviderDashboardProvider]) {
+        model.configuredProviders = providers
+        model.normalizeSelection()
+    }
+
+    func refreshProviderIcons() {
+        hostingController.rootView = ProviderUsageDashboardContent(model: model, compact: false)
+    }
+
+    func updateQuotaUsages(_ usages: [ProviderQuotaUsage]) {
+        model.quotaUsages = usages
+        model.quotaStatusTitle = L10n.Provider.quotaEmpty
+        model.quotaStatusDetail = nil
+        model.normalizeSelection()
+    }
+
+    func updateTokenStatus(title: String, detail: String?) {
+        model.tokenStatusTitle = title
+        model.tokenStatusDetail = detail
+    }
+
+    func updateTokenUsages(_ usages: [ProviderTokenUsage]) {
+        model.tokenUsages = usages
+        model.tokenStatusTitle = "Token 使用：暂无数据"
+        model.tokenStatusDetail = nil
+        model.normalizeSelection()
+    }
+
+    var onRangeChange: ((TokenUsageRange) -> Void)? {
+        get { model.onRangeChange }
+        set { model.onRangeChange = newValue }
     }
 }
 
