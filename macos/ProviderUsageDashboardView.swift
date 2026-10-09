@@ -930,26 +930,19 @@ private struct RequestUsageTable: View {
     let rows: [RequestUsageRow]
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 14) {
+        VStack(alignment: .leading, spacing: 24) {
             RequestSummaryStrip(rows: rows)
             VStack(alignment: .leading, spacing: 0) {
                 requestHeader
                 Divider()
                 ScrollView(.vertical) {
                     LazyVStack(spacing: 0) {
-                        ForEach(Array(rows.enumerated()), id: \.element.id) { index, row in
-                            RequestUsageRowView(row: row, even: index.isMultiple(of: 2))
+                        ForEach(rows) { row in
+                            RequestUsageRowView(row: row)
+                            Divider()
                         }
                     }
                 }
-            }
-            .background(
-                Color(nsColor: .controlBackgroundColor),
-                in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-            )
-            .overlay {
-                RoundedRectangle(cornerRadius: 12, style: .continuous)
-                    .stroke(.separator)
             }
         }
         .frame(maxWidth: .infinity, maxHeight: .infinity, alignment: .topLeading)
@@ -968,14 +961,12 @@ private struct RequestUsageTable: View {
         }
         .font(.caption.weight(.semibold))
         .foregroundStyle(.secondary)
-        .padding(.horizontal, 12)
-        .padding(.vertical, 9)
+        .padding(.vertical, 8)
     }
 }
 
 private struct RequestUsageRowView: View {
     let row: RequestUsageRow
-    let even: Bool
 
     var body: some View {
         HStack(spacing: 10) {
@@ -1001,9 +992,7 @@ private struct RequestUsageRowView: View {
                 .frame(width: reqColTPS, alignment: .trailing)
         }
         .font(.system(size: 12).monospacedDigit())
-        .padding(.horizontal, 12)
-        .padding(.vertical, 7)
-        .background(even ? Color.clear : Color.secondary.opacity(0.06))
+        .padding(.vertical, 8)
         .help(row.prefixState.map { "缓存状态：\($0)" } ?? "")
     }
 }
@@ -1012,10 +1001,13 @@ private struct RequestSummaryStrip: View {
     let rows: [RequestUsageRow]
 
     var body: some View {
-        HStack(spacing: 12) {
+        HStack(alignment: .top, spacing: 0) {
             StatChip(title: "请求数", value: "\(rows.count)")
+            Divider().frame(height: 40).padding(.horizontal, 10)
             StatChip(title: "中位 TTFT", value: medianTTFT)
+            Divider().frame(height: 40).padding(.horizontal, 10)
             StatChip(title: "平均吞吐", value: averageThroughput)
+            Divider().frame(height: 40).padding(.horizontal, 10)
             StatChip(title: "缓存命中", value: cacheHitRate)
         }
     }
@@ -1050,26 +1042,16 @@ private struct StatChip: View {
     let value: String
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 4) {
+        VStack(alignment: .leading, spacing: 6) {
             Text(title)
-                .font(.caption2)
+                .font(.caption)
                 .foregroundStyle(.secondary)
             Text(value)
-                .font(.title3.weight(.semibold).monospacedDigit())
+                .font(.system(size: 26, weight: .semibold).monospacedDigit())
                 .lineLimit(1)
                 .minimumScaleFactor(0.6)
         }
-        .padding(.horizontal, 14)
-        .padding(.vertical, 10)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(
-            Color(nsColor: .controlBackgroundColor),
-            in: RoundedRectangle(cornerRadius: 12, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 12, style: .continuous)
-                .stroke(.separator)
-        }
     }
 }
 
