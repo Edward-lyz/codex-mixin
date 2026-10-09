@@ -170,6 +170,8 @@ pub(super) enum Command {
         limit: Option<u64>,
         #[arg(long)]
         before: Option<i64>,
+        #[arg(long)]
+        provider: Option<String>,
     },
     /// Back up, restore, or inspect the Codex Mixin configuration.
     Config {

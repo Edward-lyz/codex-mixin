@@ -808,7 +808,8 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             json,
             limit,
             before,
-        } => request_usage(json, limit, before).await,
+            provider,
+        } => request_usage(json, limit, before, provider.as_deref()).await,
         Command::Config {
             command,
             json,

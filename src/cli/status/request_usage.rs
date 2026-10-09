@@ -9,6 +9,7 @@ pub(crate) async fn request_usage(
     json_output: bool,
     limit: Option<u64>,
     before: Option<i64>,
+    provider: Option<&str>,
 ) -> anyhow::Result<()> {
     let runtime =
         load_runtime_metadata()?.ok_or_else(|| anyhow::anyhow!("gateway is not running"))?;
@@ -16,22 +17,21 @@ pub(crate) async fn request_usage(
         anyhow::bail!("gateway is not running");
     }
     let config = GatewayConfig::from_stored_config()?;
-    let mut url = format!("http://{}/v1/request-usage", runtime.bind);
+    let url = format!("http://{}/v1/request-usage", runtime.bind);
     let mut query = Vec::new();
     if let Some(limit) = limit {
-        query.push(format!("limit={limit}"));
+        query.push(("limit", limit.to_string()));
     }
     if let Some(before) = before {
-        query.push(format!("before={before}"));
+        query.push(("before", before.to_string()));
     }
-    if !query.is_empty() {
-        url.push('?');
-        url.push_str(&query.join("&"));
+    if let Some(provider) = provider {
+        query.push(("provider_id", provider.to_owned()));
     }
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))
         .build()?;
-    let mut request = client.get(&url);
+    let mut request = client.get(&url).query(&query);
     if let Some(key) = config.gateway_api_key {
         request = request.bearer_auth(key);
     }

@@ -140,7 +140,9 @@ fn ensure_request_usage_table(connection: &Connection) -> anyhow::Result<()> {
         CREATE INDEX IF NOT EXISTS request_usage_recorded_at
             ON request_usage(recorded_at_ms DESC);
         CREATE INDEX IF NOT EXISTS request_usage_client_time
-            ON request_usage(client_id, recorded_at_ms DESC);",
+            ON request_usage(client_id, recorded_at_ms DESC);
+        CREATE INDEX IF NOT EXISTS request_usage_provider_id
+            ON request_usage(provider_id, id DESC);",
     )?;
     Ok(())
 }
@@ -558,6 +560,7 @@ impl TokenUsageAggregator {
         &self,
         limit: u64,
         before: Option<i64>,
+        provider_id: Option<&str>,
     ) -> anyhow::Result<Vec<ProviderRequestUsage>> {
         anyhow::ensure!(
             (1..=500).contains(&limit),
@@ -575,10 +578,11 @@ impl TokenUsageAggregator {
                     reused_turns, total_turns
              FROM request_usage
              WHERE (?1 IS NULL OR id < ?1)
+               AND (?3 IS NULL OR provider_id = ?3)
              ORDER BY id DESC
              LIMIT ?2",
         )?;
-        let rows = statement.query_map(params![before, limit], |row| {
+        let rows = statement.query_map(params![before, limit, provider_id], |row| {
             Ok(ProviderRequestUsage {
                 id: row.get(0)?,
                 recorded_at_ms: row.get(1)?,
@@ -832,8 +836,12 @@ mod tests {
             generation_micros: Some(400_000),
             ..Default::default()
         };
-        for (recorded_at_ms, client_id) in [(100, "codex"), (200, "claude")] {
-            let mut request = ProviderRequestUsage::from_usage("provider", "model", &usage);
+        for (recorded_at_ms, client_id, provider_id) in [
+            (100, "codex", "provider"),
+            (200, "claude", "provider"),
+            (300, "dsh", "other"),
+        ] {
+            let mut request = ProviderRequestUsage::from_usage(provider_id, "model", &usage);
             request.recorded_at_ms = recorded_at_ms;
             request.client_id = client_id.to_owned();
             persist_usage_delta(&path, &request).unwrap();
@@ -843,12 +851,17 @@ mod tests {
             persist_path: Some(path),
         };
 
-        let latest = aggregator.request_snapshot(1, None).unwrap();
+        let latest = aggregator.request_snapshot(1, None, Some("provider")).unwrap();
         assert_eq!(latest.len(), 1);
         assert_eq!(latest[0].client_id, "claude");
         assert_eq!(latest[0].cache_read_tokens, 90);
-        let older = aggregator.request_snapshot(10, Some(latest[0].id)).unwrap();
+        let older = aggregator
+            .request_snapshot(10, Some(latest[0].id), Some("provider"))
+            .unwrap();
         assert_eq!(older.len(), 1);
         assert_eq!(older[0].client_id, "codex");
+        let all = aggregator.request_snapshot(10, None, None).unwrap();
+        assert_eq!(all.len(), 3);
+        assert_eq!(all[0].client_id, "dsh");
     }
 }

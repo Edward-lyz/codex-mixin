@@ -250,12 +250,15 @@ async fn request_usage(
         ));
     }
     let before = query.before;
+    let provider_id = query.provider_id;
     let aggregator = state.cache_shapes.usage();
     // The ledger lives in SQLite, so read it off the async runtime.
-    let rows = tokio::task::spawn_blocking(move || aggregator.request_snapshot(limit, before))
-        .await
-        .map_err(|error| GatewayError::Other(error.into()))?
-        .map_err(GatewayError::Other)?;
+    let rows = tokio::task::spawn_blocking(move || {
+        aggregator.request_snapshot(limit, before, provider_id.as_deref())
+    })
+    .await
+    .map_err(|error| GatewayError::Other(error.into()))?
+    .map_err(GatewayError::Other)?;
     Ok(Json(rows))
 }
 
@@ -263,4 +266,5 @@ async fn request_usage(
 struct RequestUsageQuery {
     limit: Option<u64>,
     before: Option<i64>,
+    provider_id: Option<String>,
 }
