@@ -9,6 +9,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var serviceStatusItem: NSMenuItem?
     var providerUsageWindowController: ProviderUsageWindowController?
+    var providerUsageDashboardView: ProviderUsageDashboardView?
     var launchAtLoginMenuItem: NSMenuItem?
     var echMenuItem: NSMenuItem?
     var providerSettingsWindowController: ProviderSettingsWindowController?
@@ -190,6 +191,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         providerUsageWindowController = providerUsageController
         menu.addItem(serviceItem)
         updateServiceStatusView()
+        let providerUsageItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
+        let providerUsageView = ProviderUsageDashboardView()
+        providerUsageItem.view = providerUsageView
+        providerUsageDashboardView = providerUsageView
+        menu.addItem(providerUsageItem)
         menu.addItem(actionItem("使用与性能…", #selector(showProviderUsage), "chart.bar.xaxis"))
         updateQuotaStatus(title: "额度：检查中...", detail: nil, progress: nil)
         updateTokenUsageStatus(title: "Token 使用：检查中...", detail: nil, progress: nil)

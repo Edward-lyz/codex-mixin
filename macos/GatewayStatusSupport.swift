@@ -192,6 +192,7 @@ extension AppDelegate {
             }
             await MainActor.run {
                 providerUsageWindowController?.updateConfiguredProviders(dashboardProviders)
+                providerUsageDashboardView?.updateConfiguredProviders(dashboardProviders)
             }
             Task { [weak self] in
                 guard let self else { return }
@@ -204,6 +205,7 @@ extension AppDelegate {
                         ) {
                             await MainActor.run {
                                 self.providerUsageWindowController?.refreshProviderIcons()
+                                self.providerUsageDashboardView?.refreshProviderIcons()
                             }
                         }
                     } catch {
@@ -316,10 +318,12 @@ extension AppDelegate {
 
     func updateQuotaStatus(title: String, detail: String?, progress: Double?) {
         providerUsageWindowController?.updateQuotaStatus(title: title, detail: detail)
+        providerUsageDashboardView?.updateQuotaStatus(title: title, detail: detail)
     }
 
     func updateProviderQuotaStatus(_ usages: [ProviderQuotaUsage]) {
         providerUsageWindowController?.updateQuotaUsages(usages)
+        providerUsageDashboardView?.updateQuotaUsages(usages)
     }
 
     func loadCachedProviderQuota() {

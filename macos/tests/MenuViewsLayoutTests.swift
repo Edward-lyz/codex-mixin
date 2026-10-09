@@ -261,20 +261,15 @@ struct MenuViewsLayoutTests {
         precondition(dashboard.model.selectedGroup?.models.count == 2)
         precondition(dashboard.model.selectedGroup?.models.first?.modelID == "gpt-5.6-sol")
         dashboard.model.selectModel("gpt-5.6-sol")
-        precondition(
-            dashboard.frame.height == collapsedHeight,
-            "row resize must be deferred off the menu display cycle, not applied synchronously"
-        )
-        precondition(
-            dashboard.frame.width == menuManagedWidth,
-            "requesting a row-height sync must not change the menu-managed width synchronously"
-        )
         flushDeferredMenuLayout()
         precondition(
-            dashboard.frame.width == menuManagedWidth,
-            "row-height sync must preserve the width managed by the menu"
+            dashboard.frame.height == collapsedHeight,
+            "selecting a model must not resize the menu embed; model usage lives in the window"
         )
-        precondition(dashboard.frame.height > collapsedHeight)
+        precondition(
+            dashboard.frame.width == menuManagedWidth,
+            "model selection must not change the menu-managed width"
+        )
         dashboard.model.selectModel("gpt-5.6-sol")
         flushDeferredMenuLayout()
         precondition(dashboard.frame.height == collapsedHeight)
@@ -314,8 +309,8 @@ struct MenuViewsLayoutTests {
         proDashboard.model.selectModel("gpt-5.6-sol")
         flushDeferredMenuLayout()
         precondition(
-            proDashboard.frame.height >= 442,
-            "three quota rows must keep their row spacing instead of compressing into the token range picker"
+            proDashboard.frame.height >= 190,
+            "three quota rows must keep their row spacing in the menu embed"
         )
         proDashboard.layoutSubtreeIfNeeded()
         let threeQuotaScrollCount = descendants(of: proDashboard, matching: NSScrollView.self).count

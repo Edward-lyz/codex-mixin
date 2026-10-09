@@ -266,11 +266,11 @@ final class ProviderUsageDashboardModel: ObservableObject {
 
     var contentHeight: CGFloat {
         guard let group = selectedGroup else { return providerDashboardMinimumHeight }
-        let tokenHeight: CGFloat = group.models.isEmpty ? 20 : 144
-        let detailHeight: CGFloat = selectedModel == nil ? 0 : 104
+        // Menu embed only renders provider icons + quota rows; model usage lives
+        // in the detached window, so height tracks the quota section alone.
         return max(
             providerDashboardMinimumHeight,
-            98 + providerQuotaSectionHeight(group.quotas.count) + tokenHeight + detailHeight
+            101 + providerQuotaSectionHeight(group.quotas.count)
         )
     }
 
@@ -361,7 +361,9 @@ private struct ProviderUsageDashboardContent: View {
         if let group = model.selectedGroup {
             providerSummary(group)
             quotaContent(group)
-            tokenContent(group)
+            if !compact {
+                tokenContent(group)
+            }
         } else {
             VStack(spacing: 8) {
                 Image(systemName: "chart.bar.xaxis")
