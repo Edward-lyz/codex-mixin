@@ -36,6 +36,7 @@ pub(crate) struct ProviderRequestUsage {
 }
 
 impl ProviderRequestUsage {
+    #[cfg(test)]
     fn from_usage(provider_id: &str, model_id: &str, usage: &UpstreamCacheUsage) -> Self {
         Self {
             id: 0,
@@ -504,6 +505,7 @@ impl TokenUsageAggregator {
         })
     }
 
+    #[cfg(test)]
     pub(crate) fn record(&self, provider_id: &str, model_id: &str, usage: &UpstreamCacheUsage) {
         self.record_request(ProviderRequestUsage::from_usage(
             provider_id,

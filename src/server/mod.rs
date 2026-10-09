@@ -22,7 +22,9 @@ use crate::config::GatewayConfig;
 use crate::error::GatewayError;
 use crate::fusion::{FusionEngine, should_fuse_turn, validate_fusion_profiles};
 use crate::gateway::UpstreamRouting;
-use crate::gateway::{CacheShapeTracker, ProviderTokenUsage, RequestPlan, ResolvedModelRoute};
+use crate::gateway::{
+    CacheShapeTracker, ProviderRequestUsage, ProviderTokenUsage, RequestPlan, ResolvedModelRoute,
+};
 use crate::images::ImageRouteRegistry;
 use crate::protocol::ResponseStream;
 use crate::protocol::sse::encode_event;

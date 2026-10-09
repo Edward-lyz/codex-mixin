@@ -28,6 +28,7 @@ pub fn router(state: AppState) -> Router {
             get(model_benchmarks).post(start_model_benchmarks),
         )
         .route("/v1/usage", get(token_usage))
+        .route("/v1/request-usage", get(request_usage))
         .route("/v1/responses", get(responses_ws).post(responses))
         .route("/v1/responses/compact", post(compact))
         .route("/v1/messages", post(super::messages_http::messages))
@@ -234,4 +235,32 @@ async fn token_usage(
 #[derive(Deserialize)]
 struct TokenUsageQuery {
     days: Option<u64>,
+}
+
+async fn request_usage(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<RequestUsageQuery>,
+) -> Result<Json<Vec<ProviderRequestUsage>>, GatewayError> {
+    check_gateway_auth(&state, &headers).await?;
+    let limit = query.limit.unwrap_or(100);
+    if !(1..=500).contains(&limit) {
+        return Err(GatewayError::BadRequest(
+            "request usage limit must be between 1 and 500".to_owned(),
+        ));
+    }
+    let before = query.before;
+    let aggregator = state.cache_shapes.usage();
+    // The ledger lives in SQLite, so read it off the async runtime.
+    let rows = tokio::task::spawn_blocking(move || aggregator.request_snapshot(limit, before))
+        .await
+        .map_err(|error| GatewayError::Other(error.into()))?
+        .map_err(GatewayError::Other)?;
+    Ok(Json(rows))
+}
+
+#[derive(Deserialize)]
+struct RequestUsageQuery {
+    limit: Option<u64>,
+    before: Option<i64>,
 }
