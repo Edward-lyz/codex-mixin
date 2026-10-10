@@ -14,8 +14,8 @@ use crate::provider::{
 
 use super::super::error::OperationError;
 use super::{
-    after_provider_commit, commit_provider_change, provider_for_refresh, provider_mut,
-    require_providers, set_auxiliary_upstream,
+    commit_provider_change, provider_for_refresh, provider_mut, require_providers,
+    set_auxiliary_upstream,
 };
 
 pub fn apply_model_selection(
@@ -196,9 +196,6 @@ pub async fn probe_provider_models(
         current.validate()
     })?;
     super::invalidate_web_search_cache()?;
-    after_provider_commit("provider capability cache invalidation", || {
-        ProviderCapabilities::clear_default_cache().map(|_| ())
-    })?;
     Ok(summary)
 }
 
