@@ -372,33 +372,45 @@ async fn claude_desktop_can_stream_a_real_selected_model() {
 
     let model = std::env::var("CODEX_MIXIN_REAL_MODEL").expect("select one real catalog model");
     let mut stored = load_stored_config().unwrap().expect("load local providers");
-    let provider = stored
-        .providers
-        .iter_mut()
-        .find(|provider| {
-            provider.enabled
-                && provider
-                    .selected_models
-                    .iter()
-                    .any(|selected| catalog_model_slug(selected, &provider.id) == model)
-        })
-        .expect("real Desktop test must target an enabled selected provider model");
-    provider
-        .selected_models
-        .retain(|selected| catalog_model_slug(selected, &provider.id) == model);
-    provider.request_policy.baidu_code_report = false;
-    if provider.request_policy.ducx_executable.is_none() {
-        let executable = codex_mixin::platform::home_dir_required()
-            .unwrap()
-            .join(".codex-mixin/ducx/home/.baidu-cx/baidu-cx/bin")
-            .join(codex_mixin::platform::executable_file_name("ducx"));
-        if executable.is_file() {
-            provider.request_policy.ducx_executable = Some(executable);
+    let official = stored
+        .official_selected_models
+        .as_ref()
+        .is_some_and(|ids| ids.contains(&model));
+    let auth_path = GatewayConfig::from_stored_config().unwrap().codex_auth_path;
+    if official {
+        for provider in &mut stored.providers {
+            provider.enabled = false;
         }
+        stored.official_selected_models = Some(vec![model.clone()]);
+    } else {
+        let provider = stored
+            .providers
+            .iter_mut()
+            .find(|provider| {
+                provider.enabled
+                    && provider
+                        .selected_models
+                        .iter()
+                        .any(|selected| catalog_model_slug(selected, &provider.id) == model)
+            })
+            .expect("real Desktop test must target an enabled selected model");
+        provider
+            .selected_models
+            .retain(|selected| catalog_model_slug(selected, &provider.id) == model);
+        provider.request_policy.baidu_code_report = false;
+        if provider.request_policy.ducx_executable.is_none() {
+            let executable = codex_mixin::platform::home_dir_required()
+                .unwrap()
+                .join(".codex-mixin/ducx/home/.baidu-cx/baidu-cx/bin")
+                .join(codex_mixin::platform::executable_file_name("ducx"));
+            if executable.is_file() {
+                provider.request_policy.ducx_executable = Some(executable);
+            }
+        }
+        let provider = provider.clone();
+        stored.providers = vec![provider];
+        stored.official_selected_models = Some(Vec::new());
     }
-    let provider = provider.clone();
-    stored.providers = vec![provider];
-    stored.official_selected_models = Some(Vec::new());
     stored.fusion_profiles.clear();
     let key = generate_client_key(GatewayClient::ClaudeDesktop).unwrap();
     stored.gateway_client_keys.claude_desktop = Some(key.clone());
@@ -407,6 +419,13 @@ async fn claude_desktop_can_stream_a_real_selected_model() {
     let runtime_path = directory.path().join("runtime.json");
     let home = directory.path().join("home");
     fs::create_dir_all(&home).unwrap();
+    if official {
+        codex_mixin::clients::files::write_owner_only(
+            &directory.path().join("codex/auth.json"),
+            &fs::read(auth_path).unwrap(),
+        )
+        .unwrap();
+    }
     save_stored_config_to_path(&config_path, &stored).unwrap();
     // DUCX launches current_exe as its auth carrier, so exercise the real CLI
     // process with isolated client configs rather than the Rust test binary.

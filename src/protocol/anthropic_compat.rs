@@ -96,6 +96,8 @@ pub(crate) fn message_request_to_responses(
     let mut body = json!({
         "model": downstream_model,
         "stream": true,
+        // Messages clients carry their own history; Codex OAuth requires this.
+        "store": false,
         "max_output_tokens": request.max_tokens,
         "input": input
     });

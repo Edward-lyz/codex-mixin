@@ -4075,6 +4075,9 @@ async fn converts_anthropic_messages_for_official_models() {
                     headers.get(header::AUTHORIZATION).and_then(|value| value.to_str().ok()),
                     Some("Bearer codex-oauth-token")
                 );
+                if body["store"] != false {
+                    return (StatusCode::BAD_REQUEST, Json(json!({"detail":"Store must be set to false"}))).into_response();
+                }
                 captured.lock().unwrap().push(body.clone());
                 let item = json!({
                     "id":"msg_official",
@@ -4116,6 +4119,8 @@ async fn converts_anthropic_messages_for_official_models() {
         r#"{"tokens":{"access_token":"codex-oauth-token","account_id":"account-1"}}"#,
     )
     .unwrap();
+    config.gateway_client_keys.claude_desktop = Some("desktop-key".to_owned());
+    config.official_selected_models = Some(vec!["gpt-5.5".to_owned()]);
     let gateway_url = spawn_gateway_with_config(config).await;
 
     let response = reqwest::Client::new()
@@ -4136,8 +4141,60 @@ async fn converts_anthropic_messages_for_official_models() {
 
     assert_eq!(status, StatusCode::OK, "unexpected response: {body}");
     assert!(body.contains("hello official"), "{body}");
+    for stream in [true, false] {
+        let response = reqwest::Client::new()
+            .post(format!("{gateway_url}/claude-desktop/v1/messages"))
+            .bearer_auth("desktop-key")
+            .json(&json!({
+                "model": codex_mixin::clients::claude_desktop::route_id("gpt-5.5"),
+                "max_tokens":1024,"stream":stream,
+                "messages":[{"role":"user","content":"say hi"}]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        if stream {
+            assert!(
+                response
+                    .text()
+                    .await
+                    .unwrap()
+                    .contains("event: message_stop")
+            );
+        } else {
+            let message: Value = response.json().await.unwrap();
+            assert_eq!(message["content"][0]["text"], "hello official");
+        }
+    }
+    let alias = codex_mixin::clients::claude_desktop::route_id("gpt-5.5");
+    let models: Value = reqwest::Client::new()
+        .get(format!("{gateway_url}/claude-desktop/v1/models"))
+        .bearer_auth("desktop-key")
+        .send()
+        .await
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert!(
+        models["data"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|model| model["id"] == alias)
+    );
+    let detail = reqwest::Client::new()
+        .get(format!("{gateway_url}/claude-desktop/v1/models/{alias}"))
+        .bearer_auth("desktop-key")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(detail.status(), StatusCode::OK);
+    assert_eq!(detail.json::<Value>().await.unwrap()["id"], alias);
     let requests = official_requests.lock().unwrap();
-    assert_eq!(requests.len(), 1);
+    assert_eq!(requests.len(), 3);
+    assert!(requests.iter().all(|body| body["store"] == false));
     assert_eq!(requests[0]["model"], "gpt-5.5");
     assert_eq!(requests[0]["instructions"], "You are Claude Code.");
 }

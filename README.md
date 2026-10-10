@@ -204,3 +204,14 @@ Anthropic account services are outside its routing scope.
 The Desktop profile format follows the
 [CC Switch implementation](https://github.com/farion1231/cc-switch/blob/main/src-tauri/src/claude_desktop_config.rs)
 and was checked against Claude Desktop 2.31226.1 on macOS.
+
+Desktop gateway profiles keep Claude.ai sign-in enabled. The local 3P UI and
+the standard Claude.ai UI are different deployment surfaces; this integration
+does not combine personal Claude subscription models and custom models in a
+single picker. Signing in to Claude.ai remains available, and restoring the
+integration returns the previous deployment mode. Enterprise deployments can
+manage 3P inference through the Claude.ai admin console; see the
+[official 3P architecture](https://claude.com/docs/third-party/claude-desktop/overview).
+The 3P UI uses the languages bundled by Anthropic. Mixin does not change the
+language setting or add translations; the currently documented language list
+does not include Simplified Chinese.

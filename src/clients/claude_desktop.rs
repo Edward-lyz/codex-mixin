@@ -231,7 +231,7 @@ fn apply(
         json!({
             "inferenceProvider": "gateway", "inferenceGatewayBaseUrl": base_url,
             "inferenceGatewayAuthScheme": "bearer", "inferenceGatewayApiKey": key,
-            "inferenceModels": models, "disableDeploymentModeChooser": true,
+            "inferenceModels": models, "disableDeploymentModeChooser": false,
         }),
     ];
     for (index, patch) in patches.iter().enumerate() {
@@ -433,6 +433,22 @@ mod tests {
         assert_eq!(read_object(&paths[2]).unwrap()["appliedId"], "user-profile");
         uninstall(root.path()).unwrap();
         assert_eq!(read_object(&paths[2]).unwrap()["appliedId"], "user-profile");
+    }
+
+    #[test]
+    fn refresh_preserves_language_and_allows_official_login() {
+        let root = tempfile::tempdir().unwrap();
+        let paths = paths(root.path());
+        let models = json!([{"name": route_id("gpt-5-custom")}]);
+        install(root.path(), "http://localhost", "key", models.clone()).unwrap();
+        let mut profile = read_object(&paths[3]).unwrap();
+        profile["disableDeploymentModeChooser"] = json!(true);
+        profile["language"] = json!("ja-JP");
+        write_owner_only(&paths[3], &serde_json::to_vec(&profile).unwrap()).unwrap();
+        refresh(root.path(), "http://localhost", "key", models).unwrap();
+        let refreshed = read_object(&paths[3]).unwrap();
+        assert_eq!(refreshed["disableDeploymentModeChooser"], false);
+        assert_eq!(refreshed["language"], "ja-JP");
     }
 
     #[test]
