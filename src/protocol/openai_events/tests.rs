@@ -106,6 +106,289 @@ async fn map_openai_events(events: &[Value], done: bool) -> String {
     .await
 }
 
+#[tokio::test]
+async fn chat_tools_stream_before_finish() {
+    let (sender, receiver) = tokio::sync::mpsc::channel(2);
+    let upstream = futures_util::stream::unfold(receiver, |mut receiver| async move {
+        receiver
+            .recv()
+            .await
+            .map(|chunk| (Ok::<_, reqwest::Error>(chunk), receiver))
+    });
+    let mapped = map_openai_chat_sse(upstream, json!({}), ToolNameMap::default());
+    tokio::pin!(mapped);
+    mapped.next().await.unwrap().unwrap(); // response.created
+    mapped.next().await.unwrap().unwrap(); // response.in_progress
+    let delta = json!({"choices":[{"delta":{"tool_calls":[{
+        "index":0,"id":"call_live","function":{"name":"exec_command","arguments":"{\"cmd\":"}
+    }]},"finish_reason":null}]});
+    sender
+        .send(Bytes::from(format!("data: {delta}\n\n")))
+        .await
+        .unwrap();
+    let chunk = tokio::time::timeout(Duration::from_secs(1), mapped.next())
+        .await
+        .expect("tool added/arguments delta must arrive before the finish chunk")
+        .unwrap()
+        .unwrap();
+    let mut encoded = chunk.to_vec();
+    let events = drain_events(&mut encoded);
+    let values: Vec<Value> = events
+        .iter()
+        .map(|e| serde_json::from_str(&e.data).unwrap())
+        .collect();
+    assert_eq!(values[0]["type"], "response.output_item.added");
+    assert_eq!(values[0]["item"]["status"], "in_progress");
+    assert_eq!(values[1]["type"], "response.function_call_arguments.delta");
+    assert_eq!(values[1]["delta"], "{\"cmd\":");
+    let tail = "\"\u{4f60}\u{597d}\"} \n";
+    let delta = json!({"choices":[{"delta":{"tool_calls":[{
+        "index":0,"function":{"arguments":tail}
+    }]},"finish_reason":null}]});
+    sender
+        .send(Bytes::from(format!("data: {delta}\n\n")))
+        .await
+        .unwrap();
+    let chunk = tokio::time::timeout(Duration::from_secs(1), mapped.next())
+        .await
+        .unwrap()
+        .unwrap()
+        .unwrap();
+    let mut encoded = chunk.to_vec();
+    let second: Value = serde_json::from_str(&drain_events(&mut encoded)[0].data).unwrap();
+    assert_eq!(second["delta"], tail);
+    assert_eq!(second["item_id"], values[0]["item"]["id"]);
+    assert_eq!(second["output_index"], values[0]["output_index"]);
+    let finish = json!({"choices":[{"delta":{},"finish_reason":"tool_calls"}]});
+    sender
+        .send(Bytes::from(format!("data: {finish}\n\ndata: [DONE]\n\n")))
+        .await
+        .unwrap();
+    drop(sender);
+    let body = collect_events(mapped).await;
+    let mut encoded = body.as_bytes().to_vec();
+    let final_events: Vec<Value> = drain_events(&mut encoded)
+        .iter()
+        .map(|e| serde_json::from_str(&e.data).unwrap())
+        .collect();
+    let arguments = format!("{{\"cmd\":{tail}");
+    assert_eq!(
+        final_events[0]["type"],
+        "response.function_call_arguments.done"
+    );
+    assert_eq!(final_events[0]["arguments"], arguments);
+    assert_eq!(final_events[0]["item_id"], values[0]["item"]["id"]);
+    assert_eq!(final_events[1]["item"]["call_id"], "call_live");
+    assert_eq!(final_events[1]["item"]["arguments"], arguments);
+    assert_eq!(final_events[1]["output_index"], values[0]["output_index"]);
+    assert_eq!(final_events[1]["item"]["status"], "completed");
+    assert_eq!(
+        final_events[2]["response"]["output"][0],
+        final_events[1]["item"]
+    );
+}
+
+#[tokio::test]
+async fn chat_reasoning_raw_text() {
+    for field in ["reasoning_content", "reasoning"] {
+        let mut delta = json!({});
+        delta[field] = json!("\u{68c0}\u{67e5} constraints");
+        let body = map_openai_events(&[
+            json!({"choices":[{"delta":delta,"finish_reason":null}]}),
+            json!({"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}],
+                "usage":{"prompt_tokens":10,"completion_tokens":8,"completion_tokens_details":{"reasoning_tokens":6}}}),
+        ], true).await;
+        let mut encoded = body.as_bytes().to_vec();
+        let values: Vec<Value> = drain_events(&mut encoded)
+            .iter()
+            .map(|e| serde_json::from_str(&e.data).unwrap())
+            .collect();
+        let reasoning = values
+            .iter()
+            .find(|e| e["type"] == "response.reasoning_text.delta")
+            .expect("raw reasoning must reach the Responses stream");
+        assert_eq!(reasoning["delta"], "\u{68c0}\u{67e5} constraints");
+        let response = &values.last().unwrap()["response"];
+        assert_eq!(response["output"][0]["type"], "reasoning");
+        assert_eq!(
+            response["output"][0]["content"][0]["type"],
+            "reasoning_text"
+        );
+        assert_eq!(
+            response["output"][0]["content"][0]["text"],
+            "\u{68c0}\u{67e5} constraints"
+        );
+        assert_eq!(response["output"][0]["summary"], json!([]));
+        assert_eq!(
+            response["usage"]["output_tokens_details"]["reasoning_tokens"],
+            6
+        );
+    }
+}
+
+#[tokio::test]
+async fn chat_tools_reject_incomplete() {
+    for (reason, arguments, done) in [
+        (Some("length"), "{}", true),
+        (Some("content_filter"), "{", true),
+        (Some("stop"), "{}", true),
+        (None, "{}", false),
+        (Some("tool_calls"), "{", true),
+        (Some("tool_calls"), "[]", true),
+    ] {
+        let body = map_openai_events(&[
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call_bad",
+                "function":{"name":"exec_command","arguments":arguments}}]},"finish_reason":null}]}),
+            json!({"choices":[{"delta":{},"finish_reason":reason}]}),
+        ], done).await;
+        assert!(
+            !body.contains("event: response.output_item.done"),
+            "{reason:?}: {body}"
+        );
+        assert!(
+            !body.contains("event: response.function_call_arguments.done"),
+            "{reason:?}: {body}"
+        );
+        assert!(
+            !body.contains("event: response.completed"),
+            "{reason:?}: {body}"
+        );
+        assert!(
+            body.contains("event: response.failed") || body.contains("event: response.incomplete"),
+            "{body}"
+        );
+    }
+}
+
+#[tokio::test]
+async fn chat_parallel_tool_slots() {
+    let body = map_openai_events(
+        &[
+            json!({"choices":[{"delta":{"content":"checking"},"finish_reason":null}]}),
+            json!({"choices":[{"delta":{"tool_calls":[
+            {"index":3,"id":"call_a","function":{"name":"first","arguments":"{\"a\":"}},
+            {"index":0,"id":"call_b","function":{"name":"second","arguments":"{\"b\":"}}
+        ]},"finish_reason":null}]}),
+            json!({"choices":[{"delta":{"tool_calls":[
+            {"index":0,"function":{"arguments":"2}"}},
+            {"index":3,"function":{"arguments":"1}"}}
+        ]},"finish_reason":"tool_calls"}]}),
+        ],
+        true,
+    )
+    .await;
+    let mut encoded = body.as_bytes().to_vec();
+    let values: Vec<Value> = drain_events(&mut encoded)
+        .iter()
+        .map(|e| serde_json::from_str(&e.data).unwrap())
+        .collect();
+    let output = values.last().unwrap()["response"]["output"]
+        .as_array()
+        .unwrap();
+    assert_eq!(output.len(), 3);
+    assert_eq!(output[0]["phase"], "commentary");
+    assert_eq!(output[1]["call_id"], "call_a");
+    assert_eq!(output[1]["arguments"], "{\"a\":1}");
+    assert_eq!(output[2]["call_id"], "call_b");
+    assert_eq!(output[2]["arguments"], "{\"b\":2}");
+    for event in values
+        .iter()
+        .filter(|e| e["type"] == "response.output_item.done")
+    {
+        let index = event["output_index"].as_u64().unwrap() as usize;
+        assert_eq!(&event["item"], &output[index]);
+    }
+}
+
+#[tokio::test]
+async fn chat_tool_batch_is_validated() {
+    let body = map_openai_events(
+        &[json!({"choices":[{"delta":{"tool_calls":[
+        {"index":0,"id":"good","function":{"name":"exec_command","arguments":"{}"}},
+        {"index":1,"id":"bad","function":{"name":"exec_command","arguments":"{"}}
+    ]},"finish_reason":"tool_calls"}]})],
+        true,
+    )
+    .await;
+    assert!(body.contains("event: response.failed"));
+    assert!(!body.contains("event: response.output_item.done"), "{body}");
+}
+
+#[tokio::test]
+async fn chat_reused_index_returns() {
+    let body = map_openai_events(
+        &[
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"first",
+            "function":{"name":"exec_command","arguments":"{\"a\":"}}]},"finish_reason":null}]}),
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"second",
+            "function":{"name":"exec_command","arguments":"{}"}}]},"finish_reason":null}]}),
+            json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"first",
+            "function":{"arguments":"1}"}}]},"finish_reason":"tool_calls"}]}),
+        ],
+        true,
+    )
+    .await;
+    assert!(!body.contains("response.failed"), "{body}");
+    let mut encoded = body.as_bytes().to_vec();
+    let values: Vec<Value> = drain_events(&mut encoded)
+        .iter()
+        .map(|e| serde_json::from_str(&e.data).unwrap())
+        .collect();
+    let output = values.last().unwrap()["response"]["output"]
+        .as_array()
+        .unwrap();
+    assert_eq!(output.len(), 2);
+    assert_eq!(output[0]["arguments"], "{\"a\":1}");
+    assert_eq!(output[1]["arguments"], "{}");
+}
+
+#[tokio::test]
+async fn chat_invalid_call_ids() {
+    let body = map_openai_events(
+        &[json!({"choices":[{"delta":{"tool_calls":[
+        {"index":0,"id":"duplicate","function":{"name":"first","arguments":"{}"}},
+        {"index":1,"id":"duplicate","function":{"name":"second","arguments":"{}"}}
+    ]},"finish_reason":"tool_calls"}]})],
+        true,
+    )
+    .await;
+    assert!(body.contains("response.failed"), "{body}");
+    assert!(!body.contains("response.output_item.done"), "{body}");
+}
+
+#[tokio::test]
+async fn chat_invalid_fragments_fail() {
+    let first = json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call",
+        "function":{"name":"exec_command","arguments":"{}"}}]},"finish_reason":null}]});
+    let finish = json!({"choices":[{"delta":{},"finish_reason":"tool_calls"}]});
+    let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(format!(
+        "data: {first}\n\ndata: {{\n\ndata: {finish}\n\ndata: [DONE]\n\n"
+    )))]);
+    let body = collect_events(map_openai_chat_sse(
+        upstream,
+        json!({}),
+        ToolNameMap::default(),
+    ))
+    .await;
+    assert!(body.contains("response.failed"), "{body}");
+    assert!(!body.contains("response.output_item.done"), "{body}");
+}
+
+#[tokio::test]
+async fn chat_reasoning_tokens_only() {
+    let body = map_openai_events(
+        &[
+            json!({"choices":[{"delta":{"content":"ok"},"finish_reason":"stop"}],
+        "usage":{"completion_tokens":8,"completion_tokens_details":{"reasoning_tokens":6}}}),
+        ],
+        true,
+    )
+    .await;
+    assert!(!body.contains("response.reasoning_text"), "{body}");
+    assert!(!body.contains("\"type\":\"reasoning\""), "{body}");
+    assert!(body.contains("\"reasoning_tokens\":6"), "{body}");
+}
+
 async fn map_anthropic_events(events: &[Value]) -> String {
     let stream = events
         .iter()
@@ -517,7 +800,7 @@ async fn separates_openai_tool_calls_that_reuse_the_same_index() {
     let arguments = events
         .iter()
         .filter_map(|event| {
-            if event.event.as_deref() != Some("response.output_item.added") {
+            if event.event.as_deref() != Some("response.output_item.done") {
                 return None;
             }
             let value: Value = serde_json::from_str(&event.data).ok()?;

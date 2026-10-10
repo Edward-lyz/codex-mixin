@@ -12,6 +12,8 @@ use crate::protocol::convert::ToolNameMap;
 use crate::protocol::sse::{SseDecoder, encode_event, encode_raw_event};
 
 mod anthropic;
+mod chat_reasoning;
+mod chat_tools;
 mod openai_chat;
 mod state;
 
@@ -19,6 +21,10 @@ pub use anthropic::map_anthropic_sse;
 pub(crate) use anthropic::map_anthropic_sse_with_image_routes;
 pub use openai_chat::map_openai_chat_sse;
 pub(crate) use openai_chat::map_openai_chat_sse_with_image_routes;
+
+fn chat_event(kind: &str, value: Value) -> Bytes {
+    encode_raw_event(kind, &value.to_string())
+}
 
 pub(super) fn coalesce_events(events: &mut Vec<Bytes>) -> Option<Bytes> {
     if events.is_empty() {

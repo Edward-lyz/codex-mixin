@@ -1,3 +1,4 @@
+use super::chat_tools::StreamingTool;
 use super::*;
 
 #[derive(Debug)]
@@ -58,9 +59,12 @@ pub(super) struct MapperState {
     response_metadata: Value,
     pub(super) output: Vec<Value>,
     pub(super) current_text: Option<TextBlock>,
+    pub(super) chat_reasoning: Option<TextBlock>,
     pub(super) thinking: HashMap<u64, ThinkingBlock>,
     pub(super) tools: HashMap<u64, ToolBlock>,
     pub(super) openai_tool_keys_by_index: HashMap<u64, u64>,
+    openai_tool_keys_by_call: HashMap<(u64, String), u64>,
+    pub(super) chat_tools: HashMap<u64, StreamingTool>,
     pub(super) pending_web_searches: HashMap<String, PendingWebSearch>,
     pub(super) ignored_web_searches: HashSet<String>,
     pub(super) ignored_web_search_result_indexes: HashSet<u64>,
@@ -74,6 +78,7 @@ pub(super) struct Usage {
     pub(super) input_tokens: Option<u64>,
     pub(super) cached_tokens: Option<u64>,
     pub(super) output_tokens: Option<u64>,
+    pub(super) reasoning_tokens: Option<u64>,
 }
 
 impl MapperState {
@@ -88,9 +93,12 @@ impl MapperState {
             response_metadata,
             output: Vec::new(),
             current_text: None,
+            chat_reasoning: None,
             thinking: HashMap::new(),
             tools: HashMap::new(),
             openai_tool_keys_by_index: HashMap::new(),
+            openai_tool_keys_by_call: HashMap::new(),
+            chat_tools: HashMap::new(),
             pending_web_searches: HashMap::new(),
             ignored_web_searches: HashSet::new(),
             ignored_web_search_result_indexes: HashSet::new(),
@@ -129,7 +137,7 @@ impl MapperState {
             "input_tokens": input_tokens,
             "input_tokens_details": {"cached_tokens": self.usage.cached_tokens.unwrap_or(0)},
             "output_tokens": output_tokens,
-            "output_tokens_details": {"reasoning_tokens": 0},
+            "output_tokens_details": {"reasoning_tokens": self.usage.reasoning_tokens.unwrap_or(0)},
             "total_tokens": input_tokens + output_tokens
         });
         response
@@ -235,7 +243,9 @@ impl MapperState {
     pub(super) fn openai_tool_entry(&mut self, index: u64, id: Option<&str>) -> &mut ToolBlock {
         let key = match id {
             Some(id) => {
-                if let Some(&key) = self.openai_tool_keys_by_index.get(&index) {
+                if let Some(&key) = self.openai_tool_keys_by_call.get(&(index, id.to_owned())) {
+                    key
+                } else if let Some(&key) = self.openai_tool_keys_by_index.get(&index) {
                     match self.tools.get(&key).and_then(|block| block.id.as_deref()) {
                         Some(existing) if existing == id => key,
                         // First fragment arrived without an id; adopt it.
@@ -243,13 +253,6 @@ impl MapperState {
                         // A different tool is reusing this stream index.
                         Some(_) => self.allocate_openai_tool_key(index),
                     }
-                } else if let Some((&key, _)) = self
-                    .tools
-                    .iter()
-                    .find(|(_, block)| block.id.as_deref() == Some(id))
-                {
-                    self.openai_tool_keys_by_index.insert(index, key);
-                    key
                 } else {
                     self.allocate_openai_tool_key(index)
                 }
@@ -262,6 +265,12 @@ impl MapperState {
                 }
             }
         };
+
+        self.openai_tool_keys_by_index.insert(index, key);
+        if let Some(id) = id {
+            self.openai_tool_keys_by_call
+                .insert((index, id.to_owned()), key);
+        }
 
         let entry = self.tools.entry(key).or_insert_with(|| ToolBlock {
             id: id.map(str::to_owned),
@@ -350,18 +359,43 @@ impl MapperState {
         if arguments.is_empty() {
             arguments = "{}".to_owned();
         }
-        let codex_name = self.tool_names.to_codex_name(&name).to_owned();
-        let codex_namespace = self.tool_names.to_codex_namespace(&name).map(str::to_owned);
+        let codex_name = self.tool_names.to_codex_name(&name);
+        let codex_namespace = self.tool_names.to_codex_namespace(&name);
         if let Some(image_routes) = image_routes
-            && codex_namespace.as_deref() == Some("image_gen")
+            && codex_namespace == Some("image_gen")
             && codex_name == "imagegen"
         {
             arguments = image_routes.mark_arguments(&arguments)?;
         }
         let output_index = self.output.len();
         let item_id = format!("fc_{}", Uuid::new_v4().simple());
-        let item = if self.tool_names.is_custom(&name) {
-            let parsed_arguments = serde_json::from_str::<Value>(&arguments).map_err(|err| {
+        let item = self.tool_item(&id, &name, &item_id, &arguments)?;
+        self.output.push(item.clone());
+        Ok(vec![
+            encode_event(
+                "response.output_item.added",
+                &json!({"type":"response.output_item.added","output_index":output_index,"item":item}),
+            )
+            .unwrap(),
+            encode_event(
+                "response.output_item.done",
+                &json!({"type":"response.output_item.done","output_index":output_index,"item":item}),
+            )
+            .unwrap(),
+        ])
+    }
+
+    pub(super) fn tool_item(
+        &self,
+        id: &str,
+        name: &str,
+        item_id: &str,
+        arguments: &str,
+    ) -> Result<Value, String> {
+        let codex_name = self.tool_names.to_codex_name(name).to_owned();
+        let codex_namespace = self.tool_names.to_codex_namespace(name).map(str::to_owned);
+        let item = if self.tool_names.is_custom(name) {
+            let parsed_arguments = serde_json::from_str::<Value>(arguments).map_err(|err| {
                 format!("custom tool call {id} arguments are not valid JSON: {err}")
             })?;
             let input = parsed_arguments
@@ -385,8 +419,8 @@ impl MapperState {
                 "input": input,
                 "status": "completed"
             })
-        } else if let Some(execution) = self.tool_names.tool_search_execution(&name) {
-            let arguments = serde_json::from_str::<Value>(&arguments).map_err(|err| {
+        } else if let Some(execution) = self.tool_names.tool_search_execution(name) {
+            let arguments = serde_json::from_str::<Value>(arguments).map_err(|err| {
                 format!("tool_search call {id} arguments are not valid JSON: {err}")
             })?;
             json!({
@@ -398,6 +432,13 @@ impl MapperState {
                 "arguments": arguments
             })
         } else {
+            let parsed = serde_json::from_str::<Value>(arguments)
+                .map_err(|err| format!("function call {id} arguments are not valid JSON: {err}"))?;
+            if !parsed.is_object() {
+                return Err(format!(
+                    "function call {id} arguments must be a JSON object"
+                ));
+            }
             let mut item = json!({
                 "type": "function_call",
                 "id": item_id,
@@ -411,19 +452,7 @@ impl MapperState {
             }
             item
         };
-        self.output.push(item.clone());
-        Ok(vec![
-            encode_event(
-                "response.output_item.added",
-                &json!({"type":"response.output_item.added","output_index":output_index,"item":item}),
-            )
-            .unwrap(),
-            encode_event(
-                "response.output_item.done",
-                &json!({"type":"response.output_item.done","output_index":output_index,"item":item}),
-            )
-            .unwrap(),
-        ])
+        Ok(item)
     }
 
     pub(super) fn finish_tools(
