@@ -10,6 +10,7 @@ pub const CODEX_CLIENT_KEY_HEADER: &str = "x-codex-mixin-client-key";
 pub enum GatewayClient {
     Codex,
     Claude,
+    ClaudeDesktop,
     Dsh,
     OpenCode,
     Pi,
@@ -20,6 +21,7 @@ impl GatewayClient {
         match self {
             Self::Codex => "codex",
             Self::Claude => "claude",
+            Self::ClaudeDesktop => "claude-desktop",
             Self::Dsh => "dsh",
             Self::OpenCode => "opencode",
             Self::Pi => "pi",
@@ -30,6 +32,7 @@ impl GatewayClient {
         match self {
             Self::Codex => "Codex",
             Self::Claude => "Claude",
+            Self::ClaudeDesktop => "Claude Desktop",
             Self::Dsh => "DSH",
             Self::OpenCode => "OpenCode",
             Self::Pi => "Pi",
@@ -44,6 +47,8 @@ pub struct GatewayClientKeys {
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub claude: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub claude_desktop: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
     pub dsh: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub opencode: Option<String>,
@@ -56,6 +61,7 @@ impl GatewayClientKeys {
         match client {
             GatewayClient::Codex => self.codex.as_deref(),
             GatewayClient::Claude => self.claude.as_deref(),
+            GatewayClient::ClaudeDesktop => self.claude_desktop.as_deref(),
             GatewayClient::Dsh => self.dsh.as_deref(),
             GatewayClient::OpenCode => self.opencode.as_deref(),
             GatewayClient::Pi => self.pi.as_deref(),
@@ -66,6 +72,7 @@ impl GatewayClientKeys {
         match client {
             GatewayClient::Codex => &mut self.codex,
             GatewayClient::Claude => &mut self.claude,
+            GatewayClient::ClaudeDesktop => &mut self.claude_desktop,
             GatewayClient::Dsh => &mut self.dsh,
             GatewayClient::OpenCode => &mut self.opencode,
             GatewayClient::Pi => &mut self.pi,
@@ -85,6 +92,7 @@ impl GatewayClientKeys {
             .and_then(|value| value.strip_prefix("Bearer "));
         [
             GatewayClient::Claude,
+            GatewayClient::ClaudeDesktop,
             GatewayClient::Dsh,
             GatewayClient::OpenCode,
             GatewayClient::Pi,

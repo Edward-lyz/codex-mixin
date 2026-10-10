@@ -31,6 +31,12 @@ const clientIntegrations = <ClientIntegration>[
     removeArguments: ['connect', 'remove', 'claude'],
   ),
   ClientIntegration(
+    id: 'claude-desktop',
+    displayName: 'Claude Desktop',
+    installArguments: ['connect', 'claude-desktop'],
+    removeArguments: ['connect', 'remove', 'claude-desktop'],
+  ),
+  ClientIntegration(
     id: 'dsh',
     displayName: 'DSH',
     removeVerb: '卸载',

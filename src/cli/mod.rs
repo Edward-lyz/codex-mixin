@@ -17,6 +17,7 @@ use crate::ducx_auth_carrier::{DucxAuthCarrier, PREFIX, VERSION};
 mod atomic_file;
 mod benchmark_proxy;
 mod claude;
+mod claude_desktop;
 mod codex;
 mod config_apply;
 mod config_input;
@@ -120,6 +121,7 @@ pub(super) fn next_step_line(message: &str) {
 pub(in crate::cli) fn sync_installed_client_keys() -> anyhow::Result<()> {
     sync_installed_codex_client_key(None)?;
     sync_installed_claude_client_key()?;
+    claude_desktop::sync_installed()?;
     sync_installed_dsh_client_key()?;
     sync_installed_opencode_client_key()?;
     sync_installed_pi_client_key()?;
@@ -128,6 +130,9 @@ pub(in crate::cli) fn sync_installed_client_keys() -> anyhow::Result<()> {
 
 pub(in crate::cli) fn sync_installed_client_models() -> anyhow::Result<Vec<&'static str>> {
     let mut refreshed = Vec::new();
+    if claude_desktop::sync_installed()? {
+        refreshed.push("Claude Desktop");
+    }
     if sync_installed_claude_models()? {
         refreshed.push("Claude Code");
     }
@@ -145,6 +150,7 @@ pub(in crate::cli) fn sync_installed_client_models() -> anyhow::Result<Vec<&'sta
 
 fn remove_client_integration(
     target: &str,
+    config_root: Option<PathBuf>,
     settings_path: Option<PathBuf>,
     dsh_home: Option<PathBuf>,
     opencode_config: Option<PathBuf>,
@@ -157,6 +163,7 @@ fn remove_client_integration(
                 codex_mixin::gateway_access::GatewayClient::Codex,
             )
         }
+        "claude-desktop" => claude_desktop::uninstall(config_root),
         "claude" => {
             let hook_settings_path = settings_path.clone();
             uninstall_claude(settings_path)?;
@@ -203,15 +210,20 @@ fn restore_managed_clients() -> anyhow::Result<Vec<&'static str>> {
     if codex::restore_codex_for_quit()? {
         restored.push("Codex");
     }
-    let clients: [(&str, &'static str, InstalledCheck); 4] = [
+    let clients: [(&str, &'static str, InstalledCheck); 5] = [
         ("claude", "Claude Code", claude::claude_is_installed),
+        (
+            "claude-desktop",
+            "Claude Desktop",
+            claude_desktop::is_installed,
+        ),
         ("dsh", "DSH", dsh::dsh_is_installed),
         ("opencode", "OpenCode", opencode::opencode_is_installed),
         ("pi", "Pi", pi::pi_is_installed),
     ];
     for (target, name, is_installed) in clients {
         if is_installed()? {
-            remove_client_integration(target, None, None, None, None)?;
+            remove_client_integration(target, None, None, None, None, None)?;
             restored.push(name);
         }
     }
@@ -741,6 +753,23 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
                 }
                 Ok(())
             }
+            ConnectCommand::ClaudeDesktop {
+                config_root,
+                status,
+                json,
+            } => {
+                if status {
+                    claude_desktop::status(config_root, json)
+                } else {
+                    claude_desktop::install(config_root)?;
+                    codex_mixin::application::provider::after_provider_commit_async(
+                        "Claude Desktop gateway restart",
+                        service::restart_managed(),
+                    )
+                    .await?;
+                    Ok(())
+                }
+            }
             ConnectCommand::Claude { settings_path } => {
                 let hook_settings_path = settings_path.clone();
                 install_claude(settings_path)?;
@@ -761,12 +790,14 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             ConnectCommand::Status { settings_path } => claude_status(settings_path),
             ConnectCommand::Remove {
                 target,
+                config_root,
                 settings_path,
                 dsh_home,
                 opencode_config,
                 pi_agent_dir,
             } => remove_client_integration(
                 &target,
+                config_root,
                 settings_path,
                 dsh_home,
                 opencode_config,

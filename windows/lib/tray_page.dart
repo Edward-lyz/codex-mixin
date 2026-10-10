@@ -207,7 +207,7 @@ class _TrayPageState extends State<TrayPage> with WindowListener {
           context,
           title: title,
           message:
-              '会先把 Codex、Claude Code、DSH、OpenCode、Pi 中由 Codex Mixin 接管的配置恢复为安装前的状态，'
+              '会先把 Codex、Claude Code、Claude Desktop、DSH、OpenCode、Pi 中由 Codex Mixin 接管的配置恢复为安装前的状态，'
               '再停止本地网关并退出。客户端需要重启或开新会话。',
         ),
       );

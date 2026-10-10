@@ -243,15 +243,20 @@ pub(super) fn handle_mouse_event(
             }
         }
         Page::Integrations => {
-            let relative_row = row.saturating_sub(body.y);
-            let card = (usize::from(relative_row) * 5 / usize::from(body.height.max(1))).min(4);
-            let relative_column = column.saturating_sub(body.x);
-            app.integration_index = match card {
-                0 => (usize::from(relative_column) * 3 / usize::from(body.width.max(1))).min(2),
-                1 => 3 + (usize::from(relative_column) * 2 / usize::from(body.width.max(1))).min(1),
-                2 => 5 + (usize::from(relative_column) * 2 / usize::from(body.width.max(1))).min(1),
-                3 => 7 + (usize::from(relative_column) * 2 / usize::from(body.width.max(1))).min(1),
-                _ => 9 + (usize::from(relative_column) * 2 / usize::from(body.width.max(1))).min(1),
+            let cards = super::view::integration_cards(body);
+            let Some(card) = cards
+                .iter()
+                .position(|area| area.contains((column, row).into()))
+            else {
+                return Action::None;
+            };
+            let relative_column = column.saturating_sub(cards[card].x);
+            let button = usize::from(relative_column) * if card == 0 { 3 } else { 2 }
+                / usize::from(cards[card].width.max(1));
+            app.integration_index = if card == 0 {
+                button.min(2)
+            } else {
+                3 + (card - 1) * 2 + button.min(1)
             };
             integration_action(app.integration_index)
         }
@@ -411,7 +416,10 @@ pub(super) fn integration_action(index: usize) -> Action {
         7 => Action::ConnectOpenCode,
         8 => Action::ConfirmUninstallOpenCode,
         9 => Action::ConnectPi,
-        _ => Action::ConfirmUninstallPi,
+        10 => Action::ConfirmUninstallPi,
+        11 => Action::ConnectClaudeDesktop,
+        12 => Action::ConfirmUninstallClaudeDesktop,
+        _ => Action::None,
     }
 }
 
@@ -449,7 +457,7 @@ pub(super) fn handle_page_event(app: &mut App, code: KeyCode) -> Action {
                 Action::None
             }
             KeyCode::Right | KeyCode::Down => {
-                app.integration_index = (app.integration_index + 1).min(10);
+                app.integration_index = (app.integration_index + 1).min(12);
                 Action::None
             }
             KeyCode::Enter => integration_action(app.integration_index),
@@ -464,6 +472,8 @@ pub(super) fn handle_page_event(app: &mut App, code: KeyCode) -> Action {
             KeyCode::Char('9') => Action::ConfirmUninstallOpenCode,
             KeyCode::Char('p') => Action::ConnectPi,
             KeyCode::Char('P') => Action::ConfirmUninstallPi,
+            KeyCode::Char('d') => Action::ConnectClaudeDesktop,
+            KeyCode::Char('D') => Action::ConfirmUninstallClaudeDesktop,
             _ => Action::None,
         },
         Page::System => match code {

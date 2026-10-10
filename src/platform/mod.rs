@@ -31,7 +31,10 @@ pub use files::{
     symlink_file,
 };
 pub use package::{PackageTarget, package_target};
-pub use paths::{home_dir, home_dir_required, os_name, set_home_env, set_tokio_home_env};
+pub use paths::{
+    claude_desktop_config_root, home_dir, home_dir_required, os_name, set_home_env,
+    set_tokio_home_env,
+};
 pub use permissions::{restrict_owner_only_dir, restrict_owner_only_file};
 pub use process::{
     ShutdownSignal, current_executable_image_name, force_kill_process_tree,

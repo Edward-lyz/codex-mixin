@@ -25,6 +25,18 @@ fn user_facing_command_groups_parse() {
     assert!(Cli::try_parse_from(["codex-mixin", "service", "start", "--foreground"]).is_ok());
     assert!(Cli::try_parse_from(["codex-mixin", "connect", "codex", "--custom-only"]).is_ok());
     assert!(Cli::try_parse_from(["codex-mixin", "connect", "claude"]).is_ok());
+    assert!(Cli::try_parse_from(["codex-mixin", "connect", "claude-desktop"]).is_ok());
+    assert!(
+        Cli::try_parse_from([
+            "codex-mixin",
+            "connect",
+            "claude-desktop",
+            "--status",
+            "--json"
+        ])
+        .is_ok()
+    );
+    assert!(Cli::try_parse_from(["codex-mixin", "connect", "remove", "claude-desktop"]).is_ok());
     assert!(Cli::try_parse_from(["codex-mixin", "connect", "dsh"]).is_ok());
     assert!(
         Cli::try_parse_from(["codex-mixin", "config", "export", "/tmp/mixin-backup.b64"]).is_ok()

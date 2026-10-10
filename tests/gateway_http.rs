@@ -7858,3 +7858,106 @@ async fn retries_official_websocket_with_materialized_agent_messages() {
     );
     assert_eq!(connections.load(Ordering::SeqCst), 2);
 }
+
+#[tokio::test]
+async fn claude_desktop_routes_aliases_and_requires_its_own_key() {
+    use codex_mixin::clients::claude_desktop::route_id;
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    config.gateway_client_keys.claude_desktop = Some("desktop-key".to_owned());
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+    let request = json!({
+        "model": route_id("DeepSeek-V4-Flash-custom"), "max_tokens": 1024,
+        "stream": true, "messages": [{"role":"user", "content":"say hi"}]
+    });
+    let endpoint = format!("{gateway_url}/claude-desktop/v1/messages");
+    for key in ["gateway-key", "copied-key"] {
+        let response = client
+            .post(&endpoint)
+            .bearer_auth(key)
+            .json(&request)
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    }
+    let mut invalid = request.clone();
+    invalid["model"] = json!("claude-sonnet-mixin-ff");
+    let response = client
+        .post(&endpoint)
+        .bearer_auth("desktop-key")
+        .json(&invalid)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(requests.lock().unwrap().is_empty());
+    let response = client
+        .post(&endpoint)
+        .bearer_auth("desktop-key")
+        .header("anthropic-beta", "context-1m-2025-08-07")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let stream = response.text().await.unwrap();
+    assert!(stream.contains("event: message_stop"), "{stream}");
+    assert_eq!(requests.lock().unwrap()[0]["model"], "DeepSeek-V4-Flash");
+    let response = client
+        .get(format!("{gateway_url}/claude-desktop/v1/models"))
+        .bearer_auth("desktop-key")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let models: Value = response.json().await.unwrap();
+    assert!(models["data"].as_array().unwrap().iter().all(|model| {
+        model["id"]
+            .as_str()
+            .unwrap()
+            .starts_with("claude-sonnet-mixin-")
+    }));
+}
+
+#[tokio::test]
+async fn claude_desktop_converts_openai_chat_stream_and_response() {
+    use codex_mixin::clients::claude_desktop::route_id;
+    let (upstream_url, requests) = spawn_mock_openai_chat().await;
+    let mut config = test_config(upstream_url);
+    configure_openai_chat(&mut config, "/chat/completions");
+    config.gateway_client_keys.claude_desktop = Some("desktop-key".to_owned());
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+    for stream in [true, false] {
+        let response = client
+            .post(format!("{gateway_url}/claude-desktop/v1/messages"))
+            .bearer_auth("desktop-key")
+            .json(&json!({
+                "model": format!("{}[1m]", route_id("gpt-5.6-sol-custom")),
+                "max_tokens":1024, "stream":stream,
+                "messages":[{"role":"user","content":"say hi"}]
+            }))
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        if stream {
+            let events = response.text().await.unwrap();
+            assert!(events.contains("event: message_stop"), "{events}");
+            assert!(events.contains("hello"), "{events}");
+        } else {
+            let message: Value = response.json().await.unwrap();
+            assert_eq!(message["content"][0]["text"], "hello openai");
+            assert_eq!(message["stop_reason"], "end_turn");
+        }
+    }
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 2);
+    assert!(
+        requests
+            .iter()
+            .all(|request| request["model"] == "gpt-5.6-sol")
+    );
+}

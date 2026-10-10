@@ -11,6 +11,14 @@ pub(super) async fn messages(
 ) -> Result<Response, GatewayError> {
     check_gateway_auth(&state, &headers).await?;
     let body = super::request_body::parse_json(body).await?;
+    messages_body(state, headers, body).await
+}
+
+pub(super) async fn messages_body(
+    state: AppState,
+    headers: HeaderMap,
+    body: Value,
+) -> Result<Response, GatewayError> {
     let (body, _) = crate::images::normalize_anthropic_images_blocking(
         body,
         crate::images::ImageCompressionProfile::Primary,

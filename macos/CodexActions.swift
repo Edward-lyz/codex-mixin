@@ -158,6 +158,39 @@ extension AppDelegate {
         }
     }
 
+    @objc func installClaudeDesktop() {
+        Task { @MainActor in
+            serviceBusy = true
+            defer { serviceBusy = false }
+            do {
+                let status = try await ensureGatewayReady()
+                applyGatewayStatus(status)
+                _ = try await runGateway(["connect", "claude-desktop"])
+                showAlert(
+                    title: "Claude Desktop 配置已更新",
+                    message: "已接入本地网关并写入当前已选模型。请完全退出并重启 Claude Desktop，在 Code 中选择模型。使用期间保持网关运行。"
+                )
+                await refreshStatusNow()
+            } catch {
+                showAlert(title: "安装到 Claude Desktop 失败", message: localizedErrorDescription(error))
+            }
+        }
+    }
+
+    @objc func uninstallClaudeDesktop() {
+        Task { @MainActor in
+            serviceBusy = true
+            defer { serviceBusy = false }
+            do {
+                _ = try await runGateway(["connect", "remove", "claude-desktop"])
+                showAlert(title: "Claude Desktop 配置已恢复", message: "已恢复安装前的部署模式和 Profile。请完全退出并重启 Claude Desktop。")
+                await refreshStatusNow()
+            } catch {
+                showAlert(title: "从 Claude Desktop 恢复失败", message: localizedErrorDescription(error))
+            }
+        }
+    }
+
     @objc func installDsh() {
         Task { @MainActor in
             serviceBusy = true

@@ -208,6 +208,7 @@ impl Default for StoredGatewayConfig {
 fn gateway_client_keys_are_empty(keys: &crate::gateway_access::GatewayClientKeys) -> bool {
     keys.codex.is_none()
         && keys.claude.is_none()
+        && keys.claude_desktop.is_none()
         && keys.dsh.is_none()
         && keys.opencode.is_none()
         && keys.pi.is_none()

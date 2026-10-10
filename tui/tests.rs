@@ -485,6 +485,21 @@ fn every_workspace_renders_at_eighty_by_twenty_four() {
     for page in Page::ALL {
         app.page = page;
         terminal.draw(|frame| render(frame, &app)).unwrap();
+        if page == Page::Integrations {
+            let text = terminal
+                .backend()
+                .buffer()
+                .content()
+                .iter()
+                .map(ratatui::buffer::Cell::symbol)
+                .collect::<String>();
+            for label in ["[1] Official", "[3] Restore", "[d] Install", "[D] Restore"] {
+                assert!(
+                    text.contains(label),
+                    "integration action is hidden at 80x24: {label}"
+                );
+            }
+        }
     }
 }
 
@@ -584,11 +599,24 @@ fn mouse_selects_tabs_and_integration_actions() {
     assert_eq!(app.page, Page::Dashboard);
     app.page = Page::Integrations;
     assert_eq!(
-        handle_mouse_event(&mut app, MouseEventKind::Down(MouseButton::Left), 90, 8),
+        handle_mouse_event(&mut app, MouseEventKind::Down(MouseButton::Left), 45, 8),
         Action::ConfirmUninstallCodex
     );
     assert_eq!(integration_action(9), Action::ConnectPi);
     assert_eq!(integration_action(10), Action::ConfirmUninstallPi);
+    assert_eq!(integration_action(11), Action::ConnectClaudeDesktop);
+    assert_eq!(
+        integration_action(12),
+        Action::ConfirmUninstallClaudeDesktop
+    );
+    assert_eq!(
+        handle_page_event(&mut app, KeyCode::Char('d')),
+        Action::ConnectClaudeDesktop
+    );
+    assert_eq!(
+        handle_page_event(&mut app, KeyCode::Char('D')),
+        Action::ConfirmUninstallClaudeDesktop
+    );
 }
 
 #[test]

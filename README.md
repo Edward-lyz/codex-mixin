@@ -159,3 +159,48 @@ Installation, configuration, and troubleshooting guides are maintained in the [G
 ## License
 
 See [LICENSE](LICENSE) and [NOTICE](NOTICE).
+
+### Claude Desktop
+
+Claude Code's desktop entry point is the Code tab in the official
+[Claude Desktop app](https://claude.com/download). To route its local sessions
+through Codex Mixin, select models in your providers, keep the gateway running,
+and run:
+
+```sh
+codex-mixin connect claude-desktop
+codex-mixin connect claude-desktop --status --json
+# Restore the deployment mode and profile that preceded integration:
+codex-mixin connect remove claude-desktop
+```
+
+The connect command starts or restarts the managed gateway after committing
+the profile, so the serving process includes the Desktop routes and client key.
+Fully quit and reopen Claude Desktop after connecting, restoring, or changing
+selected models. The macOS **Install and Restore** menu, Windows install page,
+and TUI **Integrations** page (`d` / `D`) expose the same commands. Desktop and
+the Claude Code CLI have separate integrations; `connect claude` still manages
+only Claude Code CLI settings.
+
+The Desktop profile is registered in `Claude-3p/configLibrary/_meta.json` and
+uses the gateway's `/claude-desktop` prefix with a separate client key. Every
+selected catalog model receives a stable `claude-sonnet-mixin-*` route and a
+label containing its real model and provider name. The Sonnet prefix is a
+Desktop-compatible route family, not a claim about the upstream model.
+Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses use the
+existing protocol conversion. Models with at least one million context tokens
+receive `supports1m`; Desktop accepts at most 200 selected models.
+
+Default configuration roots are `~/Library/Application Support` on macOS,
+`%LOCALAPPDATA%` on Windows, and `$XDG_CONFIG_HOME` (or `~/.config`) on Linux.
+Use `--config-root <parent-of-Claude-and-Claude-3p>` on either connect or remove
+for a custom installation. Integration saves an owner-only backup before
+switching deployment modes; restore removes managed fields while retaining
+unrelated settings and user edits. Model/key synchronization refreshes the
+Mixin profile without changing the profile selected manually in Desktop.
+This integration targets local Desktop inference; cloud sessions and
+Anthropic account services are outside its routing scope.
+
+The Desktop profile format follows the
+[CC Switch implementation](https://github.com/farion1231/cc-switch/blob/main/src-tauri/src/claude_desktop_config.rs)
+and was checked against Claude Desktop 2.31226.1 on macOS.

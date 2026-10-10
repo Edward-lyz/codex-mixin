@@ -33,6 +33,7 @@ void main() {
     expect(clientIntegrations.map((client) => client.id), [
       'codex',
       'claude',
+      'claude-desktop',
       'dsh',
       'opencode',
       'pi',

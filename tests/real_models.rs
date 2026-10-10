@@ -361,3 +361,127 @@ async fn baidu_auxiliary_auto_review_alias_reaches_real_upstream() {
         body.chars().take(1000).collect::<String>()
     );
 }
+
+#[tokio::test]
+#[ignore = "requires CODEX_MIXIN_REAL_MODEL and local provider credentials"]
+async fn claude_desktop_can_stream_a_real_selected_model() {
+    use codex_mixin::clients::claude_desktop::route_id;
+    use codex_mixin::config::{load_stored_config, save_stored_config_to_path};
+    use codex_mixin::gateway_access::{GatewayClient, generate_client_key};
+    use std::process::Stdio;
+
+    let model = std::env::var("CODEX_MIXIN_REAL_MODEL").expect("select one real catalog model");
+    let mut stored = load_stored_config().unwrap().expect("load local providers");
+    let provider = stored
+        .providers
+        .iter_mut()
+        .find(|provider| {
+            provider.enabled
+                && provider
+                    .selected_models
+                    .iter()
+                    .any(|selected| catalog_model_slug(selected, &provider.id) == model)
+        })
+        .expect("real Desktop test must target an enabled selected provider model");
+    provider
+        .selected_models
+        .retain(|selected| catalog_model_slug(selected, &provider.id) == model);
+    provider.request_policy.baidu_code_report = false;
+    if provider.request_policy.ducx_executable.is_none() {
+        let executable = codex_mixin::platform::home_dir_required()
+            .unwrap()
+            .join(".codex-mixin/ducx/home/.baidu-cx/baidu-cx/bin")
+            .join(codex_mixin::platform::executable_file_name("ducx"));
+        if executable.is_file() {
+            provider.request_policy.ducx_executable = Some(executable);
+        }
+    }
+    let provider = provider.clone();
+    stored.providers = vec![provider];
+    stored.official_selected_models = Some(Vec::new());
+    stored.fusion_profiles.clear();
+    let key = generate_client_key(GatewayClient::ClaudeDesktop).unwrap();
+    stored.gateway_client_keys.claude_desktop = Some(key.clone());
+    let directory = tempfile::tempdir().unwrap();
+    let config_path = directory.path().join("gateway.json");
+    let runtime_path = directory.path().join("runtime.json");
+    let home = directory.path().join("home");
+    fs::create_dir_all(&home).unwrap();
+    save_stored_config_to_path(&config_path, &stored).unwrap();
+    // DUCX launches current_exe as its auth carrier, so exercise the real CLI
+    // process with isolated client configs rather than the Rust test binary.
+    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_codex-mixin"));
+    codex_mixin::platform::set_tokio_home_env(&mut command, &home);
+    let mut child = command
+        .args(["start", "--bind", "127.0.0.1:0"])
+        .env("CODEX_GATEWAY_CONFIG", &config_path)
+        .env("CODEX_GATEWAY_RUNTIME_FILE", &runtime_path)
+        .env(
+            "CODEX_GATEWAY_DAEMON_FILE",
+            directory.path().join("daemon.json"),
+        )
+        .env("CODEX_HOME", directory.path().join("codex"))
+        .stdout(Stdio::null())
+        .stderr(Stdio::inherit())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let bind = tokio::time::timeout(Duration::from_secs(10), async {
+        loop {
+            if let Ok(bytes) = fs::read(&runtime_path)
+                && let Ok(runtime) = serde_json::from_slice::<Value>(&bytes)
+                && let Some(bind) = runtime["bind"].as_str()
+            {
+                break bind.to_owned();
+            }
+            assert!(
+                child.try_wait().unwrap().is_none(),
+                "real gateway exited during startup"
+            );
+            tokio::time::sleep(Duration::from_millis(20)).await;
+        }
+    })
+    .await
+    .expect("real gateway startup timed out");
+    let gateway_url = format!("http://{bind}");
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/claude-desktop/v1/messages"))
+        .bearer_auth(key)
+        .timeout(Duration::from_secs(90))
+        .json(&json!({
+            "model": route_id(&model), "stream":true, "max_tokens":256,
+            "messages":[{"role":"user", "content":"Reply with hi only."}]
+        }))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    if !status.is_success() {
+        let error: Value = response.json().await.unwrap();
+        panic!(
+            "Desktop gateway request failed: {status}; {}",
+            error["error"]["message"]
+        );
+    }
+    let events = response.text().await.unwrap();
+    assert!(
+        events.contains("event: message_stop"),
+        "Desktop stream did not complete"
+    );
+    assert!(
+        !events.contains("event: error"),
+        "Desktop stream returned an error"
+    );
+    let text = events
+        .lines()
+        .filter_map(|line| line.strip_prefix("data: "))
+        .filter_map(|line| serde_json::from_str::<Value>(line).ok())
+        .filter_map(|event| event["delta"]["text"].as_str().map(str::to_owned))
+        .collect::<String>();
+    assert!(!text.trim().is_empty(), "Desktop model returned no text");
+    child.kill().await.unwrap();
+    println!(
+        "Claude Desktop real upstream completed: {model}, {} text characters",
+        text.chars().count()
+    );
+}

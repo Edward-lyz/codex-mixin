@@ -122,7 +122,7 @@ pub(in crate::cli) fn sync_claude_models(
     )
 }
 
-fn claude_model_picker(
+pub(super) fn claude_model_picker(
     config: &GatewayConfig,
     official_models: &[ProviderModel],
 ) -> anyhow::Result<(Value, String)> {

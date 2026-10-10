@@ -24,6 +24,7 @@ pub(super) async fn check_gateway_auth(
             state.config.gateway_client_keys.authenticate(headers),
             Some(
                 crate::gateway_access::GatewayClient::Claude
+                    | crate::gateway_access::GatewayClient::ClaudeDesktop
                     | crate::gateway_access::GatewayClient::Dsh
                     | crate::gateway_access::GatewayClient::OpenCode
                     | crate::gateway_access::GatewayClient::Pi

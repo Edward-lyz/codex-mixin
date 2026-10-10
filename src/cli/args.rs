@@ -417,6 +417,16 @@ pub(super) enum ConnectCommand {
         #[arg(long)]
         settings_path: Option<PathBuf>,
     },
+    /// Route Claude Desktop through the local gateway (restart Desktop to apply).
+    ClaudeDesktop {
+        /// Parent directory containing Claude and Claude-3p.
+        #[arg(long)]
+        config_root: Option<PathBuf>,
+        #[arg(long)]
+        status: bool,
+        #[arg(long, requires = "status")]
+        json: bool,
+    },
     /// Install the Codex Mixin gateway as a DeepSeek Harness provider.
     Dsh {
         #[arg(long)]
@@ -437,10 +447,13 @@ pub(super) enum ConnectCommand {
         #[arg(long)]
         settings_path: Option<PathBuf>,
     },
-    /// Remove Codex, Claude, DSH, OpenCode, or Pi integration.
+    /// Remove a client integration.
     Remove {
-        #[arg(value_parser = ["codex", "claude", "dsh", "opencode", "pi"])]
+        #[arg(value_parser = ["codex", "claude", "claude-desktop", "dsh", "opencode", "pi"])]
         target: String,
+        /// Parent directory containing Claude and Claude-3p.
+        #[arg(long)]
+        config_root: Option<PathBuf>,
         #[arg(long)]
         settings_path: Option<PathBuf>,
         #[arg(long)]

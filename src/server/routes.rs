@@ -31,6 +31,8 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/responses", get(responses_ws).post(responses))
         .route("/v1/responses/compact", post(compact))
         .route("/v1/messages", post(super::messages_http::messages))
+        .route("/claude-desktop/v1/messages", post(desktop_messages))
+        .route("/claude-desktop/v1/models", get(desktop_models))
         .route("/v1/realtime", get(realtime_ws))
         .route("/v1/realtime/calls", post(realtime_call))
         .route("/v1/live", get(live_ws).post(realtime_call))
@@ -234,4 +236,51 @@ async fn token_usage(
 #[derive(Deserialize)]
 struct TokenUsageQuery {
     days: Option<u64>,
+}
+
+async fn desktop_messages(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    body: Body,
+) -> Result<Response, GatewayError> {
+    check_gateway_auth(&state, &headers).await?;
+    if state.config.gateway_client_keys.authenticate(&headers)
+        != Some(crate::gateway_access::GatewayClient::ClaudeDesktop)
+    {
+        return Err(GatewayError::Unauthorized);
+    }
+    let mut body = super::request_body::parse_json(body).await?;
+    let route = body
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GatewayError::BadRequest("missing Desktop model route".to_owned()))?;
+    let model = crate::clients::claude_desktop::route_model(route)
+        .map_err(|_| GatewayError::BadRequest("invalid Claude Desktop model route".to_owned()))?;
+    body["model"] = json!(model);
+    super::messages_http::messages_body(state, headers, body).await
+}
+
+async fn desktop_models(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+) -> Result<Response, GatewayError> {
+    check_gateway_auth(&state, &headers).await?;
+    if state.config.gateway_client_keys.authenticate(&headers)
+        != Some(crate::gateway_access::GatewayClient::ClaudeDesktop)
+    {
+        return Err(GatewayError::Unauthorized);
+    }
+    let models = state
+        .fetch_models()
+        .await?
+        .into_iter()
+        .map(|model| {
+            json!({
+                "id": crate::clients::claude_desktop::route_id(&model.id),
+                "display_name": model.display_name,
+                "type": "model", "created_at": "2024-01-01T00:00:00Z",
+            })
+        })
+        .collect::<Vec<_>>();
+    Ok(Json(json!({"data": models, "has_more": false})).into_response())
 }

@@ -996,22 +996,30 @@ pub(super) fn render_fusion(frame: &mut ratatui::Frame<'_>, area: Rect, app: &Ap
     );
 }
 
+pub(super) fn integration_cards(area: Rect) -> [Rect; 6] {
+    let rows = Layout::default()
+        .direction(Direction::Vertical)
+        .constraints([Constraint::Ratio(1, 3); 3])
+        .split(area);
+    let mut cards = [Rect::default(); 6];
+    for (index, row) in rows.iter().enumerate() {
+        let columns = Layout::default()
+            .direction(Direction::Horizontal)
+            .constraints([Constraint::Ratio(1, 2); 2])
+            .split(*row);
+        cards[index * 2] = columns[0];
+        cards[index * 2 + 1] = columns[1];
+    }
+    cards
+}
+
 pub(super) fn render_integrations(frame: &mut ratatui::Frame<'_>, area: Rect, app: &App) {
     let mode = app
         .snapshot
         .codex_install_mode
         .as_deref()
         .unwrap_or("not managed");
-    let cards = Layout::default()
-        .direction(Direction::Vertical)
-        .constraints([
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
-            Constraint::Percentage(20),
-        ])
-        .split(area);
+    let cards = integration_cards(area);
     frame.render_widget(
         Paragraph::new(vec![
             Line::from(vec![
@@ -1020,9 +1028,9 @@ pub(super) fn render_integrations(frame: &mut ratatui::Frame<'_>, area: Rect, ap
             ]),
             Line::from(vec![
                 action_label(0, "[1] Official", app.integration_index),
-                Span::raw("   "),
-                action_label(1, "[2] Custom-only", app.integration_index),
-                Span::raw("   "),
+                Span::raw(" "),
+                action_label(1, "[2] Custom", app.integration_index),
+                Span::raw(" "),
                 action_label(2, "[3] Restore", app.integration_index),
             ]),
         ])
@@ -1043,8 +1051,8 @@ pub(super) fn render_integrations(frame: &mut ratatui::Frame<'_>, area: Rect, ap
                 Style::default().fg(Color::Magenta).bold(),
             )),
             Line::from(vec![
-                action_label(3, "[4] Install / refresh", app.integration_index),
-                Span::raw("       "),
+                action_label(3, "[4] Install", app.integration_index),
+                Span::raw("   "),
                 action_label(4, "[5] Restore", app.integration_index),
             ]),
         ])
@@ -1065,8 +1073,8 @@ pub(super) fn render_integrations(frame: &mut ratatui::Frame<'_>, area: Rect, ap
                 Style::default().fg(Color::Green).bold(),
             )),
             Line::from(vec![
-                action_label(5, "[6] Install / refresh", app.integration_index),
-                Span::raw("       "),
+                action_label(5, "[6] Install", app.integration_index),
+                Span::raw("   "),
                 action_label(6, "[7] Remove", app.integration_index),
             ]),
         ])
@@ -1087,8 +1095,8 @@ pub(super) fn render_integrations(frame: &mut ratatui::Frame<'_>, area: Rect, ap
                 Style::default().fg(Color::Cyan).bold(),
             )),
             Line::from(vec![
-                action_label(7, "[8] Install / refresh", app.integration_index),
-                Span::raw("       "),
+                action_label(7, "[8] Install", app.integration_index),
+                Span::raw("   "),
                 action_label(8, "[9] Remove", app.integration_index),
             ]),
         ])
@@ -1109,8 +1117,8 @@ pub(super) fn render_integrations(frame: &mut ratatui::Frame<'_>, area: Rect, ap
                 Style::default().fg(Color::Yellow).bold(),
             )),
             Line::from(vec![
-                action_label(9, "[p] Install / refresh", app.integration_index),
-                Span::raw("       "),
+                action_label(9, "[p] Install", app.integration_index),
+                Span::raw("   "),
                 action_label(10, "[P] Remove", app.integration_index),
             ]),
         ])
@@ -1123,6 +1131,28 @@ pub(super) fn render_integrations(frame: &mut ratatui::Frame<'_>, area: Rect, ap
         )
         .wrap(Wrap { trim: true }),
         cards[4],
+    );
+    frame.render_widget(
+        Paragraph::new(vec![
+            Line::from(Span::styled(
+                "CLAUDE DESKTOP - restart to apply",
+                Style::default().fg(Color::Magenta).bold(),
+            )),
+            Line::from(vec![
+                action_label(11, "[d] Install", app.integration_index),
+                Span::raw("   "),
+                action_label(12, "[D] Restore", app.integration_index),
+            ]),
+        ])
+        .block(
+            Block::default()
+                .title(" CLAUDE DESKTOP ")
+                .borders(Borders::ALL)
+                .border_type(BorderType::Rounded)
+                .border_style(Style::default().fg(Color::Magenta)),
+        )
+        .wrap(Wrap { trim: true }),
+        cards[5],
     );
 }
 
@@ -1685,7 +1715,7 @@ pub(super) fn render_footer(frame: &mut ratatui::Frame<'_>, area: Rect, app: &Ap
             }
             Page::Fusion => "Up/Down model  Space Panel  j Judge  f Final  s save  D disable",
             Page::Integrations => {
-                "1-3 Codex  4-5 Claude  6-7 DSH  8-9 OpenCode  p/P Pi  click or press a key"
+                "1-3 Codex  4-5 Claude  6-7 DSH  8-9 OpenCode  p/P Pi  d/D Desktop"
             }
             Page::System => "s/R gateway  u update  d doctor  F repair  f catalog  l logs",
             Page::Diagnostics => "x doctor  PgUp/PgDn scroll  r refresh  ? help  q quit",
@@ -1769,7 +1799,7 @@ pub(super) fn render_help(frame: &mut ratatui::Frame<'_>, area: Rect) {
             Line::from("e / t / m            Enable, test, discover provider"),
             Line::from("Space / s / p        Toggle, save, probe models"),
             Line::from("b                    Benchmark selected provider"),
-            Line::from("1-7                  Install or restore integrations"),
+            Line::from("1-9 p/P d/D          Install or restore integrations"),
             Line::from("u / F / f / l        Update, repair, catalog, logs"),
             Line::from("r                    Refresh status"),
             Line::from("s / R                Start-stop / restart gateway"),

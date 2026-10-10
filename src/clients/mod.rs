@@ -4,6 +4,7 @@
 //! application workflow ordering stay outside this module.
 
 pub mod claude;
+pub mod claude_desktop;
 pub mod codex;
 pub mod dsh;
 pub mod files;

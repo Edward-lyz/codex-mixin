@@ -339,6 +339,7 @@ enum Dialog {
 enum ConfirmOperation {
     UninstallCodex,
     UninstallClaude,
+    UninstallClaudeDesktop,
     UninstallDsh,
     UninstallOpenCode,
     UninstallPi,
@@ -352,6 +353,7 @@ impl ConfirmOperation {
         match self {
             Self::UninstallCodex => "Restore Codex",
             Self::UninstallClaude => "Restore Claude Code",
+            Self::UninstallClaudeDesktop => "Restore Claude Desktop",
             Self::UninstallDsh => "Remove DSH integration",
             Self::UninstallOpenCode => "Remove OpenCode integration",
             Self::UninstallPi => "Remove Pi integration",
@@ -365,6 +367,9 @@ impl ConfirmOperation {
         match self {
             Self::UninstallCodex => "Restore the Codex configuration saved before installation.",
             Self::UninstallClaude => "Remove managed Claude Code settings and restore the backup.",
+            Self::UninstallClaudeDesktop => {
+                "Restore the previous Desktop profile and deployment mode. Restart Claude Desktop after restoring."
+            }
             Self::UninstallDsh => "Remove codex-mixin from DSH settings and credentials.",
             Self::UninstallOpenCode => {
                 "Remove the managed provider and gateway credential from OpenCode."
@@ -549,11 +554,13 @@ enum Action {
     ConnectCodexOfficial,
     ConnectCodexCustom,
     ConnectClaude,
+    ConnectClaudeDesktop,
     ConnectDsh,
     ConnectOpenCode,
     ConnectPi,
     ConfirmUninstallCodex,
     ConfirmUninstallClaude,
+    ConfirmUninstallClaudeDesktop,
     ConfirmUninstallDsh,
     ConfirmUninstallOpenCode,
     ConfirmUninstallPi,
@@ -1096,6 +1103,16 @@ pub(crate) async fn run(
                 )
                 .await;
             }
+            Action::ConnectClaudeDesktop => {
+                run_action(
+                    &mut terminal,
+                    &mut app,
+                    "Installing Claude Desktop routing; restart Desktop to apply",
+                    &["connect", "claude-desktop"],
+                    true,
+                )
+                .await;
+            }
             Action::ConnectDsh => {
                 run_action(
                     &mut terminal,
@@ -1132,6 +1149,11 @@ pub(crate) async fn run(
             Action::ConfirmUninstallClaude => {
                 app.dialog = Some(Dialog::ConfirmOperation(ConfirmOperation::UninstallClaude));
             }
+            Action::ConfirmUninstallClaudeDesktop => {
+                app.dialog = Some(Dialog::ConfirmOperation(
+                    ConfirmOperation::UninstallClaudeDesktop,
+                ));
+            }
             Action::ConfirmUninstallDsh => {
                 app.dialog = Some(Dialog::ConfirmOperation(ConfirmOperation::UninstallDsh));
             }
@@ -1166,6 +1188,11 @@ pub(crate) async fn run(
                     ConfirmOperation::UninstallClaude => (
                         "Restoring Claude Code configuration",
                         &["connect", "remove", "claude"][..],
+                        true,
+                    ),
+                    ConfirmOperation::UninstallClaudeDesktop => (
+                        "Restoring Claude Desktop configuration; restart Desktop to apply",
+                        &["connect", "remove", "claude-desktop"][..],
                         true,
                     ),
                     ConfirmOperation::UninstallDsh => (

@@ -45,3 +45,23 @@ pub fn set_tokio_home_env(command: &mut tokio::process::Command, home: &std::pat
 pub fn os_name() -> &'static str {
     std::env::consts::OS
 }
+
+pub fn claude_desktop_config_root() -> anyhow::Result<PathBuf> {
+    let home = home_dir_required()?;
+    if cfg!(target_os = "macos") {
+        return Ok(home.join("Library/Application Support"));
+    }
+    if cfg!(windows) {
+        return Ok(std::env::var_os("LOCALAPPDATA")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join("AppData/Local")));
+    }
+    if cfg!(target_os = "linux") {
+        let root = std::env::var_os("XDG_CONFIG_HOME")
+            .map(PathBuf::from)
+            .unwrap_or_else(|| home.join(".config"));
+        anyhow::ensure!(root.is_absolute(), "XDG_CONFIG_HOME must be absolute");
+        return Ok(root);
+    }
+    anyhow::bail!("Claude Desktop integration is unsupported on this platform")
+}

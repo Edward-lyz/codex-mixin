@@ -256,7 +256,7 @@ extension AppDelegate {
     @objc func quitAndRestore() {
         guard confirm(
             title: "退出并恢复原配置？",
-            message: "会先把 Codex、Claude Code、DSH、OpenCode、Pi 中由 Codex Mixin 接管的配置恢复为安装前的状态，再停止本地网关并退出。正在运行的 Codex App 会自动重启；其他客户端需要重启或开新会话。"
+            message: "会先把 Codex、Claude Code、Claude Desktop、DSH、OpenCode、Pi 中由 Codex Mixin 接管的配置恢复为安装前的状态，再停止本地网关并退出。正在运行的 Codex App 会自动重启；其他客户端需要重启或开新会话。"
         ) else { return }
         quitApplication(restoreClients: true)
     }

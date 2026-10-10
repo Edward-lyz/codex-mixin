@@ -22,6 +22,7 @@ pub(super) fn describe(json_output: bool) -> anyhow::Result<()> {
             "codex_lifecycle": true,
             "gateway_autostart": codex_mixin::platform::startup_service_supported(),
             "config_apply": true,
+            "claude_desktop_routing": true,
             "official_ech_proxy": true,
             "cli_update": super::update::cli_release_target().is_ok(),
         },

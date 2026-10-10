@@ -84,6 +84,21 @@ InstallTarget installTargetFor(String id) {
         supported: false,
         buildArgs: (_) => const <String>[],
       );
+    case 'claude-desktop':
+      return InstallTarget(
+        id: id,
+        name: 'Claude Desktop',
+        modes: const [
+          InstallMode(
+            value: 'gateway',
+            icon: Icons.route_outlined,
+            title: '本地网关路由',
+            description: '使用当前已选模型。安装或恢复后请完全退出并重启 Claude Desktop；使用期间保持网关运行。',
+          ),
+        ],
+        locations: const [('Profile', '%LOCALAPPDATA%/Claude-3p/configLibrary')],
+        buildArgs: (_) => const ['connect', 'claude-desktop'],
+      );
     case 'dsh':
       return InstallTarget(
         id: id,
