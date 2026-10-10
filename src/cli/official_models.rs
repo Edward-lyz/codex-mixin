@@ -2,8 +2,8 @@ use std::collections::HashSet;
 use std::path::{Path, PathBuf};
 use std::time::SystemTime;
 
-use codex_mixin::catalog::load_template_catalog;
-use codex_mixin::config::{GatewayConfig, stored_config_path};
+use codex_mixin::catalog::{apply_official_context_overrides, load_template_catalog};
+use codex_mixin::config::{GatewayConfig, load_stored_config, stored_config_path};
 use codex_mixin::provider::{ProviderModel, ProviderProtocol};
 use serde_json::Value;
 
@@ -71,7 +71,13 @@ pub(super) fn selected_official_models(
     if !config.accept_codex_oauth || !config.codex_auth_path.is_file() {
         return Ok(Vec::new());
     }
-    let models = load_official_models()?;
+    let Some(mut catalog) = load_official_catalog()? else {
+        return Ok(Vec::new());
+    };
+    let stored = load_stored_config()?
+        .ok_or_else(|| anyhow::anyhow!("provider configuration is missing"))?;
+    apply_official_context_overrides(&mut catalog, &stored.official_model_contexts)?;
+    let models = official_models_from_catalog(&catalog)?;
     Ok(filter_selected_models(
         models,
         config.official_selected_models.as_deref(),

@@ -23,6 +23,14 @@ codex-mixin --no-tui provider list --json
 
 刷新会保留完整的元数据，包括 context window、reasoning levels、input modalities 和隐藏条目，其中 `visibility=hide` 的模型不会出现在选择器里。选了哪些模型、上下文怎么覆盖，仍由 Mixin 管理。
 
+官方模型的 `official_model_contexts` 覆盖同时用于 Codex 和其他托管客户端的
+模型配置，包括 Pi、OpenCode、DSH、Claude Code 和 Claude Desktop。覆盖值必须
+大于 0，且不能超过官方清单的 `max_context_window`；清除覆盖后恢复清单中的
+原始窗口。修改后 Mixin 会同步已安装客户端，运行中的客户端需要重新加载。
+Pi、OpenCode 和 DSH 接收精确窗口；Claude Code 使用其 `[1m]` 模型标记，
+Claude Desktop 使用 `supports1m`，只有窗口至少为 1M 时才启用，不能表达任意
+自定义窗口大小。设置窗口不会提高官方服务端实际允许的上限。
+
 ## 后台刷新和流量
 
 网关运行时，每 30 秒检查一次官方托管目录和已启用的动态 Provider；本地能力目录每 15 秒同步一次，这一步不下载官方清单。只有启用了官方 OAuth 托管目录才会检查官方清单，已禁用的自定义 Provider 不会发模型发现请求。
