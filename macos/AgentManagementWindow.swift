@@ -749,3 +749,95 @@ private func agentLogoImage(_ agentID: String) -> NSImage? {
     }
     return nil
 }
+
+private struct AgentDetailPanel: View {
+    let entry: AgentEntry
+
+    var body: some View {
+        VStack(alignment: .leading, spacing: 5) {
+            detailRow("agentManagement.detail.version", entry.cli.version)
+            detailRow("agentManagement.detail.latest", entry.cli.latest)
+            detailRow("agentManagement.detail.via", entry.cli.via)
+            detailRow("agentManagement.detail.path", entry.cli.path)
+            detailRow("agentManagement.detail.command", entry.cli.command)
+            detailRow("agentManagement.detail.appVersion", entry.cli.appVersion)
+            detailRow("agentManagement.detail.mode", agentIntegrationModeText(entry.integration.mode))
+            detailRow("agentManagement.detail.error", entry.integration.error)
+            detailRow("agentManagement.detail.cliError", entry.cli.error)
+            detailRow(
+                "agentManagement.detail.disconnectScope",
+                agentDisconnectScopeText(entry)
+            )
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    @ViewBuilder
+    private func detailRow(_ key: String, _ value: String?) -> some View {
+        if let value, !value.isEmpty {
+            HStack(alignment: .firstTextBaseline, spacing: 10) {
+                Text(AppLocalization.string(key))
+                    .font(.caption)
+                    .foregroundStyle(.secondary)
+                    .frame(width: 96, alignment: .leading)
+                Text(value)
+                    .font(.caption)
+                    .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
+            }
+        }
+    }
+}
+
+final class AgentManagementWindowController: NSWindowController, NSWindowDelegate {
+    let model: AgentManagementModel
+
+    init(model: AgentManagementModel) {
+        self.model = model
+        let window = NSWindow(
+            contentRect: NSRect(
+                x: 0,
+                y: 0,
+                width: agentManagementContentWidth,
+                height: agentManagementContentHeight
+            ),
+            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            backing: .buffered,
+            defer: false
+        )
+        window.title = AppLocalization.string("agentManagement.windowTitle")
+        window.minSize = NSSize(
+            width: agentManagementContentWidth,
+            height: agentManagementContentHeight
+        )
+        window.toolbarStyle = .unified
+        configureOpaqueWindow(window)
+        window.center()
+        super.init(window: window)
+        window.delegate = self
+        let hostingController = NSHostingController(
+            rootView: AgentManagementView(model: model)
+        )
+        if #available(macOS 14.0, *) {
+            // Let the SwiftUI toolbar become the window's native toolbar.
+            hostingController.sceneBridgingOptions = [.toolbars]
+        }
+        window.contentViewController = hostingController
+        configurePersistentWindow(window)
+    }
+
+    required init?(coder: NSCoder) {
+        fatalError("init(coder:) has not been implemented")
+    }
+
+    func present() {
+        showWindow(nil)
+        if let window {
+            presentPersistentWindow(window)
+        }
+        Task { @MainActor [weak self] in
+            await self?.model.refresh()
+        }
+    }
+}

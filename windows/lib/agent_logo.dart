@@ -33,7 +33,8 @@ class AgentLogo extends StatelessWidget {
           }
           final path = 'assets/agents/${asset['file']}';
           if (path.endsWith('.png')) {
-            return Image.asset(path, width: size, height: size, fit: BoxFit.contain);
+            return Image.asset(path, width: size, height: size, fit: BoxFit.contain,
+                cacheWidth: (size * MediaQuery.devicePixelRatioOf(context)).round());
           }
           final dark = Theme.of(context).brightness == Brightness.dark;
           return SvgPicture.asset(
