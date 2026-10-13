@@ -85,15 +85,6 @@ struct Backup {
     previous: Vec<BTreeMap<String, Option<Value>>>,
     installed: Vec<BTreeMap<String, Value>>,
     existed: Vec<bool>,
-    #[serde(default, skip_serializing_if = "Option::is_none")]
-    locale: Option<LocaleBackup>,
-}
-
-#[derive(Deserialize, Serialize)]
-struct LocaleBackup {
-    existed: bool,
-    previous: Option<Value>,
-    installed: Value,
 }
 
 impl Backup {
@@ -178,26 +169,12 @@ pub fn is_managed(root: &Path) -> anyhow::Result<bool> {
 }
 
 pub fn install(root: &Path, base_url: &str, key: &str, models: Value) -> anyhow::Result<bool> {
-    apply(
-        root,
-        base_url,
-        key,
-        models,
-        true,
-        &crate::platform::system_locale()?,
-    )
+    apply(root, base_url, key, models, true)
 }
 
 pub fn refresh(root: &Path, base_url: &str, key: &str, models: Value) -> anyhow::Result<bool> {
     anyhow::ensure!(is_managed(root)?, "Claude Desktop is not managed");
-    apply(
-        root,
-        base_url,
-        key,
-        models,
-        false,
-        &crate::platform::system_locale()?,
-    )
+    apply(root, base_url, key, models, false)
 }
 
 fn apply(
@@ -206,7 +183,6 @@ fn apply(
     key: &str,
     models: Value,
     activate: bool,
-    locale: &str,
 ) -> anyhow::Result<bool> {
     anyhow::ensure!(!key.is_empty(), "Claude Desktop client key is empty");
     anyhow::ensure!(
@@ -246,7 +222,6 @@ fn apply(
             previous: vec![BTreeMap::new(); 4],
             installed: vec![BTreeMap::new(); 4],
             existed: paths[..4].iter().map(|path| path.exists()).collect(),
-            locale: None,
         }
     };
     let patches = [
@@ -257,7 +232,6 @@ fn apply(
             "inferenceProvider": "gateway", "inferenceGatewayBaseUrl": base_url,
             "inferenceGatewayAuthScheme": "bearer", "inferenceGatewayApiKey": key,
             "inferenceModels": models, "disableDeploymentModeChooser": false,
-            "language": locale,
         }),
     ];
     for (index, patch) in patches.iter().enumerate() {
@@ -292,21 +266,10 @@ fn apply(
     }
     // Persist the first-write backup before switching deployment modes, so a
     // process interruption can be repaired by rerunning install or restore.
-    let locale_path = root.join("Claude-3p/config.json");
-    let mut locale_config = read_object(&locale_path)?;
-    let locale_backup = backup.locale.get_or_insert_with(|| LocaleBackup {
-        existed: locale_path.exists(),
-        previous: locale_config.get("locale").cloned(),
-        installed: json!(locale),
-    });
-    locale_backup.installed = json!(locale);
-    locale_config["locale"] = json!(locale);
     let mut write_paths = vec![paths[4].clone()];
     write_paths.extend_from_slice(&paths[..4]);
     let mut writes = vec![Some(serde_json::to_value(&backup)?)];
     writes.extend(documents.into_iter().map(Some));
-    write_paths.push(locale_path);
-    writes.push(Some(locale_config));
     write_documents(&write_paths, &writes)
 }
 
@@ -365,139 +328,13 @@ pub fn uninstall(root: &Path) -> anyhow::Result<()> {
         })
         .collect::<Vec<_>>();
     writes.push(None);
-    let mut write_paths = paths.to_vec();
-    if let Some(locale) = backup.locale {
-        let locale_path = root.join("Claude-3p/config.json");
-        let mut config = read_object(&locale_path)?;
-        if config.get("locale") == Some(&locale.installed) {
-            match locale.previous {
-                Some(previous) => {
-                    config["locale"] = previous;
-                }
-                None => {
-                    config
-                        .as_object_mut()
-                        .context("Desktop locale config must be an object")?
-                        .remove("locale");
-                }
-            }
-        }
-        let document = if !locale_path.exists()
-            || (!locale.existed && config.as_object().is_some_and(serde_json::Map::is_empty))
-        {
-            None
-        } else {
-            Some(config)
-        };
-        write_paths.push(locale_path);
-        writes.push(document);
-    }
-    write_documents(&write_paths, &writes)?;
+    write_documents(&paths, &writes)?;
     Ok(())
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-
-    #[test]
-    fn system_locale_sync_restores_original_preferences() {
-        let root = tempfile::tempdir().unwrap();
-        let locale_path = root.path().join("Claude-3p/config.json");
-        write_owner_only(&locale_path, br#"{"locale":"en-US","keep":true}"#).unwrap();
-        let models = json!([{"name": route_id("gpt-test-custom")}]);
-        apply(
-            root.path(),
-            "http://localhost",
-            "key",
-            models.clone(),
-            true,
-            "zh-Hans",
-        )
-        .unwrap();
-        let paths = paths(root.path());
-        assert_eq!(read_object(&paths[3]).unwrap()["language"], "zh-Hans");
-        assert_eq!(read_object(&locale_path).unwrap()["locale"], "zh-Hans");
-        apply(
-            root.path(),
-            "http://localhost",
-            "key",
-            models,
-            false,
-            "zh-Hant",
-        )
-        .unwrap();
-        assert_eq!(read_object(&locale_path).unwrap()["locale"], "zh-Hant");
-        uninstall(root.path()).unwrap();
-        assert_eq!(
-            read_object(&locale_path).unwrap(),
-            json!({"locale":"en-US","keep":true})
-        );
-    }
-
-    #[test]
-    fn locale_restore_preserves_user_changes_and_deletion() {
-        for delete in [false, true] {
-            let root = tempfile::tempdir().unwrap();
-            let locale_path = root.path().join("Claude-3p/config.json");
-            let models = json!([{"name": route_id("gpt-test-custom")}]);
-            apply(
-                root.path(),
-                "http://localhost",
-                "key",
-                models,
-                true,
-                "zh-Hans",
-            )
-            .unwrap();
-            if delete {
-                fs::remove_file(&locale_path).unwrap();
-            } else {
-                write_owner_only(&locale_path, br#"{"locale":"ja-JP","keep":true}"#).unwrap();
-            }
-            uninstall(root.path()).unwrap();
-            if delete {
-                assert!(!locale_path.exists());
-            } else {
-                assert_eq!(
-                    read_object(&locale_path).unwrap(),
-                    json!({"locale":"ja-JP","keep":true})
-                );
-            }
-        }
-    }
-
-    #[test]
-    fn upgrades_existing_backup_without_losing_restore() {
-        let root = tempfile::tempdir().unwrap();
-        let models = json!([{"name": route_id("gpt-test-custom")}]);
-        apply(
-            root.path(),
-            "http://localhost",
-            "key",
-            models.clone(),
-            true,
-            "zh-Hans",
-        )
-        .unwrap();
-        let paths = paths(root.path());
-        let mut backup = read_object(&paths[4]).unwrap();
-        backup.as_object_mut().unwrap().remove("locale");
-        write_owner_only(&paths[4], &serde_json::to_vec(&backup).unwrap()).unwrap();
-        let locale_path = root.path().join("Claude-3p/config.json");
-        write_owner_only(&locale_path, br#"{"locale":"ja-JP"}"#).unwrap();
-        apply(
-            root.path(),
-            "http://localhost",
-            "key",
-            models,
-            false,
-            "zh-Hans",
-        )
-        .unwrap();
-        uninstall(root.path()).unwrap();
-        assert_eq!(read_object(&locale_path).unwrap()["locale"], "ja-JP");
-    }
 
     #[test]
     fn desktop_aliases_roundtrip_unicode_and_context_suffix() {
@@ -599,7 +436,7 @@ mod tests {
     }
 
     #[test]
-    fn refresh_follows_system_language() {
+    fn refresh_preserves_language_and_allows_official_login() {
         let root = tempfile::tempdir().unwrap();
         let paths = paths(root.path());
         let models = json!([{"name": route_id("gpt-5-custom")}]);
@@ -611,12 +448,7 @@ mod tests {
         refresh(root.path(), "http://localhost", "key", models).unwrap();
         let refreshed = read_object(&paths[3]).unwrap();
         assert_eq!(refreshed["disableDeploymentModeChooser"], false);
-        let locale = crate::platform::system_locale().unwrap();
-        assert_eq!(refreshed["language"], locale);
-        assert_eq!(
-            read_object(&root.path().join("Claude-3p/config.json")).unwrap()["locale"],
-            locale
-        );
+        assert_eq!(refreshed["language"], "ja-JP");
     }
 
     #[test]

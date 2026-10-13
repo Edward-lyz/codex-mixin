@@ -14,26 +14,6 @@ fn config_root(root: Option<PathBuf>) -> anyhow::Result<PathBuf> {
     .context("resolve Claude Desktop configuration root")
 }
 
-pub(super) fn sync_language() -> anyhow::Result<()> {
-    let root = config_root(None)?;
-    anyhow::ensure!(
-        claude_desktop::is_managed(&root)?,
-        "install the Claude Desktop integration before applying its language pack"
-    );
-    let path = root
-        .join("Claude-3p/configLibrary")
-        .join(format!("{}.json", claude_desktop::PROFILE_ID));
-    let profile: Value = serde_json::from_slice(&std::fs::read(path)?)?;
-    let base = profile["inferenceGatewayBaseUrl"]
-        .as_str()
-        .context("Desktop gateway URL is missing")?;
-    let key = profile["inferenceGatewayApiKey"]
-        .as_str()
-        .context("Desktop gateway key is missing")?;
-    claude_desktop::refresh(&root, base, key, profile["inferenceModels"].clone())?;
-    Ok(())
-}
-
 fn install_config(root: Option<PathBuf>, announce: bool) -> anyhow::Result<bool> {
     let root = config_root(root)?;
     let config = GatewayConfig::from_stored_config()?;
@@ -62,13 +42,6 @@ fn install_config(root: Option<PathBuf>, announce: bool) -> anyhow::Result<bool>
         claude_desktop::refresh(&root, &url, &key, json!(models))?
     };
     if announce {
-        let locale = codex_mixin::platform::system_locale()?;
-        println!("Claude Desktop language: {locale} (system preference)");
-        if codex_mixin::platform::claude_desktop_has_locale(&locale) == Some(false) {
-            println!(
-                "Claude Desktop has no 3P chat resources for {locale}; the language preference is saved, but the chat interface needs an app update or a compatible language pack"
-            );
-        }
         println!("Claude Desktop gateway: {url}");
         println!(
             "Claude Desktop profile: {}",

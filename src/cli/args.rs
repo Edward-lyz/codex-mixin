@@ -405,13 +405,6 @@ pub(super) enum ConfigCommand {
 
 #[derive(Debug, Subcommand)]
 pub(super) enum ConnectCommand {
-    /// Install or restore an independent Chinese language pack for macOS Claude Desktop.
-    ClaudeDesktopLanguage {
-        #[arg(long)]
-        app_path: Option<PathBuf>,
-        #[arg(long)]
-        restore: bool,
-    },
     /// Install Codex integration.
     Codex(InstallCodexOptions),
     /// Install and sign in to the managed DUCX authentication carrier.

@@ -3,11 +3,9 @@
 //! Callers express intent through this module instead of branching on an OS.
 //! Platform-specific process flags, paths, and permission tools stay here.
 
-mod claude_language;
 mod codex_cli;
 mod desktop;
 mod files;
-mod locale;
 mod package;
 mod paths;
 mod permissions;
@@ -17,7 +15,6 @@ mod signing;
 mod startup_service;
 mod terminal;
 
-pub use claude_language::{claude_desktop_has_locale, manage_claude_language_pack};
 pub use codex_cli::{
     CodexCliInstaller, codex_cli_candidates, codex_cli_installer, launcher_command,
     path_executable_candidates,
@@ -33,7 +30,6 @@ pub use files::{
     persist_temp_path, set_owner_only_dir_mode, set_owner_only_mode, set_owner_only_mode_on,
     symlink_file,
 };
-pub use locale::system_locale;
 pub use package::{PackageTarget, package_target};
 pub use paths::{
     claude_desktop_config_root, home_dir, home_dir_required, os_name, set_home_env,
