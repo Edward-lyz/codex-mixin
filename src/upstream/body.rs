@@ -1,28 +1,38 @@
 use std::io::{Seek, Write};
 
 use futures_util::StreamExt;
-use reqwest::header::{CONTENT_LENGTH, CONTENT_TYPE, HeaderValue};
+use reqwest::header::CONTENT_TYPE;
+#[cfg(test)]
+use reqwest::header::{CONTENT_LENGTH, HeaderValue};
 use serde::Serialize;
 
 use crate::error::GatewayError;
 
 const MAX_UPSTREAM_ERROR_BYTES: usize = 64 * 1024;
+const MIN_COMPRESS_REQUEST_BYTES: u64 = 64 * 1024;
 
-pub(super) struct SignedJsonBody {
+pub(super) struct JsonFile {
     pub(super) file: tokio::fs::File,
     pub(super) length: u64,
-    pub(super) sha256: String,
+    pub(super) sha256: Option<String>,
+}
+
+pub(super) struct PreparedJson {
+    pub(super) raw: JsonFile,
+    pub(super) gzip: Option<JsonFile>,
 }
 
 struct DigestWriter<W> {
     inner: W,
-    digest: ring::digest::Context,
+    digest: Option<ring::digest::Context>,
 }
 
 impl<W: Write> Write for DigestWriter<W> {
     fn write(&mut self, bytes: &[u8]) -> std::io::Result<usize> {
         let written = self.inner.write(bytes)?;
-        self.digest.update(&bytes[..written]);
+        if let Some(digest) = &mut self.digest {
+            digest.update(&bytes[..written]);
+        }
         Ok(written)
     }
 
@@ -31,31 +41,61 @@ impl<W: Write> Write for DigestWriter<W> {
     }
 }
 
-pub(super) async fn prepare_signed_json<T>(value: T) -> Result<SignedJsonBody, GatewayError>
+fn finish_json_file(mut writer: DigestWriter<std::fs::File>) -> anyhow::Result<JsonFile> {
+    writer.flush()?;
+    let length = writer.inner.metadata()?.len();
+    writer.inner.rewind()?;
+    let sha256 = writer.digest.map(|digest| {
+        const HEX: &[u8; 16] = b"0123456789abcdef";
+        let digest = digest.finish();
+        let mut hex = String::with_capacity(digest.as_ref().len() * 2);
+        for byte in digest.as_ref() {
+            hex.push(char::from(HEX[usize::from(*byte >> 4)]));
+            hex.push(char::from(HEX[usize::from(*byte & 0x0f)]));
+        }
+        hex
+    });
+    Ok(JsonFile {
+        file: tokio::fs::File::from_std(writer.inner),
+        length,
+        sha256,
+    })
+}
+
+pub(super) async fn prepare_json_body<T>(
+    value: T,
+    compress: bool,
+    signed: bool,
+) -> Result<PreparedJson, GatewayError>
 where
     T: Serialize + Send + 'static,
 {
     tokio::task::spawn_blocking(move || {
-        let file = tempfile::tempfile()?;
         let mut writer = DigestWriter {
-            inner: file,
-            digest: ring::digest::Context::new(&ring::digest::SHA256),
+            inner: tempfile::tempfile()?,
+            digest: signed.then(|| ring::digest::Context::new(&ring::digest::SHA256)),
         };
         serde_json::to_writer(&mut writer, &value)?;
         writer.flush()?;
         let length = writer.inner.stream_position()?;
-        writer.inner.seek(std::io::SeekFrom::Start(0))?;
-        let digest = writer.digest.finish();
-        const HEX: &[u8; 16] = b"0123456789abcdef";
-        let mut sha256 = String::with_capacity(digest.as_ref().len() * 2);
-        for byte in digest.as_ref() {
-            sha256.push(char::from(HEX[usize::from(*byte >> 4)]));
-            sha256.push(char::from(HEX[usize::from(*byte & 0x0f)]));
-        }
-        Ok::<_, anyhow::Error>(SignedJsonBody {
-            file: tokio::fs::File::from_std(writer.inner),
-            length,
-            sha256,
+        writer.inner.rewind()?;
+        let gzip = if compress && length >= MIN_COMPRESS_REQUEST_BYTES {
+            let compressed = DigestWriter {
+                inner: tempfile::tempfile()?,
+                digest: signed.then(|| ring::digest::Context::new(&ring::digest::SHA256)),
+            };
+            // Disk-backed encoding bounds memory even for long coding contexts.
+            let mut encoder =
+                flate2::write::GzEncoder::new(compressed, flate2::Compression::fast());
+            std::io::copy(&mut writer.inner, &mut encoder)?;
+            let compressed = finish_json_file(encoder.finish()?)?;
+            (compressed.length < length).then_some(compressed)
+        } else {
+            None
+        };
+        Ok::<_, anyhow::Error>(PreparedJson {
+            raw: finish_json_file(writer)?,
+            gzip,
         })
     })
     .await
@@ -63,6 +103,7 @@ where
     .map_err(GatewayError::Other)
 }
 
+#[cfg(test)]
 pub(crate) async fn prepare_json<T>(
     request: reqwest::RequestBuilder,
     value: T,
@@ -126,4 +167,60 @@ pub(crate) async fn response_error(
         content_type,
         context: context.into(),
     })
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::io::Read;
+    use tokio::io::AsyncReadExt;
+
+    #[tokio::test]
+    async fn compressed_json_preserves_payload_and_signed_bytes() {
+        let value = serde_json::json!({"input": "coding context ".repeat(10_000)});
+        let prepared = prepare_json_body(value.clone(), true, true).await.unwrap();
+        let mut gzip = prepared.gzip.unwrap();
+        let mut bytes = Vec::new();
+        gzip.file.read_to_end(&mut bytes).await.unwrap();
+        assert_eq!(gzip.length as usize, bytes.len());
+        let digest = ring::digest::digest(&ring::digest::SHA256, &bytes);
+        let expected: String = digest
+            .as_ref()
+            .iter()
+            .map(|byte| format!("{byte:02x}"))
+            .collect();
+        assert_eq!(gzip.sha256.as_deref(), Some(expected.as_str()));
+        let mut restored = Vec::new();
+        flate2::read::GzDecoder::new(bytes.as_slice())
+            .read_to_end(&mut restored)
+            .unwrap();
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&restored).unwrap(),
+            value
+        );
+        assert!(gzip.length < prepared.raw.length);
+    }
+
+    #[tokio::test]
+    async fn small_or_unsupported_requests_remain_uncompressed() {
+        let value = serde_json::json!({"input":"hi"});
+        let mut small = prepare_json_body(value.clone(), true, false).await.unwrap();
+        assert!(small.gzip.is_none());
+        let mut bytes = Vec::new();
+        small.raw.file.read_to_end(&mut bytes).await.unwrap();
+        assert_eq!(small.raw.length as usize, bytes.len());
+        assert_eq!(
+            serde_json::from_slice::<serde_json::Value>(&bytes).unwrap(),
+            value
+        );
+        let prepared = prepare_json_body(
+            serde_json::json!({"input":"context".repeat(20_000)}),
+            false,
+            false,
+        )
+        .await
+        .unwrap();
+        assert!(prepared.gzip.is_none());
+        assert!(prepared.raw.sha256.is_none());
+    }
 }

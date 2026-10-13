@@ -25,6 +25,7 @@ pub(crate) mod body;
 mod ducx;
 #[cfg(test)]
 mod ech_tests;
+mod http_compression;
 mod official;
 pub(crate) mod transport_log;
 use transport_log::{OfficialTransport, TransportTrace, attach_trace, take_trace};
@@ -54,6 +55,7 @@ pub(crate) struct UpstreamAccess {
     official_direct_client: Arc<tokio::sync::OnceCell<Client>>,
     official_auth_cache: Arc<tokio::sync::Mutex<Option<CachedOfficialAuth>>>,
     ducx_runtimes: Arc<tokio::sync::Mutex<HashMap<String, Arc<DucxRuntime>>>>,
+    gzip_support: Arc<tokio::sync::Mutex<HashMap<reqwest::Url, bool>>>,
 }
 
 impl UpstreamAccess {
@@ -65,6 +67,7 @@ impl UpstreamAccess {
             official_direct_client: Arc::new(tokio::sync::OnceCell::new()),
             official_auth_cache: Arc::new(tokio::sync::Mutex::new(None)),
             ducx_runtimes: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            gzip_support: Arc::default(),
         }
     }
 
@@ -93,8 +96,7 @@ impl UpstreamAccess {
         let request = provider
             .apply_session_affinity(authenticated, hash_key)
             .header(reqwest::header::ACCEPT, "text/event-stream");
-        let request = body::prepare_json(request, body).await?;
-        self.send_official(request).await
+        self.send_json(request, body, None).await
     }
 
     pub(crate) async fn request(
@@ -287,38 +289,17 @@ impl UpstreamAccess {
             let upstream_request = provider
                 .apply_session_affinity(upstream_request, hash_key)
                 .header(header::ACCEPT, "text/event-stream");
-            let response = if let Some(aws) = provider.aws_sigv4() {
-                let prepared = body::prepare_signed_json(request.clone()).await?;
-                let content_length = header::HeaderValue::from_str(&prepared.length.to_string())
-                    .map_err(|error| GatewayError::Other(error.into()))?;
-                let mut request = upstream_request
-                    .header(header::CONTENT_TYPE, "application/json")
-                    .header(header::CONTENT_LENGTH, content_length)
-                    .body(prepared.file)
-                    .build()
-                    .map_err(GatewayError::Http)?;
-                crate::provider::sign_aws_request(
-                    &mut request,
-                    aws,
-                    prepared.sha256,
-                    std::time::SystemTime::now(),
-                )?;
-                self.client
-                    .execute(request)
-                    .await
-                    .map_err(GatewayError::Http)
-            } else {
-                let prepared = body::prepare_json(upstream_request, request.clone()).await?;
-                self.send_official(prepared).await
-            }
-            .inspect_err(|error| {
-                tracing::error!(
-                    provider_id = provider.id(),
-                    upstream_model_id = %request.model,
-                    error = %crate::error::format_error_chain(error),
-                    "provider messages request failed before receiving a response"
-                );
-            })?;
+            let response = self
+                .send_json(upstream_request, request.clone(), provider.aws_sigv4())
+                .await
+                .inspect_err(|error| {
+                    tracing::error!(
+                        provider_id = provider.id(),
+                        upstream_model_id = %request.model,
+                        error = %crate::error::format_error_chain(error),
+                        "provider messages request failed before receiving a response"
+                    );
+                })?;
             let status = response.status();
             if status == reqwest::StatusCode::UNAUTHORIZED
                 && provider.uses_ducx_loopback()

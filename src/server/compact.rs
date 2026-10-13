@@ -387,8 +387,7 @@ async fn forward_official_compact(
             .header(header::ACCEPT, "application/json, text/event-stream"),
         headers,
     );
-    let request = crate::upstream::body::prepare_json(request, body).await?;
-    let upstream = state.upstream.send_official(request).await?;
+    let upstream = state.upstream.send_json(request, body, None).await?;
     let status = upstream.status();
     let content_type = upstream
         .headers()

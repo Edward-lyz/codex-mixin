@@ -50,6 +50,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/images/generations", post(image_generations))
         .route("/v1/images/edits", post(image_edits))
         .layer(RequestDecompressionLayer::new())
+        .layer(CompressionLayer::new().quality(tower_http::CompressionLevel::Fastest))
         .with_state(state)
 }
 

@@ -107,8 +107,7 @@ impl UpstreamAccess {
             .header(header::ACCEPT, "text/event-stream"),
             headers,
         );
-        let request = super::body::prepare_json(request, body).await?;
-        self.send_official(request).await
+        self.send_json(request, body, None).await
     }
 }
 

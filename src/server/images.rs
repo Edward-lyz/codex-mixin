@@ -36,7 +36,7 @@ pub(super) async fn image_generations(
             })?
             .clone();
         let request = provider_image_request(&state, provider, url).await?;
-        let upstream = state.upstream.send_official(request.json(&body)).await?;
+        let upstream = state.upstream.send_json(request, body, None).await?;
         return proxy_image_response(upstream, &format!("provider {provider_id}")).await;
     }
 
@@ -46,7 +46,7 @@ pub(super) async fn image_generations(
             .expect("checked above")
             .clone();
         let request = provider_image_request(&state, provider, url).await?;
-        let upstream = state.upstream.send_official(request.json(&body)).await?;
+        let upstream = state.upstream.send_json(request, body, None).await?;
         return proxy_image_response(upstream, &format!("provider {}", provider.id())).await;
     }
 
@@ -129,7 +129,10 @@ async fn forward_official_image_request(
             .header(header::ACCEPT, "application/json"),
         headers,
     );
-    let upstream = state.upstream.send_official(request.json(body)).await?;
+    let upstream = state
+        .upstream
+        .send_json(request, body.clone(), None)
+        .await?;
     proxy_image_response(upstream, "official").await
 }
 
