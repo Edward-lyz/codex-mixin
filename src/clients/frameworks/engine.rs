@@ -279,7 +279,7 @@ fn set(value: &mut Value, path: &[String], replacement: Option<Value>) -> anyhow
     }
     let child = object.entry(key.clone()).or_insert_with(|| json!({}));
     set(child, rest, replacement)?;
-    if child.as_object().is_some_and(|o| o.is_empty()) {
+    if child.as_object().is_some_and(serde_json::Map::is_empty) {
         object.remove(key);
     }
     Ok(())
