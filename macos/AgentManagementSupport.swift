@@ -163,12 +163,13 @@ func orderedAgentEntries(_ agents: [AgentEntry]) -> [AgentEntry] {
     }
 }
 
+// A version check that finds the CLI outranks the earlier list result.
 func detectedAgentEntries(_ agents: [AgentEntry]) -> [AgentEntry] {
-    orderedAgentEntries(agents.filter(\.detected))
+    orderedAgentEntries(agents.filter { $0.detected || !$0.cli.isMissing })
 }
 
 func undetectedAgentEntries(_ agents: [AgentEntry]) -> [AgentEntry] {
-    orderedAgentEntries(agents.filter { !$0.detected })
+    orderedAgentEntries(agents.filter { !$0.detected && $0.cli.isMissing })
 }
 
 func upgradableAgentEntries(_ agents: [AgentEntry]) -> [AgentEntry] {
@@ -288,10 +289,8 @@ func agentRowPresentation(for entry: AgentEntry, isBusy: Bool) -> AgentRowPresen
     if let mode = agentIntegrationModeText(entry.integration.mode) {
         parts.append(mode)
     }
-    let detail = entry.integration.detail.trimmingCharacters(in: .whitespacesAndNewlines)
-    if !detail.isEmpty {
-        parts.append(detail)
-    }
+    // integration.detail describes what disconnect restores; it belongs in
+    // the details panel and the confirmation, not the one-line summary.
     if let integrationError = entry.integration.error, !integrationError.isEmpty {
         parts.append(integrationError)
     }
@@ -304,8 +303,11 @@ func agentRowPresentation(for entry: AgentEntry, isBusy: Bool) -> AgentRowPresen
         : nil
     return AgentRowPresentation(
         name: entry.name,
+        // "CLI" only tells the two apart when an app version is shown too.
         cliVersionText: entry.cli.version.isEmpty
             ? nil
+            : entry.cli.appVersion == nil
+            ? entry.cli.version
             : AppLocalization.string("agentManagement.cliVersion", entry.cli.version),
         appVersionText: entry.cli.appVersion.map {
             AppLocalization.string("agentManagement.appVersion", $0)
