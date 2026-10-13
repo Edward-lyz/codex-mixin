@@ -712,7 +712,7 @@ String upgradeAllSummary(CliResult result, String Function(String id) nameFor) {
     return upgraded.isEmpty ? '全部升级完成' : '已升级：${upgraded.join('、')}';
   }
   final head = upgraded.isEmpty ? '' : '已升级：${upgraded.join('、')}\n';
-  return '${head}升级失败 ${failed.length} 个：\n${failed.join('\n')}';
+  return '$head升级失败 ${failed.length} 个：\n${failed.join('\n')}';
 }
 
 /// A row error is either the explicit `error` field or the `cli.error` the

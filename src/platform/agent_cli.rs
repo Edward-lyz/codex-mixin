@@ -422,6 +422,7 @@ impl AgentUpdateLock {
         let path = directory.join(format!("{agent_id}.lock"));
         let file = std::fs::OpenOptions::new()
             .create(true)
+            .truncate(false)
             .read(true)
             .write(true)
             .open(&path)
