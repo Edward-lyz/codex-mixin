@@ -17,6 +17,8 @@ pub struct FrameworkModel {
     pub context_window: u64,
     pub max_tokens: u64,
     pub supports_image: bool,
+    pub protocol: crate::provider::ProviderProtocol,
+    pub efforts: Vec<String>,
 }
 
 pub fn name(id: &str) -> anyhow::Result<&'static str> {
@@ -102,9 +104,6 @@ pub fn limitation(id: &str) -> Option<&'static str> {
         ),
         "reasonix" => Some(
             "Requires an environment-file credential and coordinated planner/provider configuration adapter.",
-        ),
-        "air" | "openchamber" => Some(
-            "Requires an ACP/OpenCode instance adapter; a provider file alone does not select its active agent.",
         ),
         "minimax-code" => {
             Some("Requires MiniMax flattened model IDs and reversible gateway alias mapping.")
@@ -195,8 +194,8 @@ fn config_home() -> anyhow::Result<PathBuf> {
     home_path("XDG_CONFIG_HOME", ".config")
 }
 
-fn pi_models(models: &[FrameworkModel]) -> Value {
-    json!(models.iter().map(|m|json!({"id":m.id,"name":m.name,"input":if m.supports_image {vec!["text","image"]} else {vec!["text"]},"contextWindow":m.context_window,"maxTokens":m.max_tokens,"reasoning":false,"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}})).collect::<Vec<_>>())
+fn pi_models(models: &[FrameworkModel], base: &str) -> Value {
+    json!(models.iter().map(|m|json!({"id":m.id,"name":m.name,"api":match m.protocol {crate::provider::ProviderProtocol::OpenAiChat => "openai-completions",crate::provider::ProviderProtocol::OpenAiResponses => "openai-responses",crate::provider::ProviderProtocol::AnthropicMessages => "anthropic-messages"},"baseUrl":if m.protocol == crate::provider::ProviderProtocol::AnthropicMessages {base.trim_end_matches("/v1")} else {base},"input":if m.supports_image {vec!["text","image"]} else {vec!["text"]},"contextWindow":m.context_window,"maxTokens":m.max_tokens,"reasoning":!m.efforts.is_empty(),"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}})).collect::<Vec<_>>())
 }
 
 #[cfg(test)]

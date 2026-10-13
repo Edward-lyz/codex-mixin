@@ -5,6 +5,7 @@ fn bearer_token(headers: &HeaderMap) -> Option<&str> {
         .get(header::AUTHORIZATION)
         .and_then(|value| value.to_str().ok())
         .and_then(|value| value.strip_prefix("Bearer "))
+        .or_else(|| headers.get("x-api-key").and_then(|v| v.to_str().ok()))
 }
 
 pub(super) async fn check_gateway_auth(

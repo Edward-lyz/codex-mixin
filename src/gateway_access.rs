@@ -96,7 +96,8 @@ impl GatewayClientKeys {
         let bearer = headers
             .get(header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer "));
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .or_else(|| headers.get("x-api-key").and_then(|v| v.to_str().ok()));
         [
             GatewayClient::Claude,
             GatewayClient::ClaudeDesktop,

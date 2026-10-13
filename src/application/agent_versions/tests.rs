@@ -372,13 +372,13 @@ fn every_listed_agent_has_a_spec() {
 
 #[test]
 fn discover_rejects_unknown_agent_ids() {
-    let error = discover_agent("gemini").unwrap_err();
+    let error = discover_agent("not-an-agent").unwrap_err();
     assert!(format!("{error:#}").contains("unknown agent id"));
 }
 
 #[tokio::test]
 async fn upgrade_rejects_unknown_agent_ids() {
-    let error = upgrade_agent("gemini").await.unwrap_err();
+    let error = upgrade_agent("not-an-agent").await.unwrap_err();
     assert!(format!("{error:#}").contains("unknown agent id"));
 }
 

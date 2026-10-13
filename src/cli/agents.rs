@@ -260,11 +260,17 @@ async fn connect_framework(id: &str, mode: Option<AgentConnectMode>) -> anyhow::
                         codex_mixin::provider::catalog_model_slug(selected, &provider.id),
                         model,
                         &config,
+                        provider.protocol,
                     ));
                 }
             }
             for model in super::official_models::selected_official_models(&config)? {
-                models.push(framework_model(model.id.clone(), &model, &config));
+                models.push(framework_model(
+                    model.id.clone(),
+                    &model,
+                    &config,
+                    codex_mixin::provider::ProviderProtocol::OpenAiResponses,
+                ));
             }
             frameworks::install(
                 &id_owned,
@@ -285,6 +291,7 @@ fn framework_model(
     id: String,
     model: &codex_mixin::provider::ProviderModel,
     config: &codex_mixin::config::GatewayConfig,
+    protocol: codex_mixin::provider::ProviderProtocol,
 ) -> codex_mixin::clients::frameworks::FrameworkModel {
     let context = model
         .context_window
@@ -301,6 +308,23 @@ fn framework_model(
             .unwrap_or(config.default_max_tokens)
             .min(context),
         supports_image: model.supports_image.unwrap_or(false),
+        protocol: model.protocol.unwrap_or(protocol),
+        efforts: if model.supports_thinking == Some(false) {
+            Vec::new()
+        } else {
+            codex_mixin::protocol::model_reasoning::resolve_model_reasoning(
+                &model.id,
+                model.supports_thinking,
+            )
+            .map(|c| {
+                c.supported_levels
+                    .iter()
+                    .filter(|l| l.effort != "ultra")
+                    .map(|l| l.effort.to_owned())
+                    .collect()
+            })
+            .unwrap_or_default()
+        },
     }
 }
 

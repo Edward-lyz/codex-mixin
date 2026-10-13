@@ -111,14 +111,9 @@ pub(super) fn patches(
         "copilot-jetbrains" => copilot_jb(&v1, key, models)?,
         "workbuddy" | "codebuddy" => buddy(id, &v1, key, models)?,
         "vscode" | "vscode-insiders" | "vscodium" => vscode(id, &v1, key, models)?,
-        "zcode" => vec![patch(
-            home_path("", ".zcode")?.join("v2/config.json"),
-            Format::Json,
-            vec![field(
-                &["provider", PROVIDER],
-                json!({"name":PROVIDER,"kind":"anthropic","enabled":true,"source":"custom","options":{"apiKey":key,"baseURL":base},"models":opencode_models(models)}),
-            )],
-        )],
+        "zcode" => zcode(base, key, models)?,
+        "air" => air(&v1, key, models)?,
+        "openchamber" => openchamber(&v1, key, models)?,
         "t3code" => t3code(base, key, models)?,
         _ => anyhow::bail!("no source-verified configuration adapter for {id}"),
     })
@@ -175,7 +170,7 @@ fn pi_like(id: &str, v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::
         Format::Json,
         vec![field(
             &["providers", PROVIDER],
-            json!({"name":PROVIDER,"baseUrl":v1,"api":"openai-responses","apiKey":key,"models":pi_models(models)}),
+            json!({"name":PROVIDER,"baseUrl":v1,"api":"openai-responses","apiKey":key,"models":pi_models(models,v1)}),
         )],
     )];
     if id == "omo" {
@@ -205,7 +200,7 @@ fn crush(v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec<P
     };
     let provider = field(
         &["providers", PROVIDER],
-        json!({"type":"openai","name":PROVIDER,"base_url":v1,"api_key":key,"models":models.iter().map(|m|json!({"id":m.id,"name":m.name,"context_window":m.context_window,"default_max_tokens":m.max_tokens,"can_reason":false})).collect::<Vec<_>>()}),
+        json!({"type":"openai","name":PROVIDER,"base_url":v1,"api_key":key,"models":models.iter().map(|m|json!({"id":m.id,"name":m.name,"context_window":m.context_window,"default_max_tokens":m.max_tokens,"can_reason":!m.efforts.is_empty()})).collect::<Vec<_>>()}),
     );
     let picks = vec![
         field(
@@ -229,7 +224,7 @@ fn crush(v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec<P
 }
 
 fn opencode_models(models: &[FrameworkModel]) -> Value {
-    Value::Object(models.iter().map(|m|(m.id.clone(),json!({"name":m.name,"limit":{"context":m.context_window,"output":m.max_tokens},"attachment":m.supports_image,"modalities":{"input":if m.supports_image {vec!["text","image"]} else {vec!["text"]},"output":["text"]}}))).collect())
+    Value::Object(models.iter().map(|m|(m.id.clone(),json!({"name":m.name,"limit":{"context":m.context_window,"output":m.max_tokens},"attachment":m.supports_image,"reasoning":!m.efforts.is_empty(),"variants":Value::Object(m.efforts.iter().map(|e|(e.clone(),json!({"reasoningEffort":e}))).collect()),"modalities":{"input":if m.supports_image {vec!["text","image"]} else {vec!["text"]},"output":["text"]}}))).collect())
 }
 
 fn mimocode(v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec<Patch>> {
@@ -316,7 +311,7 @@ fn omp(v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec<Pat
             Format::Yaml,
             vec![field(
                 &["providers", PROVIDER],
-                json!({"baseUrl":v1,"api":"openai-responses","apiKey":key,"headers":{"User-Agent":"omp"},"models":pi_models(models)}),
+                json!({"baseUrl":v1,"api":"openai-responses","apiKey":key,"headers":{"User-Agent":"omp"},"models":pi_models(models,v1)}),
             )],
         ),
         patch(
@@ -422,7 +417,7 @@ fn buddy(id: &str, v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Re
     let dir = home_path(variable, default)?;
     let path = dir.join("models.json");
     let doc = read_config(&path, Format::Json)?;
-    let entries = models.iter().map(|m|json!({"id":m.id,"name":m.name,"vendor":PROVIDER,"apiKey":key,"url":format!("{v1}/chat/completions"),"maxInputTokens":m.context_window,"maxOutputTokens":m.max_tokens,"supportsToolCall":true,"supportsImages":m.supports_image,"supportsReasoning":false})).collect();
+    let entries = models.iter().map(|m|json!({"id":m.id,"name":m.name,"vendor":PROVIDER,"apiKey":key,"url":format!("{v1}/chat/completions"),"maxInputTokens":m.context_window,"maxOutputTokens":m.max_tokens,"supportsToolCall":true,"supportsImages":m.supports_image,"supportsReasoning":!m.efforts.is_empty()})).collect();
     let root_array = doc.is_array() || (!path.exists() && id == "workbuddy");
     let fields = if root_array {
         vec![(vec![], append_existing(&path, &[], entries)?)]
@@ -507,6 +502,181 @@ fn t3code(base: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Ve
     )])
 }
 
+fn open_code_provider(v1: &str, key: &str, models: &[FrameworkModel]) -> Value {
+    json!({"npm":"@ai-sdk/openai-compatible","name":PROVIDER,"options":{"baseURL":v1,"apiKey":key},"models":opencode_models(models)})
+}
+
+fn air(v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec<Patch>> {
+    let root = if cfg!(target_os = "macos") {
+        home_path("", "Library/Application Support")?
+    } else if cfg!(target_os = "windows") {
+        home_path("APPDATA", "AppData/Roaming")?
+    } else {
+        config_home()?
+    };
+    let dir = root.join("JetBrains/Air");
+    let config = dir.join("codex-mixin-opencode.json");
+    let binary = crate::platform::agent_cli::find_command("opencode")
+        .or_else(|| {
+            let name = if cfg!(target_os = "windows") {
+                "opencode.exe"
+            } else {
+                "opencode"
+            };
+            let binary = crate::platform::home_dir().join(".opencode/bin").join(name);
+            binary.is_file().then_some(binary)
+        })
+        .ok_or_else(|| anyhow::anyhow!("Air requires an installed OpenCode ACP server"))?;
+    let model = format!("{PROVIDER}/{}", models[0].id);
+    Ok(vec![
+        patch(
+            config.clone(),
+            Format::Json,
+            vec![
+                field(&["provider", PROVIDER], open_code_provider(v1, key, models)),
+                field(&["enabled_providers"], json!([PROVIDER])),
+                field(&["model"], json!(model)),
+                field(&["small_model"], json!(model)),
+            ],
+        ),
+        patch(
+            dir.join("acp.json"),
+            Format::Json,
+            vec![field(
+                &["agent_servers", "Codex Mixin"],
+                json!({"command":binary,"args":["acp"],"env":{"OPENCODE_CONFIG":config}}),
+            )],
+        ),
+    ])
+}
+
+fn openchamber(v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec<Patch>> {
+    let dir = home_path("OPENCHAMBER_DATA_DIR", ".config/openchamber")?;
+    let oc_dir = if std::env::var_os("OPENCODE_CONFIG_DIR").is_some() {
+        home_path("OPENCODE_CONFIG_DIR", "")?
+    } else {
+        config_home()?.join("opencode")
+    };
+    let oc_path = if std::env::var_os("OPENCODE_CONFIG").is_some() {
+        home_path("OPENCODE_CONFIG", "")?
+    } else {
+        ["opencode.jsonc", "opencode.json", "config.json"]
+            .into_iter()
+            .map(|s| oc_dir.join(s))
+            .find(|p| p.exists())
+            .unwrap_or_else(|| oc_dir.join("opencode.json"))
+    };
+    // An independent provider avoids taking ownership of the OpenCode row.
+    let provider_id = "codex-mixin-openchamber";
+    let model = format!("{provider_id}/{}", models[0].id);
+    let mut out = vec![patch(
+        oc_path,
+        Format::Json,
+        vec![field(
+            &["provider", provider_id],
+            open_code_provider(v1, key, models),
+        )],
+    )];
+    let settings = dir.join("settings.json");
+    let doc = read_config(&settings, Format::Json)?;
+    let mut fields = vec![
+        field(&["defaultModel"], json!(model)),
+        field(&["smallModelUseDefault"], json!(false)),
+        field(&["smallModelOverride"], json!(model)),
+    ];
+    if let Some(projects) = doc.get("projects") {
+        let projects = projects
+            .as_array()
+            .ok_or_else(|| anyhow::anyhow!("OpenChamber projects must be an array"))?;
+        anyhow::ensure!(
+            !projects.iter().any(|p| p.get("defaultModel").is_some()),
+            "OpenChamber project defaultModel overrides its profile; select the Mixin model per project or remove the override before connecting"
+        );
+    }
+    let preferences = dir.join("preferences.json");
+    if preferences.exists() {
+        let prefs = read_config(&preferences, Format::Json)?;
+        anyhow::ensure!(
+            prefs["version"] == 1 && prefs["fields"].is_object(),
+            "OpenChamber preferences must have version=1 and a fields object"
+        );
+        let now = chrono::Utc::now().timestamp_millis();
+        let profile_fields = fields
+            .iter()
+            .map(|(path, value)| {
+                (
+                    vec!["fields".to_owned(), path[0].clone()],
+                    json!({"value":value,"updatedAt":now}),
+                )
+            })
+            .collect();
+        out.push(patch(preferences, Format::Json, profile_fields));
+        if !settings.exists() {
+            fields.clear();
+        }
+    }
+    if !fields.is_empty() {
+        out.push(patch(settings, Format::Json, fields));
+    }
+    Ok(out)
+}
+
+fn zcode(base: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec<Patch>> {
+    let dir = home_path("", ".zcode/v2")?;
+    let rules = dir.join("provider_config.json");
+    let doc = read_config(&rules, Format::Json)?;
+    let read_rules = |pointer: &str| -> anyhow::Result<Vec<Value>> {
+        let Some(value) = doc.pointer(pointer) else {
+            return Ok(Vec::new());
+        };
+        let values = value
+            .as_array()
+            .cloned()
+            .ok_or_else(|| anyhow::anyhow!("ZCode {pointer} must be an array"))?;
+        anyhow::ensure!(
+            !values.iter().any(|v| v["providerId"] == PROVIDER),
+            "ZCode has unmanaged codex-mixin rules"
+        );
+        Ok(values)
+    };
+    let mut provider_rules = read_rules("/config/providerConfigRules/providerRules")?;
+    let mut model_rules = read_rules("/config/modelConfigRules/providerModelRules")?;
+    let ids: Vec<_> = models.iter().map(|m| &m.id).collect();
+    provider_rules.push(json!({"providerId":PROVIDER,"providerName":PROVIDER,"enabled":true,"config":{"group":"standard-personal","access":{"type":"api-key","apiKey":key},"api":{"type":"anthropic-messages","baseUrl":base},"personalModelIds":ids,"modelOrder":ids}}));
+    for model in models {
+        model_rules.push(json!({"providerId":PROVIDER,"modelId":model.id,"config":{"properties":{"contextWindow":model.context_window,"inputFormat":{"supportsImage":model.supports_image}},"optionSpecs":{"maxOutputTokens":{"max":model.max_tokens.min(128000)}}}}));
+    }
+    let mut fields = vec![
+        field(
+            &["config", "providerConfigRules", "providerRules"],
+            json!(provider_rules),
+        ),
+        field(
+            &["config", "modelConfigRules", "providerModelRules"],
+            json!(model_rules),
+        ),
+    ];
+    if doc.get("schemaVersion").is_none() {
+        fields.push(field(&["schemaVersion"], json!(1)));
+    } else {
+        anyhow::ensure!(
+            doc["schemaVersion"] == 1,
+            "unsupported ZCode rule schema version"
+        );
+    }
+    Ok(vec![
+        patch(
+            dir.join("config.json"),
+            Format::Json,
+            vec![field(
+                &["provider", PROVIDER],
+                json!({"name":PROVIDER,"kind":"anthropic","enabled":true,"source":"custom","options":{"apiKey":key,"baseURL":base},"models":opencode_models(models)}),
+            )],
+        ),
+        patch(rules, Format::Json, fields),
+    ])
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -518,12 +688,17 @@ mod tests {
             context_window: 128000,
             max_tokens: 8192,
             supports_image: true,
+            protocol: crate::provider::ProviderProtocol::OpenAiChat,
+            efforts: vec!["high".to_owned()],
         }];
         assert_eq!(
             opencode_models(&models)["provider/model.with.dots"]["limit"]["context"],
             128000
         );
-        assert_eq!(pi_models(&models)[0]["input"], json!(["text", "image"]));
+        assert_eq!(
+            pi_models(&models, "http://127.0.0.1:8787/v1")[0]["input"],
+            json!(["text", "image"])
+        );
     }
     #[test]
     fn array_append_preserves_existing_entries_and_rejects_collisions() {
