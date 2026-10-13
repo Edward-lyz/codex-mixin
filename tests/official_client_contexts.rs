@@ -42,6 +42,28 @@ fn official_contexts_reach_clients() {
     let claude_settings = directory.path().join("claude/settings.json");
     let pi_dir = directory.path().join("pi");
     let desktop_root = directory.path().join("desktop");
+    // Claude Desktop connect restarts a real gateway, which refreshes the
+    // official catalog. Block outbound HTTP so the fixture catalog survives.
+    let mixin = |args: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_codex-mixin"));
+        command
+            .args(args)
+            .env("CODEX_GATEWAY_CONFIG", &config_path)
+            .env("CODEX_HOME", &codex_home)
+            .env("HOME", directory.path().join("home"))
+            .env(
+                "CODEX_GATEWAY_RUNTIME_FILE",
+                directory.path().join("runtime.json"),
+            )
+            .env(
+                "CODEX_GATEWAY_DAEMON_FILE",
+                directory.path().join("daemon.json"),
+            )
+            .env("HTTP_PROXY", "http://127.0.0.1:9")
+            .env("HTTPS_PROXY", "http://127.0.0.1:9")
+            .env("NO_PROXY", "127.0.0.1,localhost");
+        command
+    };
     for context in [Some(1_000_000), Some(512_000), None] {
         let mut stored = load_stored_config_from_path(&config_path).unwrap().unwrap();
         stored.official_model_contexts = context
@@ -63,21 +85,7 @@ fn official_contexts_reach_clients() {
                 desktop_root.to_str().unwrap(),
             ],
         ] {
-            let output = Command::new(env!("CARGO_BIN_EXE_codex-mixin"))
-                .args(&args)
-                .env("CODEX_GATEWAY_CONFIG", &config_path)
-                .env("CODEX_HOME", &codex_home)
-                .env("HOME", directory.path().join("home"))
-                .env(
-                    "CODEX_GATEWAY_RUNTIME_FILE",
-                    directory.path().join("runtime.json"),
-                )
-                .env(
-                    "CODEX_GATEWAY_DAEMON_FILE",
-                    directory.path().join("daemon.json"),
-                )
-                .output()
-                .unwrap();
+            let output = mixin(&args).output().unwrap();
             assert!(
                 output.status.success(),
                 "{args:?}: {}",
@@ -104,4 +112,10 @@ fn official_contexts_reach_clients() {
             json!({"claude_model": if context == Some(1_000_000) { "gpt-test[1m]" } else { "gpt-test" }, "pi_context":context.unwrap_or(272000), "desktop_1m":context == Some(1_000_000)})
         );
     }
+    let stopped = mixin(&["service", "stop", "--force"]).output().unwrap();
+    assert!(
+        stopped.status.success(),
+        "stop test gateway: {}",
+        String::from_utf8_lossy(&stopped.stderr)
+    );
 }

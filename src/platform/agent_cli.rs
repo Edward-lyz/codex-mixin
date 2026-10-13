@@ -429,7 +429,10 @@ impl AgentUpdateLock {
             .with_context(|| format!("open {}", path.display()))?;
         match fs2::FileExt::try_lock_exclusive(&file) {
             Ok(()) => Ok(Some(Self { file })),
-            Err(error) if error.kind() == std::io::ErrorKind::WouldBlock => Ok(None),
+            // Windows reports contention as ERROR_LOCK_VIOLATION, not WouldBlock.
+            Err(error) if error.raw_os_error() == fs2::lock_contended_error().raw_os_error() => {
+                Ok(None)
+            }
             Err(error) => Err(error).with_context(|| format!("lock {}", path.display())),
         }
     }
