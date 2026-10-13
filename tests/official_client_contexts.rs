@@ -68,6 +68,8 @@ fn official_contexts_reach_clients() {
                 .env("CODEX_GATEWAY_CONFIG", &config_path)
                 .env("CODEX_HOME", &codex_home)
                 .env("HOME", directory.path().join("home"))
+                .env("CODEX_GATEWAY_RUNTIME_FILE", directory.path().join("runtime.json"))
+                .env("CODEX_GATEWAY_DAEMON_FILE", directory.path().join("daemon.json"))
                 .output()
                 .unwrap();
             assert!(
