@@ -13,7 +13,7 @@ const windowKindMain = 'main';
 const windowKindTray = 'tray';
 const windowKindFusion = 'fusion';
 const windowKindFlyout = 'flyout';
-const windowKindInstall = 'install';
+const windowKindAgents = 'agents';
 
 class WindowHub {
   WindowHub._();
@@ -136,15 +136,11 @@ class WindowHub {
   Future<void> showFusion() =>
       _show(windowKindFusion, 'Fusion 设置', const Size(620, 650));
 
-  /// Open the reusable install-config window for a downstream platform. Keyed by
-  /// target so each platform reuses its own window instance; the page renders
-  /// from the target descriptor (see install_page.dart).
-  Future<void> showInstall(String target) => _show(
-    '$windowKindInstall:$target',
-    '安装配置',
-    const Size(560, 640),
-    payload: {'kind': windowKindInstall, 'target': target},
-  );
+  /// Open the Agent 接入管理 window: program detection, integration state,
+  /// CLI / App versions, upgrades and per-agent connect/disconnect, all driven
+  /// by the `agent` CLI JSON contract (see agents_page.dart).
+  Future<void> showAgents() =>
+      _show(windowKindAgents, 'Agent 接入管理', const Size(680, 700));
 
   // The tray popup uses a fixed logical size. The dashboard fills this height:
   // the token/provider region flexes to absorb any content variation, so the

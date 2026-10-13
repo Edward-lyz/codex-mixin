@@ -2,14 +2,14 @@
 
 Codex Mixin 的 Windows 桌面界面，使用 **Flutter** 构建，是 Rust 本地网关（`codex-mixin`）在 Windows 上的图形控制端。它与 `macos/`、`tui/` 一样是独立壳层，只消费 CLI JSON contract。
 
-界面本身不实现任何网关逻辑：它定位并调用真实的 `codex-mixin.exe`（优先用已安装包中的可执行文件，其次用仓库 `target/release/`），完成供应商管理、网关启停、模型选择与测速、配置备份，以及 Codex、Claude Code、DSH、OpenCode、Pi 的接入与恢复。供应商图标复用 `macos/assets/providers` 下的 SVG，通过 `flutter_svg` 渲染。
+界面本身不实现任何网关逻辑：它定位并调用真实的 `codex-mixin.exe`（优先用已安装包中的可执行文件，其次用仓库 `target/release/`），完成供应商管理、网关启停、模型选择与测速、配置备份，以及 Codex、Claude Code、Claude Desktop、DSH、OpenCode、Pi 六个 Agent 的检测、接入、断开与升级（`agent` CLI JSON 契约）。程序检测、接入状态与版本都由 CLI 判定，界面不重复实现。供应商图标复用 `macos/assets/providers` 下的 SVG，通过 `flutter_svg` 渲染。
 
 DUCX `.tar.bz2` 由 Rust core 直接解压，不依赖或捆绑第三方归档程序。
 
 ## 目录结构
 
 - `lib/` — Dart 前端代码（UI 主体，日常改动都在这里）。
-  - `main.dart` 入口、`tray_page.dart` 托盘弹窗、`settings_page.dart` 供应商设置、`benchmark_page.dart` 测速、`fusion_page.dart`/`flyout_page.dart` 等页面，`controller.dart` 调用 CLI，`theme.dart` 主题，`widgets.dart` 通用组件。
+  - `main.dart` 入口、`tray_page.dart` 托盘弹窗、`settings_page.dart` 供应商设置、`agents_page.dart` Agent 接入管理、`agent_models.dart` Agent JSON 模型、`fusion_page.dart`/`flyout_page.dart` 等页面，`controller.dart` 调用 CLI，`theme.dart` 主题，`widgets.dart` 通用组件。
 - `windows/` — **Flutter 自动生成的原生 Windows Runner（C++ 嵌入层）**。包含 `runner/`、`flutter/`、`CMakeLists.txt`。
   - 注意：这个子目录名由 Flutter 工具链强制约定，`flutter build windows` 只认 `windows/` 这个名字，**不能改名**（改成 `win` 等会导致构建失败）。若要去掉“windows/windows”的双层重名，只能重命名外层的 Flutter 工程目录（即本目录 `windows/`），并同步更新 CI 与打包脚本中的路径。
 - `scripts/` — Windows 专用的打包、安装、修补脚本（详见下文），镜像 macOS 把构建脚本放在 `macos/` 下的做法。
@@ -73,7 +73,9 @@ powershell -ExecutionPolicy Bypass -File windows/scripts/package-windows.ps1
 
 ## 托盘行为
 
-Release 版会创建系统托盘图标：左键点击弹出紧凑面板，点击面板外部自动隐藏；完整的“供应商设置”窗口与托盘面板可同时打开。面板提供与 macOS 一致的二级菜单：模型与服务、Fusion、安装/恢复（Codex、Claude Code、DSH、OpenCode、Pi），以及关于/日志/配置目录等操作。
+Release 版会创建系统托盘图标：左键点击弹出紧凑面板，点击面板外部自动隐藏；完整的“供应商设置”窗口与托盘面板可同时打开。面板菜单包含模型与服务、Agent 接入管理（检测/接入/断开/升级六个 Agent）、高级（Fusion、上报、配置备份）以及关于/日志/配置目录等操作。
+
+登录时自动启动默认开启：首次运行写入当前用户 Run 项；若用户在 Windows「启动应用」中显式禁用，应用不会重新打开该项，也不在登录路径自动启动网关。该状态显示在 Agent 接入管理页底部，不再提供单独的开关入口。
 
 ## 与 Rust 网关的关系
 

@@ -7,15 +7,16 @@ import 'package:flutter/material.dart';
 import 'package:tray_manager/tray_manager.dart';
 import 'package:window_manager/window_manager.dart';
 
+import 'agents_page.dart';
 import 'controller.dart';
-import 'fusion_page.dart';
 import 'flyout_page.dart';
-import 'install_page.dart';
+import 'fusion_page.dart';
 import 'log.dart';
 import 'settings_page.dart';
 import 'tray_page.dart';
 import 'windows.dart';
 
+export 'agents_page.dart' show AgentsPage, agentsApp;
 export 'cli.dart' show decodeCliJson;
 export 'flyout_page.dart' show FlyoutPage, flyoutApp;
 export 'models.dart' show ProviderModel;
@@ -55,10 +56,11 @@ Future<void> _runMainWindow() async {
   });
   final controller = MixinController();
   if (Platform.isWindows) {
-    // Honour the "start service at login" preference: the Run key only relaunches
-    // the UI, so bring the gateway up here when the toggle is enabled.
+    // Startup at login is on by default (an explicit disable in Windows
+    // 启动应用 wins). The Run key only relaunches the UI, so bring the gateway
+    // up here whenever that startup choice is enabled.
     unawaited(() async {
-      await controller.refreshLaunchAtLogin();
+      await controller.ensureLaunchAtLogin();
       if (controller.launchAtLogin) {
         await controller.startGatewayIfStopped();
       }
@@ -75,8 +77,8 @@ Future<void> _runMainWindow() async {
         await hub.showTray();
       case 'show_fusion':
         await hub.showFusion();
-      case 'show_install':
-        await hub.showInstall('${arguments['target'] ?? 'codex'}');
+      case 'show_agents':
+        await hub.showAgents();
       case 'show_flyout':
         await hub.showFlyout(arguments);
       case 'hide_flyout':
@@ -126,17 +128,17 @@ Future<void> _runSubWindow(List<String> args) async {
         );
         await windowManager.setSkipTaskbar(false);
         final subSize = switch (kind) {
-          windowKindInstall => const Size(560, 640),
+          windowKindAgents => const Size(680, 700),
           _ => const Size(620, 650),
         };
         await windowManager.setSize(subSize);
         // Keep sub-windows within a compact, readable range.
         await windowManager.setMinimumSize(switch (kind) {
-          windowKindInstall => const Size(480, 540),
+          windowKindAgents => const Size(560, 560),
           _ => const Size(560, 520),
         });
         await windowManager.setMaximumSize(const Size(1500, 1000));
-        // Titled sub-windows (Fusion / install) are separate
+        // Titled sub-windows (Fusion / Agent 接入管理) are separate
         // desktop_multi_window top-level windows that otherwise show a blank
         // default taskbar icon; set the bundled app icon explicitly.
         try {
@@ -178,11 +180,8 @@ Widget _subApp(
   switch (kind) {
     case windowKindFusion:
       return fusionApp(controller: controller);
-    case windowKindInstall:
-      return installApp(
-        controller: controller,
-        target: '${payload['target'] ?? 'codex'}',
-      );
+    case windowKindAgents:
+      return agentsApp(controller: controller);
     case windowKindFlyout:
       return flyoutApp(
         controller: controller,
