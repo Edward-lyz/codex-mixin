@@ -27,7 +27,7 @@ fn orders_releases_after_prereleases() {
     assert!(!newer("0.42.0", "0.42.0"));
     assert!(newer("1.0.87", "1.0.87-0"));
     assert!(!newer("1.0.0-0", "1.0.0"));
-    assert!(newer("1.0.0-2", "1.0.0-10"));
+    assert!(newer("1.0.0-10", "1.0.0-2"));
     assert!(newer("1.0.0-beta.2", "1.0.0-beta.1"));
     assert!(!newer("1.0.0-beta.1", "1.0.0-beta.2"));
 }
@@ -264,7 +264,7 @@ async fn a_failing_latest_lookup_is_reported_and_not_up_to_date() {
     };
     let answer = latest_version(&updater).await;
     assert_eq!(answer.value, None);
-    let error = answer.error.expect("the failed lookup is reported");
+    let error = answer.error.clone().expect("the failed lookup is reported");
     assert!(error.contains("missing-brew"), "{error}");
 
     let mut info = AgentCliInfo {

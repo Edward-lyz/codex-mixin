@@ -267,7 +267,7 @@ pub async fn check_versions(refresh: bool) -> Vec<AgentVersionEntry> {
     if refresh {
         cache().clear();
     }
-    let inspections = AGENT_VERSION_IDS.iter().map(|id| inspect_entry(*id));
+    let inspections = AGENT_VERSION_IDS.iter().copied().map(inspect_entry);
     futures_util::future::join_all(inspections).await
 }
 
@@ -356,17 +356,16 @@ pub async fn upgrade_agent(id: &str) -> anyhow::Result<AgentCliInfo> {
     }
     let answer = latest_version(&updater).await;
     apply_latest(&mut info, &updater, answer);
-    if outcome.is_ok() {
-        if let (Some(before), Some(after)) = (version_before.as_deref(), info.version.as_deref()) {
-            if info.update && before == after {
-                let command = updater.display_command();
-                let latest = info.latest.as_deref().unwrap_or("a newer version");
-                push_error(
-                    &mut info,
-                    format!("{id} is still {after} after {command}; {latest} is out"),
-                );
-            }
-        }
+    // A clean exit that left the old version is still a failed upgrade.
+    if outcome.is_ok()
+        && info.update
+        && version_before == info.version
+        && let Some(after) = info.version.clone()
+    {
+        let command = updater.display_command();
+        let latest = info.latest.as_deref().unwrap_or("a newer version");
+        let message = format!("{id} is still {after} after {command}; {latest} is out");
+        push_error(&mut info, message);
     }
     Ok(info)
 }
@@ -572,31 +571,11 @@ fn node_updater(package: &str, bin: &Path, real: &Path) -> Option<Updater> {
         } else {
             platform::agent_cli::find_command("bun")?
         };
-        return Some(Updater {
-            via: "bun",
-            program: bun,
-            args: vec![
-                "add".to_owned(),
-                "-g".to_owned(),
-                format!("{package}@latest"),
-            ],
-            latest: LatestSource::Npm(package.to_owned()),
-            blocked: None,
-        });
+        return Some(global_add_updater("bun", bun, package));
     }
     if lower.contains("/pnpm/") || lower.contains("/.pnpm/") {
         let pnpm = platform::agent_cli::find_command("pnpm")?;
-        return Some(Updater {
-            via: "pnpm",
-            program: pnpm,
-            args: vec![
-                "add".to_owned(),
-                "-g".to_owned(),
-                format!("{package}@latest"),
-            ],
-            latest: LatestSource::Npm(package.to_owned()),
-            blocked: None,
-        });
+        return Some(global_add_updater("pnpm", pnpm, package));
     }
     if lower.contains("/.volta/") || lower.contains("/yarn/") || lower.contains("/.yarn/") {
         // A version manager of its own keeps these; updating them behind its
@@ -605,6 +584,21 @@ fn node_updater(package: &str, bin: &Path, real: &Path) -> Option<Updater> {
     }
     let install = platform::agent_cli::npm_global_install(&modules?)?;
     Some(npm_updater(package, install))
+}
+
+/// `<manager> add -g <package>@latest`, which bun and pnpm share.
+fn global_add_updater(via: &'static str, program: PathBuf, package: &str) -> Updater {
+    Updater {
+        via,
+        program,
+        args: vec![
+            "add".to_owned(),
+            "-g".to_owned(),
+            format!("{package}@latest"),
+        ],
+        latest: LatestSource::Npm(package.to_owned()),
+        blocked: None,
+    }
 }
 
 /// The npm updater of a global install, refused before it runs when npm's
@@ -667,10 +661,10 @@ fn apply_latest(info: &mut AgentCliInfo, updater: &Updater, answer: CachedAnswer
     if let Some(error) = answer.error {
         push_error(info, error);
     }
-    if updater.blocked.is_none() {
-        if let (Some(version), Some(latest)) = (info.version.as_deref(), info.latest.as_deref()) {
-            info.update = newer(latest, version);
-        }
+    if updater.blocked.is_none()
+        && let (Some(version), Some(latest)) = (info.version.as_deref(), info.latest.as_deref())
+    {
+        info.update = newer(latest, version);
     }
 }
 
@@ -726,6 +720,36 @@ impl Cache {
         );
     }
 
+    /// Store the outcome of one ask and return it as an answer. A failure
+    /// keeps the last value known for the same `stamp`.
+    fn record(
+        &self,
+        key: &str,
+        stamp: &str,
+        outcome: anyhow::Result<String>,
+        ok_ttl: Duration,
+        failed_ttl: Duration,
+    ) -> CachedAnswer {
+        let (answer, ttl) = match outcome {
+            Ok(version) => (
+                CachedAnswer {
+                    value: Some(version),
+                    error: None,
+                },
+                ok_ttl,
+            ),
+            Err(error) => (
+                CachedAnswer {
+                    value: self.last(key, stamp).and_then(|answer| answer.value),
+                    error: Some(format!("{error:#}")),
+                },
+                failed_ttl,
+            ),
+        };
+        self.store(key, stamp, answer.clone(), ttl);
+        answer
+    }
+
     fn forget(&self, key: &str) {
         let mut entries = self.entries.lock().unwrap_or_else(PoisonError::into_inner);
         entries.remove(key);
@@ -744,53 +768,23 @@ fn cache() -> &'static Cache {
     CACHE.get_or_init(Cache::default)
 }
 
-/// Version a CLI reported, with the error when it could not be read.
-struct VersionProbe {
-    value: Option<String>,
-    error: Option<String>,
-}
-
 /// What the CLI at `bin` says its version is, asked again only once the
 /// binary it runs changes.
-fn installed_version(bin: &Path) -> VersionProbe {
+fn installed_version(bin: &Path) -> CachedAnswer {
     let real = platform::agent_cli::real_executable(bin);
     let stamp = binary_stamp(&real);
     let key = version_cache_key(bin);
     if let Some(answer) = cache().get(&key, &stamp) {
-        return VersionProbe {
-            value: answer.value,
-            error: answer.error,
-        };
+        return answer;
     }
     let probe =
         platform::agent_cli::probe_version_output(bin, VERSION_PROBE_TIMEOUT).and_then(|output| {
-            match parse_version(&output) {
-                Some(version) => Ok(version),
-                None => Err(anyhow::anyhow!("{} printed no version", bin.display())),
-            }
+            parse_version(&output)
+                .ok_or_else(|| anyhow::anyhow!("{} printed no version", bin.display()))
         });
-    let answer = match probe {
-        Ok(version) => CachedAnswer {
-            value: Some(version),
-            error: None,
-        },
-        Err(error) => CachedAnswer {
-            // A failure keeps the version of the same binary; a changed
-            // binary starts empty, so a stale version is never shown as new.
-            value: cache().last(&key, &stamp).and_then(|answer| answer.value),
-            error: Some(format!("{error:#}")),
-        },
-    };
-    let ttl = if answer.error.is_none() {
-        VERSION_CACHE_OK
-    } else {
-        VERSION_CACHE_FAILED
-    };
-    cache().store(&key, &stamp, answer.clone(), ttl);
-    VersionProbe {
-        value: answer.value,
-        error: answer.error,
-    }
+    // A failure keeps the version of the same binary; a changed binary
+    // starts empty, so a stale version is never shown as new.
+    cache().record(&key, &stamp, probe, VERSION_CACHE_OK, VERSION_CACHE_FAILED)
 }
 
 fn version_cache_key(bin: &Path) -> String {
@@ -806,7 +800,7 @@ fn binary_stamp(real: &Path) -> String {
                 .modified()
                 .ok()
                 .and_then(|time| time.duration_since(std::time::UNIX_EPOCH).ok())
-                .map(Duration::as_nanos)
+                .map(|elapsed| elapsed.as_nanos())
                 .unwrap_or(0);
             format!("{}|{}|{modified}", real.display(), metadata.len())
         }
@@ -827,23 +821,7 @@ async fn latest_version(updater: &Updater) -> CachedAnswer {
             brew_latest(updater.program.clone(), package.clone(), *cask).await
         }
     };
-    let answer = match fetched {
-        Ok(version) => CachedAnswer {
-            value: Some(version),
-            error: None,
-        },
-        Err(error) => CachedAnswer {
-            value: cache().last(&key, "").and_then(|answer| answer.value),
-            error: Some(format!("{error:#}")),
-        },
-    };
-    let ttl = if answer.error.is_none() {
-        LATEST_CACHE_OK
-    } else {
-        LATEST_CACHE_FAILED
-    };
-    cache().store(&key, "", answer.clone(), ttl);
-    answer
+    cache().record(&key, "", fetched, LATEST_CACHE_OK, LATEST_CACHE_FAILED)
 }
 
 /// Newest version of an npm package, the registry's `latest` tag.
@@ -983,11 +961,13 @@ impl Drop for InProcessUpgrade {
     }
 }
 
-/// The first version in what a CLI printed.
+/// The first version in what a CLI printed; a color code may precede it.
 fn parse_version(output: &str) -> Option<String> {
     static VERSION_PATTERN: LazyLock<Regex> = LazyLock::new(|| {
-        Regex::new(r"(?:^|[^\w.])(?:v)?(\d+\.\d+(?:\.\d+)*(?:-[0-9A-Za-z][0-9A-Za-z.]*)?)")
-            .expect("valid version pattern")
+        Regex::new(
+            r"(?:^|[^\w.]|\x1b\[[0-9;]*m)(?:v)?(\d+\.\d+(?:\.\d+)*(?:-[0-9A-Za-z][0-9A-Za-z.]*)?)",
+        )
+        .expect("valid version pattern")
     });
     let captures = VERSION_PATTERN.captures(output)?;
     let version = captures.get(1)?.as_str().trim_end_matches('.');
