@@ -367,7 +367,7 @@ fn every_listed_agent_has_a_spec() {
     for id in AGENT_VERSION_IDS {
         assert!(spec_for(id).is_some(), "{id}");
     }
-    assert!(spec_for("gemini").is_none());
+    assert!(spec_for("not-an-agent").is_none());
 }
 
 #[test]

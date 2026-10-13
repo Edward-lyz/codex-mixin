@@ -24,7 +24,7 @@ pub fn agent_name(id: &str) -> anyhow::Result<&'static str> {
         "dsh" => Ok("DSH"),
         "opencode" => Ok("OpenCode"),
         "pi" => Ok("Pi"),
-        _ => anyhow::bail!("unsupported agent: {id}"),
+        _ => clients::frameworks::name(id),
     }
 }
 

@@ -57,7 +57,7 @@ fn log_responses_route(requested_model: &str, route: &ResolvedModelRoute) {
     }
 }
 
-async fn stream_custom_responses(
+pub(super) async fn stream_custom_responses(
     state: &AppState,
     headers: &HeaderMap,
     body: Value,

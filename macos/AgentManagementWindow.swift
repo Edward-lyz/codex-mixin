@@ -573,7 +573,7 @@ private struct AgentRowView: View {
                     .labelsHidden()
                     .toggleStyle(.switch)
                     .controlSize(.small)
-                    .disabled(model.isBusy)
+                    .disabled(model.isBusy || entry.integration.state == .unsupported)
                     .help(connectHelp(presentation))
                     .accessibilityLabel(connectHelp(presentation))
             }
@@ -653,7 +653,7 @@ private struct AgentRowView: View {
 
     private var connectBinding: Binding<Bool> {
         Binding(
-            get: { entry.integration.state == .managed },
+            get: { entry.integration.state == .managed || entry.integration.state == .drift },
             set: { isOn in
                 Task { @MainActor in
                     if isOn {

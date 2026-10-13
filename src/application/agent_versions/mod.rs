@@ -1,5 +1,7 @@
-//! Version detection and upgrades for the coding-agent CLIs the Agents page
-//! manages: Codex, Claude Code, Claude Desktop, DSH, OpenCode, and Pi.
+//! Version detection and upgrades for every fixed agent in magpie's All().
+//! Dynamic WSL and omp profile rows are managed by their own discovery paths.
+//! Only source-verified install sources offer upgrades; other rows explicitly
+//! report unavailable rather than guessing a package or executing a shell.
 //!
 //! Detection reads local state only: where a CLI is, how it was installed,
 //! what version it reports, and the version of a desktop app installed beside
@@ -45,8 +47,58 @@ const NPM_REGISTRY: &str = "https://registry.npmjs.org/";
 
 /// Agents the version core covers, in the order [`check_versions`] reports
 /// them. The ids match the Agents page.
-pub const AGENT_VERSION_IDS: [&str; 6] =
-    ["codex", "claude", "claude-desktop", "dsh", "opencode", "pi"];
+pub const AGENT_VERSION_IDS: [&str; 50] = [
+    "codex",
+    "claude",
+    "claude-desktop",
+    "dsh",
+    "opencode",
+    "pi",
+    "gemini",
+    "agy",
+    "openchamber",
+    "mimocode",
+    "aside",
+    "omo",
+    "goose",
+    "cursor",
+    "cursor-local",
+    "zed",
+    "vscode",
+    "vscode-insiders",
+    "vscodium",
+    "copilot-jetbrains",
+    "air",
+    "copilot",
+    "crush",
+    "reasonix",
+    "commandcode",
+    "fx",
+    "omp",
+    "devin",
+    "hermes",
+    "morph",
+    "kimi",
+    "qwen",
+    "muse",
+    "empryo",
+    "ante",
+    "minimax-code",
+    "droid",
+    "cline",
+    "qoder",
+    "qoder-cn",
+    "grok",
+    "zcode",
+    "workbuddy",
+    "codebuddy",
+    "pencil",
+    "t3code",
+    "hanako",
+    "atomcode",
+    "alma",
+    "cindy",
+];
 
 /// One agent's CLI state, as the Agents page shows it.
 ///
@@ -113,10 +165,10 @@ struct SelfUpdate {
     home_launcher: bool,
 }
 
-/// The six agents the version core covers, from the same facts magpie reads:
-/// each CLI's npm package, its Homebrew formula or cask, and where its own
-/// installer puts it.
-const SPECS: [AgentSpec; 6] = [
+/// Fixed All() ids and Bin values from internal/agent/agents.go and the
+/// individual constructors. Upgrade packages and verbs are restricted to
+/// internal/agent/cliupdate.go; a missing source is deliberately unavailable.
+const SPECS: [AgentSpec; 50] = [
     AgentSpec {
         id: "codex",
         command: Some("codex"),
@@ -186,7 +238,98 @@ const SPECS: [AgentSpec; 6] = [
         self_update: None,
         desktop_app: None,
     },
+    agent_spec(
+        "gemini",
+        Some("gemini"),
+        &["@google/gemini-cli"],
+        &["gemini-cli"],
+    ),
+    agent_spec("agy", Some("agy"), &[], &[]),
+    agent_spec("openchamber", Some("openchamber"), &[], &[]),
+    agent_spec("mimocode", Some("mimo"), &[], &[]),
+    agent_spec("aside", Some("aside"), &[], &[]),
+    AgentSpec {
+        self_update: Some(SelfUpdate {
+            // Magpie uses omo update for every install to move its pinned engine.
+            marker: "",
+            verb: "update",
+            home_launcher: false,
+        }),
+        ..agent_spec("omo", Some("omo"), &["omo-ai"], &[])
+    },
+    agent_spec("goose", Some("goose"), &[], &["block-goose-cli"]),
+    agent_spec("cursor", Some("cursor-agent"), &[], &[]),
+    agent_spec("cursor-local", None, &[], &[]),
+    agent_spec("zed", Some("zed"), &[], &[]),
+    agent_spec("vscode", Some("code"), &[], &[]),
+    agent_spec("vscode-insiders", Some("code-insiders"), &[], &[]),
+    agent_spec("vscodium", Some("codium"), &[], &[]),
+    agent_spec("copilot-jetbrains", None, &[], &[]),
+    // These constructors omit Bin to avoid colliding with unrelated tools.
+    agent_spec("air", None, &[], &[]),
+    agent_spec(
+        "copilot",
+        Some("copilot"),
+        &["@github/copilot"],
+        &["copilot-cli"],
+    ),
+    agent_spec("crush", Some("crush"), &["@charmland/crush"], &["crush"]),
+    agent_spec("reasonix", Some("reasonix"), &[], &[]),
+    agent_spec("commandcode", Some("command-code"), &[], &[]),
+    agent_spec("fx", None, &[], &[]),
+    agent_spec("omp", Some("omp"), &["@oh-my-pi/pi-coding-agent"], &[]),
+    agent_spec("devin", Some("devin"), &[], &[]),
+    agent_spec("hermes", Some("hermes"), &[], &[]),
+    agent_spec("morph", None, &[], &[]),
+    agent_spec("kimi", Some("kimi"), &[], &[]),
+    agent_spec("qwen", Some("qwen"), &[], &[]),
+    agent_spec("muse", Some("muse"), &[], &[]),
+    agent_spec("empryo", Some("empryo"), &[], &[]),
+    agent_spec("ante", Some("ante"), &[], &[]),
+    agent_spec("minimax-code", Some("mcode"), &[], &[]),
+    agent_spec("droid", Some("droid"), &[], &[]),
+    agent_spec("cline", Some("cline"), &["cline"], &[]),
+    agent_spec("qoder", Some("qodercli"), &[], &[]),
+    agent_spec("qoder-cn", Some("qoderclicn"), &[], &[]),
+    agent_spec("grok", None, &[], &[]),
+    agent_spec("zcode", None, &[], &[]),
+    agent_spec("workbuddy", None, &[], &[]),
+    agent_spec(
+        "codebuddy",
+        Some("codebuddy"),
+        &["@tencent-ai/codebuddy-code"],
+        &[],
+    ),
+    agent_spec("pencil", None, &[], &[]),
+    agent_spec("t3code", None, &[], &[]),
+    agent_spec("hanako", None, &[], &[]),
+    agent_spec(
+        "atomcode",
+        Some("atomcode"),
+        &["@atomgit.com/atomcode"],
+        &["atomcode"],
+    ),
+    agent_spec("alma", None, &[], &[]),
+    agent_spec("cindy", None, &[], &[]),
 ];
+
+/// Common static spec shape; empty package lists mean no verified updater.
+const fn agent_spec(
+    id: &'static str,
+    command: Option<&'static str>,
+    npm: &'static [&'static str],
+    brew: &'static [&'static str],
+) -> AgentSpec {
+    AgentSpec {
+        id,
+        command,
+        home_bin: None,
+        npm,
+        brew,
+        self_update: None,
+        desktop_app: None,
+    }
+}
 
 fn spec_for(id: &str) -> Option<&'static AgentSpec> {
     SPECS.iter().find(|spec| spec.id == id)
@@ -412,6 +555,19 @@ fn inspect_local(spec: &AgentSpec) -> LocalState {
         None => LocalState {
             info: AgentCliInfo {
                 app_version,
+                error: if spec.command.is_none() {
+                    Some(format!(
+                        "{} CLI version detection and upgrade unavailable: no verified command",
+                        spec.id
+                    ))
+                } else if spec.npm.is_empty() && spec.brew.is_empty() {
+                    Some(format!(
+                        "{} upgrade unavailable: no verified updater",
+                        spec.id
+                    ))
+                } else {
+                    None
+                },
                 ..AgentCliInfo::default()
             },
             updater: None,
@@ -433,6 +589,14 @@ fn inspect_cli(spec: &AgentSpec, bin: PathBuf, app_version: Option<String>) -> L
         if let Some(reason) = &updater.blocked {
             push_error(&mut info, reason.clone());
         }
+    } else {
+        push_error(
+            &mut info,
+            format!(
+                "{} upgrade unavailable: no verified updater for this install",
+                spec.id
+            ),
+        );
     }
     let probe = installed_version(&bin);
     info.version = probe.value;
@@ -559,6 +723,11 @@ fn brew_install(real: &Path) -> Option<(PathBuf, String, bool)> {
 fn node_updater(package: &str, bin: &Path, real: &Path) -> Option<Updater> {
     let real_text = slash_text(real);
     let mark = format!("/node_modules/{package}/");
+    // A manager's path alone is not proof that this is the requested package.
+    // pnpm shims can name a store elsewhere, so identity and location differ.
+    if !real_text.contains(&mark) && !shim_names(bin, package) {
+        return None;
+    }
     let modules = real_text
         .find(&mark)
         .map(|index| PathBuf::from(&real_text[..index]).join("node_modules"))
@@ -630,21 +799,26 @@ fn npm_updater(package: &str, install: NpmGlobalInstall) -> Updater {
 /// The `node_modules` folder a launcher script names, for npm's Windows
 /// `.cmd` shims and pnpm's scripts, whose own path does not lead into it.
 fn shim_modules(bin: &Path, package: &str) -> Option<PathBuf> {
-    /// A launcher script is small; anything larger is a real binary.
-    const SHIM_MAX_BYTES: u64 = 64 * 1024;
-    let metadata = std::fs::metadata(bin).ok()?;
-    if !metadata.is_file() || metadata.len() > SHIM_MAX_BYTES {
-        return None;
-    }
-    let text = std::fs::read_to_string(bin).ok()?;
-    if !text
-        .replace('\\', "/")
-        .contains(&format!("node_modules/{package}/"))
-    {
+    if !shim_names(bin, package) {
         return None;
     }
     let modules = bin.parent()?.join("node_modules");
     modules.join(package).is_dir().then_some(modules)
+}
+
+fn shim_names(bin: &Path, package: &str) -> bool {
+    /// A launcher script is small; anything larger is a real binary.
+    const SHIM_MAX_BYTES: u64 = 64 * 1024;
+    let Ok(metadata) = std::fs::metadata(bin) else {
+        return false;
+    };
+    if !metadata.is_file() || metadata.len() > SHIM_MAX_BYTES {
+        return false;
+    }
+    std::fs::read_to_string(bin).is_ok_and(|text| {
+        text.replace('\\', "/")
+            .contains(&format!("node_modules/{package}/"))
+    })
 }
 
 /// `path` with forward slashes, which both Windows and Unix patterns match.
@@ -772,6 +946,14 @@ fn cache() -> &'static Cache {
 /// binary it runs changes.
 fn installed_version(bin: &Path) -> CachedAnswer {
     let real = platform::agent_cli::real_executable(bin);
+    // Match magpie internal/proc/version.go: npm metadata does not start the
+    // CLI, and is reread so an in-place package update cannot leave it stale.
+    if let Some(version) = npm_installed_version(&real) {
+        return CachedAnswer {
+            value: Some(version),
+            error: None,
+        };
+    }
     let stamp = binary_stamp(&real);
     let key = version_cache_key(bin);
     if let Some(answer) = cache().get(&key, &stamp) {
@@ -785,6 +967,34 @@ fn installed_version(bin: &Path) -> CachedAnswer {
     // A failure keeps the version of the same binary; a changed binary
     // starts empty, so a stale version is never shown as new.
     cache().record(&key, &stamp, probe, VERSION_CACHE_OK, VERSION_CACHE_FAILED)
+}
+
+/// Version of the enclosing npm package, never an unrelated parent project.
+fn npm_installed_version(real: &Path) -> Option<String> {
+    for directory in real.parent()?.ancestors() {
+        let Some(parent) = directory.parent() else {
+            continue;
+        };
+        let directly_in_modules = parent
+            .file_name()
+            .is_some_and(|name| name == "node_modules");
+        let scoped_in_modules = parent
+            .file_name()
+            .is_some_and(|name| name.to_string_lossy().starts_with('@'))
+            && parent
+                .parent()
+                .and_then(Path::file_name)
+                .is_some_and(|name| name == "node_modules");
+        if directly_in_modules || scoped_in_modules {
+            let content = std::fs::read_to_string(directory.join("package.json")).ok()?;
+            let package: serde_json::Value = serde_json::from_str(&content).ok()?;
+            return package
+                .get("version")
+                .and_then(serde_json::Value::as_str)
+                .and_then(parse_version);
+        }
+    }
+    None
 }
 
 fn version_cache_key(bin: &Path) -> String {

@@ -456,7 +456,7 @@ class _AgentsPageState extends State<AgentsPage> {
                     key: ValueKey('agent-switch-${agent.id}'),
                     materialTapTargetSize: MaterialTapTargetSize.shrinkWrap,
                     value: agent.managed,
-                    onChanged: (!agent.detected || _busy)
+                    onChanged: (!agent.detected || _busy || !agent.integration.canConnect)
                         ? null
                         : (value) => _toggleAgent(agent, value),
                   ),
@@ -513,6 +513,8 @@ class _AgentsPageState extends State<AgentsPage> {
       AgentIntegrationState.managed => ('已接入', green),
       AgentIntegrationState.error => ('检测错误', _danger),
       AgentIntegrationState.unmanaged => ('未接入', muted),
+      AgentIntegrationState.unsupported => ('暂不支持接入', muted),
+      AgentIntegrationState.drift => ('配置已改变', _danger),
     };
     return statusBadge(label, color);
   }

@@ -64,7 +64,7 @@ fn integration_paths(id: &str) -> anyhow::Result<(PathBuf, Option<PathBuf>)> {
                 Some(stored.with_file_name("pi-api-key")),
             ));
         }
-        _ => anyhow::bail!("unsupported agent: {id}"),
+        _ => codex_mixin::clients::frameworks::manifest_path(id, &super::runtime::state_dir())?,
     };
     Ok((path, None))
 }
@@ -73,7 +73,8 @@ fn snapshot(id: &str) -> anyhow::Result<Value> {
     let name = agent_name(id)?;
     let cli = agent_versions::discover_agent(id)?;
     let integration = match integration_paths(id) {
-        Ok((path, key)) => integration_status(id, &path, key.as_deref())?,
+        Ok((path, key)) if is_legacy(id) => integration_status(id, &path, key.as_deref())?,
+        Ok((path, _)) => codex_mixin::clients::frameworks::status(id, &path)?,
         Err(error) => codex_mixin::application::agents::IntegrationStatus {
             state: "error",
             mode: None,
@@ -125,6 +126,9 @@ fn integration_lock() -> anyhow::Result<std::fs::File> {
 
 async fn connect(id: &str, mode: Option<AgentConnectMode>) -> anyhow::Result<()> {
     agent_name(id)?;
+    if !is_legacy(id) {
+        return connect_framework(id, mode).await;
+    }
     let command = connect_command(id, mode)?;
     let _lock = integration_lock()?;
     super::service::ensure_ready().await?;
@@ -178,6 +182,14 @@ fn connect_command(id: &str, mode: Option<AgentConnectMode>) -> anyhow::Result<C
 
 async fn disconnect(id: &str) -> anyhow::Result<()> {
     agent_name(id)?;
+    if !is_legacy(id) {
+        let _lock = integration_lock()?;
+        let (manifest, _) = integration_paths(id)?;
+        codex_mixin::clients::frameworks::remove(id, &manifest)?;
+        let client = framework_client(id)?;
+        codex_mixin::config::revoke_gateway_client_key(client)?;
+        return verify_integration(id, "unmanaged").await;
+    }
     let id = id.to_owned();
     let verified_id = id.clone();
     tokio::task::spawn_blocking(move || {
@@ -193,7 +205,11 @@ async fn disconnect(id: &str) -> anyhow::Result<()> {
 
 async fn verify_integration(id: &str, expected: &str) -> anyhow::Result<()> {
     let (path, key) = integration_paths(id)?;
-    let state = integration_status(id, &path, key.as_deref())?;
+    let state = if is_legacy(id) {
+        integration_status(id, &path, key.as_deref())?
+    } else {
+        codex_mixin::clients::frameworks::status(id, &path)?
+    };
     anyhow::ensure!(
         state.state == expected,
         "{id} integration did not become {expected}: {}",
@@ -201,6 +217,91 @@ async fn verify_integration(id: &str, expected: &str) -> anyhow::Result<()> {
     );
     super::progress_step("Agent configuration verified");
     Ok(())
+}
+
+fn is_legacy(id: &str) -> bool {
+    ["codex", "claude", "claude-desktop", "dsh", "opencode", "pi"].contains(&id)
+}
+
+fn framework_client(id: &str) -> anyhow::Result<codex_mixin::gateway_access::GatewayClient> {
+    let id = AGENT_VERSION_IDS
+        .into_iter()
+        .find(|known| *known == id)
+        .context("unknown framework client")?;
+    Ok(codex_mixin::gateway_access::GatewayClient::Framework(id))
+}
+
+async fn connect_framework(id: &str, mode: Option<AgentConnectMode>) -> anyhow::Result<()> {
+    use codex_mixin::clients::frameworks;
+    anyhow::ensure!(mode.is_none(), "--mode applies only to Codex");
+    frameworks::require_supported(id)?;
+    let _lock = integration_lock()?;
+    let (manifest, _) = integration_paths(id)?;
+    if frameworks::status(id, &manifest)?.state == "managed" {
+        return Ok(());
+    }
+    let client = framework_client(id)?;
+    let id_owned = id.to_owned();
+    tokio::task::spawn_blocking(move || {
+        codex_mixin::application::client::install_with_client_key(client, || {
+            let config = codex_mixin::config::GatewayConfig::from_stored_config()?;
+            let bind = super::runtime::effective_gateway_bind(&config)?;
+            let mut models = Vec::new();
+            for provider in config.providers.iter().filter(|p| p.enabled) {
+                for selected in &provider.selected_models {
+                    let model = provider
+                        .cached_models
+                        .iter()
+                        .find(|m| m.id == *selected)
+                        .with_context(|| {
+                            format!("missing cached model {selected} for {}", provider.id)
+                        })?;
+                    models.push(framework_model(
+                        codex_mixin::provider::catalog_model_slug(selected, &provider.id),
+                        model,
+                        &config,
+                    ));
+                }
+            }
+            for model in super::official_models::selected_official_models(&config)? {
+                models.push(framework_model(model.id.clone(), &model, &config));
+            }
+            frameworks::install(
+                &id_owned,
+                &manifest,
+                &format!("http://{bind}"),
+                &config.require_client_key(client)?,
+                &models,
+            )
+        })
+    })
+    .await
+    .context("framework install worker failed")??;
+    super::service::ensure_ready().await?;
+    verify_integration(id, "managed").await
+}
+
+fn framework_model(
+    id: String,
+    model: &codex_mixin::provider::ProviderModel,
+    config: &codex_mixin::config::GatewayConfig,
+) -> codex_mixin::clients::frameworks::FrameworkModel {
+    let context = model
+        .context_window
+        .unwrap_or(config.default_context_window);
+    codex_mixin::clients::frameworks::FrameworkModel {
+        id,
+        name: model
+            .display_name
+            .clone()
+            .unwrap_or_else(|| model.id.clone()),
+        context_window: context,
+        max_tokens: model
+            .max_output_tokens
+            .unwrap_or(config.default_max_tokens)
+            .min(context),
+        supports_image: model.supports_image.unwrap_or(false),
+    }
 }
 
 #[cfg(test)]

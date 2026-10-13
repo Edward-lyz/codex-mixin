@@ -2,7 +2,7 @@
 ///
 /// The CLI owns program detection, integration state and version resolution;
 /// the UI renders these fields and never probes the system itself.
-enum AgentIntegrationState { managed, unmanaged, error }
+enum AgentIntegrationState { managed, unmanaged, error, unsupported, drift }
 
 class AgentCliInfo {
   final String? version;
@@ -62,6 +62,8 @@ class AgentIntegration {
       state: switch ('${row['state'] ?? ''}') {
         'managed' => AgentIntegrationState.managed,
         'error' => AgentIntegrationState.error,
+        'unsupported' => AgentIntegrationState.unsupported,
+        'drift' => AgentIntegrationState.drift,
         _ => AgentIntegrationState.unmanaged,
       },
       mode: _stringOrNull(row['mode']),
@@ -70,12 +72,18 @@ class AgentIntegration {
     );
   }
 
-  bool get managed => state == AgentIntegrationState.managed;
+  bool get managed =>
+      state == AgentIntegrationState.managed ||
+      state == AgentIntegrationState.drift;
+
+  bool get canConnect => state != AgentIntegrationState.unsupported;
 
   String get stateLabel => switch (state) {
     AgentIntegrationState.managed => '已接入',
     AgentIntegrationState.error => '检测错误',
     AgentIntegrationState.unmanaged => '未接入',
+    AgentIntegrationState.unsupported => '暂不支持接入',
+    AgentIntegrationState.drift => '配置已改变',
   };
 
   /// Labels for the `--mode` values the CLI accepts; unknown modes render

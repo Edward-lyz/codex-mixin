@@ -10,6 +10,8 @@ enum AgentIntegrationState: String, Decodable, Equatable {
     case managed
     case unmanaged
     case error
+    case unsupported
+    case drift
 }
 
 struct AgentIntegration: Decodable, Equatable {
@@ -266,6 +268,8 @@ func agentIntegrationStateText(_ state: AgentIntegrationState) -> String {
     case .managed: return AppLocalization.string("agentManagement.state.managed")
     case .unmanaged: return AppLocalization.string("agentManagement.state.unmanaged")
     case .error: return AppLocalization.string("agentManagement.state.error")
+    case .unsupported: return "Unsupported"
+    case .drift: return "Configuration drift"
     }
 }
 
@@ -320,7 +324,7 @@ func agentRowPresentation(for entry: AgentEntry, isBusy: Bool) -> AgentRowPresen
         statusText: statusText,
         statusIsError: entry.integration.state == .error,
         detailText: parts.joined(separator: AppLocalization.string("agentManagement.detailSeparator")),
-        isConnected: entry.integration.state == .managed,
+        isConnected: entry.integration.state == .managed || entry.integration.state == .drift,
         isBusy: isBusy
     )
 }
