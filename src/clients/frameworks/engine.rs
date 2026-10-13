@@ -315,7 +315,7 @@ pub(super) fn apply(manifest: &Path, patches: Vec<Patch>) -> anyhow::Result<()> 
             );
             let before = get(&value, &path).cloned();
             // Provider namespaces are owned only after a journal is created.
-            if path.iter().any(|s| s == "codex-mixin") {
+            if path.iter().any(|s| s.starts_with("codex-mixin")) {
                 anyhow::ensure!(
                     before.is_none(),
                     "codex-mixin configuration already exists without an undo journal"
@@ -336,6 +336,7 @@ pub(super) fn apply(manifest: &Path, patches: Vec<Patch>) -> anyhow::Result<()> 
             fields,
         });
     }
+    files::ensure_owner_only_dir(manifest.parent().context("undo journal has no parent")?)?;
     files::write_owner_only(manifest, &serde_json::to_vec(&Journal { entries })?)?;
     let journal: Journal = serde_json::from_str(&read(manifest)?.context("undo journal missing")?)?;
     for entry in &journal.entries {

@@ -8381,7 +8381,19 @@ async fn chat_endpoint_returns_json_or_sse_and_real_usage() {
         let text = response.text().await.unwrap();
         if streaming {
             assert!(content_type.starts_with("text/event-stream"));
-            assert!(text.contains("hello codex"));
+            let mut buffer = text.as_bytes().to_vec();
+            let content = drain_events(&mut buffer)
+                .into_iter()
+                .filter(|event| event.data != "[DONE]")
+                .map(|event| serde_json::from_str::<Value>(&event.data).unwrap())
+                .filter_map(|value| {
+                    value
+                        .pointer("/choices/0/delta/content")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+                .collect::<String>();
+            assert_eq!(content, "hello codex");
             assert!(text.contains("\"finish_reason\":\"stop\""));
             assert!(text.contains("\"usage\""));
             assert!(text.ends_with("data: [DONE]\n\n"));
