@@ -389,7 +389,7 @@ struct AgentManagementWindowTests {
         precondition(managedRow.isConnected)
         precondition(!managedRow.statusIsError)
         precondition(managedRow.detailText.contains("Official account mode"))
-        precondition(managedRow.detailText.contains("GPT 与自定义模型都可用"))
+        precondition(!managedRow.detailText.contains("GPT 与自定义模型都可用"))
         precondition(!managedRow.detailText.contains("CLI 0.9.0"))
 
         let failing = agentEntry(
@@ -402,6 +402,7 @@ struct AgentManagementWindowTests {
         let failingRow = agentRowPresentation(for: failing, isBusy: false)
         precondition(failingRow.statusText == "Connection error")
         precondition(failingRow.statusIsError)
+        precondition(failingRow.cliVersionText == "1.0.0")
         precondition(!failingRow.isConnected)
         precondition(failingRow.detailText.contains("网关认证失败"))
         precondition(failingRow.detailText.contains("Version check failed: 无法读取版本"))

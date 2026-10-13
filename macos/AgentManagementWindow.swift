@@ -1,9 +1,12 @@
 import Cocoa
 import SwiftUI
 
-private let agentManagementContentWidth: CGFloat = 780
-private let agentManagementContentHeight: CGFloat = 540
-private let agentManagementRowHeight: CGFloat = 56
+private let agentManagementContentWidth: CGFloat = 720
+private let agentManagementContentHeight: CGFloat = 560
+private let agentIconSize: CGFloat = 28
+/// Agents whose logo is a single-colour mark drawn as a template, so it
+/// follows the light or dark appearance.
+private let monochromeAgentLogos: Set<String> = ["opencode", "pi"]
 
 @MainActor
 final class AgentManagementModel: ObservableObject {
@@ -358,187 +361,195 @@ private struct AgentManagementView: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            header
-            Divider()
+            legacyToolbar
             content
-            Divider()
             footer
         }
         .frame(
             minWidth: agentManagementContentWidth,
             minHeight: agentManagementContentHeight
         )
-        .background(Color(nsColor: .windowBackgroundColor))
-    }
-
-    private var header: some View {
-        HStack(alignment: .center, spacing: 10) {
-            VStack(alignment: .leading, spacing: 3) {
-                Text(AppLocalization.string("agentManagement.windowTitle"))
-                    .font(.title3.weight(.semibold))
-                Text(AppLocalization.string("agentManagement.subtitle"))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-            Spacer(minLength: 12)
-            if let batch = model.batch {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text(AppLocalization.string(
-                        "agentManagement.updatingAllProgress",
-                        batch.currentAgentName,
-                        String(batch.completed + 1),
-                        String(batch.total)
-                    ))
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-                }
-            } else if model.isCheckingVersions {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text(AppLocalization.string("agentManagement.checkingVersions"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            } else if model.isReloading {
-                HStack(spacing: 6) {
-                    ProgressView().controlSize(.small)
-                    Text(AppLocalization.string("agentManagement.reloading"))
-                        .font(.caption)
-                        .foregroundStyle(.secondary)
-                }
-            }
-            Button {
-                Task { await model.refresh() }
-            } label: {
-                Label(
-                    AppLocalization.string("agentManagement.refresh"),
-                    systemImage: "arrow.triangle.2.circlepath"
-                )
-            }
-            .disabled(model.isBusy)
-            .keyboardShortcut("r", modifiers: .command)
-            .help(AppLocalization.string("agentManagement.refreshHelp"))
-            if model.showsUpdateAllButton {
-                Button {
-                    Task { await model.upgradeAll() }
-                } label: {
-                    Label(
-                        AppLocalization.string("agentManagement.updateAll"),
-                        systemImage: "arrow.down.circle"
-                    )
-                }
-                .disabled(!model.canUpgradeAll)
-                .keyboardShortcut("u", modifiers: [.command, .shift])
-                .help(AppLocalization.string("agentManagement.updateAllHelp"))
+        .toolbar {
+            ToolbarItemGroup(placement: .primaryAction) {
+                toolbarControls
             }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 14)
+    }
+
+    /// macOS 13 cannot bridge SwiftUI toolbars into an AppKit window, so the
+    /// same controls sit above the list there.
+    @ViewBuilder
+    private var legacyToolbar: some View {
+        if #available(macOS 14.0, *) {
+            EmptyView()
+        } else {
+            HStack(spacing: 10) {
+                Spacer(minLength: 0)
+                toolbarControls
+            }
+            .padding(.horizontal, 20)
+            .padding(.top, 10)
+        }
     }
 
     @ViewBuilder
+    private var toolbarControls: some View {
+        toolbarProgress
+        if model.showsUpdateAllButton {
+            Button {
+                Task { await model.upgradeAll() }
+            } label: {
+                Label(
+                    AppLocalization.string("agentManagement.updateAll"),
+                    systemImage: "arrow.down.circle"
+                )
+            }
+            .disabled(!model.canUpgradeAll)
+            .keyboardShortcut("u", modifiers: [.command, .shift])
+            .help(AppLocalization.string("agentManagement.updateAllHelp"))
+        }
+        Button {
+            Task { await model.refresh() }
+        } label: {
+            Label(
+                AppLocalization.string("agentManagement.refresh"),
+                systemImage: "arrow.clockwise"
+            )
+        }
+        .disabled(model.isBusy)
+        .keyboardShortcut("r", modifiers: .command)
+        .help(AppLocalization.string("agentManagement.refreshHelp"))
+    }
+
+    @ViewBuilder
+    private var toolbarProgress: some View {
+        if let batch = model.batch {
+            progressLabel(AppLocalization.string(
+                "agentManagement.updatingAllProgress",
+                batch.currentAgentName,
+                String(batch.completed + 1),
+                String(batch.total)
+            ))
+        } else if model.isCheckingVersions {
+            progressLabel(AppLocalization.string("agentManagement.checkingVersions"))
+        } else if model.isReloading {
+            progressLabel(AppLocalization.string("agentManagement.reloading"))
+        }
+    }
+
+    private func progressLabel(_ text: String) -> some View {
+        HStack(spacing: 6) {
+            ProgressView().controlSize(.small)
+            Text(text)
+                .font(.caption)
+                .foregroundStyle(.secondary)
+        }
+    }
+
+    // A grouped Form draws the native inset, rounded list that System
+    // Settings uses; on macOS 26 it picks up the Liquid Glass materials.
+    @ViewBuilder
     private var content: some View {
-        ScrollView {
-            LazyVStack(alignment: .leading, spacing: 0) {
-                if model.entries.isEmpty, let loadError = model.loadError {
-                    messageState(
-                        symbol: "exclamationmark.triangle.fill",
-                        title: AppLocalization.string("agentManagement.loadFailed", loadError)
-                    )
-                } else if model.entries.isEmpty {
-                    messageState(
-                        symbol: "person.2",
-                        title: AppLocalization.string("agentManagement.emptyTitle"),
-                        detail: AppLocalization.string("agentManagement.emptyHint")
-                    )
-                } else {
+        if model.entries.isEmpty {
+            emptyState
+        } else {
+            Form {
+                Section {
                     ForEach(model.detectedEntries, id: \.id) { entry in
                         AgentRowView(model: model, entry: entry)
-                        Divider().padding(.leading, 52)
                     }
-                    if !model.undetectedEntries.isEmpty {
-                        undetectedFold
+                } footer: {
+                    Text(AppLocalization.string("agentManagement.subtitle"))
+                        .font(.caption)
+                        .foregroundStyle(.secondary)
+                }
+                if !model.undetectedEntries.isEmpty {
+                    Section {
+                        if model.showsUndetectedAgents {
+                            ForEach(model.undetectedEntries, id: \.id) { entry in
+                                AgentRowView(model: model, entry: entry)
+                            }
+                        }
+                    } header: {
+                        undetectedHeader
                     }
                 }
             }
-            .padding(.vertical, 6)
+            .formStyle(.grouped)
+            .animation(.easeInOut(duration: 0.18), value: model.showsUndetectedAgents)
         }
     }
 
-    private var undetectedFold: some View {
-        VStack(alignment: .leading, spacing: 0) {
-            Button {
-                model.toggleUndetectedAgents()
-            } label: {
-                HStack(spacing: 6) {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .rotationEffect(.degrees(model.showsUndetectedAgents ? 90 : 0))
-                    Text(model.undetectedFoldTitle)
-                        .font(.caption.weight(.medium))
-                    Spacer(minLength: 0)
-                }
-                .contentShape(Rectangle())
+    private var undetectedHeader: some View {
+        Button {
+            model.toggleUndetectedAgents()
+        } label: {
+            HStack(spacing: 6) {
+                Image(systemName: "chevron.right")
+                    .font(.system(size: 10, weight: .semibold))
+                    .rotationEffect(.degrees(model.showsUndetectedAgents ? 90 : 0))
+                Text(model.undetectedFoldTitle)
+                Spacer(minLength: 0)
             }
-            .buttonStyle(.plain)
-            .foregroundStyle(.secondary)
-            .padding(.horizontal, 20)
-            .padding(.vertical, 10)
-            if model.showsUndetectedAgents {
-                ForEach(model.undetectedEntries, id: \.id) { entry in
-                    AgentRowView(model: model, entry: entry)
-                    Divider().padding(.leading, 52)
-                }
-            }
+            .contentShape(Rectangle())
         }
-        .animation(.easeInOut(duration: 0.18), value: model.showsUndetectedAgents)
+        .buttonStyle(.plain)
+        .foregroundStyle(.secondary)
     }
 
-    private func messageState(symbol: String, title: String, detail: String? = nil) -> some View {
-        VStack(alignment: .leading, spacing: 8) {
-            Label(title, systemImage: symbol)
-                .font(.callout.weight(.medium))
-                .foregroundStyle(.secondary)
-            if let detail {
-                Text(detail)
-                    .font(.caption)
-                    .foregroundStyle(.secondary)
-            }
-        }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 24)
-        .frame(maxWidth: .infinity, alignment: .leading)
-    }
-
-    private var footer: some View {
-        HStack(alignment: .center, spacing: 10) {
-            if let status = model.status {
-                Image(
-                    systemName: status.isError
-                        ? "exclamationmark.triangle.fill"
-                        : "checkmark.circle.fill"
-                )
-                .foregroundStyle(status.isError ? Color.orange : Color.green)
-                Text(status.text)
-                    .font(.caption)
-                    .lineLimit(2)
+    private var emptyState: some View {
+        VStack(spacing: 10) {
+            if let loadError = model.loadError {
+                Image(systemName: "exclamationmark.triangle")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.orange)
+                Text(AppLocalization.string("agentManagement.loadFailed", loadError))
+                    .font(.callout)
+                    .multilineTextAlignment(.center)
                     .textSelection(.enabled)
             } else if model.isReloading {
-                Text(AppLocalization.string("agentManagement.reloading"))
-                    .font(.caption)
+                ProgressView()
+            } else {
+                Image(systemName: "person.2")
+                    .font(.system(size: 28))
+                    .foregroundStyle(.secondary)
+                Text(AppLocalization.string("agentManagement.emptyTitle"))
+                    .font(.headline)
+                Text(AppLocalization.string("agentManagement.emptyHint"))
+                    .font(.callout)
                     .foregroundStyle(.secondary)
             }
-            Spacer(minLength: 8)
-            if let lastCheckedText = model.lastCheckedText {
-                Text(lastCheckedText)
-                    .font(.caption.monospacedDigit())
-                    .foregroundStyle(.tertiary)
-            }
         }
-        .padding(.horizontal, 20)
-        .padding(.vertical, 10)
-        .frame(minHeight: 38, alignment: .leading)
+        .padding(32)
+        .frame(maxWidth: .infinity, maxHeight: .infinity)
+    }
+
+    @ViewBuilder
+    private var footer: some View {
+        if model.status != nil || model.lastCheckedText != nil {
+            HStack(alignment: .center, spacing: 8) {
+                if let status = model.status {
+                    Image(
+                        systemName: status.isError
+                            ? "exclamationmark.triangle.fill"
+                            : "checkmark.circle.fill"
+                    )
+                    .foregroundStyle(status.isError ? Color.orange : Color.green)
+                    Text(status.text)
+                        .font(.caption)
+                        .lineLimit(2)
+                        .textSelection(.enabled)
+                }
+                Spacer(minLength: 8)
+                if let lastCheckedText = model.lastCheckedText {
+                    Text(lastCheckedText)
+                        .font(.caption.monospacedDigit())
+                        .foregroundStyle(.secondary)
+                }
+            }
+            .padding(.horizontal, 20)
+            .padding(.vertical, 8)
+        }
     }
 }
 
@@ -548,100 +559,95 @@ private struct AgentRowView: View {
 
     var body: some View {
         let presentation = model.rowPresentation(for: entry)
+        let expanded = model.isExpanded(agentID: entry.id)
         VStack(alignment: .leading, spacing: 0) {
-            HStack(spacing: 10) {
-                Image(systemName: agentSymbolName(entry.id))
-                    .font(.system(size: 15))
-                    .foregroundStyle(.secondary)
-                    .frame(width: 22)
+            HStack(spacing: 12) {
+                AgentLogoView(agentID: entry.id)
                 VStack(alignment: .leading, spacing: 3) {
-                    HStack(spacing: 8) {
-                        Text(entry.name)
-                            .font(.body.weight(.medium))
-                        if let cliVersionText = presentation.cliVersionText {
-                            Text(cliVersionText)
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                        } else if entry.cli.isMissing {
-                            Text(AppLocalization.string("agentManagement.cliMissing"))
-                                .font(.caption)
-                                .foregroundStyle(.orange)
-                        }
-                        if let appVersionText = presentation.appVersionText {
-                            Text(appVersionText)
-                                .font(.caption.monospacedDigit())
-                                .foregroundStyle(.secondary)
-                        }
-                        if presentation.isUpdating {
-                            HStack(spacing: 5) {
-                                ProgressView().controlSize(.mini)
-                                Text(AppLocalization.string("agentManagement.updating"))
-                                    .font(.caption)
-                                    .foregroundStyle(.secondary)
-                            }
-                        } else if let updateText = presentation.updateText {
-                            Button {
-                                Task { await model.upgrade(agentID: entry.id) }
-                            } label: {
-                                HStack(spacing: 4) {
-                                    Image(systemName: "arrow.down.circle")
-                                    Text(updateText)
-                                }
-                                .font(.caption)
-                            }
-                            .buttonStyle(.bordered)
-                            .controlSize(.small)
-                            .disabled(model.isBusy)
-                            .help(presentation.updateHelp ?? "")
-                            .accessibilityLabel(updateText)
-                        }
-                    }
-                    Text(secondaryLineText(presentation))
-                        .font(.caption.monospaced())
-                        .foregroundStyle(.secondary)
-                        .lineLimit(1)
-                        .truncationMode(.middle)
-                        .help(secondaryLineHelp(presentation))
+                    titleLine(presentation)
+                    summaryLine(presentation)
                 }
-                Spacer(minLength: 8)
-                Text(presentation.statusText)
-                    .font(.caption.weight(.medium))
-                    .foregroundStyle(statusColor(presentation))
-                    .padding(.horizontal, 7)
-                    .padding(.vertical, 2)
-                    .background(
-                        statusColor(presentation).opacity(0.12),
-                        in: Capsule()
-                    )
+                Spacer(minLength: 12)
+                updateControl(presentation)
                 Toggle("", isOn: connectBinding)
                     .labelsHidden()
                     .toggleStyle(.switch)
+                    .controlSize(.small)
                     .disabled(model.isBusy)
                     .help(connectHelp(presentation))
                     .accessibilityLabel(connectHelp(presentation))
-                Button {
-                    model.toggleDetails(agentID: entry.id)
-                } label: {
-                    Image(systemName: "chevron.right")
-                        .font(.system(size: 10, weight: .semibold))
-                        .rotationEffect(.degrees(model.isExpanded(agentID: entry.id) ? 90 : 0))
-                }
-                .buttonStyle(.plain)
-                .foregroundStyle(.secondary)
-                .help(model.isExpanded(agentID: entry.id)
-                    ? AppLocalization.string("agentManagement.detailsHide")
-                    : AppLocalization.string("agentManagement.details"))
-                .accessibilityLabel(AppLocalization.string("agentManagement.details"))
             }
-            .padding(.horizontal, 14)
-            .frame(height: agentManagementRowHeight)
+            .padding(.vertical, 4)
             .contentShape(Rectangle())
-            .onTapGesture {
-                model.toggleDetails(agentID: entry.id)
-            }
-            if model.isExpanded(agentID: entry.id) {
+            .onTapGesture { model.toggleDetails(agentID: entry.id) }
+            .help(expanded
+                ? AppLocalization.string("agentManagement.detailsHide")
+                : AppLocalization.string("agentManagement.details"))
+            if expanded {
                 AgentDetailPanel(entry: entry)
+                    .padding(.leading, agentIconSize + 12)
+                    .padding(.top, 8)
+                    .padding(.bottom, 4)
             }
+        }
+        .accessibilityElement(children: .contain)
+    }
+
+    private func titleLine(_ presentation: AgentRowPresentation) -> some View {
+        HStack(alignment: .firstTextBaseline, spacing: 8) {
+            Text(entry.name)
+                .font(.body)
+            if let cliVersionText = presentation.cliVersionText {
+                Text(cliVersionText)
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            } else if entry.cli.isMissing && presentation.appVersionText == nil {
+                Text(AppLocalization.string("agentManagement.cliMissing"))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+            if let appVersionText = presentation.appVersionText {
+                Text(appVersionText)
+                    .font(.callout.monospacedDigit())
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .lineLimit(1)
+    }
+
+    private func summaryLine(_ presentation: AgentRowPresentation) -> some View {
+        HStack(spacing: 6) {
+            Circle()
+                .fill(statusColor(presentation))
+                .frame(width: 6, height: 6)
+            Text(summaryText(presentation))
+                .font(.callout)
+                .foregroundStyle(presentation.statusIsError ? Color.orange : Color.secondary)
+                .lineLimit(1)
+                .truncationMode(.tail)
+        }
+        .help(summaryHelp(presentation))
+    }
+
+    @ViewBuilder
+    private func updateControl(_ presentation: AgentRowPresentation) -> some View {
+        if presentation.isUpdating {
+            HStack(spacing: 6) {
+                ProgressView().controlSize(.small)
+                Text(AppLocalization.string("agentManagement.updating"))
+                    .font(.callout)
+                    .foregroundStyle(.secondary)
+            }
+        } else if let updateText = presentation.updateText {
+            Button {
+                Task { await model.upgrade(agentID: entry.id) }
+            } label: {
+                Label(updateText, systemImage: "arrow.down.circle")
+            }
+            .buttonStyle(.bordered)
+            .controlSize(.small)
+            .disabled(model.isBusy)
+            .help(presentation.updateHelp ?? "")
         }
     }
 
@@ -660,35 +666,22 @@ private struct AgentRowView: View {
         )
     }
 
-    private func secondaryLineText(_ presentation: AgentRowPresentation) -> String {
-        if presentation.isUpdating {
-            return AppLocalization.string("agentManagement.updating")
-        }
-        if !presentation.detailText.isEmpty {
-            return presentation.detailText
-        }
-        return entry.cli.path.isEmpty
-            ? AppLocalization.string("agentManagement.detail.unknown")
-            : entry.cli.path
+    private func summaryText(_ presentation: AgentRowPresentation) -> String {
+        let separator = AppLocalization.string("agentManagement.detailSeparator")
+        return [presentation.statusText, presentation.detailText]
+            .filter { !$0.isEmpty }
+            .joined(separator: separator)
     }
 
-    private func secondaryLineHelp(_ presentation: AgentRowPresentation) -> String {
-        var lines: [String] = []
-        if !presentation.detailText.isEmpty {
-            lines.append(presentation.detailText)
-        }
-        if !entry.cli.path.isEmpty {
-            lines.append(entry.cli.path)
-        }
-        if !entry.cli.command.isEmpty {
-            lines.append(entry.cli.command)
-        }
-        return lines.joined(separator: "\n")
+    private func summaryHelp(_ presentation: AgentRowPresentation) -> String {
+        [summaryText(presentation), entry.cli.path, entry.cli.command]
+            .filter { !$0.isEmpty }
+            .joined(separator: "\n")
     }
 
     private func statusColor(_ presentation: AgentRowPresentation) -> Color {
         if presentation.statusIsError { return .orange }
-        return presentation.isConnected ? .green : .secondary
+        return presentation.isConnected ? .green : Color(nsColor: .tertiaryLabelColor)
     }
 
     private func connectHelp(_ presentation: AgentRowPresentation) -> String {
@@ -699,11 +692,54 @@ private struct AgentRowView: View {
     }
 }
 
+/// The agent's brand mark from the bundled AgentLogos folder, or an SF Symbol
+/// when the bundle has none for it.
+private struct AgentLogoView: View {
+    let agentID: String
+
+    var body: some View {
+        Group {
+            if let image = agentLogoImage(agentID) {
+                Image(nsImage: image)
+                    .resizable()
+                    .interpolation(.high)
+                    .aspectRatio(contentMode: .fit)
+            } else {
+                Image(systemName: "terminal")
+                    .font(.system(size: 18))
+                    .foregroundStyle(.secondary)
+            }
+        }
+        .frame(width: agentIconSize, height: agentIconSize)
+        .accessibilityHidden(true)
+    }
+}
+
+@MainActor
+private var agentLogoCache: [String: NSImage] = [:]
+
+@MainActor
+private func agentLogoImage(_ agentID: String) -> NSImage? {
+    if let cached = agentLogoCache[agentID] { return cached }
+    let directories = [
+        Bundle.main.resourceURL?.appendingPathComponent("AgentLogos", isDirectory: true),
+        Bundle.main.bundleURL.appendingPathComponent("AgentLogos", isDirectory: true),
+    ]
+    for directory in directories.compactMap({ $0 }) {
+        guard let image = NSImage(contentsOf: directory.appendingPathComponent("\(agentID).svg"))
+        else { continue }
+        image.isTemplate = monochromeAgentLogos.contains(agentID)
+        agentLogoCache[agentID] = image
+        return image
+    }
+    return nil
+}
+
 private struct AgentDetailPanel: View {
     let entry: AgentEntry
 
     var body: some View {
-        VStack(alignment: .leading, spacing: 6) {
+        VStack(alignment: .leading, spacing: 5) {
             detailRow("agentManagement.detail.version", entry.cli.version)
             detailRow("agentManagement.detail.latest", entry.cli.latest)
             detailRow("agentManagement.detail.via", entry.cli.via)
@@ -711,7 +747,6 @@ private struct AgentDetailPanel: View {
             detailRow("agentManagement.detail.command", entry.cli.command)
             detailRow("agentManagement.detail.appVersion", entry.cli.appVersion)
             detailRow("agentManagement.detail.mode", agentIntegrationModeText(entry.integration.mode))
-            detailRow("agentManagement.detail.integration", entry.integration.detail)
             detailRow("agentManagement.detail.error", entry.integration.error)
             detailRow("agentManagement.detail.cliError", entry.cli.error)
             detailRow(
@@ -719,11 +754,7 @@ private struct AgentDetailPanel: View {
                 agentDisconnectScopeText(entry)
             )
         }
-        .padding(.horizontal, 20)
-        .padding(.top, 4)
-        .padding(.bottom, 12)
         .frame(maxWidth: .infinity, alignment: .leading)
-        .background(Color(nsColor: .controlBackgroundColor).opacity(0.5))
     }
 
     @ViewBuilder
@@ -732,26 +763,15 @@ private struct AgentDetailPanel: View {
             HStack(alignment: .firstTextBaseline, spacing: 10) {
                 Text(AppLocalization.string(key))
                     .font(.caption)
-                    .foregroundStyle(.tertiary)
+                    .foregroundStyle(.secondary)
                     .frame(width: 96, alignment: .leading)
                 Text(value)
-                    .font(.caption.monospaced())
+                    .font(.caption)
                     .textSelection(.enabled)
+                    .fixedSize(horizontal: false, vertical: true)
                     .frame(maxWidth: .infinity, alignment: .leading)
             }
         }
-    }
-}
-
-private func agentSymbolName(_ id: String) -> String {
-    switch id {
-    case "codex": return "chevron.left.forwardslash.chevron.right"
-    case "claude": return "text.bubble"
-    case "claude-desktop": return "macwindow"
-    case "dsh": return "terminal"
-    case "opencode": return "curlybraces"
-    case "pi": return "function"
-    default: return "app"
     }
 }
 
@@ -781,9 +801,14 @@ final class AgentManagementWindowController: NSWindowController, NSWindowDelegat
         window.center()
         super.init(window: window)
         window.delegate = self
-        window.contentViewController = NSHostingController(
+        let hostingController = NSHostingController(
             rootView: AgentManagementView(model: model)
         )
+        if #available(macOS 14.0, *) {
+            // Let the SwiftUI toolbar become the window's native toolbar.
+            hostingController.sceneBridgingOptions = [.toolbars]
+        }
+        window.contentViewController = hostingController
         configurePersistentWindow(window)
     }
 
