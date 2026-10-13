@@ -50,3 +50,6 @@ app.*.map.json
 /assets/providers/
 /assets/tray_icon.ico
 /windows/runner/resources/app_icon.ico
+
+# Single-source Agent logos are mirrored from macos/assets/agents in CI.
+/assets/agents/

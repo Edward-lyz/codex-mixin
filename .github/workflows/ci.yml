@@ -103,6 +103,7 @@ jobs:
         if: runner.os == 'macOS'
         run: |
           ./scripts/test_agent_management.sh
+          ./scripts/test_agent_logos.sh
           ./scripts/test_launch_agent_bootstrap.sh
           ./scripts/test_liquid_glass_style.sh
           ./scripts/test_application_menu.sh

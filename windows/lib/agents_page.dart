@@ -4,6 +4,7 @@ import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
 import 'agent_models.dart';
+import 'agent_logo.dart';
 import 'cli.dart';
 import 'controller.dart';
 import 'theme.dart';
@@ -11,16 +12,6 @@ import 'widgets.dart';
 
 /// Windows error red, used for detection and upgrade failures.
 const _danger = Color(0xffd13438);
-
-IconData _agentIcon(String id) => switch (id) {
-  'codex' => Icons.terminal_rounded,
-  'claude' => Icons.psychology_outlined,
-  'claude-desktop' => Icons.desktop_windows_outlined,
-  'dsh' => Icons.dns_outlined,
-  'opencode' => Icons.code_rounded,
-  'pi' => Icons.functions_rounded,
-  _ => Icons.smart_toy_outlined,
-};
 
 /// Agent 接入管理：程序检测、接入状态、版本与升级，全部来自 `agent` CLI JSON。
 ///
@@ -425,10 +416,9 @@ class _AgentsPageState extends State<AgentsPage> {
             ),
             child: Row(
               children: [
-                Icon(
-                  _agentIcon(agent.id),
-                  size: 19,
-                  color: dimmed ? muted : const Color(0xff3f4247),
+                Opacity(
+                  opacity: dimmed ? .55 : 1,
+                  child: AgentLogo(agentID: agent.id, size: 24),
                 ),
                 const SizedBox(width: 10),
                 Expanded(child: _rowTitle(agent, dimmed)),
