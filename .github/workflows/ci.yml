@@ -121,6 +121,7 @@ jobs:
           ./scripts/test_application_lifecycle.sh
           ./scripts/test_codex_gateway_switch_state.sh
           ./scripts/test_status_refresh_coordinator.sh
+          ./scripts/test_user_shell_path.sh
       - name: Package macOS development app
         if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch'
         run: |

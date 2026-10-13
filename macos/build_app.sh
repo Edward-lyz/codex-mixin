@@ -165,6 +165,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/StatusRefreshCoordinator.swift" \
   "$ROOT_DIR/macos/ProcessOutputCollector.swift" \
   "$ROOT_DIR/macos/GatewayService.swift" \
+  "$ROOT_DIR/macos/UserShellPathSupport.swift" \
   "$ROOT_DIR/macos/GatewayStatusSupport.swift" \
   "$ROOT_DIR/macos/CodexGatewaySwitchSupport.swift" \
   "$ROOT_DIR/macos/GatewayLifecycleSupport.swift" \

@@ -88,6 +88,7 @@ extension AppDelegate {
                 for key in ignoredKeys {
                     environment.removeValue(forKey: key)
                 }
+                environment["PATH"] = userShellPATH
                 process.environment = environment
                 do {
                     let result = try runProcessCollectingOutput(
@@ -141,6 +142,9 @@ extension AppDelegate {
                 process.arguments = arguments
                 process.standardOutput = outputPipe
                 process.standardError = errorPipe
+                var environment = ProcessInfo.processInfo.environment
+                environment["PATH"] = userShellPATH
+                process.environment = environment
                 let collector = StreamingProcessOutputCollector(
                     progressPrefix: "MIXIN_PROGRESS ",
                     onProgress: onProgress

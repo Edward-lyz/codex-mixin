@@ -48,6 +48,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func applicationDidFinishLaunching(_ notification: Notification) {
         NSApp.setActivationPolicy(.accessory)
+        // Resolve the login shell PATH off the main thread before the first
+        // agent command needs it.
+        DispatchQueue.global(qos: .utility).async { _ = userShellPATH }
         applicationIconController.start(application: NSApp)
         updaterController = SPUStandardUpdaterController(
             updaterDelegate: self,
