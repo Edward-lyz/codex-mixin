@@ -40,6 +40,40 @@ struct AgentCLIInfo: Decodable, Equatable {
         case error
     }
 
+    init(
+        version: String,
+        latest: String,
+        via: String,
+        path: String,
+        command: String,
+        appVersion: String?,
+        update: Bool,
+        error: String?
+    ) {
+        self.version = version
+        self.latest = latest
+        self.via = via
+        self.path = path
+        self.command = command
+        self.appVersion = appVersion
+        self.update = update
+        self.error = error
+    }
+
+    /// The CLI serializes the version fields as nullable strings when it
+    /// cannot read them, so null and a missing key both mean "unknown" here.
+    init(from decoder: Decoder) throws {
+        let container = try decoder.container(keyedBy: CodingKeys.self)
+        version = try container.decodeIfPresent(String.self, forKey: .version) ?? ""
+        latest = try container.decodeIfPresent(String.self, forKey: .latest) ?? ""
+        via = try container.decodeIfPresent(String.self, forKey: .via) ?? ""
+        path = try container.decodeIfPresent(String.self, forKey: .path) ?? ""
+        command = try container.decodeIfPresent(String.self, forKey: .command) ?? ""
+        appVersion = try container.decodeIfPresent(String.self, forKey: .appVersion)
+        update = try container.decode(Bool.self, forKey: .update)
+        error = try container.decodeIfPresent(String.self, forKey: .error)
+    }
+
     /// The agent is configured but its command-line program is not there.
     var isMissing: Bool {
         version.isEmpty && path.isEmpty

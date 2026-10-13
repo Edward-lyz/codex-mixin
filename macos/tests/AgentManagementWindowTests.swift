@@ -105,6 +105,7 @@ struct AgentManagementWindowTests {
 
         testDecodesListContract()
         testRejectsMalformedJSON()
+        testDecodesNullableCLIFields()
         testOrderingAndGrouping()
         testRowPresentationCarriesStatusAndVersions()
         testCommandContract()
@@ -242,6 +243,96 @@ struct AgentManagementWindowTests {
             versionsFailed = true
         }
         precondition(versionsFailed)
+    }
+
+    /// The CLI serializes the version fields as nullable strings when it
+    /// cannot read them; null and a missing key must both land on "unknown"
+    /// instead of failing the whole list.
+    @MainActor
+    private static func testDecodesNullableCLIFields() {
+        let nullFields = """
+        {
+          "agents": [
+            {
+              "id": "codex",
+              "name": "Codex",
+              "detected": true,
+              "integration": {
+                "state": "unmanaged",
+                "mode": null,
+                "detail": "",
+                "error": null
+              },
+              "cli": {
+                "version": null,
+                "latest": null,
+                "via": null,
+                "path": null,
+                "command": null,
+                "app_version": null,
+                "update": false,
+                "error": null
+              }
+            }
+          ]
+        }
+        """
+        guard let response = try? decodeAgentList(nullFields) else {
+            preconditionFailure("nullable CLI fields must decode")
+        }
+        let entry = response.agents[0]
+        precondition(entry.cli.version.isEmpty)
+        precondition(entry.cli.latest.isEmpty)
+        precondition(entry.cli.via.isEmpty)
+        precondition(entry.cli.path.isEmpty)
+        precondition(entry.cli.command.isEmpty)
+        precondition(entry.cli.appVersion == nil)
+        precondition(entry.cli.update == false)
+        precondition(entry.cli.error == nil)
+        precondition(entry.cli.isMissing)
+        let row = agentRowPresentation(for: entry, isBusy: false)
+        precondition(row.cliVersionText == nil)
+        precondition(row.updateText == nil)
+
+        let missingFields = """
+        {"agents":[{"id":"pi","name":"Pi","detected":false,"integration":{"state":"unmanaged","mode":null,"detail":"","error":null},"cli":{"update":false}}]}
+        """
+        guard let missingResponse = try? decodeAgentList(missingFields) else {
+            preconditionFailure("missing CLI fields must decode as unknown")
+        }
+        precondition(missingResponse.agents[0].cli.version.isEmpty)
+        precondition(missingResponse.agents[0].cli.latest.isEmpty)
+        precondition(missingResponse.agents[0].cli.command.isEmpty)
+        precondition(missingResponse.agents[0].cli.isMissing)
+
+        let nullVersions = """
+        {"agents":[{"id":"codex","cli":{"version":null,"latest":null,"via":null,"path":null,"command":null,"app_version":null,"update":false,"error":null}}]}
+        """
+        guard let versions = try? decodeAgentVersions(nullVersions) else {
+            preconditionFailure("nullable CLI fields in agent versions must decode")
+        }
+        precondition(versions.agents[0].cli.version.isEmpty)
+        precondition(versions.agents[0].cli.update == false)
+
+        let nullUpgrade = """
+        {"id":"codex","cli":{"version":null,"latest":null,"via":null,"path":null,"command":null,"update":false}}
+        """
+        guard let upgrade = try? decodeAgentUpgrade(nullUpgrade) else {
+            preconditionFailure("nullable CLI fields in agent upgrade must decode")
+        }
+        precondition(upgrade.cli.version.isEmpty)
+        precondition(upgrade.cli.appVersion == nil)
+        precondition(upgrade.cli.error == nil)
+
+        var missingUpdateFailed = false
+        do {
+            _ = try decodeAgentList("""
+            {"agents":[{"id":"codex","name":"Codex","detected":true,"integration":{"state":"unmanaged","mode":null,"detail":"","error":null},"cli":{"version":"1.0.0","latest":"1.0.0","via":"npm","path":"/bin/codex","command":"npm i -g codex"}}]}
+            """)
+        } catch {
+            missingUpdateFailed = true
+        }
+        precondition(missingUpdateFailed, "update is required: a missing flag must fail fast")
     }
 
     // MARK: - Ordering and presentation
