@@ -17,6 +17,8 @@ pub(super) fn describe(json_output: bool) -> anyhow::Result<()> {
         },
         "capabilities": {
             "structured_errors": true,
+            "agent_management": true,
+            "agent_versions": true,
             "fusion_model_options": true,
             "service_lifecycle": true,
             "codex_lifecycle": true,

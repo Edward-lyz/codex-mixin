@@ -187,3 +187,19 @@ fn macos_bridge_commands_accept_multi_provider_arguments() {
     );
     assert!(Cli::try_parse_from(["codex-mixin", "fusion", "delete", "--id", "default"]).is_ok());
 }
+
+#[test]
+fn agent_management_machine_commands_parse() {
+    for args in [
+        vec!["agent", "list", "--json"],
+        vec!["agent", "versions", "--json", "--refresh"],
+        vec!["agent", "upgrade", "codex", "--json"],
+        vec!["agent", "upgrade", "--all", "--json"],
+        vec!["agent", "connect", "codex", "--mode", "official-account"],
+        vec!["agent", "disconnect", "pi"],
+    ] {
+        assert!(Cli::try_parse_from(std::iter::once("codex-mixin").chain(args)).is_ok());
+    }
+    assert!(Cli::try_parse_from(["codex-mixin", "agent", "upgrade", "codex", "--all"]).is_err());
+    assert!(Cli::try_parse_from(["codex-mixin", "agent", "disconnect", "unsupported"]).is_err());
+}

@@ -69,7 +69,9 @@ fn default_opencode_config_path() -> PathBuf {
         .join("opencode.json")
 }
 
-fn resolve_opencode_config_path(config_path: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+pub(in crate::cli) fn resolve_opencode_config_path(
+    config_path: Option<PathBuf>,
+) -> anyhow::Result<PathBuf> {
     std::path::absolute(config_path.unwrap_or_else(default_opencode_config_path))
         .map_err(Into::into)
 }
