@@ -95,6 +95,23 @@ Codex Mixin 是一个跨平台的 Rust 本地网关，提供 Windows 桌面 App�
 | OpenCode Go | OpenAI Responses |
 | AWS Bedrock | Anthropic Messages |
 
+### 编译时客户端认证
+
+默认构建关闭网关入站 auth key 校验，客户端无需携带网关 key 或专用客户端 key 即可发送请求，包括 Claude Desktop 和 DUCX 路由。已有客户端配置和 key 仍可使用。Provider API key 和官方账号的上游认证仍然需要。
+
+```bash
+cargo build --locked --release
+```
+
+启用 `client-auth` feature 可恢复现有网关 key、客户端专用 key 和 Codex OAuth 校验规则：
+
+```bash
+cargo build --locked --release --features client-auth
+CARGO_BUILD_FEATURES=client-auth ./macos/build_app.sh
+```
+
+这是编译选项；修改运行时配置不会开启默认构建中的校验。
+
 ### 文档
 
 完整安装、配置和排障资料维护在 [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki)：
@@ -142,6 +159,27 @@ Codex Mixin is a cross-platform local gateway built in Rust. It provides a Windo
 | DeepSeek | OpenAI Chat Completions |
 | OpenCode Go | OpenAI Responses |
 | AWS Bedrock | Anthropic Messages |
+
+### Client authentication at build time
+
+The default build accepts gateway requests without a gateway key or a client key,
+including Claude Desktop and DUCX routes. Existing client keys remain usable.
+Provider API keys and official account authentication are still required upstream.
+
+```bash
+cargo build --locked --release
+```
+
+Enable `client-auth` to restore the existing gateway key, client key, and Codex
+OAuth checks:
+
+```bash
+cargo build --locked --release --features client-auth
+CARGO_BUILD_FEATURES=client-auth ./macos/build_app.sh
+```
+
+This is a build option. Runtime configuration cannot enable these checks in the
+default build.
 
 ### Documentation
 

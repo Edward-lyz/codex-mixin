@@ -5005,6 +5005,77 @@ async fn maps_deferred_tool_search_back_to_codex_call() {
 }
 
 #[tokio::test]
+async fn responses_auth_obeys_build_feature() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    config.accept_codex_oauth = false;
+    let gateway_url = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+    for key in [None, Some("copied-key"), Some("gateway-key")] {
+        let allowed = !cfg!(feature = "client-auth") || key == Some("gateway-key");
+        let mut request = client.post(format!("{gateway_url}/v1/responses"));
+        if let Some(key) = key {
+            request = request.bearer_auth(key);
+        }
+        let response = request.json(&responses_request()).send().await.unwrap();
+        if allowed {
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(
+                response
+                    .text()
+                    .await
+                    .unwrap()
+                    .contains("response.completed")
+            );
+        } else {
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        }
+
+        let mut request = format!(
+            "{}/v1/responses",
+            gateway_url.replacen("http://", "ws://", 1)
+        )
+        .into_client_request()
+        .unwrap();
+        if let Some(key) = key {
+            request.headers_mut().insert(
+                header::AUTHORIZATION,
+                format!("Bearer {key}").parse().unwrap(),
+            );
+        }
+        let connection = connect_async(request).await;
+        if allowed {
+            let (mut socket, _) = connection.unwrap();
+            let mut body = responses_request();
+            body["type"] = json!("response.create");
+            socket
+                .send(WsMessage::Text(body.to_string().into()))
+                .await
+                .unwrap();
+            let frames = tokio::time::timeout(
+                Duration::from_secs(5),
+                websocket_response_frames(&mut socket),
+            )
+            .await
+            .unwrap()
+            .join("\n");
+            assert!(frames.contains("response.completed"), "{frames}");
+        } else {
+            match connection.unwrap_err() {
+                tokio_tungstenite::tungstenite::Error::Http(response) => {
+                    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+                }
+                error => panic!("unexpected WebSocket error: {error}"),
+            }
+        }
+    }
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        if cfg!(feature = "client-auth") { 2 } else { 6 }
+    );
+}
+
+#[tokio::test]
 async fn maps_custom_websocket_to_responses_frames() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let mut config = test_config(upstream_url);
@@ -7917,7 +7988,7 @@ async fn retries_official_websocket_with_materialized_agent_messages() {
 }
 
 #[tokio::test]
-async fn claude_desktop_routes_aliases_and_requires_its_own_key() {
+async fn claude_desktop_auth_obeys_build_feature() {
     use codex_mixin::clients::claude_desktop::route_id;
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let mut config = test_config(upstream_url);
@@ -7929,16 +8000,30 @@ async fn claude_desktop_routes_aliases_and_requires_its_own_key() {
         "stream": true, "messages": [{"role":"user", "content":"say hi"}]
     });
     let endpoint = format!("{gateway_url}/claude-desktop/v1/messages");
-    for key in ["gateway-key", "copied-key"] {
-        let response = client
-            .post(&endpoint)
-            .bearer_auth(key)
-            .json(&request)
-            .send()
-            .await
-            .unwrap();
-        assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+    for key in [None, Some("gateway-key"), Some("copied-key")] {
+        let mut request_builder = client.post(&endpoint);
+        if let Some(key) = key {
+            request_builder = request_builder.bearer_auth(key);
+        }
+        let response = request_builder.json(&request).send().await.unwrap();
+        if cfg!(feature = "client-auth") {
+            assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+        } else {
+            assert_eq!(response.status(), StatusCode::OK);
+            assert!(
+                response
+                    .text()
+                    .await
+                    .unwrap()
+                    .contains("event: message_stop")
+            );
+        }
     }
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        if cfg!(feature = "client-auth") { 0 } else { 3 }
+    );
+    requests.lock().unwrap().clear();
     let mut invalid = request.clone();
     invalid["model"] = json!("claude-sonnet-mixin-ff");
     let response = client

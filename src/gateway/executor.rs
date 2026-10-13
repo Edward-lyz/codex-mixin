@@ -168,7 +168,7 @@ impl GatewayExecutor {
         provider: &ProviderRuntime,
         headers: &HeaderMap,
     ) -> Result<(), GatewayError> {
-        if !provider.uses_ducx_loopback() {
+        if !cfg!(feature = "client-auth") || !provider.uses_ducx_loopback() {
             return Ok(());
         }
         self.config

@@ -13,6 +13,9 @@ pub(super) async fn check_gateway_auth(
 ) -> Result<(), GatewayError> {
     use subtle::ConstantTimeEq;
 
+    if !cfg!(feature = "client-auth") {
+        return Ok(());
+    }
     let Some(expected) = &state.config.gateway_api_key else {
         return Ok(());
     };
@@ -58,7 +61,7 @@ pub(crate) fn require_ducx_client(
     provider: &ProviderRuntime,
     headers: &HeaderMap,
 ) -> Result<(), GatewayError> {
-    if !provider.uses_ducx_loopback() {
+    if !cfg!(feature = "client-auth") || !provider.uses_ducx_loopback() {
         return Ok(());
     }
     state

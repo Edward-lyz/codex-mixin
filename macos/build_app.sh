@@ -38,6 +38,10 @@ if [[ -n "${CARGO_BUILD_TARGET:-}" ]]; then
   TARGET_DIR="$ROOT_DIR/target/$CARGO_BUILD_TARGET/release"
 fi
 
+if [[ -n "${CARGO_BUILD_FEATURES:-}" ]]; then
+  CARGO_BUILD_ARGS+=(--features "$CARGO_BUILD_FEATURES")
+fi
+
 case "${CARGO_BUILD_TARGET:-}" in
   "")
     SWIFT_ARCH="$(uname -m)"

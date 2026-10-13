@@ -190,7 +190,7 @@ fn native_message_request_normalizes_anthropic_fields() {
 }
 
 #[tokio::test]
-async fn gateway_auth_accepts_only_the_configured_key_or_actual_codex_oauth_token() {
+async fn gateway_auth_obeys_build_feature() {
     let directory = tempfile::tempdir().unwrap();
     let auth_path = directory.path().join("auth.json");
     tokio::fs::write(
@@ -199,18 +199,25 @@ async fn gateway_auth_accepts_only_the_configured_key_or_actual_codex_oauth_toke
     )
     .await
     .unwrap();
+    let mut ducx = crate::provider::baidu_oneapi_provider("ducx", "upstream-key");
+    ducx.quota_username = Some("test-user".to_owned());
+    ducx.request_policy.baidu_auth_bridge = Some(crate::provider::BaiduAuthBridge::DucxLoopback);
     let state = AppState::new(GatewayConfig {
         bind: "127.0.0.1:8787".parse().unwrap(),
-        providers: vec![test_provider(
-            "https://example.invalid".to_owned(),
-            "test-model",
-        )],
+        providers: vec![
+            test_provider("https://example.invalid".to_owned(), "test-model"),
+            ducx,
+        ],
         official_responses_url: "https://example.invalid/responses".to_owned(),
         codex_auth_path: auth_path,
         gateway_api_key: Some("gateway-secret".to_owned()),
         gateway_client_keys: crate::gateway_access::GatewayClientKeys {
+            codex: Some("codex-client-key".to_owned()),
             claude: Some("claude-client-key".to_owned()),
-            ..Default::default()
+            claude_desktop: Some("desktop-client-key".to_owned()),
+            dsh: Some("dsh-client-key".to_owned()),
+            opencode: Some("opencode-client-key".to_owned()),
+            pi: Some("pi-client-key".to_owned()),
         },
         accept_codex_oauth: true,
         official_ech_fallback_reason: None,
@@ -227,7 +234,15 @@ async fn gateway_auth_accepts_only_the_configured_key_or_actual_codex_oauth_toke
     })
     .unwrap();
 
-    for token in ["gateway-secret", "oauth-secret", "claude-client-key"] {
+    for token in [
+        "gateway-secret",
+        "oauth-secret",
+        "claude-client-key",
+        "desktop-client-key",
+        "dsh-client-key",
+        "opencode-client-key",
+        "pi-client-key",
+    ] {
         let mut headers = HeaderMap::new();
         headers.insert(
             header::AUTHORIZATION,
@@ -235,16 +250,56 @@ async fn gateway_auth_accepts_only_the_configured_key_or_actual_codex_oauth_toke
         );
         assert!(check_gateway_auth(&state, &headers).await.is_ok());
     }
-    let mut headers = HeaderMap::new();
-    headers.insert(header::AUTHORIZATION, "Bearer arbitrary".parse().unwrap());
-    assert!(matches!(
-        check_gateway_auth(&state, &headers).await,
-        Err(GatewayError::Unauthorized)
-    ));
+    for authorization in [None, Some("Bearer arbitrary"), Some("Basic arbitrary")] {
+        let mut headers = HeaderMap::new();
+        if let Some(authorization) = authorization {
+            headers.insert(header::AUTHORIZATION, authorization.parse().unwrap());
+        }
+        let result = check_gateway_auth(&state, &headers).await;
+        if cfg!(feature = "client-auth") {
+            assert!(matches!(result, Err(GatewayError::Unauthorized)));
+        } else {
+            assert!(result.is_ok());
+        }
+    }
+
+    let provider = state.provider("ducx").unwrap();
+    for (header_name, token, installed_client) in [
+        (header::AUTHORIZATION, None, false),
+        (header::AUTHORIZATION, Some("Bearer arbitrary"), false),
+        (header::AUTHORIZATION, Some("Bearer gateway-secret"), false),
+        (
+            header::AUTHORIZATION,
+            Some("Bearer claude-client-key"),
+            true,
+        ),
+        (
+            crate::gateway_access::CODEX_CLIENT_KEY_HEADER
+                .parse()
+                .unwrap(),
+            Some("codex-client-key"),
+            true,
+        ),
+    ] {
+        let mut headers = HeaderMap::new();
+        if let Some(token) = token {
+            headers.insert(header_name, token.parse().unwrap());
+        }
+        for result in [
+            require_ducx_client(&state, provider, &headers),
+            state.gateway.require_ducx_client(provider, &headers),
+        ] {
+            if cfg!(feature = "client-auth") && !installed_client {
+                assert!(matches!(result, Err(GatewayError::Unauthorized)));
+            } else {
+                assert!(result.is_ok());
+            }
+        }
+    }
 }
 
 #[tokio::test]
-async fn usage_endpoint_requires_auth_and_returns_recorded_provider_usage() {
+async fn usage_auth_obeys_build_feature() {
     let directory = tempfile::tempdir().unwrap();
     let state = AppState::with_usage_aggregator(
         GatewayConfig {
@@ -282,7 +337,14 @@ async fn usage_endpoint_requires_auth_and_returns_recorded_provider_usage() {
         .send()
         .await
         .unwrap();
-    assert_eq!(unauthorized.status(), StatusCode::UNAUTHORIZED);
+    assert_eq!(
+        unauthorized.status(),
+        if cfg!(feature = "client-auth") {
+            StatusCode::UNAUTHORIZED
+        } else {
+            StatusCode::OK
+        }
+    );
     let body: Value = client
         .get(format!("http://{address}/v1/usage"))
         .bearer_auth("gateway-key")

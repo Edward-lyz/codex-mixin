@@ -225,6 +225,7 @@ async fn first_start_accepts_client_key_created_during_client_sync() {
 /// only reaches a running gateway by reload. Without that reload a client the
 /// user just installed authenticates with the fresh key and gets
 /// `401 unauthorized` until the gateway restarts.
+#[cfg(feature = "client-auth")]
 #[tokio::test]
 async fn running_gateway_serves_a_rotated_client_key() {
     let directory = tempfile::tempdir().unwrap();

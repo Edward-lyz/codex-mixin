@@ -55,6 +55,14 @@ jobs:
           ./scripts/test_check_arch.sh
       - name: Run unit and integration tests
         run: cargo test --locked --all-targets
+      - name: Check client auth build
+        run: |
+          cargo clippy --locked --all-targets --features client-auth -- \
+            -D clippy::cognitive_complexity \
+            -D clippy::redundant_closure_for_method_calls \
+            -D clippy::redundant_pattern_matching \
+            -D warnings
+          cargo test --locked --all-targets --features client-auth
       - name: Run prompt cache prefix E2E
         run: ./scripts/e2e_prompt_cache.sh
       - name: Build static Linux CLI

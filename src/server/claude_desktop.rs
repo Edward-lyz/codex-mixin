@@ -4,7 +4,9 @@ use crate::gateway_access::GatewayClient;
 
 async fn check_auth(state: &AppState, headers: &HeaderMap) -> Result<(), GatewayError> {
     super::auth::check_gateway_auth(state, headers).await?;
-    if state.config.gateway_client_keys.authenticate(headers) != Some(GatewayClient::ClaudeDesktop)
+    if cfg!(feature = "client-auth")
+        && state.config.gateway_client_keys.authenticate(headers)
+            != Some(GatewayClient::ClaudeDesktop)
     {
         return Err(GatewayError::Unauthorized);
     }

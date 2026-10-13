@@ -4,6 +4,10 @@ version = "0.7.2"
 edition = "2024"
 license-file = "LICENSE"
 
+[features]
+default = []
+client-auth = []
+
 [lints.rust]
 unsafe_code = "forbid"
 
