@@ -15,11 +15,11 @@ enum LaunchAtLoginAction: Equatable {
 }
 
 struct LaunchAtLoginState: Equatable {
-    let platformSupportsStartupService: Bool
-    let bundlePathIsStable: Bool
-    let launchAgentInstalled: Bool
-    let systemDisabled: Bool
-    let defaultAppliedMarkerExists: Bool
+    var platformSupportsStartupService: Bool
+    var bundlePathIsStable: Bool
+    var launchAgentInstalled: Bool
+    var systemDisabled: Bool
+    var defaultAppliedMarkerExists: Bool
 }
 
 /// Launch at login is on by default, but the app applies that default once:

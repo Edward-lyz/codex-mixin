@@ -110,7 +110,7 @@ struct AgentManagementWindowTests {
         testRowPresentationCarriesStatusAndVersions()
         testCommandContract()
         testDisconnectConfirmationStatesRestoreScope()
-        testWindowBuildsContentAndFoldStartsClosed()
+        await testWindowBuildsContentAndFoldStartsClosed()
         await testRefreshMergesVersions()
         await testSingleUpgradeUpdatesRowAndBlocksReentry()
         await testUpgradeFailureReportsError()
@@ -480,7 +480,7 @@ struct AgentManagementWindowTests {
     }
 
     @MainActor
-    private static func testWindowBuildsContentAndFoldStartsClosed() {
+    private static func testWindowBuildsContentAndFoldStartsClosed() async {
         let model = makeModel(
             list: [
                 upgradableEntry(id: "codex", name: "Codex"),
@@ -499,7 +499,10 @@ struct AgentManagementWindowTests {
         }
         precondition(window.title == "Agent Connections")
         precondition(window.minSize.width >= 720)
-        precondition(!descendantViews(of: NSView.self, in: contentView).isEmpty)
+        // SwiftUI draws without AppKit subviews; check that it hosts content.
+        precondition(window.contentViewController?.view === contentView)
+        precondition(contentView.fittingSize.width > 0)
+        await model.reload()
         precondition(model.detectedEntries.count == 2)
         precondition(model.undetectedEntries.count == 1)
         precondition(model.undetectedFoldTitle == "Agents not detected (1)")
@@ -858,15 +861,4 @@ struct AgentManagementWindowTests {
             confirmHandler: { _, _ in false }
         )
     }
-}
-
-private func descendantViews<T: NSView>(of type: T.Type, in view: NSView) -> [T] {
-    var found: [T] = []
-    for subview in view.subviews {
-        if let match = subview as? T {
-            found.append(match)
-        }
-        found.append(contentsOf: descendantViews(of: type, in: subview))
-    }
-    return found
 }
