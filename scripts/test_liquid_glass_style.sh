@@ -22,7 +22,8 @@ for file in \
   macos/ProviderSettingsWindow.swift \
   macos/FusionSettingsWindow.swift \
   macos/SettingsPanel.swift \
-  macos/InstallCodexPanel.swift \
+  macos/CodexConnectPanel.swift \
+  macos/AgentManagementWindow.swift \
   macos/AboutWindow.swift \
   macos/InstallProgressWindow.swift \
   macos/InstallCard.swift \

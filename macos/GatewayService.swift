@@ -117,42 +117,6 @@ extension AppDelegate {
         }
     }
 
-    @objc func toggleLaunchAtLogin() {
-        serviceBusy = true
-        Task { @MainActor in
-            defer { serviceBusy = false }
-            do {
-                try await runOperationProgress(
-                    title: "正在更新登录自启",
-                    phases: ["更新登录启动", "应用网关状态", "完成"],
-                    successTitle: "✓ 登录自启已更新",
-                    failureTitle: "✗ 更新失败",
-                    showFailureAlert: true,
-                    failureAlertTitle: "更新登录自启失败"
-                ) { progress in
-                    progress.advance(to: 0)
-                    let enabled = !FileManager.default.fileExists(atPath: menuLaunchAgentPath().path)
-                    _ = try await runGateway([
-                        "service", "autostart", enabled ? "enable" : "disable", "--json",
-                    ])
-                    progress.advance(to: 1)
-                    if enabled {
-                        try installMenuLaunchAgent()
-                    } else {
-                        try await bootoutIfLoaded(menuLaunchDomainAndLabel())
-                        if FileManager.default.fileExists(atPath: menuLaunchAgentPath().path) {
-                            try FileManager.default.removeItem(at: menuLaunchAgentPath())
-                        }
-                    }
-                    progress.advance(to: 2)
-                    await refreshStatusNow()
-                }
-            } catch {
-                // Failure already shown by the progress window + alert.
-            }
-        }
-    }
-
     @objc func refreshStatus() {
         Task { @MainActor in
             await refreshStatusNow()

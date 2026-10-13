@@ -17,43 +17,6 @@ extension AppDelegate {
         controller.present()
     }
 
-    @objc func runAutomaticDoctor() {
-        guard !serviceBusy, !automaticDoctorBusy else { return }
-        automaticDoctorBusy = true
-        serviceBusy = true
-        serviceStatus = "正在健康检测和修复..."
-        Task { @MainActor in
-            defer {
-                automaticDoctorBusy = false
-                serviceBusy = false
-            }
-            do {
-                try await runOperationProgress(
-                    title: "正在健康检测和修复",
-                    phases: [
-                        "运行 doctor --fix --quick",
-                        "刷新状态",
-                        "完成",
-                    ],
-                    successTitle: "✓ 检测完成",
-                    failureTitle: "✗ 检测失败",
-                    showFailureAlert: true,
-                    failureAlertTitle: "健康检测和修复失败"
-                ) { progress in
-                    progress.advance(to: 0)
-                    let report = try await runGateway(["doctor", "--fix", "--quick"])
-                    appendDiagnosticLog("Health check and repair report\n\(report)")
-                    progress.advance(to: 1)
-                    await refreshStatusNow()
-                    progress.advance(to: 2)
-                    showDiagnosticReport(title: "Codex Mixin 健康检测和修复", report: report)
-                }
-            } catch {
-                // Failure already shown by the progress window + alert.
-            }
-        }
-    }
-
     @objc func configureLogin() {
         if providerSettingsWindowController == nil {
             providerSettingsWindowController = ProviderSettingsWindowController(
@@ -380,5 +343,24 @@ extension AppDelegate {
             ModelBenchmarkSnapshotEnvelope.self,
             from: Data(output.utf8)
         ).snapshot
+    }
+
+    @objc func copyLocalEndpoint() {
+        Task { @MainActor in
+            do {
+                let output = try await runGateway(["config", "--json", "--scope", "effective"])
+                let data = Data(output.utf8)
+                guard
+                    let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                    let bind = object["bind"] as? String
+                else {
+                    throw GatewayError.command("无法从有效配置中读取本地网关端口")
+                }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString("http://\(bind)/v1", forType: .string)
+            } catch {
+                showAlert(title: "复制本地接口失败", message: String(describing: error))
+            }
+        }
     }
 }

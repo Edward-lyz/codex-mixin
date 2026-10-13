@@ -169,10 +169,13 @@ xcrun swiftc \
   "$ROOT_DIR/macos/CodexGatewaySwitchSupport.swift" \
   "$ROOT_DIR/macos/GatewayLifecycleSupport.swift" \
   "$ROOT_DIR/macos/LaunchAgentBootstrapSupport.swift" \
+  "$ROOT_DIR/macos/LaunchAtLoginSupport.swift" \
   "$ROOT_DIR/macos/GatewayProcessSupport.swift" \
   "$ROOT_DIR/macos/GatewayLaunchAgentSupport.swift" \
   "$ROOT_DIR/macos/SettingsActions.swift" \
-  "$ROOT_DIR/macos/CodexActions.swift" \
+  "$ROOT_DIR/macos/AgentManagementSupport.swift" \
+  "$ROOT_DIR/macos/AgentManagementActions.swift" \
+  "$ROOT_DIR/macos/AgentManagementWindow.swift" \
   "$ROOT_DIR/macos/UpdateController.swift" \
   "$ROOT_DIR/macos/UpdateSupport.swift" \
   "$ROOT_DIR/macos/UpdateWatchdog.swift" \
@@ -194,7 +197,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/ProviderSettingsView.swift" \
   "$ROOT_DIR/macos/AboutWindow.swift" \
   "$ROOT_DIR/macos/InstallCard.swift" \
-  "$ROOT_DIR/macos/InstallCodexPanel.swift" \
+  "$ROOT_DIR/macos/CodexConnectPanel.swift" \
   "$ROOT_DIR/macos/InstallProgressWindow.swift" \
   "$ROOT_DIR/macos/QuotaSupport.swift" \
   "$ROOT_DIR/macos/Localization.swift" \

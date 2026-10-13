@@ -9,12 +9,12 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var statusItem: NSStatusItem?
     var serviceStatusItem: NSMenuItem?
     var providerUsageDashboardView: ProviderUsageDashboardView?
-    var launchAtLoginMenuItem: NSMenuItem?
     var echMenuItem: NSMenuItem?
     var providerSettingsWindowController: ProviderSettingsWindowController?
     var fusionSettingsWindowController: FusionSettingsWindowController?
     var aboutWindowController: AboutWindowController?
     var installCardWindowController: InstallCardWindowController?
+    var agentManagementWindowController: AgentManagementWindowController?
     let menuItemViewUpdater = MenuItemViewUpdater()
     var refreshTimer: RefreshTimerController?
     var refreshLifecycleObservers: [NSObjectProtocol] = []
@@ -29,7 +29,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     }
     var echFallbackReason: String?
     var presentedEchFallbackReason: String?
-    var automaticDoctorBusy = false
     lazy var statusRefreshCoordinator = StatusRefreshCoordinator { [weak self] isCurrent in
         await self?.performStatusRefresh(isCurrent: isCurrent)
     }
@@ -62,6 +61,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 await self?.refreshMenuStatus()
             }
         }
+        applyDefaultLaunchAtLogin()
         startGatewayAtLaunch()
         installRefreshLifecycleObservers()
         startRefreshTimer()
@@ -192,9 +192,11 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateTokenUsageStatus(title: "Token 使用：检查中...", detail: nil, progress: nil)
         menu.addItem(.separator())
         menu.addItem(actionItem("模型与服务…", #selector(configureLogin), "square.grid.2x2"))
-        launchAtLoginMenuItem = actionItem("登录时启动并开启服务", #selector(toggleLaunchAtLogin), "poweron")
-        menu.addItem(launchAtLoginMenuItem!)
-        menu.addItem(actionItem("健康检测和修复...", #selector(runAutomaticDoctor), "stethoscope"))
+        menu.addItem(actionItem(
+            AppLocalization.string("agentManagement.menuTitle"),
+            #selector(showAgentManagement),
+            "person.2"
+        ))
         menu.addItem(.separator())
         echMenuItem = actionItem("启用 ECH 代理访问 GPT", #selector(configureEchAccess), "network")
         menu.addItem(submenuItem("高级", symbolName: "gearshape.2", items: [
@@ -203,20 +205,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             actionItem("手动触发上报…", #selector(manuallyReportSessions), "arrow.triangle.2.circlepath"),
             actionItem("导入配置备份…", #selector(importConfigBackup), "square.and.arrow.down"),
             actionItem("导出配置备份…", #selector(exportConfigBackup), "square.and.arrow.up")
-        ]))
-        menu.addItem(submenuItem("安装与恢复", symbolName: "square.and.arrow.down", items: [
-            actionItem("安装到 Codex...", #selector(installCodexConfig), "square.and.arrow.down"),
-            actionItem("从 Codex 恢复...", #selector(uninstallCodexConfig), "arrow.uturn.backward.circle"),
-            actionItem("安装到 Claude Code...", #selector(installClaudeCode), "square.and.arrow.down"),
-            actionItem("从 Claude Code 恢复...", #selector(uninstallClaudeCode), "arrow.uturn.backward.circle"),
-            actionItem("安装到 Claude Desktop...", #selector(installClaudeDesktop), "square.and.arrow.down"),
-            actionItem("从 Claude Desktop 恢复...", #selector(uninstallClaudeDesktop), "arrow.uturn.backward.circle"),
-            actionItem("安装到 DSH...", #selector(installDsh), "square.and.arrow.down"),
-            actionItem("从 DSH 卸载...", #selector(uninstallDsh), "arrow.uturn.backward.circle"),
-            actionItem("安装到 OpenCode...", #selector(installOpenCode), "square.and.arrow.down"),
-            actionItem("从 OpenCode 卸载...", #selector(uninstallOpenCode), "arrow.uturn.backward.circle"),
-            actionItem("安装到 Pi...", #selector(installPi), "square.and.arrow.down"),
-            actionItem("从 Pi 卸载...", #selector(uninstallPi), "arrow.uturn.backward.circle")
         ]))
         menu.addItem(submenuItem("关于", symbolName: "info.circle", items: [
             actionItem("关于 Codex Mixin...", #selector(showAbout), "info.circle"),
@@ -292,7 +280,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
 
     func updateActionStates() {
         updateServiceStatusView()
-        launchAtLoginMenuItem?.state = FileManager.default.fileExists(atPath: menuLaunchAgentPath().path) ? .on : .off
     }
 
     @objc func toggleGateway(_ sender: GatewaySwitchControl) {

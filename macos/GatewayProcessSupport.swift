@@ -49,15 +49,17 @@ extension AppDelegate {
         return rawPaths.compactMapValues { $0 as? String }
     }
 
-    func bootoutIfLoaded(_ domainAndLabel: String) async throws {
-        do {
-            _ = try await runProcess("/bin/launchctl", ["bootout", domainAndLabel])
-        } catch {
-            let message = String(describing: error)
-            if !message.contains("No such process") && !message.contains("Could not find service") {
-                throw error
-            }
+    func interfaceCapabilities() async throws -> [String: Bool] {
+        let output = try await runGateway(["interface", "--json"])
+        let data = Data(output.utf8)
+        guard
+            let response = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+            response["protocol_version"] as? Int == 1,
+            let rawCapabilities = response["capabilities"] as? [String: Any]
+        else {
+            throw GatewayError.command("CLI interface response has an invalid schema")
         }
+        return rawCapabilities.compactMapValues { $0 as? Bool }
     }
 
     func runProcess(_ executable: String, _ arguments: [String]) async throws -> String {
@@ -188,9 +190,5 @@ extension AppDelegate {
 
     func launchDomain() -> String {
         "gui/\(getuid())"
-    }
-
-    func menuLaunchDomainAndLabel() -> String {
-        "\(launchDomain())/\(menuLaunchLabel)"
     }
 }
