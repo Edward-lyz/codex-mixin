@@ -6,7 +6,10 @@
 //! it. The newest version comes from the source that would update it (npm or
 //! Homebrew); when that cannot be read, `latest` stays `None` and `error`
 //! says why, so an unknown version is never shown as up to date. One agent is
-//! upgraded at a time, in this process and across processes.
+//! upgraded at a time, in this process and across processes. Version and
+//! newest-version answers are cached in this process only, so a fresh CLI
+//! invocation asks the local sources again and stays true of the machine as
+//! it is now.
 
 use std::collections::{HashMap, HashSet};
 use std::path::{Path, PathBuf};
@@ -73,8 +76,9 @@ pub struct AgentCliInfo {
     pub error: Option<String>,
 }
 
-/// One row of [`check_versions`].
-#[derive(Clone, Debug, Eq, PartialEq, Serialize, Deserialize)]
+/// One row of [`check_versions`]. `Default` is what serde fills a missing
+/// field of a row with.
+#[derive(Clone, Debug, Default, Eq, PartialEq, Serialize, Deserialize)]
 #[serde(default)]
 pub struct AgentVersionEntry {
     pub id: String,
@@ -683,8 +687,9 @@ struct CacheEntry {
     expires: Instant,
 }
 
-/// Answers that took a process or a request to get, kept per key. Concurrent
-/// misses for the same key may ask twice; the answers are the same.
+/// Answers that took a process or a request to get, kept per key for as long
+/// as this process lives. Concurrent misses for the same key may ask twice;
+/// the answers are the same.
 #[derive(Default)]
 struct Cache {
     entries: Mutex<HashMap<String, CacheEntry>>,
@@ -905,8 +910,8 @@ fn brew_latest_blocking(brew: &Path, package: &str, cask: bool) -> anyhow::Resul
         .arg(package)
         .env("HOMEBREW_NO_AUTO_UPDATE", "1")
         .env("HOMEBREW_NO_ENV_HINTS", "1");
-    let outcome =
-        platform::agent_cli::run_command(command, BREW_TIMEOUT, &format!("brew info {package}"))?;
+    let what = format!("{} info {package}", brew.display());
+    let outcome = platform::agent_cli::run_command(command, BREW_TIMEOUT, &what)?;
     brew_info_version(&outcome.stdout, package)
 }
 

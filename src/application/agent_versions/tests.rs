@@ -248,6 +248,38 @@ fn a_newer_latest_marks_the_update() {
     assert_eq!(info.error, None);
 }
 
+#[tokio::test]
+async fn a_failing_latest_lookup_is_reported_and_not_up_to_date() {
+    let directory = tempfile::tempdir().unwrap();
+    let package = "codex-agent-versions-test";
+    let updater = Updater {
+        via: "brew",
+        program: directory.path().join("missing-brew"),
+        args: vec!["upgrade".to_owned(), package.to_owned()],
+        latest: LatestSource::Brew {
+            package: package.to_owned(),
+            cask: false,
+        },
+        blocked: None,
+    };
+    let answer = latest_version(&updater).await;
+    assert_eq!(answer.value, None);
+    let error = answer.error.expect("the failed lookup is reported");
+    assert!(error.contains("missing-brew"), "{error}");
+
+    let mut info = AgentCliInfo {
+        version: Some("1.0.0".to_owned()),
+        ..AgentCliInfo::default()
+    };
+    apply_latest(&mut info, &updater, answer);
+    assert_eq!(info.latest, None);
+    assert!(
+        !info.update,
+        "a failed newest-version lookup is not up to date"
+    );
+    assert!(info.error.is_some(), "the failure stays in the row");
+}
+
 #[test]
 fn a_blocked_install_offers_no_update() {
     let mut info = AgentCliInfo {
