@@ -675,10 +675,9 @@ class _TrayPageState extends State<TrayPage> with WindowListener {
                         ],
                       ],
                     );
-                    return (barsHeight + (hasDetail ? detailBlock : 0)) <=
-                            region.maxHeight
-                        ? body
-                        : SingleChildScrollView(child: body);
+                    // The detail height varies with platform font metrics,
+                    // so let the scroll view absorb any shortfall.
+                    return SingleChildScrollView(child: body);
                   },
                 ),
         ),
