@@ -743,6 +743,21 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             ServiceCommand::Status { json } => status(json).await,
         },
         Command::Connect { command } => match command {
+            ConnectCommand::ClaudeDesktopLanguage { app_path, restore } => {
+                let outcome = tokio::task::spawn_blocking(move || {
+                    codex_mixin::platform::manage_claude_language_pack(app_path.as_deref(), restore)
+                })
+                .await
+                .context("join Claude language pack operation")??;
+                if !restore {
+                    claude_desktop::sync_language()?;
+                }
+                println!("{outcome}");
+                println!(
+                    "Fully quit and reopen Claude Desktop; Code/Cowork compatibility must be verified after app updates"
+                );
+                Ok(())
+            }
             ConnectCommand::Codex(options) => install_codex(options).await,
             ConnectCommand::Ducx { json } => {
                 let executable = ensure_managed_ducx().await?;
