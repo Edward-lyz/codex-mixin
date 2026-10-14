@@ -32,8 +32,6 @@ internal static class Program
             var desktop = System.Windows.Forms.Screen.FromHandle(handle).WorkingArea;
             if (desktop.Width < 800 || desktop.Height < 600)
                 throw new InvalidOperationException("CI desktop is too small to capture the native application");
-            MoveWindow(handle, desktop.Left + 24, desktop.Top + 24,
-                Math.Min(1120, desktop.Width - 48), Math.Min(800, desktop.Height - 48), true);
             AutomationElement? loadedWindow = null;
             Wait(() =>
             {
@@ -45,6 +43,10 @@ internal static class Program
                 return !loadedWindow.Current.IsOffscreen;
             }, "native automation window", process);
             var window = loadedWindow!;
+            // MainWindowHandle can initially refer to a WinUI helper HWND.
+            // Resize only the application window identified by its title and PID.
+            MoveWindow(handle, desktop.Left + 24, desktop.Top + 24,
+                Math.Min(1120, desktop.Width - 48), Math.Min(800, desktop.Height - 48), true);
             Wait(() => Find(window, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), "initial CLI load", process);
             AssertName(window, "还没有服务商");
             Capture(window, Path.Combine(output, "providers-empty.png"));
