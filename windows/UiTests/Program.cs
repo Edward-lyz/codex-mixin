@@ -64,7 +64,7 @@ internal static class Program
                     Capture(window, Path.Combine(output, $"{filename}-{theme}.png"));
                     var viewport = Find(window, "page-scroll");
                     if (viewport.TryGetCurrentPattern(ScrollPattern.Pattern, out var pattern) &&
-                        pattern is ScrollPattern { Current.VerticalScrollable: true } scroll)
+                        pattern is ScrollPattern { Current.VerticallyScrollable: true } scroll)
                     {
                         scroll.SetScrollPercent(ScrollPattern.NoScroll, 100);
                         Capture(window, Path.Combine(output, $"{filename}-{theme}-lower.png"));
