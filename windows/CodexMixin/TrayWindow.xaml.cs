@@ -52,7 +52,9 @@ public sealed partial class TrayWindow : Window
     private async Task ReloadAsync()
     {
         if (busy) return;
-        busy = true; GatewaySwitch.IsEnabled = false;
+        busy = true; GatewaySwitch.IsEnabled = false; PanelStatus.Text = "正在读取…";
+        foreach (var range in UsageRanges.Children.Cast<Microsoft.UI.Xaml.Controls.Primitives.ToggleButton>())
+            range.IsChecked = (string)range.Tag == days;
         try
         {
             var client = ((App)Microsoft.UI.Xaml.Application.Current).Client;
@@ -165,7 +167,7 @@ public sealed partial class TrayWindow : Window
         if (settingState || busy) return;
         await ChangeAsync(["service", GatewaySwitch.IsOn ? "start" : "stop", "--managed", "--json"]);
     }
-    private async void OnRange(object sender, RoutedEventArgs args) { days = (string)((Button)sender).Tag; await ReloadAsync(); }
+    private async void OnRange(object sender, RoutedEventArgs args) { days = (string)((FrameworkElement)sender).Tag; await ReloadAsync(); }
     private void OnOpen(object sender, RoutedEventArgs args)
     {
         var target = (string)((FrameworkElement)sender).Tag;

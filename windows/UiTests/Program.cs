@@ -1,6 +1,8 @@
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Net.Http.Headers;
+using System.Net.Http.Json;
 using System.Runtime.InteropServices;
 using System.Text;
 using System.Text.Json;
@@ -51,6 +53,9 @@ internal static class Program
             nativeErrors = process.StandardError.ReadToEndAsync();
         }
         using var appLifetime = process;
+        using var upstream = new FixtureHost();
+        var cli = new CodexMixin.CliClient(Path.Combine(Path.GetDirectoryName(start.FileName)!, "codex-mixin.exe"));
+        var gatewayStarted = false;
         _ = process.Handle; // Retain the debugger-launched process handle for exit diagnostics.
         nint handle = 0;
         try
@@ -79,7 +84,11 @@ internal static class Program
             Wait(() => Find(window, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), "initial CLI load", process);
             AssertName(window, "还没有服务商");
             Capture(window, Path.Combine(output, "providers-empty.png"));
-            SeedDemo(Path.Combine(Path.GetDirectoryName(start.FileName)!, "codex-mixin.exe"), output);
+            var modelIds = SeedDemo(cli, output, upstream.Url);
+            var gateway = $"http://127.0.0.1:{FixtureHost.FreePort()}";
+            cli.RunAsync(["service", "start", "--bind", new Uri(gateway).Authority, "--json"], CancellationToken.None, timeout: TimeSpan.FromSeconds(30)).GetAwaiter().GetResult();
+            gatewayStarted = true;
+            SeedTraffic(gateway, modelIds).GetAwaiter().GetResult();
             for (var themeIndex = 0; themeIndex < 2; themeIndex++)
             {
                 var themeName = themeIndex == 0 ? "light" : "dark";
@@ -103,7 +112,13 @@ internal static class Program
                             return model != null && !model.Current.IsOffscreen && model.Current.BoundingRectangle.Height > 0;
                         }, "painted model table rows", process);
                     if (role == "overview")
+                    {
                         Wait(() => Find(target, "panel-status").Current.Name.Contains("配置已同步", StringComparison.Ordinal), "tray CLI load", process);
+                        Wait(() => target.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text)).Cast<AutomationElement>()
+                            .Any(element => element.Current.Name.Contains("81 / 100", StringComparison.Ordinal)), "real CLI quota display", process);
+                        Wait(() => target.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text)).Cast<AutomationElement>()
+                            .Any(element => element.Current.Name.Contains("ci-coder", StringComparison.Ordinal)), "real gateway usage chart", process);
+                    }
                     Capture(target, Path.Combine(output, $"{filename}-{themeName}.png"));
                     if (role != "overview") CaptureLower(target, Path.Combine(output, $"{filename}-lower-{themeName}.png"));
                     if (role == "agents")
@@ -162,6 +177,8 @@ internal static class Program
         finally
         {
             if (!process.HasExited) { process.Kill(true); process.WaitForExit(); }
+            if (gatewayStarted)
+                cli.RunAsync(["service", "stop", "--force", "--json"], CancellationToken.None, timeout: TimeSpan.FromSeconds(30)).GetAwaiter().GetResult();
             if (debugger != null)
             {
                 if (!debugger.WaitForExit(30000)) debugger.Kill(true);
@@ -219,18 +236,20 @@ internal static class Program
         Thread.Sleep(400);
     }
 
-    private static void SeedDemo(string executable, string output)
+    private static string[] SeedDemo(CodexMixin.CliClient cli, string output, string upstream)
     {
         // This fixture is imported by the real CLI. No provider or gateway result is mocked.
-        // It uses reserved .invalid hosts and fictional credentials, with no network actions.
+        // Only loopback fixture endpoints are used; all credentials are fictional.
         var models = new[] { "ci-coder", "ci-reasoner", "ci-vision" };
         var document = new
         {
             config_version = 2,
+            gateway_api_key = "ci-gateway-fixture",
             providers = new[] { new
             {
                 id = "ci-demo", display_name = "CI 示例供应商", preset_id = "custom", enabled = true,
-                protocol = "open_ai_chat", base_url = "https://example.invalid", api_path = "/v1/chat/completions",
+                protocol = "open_ai_chat", base_url = upstream, api_path = "/v1/chat/completions",
+                quota_url = $"{upstream}/quota", quota_parser = "generic",
                 model_source = new { kind = "static" },
                 auth = new { header = "authorization_bearer", api_key = "ci-fixture-not-a-real-key" },
                 selected_models = models,
@@ -241,7 +260,6 @@ internal static class Program
         };
         var backup = Path.Combine(output, "isolated", "demo.b64");
         File.WriteAllText(backup, Convert.ToBase64String(Encoding.UTF8.GetBytes(JsonSerializer.Serialize(document))));
-        var cli = new CodexMixin.CliClient(executable);
         cli.RunAsync(["config", "import", backup], CancellationToken.None).GetAwaiter().GetResult();
         var options = CodexMixin.Json.Rows(CodexMixin.Json.Field(cli.QueryAsync(["fusion", "models", "--json"], CancellationToken.None).GetAwaiter().GetResult(), "models"));
         var ids = options.Select(row => CodexMixin.Json.Text(row, "id")).ToArray();
@@ -254,6 +272,19 @@ internal static class Program
             panel_tools = new { enabled = true, max_rounds = 16, max_calls_per_model = 64 }
         });
         cli.RunAsync(["fusion", "set", "--profile-json", profile], CancellationToken.None).GetAwaiter().GetResult();
+        return ids;
+    }
+
+    private static async Task SeedTraffic(string gateway, string[] modelIds)
+    {
+        using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
+        client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "ci-gateway-fixture");
+        foreach (var model in modelIds.Take(2))
+        {
+            using var response = await client.PostAsJsonAsync($"{gateway}/v1/chat/completions", new { model, stream = false, messages = new[] { new { role = "user", content = "UI screenshot fixture" } } });
+            if (!response.IsSuccessStatusCode)
+                throw new InvalidOperationException($"Demo gateway request failed: {response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+        }
     }
 
     private static void WriteGallery(string output)
@@ -267,7 +298,7 @@ internal static class Program
         }));
         var html = "<!doctype html><html lang='zh-CN'><meta charset='utf-8'><meta name='viewport' content='width=device-width,initial-scale=1'>" +
             "<title>Codex Mixin Windows UI · GitHub CI</title><style>body{margin:32px;font:15px system-ui;background:#101318;color:#e8edf5}h1{font-size:28px}p{color:#aeb8c8}main{display:grid;grid-template-columns:repeat(auto-fit,minmax(400px,1fr));gap:24px}figure{margin:0;padding:12px;background:#1c222b;border-radius:12px}img{width:100%;height:auto;border-radius:6px}figcaption{padding-top:12px}a{color:inherit}@media(max-width:480px){body{margin:12px}main{grid-template-columns:1fr}}</style>" +
-            "<h1>Codex Mixin · Windows 原生界面</h1><p>由 GitHub Windows runner 运行真实 WinUI 3 应用并截图。示例供应商和 Fusion 来自 CLI 导入的隔离 CI fixture，凭据为虚构值；未连接外部模型服务。</p><main>" + figures + "</main></html>";
+            "<h1>Codex Mixin · Windows 原生界面</h1><p>由 GitHub Windows runner 运行真实 WinUI 3 应用并截图。供应商和 Fusion 来自 CLI 导入的隔离 fixture；额度来自 loopback HTTP fixture，用量由真实 Rust 网关处理示例请求后记录。所有凭据为虚构值，未连接外部模型服务。</p><main>" + figures + "</main></html>";
         File.WriteAllText(Path.Combine(output, "index.html"), html);
     }
 

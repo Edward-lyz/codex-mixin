@@ -13,8 +13,8 @@
    <Border Grid.Row="2" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Padding="0,12,0,0"><TextBlock x:Name="ProviderTitle" Text="尚未配置服务商" FontWeight="SemiBold"/></Border>
    <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto"><StackPanel Spacing="12">
     <StackPanel x:Name="QuotaBody" Spacing="8"/>
-    <StackPanel Orientation="Horizontal" Spacing="0" HorizontalAlignment="Center">
-     <Button Content="1天" Tag="1" Click="OnRange"/><Button Content="7天" Tag="7" Click="OnRange"/><Button Content="1月" Tag="30" Click="OnRange"/><Button Content="全部" Tag="all" Click="OnRange"/>
+    <StackPanel x:Name="UsageRanges" Orientation="Horizontal" Spacing="0" HorizontalAlignment="Center">
+     <ToggleButton Content="1天" Tag="1" IsChecked="True" Click="OnRange"/><ToggleButton Content="7天" Tag="7" Click="OnRange"/><ToggleButton Content="1月" Tag="30" Click="OnRange"/><ToggleButton Content="全部" Tag="all" Click="OnRange"/>
     </StackPanel>
     <StackPanel x:Name="UsageBody" Spacing="12"/>
     <TextBlock x:Name="PanelStatus" AutomationProperties.AutomationId="panel-status" Text="正在读取…" TextWrapping="Wrap" FontSize="11" Style="{StaticResource SecondaryText}"/>
@@ -22,7 +22,7 @@
    <StackPanel Grid.Row="4" Spacing="2">
     <Border Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" Margin="0,4"/>
     <Button Content="▦  模型与服务…" Tag="providers" Click="OnOpen" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"/>
-    <Button Content="♧  Agent 接入管理…" Tag="agents" Click="OnOpen" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"/>
+    <Button Tag="agents" Click="OnOpen" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left" AutomationProperties.Name="Agent 接入管理…"><StackPanel Orientation="Horizontal" Spacing="10"><SymbolIcon Symbol="Contact"/><TextBlock Text="Agent 接入管理…"/></StackPanel></Button>
     <Border Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" Margin="0,4"/>
     <Button Content="⚙  高级" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"><Button.Flyout><MenuFlyout>
      <MenuFlyoutItem Text="Fusion 设置…" Tag="fusion" Click="OnOpen"/><MenuFlyoutItem Text="按时间轮转…" Tag="fusion" Click="OnOpen"/><MenuFlyoutItem Text="健康检测和修复…" Click="OnDoctor"/><MenuFlyoutItem Text="启用网关开机启动" Click="OnAutostart"/><MenuFlyoutItem Text="连接、备份与诊断…" Tag="settings" Click="OnOpen"/>
