@@ -23,19 +23,34 @@ internal static class Program
         start.ArgumentList.Add("--capture-ui");
         var previousConfig = Environment.GetEnvironmentVariable("CODEX_GATEWAY_CONFIG");
         Environment.SetEnvironmentVariable("CODEX_GATEWAY_CONFIG", config);
-        using var process = Process.Start(start) ?? throw new InvalidOperationException("Cannot launch WinUI app");
         Process? debugger = null;
+        Process process;
+        Task<string> nativeErrors;
         if (args.Length == 3)
         {
             var commands = Path.Combine(output, "native-crash.commands");
             File.WriteAllText(commands, "sxe -c \".exr -1; !analyze -v; q\" 0xc000027b\ng\n");
             var debugStart = new ProcessStartInfo(args[2]) { UseShellExecute = false };
-            foreach (var argument in new[] { "-p", process.Id.ToString(), "-G", "-cf", commands, "-logo", Path.Combine(output, "native-debugger.txt") })
+            debugStart.Environment["CODEX_GATEWAY_CONFIG"] = config;
+            foreach (var argument in new[] { "-G", "-cf", commands, "-logo", Path.Combine(output, "native-debugger.txt"), start.FileName, "--capture-ui" })
                 debugStart.ArgumentList.Add(argument);
-            debugger = Process.Start(debugStart) ?? throw new InvalidOperationException("Cannot attach native debugger");
-            Thread.Sleep(1500);
+            debugger = Process.Start(debugStart) ?? throw new InvalidOperationException("Cannot launch native debugger");
+            Process? target = null;
+            var deadline = DateTime.UtcNow.AddSeconds(15);
+            while (target == null && DateTime.UtcNow < deadline)
+            {
+                target = Process.GetProcessesByName(Path.GetFileNameWithoutExtension(start.FileName)).SingleOrDefault();
+                if (target == null) Thread.Sleep(100);
+            }
+            process = target ?? throw new InvalidOperationException("Native debugger did not launch WinUI");
+            nativeErrors = Task.FromResult("");
         }
-        var nativeErrors = process.StandardError.ReadToEndAsync();
+        else
+        {
+            process = Process.Start(start) ?? throw new InvalidOperationException("Cannot launch WinUI app");
+            nativeErrors = process.StandardError.ReadToEndAsync();
+        }
+        using var appLifetime = process;
         nint handle = 0;
         try
         {
