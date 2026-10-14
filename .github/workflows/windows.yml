@@ -2,16 +2,22 @@ name: Windows
 
 on:
   workflow_dispatch:
+    inputs:
+      ui_artifact_run:
+        description: 'Re-run UI tests with native UI and CLI artifacts from this Windows run ID'
+        required: false
+        type: string
   pull_request:
   push:
     branches: [main]
 
 concurrency:
-  group: windows-${{ github.ref }}
+  group: windows-${{ github.ref }}-${{ inputs.ui_artifact_run }}
   cancel-in-progress: true
 
 jobs:
   rust:
+    if: ${{ !inputs.ui_artifact_run }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -51,6 +57,7 @@ jobs:
         run: cargo test --locked --test gateway_http anthropic_messages_ignores_legacy_model_level_endpoint -- --nocapture
       - run: cargo test --locked --all-targets
   cli:
+    if: ${{ !inputs.ui_artifact_run }}
     name: Build Windows CLI
     runs-on: windows-latest
     steps:
@@ -67,6 +74,7 @@ jobs:
           if-no-files-found: error
 
   native:
+    if: ${{ !inputs.ui_artifact_run }}
     name: WinUI 3 build and adapter tests
     runs-on: windows-latest
     steps:
@@ -99,6 +107,7 @@ jobs:
           if-no-files-found: error
 
   native-ui:
+    if: ${{ always() && (inputs.ui_artifact_run || (needs.cli.result == 'success' && needs.native.result == 'success')) }}
     name: Windows native UI and real CLI tests
     runs-on: windows-latest
     needs: [cli, native]
@@ -111,10 +120,14 @@ jobs:
         with:
           name: windows-cli
           path: target/release
+          run-id: ${{ inputs.ui_artifact_run || github.run_id }}
+          github-token: ${{ github.token }}
       - uses: actions/download-artifact@v7
         with:
           name: windows-native-ui
           path: windows/build/publish
+          run-id: ${{ inputs.ui_artifact_run || github.run_id }}
+          github-token: ${{ github.token }}
       - name: Test real Rust CLI contracts
         shell: pwsh
         run: dotnet run --project windows/Tests/Tests.csproj -c Release -- --cli target/release/codex-mixin.exe
@@ -136,8 +149,17 @@ jobs:
             Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddMinutes(-10)} |
               Where-Object { $_.Message -match 'codex_mixin_ui|Microsoft.UI.Xaml' } |
               Format-List TimeCreated,Id,Message | Out-File windows/build/ui-test-artifacts/native-events.txt
-            Get-ChildItem 'C:\Program Files (x86)\Windows Kits' -Filter cdb.exe -Recurse -ErrorAction SilentlyContinue |
-              Select-Object -ExpandProperty FullName
+            $debugger = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
+            if (-not (Test-Path $debugger)) { throw 'Native crash debugger is missing from Windows runner' }
+            $commands = Join-Path $env:RUNNER_TEMP 'native-crash.commands'
+            @'
+          sxe -c ".exr -1; !analyze -v; q" 0xc000027b
+          g
+          '@ | Set-Content $commands
+            $env:CODEX_GATEWAY_CONFIG = Join-Path $pwd 'windows/build/ui-test-artifacts/isolated/config.json'
+            $debugLog = Join-Path $pwd 'windows/build/ui-test-artifacts/native-debugger.txt'
+            $replay = Start-Process $debugger -ArgumentList @('-G', '-cf', $commands, '-logo', $debugLog, (Join-Path $pwd 'windows/build/publish/codex_mixin_ui.exe')) -PassThru -NoNewWindow
+            if (-not $replay.WaitForExit(60000)) { $replay.Kill($true); throw 'Native crash replay did not finish within 60 seconds' }
           }
           exit $testExit
       - uses: actions/upload-artifact@v7
@@ -158,10 +180,12 @@ jobs:
             windows/build/ui-test-artifacts/native-errors.txt
             windows/build/ui-test-artifacts/startup-trace.txt
             windows/build/ui-test-artifacts/native-events.txt
+            windows/build/ui-test-artifacts/native-debugger.txt
           retention-days: 14
           if-no-files-found: warn
 
   package:
+    if: ${{ !inputs.ui_artifact_run }}
     runs-on: windows-latest
     needs: [rust, native-ui]
     steps:
