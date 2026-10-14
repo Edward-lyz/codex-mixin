@@ -174,7 +174,6 @@ jobs:
             windows/build/ui-test-artifacts/index.html
             windows/build/ui-test-artifacts/failure.txt
             windows/build/ui-test-artifacts/native-errors.txt
-            windows/build/ui-test-artifacts/startup-trace.txt
             windows/build/ui-test-artifacts/native-events.txt
             windows/build/ui-test-artifacts/native-debugger.txt
           retention-days: 14

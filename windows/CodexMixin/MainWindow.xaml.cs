@@ -48,9 +48,7 @@ public sealed partial class MainWindow : Window
         // before asking WinUI to construct its automation peers.
         if (page == "providers" && Environment.GetCommandLineArgs().Contains("--capture-ui"))
             captureReady = new EventWaitHandle(false, EventResetMode.ManualReset, $"Local\\CodexMixin.UIReady.{Environment.ProcessId}");
-        App.StartupTrace($"window {page}: initialize XAML");
         InitializeComponent();
-        App.StartupTrace($"window {page}: XAML ready");
         Root.RequestedTheme = ((App)Microsoft.UI.Xaml.Application.Current).Theme;
         Title = WindowCaption.Text = page switch
         {
@@ -63,7 +61,6 @@ public sealed partial class MainWindow : Window
         ApplyChanges.Visibility = page is "providers" or "fusion" ? Visibility.Visible : Visibility.Collapsed;
         if (page == "agents") { PageTitle.Visibility = Visibility.Collapsed; PageDescription.Visibility = Visibility.Collapsed; ApplySummary.Visibility = Visibility.Collapsed; }
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"));
-        App.StartupTrace($"window {page}: icon ready");
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 800));
         if (AppWindowTitleBar.IsCustomizationSupported())
         {
@@ -76,11 +73,9 @@ public sealed partial class MainWindow : Window
         }
         else { TitleBar.Visibility = Visibility.Collapsed; }
         SystemBackdrop = new MicaBackdrop();
-        App.StartupTrace($"window {page}: backdrop ready");
         var handle = WindowNative.GetWindowHandle(this);
         try { if (page == "providers") shell = new NativeShell(handle, OnTrayCommand); }
         catch (Exception error) { ShowNotice("系统托盘不可用", error.Message, InfoBarSeverity.Warning); }
-        App.StartupTrace($"window {page}: native shell ready");
         AppWindow.Closing += (_, args) =>
         {
             if (!exiting && shell != null) { args.Cancel = true; shell.Hide(); }
@@ -95,27 +90,24 @@ public sealed partial class MainWindow : Window
         };
         Root.Loaded += (_, _) =>
         {
-            App.StartupTrace($"window {page}: root loaded");
             if (initialized) return;
             initialized = true;
             // Loaded can run inside a synchronous native layout callback.
             // Start CLI work after that callback returns to the message loop.
             if (!DispatcherQueue.TryEnqueue(async () =>
             {
-            ready = true;
-            await ExecuteUiAsync("连接 CLI", async token =>
-            {
-                cli = ((App)Microsoft.UI.Xaml.Application.Current).Client;
-                operations = ((App)Microsoft.UI.Xaml.Application.Current).Operations;
-                metadata = await cli.QueryAsync(["interface", "--json"], token);
-                Json.Interface(metadata);
-                App.StartupTrace($"window {page}: CLI interface loaded");
-                await LoadPageAsync(token);
-                App.StartupTrace($"window {page}: page loaded");
-            });
-            timer.Start();
-            captureReady?.Set();
-            if (Environment.GetCommandLineArgs().Contains("--background") && shell != null) shell.Hide();
+                ready = true;
+                await ExecuteUiAsync("连接 CLI", async token =>
+                {
+                    cli = ((App)Microsoft.UI.Xaml.Application.Current).Client;
+                    operations = ((App)Microsoft.UI.Xaml.Application.Current).Operations;
+                    metadata = await cli.QueryAsync(["interface", "--json"], token);
+                    Json.Interface(metadata);
+                    await LoadPageAsync(token);
+                });
+                timer.Start();
+                captureReady?.Set();
+                if (Environment.GetCommandLineArgs().Contains("--background") && shell != null) shell.Hide();
             })) throw new InvalidOperationException("无法调度 Windows 界面初始化。");
         };
         timer.Tick += async (_, _) =>
@@ -135,11 +127,9 @@ public sealed partial class MainWindow : Window
 
     internal void ShowMain()
     {
-        App.StartupTrace($"window {page}: show");
         shell?.Show();
         AppWindow.Show();
         Activate();
-        App.StartupTrace($"window {page}: activated");
     }
 
     private void OnTrayCommand(string command) => DispatcherQueue.TryEnqueue(async () =>
@@ -209,23 +199,20 @@ public sealed partial class MainWindow : Window
         metadata = await cli.QueryAsync(["interface", "--json"], token);
         Json.Interface(metadata);
         await LoadPageAsync(token);
-                if (page == "providers") await RefreshTimingsAsync(token);
+        if (page == "providers") await RefreshTimingsAsync(token);
     });
 
     private async Task ExecuteUiAsync(string label, Func<CancellationToken, Task> work)
     {
         if (busy || exiting) return;
         busy = true;
-        App.StartupTrace($"window {page}: disable page");
         PageShell.IsEnabled = false;
-        App.StartupTrace($"window {page}: start activity");
         Activity.IsActive = true;
         Activity.Visibility = Visibility.Visible;
         StatusText.Text = $"{label}…";
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         activeCancellation = cancellation;
         CancelAction.Visibility = Visibility.Visible;
-        App.StartupTrace($"window {page}: begin operation {label}");
         try
         {
             await work(cancellation.Token);
@@ -523,7 +510,7 @@ public sealed partial class MainWindow : Window
             }
             await ChangeAsync("应用模型更改", arguments.ToArray(), apply: true);
         };
-            modelDrafts[id] = (modelBody, pendingApply);
+        modelDrafts[id] = (modelBody, pendingApply);
         PageBody.Children.Add(modelBody);
     }
 

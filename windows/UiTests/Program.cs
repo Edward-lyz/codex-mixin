@@ -1,6 +1,7 @@
 using System.Diagnostics;
 using System.Drawing;
 using System.Drawing.Imaging;
+using System.Net.Http;
 using System.Net.Http.Headers;
 using System.Net.Http.Json;
 using System.Runtime.InteropServices;
@@ -188,8 +189,6 @@ internal static class Program
             if (!string.IsNullOrWhiteSpace(errors)) File.WriteAllText(Path.Combine(output, "native-errors.txt"), errors);
             var diagnostic = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexMixin", "logs", "native-error.txt");
             if (File.Exists(diagnostic)) File.Copy(diagnostic, Path.Combine(output, "native-errors.txt"), true);
-            var startup = Path.Combine(Path.GetDirectoryName(diagnostic)!, "startup-trace.txt");
-            if (File.Exists(startup)) File.Copy(startup, Path.Combine(output, "startup-trace.txt"), true);
             Environment.SetEnvironmentVariable("CODEX_GATEWAY_CONFIG", previousConfig);
             WriteGallery(output);
         }
