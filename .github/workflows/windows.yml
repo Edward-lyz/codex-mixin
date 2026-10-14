@@ -123,7 +123,30 @@ jobs:
         run: Copy-Item target/release/codex-mixin.exe windows/build/publish/
       - name: Test native navigation, themes, tray and activation
         shell: pwsh
-        run: dotnet run --project windows/UiTests/UiTests.csproj -c Release -- windows/build/publish/codex_mixin_ui.exe windows/build/ui-test-artifacts
+        run: |
+          $dumpPath = Join-Path $env:RUNNER_TEMP 'native-dumps'
+          New-Item -ItemType Directory -Force $dumpPath | Out-Null
+          $key = 'HKCU:\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\codex_mixin_ui.exe'
+          New-Item -Path $key -Force | Out-Null
+          New-ItemProperty -Path $key -Name DumpFolder -Value $dumpPath -PropertyType ExpandString -Force | Out-Null
+          New-ItemProperty -Path $key -Name DumpType -Value 2 -PropertyType DWord -Force | Out-Null
+          dotnet run --project windows/UiTests/UiTests.csproj -c Release -- windows/build/publish/codex_mixin_ui.exe windows/build/ui-test-artifacts
+          $testExit = $LASTEXITCODE
+          if ($testExit -ne 0) {
+            Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddMinutes(-10)} |
+              Where-Object { $_.Message -match 'codex_mixin_ui|Microsoft.UI.Xaml' } |
+              Format-List TimeCreated,Id,Message | Out-File windows/build/ui-test-artifacts/native-events.txt
+            Get-ChildItem 'C:\Program Files (x86)\Windows Kits' -Filter cdb.exe -Recurse -ErrorAction SilentlyContinue |
+              Select-Object -ExpandProperty FullName
+          }
+          exit $testExit
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: windows-native-crash-dumps
+          path: ${{ runner.temp }}/native-dumps/*.dmp
+          retention-days: 3
+          if-no-files-found: warn
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -134,6 +157,7 @@ jobs:
             windows/build/ui-test-artifacts/failure.txt
             windows/build/ui-test-artifacts/native-errors.txt
             windows/build/ui-test-artifacts/startup-trace.txt
+            windows/build/ui-test-artifacts/native-events.txt
           retention-days: 14
           if-no-files-found: warn
 

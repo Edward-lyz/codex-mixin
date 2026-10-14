@@ -88,6 +88,7 @@ public sealed partial class MainWindow : Window
         };
         Root.Loaded += async (_, _) =>
         {
+            App.StartupTrace($"window {page}: root loaded");
             if (initialized) return;
             initialized = true;
             ready = true;
@@ -97,7 +98,9 @@ public sealed partial class MainWindow : Window
                 operations = ((App)Microsoft.UI.Xaml.Application.Current).Operations;
                 metadata = await cli.QueryAsync(["interface", "--json"], token);
                 Json.Interface(metadata);
+                App.StartupTrace($"window {page}: CLI interface loaded");
                 await LoadPageAsync(token);
+                App.StartupTrace($"window {page}: page loaded");
             });
             timer.Start();
             if (Environment.GetCommandLineArgs().Contains("--background") && shell != null) shell.Hide();
