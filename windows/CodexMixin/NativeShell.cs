@@ -57,11 +57,17 @@ internal sealed class NativeShell : IDisposable
     internal static Windows.Graphics.RectInt32 PanelBounds()
     {
         GetCursorPos(out var position);
+        var monitor = MonitorFromPoint(position, 2);
         var info = new MonitorInfo { Size = (uint)Marshal.SizeOf<MonitorInfo>() };
-        if (!GetMonitorInfo(MonitorFromPoint(position, 2), ref info)) throw new Win32Exception(Marshal.GetLastWin32Error());
-        var width = Math.Min(352, info.Work.Right - info.Work.Left - 16);
-        var height = Math.Min(700, info.Work.Bottom - info.Work.Top - 16);
-        return new Windows.Graphics.RectInt32(Math.Clamp(position.X - width / 2, info.Work.Left + 8, info.Work.Right - width - 8), info.Work.Bottom - height - 8, width, height);
+        if (!GetMonitorInfo(monitor, ref info)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        // AppWindow bounds are physical pixels; the panel layout is designed in 96-DPI units.
+        var result = GetDpiForMonitor(monitor, 0, out var dpi, out _);
+        if (result != 0) throw new Win32Exception(result);
+        var scale = dpi / 96.0;
+        var margin = (int)(8 * scale);
+        var width = Math.Min((int)(360 * scale), info.Work.Right - info.Work.Left - 2 * margin);
+        var height = Math.Min((int)(640 * scale), info.Work.Bottom - info.Work.Top - 2 * margin);
+        return new Windows.Graphics.RectInt32(Math.Clamp(position.X - width / 2, info.Work.Left + margin, info.Work.Right - width - margin), info.Work.Bottom - height - margin, width, height);
     }
 
     private nint WindowProc(nint hwnd, uint message, nuint wParam, nint lParam, nuint id, nuint reference)
@@ -177,6 +183,7 @@ internal sealed class NativeShell : IDisposable
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool DestroyIcon(nint icon);
     [DllImport("user32.dll")] private static extern uint GetDpiForWindow(nint window);
     [DllImport("user32.dll")] private static extern nint MonitorFromPoint(Point point, uint flags);
+    [DllImport("shcore.dll")] private static extern int GetDpiForMonitor(nint monitor, int type, out uint dpiX, out uint dpiY);
     [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ShowWindow(nint window, int command);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(nint window);

@@ -3,51 +3,59 @@
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
   <Grid x:Name="Root" Background="Transparent">
     <Grid.RowDefinitions><RowDefinition Height="48"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-    <Grid x:Name="TitleBar" Padding="20,0,160,0">
+    <Grid x:Name="TitleBar" Padding="16,0,160,0">
       <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-        <Image Source="ms-appx:///Assets/app_icon.png" Width="20" Height="20"/>
-        <TextBlock x:Name="WindowCaption" Text="模型与服务" FontWeight="SemiBold" VerticalAlignment="Center"/>
+        <Image Source="ms-appx:///Assets/app_icon.png" Width="18" Height="18"/>
+        <TextBlock x:Name="WindowCaption" Text="模型与服务" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center"/>
       </StackPanel>
     </Grid>
     <ContentControl x:Name="PageShell" Grid.Row="1" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"><Grid>
-      <Grid.ColumnDefinitions><ColumnDefinition x:Name="SidebarColumn" Width="232"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-      <Border x:Name="ProviderSidebar" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,1,0">
-        <Grid Padding="8,12" RowSpacing="12">
-          <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
-          <Grid Padding="8,0" ColumnSpacing="8">
-            <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-            <TextBlock Text="服务商" FontWeight="SemiBold" VerticalAlignment="Center"/>
-            <Button Grid.Column="1" Content="＋" Click="OnAddProvider" AutomationProperties.Name="新增服务商"/>
-            <Button Grid.Column="2" Content="−" Click="OnRemoveProvider" AutomationProperties.Name="删除服务商"/>
-          </Grid>
-          <ListView x:Name="ProviderList" Grid.Row="1" SelectionChanged="OnProviderSelected" AutomationProperties.AutomationId="provider-list"/>
+      <Grid.ColumnDefinitions><ColumnDefinition x:Name="SidebarColumn" Width="248"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+      <Grid x:Name="ProviderSidebar" Padding="8,4,8,12" RowSpacing="8">
+        <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
+        <Grid Padding="12,0,0,0" ColumnSpacing="2">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+          <TextBlock Text="服务商" Style="{StaticResource BodyStrongTextBlockStyle}" VerticalAlignment="Center"/>
+          <Button Grid.Column="1" Style="{StaticResource FlatButton}" Padding="8" Click="OnAddProvider" AutomationProperties.Name="新增服务商" ToolTipService.ToolTip="新增服务商"><FontIcon Glyph="&#xE710;" FontSize="14"/></Button>
+          <Button Grid.Column="2" Style="{StaticResource FlatButton}" Padding="8" Click="OnRemoveProvider" AutomationProperties.Name="删除服务商" ToolTipService.ToolTip="删除服务商"><FontIcon Glyph="&#xE738;" FontSize="14"/></Button>
         </Grid>
-      </Border>
-      <Grid Grid.Column="1" Padding="20,16" RowSpacing="12">
+        <ListView x:Name="ProviderList" Grid.Row="1" SelectionChanged="OnProviderSelected" AutomationProperties.AutomationId="provider-list"/>
+      </Grid>
+      <Border x:Name="ContentLayer" Grid.Column="1" Background="{ThemeResource LayerFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="1,1,0,0" CornerRadius="8,0,0,0">
+      <Grid Padding="24,16,24,12" RowSpacing="12">
         <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-        <Grid ColumnSpacing="12">
+        <Grid ColumnSpacing="16">
           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-          <StackPanel Spacing="4">
-            <StackPanel Orientation="Horizontal" Spacing="10">
-              <Image x:Name="ProviderHeaderIcon" Width="28" Height="28" Visibility="Collapsed"/>
-              <TextBlock x:Name="PageTitle" Text="模型与服务" Style="{ThemeResource SubtitleTextBlockStyle}" VerticalAlignment="Center"/>
-              <Border x:Name="OfficialBadge" Visibility="Collapsed" Padding="6,2" CornerRadius="4" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"><TextBlock Text="官方" FontSize="11" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/></Border>
+          <Grid ColumnSpacing="12">
+            <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
+            <Border x:Name="ProviderHeaderTile" Style="{StaticResource IconTile}" Width="44" Height="44" Visibility="Collapsed">
+              <Image x:Name="ProviderHeaderIcon" Width="28" Height="28"/>
+            </Border>
+            <StackPanel Grid.Column="1" Spacing="2" VerticalAlignment="Center">
+              <StackPanel Orientation="Horizontal" Spacing="8">
+                <TextBlock x:Name="PageTitle" Text="模型与服务" Style="{StaticResource SubtitleTextBlockStyle}" VerticalAlignment="Center"/>
+                <Border x:Name="StatusBadge" Style="{StaticResource SuccessBadge}" Visibility="Collapsed" VerticalAlignment="Center"><TextBlock x:Name="StatusBadgeText" FontSize="11" FontWeight="SemiBold"/></Border>
+                <Border x:Name="OfficialBadge" Visibility="Collapsed" Style="{StaticResource SuccessBadge}" VerticalAlignment="Center"><TextBlock Text="官方" FontSize="11" FontWeight="SemiBold"/></Border>
+              </StackPanel>
+              <TextBlock x:Name="PageDescription" AutomationProperties.AutomationId="page-description" Text="从左侧选择服务商" Style="{StaticResource Mono}"/>
             </StackPanel>
-            <TextBlock x:Name="PageDescription" AutomationProperties.AutomationId="page-description" Text="从左侧选择服务商" Style="{StaticResource SecondaryText}" FontSize="12"/>
-          </StackPanel>
-          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">
-            <StackPanel x:Name="ProviderTabs" Orientation="Horizontal" Spacing="0">
-              <ToggleButton x:Name="ModelsTab" Content="模型" IsChecked="True" Click="OnModelsTab" AutomationProperties.AutomationId="provider-models-tab"/>
-              <ToggleButton x:Name="ConnectionTab" Content="连接设置" Click="OnConnectionTab" AutomationProperties.AutomationId="provider-connection-tab"/>
-            </StackPanel>
-            <Button Content="刷新" Click="OnRefresh"/>
-            <Button Content="⋯" AutomationProperties.AutomationId="window-menu">
-              <Button.Flyout><MenuFlyout>
-                <MenuFlyoutItem Text="托盘主面板" Tag="overview" Click="OnOpenPage"/>
-                <MenuFlyoutItem Text="模型与服务" Tag="providers" Click="OnOpenPage"/>
-                <MenuFlyoutItem Text="Agent 接入管理" Tag="agents" Click="OnOpenPage"/>
-                <MenuFlyoutItem Text="Fusion 设置" Tag="fusion" Click="OnOpenPage"/>
-                <MenuFlyoutItem Text="设置与诊断" Tag="settings" Click="OnOpenPage"/>
+          </Grid>
+          <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="4" VerticalAlignment="Center">
+            <Border x:Name="ProviderTabs" Style="{StaticResource SegmentTrack}" Margin="0,0,8,0">
+              <StackPanel Orientation="Horizontal" Spacing="2">
+                <ToggleButton x:Name="ModelsTab" Style="{StaticResource Segment}" Content="模型" IsChecked="True" Click="OnModelsTab" AutomationProperties.AutomationId="provider-models-tab"/>
+                <ToggleButton x:Name="ConnectionTab" Style="{StaticResource Segment}" Content="连接设置" Click="OnConnectionTab" AutomationProperties.AutomationId="provider-connection-tab"/>
+              </StackPanel>
+            </Border>
+            <Button Style="{StaticResource FlatButton}" Padding="8" Click="OnRefresh" AutomationProperties.Name="刷新" ToolTipService.ToolTip="刷新 (Ctrl+R)"><FontIcon Glyph="&#xE72C;" FontSize="15"/></Button>
+            <Button Style="{StaticResource FlatButton}" Padding="8" AutomationProperties.AutomationId="window-menu" AutomationProperties.Name="更多窗口" ToolTipService.ToolTip="更多窗口">
+              <FontIcon Glyph="&#xE712;" FontSize="15"/>
+              <Button.Flyout><MenuFlyout Placement="BottomEdgeAlignedRight">
+                <MenuFlyoutItem Text="托盘主面板" Tag="overview" Click="OnOpenPage"><MenuFlyoutItem.Icon><FontIcon Glyph="&#xE80F;"/></MenuFlyoutItem.Icon></MenuFlyoutItem>
+                <MenuFlyoutItem Text="模型与服务" Tag="providers" Click="OnOpenPage"><MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8A9;"/></MenuFlyoutItem.Icon></MenuFlyoutItem>
+                <MenuFlyoutItem Text="Agent 接入管理" Tag="agents" Click="OnOpenPage"><MenuFlyoutItem.Icon><FontIcon Glyph="&#xE716;"/></MenuFlyoutItem.Icon></MenuFlyoutItem>
+                <MenuFlyoutItem Text="Fusion 设置" Tag="fusion" Click="OnOpenPage"><MenuFlyoutItem.Icon><FontIcon Glyph="&#xE8F1;"/></MenuFlyoutItem.Icon></MenuFlyoutItem>
+                <MenuFlyoutItem Text="设置与诊断" Tag="settings" Click="OnOpenPage"><MenuFlyoutItem.Icon><FontIcon Glyph="&#xE713;"/></MenuFlyoutItem.Icon></MenuFlyoutItem>
               </MenuFlyout></Button.Flyout>
             </Button>
           </StackPanel>
@@ -56,18 +64,19 @@
         <ScrollViewer x:Name="PageScroll" Grid.Row="2" AutomationProperties.AutomationId="page-scroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
           <StackPanel x:Name="PageBody" Spacing="12" HorizontalAlignment="Stretch"/>
         </ScrollViewer>
-        <Grid Grid.Row="3" Padding="0,12,0,0" ColumnSpacing="12">
+        <Grid Grid.Row="3" ColumnSpacing="12">
           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-          <TextBlock x:Name="ApplySummary" Text="配置已同步" FontSize="12" Style="{StaticResource SecondaryText}" VerticalAlignment="Center"/>
+          <TextBlock x:Name="ApplySummary" Text="配置已同步" Style="{StaticResource Caption}" TextWrapping="Wrap" VerticalAlignment="Center"/>
           <Button x:Name="ApplyChanges" Grid.Column="1" Content="应用更改" Style="{ThemeResource AccentButtonStyle}" Click="OnApplyChanges" AutomationProperties.AutomationId="apply-changes"/>
         </Grid>
       </Grid>
+      </Border>
     </Grid></ContentControl>
-    <Grid Grid.Row="2" Padding="16,8" ColumnSpacing="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+    <Grid Grid.Row="2" Padding="16,6" ColumnSpacing="10" Background="{ThemeResource LayerFillColorDefaultBrush}" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,1,0,0">
       <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-      <ProgressRing x:Name="Activity" Width="18" Height="18" IsActive="False" Visibility="Collapsed"/>
-      <TextBlock x:Name="StatusText" AutomationProperties.AutomationId="operation-status" Grid.Column="1" Text="正在连接 CLI…" FontSize="12" Style="{StaticResource SecondaryText}"/>
-      <Button x:Name="CancelAction" Grid.Column="2" Content="取消操作" Visibility="Collapsed" Click="OnCancel"/>
+      <ProgressRing x:Name="Activity" Width="14" Height="14" IsActive="False" Visibility="Collapsed"/>
+      <TextBlock x:Name="StatusText" AutomationProperties.AutomationId="operation-status" Grid.Column="1" Text="正在连接 CLI…" Style="{StaticResource Caption}" VerticalAlignment="Center"/>
+      <HyperlinkButton x:Name="CancelAction" Grid.Column="2" Content="取消操作" Padding="6,2" Visibility="Collapsed" Click="OnCancel"/>
     </Grid>
   </Grid>
 </Window>

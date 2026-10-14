@@ -60,9 +60,9 @@ public sealed partial class TrayWindow : Window
             var client = ((App)Microsoft.UI.Xaml.Application.Current).Client;
             var status = await client.QueryAsync(["service", "status", "--json"], lifetime.Token);
             ServiceTitle.Text = $"本地服务{Json.Gateway(status)}";
-            Endpoint.Text = Json.OptionalText(status, "endpoint") ?? "请先配置服务商";
             var running = Json.OptionalText(status, "gateway") == "running";
-            ServiceDot.Fill = new SolidColorBrush(running ? Colors.LimeGreen : Colors.Gray);
+            Endpoint.Text = Json.OptionalText(status, "endpoint") ?? (Json.Flag(status, "configured") ? "网关未启动" : "请先配置服务商");
+            ServiceDot.Style = Themed(running ? "DotOn" : "DotOff");
             settingState = true; GatewaySwitch.IsOn = running; settingState = false;
             providers = Json.Flag(status, "configured")
                 ? Json.Rows(Json.Field(await client.QueryAsync(["provider", "list", "--json"], lifetime.Token), "providers")) : [];
@@ -72,39 +72,52 @@ public sealed partial class TrayWindow : Window
             foreach (var provider in providers)
             {
                 var id = Json.Text(provider, "id");
-                var button = new Button { Content = Marks.Provider(provider, 24), Padding = new Thickness(8), BorderBrush = (Brush)Microsoft.UI.Xaml.Application.Current.Resources[id == providerId ? "AccentFillColorDefaultBrush" : "CardStrokeColorDefaultBrush"] };
+                var tile = new Border { Style = Themed(id == providerId ? "IconTile" : "IconTileIdle"), Width = 40, Height = 40, Child = Marks.Provider(provider, 24) };
+                var button = new Button { Content = tile, Style = Themed("FlatButton"), Padding = new Thickness(0), CornerRadius = new CornerRadius(8) };
                 ToolTipService.SetToolTip(button, Json.Text(provider, "display_name"));
+                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, Json.Text(provider, "display_name"));
                 button.Click += async (_, _) => { providerId = id; await ReloadAsync(); };
                 ProviderStrip.Children.Add(button);
             }
             var selected = providers.FirstOrDefault(row => Json.Text(row, "id") == providerId);
-            ProviderTitle.Text = selected.ValueKind == JsonValueKind.Object ? Json.Text(selected, "display_name") : "尚未配置服务商";
+            var hasProvider = selected.ValueKind == JsonValueKind.Object;
+            ProviderTitle.Text = hasProvider ? Json.Text(selected, "display_name") : "尚未配置服务商";
+            ProviderIcon.Visibility = hasProvider ? Visibility.Visible : Visibility.Collapsed;
+            if (hasProvider) ProviderIcon.Source = Marks.Provider(selected, 22).Source;
             UsageBody.Children.Clear(); QuotaBody.Children.Clear();
             if (Json.Flag(status, "configured"))
             {
                 var quotas = Json.Rows(await client.QueryAsync(["quota", "--json"], lifetime.Token));
                 foreach (var row in quotas.Where(row => Json.Text(row, "provider_id") == providerId)) RenderQuota(row);
             }
-            if (QuotaBody.Children.Count == 0) QuotaBody.Children.Add(new TextBlock { Text = "额度未知", FontSize = 12 });
-            if (!running) UsageBody.Children.Add(new TextBlock { Text = "本地网关未运行，暂无可读取的用量。", TextWrapping = TextWrapping.Wrap, FontSize = 12 });
+            if (QuotaBody.Children.Count == 0) QuotaBody.Children.Add(new TextBlock { Text = "额度未知", Style = Themed("Caption") });
+            if (!running) UsageBody.Children.Add(Placeholder("本地网关未运行，暂无可读取的用量。"));
             else
             {
                 var arguments = new List<string> { "usage", "--json" };
                 if (days != "all") arguments.AddRange(["--days", days]);
                 var rows = Json.Rows(await client.QueryAsync(arguments.ToArray(), lifetime.Token)).Where(row => Json.Text(row, "provider_id") == providerId).ToArray();
                 if (rows.Length > 0) RenderUsage(rows);
-                if (rows.Length == 0) UsageBody.Children.Add(new TextBlock { Text = "此时间范围暂无请求记录。" });
+                if (rows.Length == 0) UsageBody.Children.Add(Placeholder("此时间范围暂无请求记录。"));
             }
             PanelStatus.Text = $"{DateTime.Now:HH:mm:ss} · 配置已同步";
         }
         catch (Exception error)
         {
             ServiceTitle.Text = "本地服务 · 状态未知";
-            ServiceDot.Fill = new SolidColorBrush(Colors.Orange);
+            ServiceDot.Style = Themed("DotWarn");
             PanelStatus.Text = error.Message;
         }
         finally { busy = false; GatewaySwitch.IsEnabled = true; }
     }
+
+    private static Style Themed(string key) => (Style)Microsoft.UI.Xaml.Application.Current.Resources[key];
+
+    private static TextBlock Placeholder(string text) => new()
+    {
+        Text = text, Style = Themed("Caption"), TextWrapping = TextWrapping.Wrap,
+        HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 40, 0, 0)
+    };
 
     private static double? Amount(JsonElement row, string field)
     {
@@ -126,14 +139,27 @@ public sealed partial class TrayWindow : Window
         var heading = new Grid { ColumnSpacing = 8 };
         heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        heading.Children.Add(new TextBlock { Text = label, FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-        var text = new TextBlock { Text = value, FontSize = 12, MaxWidth = 180, TextTrimming = TextTrimming.CharacterEllipsis };
+        heading.Children.Add(new TextBlock { Text = label, FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
+        var text = new TextBlock { Text = value, Style = Themed("MonoPrimary"), MaxWidth = 200 };
         ToolTipService.SetToolTip(text, value);
         Grid.SetColumn(text, 1); heading.Children.Add(text);
         var body = new StackPanel { Spacing = 6 }; body.Children.Add(heading);
         if (used is { } amount && limit is > 0)
-            body.Children.Add(new ProgressBar { Minimum = 0, Maximum = 100, Value = Math.Clamp(amount / limit.Value * 100, 0, 100), Height = 7 });
+            body.Children.Add(Bar(Math.Clamp(amount / limit.Value, 0, 1)));
         QuotaBody.Children.Add(body);
+    }
+
+    // Star columns size the fill without waiting for a layout pass.
+    private static Grid Bar(double fraction)
+    {
+        var bar = new Grid { Height = 8 };
+        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(fraction, 0.0001), GridUnitType.Star) });
+        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(1 - fraction, 0.0001), GridUnitType.Star) });
+        var track = new Border { Style = Themed("BarTrack") };
+        Grid.SetColumnSpan(track, 2);
+        bar.Children.Add(track);
+        if (fraction > 0) bar.Children.Add(new Border { Style = Themed("BarFill") });
+        return bar;
     }
 
     private static double TokenTotal(JsonElement row) => new[] { "input_tokens", "cache_read_tokens", "cache_creation_tokens", "output_tokens" }
@@ -145,21 +171,23 @@ public sealed partial class TrayWindow : Window
     {
         var models = rows.Select(row => (Row: row, Total: TokenTotal(row))).OrderByDescending(row => row.Total).Take(VisibleUsageModels).ToArray();
         var maximum = Math.Max(1, models.Max(row => row.Total));
-        var chart = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        const double plotHeight = 120;
+        var chart = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
         foreach (var (row, total) in models)
         {
             var model = Json.Text(row, "model_id");
-            var column = new StackPanel { Spacing = 6, Width = 72 };
-            column.Children.Add(new TextBlock { Text = TokenLabel(total), FontSize = 11, HorizontalAlignment = HorizontalAlignment.Center });
-            var plot = new Grid { Height = 110 };
-            plot.Children.Add(new Border { Width = 8, Height = total / maximum * 110, CornerRadius = new CornerRadius(4), Background = (Brush)Microsoft.UI.Xaml.Application.Current.Resources["AccentFillColorDefaultBrush"], VerticalAlignment = VerticalAlignment.Bottom });
+            var column = new StackPanel { Spacing = 6, Width = 76 };
+            var plot = new Grid { Height = plotHeight + 18 };
+            var barHeight = Math.Max(4, total / maximum * plotHeight);
+            plot.Children.Add(new TextBlock { Text = TokenLabel(total), Style = Themed("Caption"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 0, barHeight + 4) });
+            plot.Children.Add(new Border { Style = Themed("BarFill"), Width = 12, Height = barHeight, VerticalAlignment = VerticalAlignment.Bottom, Opacity = 0.85 });
             column.Children.Add(plot);
-            column.Children.Add(new TextBlock { Text = model, FontSize = 11, TextTrimming = TextTrimming.CharacterEllipsis });
+            column.Children.Add(new TextBlock { Text = model, Style = Themed("Caption"), FontSize = 11, HorizontalAlignment = HorizontalAlignment.Center });
             ToolTipService.SetToolTip(column, $"{model}\n请求 {Json.Field(row, "request_count")} · 输入 {Json.Field(row, "input_tokens")} · 缓存输入 {Json.Field(row, "cache_read_tokens")} · 输出 {Json.Field(row, "output_tokens")}");
             chart.Children.Add(column);
         }
         UsageBody.Children.Add(new ScrollViewer { Content = chart, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled });
-        if (rows.Length > VisibleUsageModels) UsageBody.Children.Add(new TextBlock { Text = $"展示用量最高的 {VisibleUsageModels} 个模型", FontSize = 11 });
+        if (rows.Length > VisibleUsageModels) UsageBody.Children.Add(new TextBlock { Text = $"展示用量最高的 {VisibleUsageModels} 个模型", Style = Themed("Caption"), FontSize = 11 });
     }
 
     private async void OnGatewayToggled(object sender, RoutedEventArgs args)

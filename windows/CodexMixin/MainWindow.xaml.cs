@@ -32,6 +32,8 @@ public sealed partial class MainWindow : Window
     private readonly Dictionary<string, (UIElement View, Func<Task> Save)> connectionDrafts = [];
     private readonly Dictionary<string, (UIElement View, Func<Task> Save)> modelDrafts = [];
     private readonly Dictionary<string, (TextBlock Ttft, TextBlock Tps)> timingCells = [];
+    private readonly Dictionary<string, JsonElement> timings = [];
+    private bool draftDirty;
     private bool ready;
     private bool busy;
     private bool exiting;
@@ -55,9 +57,10 @@ public sealed partial class MainWindow : Window
             "providers" => "模型与服务", "agents" => "Agent 接入管理", "fusion" => "Fusion 设置",
             "usage" => "用量与额度", _ => "设置与诊断"
         };
-        SidebarColumn.Width = new GridLength(page == "providers" ? 232 : 0);
+        SidebarColumn.Width = new GridLength(page == "providers" ? 248 : 0);
         ProviderSidebar.Visibility = page == "providers" ? Visibility.Visible : Visibility.Collapsed;
         ProviderTabs.Visibility = ProviderSidebar.Visibility;
+        if (page != "providers") { ContentLayer.BorderThickness = new Thickness(0, 1, 0, 0); ContentLayer.CornerRadius = new CornerRadius(0); }
         ApplyChanges.Visibility = page is "providers" or "fusion" ? Visibility.Visible : Visibility.Collapsed;
         if (page == "agents") { PageTitle.Visibility = Visibility.Collapsed; PageDescription.Visibility = Visibility.Collapsed; ApplySummary.Visibility = Visibility.Collapsed; }
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"));
@@ -120,6 +123,12 @@ public sealed partial class MainWindow : Window
         var refresh = new KeyboardAccelerator { Key = VirtualKey.R, Modifiers = VirtualKeyModifiers.Control };
         refresh.Invoked += async (_, args) => { args.Handled = true; await ReloadAsync(); };
         Root.KeyboardAccelerators.Add(refresh);
+        // The model table virtualizes its rows, so it gets the visible height instead of the page scroller.
+        PageScroll.SizeChanged += (_, _) =>
+        {
+            foreach (var table in PageBody.Children.OfType<StackPanel>().SelectMany(panel => panel.Children.OfType<ListView>()))
+                table.Height = ModelTableHeight();
+        };
     }
 
     internal void Shutdown() { exiting = true; Close(); }
@@ -206,7 +215,8 @@ public sealed partial class MainWindow : Window
     {
         if (busy || exiting) return;
         busy = true;
-        PageShell.IsEnabled = false;
+        // Block input without the disabled look; a refresh should not gray out the window.
+        PageShell.IsHitTestVisible = false;
         Activity.IsActive = true;
         Activity.Visibility = Visibility.Visible;
         StatusText.Text = $"{label}…";
@@ -246,7 +256,7 @@ public sealed partial class MainWindow : Window
             activeCancellation = null;
             CancelAction.Visibility = Visibility.Collapsed;
             busy = false;
-            PageShell.IsEnabled = true;
+            PageShell.IsHitTestVisible = true;
             Activity.IsActive = false;
             Activity.Visibility = Visibility.Collapsed;
         }
@@ -271,6 +281,9 @@ public sealed partial class MainWindow : Window
     private async Task LoadPageAsync(CancellationToken token)
     {
         PageBody.Children.Clear();
+        draftDirty = false;
+        ProviderHeaderTile.Visibility = StatusBadge.Visibility = OfficialBadge.Visibility = Visibility.Collapsed;
+        ShowSummary("配置已同步", "Caption");
         (PageTitle.Text, PageDescription.Text) = page switch
         {
             "providers" => ("供应商与模型", "管理服务连接与向 Agent 提供的模型"),
@@ -329,21 +342,52 @@ public sealed partial class MainWindow : Window
     private static string Readiness(JsonElement provider) => !Json.Flag(provider, "enabled") ? "已停用" :
         Json.Text(provider, "readiness") switch { "healthy" => "正常", "degraded" => "降级", var value => value };
 
+    private static string ReadinessDot(JsonElement provider) => !Json.Flag(provider, "enabled") ? "DotOff" :
+        Json.Text(provider, "readiness") == "healthy" ? "DotOn" : "DotWarn";
+
+    // Styles carry ThemeResource brushes, so code-built elements follow the window theme.
+    private static Style Themed(string key) => (Style)Microsoft.UI.Xaml.Application.Current.Resources[key];
+
+    private static StackPanel IconLabel(string glyph, string text)
+    {
+        var label = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+        label.Children.Add(new FontIcon { Glyph = glyph, FontSize = 14 });
+        label.Children.Add(new TextBlock { Text = text });
+        return label;
+    }
+
+    private MenuFlyoutItem MenuItem(string label, string glyph, Func<Task> work)
+    {
+        var item = new MenuFlyoutItem { Text = label, Icon = new FontIcon { Glyph = glyph } };
+        item.Click += async (_, _) =>
+        {
+            try { await work(); }
+            catch (Exception error) { ShowNotice($"{label}失败", error.Message, InfoBarSeverity.Error); }
+        };
+        return item;
+    }
+
     private async Task ProvidersAsync(CancellationToken token)
     {
         var status = await Client.QueryAsync(["service", "status", "--json"], token);
         providers = Json.Flag(status, "configured")
             ? Json.Rows(Json.Field(await Client.QueryAsync(["provider", "list", "--json"], token), "providers")) : [];
         ready = false;
+        // A reload shows the saved state; drafts only survive provider and tab switches.
+        modelDrafts.Clear(); connectionDrafts.Clear(); timingCells.Clear(); timings.Clear();
         ProviderList.Items.Clear();
         foreach (var provider in providers)
         {
-            var row = new StackPanel { Spacing = 3 };
-            row.Children.Add(new TextBlock { Text = Json.Text(provider, "display_name"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-            row.Children.Add(new TextBlock { Text = $"{Readiness(provider)} · {Json.Strings(Json.Field(provider, "selected_models")).Length}/{Json.Rows(Json.Field(provider, "cached_models")).Length} 个模型", FontSize = 11 });
-            var item = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
-            item.Children.Add(Marks.Provider(provider)); item.Children.Add(row);
-            ProviderList.Items.Add(new ListViewItem { Content = item, Tag = Json.Text(provider, "id"), Padding = new Thickness(12, 10, 12, 10) });
+            var row = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+            row.Children.Add(new TextBlock { Text = Json.Text(provider, "display_name"), TextTrimming = TextTrimming.CharacterEllipsis });
+            var state = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            state.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Style = Themed(ReadinessDot(provider)), VerticalAlignment = VerticalAlignment.Center });
+            state.Children.Add(new TextBlock { Text = $"{Readiness(provider)} · {Json.Strings(Json.Field(provider, "selected_models")).Length}/{Json.Rows(Json.Field(provider, "cached_models")).Length} 个模型", Style = Themed("Caption") });
+            row.Children.Add(state);
+            var item = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+            item.Children.Add(new Border { Style = Themed("IconTile"), Width = 36, Height = 36, Child = Marks.Provider(provider, 22) });
+            item.Children.Add(row);
+            ProviderList.Items.Add(new ListViewItem { Content = item, Tag = Json.Text(provider, "id"), Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 1, 0, 1) });
         }
         ready = true;
         if (providers.Length == 0)
@@ -367,9 +411,15 @@ public sealed partial class MainWindow : Window
         ModelsTab.IsChecked = !connectionSelected; ConnectionTab.IsChecked = connectionSelected;
         PageTitle.Text = Json.Text(provider, "display_name");
         ProviderHeaderIcon.Source = Marks.Provider(provider).Source;
-        ProviderHeaderIcon.Visibility = Visibility.Visible;
+        ProviderHeaderTile.Visibility = Visibility.Visible;
         OfficialBadge.Visibility = Json.Text(provider, "kind") == "official" ? Visibility.Visible : Visibility.Collapsed;
-        PageDescription.Text = $"{providerId} · {Readiness(provider)} · 已加入 {Json.Strings(Json.Field(provider, "selected_models")).Length} / 可选 {Json.Rows(Json.Field(provider, "cached_models")).Length}";
+        var healthy = Json.Flag(provider, "enabled") && Json.Text(provider, "readiness") == "healthy";
+        StatusBadge.Style = Themed(healthy ? "SuccessBadge" : "CautionBadge");
+        StatusBadgeText.Text = healthy ? "配置就绪" : Readiness(provider);
+        StatusBadge.Visibility = Visibility.Visible;
+        var refreshed = provider.TryGetProperty("models_refreshed_at_ms", out var stamp) && stamp.ValueKind == JsonValueKind.Number
+            ? $" · 上次刷新 {DateTimeOffset.FromUnixTimeMilliseconds(stamp.GetInt64()).ToLocalTime():yyyy/MM/dd HH:mm}" : "";
+        PageDescription.Text = $"{providerId} · 已加入 {Json.Strings(Json.Field(provider, "selected_models")).Length} / 可选 {Json.Rows(Json.Field(provider, "cached_models")).Length}{refreshed}";
         ApplyChanges.IsEnabled = true;
         try
         {
@@ -397,40 +447,56 @@ public sealed partial class MainWindow : Window
 
     private void RenderModels(JsonElement provider)
     {
-        var modelBody = new StackPanel { Spacing = 12 };
+        var modelBody = new StackPanel { Spacing = 8 };
         var id = Json.Text(provider, "id");
         var models = Json.Rows(Json.Field(provider, "cached_models"));
         var modelsById = models.Select((model, index) => (Model: model, Index: index)).ToDictionary(row => Json.Text(row.Model, "id"));
         var selected = Json.Strings(Json.Field(provider, "selected_models")).ToHashSet();
         var savedContexts = Json.Field(provider, "model_context_overrides");
         var contexts = savedContexts.EnumerateObject().ToDictionary(entry => entry.Name, entry => entry.Value.GetDouble());
-        var toolbar = Row();
-        var search = new TextBox { PlaceholderText = "搜索当前服务商的模型", Width = 280 };
+
+        var toolbar = new Grid { ColumnSpacing = 8 };
+        foreach (var width in new[] { GridLength.Auto, GridLength.Auto, GridLength.Auto, new GridLength(1, GridUnitType.Star), GridLength.Auto })
+            toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = width });
+        var search = new AutoSuggestBox { PlaceholderText = "搜索当前服务商的模型", QueryIcon = new SymbolIcon(Symbol.Find), Width = 300 };
         AutomationProperties.SetName(search, "搜索当前服务商的模型");
-        toolbar.Children.Add(search);
-        var filter = Choice("", ["全部", "已加入", "未加入"], "全部");
-        toolbar.Children.Add(filter);
-        toolbar.Children.Add(Button("刷新模型", () => ChangeAsync("刷新模型", ["provider", "discover", id], apply: true)));
-        toolbar.Children.Add(Button($"测试已加入的 {selected.Count} 个模型", () => ChangeAsync("启动模型测速", ["benchmark", "start", "--provider", id, "--timeout-seconds", "60"]), true));
+        var filter = new ComboBox { MinWidth = 108, VerticalAlignment = VerticalAlignment.Center };
+        foreach (var option in new[] { "全部", "已加入", "未加入" }) filter.Items.Add(option);
+        filter.SelectedIndex = 0;
+        AutomationProperties.SetName(filter, "模型筛选");
+        var actions = new MenuFlyout { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedLeft };
+        actions.Items.Add(MenuItem("刷新模型列表", "\uE72C", () => ChangeAsync("刷新模型", ["provider", "discover", id], apply: true)));
+        actions.Items.Add(MenuItem("探测已加入模型的能力", "\uE9D9", () => ChangeAsync("探测模型能力", ["provider", "probe", id], apply: true)));
+        var more = new DropDownButton { Content = new FontIcon { Glyph = "\uE712", FontSize = 14 }, Flyout = actions, VerticalAlignment = VerticalAlignment.Center };
+        AutomationProperties.SetName(more, "更多模型操作");
+        var test = Button($"测试已加入的 {selected.Count} 个模型", () => ChangeAsync("启动模型测速", ["benchmark", "start", "--provider", id, "--timeout-seconds", "60"]), true);
+        test.Content = IconLabel("\uE916", $"测试已加入的 {selected.Count} 个模型");
+        AutomationProperties.SetName(test, $"测试已加入的 {selected.Count} 个模型");
+        var tools = new FrameworkElement[] { search, filter, more, new Border(), test };
+        for (var index = 0; index < tools.Length; index++) { Grid.SetColumn(tools[index], index); toolbar.Children.Add(tools[index]); }
         modelBody.Children.Add(toolbar);
+
+        // Shared by the header and every virtualized row so the columns stay aligned.
         Grid Columns()
         {
-            var grid = new Grid { ColumnSpacing = 8, Padding = new Thickness(4) };
-            foreach (var width in new[] { 44d, -1d, 68d, 68d, 84d, 130d })
+            var grid = new Grid { ColumnSpacing = 12 };
+            foreach (var width in new[] { 44d, -1d, 76d, 84d, 80d, 48d, 120d })
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = width < 0 ? new GridLength(1, GridUnitType.Star) : new GridLength(width) });
             return grid;
         }
         var header = Columns();
-        var labels = new[] { "Codex", "模型", "首 Token", "生成速度", "上下文", "能力" };
+        var labels = new[] { "Codex", "模型", "首 Token", "生成速度", "上下文", "倍率", "能力" };
         for (var index = 0; index < labels.Length; index++)
         {
-            var label = new TextBlock { Text = labels[index], FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+            var label = new TextBlock { Text = labels[index], Style = Themed("ColumnHeader"), HorizontalAlignment = index is >= 2 and <= 5 ? HorizontalAlignment.Right : HorizontalAlignment.Left };
             Grid.SetColumn(label, index); header.Children.Add(label);
         }
-        modelBody.Children.Add(header);
-        var list = new ListView { Height = 390, SelectionMode = ListViewSelectionMode.None };
+        modelBody.Children.Add(new Border { Style = Themed("RowDivider"), Padding = new Thickness(12, 8, 12, 8), Child = header });
+
+        var list = new ListView { SelectionMode = ListViewSelectionMode.None, Height = ModelTableHeight(), Padding = new Thickness(0) };
         list.ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load(
             "<DataTemplate xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\"><ContentControl HorizontalContentAlignment=\"Stretch\"/></DataTemplate>");
+        list.ItemContainerStyle = Themed("ModelRowContainer");
         AutomationProperties.SetAutomationId(list, "model-table");
         list.ContainerContentChanging += (_, args) =>
         {
@@ -438,52 +504,71 @@ public sealed partial class MainWindow : Window
             if (args.Item is not string modelId) return;
             var (model, modelIndex) = modelsById[modelId];
             var row = Columns();
-            var check = new CheckBox { IsChecked = selected.Contains(modelId), MinWidth = 24, MinHeight = 28, Height = 28, Padding = new Thickness(0) };
+            var check = new CheckBox { IsChecked = selected.Contains(modelId), MinWidth = 0, MinHeight = 0, Padding = new Thickness(0), VerticalAlignment = VerticalAlignment.Center };
+            AutomationProperties.SetName(check, $"{modelId} 加入 Codex");
             check.Checked += (_, _) => { selected.Add(modelId); MarkDirty(); };
             check.Unchecked += (_, _) => { selected.Remove(modelId); MarkDirty(); };
-            var title = new TextBlock { Text = Json.OptionalText(model, "display_name") ?? modelId, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
-            ToolTipService.SetToolTip(title, modelId);
-            var originalContext = model.TryGetProperty("context_window", out var original) && original.ValueKind == JsonValueKind.Number ? original.GetDouble() : double.NaN;
-            string ContextLabel()
+            var title = new Grid { ColumnSpacing = 0, VerticalAlignment = VerticalAlignment.Center };
+            title.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            title.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            var name = new TextBlock { Text = Json.OptionalText(model, "display_name") ?? modelId, Style = Themed("MonoPrimary"), MaxWidth = 280 };
+            AutomationProperties.SetName(name, modelId);
+            title.Children.Add(name);
+            if (Json.OptionalText(model, "description") is { Length: > 0 } description)
             {
-                var value = contexts.GetValueOrDefault(modelId, originalContext);
-                if (double.IsNaN(value)) value = originalContext;
-                return double.IsNaN(value) ? "默认" : value >= 1000 ? $"{value / 1000:0.#}K" : $"{value:0}";
+                var detail = new TextBlock { Text = $" · {description}", Style = Themed("Mono") };
+                Grid.SetColumn(detail, 1); title.Children.Add(detail);
             }
-            Button? context = null;
-            context = Button(ContextLabel(), async () =>
+            ToolTipService.SetToolTip(title, string.Join("\n", new[] { modelId, Json.OptionalText(model, "display_name"), Json.OptionalText(model, "description") }.Where(value => !string.IsNullOrEmpty(value)).Distinct()));
+            var originalContext = model.TryGetProperty("context_window", out var original) && original.ValueKind == JsonValueKind.Number ? original.GetDouble() : double.NaN;
+            var contextText = new TextBlock { Style = Themed("MonoPrimary") };
+            var overridden = new FontIcon { Glyph = "\uE7A7", FontSize = 10, Visibility = Visibility.Collapsed, VerticalAlignment = VerticalAlignment.Center };
+            ToolTipService.SetToolTip(overridden, "已覆盖上游上下文");
+            void ShowContext()
             {
-                var number = new NumberBox { Header = "上下文 Token 数", Minimum = 1, Value = contexts.GetValueOrDefault(modelId, originalContext) };
+                var value = contexts.GetValueOrDefault(modelId, double.NaN);
+                overridden.Visibility = double.IsNaN(value) ? Visibility.Collapsed : Visibility.Visible;
+                if (double.IsNaN(value)) value = originalContext;
+                contextText.Text = double.IsNaN(value) ? "默认" : value >= 1000 ? $"{value / 1000:N0} K" : $"{value:0}";
+            }
+            ShowContext();
+            var contextLabel = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4, HorizontalAlignment = HorizontalAlignment.Right };
+            contextLabel.Children.Add(contextText); contextLabel.Children.Add(overridden);
+            var context = Button("编辑上下文", async () =>
+            {
+                var number = new NumberBox { Header = "上下文 Token 数", Minimum = 1, Value = contexts.GetValueOrDefault(modelId, originalContext), SpinButtonPlacementMode = NumberBoxSpinButtonPlacementMode.Compact };
                 var dialog = Dialog("模型上下文", number); dialog.PrimaryButtonText = "应用到草稿"; dialog.SecondaryButtonText = "恢复默认";
                 var choice = await ShowDialogAsync(dialog);
                 if (choice == ContentDialogResult.None) return;
                 if (choice == ContentDialogResult.Primary && (!double.IsFinite(number.Value) || number.Value <= 0 || number.Value != Math.Truncate(number.Value)))
                     throw new InvalidOperationException("上下文 Token 数必须是正整数。");
                 contexts[modelId] = choice == ContentDialogResult.Secondary ? double.NaN : number.Value;
-                context!.Content = ContextLabel(); MarkDirty();
+                ShowContext(); MarkDirty();
             });
-            context.Background = new SolidColorBrush(Colors.Transparent); context.BorderThickness = new Thickness(0);
-            context.Padding = new Thickness(4, 0, 4, 0); context.MinHeight = 28; context.FontSize = 12;
+            context.Content = contextLabel; context.Style = Themed("FlatButton");
+            context.Padding = new Thickness(4, 2, 4, 2); context.HorizontalAlignment = HorizontalAlignment.Right; context.MinHeight = 0;
             AutomationProperties.SetName(context, $"{modelId} 上下文");
-            var capabilities = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-            foreach (var (field, label, glyph) in new[] { ("supports_image", "图片输入", "\uE8B9"), ("supports_thinking", "Thinking", "\uEA80"), ("supports_function_tools", "Function Tools", "\uE90F"), ("supports_tool_search", "Tool Search", "\uE721"), ("supports_web_search", "Web Search", "\uE774") })
+            var capabilities = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10, VerticalAlignment = VerticalAlignment.Center };
+            foreach (var (field, label, glyph) in new[] { ("supports_image", "图片输入", "\uE8B9"), ("supports_thinking", "Thinking", "\uE82F"), ("supports_function_tools", "Function Tools", "\uE90F"), ("supports_tool_search", "Tool Search", "\uE721"), ("supports_web_search", "Web Search", "\uE774") })
             {
                 var known = model.TryGetProperty(field, out var support) && support.ValueKind is JsonValueKind.True or JsonValueKind.False;
                 var supported = known && support.ValueKind == JsonValueKind.True;
-                var icon = new TextBlock { Text = glyph, FontFamily = new FontFamily("Segoe Fluent Icons"), FontSize = 14, Foreground = (Brush)Microsoft.UI.Xaml.Application.Current.Resources[supported ? "AccentTextFillColorPrimaryBrush" : "TextFillColorDisabledBrush"] };
-                var description = $"{label} · {(known ? supported ? "支持" : "不支持" : "尚未探测")}";
-                ToolTipService.SetToolTip(icon, description); AutomationProperties.SetName(icon, description);
+                var icon = new FontIcon { Glyph = glyph, Style = Themed(supported ? "GlyphOn" : "GlyphOff") };
+                var summary = $"{label} · {(known ? supported ? "支持" : "不支持" : "尚未探测")}";
+                ToolTipService.SetToolTip(icon, summary); AutomationProperties.SetName(icon, summary);
                 capabilities.Children.Add(icon);
             }
-            var ttft = Text("—"); var tps = Text("—");
+            var ttft = new TextBlock { Text = "-", Style = Themed("Mono"), HorizontalAlignment = HorizontalAlignment.Right };
+            var tps = new TextBlock { Text = "-", Style = Themed("Mono"), HorizontalAlignment = HorizontalAlignment.Right };
             timingCells[$"{id}/{modelId}"] = (ttft, tps);
-            var cells = new FrameworkElement[] { check, title, ttft, tps, context, capabilities };
+            if (timings.TryGetValue($"{id}/{modelId}", out var timing)) ShowTiming(timing, ttft, tps);
+            var ratio = new TextBlock { Text = Json.OptionalText(model, "ratio") ?? "-", Style = Themed("MonoPrimary"), HorizontalAlignment = HorizontalAlignment.Right };
+            var cells = new FrameworkElement[] { check, title, ttft, tps, context, ratio, capabilities };
             for (var index = 0; index < cells.Length; index++) { Grid.SetColumn(cells[index], index); row.Children.Add(cells[index]); }
             args.ItemContainer.HorizontalContentAlignment = HorizontalAlignment.Stretch;
             ((ContentControl)args.ItemContainer.ContentTemplateRoot).Content = new Border
             {
-                Child = row, CornerRadius = new CornerRadius(6),
-                Background = modelIndex % 2 == 0 ? (Brush)Microsoft.UI.Xaml.Application.Current.Resources["CardBackgroundFillColorDefaultBrush"] : new SolidColorBrush(Colors.Transparent)
+                Child = row, Style = Themed(modelIndex % 2 == 0 ? "RowStripe" : "RowPlain"), Padding = new Thickness(12, 0, 12, 0), Height = 34
             };
             args.Handled = true;
         };
@@ -496,8 +581,7 @@ public sealed partial class MainWindow : Window
         }
         search.TextChanged += (_, _) => Filter(); filter.SelectionChanged += (_, _) => Filter();
         modelBody.Children.Add(list);
-        modelBody.Children.Add(Button("探测已加入模型的能力", () => ChangeAsync("探测模型能力", ["provider", "probe", id], apply: true)));
-        ApplySummary.Text = "当前服务商尚未测速；未取得的首 Token 与生成速度显示为 —。";
+        ShowSummary("当前服务商尚未测速", "Caption");
         pendingApply = async () =>
         {
             var arguments = new List<string> { "provider", "select", id };
@@ -514,7 +598,29 @@ public sealed partial class MainWindow : Window
         PageBody.Children.Add(modelBody);
     }
 
-    private void MarkDirty() { ApplySummary.Text = "还有未应用的更改"; ApplyChanges.IsEnabled = true; }
+    private double ModelTableHeight() => Math.Max(240, PageScroll.ActualHeight - 112);
+
+    private void MarkDirty() { draftDirty = true; ShowSummary("还有未应用的更改", "CautionCaption"); ApplyChanges.IsEnabled = true; }
+
+    private void ShowSummary(string text, string style) { ApplySummary.Text = text; ApplySummary.Style = Themed(style); }
+
+    private static string Milliseconds(double value) => value < 1000 ? $"{value:0} ms" : $"{value / 1000:0.##} s";
+
+    private static void ShowTiming(JsonElement row, TextBlock ttft, TextBlock tps)
+    {
+        var status = Json.Text(row, "status");
+        var latency = row.TryGetProperty("ttft_ms", out var ms) && ms.ValueKind == JsonValueKind.Number ? ms.GetDouble() : (double?)null;
+        (ttft.Text, ttft.Style) = status switch
+        {
+            "timed_out" => ("超时", Themed("MonoCaution")),
+            "failed" => ("失败", Themed("MonoCritical")),
+            _ when latency is { } value => (Milliseconds(value), Themed(value < 1000 ? "MonoSuccess" : value < 3000 ? "MonoCaution" : "MonoCritical")),
+            _ => ("-", Themed("Mono"))
+        };
+        var speed = row.TryGetProperty("tps", out var rate) && rate.ValueKind == JsonValueKind.Number ? rate.GetDouble() : (double?)null;
+        (tps.Text, tps.Style) = speed is { } tokens ? ($"{tokens:0.0} tok/s", Themed("MonoPrimary")) : ("-", Themed("Mono"));
+        if (Json.OptionalText(row, "error") is { } error) ToolTipService.SetToolTip(ttft, error);
+    }
 
     private async Task RefreshTimingsAsync(CancellationToken token)
     {
@@ -523,16 +629,27 @@ public sealed partial class MainWindow : Window
             var response = await Client.QueryAsync(["benchmark", "status"], token);
             var snapshot = Json.Field(response, "snapshot");
             if (snapshot.ValueKind == JsonValueKind.Null) return;
-            foreach (var row in Json.Rows(Json.Field(snapshot, "results")))
+            var results = Json.Rows(Json.Field(snapshot, "results")).Where(row => Json.Text(row, "provider_id") == providerId).ToArray();
+            foreach (var row in results)
             {
-                if (!timingCells.TryGetValue($"{Json.Text(row, "provider_id")}/{Json.Text(row, "upstream_model")}", out var cells)) continue;
-                cells.Ttft.Text = Metric(row, "ttft_ms", " ms");
-                cells.Tps.Text = Metric(row, "tps", " t/s");
-                if (Json.OptionalText(row, "error") is { } error) ToolTipService.SetToolTip(cells.Ttft, error);
+                var key = $"{Json.Text(row, "provider_id")}/{Json.Text(row, "upstream_model")}";
+                timings[key] = row;
+                if (timingCells.TryGetValue(key, out var cells)) ShowTiming(row, cells.Ttft, cells.Tps);
             }
-            ApplySummary.Text = $"测速 {Json.Text(snapshot, "status")} · {Json.Rows(Json.Field(snapshot, "results")).Length}/{Json.Field(snapshot, "total_models")}";
+            if (draftDirty || results.Length == 0) return;
+            var started = DateTimeOffset.FromUnixTimeMilliseconds(Json.Field(snapshot, "started_at").GetInt64()).ToLocalTime();
+            var prefix = $"{started:yyyy年M月d日 HH:mm} · 超时 {Json.Field(snapshot, "timeout_seconds")} 秒 · ";
+            var completed = results.Count(row => Json.Text(row, "status") == "completed");
+            var timedOut = results.Count(row => Json.Text(row, "status") == "timed_out");
+            var failed = results.Length - completed - timedOut;
+            switch (Json.Text(snapshot, "status"))
+            {
+                case "running": ShowSummary($"{prefix}正在测速 {results.Length}/{Json.Field(snapshot, "total_models")}", "Caption"); break;
+                case "failed": ShowSummary($"{prefix}测速任务失败：{Json.OptionalText(snapshot, "error") ?? "未知错误"}", "CautionCaption"); break;
+                default: ShowSummary($"{prefix}测速完成：成功 {completed}，超时 {timedOut}，失败 {failed}", failed == 0 && timedOut == 0 ? "SuccessCaption" : "CautionCaption"); break;
+            }
         }
-        catch (CliFailure error) { if (!busy) ApplySummary.Text = $"测速不可用：{error.Message}"; }
+        catch (CliFailure error) { if (!busy && !draftDirty) ShowSummary($"测速不可用：{error.Message}", "CautionCaption"); }
     }
 
     private Task AddProviderAsync() => ProviderDialogAsync(null);
@@ -643,7 +760,7 @@ public sealed partial class MainWindow : Window
     private async Task AgentsAsync(CancellationToken token)
     {
         var agents = Json.Rows(Json.Field(await Client.QueryAsync(["agent", "list", "--json"], token), "agents"));
-        PageBody.Children.Add(Button("检查版本更新", () => ExecuteUiAsync("检查 Agent 版本", async cancellation =>
+        var checkVersions = Button("检查版本更新", () => ExecuteUiAsync("检查 Agent 版本", async cancellation =>
         {
             var versions = Json.Rows(Json.Field(await Client.QueryAsync(["agent", "versions", "--json", "--refresh"], cancellation), "agents"));
             var body = new StackPanel { Spacing = 12 };
@@ -658,11 +775,17 @@ public sealed partial class MainWindow : Window
                 body.Children.Add(row);
             }
             PageBody.Children.Insert(1, Card("版本检查结果", "每个 Agent 的查询结果由 CLI 返回。", body));
-        })));
-        var detected = agents.Count(agent => Json.Flag(agent, "detected"));
-        PageBody.Children.Add(Text($"已检测到 {detected} 个 Agent · 未检测到 {agents.Length - detected} 个"));
-        var undetected = new StackPanel { Spacing = 6 };
-        var detectedRows = new StackPanel { Spacing = 0, MaxWidth = 980, HorizontalAlignment = HorizontalAlignment.Stretch };
+        }));
+        checkVersions.Content = IconLabel("\uE895", "检查版本更新");
+        checkVersions.Style = Themed("FlatButton");
+        var detectedCount = agents.Count(agent => Json.Flag(agent, "detected"));
+        var agentToolbar = new Grid();
+        agentToolbar.Children.Add(new TextBlock { Text = $"已检测到 {detectedCount} 个 Agent · 未检测到 {agents.Length - detectedCount} 个", Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center });
+        checkVersions.HorizontalAlignment = HorizontalAlignment.Right;
+        agentToolbar.Children.Add(checkVersions);
+        PageBody.Children.Add(agentToolbar);
+        var undetected = new StackPanel { Spacing = 0 };
+        var detectedRows = new StackPanel { Spacing = 0 };
         foreach (var agent in agents)
         {
             var id = Json.Text(agent, "id");
@@ -703,7 +826,7 @@ public sealed partial class MainWindow : Window
                 }
                 catch (Exception error) { ShowNotice("Agent 接入失败", error.Message, InfoBarSeverity.Error); }
             };
-            var body = new StackPanel { Spacing = 8, Visibility = Visibility.Collapsed, Margin = new Thickness(44, 8, 0, 0) };
+            var body = new StackPanel { Spacing = 8, Visibility = Visibility.Collapsed, Margin = new Thickness(56, 8, 0, 4) };
             body.Children.Add(Text(Json.Text(integration, "detail")));
             if (Json.OptionalText(integration, "error") is { } integrationError) body.Children.Add(Text(integrationError));
             if (Json.OptionalText(version, "error") is { } versionError) body.Children.Add(Text(versionError));
@@ -711,32 +834,37 @@ public sealed partial class MainWindow : Window
             var heading = new Grid { ColumnSpacing = 12 };
             heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            var title = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
-            title.Children.Add(new TextBlock { Text = Json.Text(agent, "name"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
-            title.Children.Add(new TextBlock { Text = $"CLI {Json.OptionalText(version, "version") ?? "未知"}" + (Json.OptionalText(version, "app_version") is { } appVersion ? $" · App {appVersion}" : ""), FontSize = 12, Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["SecondaryText"], VerticalAlignment = VerticalAlignment.Center });
-            var text = new StackPanel { Spacing = 4 };
+            var title = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+            title.Children.Add(new TextBlock { Text = Json.Text(agent, "name"), FontSize = 15 });
+            var versions = string.Join("  ", new[] { Json.OptionalText(version, "version") is { } cliVersion ? (Json.OptionalText(version, "app_version") != null ? $"CLI {cliVersion}" : cliVersion) : null,
+                Json.OptionalText(version, "app_version") is { } appVersion ? $"App {appVersion}" : null }.Where(value => value != null));
+            if (versions.Length > 0) title.Children.Add(new TextBlock { Text = versions, Style = Themed("Caption"), FontSize = 14, VerticalAlignment = VerticalAlignment.Center });
+            var text = new StackPanel { Spacing = 3, VerticalAlignment = VerticalAlignment.Center };
             text.Children.Add(title);
-            var summary = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-            summary.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Width = 6, Height = 6, Fill = new SolidColorBrush(connected ? Colors.LimeGreen : state == "error" ? Colors.Orange : Colors.Gray), VerticalAlignment = VerticalAlignment.Center });
-            summary.Children.Add(new TextBlock { Text = stateLabel, FontSize = 12, Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["SecondaryText"] });
+            var summary = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            summary.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Style = Themed(connected ? "DotOn" : state == "error" ? "DotWarn" : "DotOff"), VerticalAlignment = VerticalAlignment.Center });
+            var problem = Json.OptionalText(integration, "error") ?? (Json.OptionalText(version, "error") is { } failure ? $"版本检查失败：{failure}" : null);
+            summary.Children.Add(new TextBlock { Text = problem == null ? stateLabel : $"{stateLabel} · {problem}", Style = Themed("Caption"), FontSize = 13, MaxWidth = 760 });
             text.Children.Add(summary);
-            var identity = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-            identity.Children.Add(Marks.Agent(id)); identity.Children.Add(text);
-            var details = new Button { Content = identity, Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0), Padding = new Thickness(0), HorizontalContentAlignment = HorizontalAlignment.Left, HorizontalAlignment = HorizontalAlignment.Stretch };
+            var identity = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 16 };
+            identity.Children.Add(new Border { Width = 40, Height = 40, Child = Marks.Agent(id) }); identity.Children.Add(text);
+            var details = new Button { Content = identity, Style = Themed("FlatButton"), Padding = new Thickness(0), HorizontalContentAlignment = HorizontalAlignment.Left, HorizontalAlignment = HorizontalAlignment.Stretch };
             AutomationProperties.SetName(details, $"查看 {Json.Text(agent, "name")} 详情");
             details.Click += (_, _) => body.Visibility = body.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
             heading.Children.Add(details);
             Grid.SetColumn(connectSwitch, 1); heading.Children.Add(connectSwitch);
             var entryBody = new StackPanel { Spacing = 0 };
             entryBody.Children.Add(heading); entryBody.Children.Add(body);
-            var entry = new Border { Child = entryBody, Padding = new Thickness(16, 12, 16, 12), BorderBrush = (Brush)Microsoft.UI.Xaml.Application.Current.Resources["CardStrokeColorDefaultBrush"], BorderThickness = new Thickness(0, 0, 0, 1) };
-            if (Json.Flag(agent, "detected")) detectedRows.Children.Add(entry);
-            else undetected.Children.Add(entry);
+            var rows = Json.Flag(agent, "detected") ? detectedRows : undetected;
+            var entry = new Border { Child = entryBody, Padding = new Thickness(20, 14, 20, 14), Style = Themed(rows.Children.Count == 0 ? "RowPlain" : "RowDivider") };
+            // Dividers sit above every row except the first, so the last row has no trailing line.
+            if (rows.Children.Count > 0) entry.BorderThickness = new Thickness(0, 1, 0, 0);
+            rows.Children.Add(entry);
         }
-        if (detectedRows.Children.Count > 0) PageBody.Children.Add(new Border { Child = detectedRows, CornerRadius = new CornerRadius(10), Background = (Brush)Microsoft.UI.Xaml.Application.Current.Resources["CardBackgroundFillColorDefaultBrush"] });
+        if (detectedRows.Children.Count > 0) PageBody.Children.Add(new Border { Child = detectedRows, Style = Themed("ListCard"), MaxWidth = 1120 });
         if (undetected.Children.Count > 0)
         {
-            var section = new Expander { Header = $"显示未检测到的 {undetected.Children.Count} 个 Agent", Content = undetected, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+            var section = new Expander { Header = $"显示未检测到的 {undetected.Children.Count} 个 Agent", Content = undetected, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch, MaxWidth = 1120 };
             AutomationProperties.SetAutomationId(section, "agent-undetected");
             PageBody.Children.Add(section);
         }
@@ -958,7 +1086,7 @@ public sealed partial class MainWindow : Window
     private Border Card(string title, string description, UIElement? content = null)
     {
         var body = new StackPanel { Spacing = 12 };
-        body.Children.Add(new TextBlock { Text = title, Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["SubtitleTextBlockStyle"], TextWrapping = TextWrapping.Wrap });
+        body.Children.Add(new TextBlock { Text = title, Style = Themed("BodyStrongTextBlockStyle"), FontSize = 16, TextWrapping = TextWrapping.Wrap });
         body.Children.Add(new TextBlock { Text = description,
             Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["SecondaryText"] });
         if (content != null) body.Children.Add(content);
