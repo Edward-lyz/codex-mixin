@@ -170,6 +170,14 @@ internal static class Program
             File.WriteAllText(Path.Combine(output, "failure.txt"), error.ToString());
             if (handle != 0 && !process.HasExited)
             {
+                // Visible text holds the status line and InfoBar, which name the failing CLI step.
+                try
+                {
+                    var texts = AutomationElement.FromHandle(handle).FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text))
+                        .Cast<AutomationElement>().Select(element => element.Current.Name).Where(name => !string.IsNullOrWhiteSpace(name)).Take(80);
+                    File.AppendAllText(Path.Combine(output, "failure.txt"), "\n\nVisible text:\n" + string.Join("\n", texts));
+                }
+                catch (Exception textError) { Console.Error.WriteLine($"Failure text unavailable: {textError.Message}"); }
                 try { Capture(AutomationElement.FromHandle(handle), Path.Combine(output, "failure.png")); }
                 catch (Exception captureError) { Console.Error.WriteLine($"Failure screenshot unavailable: {captureError.Message}"); }
             }
