@@ -43,7 +43,9 @@ public sealed partial class MainWindow : Window
     internal MainWindow(string page)
     {
         this.page = page;
+        App.StartupTrace($"window {page}: initialize XAML");
         InitializeComponent();
+        App.StartupTrace($"window {page}: XAML ready");
         Root.RequestedTheme = ((App)Microsoft.UI.Xaml.Application.Current).Theme;
         Title = WindowCaption.Text = page switch
         {
@@ -55,6 +57,7 @@ public sealed partial class MainWindow : Window
         ProviderTabs.Visibility = ProviderSidebar.Visibility;
         ApplyChanges.Visibility = page is "providers" or "fusion" ? Visibility.Visible : Visibility.Collapsed;
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"));
+        App.StartupTrace($"window {page}: icon ready");
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 800));
         if (AppWindowTitleBar.IsCustomizationSupported())
         {
@@ -67,9 +70,11 @@ public sealed partial class MainWindow : Window
         }
         else { TitleBar.Visibility = Visibility.Collapsed; }
         SystemBackdrop = new MicaBackdrop();
+        App.StartupTrace($"window {page}: backdrop ready");
         var handle = WindowNative.GetWindowHandle(this);
         try { if (page == "providers") shell = new NativeShell(handle, OnTrayCommand); }
         catch (Exception error) { ShowNotice("系统托盘不可用", error.Message, InfoBarSeverity.Warning); }
+        App.StartupTrace($"window {page}: native shell ready");
         AppWindow.Closing += (_, args) =>
         {
             if (!exiting && shell != null) { args.Cancel = true; shell.Hide(); }
@@ -114,9 +119,11 @@ public sealed partial class MainWindow : Window
 
     internal void ShowMain()
     {
+        App.StartupTrace($"window {page}: show");
         shell?.Show();
         AppWindow.Show();
         Activate();
+        App.StartupTrace($"window {page}: activated");
     }
 
     private void OnTrayCommand(string command) => DispatcherQueue.TryEnqueue(async () =>

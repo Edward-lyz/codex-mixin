@@ -16,6 +16,12 @@ public partial class App : Application
     internal CliClient Client => cli ??= CliClient.Locate();
     internal Operations Operations => operations ??= new Operations(Client);
     internal ElementTheme Theme => theme;
+    internal static void StartupTrace(string stage)
+    {
+        var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexMixin", "logs");
+        Directory.CreateDirectory(directory);
+        File.AppendAllText(Path.Combine(directory, "startup-trace.txt"), $"{DateTime.UtcNow:O} {stage}\n");
+    }
     internal void SetTheme(ElementTheme value)
     {
         theme = value;
@@ -51,6 +57,7 @@ public partial class App : Application
 
     public App()
     {
+        StartupTrace("application constructor");
         UnhandledException += (_, args) =>
         {
             var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexMixin", "logs");
@@ -58,10 +65,12 @@ public partial class App : Application
             File.WriteAllText(Path.Combine(directory, "native-error.txt"), args.Exception.ToString());
         };
         InitializeComponent();
+        StartupTrace("application resources initialized");
     }
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
+        StartupTrace("application launched");
         var instance = AppInstance.FindOrRegisterForKey("CodexMixin.Windows");
         if (!instance.IsCurrent)
         {
@@ -72,6 +81,7 @@ public partial class App : Application
         try { OpenPage("providers"); }
         catch (Exception error) { Console.Error.WriteLine($"Windows startup failed: {error}"); throw; }
         window = windows["providers"];
+        StartupTrace("provider window opened");
         instance.Activated += (_, activation) => window.DispatcherQueue.TryEnqueue(() =>
         {
             var arguments = activation.Data switch

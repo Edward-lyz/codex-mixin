@@ -133,6 +133,7 @@ jobs:
             windows/build/ui-test-artifacts/index.html
             windows/build/ui-test-artifacts/failure.txt
             windows/build/ui-test-artifacts/native-errors.txt
+            windows/build/ui-test-artifacts/startup-trace.txt
           retention-days: 14
           if-no-files-found: warn
 
