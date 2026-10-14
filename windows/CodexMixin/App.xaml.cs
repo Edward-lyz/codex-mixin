@@ -58,6 +58,8 @@ public partial class App : Application
     public App()
     {
         StartupTrace("application constructor");
+        if (Environment.GetCommandLineArgs().Contains("--capture-ui"))
+            AppDomain.CurrentDomain.FirstChanceException += (_, args) => StartupTrace($"managed exception: {args.Exception}");
         UnhandledException += (_, args) =>
         {
             var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexMixin", "logs");

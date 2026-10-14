@@ -203,13 +203,16 @@ public sealed partial class MainWindow : Window
     {
         if (busy || exiting) return;
         busy = true;
+        App.StartupTrace($"window {page}: disable page");
         PageShell.IsEnabled = false;
+        App.StartupTrace($"window {page}: start activity");
         Activity.IsActive = true;
         Activity.Visibility = Visibility.Visible;
         StatusText.Text = $"{label}…";
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         activeCancellation = cancellation;
         CancelAction.Visibility = Visibility.Visible;
+        App.StartupTrace($"window {page}: begin operation {label}");
         try
         {
             await work(cancellation.Token);
