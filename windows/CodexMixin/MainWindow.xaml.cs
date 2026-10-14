@@ -31,6 +31,7 @@ public sealed partial class MainWindow : Window
     private Func<Task>? pendingApply;
     private readonly Dictionary<string, (UIElement View, Func<Task> Save)> connectionDrafts = [];
     private readonly Dictionary<string, (UIElement View, Func<Task> Save)> modelDrafts = [];
+    private readonly Dictionary<string, (TextBlock Ttft, TextBlock Tps)> timingCells = [];
     private bool ready;
     private bool busy;
     private bool exiting;
@@ -100,6 +101,8 @@ public sealed partial class MainWindow : Window
         {
             if (!busy && !dialogOpen && page == "overview" && AppWindow.IsVisible && cli != null)
                 await ExecuteUiAsync("刷新状态", LoadPageAsync);
+            if (!busy && page == "providers" && !connectionSelected && AppWindow.IsVisible && cli != null)
+                await RefreshTimingsAsync(lifetime.Token);
         };
         var refresh = new KeyboardAccelerator { Key = VirtualKey.R, Modifiers = VirtualKeyModifiers.Control };
         refresh.Invoked += async (_, args) => { args.Handled = true; await ReloadAsync(); };
@@ -183,6 +186,7 @@ public sealed partial class MainWindow : Window
         metadata = await cli.QueryAsync(["interface", "--json"], token);
         Json.Interface(metadata);
         await LoadPageAsync(token);
+                if (page == "providers") await RefreshTimingsAsync(token);
     });
 
     private async Task ExecuteUiAsync(string label, Func<CancellationToken, Task> work)
@@ -424,7 +428,9 @@ public sealed partial class MainWindow : Window
             context.ValueChanged += (_, change) => { contexts[modelId] = change.NewValue; MarkDirty(); };
             var capabilities = string.Join(" ", new[] { ("supports_image", "图像"), ("supports_thinking", "思考"), ("supports_function_tools", "工具"), ("supports_web_search", "搜索") }
                 .Where(capability => model.TryGetProperty(capability.Item1, out var value) && value.ValueKind == JsonValueKind.True).Select(capability => capability.Item2));
-            var cells = new FrameworkElement[] { check, title, Text("—"), Text("—"), context, Text(capabilities.Length == 0 ? "待探测" : capabilities) };
+            var ttft = Text("—"); var tps = Text("—");
+            timingCells[$"{id}/{modelId}"] = (ttft, tps);
+            var cells = new FrameworkElement[] { check, title, ttft, tps, context, Text(capabilities.Length == 0 ? "待探测" : capabilities) };
             for (var index = 0; index < cells.Length; index++) { Grid.SetColumn(cells[index], index); row.Children.Add(cells[index]); }
             args.ItemContainer.HorizontalContentAlignment = HorizontalAlignment.Stretch;
             args.ItemContainer.Content = row;
@@ -456,6 +462,25 @@ public sealed partial class MainWindow : Window
     }
 
     private void MarkDirty() { ApplySummary.Text = "还有未应用的更改"; ApplyChanges.IsEnabled = true; }
+
+    private async Task RefreshTimingsAsync(CancellationToken token)
+    {
+        try
+        {
+            var response = await Client.QueryAsync(["benchmark", "status"], token);
+            var snapshot = Json.Field(response, "snapshot");
+            if (snapshot.ValueKind == JsonValueKind.Null) return;
+            foreach (var row in Json.Rows(Json.Field(snapshot, "results")))
+            {
+                if (!timingCells.TryGetValue($"{Json.Text(row, "provider_id")}/{Json.Text(row, "upstream_model")}", out var cells)) continue;
+                cells.Ttft.Text = Metric(row, "ttft_ms", " ms");
+                cells.Tps.Text = Metric(row, "tps", " t/s");
+                if (Json.OptionalText(row, "error") is { } error) ToolTipService.SetToolTip(cells.Ttft, error);
+            }
+            ApplySummary.Text = $"测速 {Json.Text(snapshot, "status")} · {Json.Rows(Json.Field(snapshot, "results")).Length}/{Json.Field(snapshot, "total_models")}";
+        }
+        catch (CliFailure error) { if (!busy) ApplySummary.Text = $"测速不可用：{error.Message}"; }
+    }
 
     private Task AddProviderAsync() => ProviderDialogAsync(null);
     private Task EditProviderAsync(JsonElement provider) => ProviderDialogAsync(provider);

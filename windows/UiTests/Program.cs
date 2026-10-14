@@ -33,7 +33,9 @@ internal static class Program
                 throw new InvalidOperationException("CI desktop is too small to capture the native application");
             MoveWindow(handle, desktop.Left + 24, desktop.Top + 24,
                 Math.Min(1120, desktop.Width - 48), Math.Min(800, desktop.Height - 48), true);
-            var window = AutomationElement.FromHandle(handle);
+            AutomationElement? loadedWindow = null;
+            Wait(() => { loadedWindow = AutomationElement.FromHandle(handle); return loadedWindow.Current.ControlType == ControlType.Window; }, "native automation window", process);
+            var window = loadedWindow!;
             Wait(() => Find(window, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), "initial CLI load", process);
             AssertName(window, "还没有服务商");
             Capture(window, Path.Combine(output, "providers-empty.png"));
