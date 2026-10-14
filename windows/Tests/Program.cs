@@ -32,6 +32,13 @@ if (args.Contains("--fixture"))
         case "flood":
             for (var index = 0; index < 2500; index++) Console.Write(new string('x', 4096));
             await Task.Delay(TimeSpan.FromSeconds(120)); break;
+        case "daemon":
+            // Like `service start`: a detached child keeps the inherited output pipes open.
+            Process.Start(new ProcessStartInfo(Environment.ProcessPath!,
+                [typeof(CliClient).Assembly.Location, "--fixture", "--json-errors", "hold"]) { UseShellExecute = false });
+            Console.Write("{\"started\":true}");
+            break;
+        case "hold": await Task.Delay(TimeSpan.FromSeconds(15)); break;
         default: throw new InvalidOperationException("Unknown fixture command");
     }
     return 0;
@@ -104,6 +111,11 @@ Check("bounded output fails and releases the queue", async () =>
     var error = await Failure(() => fixture.RunAsync(["flood"], CancellationToken.None, timeout: TimeSpan.FromSeconds(5)));
     Assert(error.Message.Contains("8 MiB"), "Output limit did not fail immediately");
     await fixture.RunAsync(["echo"], CancellationToken.None);
+});
+Check("successful exit keeps output when a daemon holds the pipes", async () =>
+{
+    var output = await fixture.QueryAsync(["daemon"], CancellationToken.None);
+    Assert(Json.Flag(output, "started"), "Daemon start output was lost");
 });
 Check("concurrent mutations are serialized", async () =>
 {

@@ -81,8 +81,8 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
         using var process = new Process { StartInfo = start };
         if (!process.Start()) throw new CliFailure("无法启动 Rust CLI。");
         using var pipes = CancellationTokenSource.CreateLinkedTokenSource(deadline.Token);
-        var stdout = ReadAsync(process.StandardOutput, null, secrets, pipes.Token);
-        var stderr = ReadAsync(process.StandardError, progress, secrets, pipes.Token);
+        var stdout = ReadAsync(process.StandardOutput, null, secrets, pipes.Token, deadline.Token);
+        var stderr = ReadAsync(process.StandardError, progress, secrets, pipes.Token, deadline.Token);
         try
         {
             var exited = process.WaitForExitAsync(deadline.Token);
@@ -94,7 +94,8 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
                 if (first == exited) break;
                 pending.Remove(first);
             }
-            // Daemons can inherit a pipe. Never leave an action waiting on them forever.
+            // Daemons such as `service start` inherit the pipes and keep them open.
+            // The CLI has exited, so its output is complete once this drain window ends.
             pipes.CancelAfter(PipeTimeout);
             var output = await stdout;
             var errors = await stderr;
@@ -124,14 +125,17 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
     }
 
     private static async Task<string> ReadAsync(StreamReader reader, IProgress<string>? progress,
-        IReadOnlyDictionary<string, string>? secrets, CancellationToken cancellation)
+        IReadOnlyDictionary<string, string>? secrets, CancellationToken drain, CancellationToken deadline)
     {
         var output = new StringBuilder();
         var buffer = new char[4096];
         var pending = new StringBuilder();
         while (true)
         {
-            var count = await reader.ReadAsync(buffer.AsMemory(), cancellation);
+            int count;
+            try { count = await reader.ReadAsync(buffer.AsMemory(), drain); }
+            // Only the post-exit drain window ends a read successfully; timeouts and cancellation still fail.
+            catch (OperationCanceledException) when (!deadline.IsCancellationRequested) { break; }
             if (count == 0) break;
             if (output.Length + count > OutputLimit) throw new CliFailure("CLI 输出超过 8 MiB 限制。");
             output.Append(buffer, 0, count);
