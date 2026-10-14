@@ -61,6 +61,7 @@ public sealed partial class MainWindow : Window
         ProviderSidebar.Visibility = page == "providers" ? Visibility.Visible : Visibility.Collapsed;
         ProviderTabs.Visibility = ProviderSidebar.Visibility;
         ApplyChanges.Visibility = page is "providers" or "fusion" ? Visibility.Visible : Visibility.Collapsed;
+        if (page == "agents") { PageTitle.Visibility = Visibility.Collapsed; PageDescription.Visibility = Visibility.Collapsed; ApplySummary.Visibility = Visibility.Collapsed; }
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"));
         App.StartupTrace($"window {page}: icon ready");
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 800));
@@ -478,11 +479,11 @@ public sealed partial class MainWindow : Window
             context.Padding = new Thickness(4, 0, 4, 0); context.MinHeight = 28; context.FontSize = 12;
             AutomationProperties.SetName(context, $"{modelId} 上下文");
             var capabilities = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
-            foreach (var (field, label, glyph) in new[] { ("supports_image", "图片输入", "\uE8B9"), ("supports_thinking", "Thinking", "思"), ("supports_function_tools", "Function Tools", "\uE90F"), ("supports_tool_search", "Tool Search", "\uE721"), ("supports_web_search", "Web Search", "\uE774") })
+            foreach (var (field, label, glyph) in new[] { ("supports_image", "图片输入", "\uE8B9"), ("supports_thinking", "Thinking", "\uEA80"), ("supports_function_tools", "Function Tools", "\uE90F"), ("supports_tool_search", "Tool Search", "\uE721"), ("supports_web_search", "Web Search", "\uE774") })
             {
                 var known = model.TryGetProperty(field, out var support) && support.ValueKind is JsonValueKind.True or JsonValueKind.False;
                 var supported = known && support.ValueKind == JsonValueKind.True;
-                var icon = new TextBlock { Text = glyph, FontFamily = new FontFamily(glyph == "思" ? "Segoe UI" : "Segoe Fluent Icons"), FontSize = 14, Foreground = (Brush)Microsoft.UI.Xaml.Application.Current.Resources[supported ? "AccentTextFillColorPrimaryBrush" : "TextFillColorDisabledBrush"] };
+                var icon = new TextBlock { Text = glyph, FontFamily = new FontFamily("Segoe Fluent Icons"), FontSize = 14, Foreground = (Brush)Microsoft.UI.Xaml.Application.Current.Resources[supported ? "AccentTextFillColorPrimaryBrush" : "TextFillColorDisabledBrush"] };
                 var description = $"{label} · {(known ? supported ? "支持" : "不支持" : "尚未探测")}";
                 ToolTipService.SetToolTip(icon, description); AutomationProperties.SetName(icon, description);
                 capabilities.Children.Add(icon);
@@ -748,7 +749,7 @@ public sealed partial class MainWindow : Window
         if (detectedRows.Children.Count > 0) PageBody.Children.Add(new Border { Child = detectedRows, CornerRadius = new CornerRadius(10), Background = (Brush)Microsoft.UI.Xaml.Application.Current.Resources["CardBackgroundFillColorDefaultBrush"] });
         if (undetected.Children.Count > 0)
         {
-            var section = new Expander { Header = $"显示未检测到的 {undetected.Children.Count} 个 Agent", Content = undetected, HorizontalAlignment = HorizontalAlignment.Stretch };
+            var section = new Expander { Header = $"显示未检测到的 {undetected.Children.Count} 个 Agent", Content = undetected, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
             AutomationProperties.SetAutomationId(section, "agent-undetected");
             PageBody.Children.Add(section);
         }
