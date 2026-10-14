@@ -54,6 +54,9 @@ internal static class Program
         nint handle = 0;
         try
         {
+            if (!process.WaitForInputIdle(30000)) throw new TimeoutException("WinUI did not reach input idle");
+            // WinUI creates its HWND before the first XAML frame and automation peer.
+            Thread.Sleep(1000);
             Wait(() => { process.Refresh(); handle = process.MainWindowHandle; return handle != 0; }, "native main window", process);
             var desktop = System.Windows.Forms.Screen.FromHandle(handle).WorkingArea;
             if (desktop.Width < 800 || desktop.Height < 600)
@@ -176,6 +179,8 @@ internal static class Program
             return window != null && !window.Current.IsOffscreen;
         }, $"open {title}", process);
         if (!activation.WaitForExit(15000) || activation.ExitCode != 0) throw new InvalidOperationException("Page activation did not exit cleanly");
+        if (role != "overview")
+            Wait(() => Find(window!, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), $"initial load {role}", process);
         return window!;
     }
 
