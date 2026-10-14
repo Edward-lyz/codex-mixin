@@ -255,7 +255,9 @@ public sealed partial class MainWindow : Window
         PageBody.Children.Add(Card($"本地网关 · {state}", endpoint ?? "尚无运行中的接口地址", buttons));
         if (Json.OptionalText(status, "error") is { } statusError)
             PageBody.Children.Add(Card("服务诊断", statusError));
-        var providers = Json.Rows(Json.Field(await Client.QueryAsync(["provider", "list", "--json"], token), "providers"));
+        var providers = Json.Flag(status, "configured")
+            ? Json.Rows(Json.Field(await Client.QueryAsync(["provider", "list", "--json"], token), "providers"))
+            : [];
         if (providers.Length == 0) PageBody.Children.Add(Card("开始连接模型服务", "先添加一个供应商，再选择模型并接入 Agent。",
             Button("添加供应商", AddProviderAsync, true)));
         foreach (var provider in providers)
@@ -273,8 +275,14 @@ public sealed partial class MainWindow : Window
 
     private async Task ProvidersAsync(CancellationToken token)
     {
-        var providers = Json.Rows(Json.Field(await Client.QueryAsync(["provider", "list", "--json"], token), "providers"));
         PageBody.Children.Add(Button("添加供应商", AddProviderAsync, true));
+        var status = await Client.QueryAsync(["service", "status", "--json"], token);
+        if (!Json.Flag(status, "configured"))
+        {
+            PageBody.Children.Add(Card("暂无供应商", "CLI 尚未配置。添加供应商后会发现可用模型。"));
+            return;
+        }
+        var providers = Json.Rows(Json.Field(await Client.QueryAsync(["provider", "list", "--json"], token), "providers"));
         if (providers.Length == 0) { PageBody.Children.Add(Card("暂无供应商", "添加供应商后，CLI 会发现可用模型。")); return; }
         var picker = new ComboBox { Header = "供应商", HorizontalAlignment = HorizontalAlignment.Stretch };
         foreach (var provider in providers)
@@ -563,6 +571,12 @@ public sealed partial class MainWindow : Window
 
     private async Task FusionAsync(CancellationToken token)
     {
+        var status = await Client.QueryAsync(["service", "status", "--json"], token);
+        if (!Json.Flag(status, "configured"))
+        {
+            PageBody.Children.Add(Card("暂无可用模型", "先添加供应商并选择模型，再创建 Fusion。"));
+            return;
+        }
         var envelope = await Client.QueryAsync(["fusion", "get", "--json"], token);
         var profile = Json.Field(envelope, "profile");
         var options = Json.Rows(Json.Field(await Client.QueryAsync(["fusion", "models", "--json"], token), "models"));

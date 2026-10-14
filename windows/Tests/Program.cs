@@ -146,8 +146,10 @@ if (args is ["--cli", var realCli])
             var client = new CliClient(Path.GetFullPath(realCli));
             var metadata = await client.QueryAsync(["interface", "--json"], CancellationToken.None);
             Json.Interface(metadata);
-            Json.Gateway(await client.QueryAsync(["service", "status", "--json"], CancellationToken.None));
-            Json.Rows(Json.Field(await client.QueryAsync(["provider", "list", "--json"], CancellationToken.None), "providers"));
+            var status = await client.QueryAsync(["service", "status", "--json"], CancellationToken.None);
+            Assert(Json.Gateway(status) == "未配置", "Fresh CLI unexpectedly reported a configured gateway");
+            var providerError = await Failure(() => client.QueryAsync(["provider", "list", "--json"], CancellationToken.None));
+            Assert(providerError.Message.Contains("provider configuration is missing"), "Missing configuration was not reported explicitly");
             Json.Rows(Json.Field(await client.QueryAsync(["agent", "list", "--json"], CancellationToken.None), "agents"));
             Json.Flag(await client.QueryAsync(["service", "autostart", "status", "--json"], CancellationToken.None), "enabled");
             Json.Flag(await client.QueryAsync(["ech", "status", "--json"], CancellationToken.None), "enabled");
