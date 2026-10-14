@@ -46,6 +46,7 @@ public partial class App : Application
         }
         if (page is not ("providers" or "agents" or "fusion" or "settings" or "usage"))
             throw new ArgumentException($"Unknown Windows page: {page}");
+        tray?.HidePanel();
         if (!windows.TryGetValue(page, out var target))
         {
             target = new MainWindow(page);

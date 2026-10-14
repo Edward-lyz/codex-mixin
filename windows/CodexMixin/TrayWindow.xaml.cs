@@ -37,6 +37,7 @@ public sealed partial class TrayWindow : Window
     }
 
     internal void Shutdown() { exiting = true; Close(); }
+    internal void HidePanel() => AppWindow.Hide();
     internal void SetTheme(ElementTheme theme) => Panel.RequestedTheme = theme;
 
     internal async void ShowPanel()

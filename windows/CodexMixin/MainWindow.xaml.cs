@@ -404,6 +404,7 @@ public sealed partial class MainWindow : Window
         var modelBody = new StackPanel { Spacing = 12 };
         var id = Json.Text(provider, "id");
         var models = Json.Rows(Json.Field(provider, "cached_models"));
+        var modelsById = models.ToDictionary(model => Json.Text(model, "id"));
         var selected = Json.Strings(Json.Field(provider, "selected_models")).ToHashSet();
         var savedContexts = Json.Field(provider, "model_context_overrides");
         var contexts = savedContexts.EnumerateObject().ToDictionary(entry => entry.Name, entry => entry.Value.GetDouble());
@@ -431,13 +432,13 @@ public sealed partial class MainWindow : Window
             Grid.SetColumn(label, index); header.Children.Add(label);
         }
         modelBody.Children.Add(header);
-        var list = new ListView { Height = 390, SelectionMode = ListViewSelectionMode.None, ItemsSource = models };
+        var list = new ListView { Height = 390, SelectionMode = ListViewSelectionMode.None };
         AutomationProperties.SetAutomationId(list, "model-table");
         list.ContainerContentChanging += (_, args) =>
         {
             if (args.InRecycleQueue) return;
-            if (args.Item is not JsonElement model) return;
-            var modelId = Json.Text(model, "id");
+            if (args.Item is not string modelId) return;
+            var model = modelsById[modelId];
             var row = Columns();
             var check = new CheckBox { IsChecked = selected.Contains(modelId), MinWidth = 24 };
             check.Checked += (_, _) => { selected.Add(modelId); MarkDirty(); };
@@ -456,10 +457,12 @@ public sealed partial class MainWindow : Window
             args.ItemContainer.Content = row;
             args.Handled = true;
         };
+        // WinRT collections can expose strings directly; JsonElement is a .NET struct.
+        list.ItemsSource = modelsById.Keys.ToList();
         void Filter()
         {
             list.ItemsSource = models.Where(model => Json.Text(model, "id").Contains(search.Text, StringComparison.OrdinalIgnoreCase) &&
-                (filter.SelectedIndex == 0 || selected.Contains(Json.Text(model, "id")) == (filter.SelectedIndex == 1))).ToArray();
+                (filter.SelectedIndex == 0 || selected.Contains(Json.Text(model, "id")) == (filter.SelectedIndex == 1))).Select(model => Json.Text(model, "id")).ToList();
         }
         search.TextChanged += (_, _) => Filter(); filter.SelectionChanged += (_, _) => Filter();
         modelBody.Children.Add(list);
@@ -795,7 +798,10 @@ public sealed partial class MainWindow : Window
             payload["min_successful"] = (int)minimum.Value; payload["timeout_ms"] = (long)timeout.Value;
             payload["show_intermediate_results"] = intermediate.IsChecked == true;
             payload["time_routes"] = routes.Select(route => new { start_minute = (int)route.Start.Time.TotalMinutes, end_minute = (int)route.End.Time.TotalMinutes, model = (string)route.Model.SelectedItem }).ToArray();
-            payload["panel_tools"] = new { enabled = tools.IsChecked == true, max_rounds = 16, max_calls_per_model = 64 };
+            var panelTools = saved ? JsonSerializer.Deserialize<Dictionary<string, object?>>(Json.Field(profile, "panel_tools").GetRawText())!
+                : new Dictionary<string, object?> { ["max_rounds"] = 16, ["max_calls_per_model"] = 64 };
+            panelTools["enabled"] = tools.IsChecked == true;
+            payload["panel_tools"] = panelTools;
             if (!saved) payload["max_completion_tokens"] = 2048;
             var arguments = new List<string> { "fusion", "set", "--profile-json", JsonSerializer.Serialize(payload) };
             if (saved) arguments.AddRange(["--replace-id", Json.Text(profile, "id")]);

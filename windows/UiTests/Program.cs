@@ -98,6 +98,7 @@ internal static class Program
                     Capture(target, Path.Combine(output, $"{filename}-{themeName}.png"));
                     if (role == "providers")
                     {
+                        Wait(() => target.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "ci-coder")) != null, "visible model table rows", process);
                         ((TogglePattern)Find(target, "provider-connection-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
                         Wait(() => target.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "连接配置")) != null, "connection tab", process);
                         Capture(target, Path.Combine(output, $"connection-{themeName}.png"));
@@ -160,6 +161,7 @@ internal static class Program
         ("agents", "Agent 接入管理", "agents"),
         ("fusion", "Fusion 设置", "fusion"),
         ("settings", "设置与诊断", "settings"),
+        ("usage", "用量与额度", "usage"),
         ("overview", "Codex Mixin · 主面板", "main-panel")
     ];
 
