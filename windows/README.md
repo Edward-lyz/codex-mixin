@@ -40,7 +40,11 @@ dotnet build windows/CodexMixin/CodexMixin.csproj -c Debug -p:Platform=x64
 
 ## CI 验证与发布
 
-`.github/workflows/windows.yml` 在 GitHub Windows runner 运行 Rust 检查与测试、C# 适配层及真实 CLI 契约测试、自包含 WinUI 发布、Windows UI Automation 测试，最后生成安装器和便携包。UI 截图与失败记录保存在 `windows-native-ui-evidence` artifact。本次迁移按用户要求不在本机运行测试。
+`.github/workflows/windows.yml` 在 GitHub Windows runner 运行 Rust 检查与测试、C# 适配层及真实 CLI 契约测试、自包含 WinUI 发布、Windows UI Automation 测试，最后生成安装器和便携包。本次迁移按用户要求不在本机运行测试。
+
+每次成功的 UI 测试都截图六个页面的浅色和深色版本，并保存首次启动、空状态、停止状态与窄窗口截图。供应商与 Fusion 的已配置画面使用经真实 CLI 导入的隔离 CI fixture，凭据为虚构值，不连接外部模型服务。失败时也尝试保存现场截图与错误文本。
+
+在 GitHub Actions 的 Windows run 页面下载 `windows-native-ui-evidence` artifact，解压后在 macOS 浏览器打开 `index.html`，即可查看全部页面；点击缩略图可查看原始 PNG。artifact 保留 14 天，仅包含截图、图集与错误文本，不上传配置目录。
 
 一键打包仍从仓库根执行：
 

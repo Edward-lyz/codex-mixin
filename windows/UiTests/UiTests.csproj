@@ -5,4 +5,5 @@
     <Nullable>enable</Nullable><ImplicitUsings>disable</ImplicitUsings>
     <TreatWarningsAsErrors>true</TreatWarningsAsErrors>
   </PropertyGroup>
+  <ItemGroup><Compile Include="../Core/*.cs" Link="Core/%(Filename)%(Extension)" /></ItemGroup>
 </Project>

@@ -126,7 +126,11 @@ jobs:
         if: always()
         with:
           name: windows-native-ui-evidence
-          path: windows/build/ui-test-artifacts
+          path: |
+            windows/build/ui-test-artifacts/*.png
+            windows/build/ui-test-artifacts/index.html
+            windows/build/ui-test-artifacts/failure.txt
+          retention-days: 14
           if-no-files-found: warn
 
   package:
