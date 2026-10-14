@@ -42,9 +42,41 @@ jobs:
           if-no-files-found: error
 
   native:
-    name: WinUI 3 build and Windows UI tests
+    name: WinUI 3 build and adapter tests
     runs-on: windows-latest
-    needs: rust
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Test CLI adapter
+        shell: pwsh
+        run: dotnet run --project windows/Tests/Tests.csproj -c Release
+      - name: Compile Windows UI Automation tests
+        shell: pwsh
+        run: dotnet build windows/UiTests/UiTests.csproj -c Release
+      - name: Generate native icons
+        shell: pwsh
+        run: ./windows/scripts/generate-windows-assets.ps1
+      - name: Compile and publish native UI
+        shell: pwsh
+        run: dotnet publish windows/CodexMixin/CodexMixin.csproj -c Release -p:Platform=x64 -o windows/build/publish
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-native-dependencies
+          path: windows/CodexMixin/packages.lock.json
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-native-ui
+          path: windows/build/publish
+          if-no-files-found: error
+
+  native-ui:
+    name: Windows native UI and real CLI tests
+    runs-on: windows-latest
+    needs: [rust, native]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
@@ -54,15 +86,13 @@ jobs:
         with:
           name: windows-cli
           path: target/release
-      - name: Test CLI adapter and real Rust contracts
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-native-ui
+          path: windows/build/publish
+      - name: Test real Rust CLI contracts
         shell: pwsh
         run: dotnet run --project windows/Tests/Tests.csproj -c Release -- --cli target/release/codex-mixin.exe
-      - name: Generate native icons
-        shell: pwsh
-        run: ./windows/scripts/generate-windows-assets.ps1
-      - name: Compile and publish native UI
-        shell: pwsh
-        run: dotnet publish windows/CodexMixin/CodexMixin.csproj -c Release -p:Platform=x64 -o windows/build/publish
       - name: Stage real CLI alongside UI
         shell: pwsh
         run: Copy-Item target/release/codex-mixin.exe windows/build/publish/
@@ -73,19 +103,12 @@ jobs:
         if: always()
         with:
           name: windows-native-ui-evidence
-          path: |
-            windows/build/ui-test-artifacts
-            windows/CodexMixin/packages.lock.json
+          path: windows/build/ui-test-artifacts
           if-no-files-found: warn
-      - uses: actions/upload-artifact@v7
-        with:
-          name: windows-native-ui
-          path: windows/build/publish
-          if-no-files-found: error
 
   package:
     runs-on: windows-latest
-    needs: [rust, native]
+    needs: [rust, native-ui]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
