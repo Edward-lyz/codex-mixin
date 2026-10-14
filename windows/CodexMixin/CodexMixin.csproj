@@ -29,5 +29,7 @@
     <Content Include="../assets/*.ico" Link="Assets/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../assets/app_icon.png" Link="Assets/app_icon.png" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../assets/providers/*.svg" Link="Assets/providers/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../assets/agents/*.svg;../assets/agents/*.png" Link="Assets/agents/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../assets/agents/ATTRIBUTION.md" Link="Assets/agents/ATTRIBUTION.md" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

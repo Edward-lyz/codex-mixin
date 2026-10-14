@@ -106,6 +106,18 @@ internal static class Program
                         Wait(() => Find(target, "panel-status").Current.Name.Contains("配置已同步", StringComparison.Ordinal), "tray CLI load", process);
                     Capture(target, Path.Combine(output, $"{filename}-{themeName}.png"));
                     if (role != "overview") CaptureLower(target, Path.Combine(output, $"{filename}-lower-{themeName}.png"));
+                    if (role == "agents")
+                    {
+                        var folded = target.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.AutomationIdProperty, "agent-undetected"));
+                        if (folded != null)
+                        {
+                            var expand = (ExpandCollapsePattern)folded.GetCurrentPattern(ExpandCollapsePattern.Pattern);
+                            expand.Expand();
+                            Capture(target, Path.Combine(output, $"agents-undetected-{themeName}.png"));
+                            CaptureLower(target, Path.Combine(output, $"agents-undetected-lower-{themeName}.png"));
+                            expand.Collapse();
+                        }
+                    }
                     if (role == "providers")
                     {
                         ((TogglePattern)Find(target, "provider-connection-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();

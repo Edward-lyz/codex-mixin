@@ -3,15 +3,16 @@
  <Border x:Name="Panel" CornerRadius="12" BorderThickness="1" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}">
   <Grid Padding="16" RowSpacing="12">
    <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="Auto"/><RowDefinition Height="*"/><RowDefinition Height="Auto"/></Grid.RowDefinitions>
-   <Grid ColumnSpacing="10">
+   <Grid ColumnSpacing="10" MinHeight="56">
     <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
     <Ellipse x:Name="ServiceDot" Width="10" Height="10" Fill="Gray" VerticalAlignment="Center"/>
-    <StackPanel Grid.Column="1" Spacing="3"><TextBlock x:Name="ServiceTitle" Text="正在读取服务状态" FontWeight="SemiBold"/><TextBlock x:Name="Endpoint" Text="" FontSize="11" TextTrimming="CharacterEllipsis"/></StackPanel>
+    <StackPanel Grid.Column="1" Spacing="3" VerticalAlignment="Center"><TextBlock x:Name="ServiceTitle" Text="正在读取服务状态" FontWeight="SemiBold"/><TextBlock x:Name="Endpoint" Text="" FontSize="11" FontFamily="Consolas" TextTrimming="CharacterEllipsis"/></StackPanel>
     <ToggleSwitch x:Name="GatewaySwitch" Grid.Column="2" OnContent="" OffContent="" Toggled="OnGatewayToggled" MinWidth="44" AutomationProperties.Name="本地网关"/>
    </Grid>
    <ScrollViewer Grid.Row="1" HorizontalScrollBarVisibility="Auto" VerticalScrollBarVisibility="Disabled"><StackPanel x:Name="ProviderStrip" Orientation="Horizontal" Spacing="8"/></ScrollViewer>
-   <Grid Grid.Row="2" ColumnSpacing="8"><Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions><TextBlock x:Name="ProviderTitle" Text="尚未配置服务商" FontWeight="SemiBold"/><TextBlock x:Name="Quota" Grid.Column="1" FontSize="12"/></Grid>
+   <Border Grid.Row="2" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Padding="0,12,0,0"><TextBlock x:Name="ProviderTitle" Text="尚未配置服务商" FontWeight="SemiBold"/></Border>
    <ScrollViewer Grid.Row="3" VerticalScrollBarVisibility="Auto"><StackPanel Spacing="12">
+    <StackPanel x:Name="QuotaBody" Spacing="8"/>
     <StackPanel Orientation="Horizontal" Spacing="0" HorizontalAlignment="Center">
      <Button Content="1天" Tag="1" Click="OnRange"/><Button Content="7天" Tag="7" Click="OnRange"/><Button Content="1月" Tag="30" Click="OnRange"/><Button Content="全部" Tag="all" Click="OnRange"/>
     </StackPanel>
@@ -19,14 +20,17 @@
     <TextBlock x:Name="PanelStatus" AutomationProperties.AutomationId="panel-status" Text="正在读取…" TextWrapping="Wrap" FontSize="11" Style="{StaticResource SecondaryText}"/>
    </StackPanel></ScrollViewer>
    <StackPanel Grid.Row="4" Spacing="2">
+    <Border Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" Margin="0,4"/>
     <Button Content="▦  模型与服务…" Tag="providers" Click="OnOpen" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"/>
-    <Button Content="☑  登录时启动并开启服务" Click="OnAutostart" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"/>
-    <Button Content="♡  健康检测和修复…" Click="OnDoctor" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"/>
+    <Button Content="♧  Agent 接入管理…" Tag="agents" Click="OnOpen" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"/>
+    <Border Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" Margin="0,4"/>
     <Button Content="⚙  高级" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"><Button.Flyout><MenuFlyout>
-     <MenuFlyoutItem Text="Fusion 设置…" Tag="fusion" Click="OnOpen"/><MenuFlyoutItem Text="按时间轮转…" Tag="fusion" Click="OnOpen"/><MenuFlyoutItem Text="连接、备份与诊断…" Tag="settings" Click="OnOpen"/>
+     <MenuFlyoutItem Text="Fusion 设置…" Tag="fusion" Click="OnOpen"/><MenuFlyoutItem Text="按时间轮转…" Tag="fusion" Click="OnOpen"/><MenuFlyoutItem Text="健康检测和修复…" Click="OnDoctor"/><MenuFlyoutItem Text="启用网关开机启动" Click="OnAutostart"/><MenuFlyoutItem Text="连接、备份与诊断…" Tag="settings" Click="OnOpen"/>
     </MenuFlyout></Button.Flyout></Button>
-    <Button Content="⇩  安装与恢复" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"><Button.Flyout><MenuFlyout><MenuFlyoutItem Text="Agent 接入管理…" Tag="agents" Click="OnOpen"/></MenuFlyout></Button.Flyout></Button>
-    <Button Content="ⓘ  关于与日志…" Tag="settings" Click="OnOpen" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"/>
+    <Button Content="ⓘ  关于" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"><Button.Flyout><MenuFlyout><MenuFlyoutItem Text="关于与日志…" Tag="settings" Click="OnOpen"/></MenuFlyout></Button.Flyout></Button>
+    <Border Height="1" Background="{ThemeResource CardStrokeColorDefaultBrush}" Margin="0,4"/>
+    <Button Content="⏻  退出 Codex Mixin" Tag="quit" Click="OnQuit" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"/>
+    <Button Content="↶  退出并恢复原配置…" Tag="restore" Click="OnQuit" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"/>
    </StackPanel>
   </Grid>
  </Border>

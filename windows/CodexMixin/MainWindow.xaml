@@ -28,7 +28,11 @@
         <Grid ColumnSpacing="12">
           <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
           <StackPanel Spacing="4">
-            <TextBlock x:Name="PageTitle" Text="模型与服务" Style="{ThemeResource SubtitleTextBlockStyle}"/>
+            <StackPanel Orientation="Horizontal" Spacing="10">
+              <Image x:Name="ProviderHeaderIcon" Width="28" Height="28" Visibility="Collapsed"/>
+              <TextBlock x:Name="PageTitle" Text="模型与服务" Style="{ThemeResource SubtitleTextBlockStyle}" VerticalAlignment="Center"/>
+              <Border x:Name="OfficialBadge" Visibility="Collapsed" Padding="6,2" CornerRadius="4" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}"><TextBlock Text="官方" FontSize="11" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}"/></Border>
+            </StackPanel>
             <TextBlock x:Name="PageDescription" AutomationProperties.AutomationId="page-description" Text="从左侧选择服务商" Style="{StaticResource SecondaryText}" FontSize="12"/>
           </StackPanel>
           <StackPanel Grid.Column="1" Orientation="Horizontal" Spacing="8" VerticalAlignment="Center">

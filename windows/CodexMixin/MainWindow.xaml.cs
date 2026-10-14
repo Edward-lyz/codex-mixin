@@ -378,6 +378,9 @@ public sealed partial class MainWindow : Window
         PageBody.Children.Clear();
         ModelsTab.IsChecked = !connectionSelected; ConnectionTab.IsChecked = connectionSelected;
         PageTitle.Text = Json.Text(provider, "display_name");
+        ProviderHeaderIcon.Source = Marks.Provider(provider).Source;
+        ProviderHeaderIcon.Visibility = Visibility.Visible;
+        OfficialBadge.Visibility = Json.Text(provider, "kind") == "official" ? Visibility.Visible : Visibility.Collapsed;
         PageDescription.Text = $"{providerId} · {Readiness(provider)} · 已加入 {Json.Strings(Json.Field(provider, "selected_models")).Length} / 可选 {Json.Rows(Json.Field(provider, "cached_models")).Length}";
         ApplyChanges.IsEnabled = true;
         try
@@ -409,7 +412,7 @@ public sealed partial class MainWindow : Window
         var modelBody = new StackPanel { Spacing = 12 };
         var id = Json.Text(provider, "id");
         var models = Json.Rows(Json.Field(provider, "cached_models"));
-        var modelsById = models.ToDictionary(model => Json.Text(model, "id"));
+        var modelsById = models.Select((model, index) => (Model: model, Index: index)).ToDictionary(row => Json.Text(row.Model, "id"));
         var selected = Json.Strings(Json.Field(provider, "selected_models")).ToHashSet();
         var savedContexts = Json.Field(provider, "model_context_overrides");
         var contexts = savedContexts.EnumerateObject().ToDictionary(entry => entry.Name, entry => entry.Value.GetDouble());
@@ -425,7 +428,7 @@ public sealed partial class MainWindow : Window
         Grid Columns()
         {
             var grid = new Grid { ColumnSpacing = 8, Padding = new Thickness(4) };
-            foreach (var width in new[] { 36d, -1d, 68d, 68d, 100d, 86d })
+            foreach (var width in new[] { 44d, -1d, 68d, 68d, 84d, 130d })
                 grid.ColumnDefinitions.Add(new ColumnDefinition { Width = width < 0 ? new GridLength(1, GridUnitType.Star) : new GridLength(width) });
             return grid;
         }
@@ -445,23 +448,55 @@ public sealed partial class MainWindow : Window
         {
             if (args.InRecycleQueue) return;
             if (args.Item is not string modelId) return;
-            var model = modelsById[modelId];
+            var (model, modelIndex) = modelsById[modelId];
             var row = Columns();
-            var check = new CheckBox { IsChecked = selected.Contains(modelId), MinWidth = 24 };
+            var check = new CheckBox { IsChecked = selected.Contains(modelId), MinWidth = 24, MinHeight = 28, Height = 28, Padding = new Thickness(0) };
             check.Checked += (_, _) => { selected.Add(modelId); MarkDirty(); };
             check.Unchecked += (_, _) => { selected.Remove(modelId); MarkDirty(); };
             var title = new TextBlock { Text = Json.OptionalText(model, "display_name") ?? modelId, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
             ToolTipService.SetToolTip(title, modelId);
-            var context = new NumberBox { Minimum = 1, Value = contexts.GetValueOrDefault(modelId, double.NaN), PlaceholderText = model.TryGetProperty("context_window", out var originalContext) ? originalContext.ToString() : "默认", FontSize = 12 };
-            context.ValueChanged += (_, change) => { contexts[modelId] = change.NewValue; MarkDirty(); };
-            var capabilities = string.Join(" ", new[] { ("supports_image", "图像"), ("supports_thinking", "思考"), ("supports_function_tools", "工具"), ("supports_web_search", "搜索") }
-                .Where(capability => model.TryGetProperty(capability.Item1, out var value) && value.ValueKind == JsonValueKind.True).Select(capability => capability.Item2));
+            var originalContext = model.TryGetProperty("context_window", out var original) && original.ValueKind == JsonValueKind.Number ? original.GetDouble() : double.NaN;
+            string ContextLabel()
+            {
+                var value = contexts.GetValueOrDefault(modelId, originalContext);
+                if (double.IsNaN(value)) value = originalContext;
+                return double.IsNaN(value) ? "默认" : value >= 1000 ? $"{value / 1000:0.#}K" : $"{value:0}";
+            }
+            Button? context = null;
+            context = Button(ContextLabel(), async () =>
+            {
+                var number = new NumberBox { Header = "上下文 Token 数", Minimum = 1, Value = contexts.GetValueOrDefault(modelId, originalContext) };
+                var dialog = Dialog("模型上下文", number); dialog.PrimaryButtonText = "应用到草稿"; dialog.SecondaryButtonText = "恢复默认";
+                var choice = await ShowDialogAsync(dialog);
+                if (choice == ContentDialogResult.None) return;
+                if (choice == ContentDialogResult.Primary && (!double.IsFinite(number.Value) || number.Value <= 0 || number.Value != Math.Truncate(number.Value)))
+                    throw new InvalidOperationException("上下文 Token 数必须是正整数。");
+                contexts[modelId] = choice == ContentDialogResult.Secondary ? double.NaN : number.Value;
+                context!.Content = ContextLabel(); MarkDirty();
+            });
+            context.Background = new SolidColorBrush(Colors.Transparent); context.BorderThickness = new Thickness(0);
+            context.Padding = new Thickness(4, 0, 4, 0); context.MinHeight = 28; context.FontSize = 12;
+            AutomationProperties.SetName(context, $"{modelId} 上下文");
+            var capabilities = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8, VerticalAlignment = VerticalAlignment.Center };
+            foreach (var (field, label, glyph) in new[] { ("supports_image", "图片输入", "\uE8B9"), ("supports_thinking", "Thinking", "思"), ("supports_function_tools", "Function Tools", "\uE90F"), ("supports_tool_search", "Tool Search", "\uE721"), ("supports_web_search", "Web Search", "\uE774") })
+            {
+                var known = model.TryGetProperty(field, out var support) && support.ValueKind is JsonValueKind.True or JsonValueKind.False;
+                var supported = known && support.ValueKind == JsonValueKind.True;
+                var icon = new TextBlock { Text = glyph, FontFamily = new FontFamily(glyph == "思" ? "Segoe UI" : "Segoe Fluent Icons"), FontSize = 14, Foreground = (Brush)Microsoft.UI.Xaml.Application.Current.Resources[supported ? "AccentTextFillColorPrimaryBrush" : "TextFillColorDisabledBrush"] };
+                var description = $"{label} · {(known ? supported ? "支持" : "不支持" : "尚未探测")}";
+                ToolTipService.SetToolTip(icon, description); AutomationProperties.SetName(icon, description);
+                capabilities.Children.Add(icon);
+            }
             var ttft = Text("—"); var tps = Text("—");
             timingCells[$"{id}/{modelId}"] = (ttft, tps);
-            var cells = new FrameworkElement[] { check, title, ttft, tps, context, Text(capabilities.Length == 0 ? "待探测" : capabilities) };
+            var cells = new FrameworkElement[] { check, title, ttft, tps, context, capabilities };
             for (var index = 0; index < cells.Length; index++) { Grid.SetColumn(cells[index], index); row.Children.Add(cells[index]); }
             args.ItemContainer.HorizontalContentAlignment = HorizontalAlignment.Stretch;
-            ((ContentControl)args.ItemContainer.ContentTemplateRoot).Content = row;
+            ((ContentControl)args.ItemContainer.ContentTemplateRoot).Content = new Border
+            {
+                Child = row, CornerRadius = new CornerRadius(6),
+                Background = modelIndex % 2 == 0 ? (Brush)Microsoft.UI.Xaml.Application.Current.Resources["CardBackgroundFillColorDefaultBrush"] : new SolidColorBrush(Colors.Transparent)
+            };
             args.Handled = true;
         };
         // WinRT collections can expose strings directly; JsonElement is a .NET struct.
@@ -639,6 +674,7 @@ public sealed partial class MainWindow : Window
         var detected = agents.Count(agent => Json.Flag(agent, "detected"));
         PageBody.Children.Add(Text($"已检测到 {detected} 个 Agent · 未检测到 {agents.Length - detected} 个"));
         var undetected = new StackPanel { Spacing = 6 };
+        var detectedRows = new StackPanel { Spacing = 0, MaxWidth = 980, HorizontalAlignment = HorizontalAlignment.Stretch };
         foreach (var agent in agents)
         {
             var id = Json.Text(agent, "id");
@@ -650,11 +686,23 @@ public sealed partial class MainWindow : Window
                 "error" => "检测失败", "unsupported" => "暂不支持接入", _ => $"未知状态：{state}"
             };
             var version = Json.Field(agent, "cli");
-            var buttons = Row();
-            if (state != "unsupported")
+            var connected = state is "managed" or "drift";
+            var connectSwitch = new ToggleSwitch { IsOn = connected, OnContent = "", OffContent = "", IsEnabled = state != "unsupported", MinWidth = 44, VerticalAlignment = VerticalAlignment.Center };
+            AutomationProperties.SetName(connectSwitch, $"{Json.Text(agent, "name")} 接入");
+            var restoringSwitch = false;
+            connectSwitch.Toggled += async (_, _) =>
             {
-                buttons.Children.Add(Button("接入", async () =>
+                if (restoringSwitch || busy) return;
+                var connect = connectSwitch.IsOn;
+                restoringSwitch = true; connectSwitch.IsOn = connected; restoringSwitch = false;
+                try
                 {
+                    if (!connect)
+                    {
+                        if (await ConfirmAsync("断开 Agent？", "CLI 将恢复或移除此 Agent 的托管配置。", "断开"))
+                            await ChangeAsync("断开 Agent", ["agent", "disconnect", id]);
+                        return;
+                    }
                     var args = new List<string> { "agent", "connect", id };
                     if (id == "codex")
                     {
@@ -664,30 +712,46 @@ public sealed partial class MainWindow : Window
                         args.AddRange(["--mode", mode.SelectedIndex == 0 ? "official-account" : "custom-only"]);
                     }
                     await ChangeAsync("接入 Agent", args.ToArray());
-                }, true));
-                buttons.Children.Add(Button("断开", async () =>
-                {
-                    if (await ConfirmAsync("断开 Agent？", "CLI 将恢复或移除此 Agent 的托管配置。", "断开"))
-                        await ChangeAsync("断开 Agent", ["agent", "disconnect", id]);
-                }));
-            }
-            buttons.Children.Add(Button("升级", () => ChangeAsync("升级 Agent", ["agent", "upgrade", id, "--json"])));
-            var body = new StackPanel { Spacing = 12 };
+                }
+                catch (Exception error) { ShowNotice("Agent 接入失败", error.Message, InfoBarSeverity.Error); }
+            };
+            var body = new StackPanel { Spacing = 8, Visibility = Visibility.Collapsed, Margin = new Thickness(44, 8, 0, 0) };
             body.Children.Add(Text(Json.Text(integration, "detail")));
             if (Json.OptionalText(integration, "error") is { } integrationError) body.Children.Add(Text(integrationError));
             if (Json.OptionalText(version, "error") is { } versionError) body.Children.Add(Text(versionError));
-            body.Children.Add(buttons);
-            var heading = new Grid { ColumnSpacing = 12, MinWidth = 520 };
+            body.Children.Add(Button("升级", () => ChangeAsync("升级 Agent", ["agent", "upgrade", id, "--json"])));
+            var heading = new Grid { ColumnSpacing = 12 };
             heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
-            heading.Children.Add(new TextBlock { Text = Json.Text(agent, "name"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
-            var summary = new TextBlock { Text = $"{stateLabel} · {Json.OptionalText(version, "version") ?? Json.OptionalText(version, "app_version") ?? "版本未知"}", FontSize = 12, TextWrapping = TextWrapping.Wrap };
-            Grid.SetColumn(summary, 1); heading.Children.Add(summary);
-            var entry = new Expander { Header = heading, Content = body, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
-            if (Json.Flag(agent, "detected")) PageBody.Children.Add(entry);
+            heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+            var title = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 8 };
+            title.Children.Add(new TextBlock { Text = Json.Text(agent, "name"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+            title.Children.Add(new TextBlock { Text = $"CLI {Json.OptionalText(version, "version") ?? "未知"}" + (Json.OptionalText(version, "app_version") is { } appVersion ? $" · App {appVersion}" : ""), FontSize = 12, Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["SecondaryText"], VerticalAlignment = VerticalAlignment.Center });
+            var text = new StackPanel { Spacing = 4 };
+            text.Children.Add(title);
+            var summary = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+            summary.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Width = 6, Height = 6, Fill = new SolidColorBrush(connected ? Colors.LimeGreen : state == "error" ? Colors.Orange : Colors.Gray), VerticalAlignment = VerticalAlignment.Center });
+            summary.Children.Add(new TextBlock { Text = stateLabel, FontSize = 12, Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["SecondaryText"] });
+            text.Children.Add(summary);
+            var identity = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+            identity.Children.Add(Marks.Agent(id)); identity.Children.Add(text);
+            var details = new Button { Content = identity, Background = new SolidColorBrush(Colors.Transparent), BorderThickness = new Thickness(0), Padding = new Thickness(0), HorizontalContentAlignment = HorizontalAlignment.Left, HorizontalAlignment = HorizontalAlignment.Stretch };
+            AutomationProperties.SetName(details, $"查看 {Json.Text(agent, "name")} 详情");
+            details.Click += (_, _) => body.Visibility = body.Visibility == Visibility.Visible ? Visibility.Collapsed : Visibility.Visible;
+            heading.Children.Add(details);
+            Grid.SetColumn(connectSwitch, 1); heading.Children.Add(connectSwitch);
+            var entryBody = new StackPanel { Spacing = 0 };
+            entryBody.Children.Add(heading); entryBody.Children.Add(body);
+            var entry = new Border { Child = entryBody, Padding = new Thickness(16, 12, 16, 12), BorderBrush = (Brush)Microsoft.UI.Xaml.Application.Current.Resources["CardStrokeColorDefaultBrush"], BorderThickness = new Thickness(0, 0, 0, 1) };
+            if (Json.Flag(agent, "detected")) detectedRows.Children.Add(entry);
             else undetected.Children.Add(entry);
         }
-        if (undetected.Children.Count > 0) PageBody.Children.Add(new Expander { Header = $"显示未检测到的 {undetected.Children.Count} 个 Agent", Content = undetected, HorizontalAlignment = HorizontalAlignment.Stretch });
+        if (detectedRows.Children.Count > 0) PageBody.Children.Add(new Border { Child = detectedRows, CornerRadius = new CornerRadius(10), Background = (Brush)Microsoft.UI.Xaml.Application.Current.Resources["CardBackgroundFillColorDefaultBrush"] });
+        if (undetected.Children.Count > 0)
+        {
+            var section = new Expander { Header = $"显示未检测到的 {undetected.Children.Count} 个 Agent", Content = undetected, HorizontalAlignment = HorizontalAlignment.Stretch };
+            AutomationProperties.SetAutomationId(section, "agent-undetected");
+            PageBody.Children.Add(section);
+        }
     }
 
     private async Task UsageAsync(CancellationToken token)

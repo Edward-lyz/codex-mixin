@@ -73,5 +73,9 @@ Copy-Item -LiteralPath $Source -Destination (Join-Path $repo "windows\assets\app
 $providers = Join-Path $repo "windows\assets\providers"
 New-Item -ItemType Directory -Force -Path $providers | Out-Null
 Copy-Item -Path (Join-Path $repo "macos\assets\providers\*.svg") -Destination $providers -Force
+$agents = Join-Path $repo "windows\assets\agents"
+New-Item -ItemType Directory -Force -Path $agents | Out-Null
+Copy-Item -Path (Join-Path $repo "macos\assets\agents\*.svg"), (Join-Path $repo "macos\assets\agents\*.png") -Destination $agents -Force
+Copy-Item -LiteralPath (Join-Path $repo "macos\assets\agents\ATTRIBUTION.md") -Destination $agents -Force
 
 Write-Host "Generated native Windows application and tray icons from $Source"
