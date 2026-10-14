@@ -48,6 +48,15 @@ jobs:
           ./scripts/check_arch.sh
           ./scripts/test_check_arch.sh
       - run: cargo test --locked --all-targets
+  cli:
+    name: Build Windows CLI
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
+        with:
+          shared-key: rust
       - run: cargo build --locked --release
       - uses: actions/upload-artifact@v7
         with:
@@ -90,7 +99,7 @@ jobs:
   native-ui:
     name: Windows native UI and real CLI tests
     runs-on: windows-latest
-    needs: [rust, native]
+    needs: [cli, native]
     steps:
       - uses: actions/checkout@v5
       - uses: actions/setup-dotnet@v5
