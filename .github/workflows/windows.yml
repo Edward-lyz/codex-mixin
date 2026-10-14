@@ -7,6 +7,10 @@ on:
         description: 'Re-run UI tests with native UI and CLI artifacts from this Windows run ID'
         required: false
         type: string
+      cli_artifact_run:
+        description: 'Optional CLI artifact run ID when re-running native UI artifacts'
+        required: false
+        type: string
   pull_request:
   push:
     branches: [main]
@@ -120,7 +124,7 @@ jobs:
         with:
           name: windows-cli
           path: target/release
-          run-id: ${{ inputs.ui_artifact_run || github.run_id }}
+          run-id: ${{ inputs.cli_artifact_run || inputs.ui_artifact_run || github.run_id }}
           github-token: ${{ github.token }}
       - uses: actions/download-artifact@v7
         with:
