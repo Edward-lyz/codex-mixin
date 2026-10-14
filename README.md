@@ -74,7 +74,325 @@ Codex Mixin 是一个跨平台的 Rust 本地网关，提供 Windows 桌面 App�
 - 自动完成供应商管理、模型发现、能力探测、上下文配置、测速、额度和 Token 监测。
 - 模型融合支持多模型编排，提升整体表现；以及按时间轮转，一个模型名称下，按时间路由至不同模型（适用于波峰-波谷计价用户）
 - 配置加密，可导出为 Base64 备份并在另一台机器一键导入，无需繁琐重新配置
-- 目前支持的框架有：Codex、Claude Code、DSH、OpenCode 和 Pi 。
+- 统一管理 50 个 Agent，其中 30 个支持网关配置接入与恢复；[查看框架图标与接入情况](#agent-integrations)。
+
+### Agent integrations
+
+目前管理目录覆盖 **50 个 Agent**，其中 **30 个支持网关配置接入与恢复**。下方按接入能力分组；版本检测和升级取决于实际安装来源，不代表支持网关接入。
+
+The catalog contains **50 Agents**, with **30 gateway configuration integrations**. The groups below show integration support. Version detection and upgrades depend on the installation channel and do not imply gateway integration.
+
+#### 已支持接入 · Supported integrations (30)
+
+<table>
+  <tr>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/codex.svg" width="36" height="36" alt="Codex logo"><br>
+      <sub>Codex</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/claude.svg" width="36" height="36" alt="Claude Code logo"><br>
+      <sub>Claude Code</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/claude-desktop.svg" width="36" height="36" alt="Claude Desktop logo"><br>
+      <sub>Claude Desktop</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/dsh.svg" width="36" height="36" alt="DSH logo"><br>
+      <sub>DSH</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/opencode-dark.svg">
+        <img src="docs/assets/agents/opencode-light.svg" width="36" height="36" alt="OpenCode logo">
+      </picture><br>
+      <sub>OpenCode</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/pi-dark.svg">
+        <img src="docs/assets/agents/pi-light.svg" width="36" height="36" alt="Pi logo">
+      </picture><br>
+      <sub>Pi</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/openchamber.svg" width="36" height="36" alt="OpenChamber logo"><br>
+      <sub>OpenChamber</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/mimocode-dark.svg">
+        <img src="docs/assets/agents/mimocode-light.svg" width="36" height="36" alt="MiMo Code logo">
+      </picture><br>
+      <sub>MiMo Code</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/omo-dark.svg">
+        <img src="docs/assets/agents/omo-light.svg" width="36" height="36" alt="OmO logo">
+      </picture><br>
+      <sub>OmO</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/goose-dark.svg">
+        <img src="docs/assets/agents/goose-light.svg" width="36" height="36" alt="Goose logo">
+      </picture><br>
+      <sub>Goose</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/vscode-dark.svg">
+        <img src="docs/assets/agents/vscode-light.svg" width="36" height="36" alt="VS Code logo">
+      </picture><br>
+      <sub>VS Code</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/vscode-insiders-dark.svg">
+        <img src="docs/assets/agents/vscode-insiders-light.svg" width="36" height="36" alt="VS Code Insiders logo">
+      </picture><br>
+      <sub>VS Code Insiders</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/copilot-jetbrains-dark.svg">
+        <img src="docs/assets/agents/copilot-jetbrains-light.svg" width="36" height="36" alt="Copilot for JetBrains logo">
+      </picture><br>
+      <sub>Copilot for JetBrains</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/air.svg" width="36" height="36" alt="Air logo"><br>
+      <sub>Air</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/crush.svg" width="36" height="36" alt="Crush logo"><br>
+      <sub>Crush</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/omp-dark.svg">
+        <img src="docs/assets/agents/omp-light.svg" width="36" height="36" alt="Oh My Pi logo">
+      </picture><br>
+      <sub>Oh My Pi</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/hermes-dark.svg">
+        <img src="docs/assets/agents/hermes-light.svg" width="36" height="36" alt="Hermes Agent logo">
+      </picture><br>
+      <sub>Hermes Agent</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/morph.svg" width="36" height="36" alt="Mister Morph logo"><br>
+      <sub>Mister Morph</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/kimi-dark.svg">
+        <img src="docs/assets/agents/kimi-light.svg" width="36" height="36" alt="Kimi Code logo">
+      </picture><br>
+      <sub>Kimi Code</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/qwen.svg" width="36" height="36" alt="Qwen Code logo"><br>
+      <sub>Qwen Code</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/droid-dark.svg">
+        <img src="docs/assets/agents/droid-light.svg" width="36" height="36" alt="Droid logo">
+      </picture><br>
+      <sub>Droid</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/qoder-dark.svg">
+        <img src="docs/assets/agents/qoder-light.svg" width="36" height="36" alt="Qoder logo">
+      </picture><br>
+      <sub>Qoder</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/qoder-cn-dark.svg">
+        <img src="docs/assets/agents/qoder-cn-light.svg" width="36" height="36" alt="Qoder CN logo">
+      </picture><br>
+      <sub>Qoder CN</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/grok-dark.svg">
+        <img src="docs/assets/agents/grok-light.svg" width="36" height="36" alt="Grok Build logo">
+      </picture><br>
+      <sub>Grok Build</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/zcode.svg" width="36" height="36" alt="ZCode logo"><br>
+      <sub>ZCode</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/workbuddy.svg" width="36" height="36" alt="WorkBuddy logo"><br>
+      <sub>WorkBuddy</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/codebuddy.svg" width="36" height="36" alt="CodeBuddy logo"><br>
+      <sub>CodeBuddy</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/pencil.svg" width="36" height="36" alt="Pencil logo"><br>
+      <sub>Pencil</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/t3code.svg" width="36" height="36" alt="T3 Code logo"><br>
+      <sub>T3 Code</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/atomcode.svg" width="36" height="36" alt="AtomCode logo"><br>
+      <sub>AtomCode</sub>
+    </td>
+  </tr>
+</table>
+
+安装对应框架并选择模型后，可通过 macOS / Windows 的 **Agent 管理**连接或恢复配置，或运行 `codex-mixin agent connect <id>` / `codex-mixin agent disconnect <id>`。Codex 连接时需要额外指定 `--mode official-account` 或 `--mode custom-only`。Air 接入需要已安装 OpenCode。
+
+Install the Agent and select models, then connect or restore it through **Agent management** on macOS / Windows, or use the CLI commands above. Codex also requires `--mode official-account` or `--mode custom-only`. Air requires OpenCode.
+
+#### 暂未支持接入 · Integration unavailable (20)
+
+<table>
+  <tr>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/gemini.svg" width="36" height="36" alt="Gemini CLI logo"><br>
+      <sub>Gemini CLI</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/agy.svg" width="36" height="36" alt="agy logo"><br>
+      <sub>agy</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/aside.svg" width="36" height="36" alt="Aside logo"><br>
+      <sub>Aside</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/cursor-dark.svg">
+        <img src="docs/assets/agents/cursor-light.svg" width="36" height="36" alt="Cursor CLI logo">
+      </picture><br>
+      <sub>Cursor CLI</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/cursor-local-dark.svg">
+        <img src="docs/assets/agents/cursor-local-light.svg" width="36" height="36" alt="Cursor logo">
+      </picture><br>
+      <sub>Cursor</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/zed-dark.svg">
+        <img src="docs/assets/agents/zed-light.svg" width="36" height="36" alt="Zed logo">
+      </picture><br>
+      <sub>Zed</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/vscodium-dark.svg">
+        <img src="docs/assets/agents/vscodium-light.svg" width="36" height="36" alt="VSCodium logo">
+      </picture><br>
+      <sub>VSCodium</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/copilot-dark.svg">
+        <img src="docs/assets/agents/copilot-light.svg" width="36" height="36" alt="Copilot CLI logo">
+      </picture><br>
+      <sub>Copilot CLI</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/reasonix.svg" width="36" height="36" alt="Reasonix logo"><br>
+      <sub>Reasonix</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/commandcode-dark.svg">
+        <img src="docs/assets/agents/commandcode-light.svg" width="36" height="36" alt="Command Code logo">
+      </picture><br>
+      <sub>Command Code</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/fx-dark.svg">
+        <img src="docs/assets/agents/fx-light.svg" width="36" height="36" alt="fx logo">
+      </picture><br>
+      <sub>fx</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/devin-dark.svg">
+        <img src="docs/assets/agents/devin-light.svg" width="36" height="36" alt="Devin logo">
+      </picture><br>
+      <sub>Devin</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/muse.svg" width="36" height="36" alt="Muse logo"><br>
+      <sub>Muse</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/empryo.svg" width="36" height="36" alt="Empryo logo"><br>
+      <sub>Empryo</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/ante.svg" width="36" height="36" alt="Ante logo"><br>
+      <sub>Ante</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/minimax-code.svg" width="36" height="36" alt="MiniMax Code logo"><br>
+      <sub>MiniMax Code</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/cline-dark.svg">
+        <img src="docs/assets/agents/cline-light.svg" width="36" height="36" alt="Cline logo">
+      </picture><br>
+      <sub>Cline</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/hanako.svg" width="36" height="36" alt="Hanako logo"><br>
+      <sub>Hanako</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/alma.svg" width="36" height="36" alt="Alma logo"><br>
+      <sub>Alma</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="docs/assets/agents/cindy.svg" width="36" height="36" alt="Cindy logo"><br>
+      <sub>Cindy</sub>
+    </td>
+  </tr>
+</table>
+
+这些框架已列入管理目录，但当前不能连接到 Mixin 网关。接入仍需要专用协议、系统凭据存储、应用运行时 API、受管理的启动器或扩展检测；界面会显示具体原因并禁用连接开关。
+
+These Agents are listed in the catalog but cannot connect to the Mixin gateway yet. They need dedicated protocols, credential stores, app runtime APIs, managed launchers, or extension discovery. Agent management shows the reason and disables the connection switch.
+
+图标来源与品牌归属见 [Agent Logos](macos/assets/agents/ATTRIBUTION.md)。
 
 ### 产品形态
 
@@ -139,7 +457,7 @@ Codex Mixin is a cross-platform local gateway built in Rust. It provides a Windo
 - Automatic provider management, model discovery, capability probing, context configuration, benchmarking, quota monitoring, and token usage tracking.
 - Fusion combines multiple models to improve overall results. Time-based rotation routes one model name to different upstream models at different times, which is useful for peak and off-peak pricing.
 - Encrypted configuration can be exported as a Base64 backup and imported on another machine without repeating setup.
-- Supported clients include Codex, Claude Code, DSH, OpenCode, and Pi.
+- Manage 50 Agents, with 30 gateway configuration integrations. See the [Agent logos and integration status](#agent-integrations).
 
 ### Product interfaces
 
@@ -215,8 +533,8 @@ codex-mixin connect remove claude-desktop
 The connect command starts or restarts the managed gateway after committing
 the profile, so the serving process includes the Desktop routes and client key.
 Fully quit and reopen Claude Desktop after connecting, restoring, or changing
-selected models. The macOS **Install and Restore** menu, Windows install page,
-and TUI **Integrations** page (`d` / `D`) expose the same commands. Desktop and
+selected models. The macOS and Windows **Agent management** windows and the TUI
+**Integrations** page (`d` / `D`) expose the same operations. Desktop and
 the Claude Code CLI have separate integrations; `connect claude` still manages
 only Claude Code CLI settings.
 
