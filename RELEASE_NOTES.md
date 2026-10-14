@@ -1,4 +1,34 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.7.3
+
+### 功能
+
+- 新增 macOS、Windows Agent 管理窗口，支持接入、恢复配置、版本检查及单个或批量升级。
+- Agent 管理目录扩展至 50 个，其中 30 个支持网关配置接入与恢复（PR #46）。
+- 新增 Claude Desktop 接入，支持通过本地网关使用官方 GPT 和自定义模型。
+- 新增 `/v1/chat/completions` 入口，支持文本、图片、工具调用、结构化输出和流式响应。
+- 官方模型 context window 覆盖值同步应用到其他既有托管客户端。
+- macOS、Windows 默认启用登录启动，并尊重系统中的关闭设置；客户端认证改为可选 `client-auth` 编译功能。
+
+### 性能
+
+- 大请求按上游支持情况使用 gzip，网关响应支持协商压缩，减少长上下文传输量。
+- 请求序列化与压缩移出异步运行线程，通过临时文件控制额外内存占用。
+- 保留模型能力探测缓存，避免刷新目录时重复发送付费请求。
+
+### BUG 修复
+
+- 修复 Chat → Responses 丢弃推理文本及工具参数缺少流式事件的问题；截断或畸形调用不再产生可执行的完成事件（#43、#44）。
+- 修复 Anthropic 默认输出预算未正确采用模型声明上限的问题。
+- 修复 Claude Desktop 官方 GPT 请求、模型发现及 Claude.ai 登录兼容问题。
+- 修复 Windows 权限更新依赖审计权限、托盘详情区域溢出的问题。
+- 修复 macOS 从 Finder 启动时无法发现 Agent CLI、空版本字段导致列表加载失败及模型信息列布局问题。
+- 修复停止网关时进程已退出仍报告失败的问题。
+
+### 致谢
+
+感谢 @Fakaren 提交推理文本与工具调用流式问题，并提供复现和协议分析；感谢 magpie 与 LobeHub Icons 提供 Agent 图标资源；感谢所有帮助验证跨平台接入与兼容性问题的用户。
+
 ## v0.7.2
 
 ### 功能
@@ -132,6 +162,36 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v0.7.3
+
+### 功能
+
+- 新增 macOS、Windows Agent 管理視窗，支援接入、還原設定、版本檢查及單個或批次升級。
+- Agent 管理目錄擴展至 50 個，其中 30 個支援閘道設定接入與還原（PR #46）。
+- 新增 Claude Desktop 接入，支援透過本機閘道使用官方 GPT 和自訂模型。
+- 新增 `/v1/chat/completions` 入口，支援文字、圖片、工具呼叫、結構化輸出和串流回應。
+- 官方模型 context window 覆寫值同步套用到其他既有受管用戶端。
+- macOS、Windows 預設啟用登入啟動，並尊重系統中的關閉設定；用戶端認證改為可選 `client-auth` 編譯功能。
+
+### 效能
+
+- 大請求依上游支援情況使用 gzip，閘道回應支援協商壓縮，減少長上下文傳輸量。
+- 請求序列化與壓縮移出非同步執行緒，透過暫存檔控制額外記憶體占用。
+- 保留模型能力探測快取，避免重新整理目錄時重複發送付費請求。
+
+### BUG 修復
+
+- 修復 Chat → Responses 遺失推理文字及工具參數缺少串流事件的問題；截斷或格式錯誤的呼叫不再產生可執行的完成事件（#43、#44）。
+- 修復 Anthropic 預設輸出預算未正確採用模型宣告上限的問題。
+- 修復 Claude Desktop 官方 GPT 請求、模型探索及 Claude.ai 登入相容問題。
+- 修復 Windows 權限更新依賴稽核權限、系統匣詳細資訊區域溢位的問題。
+- 修復 macOS 從 Finder 啟動時無法找到 Agent CLI、空版本欄位導致清單載入失敗及模型資訊欄位版面問題。
+- 修復停止閘道時程序已結束仍回報失敗的問題。
+
+### 致謝
+
+感謝 @Fakaren 提交推理文字與工具呼叫串流問題，並提供重現方式和協定分析；感謝 magpie 與 LobeHub Icons 提供 Agent 圖示資源；感謝所有協助驗證跨平台接入與相容性問題的使用者。
+
 ## v0.7.2
 
 ### 功能
@@ -265,6 +325,36 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v0.7.3
+
+### Features
+
+- Add Agent management windows on macOS and Windows for connection, configuration restoration, version checks, and individual or batch upgrades.
+- Expand the catalog to 50 Agents, with gateway configuration integration and restoration for 30 of them (PR #46).
+- Add Claude Desktop integration for official GPT and custom models through the local gateway.
+- Add `/v1/chat/completions` with text, images, tool calls, structured output, and streaming responses.
+- Apply official model context window overrides to other existing managed clients.
+- Enable launch at login by default on macOS and Windows while respecting system disablement; make client authentication an optional `client-auth` build feature.
+
+### Performance
+
+- Use gzip for large requests when supported by the upstream and negotiate gateway response compression to reduce long-context traffic.
+- Move request serialization and compression off async runtime threads and use temporary files to control additional memory use.
+- Preserve capability probe caches to avoid repeated paid requests during catalog refreshes.
+
+### Bug fixes
+
+- Preserve reasoning text and streamed tool argument events in Chat-to-Responses conversion; truncated or malformed calls no longer produce executable completion events (#43, #44).
+- Resolve Anthropic default output budgets from declared model limits.
+- Fix Claude Desktop official GPT requests, model discovery, and Claude.ai sign-in compatibility.
+- Fix Windows permission updates requiring audit privileges and overflowing tray details.
+- Fix Agent CLI discovery when the macOS app starts from Finder, list loading with null version fields, and model metadata column layout.
+- Fix gateway shutdown reporting failure when the process has already exited.
+
+### Thanks
+
+Thanks to @Fakaren for reporting reasoning text and streamed tool call issues with reproductions and protocol analysis; to magpie and LobeHub Icons for Agent logo assets; and to everyone who helped validate cross-platform integration and compatibility.
+
 ## v0.7.2
 
 ### Features
