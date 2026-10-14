@@ -110,6 +110,8 @@ internal static class Program
             if (!process.HasExited) { process.Kill(true); process.WaitForExit(); }
             var errors = nativeErrors.GetAwaiter().GetResult();
             if (!string.IsNullOrWhiteSpace(errors)) File.WriteAllText(Path.Combine(output, "native-errors.txt"), errors);
+            var diagnostic = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexMixin", "logs", "native-error.txt");
+            if (File.Exists(diagnostic)) File.Copy(diagnostic, Path.Combine(output, "native-errors.txt"), true);
             Environment.SetEnvironmentVariable("CODEX_GATEWAY_CONFIG", previousConfig);
             WriteGallery(output);
         }

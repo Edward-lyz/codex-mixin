@@ -49,7 +49,16 @@ public partial class App : Application
         target.ShowMain();
     }
 
-    public App() => InitializeComponent();
+    public App()
+    {
+        UnhandledException += (_, args) =>
+        {
+            var directory = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexMixin", "logs");
+            Directory.CreateDirectory(directory);
+            File.WriteAllText(Path.Combine(directory, "native-error.txt"), args.Exception.ToString());
+        };
+        InitializeComponent();
+    }
 
     protected override async void OnLaunched(LaunchActivatedEventArgs args)
     {
