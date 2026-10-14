@@ -7960,8 +7960,9 @@ async fn anthropic_messages_ignores_legacy_model_level_endpoint() {
         .send()
         .await
         .unwrap();
-    assert_eq!(response.status(), StatusCode::OK);
+    let status = response.status();
     let body = response.text().await.unwrap();
+    assert_eq!(status, StatusCode::OK, "gateway response: {body}");
     assert!(body.contains("response.completed"));
     let hits = hits.lock().unwrap();
     assert_eq!(hits.as_slice(), ["/v1/messages"]);

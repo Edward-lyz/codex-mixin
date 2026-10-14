@@ -47,6 +47,8 @@ jobs:
         run: |
           ./scripts/check_arch.sh
           ./scripts/test_check_arch.sh
+      - name: Check Anthropic endpoint isolation
+        run: cargo test --locked --test gateway_http anthropic_messages_ignores_legacy_model_level_endpoint -- --nocapture
       - run: cargo test --locked --all-targets
   cli:
     name: Build Windows CLI
