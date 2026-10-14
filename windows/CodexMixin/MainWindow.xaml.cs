@@ -438,6 +438,8 @@ public sealed partial class MainWindow : Window
         }
         modelBody.Children.Add(header);
         var list = new ListView { Height = 390, SelectionMode = ListViewSelectionMode.None };
+        list.ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load(
+            "<DataTemplate xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\"><ContentControl HorizontalContentAlignment=\"Stretch\"/></DataTemplate>");
         AutomationProperties.SetAutomationId(list, "model-table");
         list.ContainerContentChanging += (_, args) =>
         {
@@ -459,7 +461,7 @@ public sealed partial class MainWindow : Window
             var cells = new FrameworkElement[] { check, title, ttft, tps, context, Text(capabilities.Length == 0 ? "待探测" : capabilities) };
             for (var index = 0; index < cells.Length; index++) { Grid.SetColumn(cells[index], index); row.Children.Add(cells[index]); }
             args.ItemContainer.HorizontalContentAlignment = HorizontalAlignment.Stretch;
-            args.ItemContainer.Content = row;
+            ((ContentControl)args.ItemContainer.ContentTemplateRoot).Content = row;
             args.Handled = true;
         };
         // WinRT collections can expose strings directly; JsonElement is a .NET struct.

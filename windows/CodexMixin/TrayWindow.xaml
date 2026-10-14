@@ -16,7 +16,7 @@
      <Button Content="1天" Tag="1" Click="OnRange"/><Button Content="7天" Tag="7" Click="OnRange"/><Button Content="1月" Tag="30" Click="OnRange"/><Button Content="全部" Tag="all" Click="OnRange"/>
     </StackPanel>
     <StackPanel x:Name="UsageBody" Spacing="12"/>
-    <TextBlock x:Name="PanelStatus" Text="正在读取…" TextWrapping="Wrap" FontSize="11" Style="{StaticResource SecondaryText}"/>
+    <TextBlock x:Name="PanelStatus" AutomationProperties.AutomationId="panel-status" Text="正在读取…" TextWrapping="Wrap" FontSize="11" Style="{StaticResource SecondaryText}"/>
    </StackPanel></ScrollViewer>
    <StackPanel Grid.Row="4" Spacing="2">
     <Button Content="▦  模型与服务…" Tag="providers" Click="OnOpen" HorizontalAlignment="Stretch" HorizontalContentAlignment="Left"/>

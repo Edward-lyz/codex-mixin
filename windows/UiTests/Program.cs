@@ -96,19 +96,29 @@ internal static class Program
                         if (refresh != null) ((InvokePattern)refresh.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
                         Wait(() => Find(target, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), $"load {role}", process);
                     }
+                    if (role == "providers")
+                        Wait(() =>
+                        {
+                            var model = target.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "ci-coder"));
+                            return model != null && !model.Current.IsOffscreen && model.Current.BoundingRectangle.Height > 0;
+                        }, "painted model table rows", process);
+                    if (role == "overview")
+                        Wait(() => Find(target, "panel-status").Current.Name.Contains("配置已同步", StringComparison.Ordinal), "tray CLI load", process);
                     Capture(target, Path.Combine(output, $"{filename}-{themeName}.png"));
+                    if (role != "overview") CaptureLower(target, Path.Combine(output, $"{filename}-lower-{themeName}.png"));
                     if (role == "providers")
                     {
-                        Wait(() => target.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "ci-coder")) != null, "visible model table rows", process);
                         ((TogglePattern)Find(target, "provider-connection-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
                         Wait(() => target.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "连接配置")) != null, "connection tab", process);
                         Capture(target, Path.Combine(output, $"connection-{themeName}.png"));
+                        CaptureLower(target, Path.Combine(output, $"connection-lower-{themeName}.png"));
                         ((TogglePattern)Find(target, "provider-models-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
                     }
                     if (role == "fusion")
                     {
                         SelectCombo(target, "fusion-mode", "按时间轮转");
                         Capture(target, Path.Combine(output, $"fusion-time-{themeName}.png"));
+                        CaptureLower(target, Path.Combine(output, $"fusion-time-lower-{themeName}.png"));
                         SelectCombo(target, "fusion-mode", "多模型编排");
                     }
                 }
@@ -292,6 +302,17 @@ internal static class Program
         using var graphics = Graphics.FromImage(image);
         graphics.CopyFromScreen(rect.Left, rect.Top, 0, 0, image.Size);
         image.Save(path, ImageFormat.Png);
+    }
+
+    private static void CaptureLower(AutomationElement window, string path)
+    {
+        var scroller = Find(window, "page-scroll");
+        if (!scroller.TryGetCurrentPattern(ScrollPattern.Pattern, out var pattern)) return;
+        var scroll = (ScrollPattern)pattern;
+        if (!scroll.Current.VerticallyScrollable) return;
+        scroll.SetScrollPercent(ScrollPattern.NoScroll, 100);
+        Capture(window, path);
+        scroll.SetScrollPercent(ScrollPattern.NoScroll, 0);
     }
 
     [StructLayout(LayoutKind.Sequential)]
