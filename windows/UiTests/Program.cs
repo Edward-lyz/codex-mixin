@@ -51,6 +51,7 @@ internal static class Program
             nativeErrors = process.StandardError.ReadToEndAsync();
         }
         using var appLifetime = process;
+        _ = process.Handle; // Retain the debugger-launched process handle for exit diagnostics.
         nint handle = 0;
         try
         {

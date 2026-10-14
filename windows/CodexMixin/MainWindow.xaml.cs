@@ -92,11 +92,15 @@ public sealed partial class MainWindow : Window
             shell?.Dispose();
             captureReady?.Dispose();
         };
-        Root.Loaded += async (_, _) =>
+        Root.Loaded += (_, _) =>
         {
             App.StartupTrace($"window {page}: root loaded");
             if (initialized) return;
             initialized = true;
+            // Loaded can run inside a synchronous native layout callback.
+            // Start CLI work after that callback returns to the message loop.
+            if (!DispatcherQueue.TryEnqueue(async () =>
+            {
             ready = true;
             await ExecuteUiAsync("连接 CLI", async token =>
             {
@@ -111,6 +115,7 @@ public sealed partial class MainWindow : Window
             timer.Start();
             captureReady?.Set();
             if (Environment.GetCommandLineArgs().Contains("--background") && shell != null) shell.Hide();
+            })) throw new InvalidOperationException("无法调度 Windows 界面初始化。");
         };
         timer.Tick += async (_, _) =>
         {
