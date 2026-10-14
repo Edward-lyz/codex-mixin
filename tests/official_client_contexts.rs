@@ -1,6 +1,6 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::process::Command;
+use tokio::process::Command;
 
 use codex_mixin::config::{
     StoredGatewayConfig, load_stored_config_from_path, save_stored_config_to_path,
@@ -8,8 +8,8 @@ use codex_mixin::config::{
 use codex_mixin::provider::custom_provider;
 use serde_json::{Value, json};
 
-#[test]
-fn official_contexts_reach_clients() {
+#[tokio::test]
+async fn official_contexts_reach_clients() {
     let directory = tempfile::tempdir().unwrap();
     let config_path = directory.path().join("gateway.json");
     let codex_home = directory.path().join("codex");
@@ -46,11 +46,12 @@ fn official_contexts_reach_clients() {
     // official catalog. Block outbound HTTP so the fixture catalog survives.
     let mixin = |args: &[&str]| {
         let mut command = Command::new(env!("CARGO_BIN_EXE_codex-mixin"));
+        codex_mixin::platform::set_tokio_home_env(&mut command, &directory.path().join("home"));
         command
+            .kill_on_drop(true)
             .args(args)
             .env("CODEX_GATEWAY_CONFIG", &config_path)
             .env("CODEX_HOME", &codex_home)
-            .env("HOME", directory.path().join("home"))
             .env(
                 "CODEX_GATEWAY_RUNTIME_FILE",
                 directory.path().join("runtime.json"),
@@ -85,7 +86,11 @@ fn official_contexts_reach_clients() {
                 desktop_root.to_str().unwrap(),
             ],
         ] {
-            let output = mixin(&args).output().unwrap();
+            let output =
+                tokio::time::timeout(std::time::Duration::from_secs(60), mixin(&args).output())
+                    .await
+                    .unwrap_or_else(|_| panic!("CLI command timed out: {args:?}"))
+                    .unwrap();
             assert!(
                 output.status.success(),
                 "{args:?}: {}",
@@ -112,7 +117,13 @@ fn official_contexts_reach_clients() {
             json!({"claude_model": if context == Some(1_000_000) { "gpt-test[1m]" } else { "gpt-test" }, "pi_context":context.unwrap_or(272000), "desktop_1m":context == Some(1_000_000)})
         );
     }
-    let stopped = mixin(&["service", "stop", "--force"]).output().unwrap();
+    let stopped = tokio::time::timeout(
+        std::time::Duration::from_secs(60),
+        mixin(&["service", "stop", "--force"]).output(),
+    )
+    .await
+    .expect("stop test gateway timed out")
+    .unwrap();
     assert!(
         stopped.status.success(),
         "stop test gateway: {}",

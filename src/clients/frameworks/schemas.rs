@@ -187,17 +187,7 @@ fn pi_like(id: &str, v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::
 }
 
 fn crush(v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec<Patch>> {
-    let dir = if cfg!(target_os = "windows") {
-        home_path("LOCALAPPDATA", "AppData/Local")?.join("crush")
-    } else {
-        config_home()?.join("crush")
-    };
-    let path = dir.join("crush.json");
-    let data = if cfg!(target_os = "windows") {
-        path.clone()
-    } else {
-        home_path("XDG_DATA_HOME", ".local/share")?.join("crush/crush.json")
-    };
+    let (path, data) = crate::platform::crush_config_paths()?;
     let provider = field(
         &["providers", PROVIDER],
         json!({"type":"openai","name":PROVIDER,"base_url":v1,"api_key":key,"models":models.iter().map(|m|json!({"id":m.id,"name":m.name,"context_window":m.context_window,"default_max_tokens":m.max_tokens,"can_reason":!m.efforts.is_empty()})).collect::<Vec<_>>()}),
@@ -388,11 +378,7 @@ fn toml_agent(
 }
 
 fn copilot_jb(v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec<Patch>> {
-    let dir = if cfg!(target_os = "windows") && std::env::var_os("XDG_CONFIG_HOME").is_none() {
-        home_path("", "AppData/Local")?
-    } else {
-        config_home()?
-    };
+    let dir = crate::platform::copilot_config_root()?;
     let entries = Value::Object(models.iter().map(|m|(m.id.clone(),json!({"deploymentUrl":format!("{v1}/chat/completions"),"isRegistered":true,"isCustomModel":true,"modelCapabilities":{"name":m.name,"maxInputTokens":m.context_window.saturating_sub(m.max_tokens),"maxOutputTokens":m.max_tokens,"toolCalling":true,"vision":m.supports_image}}))).collect());
     Ok(vec![patch(
         dir.join("github-copilot/byok.json"),
@@ -448,13 +434,7 @@ fn vscode(id: &str, v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::R
     } else {
         "Code"
     };
-    let root = if cfg!(target_os = "macos") {
-        home_path("", "Library/Application Support")?
-    } else if cfg!(target_os = "windows") {
-        home_path("APPDATA", "AppData/Roaming")?
-    } else {
-        config_home()?
-    };
+    let root = crate::platform::framework_app_root()?;
     let dir = root.join(folder).join("User");
     let path = dir.join("chatLanguageModels.json");
     let doc = read_config(&path, Format::Json)?;
@@ -507,23 +487,14 @@ fn open_code_provider(v1: &str, key: &str, models: &[FrameworkModel]) -> Value {
 }
 
 fn air(v1: &str, key: &str, models: &[FrameworkModel]) -> anyhow::Result<Vec<Patch>> {
-    let root = if cfg!(target_os = "macos") {
-        home_path("", "Library/Application Support")?
-    } else if cfg!(target_os = "windows") {
-        home_path("APPDATA", "AppData/Roaming")?
-    } else {
-        config_home()?
-    };
+    let root = crate::platform::framework_app_root()?;
     let dir = root.join("JetBrains/Air");
     let config = dir.join("codex-mixin-opencode.json");
     let binary = crate::platform::agent_cli::find_command("opencode")
         .or_else(|| {
-            let name = if cfg!(target_os = "windows") {
-                "opencode.exe"
-            } else {
-                "opencode"
-            };
-            let binary = crate::platform::home_dir().join(".opencode/bin").join(name);
+            let binary = crate::platform::home_dir()
+                .join(".opencode/bin")
+                .join(crate::platform::executable_file_name("opencode"));
             binary.is_file().then_some(binary)
         })
         .ok_or_else(|| anyhow::anyhow!("Air requires an installed OpenCode ACP server"))?;

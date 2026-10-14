@@ -180,13 +180,7 @@ pub fn remove(id: &str, manifest: &Path) -> anyhow::Result<()> {
 /// Configuration presence is useful detection for apps with no CLI. The
 /// undo journal alone is never treated as evidence of an installed app.
 pub fn detected(id: &str) -> anyhow::Result<bool> {
-    let root = if cfg!(target_os = "macos") {
-        home_path("", "Library/Application Support")?
-    } else if cfg!(target_os = "windows") {
-        home_path("APPDATA", "AppData/Roaming")?
-    } else {
-        config_home()?
-    };
+    let root = crate::platform::framework_app_root()?;
     let path = match id {
         "vscode" => root.join("Code/User"),
         "vscode-insiders" => root.join("Code - Insiders/User"),
@@ -200,13 +194,7 @@ pub fn detected(id: &str) -> anyhow::Result<bool> {
         "grok" => home_path("GROK_HOME", ".grok")?,
         "morph" => home_path("MISTER_MORPH_CONFIG", ".morph/config.yaml")?,
         "copilot-jetbrains" => {
-            let config =
-                if cfg!(target_os = "windows") && std::env::var_os("XDG_CONFIG_HOME").is_none() {
-                    home_path("", "AppData/Local")?
-                } else {
-                    config_home()?
-                };
-            config.join("github-copilot/byok.json")
+            crate::platform::copilot_config_root()?.join("github-copilot/byok.json")
         }
         _ => return Ok(false),
     };

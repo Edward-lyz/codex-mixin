@@ -58,3 +58,5 @@ pub mod update;
 pub mod agent_cli;
 
 pub mod installation;
+
+pub(crate) use paths::{copilot_config_root, crush_config_paths, framework_app_root};
