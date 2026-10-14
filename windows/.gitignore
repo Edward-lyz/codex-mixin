@@ -2,5 +2,6 @@
 **/obj/
 /build/
 /assets/*.ico
+/assets/app_icon.png
 *.user
 *.log

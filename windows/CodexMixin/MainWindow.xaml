@@ -5,7 +5,7 @@
     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
     <Grid x:Name="TitleBar" Height="48" Padding="20,0,160,0">
       <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
-        <FontIcon Glyph="&#xE7FC;" FontSize="18" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+        <Image Source="ms-appx:///Assets/app_icon.png" Width="20" Height="20" />
         <TextBlock Text="Codex Mixin" FontWeight="SemiBold" VerticalAlignment="Center" />
       </StackPanel>
     </Grid>
@@ -32,7 +32,7 @@
           <Button Grid.Column="1" Content="刷新" Click="OnRefresh" VerticalAlignment="Center" ToolTipService.ToolTip="刷新当前页面 (Ctrl+R)" />
         </Grid>
         <InfoBar x:Name="Notice" Grid.Row="1" IsOpen="False" IsClosable="True" />
-        <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+        <ScrollViewer Grid.Row="2" AutomationProperties.AutomationId="page-scroll" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
           <StackPanel x:Name="PageBody" Spacing="16" MaxWidth="1100" HorizontalAlignment="Stretch" />
         </ScrollViewer>
       </Grid>

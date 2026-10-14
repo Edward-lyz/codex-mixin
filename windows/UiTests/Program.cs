@@ -27,6 +27,11 @@ internal static class Program
         try
         {
             Wait(() => { process.Refresh(); handle = process.MainWindowHandle; return handle != 0; }, "native main window", process);
+            var desktop = System.Windows.Forms.Screen.FromHandle(handle).WorkingArea;
+            if (desktop.Width < 800 || desktop.Height < 600)
+                throw new InvalidOperationException("CI desktop is too small to capture the native application");
+            MoveWindow(handle, desktop.Left + 24, desktop.Top + 24,
+                Math.Min(1120, desktop.Width - 48), Math.Min(800, desktop.Height - 48), true);
             var window = AutomationElement.FromHandle(handle);
             Wait(() => Find(window, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), "initial CLI load", process);
             AssertName(window, "本地网关 · 未配置");
@@ -57,6 +62,14 @@ internal static class Program
                 {
                     Navigate(window, id, description, process);
                     Capture(window, Path.Combine(output, $"{filename}-{theme}.png"));
+                    var viewport = Find(window, "page-scroll");
+                    if (viewport.TryGetCurrentPattern(ScrollPattern.Pattern, out var pattern) &&
+                        pattern is ScrollPattern { Current.VerticalScrollable: true } scroll)
+                    {
+                        scroll.SetScrollPercent(ScrollPattern.NoScroll, 100);
+                        Capture(window, Path.Combine(output, $"{filename}-{theme}-lower.png"));
+                        scroll.SetScrollPercent(ScrollPattern.NoScroll, 0);
+                    }
                 }
             }
             Console.WriteLine("PASS all six native pages captured in light and dark themes");
@@ -206,12 +219,18 @@ internal static class Program
     private static void Capture(AutomationElement window, string path)
     {
         Thread.Sleep(300);
-        var rect = window.Current.BoundingRectangle;
-        using var image = new Bitmap((int)rect.Width, (int)rect.Height);
+        var result = DwmGetWindowAttribute((nint)window.Current.NativeWindowHandle, 9, out var rect, Marshal.SizeOf<FrameRect>());
+        if (result != 0) throw new InvalidOperationException($"Cannot read the visible window frame: HRESULT {result:X8}");
+        using var image = new Bitmap(rect.Right - rect.Left, rect.Bottom - rect.Top);
         using var graphics = Graphics.FromImage(image);
-        graphics.CopyFromScreen((int)rect.Left, (int)rect.Top, 0, 0, image.Size);
+        graphics.CopyFromScreen(rect.Left, rect.Top, 0, 0, image.Size);
         image.Save(path, ImageFormat.Png);
     }
+
+    [StructLayout(LayoutKind.Sequential)]
+    private struct FrameRect { internal int Left; internal int Top; internal int Right; internal int Bottom; }
+    [DllImport("dwmapi.dll")]
+    private static extern int DwmGetWindowAttribute(nint window, uint attribute, out FrameRect value, int size);
 
     [DllImport("user32.dll", EntryPoint = "PostMessageW")]
     [return: MarshalAs(UnmanagedType.Bool)] private static extern bool PostMessage(nint window, uint message, nuint wParam, nint lParam);

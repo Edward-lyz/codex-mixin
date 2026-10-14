@@ -27,5 +27,6 @@
     <PackageReference Include="Microsoft.WindowsAppSDK" Version="1.8.260921001" />
     <Compile Include="../Core/*.cs" Link="Core/%(Filename)%(Extension)" />
     <Content Include="../assets/*.ico" Link="Assets/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../assets/app_icon.png" Link="Assets/app_icon.png" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

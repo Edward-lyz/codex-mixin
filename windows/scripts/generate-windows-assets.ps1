@@ -69,5 +69,6 @@ function New-IcoFile {
 $repo = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 New-IcoFile -InputPath $Source -OutputPath (Join-Path $repo "windows\assets\tray_icon.ico")
 New-IcoFile -InputPath $Source -OutputPath (Join-Path $repo "windows\assets\app_icon.ico")
+Copy-Item -LiteralPath $Source -Destination (Join-Path $repo "windows\assets\app_icon.png") -Force
 
 Write-Host "Generated native Windows application and tray icons from $Source"

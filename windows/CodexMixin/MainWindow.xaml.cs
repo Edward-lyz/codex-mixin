@@ -36,12 +36,18 @@ public sealed partial class MainWindow : Window
     {
         InitializeComponent();
         Title = "Codex Mixin";
+        AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"));
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 800));
         if (AppWindowTitleBar.IsCustomizationSupported())
         {
             ExtendsContentIntoTitleBar = true;
             SetTitleBar(TitleBar);
+            AppWindow.TitleBar.PreferredHeightOption = TitleBarHeightOption.Tall;
+            AppWindow.TitleBar.PreferredTheme = Root.ActualTheme == ElementTheme.Dark ? TitleBarTheme.Dark : TitleBarTheme.Light;
+            Root.ActualThemeChanged += (_, _) =>
+                AppWindow.TitleBar.PreferredTheme = Root.ActualTheme == ElementTheme.Dark ? TitleBarTheme.Dark : TitleBarTheme.Light;
         }
+        else { TitleBar.Visibility = Visibility.Collapsed; }
         SystemBackdrop = new MicaBackdrop();
         var handle = WindowNative.GetWindowHandle(this);
         try { shell = new NativeShell(handle, OnTrayCommand); }
@@ -317,8 +323,13 @@ public sealed partial class MainWindow : Window
                     await ChangeAsync("删除供应商", ["provider", "remove", id], apply: true);
             }));
         }
+        var protocol = Json.Text(provider, "protocol") switch
+        {
+            "open_ai_chat" => "OpenAI Chat Completions", "open_ai_responses" => "OpenAI Responses",
+            "anthropic_messages" => "Anthropic Messages", var value => value
+        };
         detail.Children.Add(Card(Json.Text(provider, "display_name"),
-            $"{Json.Text(provider, "protocol")} · {Json.Text(provider, "base_url")}", toolbar));
+            $"{protocol} · {Json.Text(provider, "base_url")}", toolbar));
         var issues = Json.Strings(Json.Field(provider, "readiness_issues"));
         if (issues.Length > 0) detail.Children.Add(Card("需要处理", string.Join("\n", issues)));
         if (Json.OptionalText(provider, "last_model_refresh_error") is { } refreshError)
@@ -489,6 +500,11 @@ public sealed partial class MainWindow : Window
             var id = Json.Text(agent, "id");
             var integration = Json.Field(agent, "integration");
             var state = Json.Text(integration, "state");
+            var stateLabel = state switch
+            {
+                "managed" => "已接入", "unmanaged" => "未接入", "drift" => "配置已改变",
+                "error" => "检测失败", "unsupported" => "暂不支持接入", _ => $"未知状态：{state}"
+            };
             var version = Json.Field(agent, "cli");
             var buttons = Row();
             if (state != "unsupported")
@@ -498,10 +514,10 @@ public sealed partial class MainWindow : Window
                     var args = new List<string> { "agent", "connect", id };
                     if (id == "codex")
                     {
-                        var mode = Choice("接入模式", ["official-account", "custom-only"], "official-account");
+                        var mode = Choice("接入模式", ["官方账号 + 自定义模型", "仅自定义模型"], "官方账号 + 自定义模型");
                         var dialog = Dialog("接入 Codex", mode); dialog.PrimaryButtonText = "接入";
                         if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
-                        args.AddRange(["--mode", (string)mode.SelectedItem]);
+                        args.AddRange(["--mode", mode.SelectedIndex == 0 ? "official-account" : "custom-only"]);
                     }
                     await ChangeAsync("接入 Agent", args.ToArray());
                 }, true));
@@ -518,7 +534,7 @@ public sealed partial class MainWindow : Window
             if (Json.OptionalText(version, "error") is { } versionError) body.Children.Add(Text(versionError));
             body.Children.Add(buttons);
             PageBody.Children.Add(Card(Json.Text(agent, "name"),
-                $"{(Json.Flag(agent, "detected") ? "已检测到" : "未检测到")} · {state} · {Json.OptionalText(version, "version") ?? Json.OptionalText(version, "app_version") ?? "版本未知"}", body));
+                $"{(Json.Flag(agent, "detected") ? "已检测到" : "未检测到")} · {stateLabel} · {Json.OptionalText(version, "version") ?? Json.OptionalText(version, "app_version") ?? "版本未知"}", body));
         }
     }
 
