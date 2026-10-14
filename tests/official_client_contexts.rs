@@ -1,6 +1,8 @@
 use std::collections::BTreeMap;
 use std::fs;
-use std::process::Command;
+use std::path::Path;
+use std::process::{Output, Stdio};
+use tokio::process::Command;
 
 use codex_mixin::config::{
     StoredGatewayConfig, load_stored_config_from_path, save_stored_config_to_path,
@@ -8,8 +10,8 @@ use codex_mixin::config::{
 use codex_mixin::provider::custom_provider;
 use serde_json::{Value, json};
 
-#[test]
-fn official_contexts_reach_clients() {
+#[tokio::test]
+async fn official_contexts_reach_clients() {
     let directory = tempfile::tempdir().unwrap();
     let config_path = directory.path().join("gateway.json");
     let codex_home = directory.path().join("codex");
@@ -42,6 +44,29 @@ fn official_contexts_reach_clients() {
     let claude_settings = directory.path().join("claude/settings.json");
     let pi_dir = directory.path().join("pi");
     let desktop_root = directory.path().join("desktop");
+    // Claude Desktop connect restarts a real gateway, which refreshes the
+    // official catalog. Block outbound HTTP so the fixture catalog survives.
+    let mixin = |args: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_codex-mixin"));
+        codex_mixin::platform::set_tokio_home_env(&mut command, &directory.path().join("home"));
+        command
+            .kill_on_drop(true)
+            .args(args)
+            .env("CODEX_GATEWAY_CONFIG", &config_path)
+            .env("CODEX_HOME", &codex_home)
+            .env(
+                "CODEX_GATEWAY_RUNTIME_FILE",
+                directory.path().join("runtime.json"),
+            )
+            .env(
+                "CODEX_GATEWAY_DAEMON_FILE",
+                directory.path().join("daemon.json"),
+            )
+            .env("HTTP_PROXY", "http://127.0.0.1:9")
+            .env("HTTPS_PROXY", "http://127.0.0.1:9")
+            .env("NO_PROXY", "127.0.0.1,localhost");
+        command
+    };
     for context in [Some(1_000_000), Some(512_000), None] {
         let mut stored = load_stored_config_from_path(&config_path).unwrap().unwrap();
         stored.official_model_contexts = context
@@ -63,15 +88,7 @@ fn official_contexts_reach_clients() {
                 desktop_root.to_str().unwrap(),
             ],
         ] {
-            let output = Command::new(env!("CARGO_BIN_EXE_codex-mixin"))
-                .args(&args)
-                .env("CODEX_GATEWAY_CONFIG", &config_path)
-                .env("CODEX_HOME", &codex_home)
-                .env("HOME", directory.path().join("home"))
-                .env("CODEX_GATEWAY_RUNTIME_FILE", directory.path().join("runtime.json"))
-                .env("CODEX_GATEWAY_DAEMON_FILE", directory.path().join("daemon.json"))
-                .output()
-                .unwrap();
+            let output = run_cli(mixin(&args), &args, directory.path()).await;
             assert!(
                 output.status.success(),
                 "{args:?}: {}",
@@ -97,5 +114,37 @@ fn official_contexts_reach_clients() {
             }),
             json!({"claude_model": if context == Some(1_000_000) { "gpt-test[1m]" } else { "gpt-test" }, "pi_context":context.unwrap_or(272000), "desktop_1m":context == Some(1_000_000)})
         );
+    }
+    let stop_args = ["service", "stop", "--force"];
+    let stopped = run_cli(mixin(&stop_args), &stop_args, directory.path()).await;
+    assert!(
+        stopped.status.success(),
+        "stop test gateway: {}",
+        String::from_utf8_lossy(&stopped.stderr)
+    );
+}
+
+async fn run_cli(mut command: Command, args: &[&str], directory: &Path) -> Output {
+    // Descendant gateways can keep inherited Windows pipe handles open.
+    // Files let us wait for the CLI's exit independently of gateway lifetime.
+    let stdout = directory.join("cli.stdout");
+    let stderr = directory.join("cli.stderr");
+    command
+        .stdin(Stdio::null())
+        .stdout(fs::File::create(&stdout).unwrap())
+        .stderr(fs::File::create(&stderr).unwrap());
+    let status = tokio::time::timeout(std::time::Duration::from_secs(60), command.status())
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "CLI command timed out: {args:?}: {}",
+                fs::read_to_string(&stderr).unwrap()
+            )
+        })
+        .unwrap();
+    Output {
+        status,
+        stdout: fs::read(stdout).unwrap(),
+        stderr: fs::read(stderr).unwrap(),
     }
 }

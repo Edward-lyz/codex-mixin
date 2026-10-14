@@ -11,6 +11,7 @@
 //! model_reasoning: per-model reasoning-effort mapping.
 
 pub(crate) mod anthropic_compat;
+pub(crate) mod chat_compat;
 pub(crate) mod compaction;
 pub mod convert;
 pub mod model_reasoning;

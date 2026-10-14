@@ -147,6 +147,10 @@ cp "$ROOT_DIR/macos/assets/nasa-wallpapers/ATTRIBUTION.md" "$RESOURCES_DIR/Wallp
 mkdir -p "$RESOURCES_DIR/ProviderLogos"
 cp "$ROOT_DIR/macos/assets/providers/"*.svg "$RESOURCES_DIR/ProviderLogos/"
 cp "$ROOT_DIR/macos/assets/providers/ATTRIBUTION.md" "$RESOURCES_DIR/ProviderLogos/"
+mkdir -p "$RESOURCES_DIR/AgentLogos"
+cp "$ROOT_DIR/macos/assets/agents/"*.svg "$ROOT_DIR/macos/assets/agents/"*.png "$RESOURCES_DIR/AgentLogos/"
+cp "$ROOT_DIR/macos/assets/agents/manifest.json" "$RESOURCES_DIR/AgentLogos/"
+cp "$ROOT_DIR/macos/assets/agents/ATTRIBUTION.md" "$RESOURCES_DIR/AgentLogos/"
 mkdir -p "$RESOURCES_DIR/ThirdPartyLicenses"
 cp "$SPARKLE_DIR/LICENSE" "$RESOURCES_DIR/ThirdPartyLicenses/Sparkle.txt"
 cp "$TARGET_DIR/codex-mixin" "$RESOURCES_DIR/codex-mixin"
@@ -165,14 +169,18 @@ xcrun swiftc \
   "$ROOT_DIR/macos/StatusRefreshCoordinator.swift" \
   "$ROOT_DIR/macos/ProcessOutputCollector.swift" \
   "$ROOT_DIR/macos/GatewayService.swift" \
+  "$ROOT_DIR/macos/UserShellPathSupport.swift" \
   "$ROOT_DIR/macos/GatewayStatusSupport.swift" \
   "$ROOT_DIR/macos/CodexGatewaySwitchSupport.swift" \
   "$ROOT_DIR/macos/GatewayLifecycleSupport.swift" \
   "$ROOT_DIR/macos/LaunchAgentBootstrapSupport.swift" \
+  "$ROOT_DIR/macos/LaunchAtLoginSupport.swift" \
   "$ROOT_DIR/macos/GatewayProcessSupport.swift" \
   "$ROOT_DIR/macos/GatewayLaunchAgentSupport.swift" \
   "$ROOT_DIR/macos/SettingsActions.swift" \
-  "$ROOT_DIR/macos/CodexActions.swift" \
+  "$ROOT_DIR/macos/AgentManagementSupport.swift" \
+  "$ROOT_DIR/macos/AgentManagementActions.swift" \
+  "$ROOT_DIR/macos/AgentManagementWindow.swift" \
   "$ROOT_DIR/macos/UpdateController.swift" \
   "$ROOT_DIR/macos/UpdateSupport.swift" \
   "$ROOT_DIR/macos/UpdateWatchdog.swift" \
@@ -194,7 +202,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/ProviderSettingsView.swift" \
   "$ROOT_DIR/macos/AboutWindow.swift" \
   "$ROOT_DIR/macos/InstallCard.swift" \
-  "$ROOT_DIR/macos/InstallCodexPanel.swift" \
+  "$ROOT_DIR/macos/CodexConnectPanel.swift" \
   "$ROOT_DIR/macos/InstallProgressWindow.swift" \
   "$ROOT_DIR/macos/QuotaSupport.swift" \
   "$ROOT_DIR/macos/Localization.swift" \

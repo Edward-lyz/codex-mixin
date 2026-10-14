@@ -80,3 +80,9 @@ New-Item -ItemType Directory -Force -Path $providerDst | Out-Null
 Copy-Item -Path (Join-Path $providerSrc "*.svg") -Destination $providerDst -Force
 
 Write-Host "Generated Windows assets (icons + provider SVGs) from $Source and $providerSrc"
+
+# Agent SVG/PNG marks and their manifest use the same source as macOS.
+$agentSrc = Join-Path $repo "macos\assets\agents"
+$agentDst = Join-Path $repo "windows\assets\agents"
+New-Item -ItemType Directory -Force -Path $agentDst | Out-Null
+Copy-Item -Path (Join-Path $agentSrc "*.svg"), (Join-Path $agentSrc "*.png"), (Join-Path $agentSrc "manifest.json") -Destination $agentDst -Force

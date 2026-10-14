@@ -99,6 +99,14 @@ jobs:
         run: |
           ./scripts/test_about_window.sh
           ./scripts/test_install_card.sh
+      - name: Test macOS Agent management and default login startup
+        if: runner.os == 'macOS'
+        run: |
+          ./scripts/test_agent_management.sh
+          ./scripts/test_agent_logos.sh
+          ./scripts/test_launch_agent_bootstrap.sh
+          ./scripts/test_liquid_glass_style.sh
+          ./scripts/test_application_menu.sh
       - name: Test macOS Provider setup flow
         if: runner.os == 'macOS'
         run: ./scripts/test_provider_settings_navigation.sh
@@ -114,6 +122,7 @@ jobs:
           ./scripts/test_application_lifecycle.sh
           ./scripts/test_codex_gateway_switch_state.sh
           ./scripts/test_status_refresh_coordinator.sh
+          ./scripts/test_user_shell_path.sh
       - name: Package macOS development app
         if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch'
         run: |

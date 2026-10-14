@@ -1,0 +1,252 @@
+{
+  "codex": {
+    "file": "codex.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/codex-color.svg"
+  },
+  "claude": {
+    "file": "claude.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/claudecode-color.svg"
+  },
+  "claude-desktop": {
+    "file": "claude-desktop.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/claude-color.svg"
+  },
+  "dsh": {
+    "file": "dsh.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/deepseek-color.svg"
+  },
+  "opencode": {
+    "file": "opencode.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/opencode.svg"
+  },
+  "pi": {
+    "file": "pi.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/pi.svg"
+  },
+  "gemini": {
+    "file": "gemini.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/geminicli-color.svg"
+  },
+  "agy": {
+    "file": "agy.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/antigravity-color.svg"
+  },
+  "openchamber": {
+    "file": "openchamber.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/openchamber.svg"
+  },
+  "mimocode": {
+    "file": "mimocode.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/mimocode.svg"
+  },
+  "aside": {
+    "file": "aside.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/aside.svg"
+  },
+  "omo": {
+    "file": "omo.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/omo.svg"
+  },
+  "goose": {
+    "file": "goose.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/goose.svg"
+  },
+  "cursor": {
+    "file": "cursor.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/cursor.svg"
+  },
+  "cursor-local": {
+    "file": "cursor-local.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/cursor.svg"
+  },
+  "zed": {
+    "file": "zed.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/zed.svg"
+  },
+  "vscode": {
+    "file": "vscode.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/vscode.svg"
+  },
+  "vscode-insiders": {
+    "file": "vscode-insiders.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/vscode.svg"
+  },
+  "vscodium": {
+    "file": "vscodium.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/vscode.svg"
+  },
+  "copilot-jetbrains": {
+    "file": "copilot-jetbrains.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/githubcopilot.svg"
+  },
+  "air": {
+    "file": "air.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/air.svg"
+  },
+  "copilot": {
+    "file": "copilot.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/githubcopilot.svg"
+  },
+  "crush": {
+    "file": "crush.png",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/crush.png"
+  },
+  "reasonix": {
+    "file": "reasonix.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/reasonix-color.svg"
+  },
+  "commandcode": {
+    "file": "commandcode.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/commandcode.svg"
+  },
+  "fx": {
+    "file": "fx.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/fx.svg"
+  },
+  "omp": {
+    "file": "omp.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/omp.svg"
+  },
+  "devin": {
+    "file": "devin.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/devin.svg"
+  },
+  "hermes": {
+    "file": "hermes.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/hermes.svg"
+  },
+  "morph": {
+    "file": "morph.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/mistermorph-color.svg"
+  },
+  "kimi": {
+    "file": "kimi.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/kimi.svg"
+  },
+  "qwen": {
+    "file": "qwen.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/qwen-color.svg"
+  },
+  "muse": {
+    "file": "muse.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/meta-color.svg"
+  },
+  "empryo": {
+    "file": "empryo.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/empryo-color.svg"
+  },
+  "ante": {
+    "file": "ante.svg",
+    "template": false,
+    "source": "https://antigma.ai/img/favicon.svg"
+  },
+  "minimax-code": {
+    "file": "minimax-code.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/minimax-color.svg"
+  },
+  "droid": {
+    "file": "droid.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/factory.svg"
+  },
+  "cline": {
+    "file": "cline.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/cline.svg"
+  },
+  "qoder": {
+    "file": "qoder.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/qoder.svg"
+  },
+  "qoder-cn": {
+    "file": "qoder-cn.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/qoder.svg"
+  },
+  "grok": {
+    "file": "grok.svg",
+    "template": true,
+    "source": "magpie/internal/gui/assets/icons/xai.svg"
+  },
+  "zcode": {
+    "file": "zcode.png",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/zcode.png"
+  },
+  "workbuddy": {
+    "file": "workbuddy.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/workbuddy-color.svg"
+  },
+  "codebuddy": {
+    "file": "codebuddy.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/codebuddy-color.svg"
+  },
+  "pencil": {
+    "file": "pencil.svg",
+    "template": false,
+    "source": "https://pen.dev/favicon.svg"
+  },
+  "t3code": {
+    "file": "t3code.svg",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/t3code.svg"
+  },
+  "hanako": {
+    "file": "hanako.png",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/hanako.png"
+  },
+  "atomcode": {
+    "file": "atomcode.png",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/atomcode.png"
+  },
+  "alma": {
+    "file": "alma.png",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/alma.png"
+  },
+  "cindy": {
+    "file": "cindy.png",
+    "template": false,
+    "source": "magpie/internal/gui/assets/icons/cindy.png"
+  }
+}

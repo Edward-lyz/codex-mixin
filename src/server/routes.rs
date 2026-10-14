@@ -31,6 +31,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/responses", get(responses_ws).post(responses))
         .route("/v1/responses/compact", post(compact))
         .route("/v1/messages", post(super::messages_http::messages))
+        .route("/v1/chat/completions", post(super::chat_http::chat))
         .route(
             "/claude-desktop/v1/messages",
             post(super::claude_desktop::messages),

@@ -53,12 +53,12 @@ pub fn pid_is_running(pid: u32, expected_image_name: &str) -> std::io::Result<bo
 }
 
 pub fn send_process_signal(pid: u32, signal: &str) -> anyhow::Result<()> {
+    anyhow::ensure!(
+        matches!(signal, "KILL" | "TERM"),
+        "unsupported process signal: {signal}"
+    );
     #[cfg(windows)]
     {
-        anyhow::ensure!(
-            matches!(signal, "KILL" | "TERM"),
-            "unsupported Windows process signal: {signal}"
-        );
         let mut stopped = terminate_windows_tree(pid, signal == "KILL")?;
         if !stopped {
             stopped = terminate_windows_tree(pid, true)?;
@@ -74,7 +74,11 @@ pub fn send_process_signal(pid: u32, signal: &str) -> anyhow::Result<()> {
             .arg(format!("-{signal}"))
             .arg(pid.to_string())
             .status()?;
-        anyhow::ensure!(status.success(), "failed to send SIG{signal} to pid {pid}");
+        // The process may exit between the caller's probe and this signal.
+        anyhow::ensure!(
+            status.success() || !pid_is_running(pid, "")?,
+            "failed to send SIG{signal} to pid {pid}"
+        );
         Ok(())
     }
 }
@@ -273,5 +277,30 @@ pub fn terminate_isolated_child(child: &mut std::process::Child) -> std::io::Res
         Ok(()) => Ok(()),
         Err(_) if child.try_wait()?.is_some() => Ok(()),
         Err(error) => child.kill().map_err(|_| error),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn signals_accept_an_already_exited_process() {
+        let mut command = if cfg!(windows) {
+            let mut command = Command::new("cmd.exe");
+            command.args(["/C", "exit 0"]);
+            command
+        } else {
+            let mut command = Command::new("sh");
+            command.args(["-c", "exit 0"]);
+            command
+        };
+        let mut child = command.spawn().unwrap();
+        let pid = child.id();
+        assert!(child.wait().unwrap().success());
+        assert!(!pid_is_running(pid, "").unwrap());
+        send_process_signal(pid, "TERM").unwrap();
+        send_process_signal(pid, "KILL").unwrap();
+        assert!(send_process_signal(pid, "INVALID").is_err());
     }
 }

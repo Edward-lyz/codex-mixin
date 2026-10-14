@@ -14,6 +14,7 @@ use indicatif::{ProgressBar, ProgressStyle};
 
 use crate::ducx_auth_carrier::{DucxAuthCarrier, PREFIX, VERSION};
 
+mod agents;
 mod atomic_file;
 mod benchmark_proxy;
 mod claude;
@@ -445,6 +446,7 @@ fn exit_with_command_error(
 async fn run(cli: Cli) -> anyhow::Result<()> {
     match cli.command.unwrap_or(Command::Info { json: false }) {
         Command::Interface { json } => interface::describe(json),
+        Command::Agent { command } => agents::run(command).await,
         Command::DucxAuthCarrier => print_ducx_auth_carrier(),
         Command::ReportHook { event } => report_hook::run(&event).await,
         Command::ReportReplay {

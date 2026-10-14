@@ -33,6 +33,11 @@ pub(super) enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Manage agent connections, installed versions, and upgrades.
+    Agent {
+        #[command(subcommand)]
+        command: AgentCommand,
+    },
     /// Internal: return DUCX-injected authentication to the parent gateway.
     #[command(name = "ducx-auth-carrier", hide = true)]
     DucxAuthCarrier,
@@ -795,4 +800,54 @@ pub(super) enum EchCommand {
         #[arg(long)]
         json: bool,
     },
+}
+
+#[derive(Debug, Subcommand)]
+pub(super) enum AgentCommand {
+    /// Read local agent installation and integration state without network access.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Check installed agents for updates from their installation channels.
+    Versions {
+        #[arg(long)]
+        json: bool,
+        #[arg(long)]
+        refresh: bool,
+    },
+    /// Upgrade one agent, or all agents with available updates in order.
+    Upgrade {
+        #[arg(required_unless_present = "all", conflicts_with = "all", value_parser = agent_id)]
+        id: Option<String>,
+        #[arg(long)]
+        all: bool,
+        #[arg(long)]
+        json: bool,
+    },
+    /// Connect an agent without stopping the shared gateway.
+    Connect {
+        #[arg(value_parser = agent_id)]
+        id: String,
+        #[arg(long, value_enum)]
+        mode: Option<AgentConnectMode>,
+    },
+    /// Restore or remove only this agent's managed configuration.
+    Disconnect {
+        #[arg(value_parser = agent_id)]
+        id: String,
+    },
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq, ValueEnum)]
+pub(super) enum AgentConnectMode {
+    OfficialAccount,
+    CustomOnly,
+}
+
+fn agent_id(value: &str) -> Result<String, String> {
+    if codex_mixin::application::agent_versions::AGENT_VERSION_IDS.contains(&value) {
+        return Ok(value.to_owned());
+    }
+    Err(format!("unsupported agent: {value}"))
 }

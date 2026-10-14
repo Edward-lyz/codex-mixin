@@ -212,6 +212,7 @@ async fn gateway_auth_obeys_build_feature() {
         codex_auth_path: auth_path,
         gateway_api_key: Some("gateway-secret".to_owned()),
         gateway_client_keys: crate::gateway_access::GatewayClientKeys {
+            frameworks: Default::default(),
             codex: Some("codex-client-key".to_owned()),
             claude: Some("claude-client-key".to_owned()),
             claude_desktop: Some("desktop-client-key".to_owned()),

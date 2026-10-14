@@ -5,7 +5,6 @@ import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
-import 'client_integrations.dart';
 import 'config_backups.dart';
 import 'controller.dart';
 import 'ech_settings.dart';
@@ -57,7 +56,6 @@ class _TrayPageState extends State<TrayPage> with WindowListener {
     windowManager.addListener(this);
     _selectedId = _snapshot.providers.firstOrNull?.id;
     if (widget.autoRefresh) {
-      unawaited(_controller.refreshLaunchAtLogin());
       WidgetsBinding.instance.addPostFrameCallback((_) => _refresh());
       _refreshTimer = Timer.periodic(
         const Duration(seconds: 10),
@@ -143,46 +141,6 @@ class _TrayPageState extends State<TrayPage> with WindowListener {
     } finally {
       _dialogDepth--;
     }
-  }
-
-  /// Open the reusable install-config window for Codex (runs the install
-  /// in-window with full space), then dismiss the tray popup.
-  Future<void> _installCodex() async {
-    await _notifyMain('show_install', {'target': 'codex'});
-    await _hide();
-  }
-
-  Future<void> _runClient(
-    String title,
-    List<String> args, {
-    bool confirmRestore = false,
-    String? confirmMessage,
-  }) async {
-    if (confirmRestore) {
-      final confirmed = await _withDialog(
-        () => confirmAction(
-          context,
-          title: title,
-          message: confirmMessage ?? '确定执行该操作？',
-        ),
-      );
-      if (confirmed != true) return;
-    }
-    _ignoreBlurUntil = DateTime.now().add(const Duration(seconds: 8));
-    await _withDialog(
-      () => runWithProgress(
-        context,
-        title: title,
-        resultText: (result) => result.ok
-            ? '$title成功'
-            : '$title失败：${formatCliReport(result.output).trim().isEmpty ? '未返回具体原因' : formatCliReport(result.output).trim()}',
-        action: (onProgress) =>
-            _controller.runAction(title, args, onProgress: onProgress),
-      ),
-    );
-    if (!mounted) return;
-    setState(() {});
-    await _refresh();
   }
 
   Future<void> _exportConfig() async {
@@ -717,10 +675,9 @@ class _TrayPageState extends State<TrayPage> with WindowListener {
                         ],
                       ],
                     );
-                    return (barsHeight + (hasDetail ? detailBlock : 0)) <=
-                            region.maxHeight
-                        ? body
-                        : SingleChildScrollView(child: body);
+                    // The detail height varies with platform font metrics,
+                    // so let the scroll view absorb any shortfall.
+                    return SingleChildScrollView(child: body);
                   },
                 ),
         ),
@@ -831,21 +788,10 @@ class _TrayPageState extends State<TrayPage> with WindowListener {
     children: [
       _item(Icons.dns_outlined, '模型与服务...', () => _openWindow('show_main')),
       _item(
-        _controller.launchAtLogin ? Icons.check : Icons.login,
-        '登录时启动并开启服务',
-        () async {
-          await _controller.toggleLaunchAtLogin();
-          if (mounted) setState(() {});
-        },
+        Icons.smart_toy_outlined,
+        'Agent 接入管理...',
+        () => _openWindow('show_agents'),
       ),
-      _item(Icons.health_and_safety_outlined, '健康检测和修复', () async {
-        final result = await _controller.doctor();
-        if (!mounted) return;
-        await _withDialog(
-          () => showTextReport(context, '健康检测和修复', result.output),
-        );
-        await _refresh();
-      }),
       const Divider(height: 12),
       _item(Icons.settings_suggest_outlined, '高级', () {
         _openSubmenu('高级', [
@@ -884,32 +830,6 @@ class _TrayPageState extends State<TrayPage> with WindowListener {
             '导出配置备份',
             _exportConfig,
           ),
-        ]);
-      }, chevron: true),
-      _item(Icons.file_download_outlined, '安装与恢复', () {
-        _openSubmenu('安装与恢复', [
-          for (final client in clientIntegrations) ...[
-            _MenuAction(
-              Icons.file_download_outlined,
-              client.installLabel,
-              client.id == 'codex'
-                  ? _installCodex
-                  : () => _runClient(
-                      client.installLabel,
-                      client.installArguments,
-                    ),
-            ),
-            _MenuAction(
-              Icons.restore,
-              client.removeLabel,
-              () => _runClient(
-                client.removeLabel,
-                client.removeArguments,
-                confirmRestore: true,
-                confirmMessage: '会恢复安装前备份的 ${client.displayName} 配置。',
-              ),
-            ),
-          ],
         ]);
       }, chevron: true),
       _item(Icons.info_outline, '关于', () {

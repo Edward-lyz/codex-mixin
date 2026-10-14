@@ -65,3 +65,46 @@ pub fn claude_desktop_config_root() -> anyhow::Result<PathBuf> {
     }
     anyhow::bail!("Claude Desktop integration is unsupported on this platform")
 }
+
+// Framework configuration locations follow each vendor's OS conventions.
+pub(crate) fn framework_app_root() -> anyhow::Result<PathBuf> {
+    if cfg!(target_os = "macos") {
+        framework_home_path("", "Library/Application Support")
+    } else if cfg!(windows) {
+        framework_home_path("APPDATA", "AppData/Roaming")
+    } else {
+        framework_home_path("XDG_CONFIG_HOME", ".config")
+    }
+}
+
+pub(crate) fn copilot_config_root() -> anyhow::Result<PathBuf> {
+    if cfg!(windows) && std::env::var_os("XDG_CONFIG_HOME").is_none() {
+        framework_home_path("", "AppData/Local")
+    } else {
+        framework_home_path("XDG_CONFIG_HOME", ".config")
+    }
+}
+
+pub(crate) fn crush_config_paths() -> anyhow::Result<(PathBuf, PathBuf)> {
+    let root = if cfg!(windows) {
+        framework_home_path("LOCALAPPDATA", "AppData/Local")?
+    } else {
+        framework_home_path("XDG_CONFIG_HOME", ".config")?
+    };
+    let config = root.join("crush/crush.json");
+    let data = if cfg!(windows) {
+        config.clone()
+    } else {
+        framework_home_path("XDG_DATA_HOME", ".local/share")?.join("crush/crush.json")
+    };
+    Ok((config, data))
+}
+
+fn framework_home_path(variable: &str, default: &str) -> anyhow::Result<PathBuf> {
+    let path = match std::env::var_os(variable).filter(|v| !variable.is_empty() && !v.is_empty()) {
+        Some(value) => PathBuf::from(value),
+        None => home_dir_required()?.join(default),
+    };
+    anyhow::ensure!(path.is_absolute(), "{variable} must be an absolute path");
+    Ok(path)
+}

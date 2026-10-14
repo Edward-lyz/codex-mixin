@@ -66,7 +66,7 @@ fn default_pi_agent_dir() -> PathBuf {
     codex_mixin::platform::home_dir().join(".pi").join("agent")
 }
 
-fn resolve_pi_agent_dir(agent_dir: Option<PathBuf>) -> anyhow::Result<PathBuf> {
+pub(in crate::cli) fn resolve_pi_agent_dir(agent_dir: Option<PathBuf>) -> anyhow::Result<PathBuf> {
     std::path::absolute(agent_dir.unwrap_or_else(default_pi_agent_dir)).map_err(Into::into)
 }
 

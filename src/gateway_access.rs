@@ -14,6 +14,7 @@ pub enum GatewayClient {
     Dsh,
     OpenCode,
     Pi,
+    Framework(&'static str),
 }
 
 impl GatewayClient {
@@ -25,6 +26,7 @@ impl GatewayClient {
             Self::Dsh => "dsh",
             Self::OpenCode => "opencode",
             Self::Pi => "pi",
+            Self::Framework(id) => id,
         }
     }
 
@@ -36,6 +38,7 @@ impl GatewayClient {
             Self::Dsh => "DSH",
             Self::OpenCode => "OpenCode",
             Self::Pi => "Pi",
+            Self::Framework(id) => id,
         }
     }
 }
@@ -54,6 +57,8 @@ pub struct GatewayClientKeys {
     pub opencode: Option<String>,
     #[serde(default, skip_serializing_if = "Option::is_none")]
     pub pi: Option<String>,
+    #[serde(default, skip_serializing_if = "std::collections::BTreeMap::is_empty")]
+    pub frameworks: std::collections::BTreeMap<String, Option<String>>,
 }
 
 impl GatewayClientKeys {
@@ -65,6 +70,7 @@ impl GatewayClientKeys {
             GatewayClient::Dsh => self.dsh.as_deref(),
             GatewayClient::OpenCode => self.opencode.as_deref(),
             GatewayClient::Pi => self.pi.as_deref(),
+            GatewayClient::Framework(id) => self.frameworks.get(id).and_then(Option::as_deref),
         }
     }
 
@@ -76,6 +82,7 @@ impl GatewayClientKeys {
             GatewayClient::Dsh => &mut self.dsh,
             GatewayClient::OpenCode => &mut self.opencode,
             GatewayClient::Pi => &mut self.pi,
+            GatewayClient::Framework(id) => self.frameworks.entry(id.to_owned()).or_default(),
         }
     }
 
@@ -89,7 +96,8 @@ impl GatewayClientKeys {
         let bearer = headers
             .get(header::AUTHORIZATION)
             .and_then(|value| value.to_str().ok())
-            .and_then(|value| value.strip_prefix("Bearer "));
+            .and_then(|value| value.strip_prefix("Bearer "))
+            .or_else(|| headers.get("x-api-key").and_then(|v| v.to_str().ok()));
         [
             GatewayClient::Claude,
             GatewayClient::ClaudeDesktop,
@@ -99,6 +107,12 @@ impl GatewayClientKeys {
         ]
         .into_iter()
         .find(|client| self.matches(*client, bearer))
+        .or_else(|| {
+            crate::application::agent_versions::AGENT_VERSION_IDS
+                .into_iter()
+                .map(GatewayClient::Framework)
+                .find(|client| self.matches(*client, bearer))
+        })
     }
 
     fn matches(&self, client: GatewayClient, actual: Option<&str>) -> bool {

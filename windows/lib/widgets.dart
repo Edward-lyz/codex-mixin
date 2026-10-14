@@ -445,7 +445,7 @@ String formatCliReport(String report) {
           text = text.substring('MIXIN_PROGRESS '.length);
         }
         if (text.contains('Codex config is not managed by codex-mixin')) {
-          return '当前 Codex 配置还没有被 Codex Mixin 接管，需要先「安装到 Codex」。';
+          return '当前 Codex 配置还没有被 Codex Mixin 接管，请先在「Agent 接入管理」中接入 Codex。';
         }
         if (text.contains('failed to load Codex config') ||
             text.contains('config.load check failed')) {

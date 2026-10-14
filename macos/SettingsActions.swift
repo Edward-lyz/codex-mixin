@@ -17,43 +17,6 @@ extension AppDelegate {
         controller.present()
     }
 
-    @objc func runAutomaticDoctor() {
-        guard !serviceBusy, !automaticDoctorBusy else { return }
-        automaticDoctorBusy = true
-        serviceBusy = true
-        serviceStatus = "正在健康检测和修复..."
-        Task { @MainActor in
-            defer {
-                automaticDoctorBusy = false
-                serviceBusy = false
-            }
-            do {
-                try await runOperationProgress(
-                    title: "正在健康检测和修复",
-                    phases: [
-                        "运行 doctor --fix --quick",
-                        "刷新状态",
-                        "完成",
-                    ],
-                    successTitle: "✓ 检测完成",
-                    failureTitle: "✗ 检测失败",
-                    showFailureAlert: true,
-                    failureAlertTitle: "健康检测和修复失败"
-                ) { progress in
-                    progress.advance(to: 0)
-                    let report = try await runGateway(["doctor", "--fix", "--quick"])
-                    appendDiagnosticLog("Health check and repair report\n\(report)")
-                    progress.advance(to: 1)
-                    await refreshStatusNow()
-                    progress.advance(to: 2)
-                    showDiagnosticReport(title: "Codex Mixin 健康检测和修复", report: report)
-                }
-            } catch {
-                // Failure already shown by the progress window + alert.
-            }
-        }
-    }
-
     @objc func configureLogin() {
         if providerSettingsWindowController == nil {
             providerSettingsWindowController = ProviderSettingsWindowController(
@@ -174,7 +137,6 @@ extension AppDelegate {
                       let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
                       let enabled = object["enabled"] as? Bool
                 else { throw GatewayError.command("ECH 状态接口返回了无效 JSON") }
-                NSApp.activate(ignoringOtherApps: true)
                 let alert = NSAlert()
                 alert.messageText = "启用 ECH 代理访问 GPT"
                 alert.informativeText = "当前：\(enabled ? "已启用" : "未启用")\n仅接管本地网关的官方 GPT 请求。使用 edge.1molchuan.top/plus 的 IPv4 和 ECH 配置，保留端到端 TLS。ECH 连接失败会自动关闭并回退到直连。\n\n启用会先测试连接，再保存设置并重启网关。ECH 成功不能证明中继出口位于 Azure；不影响浏览器登录或第三方 Provider。"
@@ -184,7 +146,9 @@ extension AppDelegate {
                 alert.addButton(withTitle: enabled ? "关闭并应用" : "启用并测试")
                 alert.addButton(withTitle: "仅测试连接")
                 alert.addButton(withTitle: "取消")
+                presentPersistentWindow(alert.window)
                 let choice = alert.runModal()
+                alert.window.close()
                 guard choice != .alertThirdButtonReturn else { return }
                 let command = choice == .alertSecondButtonReturn ? "test" : (enabled ? "disable" : "enable")
                 try await runOperationProgress(
@@ -380,5 +344,24 @@ extension AppDelegate {
             ModelBenchmarkSnapshotEnvelope.self,
             from: Data(output.utf8)
         ).snapshot
+    }
+
+    @objc func copyLocalEndpoint() {
+        Task { @MainActor in
+            do {
+                let output = try await runGateway(["config", "--json", "--scope", "effective"])
+                let data = Data(output.utf8)
+                guard
+                    let object = try JSONSerialization.jsonObject(with: data) as? [String: Any],
+                    let bind = object["bind"] as? String
+                else {
+                    throw GatewayError.command("无法从有效配置中读取本地网关端口")
+                }
+                NSPasteboard.general.clearContents()
+                NSPasteboard.general.setString("http://\(bind)/v1", forType: .string)
+            } catch {
+                showAlert(title: "复制本地接口失败", message: String(describing: error))
+            }
+        }
     }
 }

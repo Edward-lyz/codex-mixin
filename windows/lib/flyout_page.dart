@@ -5,7 +5,6 @@ import 'package:desktop_multi_window/desktop_multi_window.dart';
 import 'package:flutter/material.dart';
 import 'package:window_manager/window_manager.dart';
 
-import 'client_integrations.dart';
 import 'config_backups.dart';
 import 'controller.dart';
 import 'ech_settings.dart';
@@ -37,11 +36,8 @@ class _FlyoutPageState extends State<FlyoutPage> with WindowListener {
   DateTime _ignoreBlurUntil = DateTime.fromMillisecondsSinceEpoch(0);
   Timer? _focusWatch;
 
-  static final _installActions = [
-    for (final client in clientIntegrations) ...[
-      ('${client.installLabel}...', Icons.file_download_outlined),
-      ('${client.removeLabel}...', Icons.restore),
-    ],
+  static const _agentActions = <(String, IconData)>[
+    ('Agent 接入管理...', Icons.smart_toy_outlined),
   ];
 
   @override
@@ -125,35 +121,6 @@ class _FlyoutPageState extends State<FlyoutPage> with WindowListener {
     }
   }
 
-  Future<void> _runClient(
-    String title,
-    List<String> args, {
-    bool confirmRestore = false,
-  }) async {
-    if (confirmRestore) {
-      final confirmed = await confirmAction(
-        context,
-        title: title,
-        message: '会恢复安装前备份的配置。',
-      );
-      if (!confirmed) return;
-    }
-    setState(() => _busy = true);
-    if (!mounted) return;
-    await runWithProgress(
-      context,
-      title: title,
-      resultText: (result) => result.ok
-          ? '$title成功'
-          : '$title失败：${formatCliReport(result.output).trim().isEmpty ? '未返回具体原因' : formatCliReport(result.output).trim()}',
-      action: (onProgress) =>
-          widget.controller.runAction(title, args, onProgress: onProgress),
-    );
-    if (!mounted) return;
-    setState(() => _busy = false);
-    await _close();
-  }
-
   Future<void> _runAdvanced(String label) async {
     String? backupPath;
     if (label == '导入配置备份...') {
@@ -224,21 +191,8 @@ class _FlyoutPageState extends State<FlyoutPage> with WindowListener {
         } else {
           await _runAdvanced(label);
         }
-      case '安装与恢复':
-        final index = _installActions.indexWhere((item) => item.$1 == label);
-        if (index < 0) return;
-        final action = clientActionAt(index);
-        if (action.client.id == 'codex' && action.install) {
-          await _sendMain('show_install', {'target': 'codex'});
-          return;
-        }
-        await _runClient(
-          label,
-          action.install
-              ? action.client.installArguments
-              : action.client.removeArguments,
-          confirmRestore: !action.install,
-        );
+      case 'Agent 接入管理':
+        await _sendMain('show_agents');
       case '关于':
         if (label == '关于 Codex Mixin...') {
           showAboutDialog(
@@ -271,7 +225,7 @@ class _FlyoutPageState extends State<FlyoutPage> with WindowListener {
       ('导入配置备份...', Icons.file_download_outlined),
       ('导出配置备份...', Icons.file_upload_outlined),
     ],
-    '安装与恢复' => _installActions,
+    'Agent 接入管理' => _agentActions,
     _ => const [
       ('关于 Codex Mixin...', Icons.info_outline),
       ('检查更新', Icons.system_update_alt),

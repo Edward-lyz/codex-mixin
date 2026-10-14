@@ -3,6 +3,7 @@ import 'dart:io';
 
 import 'package:flutter/services.dart';
 
+import 'agent_models.dart';
 import 'cli.dart';
 import 'log.dart';
 import 'models.dart';
@@ -14,10 +15,17 @@ class MixinController {
   GatewaySnapshot snapshot = GatewaySnapshot.empty;
   int? usageDays = 1;
   bool launchAtLogin = false;
+  bool launchAtLoginSupported = false;
+  bool launchAtLoginDisabledBySystem = false;
   bool busy = false;
   String status = GatewaySnapshot.empty.status;
   String? gatewayLogPath;
   String? stateDirectory;
+  List<AgentInfo> agents = const [];
+  bool agentsLoaded = false;
+  String? agentsError;
+  bool agentVersionsLoading = false;
+  String? agentVersionsError;
   Future<void>? _refreshInFlight;
   Future<void> _actionTail = Future<void>.value();
 
@@ -223,7 +231,7 @@ class MixinController {
       final error = decodeCliObject(result.stderr)?['error'];
       if (error is Map && error['code'] == 'codex_requires_gateway') {
         status = '停止网关失败：Codex 仍通过 Mixin 网关连接 GPT。'
-            '请先在“安装与恢复”中从 Codex 恢复，再停止网关。';
+            '请先在“Agent 接入管理”中断开 Codex 接入，再停止网关。';
       }
     } else {
       await runAction('启动网关', ['service', 'start', '--managed', '--json']);
@@ -231,54 +239,190 @@ class MixinController {
     await refresh(force: true);
   }
 
+  static const _runKeyPath =
+      r'HKCU\Software\Microsoft\Windows\CurrentVersion\Run';
+  static const _startupApprovedPath =
+      r'HKCU\Software\Microsoft\Windows\CurrentVersion\Explorer\StartupApproved\Run';
+  static const _runValueName = 'CodexMixin';
+
+  /// Read the current-user Run entry and the Windows 启动应用 (StartupApproved)
+  /// flag. Startup at login is on by default; a disable made in Windows must
+  /// never be undone by this app.
   Future<void> refreshLaunchAtLogin() async {
-    if (!Platform.isWindows) return;
-    final result = await Process.run('reg.exe', [
-      'query',
-      r'HKCU\Software\Microsoft\Windows\CurrentVersion\Run',
-      '/v',
-      'CodexMixin',
-    ]);
-    launchAtLogin = result.exitCode == 0;
+    if (!Platform.isWindows) {
+      launchAtLoginSupported = false;
+      launchAtLogin = false;
+      launchAtLoginDisabledBySystem = false;
+      return;
+    }
+    final run = await _regQuery(_runKeyPath, _runValueName);
+    launchAtLoginSupported = run.supported;
+    launchAtLogin = run.supported && run.present;
+    if (!run.supported) {
+      launchAtLoginDisabledBySystem = false;
+      return;
+    }
+    final approved = await _regQuery(_startupApprovedPath, _runValueName);
+    launchAtLoginDisabledBySystem = startupEntryDisabled(approved.output);
   }
 
-  Future<void> toggleLaunchAtLogin() async {
-    final key = r'HKCU\Software\Microsoft\Windows\CurrentVersion\Run';
-    final args = launchAtLogin
-        ? ['delete', key, '/v', 'CodexMixin', '/f']
-        : [
-            'add',
-            key,
-            '/v',
-            'CodexMixin',
-            '/t',
-            'REG_SZ',
-            '/d',
-            '"${Platform.resolvedExecutable}"',
-            '/f',
-          ];
-    final result = await Process.run('reg.exe', args);
+  /// Register the UI to start at login when nothing else already decided it:
+  /// no explicit disable in Windows 启动应用 and no existing Run entry.
+  Future<void> ensureLaunchAtLogin() async {
+    await refreshLaunchAtLogin();
+    if (!launchAtLoginSupported ||
+        launchAtLogin ||
+        launchAtLoginDisabledBySystem) {
+      return;
+    }
+    final result = await Process.run('reg.exe', [
+      'add',
+      _runKeyPath,
+      '/v',
+      _runValueName,
+      '/t',
+      'REG_SZ',
+      '/d',
+      '"${Platform.resolvedExecutable}"',
+      '/f',
+    ]);
     if (result.exitCode == 0) {
-      launchAtLogin = !launchAtLogin;
-      UiLog.instance.info('launch at login -> $launchAtLogin');
-      if (launchAtLogin && !snapshot.gatewayRunning) await toggleGateway();
-    } else {
-      status = '设置登录启动失败：${result.stderr}';
+      launchAtLogin = true;
+      UiLog.instance.info('launch at login enabled by default');
+      return;
+    }
+    final detail = '${result.stderr}'.trim();
+    UiLog.instance.warn(
+      'enable launch at login failed (exit ${result.exitCode}): $detail',
+    );
+  }
+
+  Future<({bool supported, bool present, String output})> _regQuery(
+    String key,
+    String value,
+  ) async {
+    try {
+      final result = await Process.run('reg.exe', [
+        'query',
+        key,
+        '/v',
+        value,
+      ]);
+      final output = '${result.stdout}\n${result.stderr}';
+      if (result.exitCode == 0) {
+        return (supported: true, present: true, output: output);
+      }
+      // reg.exe exits 1 when the key or value does not exist; any other code
+      // means the registry is not readable, so the capability is unknown.
+      if (result.exitCode == 1) {
+        return (supported: true, present: false, output: output);
+      }
+      final detail = '${result.stderr}'.trim();
       UiLog.instance.warn(
-        'toggle launch at login failed (exit ${result.exitCode}): '
-        '${'${result.stderr}'.trim()}',
+        'reg query $key failed (exit ${result.exitCode}): $detail',
       );
+      return (supported: false, present: false, output: output);
+    } catch (error, stack) {
+      UiLog.instance.error('reg query $key error', error, stack);
+      return (supported: false, present: false, output: '$error');
     }
   }
 
-  Future<CliResult> doctor() =>
-      runAction('健康检测和修复', ['doctor', '--fix', '--quick']);
+  /// Read `agent list --json`. Detection, integration state and probe errors
+  /// come from the CLI; the UI never inspects installed programs itself.
+  Future<void> refreshAgents() async {
+    final result = await cli.run(['agent', 'list', '--json']);
+    final json = result.ok ? decodeCliObject(result.stdout) : null;
+    final rows = json?['agents'];
+    if (!result.ok) {
+      agentsError = result.output;
+    } else if (json == null || rows is! List) {
+      agentsError = 'agent list 返回了无效 JSON';
+    } else {
+      agents = parseAgentRows(rows);
+      agentsError = null;
+    }
+    agentsLoaded = true;
+  }
 
-  Future<CliResult> install(String target, List<String> args) =>
-      runAction('安装到 $target', args);
+  /// Resolve CLI / App versions after the list is on screen. The separate
+  /// `--refresh` run keeps a slow npm or registry lookup off first paint.
+  Future<void> refreshAgentVersions() async {
+    if (agentVersionsLoading) return;
+    agentVersionsLoading = true;
+    try {
+      final result = await cli.run(['agent', 'versions', '--json', '--refresh']);
+      if (!result.ok) {
+        agentVersionsError = result.output;
+        return;
+      }
+      final json = decodeCliObject(result.stdout);
+      final rows = json?['agents'];
+      if (json == null || rows is! List) {
+        agentVersionsError = 'agent versions 返回了无效 JSON';
+        return;
+      }
+      agentVersionsError = null;
+      final versions = <String, AgentCliInfo?>{};
+      for (final row in rows.whereType<Map>()) {
+        final rowCli = row['cli'];
+        versions['${row['id'] ?? ''}'] = rowCli is Map
+            ? AgentCliInfo.fromJson(Map<String, dynamic>.from(rowCli))
+            : null;
+      }
+      agents = [
+        for (final agent in agents)
+          versions.containsKey(agent.id)
+              ? agent.withCli(versions[agent.id])
+              : agent,
+      ];
+    } finally {
+      agentVersionsLoading = false;
+    }
+  }
 
-  Future<CliResult> restore(String target, List<String> args) =>
-      runAction('从 $target 恢复', args);
+  String agentLabel(String id) =>
+      agents.where((agent) => agent.id == id).firstOrNull?.name ?? id;
+
+  Future<CliResult> connectAgent(
+    String id, {
+    String? mode,
+    void Function(String line)? onProgress,
+  }) => runAction(
+    '接入 ${agentLabel(id)}',
+    ['agent', 'connect', id, if (mode != null) ...['--mode', mode]],
+    onProgress: onProgress,
+  );
+
+  Future<CliResult> disconnectAgent(
+    String id, {
+    void Function(String line)? onProgress,
+  }) => runAction(
+    '断开 ${agentLabel(id)} 接入',
+    ['agent', 'disconnect', id],
+    onProgress: onProgress,
+  );
+
+  Future<CliResult> upgradeAgent(
+    String id, {
+    void Function(String line)? onProgress,
+  }) => runAction(
+    '升级 ${agentLabel(id)}',
+    ['agent', 'upgrade', id, '--json'],
+    // Package-manager upgrades download from the network; give them room
+    // before the action is treated as hung.
+    timeout: const Duration(minutes: 30),
+    onProgress: onProgress,
+  );
+
+  Future<CliResult> upgradeAllAgents({
+    void Function(String line)? onProgress,
+  }) => runAction(
+    '顺序升级全部 Agent',
+    ['agent', 'upgrade', '--all', '--json'],
+    timeout: const Duration(minutes: 30),
+    onProgress: onProgress,
+  );
 
   Future<void> copyEndpoint() async {
     await Clipboard.setData(ClipboardData(text: snapshot.serviceEndpoint));
@@ -403,4 +547,15 @@ class MixinController {
     await runAction('启动网关', ['service', 'start', '--managed', '--json']);
     await refresh(force: true);
   }
+}
+
+/// True when Windows 启动应用 marks the startup entry disabled. reg.exe prints
+/// the StartupApproved REG_BINARY payload as hex; the first byte is 2 (enabled)
+/// or 3 (disabled), so an odd first byte means the user turned the entry off.
+bool startupEntryDisabled(String regOutput) {
+  final match = RegExp(r'REG_BINARY\s+([0-9A-Fa-f]+)').firstMatch(regOutput);
+  final hex = match?.group(1);
+  if (hex == null || hex.length < 2) return false;
+  final first = int.tryParse(hex.substring(0, 2), radix: 16);
+  return first != null && first.isOdd;
 }

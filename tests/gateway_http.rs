@@ -8362,3 +8362,80 @@ async fn claude_desktop_converts_openai_chat_stream_and_response() {
             .all(|request| request["model"] == "gpt-5.6-sol")
     );
 }
+
+#[tokio::test]
+async fn chat_endpoint_returns_json_or_sse_and_real_usage() {
+    let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let gateway = spawn_gateway(upstream).await;
+    for streaming in [false, true] {
+        let response = reqwest::Client::new()
+            .post(format!("{gateway}/v1/chat/completions"))
+            .bearer_auth("gateway-key")
+            .json(&json!({"model":"DeepSeek-V4-Flash-custom","messages":[{"role":"system","content":"policy"},{"role":"user","content":"hello"}],"stream":streaming,"stream_options":{"include_usage":true}}))
+            .send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::OK);
+        let content_type = response.headers()[header::CONTENT_TYPE]
+            .to_str()
+            .unwrap()
+            .to_owned();
+        let text = response.text().await.unwrap();
+        if streaming {
+            assert!(content_type.starts_with("text/event-stream"));
+            let mut buffer = text.as_bytes().to_vec();
+            let content = drain_events(&mut buffer)
+                .into_iter()
+                .filter(|event| event.data != "[DONE]")
+                .map(|event| serde_json::from_str::<Value>(&event.data).unwrap())
+                .filter_map(|value| {
+                    value
+                        .pointer("/choices/0/delta/content")
+                        .and_then(Value::as_str)
+                        .map(str::to_owned)
+                })
+                .collect::<String>();
+            assert_eq!(content, "hello codex");
+            assert!(text.contains("\"finish_reason\":\"stop\""));
+            assert!(text.contains("\"usage\""));
+            assert!(text.ends_with("data: [DONE]\n\n"));
+        } else {
+            assert!(content_type.starts_with("application/json"));
+            let value: Value = serde_json::from_str(&text).unwrap();
+            assert_eq!(value["object"], "chat.completion");
+            assert_eq!(value["choices"][0]["message"]["content"], "hello codex");
+            assert_eq!(value["choices"][0]["finish_reason"], "stop");
+            assert!(value["usage"]["total_tokens"].as_u64().unwrap() > 0);
+        }
+    }
+    assert_eq!(requests.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn chat_endpoint_maps_real_function_calls() {
+    let (upstream, _) = spawn_mock_upstream(MockMode::Tool).await;
+    let gateway = spawn_gateway(upstream).await;
+    let response = reqwest::Client::new().post(format!("{gateway}/v1/chat/completions"))
+        .bearer_auth("gateway-key")
+        .json(&json!({"model":"DeepSeek-V4-Flash-custom","messages":[{"role":"user","content":"read file"}],"tools":[{"type":"function","function":{"name":"read_file","parameters":{"type":"object"}}}]}))
+        .send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let value: Value = response.json().await.unwrap();
+    assert_eq!(value["choices"][0]["finish_reason"], "tool_calls");
+    assert!(
+        !value["choices"][0]["message"]["tool_calls"]
+            .as_array()
+            .unwrap()
+            .is_empty()
+    );
+}
+
+#[tokio::test]
+async fn chat_rejects_unsupported_semantics_before_upstream_call() {
+    let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let gateway = spawn_gateway(upstream).await;
+    let response = reqwest::Client::new().post(format!("{gateway}/v1/chat/completions"))
+        .bearer_auth("gateway-key")
+        .json(&json!({"model":"DeepSeek-V4-Flash-custom","messages":[{"role":"user","content":"hello"}],"n":2}))
+        .send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    assert!(requests.lock().unwrap().is_empty());
+}

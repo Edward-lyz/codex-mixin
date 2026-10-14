@@ -32,6 +32,7 @@ use crate::provider::{ProviderRegistry, ProviderRuntime};
 use crate::web_search::{WebSearchCapabilities, WebSearchProbeSummary};
 
 pub(crate) mod auth;
+mod chat_http;
 mod claude_desktop;
 mod compact;
 mod error_response;

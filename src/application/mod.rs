@@ -2,6 +2,7 @@
 //! tests. Each use case takes concrete dependencies and returns a domain
 //! result; progress reporting and user-facing text stay in the caller.
 
+pub mod agent_versions;
 pub mod client;
 pub mod diagnostic;
 pub mod error;
@@ -12,3 +13,5 @@ pub mod provider;
 pub mod update;
 
 pub mod ech;
+
+pub mod agents;

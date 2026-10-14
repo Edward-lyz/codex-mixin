@@ -8,5 +8,6 @@ pub mod claude_desktop;
 pub mod codex;
 pub mod dsh;
 pub mod files;
+pub mod frameworks;
 pub mod opencode;
 pub mod pi;
