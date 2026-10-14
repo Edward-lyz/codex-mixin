@@ -35,7 +35,6 @@ public sealed partial class MainWindow : Window
     public MainWindow()
     {
         InitializeComponent();
-        AutomationProperties.SetAutomationId((DependencyObject)Navigation.SettingsItem, "nav-settings");
         Title = "Codex Mixin";
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 800));
         if (AppWindowTitleBar.IsCustomizationSupported())
@@ -108,7 +107,7 @@ public sealed partial class MainWindow : Window
             return;
         }
         ShowMain();
-        if (command == "settings") Navigation.SelectedItem = Navigation.SettingsItem;
+        if (command == "settings") Navigation.SelectedItem = SettingsNavigationItem;
         else Navigation.SelectedItem = Navigation.MenuItems[0];
     });
 

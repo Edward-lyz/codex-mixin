@@ -10,7 +10,7 @@
       </StackPanel>
     </Grid>
     <NavigationView x:Name="Navigation" Grid.Row="1" PaneDisplayMode="Left" IsBackButtonVisible="Collapsed"
-        IsSettingsVisible="True" IsPaneOpen="True" OpenPaneLength="224" SelectionChanged="OnNavigationChanged">
+        IsSettingsVisible="False" IsPaneOpen="True" OpenPaneLength="224" SelectionChanged="OnNavigationChanged">
       <NavigationView.MenuItems>
         <NavigationViewItem Content="概览" Tag="overview" Icon="Home" IsSelected="True" AutomationProperties.AutomationId="nav-overview" />
         <NavigationViewItem Content="供应商与模型" Tag="providers" Icon="Library" AutomationProperties.AutomationId="nav-providers" />
@@ -18,6 +18,9 @@
         <NavigationViewItem Content="用量与额度" Tag="usage" Icon="FourBars" AutomationProperties.AutomationId="nav-usage" />
         <NavigationViewItem Content="Fusion" Tag="fusion" Icon="Shuffle" AutomationProperties.AutomationId="nav-fusion" />
       </NavigationView.MenuItems>
+      <NavigationView.FooterMenuItems>
+        <NavigationViewItem x:Name="SettingsNavigationItem" Content="设置" Tag="settings" Icon="Setting" AutomationProperties.AutomationId="nav-settings" />
+      </NavigationView.FooterMenuItems>
       <Grid Padding="32,24" RowSpacing="20">
         <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
         <Grid ColumnSpacing="16">
