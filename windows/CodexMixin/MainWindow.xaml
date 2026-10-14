@@ -35,9 +35,10 @@
       </Grid>
     </NavigationView>
     <Grid Grid.Row="2" Padding="20,10" ColumnSpacing="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
-      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
       <ProgressRing x:Name="Activity" Width="18" Height="18" IsActive="False" Visibility="Collapsed" />
       <TextBlock x:Name="StatusText" AutomationProperties.AutomationId="operation-status" Grid.Column="1" Text="正在连接 CLI…" FontSize="12" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+      <Button x:Name="CancelAction" Grid.Column="2" Content="取消操作" Visibility="Collapsed" Click="OnCancel" ToolTipService.ToolTip="停止当前 CLI 操作；已经保存的配置不会自动回滚" />
     </Grid>
   </Grid>
 </Window>

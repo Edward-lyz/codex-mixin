@@ -22,6 +22,13 @@ if (args.Contains("--fixture"))
             Console.Error.WriteLine("MIXIN_PROGRESS step one");
             Console.Error.WriteLine("MIXIN_PROGRESS " + Environment.GetEnvironmentVariable("CM_TEST_SECRET"));
             Console.Write("done"); break;
+        case "lock":
+            using (var locked = new FileStream(flags[1], FileMode.OpenOrCreate, FileAccess.ReadWrite, FileShare.None))
+            {
+                await Task.Delay(150);
+                Console.Write(flags[2]);
+            }
+            break;
         case "flood":
             for (var index = 0; index < 2500; index++) Console.Write(new string('x', 4096));
             await Task.Delay(TimeSpan.FromSeconds(120)); break;
@@ -52,7 +59,7 @@ Check("argument boundaries and shell metacharacters", async () =>
 });
 Check("secret environment and redacted output", async () =>
 {
-    const string secret = "unique-test-secret-123";
+    const string secret = "unique-test-secret-\"\\\n";
     var output = await fixture.RunAsync(["echo", "--key", "@env:CM_TEST_SECRET"], CancellationToken.None,
         new Dictionary<string, string> { ["CM_TEST_SECRET"] = secret });
     var row = Parse(output);
@@ -98,11 +105,16 @@ Check("bounded output fails and releases the queue", async () =>
     Assert(error.Message.Contains("8 MiB"), "Output limit did not fail immediately");
     await fixture.RunAsync(["echo"], CancellationToken.None);
 });
-Check("concurrent process requests complete", async () =>
+Check("concurrent mutations are serialized", async () =>
 {
-    var queries = Enumerable.Range(0, 6).Select(index => fixture.QueryAsync(["echo", index.ToString()], CancellationToken.None));
-    var results = await Task.WhenAll(queries);
-    Assert(results.Select(row => Json.Strings(Json.Field(row, "args"))[1]).Order().SequenceEqual(new[] { "0", "1", "2", "3", "4", "5" }), "Request outputs crossed");
+    var path = Path.Combine(Path.GetTempPath(), "mixin-queue-" + Guid.NewGuid().ToString("N"));
+    try
+    {
+        var queries = Enumerable.Range(0, 6).Select(index => fixture.RunAsync(["lock", path, index.ToString()], CancellationToken.None));
+        var results = await Task.WhenAll(queries);
+        Assert(results.Order().SequenceEqual(new[] { "0", "1", "2", "3", "4", "5" }), "Request outputs crossed");
+    }
+    finally { File.Delete(path); }
 });
 Check("fresh installation is unconfigured", () =>
 {

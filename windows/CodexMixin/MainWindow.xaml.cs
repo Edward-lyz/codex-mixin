@@ -22,6 +22,7 @@ public sealed partial class MainWindow : Window
     private CliClient? cli;
     private Operations? operations;
     private NativeShell? shell;
+    private CancellationTokenSource? activeCancellation;
     private JsonElement metadata;
     private string page = "overview";
     private string? providerId;
@@ -134,6 +135,7 @@ public sealed partial class MainWindow : Window
     }
 
     private async void OnRefresh(object sender, RoutedEventArgs args) => await ReloadAsync();
+    private void OnCancel(object sender, RoutedEventArgs args) => activeCancellation?.Cancel();
 
     private Task ReloadAsync() => ExecuteUiAsync("刷新", async token =>
     {
@@ -153,6 +155,8 @@ public sealed partial class MainWindow : Window
         Activity.Visibility = Visibility.Visible;
         StatusText.Text = $"{label}…";
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+        activeCancellation = cancellation;
+        CancelAction.Visibility = Visibility.Visible;
         try
         {
             await work(cancellation.Token);
@@ -164,6 +168,16 @@ public sealed partial class MainWindow : Window
             var title = error is CliFailure { Committed: true } ? "配置已保存，后续操作失败" : $"{label}失败";
             StatusText.Text = title;
             ShowNotice(title, error.Message, InfoBarSeverity.Error);
+            if (error is CliFailure { Committed: true })
+            {
+                PageBody.Children.Clear();
+                try { await LoadPageAsync(cancellation.Token); }
+                catch (Exception refreshError)
+                {
+                    PageBody.Children.Clear();
+                    Notice.Message += $"\n状态刷新失败：{refreshError.Message}";
+                }
+            }
             // Never leave a failed status query showing a previously healthy gateway.
             if (page == "overview")
             {
@@ -173,6 +187,8 @@ public sealed partial class MainWindow : Window
         }
         finally
         {
+            activeCancellation = null;
+            CancelAction.Visibility = Visibility.Collapsed;
             busy = false;
             Navigation.IsEnabled = true;
             Activity.IsActive = false;
@@ -191,7 +207,8 @@ public sealed partial class MainWindow : Window
         catch (Exception error)
         {
             ShowNotice($"{label}完成，状态刷新失败", error.Message, InfoBarSeverity.Warning);
-            if (page == "overview") PageBody.Children.Clear();
+            PageBody.Children.Clear();
+            PageBody.Children.Add(Card("状态刷新失败", "操作已执行，请刷新确认最新状态。", Text(error.Message)));
         }
     });
 
