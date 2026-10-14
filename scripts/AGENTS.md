@@ -9,4 +9,4 @@
 - E2E 使用受控本地 provider；需要真实凭据/网络的入口说明前提与成本，不在日志输出密钥。
 - 下载/打包使用既有版本锁、签名/校验机制，文件缺失立即失败；dist/target/第三方缓存不提交。
 - Bash 改动用 `bash -n <script>`，Node 用 `node --check <script>`，Python 按上级规范执行静态检查；再实际运行受影响入口，长日志重定向并报告退出码。
-- 本次只改规范时运行 `./scripts/check_arch.sh`、`./scripts/test_check_arch.sh`、目录/引用检查与 `git diff --check`，不无条件重编译所有平台。
+- 只改规范时运行 `./scripts/check_arch.sh`、`./scripts/test_check_arch.sh`、继承/引用检查与 `git diff --check`，不无条件重编译所有平台。
