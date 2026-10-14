@@ -54,9 +54,8 @@ internal static class Program
         nint handle = 0;
         try
         {
-            if (!process.WaitForInputIdle(30000)) throw new TimeoutException("WinUI did not reach input idle");
-            // WinUI creates its HWND before the first XAML frame and automation peer.
-            Thread.Sleep(1000);
+            using var ready = new EventWaitHandle(false, EventResetMode.ManualReset, $"Local\\CodexMixin.UIReady.{process.Id}");
+            Wait(() => ready.WaitOne(0), "completed native initialization", process);
             Wait(() => { process.Refresh(); handle = process.MainWindowHandle; return handle != 0; }, "native main window", process);
             var desktop = System.Windows.Forms.Screen.FromHandle(handle).WorkingArea;
             if (desktop.Width < 800 || desktop.Height < 600)
@@ -99,10 +98,10 @@ internal static class Program
                     Capture(target, Path.Combine(output, $"{filename}-{themeName}.png"));
                     if (role == "providers")
                     {
-                        ((InvokePattern)Find(target, "provider-connection-tab").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+                        ((TogglePattern)Find(target, "provider-connection-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
                         Wait(() => target.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "连接配置")) != null, "connection tab", process);
                         Capture(target, Path.Combine(output, $"connection-{themeName}.png"));
-                        ((InvokePattern)Find(target, "provider-models-tab").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+                        ((TogglePattern)Find(target, "provider-models-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
                     }
                     if (role == "fusion")
                     {

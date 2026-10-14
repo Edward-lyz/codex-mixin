@@ -37,12 +37,17 @@ public sealed partial class MainWindow : Window
     private bool exiting;
     private bool dialogOpen;
     private bool initialized;
+    private readonly EventWaitHandle? captureReady;
 
     public MainWindow() : this("providers") { }
 
     internal MainWindow(string page)
     {
         this.page = page;
+        // HWND creation precedes XAML loading. CI waits for real initialization
+        // before asking WinUI to construct its automation peers.
+        if (page == "providers" && Environment.GetCommandLineArgs().Contains("--capture-ui"))
+            captureReady = new EventWaitHandle(false, EventResetMode.ManualReset, $"Local\\CodexMixin.UIReady.{Environment.ProcessId}");
         App.StartupTrace($"window {page}: initialize XAML");
         InitializeComponent();
         App.StartupTrace($"window {page}: XAML ready");
@@ -85,6 +90,7 @@ public sealed partial class MainWindow : Window
             timer.Stop();
             lifetime.Cancel();
             shell?.Dispose();
+            captureReady?.Dispose();
         };
         Root.Loaded += async (_, _) =>
         {
@@ -103,6 +109,7 @@ public sealed partial class MainWindow : Window
                 App.StartupTrace($"window {page}: page loaded");
             });
             timer.Start();
+            captureReady?.Set();
             if (Environment.GetCommandLineArgs().Contains("--background") && shell != null) shell.Hide();
         };
         timer.Tick += async (_, _) =>
