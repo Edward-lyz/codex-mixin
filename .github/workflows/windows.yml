@@ -155,15 +155,7 @@ jobs:
               Format-List TimeCreated,Id,Message | Out-File windows/build/ui-test-artifacts/native-events.txt
             $debugger = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
             if (-not (Test-Path $debugger)) { throw 'Native crash debugger is missing from Windows runner' }
-            $commands = Join-Path $env:RUNNER_TEMP 'native-crash.commands'
-            @'
-          sxe -c ".exr -1; !analyze -v; q" 0xc000027b
-          g
-          '@ | Set-Content $commands
-            $env:CODEX_GATEWAY_CONFIG = Join-Path $pwd 'windows/build/ui-test-artifacts/isolated/config.json'
-            $debugLog = Join-Path $pwd 'windows/build/ui-test-artifacts/native-debugger.txt'
-            $replay = Start-Process $debugger -ArgumentList @('-G', '-cf', $commands, '-logo', $debugLog, (Join-Path $pwd 'windows/build/publish/codex_mixin_ui.exe')) -PassThru -NoNewWindow
-            if (-not $replay.WaitForExit(60000)) { $replay.Kill($true); throw 'Native crash replay did not finish within 60 seconds' }
+            dotnet run --project windows/UiTests/UiTests.csproj -c Release -- windows/build/publish/codex_mixin_ui.exe windows/build/ui-test-artifacts $debugger
           }
           exit $testExit
       - uses: actions/upload-artifact@v7

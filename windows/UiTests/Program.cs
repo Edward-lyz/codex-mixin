@@ -13,7 +13,7 @@ internal static class Program
     [STAThread]
     private static int Main(string[] args)
     {
-        if (args.Length != 2) throw new ArgumentException("Usage: UiTests <UI exe> <artifact directory>");
+        if (args.Length is not (2 or 3)) throw new ArgumentException("Usage: UiTests <UI exe> <artifact directory> [native debugger]");
         var output = Path.GetFullPath(args[1]);
         Directory.CreateDirectory(output);
         var config = Path.Combine(output, "isolated", "config.json");
@@ -24,6 +24,17 @@ internal static class Program
         var previousConfig = Environment.GetEnvironmentVariable("CODEX_GATEWAY_CONFIG");
         Environment.SetEnvironmentVariable("CODEX_GATEWAY_CONFIG", config);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Cannot launch WinUI app");
+        Process? debugger = null;
+        if (args.Length == 3)
+        {
+            var commands = Path.Combine(output, "native-crash.commands");
+            File.WriteAllText(commands, "sxe -c \".exr -1; !analyze -v; q\" 0xc000027b\ng\n");
+            var debugStart = new ProcessStartInfo(args[2]) { UseShellExecute = false };
+            foreach (var argument in new[] { "-p", process.Id.ToString(), "-G", "-cf", commands, "-logo", Path.Combine(output, "native-debugger.txt") })
+                debugStart.ArgumentList.Add(argument);
+            debugger = Process.Start(debugStart) ?? throw new InvalidOperationException("Cannot attach native debugger");
+            Thread.Sleep(1500);
+        }
         var nativeErrors = process.StandardError.ReadToEndAsync();
         nint handle = 0;
         try
@@ -110,6 +121,11 @@ internal static class Program
         finally
         {
             if (!process.HasExited) { process.Kill(true); process.WaitForExit(); }
+            if (debugger != null)
+            {
+                if (!debugger.WaitForExit(30000)) debugger.Kill(true);
+                debugger.Dispose();
+            }
             var errors = nativeErrors.GetAwaiter().GetResult();
             if (!string.IsNullOrWhiteSpace(errors)) File.WriteAllText(Path.Combine(output, "native-errors.txt"), errors);
             var diagnostic = Path.Combine(Environment.GetFolderPath(Environment.SpecialFolder.LocalApplicationData), "CodexMixin", "logs", "native-error.txt");
