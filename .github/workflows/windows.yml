@@ -6,6 +6,10 @@ on:
   push:
     branches: [main]
 
+concurrency:
+  group: windows-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   rust:
     runs-on: windows-latest
@@ -18,7 +22,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install ripgrep
         shell: pwsh
-        run: choco install ripgrep -y --no-progress
+        run: |
+          $version = '15.1.0'
+          $archive = Join-Path $env:RUNNER_TEMP 'ripgrep.zip'
+          $tools = Join-Path $env:RUNNER_TEMP 'ripgrep'
+          Invoke-WebRequest "https://github.com/BurntSushi/ripgrep/releases/download/$version/ripgrep-$version-x86_64-pc-windows-msvc.zip" -OutFile $archive
+          Expand-Archive $archive -DestinationPath $tools -Force
+          $bin = Join-Path $tools "ripgrep-$version-x86_64-pc-windows-msvc"
+          if (-not (Test-Path "$bin/rg.exe")) { throw 'Official ripgrep archive is missing rg.exe' }
+          $bin >> $env:GITHUB_PATH
+          & "$bin/rg.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw 'ripgrep could not run' }
       - run: cargo fmt --all -- --check
       - name: Run strict Clippy
         shell: bash
