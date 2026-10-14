@@ -1,7 +1,7 @@
 <Window x:Class="CodexMixin.MainWindow"
     xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
     xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
-  <Grid x:Name="Root" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" RowSpacing="0">
+  <Grid x:Name="Root" Background="Transparent" RowSpacing="0">
     <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
     <Grid x:Name="TitleBar" Height="48" Padding="20,0,160,0">
       <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">

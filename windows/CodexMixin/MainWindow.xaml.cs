@@ -703,8 +703,8 @@ public sealed partial class MainWindow : Window
     {
         var body = new StackPanel { Spacing = 12 };
         body.Children.Add(new TextBlock { Text = title, Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["SubtitleTextBlockStyle"], TextWrapping = TextWrapping.Wrap });
-        body.Children.Add(new TextBlock { Text = description, TextWrapping = TextWrapping.Wrap, IsTextSelectionEnabled = true,
-            Foreground = (Brush)Microsoft.UI.Xaml.Application.Current.Resources["TextFillColorSecondaryBrush"] });
+        body.Children.Add(new TextBlock { Text = description,
+            Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["SecondaryText"] });
         if (content != null) body.Children.Add(content);
         return new Border { Style = (Style)Microsoft.UI.Xaml.Application.Current.Resources["Card"], Child = body };
     }
