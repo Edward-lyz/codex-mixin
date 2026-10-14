@@ -24,18 +24,35 @@ public sealed partial class MainWindow : Window
     private NativeShell? shell;
     private CancellationTokenSource? activeCancellation;
     private JsonElement metadata;
-    private string page = "overview";
+    private readonly string page;
     private string? providerId;
+    private JsonElement[] providers = [];
+    private bool connectionSelected;
+    private Func<Task>? pendingApply;
+    private readonly Dictionary<string, (UIElement View, Func<Task> Save)> connectionDrafts = [];
+    private readonly Dictionary<string, (UIElement View, Func<Task> Save)> modelDrafts = [];
     private bool ready;
     private bool busy;
     private bool exiting;
     private bool dialogOpen;
     private bool initialized;
 
-    public MainWindow()
+    public MainWindow() : this("providers") { }
+
+    internal MainWindow(string page)
     {
+        this.page = page;
         InitializeComponent();
-        Title = "Codex Mixin";
+        Root.RequestedTheme = ((App)Microsoft.UI.Xaml.Application.Current).Theme;
+        Title = WindowCaption.Text = page switch
+        {
+            "providers" => "模型与服务", "agents" => "Agent 接入管理", "fusion" => "Fusion 设置",
+            "usage" => "用量与额度", _ => "设置与诊断"
+        };
+        SidebarColumn.Width = new GridLength(page == "providers" ? 232 : 0);
+        ProviderSidebar.Visibility = page == "providers" ? Visibility.Visible : Visibility.Collapsed;
+        ProviderTabs.Visibility = ProviderSidebar.Visibility;
+        ApplyChanges.Visibility = page is "providers" or "fusion" ? Visibility.Visible : Visibility.Collapsed;
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"));
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 800));
         if (AppWindowTitleBar.IsCustomizationSupported())
@@ -50,7 +67,7 @@ public sealed partial class MainWindow : Window
         else { TitleBar.Visibility = Visibility.Collapsed; }
         SystemBackdrop = new MicaBackdrop();
         var handle = WindowNative.GetWindowHandle(this);
-        try { shell = new NativeShell(handle, OnTrayCommand); }
+        try { if (page == "providers") shell = new NativeShell(handle, OnTrayCommand); }
         catch (Exception error) { ShowNotice("系统托盘不可用", error.Message, InfoBarSeverity.Warning); }
         AppWindow.Closing += (_, args) =>
         {
@@ -70,8 +87,8 @@ public sealed partial class MainWindow : Window
             ready = true;
             await ExecuteUiAsync("连接 CLI", async token =>
             {
-                cli = CliClient.Locate();
-                operations = new Operations(cli);
+                cli = ((App)Microsoft.UI.Xaml.Application.Current).Client;
+                operations = ((App)Microsoft.UI.Xaml.Application.Current).Operations;
                 metadata = await cli.QueryAsync(["interface", "--json"], token);
                 Json.Interface(metadata);
                 await LoadPageAsync(token);
@@ -88,6 +105,9 @@ public sealed partial class MainWindow : Window
         refresh.Invoked += async (_, args) => { args.Handled = true; await ReloadAsync(); };
         Root.KeyboardAccelerators.Add(refresh);
     }
+
+    internal void Shutdown() { exiting = true; Close(); }
+    internal void SetTheme(ElementTheme theme) => Root.RequestedTheme = theme;
 
     internal void ShowMain()
     {
@@ -112,9 +132,7 @@ public sealed partial class MainWindow : Window
                 ["service", command, "--managed", "--json"]);
             return;
         }
-        ShowMain();
-        if (command == "settings") Navigation.SelectedItem = SettingsNavigationItem;
-        else Navigation.SelectedItem = Navigation.MenuItems[0];
+        ((App)Microsoft.UI.Xaml.Application.Current).OpenPage(command is "providers" or "agents" or "fusion" or "settings" ? command : "overview");
     });
 
     private async Task ExitAsync()
@@ -128,24 +146,40 @@ public sealed partial class MainWindow : Window
         if (await ConfirmAsync("退出 Codex Mixin？", "退出界面后，本地网关会继续按 CLI 的服务设置运行。", "退出"))
         {
             exiting = true;
-            Close();
+            ((App)Microsoft.UI.Xaml.Application.Current).ExitAll();
         }
     }
 
-    private async void OnNavigationChanged(NavigationView sender, NavigationViewSelectionChangedEventArgs args)
+    private void OnProviderSelected(object sender, SelectionChangedEventArgs args)
     {
-        if (!ready || busy) return;
-        page = args.IsSettingsSelected ? "settings" : (args.SelectedItem as NavigationViewItem)?.Tag as string ?? "overview";
-        await ReloadAsync();
+        if (!ready || ProviderList.SelectedItem is not ListViewItem row) return;
+        providerId = row.Tag as string;
+        RenderSelectedProvider();
     }
+
+    private async void OnAddProvider(object sender, RoutedEventArgs args) => await AddProviderAsync();
+    private async void OnRemoveProvider(object sender, RoutedEventArgs args)
+    {
+        if (providerId != null && await ConfirmAsync("删除服务商？", "将移除当前服务商及其模型配置。", "删除"))
+            await ChangeAsync("删除服务商", ["provider", "remove", providerId], apply: true);
+    }
+    private void OnModelsTab(object sender, RoutedEventArgs args) { connectionSelected = false; RenderSelectedProvider(); }
+    private void OnConnectionTab(object sender, RoutedEventArgs args) { connectionSelected = true; RenderSelectedProvider(); }
+    private async void OnApplyChanges(object sender, RoutedEventArgs args)
+    {
+        try { if (pendingApply != null) await pendingApply(); }
+        catch (Exception error) { ShowNotice("应用更改失败", error.Message, InfoBarSeverity.Error); }
+    }
+    private void OnOpenPage(object sender, RoutedEventArgs args) =>
+        ((App)Microsoft.UI.Xaml.Application.Current).OpenPage((string)((MenuFlyoutItem)sender).Tag);
 
     private async void OnRefresh(object sender, RoutedEventArgs args) => await ReloadAsync();
     private void OnCancel(object sender, RoutedEventArgs args) => activeCancellation?.Cancel();
 
     private Task ReloadAsync() => ExecuteUiAsync("刷新", async token =>
     {
-        cli ??= CliClient.Locate();
-        operations ??= new Operations(cli);
+        cli ??= ((App)Microsoft.UI.Xaml.Application.Current).Client;
+        operations ??= ((App)Microsoft.UI.Xaml.Application.Current).Operations;
         metadata = await cli.QueryAsync(["interface", "--json"], token);
         Json.Interface(metadata);
         await LoadPageAsync(token);
@@ -155,7 +189,7 @@ public sealed partial class MainWindow : Window
     {
         if (busy || exiting) return;
         busy = true;
-        Navigation.IsEnabled = false;
+        PageShell.IsEnabled = false;
         Activity.IsActive = true;
         Activity.Visibility = Visibility.Visible;
         StatusText.Text = $"{label}…";
@@ -195,7 +229,7 @@ public sealed partial class MainWindow : Window
             activeCancellation = null;
             CancelAction.Visibility = Visibility.Collapsed;
             busy = false;
-            Navigation.IsEnabled = true;
+            PageShell.IsEnabled = true;
             Activity.IsActive = false;
             Activity.Visibility = Visibility.Collapsed;
         }
@@ -280,118 +314,153 @@ public sealed partial class MainWindow : Window
 
     private async Task ProvidersAsync(CancellationToken token)
     {
-        PageBody.Children.Add(Button("添加供应商", AddProviderAsync, true));
         var status = await Client.QueryAsync(["service", "status", "--json"], token);
-        if (!Json.Flag(status, "configured"))
+        providers = Json.Flag(status, "configured")
+            ? Json.Rows(Json.Field(await Client.QueryAsync(["provider", "list", "--json"], token), "providers")) : [];
+        ready = false;
+        ProviderList.Items.Clear();
+        foreach (var provider in providers)
         {
-            PageBody.Children.Add(Card("暂无供应商", "CLI 尚未配置。添加供应商后会发现可用模型。"));
+            var row = new StackPanel { Spacing = 3 };
+            row.Children.Add(new TextBlock { Text = Json.Text(provider, "display_name"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+            row.Children.Add(new TextBlock { Text = $"{Readiness(provider)} · {Json.Strings(Json.Field(provider, "selected_models")).Length}/{Json.Rows(Json.Field(provider, "cached_models")).Length} 个模型", FontSize = 11 });
+            var item = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 10 };
+            item.Children.Add(Marks.Provider(provider)); item.Children.Add(row);
+            ProviderList.Items.Add(new ListViewItem { Content = item, Tag = Json.Text(provider, "id"), Padding = new Thickness(12, 10, 12, 10) });
+        }
+        ready = true;
+        if (providers.Length == 0)
+        {
+            pendingApply = null; ApplyChanges.IsEnabled = false;
+            PageTitle.Text = "还没有服务商";
+            PageDescription.Text = "添加上游 API 后，Codex Mixin 才能为网关提供模型。";
+            PageBody.Children.Add(Button("新增服务商", AddProviderAsync, true));
             return;
         }
-        var providers = Json.Rows(Json.Field(await Client.QueryAsync(["provider", "list", "--json"], token), "providers"));
-        if (providers.Length == 0) { PageBody.Children.Add(Card("暂无供应商", "添加供应商后，CLI 会发现可用模型。")); return; }
-        var picker = new ComboBox { Header = "供应商", HorizontalAlignment = HorizontalAlignment.Stretch };
-        foreach (var provider in providers)
-            picker.Items.Add(new ComboBoxItem { Content = $"{Json.Text(provider, "display_name")} · {Readiness(provider)}", Tag = Json.Text(provider, "id") });
-        var detail = new StackPanel { Spacing = 16 };
-        picker.SelectionChanged += (_, _) =>
-        {
-            providerId = (picker.SelectedItem as ComboBoxItem)?.Tag as string;
-            detail.Children.Clear();
-            var selected = providers.First(row => Json.Text(row, "id") == providerId);
-            RenderProvider(selected, detail);
-        };
-        PageBody.Children.Add(picker);
-        PageBody.Children.Add(detail);
-        picker.SelectedIndex = Math.Max(0, Array.FindIndex(providers, row => Json.Text(row, "id") == providerId));
+        ProviderList.SelectedIndex = Math.Max(0, Array.FindIndex(providers, row => Json.Text(row, "id") == providerId));
+        RenderSelectedProvider();
     }
 
-    private void RenderProvider(JsonElement provider, StackPanel detail)
+    private async void RenderSelectedProvider()
     {
-        var id = Json.Text(provider, "id");
-        var official = Json.Text(provider, "kind") == "official";
-        var toolbar = Row();
-        toolbar.Children.Add(Button("刷新模型", () => ChangeAsync("刷新模型", ["provider", "discover", id], apply: true)));
-        if (!official)
+        if (providerId == null) return;
+        var provider = providers.FirstOrDefault(row => Json.Text(row, "id") == providerId);
+        if (provider.ValueKind != JsonValueKind.Object) return;
+        PageBody.Children.Clear();
+        ModelsTab.IsChecked = !connectionSelected; ConnectionTab.IsChecked = connectionSelected;
+        PageTitle.Text = Json.Text(provider, "display_name");
+        PageDescription.Text = $"{providerId} · {Readiness(provider)} · 已加入 {Json.Strings(Json.Field(provider, "selected_models")).Length} / 可选 {Json.Rows(Json.Field(provider, "cached_models")).Length}";
+        ApplyChanges.IsEnabled = true;
+        try
         {
-            toolbar.Children.Add(Button("编辑连接", () => EditProviderAsync(provider)));
-            toolbar.Children.Add(Button("验证连接", () => ChangeAsync("验证连接", ["provider", "test", id, "--json"])));
-            toolbar.Children.Add(Button(Json.Flag(provider, "enabled") ? "停用" : "启用", () =>
-                ChangeAsync("更新供应商状态", ["provider", Json.Flag(provider, "enabled") ? "disable" : "enable", id], apply: true)));
-            toolbar.Children.Add(Button("删除", async () =>
+            if (connectionSelected)
             {
-                if (await ConfirmAsync("删除供应商？", $"将移除 {Json.Text(provider, "display_name")} 及其模型配置。", "删除"))
-                    await ChangeAsync("删除供应商", ["provider", "remove", id], apply: true);
-            }));
+                if (Json.Text(provider, "kind") == "official")
+                {
+                    PageBody.Children.Add(Card("连接配置", "官方服务商由 Codex OAuth 管理，连接参数只读。"));
+                    pendingApply = null; ApplyChanges.IsEnabled = false; return;
+                }
+                if (connectionDrafts.TryGetValue(providerId, out var draft))
+                {
+                    PageBody.Children.Add(draft.View); pendingApply = draft.Save;
+                }
+                else await ProviderDialogAsync(provider, inline: true);
+            }
+            else if (modelDrafts.TryGetValue(providerId, out var modelDraft))
+            {
+                PageBody.Children.Add(modelDraft.View); pendingApply = modelDraft.Save;
+            }
+            else RenderModels(provider);
         }
-        var protocol = Json.Text(provider, "protocol") switch
-        {
-            "open_ai_chat" => "OpenAI Chat Completions", "open_ai_responses" => "OpenAI Responses",
-            "anthropic_messages" => "Anthropic Messages", var value => value
-        };
-        detail.Children.Add(Card(Json.Text(provider, "display_name"),
-            $"{protocol} · {Json.Text(provider, "base_url")}", toolbar));
-        var issues = Json.Strings(Json.Field(provider, "readiness_issues"));
-        if (issues.Length > 0) detail.Children.Add(Card("需要处理", string.Join("\n", issues)));
-        if (Json.OptionalText(provider, "last_model_refresh_error") is { } refreshError)
-            detail.Children.Add(Card("上次模型刷新失败", refreshError));
+        catch (Exception error) { ShowNotice("读取服务商失败", error.Message, InfoBarSeverity.Error); }
+    }
+
+    private void RenderModels(JsonElement provider)
+    {
+        var modelBody = new StackPanel { Spacing = 12 };
+        var id = Json.Text(provider, "id");
         var models = Json.Rows(Json.Field(provider, "cached_models"));
         var selected = Json.Strings(Json.Field(provider, "selected_models")).ToHashSet();
-        var list = new StackPanel { Spacing = 10 };
-        var search = new TextBox { PlaceholderText = "搜索模型", Header = "可用模型" };
-        AutomationProperties.SetName(search, "搜索可用模型");
-        var entries = new List<(string Id, CheckBox Check, Grid Row, NumberBox Context)>();
-        var overrides = Json.Field(provider, "model_context_overrides");
-        foreach (var model in models)
+        var savedContexts = Json.Field(provider, "model_context_overrides");
+        var contexts = savedContexts.EnumerateObject().ToDictionary(entry => entry.Name, entry => entry.Value.GetDouble());
+        var toolbar = Row();
+        var search = new TextBox { PlaceholderText = "搜索当前服务商的模型", Width = 280 };
+        AutomationProperties.SetName(search, "搜索当前服务商的模型");
+        toolbar.Children.Add(search);
+        var filter = Choice("", ["全部", "已加入", "未加入"], "全部");
+        toolbar.Children.Add(filter);
+        toolbar.Children.Add(Button("刷新模型", () => ChangeAsync("刷新模型", ["provider", "discover", id], apply: true)));
+        toolbar.Children.Add(Button($"测试已加入的 {selected.Count} 个模型", () => ChangeAsync("启动模型测速", ["benchmark", "start", "--provider", id, "--timeout-seconds", "60"]), true));
+        modelBody.Children.Add(toolbar);
+        Grid Columns()
         {
-            var modelId = Json.Text(model, "id");
-            var check = new CheckBox { Content = Json.OptionalText(model, "display_name") ?? modelId, IsChecked = selected.Contains(modelId) };
-            var context = new NumberBox { PlaceholderText = "默认上下文", Width = 180, Minimum = 1,
-                Value = overrides.TryGetProperty(modelId, out var saved) ? saved.GetDouble() : double.NaN };
-            AutomationProperties.SetName(context, $"{modelId} 上下文 Token 数，留空使用默认值");
-            var row = new Grid { ColumnSpacing = 12 };
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-            row.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-            row.Children.Add(check); Grid.SetColumn(context, 1); row.Children.Add(context);
-            ToolTipService.SetToolTip(check, modelId);
-            entries.Add((modelId, check, row, context));
-            list.Children.Add(row);
+            var grid = new Grid { ColumnSpacing = 8, Padding = new Thickness(4) };
+            foreach (var width in new[] { 36d, -1d, 68d, 68d, 100d, 86d })
+                grid.ColumnDefinitions.Add(new ColumnDefinition { Width = width < 0 ? new GridLength(1, GridUnitType.Star) : new GridLength(width) });
+            return grid;
         }
-        search.TextChanged += (_, _) =>
+        var header = Columns();
+        var labels = new[] { "Codex", "模型", "首 Token", "生成速度", "上下文", "能力" };
+        for (var index = 0; index < labels.Length; index++)
         {
-            foreach (var entry in entries)
-                entry.Row.Visibility = entry.Id.Contains(search.Text, StringComparison.OrdinalIgnoreCase) ? Visibility.Visible : Visibility.Collapsed;
+            var label = new TextBlock { Text = labels[index], FontSize = 12, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold };
+            Grid.SetColumn(label, index); header.Children.Add(label);
+        }
+        modelBody.Children.Add(header);
+        var list = new ListView { Height = 390, SelectionMode = ListViewSelectionMode.None, ItemsSource = models };
+        AutomationProperties.SetAutomationId(list, "model-table");
+        list.ContainerContentChanging += (_, args) =>
+        {
+            if (args.InRecycleQueue) return;
+            if (args.Item is not JsonElement model) return;
+            var modelId = Json.Text(model, "id");
+            var row = Columns();
+            var check = new CheckBox { IsChecked = selected.Contains(modelId), MinWidth = 24 };
+            check.Checked += (_, _) => { selected.Add(modelId); MarkDirty(); };
+            check.Unchecked += (_, _) => { selected.Remove(modelId); MarkDirty(); };
+            var title = new TextBlock { Text = Json.OptionalText(model, "display_name") ?? modelId, TextTrimming = TextTrimming.CharacterEllipsis, VerticalAlignment = VerticalAlignment.Center, FontSize = 12 };
+            ToolTipService.SetToolTip(title, modelId);
+            var context = new NumberBox { Minimum = 1, Value = contexts.GetValueOrDefault(modelId, double.NaN), PlaceholderText = model.TryGetProperty("context_window", out var originalContext) ? originalContext.ToString() : "默认", FontSize = 12 };
+            context.ValueChanged += (_, change) => { contexts[modelId] = change.NewValue; MarkDirty(); };
+            var capabilities = string.Join(" ", new[] { ("supports_image", "图像"), ("supports_thinking", "思考"), ("supports_function_tools", "工具"), ("supports_web_search", "搜索") }
+                .Where(capability => model.TryGetProperty(capability.Item1, out var value) && value.ValueKind == JsonValueKind.True).Select(capability => capability.Item2));
+            var cells = new UIElement[] { check, title, Text("—"), Text("—"), context, Text(capabilities.Length == 0 ? "待探测" : capabilities) };
+            for (var index = 0; index < cells.Length; index++) { Grid.SetColumn(cells[index], index); row.Children.Add(cells[index]); }
+            args.ItemContainer.HorizontalContentAlignment = HorizontalAlignment.Stretch;
+            args.ItemContainer.Content = row;
+            args.Handled = true;
         };
-        var body = new StackPanel { Spacing = 16 };
-        body.Children.Add(search);
-        body.Children.Add(list);
-        var modelActions = Row();
-        modelActions.Children.Add(Button("保存模型选择", async () =>
+        void Filter()
         {
-            var args = new List<string> { "provider", "select", id };
-            foreach (var entry in entries)
+            list.ItemsSource = models.Where(model => Json.Text(model, "id").Contains(search.Text, StringComparison.OrdinalIgnoreCase) &&
+                (filter.SelectedIndex == 0 || selected.Contains(Json.Text(model, "id")) == (filter.SelectedIndex == 1))).ToArray();
+        }
+        search.TextChanged += (_, _) => Filter(); filter.SelectionChanged += (_, _) => Filter();
+        modelBody.Children.Add(list);
+        modelBody.Children.Add(Button("探测已加入模型的能力", () => ChangeAsync("探测模型能力", ["provider", "probe", id], apply: true)));
+        ApplySummary.Text = "当前服务商尚未测速；未取得的首 Token 与生成速度显示为 —。";
+        pendingApply = async () =>
+        {
+            var arguments = new List<string> { "provider", "select", id };
+            foreach (var modelId in selected) arguments.AddRange(["--model", modelId]);
+            foreach (var (modelId, value) in contexts)
             {
-                if (entry.Check.IsChecked == true) args.AddRange(["--model", entry.Id]);
-                if (!double.IsNaN(entry.Context.Value))
-                {
-                    if (!double.IsFinite(entry.Context.Value) || entry.Context.Value < 1 || entry.Context.Value != Math.Truncate(entry.Context.Value))
-                        throw new InvalidOperationException("上下文 Token 数必须是正整数。");
-                    args.AddRange(["--model-context", $"{entry.Id}={entry.Context.Value:0}"]);
-                }
-                else if (overrides.TryGetProperty(entry.Id, out _)) args.AddRange(["--clear-model-context", entry.Id]);
+                if (double.IsNaN(value)) { if (savedContexts.TryGetProperty(modelId, out _)) arguments.AddRange(["--clear-model-context", modelId]); continue; }
+                if (!double.IsFinite(value) || value <= 0 || value != Math.Truncate(value)) throw new InvalidOperationException("上下文 Token 数必须是正整数。");
+                arguments.AddRange(["--model-context", $"{modelId}={value:0}"]);
             }
-            await ChangeAsync("保存模型选择", args.ToArray(), apply: true);
-        }, true));
-        modelActions.Children.Add(Button("探测能力", () => ChangeAsync("探测模型能力", ["provider", "probe", id], apply: true)));
-        modelActions.Children.Add(Button("测速", () => ChangeAsync("启动模型测速",
-            ["benchmark", "start", "--provider", id, "--timeout-seconds", "120"])));
-        body.Children.Add(modelActions);
-        detail.Children.Add(Card($"模型 · {selected.Count} / {models.Length}", "勾选向 Agent 提供的模型；搜索不会改变选择。", body));
+            await ChangeAsync("应用模型更改", arguments.ToArray(), apply: true);
+        };
+            modelDrafts[id] = (modelBody, pendingApply);
+        PageBody.Children.Add(modelBody);
     }
+
+    private void MarkDirty() { ApplySummary.Text = "还有未应用的更改"; ApplyChanges.IsEnabled = true; }
 
     private Task AddProviderAsync() => ProviderDialogAsync(null);
     private Task EditProviderAsync(JsonElement provider) => ProviderDialogAsync(provider);
 
-    private async Task ProviderDialogAsync(JsonElement? provider)
+    private async Task ProviderDialogAsync(JsonElement? provider, bool inline = false)
     {
         var form = new StackPanel { Spacing = 12, MinWidth = 360 };
         var preset = Choice("供应商类型", ["baidu-oneapi", "openrouter", "deepseek", "opencode-go", "aws-bedrock", "custom"],
@@ -432,9 +501,14 @@ public sealed partial class MainWindow : Window
             apiPath.Visibility = protocol.Visibility;
         }
         preset.SelectionChanged += (_, _) => Fields(); Fields();
-        var dialog = Dialog(provider == null ? "添加供应商" : "编辑供应商", new ScrollViewer { Content = form, MaxHeight = 480 });
-        dialog.PrimaryButtonText = "保存";
-        if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
+        if (!inline)
+        {
+            var dialog = Dialog(provider == null ? "新增服务商" : "连接配置", new ScrollViewer { Content = form, MaxHeight = 480 });
+            dialog.PrimaryButtonText = "保存";
+            if (await ShowDialogAsync(dialog) != ContentDialogResult.Primary) return;
+        }
+        async Task Save()
+        {
         var args = new List<string> { "provider", provider == null ? "add" : "update" };
         if (provider == null) args.AddRange(["--preset", (string)preset.SelectedItem]);
         if (!string.IsNullOrWhiteSpace(id.Text))
@@ -472,8 +546,20 @@ public sealed partial class MainWindow : Window
             Secret("--quota-auth-cookie", cookie, "CM_QUOTA_COOKIE");
         }
         args.AddRange(["--auxiliary-model-upstream", auxiliary.IsChecked == true ? "true" : "false"]);
-        try { await ChangeAsync("保存供应商", args.ToArray(), apply: true, secrets: secrets); }
+        try { await ChangeAsync("保存供应商", args.ToArray(), apply: true, secrets: secrets); ApplySummary.Text = "配置已同步"; }
         finally { secrets.Clear(); }
+        }
+        if (inline && provider is { } connection)
+        {
+            var body = new StackPanel { Spacing = 16, MaxWidth = 720, HorizontalAlignment = HorizontalAlignment.Stretch };
+            body.Children.Add(Card("连接配置", "密钥已配置时留空保留；修改后使用底部「应用更改」。", form));
+            body.Children.Add(Button("清除密钥", () => ChangeAsync("清除密钥", ["provider", "update", Json.Text(connection, "id"), Json.OptionalText(connection, "preset_id") == "aws-bedrock" ? "--clear-aws-credentials" : "--clear-key"], apply: true)));
+            pendingApply = Save;
+            connectionDrafts[Json.Text(connection, "id")] = (body, Save);
+            PageBody.Children.Add(body);
+        }
+        else await Save();
+
     }
 
     private async Task AgentsAsync(CancellationToken token)
@@ -495,6 +581,9 @@ public sealed partial class MainWindow : Window
             }
             PageBody.Children.Insert(1, Card("版本检查结果", "每个 Agent 的查询结果由 CLI 返回。", body));
         })));
+        var detected = agents.Count(agent => Json.Flag(agent, "detected"));
+        PageBody.Children.Add(Text($"已检测到 {detected} 个 Agent · 未检测到 {agents.Length - detected} 个"));
+        var undetected = new StackPanel { Spacing = 6 };
         foreach (var agent in agents)
         {
             var id = Json.Text(agent, "id");
@@ -533,9 +622,17 @@ public sealed partial class MainWindow : Window
             if (Json.OptionalText(integration, "error") is { } integrationError) body.Children.Add(Text(integrationError));
             if (Json.OptionalText(version, "error") is { } versionError) body.Children.Add(Text(versionError));
             body.Children.Add(buttons);
-            PageBody.Children.Add(Card(Json.Text(agent, "name"),
-                $"{(Json.Flag(agent, "detected") ? "已检测到" : "未检测到")} · {stateLabel} · {Json.OptionalText(version, "version") ?? Json.OptionalText(version, "app_version") ?? "版本未知"}", body));
+            var heading = new Grid { ColumnSpacing = 12, MinWidth = 520 };
+            heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(150) });
+            heading.Children.Add(new TextBlock { Text = Json.Text(agent, "name"), FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, VerticalAlignment = VerticalAlignment.Center });
+            var summary = new TextBlock { Text = $"{stateLabel} · {Json.OptionalText(version, "version") ?? Json.OptionalText(version, "app_version") ?? "版本未知"}", FontSize = 12, TextWrapping = TextWrapping.Wrap };
+            Grid.SetColumn(summary, 1); heading.Children.Add(summary);
+            var entry = new Expander { Header = heading, Content = body, HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch };
+            if (Json.Flag(agent, "detected")) PageBody.Children.Add(entry);
+            else undetected.Children.Add(entry);
         }
+        if (undetected.Children.Count > 0) PageBody.Children.Add(new Expander { Header = $"显示未检测到的 {undetected.Children.Count} 个 Agent", Content = undetected, HorizontalAlignment = HorizontalAlignment.Stretch });
     }
 
     private async Task UsageAsync(CancellationToken token)
@@ -589,66 +686,86 @@ public sealed partial class MainWindow : Window
         var status = await Client.QueryAsync(["service", "status", "--json"], token);
         if (!Json.Flag(status, "configured"))
         {
-            PageBody.Children.Add(Card("暂无可用模型", "先添加供应商并选择模型，再创建 Fusion。"));
-            return;
+            PageBody.Children.Add(Card("暂无可用模型", "先添加供应商并选择模型，再创建 Fusion。")); return;
         }
-        var envelope = await Client.QueryAsync(["fusion", "get", "--json"], token);
-        var profile = Json.Field(envelope, "profile");
+        var profile = Json.Field(await Client.QueryAsync(["fusion", "get", "--json"], token), "profile");
         var options = Json.Rows(Json.Field(await Client.QueryAsync(["fusion", "models", "--json"], token), "models"));
         var ids = options.Select(row => Json.Text(row, "id")).Where(id => !id.StartsWith("mixin/fusion/", StringComparison.Ordinal)).ToArray();
-        if (ids.Length == 0) { PageBody.Children.Add(Card("暂无可用模型", "先在供应商中选择模型，再创建 Fusion。")); return; }
+        if (ids.Length == 0) { PageBody.Children.Add(Card("暂无可用模型", "先在服务商中选择模型。")); return; }
         var saved = profile.ValueKind == JsonValueKind.Object;
         var profileId = Input("Profile ID", saved ? Json.Text(profile, "id") : "default");
+        var mode = Choice("运行模式", ["多模型编排", "按时间轮转"], saved && Json.Text(profile, "mode") == "time_rotation" ? "按时间轮转" : "多模型编排");
+        Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(mode, "fusion-mode");
+        var selected = saved ? Json.Strings(Json.Field(profile, "panel_models")) : ids.Take(3).ToArray();
         var panels = new StackPanel { Spacing = 8 };
         var choices = new List<CheckBox>();
-        var selected = saved ? Json.Strings(Json.Field(profile, "panel_models")) : ids.Take(3).ToArray();
+        var search = Input("搜索 Panel 模型", "");
         foreach (var id in ids)
         {
             var check = new CheckBox { Content = id, IsChecked = selected.Contains(id) };
             panels.Children.Add(check); choices.Add(check);
         }
+        search.TextChanged += (_, _) => { foreach (var check in choices) check.Visibility = ((string)check.Content).Contains(search.Text, StringComparison.OrdinalIgnoreCase) ? Visibility.Visible : Visibility.Collapsed; };
         var judge = Choice("Judge 模型", ids, saved ? Json.Text(profile, "judge_model") : ids[0]);
-        var final = Choice("Final 模型", ids, saved ? Json.Text(profile, "final_model") : ids[0]);
+        var final = Choice("Final / 未覆盖时段默认模型", ids, saved ? Json.Text(profile, "final_model") : ids[0]);
         var minimum = new NumberBox { Header = "最少成功 Panel", Minimum = 1, Maximum = 8, Value = saved ? Json.Field(profile, "min_successful").GetDouble() : 1 };
         var timeout = new NumberBox { Header = "超时（毫秒）", Minimum = 1, Value = saved ? Json.Field(profile, "timeout_ms").GetDouble() : 300000 };
-        var intermediate = new CheckBox { Content = "显示中间结果", IsChecked = !saved || Json.Flag(profile, "show_intermediate_results") };
-        var tools = new CheckBox { Content = "允许 Panel 调用工具", IsChecked = !saved || Json.Flag(Json.Field(profile, "panel_tools"), "enabled") };
+        var intermediate = new CheckBox { Content = "显示中间结果", IsChecked = saved && Json.Flag(profile, "show_intermediate_results") };
+        var tools = new CheckBox { Content = "允许 Panel 调用工具", IsChecked = saved && Json.Flag(Json.Field(profile, "panel_tools"), "enabled") };
+        var orchestration = new StackPanel { Spacing = 16 };
+        foreach (var element in new FrameworkElement[] { Text("多个 Panel 模型并行分析，由 Judge 结构化对比，再由 Final 模型回答。"), search, panels, judge, minimum, timeout, intermediate, tools }) orchestration.Children.Add(element);
+        var schedule = new StackPanel { Spacing = 12 };
+        var routes = new List<(TimePicker Start, TimePicker End, ComboBox Model)>();
+        void AddRoute(int start, int end, string model)
+        {
+            var begin = new TimePicker { Time = TimeSpan.FromMinutes(start), ClockIdentifier = "24HourClock", Header = "开始" };
+            var finish = new TimePicker { Time = TimeSpan.FromMinutes(end), ClockIdentifier = "24HourClock", Header = "结束" };
+            var picker = Choice("时段模型", ids, model);
+            var row = new StackPanel { Spacing = 8 };
+            var times = Row(); times.Children.Add(begin); times.Children.Add(finish);
+            row.Children.Add(times); row.Children.Add(picker);
+            var route = (begin, finish, picker); routes.Add(route);
+            row.Children.Add(Button("移除此时段", () => { routes.Remove(route); schedule.Children.Remove(row); return Task.CompletedTask; }));
+            schedule.Children.Add(row);
+        }
+        if (saved)
+            foreach (var route in Json.Rows(Json.Field(profile, "time_routes"))) AddRoute(Json.Field(route, "start_minute").GetInt32(), Json.Field(route, "end_minute").GetInt32(), Json.Text(route, "model"));
+        if (routes.Count == 0) AddRoute(540, 1080, ids[0]);
+        var scheduleBody = new StackPanel { Spacing = 16 };
+        scheduleBody.Children.Add(Text("按本地时间切换模型；未覆盖的时段使用默认模型。"));
+        scheduleBody.Children.Add(schedule);
+        scheduleBody.Children.Add(Button("添加时段", () => { AddRoute(540, 1080, ids[0]); return Task.CompletedTask; }));
+        void SelectMode() { orchestration.Visibility = mode.SelectedIndex == 0 ? Visibility.Visible : Visibility.Collapsed; scheduleBody.Visibility = mode.SelectedIndex == 1 ? Visibility.Visible : Visibility.Collapsed; }
+        mode.SelectionChanged += (_, _) => SelectMode(); SelectMode();
         var form = new StackPanel { Spacing = 16 };
-        foreach (var element in new FrameworkElement[] { profileId, Text("Panel 模型（1–8 个）"), panels, judge, final, minimum, timeout, intermediate, tools }) form.Children.Add(element);
-        var buttons = Row();
-        buttons.Children.Add(Button("保存 Fusion", async () =>
+        foreach (var element in new FrameworkElement[] { profileId, mode, orchestration, scheduleBody, final }) form.Children.Add(element);
+        pendingApply = async () =>
         {
             var chosen = choices.Where(check => check.IsChecked == true).Select(check => (string)check.Content).ToArray();
-            if (chosen.Length is < 1 or > 8 || !double.IsFinite(minimum.Value) || minimum.Value != Math.Truncate(minimum.Value) || minimum.Value < 1 || minimum.Value > chosen.Length ||
-                !double.IsFinite(timeout.Value) || timeout.Value <= 0 || timeout.Value != Math.Truncate(timeout.Value))
-                throw new InvalidOperationException("请选择 1–8 个 Panel，最少成功数必须为整数且不超过 Panel 数，超时必须为正整数。");
-            // Preserve fields not edited by this shell; validation remains in the CLI.
+            if (mode.SelectedIndex == 0 && (chosen.Length is < 1 or > 8 || !double.IsFinite(minimum.Value) || minimum.Value < 1 || minimum.Value > chosen.Length || minimum.Value != Math.Truncate(minimum.Value) || !double.IsFinite(timeout.Value) || timeout.Value <= 0))
+                throw new InvalidOperationException("请选择 1–8 个 Panel，并填写有效的最少成功数和超时。 ");
             var payload = saved ? JsonSerializer.Deserialize<Dictionary<string, object?>>(profile.GetRawText())! : new Dictionary<string, object?>();
-            payload["id"] = profileId.Text.Trim(); payload["panel_models"] = chosen;
-            payload["judge_model"] = judge.SelectedItem; payload["final_model"] = final.SelectedItem;
+            payload["id"] = profileId.Text.Trim(); payload["mode"] = mode.SelectedIndex == 0 ? "orchestration" : "time_rotation";
+            payload["panel_models"] = chosen; payload["judge_model"] = judge.SelectedItem; payload["final_model"] = final.SelectedItem;
             payload["min_successful"] = (int)minimum.Value; payload["timeout_ms"] = (long)timeout.Value;
             payload["show_intermediate_results"] = intermediate.IsChecked == true;
-            var panelTools = saved ? JsonSerializer.Deserialize<Dictionary<string, object?>>(Json.Field(profile, "panel_tools").GetRawText())! : new Dictionary<string, object?> { ["max_rounds"] = 16, ["max_calls_per_model"] = 64 };
-            panelTools["enabled"] = tools.IsChecked == true; payload["panel_tools"] = panelTools;
+            payload["time_routes"] = routes.Select(route => new { start_minute = (int)route.Start.Time.TotalMinutes, end_minute = (int)route.End.Time.TotalMinutes, model = (string)route.Model.SelectedItem }).ToArray();
+            payload["panel_tools"] = new { enabled = tools.IsChecked == true, max_rounds = 16, max_calls_per_model = 64 };
             if (!saved) payload["max_completion_tokens"] = 2048;
-            var args = new List<string> { "fusion", "set", "--profile-json", JsonSerializer.Serialize(payload) };
-            if (saved) args.AddRange(["--replace-id", Json.Text(profile, "id")]);
-            await ChangeAsync("保存 Fusion", args.ToArray(), apply: true);
-        }, true));
-        if (saved) buttons.Children.Add(Button("删除 Fusion", async () =>
-        {
-            if (await ConfirmAsync("删除 Fusion？", "将移除此组合模型的配置。", "删除"))
-                await ChangeAsync("删除 Fusion", ["fusion", "delete", "--id", Json.Text(profile, "id")], apply: true);
-        }));
-        form.Children.Add(buttons);
-        PageBody.Children.Add(Card("多模型协作", "可用模型由 CLI 提供；保存后应用到已接入的客户端。", form));
+            var arguments = new List<string> { "fusion", "set", "--profile-json", JsonSerializer.Serialize(payload) };
+            if (saved) arguments.AddRange(["--replace-id", Json.Text(profile, "id")]);
+            await ChangeAsync("保存 Fusion", arguments.ToArray(), apply: true);
+        };
+        ApplyChanges.Content = "保存并重启网关";
+        if (saved) form.Children.Add(Button("停用 Fusion", async () => { if (await ConfirmAsync("停用 Fusion？", "将移除当前组合模型配置。", "停用")) await ChangeAsync("停用 Fusion", ["fusion", "delete", "--id", Json.Text(profile, "id")], apply: true); }));
+        PageBody.Children.Add(Card("Fusion 模型编排", "运行模式与 macOS 端保持一致。", form));
     }
 
     private async Task SettingsAsync(CancellationToken token)
     {
         var theme = Choice("外观", ["跟随系统", "浅色", "深色"], Root.RequestedTheme switch { ElementTheme.Light => "浅色", ElementTheme.Dark => "深色", _ => "跟随系统" });
         AutomationProperties.SetAutomationId(theme, "theme-picker");
-        theme.SelectionChanged += (_, _) => Root.RequestedTheme = theme.SelectedIndex switch { 1 => ElementTheme.Light, 2 => ElementTheme.Dark, _ => ElementTheme.Default };
+        theme.SelectionChanged += (_, _) => ((App)Microsoft.UI.Xaml.Application.Current).SetTheme(theme.SelectedIndex switch { 1 => ElementTheme.Light, 2 => ElementTheme.Dark, _ => ElementTheme.Default });
         var startup = new CheckBox { Content = "登录 Windows 时启动界面", IsChecked = NativeShell.StartupEnabled(), IsEnabled = !NativeShell.StartupBlocked() };
         startup.Click += (_, _) =>
         {

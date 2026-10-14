@@ -20,6 +20,7 @@ internal static class Program
         Directory.CreateDirectory(Path.GetDirectoryName(config)!);
         var start = new ProcessStartInfo(Path.GetFullPath(args[0])) { UseShellExecute = false };
         start.Environment["CODEX_GATEWAY_CONFIG"] = config;
+        start.ArgumentList.Add("--capture-ui");
         var previousConfig = Environment.GetEnvironmentVariable("CODEX_GATEWAY_CONFIG");
         Environment.SetEnvironmentVariable("CODEX_GATEWAY_CONFIG", config);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Cannot launch WinUI app");
@@ -34,59 +35,52 @@ internal static class Program
                 Math.Min(1120, desktop.Width - 48), Math.Min(800, desktop.Height - 48), true);
             var window = AutomationElement.FromHandle(handle);
             Wait(() => Find(window, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), "initial CLI load", process);
-            AssertName(window, "本地网关 · 未配置");
-            Console.WriteLine("PASS fresh installation shows unconfigured gateway");
-            Capture(window, Path.Combine(output, "overview-unconfigured.png"));
-            Navigate(window, "nav-providers", "管理服务连接与向 Agent 提供的模型", process);
-            AssertName(window, "暂无供应商");
-            Console.WriteLine("PASS provider empty state");
+            AssertName(window, "还没有服务商");
             Capture(window, Path.Combine(output, "providers-empty.png"));
-            Navigate(window, "nav-agents", "检测、接入与升级由本地 CLI 执行", process);
-            AssertName(window, "检查版本更新");
-            Console.WriteLine("PASS agent contract reaches native controls");
-            Capture(window, Path.Combine(output, "agents-detected.png"));
-            Navigate(window, "nav-usage", "真实请求用量、缓存命中与供应商额度", process);
-            AssertName(window, "用量不可用");
-            Console.WriteLine("PASS stopped gateway does not show zero usage");
-            Capture(window, Path.Combine(output, "usage-stopped.png"));
-            Navigate(window, "nav-fusion", "组合 Panel、Judge 与 Final 模型", process);
-            AssertName(window, "暂无可用模型");
-            Console.WriteLine("PASS Fusion empty state");
-            Capture(window, Path.Combine(output, "fusion-empty.png"));
-            Navigate(window, "nav-settings", "外观、启动、备份与诊断", process);
             SeedDemo(Path.Combine(Path.GetDirectoryName(start.FileName)!, "codex-mixin.exe"), output);
-            foreach (var theme in new[] { "light", "dark" })
+            for (var themeIndex = 0; themeIndex < 2; themeIndex++)
             {
-                SelectTheme(window, theme == "light" ? "浅色" : "深色");
-                foreach (var (id, description, filename) in Pages)
+                var themeName = themeIndex == 0 ? "light" : "dark";
+                var settings = OpenWindow(start, process, "settings", "设置与诊断");
+                SelectTheme(settings, themeIndex == 0 ? "浅色" : "深色");
+                foreach (var (role, title, filename) in Pages)
                 {
-                    Navigate(window, id, description, process);
-                    Capture(window, Path.Combine(output, $"{filename}-{theme}.png"));
-                    var viewport = Find(window, "page-scroll");
-                    if (viewport.TryGetCurrentPattern(ScrollPattern.Pattern, out var pattern) &&
-                        pattern is ScrollPattern { Current.VerticallyScrollable: true } scroll)
+                    var target = OpenWindow(start, process, role, title);
+                    if (role != "overview")
                     {
-                        scroll.SetScrollPercent(ScrollPattern.NoScroll, 100);
-                        Capture(window, Path.Combine(output, $"{filename}-{theme}-lower.png"));
-                        scroll.SetScrollPercent(ScrollPattern.NoScroll, 0);
+                        MoveWindow((nint)target.Current.NativeWindowHandle, desktop.Left + 24, desktop.Top + 24,
+                            Math.Min(1120, desktop.Width - 48), Math.Min(800, desktop.Height - 48), true);
+                        var refresh = target.FindFirst(TreeScope.Descendants, new AndCondition(new PropertyCondition(AutomationElement.NameProperty, "刷新"), new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)));
+                        if (refresh != null) ((InvokePattern)refresh.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+                        Wait(() => Find(target, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), $"load {role}", process);
+                    }
+                    Capture(target, Path.Combine(output, $"{filename}-{themeName}.png"));
+                    if (role == "providers")
+                    {
+                        ((InvokePattern)Find(target, "provider-connection-tab").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+                        Wait(() => target.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "连接配置")) != null, "connection tab", process);
+                        Capture(target, Path.Combine(output, $"connection-{themeName}.png"));
+                        ((InvokePattern)Find(target, "provider-models-tab").GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+                    }
+                    if (role == "fusion")
+                    {
+                        SelectCombo(target, "fusion-mode", "按时间轮转");
+                        Capture(target, Path.Combine(output, $"fusion-time-{themeName}.png"));
+                        SelectCombo(target, "fusion-mode", "多模型编排");
                     }
                 }
             }
-            Console.WriteLine("PASS all six native pages captured in light and dark themes");
-            // WM_SYSCOMMAND/SC_CLOSE must hide the shell without terminating it.
+            Console.WriteLine("PASS macOS-aligned tray, provider tabs, separate windows and Fusion modes");
+            window = OpenWindow(start, process, "providers", "模型与服务");
+            handle = (nint)window.Current.NativeWindowHandle;
             PostMessage(handle, 0x112, 0xF060, 0);
             Wait(() => !IsWindowVisible(handle), "close to tray", process);
             using var second = Process.Start(start) ?? throw new InvalidOperationException("Cannot reactivate app");
             Wait(() => IsWindowVisible(handle), "single-instance reactivation", process);
-            if (!second.WaitForExit(15000)) throw new InvalidOperationException("Second instance did not redirect activation");
-            if (second.ExitCode != 0) throw new InvalidOperationException("Second instance did not exit cleanly");
-            Console.WriteLine("PASS close-to-tray and single-instance activation");
-            MoveWindow(handle, 100, 100, 760, 560, true);
-            Thread.Sleep(500);
-            if (Find(window, "nav-settings").Current.IsOffscreen)
-                throw new InvalidOperationException("Navigation is inaccessible after resize");
+            if (!second.WaitForExit(15000) || second.ExitCode != 0) throw new InvalidOperationException("Second instance did not redirect cleanly");
+            MoveWindow(handle, desktop.Left + 24, desktop.Top + 24, 960, 600, true);
             Capture(window, Path.Combine(output, "minimum-window.png"));
-            Console.WriteLine("PASS native window remains accessible after resize");
+            Console.WriteLine("PASS close-to-tray, reactivation and provider minimum window");
             return 0;
         }
         catch (Exception error)
@@ -108,24 +102,40 @@ internal static class Program
         }
     }
 
-    private static readonly (string Id, string Description, string Filename)[] Pages =
+    private static readonly (string Role, string Title, string Filename)[] Pages =
     [
-        ("nav-overview", "模型服务、连接状态与常用操作", "overview"),
-        ("nav-providers", "管理服务连接与向 Agent 提供的模型", "providers"),
-        ("nav-agents", "检测、接入与升级由本地 CLI 执行", "agents"),
-        ("nav-usage", "真实请求用量、缓存命中与供应商额度", "usage"),
-        ("nav-fusion", "组合 Panel、Judge 与 Final 模型", "fusion"),
-        ("nav-settings", "外观、启动、备份与诊断", "settings")
+        ("providers", "模型与服务", "models"),
+        ("agents", "Agent 接入管理", "agents"),
+        ("fusion", "Fusion 设置", "fusion"),
+        ("settings", "设置与诊断", "settings"),
+        ("overview", "Codex Mixin · 主面板", "main-panel")
     ];
 
-    private static void SelectTheme(AutomationElement window, string name)
+    private static AutomationElement OpenWindow(ProcessStartInfo source, Process process, string role, string title)
     {
-        var theme = Find(window, "theme-picker");
-        ((ExpandCollapsePattern)theme.GetCurrentPattern(ExpandCollapsePattern.Pattern)).Expand();
-        var option = window.FindFirst(TreeScope.Descendants, new AndCondition(
-            new PropertyCondition(AutomationElement.NameProperty, name),
-            new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.ListItem)))
-            ?? throw new InvalidOperationException($"Theme option is missing: {name}");
+        var start = new ProcessStartInfo(source.FileName) { UseShellExecute = false };
+        foreach (var variable in source.Environment) start.Environment[variable.Key] = variable.Value;
+        start.ArgumentList.Add($"--page={role}");
+        using var activation = Process.Start(start) ?? throw new InvalidOperationException("Cannot activate a page");
+        AutomationElement? window = null;
+        Wait(() =>
+        {
+            window = AutomationElement.RootElement.FindFirst(TreeScope.Children, new AndCondition(
+                new PropertyCondition(AutomationElement.ProcessIdProperty, process.Id),
+                new PropertyCondition(AutomationElement.NameProperty, title)));
+            return window != null && !window.Current.IsOffscreen;
+        }, $"open {title}", process);
+        if (!activation.WaitForExit(15000) || activation.ExitCode != 0) throw new InvalidOperationException("Page activation did not exit cleanly");
+        return window!;
+    }
+
+    private static void SelectTheme(AutomationElement window, string name) => SelectCombo(window, "theme-picker", name);
+
+    private static void SelectCombo(AutomationElement window, string id, string name)
+    {
+        ((ExpandCollapsePattern)Find(window, id).GetCurrentPattern(ExpandCollapsePattern.Pattern)).Expand();
+        var option = window.FindFirst(TreeScope.Descendants, new AndCondition(new PropertyCondition(AutomationElement.NameProperty, name),
+            new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.ListItem))) ?? throw new InvalidOperationException($"Option missing: {name}");
         ((SelectionItemPattern)option.GetCurrentPattern(SelectionItemPattern.Pattern)).Select();
         Thread.Sleep(400);
     }

@@ -70,5 +70,8 @@ $repo = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 New-IcoFile -InputPath $Source -OutputPath (Join-Path $repo "windows\assets\tray_icon.ico")
 New-IcoFile -InputPath $Source -OutputPath (Join-Path $repo "windows\assets\app_icon.ico")
 Copy-Item -LiteralPath $Source -Destination (Join-Path $repo "windows\assets\app_icon.png") -Force
+$providers = Join-Path $repo "windows\assets\providers"
+New-Item -ItemType Directory -Force -Path $providers | Out-Null
+Copy-Item -Path (Join-Path $repo "macos\assets\providers\*.svg") -Destination $providers -Force
 
 Write-Host "Generated native Windows application and tray icons from $Source"

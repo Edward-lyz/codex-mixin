@@ -7,6 +7,47 @@ namespace CodexMixin;
 public partial class App : Application
 {
     private MainWindow? window;
+    private readonly Dictionary<string, MainWindow> windows = [];
+    private CliClient? cli;
+    private Operations? operations;
+    private TrayWindow? tray;
+    private ElementTheme theme = ElementTheme.Default;
+
+    internal CliClient Client => cli ??= CliClient.Locate();
+    internal Operations Operations => operations ??= new Operations(Client);
+    internal ElementTheme Theme => theme;
+    internal void SetTheme(ElementTheme value)
+    {
+        theme = value;
+        foreach (var target in windows.Values) target.SetTheme(value);
+        tray?.SetTheme(value);
+    }
+
+    internal void ExitAll()
+    {
+        tray?.Shutdown();
+        foreach (var target in windows.Values.ToArray()) target.Shutdown();
+        Exit();
+    }
+
+    internal void OpenPage(string page)
+    {
+        if (page == "overview")
+        {
+            tray ??= new TrayWindow();
+            tray.ShowPanel();
+            return;
+        }
+        if (page is not ("providers" or "agents" or "fusion" or "settings" or "usage"))
+            throw new ArgumentException($"Unknown Windows page: {page}");
+        if (!windows.TryGetValue(page, out var target))
+        {
+            target = new MainWindow(page);
+            windows[page] = target;
+            target.Closed += (_, _) => windows.Remove(page);
+        }
+        target.ShowMain();
+    }
 
     public App() => InitializeComponent();
 
@@ -19,8 +60,18 @@ public partial class App : Application
             Exit();
             return;
         }
-        window = new MainWindow();
-        instance.Activated += (_, _) => window.DispatcherQueue.TryEnqueue(window.ShowMain);
-        window.Activate();
+        OpenPage("providers");
+        window = windows["providers"];
+        instance.Activated += (_, activation) => window.DispatcherQueue.TryEnqueue(() =>
+        {
+            var arguments = activation.Data switch
+            {
+                Windows.ApplicationModel.Activation.ICommandLineActivatedEventArgs command => command.Operation.Arguments,
+                Windows.ApplicationModel.Activation.ILaunchActivatedEventArgs launch => launch.Arguments,
+                _ => ""
+            };
+            var match = System.Text.RegularExpressions.Regex.Match(arguments, @"--page=(providers|agents|fusion|settings|overview|usage)\b");
+            OpenPage(match.Success ? match.Groups[1].Value : "providers");
+        });
     }
 }

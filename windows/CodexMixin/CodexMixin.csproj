@@ -28,5 +28,6 @@
     <Compile Include="../Core/*.cs" Link="Core/%(Filename)%(Extension)" />
     <Content Include="../assets/*.ico" Link="Assets/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
     <Content Include="../assets/app_icon.png" Link="Assets/app_icon.png" CopyToOutputDirectory="PreserveNewest" />
+    <Content Include="../assets/providers/*.svg" Link="Assets/providers/%(Filename)%(Extension)" CopyToOutputDirectory="PreserveNewest" />
   </ItemGroup>
 </Project>

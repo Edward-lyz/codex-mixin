@@ -3,5 +3,6 @@
 /build/
 /assets/*.ico
 /assets/app_icon.png
+/assets/providers/
 *.user
 *.log

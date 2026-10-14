@@ -54,6 +54,16 @@ internal sealed class NativeShell : IDisposable
 
     internal void Hide() => ShowWindow(window, 0);
 
+    internal static Windows.Graphics.RectInt32 PanelBounds()
+    {
+        GetCursorPos(out var position);
+        var info = new MonitorInfo { Size = (uint)Marshal.SizeOf<MonitorInfo>() };
+        if (!GetMonitorInfo(MonitorFromPoint(position, 2), ref info)) throw new Win32Exception(Marshal.GetLastWin32Error());
+        var width = Math.Min(352, info.Work.Right - info.Work.Left - 16);
+        var height = Math.Min(700, info.Work.Bottom - info.Work.Top - 16);
+        return new Windows.Graphics.RectInt32(Math.Clamp(position.X - width / 2, info.Work.Left + 8, info.Work.Right - width - 8), info.Work.Bottom - height - 8, width, height);
+    }
+
     private nint WindowProc(nint hwnd, uint message, nuint wParam, nint lParam, nuint id, nuint reference)
     {
         if (message == taskbarCreated)
@@ -84,19 +94,21 @@ internal sealed class NativeShell : IDisposable
         if (menu == 0) { command("tray-error"); return; }
         try
         {
-            AppendMenu(menu, 0, 1, "打开 Codex Mixin");
+            AppendMenu(menu, 0, 1, "模型与服务…");
             AppendMenu(menu, 0, 2, "启动网关");
             AppendMenu(menu, 0, 3, "停止网关");
             AppendMenu(menu, 0x800, 0, "");
             AppendMenu(menu, 0, 4, "设置");
             AppendMenu(menu, 0, 5, "退出应用");
+            AppendMenu(menu, 0, 6, "Agent 接入管理…");
+            AppendMenu(menu, 0, 7, "Fusion 设置…");
             GetCursorPos(out var position);
             SetForegroundWindow(window);
             var selected = TrackPopupMenu(menu, 0x100 | 0x2, position.X, position.Y, 0, window, 0);
             PostMessage(window, 0, 0, 0);
             if (selected != 0) command(selected switch
             {
-                1 => "overview", 2 => "start", 3 => "stop", 4 => "settings", _ => "exit"
+                1 => "providers", 2 => "start", 3 => "stop", 4 => "settings", 6 => "agents", 7 => "fusion", _ => "exit"
             });
         }
         finally { DestroyMenu(menu); }
@@ -136,6 +148,10 @@ internal sealed class NativeShell : IDisposable
     [StructLayout(LayoutKind.Sequential)]
     private struct Point { internal int X; internal int Y; }
     [StructLayout(LayoutKind.Sequential)]
+    private struct Rect { internal int Left; internal int Top; internal int Right; internal int Bottom; }
+    [StructLayout(LayoutKind.Sequential)]
+    private struct MonitorInfo { internal uint Size; internal Rect Monitor; internal Rect Work; internal uint Flags; }
+    [StructLayout(LayoutKind.Sequential)]
     private struct MinMaxInfo { internal Point Reserved; internal Point MaxSize; internal Point MaxPosition; internal Point MinTrack; internal Point MaxTrack; }
     [StructLayout(LayoutKind.Sequential, CharSet = CharSet.Unicode)]
     private struct NotifyIconData
@@ -160,6 +176,8 @@ internal sealed class NativeShell : IDisposable
     private static extern nint LoadImage(nint instance, string name, uint type, int width, int height, uint flags);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool DestroyIcon(nint icon);
     [DllImport("user32.dll")] private static extern uint GetDpiForWindow(nint window);
+    [DllImport("user32.dll")] private static extern nint MonitorFromPoint(Point point, uint flags);
+    [DllImport("user32.dll", EntryPoint = "GetMonitorInfoW", SetLastError = true)] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool GetMonitorInfo(nint monitor, ref MonitorInfo info);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool ShowWindow(nint window, int command);
     [DllImport("user32.dll")] [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(nint window);
     [DllImport("user32.dll", EntryPoint = "RegisterWindowMessageW", CharSet = CharSet.Unicode)] private static extern uint RegisterWindowMessage(string name);
