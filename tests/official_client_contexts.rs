@@ -1,5 +1,7 @@
 use std::collections::BTreeMap;
 use std::fs;
+use std::path::Path;
+use std::process::{Output, Stdio};
 use tokio::process::Command;
 
 use codex_mixin::config::{
@@ -86,11 +88,7 @@ async fn official_contexts_reach_clients() {
                 desktop_root.to_str().unwrap(),
             ],
         ] {
-            let output =
-                tokio::time::timeout(std::time::Duration::from_secs(60), mixin(&args).output())
-                    .await
-                    .unwrap_or_else(|_| panic!("CLI command timed out: {args:?}"))
-                    .unwrap();
+            let output = run_cli(mixin(&args), &args, directory.path()).await;
             assert!(
                 output.status.success(),
                 "{args:?}: {}",
@@ -117,16 +115,36 @@ async fn official_contexts_reach_clients() {
             json!({"claude_model": if context == Some(1_000_000) { "gpt-test[1m]" } else { "gpt-test" }, "pi_context":context.unwrap_or(272000), "desktop_1m":context == Some(1_000_000)})
         );
     }
-    let stopped = tokio::time::timeout(
-        std::time::Duration::from_secs(60),
-        mixin(&["service", "stop", "--force"]).output(),
-    )
-    .await
-    .expect("stop test gateway timed out")
-    .unwrap();
+    let stop_args = ["service", "stop", "--force"];
+    let stopped = run_cli(mixin(&stop_args), &stop_args, directory.path()).await;
     assert!(
         stopped.status.success(),
         "stop test gateway: {}",
         String::from_utf8_lossy(&stopped.stderr)
     );
+}
+
+async fn run_cli(mut command: Command, args: &[&str], directory: &Path) -> Output {
+    // Descendant gateways can keep inherited Windows pipe handles open.
+    // Files let us wait for the CLI's exit independently of gateway lifetime.
+    let stdout = directory.join("cli.stdout");
+    let stderr = directory.join("cli.stderr");
+    command
+        .stdin(Stdio::null())
+        .stdout(fs::File::create(&stdout).unwrap())
+        .stderr(fs::File::create(&stderr).unwrap());
+    let status = tokio::time::timeout(std::time::Duration::from_secs(60), command.status())
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "CLI command timed out: {args:?}: {}",
+                fs::read_to_string(&stderr).unwrap()
+            )
+        })
+        .unwrap();
+    Output {
+        status,
+        stdout: fs::read(stdout).unwrap(),
+        stderr: fs::read(stderr).unwrap(),
+    }
 }
