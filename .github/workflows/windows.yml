@@ -35,41 +35,71 @@ jobs:
           ./scripts/test_check_arch.sh
       - run: cargo test --locked --all-targets
       - run: cargo build --locked --release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-cli
+          path: target/release/codex-mixin.exe
+          if-no-files-found: error
 
-  flutter:
+  native:
+    name: WinUI 3 build and Windows UI tests
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: windows
+    needs: rust
     steps:
       - uses: actions/checkout@v5
-      - uses: subosito/flutter-action@v2
+      - uses: actions/setup-dotnet@v5
         with:
-          channel: stable
-      - run: flutter pub get
-      - run: powershell -File scripts/generate-windows-assets.ps1
-      - run: powershell -File scripts/patch-window-manager.ps1 -UiRoot .
-      - run: flutter analyze
-      - run: flutter test
-      - run: flutter build windows --release
+          dotnet-version: '10.0.x'
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-cli
+          path: target/release
+      - name: Test CLI adapter and real Rust contracts
+        shell: pwsh
+        run: dotnet run --project windows/Tests/Tests.csproj -c Release -- --cli target/release/codex-mixin.exe
+      - name: Generate native icons
+        shell: pwsh
+        run: ./windows/scripts/generate-windows-assets.ps1
+      - name: Compile and publish native UI
+        shell: pwsh
+        run: dotnet publish windows/CodexMixin/CodexMixin.csproj -c Release -p:Platform=x64 -o windows/build/publish
+      - name: Stage real CLI alongside UI
+        shell: pwsh
+        run: Copy-Item target/release/codex-mixin.exe windows/build/publish/
+      - name: Test native navigation, themes, tray and activation
+        shell: pwsh
+        run: dotnet run --project windows/UiTests/UiTests.csproj -c Release -- windows/build/publish/codex_mixin_ui.exe windows/build/ui-test-artifacts
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-native-ui-evidence
+          path: |
+            windows/build/ui-test-artifacts
+            windows/CodexMixin/packages.lock.json
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-native-ui
+          path: windows/build/publish
+          if-no-files-found: error
 
   package:
     runs-on: windows-latest
-    needs: [rust, flutter]
+    needs: [rust, native]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@v2
-      - uses: subosito/flutter-action@v2
+      - uses: actions/setup-dotnet@v5
         with:
-          channel: stable
+          dotnet-version: '10.0.x'
       # NSIS provides makensis for the standard installer built by the script.
       - name: Install NSIS
         run: choco install nsis -y --no-progress
         shell: pwsh
-      # Builds the Rust CLI + Flutter UI and packages the standard installer and
+      # Builds the Rust CLI + native WinUI 3 UI and packages the standard installer and
       # portable archive. Use the same relative dist\release layout as the
       # Release workflow so this job exercises the release packaging paths.
       - name: Package and optionally sign Windows artifacts

@@ -1,86 +1,53 @@
-# Codex Mixin Windows 端
+# Codex Mixin Windows 原生端
 
-Codex Mixin 的 Windows 桌面界面，使用 **Flutter** 构建，是 Rust 本地网关（`codex-mixin`）在 Windows 上的图形控制端。它与 `macos/`、`tui/` 一样是独立壳层，只消费 CLI JSON contract。
+Windows 前端使用 **C# + XAML + WinUI 3 + Windows App SDK**。Flutter 工程、Runner、插件与补丁已移除。Rust CLI / 本地网关继续负责供应商、模型、客户端接入、配置事务和服务生命周期。
 
-界面本身不实现任何网关逻辑：它定位并调用真实的 `codex-mixin.exe`（优先用已安装包中的可执行文件，其次用仓库 `target/release/`），完成供应商管理、网关启停、模型选择与测速、配置备份，以及 Codex、Claude Code、Claude Desktop、DSH、OpenCode、Pi 六个 Agent 的检测、接入、断开与升级（`agent` CLI JSON 契约）。程序检测、接入状态与版本都由 CLI 判定，界面不重复实现。供应商图标复用 `macos/assets/providers` 下的 SVG，通过 `flutter_svg` 渲染。
+采用微软推荐的新建原生桌面应用路线（[开发路径](https://learn.microsoft.com/en-us/windows/apps/get-started/)、[WinUI 3](https://learn.microsoft.com/en-us/windows/apps/winui/)）。Windows App SDK 固定为 stable `1.8.260921001`，避免引入 preview / experimental API。
 
-DUCX `.tar.bz2` 由 Rust core 直接解压，不依赖或捆绑第三方归档程序。
+## 原生界面
 
-## 目录结构
+- 单窗口 NavigationView：概览、供应商与模型、Agent 接入、用量与额度、Fusion、设置。
+- Fluent 原生控件、Mica 背景、系统明暗主题、高对比度、键盘导航与 UI Automation。
+- 供应商新增、编辑、启停、删除、连接测试；模型搜索、选择、上下文覆盖、发现、能力探测和测速。
+- OneAPI 认证桥接与上报、AWS 凭据、OpenCode Go 额度 Cookie 使用安全输入，经子进程环境传给 CLI。
+- Agent 列表由 CLI 动态提供；支持版本检查、接入、断开和升级，Codex 接入必须明确选择模式。
+- 用量时间范围、缓存命中、TTFT 与输出速率；失败展示原因，未知值不会显示为零。
+- Fusion 编辑保留页面未编辑的已有字段，保存后由 CLI 应用配置。
+- 原生托盘与菜单、关闭收起、单实例激活、每显示器 DPI；Explorer 重启后重新注册托盘。
+- Windows 原生文件选择器；导入导出前说明 Base64 备份含凭据且不是加密。
 
-- `lib/` — Dart 前端代码（UI 主体，日常改动都在这里）。
-  - `main.dart` 入口、`tray_page.dart` 托盘弹窗、`settings_page.dart` 供应商设置、`agents_page.dart` Agent 接入管理、`agent_models.dart` Agent JSON 模型、`fusion_page.dart`/`flyout_page.dart` 等页面，`controller.dart` 调用 CLI，`theme.dart` 主题，`widgets.dart` 通用组件。
-- `windows/` — **Flutter 自动生成的原生 Windows Runner（C++ 嵌入层）**。包含 `runner/`、`flutter/`、`CMakeLists.txt`。
-  - 注意：这个子目录名由 Flutter 工具链强制约定，`flutter build windows` 只认 `windows/` 这个名字，**不能改名**（改成 `win` 等会导致构建失败）。若要去掉“windows/windows”的双层重名，只能重命名外层的 Flutter 工程目录（即本目录 `windows/`），并同步更新 CI 与打包脚本中的路径。
-- `scripts/` — Windows 专用的打包、安装、修补脚本（详见下文），镜像 macOS 把构建脚本放在 `macos/` 下的做法。
-- `test/` — Flutter widget 测试（对应 `macos/tests/` 的 Swift 测试）。
-- `assets/` — 供应商图标与托盘图标：**由 `scripts/generate-windows-assets.ps1` 从 `macos/` 生成，不入库（已 gitignore）**。
-- `build/` — Flutter 构建产物（自动生成，勿提交）。
+首版托盘左键打开主窗口，右键提供网关操作和退出菜单。原 Flutter 的独立悬浮面板已移除。外观选择作用于当前运行会话。GUI 登录启动保留已有 Run 项，新增安装默认由用户在设置中启用；不会覆盖系统禁用状态，也不在登录路径启动网关。
 
-## 环境要求
+## 工程结构与环境
 
-- Flutter（stable 通道）与 Visual Studio 的“使用 C++ 的桌面开发”工作负载。
-- Rust 工具链（用于构建被界面调用的 `codex-mixin.exe`）。
+| 路径 | 职责 |
+| --- | --- |
+| `CodexMixin/` | WinUI 原生窗口、页面与 Windows 平台壳 |
+| `Core/` | CLI 进程、严格 JSON 契约与保存后应用配置 |
+| `Tests/` | 子进程边界、凭据、超时、取消、结构化错误与真实 CLI 契约 |
+| `UiTests/` | Windows UI Automation 导航、主题、托盘恢复与截图 |
+| `scripts/` | 图标生成、自包含发布、NSIS、安装与卸载 |
 
-## 开发与运行
-
-在本目录（`windows/`）下执行：
-
-```powershell
-flutter pub get
-powershell -File scripts/generate-windows-assets.ps1
-flutter run -d windows
-```
-
-> 供应商 SVG 与 `.ico` 图标不入库（唯一来源在 `macos/`），首次或清检出后必须先跑 `scripts/generate-windows-assets.ps1` 生成，否则 `flutter build/run` 会因缺资源失败。一键打包脚本 `package-windows.ps1` 会自动执行这一步。
-
-## 静态检查与测试
+开发要求 Windows 10 1809 或更高版本、.NET 10 SDK、Visual Studio 的 WinUI 开发工具和 Windows SDK，以及 Rust 工具链。建议使用当前受支持的 Windows 11。WinUI 的 XAML 编译器和 UI 测试必须在 Windows 执行。
 
 ```powershell
-flutter analyze
-flutter test
+cargo build --locked --release
+./windows/scripts/generate-windows-assets.ps1
+dotnet build windows/CodexMixin/CodexMixin.csproj -c Debug -p:Platform=x64
 ```
 
-## 构建 Release UI
+开发模式在项目祖先目录查找 `target/release/codex-mixin.exe` 或 `target/debug/codex-mixin.exe`，发布模式优先调用同目录 CLI。不会从 PATH 或当前工作目录加载任意 CLI。
 
-```powershell
-flutter build windows --release
-```
+## CI 验证与发布
 
-产物位于 `windows/build/windows/x64/runner/Release/`。
+`.github/workflows/windows.yml` 在 GitHub Windows runner 运行 Rust 检查与测试、C# 适配层及真实 CLI 契约测试、自包含 WinUI 发布、Windows UI Automation 测试，最后生成安装器和便携包。UI 截图与失败记录保存在 `windows-native-ui-evidence` artifact。本次迁移按用户要求不在本机运行测试。
 
-## 一键打包（推荐）
-
-打包脚本会依次构建 Rust CLI 与 Flutter UI、组装应用目录、生成 NSIS 安装器。在仓库根目录执行：
+一键打包仍从仓库根执行：
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File windows/scripts/package-windows.ps1
 ```
 
-产物：
-- `dist/codex-mixin-windows/` — 组装好的应用目录（含 `codex-mixin.exe` 与 `codex_mixin_ui.exe`）。
-- `dist/CodexMixin-Setup.exe` — 标准 Windows 安装器。
+输出 `dist/codex-mixin-windows/`、`dist/CodexMixin-Setup.exe`、`dist/CodexMixin-Windows.zip`。保留 `codex_mixin_ui.exe` 与 `codex-mixin.exe` 的原文件名、NSIS 注册表身份和快捷方式路径；应用目录包含 .NET 与 Windows App SDK runtime，用户无需安装 Flutter 或 .NET。
 
-可选参数：`-Sign` 开启签名、`-Version x.x.x.x` 指定安装器版本、`-NsisPath` 指定 `makensis.exe`。
-
-## windows/scripts 脚本说明
-
-- `package-windows.ps1` — 打包主入口（构建 + 组装 + 生成安装器）。
-- `installer.nsi` — NSIS 安装器脚本，安装到 `%ProgramFiles%\Codex Mixin`（需管理员权限）；安装前会依据卸载注册表项里记录的位置，先卸载任意旧版本，再创建开始菜单快捷方式与卸载项。
-- `install-windows.ps1` / `uninstall-windows.ps1` — 免安装器的手动安装/卸载脚本；安装时把安装目录加入用户 PATH、并对 `~/.codex-mixin` 配置目录做一次性 ACL 加固，卸载时清理 PATH 与快捷方式。
-- `generate-windows-assets.ps1` — 从 `macos/CodexMixin.icon/Assets/CodexMixin.png` 生成 `.ico` 图标，并从 `macos/assets/providers/` 同步供应商 SVG 到 `windows/assets/providers/`；这些产物均不入库，由本脚本按需生成。
-- `patch-window-manager.ps1` / `patch-multi-window-rounding.ps1` — 在 `flutter pub get` 后修补 `window_manager` / `desktop_multi_window` 插件的原生代码（窗口行为/圆角），需在 `flutter build` 前执行。
-
-## 托盘行为
-
-Release 版会创建系统托盘图标：左键点击弹出紧凑面板，点击面板外部自动隐藏；完整的“供应商设置”窗口与托盘面板可同时打开。面板菜单包含模型与服务、Agent 接入管理（检测/接入/断开/升级六个 Agent）、高级（Fusion、上报、配置备份）以及关于/日志/配置目录等操作。
-
-登录时自动启动默认开启：首次运行写入当前用户 Run 项；若用户在 Windows「启动应用」中显式禁用，应用不会重新打开该项，也不在登录路径自动启动网关。该状态显示在 Agent 接入管理页底部，不再提供单独的开关入口。
-
-## 与 Rust 网关的关系
-
-- 界面所有实际操作都通过命令行调用 `codex-mixin.exe`，UI 触发的动作输出会落盘到运行日志，便于排查。
-
-## 持续集成
-
-`.github/workflows/windows.yml` 在 `windows-latest` 上分别执行 Rust 检查/测试/构建、Flutter 分析/测试/构建，以及 `windows/scripts/package-windows.ps1` 打包并上传 `dist` 产物。
+安装/卸载继续保留用户配置；未发布 UI 单独可执行文件，必须使用完整应用目录。签名时覆盖随包发送的 EXE / DLL 与安装器。发布工作流沿用相同打包脚本。

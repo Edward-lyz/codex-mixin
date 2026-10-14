@@ -1,0 +1,43 @@
+<Window x:Class="CodexMixin.MainWindow"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Grid x:Name="Root" Background="{ThemeResource ApplicationPageBackgroundThemeBrush}" RowSpacing="0">
+    <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="*" /><RowDefinition Height="Auto" /></Grid.RowDefinitions>
+    <Grid x:Name="TitleBar" Height="48" Padding="20,0,160,0">
+      <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
+        <FontIcon Glyph="&#xE7FC;" FontSize="18" Foreground="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+        <TextBlock Text="Codex Mixin" FontWeight="SemiBold" VerticalAlignment="Center" />
+      </StackPanel>
+    </Grid>
+    <NavigationView x:Name="Navigation" Grid.Row="1" PaneDisplayMode="Left" IsBackButtonVisible="Collapsed"
+        IsSettingsVisible="True" IsPaneOpen="True" OpenPaneLength="224" SelectionChanged="OnNavigationChanged">
+      <NavigationView.MenuItems>
+        <NavigationViewItem Content="概览" Tag="overview" Icon="Home" IsSelected="True" AutomationProperties.AutomationId="nav-overview" />
+        <NavigationViewItem Content="供应商与模型" Tag="providers" Icon="Library" AutomationProperties.AutomationId="nav-providers" />
+        <NavigationViewItem Content="Agent 接入" Tag="agents" Icon="Link" AutomationProperties.AutomationId="nav-agents" />
+        <NavigationViewItem Content="用量与额度" Tag="usage" Icon="FourBars" AutomationProperties.AutomationId="nav-usage" />
+        <NavigationViewItem Content="Fusion" Tag="fusion" Icon="Shuffle" AutomationProperties.AutomationId="nav-fusion" />
+      </NavigationView.MenuItems>
+      <Grid Padding="32,24" RowSpacing="20">
+        <Grid.RowDefinitions><RowDefinition Height="Auto" /><RowDefinition Height="Auto" /><RowDefinition Height="*" /></Grid.RowDefinitions>
+        <Grid ColumnSpacing="16">
+          <Grid.ColumnDefinitions><ColumnDefinition Width="*" /><ColumnDefinition Width="Auto" /></Grid.ColumnDefinitions>
+          <StackPanel Spacing="6">
+            <TextBlock x:Name="PageTitle" Text="概览" Style="{ThemeResource TitleTextBlockStyle}" />
+            <TextBlock x:Name="PageDescription" AutomationProperties.AutomationId="page-description" Text="模型服务、连接状态与常用操作" Foreground="{ThemeResource TextFillColorSecondaryBrush}" TextWrapping="Wrap" />
+          </StackPanel>
+          <Button Grid.Column="1" Content="刷新" Click="OnRefresh" VerticalAlignment="Center" ToolTipService.ToolTip="刷新当前页面 (Ctrl+R)" />
+        </Grid>
+        <InfoBar x:Name="Notice" Grid.Row="1" IsOpen="False" IsClosable="True" />
+        <ScrollViewer Grid.Row="2" HorizontalScrollBarVisibility="Disabled" VerticalScrollBarVisibility="Auto">
+          <StackPanel x:Name="PageBody" Spacing="16" MaxWidth="1100" HorizontalAlignment="Stretch" />
+        </ScrollViewer>
+      </Grid>
+    </NavigationView>
+    <Grid Grid.Row="2" Padding="20,10" ColumnSpacing="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto" /><ColumnDefinition Width="*" /></Grid.ColumnDefinitions>
+      <ProgressRing x:Name="Activity" Width="18" Height="18" IsActive="False" Visibility="Collapsed" />
+      <TextBlock x:Name="StatusText" AutomationProperties.AutomationId="operation-status" Grid.Column="1" Text="正在连接 CLI…" FontSize="12" TextWrapping="Wrap" Foreground="{ThemeResource TextFillColorSecondaryBrush}" />
+    </Grid>
+  </Grid>
+</Window>

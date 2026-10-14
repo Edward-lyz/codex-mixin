@@ -76,26 +76,18 @@ function Resolve-MakeNsis {
   throw "makensis.exe not found. Install NSIS (https://nsis.sourceforge.io/Download) or pass -NsisPath."
 }
 
-Write-Host "== Building Rust CLI and Flutter UI =="
+Write-Host "== Building Rust CLI and native WinUI 3 UI =="
 Push-Location $repo
 try {
   & (Join-Path $PSScriptRoot "generate-windows-assets.ps1")
   cargo build --locked --release
   if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
-  $uiPublish = Join-Path $repo "windows\build\windows\x64\runner\Release"
+  $uiPublish = Join-Path $repo "windows\build\publish"
   if (Test-Path -LiteralPath $uiPublish) { Remove-Item -LiteralPath $uiPublish -Recurse -Force }
-  Push-Location (Join-Path $repo "windows")
-  try {
-    flutter pub get
-    & (Join-Path $PSScriptRoot "patch-window-manager.ps1") -UiRoot (Join-Path $repo "windows")
-    & (Join-Path $PSScriptRoot "patch-multi-window-rounding.ps1") -UiRoot (Join-Path $repo "windows")
-    flutter analyze
-    if ($LASTEXITCODE -ne 0) { throw "flutter analyze failed" }
-    flutter test
-    if ($LASTEXITCODE -ne 0) { throw "flutter test failed" }
-    flutter build windows --release --build-name $numericVersion --build-number 1 --dart-define "CODEX_MIXIN_VERSION=$Version"
-    if ($LASTEXITCODE -ne 0) { throw "flutter build failed" }
-  } finally { Pop-Location }
+  dotnet run --project windows/Tests/Tests.csproj --configuration Release -- --cli (Join-Path $repo "target\release\codex-mixin.exe")
+  if ($LASTEXITCODE -ne 0) { throw "Windows CLI contract tests failed" }
+  dotnet publish windows/CodexMixin/CodexMixin.csproj -c Release -p:Platform=x64 -p:Version=$numericVersion -o $uiPublish
+  if ($LASTEXITCODE -ne 0) { throw "WinUI 3 publish failed" }
 } finally { Pop-Location }
 Write-Host "== Assembling app directory: $Output =="
 if (Test-Path -LiteralPath $Output) { Remove-Item -LiteralPath $Output -Recurse -Force }
@@ -113,8 +105,8 @@ if (-not (Test-Path -LiteralPath $uiExe)) { throw "Windows UI executable was not
 if (-not (Test-Path -LiteralPath $cliExe)) { throw "Rust CLI executable was not included in the package" }
 
 # Sign every shipped executable and library before packaging so no bundled
-# binary is left unsigned (Flutter ships flutter_windows.dll and one DLL per
-# plugin alongside the two app executables). The installer itself is signed
+# binary is left unsigned, including the self-contained .NET and Windows App
+# SDK runtimes. The installer itself is signed
 # last, after these are embedded.
 if ($Sign) {
   $signTargets = Get-ChildItem -LiteralPath $Output -Recurse -File |
@@ -130,7 +122,7 @@ $makensis = Resolve-MakeNsis
 $nsi = Join-Path $PSScriptRoot "installer.nsi"
 if (-not (Test-Path -LiteralPath $nsi)) { throw "NSIS script not found: $nsi" }
 if (-not (Test-Path -Path (Join-Path $Output "*"))) { throw "Staging directory is empty: $Output" }
-$iconFile = Join-Path $repo "windows\windows\runner\resources\app_icon.ico"
+$iconFile = Join-Path $repo "windows\assets\app_icon.ico"
 $installerDir = Split-Path -Parent $Installer
 New-Item -ItemType Directory -Force -Path $installerDir | Out-Null
 if (Test-Path -LiteralPath $Installer) { Remove-Item -LiteralPath $Installer -Force }

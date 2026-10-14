@@ -68,21 +68,6 @@ function New-IcoFile {
 
 $repo = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 New-IcoFile -InputPath $Source -OutputPath (Join-Path $repo "windows\assets\tray_icon.ico")
-New-IcoFile -InputPath $Source -OutputPath (Join-Path $repo "windows\windows\runner\resources\app_icon.ico")
+New-IcoFile -InputPath $Source -OutputPath (Join-Path $repo "windows\assets\app_icon.ico")
 
-# Provider icons live under macos/assets/providers as the single source of
-# truth. Flutter can only bundle assets inside its own package root, so mirror
-# them into windows/assets/providers here (that directory is gitignored and
-# regenerated) instead of committing a duplicate copy.
-$providerSrc = Join-Path $repo "macos\assets\providers"
-$providerDst = Join-Path $repo "windows\assets\providers"
-New-Item -ItemType Directory -Force -Path $providerDst | Out-Null
-Copy-Item -Path (Join-Path $providerSrc "*.svg") -Destination $providerDst -Force
-
-Write-Host "Generated Windows assets (icons + provider SVGs) from $Source and $providerSrc"
-
-# Agent SVG/PNG marks and their manifest use the same source as macOS.
-$agentSrc = Join-Path $repo "macos\assets\agents"
-$agentDst = Join-Path $repo "windows\assets\agents"
-New-Item -ItemType Directory -Force -Path $agentDst | Out-Null
-Copy-Item -Path (Join-Path $agentSrc "*.svg"), (Join-Path $agentSrc "*.png"), (Join-Path $agentSrc "manifest.json") -Destination $agentDst -Force
+Write-Host "Generated native Windows application and tray icons from $Source"
