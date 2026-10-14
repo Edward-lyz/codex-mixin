@@ -18,12 +18,13 @@ internal static class Program
         Directory.CreateDirectory(output);
         var config = Path.Combine(output, "isolated", "config.json");
         Directory.CreateDirectory(Path.GetDirectoryName(config)!);
-        var start = new ProcessStartInfo(Path.GetFullPath(args[0])) { UseShellExecute = false };
+        var start = new ProcessStartInfo(Path.GetFullPath(args[0])) { UseShellExecute = false, RedirectStandardError = true };
         start.Environment["CODEX_GATEWAY_CONFIG"] = config;
         start.ArgumentList.Add("--capture-ui");
         var previousConfig = Environment.GetEnvironmentVariable("CODEX_GATEWAY_CONFIG");
         Environment.SetEnvironmentVariable("CODEX_GATEWAY_CONFIG", config);
         using var process = Process.Start(start) ?? throw new InvalidOperationException("Cannot launch WinUI app");
+        var nativeErrors = process.StandardError.ReadToEndAsync();
         nint handle = 0;
         try
         {
@@ -107,6 +108,8 @@ internal static class Program
         finally
         {
             if (!process.HasExited) { process.Kill(true); process.WaitForExit(); }
+            var errors = nativeErrors.GetAwaiter().GetResult();
+            if (!string.IsNullOrWhiteSpace(errors)) File.WriteAllText(Path.Combine(output, "native-errors.txt"), errors);
             Environment.SetEnvironmentVariable("CODEX_GATEWAY_CONFIG", previousConfig);
             WriteGallery(output);
         }

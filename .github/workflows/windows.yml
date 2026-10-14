@@ -132,6 +132,7 @@ jobs:
             windows/build/ui-test-artifacts/*.png
             windows/build/ui-test-artifacts/index.html
             windows/build/ui-test-artifacts/failure.txt
+            windows/build/ui-test-artifacts/native-errors.txt
           retention-days: 14
           if-no-files-found: warn
 

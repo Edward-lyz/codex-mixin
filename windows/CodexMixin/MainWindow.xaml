@@ -11,7 +11,7 @@
     </Grid>
     <ContentControl x:Name="PageShell" Grid.Row="1" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"><Grid>
       <Grid.ColumnDefinitions><ColumnDefinition x:Name="SidebarColumn" Width="232"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
-      <Border x:Name="ProviderSidebar" Background="{ThemeResource NavigationViewDefaultPaneBackground}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,1,0">
+      <Border x:Name="ProviderSidebar" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,1,0">
         <Grid Padding="8,12" RowSpacing="12">
           <Grid.RowDefinitions><RowDefinition Height="Auto"/><RowDefinition Height="*"/></Grid.RowDefinitions>
           <Grid Padding="8,0" ColumnSpacing="8">

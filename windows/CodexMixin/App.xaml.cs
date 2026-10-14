@@ -60,7 +60,8 @@ public partial class App : Application
             Exit();
             return;
         }
-        OpenPage("providers");
+        try { OpenPage("providers"); }
+        catch (Exception error) { Console.Error.WriteLine($"Windows startup failed: {error}"); throw; }
         window = windows["providers"];
         instance.Activated += (_, activation) => window.DispatcherQueue.TryEnqueue(() =>
         {
