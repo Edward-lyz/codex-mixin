@@ -34,7 +34,15 @@ internal static class Program
             MoveWindow(handle, desktop.Left + 24, desktop.Top + 24,
                 Math.Min(1120, desktop.Width - 48), Math.Min(800, desktop.Height - 48), true);
             AutomationElement? loadedWindow = null;
-            Wait(() => { loadedWindow = AutomationElement.FromHandle(handle); return loadedWindow.Current.ControlType == ControlType.Window; }, "native automation window", process);
+            Wait(() =>
+            {
+                loadedWindow = AutomationElement.RootElement.FindFirst(TreeScope.Children, new AndCondition(
+                    new PropertyCondition(AutomationElement.ProcessIdProperty, process.Id),
+                    new PropertyCondition(AutomationElement.NameProperty, "模型与服务")));
+                if (loadedWindow == null) return false;
+                handle = (nint)loadedWindow.Current.NativeWindowHandle;
+                return !loadedWindow.Current.IsOffscreen;
+            }, "native automation window", process);
             var window = loadedWindow!;
             Wait(() => Find(window, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), "initial CLI load", process);
             AssertName(window, "还没有服务商");
