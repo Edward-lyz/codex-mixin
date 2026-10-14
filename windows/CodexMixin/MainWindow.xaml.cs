@@ -424,7 +424,7 @@ public sealed partial class MainWindow : Window
             context.ValueChanged += (_, change) => { contexts[modelId] = change.NewValue; MarkDirty(); };
             var capabilities = string.Join(" ", new[] { ("supports_image", "图像"), ("supports_thinking", "思考"), ("supports_function_tools", "工具"), ("supports_web_search", "搜索") }
                 .Where(capability => model.TryGetProperty(capability.Item1, out var value) && value.ValueKind == JsonValueKind.True).Select(capability => capability.Item2));
-            var cells = new UIElement[] { check, title, Text("—"), Text("—"), context, Text(capabilities.Length == 0 ? "待探测" : capabilities) };
+            var cells = new FrameworkElement[] { check, title, Text("—"), Text("—"), context, Text(capabilities.Length == 0 ? "待探测" : capabilities) };
             for (var index = 0; index < cells.Length; index++) { Grid.SetColumn(cells[index], index); row.Children.Add(cells[index]); }
             args.ItemContainer.HorizontalContentAlignment = HorizontalAlignment.Stretch;
             args.ItemContainer.Content = row;

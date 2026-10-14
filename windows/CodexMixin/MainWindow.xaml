@@ -9,7 +9,7 @@
         <TextBlock x:Name="WindowCaption" Text="模型与服务" FontWeight="SemiBold" VerticalAlignment="Center"/>
       </StackPanel>
     </Grid>
-    <Grid x:Name="PageShell" Grid.Row="1">
+    <ContentControl x:Name="PageShell" Grid.Row="1" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"><Grid>
       <Grid.ColumnDefinitions><ColumnDefinition x:Name="SidebarColumn" Width="232"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>
       <Border x:Name="ProviderSidebar" Background="{ThemeResource NavigationViewDefaultPaneBackground}" BorderBrush="{ThemeResource CardStrokeColorDefaultBrush}" BorderThickness="0,1,1,0">
         <Grid Padding="8,12" RowSpacing="12">
@@ -58,7 +58,7 @@
           <Button x:Name="ApplyChanges" Grid.Column="1" Content="应用更改" Style="{ThemeResource AccentButtonStyle}" Click="OnApplyChanges" AutomationProperties.AutomationId="apply-changes"/>
         </Grid>
       </Grid>
-    </Grid>
+    </Grid></ContentControl>
     <Grid Grid.Row="2" Padding="16,8" ColumnSpacing="12" Background="{ThemeResource CardBackgroundFillColorDefaultBrush}">
       <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
       <ProgressRing x:Name="Activity" Width="18" Height="18" IsActive="False" Visibility="Collapsed"/>
