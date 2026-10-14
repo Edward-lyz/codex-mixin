@@ -40,17 +40,31 @@ internal sealed class FixtureHost : IDisposable
             {
                 var context = await listener.GetContextAsync().WaitAsync(lifetime.Token);
                 string response;
+                var contentType = "application/json";
                 if (context.Request.HttpMethod == "GET" && context.Request.Url?.AbsolutePath == "/quota")
                     response = JsonSerializer.Serialize(new { used = 81, limit = 100, remaining = 19 });
                 else if (context.Request.HttpMethod == "POST" && context.Request.Url?.AbsolutePath == "/v1/chat/completions")
                 {
                     using var request = await JsonDocument.ParseAsync(context.Request.InputStream, cancellationToken: lifetime.Token);
                     var model = request.RootElement.GetProperty("model").GetString();
-                    response = JsonSerializer.Serialize(new
+                    var usage = new { prompt_tokens = model == "ci-coder" ? 1000 : 500, completion_tokens = 32, total_tokens = model == "ci-coder" ? 1032 : 532 };
+                    // The gateway streams from upstream even when the client asks for one JSON reply.
+                    if (request.RootElement.TryGetProperty("stream", out var stream) && stream.ValueKind == JsonValueKind.True)
+                    {
+                        contentType = "text/event-stream";
+                        var chunks = new object[]
+                        {
+                            new { id = "ci-reply", @object = "chat.completion.chunk", created = 1, model, choices = new[] { new { index = 0, delta = new { role = "assistant", content = "CI fixture reply" }, finish_reason = (string?)null } } },
+                            new { id = "ci-reply", @object = "chat.completion.chunk", created = 1, model, choices = new[] { new { index = 0, delta = new { }, finish_reason = "stop" } } },
+                            new { id = "ci-reply", @object = "chat.completion.chunk", created = 1, model, choices = Array.Empty<object>(), usage }
+                        };
+                        response = string.Concat(chunks.Select(chunk => $"data: {JsonSerializer.Serialize(chunk)}\n\n")) + "data: [DONE]\n\n";
+                    }
+                    else response = JsonSerializer.Serialize(new
                     {
                         id = "ci-reply", @object = "chat.completion", created = 1, model,
                         choices = new[] { new { index = 0, message = new { role = "assistant", content = "CI fixture reply" }, finish_reason = "stop" } },
-                        usage = new { prompt_tokens = model == "ci-coder" ? 1000 : 500, completion_tokens = 32, total_tokens = model == "ci-coder" ? 1032 : 532 }
+                        usage
                     });
                 }
                 else
@@ -60,7 +74,7 @@ internal sealed class FixtureHost : IDisposable
                     throw new InvalidOperationException($"Unexpected upstream fixture request: {context.Request.HttpMethod} {context.Request.Url?.AbsolutePath}");
                 }
                 var bytes = Encoding.UTF8.GetBytes(response);
-                context.Response.ContentType = "application/json";
+                context.Response.ContentType = contentType;
                 context.Response.ContentLength64 = bytes.Length;
                 await context.Response.OutputStream.WriteAsync(bytes, lifetime.Token);
                 context.Response.Close();
