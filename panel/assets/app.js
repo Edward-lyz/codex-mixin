@@ -653,12 +653,13 @@ RENDERERS.home = () => {
 function exposureNotice() {
   const bind = String(state.snapshot.status?.bind || state.snapshot.gateway_bind || "");
   const open = bind.startsWith("0.0.0.0") || bind.startsWith("[::]");
-  if (!open || state.snapshot.gateway_auth_configured) return null;
+  const enforced = state.snapshot.panel?.client_auth_build && state.snapshot.gateway_auth_configured;
+  if (!open || enforced) return null;
   return h(
     "div",
     { class: "notice", role: "note" },
     h("span", { class: "dot is-bad notice-mark", "aria-hidden": "true" }),
-    h("div", null, h("strong", { text: "网关对局域网开放且未设置访问密钥" }), h("div", { class: "card-note", text: "同一网络中的其他设备可以直接使用你的 Provider 额度。需要时请设置网关密钥，或用 --bind 127.0.0.1:PORT 只监听本机。" })),
+    h("div", null, h("strong", { text: "网关对局域网开放且不校验访问密钥" }), h("div", { class: "card-note", text: "同一网络中的其他设备可以直接使用你的 Provider 额度。需要限制时，使用 client-auth 构建并设置网关密钥，或用 --bind 127.0.0.1:PORT 只监听本机。" })),
   );
 }
 
@@ -1259,6 +1260,7 @@ RENDERERS.system = () => {
           ["网关版本", status.gateway_version],
           ["网关监听", status.bind || state.snapshot.gateway_bind],
           ["网关访问密钥", state.snapshot.gateway_auth_configured ? "已设置" : "未设置"],
+          ["入站鉴权", panel.client_auth_build ? "client-auth 构建，按密钥校验" : "默认构建，不校验"],
           ["已安装命令", panel.installed_cli_path],
           ["日志文件", status.log],
         ].flatMap(([key, value]) => [h("dt", { text: key }), h("dd", { class: "mono", text: str(value) })]),

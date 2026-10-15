@@ -247,6 +247,8 @@ async fn snapshot(
         "models": models,
         "panel": {
             "version": env!("CARGO_PKG_VERSION"),
+            // Without this build feature the gateway accepts every client.
+            "client_auth_build": cfg!(feature = "client-auth"),
             "start_page": state.start_page,
             "installed_cli_path": state.installed_cli_path,
         },
