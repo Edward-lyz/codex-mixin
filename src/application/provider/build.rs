@@ -92,6 +92,10 @@ pub struct PreparedProvider {
 
 pub fn create_provider(input: AddProviderInput) -> anyhow::Result<PreparedProvider> {
     let preset = ProviderPreset::parse(input.preset.trim())?;
+    anyhow::ensure!(
+        !preset.is_virtual(),
+        "the official OAuth preset must be added through its authorization workflow"
+    );
     let id = input.id.unwrap_or_else(|| preset.default_id().to_owned());
     let mut provider = if preset == ProviderPreset::AwsBedrock && input.key.is_none() {
         let access_key_id = required(

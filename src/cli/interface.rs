@@ -64,7 +64,7 @@ fn provider_catalog() -> Value {
             json!({
                 "id": spec.id,
                 "default_id": preset.default_id(),
-                "allow_multiple": *preset != ProviderPreset::Official,
+                "allow_multiple": !preset.is_virtual(),
                 "display_name": spec.display_name,
                 "description": spec.description,
                 "icon": spec.icon,

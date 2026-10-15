@@ -89,11 +89,15 @@ impl ProviderPreset {
     }
 
     pub fn default_id(self) -> &'static str {
-        if self == Self::Official {
+        if self.is_virtual() {
             "official"
         } else {
             self.as_str()
         }
+    }
+
+    pub fn is_virtual(self) -> bool {
+        self == Self::Official
     }
 
     pub fn spec(self) -> &'static ProviderSpec {
@@ -621,10 +625,10 @@ mod tests {
     }
 
     #[test]
-    fn every_non_custom_preset_is_valid_with_required_credentials() {
+    fn every_stored_preset_is_valid_with_required_credentials() {
         for preset in ProviderPreset::ALL
             .into_iter()
-            .filter(|preset| *preset != ProviderPreset::Custom)
+            .filter(|preset| *preset != ProviderPreset::Custom && !preset.is_virtual())
         {
             let mut provider = preset.create(preset.default_id(), "secret");
             if preset == ProviderPreset::BaiduOneApi {
@@ -632,6 +636,15 @@ mod tests {
             }
             provider.validate().unwrap();
         }
+    }
+
+    #[test]
+    fn official_oauth_uses_the_reserved_virtual_provider() {
+        let preset = ProviderPreset::Official;
+        assert!(preset.is_virtual());
+        assert_eq!(preset.default_id(), "official");
+        assert_eq!(preset.as_str(), "openai");
+        assert!(preset.create(preset.default_id(), "").validate().is_err());
     }
 
     #[test]
