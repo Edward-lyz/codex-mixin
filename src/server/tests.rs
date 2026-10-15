@@ -345,7 +345,12 @@ async fn usage_auth_obeys_build_feature() {
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let address = listener.local_addr().unwrap();
     tokio::spawn(async move {
-        axum::serve(listener, router(state)).await.unwrap();
+        axum::serve(
+            listener,
+            router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
 
     let client = Client::new();
@@ -675,7 +680,12 @@ async fn benchmark_api_runs_after_the_start_request_returns_and_persists_results
     .unwrap();
     state.benchmarks = ModelBenchmarkManager::new(results_path.clone());
     tokio::spawn(async move {
-        axum::serve(gateway_listener, router(state)).await.unwrap();
+        axum::serve(
+            gateway_listener,
+            router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+        )
+        .await
+        .unwrap();
     });
 
     let client = Client::new();
