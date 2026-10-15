@@ -168,18 +168,22 @@ internal static class Program
         {
             Console.Error.WriteLine(error);
             File.WriteAllText(Path.Combine(output, "failure.txt"), error.ToString());
-            if (handle != 0 && !process.HasExited)
+            if (!process.HasExited)
             {
                 // Visible text holds the status line and InfoBar, which name the failing CLI step.
-                try
+                // Every open window is recorded: the failing check may belong to the tray panel.
+                var windows = AutomationElement.RootElement.FindAll(TreeScope.Children, new PropertyCondition(AutomationElement.ProcessIdProperty, process.Id)).Cast<AutomationElement>().ToArray();
+                for (var index = 0; index < windows.Length; index++)
                 {
-                    var texts = AutomationElement.FromHandle(handle).FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text))
-                        .Cast<AutomationElement>().Select(element => element.Current.Name).Where(name => !string.IsNullOrWhiteSpace(name)).Take(80);
-                    File.AppendAllText(Path.Combine(output, "failure.txt"), "\n\nVisible text:\n" + string.Join("\n", texts));
+                    try
+                    {
+                        var texts = windows[index].FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text))
+                            .Cast<AutomationElement>().Select(element => element.Current.Name).Where(name => !string.IsNullOrWhiteSpace(name)).Take(80);
+                        File.AppendAllText(Path.Combine(output, "failure.txt"), $"\n\nVisible text in {windows[index].Current.Name}:\n" + string.Join("\n", texts));
+                        Capture(windows[index], Path.Combine(output, $"failure-{index}.png"));
+                    }
+                    catch (Exception captureError) { Console.Error.WriteLine($"Failure evidence unavailable: {captureError.Message}"); }
                 }
-                catch (Exception textError) { Console.Error.WriteLine($"Failure text unavailable: {textError.Message}"); }
-                try { Capture(AutomationElement.FromHandle(handle), Path.Combine(output, "failure.png")); }
-                catch (Exception captureError) { Console.Error.WriteLine($"Failure screenshot unavailable: {captureError.Message}"); }
             }
             return 1;
         }
@@ -288,9 +292,22 @@ internal static class Program
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "ci-gateway-fixture");
         foreach (var model in modelIds.Take(2))
         {
-            using var response = await client.PostAsJsonAsync($"{gateway}/v1/chat/completions", new { model, stream = false, messages = new[] { new { role = "user", content = "UI screenshot fixture" } } });
-            if (!response.IsSuccessStatusCode)
-                throw new InvalidOperationException($"Demo gateway request failed: {response.StatusCode}: {await response.Content.ReadAsStringAsync()}");
+            // Codex calls the Responses endpoint with a session header; the gateway
+            // records provider usage only for requests that carry a session.
+            using var request = new HttpRequestMessage(HttpMethod.Post, $"{gateway}/v1/responses")
+            {
+                Content = JsonContent.Create(new
+                {
+                    model, stream = true, instructions = "UI screenshot fixture",
+                    input = new[] { new { type = "message", role = "user", content = new[] { new { type = "input_text", text = "say hi" } } } }
+                })
+            };
+            request.Headers.Add("session-id", $"ui-fixture-{model}");
+            using var response = await client.SendAsync(request);
+            // Reading the whole stream lets the gateway finish and record the request.
+            var body = await response.Content.ReadAsStringAsync();
+            if (!response.IsSuccessStatusCode || !body.Contains("response.completed", StringComparison.Ordinal))
+                throw new InvalidOperationException($"Demo gateway request failed: {response.StatusCode}: {body}");
         }
     }
 
