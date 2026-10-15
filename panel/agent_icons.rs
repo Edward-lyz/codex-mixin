@@ -1,4 +1,5 @@
-//! Agent logos shared with the macOS app (see macos/assets/agents/ATTRIBUTION.md).
+//! Agent and provider logos shared with the macOS app (see the ATTRIBUTION.md
+//! files next to them).
 //! Generated from macos/assets/agents/manifest.json; keep the two in sync.
 
 pub(super) const AGENT_ICONS: &[(&str, &str, &[u8])] = &[
@@ -280,4 +281,35 @@ pub(super) const TEMPLATE_AGENT_ICONS: &[&str] = &[
     "vscode-insiders",
     "vscodium",
     "zed",
+];
+
+/// Provider preset logos shared with the macOS app (see
+/// macos/assets/providers/ATTRIBUTION.md), keyed by the `icon` field of
+/// `providers list --json`.
+pub(super) const PROVIDER_ICONS: &[(&str, &[u8])] = &[
+    ("aws", include_bytes!("../macos/assets/providers/aws.svg")),
+    (
+        "baidu",
+        include_bytes!("../macos/assets/providers/baidu.svg"),
+    ),
+    (
+        "custom",
+        include_bytes!("../macos/assets/providers/custom.svg"),
+    ),
+    (
+        "deepseek",
+        include_bytes!("../macos/assets/providers/deepseek.svg"),
+    ),
+    (
+        "openai",
+        include_bytes!("../macos/assets/providers/openai.svg"),
+    ),
+    (
+        "opencode",
+        include_bytes!("../macos/assets/providers/opencode.svg"),
+    ),
+    (
+        "openrouter",
+        include_bytes!("../macos/assets/providers/openrouter.svg"),
+    ),
 ];

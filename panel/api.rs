@@ -10,6 +10,11 @@
 //!   `doctor --quick --json`; `GET /api/logs?lines=N` -> `{text}`.
 //! - `GET /api/agents` -> `agent list --json` plus `template_icons`;
 //!   `GET /api/agents/versions` -> `agent versions --json` (network).
+//! - `GET /api/ech` -> `ech status --json`; `GET /api/report/estimate` ->
+//!   `report-replay --all-sessions --estimate --json`.
+//! - `GET /api/config/export` downloads a Base64 backup (not encrypted);
+//!   `POST /api/config/import` takes the backup bytes, imports them and
+//!   restarts the gateway.
 //! - `POST /api/actions` with `{action, params?}` (see `actions.rs`) ->
 //!   `{ok: true, stdout, json}`. One action runs at a time; a concurrent
 //!   request gets HTTP 409 with code `busy`.
@@ -31,10 +36,13 @@ use serde_json::{Value, json};
 use subtle::ConstantTimeEq;
 
 use super::actions::PanelAction;
-use super::agent_icons::{AGENT_ICONS, TEMPLATE_AGENT_ICONS};
+use super::agent_icons::{AGENT_ICONS, PROVIDER_ICONS, TEMPLATE_AGENT_ICONS};
 use super::cli::{CliFailure, run_cli, run_json};
 
 const MAX_BODY_BYTES: usize = 64 * 1024;
+/// Backups carry every provider's cached model catalog.
+const MAX_BACKUP_BYTES: usize = 16 * 1024 * 1024;
+const BACKUP_FILE_NAME: &str = "codex-mixin-config.backup";
 const MAX_LOG_LINES: u32 = 2_000;
 const DEFAULT_LOG_LINES: u32 = 200;
 const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; style-src 'self'; \
@@ -98,6 +106,13 @@ pub(super) fn router(state: Shared) -> Router {
         .route("/api/logs", get(logs))
         .route("/api/agents", get(agents))
         .route("/api/agents/versions", get(agent_versions))
+        .route("/api/ech", get(ech_status))
+        .route("/api/report/estimate", get(report_estimate))
+        .route("/api/config/export", get(export_config))
+        .route(
+            "/api/config/import",
+            post(import_config).layer(DefaultBodyLimit::max(MAX_BACKUP_BYTES)),
+        )
         .route("/api/actions", post(action))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new()
@@ -119,6 +134,7 @@ pub(super) fn router(state: Shared) -> Router {
             get(|| async { binary("font/woff2", MONO_FONT) }),
         )
         .route("/agent-icons/{id}", get(agent_icon))
+        .route("/provider-icons/{id}", get(provider_icon))
         .merge(api)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(middleware::from_fn(security_headers))
@@ -143,6 +159,13 @@ fn binary(content_type: &'static str, body: &'static [u8]) -> Response {
 async fn agent_icon(Path(id): Path<String>) -> Response {
     match AGENT_ICONS.iter().find(|(icon_id, _, _)| *icon_id == id) {
         Some((_, content_type, body)) => binary(content_type, body),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
+async fn provider_icon(Path(id): Path<String>) -> Response {
+    match PROVIDER_ICONS.iter().find(|(icon_id, _)| *icon_id == id) {
+        Some((_, body)) => binary("image/svg+xml", body),
         None => StatusCode::NOT_FOUND.into_response(),
     }
 }
@@ -331,22 +354,29 @@ async fn logs(Query(query): Query<LogsQuery>) -> Result<Json<Value>, ApiError> {
     Ok(Json(json!({ "text": text })))
 }
 
+fn busy() -> ApiError {
+    ApiError {
+        status: StatusCode::CONFLICT,
+        failure: CliFailure::panel(
+            "busy",
+            "another panel action is still running".to_owned(),
+            Value::Bool(false),
+        ),
+    }
+}
+
 async fn action(
     State(state): State<Shared>,
     Json(action): Json<PanelAction>,
 ) -> Result<Json<Value>, ApiError> {
-    let invocation = action.invocation().map_err(ApiError::invalid)?;
+    let invocations = action.invocations().map_err(ApiError::invalid)?;
     let Ok(_guard) = state.action_lock.try_lock() else {
-        return Err(ApiError {
-            status: StatusCode::CONFLICT,
-            failure: CliFailure::panel(
-                "busy",
-                "another panel action is still running".to_owned(),
-                Value::Bool(false),
-            ),
-        });
+        return Err(busy());
     };
-    let stdout = run_cli(&invocation.args, &invocation.secrets).await?;
+    let mut stdout = String::new();
+    for invocation in &invocations {
+        stdout = run_cli(&invocation.args, &invocation.secrets).await?;
+    }
     let parsed = if action.prints_json() {
         serde_json::from_str(&stdout).unwrap_or(Value::Null)
     } else {
@@ -355,4 +385,101 @@ async fn action(
     Ok(Json(
         json!({ "ok": true, "stdout": stdout, "json": parsed }),
     ))
+}
+
+async fn ech_status() -> Result<Json<Value>, ApiError> {
+    Ok(Json(run_json(&["ech", "status", "--json"]).await?))
+}
+
+async fn report_estimate() -> Result<Json<Value>, ApiError> {
+    Ok(Json(
+        run_json(&["report-replay", "--all-sessions", "--estimate", "--json"]).await?,
+    ))
+}
+
+fn backup_workspace() -> Result<tempfile::TempDir, ApiError> {
+    // A fresh private directory keeps the plaintext backup away from other
+    // users; it is removed when the handle drops.
+    tempfile::tempdir().map_err(|error| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        failure: CliFailure::panel(
+            "panel_internal",
+            format!("create backup workspace: {error}"),
+            Value::Bool(false),
+        ),
+    })
+}
+
+fn path_arg(path: &std::path::Path) -> String {
+    path.display().to_string()
+}
+
+async fn export_config(State(state): State<Shared>) -> Result<Response, ApiError> {
+    let Ok(_guard) = state.action_lock.try_lock() else {
+        return Err(busy());
+    };
+    let workspace = backup_workspace()?;
+    let path = workspace.path().join(BACKUP_FILE_NAME);
+    run_cli(
+        &["config".to_owned(), "export".to_owned(), path_arg(&path)],
+        &[],
+    )
+    .await?;
+    let body = tokio::fs::read(&path).await.map_err(|error| ApiError {
+        status: StatusCode::INTERNAL_SERVER_ERROR,
+        failure: CliFailure::panel(
+            "panel_internal",
+            format!("read exported backup: {error}"),
+            Value::Bool(true),
+        ),
+    })?;
+    Ok((
+        [
+            (header::CONTENT_TYPE, "application/octet-stream".to_owned()),
+            (
+                header::CONTENT_DISPOSITION,
+                format!("attachment; filename=\"{BACKUP_FILE_NAME}\""),
+            ),
+        ],
+        body,
+    )
+        .into_response())
+}
+
+async fn import_config(
+    State(state): State<Shared>,
+    body: axum::body::Bytes,
+) -> Result<Json<Value>, ApiError> {
+    if body.is_empty() {
+        return Err(ApiError::invalid("backup file is empty".to_owned()));
+    }
+    let Ok(_guard) = state.action_lock.try_lock() else {
+        return Err(busy());
+    };
+    let workspace = backup_workspace()?;
+    let path = workspace.path().join(BACKUP_FILE_NAME);
+    tokio::fs::write(&path, &body)
+        .await
+        .map_err(|error| ApiError {
+            status: StatusCode::INTERNAL_SERVER_ERROR,
+            failure: CliFailure::panel(
+                "panel_internal",
+                format!("stage uploaded backup: {error}"),
+                Value::Bool(false),
+            ),
+        })?;
+    run_cli(
+        &["config".to_owned(), "import".to_owned(), path_arg(&path)],
+        &[],
+    )
+    .await?;
+    // The import is committed; a restart failure must say so.
+    run_cli(&["service".to_owned(), "restart".to_owned()], &[])
+        .await
+        .map_err(|mut failure| {
+            failure.committed = Value::Bool(true);
+            failure.stage = json!("gateway restart");
+            ApiError::from(failure)
+        })?;
+    Ok(Json(json!({ "ok": true })))
 }

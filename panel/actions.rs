@@ -95,6 +95,11 @@ pub(super) enum PanelAction {
     AgentUpgrade {
         id: String,
     },
+    EchEnable,
+    EchDisable,
+    EchTest,
+    /// Re-report every local session (DUCX repair path).
+    ReportReplay,
     Update,
     DoctorFix,
     RefreshCodexCatalog,
@@ -153,6 +158,8 @@ const PROVIDER_ADD_OPTIONS: &[(&str, OptionKind)] = &[
     ("auxiliary_model_upstream", OptionKind::Bool),
     ("baidu_auth_bridge", OptionKind::Text),
     ("baidu_code_report", OptionKind::Bool),
+    ("protocol", OptionKind::Text),
+    ("api_path", OptionKind::Text),
 ];
 
 const PROVIDER_UPDATE_OPTIONS: &[(&str, OptionKind)] = &[
@@ -183,6 +190,9 @@ const PROVIDER_UPDATE_OPTIONS: &[(&str, OptionKind)] = &[
     ("baidu_code_report", OptionKind::Bool),
     ("auto_review_model", OptionKind::Text),
     ("clear_auto_review_model", OptionKind::Switch),
+    // Custom providers choose their wire protocol and matching API path.
+    ("protocol", OptionKind::Text),
+    ("api_path", OptionKind::Text),
 ];
 
 /// A validated CLI invocation ready to run.
@@ -316,7 +326,24 @@ fn provider_id_command(operation: &str, id: &str) -> Result<CliInvocation, Strin
 impl PanelAction {
     /// Whether stdout is a JSON document the panel should parse.
     pub(super) fn prints_json(&self) -> bool {
-        matches!(self, Self::ProviderTest { .. })
+        matches!(
+            self,
+            Self::ProviderTest { .. } | Self::EchTest | Self::ReportReplay
+        )
+    }
+
+    /// CLI calls in order; a failure stops the sequence. Only the manual
+    /// report runs several steps, mirroring the macOS app: reset upload
+    /// credentials, restart for a fresh DUCX warmup, then replay sessions.
+    pub(super) fn invocations(&self) -> Result<Vec<CliInvocation>, String> {
+        if matches!(self, Self::ReportReplay) {
+            return Ok(vec![
+                CliInvocation::fixed(&["report-replay", "--prepare-warmup"]),
+                CliInvocation::fixed(&["service", "restart"]),
+                CliInvocation::fixed(&["report-replay", "--all-sessions", "--json"]),
+            ]);
+        }
+        Ok(vec![self.invocation()?])
     }
 
     pub(super) fn invocation(&self) -> Result<CliInvocation, String> {
@@ -449,6 +476,12 @@ impl PanelAction {
             }
             Self::AgentDisconnect { id } => agent_command("disconnect", id),
             Self::AgentUpgrade { id } => agent_command("upgrade", id),
+            Self::EchEnable => Ok(CliInvocation::fixed(&["ech", "enable"])),
+            Self::EchDisable => Ok(CliInvocation::fixed(&["ech", "disable"])),
+            Self::EchTest => Ok(CliInvocation::fixed(&["ech", "test", "--json"])),
+            Self::ReportReplay => {
+                Err("manual report runs several steps; use invocations()".to_owned())
+            }
             Self::Update => Ok(CliInvocation::fixed(&["update"])),
             Self::DoctorFix => Ok(CliInvocation::fixed(&["doctor", "--fix", "--quick"])),
             Self::RefreshCodexCatalog => Ok(CliInvocation::fixed(&["refresh-codex-catalog"])),

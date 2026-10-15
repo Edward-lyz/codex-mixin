@@ -189,3 +189,49 @@ async fn agent_icons_are_served_and_unknown_ids_are_not_found() {
         .unwrap();
     assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 }
+
+#[test]
+fn manual_report_runs_warmup_restart_and_replay_in_order() {
+    let steps = action(json!({"action": "report_replay"}))
+        .invocations()
+        .unwrap()
+        .into_iter()
+        .map(|step| step.args)
+        .collect::<Vec<_>>();
+    assert_eq!(
+        steps,
+        [
+            vec!["report-replay", "--prepare-warmup"],
+            vec!["service", "restart"],
+            vec!["report-replay", "--all-sessions", "--json"],
+        ]
+    );
+}
+
+#[tokio::test]
+async fn empty_backup_import_is_rejected_before_running_the_cli() {
+    let response = test_router()
+        .oneshot(
+            Request::post("/api/config/import")
+                .header(header::AUTHORIZATION, "Bearer expected-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+}
+
+#[tokio::test]
+async fn provider_icons_are_served_by_preset_icon_name() {
+    for (path, status) in [
+        ("/provider-icons/baidu", StatusCode::OK),
+        ("/provider-icons/unknown", StatusCode::NOT_FOUND),
+    ] {
+        let response = test_router()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(response.status(), status, "{path}");
+    }
+}
