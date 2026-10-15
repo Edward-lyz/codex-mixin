@@ -8,7 +8,7 @@
 
 ## 产品原则：CLI 是核心，GUI 是外壳
 
-Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连接官方服务及 OpenAI Chat Completions、Anthropic Messages 等兼容 provider。macOS 菜单栏 App、Windows Flutter App 和 TUI 是同一能力的交互外壳，不是独立业务实现。
+Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连接官方服务及 OpenAI Chat Completions、Anthropic Messages 等兼容 provider。macOS 菜单栏 App、Windows WinUI 3 App 和 TUI 是同一能力的交互外壳，不是独立业务实现。
 
 - 新增业务必须先提供可在 `--no-tui` 下使用的 CLI 入口及可验证的 Rust 用例；自动化调用需要稳定 JSON 输出与结构化错误。无 GUI 环境也必须能配置、运行、诊断和恢复。
 - “CLI 是核心”不等于把业务都塞进 `src/cli/`。参数、输入、渲染与退出码属于 CLI；业务规则、提交顺序和可复用能力属于 `application` 及下层模块。
@@ -75,7 +75,7 @@ Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连�
 
 实现前读相邻源码、契约和测试；若提供 LSP，优先用于定位引用。没有可用 LSP 接口时使用文件搜索与原生读取，不宣称执行了语义分析。
 
-验证命令默认从仓库根运行，Windows Flutter 命令另标工作目录。修 bug 先写复现并观察失败，再修复并观察通过；完成工作时执行最终检查。
+验证命令默认从仓库根运行，Windows .NET 命令另标工作目录。修 bug 先写复现并观察失败，再修复并观察通过；完成工作时执行最终检查。
 
 Rust/分层改动的门禁：
 

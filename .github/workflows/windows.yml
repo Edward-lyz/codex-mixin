@@ -2,12 +2,26 @@ name: Windows
 
 on:
   workflow_dispatch:
+    inputs:
+      ui_artifact_run:
+        description: 'Re-run UI tests with native UI and CLI artifacts from this Windows run ID'
+        required: false
+        type: string
+      cli_artifact_run:
+        description: 'Optional CLI artifact run ID when re-running native UI artifacts'
+        required: false
+        type: string
   pull_request:
   push:
     branches: [main]
 
+concurrency:
+  group: windows-${{ github.ref }}-${{ inputs.ui_artifact_run }}
+  cancel-in-progress: true
+
 jobs:
   rust:
+    if: ${{ !inputs.ui_artifact_run }}
     runs-on: windows-latest
     steps:
       - uses: actions/checkout@v5
@@ -18,7 +32,17 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Install ripgrep
         shell: pwsh
-        run: choco install ripgrep -y --no-progress
+        run: |
+          $version = '15.1.0'
+          $archive = Join-Path $env:RUNNER_TEMP 'ripgrep.zip'
+          $tools = Join-Path $env:RUNNER_TEMP 'ripgrep'
+          Invoke-WebRequest "https://github.com/BurntSushi/ripgrep/releases/download/$version/ripgrep-$version-x86_64-pc-windows-msvc.zip" -OutFile $archive
+          Expand-Archive $archive -DestinationPath $tools -Force
+          $bin = Join-Path $tools "ripgrep-$version-x86_64-pc-windows-msvc"
+          if (-not (Test-Path "$bin/rg.exe")) { throw 'Official ripgrep archive is missing rg.exe' }
+          $bin >> $env:GITHUB_PATH
+          & "$bin/rg.exe" --version
+          if ($LASTEXITCODE -ne 0) { throw 'ripgrep could not run' }
       - run: cargo fmt --all -- --check
       - name: Run strict Clippy
         shell: bash
@@ -33,43 +57,148 @@ jobs:
         run: |
           ./scripts/check_arch.sh
           ./scripts/test_check_arch.sh
+      - name: Check Anthropic endpoint isolation
+        run: cargo test --locked --test gateway_http anthropic_messages_ignores_legacy_model_level_endpoint -- --nocapture
       - run: cargo test --locked --all-targets
-      - run: cargo build --locked --release
-
-  flutter:
+  cli:
+    if: ${{ !inputs.ui_artifact_run }}
+    name: Build Windows CLI
     runs-on: windows-latest
-    defaults:
-      run:
-        working-directory: windows
     steps:
       - uses: actions/checkout@v5
-      - uses: subosito/flutter-action@v2
+      - uses: dtolnay/rust-toolchain@stable
+      - uses: Swatinem/rust-cache@v2
         with:
-          channel: stable
-      - run: flutter pub get
-      - run: powershell -File scripts/generate-windows-assets.ps1
-      - run: powershell -File scripts/patch-window-manager.ps1 -UiRoot .
-      - run: flutter analyze
-      - run: flutter test
-      - run: flutter build windows --release
+          shared-key: rust
+      - run: cargo build --locked --release
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-cli
+          path: target/release/codex-mixin.exe
+          if-no-files-found: error
+
+  native:
+    if: ${{ !inputs.ui_artifact_run }}
+    name: WinUI 3 build and adapter tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - name: Test CLI adapter
+        shell: pwsh
+        run: dotnet run --project windows/Tests/Tests.csproj -c Release
+      - name: Compile Windows UI Automation tests
+        shell: pwsh
+        run: dotnet build windows/UiTests/UiTests.csproj -c Release
+      - name: Generate native icons
+        shell: pwsh
+        run: ./windows/scripts/generate-windows-assets.ps1
+      - name: Compile and publish native UI
+        shell: pwsh
+        run: dotnet publish windows/CodexMixin/CodexMixin.csproj -c Release -p:Platform=x64 -o windows/build/publish
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-native-dependencies
+          path: windows/CodexMixin/packages.lock.json
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v7
+        with:
+          name: windows-native-ui
+          path: windows/build/publish
+          if-no-files-found: error
+
+  native-ui:
+    if: ${{ always() && (inputs.ui_artifact_run || (needs.cli.result == 'success' && needs.native.result == 'success')) }}
+    name: Windows native UI and real CLI tests
+    runs-on: windows-latest
+    needs: [cli, native]
+    steps:
+      - uses: actions/checkout@v5
+      - uses: actions/setup-dotnet@v5
+        with:
+          dotnet-version: '10.0.x'
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-cli
+          path: target/release
+          run-id: ${{ inputs.cli_artifact_run || inputs.ui_artifact_run || github.run_id }}
+          github-token: ${{ github.token }}
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-native-ui
+          path: windows/build/publish
+          run-id: ${{ inputs.ui_artifact_run || github.run_id }}
+          github-token: ${{ github.token }}
+      - name: Test real Rust CLI contracts
+        shell: pwsh
+        run: dotnet run --project windows/Tests/Tests.csproj -c Release -- --cli target/release/codex-mixin.exe
+      - name: Stage real CLI alongside UI
+        shell: pwsh
+        run: Copy-Item target/release/codex-mixin.exe windows/build/publish/
+      - name: Test native navigation, themes, tray and activation
+        shell: pwsh
+        run: |
+          $dumpPath = Join-Path $env:RUNNER_TEMP 'native-dumps'
+          New-Item -ItemType Directory -Force $dumpPath | Out-Null
+          $key = 'HKCU:\Software\Microsoft\Windows\Windows Error Reporting\LocalDumps\codex_mixin_ui.exe'
+          New-Item -Path $key -Force | Out-Null
+          New-ItemProperty -Path $key -Name DumpFolder -Value $dumpPath -PropertyType ExpandString -Force | Out-Null
+          New-ItemProperty -Path $key -Name DumpType -Value 2 -PropertyType DWord -Force | Out-Null
+          dotnet run --project windows/UiTests/UiTests.csproj -c Release -- windows/build/publish/codex_mixin_ui.exe windows/build/ui-test-artifacts
+          $testExit = $LASTEXITCODE
+          if ($testExit -ne 0) {
+            Get-WinEvent -FilterHashtable @{LogName='Application'; StartTime=(Get-Date).AddMinutes(-10)} |
+              Where-Object { $_.Message -match 'codex_mixin_ui|Microsoft.UI.Xaml' } |
+              Format-List TimeCreated,Id,Message | Out-File windows/build/ui-test-artifacts/native-events.txt
+            $debugger = 'C:\Program Files (x86)\Windows Kits\10\Debuggers\x64\cdb.exe'
+            if (-not (Test-Path $debugger)) { throw 'Native crash debugger is missing from Windows runner' }
+            dotnet run --project windows/UiTests/UiTests.csproj -c Release -- windows/build/publish/codex_mixin_ui.exe windows/build/ui-test-artifacts/debugger $debugger
+          }
+          exit $testExit
+      - uses: actions/upload-artifact@v7
+        if: failure()
+        with:
+          name: windows-native-crash-dumps
+          path: ${{ runner.temp }}/native-dumps/*.dmp
+          retention-days: 3
+          if-no-files-found: warn
+      - uses: actions/upload-artifact@v7
+        if: always()
+        with:
+          name: windows-native-ui-evidence
+          path: |
+            windows/build/ui-test-artifacts/*.png
+            windows/build/ui-test-artifacts/index.html
+            windows/build/ui-test-artifacts/failure.txt
+            windows/build/ui-test-artifacts/native-errors.txt
+            windows/build/ui-test-artifacts/native-events.txt
+            windows/build/ui-test-artifacts/native-debugger.txt
+            windows/build/ui-test-artifacts/debugger/failure.txt
+            windows/build/ui-test-artifacts/debugger/native-debugger.txt
+          retention-days: 14
+          if-no-files-found: warn
 
   package:
+    if: ${{ !inputs.ui_artifact_run }}
     runs-on: windows-latest
-    needs: [rust, flutter]
+    needs: [rust, native-ui]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@v2
-      - uses: subosito/flutter-action@v2
+      - uses: actions/setup-dotnet@v5
         with:
-          channel: stable
+          dotnet-version: '10.0.x'
       # NSIS provides makensis for the standard installer built by the script.
       - name: Install NSIS
         run: choco install nsis -y --no-progress
         shell: pwsh
-      # Builds the Rust CLI + Flutter UI and packages the standard installer and
+      # Builds the Rust CLI + native WinUI 3 UI and packages the standard installer and
       # portable archive. Use the same relative dist\release layout as the
       # Release workflow so this job exercises the release packaging paths.
       - name: Package and optionally sign Windows artifacts

@@ -1,0 +1,143 @@
+<Application x:Class="CodexMixin.App"
+    xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+  <Application.Resources>
+    <ResourceDictionary>
+      <ResourceDictionary.MergedDictionaries><XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" /></ResourceDictionary.MergedDictionaries>
+      <Style x:Key="SecondaryText" TargetType="TextBlock">
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+        <Setter Property="TextWrapping" Value="Wrap" />
+        <Setter Property="IsTextSelectionEnabled" Value="True" />
+      </Style>
+      <Style x:Key="Card" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+        <Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="8" />
+        <Setter Property="Padding" Value="20" />
+      </Style>
+      <!-- Code-built elements use these styles so their brushes follow the window theme. -->
+      <Style x:Key="ListCard" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource CardBackgroundFillColorDefaultBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource CardStrokeColorDefaultBrush}" />
+        <Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="8" />
+      </Style>
+      <Style x:Key="RowDivider" TargetType="Border">
+        <Setter Property="BorderBrush" Value="{ThemeResource DividerStrokeColorDefaultBrush}" />
+        <Setter Property="BorderThickness" Value="0,0,0,1" />
+      </Style>
+      <Style x:Key="RowStripe" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource SubtleFillColorSecondaryBrush}" />
+        <Setter Property="CornerRadius" Value="4" />
+      </Style>
+      <Style x:Key="RowPlain" TargetType="Border">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="CornerRadius" Value="4" />
+      </Style>
+      <Style x:Key="IconTile" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource ControlFillColorDefaultBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource ControlStrokeColorDefaultBrush}" />
+        <Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="8" />
+      </Style>
+      <Style x:Key="IconTileIdle" TargetType="Border">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="1" /><Setter Property="CornerRadius" Value="8" />
+      </Style>
+      <Style x:Key="BarTrack" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource ControlStrongStrokeColorDisabledBrush}" />
+        <Setter Property="CornerRadius" Value="4" /><Setter Property="Height" Value="8" />
+      </Style>
+      <Style x:Key="BarFill" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource AccentFillColorDefaultBrush}" />
+        <Setter Property="CornerRadius" Value="4" />
+      </Style>
+      <Style x:Key="SuccessBadge" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource SystemFillColorSuccessBackgroundBrush}" />
+        <Setter Property="CornerRadius" Value="4" /><Setter Property="Padding" Value="6,1" />
+      </Style>
+      <Style x:Key="CautionBadge" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource SystemFillColorCautionBackgroundBrush}" />
+        <Setter Property="CornerRadius" Value="4" /><Setter Property="Padding" Value="6,1" />
+      </Style>
+      <Style x:Key="Caption" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" />
+      </Style>
+      <Style x:Key="ColumnHeader" TargetType="TextBlock">
+        <Setter Property="FontSize" Value="12" /><Setter Property="FontWeight" Value="SemiBold" />
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+        <Setter Property="VerticalAlignment" Value="Center" />
+      </Style>
+      <Style x:Key="Mono" TargetType="TextBlock">
+        <Setter Property="FontFamily" Value="Cascadia Mono, Consolas" /><Setter Property="FontSize" Value="12" />
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
+        <Setter Property="TextTrimming" Value="CharacterEllipsis" /><Setter Property="VerticalAlignment" Value="Center" />
+      </Style>
+      <Style x:Key="MonoPrimary" TargetType="TextBlock" BasedOn="{StaticResource Mono}">
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorPrimaryBrush}" />
+      </Style>
+      <Style x:Key="MonoSuccess" TargetType="TextBlock" BasedOn="{StaticResource Mono}">
+        <Setter Property="Foreground" Value="{ThemeResource SystemFillColorSuccessBrush}" />
+      </Style>
+      <Style x:Key="MonoCaution" TargetType="TextBlock" BasedOn="{StaticResource Mono}">
+        <Setter Property="Foreground" Value="{ThemeResource SystemFillColorCautionBrush}" />
+      </Style>
+      <Style x:Key="MonoCritical" TargetType="TextBlock" BasedOn="{StaticResource Mono}">
+        <Setter Property="Foreground" Value="{ThemeResource SystemFillColorCriticalBrush}" />
+      </Style>
+      <Style x:Key="SuccessCaption" TargetType="TextBlock" BasedOn="{StaticResource Caption}">
+        <Setter Property="Foreground" Value="{ThemeResource SystemFillColorSuccessBrush}" />
+      </Style>
+      <Style x:Key="CautionCaption" TargetType="TextBlock" BasedOn="{StaticResource Caption}">
+        <Setter Property="Foreground" Value="{ThemeResource SystemFillColorCautionBrush}" />
+      </Style>
+      <Style x:Key="GlyphOn" TargetType="FontIcon">
+        <Setter Property="FontSize" Value="15" />
+        <Setter Property="Foreground" Value="{ThemeResource AccentTextFillColorPrimaryBrush}" />
+      </Style>
+      <Style x:Key="GlyphOff" TargetType="FontIcon">
+        <Setter Property="FontSize" Value="15" />
+        <Setter Property="Foreground" Value="{ThemeResource TextFillColorDisabledBrush}" />
+      </Style>
+      <Style x:Key="DotOn" TargetType="Ellipse">
+        <Setter Property="Width" Value="7" /><Setter Property="Height" Value="7" />
+        <Setter Property="Fill" Value="{ThemeResource SystemFillColorSuccessBrush}" />
+      </Style>
+      <Style x:Key="DotOff" TargetType="Ellipse" BasedOn="{StaticResource DotOn}">
+        <Setter Property="Fill" Value="{ThemeResource ControlStrongFillColorDisabledBrush}" />
+      </Style>
+      <Style x:Key="DotWarn" TargetType="Ellipse" BasedOn="{StaticResource DotOn}">
+        <Setter Property="Fill" Value="{ThemeResource SystemFillColorCautionBrush}" />
+      </Style>
+      <!-- Flat rows and icon buttons keep the default hover and pressed visuals. -->
+      <Style x:Key="FlatButton" TargetType="Button" BasedOn="{StaticResource DefaultButtonStyle}">
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="BorderBrush" Value="Transparent" />
+        <Setter Property="BorderThickness" Value="0" />
+      </Style>
+      <Style x:Key="MenuRow" TargetType="Button" BasedOn="{StaticResource FlatButton}">
+        <Setter Property="HorizontalAlignment" Value="Stretch" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+        <Setter Property="Padding" Value="10,6" /><Setter Property="CornerRadius" Value="6" />
+      </Style>
+      <Style x:Key="Segment" TargetType="ToggleButton" BasedOn="{StaticResource DefaultToggleButtonStyle}">
+        <Setter Property="BorderThickness" Value="0" />
+        <Setter Property="Background" Value="Transparent" />
+        <Setter Property="CornerRadius" Value="4" />
+        <Setter Property="Padding" Value="14,4" /><Setter Property="MinWidth" Value="56" />
+      </Style>
+      <Style x:Key="SegmentTrack" TargetType="Border">
+        <Setter Property="Background" Value="{ThemeResource ControlAltFillColorSecondaryBrush}" />
+        <Setter Property="BorderBrush" Value="{ThemeResource ControlStrokeColorDefaultBrush}" />
+        <Setter Property="BorderThickness" Value="1" />
+        <Setter Property="CornerRadius" Value="6" /><Setter Property="Padding" Value="2" />
+      </Style>
+      <Style x:Key="ModelRowContainer" TargetType="ListViewItem" BasedOn="{StaticResource DefaultListViewItemStyle}">
+        <Setter Property="Padding" Value="0" /><Setter Property="Margin" Value="0" />
+        <Setter Property="MinHeight" Value="0" />
+        <Setter Property="HorizontalContentAlignment" Value="Stretch" />
+      </Style>
+    </ResourceDictionary>
+  </Application.Resources>
+</Application>

@@ -68,21 +68,24 @@ function New-IcoFile {
 
 $repo = Resolve-Path (Join-Path $PSScriptRoot "..\..")
 New-IcoFile -InputPath $Source -OutputPath (Join-Path $repo "windows\assets\tray_icon.ico")
-New-IcoFile -InputPath $Source -OutputPath (Join-Path $repo "windows\windows\runner\resources\app_icon.ico")
+New-IcoFile -InputPath $Source -OutputPath (Join-Path $repo "windows\assets\app_icon.ico")
+Copy-Item -LiteralPath $Source -Destination (Join-Path $repo "windows\assets\app_icon.png") -Force
+$providers = Join-Path $repo "windows\assets\providers"
+New-Item -ItemType Directory -Force -Path $providers | Out-Null
+Copy-Item -Path (Join-Path $repo "macos\assets\providers\*.svg") -Destination $providers -Force
+$agents = Join-Path $repo "windows\assets\agents"
+New-Item -ItemType Directory -Force -Path $agents | Out-Null
+Copy-Item -Path (Join-Path $repo "macos\assets\agents\*.svg"), (Join-Path $repo "macos\assets\agents\*.png") -Destination $agents -Force
+Copy-Item -LiteralPath (Join-Path $repo "macos\assets\agents\ATTRIBUTION.md") -Destination $agents -Force
+# WinUI needs an explicit viewport for the em-sized logos used by macOS.
+foreach ($asset in Get-ChildItem $agents -Filter '*.svg') {
+  $document = New-Object System.Xml.XmlDocument
+  $document.Load($asset.FullName)
+  $document.DocumentElement.SetAttribute('width', '32')
+  $document.DocumentElement.SetAttribute('height', '32')
+  $document.DocumentElement.SetAttribute('color', '#707070')
+  $document.DocumentElement.RemoveAttribute('style')
+  $document.Save($asset.FullName)
+}
 
-# Provider icons live under macos/assets/providers as the single source of
-# truth. Flutter can only bundle assets inside its own package root, so mirror
-# them into windows/assets/providers here (that directory is gitignored and
-# regenerated) instead of committing a duplicate copy.
-$providerSrc = Join-Path $repo "macos\assets\providers"
-$providerDst = Join-Path $repo "windows\assets\providers"
-New-Item -ItemType Directory -Force -Path $providerDst | Out-Null
-Copy-Item -Path (Join-Path $providerSrc "*.svg") -Destination $providerDst -Force
-
-Write-Host "Generated Windows assets (icons + provider SVGs) from $Source and $providerSrc"
-
-# Agent SVG/PNG marks and their manifest use the same source as macOS.
-$agentSrc = Join-Path $repo "macos\assets\agents"
-$agentDst = Join-Path $repo "windows\assets\agents"
-New-Item -ItemType Directory -Force -Path $agentDst | Out-Null
-Copy-Item -Path (Join-Path $agentSrc "*.svg"), (Join-Path $agentSrc "*.png"), (Join-Path $agentSrc "manifest.json") -Destination $agentDst -Force
+Write-Host "Generated native Windows application and tray icons from $Source"
