@@ -295,6 +295,36 @@ struct MenuViewsLayoutTests {
         scrollingDashboard.model.selectModel("model-4")
         precondition(scrollingDashboard.model.selectedModel?.modelID == "model-4")
 
+        let resetDashboard = ProviderUsageDashboardView()
+        resetDashboard.updateConfiguredProviders([
+            ProviderDashboardProvider(id: "agy", displayName: "Google Antigravity (agy)"),
+        ])
+        let resetRows = (1...3).map {
+            #"{"provider_id":"agy","quota_id":"window.\#($0)","label":"Claude and GPT models - Weekly Limit Remaining","unit":"percent","remaining":97.3,"used":2.7,"limit":100,"reset_at":"2026-10-22T00:00:00Z"}"#
+        }.joined(separator: ",")
+        resetDashboard.updateQuotaUsages(try parseProviderQuotaUsage("[\(resetRows)]"))
+        flushDeferredMenuLayout()
+        precondition(resetDashboard.frame.height >= 310, "Quota labels, bars and reset times need separate vertical space before the range picker")
+
+        if let artifactDirectory = ProcessInfo.processInfo.environment["CODEX_MIXIN_LAYOUT_ARTIFACT_DIR"] {
+            let window = NSWindow(contentRect: resetDashboard.frame, styleMask: .borderless, backing: .buffered, defer: false)
+            window.contentView = resetDashboard
+            window.setFrameOrigin(NSPoint(x: -10000, y: -10000))
+            window.orderFront(nil)
+            for (name, appearance) in [("light", NSAppearance.Name.aqua), ("dark", NSAppearance.Name.darkAqua)] {
+                resetDashboard.appearance = NSAppearance(named: appearance)
+                resetDashboard.layoutSubtreeIfNeeded()
+                window.displayIfNeeded()
+                RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.2))
+                guard let bitmap = resetDashboard.bitmapImageRepForCachingDisplay(in: resetDashboard.bounds) else { preconditionFailure("Dashboard bitmap unavailable") }
+                resetDashboard.cacheDisplay(in: resetDashboard.bounds, to: bitmap)
+                guard let png = bitmap.representation(using: .png, properties: [:]) else { preconditionFailure("Dashboard PNG unavailable") }
+                try FileManager.default.createDirectory(atPath: artifactDirectory, withIntermediateDirectories: true)
+                try png.write(to: URL(fileURLWithPath: artifactDirectory).appendingPathComponent("quota-\(name).png"))
+            }
+            window.orderOut(nil)
+        }
+
         let proDashboard = ProviderUsageDashboardView()
         proDashboard.updateConfiguredProviders([
             ProviderDashboardProvider(id: "official", displayName: "OpenAI"),

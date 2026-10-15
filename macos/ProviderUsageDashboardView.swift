@@ -3,9 +3,10 @@ import SwiftUI
 
 private let menuContentWidth: CGFloat = 336
 private let providerDashboardMinimumHeight: CGFloat = 168
-private let providerQuotaRowHeight: CGFloat = 28
+private let providerQuotaRowHeight: CGFloat = 60
 private let providerQuotaRowSpacing: CGFloat = 6
 private let visibleProviderQuotaRows = 3
+private let providerDashboardChromeHeight: CGFloat = 110
 
 private func providerQuotaSectionHeight(_ quotaCount: Int) -> CGFloat {
     let rowCount = max(1, min(quotaCount, visibleProviderQuotaRows))
@@ -210,11 +211,11 @@ final class ProviderUsageDashboardModel: ObservableObject {
 
     var contentHeight: CGFloat {
         guard let group = selectedGroup else { return providerDashboardMinimumHeight }
-        let tokenHeight: CGFloat = group.models.isEmpty ? 20 : 144
+        let tokenHeight: CGFloat = group.models.isEmpty ? 36 : 144
         let detailHeight: CGFloat = selectedModel == nil ? 0 : 104
         return max(
             providerDashboardMinimumHeight,
-            98 + providerQuotaSectionHeight(group.quotas.count) + tokenHeight + detailHeight
+            providerDashboardChromeHeight + providerQuotaSectionHeight(group.quotas.count) + tokenHeight + detailHeight
         )
     }
 
@@ -422,11 +423,15 @@ private struct ProviderQuotaRow: View {
     let multiple: Bool
 
     var body: some View {
-        VStack(spacing: 3) {
-            HStack {
-                Text(providerQuotaLabel(usage, multiple: multiple)).fontWeight(.semibold)
-                Spacer()
+        VStack(alignment: .leading, spacing: 4) {
+            HStack(alignment: .top, spacing: 8) {
+                Text(providerQuotaLabel(usage, multiple: multiple))
+                    .fontWeight(.semibold)
+                    .lineLimit(2)
+                    .fixedSize(horizontal: false, vertical: true)
+                    .frame(maxWidth: .infinity, alignment: .leading)
                 Text(providerQuotaText(usage)).fontDesign(.monospaced)
+                    .fixedSize(horizontal: true, vertical: false)
             }
             .font(.caption2)
             if usage.unit == "percent", let remaining = usage.remaining, let limit = usage.limit, limit > 0 {
