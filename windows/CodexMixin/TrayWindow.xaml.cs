@@ -19,6 +19,7 @@ public sealed partial class TrayWindow : Window
     private bool settingState;
     private bool pinned;
     private bool exiting;
+    private int maximumHeight;
 
     public TrayWindow()
     {
@@ -44,7 +45,9 @@ public sealed partial class TrayWindow : Window
     internal async void ShowPanel()
     {
         pinned = Environment.GetCommandLineArgs().Contains("--capture-ui");
-        AppWindow.MoveAndResize(NativeShell.PanelBounds());
+        var bounds = NativeShell.PanelBounds();
+        maximumHeight = bounds.Height;
+        AppWindow.MoveAndResize(bounds);
         AppWindow.Show(); Activate();
         await ReloadAsync();
     }
@@ -109,6 +112,18 @@ public sealed partial class TrayWindow : Window
             PanelStatus.Text = error.Message;
         }
         finally { busy = false; GatewaySwitch.IsEnabled = true; }
+        FitToContent();
+    }
+
+    // Like the macOS menu, the panel is as tall as its content and keeps its bottom edge.
+    private void FitToContent()
+    {
+        if (Panel.XamlRoot is not { } root || maximumHeight == 0) return;
+        var scale = root.RasterizationScale;
+        Panel.Measure(new Windows.Foundation.Size(AppWindow.Size.Width / scale, double.PositiveInfinity));
+        var height = Math.Min(maximumHeight, (int)Math.Ceiling(Panel.DesiredSize.Height * scale));
+        var bottom = AppWindow.Position.Y + AppWindow.Size.Height;
+        AppWindow.MoveAndResize(new Windows.Graphics.RectInt32(AppWindow.Position.X, bottom - height, AppWindow.Size.Width, height));
     }
 
     private static Style Themed(string key) => (Style)Microsoft.UI.Xaml.Application.Current.Resources[key];

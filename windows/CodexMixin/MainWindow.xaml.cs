@@ -419,7 +419,7 @@ public sealed partial class MainWindow : Window
         StatusBadgeText.Text = healthy ? "配置就绪" : Readiness(provider);
         StatusBadge.Visibility = Visibility.Visible;
         var refreshed = provider.TryGetProperty("models_refreshed_at_ms", out var stamp) && stamp.ValueKind == JsonValueKind.Number
-            ? $" · 上次刷新 {DateTimeOffset.FromUnixTimeMilliseconds(stamp.GetInt64()).ToLocalTime():yyyy/MM/dd HH:mm}" : "";
+            ? $" · 上次刷新 {DateTimeOffset.FromUnixTimeMilliseconds(stamp.GetInt64()).ToLocalTime():MM/dd HH:mm}" : "";
         PageDescription.Style = Themed("Mono");
         PageDescription.Text = $"{providerId} · 已加入 {Json.Strings(Json.Field(provider, "selected_models")).Length} / 可选 {Json.Rows(Json.Field(provider, "cached_models")).Length}{refreshed}";
         ApplyChanges.IsEnabled = true;
@@ -458,9 +458,9 @@ public sealed partial class MainWindow : Window
         var contexts = savedContexts.EnumerateObject().ToDictionary(entry => entry.Name, entry => entry.Value.GetDouble());
 
         var toolbar = new Grid { ColumnSpacing = 8 };
-        foreach (var width in new[] { GridLength.Auto, GridLength.Auto, GridLength.Auto, new GridLength(1, GridUnitType.Star), GridLength.Auto })
+        foreach (var width in new[] { new GridLength(1, GridUnitType.Star), GridLength.Auto, GridLength.Auto, GridLength.Auto })
             toolbar.ColumnDefinitions.Add(new ColumnDefinition { Width = width });
-        var search = new AutoSuggestBox { PlaceholderText = "搜索当前服务商的模型", QueryIcon = new SymbolIcon(Symbol.Find), Width = 300 };
+        var search = new AutoSuggestBox { PlaceholderText = "搜索当前服务商的模型", QueryIcon = new SymbolIcon(Symbol.Find), MaxWidth = 360, HorizontalAlignment = HorizontalAlignment.Stretch };
         AutomationProperties.SetName(search, "搜索当前服务商的模型");
         var filter = new ComboBox { MinWidth = 108, VerticalAlignment = VerticalAlignment.Center };
         foreach (var option in new[] { "全部", "已加入", "未加入" }) filter.Items.Add(option);
@@ -474,7 +474,7 @@ public sealed partial class MainWindow : Window
         var test = Button($"测试已加入的 {selected.Count} 个模型", () => ChangeAsync("启动模型测速", ["benchmark", "start", "--provider", id, "--timeout-seconds", "60"]), true);
         test.Content = IconLabel("\uE916", $"测试已加入的 {selected.Count} 个模型");
         AutomationProperties.SetName(test, $"测试已加入的 {selected.Count} 个模型");
-        var tools = new FrameworkElement[] { search, filter, more, new Border(), test };
+        var tools = new FrameworkElement[] { search, filter, more, test };
         for (var index = 0; index < tools.Length; index++) { Grid.SetColumn(tools[index], index); toolbar.Children.Add(tools[index]); }
         modelBody.Children.Add(toolbar);
 
