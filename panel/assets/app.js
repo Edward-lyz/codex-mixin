@@ -826,6 +826,13 @@ function providerName(provider) {
   return provider.display_name || provider.id;
 }
 
+const ISSUE_LABELS = {
+  credentials_missing: "缺少凭据",
+  no_routable_models: "没有可路由模型",
+  selected_models_unavailable: "所选模型不可用",
+  model_refresh_failed: "模型刷新失败",
+};
+
 function readinessBadge(provider) {
   if (!provider.enabled) return h("span", { class: "badge", text: "已停用" });
   if (provider.readiness === "healthy") return h("span", { class: "badge badge-ok", text: "可用" });
@@ -855,7 +862,7 @@ function providerCard(provider, order) {
     next.splice(index + delta, 0, provider.id);
     return { ids: next };
   };
-  const issues = (provider.readiness_issues || []).slice(0, 2);
+  const issues = provider.readiness_issues || [];
   return h(
     "article",
     { class: `card provider ${provider.enabled ? "" : "is-off"}`.trim(), "aria-label": providerName(provider) },
@@ -875,8 +882,8 @@ function providerCard(provider, order) {
       provider.auxiliary_model_upstream ? h("span", { class: "badge", text: "辅助上游" }) : null,
       official ? h("span", { class: "badge", text: "由 Codex 管理" }) : null,
     ),
-    issues.length ? h("div", null, ...issues.map((issue) => h("div", { class: "issue", text: typeof issue === "string" ? issue : JSON.stringify(issue) }))) : null,
-    provider.last_model_refresh_error ? h("div", { class: "issue", text: `模型刷新失败：${provider.last_model_refresh_error}` }) : null,
+    issues.length ? h("div", { class: "chips" }, ...issues.map((issue) => h("span", { class: "badge badge-bad", text: ISSUE_LABELS[issue] || String(issue) }))) : null,
+    provider.last_model_refresh_error ? h("p", { class: "issue issue-clamp", title: provider.last_model_refresh_error, text: provider.last_model_refresh_error }) : null,
     official
       ? null
       : h(
@@ -1356,6 +1363,15 @@ function boot() {
     if (value) enterPanel(value);
   });
   window.addEventListener("popstate", () => navigate(readHash().page || "home", { replace: true }));
+  // A restarted panel prints a new token; opening that URL in an existing
+  // tab only changes the hash, so pick the token up here too.
+  window.addEventListener("hashchange", () => {
+    const next = readHash();
+    if (!next.token) return;
+    if (next.page && PAGES.some((candidate) => candidate.id === next.page)) state.page = next.page;
+    history.replaceState(null, "", `#${state.page}`);
+    enterPanel(next.token);
+  });
   document.addEventListener("visibilitychange", () => {
     if (document.visibilityState === "visible" && state.token) refresh(false);
     else clearTimeout(state.timer);
