@@ -277,7 +277,7 @@ fn provider_profile(bind: SocketAddr, models: Vec<Value>) -> Value {
     );
     profile.insert(
         Value::String("baseURL".to_owned()),
-        Value::String(format!("http://{bind}/v1")),
+        Value::String(format!("http://{}/v1", crate::config::client_address(bind))),
     );
     profile.insert(
         Value::String("apiKeyEnv".to_owned()),

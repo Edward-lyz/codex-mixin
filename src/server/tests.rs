@@ -249,7 +249,23 @@ async fn gateway_auth_obeys_build_feature() {
             header::AUTHORIZATION,
             format!("Bearer {token}").parse().unwrap(),
         );
+        headers.insert(
+            super::auth::LOOPBACK_PEER_HEADER,
+            axum::http::HeaderValue::from_static("1"),
+        );
         assert!(check_gateway_auth(&state, &headers).await.is_ok());
+    }
+    // Codex OAuth tokens are accepted only from loopback peers.
+    let mut remote_oauth = HeaderMap::new();
+    remote_oauth.insert(
+        header::AUTHORIZATION,
+        "Bearer oauth-secret".parse().unwrap(),
+    );
+    let result = check_gateway_auth(&state, &remote_oauth).await;
+    if cfg!(feature = "client-auth") {
+        assert!(matches!(result, Err(GatewayError::Unauthorized)));
+    } else {
+        assert!(result.is_ok());
     }
     for authorization in [None, Some("Bearer arbitrary"), Some("Basic arbitrary")] {
         let mut headers = HeaderMap::new();

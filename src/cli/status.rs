@@ -65,7 +65,7 @@ pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
         );
     }
     let gateway_version = running_version.as_deref().unwrap_or("unknown");
-    let endpoint = format!("http://{bind}/v1");
+    let endpoint = format!("http://{}/v1", codex_mixin::config::client_address(bind));
     let readiness = provider_readiness_summary(&config.providers);
     if json_output {
         println!(
@@ -170,7 +170,10 @@ pub(super) async fn gateway_snapshot(config: &GatewayConfig) -> anyhow::Result<G
         (None, Some(metadata)) => metadata.bind,
         (None, None) => config.bind,
     };
-    let healthz = format!("http://{bind}/healthz");
+    let healthz = format!(
+        "http://{}/healthz",
+        codex_mixin::config::client_address(bind)
+    );
     let response = reqwest::Client::builder()
         .timeout(Duration::from_secs(2))
         .build()?

@@ -358,7 +358,11 @@ extension AppDelegate {
                     throw GatewayError.command("无法从有效配置中读取本地网关端口")
                 }
                 NSPasteboard.general.clearContents()
-                NSPasteboard.general.setString("http://\(bind)/v1", forType: .string)
+                // A gateway listening on all interfaces is dialed via loopback locally.
+                let host = bind.hasPrefix("0.0.0.0:")
+                    ? "127.0.0.1:" + bind.dropFirst("0.0.0.0:".count)
+                    : bind
+                NSPasteboard.general.setString("http://\(host)/v1", forType: .string)
             } catch {
                 showAlert(title: "复制本地接口失败", message: String(describing: error))
             }

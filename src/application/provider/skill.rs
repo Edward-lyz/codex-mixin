@@ -88,6 +88,11 @@ def _gateway_config() -> tuple[str, str]:
     bind = runtime.get("bind")
     if not isinstance(bind, str) or not bind:
         _die("Codex Mixin runtime bind must be a non-empty string")
+    # The gateway may listen on all interfaces; clients on this host dial loopback.
+    if bind.startswith("0.0.0.0:"):
+        bind = "127.0.0.1:" + bind[len("0.0.0.0:"):]
+    elif bind.startswith("[::]:"):
+        bind = "[::1]:" + bind[len("[::]:"):]
     if bind.startswith("["):
         gateway_authority = bind
     elif bind.count(":") > 1:

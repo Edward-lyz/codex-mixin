@@ -1,5 +1,5 @@
 use std::collections::BTreeMap;
-use std::net::SocketAddr;
+use std::net::{IpAddr, Ipv4Addr, Ipv6Addr, SocketAddr};
 use std::path::PathBuf;
 use std::time::Duration;
 
@@ -23,6 +23,25 @@ pub use crate::provider::{
 };
 
 pub const DEFAULT_MAX_OUTPUT_TOKENS: u64 = 16_384;
+
+/// Default listener: all interfaces with an automatically chosen port.
+pub const DEFAULT_GATEWAY_BIND: &str = "0.0.0.0:0";
+
+/// Address clients should dial for a gateway listening on `bind`.
+///
+/// The unspecified address (`0.0.0.0` / `::`) is valid for listening but not
+/// a portable destination, so clients on this host use loopback instead.
+pub fn client_address(bind: SocketAddr) -> SocketAddr {
+    match bind.ip() {
+        IpAddr::V4(ip) if ip.is_unspecified() => {
+            SocketAddr::new(IpAddr::V4(Ipv4Addr::LOCALHOST), bind.port())
+        }
+        IpAddr::V6(ip) if ip.is_unspecified() => {
+            SocketAddr::new(IpAddr::V6(Ipv6Addr::LOCALHOST), bind.port())
+        }
+        _ => bind,
+    }
+}
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ThinkingMode {
@@ -93,7 +112,7 @@ impl GatewayConfig {
         let bind = stored_config
             .gateway_bind
             .clone()
-            .unwrap_or_else(|| "127.0.0.1:0".to_owned())
+            .unwrap_or_else(|| DEFAULT_GATEWAY_BIND.to_owned())
             .parse()
             .context("invalid stored gateway bind")?;
         let mut fusion_profiles = stored_config.fusion_profiles;
@@ -272,7 +291,7 @@ mod tests {
     }
 
     #[test]
-    fn defaults_to_an_os_assigned_loopback_port() {
+    fn defaults_to_an_os_assigned_port_on_all_interfaces() {
         let stored = StoredGatewayConfig {
             providers: vec![crate::provider::open_code_go_provider("provider", "secret")],
             ..StoredGatewayConfig::default()
@@ -280,7 +299,23 @@ mod tests {
 
         let config = GatewayConfig::from_stored_config_value(stored).unwrap();
 
-        assert_eq!(config.bind, "127.0.0.1:0".parse().unwrap());
+        assert_eq!(config.bind, "0.0.0.0:0".parse().unwrap());
+    }
+
+    #[test]
+    fn clients_dial_loopback_for_unspecified_binds() {
+        let cases = [
+            ("0.0.0.0:8787", "127.0.0.1:8787"),
+            ("[::]:8787", "[::1]:8787"),
+            ("127.0.0.1:8787", "127.0.0.1:8787"),
+            ("192.168.1.20:8787", "192.168.1.20:8787"),
+        ];
+        for (bind, expected) in cases {
+            assert_eq!(
+                client_address(bind.parse().unwrap()),
+                expected.parse().unwrap()
+            );
+        }
     }
 
     #[test]

@@ -40,7 +40,7 @@ pub fn install(
         PROVIDER_ID.to_owned(),
         json!({
             "name": PROVIDER_NAME,
-            "baseUrl": format!("http://{bind}/v1"),
+            "baseUrl": format!("http://{}/v1", crate::config::client_address(bind)),
             "apiKey": key_reference(key_path),
             "api": API,
             "models": models,
