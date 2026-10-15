@@ -15,7 +15,7 @@ use crate::protocol::openai_events::{
     map_anthropic_sse_with_image_routes, map_gemini_sse_with_image_routes,
     map_openai_chat_sse_with_image_routes,
 };
-use crate::provider::ProviderProtocol;
+use crate::provider::{ProviderProtocol, ProviderRuntime};
 
 use super::responses::map_openai_responses_sse;
 use super::{ResponseStream, UpstreamRouting};
@@ -28,6 +28,21 @@ pub(crate) struct ProviderResponseRequest<'a> {
     pub(crate) routing: Option<&'a UpstreamRouting>,
     pub(crate) downstream_model: Option<&'a str>,
     pub(crate) headers: &'a axum::http::HeaderMap,
+}
+
+struct ProviderRequestContext<'a> {
+    executor: &'a GatewayExecutor,
+    provider: &'a ProviderRuntime,
+    upstream_model_id: &'a str,
+    catalog_slug: &'a str,
+    downstream_model: &'a str,
+    routing: Option<&'a UpstreamRouting>,
+    body: &'a Value,
+    downstream_body: Value,
+    advertised_thinking: Option<bool>,
+    web_search_enabled: bool,
+    baidu_native: Option<axum::http::HeaderMap>,
+    agy_native: Option<axum::http::HeaderMap>,
 }
 
 pub(crate) async fn stream_provider_response(
@@ -47,334 +62,416 @@ pub(crate) async fn stream_provider_response(
         .providers
         .provider(provider_id)
         .ok_or_else(|| GatewayError::BadRequest(format!("unknown provider: {provider_id}")))?;
-    let upstream_model_id = upstream_model_id.to_owned();
-    let downstream_model = downstream_model.unwrap_or(catalog_slug).to_owned();
-    let downstream_body = response_metadata_request(body, &downstream_model);
+    let downstream_model = downstream_model.unwrap_or(catalog_slug);
+    let downstream_body = response_metadata_request(body, downstream_model);
     let web_search_enabled = executor.web_search_enabled_for_custom_request(body);
-    let protocol = provider.protocol_for_model(&upstream_model_id);
-    let advertised_thinking = provider.model_supports_thinking(&upstream_model_id);
+    let protocol = provider.protocol_for_model(upstream_model_id);
+    let advertised_thinking = provider.model_supports_thinking(upstream_model_id);
     executor.require_ducx_client(provider, headers)?;
     // Both managed auth cores mint native headers. Fetch once and inject at the
     // send sites instead of the stored placeholder key.
     let baidu_native = executor.upstream.baidu_native_headers(provider).await?;
     let agy_native = executor.upstream.agy_native_headers(provider).await?;
-    let stream = match protocol {
-        ProviderProtocol::AnthropicMessages => {
-            let auto_thinking_kind =
-                anthropic_thinking_kind_with_advertised(&upstream_model_id, advertised_thinking);
-            let reasoning = upstream_reasoning(body, advertised_thinking);
-            let convert = |default_max_tokens| {
-                let mut converted = responses_to_anthropic_with_model_reasoning_and_thinking_kind(
-                    body,
-                    Some(&upstream_model_id),
-                    reasoning.as_ref(),
-                    &executor.config,
-                    default_max_tokens,
-                    web_search_enabled,
-                    provider.uses_mcp_bridge_names(&upstream_model_id),
-                    auto_thinking_kind,
-                )?;
-                if provider.uses_session_affinity()
-                    && let Some(routing) = routing
-                {
-                    // OneAPI's Anthropic-to-OpenAI conversion accepts only an
-                    // optional string `metadata.user_id`. `session_id` is a 400
-                    // ("Anthropic feature at \"metadata\" ... is not supported")
-                    // on models behind that conversion, such as GLM-5.3.
-                    // Session affinity still travels in `x-hash-key`.
-                    converted.request.metadata = Some(json!({"user_id": routing.hash_key}));
-                }
-                Ok::<_, GatewayError>(converted)
-            };
-            let send = |converted: crate::protocol::convert::ConvertedRequest| async move {
-                let shape = CacheShape::from_anthropic(&converted.request);
-                let upstream = executor
-                    .upstream
-                    .anthropic_stream_with_web_search_retry(
-                        provider,
-                        converted.request,
-                        routing.map(|routing| routing.hash_key.as_str()),
-                        None,
-                    )
-                    .await?;
-                Ok::<_, GatewayError>((upstream, shape, converted.tool_names))
-            };
-            let declared_max_tokens = provider
-                .model_max_output_tokens(&upstream_model_id)
-                .unwrap_or(executor.config.default_max_tokens);
-            let default_max_tokens = executor.output_limits.default_for(
-                provider.id(),
-                &upstream_model_id,
-                declared_max_tokens,
-            );
-            let converted = convert(default_max_tokens)?;
-            let requested = converted.request.max_tokens;
-            let defaulted = converted.max_tokens_defaulted;
-            let (upstream, shape, tool_names) = match send(converted).await {
-                Err(GatewayError::UpstreamStatus {
-                    status,
-                    body: error_body,
-                    ..
-                }) if defaulted
-                    && status.is_client_error()
-                    && let Some(limit) =
-                        super::output_limit::output_limit_from_error(&error_body, requested) =>
-                {
-                    tracing::warn!(
-                        provider_id = provider.id(),
-                        upstream_model_id = %upstream_model_id,
-                        requested,
-                        limit,
-                        "provider rejected the default output budget; retrying with its limit"
-                    );
-                    let sent = send(convert(limit)?).await?;
-                    executor
-                        .output_limits
-                        .record(provider.id(), &upstream_model_id, limit);
-                    sent
-                }
-                result => result?,
-            };
-            let observation = record_provider_prefix(
-                &executor.cache_shapes,
-                provider.id(),
-                catalog_slug,
-                &upstream_model_id,
-                routing,
-                shape,
-            );
-            let upstream = observe_upstream_cache_usage(upstream, observation);
-            map_anthropic_sse_with_image_routes(
-                upstream,
-                downstream_body,
-                tool_names,
-                executor.custom_image_routes(provider),
-                provider.definition().preset_id.as_deref() == Some("baidu-oneapi"),
-            )
-            .boxed()
-        }
-        ProviderProtocol::OpenAiChat => {
-            let mut upstream_body = body.clone();
-            prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
-            let converted = responses_to_openai_chat_streaming_with_model(
-                &upstream_body,
-                Some(&upstream_model_id),
-            )?;
-            let observation = record_provider_prefix(
-                &executor.cache_shapes,
-                provider.id(),
-                catalog_slug,
-                &upstream_model_id,
-                routing,
-                CacheShape::from_openai_chat(&converted.request),
-            );
-            let upstream = executor
-                .upstream
-                .send_provider_json(
-                    provider,
-                    protocol,
-                    &upstream_model_id,
-                    routing.map(|routing| routing.hash_key.as_str()),
-                    baidu_native.as_ref(),
-                    converted.request.clone(),
-                )
-                .await
-                .inspect_err(|error| {
-                    tracing::error!(
-                        provider_id = provider.id(),
-                        catalog_slug = %catalog_slug,
-                        upstream_model_id = %upstream_model_id,
-                        error = %crate::error::format_error_chain(error),
-                        "provider chat completions request failed before receiving a response"
-                    );
-                })?;
-            let status = upstream.status();
-            if !status.is_success() {
-                return Err(crate::upstream::body::response_error(
-                    upstream,
-                    format!("provider {} chat completions endpoint", provider.id()),
-                )
-                .await?);
-            }
-            map_openai_chat_sse_with_image_routes(
-                observe_upstream_cache_usage(upstream.bytes_stream(), observation),
-                downstream_body,
-                converted.tool_names,
-                executor.custom_image_routes(provider),
-            )
-            .boxed()
-        }
-        ProviderProtocol::OpenAiResponses => {
-            let mut upstream_body = body.clone();
-            upstream_body["model"] = Value::String(upstream_model_id.clone());
-            prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
-            let observation = record_provider_prefix(
-                &executor.cache_shapes,
-                provider.id(),
-                catalog_slug,
-                &upstream_model_id,
-                routing,
-                CacheShape::from_openai_responses(&upstream_body),
-            );
-            let upstream = executor
-                .upstream
-                .send_provider_json(
-                    provider,
-                    protocol,
-                    &upstream_model_id,
-                    routing.map(|routing| routing.hash_key.as_str()),
-                    baidu_native.as_ref(),
-                    upstream_body.clone(),
-                )
-                .await;
-            let upstream = upstream.inspect_err(|error| {
-                tracing::error!(
-                    provider_id = provider.id(),
-                    catalog_slug = %catalog_slug,
-                    upstream_model_id = %upstream_model_id,
-                    error = %crate::error::format_error_chain(error),
-                    "provider responses request failed before receiving a response"
-                );
-            })?;
-            let status = upstream.status();
-            if !status.is_success() {
-                return Err(crate::upstream::body::response_error(
-                    upstream,
-                    format!("provider {} responses endpoint", provider.id()),
-                )
-                .await?);
-            }
-            map_openai_responses_sse(
-                observe_upstream_cache_usage(upstream.bytes_stream(), observation),
-                upstream_model_id,
-                downstream_model,
-            )
-        }
-        ProviderProtocol::GoogleGemini => {
-            let mut upstream_body = body.clone();
-            prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
-            let converted = responses_to_gemini(&upstream_body, Some(&upstream_model_id))?;
-            let observation = record_provider_prefix(
-                &executor.cache_shapes,
-                provider.id(),
-                catalog_slug,
-                &upstream_model_id,
-                routing,
-                CacheShape::from_gemini(&converted.request),
-            );
-            let api_url = provider.api_url_for_model(&upstream_model_id);
-            let payload = if api_url.path().contains("/v1internal:") {
-                json!({
-                    "project": "aicode-consumers",
-                    "model": upstream_model_id,
-                    "requestType": "agent",
-                    "userAgent": "antigravity",
-                    "requestId": format!("agent/{}", uuid::Uuid::new_v4()),
-                    "request": converted.request
-                })
-            } else {
-                converted.request
-            };
-            let mut upstream = executor
-                .upstream
-                .send_provider_json(
-                    provider,
-                    protocol,
-                    &upstream_model_id,
-                    routing.map(|routing| routing.hash_key.as_str()),
-                    agy_native.as_ref(),
-                    payload.clone(),
-                )
-                .await
-                .inspect_err(|error| {
-                    tracing::error!(
-                        provider_id = provider.id(),
-                        catalog_slug = %catalog_slug,
-                        upstream_model_id = %upstream_model_id,
-                        error = %crate::error::format_error_chain(error),
-                        "provider gemini generate content request failed before receiving a response"
-                    );
-                })?;
-            if upstream.status() == reqwest::StatusCode::UNAUTHORIZED {
-                tracing::warn!(
-                    provider_id = provider.id(),
-                    "refreshing agy OAuth token after upstream rejected credentials"
-                );
-                crate::provider::auth::agy::invalidate_agy_cache().await;
-                let refreshed_headers = executor.upstream.agy_native_headers(provider).await?;
-                upstream = executor
-                    .upstream
-                    .send_provider_json(
-                        provider,
-                        protocol,
-                        &upstream_model_id,
-                        routing.map(|routing| routing.hash_key.as_str()),
-                        refreshed_headers.as_ref(),
-                        payload.clone(),
-                    )
-                    .await?;
-            }
-            let mut status = upstream.status();
-            if status == reqwest::StatusCode::BAD_REQUEST {
-                let content_type = upstream
-                    .headers()
-                    .get(reqwest::header::CONTENT_TYPE)
-                    .cloned();
-                let error_text = crate::upstream::body::read_error_text(upstream).await?;
-                if error_text.contains("thought signature")
-                    || error_text.contains("thought_signature")
-                    || error_text.contains("Corrupted thought signature")
-                    || error_text.contains("Invalid thought signature")
-                {
-                    tracing::warn!(
-                        provider_id = provider.id(),
-                        upstream_model_id = %upstream_model_id,
-                        "upstream rejected thought signature, retrying with sentinel bypass"
-                    );
-                    let mut retry_payload = payload.clone();
-                    crate::protocol::gemini::sanitize_thought_signatures_in_gemini_payload(
-                        &mut retry_payload,
-                    );
-                    let retry_headers = executor.upstream.agy_native_headers(provider).await?;
-                    upstream = executor
-                        .upstream
-                        .send_provider_json(
-                            provider,
-                            protocol,
-                            &upstream_model_id,
-                            routing.map(|routing| routing.hash_key.as_str()),
-                            retry_headers.as_ref(),
-                            retry_payload,
-                        )
-                        .await?;
-                    status = upstream.status();
-                } else {
-                    return Err(crate::error::GatewayError::UpstreamStatus {
-                        status: reqwest::StatusCode::BAD_REQUEST,
-                        body: error_text,
-                        content_type,
-                        context: format!("provider {} gemini endpoint", provider.id()),
-                    });
-                }
-            }
-            if !status.is_success() {
-                return Err(crate::upstream::body::response_error(
-                    upstream,
-                    format!("provider {} gemini endpoint", provider.id()),
-                )
-                .await?);
-            }
-            // Gemini SSE mapper constructs response lifecycle events using downstream_body.
-            map_gemini_sse_with_image_routes(
-                observe_upstream_cache_usage(upstream.bytes_stream(), observation),
-                downstream_body,
-                converted.tool_names,
-                executor.custom_image_routes(provider),
-            )
-            .boxed()
-        }
+    let ctx = ProviderRequestContext {
+        executor,
+        provider,
+        upstream_model_id,
+        catalog_slug,
+        downstream_model,
+        routing,
+        body,
+        downstream_body,
+        advertised_thinking,
+        web_search_enabled,
+        baidu_native,
+        agy_native,
     };
-    Ok(stream)
+    match protocol {
+        ProviderProtocol::AnthropicMessages => stream_anthropic_messages(ctx).await,
+        ProviderProtocol::OpenAiChat => stream_openai_chat(ctx).await,
+        ProviderProtocol::OpenAiResponses => stream_openai_responses(ctx).await,
+        ProviderProtocol::GoogleGemini => stream_gemini(ctx).await,
+    }
+}
+
+async fn stream_anthropic_messages(
+    ctx: ProviderRequestContext<'_>,
+) -> Result<ResponseStream, GatewayError> {
+    let ProviderRequestContext {
+        executor,
+        provider,
+        upstream_model_id,
+        catalog_slug,
+        routing,
+        body,
+        downstream_body,
+        advertised_thinking,
+        web_search_enabled,
+        ..
+    } = ctx;
+    let auto_thinking_kind =
+        anthropic_thinking_kind_with_advertised(upstream_model_id, advertised_thinking);
+    let reasoning = upstream_reasoning(body, advertised_thinking);
+    let convert = |default_max_tokens| {
+        let mut converted = responses_to_anthropic_with_model_reasoning_and_thinking_kind(
+            body,
+            Some(upstream_model_id),
+            reasoning.as_ref(),
+            &executor.config,
+            default_max_tokens,
+            web_search_enabled,
+            provider.uses_mcp_bridge_names(upstream_model_id),
+            auto_thinking_kind,
+        )?;
+        if provider.uses_session_affinity()
+            && let Some(routing) = routing
+        {
+            // OneAPI's Anthropic-to-OpenAI conversion accepts only an
+            // optional string `metadata.user_id`. `session_id` is a 400
+            // ("Anthropic feature at \"metadata\" ... is not supported")
+            // on models behind that conversion, such as GLM-5.3.
+            // Session affinity still travels in `x-hash-key`.
+            converted.request.metadata = Some(json!({"user_id": routing.hash_key}));
+        }
+        Ok::<_, GatewayError>(converted)
+    };
+    let send = |converted: crate::protocol::convert::ConvertedRequest| async move {
+        let shape = CacheShape::from_anthropic(&converted.request);
+        let upstream = executor
+            .upstream
+            .anthropic_stream_with_web_search_retry(
+                provider,
+                converted.request,
+                routing.map(|routing| routing.hash_key.as_str()),
+                None,
+            )
+            .await?;
+        Ok::<_, GatewayError>((upstream, shape, converted.tool_names))
+    };
+    let declared_max_tokens = provider
+        .model_max_output_tokens(upstream_model_id)
+        .unwrap_or(executor.config.default_max_tokens);
+    let default_max_tokens =
+        executor
+            .output_limits
+            .default_for(provider.id(), upstream_model_id, declared_max_tokens);
+    let converted = convert(default_max_tokens)?;
+    let requested = converted.request.max_tokens;
+    let defaulted = converted.max_tokens_defaulted;
+    let (upstream, shape, tool_names) = match send(converted).await {
+        Err(GatewayError::UpstreamStatus {
+            status,
+            body: error_body,
+            ..
+        }) if defaulted
+            && status.is_client_error()
+            && let Some(limit) =
+                super::output_limit::output_limit_from_error(&error_body, requested) =>
+        {
+            tracing::warn!(
+                provider_id = provider.id(),
+                upstream_model_id = %upstream_model_id,
+                requested,
+                limit,
+                "provider rejected the default output budget; retrying with its limit"
+            );
+            let sent = send(convert(limit)?).await?;
+            executor
+                .output_limits
+                .record(provider.id(), upstream_model_id, limit);
+            sent
+        }
+        result => result?,
+    };
+    let observation = record_provider_prefix(
+        &executor.cache_shapes,
+        provider.id(),
+        catalog_slug,
+        upstream_model_id,
+        routing,
+        shape,
+    );
+    let upstream = observe_upstream_cache_usage(upstream, observation);
+    Ok(map_anthropic_sse_with_image_routes(
+        upstream,
+        downstream_body,
+        tool_names,
+        executor.custom_image_routes(provider),
+        provider.definition().preset_id.as_deref() == Some("baidu-oneapi"),
+    )
+    .boxed())
+}
+
+async fn stream_openai_chat(
+    ctx: ProviderRequestContext<'_>,
+) -> Result<ResponseStream, GatewayError> {
+    let ProviderRequestContext {
+        executor,
+        provider,
+        upstream_model_id,
+        catalog_slug,
+        routing,
+        body,
+        downstream_body,
+        advertised_thinking,
+        baidu_native,
+        ..
+    } = ctx;
+    let mut upstream_body = body.clone();
+    prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
+    let converted =
+        responses_to_openai_chat_streaming_with_model(&upstream_body, Some(upstream_model_id))?;
+    let observation = record_provider_prefix(
+        &executor.cache_shapes,
+        provider.id(),
+        catalog_slug,
+        upstream_model_id,
+        routing,
+        CacheShape::from_openai_chat(&converted.request),
+    );
+    let upstream = executor
+        .upstream
+        .send_provider_json(
+            provider,
+            ProviderProtocol::OpenAiChat,
+            upstream_model_id,
+            routing.map(|routing| routing.hash_key.as_str()),
+            baidu_native.as_ref(),
+            converted.request.clone(),
+        )
+        .await
+        .inspect_err(|error| {
+            tracing::error!(
+                provider_id = provider.id(),
+                catalog_slug = %catalog_slug,
+                upstream_model_id = %upstream_model_id,
+                error = %crate::error::format_error_chain(error),
+                "provider chat completions request failed before receiving a response"
+            );
+        })?;
+    let status = upstream.status();
+    if !status.is_success() {
+        return Err(crate::upstream::body::response_error(
+            upstream,
+            format!("provider {} chat completions endpoint", provider.id()),
+        )
+        .await?);
+    }
+    Ok(map_openai_chat_sse_with_image_routes(
+        observe_upstream_cache_usage(upstream.bytes_stream(), observation),
+        downstream_body,
+        converted.tool_names,
+        executor.custom_image_routes(provider),
+    )
+    .boxed())
+}
+
+async fn stream_openai_responses(
+    ctx: ProviderRequestContext<'_>,
+) -> Result<ResponseStream, GatewayError> {
+    let ProviderRequestContext {
+        executor,
+        provider,
+        upstream_model_id,
+        catalog_slug,
+        downstream_model,
+        routing,
+        body,
+        advertised_thinking,
+        baidu_native,
+        ..
+    } = ctx;
+    let mut upstream_body = body.clone();
+    upstream_body["model"] = Value::String(upstream_model_id.to_owned());
+    prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
+    let observation = record_provider_prefix(
+        &executor.cache_shapes,
+        provider.id(),
+        catalog_slug,
+        upstream_model_id,
+        routing,
+        CacheShape::from_openai_responses(&upstream_body),
+    );
+    let upstream = executor
+        .upstream
+        .send_provider_json(
+            provider,
+            ProviderProtocol::OpenAiResponses,
+            upstream_model_id,
+            routing.map(|routing| routing.hash_key.as_str()),
+            baidu_native.as_ref(),
+            upstream_body.clone(),
+        )
+        .await
+        .inspect_err(|error| {
+            tracing::error!(
+                provider_id = provider.id(),
+                catalog_slug = %catalog_slug,
+                upstream_model_id = %upstream_model_id,
+                error = %crate::error::format_error_chain(error),
+                "provider responses request failed before receiving a response"
+            );
+        })?;
+    let status = upstream.status();
+    if !status.is_success() {
+        return Err(crate::upstream::body::response_error(
+            upstream,
+            format!("provider {} responses endpoint", provider.id()),
+        )
+        .await?);
+    }
+    Ok(map_openai_responses_sse(
+        observe_upstream_cache_usage(upstream.bytes_stream(), observation),
+        upstream_model_id.to_owned(),
+        downstream_model.to_owned(),
+    ))
+}
+
+fn is_thought_signature_error(error_text: &str) -> bool {
+    error_text.contains("thought signature")
+        || error_text.contains("thought_signature")
+        || error_text.contains("Corrupted thought signature")
+        || error_text.contains("Invalid thought signature")
+}
+
+fn build_gemini_payload(
+    provider: &ProviderRuntime,
+    upstream_model_id: &str,
+    request: Value,
+) -> Value {
+    let api_url = provider.api_url_for_model(upstream_model_id);
+    if api_url.path().contains("/v1internal:") {
+        json!({
+            "project": "aicode-consumers",
+            "model": upstream_model_id,
+            "requestType": "agent",
+            "userAgent": "antigravity",
+            "requestId": format!("agent/{}", uuid::Uuid::new_v4()),
+            "request": request
+        })
+    } else {
+        request
+    }
+}
+
+async fn stream_gemini(ctx: ProviderRequestContext<'_>) -> Result<ResponseStream, GatewayError> {
+    let ProviderRequestContext {
+        executor,
+        provider,
+        upstream_model_id,
+        catalog_slug,
+        routing,
+        body,
+        downstream_body,
+        advertised_thinking,
+        agy_native,
+        ..
+    } = ctx;
+    let mut upstream_body = body.clone();
+    prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
+    let converted = responses_to_gemini(&upstream_body, Some(upstream_model_id))?;
+    let observation = record_provider_prefix(
+        &executor.cache_shapes,
+        provider.id(),
+        catalog_slug,
+        upstream_model_id,
+        routing,
+        CacheShape::from_gemini(&converted.request),
+    );
+    let payload = build_gemini_payload(provider, upstream_model_id, converted.request);
+    let mut upstream = executor
+        .upstream
+        .send_provider_json(
+            provider,
+            ProviderProtocol::GoogleGemini,
+            upstream_model_id,
+            routing.map(|routing| routing.hash_key.as_str()),
+            agy_native.as_ref(),
+            payload.clone(),
+        )
+        .await
+        .inspect_err(|error| {
+            tracing::error!(
+                provider_id = provider.id(),
+                catalog_slug = %catalog_slug,
+                upstream_model_id = %upstream_model_id,
+                error = %crate::error::format_error_chain(error),
+                "provider gemini generate content request failed before receiving a response"
+            );
+        })?;
+    if upstream.status() == reqwest::StatusCode::UNAUTHORIZED {
+        tracing::warn!(
+            provider_id = provider.id(),
+            "refreshing agy OAuth token after upstream rejected credentials"
+        );
+        crate::provider::auth::agy::invalidate_agy_cache().await;
+        let refreshed_headers = executor.upstream.agy_native_headers(provider).await?;
+        upstream = executor
+            .upstream
+            .send_provider_json(
+                provider,
+                ProviderProtocol::GoogleGemini,
+                upstream_model_id,
+                routing.map(|routing| routing.hash_key.as_str()),
+                refreshed_headers.as_ref(),
+                payload.clone(),
+            )
+            .await?;
+    }
+    let mut status = upstream.status();
+    if status == reqwest::StatusCode::BAD_REQUEST {
+        let content_type = upstream
+            .headers()
+            .get(reqwest::header::CONTENT_TYPE)
+            .cloned();
+        let error_text = crate::upstream::body::read_error_text(upstream).await?;
+        if is_thought_signature_error(&error_text) {
+            tracing::warn!(
+                provider_id = provider.id(),
+                upstream_model_id = %upstream_model_id,
+                "upstream rejected thought signature, retrying with sentinel bypass"
+            );
+            let mut retry_payload = payload.clone();
+            crate::protocol::gemini::sanitize_thought_signatures_in_gemini_payload(
+                &mut retry_payload,
+            );
+            let retry_headers = executor.upstream.agy_native_headers(provider).await?;
+            upstream = executor
+                .upstream
+                .send_provider_json(
+                    provider,
+                    ProviderProtocol::GoogleGemini,
+                    upstream_model_id,
+                    routing.map(|routing| routing.hash_key.as_str()),
+                    retry_headers.as_ref(),
+                    retry_payload,
+                )
+                .await?;
+            status = upstream.status();
+        } else {
+            return Err(crate::error::GatewayError::UpstreamStatus {
+                status: reqwest::StatusCode::BAD_REQUEST,
+                body: error_text,
+                content_type,
+                context: format!("provider {} gemini endpoint", provider.id()),
+            });
+        }
+    }
+    if !status.is_success() {
+        return Err(crate::upstream::body::response_error(
+            upstream,
+            format!("provider {} gemini endpoint", provider.id()),
+        )
+        .await?);
+    }
+    // Gemini SSE mapper constructs response lifecycle events using downstream_body.
+    Ok(map_gemini_sse_with_image_routes(
+        observe_upstream_cache_usage(upstream.bytes_stream(), observation),
+        downstream_body,
+        converted.tool_names,
+        executor.custom_image_routes(provider),
+    )
+    .boxed())
 }
 
 fn response_metadata_request(body: &Value, downstream_model: &str) -> Value {
