@@ -71,6 +71,7 @@ pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
         println!(
             "{}",
             serde_json::to_string_pretty(&serde_json::json!({
+                "configured": true,
                 "daemon": daemon_status,
                 "pid": metadata.as_ref().map(|metadata| metadata.pid),
                 "log": metadata.as_ref().map(|metadata| metadata.log_file.clone()),
