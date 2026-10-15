@@ -660,8 +660,11 @@ public sealed partial class MainWindow : Window
     private async Task ProviderDialogAsync(JsonElement? provider, bool inline = false)
     {
         var form = new StackPanel { Spacing = 12, MinWidth = 360 };
-        var preset = Choice("供应商类型", ["baidu-oneapi", "openrouter", "deepseek", "opencode-go", "aws-bedrock", "custom"],
-            provider is { } stored ? Json.OptionalText(stored, "preset_id") ?? "custom" : "baidu-oneapi");
+        var catalog = Json.Field(metadata, "provider_catalog");
+        var presets = Json.Rows(Json.Field(catalog, "presets"));
+        var protocols = Json.Rows(Json.Field(catalog, "protocols"));
+        var preset = Choice("供应商类型", presets.Select(row => Json.Text(row, "id")).ToArray(),
+            provider is { } stored ? Json.OptionalText(stored, "preset_id") ?? "custom" : Json.Text(catalog, "default_preset"));
         preset.IsEnabled = provider == null;
         var id = Input("供应商 ID", provider is { } p ? Json.Text(p, "id") : "");
         id.IsEnabled = provider == null;
@@ -671,7 +674,7 @@ public sealed partial class MainWindow : Window
         var imagePath = Input("图像生成路径（可选）", provider is { } image ? Json.OptionalText(image, "image_generation_path") ?? "" : "");
         var apiPath = Input("API 路径（custom，可选）", provider is { } api ? Json.OptionalText(api, "api_path") ?? "" : "");
         var key = new PasswordBox { Header = provider == null ? "API Key" : "新 API Key（留空保留）" };
-        var protocol = Choice("协议（custom）", ["自动检测", "open_ai_responses", "open_ai_chat", "anthropic_messages"],
+        var protocol = Choice("协议（custom）", new[] { "自动检测" }.Concat(protocols.Select(row => Json.Text(row, "id"))).ToArray(),
             provider is { } pr ? Json.Text(pr, "protocol") : "自动检测");
         var username = Input("OneAPI 额度用户名", provider is { } q ? Json.OptionalText(q, "quota_username") ?? "" : "");
         var workspace = Input("OpenCode Go workspace ID", provider is { } w ? Json.OptionalText(w, "quota_workspace_id") ?? "" : "");
@@ -679,7 +682,7 @@ public sealed partial class MainWindow : Window
         var accessKey = new PasswordBox { Header = "AWS Access Key ID（留空保留）" };
         var secretKey = new PasswordBox { Header = "AWS Secret Access Key（留空保留）" };
         var session = new PasswordBox { Header = "AWS Session Token（可选）" };
-        var region = Input("AWS Region", provider is { } r ? Json.OptionalText(r, "aws_region") ?? "us-east-1" : "us-east-1");
+        var region = Input("AWS Region", provider is { } r ? Json.OptionalText(r, "aws_region") ?? Json.Text(catalog, "default_aws_region") : Json.Text(catalog, "default_aws_region"));
         var bridge = Choice("OneAPI 认证桥接", ["disabled", "ducx_loopback"],
             provider is { } b ? Json.OptionalText(b, "baidu_auth_bridge") ?? "disabled" : "disabled");
         var report = new CheckBox { Content = "OneAPI 代码上报", IsChecked = provider is { } br &&
@@ -689,12 +692,14 @@ public sealed partial class MainWindow : Window
             form.Children.Add(element);
         void Fields()
         {
-            var type = (string)preset.SelectedItem;
-            key.Visibility = type == "aws-bedrock" ? Visibility.Collapsed : Visibility.Visible;
-            foreach (var element in new FrameworkElement[] { accessKey, secretKey, session, region }) element.Visibility = type == "aws-bedrock" ? Visibility.Visible : Visibility.Collapsed;
-            foreach (var element in new FrameworkElement[] { username, bridge, report }) element.Visibility = type == "baidu-oneapi" ? Visibility.Visible : Visibility.Collapsed;
-            foreach (var element in new FrameworkElement[] { workspace, cookie }) element.Visibility = type == "opencode-go" ? Visibility.Visible : Visibility.Collapsed;
-            protocol.Visibility = type == "custom" ? Visibility.Visible : Visibility.Collapsed;
+            var definition = presets.Single(row => Json.Text(row, "id") == (string)preset.SelectedItem);
+            var aws = Json.Text(definition, "auth_mode") == "aws_sigv4";
+            key.Header = Json.Flag(definition, "api_key_required") ? "API Key" : "API Key（可选；留空使用本地 OAuth）";
+            key.Visibility = aws ? Visibility.Collapsed : Visibility.Visible;
+            foreach (var element in new FrameworkElement[] { accessKey, secretKey, session, region }) element.Visibility = aws ? Visibility.Visible : Visibility.Collapsed;
+            foreach (var element in new FrameworkElement[] { username, bridge, report }) element.Visibility = Json.Flag(definition, "quota_username_required") ? Visibility.Visible : Visibility.Collapsed;
+            foreach (var element in new FrameworkElement[] { workspace, cookie }) element.Visibility = Json.Flag(definition, "quota_credentials_required") ? Visibility.Visible : Visibility.Collapsed;
+            protocol.Visibility = Json.Flag(definition, "custom_endpoint") ? Visibility.Visible : Visibility.Collapsed;
             apiPath.Visibility = protocol.Visibility;
         }
         preset.SelectionChanged += (_, _) => Fields(); Fields();
@@ -721,10 +726,10 @@ public sealed partial class MainWindow : Window
         }
         foreach (var (flag, box) in new[] { ("--display-name", name), ("--base-url", url), ("--website-url", website), ("--image-generation-path", imagePath) })
             if (!string.IsNullOrWhiteSpace(box.Text)) args.AddRange([flag, box.Text.Trim()]);
-        var type = (string)preset.SelectedItem;
-        if (type == "custom" && (string)protocol.SelectedItem != "自动检测") args.AddRange(["--protocol", (string)protocol.SelectedItem]);
-        if (type == "custom" && !string.IsNullOrWhiteSpace(apiPath.Text)) args.AddRange(["--api-path", apiPath.Text.Trim()]);
-        if (type == "aws-bedrock")
+        var definition = presets.Single(row => Json.Text(row, "id") == (string)preset.SelectedItem);
+        if (Json.Flag(definition, "custom_endpoint") && (string)protocol.SelectedItem != "自动检测") args.AddRange(["--protocol", (string)protocol.SelectedItem]);
+        if (Json.Flag(definition, "custom_endpoint") && !string.IsNullOrWhiteSpace(apiPath.Text)) args.AddRange(["--api-path", apiPath.Text.Trim()]);
+        if (Json.Text(definition, "auth_mode") == "aws_sigv4")
         {
             Secret("--aws-access-key-id", accessKey, "CM_AWS_ID");
             Secret("--aws-secret-access-key", secretKey, "CM_AWS_SECRET");
@@ -732,12 +737,12 @@ public sealed partial class MainWindow : Window
             args.AddRange(["--aws-region", region.Text.Trim()]);
         }
         else Secret("--key", key, "CM_API_KEY");
-        if (type == "baidu-oneapi")
+        if (Json.Flag(definition, "quota_username_required"))
         {
             if (!string.IsNullOrWhiteSpace(username.Text)) args.AddRange(["--quota-username", username.Text.Trim()]);
             args.AddRange(["--baidu-auth-bridge", (string)bridge.SelectedItem, "--baidu-code-report", report.IsChecked == true ? "true" : "false"]);
         }
-        if (type == "opencode-go")
+        if (Json.Flag(definition, "quota_credentials_required"))
         {
             if (!string.IsNullOrWhiteSpace(workspace.Text)) args.AddRange(["--quota-workspace-id", workspace.Text.Trim()]);
             Secret("--quota-auth-cookie", cookie, "CM_QUOTA_COOKIE");

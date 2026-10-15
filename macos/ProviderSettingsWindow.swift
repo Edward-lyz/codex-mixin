@@ -26,6 +26,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private let completionHandler: CompletionHandler?
     private let saveModelSelectionHandler: SaveModelSelectionHandler
     private let backgroundRefreshIntervalNanoseconds: UInt64
+    private let catalogHandler: (() async throws -> ProviderCatalog)?
 
     let model = ProviderSettingsModel()
     let benchmarkModel: ModelBenchmarkModel
@@ -39,6 +40,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         loadHandler: @escaping LoadHandler,
         runHandler: @escaping RunHandler,
         applyHandler: @escaping ApplyHandler,
+        catalogHandler: (() async throws -> ProviderCatalog)? = nil,
         benchmarkStartHandler: @escaping BenchmarkStartHandler = { _, _, _ in
             throw GatewayError.command("测速功能未配置")
         },
@@ -53,6 +55,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         self.loadHandler = loadHandler
         self.runHandler = runHandler
         self.applyHandler = applyHandler
+        self.catalogHandler = catalogHandler
         self.saveModelSelectionHandler = saveModelSelectionHandler
         self.baiduBridgeSetupHandler = baiduBridgeSetupHandler
         self.completionHandler = completionHandler
@@ -116,6 +119,14 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         reloadProviders()
         beginBackgroundRefresh()
         Task { @MainActor [weak self] in
+            if let self, let catalogHandler {
+                do {
+                    model.providerCatalog = try await catalogHandler()
+                } catch {
+                    showBanner(title: AppLocalization.string("settings.providerCatalogUnavailable"),
+                               message: error.localizedDescription, isError: true)
+                }
+            }
             await self?.benchmarkModel.refreshFromGatewayForPresentation()
         }
     }
@@ -319,7 +330,12 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
 
     func addProvider() {
         guard !model.isBusy, !benchmarkModel.isBusy, let window else { return }
-        runAddProviderSheet(attachedTo: window) { [weak self] values in
+        guard let catalog = model.providerCatalog else {
+            showBanner(title: AppLocalization.string("settings.providerCatalogUnavailable"),
+                       message: "", isError: true)
+            return
+        }
+        runAddProviderSheet(attachedTo: window, catalog: catalog) { [weak self] values in
             guard let self, let values else { return }
             submitNewProvider(values)
         }
@@ -328,28 +344,28 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
     private func submitNewProvider(_ values: AddProviderFormValues) {
         let id = nextProviderID(for: values.preset)
         let key = values.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        if values.preset != "aws-bedrock", key.isEmpty {
+        if values.definition.apiKeyRequired, key.isEmpty {
             showAlert(title: "缺少 API 密钥", message: "新增 Provider 必须填写 API 密钥。")
             return
         }
         var arguments = ["providers", "add", "--preset", values.preset, "--id", id]
-        if values.preset == "aws-bedrock" {
+        if values.definition.authMode == .awsSigV4 {
             arguments.append(contentsOf: [
                 "--aws-access-key-id", values.awsAccessKeyID,
                 "--aws-secret-access-key", values.awsSecretAccessKey,
                 "--aws-region", values.awsRegion,
             ])
             appendProviderArgument(&arguments, "--aws-session-token", values.awsSessionToken)
-        } else {
+        } else if !key.isEmpty {
             arguments.append(contentsOf: ["--key", key])
         }
-        if values.preset == "custom" {
+        if values.definition.customEndpoint {
             appendProviderArgument(&arguments, "--display-name", values.displayName)
             appendProviderArgument(&arguments, "--base-url", values.baseURL)
             appendProviderArgument(&arguments, "--website-url", values.websiteURL)
         }
         appendProviderArgument(&arguments, "--quota-username", values.quotaUsername)
-        if requiresOpenCodeGoQuotaCredentials(values.preset) {
+        if values.definition.quotaCredentialsRequired {
             appendProviderArgument(
                 &arguments,
                 "--quota-workspace-id",
@@ -361,7 +377,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 values.quotaAuthCookie
             )
         }
-        if values.preset == "baidu-oneapi" {
+        if values.definition.quotaUsernameRequired {
             appendBaiduAuthBridgeArguments(&arguments, mode: .disabled)
         }
         performMutation(
@@ -679,9 +695,19 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             }
             appendProviderArgument(&update, "--display-name", displayName)
             appendProviderArgument(&update, "--base-url", baseURL)
+            let path: String
+            if model.protocolID == provider.protocolID {
+                path = provider.apiPath
+            } else if let option = model.providerCatalog?.protocols.first(where: { $0.id == model.protocolID }) {
+                path = option.apiPath
+            } else {
+                showBanner(title: AppLocalization.string("settings.providerCatalogUnavailable"),
+                           message: model.protocolID, isError: true)
+                return nil
+            }
             update.append(contentsOf: [
                 "--protocol", model.protocolID,
-                "--api-path", apiPath(for: model.protocolID),
+                "--api-path", path,
             ])
             let websiteURL = model.websiteURL
                 .trimmingCharacters(in: .whitespacesAndNewlines)
@@ -732,14 +758,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                 ) ? selectedBaiduBridge : nil,
             codexSkillChanged: auxiliaryModelUpstream != provider.auxiliaryModelUpstream
         )
-    }
-
-    private func apiPath(for protocolID: String) -> String {
-        switch protocolID {
-        case "anthropic_messages": return "/v1/messages"
-        case "open_ai_chat": return "/v1/chat/completions"
-        default: return "/v1/responses"
-        }
     }
 
     private func nextProviderID(for preset: String) -> String {

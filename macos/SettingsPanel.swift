@@ -2,7 +2,8 @@ import Cocoa
 import SwiftUI
 
 struct AddProviderFormValues {
-    let preset: String
+    let definition: AddProviderPreset
+    var preset: String { definition.id }
     let displayName: String
     let baseURL: String
     let websiteURL: String
@@ -16,23 +17,60 @@ struct AddProviderFormValues {
     let quotaAuthCookie: String
 }
 
-struct AddProviderPreset: Identifiable {
+enum ProviderCredentialMode: String, Decodable {
+    case apiKey = "api_key"
+    case localOAuth = "local_oauth"
+    case awsSigV4 = "aws_sigv4"
+}
+
+struct AddProviderPreset: Identifiable, Decodable {
     let id: String
-    let title: String
+    let displayName: String
+    let authMode: ProviderCredentialMode
+    let apiKeyRequired: Bool
+    let credentialUrl: String?
+    let customEndpoint: Bool
+    let quotaUsernameRequired: Bool
+    let quotaCredentialsRequired: Bool
+}
+
+struct ProviderProtocolOption: Identifiable, Decodable {
+    let id: String
+    let displayName: String
+    let apiPath: String
+}
+
+struct ProviderCatalog: Decodable {
+    let defaultPreset: String
+    let defaultProtocol: String
+    let defaultAwsRegion: String
+    let presets: [AddProviderPreset]
+    let protocols: [ProviderProtocolOption]
+
+    static func decodeInterface(_ json: String) throws -> ProviderCatalog {
+        struct Interface: Decodable {
+            let protocolVersion: Int
+            let providerCatalog: ProviderCatalog
+        }
+        let decoder = JSONDecoder()
+        decoder.keyDecodingStrategy = .convertFromSnakeCase
+        let interface = try decoder.decode(Interface.self, from: Data(json.utf8))
+        let catalog = interface.providerCatalog
+        guard interface.protocolVersion == 1,
+              catalog.presets.contains(where: { $0.id == catalog.defaultPreset }),
+              catalog.protocols.contains(where: { $0.id == catalog.defaultProtocol }) else {
+            throw DecodingError.dataCorrupted(.init(
+                codingPath: [], debugDescription: "Invalid CLI provider catalog"
+            ))
+        }
+        return catalog
+    }
 }
 
 @MainActor
 final class AddProviderFormModel: ObservableObject {
-    let presets = [
-        AddProviderPreset(id: "baidu-oneapi", title: "Baidu OneAPI"),
-        AddProviderPreset(id: "openrouter", title: "OpenRouter"),
-        AddProviderPreset(id: "deepseek", title: "DeepSeek"),
-        AddProviderPreset(id: "opencode-go", title: "OpenCode Go"),
-        AddProviderPreset(id: "aws-bedrock", title: "Amazon Bedrock (AK/SK)"),
-        AddProviderPreset(id: "custom", title: AppLocalization.string("settings.customSite")),
-    ]
-
-    @Published var preset = "baidu-oneapi"
+    let presets: [AddProviderPreset]
+    @Published var preset: String
     @Published var displayName = ""
     @Published var baseURL = ""
     @Published var websiteURL = ""
@@ -40,18 +78,27 @@ final class AddProviderFormModel: ObservableObject {
     @Published var awsAccessKeyID = ""
     @Published var awsSecretAccessKey = ""
     @Published var awsSessionToken = ""
-    @Published var awsRegion = "us-east-1"
+    @Published var awsRegion: String
     @Published var quotaUsername = ""
     @Published var quotaWorkspaceID = ""
     @Published var quotaAuthCookie = ""
 
-    var isCustom: Bool { preset == "custom" }
-    var isBaiduOneAPI: Bool { preset == "baidu-oneapi" }
-    var isAWSBedrock: Bool { preset == "aws-bedrock" }
-    var requiresQuotaCredentials: Bool { requiresOpenCodeGoQuotaCredentials(preset) }
-    var credentialURL: URL? { URL(string: providerCredentialURL(preset)) }
+    init(catalog: ProviderCatalog) {
+        presets = catalog.presets
+        preset = catalog.defaultPreset
+        awsRegion = catalog.defaultAwsRegion
+    }
+
+    private var definition: AddProviderPreset? { presets.first { $0.id == preset } }
+    var isCustom: Bool { definition?.customEndpoint == true }
+    var isBaiduOneAPI: Bool { definition?.quotaUsernameRequired == true }
+    var isAWSBedrock: Bool { definition?.authMode == .awsSigV4 }
+    var usesLocalOAuth: Bool { definition?.authMode == .localOAuth }
+    var requiresQuotaCredentials: Bool { definition?.quotaCredentialsRequired == true }
+    var credentialURL: URL? { definition?.credentialUrl.flatMap(URL.init(string:)) }
 
     func validatedValues() -> AddProviderFormValues? {
+        guard let definition else { return nil }
         let trimmedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if isCustom, trimmedDisplayName.isEmpty || trimmedBaseURL.isEmpty {
@@ -63,7 +110,7 @@ final class AddProviderFormModel: ObservableObject {
         }
 
         let trimmedAPIKey = apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
-        guard isAWSBedrock || !trimmedAPIKey.isEmpty else {
+        guard !definition.apiKeyRequired || !trimmedAPIKey.isEmpty else {
             showAlert(
                 title: "缺少 API 密钥",
                 message: AppLocalization.string("settings.enterTheProviderAPIKey")
@@ -104,7 +151,7 @@ final class AddProviderFormModel: ObservableObject {
         }
 
         return AddProviderFormValues(
-            preset: preset,
+            definition: definition,
             displayName: trimmedDisplayName,
             baseURL: trimmedBaseURL,
             websiteURL: websiteURL.trimmingCharacters(in: .whitespacesAndNewlines),
@@ -131,13 +178,13 @@ private struct AddProviderFormView: View {
                 Section {
                     Picker(AppLocalization.string("settings.provider"), selection: $model.preset) {
                         ForEach(model.presets) { preset in
-                            Text(preset.title).tag(preset.id)
+                            Text(preset.displayName).tag(preset.id)
                         }
                     }
 
                     if let credentialURL = model.credentialURL, !model.isCustom {
                         Link(destination: credentialURL) {
-                            Label(AppLocalization.string("settings.openAPIKeyPage"), systemImage: "key")
+                            Label(AppLocalization.string("settings.openProviderSetup"), systemImage: "key")
                         }
                     }
                 } header: {
@@ -173,6 +220,11 @@ private struct AddProviderFormView: View {
                 }
 
                 Section("凭据") {
+                    if model.usesLocalOAuth {
+                        Text(AppLocalization.string("settings.localOAuthCredentials"))
+                            .font(.callout)
+                            .foregroundStyle(.secondary)
+                    }
                     if model.isAWSBedrock {
                         SecureField("Access Key ID", text: $model.awsAccessKeyID)
                         SecureField("Secret Access Key", text: $model.awsSecretAccessKey)
@@ -184,7 +236,8 @@ private struct AddProviderFormView: View {
                         SecureField(
                             "API Key",
                             text: $model.apiKey,
-                            prompt: Text(AppLocalization.string("settings.requiredStoredOnlyByTheLocalRust"))
+                            prompt: Text(AppLocalization.string(model.usesLocalOAuth
+                                ? "settings.optionalAPIKey" : "settings.requiredStoredOnlyByTheLocalRust"))
                         )
                     }
 
@@ -247,9 +300,10 @@ final class ModalActionTarget: NSObject {
 @MainActor
 func runAddProviderSheet(
     attachedTo parentWindow: NSWindow,
+    catalog: ProviderCatalog,
     completion: @escaping (AddProviderFormValues?) -> Void
 ) {
-    let model = AddProviderFormModel()
+    let model = AddProviderFormModel(catalog: catalog)
     let sheet = NSWindow(
         contentRect: NSRect(x: 0, y: 0, width: 650, height: 560),
         styleMask: [.titled, .closable],
@@ -287,15 +341,4 @@ func runAddProviderSheet(
 
 func requiresOpenCodeGoQuotaCredentials(_ provider: String) -> Bool {
     provider == "opencode-go"
-}
-
-func providerCredentialURL(_ provider: String) -> String {
-    switch provider {
-    case "baidu-oneapi": return "https://oneapi-comate.baidu-int.com/token"
-    case "openrouter": return "https://openrouter.ai/settings/keys"
-    case "deepseek": return "https://platform.deepseek.com/api_keys"
-    case "opencode-go": return "https://opencode.ai/go"
-    case "aws-bedrock": return "https://aws.amazon.com/bedrock/"
-    default: return ""
-    }
 }

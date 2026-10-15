@@ -16,4 +16,7 @@ xcrun swiftc \
   "$ROOT_DIR/macos/tests/SettingsPanelPresentationTests.swift" \
   -framework Cocoa \
   -o "$TEST_BINARY"
+cargo build --locked --manifest-path "$ROOT_DIR/Cargo.toml" >/dev/null
+"$ROOT_DIR/target/debug/codex-mixin" --no-tui interface --json > "$TEST_BINARY.interface.json"
+CODEX_MIXIN_TEST_INTERFACE_JSON="$TEST_BINARY.interface.json" \
 CODEX_MIXIN_LOCALIZATION_DIR="$LOCALIZATION_BUNDLE" "$TEST_BINARY"

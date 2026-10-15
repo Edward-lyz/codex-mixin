@@ -158,6 +158,13 @@ if (args is ["--cli", var realCli])
             var client = new CliClient(Path.GetFullPath(realCli));
             var metadata = await client.QueryAsync(["interface", "--json"], CancellationToken.None);
             Json.Interface(metadata);
+            var catalog = Json.Field(metadata, "provider_catalog");
+            var presets = Json.Rows(Json.Field(catalog, "presets"));
+            var agy = presets.Single(row => Json.Text(row, "id") == "agy");
+            Assert(Json.Text(agy, "auth_mode") == "local_oauth" && !Json.Flag(agy, "api_key_required"),
+                "Antigravity must support local OAuth without an API key");
+            Assert(Json.Rows(Json.Field(catalog, "protocols")).Any(row => Json.Text(row, "id") == "google_gemini"),
+                "The CLI must expose the Gemini protocol to the Windows picker");
             var status = await client.QueryAsync(["service", "status", "--json"], CancellationToken.None);
             Assert(Json.Gateway(status) == "未配置", "Fresh CLI unexpectedly reported a configured gateway");
             var providerError = await Failure(() => client.QueryAsync(["provider", "list", "--json"], CancellationToken.None));

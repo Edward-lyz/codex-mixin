@@ -59,6 +59,26 @@ internal static class Json
         foreach (var key in new[] { "service_lifecycle", "agent_management", "config_apply" })
             if (!Flag(Field(value, "capabilities"), key))
                 throw new CliFailure($"当前 CLI 不支持 {key}，请更新完整应用包。");
+        var catalog = Field(value, "provider_catalog");
+        var presets = Rows(Field(catalog, "presets"));
+        var protocols = Rows(Field(catalog, "protocols"));
+        if (!presets.Any(row => Text(row, "id") == Text(catalog, "default_preset")) ||
+            !protocols.Any(row => Text(row, "id") == Text(catalog, "default_protocol")))
+            throw new CliFailure("CLI provider catalog 的默认选项无效，请更新完整应用包。");
+        Text(catalog, "default_aws_region");
+        foreach (var preset in presets)
+        {
+            Text(preset, "display_name");
+            if (Text(preset, "auth_mode") is not ("api_key" or "local_oauth" or "aws_sigv4"))
+                throw new CliFailure("CLI provider catalog 包含不支持的认证方式。");
+            foreach (var key in new[] { "api_key_required", "custom_endpoint", "quota_username_required", "quota_credentials_required" })
+                Flag(preset, key);
+        }
+        foreach (var protocol in protocols)
+        {
+            Text(protocol, "display_name");
+            Text(protocol, "api_path");
+        }
     }
 
     internal static string Gateway(JsonElement value)

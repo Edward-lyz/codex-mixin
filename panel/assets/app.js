@@ -768,19 +768,28 @@ function valueView(value, depth = 0) {
 // Mirrors the macOS "模型与服务" window: provider list on the left, a
 // models table and connection settings for the selected provider.
 
-const PROVIDER_PRESETS = [
-  ["baidu-oneapi", "Baidu OneAPI"],
-  ["openrouter", "OpenRouter"],
-  ["deepseek", "DeepSeek"],
-  ["opencode-go", "OpenCode Go"],
-  ["aws-bedrock", "Amazon Bedrock (AK/SK)"],
-  ["custom", "自定义站点"],
-];
-const PROTOCOLS = [
-  ["open_ai_responses", "Responses", "/v1/responses"],
-  ["anthropic_messages", "Messages", "/v1/messages"],
-  ["open_ai_chat", "Chat Completions", "/v1/chat/completions"],
-];
+function providerCatalog() {
+  const catalog = state.snapshot?.provider_catalog;
+  if (!catalog || !Array.isArray(catalog.presets) || !Array.isArray(catalog.protocols)
+      || !catalog.presets.some((preset) => preset.id === catalog.default_preset)
+      || !catalog.protocols.some((protocol) => protocol.id === catalog.default_protocol)) {
+    throw new Error("CLI provider catalog is missing or invalid; update the complete app bundle.");
+  }
+  return catalog;
+}
+function providerProtocols() {
+  return providerCatalog().protocols.map((protocol) => [protocol.id, protocol.display_name, protocol.api_path]);
+}
+function providerDefinition(id) {
+  const definition = providerCatalog().presets.find((preset) => preset.id === id);
+  if (!definition) throw new Error(`CLI provider catalog does not describe ${id}`);
+  if (!["api_key", "local_oauth", "aws_sigv4"].includes(definition.auth_mode)
+      || ["api_key_required", "custom_endpoint", "quota_username_required", "quota_credentials_required"]
+        .some((flag) => typeof definition[flag] !== "boolean")) {
+    throw new Error(`CLI provider catalog contains an invalid definition for ${id}`);
+  }
+  return definition;
+}
 const ISSUE_LABELS = {
   credentials_missing: "缺少凭据",
   no_routable_models: "没有可路由模型",
@@ -1272,20 +1281,21 @@ function connectionTab(provider) {
     return h("div", { class: "notice notice-quiet" }, h("span", { class: "dot notice-mark", "aria-hidden": "true" }), h("div", { text: "此服务商由 Codex 官方 OAuth 登录管理，不能在这里修改连接参数。" }));
   }
   const preset = provider.preset_id || "custom";
-  const aws = preset === "aws-bedrock";
+  const definition = providerDefinition(preset);
+  const aws = definition.auth_mode === "aws_sigv4";
   const form = h("form", { class: "svc-form", autocomplete: "off" });
   const connection = [formRow("服务商 ID", h("span", { class: "mono muted", text: provider.id }))];
-  if (preset === "custom") {
+  if (definition.custom_endpoint) {
     connection.push(
       formRow("站点名称", inlineInput("display_name", provider.display_name)),
       formRow("API 地址", inlineInput("base_url", provider.base_url, { placeholder: "https://api.example.com/v1", inputmode: "url" }), "填写到版本前缀，例如 /v1"),
-      formRow("API 端点", selectControl("protocol", PROTOCOLS.map(([id, label]) => [id, label]), provider.protocol || "open_ai_responses")),
+      formRow("API 端点", selectControl("protocol", providerProtocols().map(([id, label]) => [id, label]), provider.protocol || providerCatalog().default_protocol)),
       formRow("官网地址", inlineInput("website_url", provider.website_url, { inputmode: "url" })),
     );
   }
   if (aws) {
     connection.push(
-      formRow("AWS Region", inlineInput("aws_region", provider.aws_region, { placeholder: "us-east-1" })),
+      formRow("AWS Region", inlineInput("aws_region", provider.aws_region, { placeholder: providerCatalog().default_aws_region })),
       formRow("Access Key ID", inlineSecret("aws_access_key_id", provider.aws_sigv4_configured)),
       formRow("Secret Access Key", inlineSecret("aws_secret_access_key", provider.aws_sigv4_configured)),
       formRow("Session Token", h("div", { class: "card-actions" }, inlineSecret("aws_session_token", provider.aws_session_token_configured), provider.aws_session_token_configured ? clearButton("清除 Session Token", provider, { clear_aws_session_token: true }, "Session Token 已清除") : null)),
@@ -1295,8 +1305,8 @@ function connectionTab(provider) {
     connection.push(formRow("API 密钥", h("div", { class: "card-actions" }, inlineSecret("key", provider.api_key_configured), provider.api_key_configured ? clearButton("清除密钥", provider, { clear_key: true }, "密钥已清除") : null)));
   }
   const groups = [formGroup("连接配置", ...connection)];
-  if (preset === "baidu-oneapi") groups.push(formGroup("百度额度", formRow("额度用户名", inlineInput("quota_username", provider.quota_username, { placeholder: "Baidu OneAPI 额度接口必填" }))));
-  if (preset === "opencode-go") {
+  if (definition.quota_username_required) groups.push(formGroup("百度额度", formRow("额度用户名", inlineInput("quota_username", provider.quota_username, { placeholder: "Baidu OneAPI 额度接口必填" }))));
+  if (definition.quota_credentials_required) {
     groups.push(formGroup("OpenCode Go",
       formRow("工作区 ID", inlineInput("quota_workspace_id", provider.quota_workspace_id, { placeholder: "例如：wrk_abc123" })),
       formRow("Auth Cookie", h("div", { class: "card-actions" }, inlineSecret("quota_auth_cookie", provider.quota_auth_cookie_configured), provider.quota_auth_cookie_configured ? clearButton("清除额度凭据", provider, { clear_quota_workspace_id: true, clear_quota_auth_cookie: true }, "额度凭据已清除") : null)),
@@ -1309,7 +1319,7 @@ function connectionTab(provider) {
   auxiliary.addEventListener("change", syncReview);
   syncReview();
   const advanced = [];
-  if (preset === "baidu-oneapi") {
+  if (definition.quota_username_required) {
     advanced.push(
       formRow("认证桥接", selectControl("baidu_auth_bridge", [["disabled", "关闭（默认）"], ["ducx_loopback", "DUCX 核心（loopback）"]], provider.baidu_auth_bridge || "disabled")),
       formRow("上报 AI 代码使用数据", h("input", { class: "switch", type: "checkbox", role: "switch", name: "baidu_code_report", checked: Boolean(provider.baidu_code_report), "aria-label": "上报 AI 代码使用数据" })),
@@ -1355,7 +1365,7 @@ function connectionChanges(provider, values) {
     text("website_url", provider.website_url);
     if (values.protocol && values.protocol !== provider.protocol) {
       options.protocol = values.protocol;
-      options.api_path = PROTOCOLS.find(([id]) => id === values.protocol)?.[2];
+      options.api_path = providerProtocols().find(([id]) => id === values.protocol)?.[2];
     }
   }
   for (const name of ["key", "aws_access_key_id", "aws_secret_access_key", "aws_session_token", "quota_auth_cookie"]) if (values[name]) options[name] = values[name];
@@ -1383,35 +1393,48 @@ function connectionChanges(provider, values) {
 }
 
 function openAddProvider() {
-  const preset = selectControl("preset", PROVIDER_PRESETS, "baidu-oneapi");
+  const catalog = providerCatalog();
+  const preset = selectControl("preset", catalog.presets.map((entry) => [entry.id, entry.display_name]), catalog.default_preset);
   const rows = {
     id: formRow("服务商 ID", inlineInput("id", "", { placeholder: "可选，默认按预设生成" })),
     key: formRow("API 密钥", inlineSecret("key", false)),
     display: formRow("站点名称", inlineInput("display_name", "")),
     base: formRow("API 地址", inlineInput("base_url", "", { placeholder: "https://api.example.com/v1", inputmode: "url" })),
-    protocol: formRow("API 端点", selectControl("protocol", PROTOCOLS.map(([id, label]) => [id, label]), "open_ai_responses")),
+    protocol: formRow("API 端点", selectControl("protocol", providerProtocols().map(([id, label]) => [id, label]), catalog.default_protocol)),
     website: formRow("官网地址", inlineInput("website_url", "", { inputmode: "url" })),
     quota: formRow("额度用户名", inlineInput("quota_username", "", { placeholder: "Baidu OneAPI 额度接口必填" })),
     workspace: formRow("工作区 ID", inlineInput("quota_workspace_id", "", { placeholder: "例如：wrk_abc123" })),
     cookie: formRow("Auth Cookie", inlineSecret("quota_auth_cookie", false)),
-    region: formRow("AWS Region", inlineInput("aws_region", "", { placeholder: "us-east-1" })),
+    region: formRow("AWS Region", inlineInput("aws_region", catalog.default_aws_region)),
     awsId: formRow("Access Key ID", inlineSecret("aws_access_key_id", false)),
     awsSecret: formRow("Secret Access Key", inlineSecret("aws_secret_access_key", false)),
     awsToken: formRow("Session Token", inlineSecret("aws_session_token", false)),
   };
-  const visible = {
-    custom: ["id", "key", "display", "base", "protocol", "website"],
-    "baidu-oneapi": ["id", "key", "quota"],
-    "opencode-go": ["id", "key", "workspace", "cookie"],
-    "aws-bedrock": ["id", "region", "awsId", "awsSecret", "awsToken"],
-  };
+  const hint = h("p", { class: "muted", hidden: true, text: "请先在供应商 CLI 中登录；API Key 留空时使用其本地 OAuth 凭据。" });
   const sync = () => {
-    const show = new Set(visible[preset.querySelector("select").value] || ["id", "key"]);
-    for (const [name, row] of Object.entries(rows)) row.hidden = !show.has(name);
+    const definition = providerDefinition(preset.querySelector("select").value);
+    const show = new Set(["id"]);
+    if (definition.auth_mode === "aws_sigv4") {
+      for (const name of ["region", "awsId", "awsSecret", "awsToken"]) show.add(name);
+    } else show.add("key");
+    if (definition.custom_endpoint) for (const name of ["display", "base", "protocol", "website"]) show.add(name);
+    if (definition.quota_username_required) show.add("quota");
+    if (definition.quota_credentials_required) for (const name of ["workspace", "cookie"]) show.add(name);
+    const required = new Set();
+    if (definition.api_key_required) required.add("key");
+    if (definition.custom_endpoint) for (const name of ["display", "base"]) required.add(name);
+    if (definition.auth_mode === "aws_sigv4") for (const name of ["awsId", "awsSecret", "region"]) required.add(name);
+    if (definition.quota_username_required) required.add("quota");
+    if (definition.quota_credentials_required) for (const name of ["workspace", "cookie"]) required.add(name);
+    for (const [name, row] of Object.entries(rows)) {
+      row.hidden = !show.has(name);
+      row.querySelector("input, select").required = required.has(name);
+    }
+    hint.hidden = definition.auth_mode !== "local_oauth";
   };
   preset.querySelector("select").addEventListener("change", sync);
   sync();
-  const form = h("form", { class: "svc-form", autocomplete: "off" }, formGroup(null, formRow("预设", preset), ...Object.values(rows)), h("div", { class: "form-actions" }, h("button", { class: "btn btn-ghost", type: "button", text: "取消", onclick: closeSheet }), submitButton("新增服务商")));
+  const form = h("form", { class: "svc-form", autocomplete: "off" }, formGroup(null, formRow("预设", preset), hint, ...Object.values(rows)), h("div", { class: "form-actions" }, h("button", { class: "btn btn-ghost", type: "button", text: "取消", onclick: closeSheet }), submitButton("新增服务商")));
   form.addEventListener("submit", async (event) => {
     event.preventDefault();
     const values = formValues(form);
@@ -1420,7 +1443,7 @@ function openAddProvider() {
       if (name === "preset" || !value || form.elements[name].closest(".frow")?.hidden) continue;
       options[name] = value;
     }
-    if (options.protocol) options.api_path = PROTOCOLS.find(([id]) => id === options.protocol)?.[2];
+    if (options.protocol) options.api_path = providerProtocols().find(([id]) => id === options.protocol)?.[2];
     const result = await runAction(event.submitter, "provider_add", { preset: values.preset, options }, { ok: "服务商已添加，模型列表已刷新" });
     if (!result) return;
     closeSheet();

@@ -30,6 +30,7 @@ private struct ProviderConnectionDraft {
 
 @MainActor
 final class ProviderSettingsModel: ObservableObject {
+    @Published var providerCatalog: ProviderCatalog?
     @Published var providers: [ProviderView] = []
     @Published var selectedProviderID: String?
     @Published var status = "正在读取供应商…"
@@ -629,9 +630,9 @@ private struct ProviderDetailForm: View {
                                 .font(.caption)
                                 .foregroundStyle(.secondary)
                             Picker("API 端点", selection: $formState.protocolID) {
-                                Text("Responses").tag("open_ai_responses")
-                                Text("Messages").tag("anthropic_messages")
-                                Text("Chat Completions").tag("open_ai_chat")
+                                ForEach(formState.providerCatalog?.protocols ?? []) { option in
+                                    Text(option.displayName).tag(option.id)
+                                }
                             }
                             TextField("官网地址", text: $formState.websiteURL)
                         } else if isAWSBedrock {

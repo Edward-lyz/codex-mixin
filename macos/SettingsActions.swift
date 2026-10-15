@@ -65,6 +65,12 @@ extension AppDelegate {
                     await self.refreshStatusNow()
                     progress?.advance(to: 3)
                 },
+                catalogHandler: { [weak self] in
+                    guard let self else { throw GatewayError.command("Codex Mixin exited") }
+                    return try ProviderCatalog.decodeInterface(
+                        try await self.runGateway(["interface", "--json"])
+                    )
+                },
                 benchmarkStartHandler: { [weak self] timeoutSeconds, providerID, targetOutputTokens in
                     guard let self else {
                         throw GatewayError.command("Codex Mixin 已退出")

@@ -284,14 +284,22 @@ async fn snapshot(
             Ok(json!([]))
         }
     };
-    let (providers, benchmark, usage, models) =
-        tokio::try_join!(providers, benchmark, usage, models)?;
+    let (providers, benchmark, usage, models, interface) = tokio::try_join!(
+        providers,
+        benchmark,
+        usage,
+        models,
+        run_json(&["interface", "--json"])
+    )?;
     let refreshed_at_ms = SystemTime::now()
         .duration_since(UNIX_EPOCH)
         .map(|elapsed| elapsed.as_millis())
         .unwrap_or_default();
     Ok(Json(json!({
         "status": status,
+        "provider_catalog": interface.get("provider_catalog").ok_or_else(|| ApiError::from(
+            CliFailure::panel("invalid_contract", "CLI interface is missing provider_catalog".to_owned(), Value::Bool(false))
+        ))?,
         "providers": providers.get("providers").cloned().unwrap_or(json!([])),
         "codex_install_mode": providers.get("codex_install_mode").cloned().unwrap_or(Value::Null),
         "fusion_profile": providers.get("fusion_profile").cloned().unwrap_or(Value::Null),

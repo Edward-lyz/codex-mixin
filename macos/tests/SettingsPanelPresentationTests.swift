@@ -12,6 +12,9 @@ func showAlert(title: String, message: String) {
 struct SettingsPanelPresentationTests {
     static func main() {
         _ = NSApplication.shared
+        let catalogPath = ProcessInfo.processInfo.environment["CODEX_MIXIN_TEST_INTERFACE_JSON"]!
+        let interface = try! String(contentsOfFile: catalogPath, encoding: .utf8)
+        let catalog = try! ProviderCatalog.decodeInterface(interface)
         let parent = NSWindow(
             contentRect: NSRect(x: 0, y: 0, width: 800, height: 600),
             styleMask: [.titled, .closable],
@@ -20,7 +23,7 @@ struct SettingsPanelPresentationTests {
         )
         var resultWasDelivered = false
 
-        runAddProviderSheet(attachedTo: parent) { values in
+        runAddProviderSheet(attachedTo: parent, catalog: catalog) { values in
             precondition(values == nil)
             resultWasDelivered = true
         }
@@ -33,7 +36,12 @@ struct SettingsPanelPresentationTests {
         precondition(NSApp.modalWindow == nil, "The add-provider form must not start an app-modal loop")
         precondition(sheet.contentViewController != nil, "The sheet must host its SwiftUI form")
 
-        let model = AddProviderFormModel()
+        let model = AddProviderFormModel(catalog: catalog)
+        precondition(model.presets.map(\.id) == catalog.presets.map(\.id))
+        precondition(
+            model.presets.contains { $0.id == "agy" },
+            "The add-provider picker must include the Antigravity preset"
+        )
         precondition(
             model.isBaiduOneAPI && !model.isCustom && !model.requiresQuotaCredentials,
             "Baidu fields must be active for the default preset"
@@ -47,6 +55,37 @@ struct SettingsPanelPresentationTests {
         )
         model.preset = "custom"
         precondition(model.isCustom && model.credentialURL == nil, "Custom providers must show URL fields")
+        model.preset = "agy"
+        precondition(
+            model.validatedValues()?.apiKey == "",
+            "Antigravity must allow the CLI to load local OAuth credentials without an API key"
+        )
+        model.apiKey = " test-key "
+        precondition(
+            model.validatedValues()?.apiKey == "test-key",
+            "Antigravity must preserve an explicitly supplied API key"
+        )
+        var document = try! JSONSerialization.jsonObject(with: Data(interface.utf8)) as! [String: Any]
+        var rawCatalog = document["provider_catalog"] as! [String: Any]
+        var presets = rawCatalog["presets"] as! [[String: Any]]
+        var future = presets.first { $0["id"] as? String == "agy" }!
+        future["id"] = "future-provider"
+        future["display_name"] = "Future Provider"
+        presets.append(future)
+        rawCatalog["presets"] = presets
+        rawCatalog["default_preset"] = "future-provider"
+        document["provider_catalog"] = rawCatalog
+        let futureJSON = String(decoding: try! JSONSerialization.data(withJSONObject: document), as: UTF8.self)
+        let futureCatalog = try! ProviderCatalog.decodeInterface(futureJSON)
+        let futureModel = AddProviderFormModel(catalog: futureCatalog)
+        precondition(futureModel.preset == "future-provider" && futureModel.usesLocalOAuth)
+        precondition(futureModel.validatedValues()?.preset == "future-provider")
+        precondition(futureModel.presets.count == model.presets.count + 1,
+                     "New CLI presets must appear without updating the Swift preset list")
+        do {
+            _ = try ProviderCatalog.decodeInterface("{\"protocol_version\":1}")
+            preconditionFailure("Missing CLI metadata must fail explicitly")
+        } catch {}
 
         parent.endSheet(sheet, returnCode: .cancel)
         RunLoop.main.run(until: Date(timeIntervalSinceNow: 0.1))
