@@ -284,6 +284,7 @@ public sealed partial class MainWindow : Window
         draftDirty = false;
         ProviderHeaderTile.Visibility = StatusBadge.Visibility = OfficialBadge.Visibility = Visibility.Collapsed;
         ShowSummary("配置已同步", "Caption");
+        PageDescription.Style = Themed("Caption");
         (PageTitle.Text, PageDescription.Text) = page switch
         {
             "providers" => ("供应商与模型", "管理服务连接与向 Agent 提供的模型"),
@@ -419,6 +420,7 @@ public sealed partial class MainWindow : Window
         StatusBadge.Visibility = Visibility.Visible;
         var refreshed = provider.TryGetProperty("models_refreshed_at_ms", out var stamp) && stamp.ValueKind == JsonValueKind.Number
             ? $" · 上次刷新 {DateTimeOffset.FromUnixTimeMilliseconds(stamp.GetInt64()).ToLocalTime():yyyy/MM/dd HH:mm}" : "";
+        PageDescription.Style = Themed("Mono");
         PageDescription.Text = $"{providerId} · 已加入 {Json.Strings(Json.Field(provider, "selected_models")).Length} / 可选 {Json.Rows(Json.Field(provider, "cached_models")).Length}{refreshed}";
         ApplyChanges.IsEnabled = true;
         try
