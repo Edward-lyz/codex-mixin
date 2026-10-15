@@ -66,7 +66,7 @@ internal sealed class NativeShell : IDisposable
         var scale = dpi / 96.0;
         var margin = (int)(8 * scale);
         var width = Math.Min((int)(360 * scale), info.Work.Right - info.Work.Left - 2 * margin);
-        var height = Math.Min((int)(640 * scale), info.Work.Bottom - info.Work.Top - 2 * margin);
+        var height = Math.Min((int)(720 * scale), info.Work.Bottom - info.Work.Top - 2 * margin);
         return new Windows.Graphics.RectInt32(Math.Clamp(position.X - width / 2, info.Work.Left + margin, info.Work.Right - width - margin), info.Work.Bottom - height - margin, width, height);
     }
 

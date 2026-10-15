@@ -119,7 +119,7 @@
       <Style x:Key="MenuRow" TargetType="Button" BasedOn="{StaticResource FlatButton}">
         <Setter Property="HorizontalAlignment" Value="Stretch" />
         <Setter Property="HorizontalContentAlignment" Value="Stretch" />
-        <Setter Property="Padding" Value="10,7" /><Setter Property="CornerRadius" Value="6" />
+        <Setter Property="Padding" Value="10,6" /><Setter Property="CornerRadius" Value="6" />
       </Style>
       <Style x:Key="Segment" TargetType="ToggleButton" BasedOn="{StaticResource DefaultToggleButtonStyle}">
         <Setter Property="BorderThickness" Value="0" />

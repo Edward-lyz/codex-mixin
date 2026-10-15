@@ -116,7 +116,7 @@ public sealed partial class TrayWindow : Window
     private static TextBlock Placeholder(string text) => new()
     {
         Text = text, Style = Themed("Caption"), TextWrapping = TextWrapping.Wrap,
-        HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 40, 0, 0)
+        HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 24, 0, 24)
     };
 
     private static double? Amount(JsonElement row, string field)
@@ -171,7 +171,7 @@ public sealed partial class TrayWindow : Window
     {
         var models = rows.Select(row => (Row: row, Total: TokenTotal(row))).OrderByDescending(row => row.Total).Take(VisibleUsageModels).ToArray();
         var maximum = Math.Max(1, models.Max(row => row.Total));
-        const double plotHeight = 120;
+        const double plotHeight = 96;
         var chart = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
         foreach (var (row, total) in models)
         {
