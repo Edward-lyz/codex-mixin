@@ -331,7 +331,7 @@ async fn oauth_install_falls_back_to_local_cache_when_official_fetch_fails() {
 }
 
 #[tokio::test]
-async fn oauth_install_refreshes_existing_provider_list_from_live_catalog() {
+async fn oauth_install_refreshes_its_public_template_from_live_catalog() {
     let upstream = axum::Router::new().route(
         "/backend-api/codex/models",
         axum::routing::get(|| async {
@@ -358,7 +358,7 @@ async fn oauth_install_refreshes_existing_provider_list_from_live_catalog() {
         r#"{"client_version":"0.144.0","models":[{"slug":"gpt-5.5"}]}"#,
     )
     .unwrap();
-    let official_models_cache = dir.path().join("official-models.json");
+    let official_models_cache = dir.path().join("official-template.json");
     fs::write(
         &official_models_cache,
         r#"{"models":[{"slug":"gpt-5.6-terra"},{"slug":"gpt-5.6-luna"},{"slug":"gpt-5.5"}]}"#,
