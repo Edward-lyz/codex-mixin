@@ -86,7 +86,7 @@ fn secret_environment_references_fail_closed() {
 }
 
 #[test]
-fn bare_setup_opens_the_same_tui_control_center() {
+fn bare_setup_opens_the_same_panel_control_center() {
     let setup = Cli::try_parse_from(["codex-mixin", "setup"]).unwrap();
     assert_eq!(
         requested_interactive_start(&setup, true),
@@ -96,6 +96,24 @@ fn bare_setup_opens_the_same_tui_control_center() {
 
     let plain = Cli::try_parse_from(["codex-mixin", "--no-tui", "setup"]).unwrap();
     assert_eq!(requested_interactive_start(&plain, true), None);
+}
+
+#[test]
+fn panel_command_starts_without_a_terminal() {
+    let bare = Cli::try_parse_from(["codex-mixin"]).unwrap();
+    assert_eq!(
+        requested_interactive_start(&bare, true),
+        Some(InteractiveStart::Dashboard { bind: None })
+    );
+    assert_eq!(requested_interactive_start(&bare, false), None);
+
+    let panel = Cli::try_parse_from(["codex-mixin", "panel", "--bind", "127.0.0.1:9000"]).unwrap();
+    assert_eq!(
+        requested_interactive_start(&panel, false),
+        Some(InteractiveStart::Dashboard {
+            bind: Some("127.0.0.1:9000".parse().unwrap())
+        })
+    );
 }
 
 #[test]

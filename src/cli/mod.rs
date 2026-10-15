@@ -305,7 +305,10 @@ fn expand_secret_arg(arg: std::ffi::OsString) -> anyhow::Result<std::ffi::OsStri
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub(crate) enum InteractiveStart {
-    Dashboard,
+    /// Control panel home; `bind` overrides the panel listen address.
+    Dashboard {
+        bind: Option<std::net::SocketAddr>,
+    },
     Setup,
 }
 
@@ -866,6 +869,9 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
         Command::Restart { bind, log_file } => restart(bind, log_file, false).await,
         Command::Logs { lines, follow } => logs(lines, follow),
         Command::Serve { bind } => start(bind, false, None).await,
+        Command::Panel { .. } => {
+            anyhow::bail!("the control panel is an interactive shell; remove --no-tui to open it")
+        }
         Command::Catalog { template_catalog } => {
             let config = GatewayConfig::from_stored_config()?;
             let state = AppState::new(config.clone())?;

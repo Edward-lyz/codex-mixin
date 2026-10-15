@@ -51,7 +51,7 @@ LOWER=(
     src/upstream src/ech.rs src/ech src/provider src/protocol src/catalog.rs src/catalog
     src/config.rs src/config src/benchmark src/web_search src/images
 )
-SHELLS=(macos tui windows)
+SHELLS=(macos panel windows)
 
 check_paths "core" "${CORE[@]}"
 check_paths "protocol" "${PROTO_CONVERT[@]}"
@@ -71,11 +71,11 @@ check_no_match "lower layers must not reference FusionEngine" '\bFusionEngine\b'
 check_no_match "provider rules must not reference gateway" 'crate::gateway::' src/provider
 check_no_match "protocol rules must not reference gateway or provider runtime" 'crate::gateway::|crate::provider::(ProviderRuntime|ProviderRegistry)' src/protocol
 check_no_match "server must not reference crate::cli" 'crate::cli\b' src/server
-check_no_match "core must not reference concrete shells" 'crate::tui\b|path\s*=\s*"\.\./tui/' \
+check_no_match "core must not reference concrete shells" 'crate::(tui|panel)\b|path\s*=\s*"\.\./(tui|panel)/' \
     src/lib.rs src/application src/gateway src/upstream src/ech.rs src/ech src/provider src/protocol \
     src/fusion src/catalog.rs src/catalog src/config.rs src/config src/benchmark \
     src/web_search src/images src/clients src/server src/cli
-check_no_match "TUI shell must not reach CLI internals" 'crate::cli\b|super::super::cli' tui
+check_no_match "panel shell must not reach CLI internals" 'crate::cli\b|super::super::cli' panel
 
 if [ "$fail" -ne 0 ]; then
     echo "architecture boundary check failed"
