@@ -206,6 +206,7 @@ fn test_provider(
         ProviderProtocol::AnthropicMessages => "/v1/messages",
         ProviderProtocol::OpenAiChat => "/chat/completions",
         ProviderProtocol::OpenAiResponses => "/v1/responses",
+        ProviderProtocol::GoogleGemini => "/v1beta/models/{model}:streamGenerateContent",
     }
     .to_owned();
     provider

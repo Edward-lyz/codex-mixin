@@ -83,12 +83,16 @@ impl UpstreamAccess {
     where
         T: serde::Serialize + Send + 'static,
     {
-        let base = self
-            .request(
-                reqwest::Method::POST,
-                provider.api_url_for_model(upstream_model_id).clone(),
-            )
-            .await?;
+        let url = if protocol == ProviderProtocol::GoogleGemini {
+            let mut u = provider.api_url_for_model(upstream_model_id).into_owned();
+            if !u.query_pairs().any(|(k, _)| k == "alt") {
+                u.query_pairs_mut().append_pair("alt", "sse");
+            }
+            u
+        } else {
+            provider.api_url_for_model(upstream_model_id).into_owned()
+        };
+        let base = self.request(reqwest::Method::POST, url).await?;
         let authenticated = match native_headers {
             Some(headers) => base.headers(headers.clone()),
             None => provider.apply_auth_for_protocol(base, protocol),
@@ -97,6 +101,22 @@ impl UpstreamAccess {
             .apply_session_affinity(authenticated, hash_key)
             .header(reqwest::header::ACCEPT, "text/event-stream");
         self.send_json(request, body, None).await
+    }
+
+    pub(crate) async fn agy_native_headers(
+        &self,
+        provider: &ProviderRuntime,
+    ) -> anyhow::Result<Option<reqwest::header::HeaderMap>> {
+        if (provider.definition().preset_id.as_deref() == Some("agy")
+            || provider.protocol() == ProviderProtocol::GoogleGemini)
+            && provider.definition().auth.api_key.trim().is_empty()
+        {
+            crate::provider::auth::agy::get_agy_headers()
+                .await
+                .map(Some)
+        } else {
+            Ok(None)
+        }
     }
 
     pub(crate) async fn request(
@@ -276,7 +296,7 @@ impl UpstreamAccess {
             let base_request = self
                 .request(
                     reqwest::Method::POST,
-                    provider.api_url_for_model(&request.model).clone(),
+                    provider.api_url_for_model(&request.model).into_owned(),
                 )
                 .await?;
             let mut upstream_request = match &native {

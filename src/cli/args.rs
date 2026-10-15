@@ -721,6 +721,8 @@ pub(super) enum SetupCodexMode {
 pub(super) enum CliProviderPreset {
     #[value(name = "custom")]
     Custom,
+    #[value(name = "agy", alias = "antigravity")]
+    Agy,
     #[value(name = "baidu-oneapi")]
     BaiduOneApi,
     #[value(name = "openrouter")]
@@ -737,6 +739,7 @@ impl CliProviderPreset {
     pub(super) fn as_provider_preset(self) -> ProviderPreset {
         match self {
             Self::Custom => ProviderPreset::Custom,
+            Self::Agy => ProviderPreset::Agy,
             Self::BaiduOneApi => ProviderPreset::BaiduOneApi,
             Self::OpenRouter => ProviderPreset::OpenRouter,
             Self::DeepSeek => ProviderPreset::DeepSeek,
@@ -754,6 +757,7 @@ impl From<ProviderPreset> for CliProviderPreset {
     fn from(value: ProviderPreset) -> Self {
         match value {
             ProviderPreset::Custom => Self::Custom,
+            ProviderPreset::Agy => Self::Agy,
             ProviderPreset::BaiduOneApi => Self::BaiduOneApi,
             ProviderPreset::OpenRouter => Self::OpenRouter,
             ProviderPreset::DeepSeek => Self::DeepSeek,

@@ -1,6 +1,6 @@
 use super::*;
 
-pub(super) fn convert_tools(
+pub(crate) fn convert_tools(
     tools: Option<&Value>,
 ) -> Result<(Vec<Value>, ToolNameMap), GatewayError> {
     let Some(Value::Array(tools)) = tools else {

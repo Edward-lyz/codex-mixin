@@ -151,6 +151,15 @@ pub(super) async fn benchmark_request(
             "stream": true,
             "input": BENCHMARK_PROMPT
         }),
+        ProviderProtocol::GoogleGemini => json!({
+            "contents": [{
+                "role": "user",
+                "parts": [{"text": BENCHMARK_PROMPT}]
+            }],
+            "generationConfig": {
+                "maxOutputTokens": upstream_output_budget
+            }
+        }),
     };
     if provider.uses_session_affinity() {
         body["metadata"] = json!({
@@ -162,7 +171,7 @@ pub(super) async fn benchmark_request(
             .post(
                 provider
                     .api_url_for_model(&target.upstream_model_id)
-                    .clone(),
+                    .into_owned(),
             )
             .header("accept", "text/event-stream"),
         protocol,
@@ -222,7 +231,9 @@ pub(super) async fn benchmark_request(
             Ok(None) => {
                 if matches!(
                     protocol,
-                    ProviderProtocol::OpenAiChat | ProviderProtocol::OpenAiResponses
+                    ProviderProtocol::OpenAiChat
+                        | ProviderProtocol::OpenAiResponses
+                        | ProviderProtocol::GoogleGemini
                 ) && openai_finished
                 {
                     return finish_metrics(started, first_token_at, last_token_at, output_tokens);
@@ -402,6 +413,48 @@ pub(super) async fn benchmark_request(
                             return Err(attempt_failure(false, message, started, first_token_at));
                         }
                         _ => {}
+                    }
+                }
+                ProviderProtocol::GoogleGemini => {
+                    let inner = payload.get("response").unwrap_or(&payload);
+                    if let Some(message) = inner
+                        .pointer("/error/message")
+                        .or_else(|| payload.pointer("/error/message"))
+                        .and_then(Value::as_str)
+                    {
+                        return Err(attempt_failure(false, message, started, first_token_at));
+                    }
+                    if let Some(candidate) = inner
+                        .get("candidates")
+                        .and_then(Value::as_array)
+                        .and_then(|c| c.first())
+                    {
+                        if let Some(parts) = candidate
+                            .pointer("/content/parts")
+                            .and_then(Value::as_array)
+                        {
+                            for part in parts {
+                                if let Some(text) = part.get("text").and_then(Value::as_str)
+                                    && !text.is_empty()
+                                {
+                                    first_token_at.get_or_insert(chunk_received_at);
+                                    last_token_at = Some(chunk_received_at);
+                                }
+                            }
+                        }
+                        if let Some(finish_reason) =
+                            candidate.get("finishReason").and_then(Value::as_str)
+                            && !finish_reason.is_empty()
+                            && finish_reason != "FINISH_REASON_UNSPECIFIED"
+                        {
+                            openai_finished = true;
+                        }
+                    }
+                    if let Some(usage) = inner.get("usageMetadata")
+                        && let Some(count) =
+                            usage.get("candidatesTokenCount").and_then(Value::as_u64)
+                    {
+                        output_tokens = Some(count);
                     }
                 }
             }

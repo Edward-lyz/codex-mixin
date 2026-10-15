@@ -130,9 +130,8 @@ pub(super) fn provider_realtime_url(
     call_id: Option<&str>,
 ) -> anyhow::Result<reqwest::Url> {
     let mut url = upstream_model_id
-        .map(|model| provider.api_url_for_model(model))
-        .unwrap_or_else(|| provider.api_url())
-        .clone();
+        .map(|model| provider.api_url_for_model(model).into_owned())
+        .unwrap_or_else(|| provider.api_url().clone());
     let api_path = url.path().trim_end_matches('/');
     let base_path = ["/chat/completions", "/responses", "/messages"]
         .into_iter()

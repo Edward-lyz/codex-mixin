@@ -8,6 +8,7 @@ use crate::anthropic::MessageRequest;
 pub(crate) const ANTHROPIC_MESSAGES: &str = "anthropic_messages";
 pub(crate) const OPENAI_CHAT: &str = "openai_chat";
 pub(crate) const OPENAI_RESPONSES: &str = "openai_responses";
+pub(crate) const GOOGLE_GEMINI: &str = "google_gemini";
 
 /// History this long, replaced wholesale by a much shorter one, is compaction
 /// rather than prompt drift. Below this the two are indistinguishable from a
@@ -149,6 +150,29 @@ impl CacheShape {
             tools_count: value_len(request.get("tools")),
             config: RegionDigest::of_optional(request.get("reasoning")),
             turns: turn_digests(request.get("input").and_then(Value::as_array)),
+        }
+    }
+
+    pub(crate) fn from_gemini(request: &Value) -> Self {
+        let inner = request.get("request").unwrap_or(request);
+        let contents = inner.get("contents").and_then(Value::as_array);
+        Self {
+            protocol: GOOGLE_GEMINI,
+            model: request
+                .get("model")
+                .and_then(Value::as_str)
+                .or_else(|| inner.get("model").and_then(Value::as_str))
+                .unwrap_or("")
+                .to_owned(),
+            system: inner
+                .get("systemInstruction")
+                .map(RegionDigest::of)
+                .into_iter()
+                .collect(),
+            tools: RegionDigest::of_optional(inner.get("tools")),
+            tools_count: value_len(inner.get("tools")),
+            config: RegionDigest::of_optional(inner.get("generationConfig")),
+            turns: turn_digests(contents),
         }
     }
 

@@ -26,9 +26,10 @@ pub use resolver::{
     MODELS_DEV_API_URL, MetadataResolver, ModelMetadata, default_metadata_cache_path,
 };
 pub use spec::{
-    AWS_BEDROCK_DEFAULT_REGION, AWS_BEDROCK_MANTLE_BASE_URL, AWS_BEDROCK_MANTLE_SERVICE,
-    AWS_BEDROCK_PRESET_ID, AWS_BEDROCK_RUNTIME_SERVICE, OPEN_CODE_GO_PRESET_ID, ProviderPreset,
-    ProviderSpec, aws_bedrock_aksk_provider, aws_bedrock_mantle_base_url, aws_bedrock_provider,
+    AGY_PRESET_ID, AWS_BEDROCK_DEFAULT_REGION, AWS_BEDROCK_MANTLE_BASE_URL,
+    AWS_BEDROCK_MANTLE_SERVICE, AWS_BEDROCK_PRESET_ID, AWS_BEDROCK_RUNTIME_SERVICE,
+    OPEN_CODE_GO_PRESET_ID, ProviderPreset, ProviderSpec, agy_provider, agy_seed_models,
+    aws_bedrock_aksk_provider, aws_bedrock_mantle_base_url, aws_bedrock_provider,
     aws_bedrock_runtime_base_url, baidu_oneapi_provider, custom_provider, deepseek_provider,
     open_code_go_provider, openrouter_provider, spec_for,
 };

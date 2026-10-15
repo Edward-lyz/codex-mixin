@@ -14,11 +14,14 @@ use crate::protocol::sse::{SseDecoder, encode_event, encode_raw_event};
 mod anthropic;
 mod chat_reasoning;
 mod chat_tools;
+mod gemini;
 mod openai_chat;
 mod state;
 
 pub use anthropic::map_anthropic_sse;
 pub(crate) use anthropic::map_anthropic_sse_with_image_routes;
+pub use gemini::map_gemini_sse;
+pub(crate) use gemini::map_gemini_sse_with_image_routes;
 pub use openai_chat::map_openai_chat_sse;
 pub(crate) use openai_chat::map_openai_chat_sse_with_image_routes;
 

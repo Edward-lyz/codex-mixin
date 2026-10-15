@@ -10,6 +10,7 @@ use super::types::{
     ProviderModelSource, ProviderProtocol, ProviderQuotaParser, ProviderRequestPolicy,
 };
 
+pub const AGY_PRESET_ID: &str = "agy";
 pub const OPEN_CODE_GO_PRESET_ID: &str = "opencode-go";
 pub const AWS_BEDROCK_PRESET_ID: &str = "aws-bedrock";
 pub const AWS_BEDROCK_MANTLE_BASE_URL: &str = "https://bedrock-mantle.us-east-1.api.aws/anthropic";
@@ -33,6 +34,7 @@ pub fn aws_bedrock_runtime_base_url(region: &str) -> String {
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum ProviderPreset {
     Custom,
+    Agy,
     BaiduOneApi,
     OpenRouter,
     DeepSeek,
@@ -41,8 +43,9 @@ pub enum ProviderPreset {
 }
 
 impl ProviderPreset {
-    pub const ALL: [Self; 6] = [
+    pub const ALL: [Self; 7] = [
         Self::Custom,
+        Self::Agy,
         Self::BaiduOneApi,
         Self::OpenRouter,
         Self::DeepSeek,
@@ -53,6 +56,7 @@ impl ProviderPreset {
     pub fn parse(value: &str) -> anyhow::Result<Self> {
         match value {
             "custom" => Ok(Self::Custom),
+            "agy" | "antigravity" => Ok(Self::Agy),
             "baidu-oneapi" => Ok(Self::BaiduOneApi),
             "openrouter" => Ok(Self::OpenRouter),
             "deepseek" => Ok(Self::DeepSeek),
@@ -200,7 +204,7 @@ impl ProviderSpec {
     }
 }
 
-static SPECS: [ProviderSpec; 6] = [
+static SPECS: [ProviderSpec; 7] = [
     ProviderSpec {
         preset: ProviderPreset::Custom,
         id: "custom",
@@ -222,6 +226,27 @@ static SPECS: [ProviderSpec; 6] = [
         quota_parser: ProviderQuotaParser::Generic,
         declares_model_capabilities: false,
         seed_models: Vec::new,
+        request_policy: ProviderRequestPolicy::default,
+    },
+    ProviderSpec {
+        preset: ProviderPreset::Agy,
+        id: "agy",
+        display_name: "Google Antigravity (agy)",
+        description: "Google Antigravity with Gemini 3.8 Flash / 2.5 models",
+        icon: "agy",
+        website_url: Some("https://antigravity.google"),
+        protocol: ProviderProtocol::GoogleGemini,
+        base_url: "https://daily-cloudcode-pa.googleapis.com",
+        api_path: "/v1internal:streamGenerateContent",
+        anthropic_version: None,
+        image_generation_path: None,
+        model_source: ModelSourceSpec::Static,
+        models_dev_provider: Some("google"),
+        quota_url: None,
+        quota_currency: None,
+        quota_parser: ProviderQuotaParser::Generic,
+        declares_model_capabilities: true,
+        seed_models: agy_seed_models,
         request_policy: ProviderRequestPolicy::default,
     },
     ProviderSpec {
@@ -385,6 +410,71 @@ fn bedrock_seed_model(id: &str, display_name: &str, context_window: u64) -> Prov
         supports_function_tools: Some(true),
         ..seed_model(id, display_name, Some(context_window))
     }
+}
+
+fn agy_seed_model(
+    id: &str,
+    display_name: &str,
+    context_window: u64,
+    max_output: u64,
+) -> ProviderModel {
+    ProviderModel {
+        supports_image: Some(true),
+        supports_thinking: Some(true),
+        supports_web_search: Some(false),
+        supports_tool_search: Some(false),
+        supports_function_tools: Some(true),
+        max_output_tokens: Some(max_output),
+        protocol: Some(ProviderProtocol::GoogleGemini),
+        ..seed_model(id, display_name, Some(context_window))
+    }
+}
+
+pub fn agy_seed_models() -> Vec<ProviderModel> {
+    vec![
+        agy_seed_model(
+            "gemini-3.8-flash-high",
+            "Gemini 3.8 Flash (High)",
+            1_048_576,
+            65_536,
+        ),
+        agy_seed_model(
+            "gemini-3.8-flash-medium",
+            "Gemini 3.8 Flash (Medium)",
+            1_048_576,
+            65_536,
+        ),
+        agy_seed_model(
+            "gemini-3.8-flash-low",
+            "Gemini 3.8 Flash (Low)",
+            1_048_576,
+            65_536,
+        ),
+        agy_seed_model("gemini-2.5-pro", "Gemini 2.5 Pro", 1_048_576, 65_536),
+        agy_seed_model("gemini-2.5-flash", "Gemini 2.5 Flash", 1_048_576, 65_536),
+        agy_seed_model(
+            "claude-sonnet-4-6",
+            "Claude Sonnet 4.6 (agy)",
+            200_000,
+            65_536,
+        ),
+        agy_seed_model(
+            "claude-opus-4-6-thinking",
+            "Claude Opus 4.6 Thinking (agy)",
+            200_000,
+            65_536,
+        ),
+        agy_seed_model(
+            "gpt-oss-120b-medium",
+            "GPT-OSS 120B Medium (agy)",
+            128_000,
+            16_384,
+        ),
+    ]
+}
+
+pub fn agy_provider(id: impl Into<String>, api_key: impl Into<String>) -> ProviderDefinition {
+    ProviderPreset::Agy.create(id, api_key)
 }
 
 pub fn custom_provider(id: impl Into<String>, api_key: impl Into<String>) -> ProviderDefinition {
