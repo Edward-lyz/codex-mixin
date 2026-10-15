@@ -279,7 +279,7 @@ async fn cancellation_requires_panel_authentication() {
         cancel_action: tokio::sync::watch::channel(0).0,
     });
     let cancellation = state.cancel_action.subscribe();
-    let accepted = router(state)
+    let accepted = router(state.clone())
         .oneshot(
             Request::post("/api/actions/cancel")
                 .header(header::AUTHORIZATION, "Bearer expected-token")

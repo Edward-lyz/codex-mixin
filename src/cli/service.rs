@@ -289,7 +289,7 @@ pub(super) use logging::init_tracing;
 use logging::log_gateway_configuration;
 
 pub(super) const CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
-pub(super) const OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
+pub(super) const OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 pub(super) const PROVIDER_MODEL_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const AGY_MODEL_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 /// How often the client-credential watch checks the stored configuration timestamp.
