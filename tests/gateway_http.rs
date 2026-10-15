@@ -7938,7 +7938,9 @@ async fn anthropic_messages_ignores_legacy_model_level_endpoint() {
     let hits2 = Arc::clone(&hits);
     let upstream = Router::new().route(
         "/{*path}",
-        post(move |uri: OriginalUri| async move {
+        // Read the request body before replying. Windows resets a socket that
+        // closes with unread data, and the gateway then sees a send error.
+        post(move |uri: OriginalUri, _body: bytes::Bytes| async move {
             hits2.lock().unwrap().push(uri.path().to_owned());
             Response::builder()
                 .header(header::CONTENT_TYPE, "text/event-stream")
