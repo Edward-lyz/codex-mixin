@@ -215,14 +215,12 @@
 "codexConnect.officialProvider" = "codex-mixin / 官方 OAuth 代理";
 "codexConnect.customOnlyProvider" = "amazon-bedrock / 本地占位（不连接 AWS）";
 "settings.openProviderSetup" = "打开供应商配置说明";
-"settings.localOAuthCredentials" = "请从服务商工具栏进行 OAuth 登录，无需安装供应商 CLI。";
+"settings.localOAuthCredentials" = "新增此预设时会打开浏览器进行 OAuth 授权，无需安装供应商 CLI。";
 "settings.optionalAPIKey" = "可选；留空使用本地 OAuth";
 "settings.providerCatalogUnavailable" = "无法获取 CLI 供应商目录。请重新打开设置或更新完整应用包。";
 "quota.remainingPercent" = "剩余 %@%%";
 "quota.resetsAt" = "%@ 重置";
 
-"provider.oauthLogin" = "登录 %@";
-"provider.oauthLoginMenu" = "OAuth 登录";
-"provider.oauthWaiting" = "请在浏览器中完成登录…";
-"provider.oauthComplete" = "登录成功";
-"provider.oauthFailed" = "登录失败";
+"provider.oauthWaiting" = "等待浏览器授权。关闭网页不会取消本次请求；可点击取消，或等待设置的超时自动结束。";
+"provider.oauthTimeout" = "OAuth 授权超时（秒）";
+"provider.oauthTimeoutInvalid" = "请输入大于零的超时秒数。";

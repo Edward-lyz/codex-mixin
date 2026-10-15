@@ -139,6 +139,42 @@ struct ProcessOutputCollectorTests {
             !processProgressLines.contains("stdout-ignored"),
             "stdout must not be interpreted as progress"
         )
+        let cancelledBeforeStart = ProcessCancellation()
+        cancelledBeforeStart.cancel()
+        do {
+            try cancelledBeforeStart.start(Process())
+            preconditionFailure("A cancelled request must not start its child")
+        } catch is CancellationError {}
+
+        let unrelated = Process()
+        unrelated.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        unrelated.arguments = ["30"]
+        try unrelated.run()
+        defer {
+            if unrelated.isRunning { unrelated.terminate() }
+            unrelated.waitUntilExit()
+        }
+        let cancellable = Process()
+        cancellable.executableURL = URL(fileURLWithPath: "/bin/sleep")
+        cancellable.arguments = ["30"]
+        let cancelOutput = Pipe()
+        let cancelError = Pipe()
+        cancellable.standardOutput = cancelOutput
+        cancellable.standardError = cancelError
+        let cancellation = ProcessCancellation()
+        DispatchQueue.global().asyncAfter(deadline: .now() + 0.2) { cancellation.cancel() }
+        do {
+            let cancelledResult = try runProcessCollectingOutput(
+                cancellable, outputPipe: cancelOutput, errorPipe: cancelError,
+                timeout: 5, killGrace: 1, cancellation: cancellation
+            )
+            guard cancelledResult.terminationStatus != 0 else {
+                throw NSError(domain: "ChildCancellationStatus", code: 1)
+            }
+        } catch is CancellationError {}
+        guard !cancellable.isRunning, unrelated.isRunning else {
+            throw NSError(domain: "ChildCancellationOwnership", code: 1)
+        }
         print("Process output collector tests passed")
     }
 }

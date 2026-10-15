@@ -48,7 +48,7 @@ fn provider_catalog() -> Value {
             let spec = preset.spec();
             let (auth_mode, credential_url) = match preset {
                 ProviderPreset::Custom => ("api_key", None),
-                ProviderPreset::Agy => ("local_oauth", spec.website_url),
+                ProviderPreset::Official | ProviderPreset::Agy => ("local_oauth", None),
                 ProviderPreset::AwsBedrock => ("aws_sigv4", spec.website_url),
                 ProviderPreset::BaiduOneApi => {
                     ("api_key", Some("https://oneapi-comate.baidu-int.com/token"))
@@ -63,6 +63,8 @@ fn provider_catalog() -> Value {
             };
             json!({
                 "id": spec.id,
+                "default_id": preset.default_id(),
+                "allow_multiple": *preset != ProviderPreset::Official,
                 "display_name": spec.display_name,
                 "description": spec.description,
                 "icon": spec.icon,
@@ -100,7 +102,7 @@ fn provider_catalog() -> Value {
         "default_preset": ProviderPreset::BaiduOneApi.as_str(),
         "default_protocol": ProviderProtocol::OpenAiResponses,
         "default_aws_region": codex_mixin::provider::AWS_BEDROCK_DEFAULT_REGION,
-        "oauth_providers": [{"id":"official","display_name":"OpenAI"},{"id":"agy","display_name":"Google Antigravity"}],
+        "oauth_timeout_seconds": codex_mixin::provider::OAUTH_LOGIN_TIMEOUT_SECONDS,
         "presets": presets,
         "protocols": protocols,
     })

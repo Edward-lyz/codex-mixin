@@ -197,7 +197,6 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         let rootView = ProviderSettingsRootView(
             model: model,
             benchmarkModel: benchmarkModel,
-            onLogin: { [weak self] id in self?.loginProvider(id) },
             onAdd: { [weak self] in self?.addProvider() },
             onRemove: { [weak self] in self?.removeProvider() },
             onToggle: { [weak self] in self?.toggleProvider() },
@@ -336,20 +335,37 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                        message: "", isError: true)
             return
         }
-        runAddProviderSheet(attachedTo: window, catalog: catalog) { [weak self] values in
-            guard let self, let values else { return }
-            submitNewProvider(values)
+        var authorizedProviderID: String?
+        runAddProviderSheet(attachedTo: window, catalog: catalog, authorize: { [weak self] values in
+            guard let self, let (id, arguments) = self.providerAddArguments(values) else {
+                throw CancellationError()
+            }
+            _ = try await self.runHandler(arguments)
+            try Task.checkCancellation()
+            authorizedProviderID = id
+        }) { [weak self] values in
+            guard let self else { return }
+            if let id = authorizedProviderID {
+                // OAuth has already added the provider; apply only after authorization.
+                performMutation([], status: "正在应用供应商配置…", selecting: id)
+            } else if let values {
+                submitNewProvider(values)
+            }
         }
     }
 
-    private func submitNewProvider(_ values: AddProviderFormValues) {
-        let id = nextProviderID(for: values.preset)
+    private func providerAddArguments(_ values: AddProviderFormValues) -> (String, [String])? {
+        let defaultID = values.definition.defaultId ?? values.preset
+        let id = values.definition.allowMultiple == false ? defaultID : nextProviderID(for: defaultID)
         let key = values.apiKey.trimmingCharacters(in: .whitespacesAndNewlines)
         if values.definition.apiKeyRequired, key.isEmpty {
             showAlert(title: "缺少 API 密钥", message: "新增 Provider 必须填写 API 密钥。")
-            return
+            return nil
         }
         var arguments = ["providers", "add", "--preset", values.preset, "--id", id]
+        if let timeout = values.oauthTimeoutSeconds {
+            arguments += ["--oauth-timeout-seconds", String(timeout)]
+        }
         if values.definition.authMode == .awsSigV4 {
             arguments.append(contentsOf: [
                 "--aws-access-key-id", values.awsAccessKeyID,
@@ -381,28 +397,17 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         if values.definition.quotaUsernameRequired {
             appendBaiduAuthBridgeArguments(&arguments, mode: .disabled)
         }
+        return (id, arguments)
+    }
+
+    private func submitNewProvider(_ values: AddProviderFormValues) {
+        guard let (id, arguments) = providerAddArguments(values) else { return }
         performMutation(
             arguments,
             status: "正在新增并发现模型 \(id)…",
             selecting: id,
             requiresBaiduBridge: nil
         )
-    }
-
-    func loginProvider(_ id: String) {
-        guard !model.isBusy, !benchmarkModel.isBusy else { return }
-        setBusy(true, status: AppLocalization.string("provider.oauthWaiting"))
-        Task { @MainActor [weak self] in
-            guard let self else { return }
-            do {
-                _ = try await runHandler(["providers", "login", id, "--json"])
-                _ = try await loadProvidersNow(selecting: id, preserveDrafts: false)
-                setBusy(false, status: AppLocalization.string("provider.oauthComplete"))
-            } catch {
-                setBusy(false, status: AppLocalization.string("provider.oauthFailed"))
-                showBanner(title: AppLocalization.string("provider.oauthFailed"), message: error.localizedDescription, isError: true)
-            }
-        }
     }
 
     func removeProvider() {
@@ -826,7 +831,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
                             executable: executable
                         )
                     }
-                    _ = try await self.runHandler(arguments)
+                    if !arguments.isEmpty {
+                        _ = try await self.runHandler(arguments)
+                    }
                     if let secondArguments {
                         _ = try await self.runHandler(secondArguments)
                     }

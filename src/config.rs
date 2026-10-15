@@ -80,7 +80,7 @@ impl GatewayConfig {
             None => {
                 anyhow::ensure!(
                     crate::provider::official_auth_available(&default_codex_auth_path())?,
-                    "provider configuration is missing; sign in with providers login official or add a provider"
+                    "provider configuration is missing; run providers add --preset openai or add another provider"
                 );
                 StoredGatewayConfig::default()
             }

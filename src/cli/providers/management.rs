@@ -10,7 +10,72 @@ use super::{
 };
 
 pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {
+    let mut shutdown = codex_mixin::platform::ShutdownSignal::install()?;
+    tokio::select! {
+        result = add_provider_inner(options) => result,
+        _ = shutdown.recv() => anyhow::bail!("provider addition cancelled; refresh to check any completed steps"),
+    }
+}
+
+async fn add_provider_inner(options: AddProviderOptions) -> anyhow::Result<()> {
+    let preset = codex_mixin::provider::ProviderPreset::parse(&options.preset)?;
+    let timeout = options
+        .oauth_timeout_seconds
+        .unwrap_or(codex_mixin::provider::OAUTH_LOGIN_TIMEOUT_SECONDS);
+    if preset == codex_mixin::provider::ProviderPreset::Official {
+        anyhow::ensure!(
+            options
+                .id
+                .as_deref()
+                .is_none_or(|id| matches!(id, "official" | "openai"))
+                && options
+                    .key
+                    .as_deref()
+                    .is_none_or(|key| key.trim().is_empty())
+                && options.base_url.is_none()
+                && options.protocol.is_none()
+                && options.api_path.is_none()
+                && options.aws_access_key_id.is_none()
+                && options.aws_secret_access_key.is_none()
+                && options.aws_session_token.is_none()
+                && options.models_path.is_none()
+                && options.header_env.is_empty(),
+            "the OpenAI OAuth preset uses the official account and endpoint"
+        );
+        codex_mixin::application::provider::login::authorize_add(preset, timeout, |url| {
+            super::super::progress_step(&format!("Open this URL to authorize, or cancel: {url}"));
+        })
+        .await?;
+        discover_models_with_output("official", false)
+            .await
+            .map_err(|source| OperationError::AfterCommit {
+                stage: "OAuth model discovery",
+                source,
+            })?;
+        println!("provider added: official");
+        return Ok(());
+    }
+    let browser_oauth = preset == codex_mixin::provider::ProviderPreset::Agy
+        && options
+            .key
+            .as_deref()
+            .is_none_or(|key| key.trim().is_empty());
     let mut prepared = codex_mixin::application::provider::build::create_provider(options)?;
+    if browser_oauth {
+        anyhow::ensure!(
+            !codex_mixin::config::load_stored_config()?
+                .unwrap_or_default()
+                .providers
+                .iter()
+                .any(|provider| provider.id == prepared.id),
+            "provider {} already exists; choose a different provider ID",
+            prepared.id
+        );
+        codex_mixin::application::provider::login::authorize_add(preset, timeout, |url| {
+            super::super::progress_step(&format!("Open this URL to authorize, or cancel: {url}"));
+        })
+        .await?;
+    }
     let mut detected_protocol = None;
     let mut protocol_probe_error = None;
     if prepared.should_probe_protocol {

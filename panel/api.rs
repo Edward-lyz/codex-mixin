@@ -63,6 +63,7 @@ pub(super) struct PanelState {
     pub(super) installed_cli_path: Option<String>,
     /// Serializes CLI mutations; config commits must not interleave.
     pub(super) action_lock: tokio::sync::Mutex<()>,
+    pub(super) cancel_action: tokio::sync::watch::Sender<u64>,
 }
 
 type Shared = Arc<PanelState>;
@@ -114,6 +115,7 @@ pub(super) fn router(state: Shared) -> Router {
             post(import_config).layer(DefaultBodyLimit::max(MAX_BACKUP_BYTES)),
         )
         .route("/api/actions", post(action))
+        .route("/api/actions/cancel", post(cancel_action))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new()
         .route(
@@ -376,8 +378,19 @@ async fn action(
         return Err(busy());
     };
     let mut stdout = String::new();
+    let mut cancellation = state.cancel_action.subscribe();
     for invocation in &invocations {
-        stdout = run_cli(&invocation.args, &invocation.secrets).await?;
+        stdout = tokio::select! {
+            result = run_cli(&invocation.args, &invocation.secrets) => result?,
+            _ = cancellation.changed() => return Err(ApiError {
+                status: StatusCode::REQUEST_TIMEOUT,
+                failure: CliFailure::panel(
+                    "cancelled",
+                    "Operation cancelled; refresh to check any completed steps".to_owned(),
+                    Value::Null,
+                ),
+            }),
+        };
     }
     let parsed = if action.prints_json() {
         serde_json::from_str(&stdout).unwrap_or(Value::Null)
@@ -387,6 +400,13 @@ async fn action(
     Ok(Json(
         json!({ "ok": true, "stdout": stdout, "json": parsed }),
     ))
+}
+
+async fn cancel_action(State(state): State<Shared>) -> Json<Value> {
+    state
+        .cancel_action
+        .send_modify(|revision| *revision = revision.wrapping_add(1));
+    Json(json!({"ok": true}))
 }
 
 async fn ech_status() -> Result<Json<Value>, ApiError> {

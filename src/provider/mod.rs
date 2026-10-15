@@ -5,6 +5,7 @@ pub use auth::official::{
 pub(crate) mod agy;
 pub(crate) mod auth;
 pub use agy::{AgyQuotaWindow, fetch_agy_quota};
+pub use auth::oauth::OAUTH_LOGIN_TIMEOUT_SECONDS;
 pub mod capabilities;
 mod discovery;
 mod quota;

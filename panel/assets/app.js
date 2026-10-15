@@ -301,7 +301,9 @@ async function runAction(button, action, params, messages = {}) {
     toast("ok", messages.ok || "已完成", lastLine(result.stdout));
     return result;
   } catch (error) {
-    if (error.status !== 401) {
+    if (error.code === "cancelled") {
+      toast("ok", "已取消等待", error.message);
+    } else if (error.status !== 401) {
       const [title, detail] = describeError(error);
       toast("bad", title, detail);
     }
@@ -911,14 +913,6 @@ function popoverMenu(label, items, buttonClass = "btn btn-ghost btn-icon") {
   return h("div", { class: "menu-anchor" }, button, menu);
 }
 
-function oauthLoginMenu() {
-  const options = providerCatalog().oauth_providers || [];
-  if (!options.length) return null;
-  return popoverMenu("OAuth 登录", options.map(option => ({
-    label: `登录 ${option.display_name}`,
-    run: () => runAction(null, "provider_login", { id: option.id }, { ok: "登录成功" }),
-  })));
-}
 function serviceList(providers, selected) {
   const order = configuredProviders().map((provider) => provider.id);
   const list = h("div", { class: "svc-list-rows", role: "listbox", "aria-label": "服务商" });
@@ -992,7 +986,7 @@ function serviceList(providers, selected) {
   return h(
     "aside",
     { class: "svc-list" },
-    h("header", { class: "svc-list-head" }, h("span", { text: "服务商" }), h("div", { class: "card-actions" }, h("button", { class: "btn btn-ghost btn-icon btn-sm", type: "button", "aria-label": "新增服务商", text: "+", onclick: openAddProvider }), oauthLoginMenu(), remove)),
+    h("header", { class: "svc-list-head" }, h("span", { text: "服务商" }), h("div", { class: "card-actions" }, h("button", { class: "btn btn-ghost btn-icon btn-sm", type: "button", "aria-label": "新增服务商", text: "+", onclick: openAddProvider }), remove)),
     list,
   );
 }
@@ -1428,14 +1422,17 @@ function openAddProvider() {
     awsId: formRow("Access Key ID", inlineSecret("aws_access_key_id", false)),
     awsSecret: formRow("Secret Access Key", inlineSecret("aws_secret_access_key", false)),
     awsToken: formRow("Session Token", inlineSecret("aws_session_token", false)),
+    timeout: formRow("OAuth 授权超时（秒）", inlineInput("oauth_timeout_seconds", catalog.oauth_timeout_seconds ?? "", { inputmode: "numeric" })),
   };
-  const hint = h("p", { class: "muted", hidden: true, text: "请先在供应商 CLI 中登录；API Key 留空时使用其本地 OAuth 凭据。" });
+  let pending = false;
+  const hint = h("p", { class: "muted", hidden: true, text: "点击新增后将在浏览器授权。关闭网页不会回传取消，可在此取消等待；超过时限会自动结束。" });
   const sync = () => {
     const definition = providerDefinition(preset.querySelector("select").value);
-    const show = new Set(["id"]);
+    const show = new Set(definition.allow_multiple === false ? [] : ["id"]);
     if (definition.auth_mode === "aws_sigv4") {
       for (const name of ["region", "awsId", "awsSecret", "awsToken"]) show.add(name);
-    } else show.add("key");
+    } else if (definition.auth_mode === "local_oauth") show.add("timeout");
+    else show.add("key");
     if (definition.custom_endpoint) for (const name of ["display", "base", "protocol", "website"]) show.add(name);
     if (definition.quota_username_required) show.add("quota");
     if (definition.quota_credentials_required) for (const name of ["workspace", "cookie"]) show.add(name);
@@ -1463,17 +1460,22 @@ function openAddProvider() {
       options[name] = value;
     }
     if (options.protocol) options.api_path = providerProtocols().find(([id]) => id === options.protocol)?.[2];
+    pending = true;
     const result = await runAction(event.submitter, "provider_add", { preset: values.preset, options }, { ok: "服务商已添加，模型列表已刷新" });
+    pending = false;
     if (!result) return;
     closeSheet();
-    svc.selected = options.id || values.preset;
+    svc.selected = options.id || providerDefinition(values.preset).default_id || values.preset;
   });
   openSheet("新增服务商", form);
+  $("#sheet").addEventListener("close", () => {
+    if (pending) api("/api/actions/cancel", { method: "POST" }).catch(error => toast("bad", "取消失败", error.message));
+  }, { once: true });
 }
 
 RENDERERS.providers = () => {
   const providers = state.snapshot.providers || [];
-  if (!providers.length) return card(null, null, emptyState("还没有服务商", "登录官方账号，或添加兼容 API 的服务商。", h("div", { class: "card-actions" }, oauthLoginMenu(), h("button", { class: "btn btn-primary", type: "button", text: "新增服务商", onclick: openAddProvider }))));
+  if (!providers.length) return card(null, null, emptyState("还没有服务商", "通过新增服务商选择 OAuth 登录或兼容 API 预设。", h("button", { class: "btn btn-primary", type: "button", text: "新增服务商", onclick: openAddProvider })));
   const selected = providers.find((provider) => provider.id === svc.selected) || providers[0];
   svc.selected = selected.id;
   const issue = (selected.readiness_issues || []).map((id) => ISSUE_LABELS[id] || id);

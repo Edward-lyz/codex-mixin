@@ -392,7 +392,6 @@ public sealed partial class MainWindow : Window
         if (providers.Length == 0)
         {
             pendingApply = null; ApplyChanges.IsEnabled = false;
-            AddOAuthLoginButtons();
             PageTitle.Text = "还没有服务商";
             PageDescription.Text = "添加上游 API 后，Codex Mixin 才能为网关提供模型。";
             PageBody.Children.Add(Button("新增服务商", AddProviderAsync, true));
@@ -408,7 +407,6 @@ public sealed partial class MainWindow : Window
         var provider = providers.FirstOrDefault(row => Json.Text(row, "id") == providerId);
         if (provider.ValueKind != JsonValueKind.Object) return;
         PageBody.Children.Clear();
-        AddOAuthLoginButtons();
         ModelsTab.IsChecked = !connectionSelected; ConnectionTab.IsChecked = connectionSelected;
         PageTitle.Text = Json.Text(provider, "display_name");
         ProviderHeaderIcon.Source = Marks.Provider(provider).Source;
@@ -654,15 +652,6 @@ public sealed partial class MainWindow : Window
         catch (CliFailure error) { if (!busy && !draftDirty) ShowSummary($"测速不可用：{error.Message}", "CautionCaption"); }
     }
 
-    private void AddOAuthLoginButtons()
-    {
-        foreach (var option in Json.Rows(Json.Field(Json.Field(metadata, "provider_catalog"), "oauth_providers")))
-        {
-            var loginId = Json.Text(option, "id");
-            PageBody.Children.Add(Button($"登录 {Json.Text(option, "display_name")}", () => ChangeAsync("OAuth 登录", ["providers", "login", loginId, "--json"], apply: false)));
-        }
-    }
-
     private Task AddProviderAsync() => ProviderDialogAsync(null);
     private Task EditProviderAsync(JsonElement provider) => ProviderDialogAsync(provider);
 
@@ -697,14 +686,24 @@ public sealed partial class MainWindow : Window
         var report = new CheckBox { Content = "OneAPI 代码上报", IsChecked = provider is { } br &&
             Json.Field(br, "baidu_code_report").ValueKind == JsonValueKind.True };
         var auxiliary = new CheckBox { Content = "作为辅助模型上游", IsChecked = provider is { } a && Json.Flag(a, "auxiliary_model_upstream") };
+        var oauthTimeout = Input("OAuth 授权超时（秒）", Json.Field(catalog, "oauth_timeout_seconds").ToString());
+        var oauthHint = Text("将在浏览器中授权。关闭网页不会回传取消；可使用窗口的取消操作结束等待。");
+        form.Children.Add(oauthTimeout);
+        form.Children.Add(oauthHint);
         foreach (var element in new FrameworkElement[] { preset, id, name, url, website, protocol, apiPath, imagePath, key, username, bridge, report, workspace, cookie, accessKey, secretKey, session, region, auxiliary })
             form.Children.Add(element);
         void Fields()
         {
             var definition = presets.Single(row => Json.Text(row, "id") == (string)preset.SelectedItem);
             var aws = Json.Text(definition, "auth_mode") == "aws_sigv4";
+            var oauth = provider == null && Json.Text(definition, "auth_mode") == "local_oauth";
+            oauthTimeout.Visibility = oauth ? Visibility.Visible : Visibility.Collapsed;
+            oauthHint.Visibility = oauth ? Visibility.Visible : Visibility.Collapsed;
+            id.Visibility = oauth && !Json.Flag(definition, "allow_multiple") ? Visibility.Collapsed : Visibility.Visible;
             key.Header = Json.Flag(definition, "api_key_required") ? "API Key" : "API Key（可选；留空使用本地 OAuth）";
-            key.Visibility = aws ? Visibility.Collapsed : Visibility.Visible;
+            key.Visibility = aws || oauth ? Visibility.Collapsed : Visibility.Visible;
+            foreach (var element in new FrameworkElement[] { name, url, website, imagePath, auxiliary })
+                element.Visibility = oauth ? Visibility.Collapsed : Visibility.Visible;
             foreach (var element in new FrameworkElement[] { accessKey, secretKey, session, region }) element.Visibility = aws ? Visibility.Visible : Visibility.Collapsed;
             foreach (var element in new FrameworkElement[] { username, bridge, report }) element.Visibility = Json.Flag(definition, "quota_username_required") ? Visibility.Visible : Visibility.Collapsed;
             foreach (var element in new FrameworkElement[] { workspace, cookie }) element.Visibility = Json.Flag(definition, "quota_credentials_required") ? Visibility.Visible : Visibility.Collapsed;
@@ -722,7 +721,7 @@ public sealed partial class MainWindow : Window
         {
         var args = new List<string> { "provider", provider == null ? "add" : "update" };
         if (provider == null) args.AddRange(["--preset", (string)preset.SelectedItem]);
-        if (!string.IsNullOrWhiteSpace(id.Text))
+        if (id.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(id.Text))
         {
             if (provider == null) args.Add("--id");
             args.Add(id.Text.Trim());
@@ -734,7 +733,7 @@ public sealed partial class MainWindow : Window
             secrets[variable] = box.Password; args.AddRange([flag, $"@env:{variable}"]); box.Password = "";
         }
         foreach (var (flag, box) in new[] { ("--display-name", name), ("--base-url", url), ("--website-url", website), ("--image-generation-path", imagePath) })
-            if (!string.IsNullOrWhiteSpace(box.Text)) args.AddRange([flag, box.Text.Trim()]);
+            if (box.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(box.Text)) args.AddRange([flag, box.Text.Trim()]);
         var definition = presets.Single(row => Json.Text(row, "id") == (string)preset.SelectedItem);
         if (Json.Flag(definition, "custom_endpoint") && (string)protocol.SelectedItem != "自动检测") args.AddRange(["--protocol", (string)protocol.SelectedItem]);
         if (Json.Flag(definition, "custom_endpoint") && !string.IsNullOrWhiteSpace(apiPath.Text)) args.AddRange(["--api-path", apiPath.Text.Trim()]);
@@ -745,7 +744,9 @@ public sealed partial class MainWindow : Window
             Secret("--aws-session-token", session, "CM_AWS_SESSION");
             args.AddRange(["--aws-region", region.Text.Trim()]);
         }
-        else Secret("--key", key, "CM_API_KEY");
+        else if (key.Visibility == Visibility.Visible) Secret("--key", key, "CM_API_KEY");
+        if (oauthTimeout.Visibility == Visibility.Visible && !string.IsNullOrWhiteSpace(oauthTimeout.Text))
+            args.AddRange(["--oauth-timeout-seconds", oauthTimeout.Text.Trim()]);
         if (Json.Flag(definition, "quota_username_required"))
         {
             if (!string.IsNullOrWhiteSpace(username.Text)) args.AddRange(["--quota-username", username.Text.Trim()]);
@@ -756,7 +757,8 @@ public sealed partial class MainWindow : Window
             if (!string.IsNullOrWhiteSpace(workspace.Text)) args.AddRange(["--quota-workspace-id", workspace.Text.Trim()]);
             Secret("--quota-auth-cookie", cookie, "CM_QUOTA_COOKIE");
         }
-        args.AddRange(["--auxiliary-model-upstream", auxiliary.IsChecked == true ? "true" : "false"]);
+        if (auxiliary.Visibility == Visibility.Visible)
+            args.AddRange(["--auxiliary-model-upstream", auxiliary.IsChecked == true ? "true" : "false"]);
         try { await ChangeAsync("保存供应商", args.ToArray(), apply: true, secrets: secrets); ApplySummary.Text = "配置已同步"; }
         finally { secrets.Clear(); }
         }

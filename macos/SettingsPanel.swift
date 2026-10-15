@@ -15,6 +15,7 @@ struct AddProviderFormValues {
     let quotaUsername: String
     let quotaWorkspaceID: String
     let quotaAuthCookie: String
+    var oauthTimeoutSeconds: UInt64? = nil
 }
 
 enum ProviderCredentialMode: String, Decodable {
@@ -32,6 +33,8 @@ struct AddProviderPreset: Identifiable, Decodable {
     let customEndpoint: Bool
     let quotaUsernameRequired: Bool
     let quotaCredentialsRequired: Bool
+    var defaultId: String? = nil
+    var allowMultiple: Bool? = nil
 }
 
 struct ProviderProtocolOption: Identifiable, Decodable {
@@ -40,13 +43,8 @@ struct ProviderProtocolOption: Identifiable, Decodable {
     let apiPath: String
 }
 
-struct ProviderOAuthOption: Identifiable, Decodable {
-    let id: String
-    let displayName: String
-}
-
 struct ProviderCatalog: Decodable {
-    var oauthProviders: [ProviderOAuthOption]? = nil
+    var oauthTimeoutSeconds: UInt64? = nil
     let defaultPreset: String
     let defaultProtocol: String
     let defaultAwsRegion: String
@@ -88,11 +86,15 @@ final class AddProviderFormModel: ObservableObject {
     @Published var quotaUsername = ""
     @Published var quotaWorkspaceID = ""
     @Published var quotaAuthCookie = ""
+    @Published var oauthTimeout = ""
+    @Published var isAuthorizing = false
+    @Published var authorizationError: String?
 
     init(catalog: ProviderCatalog) {
         presets = catalog.presets
         preset = catalog.defaultPreset
         awsRegion = catalog.defaultAwsRegion
+        oauthTimeout = catalog.oauthTimeoutSeconds.map(String.init) ?? ""
     }
 
     private var definition: AddProviderPreset? { presets.first { $0.id == preset } }
@@ -105,6 +107,10 @@ final class AddProviderFormModel: ObservableObject {
 
     func validatedValues() -> AddProviderFormValues? {
         guard let definition else { return nil }
+        if usesLocalOAuth, !oauthTimeout.isEmpty, UInt64(oauthTimeout).map({ $0 > 0 }) != true {
+            authorizationError = AppLocalization.string("provider.oauthTimeoutInvalid")
+            return nil
+        }
         let trimmedDisplayName = displayName.trimmingCharacters(in: .whitespacesAndNewlines)
         let trimmedBaseURL = baseURL.trimmingCharacters(in: .whitespacesAndNewlines)
         if isCustom, trimmedDisplayName.isEmpty || trimmedBaseURL.isEmpty {
@@ -161,14 +167,15 @@ final class AddProviderFormModel: ObservableObject {
             displayName: trimmedDisplayName,
             baseURL: trimmedBaseURL,
             websiteURL: websiteURL.trimmingCharacters(in: .whitespacesAndNewlines),
-            apiKey: trimmedAPIKey,
+            apiKey: usesLocalOAuth ? "" : trimmedAPIKey,
             awsAccessKeyID: trimmedAccessKeyID,
             awsSecretAccessKey: trimmedSecretAccessKey,
             awsSessionToken: trimmedSessionToken,
             awsRegion: trimmedRegion,
             quotaUsername: trimmedUsername,
             quotaWorkspaceID: trimmedWorkspaceID,
-            quotaAuthCookie: trimmedAuthCookie
+            quotaAuthCookie: trimmedAuthCookie,
+            oauthTimeoutSeconds: usesLocalOAuth ? UInt64(oauthTimeout) : nil
         )
     }
 }
@@ -188,7 +195,7 @@ private struct AddProviderFormView: View {
                         }
                     }
 
-                    if let credentialURL = model.credentialURL, !model.isCustom {
+                    if let credentialURL = model.credentialURL, !model.isCustom, !model.usesLocalOAuth {
                         Link(destination: credentialURL) {
                             Label(AppLocalization.string("settings.openProviderSetup"), systemImage: "key")
                         }
@@ -230,6 +237,10 @@ private struct AddProviderFormView: View {
                         Text(AppLocalization.string("settings.localOAuthCredentials"))
                             .font(.callout)
                             .foregroundStyle(.secondary)
+                        TextField(
+                            AppLocalization.string("provider.oauthTimeout"),
+                            text: $model.oauthTimeout
+                        )
                     }
                     if model.isAWSBedrock {
                         SecureField("Access Key ID", text: $model.awsAccessKeyID)
@@ -238,7 +249,7 @@ private struct AddProviderFormView: View {
                             "Session Token（可选）",
                             text: $model.awsSessionToken
                         )
-                    } else {
+                    } else if !model.usesLocalOAuth {
                         SecureField(
                             "API Key",
                             text: $model.apiKey,
@@ -271,6 +282,18 @@ private struct AddProviderFormView: View {
             }
             .formStyle(.grouped)
             .scrollContentBackground(.hidden)
+            .disabled(model.isAuthorizing)
+
+            if model.isAuthorizing {
+                HStack {
+                    ProgressView().controlSize(.small)
+                    Text(AppLocalization.string("provider.oauthWaiting"))
+                }
+                .padding(.horizontal, 20)
+            }
+            if let error = model.authorizationError {
+                Text(error).foregroundStyle(.red).font(.caption).padding(.horizontal, 20)
+            }
 
             Divider()
 
@@ -281,6 +304,7 @@ private struct AddProviderFormView: View {
                 Button(AppLocalization.string("settings.add"), action: submit)
                     .keyboardShortcut(.defaultAction)
                     .liquidGlassProminentButton()
+                    .disabled(model.isAuthorizing)
             }
             .padding(20)
             .background(Color(nsColor: .windowBackgroundColor))
@@ -307,6 +331,7 @@ final class ModalActionTarget: NSObject {
 func runAddProviderSheet(
     attachedTo parentWindow: NSWindow,
     catalog: ProviderCatalog,
+    authorize: (@MainActor (AddProviderFormValues) async throws -> Void)? = nil,
     completion: @escaping (AddProviderFormValues?) -> Void
 ) {
     let model = AddProviderFormModel(catalog: catalog)
@@ -321,11 +346,31 @@ func runAddProviderSheet(
     configurePersistentWindow(sheet)
 
     var submittedValues: AddProviderFormValues?
+    var authorizationTask: Task<Void, Never>?
     let cancel = {
+        authorizationTask?.cancel()
+        authorizationTask = nil
         parentWindow.endSheet(sheet, returnCode: .cancel)
     }
     let submit = {
         guard let values = model.validatedValues() else { return }
+        if model.usesLocalOAuth, let authorize {
+            model.isAuthorizing = true
+            model.authorizationError = nil
+            authorizationTask = Task { @MainActor in
+                defer { model.isAuthorizing = false }
+                do {
+                    try await authorize(values)
+                    try Task.checkCancellation()
+                    parentWindow.endSheet(sheet, returnCode: .OK)
+                } catch is CancellationError {
+                    return
+                } catch {
+                    model.authorizationError = error.localizedDescription
+                }
+            }
+            return
+        }
         submittedValues = values
         parentWindow.endSheet(sheet, returnCode: .OK)
     }
@@ -339,6 +384,8 @@ func runAddProviderSheet(
 
     presentPersistentWindow(parentWindow)
     parentWindow.beginSheet(sheet) { response in
+        authorizationTask?.cancel()
+        authorizationTask = nil
         sheet.close()
         _ = closeTarget
         completion(response == .OK ? submittedValues : nil)

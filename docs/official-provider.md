@@ -13,10 +13,12 @@ record when file storage is absent. Other platforms support file discovery and
 independent browser login; native credential-store import there is not yet
 implemented. Credential-store errors are explicit, and no store is enumerated.
 
-Run `codex-mixin --no-tui providers login official --json` or use a UI's OAuth
-menu. The CLI opens the authorization page and waits on the official loopback
+Choose OpenAI (ChatGPT OAuth) in Add Provider, or run
+`codex-mixin --no-tui providers add --preset openai`.
+There is no separate login command or toolbar entry.
+The CLI opens the authorization page and waits on the official loopback
 callback at `localhost:1455/auth/callback`. It validates state and uses PKCE.
-Failure to bind the port is explicit. The attempt times out after five minutes;
+Failure to bind the port is explicit. The attempt uses the configured timeout;
 the terminal also shows the authorization URL for manual browser opening.
 Login requires a browser able to reach the machine's loopback callback.
 
@@ -32,11 +34,23 @@ When authenticated, model refresh uses the account's native Codex models API.
 Account-bound caches are rejected after an account change. A local Codex model
 cache can supply initial metadata, and the public repository remains available
 for catalog preparation without a login. Real inference always validates auth.
+
+The account directory uses `official-models.json`. Public build templates use
+`official-template.json` and never replace that directory. Model differences
+are compared only within one account and source. Source or account changes
+establish a baseline instead of producing model-retirement notifications.
+Missing IDs retain their selection intent; availability does not prove that
+OpenAI retired a model. Public-template fetch failures can reuse validated
+account metadata in memory, without writing it back as a public directory.
 Quota uses the native usage API and renders remaining percentages and reset
 times through the common CLI quota contract; neither path launches Codex CLI.
 
-The UI OAuth options are declared by `interface --json`; macOS, Windows and the
-Web panel consume that catalog and invoke the same `providers login` command.
+The presets are declared by `interface --json`; macOS, Windows and the
+Web panel invoke the same `providers add` command. Authorization defaults to
+120 seconds and can be changed with `--oauth-timeout-seconds` (1–300 seconds)
+or the Add Provider form. Closing an external page does not deliver a cancel
+callback. Cancel in the form or use Ctrl-C in the CLI. Cancellation stops only
+this operation and releases the callback listener, not the foreground app.
 Login failure after credentials have been saved reports the failing stage and
 `committed: true`. Browser authorization still requires user interaction.
 

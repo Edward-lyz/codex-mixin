@@ -27,6 +27,8 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
+      - name: Check Web panel JavaScript syntax
+        run: node --check panel/assets/app.js
       - name: Run strict Clippy
         run: |
           cargo clippy --all-targets -- \

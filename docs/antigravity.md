@@ -36,9 +36,10 @@ Missing or invalid measurements produce an error rather than zero/full quota.
 Explicit provider keys use their own credentials for quota as well as models.
 Custom quota URLs continue through the existing parser.
 
-Run `codex-mixin --no-tui providers login agy --json` or choose OAuth sign-in
-in a UI. Browser login uses PKCE, a random state and a loopback callback with
-a five-minute timeout. Tokens are stored privately and atomically in Mixin's
+Choose AGY in Add Provider or run `codex-mixin --no-tui providers add --preset agy`.
+Browser login uses PKCE, a random state and a loopback callback. It defaults
+to 120 seconds and supports `--oauth-timeout-seconds` (1–300). Cancel in the
+form or use Ctrl-C in the CLI to stop waiting. Tokens are stored privately in Mixin's
 OAuth directory, next to its configuration, and renewed without running a CLI.
 Legacy OAuth files can still be read. A newly signed-in native account clears
 old native AGY model directories while preserving selection intent; explicit-key

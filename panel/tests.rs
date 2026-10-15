@@ -16,6 +16,7 @@ fn test_router() -> axum::Router {
         start_page: "home",
         installed_cli_path: None,
         action_lock: tokio::sync::Mutex::new(()),
+        cancel_action: tokio::sync::watch::channel(0).0,
     }))
 }
 
@@ -237,14 +238,56 @@ async fn provider_icons_are_served_by_preset_icon_name() {
 }
 
 #[test]
-fn oauth_login_uses_the_cli_contract() {
-    let invocation = action(json!({"action":"provider_login","params":{"id":"official"}}))
-        .invocation()
-        .unwrap();
-    assert_eq!(invocation.args, ["providers", "login", "official"]);
+fn oauth_uses_the_add_preset_contract() {
+    let invocation = action(json!({"action":"provider_add","params":{
+        "preset":"openai","options":{"oauth_timeout_seconds":"120"}
+    }}))
+    .invocation()
+    .unwrap();
+    assert_eq!(&invocation.args[..2], ["providers", "add"]);
+    assert!(invocation.args.iter().any(|arg| arg == "--preset=openai"));
     assert!(
-        action(json!({"action":"provider_login","params":{"id":"--bad"}}))
-            .invocation()
-            .is_err()
+        invocation
+            .args
+            .iter()
+            .any(|arg| arg == "--oauth-timeout-seconds=120")
     );
+    assert!(
+        serde_json::from_value::<PanelAction>(
+            json!({"action":"provider_login","params":{"id":"official"}})
+        )
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn cancellation_requires_panel_authentication() {
+    let denied = test_router()
+        .oneshot(
+            Request::post("/api/actions/cancel")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::UNAUTHORIZED);
+    let state = std::sync::Arc::new(PanelState {
+        token: "expected-token".to_owned(),
+        start_page: "home",
+        installed_cli_path: None,
+        action_lock: tokio::sync::Mutex::new(()),
+        cancel_action: tokio::sync::watch::channel(0).0,
+    });
+    let cancellation = state.cancel_action.subscribe();
+    let accepted = router(state)
+        .oneshot(
+            Request::post("/api/actions/cancel")
+                .header(header::AUTHORIZATION, "Bearer expected-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(accepted.status(), StatusCode::OK);
+    assert!(cancellation.has_changed().unwrap());
 }

@@ -13,6 +13,7 @@ use super::{provider_for_refresh, update_provider};
 #[derive(Clone, Debug, Default)]
 pub struct AddProviderInput {
     pub preset: String,
+    pub oauth_timeout_seconds: Option<u64>,
     pub id: Option<String>,
     pub key: Option<String>,
     pub aws_access_key_id: Option<String>,

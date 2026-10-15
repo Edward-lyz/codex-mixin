@@ -150,12 +150,18 @@ pub(super) async fn run(
             bin.display()
         );
     }
-    let key = match key.or_else(|| std::env::var("CODEX_MIXIN_API_KEY").ok()) {
-        Some(key) if !key.trim().is_empty() => key,
-        _ if io::stdin().is_terminal() => read_secret(&format!("API key for {preset}: "))?,
-        _ => anyhow::bail!(
-            "API key is required; pass --key or set CODEX_MIXIN_API_KEY in non-interactive mode"
-        ),
+    let oauth = matches!(preset, "openai" | "agy")
+        && key.as_deref().is_none_or(|key| key.trim().is_empty());
+    let key = if oauth {
+        String::new()
+    } else {
+        match key.or_else(|| std::env::var("CODEX_MIXIN_API_KEY").ok()) {
+            Some(key) if !key.trim().is_empty() => key,
+            _ if io::stdin().is_terminal() => read_secret(&format!("API key for {preset}: "))?,
+            _ => anyhow::bail!(
+                "API key is required; pass --key or set CODEX_MIXIN_API_KEY in non-interactive mode"
+            ),
+        }
     };
 
     let quota_username = if preset == "baidu-oneapi" {
@@ -198,26 +204,37 @@ pub(super) async fn run(
             .find(|provider| provider.id == preset)
     });
     if let Some(existing_provider) = existing_provider {
-        println!("Updating provider configuration: {preset}");
-        if existing_provider.preset_id.as_deref() != Some(preset) {
-            anyhow::bail!(
-                "provider {preset} already exists with preset {}; choose another provider id",
-                existing_provider.preset_id.as_deref().unwrap_or("custom")
+        anyhow::ensure!(
+            existing_provider.preset_id.as_deref() == Some(preset),
+            "provider {preset} already exists with another preset; choose another provider ID"
+        );
+        if oauth {
+            codex_mixin::application::provider::login::authorize_add(
+                ProviderPreset::parse(preset)?,
+                codex_mixin::provider::OAUTH_LOGIN_TIMEOUT_SECONDS,
+                |url| {
+                    super::progress_step(&format!("Open this URL to authorize, or cancel: {url}"))
+                },
             )
+            .await?;
+            discover_models_with_output(&existing_provider.id, false).await?;
+        } else {
+            println!("Updating provider configuration: {preset}");
+            update_provider(UpdateProviderOptions {
+                id: preset.to_owned(),
+                key: Some(key),
+                quota_username,
+                baidu_auth_bridge: (preset == "baidu-oneapi").then(|| "ducx_loopback".to_owned()),
+                ducx_executable,
+                ..UpdateProviderOptions::default()
+            })
+            .await?;
         }
-        update_provider(UpdateProviderOptions {
-            id: preset.to_owned(),
-            key: Some(key),
-            quota_username,
-            baidu_auth_bridge: (preset == "baidu-oneapi").then(|| "ducx_loopback".to_owned()),
-            ducx_executable,
-            ..UpdateProviderOptions::default()
-        })
-        .await?;
     } else {
         println!("Adding provider configuration: {preset}");
         add_provider(AddProviderOptions {
             preset: preset.to_owned(),
+            oauth_timeout_seconds: None,
             auxiliary_model_upstream: None,
             id: None,
             key: Some(key),

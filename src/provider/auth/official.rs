@@ -98,13 +98,13 @@ pub(crate) async fn headers(
     let read_path = path.clone();
     let mut document = tokio::task::spawn_blocking(move || read_document(&read_path))
         .await??
-        .context("official OAuth login is missing; run providers login official")?;
+        .context("official OAuth login is missing; run providers add --preset openai")?;
     if needs_refresh(&document) {
         // Imported official sessions are read-only. Rotating their refresh token
         // independently can sign the official app out of its existing session.
         ensure!(
             path == crate::platform::oauth::oauth_path("official"),
-            "local Codex OAuth access token expired; refresh the official session or run providers login official for independent renewal"
+            "local Codex OAuth access token expired; refresh the official session or run providers add --preset openai for independent renewal"
         );
         let _refresh_lock =
             tokio::task::spawn_blocking(|| crate::platform::oauth::lock_oauth("official"))

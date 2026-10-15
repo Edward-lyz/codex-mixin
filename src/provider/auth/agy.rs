@@ -93,7 +93,7 @@ pub async fn get_agy_headers() -> anyhow::Result<HeaderMap> {
     let now = Instant::now();
 
     let token_path = resolve_agy_token_path()
-        .context("AGY OAuth credentials are missing; run providers login agy")?;
+        .context("AGY OAuth credentials are missing; run providers add --preset agy")?;
     let file_mtime = tokio::fs::metadata(&token_path)
         .await
         .and_then(|m| m.modified())

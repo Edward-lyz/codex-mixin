@@ -70,7 +70,9 @@ extension AppDelegate {
             "APP_PROCESS started id=\(operationID) executable=\(executable) arguments=\(command)"
         )
         let diagnosticDirectory = stateDir()
-        return try await withCheckedThrowingContinuation { continuation in
+        let cancellation = ProcessCancellation()
+        return try await withTaskCancellationHandler(operation: {
+        try await withCheckedThrowingContinuation { continuation in
             DispatchQueue.global(qos: .userInitiated).async {
                 let process = Process()
                 let outputPipe = Pipe()
@@ -95,8 +97,13 @@ extension AppDelegate {
                         process,
                         outputPipe: outputPipe,
                         errorPipe: errorPipe,
-                        timeout: 600
+                        timeout: 600,
+                        cancellation: cancellation
                     )
+                    if cancellation.isCancelled {
+                        continuation.resume(throwing: CancellationError())
+                        return
+                    }
                     let output = String(decoding: result.stdoutData, as: UTF8.self)
                     let trimmed = output.trimmingCharacters(in: .whitespacesAndNewlines)
                     let durationMilliseconds = Int(Date().timeIntervalSince(startedAt) * 1_000)
@@ -130,6 +137,7 @@ extension AppDelegate {
                 }
             }
         }
+        }, onCancel: { cancellation.cancel() })
     }
 
     func runProcessStreaming(_ executable: String, _ arguments: [String], onProgress: @escaping (String) -> Void) async throws -> String {

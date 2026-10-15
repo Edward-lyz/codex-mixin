@@ -1,4 +1,54 @@
 use serde_json::{Value, json};
+
+#[test]
+fn oauth_is_an_add_preset_with_a_bounded_timeout() {
+    let directory = tempfile::tempdir().unwrap();
+    let invoke = |args: &[&str]| {
+        let mut command = Command::new(env!("CARGO_BIN_EXE_codex-mixin"));
+        codex_mixin::platform::set_home_env(&mut command, directory.path());
+        command
+            .arg("--no-tui")
+            .args(args)
+            .env("CODEX_HOME", directory.path().join("codex"))
+            .env("CODEX_GATEWAY_CONFIG", directory.path().join("config.json"))
+            .output()
+            .unwrap()
+    };
+    let help = invoke(&["providers", "add", "--help"]);
+    assert!(help.status.success());
+    let help = String::from_utf8(help.stdout).unwrap();
+    assert!(help.contains("openai"));
+    assert!(help.contains("--oauth-timeout-seconds"));
+    assert!(!invoke(&["providers", "login", "official"]).status.success());
+    assert!(
+        !invoke(&[
+            "providers",
+            "add",
+            "--preset",
+            "openai",
+            "--oauth-timeout-seconds",
+            "0"
+        ])
+        .status
+        .success()
+    );
+    let interface = query(directory.path(), &["interface", "--json"]);
+    assert!(
+        interface["provider_catalog"]
+            .get("oauth_providers")
+            .is_none()
+    );
+    assert_eq!(interface["provider_catalog"]["oauth_timeout_seconds"], 120);
+    let official = interface["provider_catalog"]["presets"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .find(|preset| preset["id"] == "openai")
+        .unwrap();
+    assert_eq!(official["default_id"], "official");
+    assert_eq!(official["auth_mode"], "local_oauth");
+    assert_eq!(official["api_key_required"], false);
+}
 use std::process::Command;
 
 fn query(directory: &std::path::Path, args: &[&str]) -> Value {

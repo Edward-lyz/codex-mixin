@@ -50,6 +50,7 @@ pub(crate) async fn run(
         start_page: start_page.fragment(),
         installed_cli_path: installed_cli_path.map(|path| path.display().to_string()),
         action_lock: tokio::sync::Mutex::new(()),
+        cancel_action: tokio::sync::watch::channel(0).0,
     });
     let mut shutdown = codex_mixin::platform::ShutdownSignal::install()
         .context("install panel shutdown signal")?;

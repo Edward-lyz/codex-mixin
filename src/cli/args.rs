@@ -520,12 +520,6 @@ pub(super) enum BenchmarkCommand {
 
 #[derive(Debug, Subcommand)]
 pub(super) enum ProviderCommand {
-    /// Sign in through browser OAuth without installing a provider CLI.
-    Login {
-        id: String,
-        #[arg(long)]
-        json: bool,
-    },
     /// List configured providers.
     List {
         #[arg(long)]
@@ -535,6 +529,9 @@ pub(super) enum ProviderCommand {
     Add {
         #[arg(long, value_enum)]
         preset: CliProviderPreset,
+        /// Maximum time to wait for browser OAuth, including token exchange.
+        #[arg(long, default_value_t = codex_mixin::provider::OAUTH_LOGIN_TIMEOUT_SECONDS, value_parser = clap::value_parser!(u64).range(1..=300))]
+        oauth_timeout_seconds: u64,
         #[arg(long, value_name = "BOOL")]
         auxiliary_model_upstream: Option<bool>,
         #[arg(long)]
@@ -735,6 +732,8 @@ pub(super) enum SetupCodexMode {
 pub(super) enum CliProviderPreset {
     #[value(name = "custom")]
     Custom,
+    #[value(name = "openai", alias = "official")]
+    Official,
     #[value(name = "agy", alias = "antigravity")]
     Agy,
     #[value(name = "baidu-oneapi")]
@@ -753,6 +752,7 @@ impl CliProviderPreset {
     pub(super) fn as_provider_preset(self) -> ProviderPreset {
         match self {
             Self::Custom => ProviderPreset::Custom,
+            Self::Official => ProviderPreset::Official,
             Self::Agy => ProviderPreset::Agy,
             Self::BaiduOneApi => ProviderPreset::BaiduOneApi,
             Self::OpenRouter => ProviderPreset::OpenRouter,
@@ -771,6 +771,7 @@ impl From<ProviderPreset> for CliProviderPreset {
     fn from(value: ProviderPreset) -> Self {
         match value {
             ProviderPreset::Custom => Self::Custom,
+            ProviderPreset::Official => Self::Official,
             ProviderPreset::Agy => Self::Agy,
             ProviderPreset::BaiduOneApi => Self::BaiduOneApi,
             ProviderPreset::OpenRouter => Self::OpenRouter,

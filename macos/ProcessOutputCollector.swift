@@ -33,6 +33,45 @@ private final class DataAccumulator {
     }
 }
 
+// Only the child registered for this invocation may be cancelled.
+final class ProcessCancellation: @unchecked Sendable {
+    private let lock = NSLock()
+    private var child: Process?
+    private var cancelled = false
+
+    var isCancelled: Bool {
+        lock.lock()
+        defer { lock.unlock() }
+        return cancelled
+    }
+
+    func start(_ process: Process) throws {
+        lock.lock()
+        defer { lock.unlock() }
+        guard !cancelled else { throw CancellationError() }
+        try process.run()
+        child = process
+    }
+
+    func finish() {
+        lock.lock()
+        child = nil
+        lock.unlock()
+    }
+
+    func cancel() {
+        lock.lock()
+        cancelled = true
+        let process = child
+        if let process, process.isRunning { process.terminate() }
+        lock.unlock()
+        guard let process else { return }
+        DispatchQueue.global().asyncAfter(deadline: .now() + 2) {
+            if process.isRunning { kill(process.processIdentifier, SIGKILL) }
+        }
+    }
+}
+
 private final class ProcessTimeout {
     private let terminateWork: DispatchWorkItem
     private let killWork: DispatchWorkItem
@@ -67,9 +106,15 @@ func runProcessCollectingOutput(
     outputPipe: Pipe,
     errorPipe: Pipe,
     timeout: TimeInterval = 0,
-    killGrace: TimeInterval = 10
+    killGrace: TimeInterval = 10,
+    cancellation: ProcessCancellation? = nil
 ) throws -> ProcessOutputResult {
-    try process.run()
+    if let cancellation {
+        try cancellation.start(process)
+    } else {
+        try process.run()
+    }
+    defer { cancellation?.finish() }
     let timeout = ProcessTimeout(
         process: process,
         timeout: timeout,

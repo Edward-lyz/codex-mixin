@@ -14,7 +14,7 @@ use std::sync::{Arc, Mutex};
 use std::time::Duration;
 
 pub(super) const OPENAI_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
-const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
+pub const OAUTH_LOGIN_TIMEOUT_SECONDS: u64 = 120;
 const MAX_TOKEN_BYTES: usize = 64 * 1024;
 
 type CallbackReply = tokio::sync::oneshot::Sender<Result<String, String>>;
@@ -53,7 +53,25 @@ async fn callback(
     )
 }
 
-pub(crate) async fn login(provider: &str, show_url: impl Fn(&str)) -> anyhow::Result<()> {
+pub(crate) async fn login(
+    provider: &str,
+    timeout_seconds: u64,
+    show_url: impl Fn(&str),
+) -> anyhow::Result<()> {
+    ensure!(
+        (1..=300).contains(&timeout_seconds),
+        "OAuth timeout must be between 1 and 300 seconds"
+    );
+    let mut shutdown = crate::platform::ShutdownSignal::install()?;
+    tokio::select! {
+        result = tokio::time::timeout(Duration::from_secs(timeout_seconds), login_inner(provider, show_url)) => {
+            result.context("OAuth login timed out; refresh to check any completed steps")?
+        }
+        _ = shutdown.recv() => anyhow::bail!("OAuth login cancelled"),
+    }
+}
+
+async fn login_inner(provider: &str, show_url: impl Fn(&str)) -> anyhow::Result<()> {
     let google = provider == "agy";
     ensure!(
         google || provider == "official",
@@ -134,10 +152,7 @@ pub(crate) async fn login(provider: &str, show_url: impl Fn(&str)) -> anyhow::Re
     {
         tracing::warn!(%error, "OAuth browser could not be opened; use the displayed URL");
     }
-    let code = tokio::time::timeout(LOGIN_TIMEOUT, receiver)
-        .await
-        .context("OAuth login timed out after five minutes")??
-        .map_err(anyhow::Error::msg)?;
+    let code = receiver.await?.map_err(anyhow::Error::msg)?;
     let mut fields = vec![
         ("grant_type", "authorization_code"),
         ("client_id", client_id.as_str()),
@@ -246,6 +261,39 @@ fn login_document(google: bool, mut tokens: Value) -> anyhow::Result<Value> {
 #[cfg(test)]
 mod tests {
     use super::*;
+    #[tokio::test]
+    async fn invalid_deadlines_never_open_a_browser() {
+        for timeout in [0, 301] {
+            let error = login("official", timeout, |_| {
+                panic!("browser flow must not start")
+            })
+            .await
+            .unwrap_err();
+            assert!(error.to_string().contains("timeout"));
+        }
+    }
+
+    #[tokio::test]
+    async fn dropping_callback_server_releases_its_listener() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = CallbackServer(tokio::spawn(async move {
+            let _listener = listener;
+            std::future::pending::<()>().await;
+        }));
+        drop(server);
+        let listener = tokio::time::timeout(Duration::from_secs(1), async {
+            loop {
+                if let Ok(listener) = tokio::net::TcpListener::bind(address).await {
+                    break listener;
+                }
+                tokio::task::yield_now().await;
+            }
+        })
+        .await
+        .unwrap();
+        drop(listener);
+    }
     #[tokio::test]
     async fn rejects_cross_session_callback() {
         let (sender, mut receiver) = tokio::sync::oneshot::channel();
