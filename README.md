@@ -62,7 +62,7 @@
 
 ## 中文
 
-Codex Mixin 是一个跨平台的 Rust 本地网关，提供 Windows 桌面 App、原生 macOS 菜单栏 App 与终端下的全屏 TUI。它把 OpenRouter、DeepSeek、Baidu OneAPI、AWS Bedrock 或其他兼容 OpenAI / Anthropic 协议的模型接入官方 Codex，同时保留官方 ChatGPT/OpenAI 账号路径、GPT 模型、远程控制和 Codex 原生体验。
+Codex Mixin 是一个跨平台的 Rust 本地网关，提供 Windows 桌面 App、原生 macOS 菜单栏 App 与浏览器中的 Web 控制面板。它把 OpenRouter、DeepSeek、Baidu OneAPI、AWS Bedrock 或其他兼容 OpenAI / Anthropic 协议的模型接入官方 Codex，同时保留官方 ChatGPT/OpenAI 账号路径、GPT 模型、远程控制和 Codex 原生体验。
 
 ### 核心能力
 
@@ -400,7 +400,7 @@ These Agents are listed in the catalog but cannot connect to the Mixin gateway y
 | --- | --- |
 | macOS App | 菜单栏状态、Provider 与模型管理、测速、配置备份、更新和修复 |
 | Windows App | 系统托盘、Provider 与模型管理、测速、配置备份、客户端接入和修复 |
-| TUI | 面向 Linux、SSH 和远端环境的完整终端控制台 |
+| Web 控制面板 | `codex-mixin panel` 启动，面向 Linux、SSH 和远端主机的完整浏览器控制台 |
 | CLI | 跨平台 core：稳定子命令、JSON contract 和后台服务管理 |
 
 ### 内置 Provider
@@ -428,6 +428,19 @@ cargo build --locked --release --features client-auth
 CARGO_BUILD_FEATURES=client-auth ./macos/build_app.sh
 ```
 
+### 网络监听与 Web 控制面板
+
+网关默认监听 `0.0.0.0` 并自动选择端口，同一网络中的设备可以访问。写入客户端配置的地址仍是 `127.0.0.1`；已保存的监听地址保持不变。默认构建不校验入站密钥，网关开放时局域网设备可以直接使用你的 Provider 额度。需要限制时，用 `--features client-auth` 构建并设置网关密钥，或用 `codex-mixin start --bind 127.0.0.1:PORT` 只监听本机。Codex OAuth 透传只接受来自本机回环地址的连接。
+
+`codex-mixin panel` 启动 Web 控制面板，默认监听 `0.0.0.0:18790`（端口被占用时自动换端口），终端会打印带访问令牌的地址：
+
+```bash
+codex-mixin panel                       # 所有网卡
+codex-mixin panel --bind 127.0.0.1:18790 # 只允许本机
+```
+
+令牌在每次启动时随机生成，所有 `/api` 请求都必须携带；密钥只经子进程环境变量传给 CLI。在终端中直接运行 `codex-mixin` 也会打开面板，原来的全屏 TUI 已移除，`--no-tui` 保持纯 CLI 输出。
+
 ### 文档
 
 完整安装、配置和排障资料维护在 [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki)：
@@ -443,7 +456,7 @@ CARGO_BUILD_FEATURES=client-auth ./macos/build_app.sh
 
 ## English
 
-Codex Mixin is a cross-platform local gateway built in Rust. It provides a Windows desktop app, a native macOS menu bar app, and a full-screen terminal UI. It connects OpenRouter, DeepSeek, Baidu OneAPI, AWS Bedrock, and other OpenAI- or Anthropic-compatible providers to official Codex while preserving official ChatGPT/OpenAI account access, GPT models, remote control, and the native Codex experience.
+Codex Mixin is a cross-platform local gateway built in Rust. It provides a Windows desktop app, a native macOS menu bar app, and a web control panel. It connects OpenRouter, DeepSeek, Baidu OneAPI, AWS Bedrock, and other OpenAI- or Anthropic-compatible providers to official Codex while preserving official ChatGPT/OpenAI account access, GPT models, remote control, and the native Codex experience.
 
 ### Core features
 
@@ -463,7 +476,7 @@ Codex Mixin is a cross-platform local gateway built in Rust. It provides a Windo
 | --- | --- |
 | macOS App | Menu bar status, provider and model management, benchmarking, configuration backups, updates, and repair |
 | Windows App | System tray, provider and model management, benchmarking, configuration backups, client integration, and repair |
-| TUI | A complete terminal console for Linux, SSH, and remote environments |
+| Web control panel | Started by `codex-mixin panel`; a complete browser console for Linux, SSH, and remote hosts |
 | CLI | Shared cross-platform core with stable subcommands, JSON contracts, and background service management |
 
 ### Built-in providers
@@ -496,6 +509,29 @@ CARGO_BUILD_FEATURES=client-auth ./macos/build_app.sh
 
 This is a build option. Runtime configuration cannot enable these checks in the
 default build.
+
+### Network binding and the web control panel
+
+The gateway now listens on `0.0.0.0` with an automatic port, so other machines
+on the network can reach it. Client configuration still points at `127.0.0.1`,
+and an already stored bind is kept. The default build does not check inbound
+keys, so an exposed gateway lets LAN devices spend your provider quota. To
+restrict it, build with `--features client-auth` and set a gateway key, or run
+`codex-mixin start --bind 127.0.0.1:PORT`. Codex OAuth passthrough only accepts
+loopback peers.
+
+`codex-mixin panel` starts the web control panel on `0.0.0.0:18790` (another
+port if that one is busy) and prints an access URL with a token:
+
+```bash
+codex-mixin panel                        # all interfaces
+codex-mixin panel --bind 127.0.0.1:18790 # this host only
+```
+
+The token is random per start and required on every `/api` request; secrets
+reach the CLI only through child environment variables. Running `codex-mixin`
+in a terminal also opens the panel. The full-screen TUI is removed; `--no-tui`
+keeps plain CLI output.
 
 ### Documentation
 
@@ -531,8 +567,8 @@ codex-mixin connect remove claude-desktop
 The connect command starts or restarts the managed gateway after committing
 the profile, so the serving process includes the Desktop routes and client key.
 Fully quit and reopen Claude Desktop after connecting, restoring, or changing
-selected models. The macOS and Windows **Agent management** windows and the TUI
-**Integrations** page (`d` / `D`) expose the same operations. Desktop and
+selected models. The macOS and Windows **Agent management** windows and the web panel
+**客户端** page expose the same operations. Desktop and
 the Claude Code CLI have separate integrations; `connect claude` still manages
 only Claude Code CLI settings.
 

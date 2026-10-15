@@ -19,7 +19,7 @@
 | `config` | 配置模型、迁移、校验、持久化 | 锁与原子替换 |
 | `clients`（新增） | 各编码客户端配置渲染、安装、同步、卸载 | 不依赖 server |
 | `platform` | 全部操作系统差异：路径与 home 变量、进程组与进程树、文件权限与锁、开机自启服务、桌面通知与桌面 App、终端窗口、代码签名、Codex CLI 位置、包目标名 | 标准库与平台命令 |
-| `macos` / `tui` / `windows` | 平台壳层；渲染 UI 并调用稳定 CLI contract | CLI 子进程及公开 core 类型 |
+| `macos` / `panel` / `windows` | 平台壳层；渲染 UI 并调用稳定 CLI contract | CLI 子进程及公开 core 类型 |
 
 依赖方向是单向的：`cli -> application -> provider/config/catalog/clients`，
 `server -> gateway -> upstream -> provider/protocol`。`gateway` 与 `fusion`
@@ -27,14 +27,14 @@
 
 ## 平台无关的核心
 
-`src/platform` 之外的生产代码（库、CLI、TUI）不含任何平台条件编译、平台
+`src/platform` 之外的生产代码（库、CLI、Web 面板）不含任何平台条件编译、平台
 工具名、平台路径或平台环境变量。核心只表达意图，例如“把子进程放进独立进程
 组”“以当前用户私有权限写文件”“登录后自动启动网关”“显示一条桌面通知”
 “在终端窗口完成扫码登录”，由 `platform` 在 macOS（launchd、plutil、
 codesign、osascript）、Linux（systemd --user、notify-send）与 Windows
 （计划任务、taskkill、ACL、Windows Terminal）上分别实现。
 
-`tests/platform_neutral_core.rs` 扫描 `src/` 与 `tui/` 中 `src/platform`
+`tests/platform_neutral_core.rs` 扫描 `src/` 与 `panel/` 中 `src/platform`
 以外的生产代码，发现 `cfg(unix|windows|target_os)`、`std::os::*`、`.exe`、
 `launchctl`、`USERPROFILE`、`/usr/`、权限位等平台片段即失败。测试专用代码
 （`#[cfg(test)]` 项与 `tests.rs`）可以按平台准备 fixture。
@@ -42,8 +42,8 @@ codesign、osascript）、Linux（systemd --user、notify-send）与 Windows
 ## 壳与 CLI 的契约
 
 三个 UI 壳均位于仓库顶层。`src/main.rs` 是唯一的 composition root：它把
-CLI 解析出的抽象交互入口连接到 `tui`，core 和 CLI 模块不引用任何具体壳。
-macOS 与 Windows 壳通过带 `--no-tui` 的 CLI 子进程访问同一组用例与 JSON
+CLI 解析出的抽象交互入口连接到 `panel`（axum Web 壳，静态资源内嵌），core 和 CLI 模块不引用任何具体壳。
+macOS、Windows 与 Web 面板壳通过带 `--no-tui` 的 CLI 子进程访问同一组用例与 JSON
 contract，平台 UI 不复制 provider、gateway 或 client integration 业务规则，
 也不读写 CLI 状态目录中的任何文件。壳自己的数据（诊断日志、额度展示缓存、
 图标缓存）放在各自的原生目录（macOS 为 `~/Library/Application Support/Codex Mixin`，
@@ -104,4 +104,4 @@ clippy 与测试仍是权威检查。当前规则：
 - 库用例不得使用 clap/indicatif/ratatui/console/crossterm 或终端打印。
 - 底层模块不得引用 `FusionEngine` 或网关执行器。
 - `server` 不得引用 `crate::cli`。
-- core/CLI 不得引用具体 `tui` 壳；TUI 不得访问 CLI 私有实现。
+- core/CLI 不得引用具体 `panel` 壳；面板不得访问 CLI 私有实现。
