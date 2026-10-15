@@ -247,15 +247,13 @@ fn official_provider_view(
         .collect::<HashSet<_>>();
     let selected_models = config.official_selected_models.as_ref().map_or_else(
         || cached_models.iter().map(|model| model.id.clone()).collect(),
-        |selected| {
-            selected
-                .iter()
-                .filter(|model| available_models.contains(model.as_str()))
-                .cloned()
-                .collect::<Vec<_>>()
-        },
+        Clone::clone,
     );
-    let routable_model_count = selected_models.len();
+    let unavailable_selected_models = selected_models
+        .iter()
+        .filter(|model| !available_models.contains(model.as_str()))
+        .collect::<Vec<_>>();
+    let routable_model_count = selected_models.len() - unavailable_selected_models.len();
     let needs_refresh = cached_models.is_empty();
     json!({
         "id": "official",
@@ -284,7 +282,7 @@ fn official_provider_view(
         "baidu_code_report": false,
         "selected_models": selected_models,
         "new_models": [],
-        "unavailable_selected_models": [],
+        "unavailable_selected_models": unavailable_selected_models,
         "cached_models": cached_models,
         "model_context_overrides": config.official_model_contexts,
         "models_refreshed_at_ms": official_models_refreshed_at_ms(),

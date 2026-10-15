@@ -14,6 +14,7 @@ use codex_mixin::catalog::official::{
 
 pub(super) const OFFICIAL_PROVIDER_ID: &str = "official";
 const OFFICIAL_MODELS_CACHE_FILE: &str = "official-models.json";
+const OFFICIAL_TEMPLATE_CACHE_FILE: &str = "official-template.json";
 
 pub(super) fn load_official_models() -> anyhow::Result<Vec<ProviderModel>> {
     load_official_catalog()?.map_or_else(
@@ -55,6 +56,23 @@ pub(super) async fn refresh_official_models() -> anyhow::Result<usize> {
 
 pub(in crate::cli) fn official_models_cache_path() -> PathBuf {
     stored_config_path().with_file_name(OFFICIAL_MODELS_CACHE_FILE)
+}
+
+pub(in crate::cli) fn official_template_cache_path() -> PathBuf {
+    stored_config_path().with_file_name(OFFICIAL_TEMPLATE_CACHE_FILE)
+}
+
+pub(super) fn same_account_catalog(previous: &Value, current: &Value) -> bool {
+    previous.get("codex_mixin_source") == current.get("codex_mixin_source")
+        && previous
+            .get("codex_mixin_source")
+            .and_then(Value::as_str)
+            .is_some()
+        && previous
+            .get("codex_mixin_account_id")
+            .and_then(Value::as_str)
+            .is_some_and(|account| !account.is_empty())
+        && previous.get("codex_mixin_account_id") == current.get("codex_mixin_account_id")
 }
 
 pub(in crate::cli) fn write_official_models_cache(
@@ -222,6 +240,29 @@ fn official_models_from_catalog(catalog: &Value) -> anyhow::Result<Vec<ProviderM
 
 #[cfg(test)]
 mod tests {
+    #[test]
+    fn different_catalog_sources_are_not_model_retirements() {
+        use serde_json::json;
+        let account = json!({"codex_mixin_source":"account","codex_mixin_account_id":"one"});
+        assert!(super::same_account_catalog(&account, &account));
+        assert!(!super::same_account_catalog(
+            &account,
+            &json!({
+                "codex_mixin_source":"repository","codex_mixin_account_id":"one"
+            })
+        ));
+        assert!(!super::same_account_catalog(
+            &account,
+            &json!({
+                "codex_mixin_source":"account","codex_mixin_account_id":"two"
+            })
+        ));
+        assert!(!super::same_account_catalog(&json!({}), &json!({})));
+        assert_ne!(
+            super::official_models_cache_path(),
+            super::official_template_cache_path()
+        );
+    }
 
     use axum::Router;
     use axum::routing::get;

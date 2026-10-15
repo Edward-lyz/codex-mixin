@@ -289,7 +289,7 @@ pub(super) use logging::init_tracing;
 use logging::log_gateway_configuration;
 
 pub(super) const CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
-pub(super) const OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+pub(super) const OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 pub(super) const PROVIDER_MODEL_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 const AGY_MODEL_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 /// How often the client-credential watch checks the stored configuration timestamp.
@@ -633,14 +633,14 @@ fn model_notification(
     let mut lines = Vec::new();
     if !changes.auto_selected.is_empty() {
         lines.push(format!(
-            "✓ 新增并探测 {} 个：{}",
+            "✓ 新发现 {} 个：{}",
             changes.auto_selected.len(),
             summarize_models(&changes.auto_selected)
         ));
     }
     if !changes.removed.is_empty() {
         lines.push(format!(
-            "− 下线并移除 {} 个：{}",
+            "− 当前目录不可用 {} 个：{}",
             changes.removed.len(),
             summarize_models(&changes.removed)
         ));
@@ -1107,7 +1107,7 @@ mod model_notification_tests {
         assert_eq!(content.subtitle, "我的常用模型 · 模型列表已更新");
         assert_eq!(
             content.body,
-            "✓ 新增并探测 2 个：gpt-5.6-luna、gpt-6-astra\n− 下线并移除 1 个：gpt-image-2"
+            "✓ 新发现 2 个：gpt-5.6-luna、gpt-6-astra\n− 当前目录不可用 1 个：gpt-image-2"
         );
     }
 

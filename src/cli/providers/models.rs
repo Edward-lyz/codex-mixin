@@ -8,7 +8,7 @@ use serde_json::json;
 use super::{TestProviderOptions, mutate_and_invalidate, normalize_model_ids};
 use crate::cli::official_models::{
     OFFICIAL_PROVIDER_ID, available_official_ids, load_official_catalog, load_official_models,
-    refresh_official_models,
+    refresh_official_models, same_account_catalog,
 };
 use crate::cli::refresh_default_managed_codex_catalog;
 
@@ -36,10 +36,28 @@ pub(crate) async fn discover_models_with_output(
 ) -> anyhow::Result<ModelDiscoveryChanges> {
     if id == OFFICIAL_PROVIDER_ID {
         super::super::progress_step("Refreshing model list for provider official");
+        let previous_catalog = load_official_catalog()?;
         let previous_models = load_official_models()?;
         let count = refresh_official_models().await?;
         let current_models = load_official_models()?;
-        let changes = apply_official_model_refresh(&previous_models, &current_models)?;
+        let current_catalog = load_official_catalog()?;
+        let comparable = previous_catalog
+            .as_ref()
+            .zip(current_catalog.as_ref())
+            .is_some_and(|(previous, current)| same_account_catalog(previous, current));
+        let changes = if comparable {
+            apply_official_model_refresh(&previous_models, &current_models)?
+        } else {
+            // Establish a new baseline without claiming that another source's
+            // models were retired or changing the user's selection.
+            ModelDiscoveryChanges {
+                updated: current_models
+                    .iter()
+                    .map(|model| model.id.clone())
+                    .collect(),
+                ..Default::default()
+            }
+        };
         super::super::progress_step(&format!(
             "Model refresh complete for official: {count} available"
         ));
@@ -87,21 +105,35 @@ pub(in crate::cli) fn apply_official_model_refresh(
     current_models: &[codex_mixin::provider::ProviderModel],
 ) -> anyhow::Result<ModelDiscoveryChanges> {
     if previous_models.is_empty() {
-        return Ok(ModelDiscoveryChanges::default());
+        return Ok(ModelDiscoveryChanges {
+            updated: current_models
+                .iter()
+                .map(|model| model.id.clone())
+                .collect(),
+            ..Default::default()
+        });
     }
     let previous_ids = previous_models
         .iter()
-        .map(|model| model.id.as_str())
-        .collect::<std::collections::HashSet<_>>();
+        .map(|model| (model.id.as_str(), model))
+        .collect::<std::collections::HashMap<_, _>>();
     let current_ids = current_models
         .iter()
         .map(|model| model.id.as_str())
         .collect::<std::collections::HashSet<_>>();
-    let mut changes = ModelDiscoveryChanges {
-        updated: Vec::new(),
+    let changes = ModelDiscoveryChanges {
+        updated: current_models
+            .iter()
+            .filter(|model| {
+                previous_ids
+                    .get(model.id.as_str())
+                    .is_some_and(|previous| **previous != **model)
+            })
+            .map(|model| model.id.clone())
+            .collect(),
         added: current_models
             .iter()
-            .filter(|model| !previous_ids.contains(model.id.as_str()))
+            .filter(|model| !previous_ids.contains_key(model.id.as_str()))
             .map(|model| model.id.clone())
             .collect(),
         removed: previous_models
@@ -111,31 +143,7 @@ pub(in crate::cli) fn apply_official_model_refresh(
             .collect(),
         auto_selected: Vec::new(),
     };
-    if changes.added.is_empty() && changes.removed.is_empty() {
-        return Ok(changes);
-    }
-    let auto_select = !changes.added.is_empty()
-        && changes.added.len() < codex_mixin::provider::AUTO_SELECT_NEW_MODEL_LIMIT;
-    mutate_and_invalidate(|config| {
-        if let Some(selected) = &mut config.official_selected_models {
-            selected.retain(|model| current_ids.contains(model.as_str()));
-            if auto_select {
-                selected.extend(changes.added.iter().cloned());
-            }
-        } else if !auto_select && !changes.added.is_empty() {
-            config.official_selected_models = Some(
-                previous_models
-                    .iter()
-                    .filter(|model| current_ids.contains(model.id.as_str()))
-                    .map(|model| model.id.clone())
-                    .collect(),
-            );
-        }
-        Ok(())
-    })?;
-    if auto_select {
-        changes.auto_selected = changes.added.clone();
-    }
+    // Availability is an observation, not a request to edit model selections.
     Ok(changes)
 }
 

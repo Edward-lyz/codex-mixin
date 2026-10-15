@@ -18,7 +18,7 @@ use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::config_input::normalize_base_url;
 use crate::cli::metadata::load_model_metadata_resolver;
 use crate::cli::official_models::{
-    filter_official_catalog, load_official_models, official_models_cache_path,
+    filter_official_catalog, load_official_models, official_template_cache_path,
 };
 use crate::cli::providers::apply_official_model_refresh;
 use crate::cli::runtime::effective_gateway_bind;
@@ -130,7 +130,7 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
     super::super::progress_step("Loading Codex config template");
     let mut template = load_codex_install_template_online(
         codex_oauth_proxy,
-        &official_models_cache_path(),
+        &official_template_cache_path(),
         codex_mixin::catalog::official::OFFICIAL_CATALOG_URL,
     )
     .await?;

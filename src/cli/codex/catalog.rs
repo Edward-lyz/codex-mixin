@@ -19,7 +19,7 @@ use super::managed_config::*;
 use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::metadata::load_model_metadata_resolver;
 use crate::cli::official_models::{
-    filter_official_catalog, official_models_cache_path, write_official_models_cache,
+    filter_official_catalog, official_template_cache_path, write_official_models_cache,
 };
 use codex_mixin::catalog::official::{
     OFFICIAL_CATALOG_TIMEOUT, OFFICIAL_CATALOG_URL, fetch_catalog,
@@ -36,7 +36,8 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
     // An explicit empty selection must clear the managed catalog too.
     let models = state.fetch_models().await?;
     let mut template = if oauth_proxy {
-        load_preferred_official_catalog(OFFICIAL_CATALOG_URL, &official_models_cache_path()).await?
+        load_preferred_official_catalog(OFFICIAL_CATALOG_URL, &official_template_cache_path())
+            .await?
     } else {
         None
     };
@@ -355,7 +356,7 @@ pub(in crate::cli) async fn refresh_managed_official_codex_catalog(
     let mut official_catalog = state
         .fetch_official_models_catalog(OFFICIAL_CATALOG_URL)
         .await?;
-    let official_cache = official_models_cache_path();
+    let official_cache = official_template_cache_path();
     write_official_models_cache(&official_catalog, &official_cache)?;
     let gateway_config = GatewayConfig::from_stored_config()?;
     filter_official_catalog(
@@ -374,6 +375,47 @@ pub(in crate::cli) async fn refresh_managed_official_codex_catalog(
     )
 }
 
+#[cfg(test)]
+mod account_cache_regressions {
+    use super::*;
+    use serde_json::json;
+
+    #[tokio::test]
+    async fn public_template_refresh_keeps_the_account_directory() {
+        let directory = tempfile::tempdir().unwrap();
+        let account_cache = directory.path().join("official-models.json");
+        let template_name = official_template_cache_path();
+        let template_cache = directory.path().join(template_name.file_name().unwrap());
+        write_official_models_cache(
+            &json!({
+                "models":[{"slug":"gpt-5.5"}],
+                "codex_mixin_source":"account",
+                "codex_mixin_account_id":"fixture"
+            }),
+            &account_cache,
+        )
+        .unwrap();
+        let original = std::fs::read(&account_cache).unwrap();
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = axum::Router::new().route(
+            "/models",
+            axum::routing::get(|headers: axum::http::HeaderMap| async move {
+                assert!(headers.get("authorization").is_none());
+                axum::Json(json!({"models":[{"slug":"public-model"}]}))
+            }),
+        );
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        for _ in 0..2 {
+            load_preferred_official_catalog(&format!("http://{address}/models"), &template_cache)
+                .await
+                .unwrap();
+            assert_eq!(std::fs::read(&account_cache).unwrap(), original);
+        }
+        server.abort();
+    }
+}
+
 async fn load_preferred_official_catalog(
     source_url: &str,
     official_cache: &Path,
@@ -385,7 +427,11 @@ async fn load_preferred_official_catalog(
             Ok(Some(catalog))
         }
         Err(error) => {
-            let Some(cached) = load_template_catalog(Some(official_cache))? else {
+            let fallback = match load_template_catalog(Some(official_cache))? {
+                Some(cached) => Some(cached),
+                None => crate::cli::official_models::load_official_catalog()?,
+            };
+            let Some(cached) = fallback else {
                 return Err(error
                     .context("official repository catalog unavailable and no Mixin cache exists"));
             };

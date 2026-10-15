@@ -178,6 +178,25 @@ fn official_provider_view_is_reserved_and_read_only() {
     assert_eq!(provider["cached_models"][0]["id"], "gpt-5.6-sol");
 }
 
+#[test]
+fn unavailable_official_models_keep_selection_intent() {
+    let config = StoredGatewayConfig {
+        official_selected_models: Some(vec!["gpt-5.5".to_owned()]),
+        ..Default::default()
+    };
+    let provider = official_provider_view(
+        &config,
+        vec![ProviderModel {
+            id: "current-model".to_owned(),
+            ..Default::default()
+        }],
+    );
+    assert_eq!(provider["selected_models"], json!(["gpt-5.5"]));
+    assert_eq!(provider["unavailable_selected_models"], json!(["gpt-5.5"]));
+    assert_eq!(provider["routable_model_count"], 0);
+    assert_eq!(config.official_selected_models.unwrap(), ["gpt-5.5"]);
+}
+
 #[tokio::test]
 async fn discovers_a_read_only_custom_quota_endpoint() {
     let authorization = Arc::new(Mutex::new(None));
