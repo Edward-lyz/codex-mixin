@@ -79,6 +79,7 @@ pub(crate) async fn fetch_opencode_go_quota_results(
                     "used": used,
                     "limit": 100.0,
                     "remaining": (100.0 - used).max(0.0),
+                "unit": "percent",
                     "error": null,
                     "stale_at": null,
                     "reset_at": unix_time_plus_seconds(window.reset_in_sec),
@@ -441,6 +442,37 @@ fn civil_from_days(days_since_epoch: u64) -> (u64, u64, u64) {
 pub(crate) fn official_quota_rows(
     value: &serde_json::Value,
 ) -> anyhow::Result<Vec<serde_json::Value>> {
+    let native;
+    let value = if value.get("rate_limit").is_some() {
+        let to_bucket = |value: &serde_json::Value| {
+            let window = |name: &str| {
+                let window = &value[name];
+                if window.is_null() {
+                    return serde_json::Value::Null;
+                }
+                serde_json::json!({"usedPercent":window["used_percent"],
+                    "windowDurationMins":window["limit_window_seconds"].as_u64().map(|seconds| seconds / 60),
+                    "resetsAt":window["reset_at"]})
+            };
+            serde_json::json!({"primary":window("primary_window"),"secondary":window("secondary_window")})
+        };
+        let mut buckets = serde_json::Map::new();
+        buckets.insert("codex".to_owned(), to_bucket(&value["rate_limit"]));
+        if let Some(limits) = value["additional_rate_limits"].as_array() {
+            for limit in limits {
+                let id = limit["limit_name"]
+                    .as_str()
+                    .or_else(|| limit["metered_feature"].as_str())
+                    .ok_or_else(|| anyhow::anyhow!("official quota bucket has no identity"))?;
+                anyhow::ensure!(!buckets.contains_key(id), "duplicate official quota bucket");
+                buckets.insert(id.to_owned(), to_bucket(&limit["rate_limit"]));
+            }
+        }
+        native = serde_json::json!({"rateLimitsByLimitId":buckets});
+        &native
+    } else {
+        value
+    };
     let buckets = if let Some(buckets) = value
         .get("rateLimitsByLimitId")
         .and_then(serde_json::Value::as_object)
@@ -516,6 +548,7 @@ pub(crate) fn official_quota_rows(
                 "used": used,
                 "limit": 100.0,
                 "remaining": (100.0 - used).max(0.0),
+                "unit": "percent",
                 "error": null,
                 "reset_at": reset_at,
                 "stale_at": null,
@@ -532,4 +565,21 @@ fn json_f64(value: &serde_json::Value) -> Option<f64> {
     value
         .as_f64()
         .or_else(|| value.as_str().and_then(|value| value.parse().ok()))
+}
+
+#[cfg(test)]
+mod native_official_quota_tests {
+    use super::*;
+    #[test]
+    fn native_usage_keeps_dynamic_windows() {
+        let window = serde_json::json!({"used_percent":94,"limit_window_seconds":18000,"reset_at":1800000000});
+        let rows = official_quota_rows(&serde_json::json!({"rate_limit":{"primary_window":window},"additional_rate_limits":[{"limit_name":"future-model","rate_limit":{"secondary_window":{"used_percent":15,"limit_window_seconds":604800}}}]})).unwrap();
+        assert_eq!(rows.len(), 2);
+        assert_eq!(rows[0]["remaining"], 6.0);
+        assert_eq!(rows[0]["unit"], "percent");
+        assert!(
+            rows.iter()
+                .any(|row| row["quota_id"] == "future-model.secondary")
+        );
+    }
 }

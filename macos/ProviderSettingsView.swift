@@ -325,6 +325,7 @@ struct ProviderBannerState: Equatable {
 struct ProviderSettingsRootView: View {
     @ObservedObject var model: ProviderSettingsModel
     @ObservedObject var benchmarkModel: ModelBenchmarkModel
+    var onLogin: (String) -> Void = { _ in }
     let onAdd: () -> Void
     let onRemove: () -> Void
     let onToggle: () -> Void
@@ -342,6 +343,17 @@ struct ProviderSettingsRootView: View {
                         .font(.headline)
                     Spacer()
 
+                    if let options = model.providerCatalog?.oauthProviders, !options.isEmpty {
+                        Menu {
+                            ForEach(options) { option in
+                                Button(AppLocalization.string("provider.oauthLogin", option.displayName)) { onLogin(option.id) }
+                            }
+                        } label: { Image(systemName: "person.crop.circle.badge.plus") }
+                        .menuStyle(.borderlessButton)
+                        .fixedSize()
+                        .help(AppLocalization.string("provider.oauthLoginMenu"))
+                        .disabled(model.isBusy || benchmarkModel.isBusy)
+                    }
                     Button(action: onAdd) {
                         Image(systemName: "plus")
                             .frame(width: 22, height: 22)

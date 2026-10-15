@@ -41,6 +41,9 @@ pub(super) enum PanelAction {
     ProviderTest {
         id: String,
     },
+    ProviderLogin {
+        id: String,
+    },
     ProviderDiscover {
         id: String,
     },
@@ -360,6 +363,7 @@ impl PanelAction {
             Self::ProviderDisable { id } => provider_id_command("disable", id),
             Self::ProviderRemove { id } => provider_id_command("remove", id),
             Self::ProviderDiscover { id } => provider_id_command("discover", id),
+            Self::ProviderLogin { id } => provider_id_command("login", id),
             Self::ProviderProbe { id } => provider_id_command("probe", id),
             Self::ProviderTest { id } => {
                 let mut invocation = provider_id_command("test", id)?;

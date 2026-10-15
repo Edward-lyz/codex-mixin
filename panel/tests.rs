@@ -235,3 +235,16 @@ async fn provider_icons_are_served_by_preset_icon_name() {
         assert_eq!(response.status(), status, "{path}");
     }
 }
+
+#[test]
+fn oauth_login_uses_the_cli_contract() {
+    let invocation = action(json!({"action":"provider_login","params":{"id":"official"}}))
+        .invocation()
+        .unwrap();
+    assert_eq!(invocation.args, ["providers", "login", "official"]);
+    assert!(
+        action(json!({"action":"provider_login","params":{"id":"--bad"}}))
+            .invocation()
+            .is_err()
+    );
+}

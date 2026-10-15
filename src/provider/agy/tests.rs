@@ -74,3 +74,43 @@ fn native_reports_are_account_bound() {
     provider.auth.api_key = "another-account-key".to_owned();
     assert!(require_native_account(&provider).is_err());
 }
+
+#[tokio::test]
+async fn projects_are_bound_to_the_credential() {
+    use axum::{Json, Router, http::HeaderMap, routing::post};
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    let requests = std::sync::Arc::new(AtomicUsize::new(0));
+    let count = requests.clone();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new().route("/v1internal:loadCodeAssist", post(move |headers: HeaderMap| {
+        let count = count.clone();
+        async move {
+            count.fetch_add(1, Ordering::SeqCst);
+            Json(json!({"cloudaicompanionProject":if headers["authorization"] == "Bearer first" { "first-project" } else { "second-project" }}))
+        }
+    }));
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut definition = super::super::agy_provider("fixture", "fixture");
+    definition.base_url = format!("http://{address}");
+    let provider = ProviderRuntime::new(definition, &|_| None).unwrap();
+    for (token, expected) in [
+        ("first", "first-project"),
+        ("first", "first-project"),
+        ("second", "second-project"),
+    ] {
+        let mut headers = reqwest::header::HeaderMap::new();
+        headers.insert(
+            reqwest::header::AUTHORIZATION,
+            format!("Bearer {token}").parse().unwrap(),
+        );
+        assert_eq!(
+            project_id(&reqwest::Client::new(), &provider, &headers)
+                .await
+                .unwrap(),
+            expected
+        );
+    }
+    assert_eq!(requests.load(Ordering::SeqCst), 2);
+    server.abort();
+}

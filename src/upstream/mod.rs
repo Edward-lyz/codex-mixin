@@ -103,6 +103,14 @@ impl UpstreamAccess {
         self.send_json(request, body, None).await
     }
 
+    pub(crate) async fn agy_native_project(
+        &self,
+        provider: &ProviderRuntime,
+        headers: &reqwest::header::HeaderMap,
+    ) -> anyhow::Result<String> {
+        crate::provider::agy::project_id(&self.client, provider, headers).await
+    }
+
     pub(crate) async fn agy_native_headers(
         &self,
         provider: &ProviderRuntime,

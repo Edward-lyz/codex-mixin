@@ -4,17 +4,13 @@ use codex_mixin::config::load_stored_config;
 use codex_mixin::provider::{ProviderQuotaParser, ProviderRegistry, quota_usage};
 use futures_util::stream::{self, StreamExt};
 
-use super::super::codex::{
-    codex_home_path, managed_codex_install_mode, request_app_server, resolve_codex_cli,
-    resolve_codex_config_path,
-};
+use super::super::codex::codex_home_path;
 use super::opencode_go::{
     OPENCODE_GO_DASHBOARD_BASE, fetch_opencode_go_quota_results, official_quota_rows,
 };
 
 pub(crate) async fn quota(json_output: bool, provider_filter: Option<&str>) -> anyhow::Result<()> {
-    let official_enabled =
-        managed_codex_install_mode(&resolve_codex_config_path(None)?)? == Some("codex_oauth_proxy");
+    let official_enabled = super::super::providers::official_provider_is_available()?;
     let stored = match load_stored_config()? {
         Some(stored) => stored,
         None if official_enabled => Default::default(),
@@ -46,7 +42,7 @@ pub(crate) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
                                 "provider_display_name": provider.display_name(),
                                 "display_name": format!("{} {}", provider.display_name(), window.label),
                                 "quota_id": window.id, "label": window.label,
-                                "currency": null, "unit": "percent", "source": "agy_cli",
+                                "currency": null, "unit": "percent", "source": "agy_oauth",
                                 "value": 100.0 - window.remaining_percent,
                                 "used": 100.0 - window.remaining_percent, "limit": 100.0,
                                 "remaining": window.remaining_percent, "reset_at": window.reset_at,
@@ -196,20 +192,12 @@ pub(super) fn validate_quota_filter(
 
 async fn fetch_official_quota_results() -> Vec<serde_json::Value> {
     let result = async {
-        let cli = resolve_codex_cli()?;
-        let codex_home = codex_home_path();
-        let reply = tokio::task::spawn_blocking(move || {
-            request_app_server(
-                &cli,
-                &codex_home,
-                "account/rateLimits/read",
-                None,
-                Duration::from_secs(10),
-                "codex-mixin-quota",
-            )
-        })
-        .await??;
-        official_quota_rows(&reply.result)
+        let value = codex_mixin::provider::fetch_official_resource(
+            &codex_home_path().join("auth.json"),
+            false,
+        )
+        .await?;
+        official_quota_rows(&value)
     }
     .await;
     match result {

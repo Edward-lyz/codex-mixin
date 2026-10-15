@@ -197,6 +197,7 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         let rootView = ProviderSettingsRootView(
             model: model,
             benchmarkModel: benchmarkModel,
+            onLogin: { [weak self] id in self?.loginProvider(id) },
             onAdd: { [weak self] in self?.addProvider() },
             onRemove: { [weak self] in self?.removeProvider() },
             onToggle: { [weak self] in self?.toggleProvider() },
@@ -386,6 +387,22 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             selecting: id,
             requiresBaiduBridge: nil
         )
+    }
+
+    func loginProvider(_ id: String) {
+        guard !model.isBusy, !benchmarkModel.isBusy else { return }
+        setBusy(true, status: AppLocalization.string("provider.oauthWaiting"))
+        Task { @MainActor [weak self] in
+            guard let self else { return }
+            do {
+                _ = try await runHandler(["providers", "login", id, "--json"])
+                _ = try await loadProvidersNow(selecting: id, preserveDrafts: false)
+                setBusy(false, status: AppLocalization.string("provider.oauthComplete"))
+            } catch {
+                setBusy(false, status: AppLocalization.string("provider.oauthFailed"))
+                showBanner(title: AppLocalization.string("provider.oauthFailed"), message: error.localizedDescription, isError: true)
+            }
+        }
     }
 
     func removeProvider() {

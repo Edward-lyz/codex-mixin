@@ -5,11 +5,12 @@ macOS, Windows and the Web panel consume the same CLI responses.
 
 ## Models and refresh
 
-The AGY preset starts without seed models. `providers discover <id>` reads the
-signed-in official CLI's `models` JSON report. With an explicit provider key,
-it queries the configured `v1internal:fetchAvailableModels` endpoint instead;
-it never borrows the local CLI account for that key. Native authentication is
-restricted to the supported Google HTTPS hosts.
+The AGY preset starts without seed models. `providers discover <id>` directly
+calls `v1internal:fetchAvailableModels`. OAuth authentication, token renewal,
+project discovery and inference run in Rust; no AGY executable is required.
+For native OAuth, `loadCodeAssist` resolves the account's Cloud Code project,
+which is cached by endpoint and credential and shared with inference/probes.
+Explicit provider keys never borrow the local OAuth account.
 
 The running gateway refreshes enabled AGY providers every 15 minutes. Failures
 back off to that interval and retain the last successful catalog, timestamp
@@ -27,23 +28,22 @@ Older binaries can parse the configuration but retain their older behavior.
 
 ## Quota and credentials
 
-`quota --provider <id> --json` reads the official CLI's read-only `/usage`
-report. It returns a row for each measured group/window, including a stable
-quota ID, label, `unit: percent`, remaining percentage and optional reset time.
-Families and window names come from the report. Missing or invalid measurements
-produce an explicit error rather than zero or full quota. Custom quota URLs
-continue through the existing parser. Local CLI quota cannot represent an
-explicit provider API key and returns an error for that configuration.
+`quota --provider <id> --json` directly calls
+`v1internal:retrieveUserQuotaSummary`. It returns one row per measured
+bucket, including upstream bucket ID, label, `unit: percent`, remaining
+percentage and optional reset time. Names and windows come from the response.
+Missing or invalid measurements produce an error rather than zero/full quota.
+Explicit provider keys use their own credentials for quota as well as models.
+Custom quota URLs continue through the existing parser.
 
-Native reports require `agy` 1.3.5 or later, the verified command baseline. Processes have bounded output,
-timeouts and process-tree cleanup. They run from a temporary directory and
-must return zero agent turns and zero usage. When file-based OAuth credentials
-exist, reports use a private temporary copy of the same credentials as gateway
-inference and force file storage instead of consulting an unrelated OS keyring.
-Temporary credentials are removed after the report; the original is not rewritten.
-Without a token file, reports use the signed-in CLI account. The existing HTTP
-inference adapter still requires file-based OAuth credentials: a working quota
-report does not establish that gateway inference authentication is configured.
+Run `codex-mixin --no-tui providers login agy --json` or choose OAuth sign-in
+in a UI. Browser login uses PKCE, a random state and a loopback callback with
+a five-minute timeout. Tokens are stored privately and atomically in Mixin's
+OAuth directory, next to its configuration, and renewed without running a CLI.
+Legacy OAuth files can still be read. A newly signed-in native account clears
+old native AGY model directories while preserving selection intent; explicit-key
+providers keep their independent directory. Each native request is restricted
+to the supported Google HTTPS hosts. HTTP output and request duration are bounded.
 
 AGY catalog refresh and model selection do not automatically run capability
 probes. Explicit `providers probe` requests can consume quota. Native account
@@ -68,7 +68,7 @@ Those models are not marked as supporting Google Search.
 References: [official CLI changelog](https://antigravity.google/docs/changelog?tab=cli),
 [official SDK tools](https://antigravity.google/docs/sdk/tools),
 [Gemini Google Search](https://ai.google.dev/gemini-api/docs/google-search/),
-[scoped file-token implementation](https://github.com/steipete/CodexBar/blob/main/Sources/CodexBarCore/Providers/Antigravity/AntigravityScopedPrintFetch.swift).
+[DSH native OAuth adapter](https://github.com/LiZhenNet/dsh-antigravity/blob/main/lib/index.js).
 
 ## Validation
 
@@ -77,6 +77,6 @@ dynamic additions/removals, metadata updates, explicit-key discovery, CLI quota
 rows and preservation after refresh failure. `cargo test --locked --test
 gemini_regressions` covers search translation and grounding citations.
 
-The ignored `live_agy_account_reports` test runs only read-only native reports
-against the signed-in account. It is an opt-in integration check, not evidence
+The ignored `live_agy_account_reports` test directly queries read-only HTTP
+endpoints with saved OAuth credentials. It is opt-in and does not establish
 that real inference or search succeeded.

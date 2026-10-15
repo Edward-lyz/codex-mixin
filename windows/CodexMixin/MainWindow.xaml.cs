@@ -370,9 +370,7 @@ public sealed partial class MainWindow : Window
 
     private async Task ProvidersAsync(CancellationToken token)
     {
-        var status = await Client.QueryAsync(["service", "status", "--json"], token);
-        providers = Json.Flag(status, "configured")
-            ? Json.Rows(Json.Field(await Client.QueryAsync(["provider", "list", "--json"], token), "providers")) : [];
+        providers = Json.Rows(Json.Field(await Client.QueryAsync(["provider", "list", "--json"], token), "providers"));
         ready = false;
         // A reload shows the saved state; drafts only survive provider and tab switches.
         modelDrafts.Clear(); connectionDrafts.Clear(); timingCells.Clear(); timings.Clear();
@@ -394,6 +392,7 @@ public sealed partial class MainWindow : Window
         if (providers.Length == 0)
         {
             pendingApply = null; ApplyChanges.IsEnabled = false;
+            AddOAuthLoginButtons();
             PageTitle.Text = "还没有服务商";
             PageDescription.Text = "添加上游 API 后，Codex Mixin 才能为网关提供模型。";
             PageBody.Children.Add(Button("新增服务商", AddProviderAsync, true));
@@ -409,6 +408,7 @@ public sealed partial class MainWindow : Window
         var provider = providers.FirstOrDefault(row => Json.Text(row, "id") == providerId);
         if (provider.ValueKind != JsonValueKind.Object) return;
         PageBody.Children.Clear();
+        AddOAuthLoginButtons();
         ModelsTab.IsChecked = !connectionSelected; ConnectionTab.IsChecked = connectionSelected;
         PageTitle.Text = Json.Text(provider, "display_name");
         ProviderHeaderIcon.Source = Marks.Provider(provider).Source;
@@ -652,6 +652,15 @@ public sealed partial class MainWindow : Window
             }
         }
         catch (CliFailure error) { if (!busy && !draftDirty) ShowSummary($"测速不可用：{error.Message}", "CautionCaption"); }
+    }
+
+    private void AddOAuthLoginButtons()
+    {
+        foreach (var option in Json.Rows(Json.Field(Json.Field(metadata, "provider_catalog"), "oauth_providers")))
+        {
+            var loginId = Json.Text(option, "id");
+            PageBody.Children.Add(Button($"登录 {Json.Text(option, "display_name")}", () => ChangeAsync("OAuth 登录", ["providers", "login", loginId, "--json"], apply: false)));
+        }
     }
 
     private Task AddProviderAsync() => ProviderDialogAsync(null);

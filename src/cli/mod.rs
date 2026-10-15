@@ -632,6 +632,29 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             }
             ProviderCommand::Discover { id } => discover_models(&id).await,
             ProviderCommand::Probe { id } => probe_selected_models(&id).await,
+            ProviderCommand::Login { id, json } => {
+                codex_mixin::application::provider::login::login(&id, |url| {
+                    eprintln!("MIXIN_PROGRESS Open this URL to sign in: {url}")
+                })
+                .await?;
+                providers::discover_models_with_output(&id, true)
+                    .await
+                    .map_err(|source| {
+                        codex_mixin::application::error::OperationError::AfterCommit {
+                            stage: "OAuth model discovery",
+                            source,
+                        }
+                    })?;
+                if json {
+                    println!(
+                        "{}",
+                        serde_json::json!({"provider_id":id,"authenticated":true})
+                    );
+                } else {
+                    println!("provider signed in: {id}");
+                }
+                Ok(())
+            }
             ProviderCommand::Test {
                 id,
                 json,

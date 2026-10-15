@@ -1,5 +1,3 @@
-use std::time::SystemTime;
-
 use axum::http::header;
 use axum::http::{HeaderMap, HeaderValue};
 use serde_json::{Value, json};
@@ -36,12 +34,7 @@ pub(crate) const FORWARDED_OFFICIAL_HEADERS: &[&str] = &[
     "x-codex-window-id",
 ];
 
-pub(crate) struct CachedOfficialAuth {
-    modified_at: SystemTime,
-    file_len: u64,
-    authorization: HeaderValue,
-    account_id: HeaderValue,
-}
+pub(crate) use crate::provider::auth::official::CachedOfficialAuth;
 
 pub(crate) fn forward_official_headers(
     mut request: reqwest::RequestBuilder,
@@ -219,50 +212,7 @@ pub(crate) async fn read_codex_official_auth(
     auth_path: &std::path::Path,
     cache: &tokio::sync::Mutex<Option<CachedOfficialAuth>>,
 ) -> anyhow::Result<(HeaderValue, HeaderValue)> {
-    let metadata = tokio::fs::metadata(auth_path).await.map_err(|err| {
-        anyhow::anyhow!("read Codex auth metadata {}: {err}", auth_path.display())
-    })?;
-    let modified_at = metadata.modified().map_err(|err| {
-        anyhow::anyhow!(
-            "read Codex auth modification time {}: {err}",
-            auth_path.display()
-        )
-    })?;
-    let mut cache = cache.lock().await;
-    if let Some(cached) = cache
-        .as_ref()
-        .filter(|cached| cached.modified_at == modified_at && cached.file_len == metadata.len())
-    {
-        return Ok((cached.authorization.clone(), cached.account_id.clone()));
-    }
-
-    let raw = tokio::fs::read_to_string(auth_path)
-        .await
-        .map_err(|err| anyhow::anyhow!("read Codex auth file {}: {err}", auth_path.display()))?;
-    let auth: Value = serde_json::from_str(&raw)
-        .map_err(|err| anyhow::anyhow!("parse Codex auth file {}: {err}", auth_path.display()))?;
-    let tokens = auth
-        .get("tokens")
-        .ok_or_else(|| anyhow::anyhow!("Codex auth file does not contain tokens"))?;
-    let access_token = tokens
-        .get("access_token")
-        .and_then(Value::as_str)
-        .filter(|token| !token.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("Codex auth file does not contain access_token"))?;
-    let account_id = tokens
-        .get("account_id")
-        .and_then(Value::as_str)
-        .filter(|account_id| !account_id.is_empty())
-        .ok_or_else(|| anyhow::anyhow!("Codex auth file does not contain account_id"))?;
-    let authorization: HeaderValue = format!("Bearer {access_token}").parse()?;
-    let account_id: HeaderValue = account_id.parse()?;
-    *cache = Some(CachedOfficialAuth {
-        modified_at,
-        file_len: metadata.len(),
-        authorization: authorization.clone(),
-        account_id: account_id.clone(),
-    });
-    Ok((authorization, account_id))
+    crate::provider::auth::official::headers(auth_path, cache).await
 }
 
 #[cfg(test)]

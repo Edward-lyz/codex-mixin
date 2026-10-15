@@ -20,6 +20,7 @@ pub(super) fn describe(json_output: bool) -> anyhow::Result<()> {
         "capabilities": {
             "structured_errors": true,
             "agent_management": true,
+            "provider_oauth_login": true,
             "agent_versions": true,
             "fusion_model_options": true,
             "service_lifecycle": true,
@@ -99,6 +100,7 @@ fn provider_catalog() -> Value {
         "default_preset": ProviderPreset::BaiduOneApi.as_str(),
         "default_protocol": ProviderProtocol::OpenAiResponses,
         "default_aws_region": codex_mixin::provider::AWS_BEDROCK_DEFAULT_REGION,
+        "oauth_providers": [{"id":"official","display_name":"OpenAI"},{"id":"agy","display_name":"Google Antigravity"}],
         "presets": presets,
         "protocols": protocols,
     })

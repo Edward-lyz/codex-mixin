@@ -48,14 +48,19 @@ pub(super) struct TestProviderOptions {
 
 pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
     let mut config = load_stored_config()?.unwrap_or_default();
-    let runtime_config = GatewayConfig::from_stored_config()?;
+    let official_available = official_provider_is_available()?;
+    let runtime_config = (!config.providers.is_empty())
+        .then(GatewayConfig::from_stored_config)
+        .transpose()?;
     // Provider listing is a read-only query. A broken managed Codex config is
     // reported by doctor and must not block configured-provider inspection.
     let codex_install_mode =
         managed_codex_install_mode(&resolve_codex_config_path(None)?).unwrap_or(None);
-    let capabilities = ProviderCapabilities::from_default_path(&runtime_config)?;
-    for provider in &mut config.providers {
-        capabilities.annotate_provider(provider);
+    if let Some(runtime_config) = runtime_config {
+        let capabilities = ProviderCapabilities::from_default_path(&runtime_config)?;
+        for provider in &mut config.providers {
+            capabilities.annotate_provider(provider);
+        }
     }
     if json_output {
         let mut providers = config
@@ -122,7 +127,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
                 })
             })
             .collect::<Vec<_>>();
-        if official_provider_is_available(codex_install_mode) {
+        if official_available {
             providers.insert(0, official_provider_view(&config, load_official_models()?));
         }
         println!(
@@ -138,7 +143,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
         );
         return Ok(());
     }
-    if config.providers.is_empty() && !official_provider_is_available(codex_install_mode) {
+    if config.providers.is_empty() && !official_available {
         println!("no providers configured");
         return Ok(());
     }
@@ -166,7 +171,7 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
             )
         })
         .collect();
-    if official_provider_is_available(codex_install_mode) {
+    if official_available {
         table_rows.insert(
             0,
             (
@@ -220,8 +225,10 @@ pub(super) fn list_providers(json_output: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-fn official_provider_is_available(codex_install_mode: Option<&str>) -> bool {
-    codex_install_mode == Some("codex_oauth_proxy")
+pub(crate) fn official_provider_is_available() -> anyhow::Result<bool> {
+    codex_mixin::provider::official_auth_available(
+        &super::codex::codex_home_path().join("auth.json"),
+    )
 }
 
 fn official_provider_view(
@@ -249,6 +256,7 @@ fn official_provider_view(
         },
     );
     let routable_model_count = selected_models.len();
+    let needs_refresh = cached_models.is_empty();
     json!({
         "id": "official",
         "kind": "official",
@@ -281,8 +289,8 @@ fn official_provider_view(
         "model_context_overrides": config.official_model_contexts,
         "models_refreshed_at_ms": official_models_refreshed_at_ms(),
         "last_model_refresh_error": null,
-        "readiness": "healthy",
-        "readiness_issues": [],
+        "readiness": if needs_refresh { "degraded" } else { "healthy" },
+        "readiness_issues": if needs_refresh { vec!["Official account model directory needs a refresh"] } else { Vec::<&str>::new() },
         "routable_model_count": routable_model_count,
     })
 }

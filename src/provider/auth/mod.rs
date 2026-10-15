@@ -9,3 +9,6 @@ pub(crate) mod aws_sigv4;
 pub(crate) mod capture;
 pub(crate) mod ducx;
 pub(crate) mod external;
+
+pub(crate) mod oauth;
+pub(crate) mod official;

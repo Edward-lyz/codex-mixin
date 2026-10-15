@@ -1,0 +1,294 @@
+//! Browser OAuth with PKCE, bounded callback lifetime and private owned storage.
+use anyhow::{Context, ensure};
+use axum::{
+    Router,
+    extract::{Query, State},
+    http::StatusCode,
+    routing::get,
+};
+use base64::{Engine, engine::general_purpose::URL_SAFE_NO_PAD};
+use ring::rand::{SecureRandom, SystemRandom};
+use serde_json::{Value, json};
+use std::collections::HashMap;
+use std::sync::{Arc, Mutex};
+use std::time::Duration;
+
+pub(super) const OPENAI_CLIENT_ID: &str = "app_EMoamEEZ73f0CkXaXp7hrann";
+const LOGIN_TIMEOUT: Duration = Duration::from_secs(300);
+const MAX_TOKEN_BYTES: usize = 64 * 1024;
+
+type CallbackReply = tokio::sync::oneshot::Sender<Result<String, String>>;
+
+struct CallbackState {
+    state: String,
+    sender: Mutex<Option<CallbackReply>>,
+}
+struct CallbackServer(tokio::task::JoinHandle<()>);
+impl Drop for CallbackServer {
+    fn drop(&mut self) {
+        self.0.abort();
+    }
+}
+
+async fn callback(
+    State(state): State<Arc<CallbackState>>,
+    Query(query): Query<HashMap<String, String>>,
+) -> (StatusCode, &'static str) {
+    if query.get("state") != Some(&state.state) {
+        return (StatusCode::BAD_REQUEST, "Invalid OAuth state.");
+    }
+    let response = match (query.get("error"), query.get("code")) {
+        (Some(_), _) => Err("OAuth authorization was denied".to_owned()),
+        (_, Some(code)) if !code.is_empty() => Ok(code.clone()),
+        _ => return (StatusCode::BAD_REQUEST, "Authorization code is missing."),
+    };
+    if let Ok(mut sender) = state.sender.lock()
+        && let Some(sender) = sender.take()
+    {
+        let _ = sender.send(response);
+    }
+    (
+        StatusCode::OK,
+        "Authorization received. Return to Codex Mixin to finish signing in.",
+    )
+}
+
+pub(crate) async fn login(provider: &str, show_url: impl Fn(&str)) -> anyhow::Result<()> {
+    let google = provider == "agy";
+    ensure!(
+        google || provider == "official",
+        "OAuth login requires agy or official"
+    );
+    let (client_id, secret) = if google {
+        let (id, secret) = super::agy::oauth_client()?;
+        (id, Some(secret))
+    } else {
+        (OPENAI_CLIENT_ID.to_owned(), None)
+    };
+    let listener = tokio::net::TcpListener::bind(if google {
+        "127.0.0.1:0"
+    } else {
+        "127.0.0.1:1455"
+    })
+    .await
+    .context("bind OAuth loopback callback")?;
+    let port = listener.local_addr()?.port();
+    let route = if google {
+        "/oauth-callback"
+    } else {
+        "/auth/callback"
+    };
+    let redirect = format!("http://localhost:{port}{route}");
+    let mut verifier = [0_u8; 32];
+    let mut state = [0_u8; 32];
+    SystemRandom::new()
+        .fill(&mut verifier)
+        .map_err(|_| anyhow::anyhow!("PKCE random generation failed"))?;
+    SystemRandom::new()
+        .fill(&mut state)
+        .map_err(|_| anyhow::anyhow!("OAuth state generation failed"))?;
+    let verifier = URL_SAFE_NO_PAD.encode(verifier);
+    let challenge = URL_SAFE_NO_PAD.encode(ring::digest::digest(
+        &ring::digest::SHA256,
+        verifier.as_bytes(),
+    ));
+    let state = URL_SAFE_NO_PAD.encode(state);
+    let (sender, receiver) = tokio::sync::oneshot::channel();
+    let app = Router::new()
+        .route(route, get(callback))
+        .with_state(Arc::new(CallbackState {
+            state: state.clone(),
+            sender: Mutex::new(Some(sender)),
+        }));
+    let _server = CallbackServer(tokio::spawn(async move {
+        if let Err(error) = axum::serve(listener, app).await {
+            tracing::warn!(%error, "OAuth callback server stopped");
+        }
+    }));
+    let mut url = url::Url::parse(if google {
+        "https://accounts.google.com/o/oauth2/v2/auth"
+    } else {
+        "https://auth.openai.com/oauth/authorize"
+    })?;
+    url.query_pairs_mut().extend_pairs([
+        ("client_id", client_id.as_str()), ("response_type", "code"), ("redirect_uri", redirect.as_str()),
+        ("code_challenge", challenge.as_str()), ("code_challenge_method", "S256"), ("state", state.as_str()),
+        ("scope", if google { "https://www.googleapis.com/auth/cloud-platform https://www.googleapis.com/auth/userinfo.email" } else { "openid profile email offline_access" }),
+    ]);
+    if google {
+        url.query_pairs_mut()
+            .extend_pairs([("access_type", "offline"), ("prompt", "consent")]);
+    } else {
+        url.query_pairs_mut().extend_pairs([
+            ("id_token_add_organizations", "true"),
+            ("codex_cli_simplified_flow", "true"),
+            ("originator", "codex_cli_rs"),
+        ]);
+    }
+    show_url(url.as_str());
+    let browser_url = url.to_string();
+    // The URL is also displayed, so a headless host can open it manually.
+    if let Err(error) =
+        tokio::task::spawn_blocking(move || crate::platform::oauth::open_oauth_url(&browser_url))
+            .await?
+    {
+        tracing::warn!(%error, "OAuth browser could not be opened; use the displayed URL");
+    }
+    let code = tokio::time::timeout(LOGIN_TIMEOUT, receiver)
+        .await
+        .context("OAuth login timed out after five minutes")??
+        .map_err(anyhow::Error::msg)?;
+    let mut fields = vec![
+        ("grant_type", "authorization_code"),
+        ("client_id", client_id.as_str()),
+        ("code", code.as_str()),
+        ("redirect_uri", redirect.as_str()),
+        ("code_verifier", verifier.as_str()),
+    ];
+    if let Some(secret) = secret.as_deref() {
+        fields.push(("client_secret", secret));
+    }
+    let tokens = token_request(
+        if google {
+            "https://oauth2.googleapis.com/token"
+        } else {
+            "https://auth.openai.com/oauth/token"
+        },
+        &fields,
+    )
+    .await?;
+    let document = login_document(google, tokens)?;
+    let path = crate::platform::oauth::oauth_path(provider);
+    let bytes = serde_json::to_vec(&document)?;
+    tokio::task::spawn_blocking(move || crate::platform::oauth::save_oauth(&path, &bytes))
+        .await??;
+    if google {
+        super::agy::invalidate_agy_cache().await;
+    }
+    Ok(())
+}
+
+pub(super) async fn token_request(
+    endpoint: &str,
+    fields: &[(&str, &str)],
+) -> anyhow::Result<Value> {
+    let mut response = reqwest::Client::new()
+        .post(endpoint)
+        .timeout(Duration::from_secs(20))
+        .form(fields)
+        .send()
+        .await?;
+    ensure!(
+        response.status().is_success(),
+        "OAuth token endpoint returned {}",
+        response.status()
+    );
+    let mut bytes = Vec::new();
+    while let Some(chunk) = response.chunk().await? {
+        ensure!(
+            bytes.len() + chunk.len() <= MAX_TOKEN_BYTES,
+            "OAuth token response exceeds its size limit"
+        );
+        bytes.extend_from_slice(&chunk);
+    }
+    serde_json::from_slice(&bytes).context("invalid OAuth token response")
+}
+
+pub(super) fn jwt_claims(token: &str) -> Option<Value> {
+    let bytes = URL_SAFE_NO_PAD.decode(token.split('.').nth(1)?).ok()?;
+    serde_json::from_slice(&bytes).ok()
+}
+
+fn login_document(google: bool, mut tokens: Value) -> anyhow::Result<Value> {
+    ensure!(
+        tokens["access_token"]
+            .as_str()
+            .is_some_and(|token| !token.is_empty()),
+        "OAuth response is missing access_token"
+    );
+    ensure!(
+        tokens["refresh_token"]
+            .as_str()
+            .is_some_and(|token| !token.is_empty()),
+        "OAuth response is missing refresh_token"
+    );
+    if google {
+        let seconds = tokens["expires_in"]
+            .as_i64()
+            .filter(|seconds| *seconds > 0)
+            .context("OAuth response is missing expiry")?;
+        tokens["expiry"] = json!(
+            chrono::Utc::now()
+                .checked_add_signed(
+                    chrono::Duration::try_seconds(seconds)
+                        .context("invalid OAuth expiry duration")?
+                )
+                .context("OAuth expiry is out of range")?
+                .to_rfc3339()
+        );
+        return Ok(json!({"auth_method":"consumer","token":tokens}));
+    }
+    let claims = tokens["id_token"]
+        .as_str()
+        .and_then(jwt_claims)
+        .context("OpenAI OAuth response has no account claims")?;
+    tokens["account_id"] = claims
+        .pointer("/https://api.openai.com/auth/chatgpt_account_id")
+        .and_then(Value::as_str)
+        .filter(|account| !account.is_empty())
+        .map(|account| json!(account))
+        .context("OpenAI OAuth response is missing account_id")?;
+    Ok(
+        json!({"auth_mode":"chatgpt","tokens":tokens,"last_refresh":chrono::Utc::now().to_rfc3339()}),
+    )
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    #[tokio::test]
+    async fn rejects_cross_session_callback() {
+        let (sender, mut receiver) = tokio::sync::oneshot::channel();
+        let state = Arc::new(CallbackState {
+            state: "expected".into(),
+            sender: Mutex::new(Some(sender)),
+        });
+        assert_eq!(
+            callback(
+                State(state.clone()),
+                Query(HashMap::from([
+                    ("state".into(), "wrong".into()),
+                    ("code".into(), "fixture".into())
+                ]))
+            )
+            .await
+            .0,
+            StatusCode::BAD_REQUEST
+        );
+        assert!(receiver.try_recv().is_err());
+        assert_eq!(
+            callback(
+                State(state),
+                Query(HashMap::from([
+                    ("state".into(), "expected".into()),
+                    ("code".into(), "fixture".into())
+                ]))
+            )
+            .await
+            .0,
+            StatusCode::OK
+        );
+        assert_eq!(receiver.await.unwrap().unwrap(), "fixture");
+    }
+    #[test]
+    fn credentials_require_refresh_and_identity() {
+        assert!(login_document(true, json!({"access_token":"fixture"})).is_err());
+        assert!(
+            login_document(
+                false,
+                json!({"access_token":"fixture","refresh_token":"fixture"})
+            )
+            .is_err()
+        );
+    }
+}

@@ -911,6 +911,14 @@ function popoverMenu(label, items, buttonClass = "btn btn-ghost btn-icon") {
   return h("div", { class: "menu-anchor" }, button, menu);
 }
 
+function oauthLoginMenu() {
+  const options = providerCatalog().oauth_providers || [];
+  if (!options.length) return null;
+  return popoverMenu("OAuth 登录", options.map(option => ({
+    label: `登录 ${option.display_name}`,
+    run: () => runAction(null, "provider_login", { id: option.id }, { ok: "登录成功" }),
+  })));
+}
 function serviceList(providers, selected) {
   const order = configuredProviders().map((provider) => provider.id);
   const list = h("div", { class: "svc-list-rows", role: "listbox", "aria-label": "服务商" });
@@ -984,7 +992,7 @@ function serviceList(providers, selected) {
   return h(
     "aside",
     { class: "svc-list" },
-    h("header", { class: "svc-list-head" }, h("span", { text: "服务商" }), h("div", { class: "card-actions" }, h("button", { class: "btn btn-ghost btn-icon btn-sm", type: "button", "aria-label": "新增服务商", text: "+", onclick: openAddProvider }), remove)),
+    h("header", { class: "svc-list-head" }, h("span", { text: "服务商" }), h("div", { class: "card-actions" }, h("button", { class: "btn btn-ghost btn-icon btn-sm", type: "button", "aria-label": "新增服务商", text: "+", onclick: openAddProvider }), oauthLoginMenu(), remove)),
     list,
   );
 }
@@ -1465,7 +1473,7 @@ function openAddProvider() {
 
 RENDERERS.providers = () => {
   const providers = state.snapshot.providers || [];
-  if (!providers.length) return card(null, null, emptyState("还没有服务商", "新增一个兼容 OpenAI 或 Anthropic 协议的服务商。", h("button", { class: "btn btn-primary", type: "button", text: "新增服务商", onclick: openAddProvider })));
+  if (!providers.length) return card(null, null, emptyState("还没有服务商", "登录官方账号，或添加兼容 API 的服务商。", h("div", { class: "card-actions" }, oauthLoginMenu(), h("button", { class: "btn btn-primary", type: "button", text: "新增服务商", onclick: openAddProvider }))));
   const selected = providers.find((provider) => provider.id === svc.selected) || providers[0];
   svc.selected = selected.id;
   const issue = (selected.readiness_issues || []).map((id) => ISSUE_LABELS[id] || id);

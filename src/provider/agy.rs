@@ -1,17 +1,21 @@
 //! Account-scoped Antigravity discovery and measured quota windows.
 
-use std::collections::{BTreeMap, HashSet};
+use std::collections::{BTreeMap, HashMap, HashSet};
+use std::sync::LazyLock;
+use std::time::{Duration, Instant};
 
 use anyhow::{Context, ensure};
 use serde::Deserialize;
 use serde_json::Value;
+
+const MAX_RESPONSE_BYTES: usize = 1024 * 1024;
 
 use super::{ProviderDefinition, ProviderModel, ProviderProtocol, ProviderRuntime};
 
 pub(crate) fn require_native_account(provider: &ProviderDefinition) -> anyhow::Result<()> {
     ensure!(
         provider.auth.api_key.trim().is_empty(),
-        "local AGY reports cannot represent a provider configured with an explicit API key"
+        "local AGY OAuth cannot represent a provider configured with an explicit API key"
     );
     let url = reqwest::Url::parse(&provider.base_url)?;
     ensure!(
@@ -31,39 +35,111 @@ pub(crate) async fn discover_models(
     definition: &ProviderDefinition,
     provider: &ProviderRuntime,
 ) -> anyhow::Result<Vec<ProviderModel>> {
-    if definition.auth.api_key.trim().is_empty() {
-        require_native_account(definition)?;
-        let report = crate::platform::agy_report(
-            crate::platform::AgyReport::Models,
-            super::auth::agy::resolve_agy_token_path(),
-        )
-        .await?;
-        return parse_models(&report);
+    let headers = auth_headers(definition).await?;
+    let project = match headers.as_ref() {
+        Some(headers) => project_id(client, provider, headers).await?,
+        None => "aicode-consumers".to_owned(),
+    };
+    let value = fetch_json(
+        client,
+        provider,
+        headers,
+        "fetchAvailableModels",
+        serde_json::json!({"project":project}),
+    )
+    .await?;
+    parse_models(&value)
+}
+
+type ProjectCache = HashMap<(String, reqwest::header::HeaderValue), (Instant, String)>;
+static PROJECTS: LazyLock<std::sync::Mutex<ProjectCache>> =
+    LazyLock::new(|| std::sync::Mutex::new(HashMap::new()));
+const PROJECT_CACHE_LIMIT: usize = 16;
+const PROJECT_CACHE_TTL: Duration = Duration::from_secs(15 * 60);
+
+pub(crate) async fn project_id(
+    client: &reqwest::Client,
+    provider: &ProviderRuntime,
+    headers: &reqwest::header::HeaderMap,
+) -> anyhow::Result<String> {
+    let authorization = headers
+        .get(reqwest::header::AUTHORIZATION)
+        .context("AGY OAuth authorization is missing")?
+        .clone();
+    let key = (provider.definition().base_url.clone(), authorization);
+    {
+        let cache = PROJECTS
+            .lock()
+            .map_err(|_| anyhow::anyhow!("AGY project cache lock failed"))?;
+        if let Some((_, project)) = cache
+            .get(&key)
+            .filter(|(expires, _)| *expires > Instant::now())
+        {
+            return Ok(project.clone());
+        }
     }
-    // An explicitly configured key must never borrow the ambient CLI account.
-    let url =
-        reqwest::Url::parse(&definition.base_url)?.join("/v1internal:fetchAvailableModels")?;
-    let response = provider
-        .apply_auth(client.post(url))
+    let value = fetch_json(client, provider, Some(headers.clone()), "loadCodeAssist", serde_json::json!({"metadata":{"ideType":"ANTIGRAVITY","platform":"PLATFORM_UNSPECIFIED","pluginType":"GEMINI"}})).await?;
+    let project = value.get("cloudaicompanionProject").or_else(|| value.get("antigravityProjectId")).or_else(|| value.get("projectId"))
+        .and_then(|value| value.as_str().or_else(|| value.get("id").and_then(Value::as_str)))
+        .filter(|project| !project.trim().is_empty()).context("AGY account has no Cloud Code project; complete account onboarding before using the provider")?.to_owned();
+    let mut cache = PROJECTS
+        .lock()
+        .map_err(|_| anyhow::anyhow!("AGY project cache lock failed"))?;
+    cache.retain(|_, (expires, _)| *expires > Instant::now());
+    if cache.len() >= PROJECT_CACHE_LIMIT
+        && let Some(oldest) = cache
+            .iter()
+            .min_by_key(|(_, (expires, _))| *expires)
+            .map(|(key, _)| key.clone())
+    {
+        cache.remove(&oldest);
+    }
+    cache.insert(key, (Instant::now() + PROJECT_CACHE_TTL, project.clone()));
+    Ok(project)
+}
+
+async fn auth_headers(
+    definition: &ProviderDefinition,
+) -> anyhow::Result<Option<reqwest::header::HeaderMap>> {
+    if !definition.auth.api_key.trim().is_empty() {
+        return Ok(None);
+    }
+    require_native_account(definition)?;
+    Ok(Some(super::auth::agy::get_agy_headers().await?))
+}
+
+async fn fetch_json(
+    client: &reqwest::Client,
+    provider: &ProviderRuntime,
+    headers: Option<reqwest::header::HeaderMap>,
+    operation: &str,
+    body: Value,
+) -> anyhow::Result<Value> {
+    let url = reqwest::Url::parse(&provider.definition().base_url)?
+        .join(&format!("/v1internal:{operation}"))?;
+    let request = client
+        .post(url)
         .timeout(std::time::Duration::from_secs(20))
-        .json(&serde_json::json!({"project": "aicode-consumers"}))
-        .send()
-        .await?;
+        .json(&body);
+    let request = match headers {
+        Some(headers) => request.headers(headers),
+        None => provider.apply_auth(request),
+    };
+    let mut response = request.send().await?;
     ensure!(
         response.status().is_success(),
-        "AGY models endpoint returned {}",
+        "AGY {operation} returned {}",
         response.status()
     );
-    let mut response = response;
     let mut bytes = Vec::new();
     while let Some(chunk) = response.chunk().await? {
         ensure!(
-            bytes.len() + chunk.len() <= 1024 * 1024,
-            "AGY model directory exceeds 1 MiB"
+            bytes.len() + chunk.len() <= MAX_RESPONSE_BYTES,
+            "AGY {operation} response exceeds 1 MiB"
         );
         bytes.extend_from_slice(&chunk);
     }
-    parse_models(&serde_json::from_slice(&bytes).context("invalid AGY models JSON")?)
+    serde_json::from_slice(&bytes).context("invalid AGY response JSON")
 }
 
 #[derive(Deserialize)]
@@ -76,9 +152,9 @@ struct ModelEntry {
     context_window: Option<u64>,
     #[serde(default, alias = "outputTokenLimit")]
     max_output_tokens: Option<u64>,
-    #[serde(default)]
+    #[serde(default, alias = "supportsImages")]
     supports_image: Option<bool>,
-    #[serde(default)]
+    #[serde(default, alias = "supportsThinking")]
     supports_thinking: Option<bool>,
     #[serde(default)]
     supports_web_search: Option<bool>,
@@ -143,10 +219,15 @@ pub struct AgyQuotaWindow {
 }
 
 pub async fn fetch_agy_quota(provider: &ProviderDefinition) -> anyhow::Result<Vec<AgyQuotaWindow>> {
-    require_native_account(provider)?;
-    let report = crate::platform::agy_report(
-        crate::platform::AgyReport::Usage,
-        super::auth::agy::resolve_agy_token_path(),
+    let headers = auth_headers(provider).await?;
+    let runtime = ProviderRuntime::new(provider.clone(), &|name| std::env::var(name).ok())?;
+    let client = reqwest::Client::new();
+    let report = fetch_json(
+        &client,
+        &runtime,
+        headers,
+        "retrieveUserQuotaSummary",
+        serde_json::json!({}),
     )
     .await?;
     parse_quota(&report)
@@ -154,14 +235,20 @@ pub async fn fetch_agy_quota(provider: &ProviderDefinition) -> anyhow::Result<Ve
 
 #[derive(Deserialize)]
 struct QuotaGroup {
+    #[serde(alias = "displayName")]
     name: String,
     buckets: Vec<QuotaBucket>,
 }
 
 #[derive(Deserialize)]
 struct QuotaBucket {
+    #[serde(default, rename = "bucketId")]
+    id: Option<String>,
+    #[serde(alias = "displayName")]
     name: String,
+    #[serde(alias = "remainingFraction")]
     remaining_fraction: Option<f64>,
+    #[serde(alias = "resetTime")]
     reset_time: Option<String>,
     enabled: Option<bool>,
 }
@@ -198,7 +285,9 @@ fn parse_quota(value: &Value) -> anyhow::Result<Vec<AgyQuotaWindow>> {
                 chrono::DateTime::parse_from_rfc3339(reset)
                     .context("invalid AGY quota reset time")?;
             }
-            let id = format!("{}/{}", group.name, bucket.name);
+            let id = bucket
+                .id
+                .unwrap_or_else(|| format!("{}/{}", group.name, bucket.name));
             let window = AgyQuotaWindow {
                 id: id.clone(),
                 label: format!("{} - {}", group.name, bucket.name),

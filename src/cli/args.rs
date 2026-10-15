@@ -520,6 +520,12 @@ pub(super) enum BenchmarkCommand {
 
 #[derive(Debug, Subcommand)]
 pub(super) enum ProviderCommand {
+    /// Sign in through browser OAuth without installing a provider CLI.
+    Login {
+        id: String,
+        #[arg(long)]
+        json: bool,
+    },
     /// List configured providers.
     List {
         #[arg(long)]

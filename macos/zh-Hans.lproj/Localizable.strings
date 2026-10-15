@@ -215,8 +215,14 @@
 "codexConnect.officialProvider" = "codex-mixin / 官方 OAuth 代理";
 "codexConnect.customOnlyProvider" = "amazon-bedrock / 本地占位（不连接 AWS）";
 "settings.openProviderSetup" = "打开供应商配置说明";
-"settings.localOAuthCredentials" = "请先在供应商的 CLI 中登录。API Key 留空时使用该 CLI 的本地 OAuth 凭据。";
+"settings.localOAuthCredentials" = "请从服务商工具栏进行 OAuth 登录，无需安装供应商 CLI。";
 "settings.optionalAPIKey" = "可选；留空使用本地 OAuth";
 "settings.providerCatalogUnavailable" = "无法获取 CLI 供应商目录。请重新打开设置或更新完整应用包。";
 "quota.remainingPercent" = "剩余 %@%%";
 "quota.resetsAt" = "%@ 重置";
+
+"provider.oauthLogin" = "登录 %@";
+"provider.oauthLoginMenu" = "OAuth 登录";
+"provider.oauthWaiting" = "请在浏览器中完成登录…";
+"provider.oauthComplete" = "登录成功";
+"provider.oauthFailed" = "登录失败";

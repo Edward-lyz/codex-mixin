@@ -12,6 +12,7 @@ use super::error::OperationError;
 
 pub mod build;
 pub mod discovery;
+pub mod login;
 pub mod models;
 pub mod skill;
 

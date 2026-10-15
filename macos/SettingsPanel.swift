@@ -40,7 +40,13 @@ struct ProviderProtocolOption: Identifiable, Decodable {
     let apiPath: String
 }
 
+struct ProviderOAuthOption: Identifiable, Decodable {
+    let id: String
+    let displayName: String
+}
+
 struct ProviderCatalog: Decodable {
+    var oauthProviders: [ProviderOAuthOption]? = nil
     let defaultPreset: String
     let defaultProtocol: String
     let defaultAwsRegion: String

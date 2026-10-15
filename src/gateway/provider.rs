@@ -415,7 +415,15 @@ async fn stream_gemini(ctx: ProviderRequestContext<'_>) -> Result<ResponseStream
         routing,
         CacheShape::from_gemini(&converted.request),
     );
-    let payload = build_gemini_payload(provider, upstream_model_id, converted.request);
+    let mut payload = build_gemini_payload(provider, upstream_model_id, converted.request);
+    if let Some(headers) = agy_native.as_ref() {
+        payload["project"] = json!(
+            executor
+                .upstream
+                .agy_native_project(provider, headers)
+                .await?
+        );
+    }
     let mut upstream = executor
         .upstream
         .send_provider_json(

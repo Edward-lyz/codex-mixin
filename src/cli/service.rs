@@ -470,7 +470,9 @@ fn dynamic_providers() -> anyhow::Result<Vec<ProviderModelRefreshTarget>> {
         .map(|stored| model_refresh_targets(&stored.providers))
         .unwrap_or_default();
     let config = GatewayConfig::from_stored_config()?;
-    if config.accept_codex_oauth && config.codex_auth_path.is_file() {
+    if config.accept_codex_oauth
+        && codex_mixin::provider::official_auth_available(&config.codex_auth_path)?
+    {
         providers.insert(
             0,
             ProviderModelRefreshTarget {

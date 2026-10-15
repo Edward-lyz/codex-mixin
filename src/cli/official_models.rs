@@ -23,10 +23,33 @@ pub(super) fn load_official_models() -> anyhow::Result<Vec<ProviderModel>> {
 }
 
 pub(super) fn load_official_catalog() -> anyhow::Result<Option<Value>> {
-    load_template_catalog(Some(&official_models_cache_path()))
+    let catalog = match load_template_catalog(Some(&official_models_cache_path()))? {
+        Some(catalog) => Some(catalog),
+        None => load_template_catalog(None)?,
+    };
+    if let Some(account) = catalog
+        .as_ref()
+        .and_then(|catalog| catalog.get("codex_mixin_account_id"))
+        .and_then(Value::as_str)
+        && codex_mixin::provider::official_account_id(
+            &super::codex::codex_home_path().join("auth.json"),
+        )?
+        .as_deref()
+            != Some(account)
+    {
+        return Ok(None);
+    }
+    Ok(catalog)
 }
 
 pub(super) async fn refresh_official_models() -> anyhow::Result<usize> {
+    let auth = super::codex::codex_home_path().join("auth.json");
+    if codex_mixin::provider::official_auth_available(&auth)? {
+        let mut catalog = codex_mixin::provider::fetch_official_resource(&auth, true).await?;
+        catalog["codex_mixin_source"] =
+            serde_json::json!("https://chatgpt.com/backend-api/codex/models");
+        return write_official_models_cache(&catalog, &official_models_cache_path());
+    }
     refresh_official_models_to_path(OFFICIAL_CATALOG_URL, &official_models_cache_path()).await
 }
 
@@ -45,7 +68,9 @@ pub(in crate::cli) fn write_official_models_cache(
         "Codex repository catalog returned no visible models"
     );
     let mut cached = catalog.clone();
-    cached["codex_mixin_source"] = serde_json::json!(OFFICIAL_CATALOG_URL);
+    if cached.get("codex_mixin_source").is_none() {
+        cached["codex_mixin_source"] = serde_json::json!(OFFICIAL_CATALOG_URL);
+    }
     write_atomic_if_changed(cache_path, &serde_json::to_vec_pretty(&cached)?)?;
     // A successful refresh can return the same catalog. Keep the timestamp
     // meaningful for the provider UI instead of showing only content changes.
@@ -65,10 +90,14 @@ async fn refresh_official_models_to_path(
     write_official_models_cache(&catalog, cache_path)
 }
 
+// Existing client exports may be prepared before OAuth is completed; requests still validate credentials.
 pub(super) fn selected_official_models(
     config: &GatewayConfig,
 ) -> anyhow::Result<Vec<ProviderModel>> {
-    if !config.accept_codex_oauth || !config.codex_auth_path.is_file() {
+    if !config.accept_codex_oauth
+        || !(config.codex_auth_path.is_file()
+            || codex_mixin::provider::official_auth_available(&config.codex_auth_path)?)
+    {
         return Ok(Vec::new());
     }
     let Some(mut catalog) = load_official_catalog()? else {

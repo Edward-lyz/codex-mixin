@@ -170,9 +170,6 @@ fn official_provider_view_is_reserved_and_read_only() {
         }],
     );
 
-    assert!(official_provider_is_available(Some("codex_oauth_proxy")));
-    assert!(!official_provider_is_available(Some("custom_only")));
-    assert!(!official_provider_is_available(None));
     assert_eq!(provider["id"], "official");
     assert_eq!(provider["kind"], "official");
     assert_eq!(provider["display_name"], "OpenAI");

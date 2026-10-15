@@ -75,11 +75,16 @@ pub struct GatewayConfig {
 
 impl GatewayConfig {
     pub fn from_stored_config() -> anyhow::Result<Self> {
-        let stored_config = load_stored_config()?.ok_or_else(|| {
-            anyhow!(
-                "provider configuration is missing; run `codex-mixin provider add --preset <preset> --key <key>`"
-            )
-        })?;
+        let stored_config = match load_stored_config()? {
+            Some(config) => config,
+            None => {
+                anyhow::ensure!(
+                    crate::provider::official_auth_available(&default_codex_auth_path())?,
+                    "provider configuration is missing; sign in with providers login official or add a provider"
+                );
+                StoredGatewayConfig::default()
+            }
+        };
         Self::from_stored_config_value(stored_config)
     }
 
@@ -103,7 +108,9 @@ impl GatewayConfig {
 
     fn from_stored_config_value(stored_config: StoredGatewayConfig) -> anyhow::Result<Self> {
         ensure_config_version(stored_config.config_version)?;
-        if stored_config.providers.is_empty() {
+        if stored_config.providers.is_empty()
+            && !crate::provider::official_auth_available(&default_codex_auth_path())?
+        {
             anyhow::bail!(
                 "provider configuration is empty; run `codex-mixin provider add --preset <preset> --key <key>`"
             );
@@ -173,13 +180,7 @@ fn migrate_legacy_fusion_panel_tool_limits(profiles: &mut [FusionProfile]) {
 }
 
 fn default_codex_auth_path() -> PathBuf {
-    codex_home_path().join("auth.json")
-}
-
-fn codex_home_path() -> PathBuf {
-    std::env::var("CODEX_HOME")
-        .map(PathBuf::from)
-        .unwrap_or_else(|_| crate::platform::home_dir().join(".codex"))
+    crate::platform::oauth::official_auth_path()
 }
 
 #[derive(Clone, Debug, Deserialize, Serialize)]

@@ -27,7 +27,9 @@ pub(crate) use quota::summarize_quota_json;
 pub(crate) use usage::usage;
 
 pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
-    if load_stored_config()?.is_none_or(|config| config.providers.is_empty()) {
+    if load_stored_config()?.is_none_or(|config| config.providers.is_empty())
+        && !super::providers::official_provider_is_available()?
+    {
         if json_output {
             println!(
                 "{}",

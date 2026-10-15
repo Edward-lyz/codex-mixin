@@ -1,3 +1,7 @@
+pub use auth::official::{
+    account_id as official_account_id, available as official_auth_available,
+    fetch_resource as fetch_official_resource,
+};
 pub(crate) mod agy;
 pub(crate) mod auth;
 pub use agy::{AgyQuotaWindow, fetch_agy_quota};

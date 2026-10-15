@@ -373,7 +373,19 @@ async fn send_probe(client: &Client, target: &ProbeTarget<'_>, mut body: Value) 
     if target.protocol == ProviderProtocol::GoogleGemini {
         url.query_pairs_mut().append_pair("alt", "sse");
         if url.path().contains("/v1internal:") {
-            body = json!({"project":"aicode-consumers","model":target.model,
+            let project = if let Some(headers) = target.native_headers {
+                match crate::provider::agy::project_id(client, target.provider, headers).await {
+                    Ok(project) => project,
+                    Err(error) => {
+                        return ProbeOutcome::indeterminate(format!(
+                            "AGY project discovery failed: {error:#}"
+                        ));
+                    }
+                }
+            } else {
+                "aicode-consumers".to_owned()
+            };
+            body = json!({"project":project,"model":target.model,
                 "requestType":"agent","userAgent":"antigravity","request":body});
         }
     }

@@ -215,8 +215,14 @@
 "codexConnect.officialProvider" = "codex-mixin / official OAuth proxy";
 "codexConnect.customOnlyProvider" = "amazon-bedrock / local placeholder (no AWS)";
 "settings.openProviderSetup" = "Open provider setup";
-"settings.localOAuthCredentials" = "Sign in with the provider's CLI first. Leave API Key empty to use its local OAuth credentials.";
+"settings.localOAuthCredentials" = "Use OAuth sign-in in the provider toolbar. No provider CLI is required.";
 "settings.optionalAPIKey" = "Optional; leave empty to use local OAuth";
 "settings.providerCatalogUnavailable" = "The CLI provider catalog is unavailable. Reopen settings or update the complete app bundle.";
 "quota.remainingPercent" = "%@%% remaining";
 "quota.resetsAt" = "Resets %@";
+
+"provider.oauthLogin" = "Sign in to %@";
+"provider.oauthLoginMenu" = "Sign in with OAuth";
+"provider.oauthWaiting" = "Complete sign-in in your browser…";
+"provider.oauthComplete" = "Signed in";
+"provider.oauthFailed" = "Sign-in failed";

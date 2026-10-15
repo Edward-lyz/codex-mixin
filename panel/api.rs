@@ -252,13 +252,7 @@ async fn snapshot(
         .and_then(Value::as_bool)
         .unwrap_or(true);
     let running = status.get("gateway").and_then(Value::as_str) == Some("running");
-    let providers = async {
-        if configured {
-            run_json(&["providers", "list", "--json"]).await
-        } else {
-            Ok(Value::Null)
-        }
-    };
+    let providers = run_json(&["providers", "list", "--json"]);
     let benchmark = async {
         if running {
             run_json(&["benchmark", "status"])

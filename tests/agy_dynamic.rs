@@ -166,43 +166,55 @@ async fn explicit_keys_use_remote_models() {
     server.abort();
 }
 
-#[cfg(unix)]
-#[test]
-fn quota_cli_returns_dynamic_rows() {
+#[tokio::test]
+async fn quota_cli_returns_dynamic_rows() {
+    use axum::{Json, Router, http::HeaderMap, routing::post};
     use serde_json::{Value, json};
-    use std::process::Command;
-    let directory = tempfile::tempdir().unwrap();
-    let executable = directory.path().join("agy");
-    let report = json!({"status":"SUCCESS","num_turns":0,"usage":{"total_tokens":0},
-    "command":{"name":"usage","data":{"groups":[{"name":"Future family","buckets":[
-        {"name":"Daily","remaining_fraction":0.42,"reset_time":"2026-10-16T00:00:00Z"}
-    ]}]}}});
-    std::fs::write(&executable, format!("#!/bin/sh\nif [ \"$1\" = --version ]; then echo 1.3.5; exit 0; fi\ncat <<'REPORT'\n{report}\nREPORT\n")).unwrap();
-    codex_mixin::platform::make_private_executable(&executable).unwrap();
-    let config = codex_mixin::config::StoredGatewayConfig {
-        providers: vec![agy_provider("agy", "")],
-        ..Default::default()
-    };
-    let config_path = directory.path().join("config.json");
-    std::fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
-    let mut paths = vec![directory.path().to_path_buf()];
-    paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
-    let output = Command::new(env!("CARGO_BIN_EXE_codex-mixin"))
-        .args(["--no-tui", "quota", "--provider", "agy", "--json"])
-        .env("CODEX_GATEWAY_CONFIG", config_path)
-        .env("PATH", std::env::join_paths(paths).unwrap())
-        .output()
-        .unwrap();
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new().route("/v1internal:retrieveUserQuotaSummary", post(|headers: HeaderMap| async move {
+        assert_eq!(headers["authorization"], "Bearer configured-key");
+        Json(json!({"groups":[{"displayName":"Future family","buckets":[
+            {"bucketId":"future.daily","displayName":"Daily","remainingFraction":0.42,"resetTime":"2026-10-16T00:00:00Z"}
+        ]}]}))
+    }));
+    let server = tokio::spawn(async move {
+        axum::serve(listener, app).await.unwrap();
+    });
+    let output = tokio::task::spawn_blocking(move || {
+        let directory = tempfile::tempdir().unwrap();
+        let mut provider = agy_provider("agy", "configured-key");
+        provider.base_url = format!("http://{address}");
+        let config = codex_mixin::config::StoredGatewayConfig {
+            providers: vec![provider],
+            ..Default::default()
+        };
+        let path = directory.path().join("config.json");
+        std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
+        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_codex-mixin"));
+        codex_mixin::platform::set_home_env(&mut command, directory.path());
+        command
+            .args(["--no-tui", "quota", "--provider", "agy", "--json"])
+            .env("CODEX_GATEWAY_CONFIG", path)
+            .env("CODEX_HOME", directory.path().join("codex-home"))
+            .env("PATH", "")
+            .output()
+            .unwrap()
+    })
+    .await
+    .unwrap();
     assert!(
         output.status.success(),
         "{}",
         String::from_utf8_lossy(&output.stderr)
     );
     let rows: Value = serde_json::from_slice(&output.stdout).unwrap();
-    assert_eq!(rows[0]["quota_id"], "Future family/Daily");
+    assert_eq!(rows[0]["quota_id"], "future.daily");
     assert_eq!(rows[0]["remaining"], 42.0);
     assert_eq!(rows[0]["unit"], "percent");
+    assert_eq!(rows[0]["source"], "agy_oauth");
     assert_eq!(rows[0]["reset_at"], "2026-10-16T00:00:00Z");
+    server.abort();
 }
 
 #[cfg(unix)]
@@ -244,7 +256,7 @@ fn failed_refresh_retains_catalog() {
 }
 
 #[tokio::test]
-#[ignore = "requires an installed, signed-in Antigravity CLI; read-only reports, no inference"]
+#[ignore = "requires saved AGY OAuth credentials; direct read-only HTTP, no inference"]
 async fn live_agy_account_reports() {
     let provider = agy_provider("agy", "");
     let models =
