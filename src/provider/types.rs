@@ -81,9 +81,13 @@ impl AwsSigV4AuthConfig {
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 #[serde(tag = "kind", rename_all = "snake_case")]
 pub enum ProviderModelSource {
-    OpenAiCompatible { path: String },
+    OpenAiCompatible {
+        path: String,
+    },
     BaiduOneApi,
     AwsBedrock,
+    // Read the transient development tag, but keep writes compatible with released CLIs.
+    #[serde(alias = "antigravity")]
     Static,
 }
 
