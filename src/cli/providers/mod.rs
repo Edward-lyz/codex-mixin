@@ -336,6 +336,7 @@ fn protocol_name(protocol: ProviderProtocol) -> &'static str {
         ProviderProtocol::AnthropicMessages => "anthropic_messages",
         ProviderProtocol::OpenAiChat => "open_ai_chat",
         ProviderProtocol::OpenAiResponses => "open_ai_responses",
+        ProviderProtocol::GoogleGemini => "google_gemini",
     }
 }
 

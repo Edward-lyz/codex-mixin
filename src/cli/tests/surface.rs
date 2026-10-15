@@ -109,6 +109,7 @@ fn setup_help_lists_provider_presets() {
     let help = String::from_utf8(help).unwrap();
     for preset in [
         "custom",
+        "agy",
         "baidu-oneapi",
         "openrouter",
         "deepseek",

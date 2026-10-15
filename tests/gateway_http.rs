@@ -8442,3 +8442,341 @@ async fn chat_rejects_unsupported_semantics_before_upstream_call() {
     assert_eq!(response.status(), StatusCode::BAD_REQUEST);
     assert!(requests.lock().unwrap().is_empty());
 }
+
+async fn spawn_mock_gemini() -> (String, Arc<Mutex<Vec<Value>>>) {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let app = Router::new()
+        .fallback(post(mock_gemini_generate_content))
+        .with_state(requests.clone());
+    (spawn_router(app).await, requests)
+}
+
+async fn mock_gemini_generate_content(
+    axum::extract::State(requests): axum::extract::State<Arc<Mutex<Vec<Value>>>>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+    axum::Json(body): axum::Json<Value>,
+) -> Response {
+    assert_eq!(query.get("alt").map(String::as_str), Some("sse"));
+    requests.lock().unwrap().push(body);
+    let sse_body = "data: {\"response\":{\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello from Gemini!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":5,\"candidatesTokenCount\":4,\"totalTokenCount\":9}}}\n\n";
+    Response::builder()
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .body(Body::from(sse_body))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn routes_gemini_models_through_responses_provider() {
+    let (upstream_url, requests) = spawn_mock_gemini().await;
+    let mut provider = codex_mixin::provider::agy_provider("gemini-test", "test-key");
+    provider.base_url = upstream_url;
+    provider.api_path = "/v1beta/models/{model}:streamGenerateContent".to_owned();
+    let config = GatewayConfig {
+        providers: vec![provider],
+        ..test_config("http://127.0.0.1:1".to_owned())
+    };
+    let gateway = spawn_gateway_with_config(config).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model": "gemini-3.8-flash-high-gemini-test",
+            "stream": true,
+            "input": "say hi"
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let stream = response.text().await.unwrap();
+    assert!(stream.contains("response.created"), "{stream}");
+    assert!(stream.contains("Hello from Gemini!"), "{stream}");
+    assert!(stream.contains("response.completed"), "{stream}");
+
+    let requests = requests.lock().unwrap();
+    assert_eq!(requests.len(), 1);
+    assert_eq!(requests[0]["contents"][0]["parts"][0]["text"], "say hi");
+}
+
+async fn mock_gemini_tool_generate_content(
+    axum::extract::State(requests): axum::extract::State<Arc<Mutex<Vec<Value>>>>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+    axum::Json(body): axum::Json<Value>,
+) -> Response {
+    assert_eq!(query.get("alt").map(String::as_str), Some("sse"));
+    let mut reqs = requests.lock().unwrap();
+    let turn = reqs.len();
+    reqs.push(body);
+    let sse_body = if turn == 0 {
+        let payload = json!({
+            "response": {
+                "candidates": [{
+                    "content": {
+                        "parts": [{
+                            "functionCall": {
+                                "name": "default_api__exec_command",
+                                "args": { "cmd": "pwd" }
+                            },
+                            "thoughtSignature": "AQJyZWFsLXNpZ25hdHVyZS1ieXRlcwM="
+                        }],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP"
+                }]
+            }
+        });
+        format!("data: {payload}\n\n")
+    } else {
+        let payload = json!({
+            "response": {
+                "candidates": [{
+                    "content": {
+                        "parts": [{
+                            "text": "Done!"
+                        }],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP"
+                }]
+            }
+        });
+        format!("data: {payload}\n\n")
+    };
+    Response::builder()
+        .header(header::CONTENT_TYPE, "text/event-stream")
+        .body(Body::from(sse_body))
+        .unwrap()
+}
+
+#[tokio::test]
+async fn gemini_preserves_thought_signature_and_tool_names_across_turns() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let app = Router::new()
+        .fallback(post(mock_gemini_tool_generate_content))
+        .with_state(requests.clone());
+    let upstream_url = spawn_router(app).await;
+
+    let mut provider = codex_mixin::provider::agy_provider("gemini-tool-test", "test-key");
+    provider.base_url = upstream_url;
+    provider.api_path = "/v1beta/models/{model}:streamGenerateContent".to_owned();
+    let config = GatewayConfig {
+        providers: vec![provider],
+        ..test_config("http://127.0.0.1:1".to_owned())
+    };
+    let gateway = spawn_gateway_with_config(config).await;
+
+    // Turn 1: request that produces a tool call
+    let response = reqwest::Client::new()
+        .post(format!("{gateway}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model": "gemini-3.8-flash-high-gemini-tool-test",
+            "stream": true,
+            "input": "run pwd",
+            "tools": [
+                {
+                    "type": "function",
+                    "name": "exec_command",
+                    "namespace": "default_api",
+                    "description": "run shell command",
+                    "parameters": {
+                        "type": "object",
+                        "properties": {
+                            "cmd": { "type": "string" }
+                        }
+                    }
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let stream_text = response.text().await.unwrap();
+    let mut call_id = String::new();
+    for line in stream_text.lines() {
+        if let Some(data) = line.strip_prefix("data: ")
+            && let Ok(val) = serde_json::from_str::<Value>(data)
+            && val.get("type").and_then(Value::as_str) == Some("response.output_item.added")
+            && val["item"]["type"] == "function_call"
+        {
+            call_id = val["item"]["call_id"].as_str().unwrap().to_owned();
+        }
+    }
+    assert!(
+        call_id.starts_with("call_default_api__exec_command_ts_"),
+        "call_id was: {call_id}"
+    );
+
+    // Turn 2: send function call and output back
+    let response = reqwest::Client::new()
+        .post(format!("{gateway}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model": "gemini-3.8-flash-high-gemini-tool-test",
+            "stream": true,
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": "run pwd"
+                },
+                {
+                    "type": "function_call",
+                    "call_id": call_id,
+                    "name": "exec_command",
+                    "namespace": "default_api",
+                    "arguments": "{\"cmd\":\"pwd\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": call_id,
+                    "output": "/home/clf"
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let stream_text = response.text().await.unwrap();
+    assert!(stream_text.contains("Done!"), "{stream_text}");
+
+    let reqs = requests.lock().unwrap();
+    assert_eq!(reqs.len(), 2);
+
+    // Verify Turn 2 upstream request structure
+    let turn2 = &reqs[1];
+    let model_part = &turn2["contents"][1]["parts"][0];
+    assert_eq!(
+        model_part["functionCall"]["id"],
+        "call_default_api__exec_command"
+    );
+    assert_eq!(
+        model_part["functionCall"]["name"],
+        "default_api__exec_command"
+    );
+    assert_eq!(
+        model_part["thoughtSignature"],
+        "AQJyZWFsLXNpZ25hdHVyZS1ieXRlcwM="
+    );
+
+    let user_part = &turn2["contents"][2]["parts"][0];
+    assert_eq!(
+        user_part["functionResponse"]["id"],
+        "call_default_api__exec_command"
+    );
+    assert_eq!(
+        user_part["functionResponse"]["name"],
+        "default_api__exec_command"
+    );
+    assert_eq!(
+        user_part["functionResponse"]["response"]["output"],
+        "/home/clf"
+    );
+}
+
+async fn mock_gemini_corrupted_sig_content(
+    axum::extract::State(requests): axum::extract::State<Arc<Mutex<Vec<Value>>>>,
+    axum::extract::Query(query): axum::extract::Query<std::collections::HashMap<String, String>>,
+    axum::Json(body): axum::Json<Value>,
+) -> Response {
+    assert_eq!(query.get("alt").map(String::as_str), Some("sse"));
+    let mut reqs = requests.lock().unwrap();
+    let attempt = reqs.len();
+    reqs.push(body.clone());
+    if attempt == 0 {
+        Response::builder()
+            .status(StatusCode::BAD_REQUEST)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                r#"{"error":{"code":400,"message":"Corrupted thought signature.","status":"INVALID_ARGUMENT"}}"#,
+            ))
+            .unwrap()
+    } else {
+        let parts = body["request"]["contents"][1]["parts"].as_array().unwrap();
+        assert_eq!(
+            parts[0]["thoughtSignature"],
+            "skip_thought_signature_validator"
+        );
+        let payload = json!({
+            "response": {
+                "candidates": [{
+                    "content": {
+                        "parts": [{
+                            "text": "Self-healed successfully!"
+                        }],
+                        "role": "model"
+                    },
+                    "finishReason": "STOP"
+                }]
+            }
+        });
+        Response::builder()
+            .header(header::CONTENT_TYPE, "text/event-stream")
+            .body(Body::from(format!("data: {payload}\n\n")))
+            .unwrap()
+    }
+}
+
+#[tokio::test]
+async fn gemini_recovers_from_corrupted_thought_signature() {
+    let requests = Arc::new(Mutex::new(Vec::new()));
+    let app = Router::new()
+        .fallback(post(mock_gemini_corrupted_sig_content))
+        .with_state(requests.clone());
+    let upstream_url = spawn_router(app).await;
+
+    let mut provider = codex_mixin::provider::agy_provider("gemini-corrupted-test", "test-key");
+    provider.base_url = upstream_url;
+    provider.api_path = "/v1internal:streamGenerateContent".to_owned();
+    let config = GatewayConfig {
+        providers: vec![provider],
+        ..test_config("http://127.0.0.1:1".to_owned())
+    };
+    let gateway = spawn_gateway_with_config(config).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&json!({
+            "model": "gemini-3.8-flash-high-gemini-corrupted-test",
+            "stream": true,
+            "input": [
+                {
+                    "type": "message",
+                    "role": "user",
+                    "content": "run pwd"
+                },
+                {
+                    "type": "function_call",
+                    "call_id": "call_1_ts_corrupted",
+                    "name": "exec_command",
+                    "namespace": "default_api",
+                    "arguments": "{\"cmd\":\"pwd\"}"
+                },
+                {
+                    "type": "function_call_output",
+                    "call_id": "call_1_ts_corrupted",
+                    "output": "/home/clf"
+                }
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+
+    assert_eq!(response.status(), StatusCode::OK);
+    let stream_text = response.text().await.unwrap();
+    assert!(
+        stream_text.contains("Self-healed successfully!"),
+        "{stream_text}"
+    );
+
+    let reqs = requests.lock().unwrap();
+    assert_eq!(reqs.len(), 2, "must have retried once after 400");
+}

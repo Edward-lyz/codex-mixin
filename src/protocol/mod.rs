@@ -3,7 +3,8 @@
 //!
 //! convert: Responses requests -> Anthropic Messages requests.
 //! openai_chat: Responses requests -> OpenAI Chat Completions requests.
-//! openai_events: upstream Anthropic / OpenAI Chat streams -> Responses
+//! gemini: Responses requests -> Google Gemini requests.
+//! openai_events: upstream Anthropic / OpenAI Chat / Gemini streams -> Responses
 //! SSE events.
 //! sse: SSE encode/decode primitives shared by every stream.
 //! compaction: self-contained conversation-summary tokens that survive
@@ -14,6 +15,7 @@ pub(crate) mod anthropic_compat;
 pub(crate) mod chat_compat;
 pub(crate) mod compaction;
 pub mod convert;
+pub mod gemini;
 pub mod model_reasoning;
 pub mod openai_chat;
 pub mod openai_events;

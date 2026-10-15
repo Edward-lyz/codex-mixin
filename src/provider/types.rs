@@ -22,6 +22,7 @@ pub enum ProviderProtocol {
     AnthropicMessages,
     OpenAiChat,
     OpenAiResponses,
+    GoogleGemini,
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Deserialize, Serialize)]
@@ -363,7 +364,7 @@ impl ProviderDefinition {
         }
         if self.enabled {
             ensure!(
-                self.auth.is_configured(),
+                self.has_configured_credentials(),
                 "enabled provider {} must configure credentials",
                 self.id
             );
@@ -431,6 +432,10 @@ impl ProviderDefinition {
 
     /// Drop an auto review model the provider no longer offers, so an upstream
     /// model list change cannot invalidate the stored provider.
+    pub fn has_configured_credentials(&self) -> bool {
+        self.auth.is_configured() || self.preset_id.as_deref() == Some("agy")
+    }
+
     pub fn prune_stale_auto_review_model(&mut self) {
         let Some(auto_review_model) = self.auto_review_model.as_deref().map(str::trim) else {
             return;
@@ -460,7 +465,7 @@ impl ProviderDefinition {
             .len()
             .saturating_sub(unavailable_selected_model_count);
         let mut issues = Vec::new();
-        if !self.auth.is_configured() {
+        if !self.has_configured_credentials() {
             issues.push("credentials_missing".to_owned());
         }
         if routable_model_count == 0 {

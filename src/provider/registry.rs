@@ -1,3 +1,4 @@
+use std::borrow::Cow;
 use std::collections::{BTreeMap, HashMap, HashSet};
 
 use anyhow::{Context, ensure};
@@ -119,13 +120,24 @@ impl ProviderRuntime {
         &self.api_url
     }
 
-    pub fn api_url_for_model(&self, model: &str) -> &Url {
+    pub fn api_url_for_model(&self, model: &str) -> Cow<'_, Url> {
         if self.protocol_for_model(model) == ProviderProtocol::OpenAiResponses
             && let Some(url) = &self.openai_responses_url
         {
-            url
+            Cow::Borrowed(url)
         } else {
-            &self.api_url
+            let url_str = self.api_url.as_str();
+            if url_str.contains("{model}") || url_str.contains("%7Bmodel%7D") {
+                let replaced = url_str
+                    .replace("{model}", model)
+                    .replace("%7Bmodel%7D", model);
+                match Url::parse(&replaced) {
+                    Ok(parsed) => Cow::Owned(parsed),
+                    Err(_) => Cow::Borrowed(&self.api_url),
+                }
+            } else {
+                Cow::Borrowed(&self.api_url)
+            }
         }
     }
 
@@ -189,6 +201,12 @@ impl ProviderRuntime {
                     .as_deref()
                     .unwrap_or("2023-06-01"),
             )
+        } else if protocol == ProviderProtocol::GoogleGemini {
+            if !self.definition.auth.api_key.trim().is_empty() {
+                request.header("x-goog-api-key", &self.definition.auth.api_key)
+            } else {
+                request
+            }
         } else {
             request
         }

@@ -57,7 +57,7 @@ pub(super) async fn probe_model(
         provider,
         model,
         protocol,
-        provider.api_url_for_model(model),
+        provider.api_url_for_model(model).as_ref(),
         request_limit,
         native_headers,
     )
@@ -170,7 +170,20 @@ fn probe_body(protocol: ProviderProtocol, model: &str, feature: Option<ProbeFeat
         ProviderProtocol::OpenAiResponses => responses_body(model, feature),
         ProviderProtocol::OpenAiChat => chat_body(model, feature),
         ProviderProtocol::AnthropicMessages => messages_body(model, feature),
+        ProviderProtocol::GoogleGemini => gemini_body(model, feature),
     }
+}
+
+fn gemini_body(_model: &str, _feature: Option<ProbeFeature>) -> Value {
+    json!({
+        "contents": [{
+            "role": "user",
+            "parts": [{"text": PROBE_PROMPT}]
+        }],
+        "generationConfig": {
+            "maxOutputTokens": 16
+        }
+    })
 }
 
 fn responses_body(model: &str, feature: Option<ProbeFeature>) -> Value {

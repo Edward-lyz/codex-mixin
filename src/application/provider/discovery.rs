@@ -467,6 +467,7 @@ fn protocol_probe_body(protocol: ProviderProtocol, model_id: Option<&str>) -> se
         ProviderProtocol::OpenAiResponses => json!({"stream": false}),
         ProviderProtocol::AnthropicMessages => json!({"max_tokens": 1}),
         ProviderProtocol::OpenAiChat => json!({"stream": false}),
+        ProviderProtocol::GoogleGemini => json!({"contents": []}),
     };
     if let Some(model_id) = model_id
         && let Some(object) = body.as_object_mut()
@@ -631,6 +632,7 @@ fn probe_missing_field_matches(protocol: ProviderProtocol, body: &str) -> bool {
         ProviderProtocol::OpenAiResponses => ["input", "model"].as_slice(),
         ProviderProtocol::AnthropicMessages => ["messages", "model", "max_tokens"].as_slice(),
         ProviderProtocol::OpenAiChat => ["messages", "model"].as_slice(),
+        ProviderProtocol::GoogleGemini => ["contents", "model"].as_slice(),
     };
     details.iter().any(|detail| {
         let missing_type = matches!(
@@ -762,6 +764,9 @@ fn protocol_probe_value_matches(protocol: ProviderProtocol, value: &Value) -> bo
                 .and_then(Value::as_str)
                 .is_some_and(|id| !id.is_empty())
                 && object.contains_key("choices")
+        }
+        ProviderProtocol::GoogleGemini => {
+            object.contains_key("candidates") || object.contains_key("usageMetadata")
         }
     }
 }

@@ -47,6 +47,7 @@ pub(super) fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConf
         ensure_config_version(u32::try_from(version).context("config_version is too large")?)?;
         upgrade_deepseek_quota_defaults(&mut parsed);
         upgrade_deepseek_responses_endpoint(&mut parsed);
+        upgrade_agy_endpoint(&mut parsed);
         upgrade_opencode_go_quota_defaults(&mut parsed);
         upgrade_opencode_go_responses_endpoint(&mut parsed);
         upgrade_baidu_image_generation_defaults(&mut parsed);
@@ -81,6 +82,7 @@ pub(super) fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConf
     let mut migrated = migrate_legacy_config(serde_json::from_value(document)?)?;
     upgrade_deepseek_quota_defaults(&mut migrated);
     upgrade_deepseek_responses_endpoint(&mut migrated);
+    upgrade_agy_endpoint(&mut migrated);
     upgrade_opencode_go_quota_defaults(&mut migrated);
     upgrade_opencode_go_responses_endpoint(&mut migrated);
     bootstrap_unrefreshed_selected_models(&mut migrated);
@@ -236,6 +238,25 @@ fn upgrade_opencode_go_responses_endpoint(config: &mut StoredGatewayConfig) {
         }
     }
 }
+fn upgrade_agy_endpoint(config: &mut StoredGatewayConfig) {
+    for provider in &mut config.providers {
+        if provider.preset_id.as_deref() == Some("agy")
+            && provider.base_url == "https://generativelanguage.googleapis.com"
+        {
+            provider.base_url = "https://daily-cloudcode-pa.googleapis.com".to_owned();
+            provider.api_path = "/v1internal:streamGenerateContent".to_owned();
+            for seed in crate::provider::agy_seed_models() {
+                if !provider.cached_models.iter().any(|m| m.id == seed.id) {
+                    provider.cached_models.push(seed.clone());
+                }
+                if !provider.selected_models.iter().any(|m| m == &seed.id) {
+                    provider.selected_models.push(seed.id);
+                }
+            }
+        }
+    }
+}
+
 fn bootstrap_unrefreshed_selected_models(config: &mut StoredGatewayConfig) {
     for provider in &mut config.providers {
         if provider.models_refreshed_at_ms.is_none()

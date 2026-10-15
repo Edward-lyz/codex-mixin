@@ -130,15 +130,17 @@ pub fn create_provider(input: AddProviderInput) -> anyhow::Result<PreparedProvid
                 && input.aws_region.is_none(),
             "AWS credential options require the aws-bedrock preset without --key"
         );
-        preset.create(
-            id.clone(),
+        let key = if preset == ProviderPreset::Agy {
+            input.key.unwrap_or_default()
+        } else {
             required(
                 "key",
                 input
                     .key
                     .ok_or_else(|| anyhow::anyhow!("provider requires --key"))?,
-            )?,
-        )
+            )?
+        };
+        preset.create(id.clone(), key)
     };
     if let Some(name) = input.display_name {
         provider.display_name = required("display name", name)?;
@@ -481,6 +483,7 @@ fn parse_protocol(value: &str) -> anyhow::Result<crate::provider::ProviderProtoc
         "open_ai_responses" | "openai_responses" | "responses" => {
             Ok(crate::provider::ProviderProtocol::OpenAiResponses)
         }
+        "google_gemini" | "gemini" => Ok(crate::provider::ProviderProtocol::GoogleGemini),
         other => anyhow::bail!("unsupported provider protocol: {other}"),
     }
 }

@@ -219,7 +219,39 @@ fn config_home() -> anyhow::Result<PathBuf> {
 }
 
 fn pi_models(models: &[FrameworkModel], base: &str) -> Value {
-    json!(models.iter().map(|m|json!({"id":m.id,"name":m.name,"api":match m.protocol {crate::provider::ProviderProtocol::OpenAiChat => "openai-completions",crate::provider::ProviderProtocol::OpenAiResponses => "openai-responses",crate::provider::ProviderProtocol::AnthropicMessages => "anthropic-messages"},"baseUrl":if m.protocol == crate::provider::ProviderProtocol::AnthropicMessages {base.trim_end_matches("/v1")} else {base},"input":if m.supports_image {vec!["text","image"]} else {vec!["text"]},"contextWindow":m.context_window,"maxTokens":m.max_tokens,"reasoning":!m.efforts.is_empty(),"cost":{"input":0,"output":0,"cacheRead":0,"cacheWrite":0}})).collect::<Vec<_>>())
+    let entries: Vec<_> = models
+        .iter()
+        .map(|m| {
+            let api = match m.protocol {
+                crate::provider::ProviderProtocol::OpenAiChat => "openai-completions",
+                crate::provider::ProviderProtocol::OpenAiResponses => "openai-responses",
+                crate::provider::ProviderProtocol::AnthropicMessages => "anthropic-messages",
+                crate::provider::ProviderProtocol::GoogleGemini => "google-gemini",
+            };
+            let base_url = if m.protocol == crate::provider::ProviderProtocol::AnthropicMessages {
+                base.trim_end_matches("/v1")
+            } else {
+                base
+            };
+            let input = if m.supports_image {
+                vec!["text", "image"]
+            } else {
+                vec!["text"]
+            };
+            json!({
+                "id": m.id,
+                "name": m.name,
+                "api": api,
+                "baseUrl": base_url,
+                "input": input,
+                "contextWindow": m.context_window,
+                "maxTokens": m.max_tokens,
+                "reasoning": !m.efforts.is_empty(),
+                "cost": {"input": 0, "output": 0, "cacheRead": 0, "cacheWrite": 0}
+            })
+        })
+        .collect();
+    json!(entries)
 }
 
 #[cfg(test)]
