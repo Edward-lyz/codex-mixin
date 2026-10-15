@@ -2,6 +2,7 @@
 //! JSON API that runs the real CLI (`--no-tui`) as a child process.
 
 mod actions;
+mod agent_icons;
 mod api;
 mod cli;
 #[cfg(test)]
@@ -30,7 +31,8 @@ impl StartPage {
     fn fragment(self) -> &'static str {
         match self {
             Self::Dashboard => "home",
-            Self::Setup => "setup",
+            // First-run setup happens on the providers page.
+            Self::Setup => "providers",
         }
     }
 }

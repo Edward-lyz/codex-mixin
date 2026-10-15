@@ -122,12 +122,12 @@ fn fixed_actions_map_to_their_cli_commands() {
             vec!["service", "restart"],
         ),
         (
-            json!({"action": "connect", "params": {"client": "codex_custom_only"}}),
-            vec!["connect", "codex", "--custom-only"],
+            json!({"action": "agent_connect", "params": {"id": "codex", "mode": "custom_only"}}),
+            vec!["agent", "connect", "codex", "--mode=custom-only"],
         ),
         (
-            json!({"action": "disconnect", "params": {"client": "claude_desktop"}}),
-            vec!["connect", "remove", "claude-desktop"],
+            json!({"action": "agent_disconnect", "params": {"id": "claude-desktop"}}),
+            vec!["agent", "disconnect", "claude-desktop"],
         ),
         (
             json!({"action": "provider_select", "params": {
@@ -145,4 +145,47 @@ fn fixed_actions_map_to_their_cli_commands() {
     for (value, expected) in cases {
         assert_eq!(action(value).invocation().unwrap().args, expected);
     }
+}
+
+#[test]
+fn agent_icons_match_the_shared_manifest() {
+    let manifest: serde_json::Map<String, serde_json::Value> =
+        serde_json::from_str(include_str!("../macos/assets/agents/manifest.json")).unwrap();
+    let icons = super::agent_icons::AGENT_ICONS
+        .iter()
+        .map(|(id, _, _)| *id)
+        .collect::<Vec<_>>();
+    let mut expected = manifest.keys().map(String::as_str).collect::<Vec<_>>();
+    expected.sort_unstable();
+    assert_eq!(icons, expected);
+    let mut templates = manifest
+        .iter()
+        .filter(|(_, entry)| entry["template"] == true)
+        .map(|(id, _)| id.as_str())
+        .collect::<Vec<_>>();
+    templates.sort_unstable();
+    assert_eq!(super::agent_icons::TEMPLATE_AGENT_ICONS, templates);
+}
+
+#[tokio::test]
+async fn agent_icons_are_served_and_unknown_ids_are_not_found() {
+    let response = test_router()
+        .oneshot(
+            Request::get("/agent-icons/codex")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    assert_eq!(response.headers()[header::CONTENT_TYPE], "image/svg+xml");
+    let missing = test_router()
+        .oneshot(
+            Request::get("/agent-icons/..%2Fsecret")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(missing.status(), StatusCode::NOT_FOUND);
 }

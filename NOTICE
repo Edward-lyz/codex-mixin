@@ -1,1 +1,5 @@
 Required Notice: Copyright 2026 Edward
+
+The web control panel embeds GitLab Mono (panel/assets/fonts/GitLabMono.woff2)
+from the @gitlab/fonts 1.3.1 package, based on JetBrains Mono and licensed
+under the SIL Open Font License 1.1; see panel/assets/fonts/OFL.txt.

@@ -66,13 +66,6 @@ pub(super) enum PanelAction {
         #[serde(default)]
         options: BTreeMap<String, OptionValue>,
     },
-    Setup {
-        preset: String,
-        key: String,
-        #[serde(default)]
-        quota_username: Option<String>,
-        codex_mode: SetupCodexMode,
-    },
     BenchmarkStart {
         timeout_seconds: u64,
         #[serde(default)]
@@ -91,37 +84,28 @@ pub(super) enum PanelAction {
         #[serde(default)]
         id: Option<String>,
     },
-    Connect {
-        client: ClientTarget,
+    AgentConnect {
+        id: String,
+        #[serde(default)]
+        mode: Option<AgentConnectMode>,
     },
-    Disconnect {
-        client: ClientTarget,
+    AgentDisconnect {
+        id: String,
+    },
+    AgentUpgrade {
+        id: String,
     },
     Update,
     DoctorFix,
     RefreshCodexCatalog,
 }
 
+/// Codex-only choice between keeping the official account and custom-only.
 #[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
 #[serde(rename_all = "snake_case")]
-pub(super) enum SetupCodexMode {
-    Official,
-    Custom,
-    Skip,
-}
-
-#[derive(Clone, Copy, Debug, Deserialize, Eq, PartialEq)]
-#[serde(rename_all = "snake_case")]
-pub(super) enum ClientTarget {
-    /// Codex keeps the official account and adds custom providers.
-    CodexOauthProxy,
-    /// Codex uses only custom providers.
-    CodexCustomOnly,
-    Claude,
-    ClaudeDesktop,
-    Dsh,
-    Opencode,
-    Pi,
+pub(super) enum AgentConnectMode {
+    OfficialAccount,
+    CustomOnly,
 }
 
 #[derive(Debug, Deserialize)]
@@ -316,27 +300,11 @@ fn ensure_list_size(label: &str, items: &[String]) -> Result<(), String> {
     Ok(())
 }
 
-fn client_args(client: ClientTarget, remove: bool) -> CliInvocation {
-    let name = match client {
-        ClientTarget::CodexOauthProxy | ClientTarget::CodexCustomOnly => "codex",
-        ClientTarget::Claude => "claude",
-        ClientTarget::ClaudeDesktop => "claude-desktop",
-        ClientTarget::Dsh => "dsh",
-        ClientTarget::Opencode => "opencode",
-        ClientTarget::Pi => "pi",
-    };
-    if remove {
-        return CliInvocation::fixed(&["connect", "remove", name]);
-    }
-    match client {
-        ClientTarget::CodexOauthProxy => {
-            CliInvocation::fixed(&["connect", "codex", "--codex-oauth-proxy"])
-        }
-        ClientTarget::CodexCustomOnly => {
-            CliInvocation::fixed(&["connect", "codex", "--custom-only"])
-        }
-        _ => CliInvocation::fixed(&["connect", name]),
-    }
+/// `agent <operation> <id>`; the CLI validates the id against its registry.
+fn agent_command(operation: &str, id: &str) -> Result<CliInvocation, String> {
+    let mut invocation = CliInvocation::fixed(&["agent", operation]);
+    invocation.push_id("agent id", id)?;
+    Ok(invocation)
 }
 
 fn provider_id_command(operation: &str, id: &str) -> Result<CliInvocation, String> {
@@ -417,32 +385,6 @@ impl PanelAction {
                 invocation.push_options(options, PROVIDER_UPDATE_OPTIONS)?;
                 Ok(invocation)
             }
-            Self::Setup {
-                preset,
-                key,
-                quota_username,
-                codex_mode,
-            } => {
-                let mut invocation = CliInvocation::fixed(&["setup"]);
-                validate_positional("preset", preset)?;
-                invocation.push_value("preset", preset)?;
-                if key.trim().is_empty() {
-                    return Err("API key is empty".to_owned());
-                }
-                invocation.push_secret("key", key.trim())?;
-                if let Some(username) = quota_username.as_deref().map(str::trim)
-                    && !username.is_empty()
-                {
-                    invocation.push_value("quota-username", username)?;
-                }
-                let mode = match codex_mode {
-                    SetupCodexMode::Official => "official",
-                    SetupCodexMode::Custom => "custom",
-                    SetupCodexMode::Skip => "skip",
-                };
-                invocation.push(format!("--codex-mode={mode}"));
-                Ok(invocation)
-            }
             Self::BenchmarkStart {
                 timeout_seconds,
                 target_output_tokens,
@@ -494,8 +436,19 @@ impl PanelAction {
                 }
                 Ok(invocation)
             }
-            Self::Connect { client } => Ok(client_args(*client, false)),
-            Self::Disconnect { client } => Ok(client_args(*client, true)),
+            Self::AgentConnect { id, mode } => {
+                let mut invocation = agent_command("connect", id)?;
+                match mode {
+                    Some(AgentConnectMode::OfficialAccount) => {
+                        invocation.push("--mode=official-account")
+                    }
+                    Some(AgentConnectMode::CustomOnly) => invocation.push("--mode=custom-only"),
+                    None => {}
+                }
+                Ok(invocation)
+            }
+            Self::AgentDisconnect { id } => agent_command("disconnect", id),
+            Self::AgentUpgrade { id } => agent_command("upgrade", id),
             Self::Update => Ok(CliInvocation::fixed(&["update"])),
             Self::DoctorFix => Ok(CliInvocation::fixed(&["doctor", "--fix", "--quick"])),
             Self::RefreshCodexCatalog => Ok(CliInvocation::fixed(&["refresh-codex-catalog"])),

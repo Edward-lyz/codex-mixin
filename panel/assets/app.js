@@ -9,12 +9,11 @@ const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 
 const PAGES = [
   { id: "home", title: "概览", glyph: "\u2302", subtitle: "网关状态、用量与额度" },
-  { id: "setup", title: "快速配置", glyph: "\u2295", subtitle: "选择预设并填写密钥，一步完成接入" },
   { id: "providers", title: "Providers", glyph: "\u25c6", subtitle: "管理上游服务、顺序与连通性" },
   { id: "models", title: "模型", glyph: "\u2261", subtitle: "选择暴露给客户端的模型与上下文窗口" },
   { id: "speed", title: "测速", glyph: "\u21af", subtitle: "首字延迟与输出速度基准" },
   { id: "fusion", title: "Fusion", glyph: "\u2726", subtitle: "多模型协同与分时路由" },
-  { id: "apps", title: "客户端", glyph: "\u25c7", subtitle: "把编码客户端接入本地网关" },
+  { id: "apps", title: "Agent", glyph: "\u25c7", subtitle: "把编码 Agent 接入本地网关，查看版本与接入状态" },
   { id: "system", title: "系统", glyph: "\u2699", subtitle: "更新、修复与维护" },
   { id: "logs", title: "日志", glyph: "\u2637", subtitle: "服务日志与诊断报告" },
 ];
@@ -315,6 +314,8 @@ async function runAction(button, action, params, messages = {}) {
     }
     $("#view").setAttribute("aria-busy", "false");
     await refresh(true);
+    // Agent state comes from a separate CLI query; re-read it after changes.
+    if (state.page === "apps") await loadAgents();
   }
 }
 
@@ -605,7 +606,7 @@ function submitButton(label) {
 RENDERERS.home = () => {
   const status = state.snapshot.status || {};
   if (!configured()) {
-    return card(null, null, emptyState("还没有可用的 Provider", "添加第一个 Provider 后，网关即可为 Codex 等客户端提供模型。", h("button", { class: "btn btn-primary", type: "button", text: "开始配置", onclick: () => navigate("setup") })));
+    return card(null, null, emptyState("还没有可用的 Provider", "添加第一个 Provider 后，网关即可为 Codex 等 Agent 提供模型。", h("button", { class: "btn btn-primary", type: "button", text: "添加 Provider", onclick: () => { navigate("providers"); openAddProvider(); } })));
   }
   const running = gatewayRunning();
   const counts = status.provider_counts || {};
@@ -642,7 +643,7 @@ RENDERERS.home = () => {
         { class: "grid grid-3" },
         metricCard("Providers", counts.total, `${str(counts.healthy, 0)} 健康 · ${str(counts.degraded, 0)} 降级 · ${str(counts.disabled, 0)} 停用`),
         metricCard("可用模型", (state.snapshot.models || []).length, "可被客户端与 Fusion 选择"),
-        metricCard("Codex 接入", codexModeLabel(state.snapshot.codex_install_mode), "在「客户端」页切换"),
+        metricCard("Codex 接入", codexModeLabel(state.snapshot.codex_install_mode), "在「Agent」页切换"),
       ),
     ),
     usageCard(),
@@ -761,51 +762,6 @@ function valueView(value, depth = 0) {
   }
   return h("span", { text: str(value) });
 }
-
-// ---------- Setup ----------
-
-const SETUP_PRESETS = [
-  ["deepseek", "DeepSeek"],
-  ["openrouter", "OpenRouter"],
-  ["baidu-oneapi", "Baidu OneAPI"],
-  ["opencode-go", "OpenCode Go"],
-];
-
-RENDERERS.setup = () => {
-  const quotaField = field("额度用户名", textInput("quota_username", "", { placeholder: "Baidu OneAPI 必填" }), "用于查询 Baidu OneAPI 额度");
-  const preset = selectControl("preset", SETUP_PRESETS, "deepseek");
-  const syncQuota = () => (quotaField.hidden = preset.querySelector("select").value !== "baidu-oneapi");
-  preset.querySelector("select").addEventListener("change", syncQuota);
-  syncQuota();
-  const modes = h(
-    "div",
-    { class: "chips", role: "radiogroup", "aria-label": "Codex 接入方式" },
-    ...[["official", "官方账号 + 自定义"], ["custom", "仅自定义"], ["skip", "暂不接入"]].map(([value, label], index) => h("label", { class: "chip" }, h("input", { type: "radio", name: "codex_mode", value, checked: index === 0 }), label)),
-  );
-  const form = h(
-    "form",
-    { class: "form", autocomplete: "off" },
-    h("div", { class: "form-row" }, field("预设", preset), field("API Key", secretInput("key", "粘贴密钥"), "只通过环境变量传给 CLI，不会出现在日志中")),
-    quotaField,
-    field("Codex 接入方式", modes),
-    h("div", { class: "form-actions" }, submitButton("完成配置")),
-  );
-  form.addEventListener("submit", async (event) => {
-    event.preventDefault();
-    const values = formValues(form);
-    if (!values.key) {
-      toast("bad", "缺少 API Key", "请先填写密钥。");
-      return;
-    }
-    const params = { preset: values.preset, key: values.key, codex_mode: values.codex_mode };
-    if (!quotaField.hidden && values.quota_username) params.quota_username = values.quota_username;
-    const result = await runAction(event.submitter, "setup", params, { ok: "配置完成" });
-    if (result) navigate("home");
-  });
-  return [
-    card("一步接入", "添加 Provider、启动网关并按选择接入 Codex。AWS Bedrock 与自定义地址请在 Providers 页添加。", form),
-  ];
-};
 
 // ---------- Providers ----------
 
@@ -1199,46 +1155,133 @@ function minutes(value) {
   return `${hours}:${String(value % 60).padStart(2, "0")}`;
 }
 
-// ---------- Apps ----------
+// ---------- Agents ----------
 
-const CLIENTS = [
-  { id: "claude", name: "Claude Code", text: "把 Anthropic Messages 请求路由到本地网关" },
-  { id: "claude_desktop", name: "Claude Desktop", text: "桌面版 Claude 通过本机网关使用自定义模型" },
-  { id: "dsh", name: "DSH", text: "为 DSH 写入网关 Provider 配置" },
-  { id: "opencode", name: "OpenCode", text: "为 OpenCode 写入网关 Provider 与模型" },
-  { id: "pi", name: "Pi", text: "为 Pi 写入网关 Provider 与模型" },
-];
+const agentView = { query: "", loading: false, versions: {} };
+
+async function loadAgents() {
+  if (agentView.loading) return;
+  agentView.loading = true;
+  try {
+    state.agents = await api("/api/agents");
+  } catch (error) {
+    if (error.status !== 401) state.agentsError = error;
+  } finally {
+    agentView.loading = false;
+  }
+  if (state.page === "apps" && !userIsEditing()) render({ animate: false });
+}
+
+async function checkAgentVersions(button) {
+  button.classList.add("is-busy");
+  try {
+    const result = await api("/api/agents/versions");
+    for (const entry of result.agents || []) if (entry && entry.id) agentView.versions[entry.id] = entry.cli || entry;
+    toast("ok", "版本检查完成");
+  } catch (error) {
+    if (error.status !== 401) toast("bad", "版本检查失败", error.message);
+  } finally {
+    button.classList.remove("is-busy");
+  }
+  render({ animate: false });
+}
+
+function agentStatus(agent) {
+  const integration = agent.integration || {};
+  const mode = integration.mode === "custom_only" ? "仅自定义模式" : integration.mode ? "官方账号模式" : null;
+  switch (integration.state) {
+    case "managed":
+      return { tone: "is-ok", text: ["已接入", agent.id === "codex" ? mode : null].filter(Boolean).join(" · "), on: true };
+    case "unmanaged":
+      return { tone: "", text: "未接入", on: false };
+    case "unsupported":
+      return { tone: "", text: "暂不支持", on: false, locked: true, hint: integration.detail };
+    default:
+      return { tone: "is-bad", text: `状态异常：${integration.error || "未知错误"}`, on: false };
+  }
+}
+
+function agentRow(agent, templates) {
+  const status = agentStatus(agent);
+  const cli = { ...(agent.cli || {}), ...(agentView.versions[agent.id] || {}) };
+  const versions = [cli.version ? (cli.app_version ? `CLI ${cli.version}` : cli.version) : null, cli.app_version ? `App ${cli.app_version}` : null].filter(Boolean).join("  ");
+  const icon = h("img", { class: `agent-icon ${templates.has(agent.id) ? "is-template" : ""}`.trim(), src: `/agent-icons/${encodeURIComponent(agent.id)}`, alt: "", width: "32", height: "32", loading: "lazy" });
+  icon.addEventListener("error", () => icon.replaceWith(h("span", { class: "agent-icon agent-icon-fallback", "aria-hidden": "true", text: agent.name.slice(0, 1) })), { once: true });
+  const toggle = h("input", { class: "switch", type: "checkbox", role: "switch", checked: status.on, disabled: status.locked || state.busy, "aria-label": `${status.on ? "断开" : "接入"} ${agent.name}`, "data-action": "", title: status.hint || null });
+  toggle.addEventListener("change", async () => {
+    const connecting = toggle.checked;
+    toggle.checked = !connecting; // reflect real state until the CLI confirms
+    const params = { id: agent.id };
+    if (connecting && agent.id === "codex") params.mode = "official_account";
+    if (connecting) await runAction(null, "agent_connect", params, { ok: `${agent.name} 已接入` });
+    else await runAction(null, "agent_disconnect", params, { ok: `${agent.name} 已断开`, confirm: [`断开 ${agent.name}？`, agent.integration?.detail || "将恢复该 Agent 的原始配置。", "断开"] });
+  });
+  const detailParts = [status.text];
+  if (cli.error && agent.detected) detailParts.push(`版本检查失败：${cli.error}`);
+  return h(
+    "div",
+    { class: "agent-row", role: "listitem", "data-search": `${agent.id} ${agent.name}`.toLowerCase() },
+    icon,
+    h(
+      "div",
+      { class: "agent-main" },
+      h("div", { class: "agent-title" }, h("span", { class: "agent-name", text: agent.name }), versions ? h("span", { class: "agent-version mono", text: versions }) : null),
+      h("div", { class: "agent-status", title: detailParts.join(" · ") }, h("span", { class: `dot ${status.tone}`, "aria-hidden": "true" }), h("span", { class: "agent-status-text", text: detailParts.join(" · ") })),
+    ),
+    agent.id === "codex" && status.on
+      ? segmented([["official_account", "官方账号"], ["custom_only", "仅自定义"]], agent.integration.mode === "custom_only" ? "custom_only" : "official_account", async (mode) => {
+          await runAction(null, "agent_connect", { id: "codex", mode }, { ok: "Codex 接入模式已切换" });
+        }, "Codex 接入模式")
+      : null,
+    cli.update && cli.latest
+      ? actionButton(`更新到 ${cli.latest}`, "agent_upgrade", { id: agent.id }, { ok: `${agent.name} 已更新` }, "btn-sm")
+      : null,
+    toggle,
+  );
+}
 
 RENDERERS.apps = () => {
-  const mode = state.snapshot.codex_install_mode;
-  const codexMode = segmented(
-    [["codex_oauth_proxy", "官方账号 + 自定义"], ["custom_only", "仅自定义"]],
-    mode === "custom_only" ? "custom_only" : "codex_oauth_proxy",
-    (value) => runAction(null, "connect", { client: value === "custom_only" ? "codex_custom_only" : "codex_oauth_proxy" }, { ok: "Codex 接入已更新" }),
-    "Codex 接入方式",
-  );
-  const codex = h(
-    "section",
-    { class: "card hero", "aria-label": "Codex" },
-    h("div", null, h("div", { class: "hero-state" }, h("span", { class: `dot dot-lg ${mode ? "is-ok" : ""}`, "aria-hidden": "true" }), h("span", { class: "hero-label", text: "Codex" })), h("div", { class: "hero-meta" }, h("span", null, "当前 ", h("b", { text: codexModeLabel(mode) })))),
-    h("div", { class: "card-actions" }, codexMode, mode ? actionButton("断开", "disconnect", { client: "codex_oauth_proxy" }, { ok: "Codex 已断开", confirm: ["断开 Codex？", "将恢复 Codex 的原始配置。", "断开"] }, "btn-ghost") : null),
-  );
+  if (!state.agents && !state.agentsError) {
+    loadAgents();
+    return [h("div", { class: "skeleton" })];
+  }
+  if (!state.agents) return [errorCard(state.agentsError)];
+  const agents = state.agents.agents || [];
+  const templates = new Set(state.agents.template_icons || []);
+  const installed = agents.filter((agent) => agent.detected);
+  const missing = agents.filter((agent) => !agent.detected);
+  const connected = agents.filter((agent) => agent.integration?.state === "managed").length;
+
+  const search = textInput("agent-query", agentView.query, { type: "search", placeholder: `搜索 ${agents.length} 个 Agent`, "aria-label": "搜索 Agent" });
+  const lists = [];
+  const applyFilter = () => {
+    agentView.query = search.value;
+    const query = search.value.trim().toLowerCase();
+    for (const list of lists) {
+      let visible = 0;
+      for (const row of list.querySelectorAll(".agent-row")) {
+        row.hidden = Boolean(query) && !row.dataset.search.includes(query);
+        if (!row.hidden) visible += 1;
+      }
+      list.closest(".agent-group").hidden = visible === 0;
+    }
+  };
+  search.addEventListener("input", applyFilter);
+  const check = h("button", { class: "btn btn-ghost", type: "button", text: "检查更新" });
+  check.addEventListener("click", () => checkAgentVersions(check));
+  const reload = h("button", { class: "btn btn-ghost btn-icon", type: "button", "aria-label": "重新检测", onclick: loadAgents }, h("span", { class: "icon icon-refresh", "aria-hidden": "true" }));
+
+  const group = (title, items, collapsed) => {
+    const list = h("div", { class: "agent-list", role: "list" }, ...items.map((agent) => agentRow(agent, templates)));
+    lists.push(list);
+    if (!collapsed) return h("section", { class: "agent-group card card-flush", "aria-label": title }, h("header", { class: "agent-group-head", text: `${title} · ${items.length}` }), list);
+    return h("details", { class: "agent-group card card-flush", open: agentView.query ? true : null }, h("summary", { class: "agent-group-head", text: `${title} · ${items.length}` }), list);
+  };
+  requestAnimationFrame(applyFilter);
   return [
-    codex,
-    stagger(
-      h(
-        "div",
-        { class: "grid grid-auto" },
-        ...CLIENTS.map((client) =>
-          h(
-            "article",
-            { class: "card provider", "aria-label": client.name },
-            h("div", { class: "provider-top" }, h("span", { class: "provider-avatar", "aria-hidden": "true", text: client.name.slice(0, 1) }), h("div", { class: "row-main" }, h("div", { class: "provider-name", text: client.name }), h("div", { class: "card-note", text: client.text }))),
-            h("div", { class: "provider-foot" }, actionButton("接入", "connect", { client: client.id }, { ok: `${client.name} 已接入` }, "btn-sm"), actionButton("移除", "disconnect", { client: client.id }, { ok: `${client.name} 已移除`, confirm: [`移除 ${client.name} 接入？`, "将删除 Codex Mixin 写入的托管配置，保留你自己的配置。", "移除"] }, "btn-sm btn-ghost")),
-          ),
-        ),
-      ),
-    ),
+    h("div", { class: "toolbar" }, h("div", { class: "toolbar-search" }, search), h("span", { class: "card-note", text: `${connected} 个已接入 · ${installed.length} 个已安装` }), h("div", { class: "card-actions" }, check, reload)),
+    installed.length ? group("已安装", installed, false) : null,
+    missing.length ? group("未检测到", missing, true) : null,
   ];
 };
 
@@ -1351,7 +1394,10 @@ function boot() {
   if (page && PAGES.some((candidate) => candidate.id === page)) state.page = page;
   // Drop the token from the address bar and history right away.
   history.replaceState(null, "", `#${state.page}`);
-  $("#refresh").addEventListener("click", () => refresh(true));
+  $("#refresh").addEventListener("click", () => {
+    refresh(true);
+    if (state.page === "apps") loadAgents();
+  });
   $("#sheet-close").addEventListener("click", closeSheet);
   $("#sheet").addEventListener("cancel", (event) => {
     event.preventDefault();

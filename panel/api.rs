@@ -8,6 +8,8 @@
 //!   `usage` and `fusion models` JSON.
 //! - `GET /api/quota` -> `quota --json`; `GET /api/doctor` ->
 //!   `doctor --quick --json`; `GET /api/logs?lines=N` -> `{text}`.
+//! - `GET /api/agents` -> `agent list --json` plus `template_icons`;
+//!   `GET /api/agents/versions` -> `agent versions --json` (network).
 //! - `POST /api/actions` with `{action, params?}` (see `actions.rs`) ->
 //!   `{ok: true, stdout, json}`. One action runs at a time; a concurrent
 //!   request gets HTTP 409 with code `busy`.
@@ -18,7 +20,7 @@
 use std::sync::Arc;
 use std::time::{SystemTime, UNIX_EPOCH};
 
-use axum::extract::{DefaultBodyLimit, Query, Request, State};
+use axum::extract::{DefaultBodyLimit, Path, Query, Request, State};
 use axum::http::{HeaderValue, StatusCode, header};
 use axum::middleware::{self, Next};
 use axum::response::{IntoResponse, Response};
@@ -29,6 +31,7 @@ use serde_json::{Value, json};
 use subtle::ConstantTimeEq;
 
 use super::actions::PanelAction;
+use super::agent_icons::{AGENT_ICONS, TEMPLATE_AGENT_ICONS};
 use super::cli::{CliFailure, run_cli, run_json};
 
 const MAX_BODY_BYTES: usize = 64 * 1024;
@@ -41,6 +44,10 @@ const CONTENT_SECURITY_POLICY: &str = "default-src 'self'; script-src 'self'; st
 const INDEX_HTML: &str = include_str!("assets/index.html");
 const APP_CSS: &str = include_str!("assets/app.css");
 const APP_JS: &str = include_str!("assets/app.js");
+const LOGO_PNG: &[u8] = include_bytes!("assets/logo.png");
+const MONO_FONT: &[u8] = include_bytes!("assets/fonts/GitLabMono.woff2");
+/// Immutable binary assets (logo, font, agent icons) may be cached.
+const STATIC_CACHE: &str = "public, max-age=86400";
 
 pub(super) struct PanelState {
     pub(super) token: String,
@@ -89,6 +96,8 @@ pub(super) fn router(state: Shared) -> Router {
         .route("/api/quota", get(quota))
         .route("/api/doctor", get(doctor))
         .route("/api/logs", get(logs))
+        .route("/api/agents", get(agents))
+        .route("/api/agents/versions", get(agent_versions))
         .route("/api/actions", post(action))
         .route_layer(middleware::from_fn_with_state(state.clone(), require_token));
     Router::new()
@@ -104,6 +113,12 @@ pub(super) fn router(state: Shared) -> Router {
             "/app.js",
             get(|| async { asset("text/javascript; charset=utf-8", APP_JS) }),
         )
+        .route("/logo.png", get(|| async { binary("image/png", LOGO_PNG) }))
+        .route(
+            "/fonts/GitLabMono.woff2",
+            get(|| async { binary("font/woff2", MONO_FONT) }),
+        )
+        .route("/agent-icons/{id}", get(agent_icon))
         .merge(api)
         .layer(DefaultBodyLimit::max(MAX_BODY_BYTES))
         .layer(middleware::from_fn(security_headers))
@@ -114,6 +129,24 @@ fn asset(content_type: &'static str, body: &'static str) -> Response {
     ([(header::CONTENT_TYPE, content_type)], body).into_response()
 }
 
+fn binary(content_type: &'static str, body: &'static [u8]) -> Response {
+    (
+        [
+            (header::CONTENT_TYPE, content_type),
+            (header::CACHE_CONTROL, STATIC_CACHE),
+        ],
+        body,
+    )
+        .into_response()
+}
+
+async fn agent_icon(Path(id): Path<String>) -> Response {
+    match AGENT_ICONS.iter().find(|(icon_id, _, _)| *icon_id == id) {
+        Some((_, content_type, body)) => binary(content_type, body),
+        None => StatusCode::NOT_FOUND.into_response(),
+    }
+}
+
 async fn security_headers(request: Request, next: Next) -> Response {
     let mut response = next.run(request).await;
     let headers = response.headers_mut();
@@ -122,10 +155,12 @@ async fn security_headers(request: Request, next: Next) -> Response {
         (header::X_CONTENT_TYPE_OPTIONS, "nosniff"),
         (header::X_FRAME_OPTIONS, "DENY"),
         (header::REFERRER_POLICY, "no-referrer"),
-        (header::CACHE_CONTROL, "no-store"),
     ] {
         headers.insert(name, HeaderValue::from_static(value));
     }
+    headers
+        .entry(header::CACHE_CONTROL)
+        .or_insert(HeaderValue::from_static("no-store"));
     response
 }
 
@@ -262,6 +297,18 @@ async fn quota() -> Result<Json<Value>, ApiError> {
 
 async fn doctor() -> Result<Json<Value>, ApiError> {
     Ok(Json(run_json(&["doctor", "--quick", "--json"]).await?))
+}
+
+async fn agents() -> Result<Json<Value>, ApiError> {
+    let mut document = run_json(&["agent", "list", "--json"]).await?;
+    if let Some(object) = document.as_object_mut() {
+        object.insert("template_icons".to_owned(), json!(TEMPLATE_AGENT_ICONS));
+    }
+    Ok(Json(document))
+}
+
+async fn agent_versions() -> Result<Json<Value>, ApiError> {
+    Ok(Json(run_json(&["agent", "versions", "--json"]).await?))
 }
 
 #[derive(Debug, Deserialize)]

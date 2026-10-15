@@ -5,6 +5,8 @@
   <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
   <meta name="color-scheme" content="dark light">
   <title>Codex Mixin</title>
+  <link rel="icon" type="image/png" href="/logo.png">
+  <link rel="preload" href="/fonts/GitLabMono.woff2" as="font" type="font/woff2" crossorigin>
   <link rel="stylesheet" href="/app.css">
   <script src="/app.js" defer></script>
 </head>
@@ -13,7 +15,7 @@
 
   <div class="gate" id="gate" hidden>
     <form class="gate-card" id="gate-form" autocomplete="off">
-      <div class="brand brand-lg" aria-hidden="true"><span class="brand-mark"></span></div>
+      <div class="brand brand-lg"><img class="brand-logo" src="/logo.png" alt="" width="56" height="56"></div>
       <h1 class="gate-title">Codex Mixin 控制面板</h1>
       <p class="gate-text">粘贴启动面板时终端打印的访问令牌。令牌只保存在当前标签页。</p>
       <label class="field">
@@ -28,7 +30,7 @@
   <div class="shell" id="shell" hidden>
     <aside class="sidebar" aria-label="主导航">
       <div class="brand">
-        <span class="brand-mark" aria-hidden="true"></span>
+        <img class="brand-logo" src="/logo.png" alt="" width="22" height="22">
         <span class="brand-name">Codex Mixin</span>
       </div>
       <nav class="nav" id="nav">
