@@ -2,8 +2,9 @@
 //!
 //! Contract (all `/api/*` routes require `Authorization: Bearer <token>`):
 //! - `GET /api/snapshot?usage=1d|7d|30d|all` -> `{status, providers,
-//!   codex_install_mode, fusion_profile, benchmark, usage, models, panel,
-//!   refreshed_at_ms}`; mirrors `info`, `providers list`, `benchmark status`,
+//!   codex_install_mode, fusion_profile, gateway_bind, gateway_auth_configured,
+//!   benchmark, usage, models, panel, refreshed_at_ms}`; mirrors `info`,
+//!   `providers list`, `benchmark status`,
 //!   `usage` and `fusion models` JSON.
 //! - `GET /api/quota` -> `quota --json`; `GET /api/doctor` ->
 //!   `doctor --quick --json`; `GET /api/logs?lines=N` -> `{text}`.
@@ -236,6 +237,11 @@ async fn snapshot(
         "providers": providers.get("providers").cloned().unwrap_or(json!([])),
         "codex_install_mode": providers.get("codex_install_mode").cloned().unwrap_or(Value::Null),
         "fusion_profile": providers.get("fusion_profile").cloned().unwrap_or(Value::Null),
+        "gateway_bind": providers.get("gateway_bind").cloned().unwrap_or(Value::Null),
+        "gateway_auth_configured": providers
+            .get("gateway_auth_configured")
+            .cloned()
+            .unwrap_or(Value::Null),
         "benchmark": benchmark,
         "usage": usage,
         "models": models,
