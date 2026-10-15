@@ -48,7 +48,7 @@ where
         let mut last_thought_signature: Option<String> = None;
         let mut finish_reason: Option<String> = None;
         let mut next_tool_index: u64 = 0;
-        let mut emitted_tool_calls: Vec<(String, String)> = Vec::new();
+        let mut emitted_tool_ids = HashSet::new();
 
         let finish_stream = |state: &mut MapperState,
                              pending: &mut Vec<Bytes>,
@@ -211,22 +211,28 @@ where
 
                         if !chunk_func_calls.is_empty() {
                             pending.extend(state.finish_chat_reasoning());
-                            let new_calls = find_new_calls(&emitted_tool_calls, &chunk_func_calls);
-                            for (part, name, args_str) in new_calls {
+                            for (part, name, args_str) in chunk_func_calls {
+                                let func_call = &part["functionCall"];
+                                let upstream_id = func_call
+                                    .get("id")
+                                    .and_then(Value::as_str)
+                                    .filter(|id| !id.trim().is_empty());
+                                // Equal arguments do not identify a call. Without an upstream
+                                // ID, each part is a separate invocation.
+                                if let Some(id) = upstream_id
+                                    && !emitted_tool_ids.insert(id.to_owned())
+                                {
+                                    continue;
+                                }
                                 let tool_index = next_tool_index;
                                 next_tool_index += 1;
-                                emitted_tool_calls.push(((*name).to_owned(), args_str.clone()));
 
-                                let func_call = &part["functionCall"];
                                 let sig = part
                                     .get("thoughtSignature")
                                     .or_else(|| part.get("thought_signature"))
                                     .and_then(Value::as_str)
                                     .or(last_thought_signature.as_deref());
-                                let base_id = func_call
-                                    .get("id")
-                                    .and_then(Value::as_str)
-                                    .filter(|id| !id.trim().is_empty())
+                                let base_id = upstream_id
                                     .map(ToOwned::to_owned)
                                     .unwrap_or_else(|| {
                                         if tool_index == 0 {
@@ -264,7 +270,7 @@ where
                 }
             }
         }
-        if !decoder.remaining().is_empty() {
+        if !decoder.remaining().is_empty() || finish_reason.is_none() {
             if let Some(combined) = coalesce_events(&mut pending) {
                 yield Ok(combined);
             }
@@ -287,41 +293,6 @@ where
             yield Ok(combined);
         }
     }
-}
-
-fn find_new_calls<'a, 'b>(
-    emitted: &[(String, String)],
-    chunk_calls: &'b [(&'a Value, &'a str, String)],
-) -> &'b [(&'a Value, &'a str, String)] {
-    let chunk_sigs: Vec<(&str, &str)> = chunk_calls
-        .iter()
-        .map(|(_, name, args)| (*name, args.as_str()))
-        .collect();
-
-    if chunk_sigs.len() <= emitted.len() {
-        let tail_start = emitted.len() - chunk_sigs.len();
-        let tail_matches = emitted[tail_start..]
-            .iter()
-            .zip(&chunk_sigs)
-            .all(|((e_name, e_args), (c_name, c_args))| e_name == c_name && e_args == c_args);
-        if tail_matches {
-            return &[];
-        }
-    }
-
-    let max_possible_overlap = chunk_sigs.len().min(emitted.len());
-    for overlap in (1..=max_possible_overlap).rev() {
-        let tail_start = emitted.len() - overlap;
-        let overlap_matches = emitted[tail_start..]
-            .iter()
-            .zip(&chunk_sigs[..overlap])
-            .all(|((e_name, e_args), (c_name, c_args))| e_name == c_name && e_args == c_args);
-        if overlap_matches {
-            return &chunk_calls[overlap..];
-        }
-    }
-
-    chunk_calls
 }
 
 #[cfg(test)]
@@ -543,7 +514,7 @@ mod tests {
     }
 
     #[tokio::test]
-    async fn map_gemini_sse_does_not_duplicate_repeated_function_call() {
+    async fn deduplicates_repeated_call_ids() {
         let request = json!({
             "model": "gemini-3.8-flash-high",
             "stream": true,
@@ -554,6 +525,7 @@ mod tests {
                 "content": {
                     "parts": [{
                         "functionCall": {
+                            "id": "call_pwd",
                             "name": "exec_command",
                             "args": {"cmd": "pwd"}
                         }
@@ -566,6 +538,7 @@ mod tests {
                 "content": {
                     "parts": [{
                         "functionCall": {
+                            "id": "call_pwd",
                             "name": "exec_command",
                             "args": {"cmd": "pwd"}
                         }
@@ -583,10 +556,17 @@ mod tests {
         tokio::pin!(mapped);
         let mut failed = false;
         let mut completed = false;
+        let mut tool_count = 0;
         while let Some(chunk) = mapped.next().await {
             let bytes = chunk.unwrap();
             let mut buf = bytes.to_vec();
             for event in drain_events(&mut buf) {
+                if event.event.as_deref() == Some("response.output_item.added") {
+                    let value: Value = serde_json::from_str(&event.data).unwrap();
+                    if value["item"]["type"] == "function_call" {
+                        tool_count += 1;
+                    }
+                }
                 if event.event.as_deref() == Some("response.failed") {
                     failed = true;
                 }
@@ -597,6 +577,7 @@ mod tests {
         }
         assert!(!failed, "stream should not fail with trailing characters");
         assert!(completed, "stream should complete successfully");
+        assert_eq!(tool_count, 1);
     }
 
     #[tokio::test]

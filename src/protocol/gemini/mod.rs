@@ -402,11 +402,32 @@ fn append_gemini_input_item(
                 .and_then(Value::as_str)
                 .ok_or_else(|| GatewayError::BadRequest("message item missing role".to_owned()))?;
             match role {
-                "developer" | "system" => {
-                    if let Some(content) = item.get("content").and_then(Value::as_str) {
-                        system_parts.push(json!({"text": content}));
+                "developer" | "system" => match item.get("content") {
+                    Some(Value::String(text)) => system_parts.push(json!({"text": text})),
+                    Some(Value::Array(parts)) => {
+                        for part in parts {
+                            let part_type =
+                                part.get("type").and_then(Value::as_str).unwrap_or("text");
+                            if !matches!(part_type, "input_text" | "output_text" | "text") {
+                                return Err(GatewayError::BadRequest(format!(
+                                    "unsupported system content part type: {part_type}"
+                                )));
+                            }
+                            let text =
+                                part.get("text").and_then(Value::as_str).ok_or_else(|| {
+                                    GatewayError::BadRequest(
+                                        "system content part missing text".to_owned(),
+                                    )
+                                })?;
+                            system_parts.push(json!({"text": text}));
+                        }
                     }
-                }
+                    _ => {
+                        return Err(GatewayError::BadRequest(
+                            "system content must be a string or array".to_owned(),
+                        ));
+                    }
+                },
                 "user" => {
                     append_gemini_content(item.get("content"), contents, "user")?;
                 }
