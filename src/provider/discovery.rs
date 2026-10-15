@@ -83,6 +83,9 @@ pub async fn discover_provider_models(
 ) -> anyhow::Result<Vec<ProviderModel>> {
     let provider = ProviderRuntime::new(definition.clone(), &|name| std::env::var(name).ok())?;
     let native_headers = native_baidu_headers_if_needed(definition, &provider).await?;
+    if definition.preset_id.as_deref() == Some("agy") {
+        return super::agy::discover_models(client, definition, &provider).await;
+    }
     match &definition.model_source {
         ProviderModelSource::Static => {
             let mut models = definition.cached_models.clone();
@@ -658,6 +661,7 @@ pub struct ModelDiscoveryChanges {
     pub added: Vec<String>,
     pub removed: Vec<String>,
     pub auto_selected: Vec<String>,
+    pub updated: Vec<String>,
 }
 
 pub fn apply_discovered_models(
@@ -688,12 +692,16 @@ pub fn apply_discovered_models(
         .iter()
         .map(|model| model.id.as_str())
         .collect::<HashSet<_>>();
-    provider
-        .model_context_overrides
-        .retain(|model, _| available_models.contains(model.as_str()));
+    if provider.preset_id.as_deref() != Some("agy") {
+        provider
+            .model_context_overrides
+            .retain(|model, _| available_models.contains(model.as_str()));
+    }
     let first_successful_refresh = provider.models_refreshed_at_ms.is_none();
     let mut changes = ModelDiscoveryChanges::default();
-    if first_successful_refresh {
+    if first_successful_refresh
+        && (provider.preset_id.as_deref() != Some("agy") || provider.selected_models.is_empty())
+    {
         provider.selected_models = models
             .iter()
             .take(DEFAULT_SELECTED_MODEL_LIMIT)
@@ -704,11 +712,11 @@ pub fn apply_discovered_models(
         let previous_models = provider
             .cached_models
             .iter()
-            .map(|model| model.id.as_str())
-            .collect::<HashSet<_>>();
+            .map(|model| (model.id.as_str(), model))
+            .collect::<HashMap<_, _>>();
         changes.added = models
             .iter()
-            .filter(|model| !previous_models.contains(model.id.as_str()))
+            .filter(|model| !previous_models.contains_key(model.id.as_str()))
             .map(|model| model.id.clone())
             .collect();
         changes.removed = provider
@@ -717,10 +725,24 @@ pub fn apply_discovered_models(
             .filter(|model| !model.manually_added && !available_models.contains(model.id.as_str()))
             .map(|model| model.id.clone())
             .collect();
-        provider
-            .selected_models
-            .retain(|model| available_models.contains(model.as_str()));
-        if !changes.added.is_empty() && changes.added.len() < AUTO_SELECT_NEW_MODEL_LIMIT {
+        changes.updated = models
+            .iter()
+            .filter(|model| {
+                previous_models
+                    .get(model.id.as_str())
+                    .is_some_and(|previous| **previous != **model)
+            })
+            .map(|model| model.id.clone())
+            .collect();
+        if provider.preset_id.as_deref() != Some("agy") {
+            provider
+                .selected_models
+                .retain(|model| available_models.contains(model.as_str()));
+        }
+        if provider.preset_id.as_deref() != Some("agy")
+            && !changes.added.is_empty()
+            && changes.added.len() < AUTO_SELECT_NEW_MODEL_LIMIT
+        {
             provider
                 .selected_models
                 .extend(changes.added.iter().cloned());

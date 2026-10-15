@@ -218,3 +218,5 @@
 "settings.localOAuthCredentials" = "请先在供应商的 CLI 中登录。API Key 留空时使用该 CLI 的本地 OAuth 凭据。";
 "settings.optionalAPIKey" = "可选；留空使用本地 OAuth";
 "settings.providerCatalogUnavailable" = "无法获取 CLI 供应商目录。请重新打开设置或更新完整应用包。";
+"quota.remainingPercent" = "剩余 %@%%";
+"quota.resetsAt" = "%@ 重置";

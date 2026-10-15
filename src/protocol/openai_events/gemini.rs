@@ -1,6 +1,12 @@
 use super::state::{AssistantMessagePhase, MapperState};
 use super::*;
 
+#[derive(Default)]
+struct GroundingState {
+    queries: Vec<String>,
+    sources: Vec<Value>,
+}
+
 pub fn map_gemini_sse<S>(
     upstream: S,
     original_request: Value,
@@ -49,11 +55,13 @@ where
         let mut finish_reason: Option<String> = None;
         let mut next_tool_index: u64 = 0;
         let mut emitted_tool_ids = HashSet::new();
+        let mut grounding = GroundingState::default();
 
         let finish_stream = |state: &mut MapperState,
                              pending: &mut Vec<Bytes>,
                              image_routes: Option<&ImageRouteRegistry>,
-                             finish_reason: Option<&str>|
+                             finish_reason: Option<&str>,
+                             grounding: &GroundingState|
          -> Result<(), String> {
             pending.extend(state.finish_chat_reasoning());
             match finish_reason {
@@ -72,6 +80,17 @@ where
                     pending.extend(state.finish_text(phase));
                     let events = state.finish_chat_tools(image_routes)?;
                     pending.extend(events);
+                    for query in &grounding.queries {
+                        let index = state.output.len();
+                        let item = json!({"type":"web_search_call","id":format!("ws_{}", Uuid::new_v4().simple()),
+                            "status":"completed","action":{"type":"search","query":query,"sources":grounding.sources}});
+                        let mut added = item.clone();
+                        added["status"] = json!("in_progress");
+                        pending.push(chat_event("response.output_item.added", json!({"type":"response.output_item.added","output_index":index,"item":added})));
+                        pending.push(chat_event("response.web_search_call.completed", json!({"type":"response.web_search_call.completed","output_index":index,"item_id":item["id"]})));
+                        pending.push(chat_event("response.output_item.done", json!({"type":"response.output_item.done","output_index":index,"item":item})));
+                        state.output.push(item);
+                    }
                     let completed = state.completed_response();
                     if let Ok(event) = encode_event(
                         "response.completed",
@@ -107,6 +126,7 @@ where
                         &mut pending,
                         image_routes.as_ref(),
                         finish_reason.as_deref(),
+                        &grounding,
                     ) {
                         if let Some(combined) = coalesce_events(&mut pending) {
                             yield Ok(combined);
@@ -198,6 +218,14 @@ where
                             }
                         }
 
+                        if let Some(metadata) = candidate.get("groundingMetadata")
+                            && let Err(error) = add_grounding(&mut state, &mut grounding, &mut pending, metadata)
+                        {
+                            if let Some(combined) = coalesce_events(&mut pending) { yield Ok(combined); }
+                            yield Ok(state.failed_event(error));
+                            return;
+                        }
+
                         let chunk_func_calls: Vec<(&Value, &str, String)> = parts
                             .iter()
                             .filter_map(|p| {
@@ -265,6 +293,14 @@ where
                         }
                     }
                 }
+                if let Some(metadata) = candidates.and_then(|c| c.first()).and_then(|candidate|
+                    candidate.get("groundingMetadata").filter(|_| candidate.pointer("/content/parts").is_none()))
+                    && let Err(error) = add_grounding(&mut state, &mut grounding, &mut pending, metadata)
+                {
+                    if let Some(combined) = coalesce_events(&mut pending) { yield Ok(combined); }
+                    yield Ok(state.failed_event(error));
+                    return;
+                }
                 if let Some(combined) = coalesce_events(&mut pending) {
                     yield Ok(combined);
                 }
@@ -282,6 +318,7 @@ where
             &mut pending,
             image_routes.as_ref(),
             finish_reason.as_deref(),
+            &grounding,
         ) {
             if let Some(combined) = coalesce_events(&mut pending) {
                 yield Ok(combined);
@@ -293,6 +330,101 @@ where
             yield Ok(combined);
         }
     }
+}
+
+fn add_grounding(
+    state: &mut MapperState,
+    grounding: &mut GroundingState,
+    pending: &mut Vec<Bytes>,
+    metadata: &Value,
+) -> Result<(), String> {
+    if let Some(queries) = metadata.get("webSearchQueries").and_then(Value::as_array) {
+        for query in queries {
+            let query = query
+                .as_str()
+                .filter(|text| !text.trim().is_empty())
+                .ok_or("Gemini returned an invalid search query")?;
+            if !grounding.queries.iter().any(|existing| existing == query) {
+                if grounding.queries.len() >= 64 {
+                    return Err("Gemini search query limit exceeded".to_owned());
+                }
+                grounding.queries.push(query.to_owned());
+            }
+        }
+    }
+    let chunks = metadata.get("groundingChunks").and_then(Value::as_array);
+    for chunk in chunks.into_iter().flatten() {
+        if let Some(web) = chunk.get("web") {
+            let uri = web
+                .get("uri")
+                .and_then(Value::as_str)
+                .ok_or("Gemini citation has no URL")?;
+            let url = url::Url::parse(uri).map_err(|_| "Gemini citation URL is invalid")?;
+            if !matches!(url.scheme(), "http" | "https") {
+                return Err("Gemini citation URL must use HTTP or HTTPS".to_owned());
+            }
+            let source = json!({"type":"url","url":uri});
+            if !grounding.sources.contains(&source) {
+                if grounding.sources.len() >= 256 {
+                    return Err("Gemini citation limit exceeded".to_owned());
+                }
+                grounding.sources.push(source);
+            }
+        }
+    }
+    let Some(supports) = metadata.get("groundingSupports").and_then(Value::as_array) else {
+        return Ok(());
+    };
+    let block = state
+        .current_text
+        .as_mut()
+        .ok_or("Gemini citations have no text item")?;
+    for support in supports {
+        let start = support
+            .pointer("/segment/startIndex")
+            .and_then(Value::as_u64)
+            .unwrap_or(0);
+        let end = support
+            .pointer("/segment/endIndex")
+            .and_then(Value::as_u64)
+            .ok_or("Gemini citation has no end offset")?;
+        let start = usize::try_from(start).map_err(|_| "Gemini citation offset is too large")?;
+        let end = usize::try_from(end).map_err(|_| "Gemini citation offset is too large")?;
+        if start > end || block.text.get(start..end).is_none() {
+            return Err("Gemini citation offsets are outside the text".to_owned());
+        }
+        let indices = support
+            .get("groundingChunkIndices")
+            .and_then(Value::as_array)
+            .ok_or("Gemini citation has no source indices")?;
+        for index in indices {
+            let index = index
+                .as_u64()
+                .and_then(|index| usize::try_from(index).ok())
+                .ok_or("Gemini citation has an invalid source index")?;
+            let web = chunks
+                .and_then(|chunks| chunks.get(index))
+                .and_then(|chunk| chunk.get("web"))
+                .ok_or("Gemini citation references an unknown web source")?;
+            let uri = web["uri"].as_str().ok_or("Gemini citation has no URL")?;
+            let annotation = json!({"type":"url_citation","url":uri,"title":web.get("title").and_then(Value::as_str).unwrap_or(uri),
+                "start_index":block.text[..start].chars().count(), "end_index":block.text[..end].chars().count()});
+            if block.annotations.contains(&annotation) {
+                continue;
+            }
+            if block.annotations.len() >= 256 {
+                return Err("Gemini annotation limit exceeded".to_owned());
+            }
+            pending.push(chat_event(
+                "response.output_text.annotation.added",
+                json!({"type":"response.output_text.annotation.added",
+                "item_id":block.item_id,"output_index":block.output_index,"content_index":0,
+                "annotation_index":block.annotations.len(),"annotation":annotation}),
+            ));
+            block.annotations.push(annotation);
+        }
+    }
+    Ok(())
 }
 
 #[cfg(test)]

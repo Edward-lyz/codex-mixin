@@ -24,7 +24,7 @@ pub(crate) async fn discover_models(id: &str) -> anyhow::Result<()> {
     if !changes.auto_selected.is_empty() {
         probe_new_models(id, &changes.auto_selected, false).await?;
     }
-    if !changes.added.is_empty() || !changes.removed.is_empty() {
+    if !changes.added.is_empty() || !changes.removed.is_empty() || !changes.updated.is_empty() {
         sync_model_clients().await?;
     }
     Ok(())
@@ -98,6 +98,7 @@ pub(in crate::cli) fn apply_official_model_refresh(
         .map(|model| model.id.as_str())
         .collect::<std::collections::HashSet<_>>();
     let mut changes = ModelDiscoveryChanges {
+        updated: Vec::new(),
         added: current_models
             .iter()
             .filter(|model| !previous_ids.contains(model.id.as_str()))
@@ -150,13 +151,16 @@ pub(crate) async fn probe_new_models(
     model_ids: &[String],
     refresh_clients: bool,
 ) -> anyhow::Result<()> {
-    let enabled = super::required_config()?
+    let config = super::required_config()?;
+    let provider = config
         .providers
         .iter()
         .find(|provider| provider.id == id)
-        .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?
-        .enabled;
-    if !enabled {
+        .ok_or_else(|| anyhow::anyhow!("unknown provider: {id}"))?;
+    if provider.preset_id.as_deref() == Some("agy") {
+        return Ok(());
+    }
+    if !provider.enabled {
         tracing::info!(
             provider_id = id,
             models = model_ids.join(","),

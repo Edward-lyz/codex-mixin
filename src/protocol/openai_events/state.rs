@@ -6,6 +6,7 @@ pub(super) struct TextBlock {
     pub(super) output_index: usize,
     pub(super) item_id: String,
     pub(super) text: String,
+    pub(super) annotations: Vec<Value>,
 }
 
 #[derive(Debug)]
@@ -166,6 +167,7 @@ impl MapperState {
             output_index,
             item_id: item_id.clone(),
             text: String::new(),
+            annotations: Vec::new(),
         });
         vec![
             encode_event(
@@ -207,7 +209,7 @@ impl MapperState {
             "status": "completed",
             "role": "assistant",
             "phase": phase.as_str(),
-            "content": [{"type":"output_text","text":block.text,"annotations":[]}]
+            "content": [{"type":"output_text","text":block.text,"annotations":block.annotations}]
         });
         self.output.push(item.clone());
         vec![
@@ -218,7 +220,7 @@ impl MapperState {
             .unwrap(),
             encode_event(
                 "response.content_part.done",
-                &json!({"type":"response.content_part.done","item_id":block.item_id,"output_index":block.output_index,"content_index":0,"part":{"type":"output_text","text":block.text,"annotations":[]}}),
+                &json!({"type":"response.content_part.done","item_id":block.item_id,"output_index":block.output_index,"content_index":0,"part":{"type":"output_text","text":block.text,"annotations":block.annotations}}),
             )
             .unwrap(),
             encode_event(

@@ -53,6 +53,11 @@ impl ProviderCapabilities {
 
     pub fn annotate_config(&self, config: &mut GatewayConfig) {
         for provider in &mut config.providers {
+            if provider.preset_id.as_deref() == Some("agy")
+                && provider.auth.api_key.trim().is_empty()
+            {
+                continue;
+            }
             let Some(record) = self.file.providers.get(&provider.id) else {
                 continue;
             };
@@ -64,6 +69,11 @@ impl ProviderCapabilities {
     }
 
     pub fn annotate_provider(&self, provider: &mut ProviderDefinition) {
+        // The native CLI owns account switching; its reports have no stable
+        // account identifier, so persisted probe results cannot be attributed.
+        if provider.preset_id.as_deref() == Some("agy") && provider.auth.api_key.trim().is_empty() {
+            return;
+        }
         let Some(record) = self.file.providers.get(&provider.id) else {
             return;
         };
@@ -128,6 +138,11 @@ impl ProviderCapabilities {
             && runtime.uses_ducx_loopback()
         {
             Some(crate::provider::native_baidu_headers(&runtime).await?)
+        } else if provider.preset_id.as_deref() == Some("agy")
+            && provider.auth.api_key.trim().is_empty()
+        {
+            crate::provider::agy::require_native_account(provider)?;
+            Some(crate::provider::auth::agy::get_agy_headers().await?)
         } else {
             None
         };

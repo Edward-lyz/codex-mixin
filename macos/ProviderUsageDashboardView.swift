@@ -120,6 +120,9 @@ private func providerMonogram(_ providerID: String) -> String {
 }
 
 func providerQuotaText(_ usage: ProviderQuotaUsage) -> String {
+    if usage.unit == "percent", let remaining = usage.remaining {
+        return AppLocalization.string("quota.remainingPercent", formatQuotaAmount(remaining))
+    }
     let currency = usage.currency.map { " \($0)" } ?? ""
     if let used = usage.used, let limit = usage.limit {
         return "\(formatQuotaAmount(used)) / \(formatQuotaAmount(limit))\(currency)"
@@ -426,8 +429,15 @@ private struct ProviderQuotaRow: View {
                 Text(providerQuotaText(usage)).fontDesign(.monospaced)
             }
             .font(.caption2)
-            if let used = usage.used, let limit = usage.limit, limit > 0 {
+            if usage.unit == "percent", let remaining = usage.remaining, let limit = usage.limit, limit > 0 {
+                ProgressView(value: min(max(remaining / limit, 0), 1))
+            } else if let used = usage.used, let limit = usage.limit, limit > 0 {
                 ProgressView(value: min(max(used / limit, 0), 1))
+            }
+            if let resetAt = usage.resetAt, let date = ISO8601DateFormatter().date(from: resetAt) {
+                Text(AppLocalization.string("quota.resetsAt", date.formatted(date: .abbreviated, time: .shortened)))
+                    .font(.caption2)
+                    .foregroundStyle(.secondary)
             }
         }
         .help(usage.error ?? "")

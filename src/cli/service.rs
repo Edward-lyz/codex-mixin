@@ -291,12 +291,14 @@ use logging::log_gateway_configuration;
 pub(super) const CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(15);
 pub(super) const OFFICIAL_CODEX_CATALOG_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
 pub(super) const PROVIDER_MODEL_REFRESH_INTERVAL: Duration = Duration::from_secs(30);
+const AGY_MODEL_REFRESH_INTERVAL: Duration = Duration::from_secs(15 * 60);
 /// How often the client-credential watch checks the stored configuration timestamp.
 const CLIENT_CREDENTIAL_WATCH_INTERVAL: Duration = Duration::from_secs(2);
 
 struct ProviderModelRefreshTarget {
     id: String,
     display_name: String,
+    is_agy: bool,
 }
 
 /// Credential material a serving gateway authenticates requests against.
@@ -360,13 +362,41 @@ fn spawn_client_credential_watch(
         .map(|_| ())
 }
 
-async fn sync_all_provider_models_once() -> bool {
+async fn sync_all_provider_models_once(
+    retries: &mut std::collections::HashMap<String, (u32, std::time::Instant)>,
+) -> bool {
     let Some(providers) = providers_or_log() else {
         return false;
     };
     let mut changed = false;
+    retries.retain(|id, _| providers.iter().any(|provider| provider.id == *id));
     for provider in providers {
-        changed |= sync_provider_models(provider).await;
+        let id = provider.id.clone();
+        let is_agy = provider.is_agy;
+        if is_agy
+            && retries
+                .get(&id)
+                .is_some_and(|(_, next)| *next > std::time::Instant::now())
+        {
+            continue;
+        }
+        match sync_provider_models(provider).await {
+            Some(updated) => {
+                changed |= updated;
+                retries.remove(&id);
+            }
+            None if is_agy => {
+                let failures = retries
+                    .get(&id)
+                    .map_or(0, |(failures, _)| *failures)
+                    .saturating_add(1);
+                let delay = PROVIDER_MODEL_REFRESH_INTERVAL
+                    .saturating_mul(1_u32 << failures.min(5))
+                    .min(AGY_MODEL_REFRESH_INTERVAL);
+                retries.insert(id, (failures, std::time::Instant::now() + delay));
+            }
+            None => {}
+        }
     }
     probe_all_missing_selected_models().await;
     refresh_client_models_after_change(changed).await;
@@ -393,8 +423,26 @@ fn model_refresh_targets(
     providers
         .iter()
         .filter(|provider| provider.enabled)
-        .filter(|provider| !matches!(provider.model_source, ProviderModelSource::Static))
+        .filter(|provider| {
+            provider.preset_id.as_deref() == Some("agy")
+                || !matches!(provider.model_source, ProviderModelSource::Static)
+        })
+        .filter(|provider| {
+            if provider.preset_id.as_deref() != Some("agy") {
+                return true;
+            }
+            let now = SystemTime::now()
+                .duration_since(UNIX_EPOCH)
+                .map(|time| time.as_millis())
+                .unwrap_or_default();
+            provider.models_refreshed_at_ms.is_none_or(|last| {
+                u128::from(last) > now
+                    || now.saturating_sub(u128::from(last))
+                        >= AGY_MODEL_REFRESH_INTERVAL.as_millis()
+            })
+        })
         .map(|provider| ProviderModelRefreshTarget {
+            is_agy: provider.preset_id.as_deref() == Some("agy"),
             display_name: if provider.display_name.trim().is_empty() {
                 provider.id.clone()
             } else {
@@ -426,6 +474,7 @@ fn dynamic_providers() -> anyhow::Result<Vec<ProviderModelRefreshTarget>> {
         providers.insert(
             0,
             ProviderModelRefreshTarget {
+                is_agy: false,
                 id: super::official_models::OFFICIAL_PROVIDER_ID.to_owned(),
                 display_name: "OpenAI".to_owned(),
             },
@@ -434,8 +483,8 @@ fn dynamic_providers() -> anyhow::Result<Vec<ProviderModelRefreshTarget>> {
     Ok(providers)
 }
 
-async fn sync_provider_models(provider: ProviderModelRefreshTarget) -> bool {
-    let provider_id = provider.id;
+async fn sync_provider_models(provider: ProviderModelRefreshTarget) -> Option<bool> {
+    let provider_id = provider.id.clone();
     let changes = match super::providers::discover_models_with_output(&provider_id, true).await {
         Ok(changes) => changes,
         Err(error) => {
@@ -444,12 +493,20 @@ async fn sync_provider_models(provider: ProviderModelRefreshTarget) -> bool {
                 error = %format!("{error:#}"),
                 "periodic provider model refresh failed"
             );
-            return false;
+            return None;
         }
     };
     if provider_id != super::official_models::OFFICIAL_PROVIDER_ID {
         probe_auto_selected_models(&provider_id, &changes).await;
     }
+    Some(finish_model_refresh(provider, provider_id, changes).await)
+}
+
+async fn finish_model_refresh(
+    provider: ProviderModelRefreshTarget,
+    provider_id: String,
+    changes: codex_mixin::provider::ModelDiscoveryChanges,
+) -> bool {
     if changes.added.len() >= codex_mixin::provider::AUTO_SELECT_NEW_MODEL_LIMIT {
         tracing::warn!(
             provider_id,
@@ -458,9 +515,18 @@ async fn sync_provider_models(provider: ProviderModelRefreshTarget) -> bool {
         );
     }
     if changes.added.is_empty() && changes.removed.is_empty() {
-        return false;
+        return !changes.updated.is_empty();
     }
-    notify_model_changes(provider_id, provider.display_name, changes).await;
+    if provider.is_agy {
+        tracing::info!(
+            provider_id,
+            added = changes.added.len(),
+            unavailable = changes.removed.len(),
+            "AGY account model directory changed; existing selections were preserved"
+        );
+    } else {
+        notify_model_changes(provider_id, provider.display_name, changes).await;
+    }
     true
 }
 
@@ -480,6 +546,10 @@ async fn probe_missing_selected_models(provider_id: &str) {
     else {
         return;
     };
+    // AGY discovery is read-only; capability checks require an explicit command.
+    if provider.preset_id.as_deref() == Some("agy") {
+        return;
+    }
     let capabilities = match ProviderCapabilities::from_default_path(&config) {
         Ok(capabilities) => capabilities,
         Err(error) => {
@@ -711,7 +781,8 @@ pub(super) async fn start(
                 }
             };
             runtime.block_on(async move {
-                if sync_all_provider_models_once().await {
+                let mut retries = std::collections::HashMap::new();
+                if sync_all_provider_models_once(&mut retries).await {
                     reload_sender
                         .send_modify(|revision| *revision = (*revision).wrapping_add(1));
                 }
@@ -722,7 +793,7 @@ pub(super) async fn start(
                     if refresh_stop.load(Ordering::Acquire) {
                         break;
                     }
-                    if sync_all_provider_models_once().await {
+                    if sync_all_provider_models_once(&mut retries).await {
                         reload_sender
                             .send_modify(|revision| *revision = (*revision).wrapping_add(1));
                     }
@@ -971,6 +1042,28 @@ mod model_refresh_target_tests {
     use super::*;
 
     #[test]
+    fn agy_refresh_uses_snapshot_age() {
+        let now = SystemTime::now()
+            .duration_since(UNIX_EPOCH)
+            .unwrap()
+            .as_millis() as u64;
+        let mut stale = codex_mixin::provider::agy_provider("stale", "");
+        stale.models_refreshed_at_ms = Some(1);
+        let mut fresh = codex_mixin::provider::agy_provider("fresh", "");
+        fresh.models_refreshed_at_ms = Some(now);
+        let pending = codex_mixin::provider::agy_provider("pending", "");
+        let targets = model_refresh_targets(&[stale, fresh, pending]);
+        assert_eq!(
+            targets
+                .iter()
+                .map(|provider| provider.id.as_str())
+                .collect::<Vec<_>>(),
+            ["stale", "pending"]
+        );
+        assert!(targets.iter().all(|provider| provider.is_agy));
+    }
+
+    #[test]
     fn background_refresh_skips_disabled_and_static_providers() {
         let mut enabled = codex_mixin::provider::custom_provider("enabled", "key");
         enabled.enabled = true;
@@ -1000,6 +1093,7 @@ mod model_notification_tests {
     #[test]
     fn formats_model_changes_for_native_notification_layout() {
         let changes = ModelDiscoveryChanges {
+            updated: Vec::new(),
             added: vec!["gpt-5.6-luna".to_owned(), "gpt-6-astra".to_owned()],
             auto_selected: vec!["gpt-5.6-luna".to_owned(), "gpt-6-astra".to_owned()],
             removed: vec!["gpt-image-2".to_owned()],

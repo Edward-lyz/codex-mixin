@@ -301,7 +301,7 @@ pub async fn test_provider(input: TestProviderInput) -> anyhow::Result<ProviderT
     }
     provider.validate()?;
     let (mode, model_count) = match provider.model_source {
-        ProviderModelSource::Static => (
+        ProviderModelSource::Static if provider.preset_id.as_deref() != Some("agy") => (
             ProviderTestMode::Configuration,
             provider.cached_models.len(),
         ),

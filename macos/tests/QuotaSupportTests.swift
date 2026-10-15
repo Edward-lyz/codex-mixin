@@ -7,6 +7,9 @@ enum GatewayError: Error {
 @main
 struct QuotaSupportTests {
     static func main() throws {
+        let dynamic = try parseProviderQuotaUsage(#"[{"provider_id":"agy","quota_id":"Future/Daily","label":"Future Daily","unit":"percent","remaining":42,"limit":100,"used":58,"reset_at":"2026-10-16T00:00:00Z"}]"#)
+        precondition(dynamic[0].unit == "percent" && dynamic[0].remaining == 42)
+        precondition(dynamic[0].resetAt == "2026-10-16T00:00:00Z")
         let usages = try parseProviderQuotaUsage(
             """
             [

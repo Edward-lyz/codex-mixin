@@ -211,6 +211,37 @@ pub fn responses_to_gemini(
     }
 
     let active_tools = collect_active_tools(body)?;
+    let mut hosted_search = false;
+    for tool in active_tools.as_array().into_iter().flatten() {
+        if !matches!(
+            tool.get("type").and_then(Value::as_str),
+            Some("web_search" | "web_search_preview")
+        ) {
+            continue;
+        }
+        if !is_gemini {
+            return Err(GatewayError::BadRequest(
+                "Google Search requires a Gemini upstream model".to_owned(),
+            ));
+        }
+        for (key, value) in tool.as_object().into_iter().flatten() {
+            if key == "type" || (key == "external_web_access" && value == &Value::Bool(true)) {
+                continue;
+            }
+            return Err(GatewayError::BadRequest(format!(
+                "Google Search cannot preserve web_search option {key}"
+            )));
+        }
+        if let Some(choice) = body.get("tool_choice")
+            && choice != "auto"
+            && choice != "none"
+        {
+            return Err(GatewayError::BadRequest(
+                "Google Search cannot force a requested tool_choice".to_owned(),
+            ));
+        }
+        hosted_search = true;
+    }
     let (tools_chat, tool_names) = convert_tools(Some(&active_tools))?;
 
     let mut function_declarations = Vec::new();
@@ -289,10 +320,19 @@ pub fn responses_to_gemini(
     if !generation_config.is_empty() {
         request["generationConfig"] = Value::Object(generation_config);
     }
+    let mut tools = Vec::new();
+    if hosted_search {
+        tools.push(json!({"googleSearch":{}}));
+    }
     if !function_declarations.is_empty() {
-        request["tools"] = json!([
-            { "functionDeclarations": function_declarations }
-        ]);
+        tools.push(json!({"functionDeclarations":function_declarations}));
+    }
+    if !tools.is_empty()
+        && body
+            .get("tool_choice")
+            .is_none_or(|choice| choice != "none")
+    {
+        request["tools"] = json!(tools);
     }
 
     Ok(ConvertedGeminiRequest {

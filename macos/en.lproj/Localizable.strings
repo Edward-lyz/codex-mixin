@@ -218,3 +218,5 @@
 "settings.localOAuthCredentials" = "Sign in with the provider's CLI first. Leave API Key empty to use its local OAuth credentials.";
 "settings.optionalAPIKey" = "Optional; leave empty to use local OAuth";
 "settings.providerCatalogUnavailable" = "The CLI provider catalog is unavailable. Reopen settings or update the complete app bundle.";
+"quota.remainingPercent" = "%@%% remaining";
+"quota.resetsAt" = "Resets %@";

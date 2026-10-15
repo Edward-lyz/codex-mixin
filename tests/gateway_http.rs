@@ -8474,6 +8474,12 @@ async fn mock_gemini_generate_content(
 async fn routes_gemini_models_through_responses_provider() {
     let (upstream_url, requests) = spawn_mock_gemini().await;
     let mut provider = codex_mixin::provider::agy_provider("gemini-test", "test-key");
+    // A routing fixture supplies the discovered model explicitly; presets have no seed catalog.
+    provider.cached_models = vec![codex_mixin::provider::ProviderModel {
+        id: "gemini-3.8-flash-high".to_owned(),
+        ..Default::default()
+    }];
+    provider.selected_models = vec!["gemini-3.8-flash-high".to_owned()];
     provider.base_url = upstream_url;
     provider.api_path = "/v1beta/models/{model}:streamGenerateContent".to_owned();
     let config = GatewayConfig {
@@ -8564,6 +8570,12 @@ async fn gemini_preserves_thought_signature_and_tool_names_across_turns() {
     let upstream_url = spawn_router(app).await;
 
     let mut provider = codex_mixin::provider::agy_provider("gemini-tool-test", "test-key");
+    // A routing fixture supplies the discovered model explicitly; presets have no seed catalog.
+    provider.cached_models = vec![codex_mixin::provider::ProviderModel {
+        id: "gemini-3.8-flash-high".to_owned(),
+        ..Default::default()
+    }];
+    provider.selected_models = vec!["gemini-3.8-flash-high".to_owned()];
     provider.base_url = upstream_url;
     provider.api_path = "/v1beta/models/{model}:streamGenerateContent".to_owned();
     let config = GatewayConfig {
@@ -8737,6 +8749,12 @@ async fn gemini_recovers_from_corrupted_thought_signature() {
     let upstream_url = spawn_router(app).await;
 
     let mut provider = codex_mixin::provider::agy_provider("gemini-corrupted-test", "test-key");
+    // A routing fixture supplies the discovered model explicitly; presets have no seed catalog.
+    provider.cached_models = vec![codex_mixin::provider::ProviderModel {
+        id: "gemini-3.8-flash-high".to_owned(),
+        ..Default::default()
+    }];
+    provider.selected_models = vec!["gemini-3.8-flash-high".to_owned()];
     provider.base_url = upstream_url;
     provider.api_path = "/v1internal:streamGenerateContent".to_owned();
     let config = GatewayConfig {

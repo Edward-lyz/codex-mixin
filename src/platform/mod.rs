@@ -3,7 +3,9 @@
 //! Callers express intent through this module instead of branching on an OS.
 //! Platform-specific process flags, paths, and permission tools stay here.
 
+mod agy;
 mod codex_cli;
+pub(crate) use agy::{AgyReport, agy_report};
 mod desktop;
 mod files;
 mod package;

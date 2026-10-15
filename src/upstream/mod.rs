@@ -107,10 +107,10 @@ impl UpstreamAccess {
         &self,
         provider: &ProviderRuntime,
     ) -> anyhow::Result<Option<reqwest::header::HeaderMap>> {
-        if (provider.definition().preset_id.as_deref() == Some("agy")
-            || provider.protocol() == ProviderProtocol::GoogleGemini)
+        if provider.definition().preset_id.as_deref() == Some("agy")
             && provider.definition().auth.api_key.trim().is_empty()
         {
+            crate::provider::agy::require_native_account(provider.definition())?;
             crate::provider::auth::agy::get_agy_headers()
                 .await
                 .map(Some)

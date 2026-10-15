@@ -76,6 +76,11 @@ pub(super) async fn probe_model_once(
     web_search_tool_type: &str,
     release_reference: Option<&str>,
 ) -> anyhow::Result<ProbeVerdict> {
+    if provider.protocol() == ProviderProtocol::GoogleGemini {
+        anyhow::bail!(
+            "Gemini search requires the provider capability probe and Google grounding evidence"
+        );
+    }
     if provider.protocol() != ProviderProtocol::AnthropicMessages {
         return Ok(ProbeVerdict::Unsupported(
             "provider_protocol_has_no_anthropic_hosted_search",

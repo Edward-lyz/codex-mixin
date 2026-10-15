@@ -37,6 +37,30 @@ pub(crate) async fn quota(json_output: bool, provider_filter: Option<&str>) -> a
             let client = client.clone();
             async move {
                 let mut provider_results = Vec::new();
+                if provider.definition().preset_id.as_deref() == Some("agy")
+                    && provider.quota_url().is_none() {
+                    match codex_mixin::provider::fetch_agy_quota(provider.definition()).await {
+                        Ok(windows) => for window in windows {
+                            provider_results.push(serde_json::json!({
+                                "provider_id": provider.id(),
+                                "provider_display_name": provider.display_name(),
+                                "display_name": format!("{} {}", provider.display_name(), window.label),
+                                "quota_id": window.id, "label": window.label,
+                                "currency": null, "unit": "percent", "source": "agy_cli",
+                                "value": 100.0 - window.remaining_percent,
+                                "used": 100.0 - window.remaining_percent, "limit": 100.0,
+                                "remaining": window.remaining_percent, "reset_at": window.reset_at,
+                                "error": null, "stale_at": null,
+                            }));
+                        },
+                        Err(error) => provider_results.push(serde_json::json!({
+                            "provider_id": provider.id(), "provider_display_name": provider.display_name(),
+                            "display_name": provider.display_name(), "quota_id": "quota", "label": "Quota",
+                            "currency": null, "value": null, "error": format!("{error:#}"), "stale_at": null,
+                        })),
+                    }
+                    return (index, provider_results);
+                }
                 if provider.quota_parser() == ProviderQuotaParser::OpenCodeGo {
                     provider_results.extend(
                         fetch_opencode_go_quota_results(

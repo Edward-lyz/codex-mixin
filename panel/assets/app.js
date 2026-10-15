@@ -744,7 +744,18 @@ function quotaCard() {
       load.classList.remove("is-busy");
     }
   });
-  const body = state.quota ? h("div", { class: "card-body" }, valueView(state.quota)) : h("p", { class: "card-note", text: "向支持额度接口的 Provider 查询剩余额度。" });
+  const body = state.quota ? h("div", { class: "card-body" }, state.quota.map((row) => {
+    if (row.error || row.unit !== "percent") return valueView(row);
+    const remaining = row.remaining;
+    if (typeof remaining !== "number" || !Number.isFinite(remaining) || remaining < 0 || remaining > 100) {
+      return h("p", { class: "card-note", text: "CLI 返回的额度比例无效。" });
+    }
+    return h("section", { class: "metric" },
+      h("strong", { text: row.display_name || row.label || row.provider_id }),
+      h("p", { text: `剩余 ${remaining.toFixed(2)}%` }),
+      h("progress", { max: 100, value: remaining, "aria-label": "剩余额度" }),
+      row.reset_at ? h("p", { class: "card-note", text: `${new Date(row.reset_at).toLocaleString()} 重置` }) : null);
+  })) : h("p", { class: "card-note", text: "向支持额度接口的 Provider 查询剩余额度。" });
   return card("额度", null, body, load);
 }
 

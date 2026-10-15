@@ -1,4 +1,6 @@
+pub(crate) mod agy;
 pub(crate) mod auth;
+pub use agy::{AgyQuotaWindow, fetch_agy_quota};
 pub mod capabilities;
 mod discovery;
 mod quota;
@@ -28,10 +30,10 @@ pub use resolver::{
 pub use spec::{
     AGY_PRESET_ID, AWS_BEDROCK_DEFAULT_REGION, AWS_BEDROCK_MANTLE_BASE_URL,
     AWS_BEDROCK_MANTLE_SERVICE, AWS_BEDROCK_PRESET_ID, AWS_BEDROCK_RUNTIME_SERVICE,
-    OPEN_CODE_GO_PRESET_ID, ProviderPreset, ProviderSpec, agy_provider, agy_seed_models,
-    aws_bedrock_aksk_provider, aws_bedrock_mantle_base_url, aws_bedrock_provider,
-    aws_bedrock_runtime_base_url, baidu_oneapi_provider, custom_provider, deepseek_provider,
-    open_code_go_provider, openrouter_provider, spec_for,
+    OPEN_CODE_GO_PRESET_ID, ProviderPreset, ProviderSpec, agy_provider, aws_bedrock_aksk_provider,
+    aws_bedrock_mantle_base_url, aws_bedrock_provider, aws_bedrock_runtime_base_url,
+    baidu_oneapi_provider, custom_provider, deepseek_provider, open_code_go_provider,
+    openrouter_provider, spec_for,
 };
 pub use types::{
     AwsSigV4AuthConfig, BaiduAuthBridge, CONFIG_VERSION, MANUAL_MODEL_CONTEXT_WINDOW,

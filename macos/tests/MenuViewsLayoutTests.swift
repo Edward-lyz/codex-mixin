@@ -8,6 +8,8 @@ enum GatewayError: Error {
 struct MenuViewsLayoutTests {
     static func main() throws {
         _ = NSApplication.shared
+        let percentage = try parseProviderQuotaUsage(#"[{"provider_id":"agy","unit":"percent","remaining":42,"used":58,"limit":100}]"#)[0]
+        precondition(providerQuotaText(percentage).contains("42%"), "Percentage quotas must show remaining allowance")
         guard let providerWebsiteURL = URL(string: "https://example.com/settings") else {
             preconditionFailure("test provider website URL is invalid")
         }

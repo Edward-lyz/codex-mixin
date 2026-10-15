@@ -7,6 +7,7 @@ struct ProviderQuotaUsage: Decodable {
     let quotaID: String?
     let label: String?
     let currency: String?
+    let unit: String?
     let used: Double?
     let limit: Double?
     let remaining: Double?
@@ -21,6 +22,7 @@ struct ProviderQuotaUsage: Decodable {
         case quotaID = "quota_id"
         case label
         case currency
+        case unit
         case used
         case value
         case limit
@@ -38,6 +40,7 @@ struct ProviderQuotaUsage: Decodable {
         quotaID = try values.decodeIfPresent(String.self, forKey: .quotaID)
         label = try values.decodeIfPresent(String.self, forKey: .label)
         currency = try values.decodeIfPresent(String.self, forKey: .currency)
+        unit = try values.decodeIfPresent(String.self, forKey: .unit)
         used = try values.decodeIfPresent(Double.self, forKey: .used)
             ?? values.decodeIfPresent(Double.self, forKey: .value)
         limit = try values.decodeIfPresent(Double.self, forKey: .limit)

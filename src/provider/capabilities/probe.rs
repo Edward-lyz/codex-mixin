@@ -35,6 +35,7 @@ impl ProbeSession {
 /// Everything one probe run needs, built once per protocol so the baseline and
 /// feature requests share the same session.
 struct ProbeTarget<'a> {
+    model: &'a str,
     provider: &'a ProviderRuntime,
     protocol: ProviderProtocol,
     url: &'a Url,
@@ -85,6 +86,7 @@ async fn probe_protocol(
     let api_path = url.path();
     let session = provider.uses_session_affinity().then(ProbeSession::new);
     let target = ProbeTarget {
+        model,
         provider,
         protocol,
         url,
@@ -122,11 +124,20 @@ async fn probe_protocol(
             &target,
             probe_body(protocol, model, Some(ProbeFeature::FunctionTools)),
         ),
-        send_probe(
-            client,
-            &target,
-            probe_body(protocol, model, Some(ProbeFeature::ToolSearch)),
-        ),
+        async {
+            if protocol == ProviderProtocol::GoogleGemini {
+                ProbeOutcome::indeterminate(
+                    "Gemini tool-search translation is not implemented".to_owned(),
+                )
+            } else {
+                send_probe(
+                    client,
+                    &target,
+                    probe_body(protocol, model, Some(ProbeFeature::ToolSearch)),
+                )
+                .await
+            }
+        },
         send_probe(
             client,
             &target,
@@ -174,8 +185,8 @@ fn probe_body(protocol: ProviderProtocol, model: &str, feature: Option<ProbeFeat
     }
 }
 
-fn gemini_body(_model: &str, _feature: Option<ProbeFeature>) -> Value {
-    json!({
+fn gemini_body(_model: &str, feature: Option<ProbeFeature>) -> Value {
+    let mut body = json!({
         "contents": [{
             "role": "user",
             "parts": [{"text": PROBE_PROMPT}]
@@ -183,7 +194,32 @@ fn gemini_body(_model: &str, _feature: Option<ProbeFeature>) -> Value {
         "generationConfig": {
             "maxOutputTokens": 16
         }
-    })
+    });
+    match feature {
+        Some(ProbeFeature::WebSearch) => {
+            body["tools"] = json!([{"googleSearch":{}}]);
+            body["generationConfig"]["maxOutputTokens"] = json!(256);
+            body["contents"][0]["parts"][0]["text"] = json!(
+                "Use Google Search to find the current stable Rust release and cite a source."
+            );
+        }
+        Some(ProbeFeature::FunctionTools) => {
+            body["tools"] = json!([{"functionDeclarations":[function_tool()]}])
+        }
+        Some(ProbeFeature::Image) => {
+            body["contents"][0]["parts"] = json!([
+                {"inlineData":{"mimeType":"image/png","data": IMAGE_DATA_URL.split_once(',').map_or("", |(_, data)| data)}},
+                {"text":PROBE_PROMPT}
+            ])
+        }
+        Some(ProbeFeature::Thinking) => {
+            body["generationConfig"] =
+                json!({"maxOutputTokens":128,"thinkingConfig":{"includeThoughts":true}})
+        }
+        Some(ProbeFeature::ToolSearch) => {}
+        None => {}
+    }
+    body
 }
 
 fn responses_body(model: &str, feature: Option<ProbeFeature>) -> Value {
@@ -328,6 +364,19 @@ impl ProbeOutcome {
 }
 
 async fn send_probe(client: &Client, target: &ProbeTarget<'_>, mut body: Value) -> ProbeOutcome {
+    let require_search_evidence = target.protocol == ProviderProtocol::GoogleGemini
+        && body
+            .get("tools")
+            .and_then(Value::as_array)
+            .is_some_and(|tools| tools.iter().any(|tool| tool.get("googleSearch").is_some()));
+    let mut url = target.url.clone();
+    if target.protocol == ProviderProtocol::GoogleGemini {
+        url.query_pairs_mut().append_pair("alt", "sse");
+        if url.path().contains("/v1internal:") {
+            body = json!({"project":"aicode-consumers","model":target.model,
+                "requestType":"agent","userAgent":"antigravity","request":body});
+        }
+    }
     let permit = target
         .request_limit
         .acquire()
@@ -337,10 +386,10 @@ async fn send_probe(client: &Client, target: &ProbeTarget<'_>, mut body: Value) 
         body["metadata"] = json!({"user_id": session.hash_key.as_str()});
     }
     let request = match target.native_headers {
-        Some(headers) => client.post(target.url.clone()).headers(headers.clone()),
+        Some(headers) => client.post(url.clone()).headers(headers.clone()),
         None => target
             .provider
-            .apply_auth_for_protocol(client.post(target.url.clone()), target.protocol),
+            .apply_auth_for_protocol(client.post(url), target.protocol),
     };
     let request = target
         .provider
@@ -351,7 +400,9 @@ async fn send_probe(client: &Client, target: &ProbeTarget<'_>, mut body: Value) 
         .json(&body)
         .timeout(PROBE_TIMEOUT);
     let outcome = match request.send().await {
-        Ok(response) if response.status().is_success() => validate_probe_stream(response).await,
+        Ok(response) if response.status().is_success() => {
+            validate_probe_stream(response, require_search_evidence).await
+        }
         Ok(response) => {
             let status = response.status();
             let body = response.text().await.unwrap_or_default();
@@ -376,11 +427,15 @@ async fn send_probe(client: &Client, target: &ProbeTarget<'_>, mut body: Value) 
     outcome
 }
 
-async fn validate_probe_stream(response: reqwest::Response) -> ProbeOutcome {
+async fn validate_probe_stream(
+    response: reqwest::Response,
+    require_search_evidence: bool,
+) -> ProbeOutcome {
     let mut decoder = SseDecoder::default();
     let mut stream = response.bytes_stream();
     let mut saw_event = false;
     let mut saw_error = false;
+    let mut saw_search = false;
     while let Some(chunk) = stream.next().await {
         let chunk = match chunk {
             Ok(chunk) => chunk,
@@ -392,14 +447,38 @@ async fn validate_probe_stream(response: reqwest::Response) -> ProbeOutcome {
         };
         for event in decoder.push(&chunk) {
             saw_event = true;
-            let Ok(payload) = serde_json::from_str::<Value>(&event.data) else {
+            if event.data == "[DONE]" {
                 continue;
+            }
+            let Ok(payload) = serde_json::from_str::<Value>(&event.data) else {
+                return ProbeOutcome::indeterminate(
+                    "provider capability probe returned invalid SSE JSON".to_owned(),
+                );
             };
             if payload.get("type").and_then(Value::as_str) == Some("error")
                 || payload.get("object").and_then(Value::as_str) == Some("error")
+                || payload.get("error").is_some()
+                || payload.pointer("/response/error").is_some()
             {
                 saw_error = true;
             }
+            let candidates = payload
+                .get("candidates")
+                .or_else(|| payload.pointer("/response/candidates"));
+            saw_search |= candidates
+                .and_then(Value::as_array)
+                .is_some_and(|candidates| {
+                    candidates.iter().any(|candidate| {
+                        candidate
+                            .pointer("/groundingMetadata/webSearchQueries")
+                            .and_then(Value::as_array)
+                            .is_some_and(|queries| {
+                                queries.iter().any(|query| {
+                                    query.as_str().is_some_and(|query| !query.trim().is_empty())
+                                })
+                            })
+                    })
+                });
         }
     }
     if !decoder.remaining().is_empty() {
@@ -413,6 +492,10 @@ async fn validate_probe_stream(response: reqwest::Response) -> ProbeOutcome {
     }
     if saw_error {
         ProbeOutcome::indeterminate("provider capability probe returned an error event".to_owned())
+    } else if require_search_evidence && !saw_search {
+        ProbeOutcome::indeterminate(
+            "Gemini returned no Google Search grounding evidence".to_owned(),
+        )
     } else if saw_event {
         ProbeOutcome {
             status: CapabilityStatus::Supported,
@@ -489,6 +572,31 @@ mod tests {
             [(header::CONTENT_TYPE, "text/event-stream")],
             "data: {\"type\":\"response.completed\"}\n\n",
         )
+    }
+
+    #[tokio::test]
+    async fn google_search_needs_grounding() {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let app = Router::new().route("/{evidence}", any(|axum::extract::Path(evidence): axum::extract::Path<String>| async move {
+            let payload = if evidence == "grounded" {
+                json!({"candidates":[{"groundingMetadata":{"webSearchQueries":["current Rust"]}}]})
+            } else { json!({"candidates":[{"content":{"parts":[{"text":"OK"}]}}]}) };
+            ([(header::CONTENT_TYPE, "text/event-stream")], format!("data: {payload}\n\n"))
+        }));
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        for (path, expected) in [
+            ("plain", CapabilityStatus::Indeterminate),
+            ("grounded", CapabilityStatus::Supported),
+        ] {
+            let response = Client::new()
+                .get(format!("http://{address}/{path}"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(validate_probe_stream(response, true).await.status, expected);
+        }
+        server.abort();
     }
 
     #[tokio::test]

@@ -204,3 +204,48 @@ async fn accepts_fragmented_stream() {
             .any(|event| event["type"] == "response.output_text.delta" && event["delta"] == text)
     );
 }
+
+#[test]
+fn converts_google_search_tools() {
+    let converted = responses_to_gemini(&json!({"model":"gemini-future","input":"latest news",
+        "tools":[{"type":"web_search"},{"type":"function","name":"lookup","parameters":{"type":"object"}}]
+    }), None).unwrap();
+    assert!(
+        converted.request["tools"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .any(|tool| tool.get("googleSearch").is_some())
+    );
+    assert!(
+        responses_to_gemini(
+            &json!({"model":"gemini-future","input":"news",
+                "tools":[{"type":"web_search","external_web_access":false}]
+            }),
+            None
+        )
+        .is_err()
+    );
+}
+
+#[tokio::test]
+async fn preserves_search_citations() {
+    let output = events(vec![sse(json!({"candidates":[{
+        "content":{"parts":[{"text":"\u{4f60}\u{597d}"}]},
+        "groundingMetadata":{
+            "webSearchQueries":["query"],
+            "groundingChunks":[{"web":{"uri":"https://example.com/source","title":"Source"}}],
+            "groundingSupports":[{"segment":{"startIndex":0,"endIndex":6},"groundingChunkIndices":[0]}]
+        },"finishReason":"STOP"
+    }]}))]).await;
+    let completed = output.last().unwrap();
+    assert_eq!(completed["type"], "response.completed");
+    let items = completed["response"]["output"].as_array().unwrap();
+    let text = items.iter().find(|item| item["type"] == "message").unwrap();
+    assert_eq!(
+        text["content"][0]["annotations"][0]["url"],
+        "https://example.com/source"
+    );
+    assert_eq!(text["content"][0]["annotations"][0]["end_index"], 2);
+    assert!(items.iter().any(|item| item["type"] == "web_search_call"));
+}

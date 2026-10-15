@@ -398,6 +398,13 @@ async fn stream_gemini(ctx: ProviderRequestContext<'_>) -> Result<ResponseStream
     } = ctx;
     let agy_native = executor.upstream.agy_native_headers(provider).await?;
     let mut upstream_body = body.clone();
+    if upstream_body.get("max_output_tokens").is_none() {
+        upstream_body["max_output_tokens"] = json!(
+            provider
+                .model_max_output_tokens(upstream_model_id)
+                .unwrap_or(executor.config.default_max_tokens)
+        );
+    }
     prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
     let converted = responses_to_gemini(&upstream_body, Some(upstream_model_id))?;
     let observation = record_provider_prefix(

@@ -21,6 +21,7 @@ impl MapperState {
                 "content_index":0,"part":{"type":"reasoning_text","text":""}
             })));
             self.chat_reasoning = Some(TextBlock {
+                annotations: Vec::new(),
                 output_index,
                 item_id,
                 text: String::new(),

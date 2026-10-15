@@ -909,8 +909,11 @@ public sealed partial class MainWindow : Window
             {
                 var label = Json.OptionalText(row, "display_name") ?? Json.OptionalText(row, "provider_id") ?? "额度";
                 var error = Json.OptionalText(row, "error");
+                var unit = Json.OptionalText(row, "unit") == "percent" ? "%" : Json.OptionalText(row, "currency") ?? "";
                 quotaBody.Children.Add(Text(error != null ? $"{label} · 查询失败：{error}" :
-                    $"{label} · 剩余 {Json.Field(row, "remaining")} {Json.OptionalText(row, "currency") ?? ""}"));
+                    $"{label} · 剩余 {Json.Field(row, "remaining")} {unit}"));
+                if (error == null && Json.OptionalText(row, "reset_at") is { } reset && DateTimeOffset.TryParse(reset, out var resetAt))
+                    quotaBody.Children.Add(Text($"{resetAt.ToLocalTime():yyyy-MM-dd HH:mm} 重置", "Caption"));
             }
         }
         catch (CliFailure error) { quotaBody.Children.Add(Text($"额度不可用：{error.Message}")); }

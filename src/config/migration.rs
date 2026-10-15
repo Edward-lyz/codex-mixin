@@ -240,19 +240,12 @@ fn upgrade_opencode_go_responses_endpoint(config: &mut StoredGatewayConfig) {
 }
 fn upgrade_agy_endpoint(config: &mut StoredGatewayConfig) {
     for provider in &mut config.providers {
-        if provider.preset_id.as_deref() == Some("agy")
-            && provider.base_url == "https://generativelanguage.googleapis.com"
-        {
+        if provider.preset_id.as_deref() != Some("agy") {
+            continue;
+        }
+        if provider.base_url == "https://generativelanguage.googleapis.com" {
             provider.base_url = "https://daily-cloudcode-pa.googleapis.com".to_owned();
             provider.api_path = "/v1internal:streamGenerateContent".to_owned();
-            for seed in crate::provider::agy_seed_models() {
-                if !provider.cached_models.iter().any(|m| m.id == seed.id) {
-                    provider.cached_models.push(seed.clone());
-                }
-                if !provider.selected_models.iter().any(|m| m == &seed.id) {
-                    provider.selected_models.push(seed.id);
-                }
-            }
         }
     }
 }

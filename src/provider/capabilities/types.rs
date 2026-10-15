@@ -6,7 +6,7 @@ use crate::provider::{ProviderAuthHeader, ProviderDefinition, ProviderProtocol};
 
 // Bumped whenever a probe payload changes, so cached results that came from the
 // previous payloads are re-probed instead of being trusted.
-pub(super) const CAPABILITY_FILE_VERSION: u64 = 3;
+pub(super) const CAPABILITY_FILE_VERSION: u64 = 4;
 pub(super) const PROBE_CONCURRENCY: usize = 4;
 pub(super) const PROBE_REQUEST_CONCURRENCY: usize = 8;
 
@@ -67,6 +67,8 @@ impl ModelCapabilities {
 
 #[derive(Clone, Debug, Eq, PartialEq, Deserialize, Serialize)]
 pub struct ProviderIdentity {
+    #[serde(default)]
+    pub credential_fingerprint: Option<String>,
     pub id: String,
     pub base_url: String,
     pub api_path: String,
@@ -80,6 +82,15 @@ pub struct ProviderIdentity {
 impl ProviderIdentity {
     pub fn from_provider(provider: &ProviderDefinition) -> Self {
         Self {
+            credential_fingerprint: (!provider.auth.api_key.is_empty()).then(|| {
+                let digest =
+                    ring::digest::digest(&ring::digest::SHA256, provider.auth.api_key.as_bytes());
+                digest
+                    .as_ref()
+                    .iter()
+                    .map(|byte| format!("{byte:02x}"))
+                    .collect()
+            }),
             id: provider.id.clone(),
             base_url: provider.base_url.clone(),
             api_path: provider.api_path.clone(),
