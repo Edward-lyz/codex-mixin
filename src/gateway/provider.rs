@@ -38,11 +38,8 @@ struct ProviderRequestContext<'a> {
     downstream_model: &'a str,
     routing: Option<&'a UpstreamRouting>,
     body: &'a Value,
-    downstream_body: Value,
     advertised_thinking: Option<bool>,
     web_search_enabled: bool,
-    baidu_native: Option<axum::http::HeaderMap>,
-    agy_native: Option<axum::http::HeaderMap>,
 }
 
 pub(crate) async fn stream_provider_response(
@@ -63,15 +60,10 @@ pub(crate) async fn stream_provider_response(
         .provider(provider_id)
         .ok_or_else(|| GatewayError::BadRequest(format!("unknown provider: {provider_id}")))?;
     let downstream_model = downstream_model.unwrap_or(catalog_slug);
-    let downstream_body = response_metadata_request(body, downstream_model);
     let web_search_enabled = executor.web_search_enabled_for_custom_request(body);
     let protocol = provider.protocol_for_model(upstream_model_id);
     let advertised_thinking = provider.model_supports_thinking(upstream_model_id);
     executor.require_ducx_client(provider, headers)?;
-    // Both managed auth cores mint native headers. Fetch once and inject at the
-    // send sites instead of the stored placeholder key.
-    let baidu_native = executor.upstream.baidu_native_headers(provider).await?;
-    let agy_native = executor.upstream.agy_native_headers(provider).await?;
     let ctx = ProviderRequestContext {
         executor,
         provider,
@@ -80,11 +72,8 @@ pub(crate) async fn stream_provider_response(
         downstream_model,
         routing,
         body,
-        downstream_body,
         advertised_thinking,
         web_search_enabled,
-        baidu_native,
-        agy_native,
     };
     match protocol {
         ProviderProtocol::AnthropicMessages => stream_anthropic_messages(ctx).await,
@@ -102,13 +91,13 @@ async fn stream_anthropic_messages(
         provider,
         upstream_model_id,
         catalog_slug,
+        downstream_model,
         routing,
         body,
-        downstream_body,
         advertised_thinking,
         web_search_enabled,
-        ..
     } = ctx;
+    let downstream_body = response_metadata_request(body, downstream_model);
     let auto_thinking_kind =
         anthropic_thinking_kind_with_advertised(upstream_model_id, advertised_thinking);
     let reasoning = upstream_reasoning(body, advertised_thinking);
@@ -210,13 +199,14 @@ async fn stream_openai_chat(
         provider,
         upstream_model_id,
         catalog_slug,
+        downstream_model,
         routing,
         body,
-        downstream_body,
         advertised_thinking,
-        baidu_native,
         ..
     } = ctx;
+    let baidu_native = executor.upstream.baidu_native_headers(provider).await?;
+    let downstream_body = response_metadata_request(body, downstream_model);
     let mut upstream_body = body.clone();
     prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
     let converted =
@@ -278,9 +268,9 @@ async fn stream_openai_responses(
         routing,
         body,
         advertised_thinking,
-        baidu_native,
         ..
     } = ctx;
+    let baidu_native = executor.upstream.baidu_native_headers(provider).await?;
     let mut upstream_body = body.clone();
     upstream_body["model"] = Value::String(upstream_model_id.to_owned());
     prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
@@ -328,10 +318,7 @@ async fn stream_openai_responses(
 }
 
 fn is_thought_signature_error(error_text: &str) -> bool {
-    error_text.contains("thought signature")
-        || error_text.contains("thought_signature")
-        || error_text.contains("Corrupted thought signature")
-        || error_text.contains("Invalid thought signature")
+    error_text.contains("thought signature") || error_text.contains("thought_signature")
 }
 
 fn build_gemini_payload(
@@ -354,19 +341,62 @@ fn build_gemini_payload(
     }
 }
 
+async fn handle_gemini_bad_request(
+    executor: &GatewayExecutor,
+    provider: &ProviderRuntime,
+    upstream_model_id: &str,
+    routing: Option<&UpstreamRouting>,
+    payload: &Value,
+    upstream: reqwest::Response,
+) -> Result<reqwest::Response, GatewayError> {
+    let content_type = upstream
+        .headers()
+        .get(reqwest::header::CONTENT_TYPE)
+        .cloned();
+    let error_text = crate::upstream::body::read_error_text(upstream).await?;
+    if is_thought_signature_error(&error_text) {
+        tracing::warn!(
+            provider_id = provider.id(),
+            upstream_model_id = %upstream_model_id,
+            "upstream rejected thought signature, retrying with sentinel bypass"
+        );
+        let mut retry_payload = payload.clone();
+        crate::protocol::gemini::sanitize_thought_signatures_in_gemini_payload(&mut retry_payload);
+        let retry_headers = executor.upstream.agy_native_headers(provider).await?;
+        executor
+            .upstream
+            .send_provider_json(
+                provider,
+                ProviderProtocol::GoogleGemini,
+                upstream_model_id,
+                routing.map(|routing| routing.hash_key.as_str()),
+                retry_headers.as_ref(),
+                retry_payload,
+            )
+            .await
+    } else {
+        Err(crate::error::GatewayError::UpstreamStatus {
+            status: reqwest::StatusCode::BAD_REQUEST,
+            body: error_text,
+            content_type,
+            context: format!("provider {} gemini endpoint", provider.id()),
+        })
+    }
+}
+
 async fn stream_gemini(ctx: ProviderRequestContext<'_>) -> Result<ResponseStream, GatewayError> {
     let ProviderRequestContext {
         executor,
         provider,
         upstream_model_id,
         catalog_slug,
+        downstream_model,
         routing,
         body,
-        downstream_body,
         advertised_thinking,
-        agy_native,
         ..
     } = ctx;
+    let agy_native = executor.upstream.agy_native_headers(provider).await?;
     let mut upstream_body = body.clone();
     prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
     let converted = responses_to_gemini(&upstream_body, Some(upstream_model_id))?;
@@ -418,46 +448,18 @@ async fn stream_gemini(ctx: ProviderRequestContext<'_>) -> Result<ResponseStream
             )
             .await?;
     }
-    let mut status = upstream.status();
-    if status == reqwest::StatusCode::BAD_REQUEST {
-        let content_type = upstream
-            .headers()
-            .get(reqwest::header::CONTENT_TYPE)
-            .cloned();
-        let error_text = crate::upstream::body::read_error_text(upstream).await?;
-        if is_thought_signature_error(&error_text) {
-            tracing::warn!(
-                provider_id = provider.id(),
-                upstream_model_id = %upstream_model_id,
-                "upstream rejected thought signature, retrying with sentinel bypass"
-            );
-            let mut retry_payload = payload.clone();
-            crate::protocol::gemini::sanitize_thought_signatures_in_gemini_payload(
-                &mut retry_payload,
-            );
-            let retry_headers = executor.upstream.agy_native_headers(provider).await?;
-            upstream = executor
-                .upstream
-                .send_provider_json(
-                    provider,
-                    ProviderProtocol::GoogleGemini,
-                    upstream_model_id,
-                    routing.map(|routing| routing.hash_key.as_str()),
-                    retry_headers.as_ref(),
-                    retry_payload,
-                )
-                .await?;
-            status = upstream.status();
-        } else {
-            return Err(crate::error::GatewayError::UpstreamStatus {
-                status: reqwest::StatusCode::BAD_REQUEST,
-                body: error_text,
-                content_type,
-                context: format!("provider {} gemini endpoint", provider.id()),
-            });
-        }
+    if upstream.status() == reqwest::StatusCode::BAD_REQUEST {
+        upstream = handle_gemini_bad_request(
+            executor,
+            provider,
+            upstream_model_id,
+            routing,
+            &payload,
+            upstream,
+        )
+        .await?;
     }
-    if !status.is_success() {
+    if !upstream.status().is_success() {
         return Err(crate::upstream::body::response_error(
             upstream,
             format!("provider {} gemini endpoint", provider.id()),
@@ -465,6 +467,7 @@ async fn stream_gemini(ctx: ProviderRequestContext<'_>) -> Result<ResponseStream
         .await?);
     }
     // Gemini SSE mapper constructs response lifecycle events using downstream_body.
+    let downstream_body = response_metadata_request(body, downstream_model);
     Ok(map_gemini_sse_with_image_routes(
         observe_upstream_cache_usage(upstream.bytes_stream(), observation),
         downstream_body,
