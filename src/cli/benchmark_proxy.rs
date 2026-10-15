@@ -33,7 +33,10 @@ async fn proxy_benchmark_request(
         .filter(|runtime| pid_is_running(runtime.pid).unwrap_or(false))
         .ok_or_else(|| anyhow::anyhow!("gateway is not running"))?;
     let config = GatewayConfig::from_stored_config()?;
-    let url = format!("http://{}/v1/model-benchmarks", runtime.bind);
+    let url = format!(
+        "http://{}/v1/model-benchmarks",
+        codex_mixin::config::client_address(runtime.bind)
+    );
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(10))
         .build()?;

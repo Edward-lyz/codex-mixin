@@ -16,7 +16,7 @@ use super::codex::InstallCodexOptions;
     about = "Connect custom model providers to Codex, Claude, DSH, OpenCode, and Pi"
 )]
 pub(super) struct Cli {
-    /// Keep the plain CLI interface instead of opening the full-screen UI.
+    /// Keep the plain CLI interface instead of opening the web control panel.
     #[arg(long, global = true)]
     pub(super) no_tui: bool,
     /// Emit command failures as a JSON object on the final stderr line.
@@ -211,6 +211,14 @@ pub(super) enum Command {
     #[command(hide = true)]
     Serve {
         #[arg(long)]
+        bind: Option<SocketAddr>,
+    },
+    /// Open the web control panel (default bind 0.0.0.0:18790).
+    Panel {
+        #[arg(
+            long,
+            help = "Listen address; defaults to all interfaces on port 18790"
+        )]
         bind: Option<SocketAddr>,
     },
     #[command(hide = true)]
@@ -775,7 +783,8 @@ pub(super) fn requested_interactive_start(
         None
     } else {
         match &cli.command {
-            None => Some(InteractiveStart::Dashboard),
+            None if interactive => Some(InteractiveStart::Dashboard { bind: None }),
+            Some(Command::Panel { bind }) => Some(InteractiveStart::Dashboard { bind: *bind }),
             Some(Command::Setup {
                 preset: None,
                 key: None,

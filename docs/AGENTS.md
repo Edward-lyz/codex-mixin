@@ -10,4 +10,4 @@
 - 截图来自真实界面并脱敏；品牌派生资源保留来源，不冒充官方矢量重建。资源子目录继承本文件。
 - 文档修改检查链接/命令存在性和 `git diff --check`；规范变更检查继承关系与架构门禁，明确没有执行的运行时检查。
 
-阅读规范从根 `AGENTS.md` 进入：Rust 用例见 `src/application/`，CLI 见 `src/cli/`，请求面见 `src/server/`、`src/gateway/`、`src/upstream/`；外壳见 `macos/`、`windows/`、`tui/`。各目录仅补充本层规则，公共要求继承父级。
+阅读规范从根 `AGENTS.md` 进入：Rust 用例见 `src/application/`，CLI 见 `src/cli/`，请求面见 `src/server/`、`src/gateway/`、`src/upstream/`；外壳见 `macos/`、`windows/`、`panel/`。各目录仅补充本层规则，公共要求继承父级。

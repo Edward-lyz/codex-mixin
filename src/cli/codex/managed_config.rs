@@ -228,7 +228,7 @@ pub(in crate::cli) fn sync_managed_codex_gateway_base_url(
         .ok_or_else(|| {
             anyhow::anyhow!("managed Codex config has no {provider_id} provider table")
         })?;
-    let base_url = format!("http://{bind}/v1");
+    let base_url = format!("http://{}/v1", codex_mixin::config::client_address(bind));
     if provider.get("base_url").and_then(Item::as_str) != Some(base_url.as_str()) {
         provider["base_url"] = value(base_url);
         changed = true;

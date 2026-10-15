@@ -1,13 +1,13 @@
 //! The CLI core is platform neutral: every OS difference lives behind
 //! `src/platform`. This test scans production Rust code everywhere else
-//! (library, CLI, TUI) and fails on platform conditionals or OS-specific
+//! (library, CLI, web panel) and fails on platform conditionals or OS-specific
 //! tools, paths, and environment variables. Test-only code (`#[cfg(test)]`
 //! items and `tests.rs` files) may still gate fixtures by platform.
 
 use std::fs;
 use std::path::{Path, PathBuf};
 
-const SCANNED_ROOTS: [&str; 2] = ["src", "tui"];
+const SCANNED_ROOTS: [&str; 2] = ["src", "panel"];
 const PLATFORM_ROOT: &str = "src/platform";
 
 /// Case-sensitive fragments that only appear in platform-specific code.

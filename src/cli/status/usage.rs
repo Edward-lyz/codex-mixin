@@ -12,9 +12,10 @@ pub(crate) async fn usage(json_output: bool, days: Option<u64>) -> anyhow::Resul
         anyhow::bail!("gateway is not running");
     }
     let config = GatewayConfig::from_stored_config()?;
+    let address = codex_mixin::config::client_address(runtime.bind);
     let url = match days {
-        Some(days) => format!("http://{}/v1/usage?days={days}", runtime.bind),
-        None => format!("http://{}/v1/usage", runtime.bind),
+        Some(days) => format!("http://{address}/v1/usage?days={days}"),
+        None => format!("http://{address}/v1/usage"),
     };
     let client = reqwest::Client::builder()
         .timeout(Duration::from_secs(5))

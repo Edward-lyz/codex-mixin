@@ -44,7 +44,7 @@ pub fn install(
             "npm": RESPONSES_PACKAGE,
             "name": PROVIDER_NAME,
             "options": {
-                "baseURL": format!("http://{bind}/v1"),
+                "baseURL": format!("http://{}/v1", crate::config::client_address(bind)),
                 "apiKey": key_reference(key_path),
             },
             "models": models,

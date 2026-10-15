@@ -1,0 +1,88 @@
+<!doctype html>
+<html lang="zh-CN">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1, viewport-fit=cover">
+  <meta name="color-scheme" content="dark light">
+  <title>Codex Mixin</title>
+  <link rel="icon" type="image/png" href="/logo.png">
+  <link rel="preload" href="/fonts/GitLabMono.woff2" as="font" type="font/woff2" crossorigin>
+  <link rel="stylesheet" href="/app.css">
+  <script src="/app.js" defer></script>
+</head>
+<body>
+  <a class="skip-link" href="#main">跳到主要内容</a>
+
+  <div class="gate" id="gate" hidden>
+    <form class="gate-card" id="gate-form" autocomplete="off">
+      <div class="brand brand-lg"><img class="brand-logo" src="/logo.png" alt="" width="56" height="56"></div>
+      <h1 class="gate-title">Codex Mixin 控制面板</h1>
+      <p class="gate-text">粘贴启动面板时终端打印的访问令牌。令牌只保存在当前标签页。</p>
+      <label class="field">
+        <span class="field-label">访问令牌</span>
+        <input class="input mono" id="gate-token" type="password" required spellcheck="false" autocomplete="off">
+      </label>
+      <p class="gate-error" id="gate-error" role="alert" hidden></p>
+      <button class="btn btn-primary btn-block" type="submit">进入面板</button>
+    </form>
+  </div>
+
+  <div class="shell" id="shell" hidden>
+    <aside class="sidebar" aria-label="主导航">
+      <div class="brand">
+        <img class="brand-logo" src="/logo.png" alt="" width="22" height="22">
+        <span class="brand-name">Codex Mixin</span>
+      </div>
+      <nav class="nav" id="nav">
+        <span class="nav-indicator" id="nav-indicator" aria-hidden="true"></span>
+        <ul class="nav-list" id="nav-list" role="list"></ul>
+      </nav>
+      <div class="sidebar-foot">
+        <span class="dot" id="foot-dot" aria-hidden="true"></span>
+        <span class="foot-text" id="foot-text">连接中</span>
+      </div>
+    </aside>
+
+    <main class="main" id="main" tabindex="-1">
+      <header class="topbar">
+        <div class="topbar-titles">
+          <h1 class="page-title" id="page-title"></h1>
+          <p class="page-subtitle" id="page-subtitle"></p>
+        </div>
+        <div class="topbar-actions">
+          <span class="refreshed mono" id="refreshed" aria-live="off"></span>
+          <button class="btn btn-ghost btn-icon" id="refresh" type="button" aria-label="立即刷新">
+            <span class="icon icon-refresh" aria-hidden="true"></span>
+          </button>
+        </div>
+      </header>
+      <section class="view" id="view" aria-live="polite" aria-busy="true"></section>
+    </main>
+  </div>
+
+  <div class="toasts" id="toasts" role="status" aria-live="polite"></div>
+
+  <dialog class="dialog" id="confirm" aria-labelledby="confirm-title">
+    <form method="dialog" class="dialog-body">
+      <h2 class="dialog-title" id="confirm-title"></h2>
+      <p class="dialog-text" id="confirm-text"></p>
+      <div class="dialog-actions">
+        <button class="btn btn-ghost" value="cancel" type="submit">取消</button>
+        <button class="btn btn-danger" value="ok" id="confirm-ok" type="submit">确认</button>
+      </div>
+    </form>
+  </dialog>
+
+  <dialog class="dialog dialog-wide" id="sheet" aria-labelledby="sheet-title">
+    <div class="dialog-body">
+      <header class="sheet-head">
+        <h2 class="dialog-title" id="sheet-title"></h2>
+        <button class="btn btn-ghost btn-icon" id="sheet-close" type="button" aria-label="关闭">
+          <span class="icon icon-close" aria-hidden="true"></span>
+        </button>
+      </header>
+      <div class="sheet-content" id="sheet-content"></div>
+    </div>
+  </dialog>
+</body>
+</html>

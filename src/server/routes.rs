@@ -52,6 +52,7 @@ pub fn router(state: AppState) -> Router {
         .route("/v1/images/edits", post(image_edits))
         .layer(RequestDecompressionLayer::new())
         .layer(CompressionLayer::new().quality(tower_http::CompressionLevel::Fastest))
+        .layer(axum::middleware::from_fn(super::auth::mark_loopback_peer))
         .with_state(state)
 }
 
@@ -120,18 +121,21 @@ pub async fn serve_on_listener_with_reload(
     let reload_requested = Arc::new(AtomicBool::new(false));
     let shutdown_reload_requested = Arc::clone(&reload_requested);
     tracing::info!(%bind, "codex-mixin listening");
-    let result = axum::serve(listener, router(state))
-        .with_graceful_shutdown(async move {
-            tokio::select! {
-                () = shutdown.recv() => {}
-                result = reload.changed() => {
-                    if result.is_ok() {
-                        shutdown_reload_requested.store(true, Ordering::Release);
-                    }
+    let result = axum::serve(
+        listener,
+        router(state).into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
+        tokio::select! {
+            () = shutdown.recv() => {}
+            result = reload.changed() => {
+                if result.is_ok() {
+                    shutdown_reload_requested.store(true, Ordering::Release);
                 }
             }
-        })
-        .await;
+        }
+    })
+    .await;
     if let Some(probe_task) = probe_task {
         probe_task.abort();
     }

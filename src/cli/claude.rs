@@ -71,7 +71,10 @@ fn install_claude_with_models(
 ) -> anyhow::Result<bool> {
     let settings_path = resolve_claude_settings_path(settings_path)?;
     let (model_picker, default_model) = claude_model_picker(gateway_config, official_models)?;
-    let base_url = format!("http://{gateway_bind}");
+    let base_url = format!(
+        "http://{}",
+        codex_mixin::config::client_address(gateway_bind)
+    );
     let client_key = gateway_config.require_client_key(GatewayClient::Claude)?;
     let changed = codex_mixin::clients::claude::install(
         &settings_path,

@@ -63,7 +63,10 @@ pub(super) async fn check_gateway_runtime() -> (DoctorCheck, Option<LiveGateway>
             None,
         ),
         Ok(true) => {
-            let url = format!("http://{}/healthz", runtime.bind);
+            let url = format!(
+                "http://{}/healthz",
+                codex_mixin::config::client_address(runtime.bind)
+            );
             let client = reqwest::Client::builder()
                 .timeout(Duration::from_secs(2))
                 .build();
@@ -146,7 +149,10 @@ pub(super) async fn check_gateway_models(
     bind: SocketAddr,
     gateway_api_key: Option<&str>,
 ) -> (DoctorCheck, Option<Vec<String>>) {
-    let url = format!("http://{bind}/v1/models");
+    let url = format!(
+        "http://{}/v1/models",
+        codex_mixin::config::client_address(bind)
+    );
     let client = match reqwest::Client::builder()
         .timeout(Duration::from_secs(10))
         .build()

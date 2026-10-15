@@ -8,11 +8,11 @@
 
 ## 产品原则：CLI 是核心，GUI 是外壳
 
-Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连接官方服务及 OpenAI Chat Completions、Anthropic Messages 等兼容 provider。macOS 菜单栏 App、Windows WinUI 3 App 和 TUI 是同一能力的交互外壳，不是独立业务实现。
+Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连接官方服务及 OpenAI Chat Completions、Anthropic Messages 等兼容 provider。macOS 菜单栏 App、Windows WinUI 3 App 和 Web 控制面板是同一能力的交互外壳，不是独立业务实现。
 
 - 新增业务必须先提供可在 `--no-tui` 下使用的 CLI 入口及可验证的 Rust 用例；自动化调用需要稳定 JSON 输出与结构化错误。无 GUI 环境也必须能配置、运行、诊断和恢复。
 - “CLI 是核心”不等于把业务都塞进 `src/cli/`。参数、输入、渲染与退出码属于 CLI；业务规则、提交顺序和可复用能力属于 `application` 及下层模块。
-- GUI/TUI 负责输入收集、页面状态、进度和错误展示，通过 CLI contract 执行业务。不得复制 provider 校验、模型路由、配置迁移、鉴权、Fusion、客户端接入或网关启停策略。
+- GUI/Web 面板负责输入收集、页面状态、进度和错误展示，通过 CLI contract 执行业务。不得复制 provider 校验、模型路由、配置迁移、鉴权、Fusion、客户端接入或网关启停策略。
 - GUI 可管理自己的窗口、托盘、登录启动、图标缓存和诊断日志。GUI 登录启动与网关自启是不同语义；后者始终由 CLI/core 管理。
 - GUI 不读写 CLI 状态目录来实现业务，不猜测其布局；通过 `interface --json` 获取版本、能力和路径。按 CLI 返回路径打开日志/目录是展示动作，不是直接修改状态。
 
@@ -24,7 +24,7 @@ Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连�
 
 | 目录/模块 | 承载的抽象 | 边界 |
 | --- | --- | --- |
-| `src/main.rs` | 二进制 composition root | 连接 CLI 抽象交互入口与具体 TUI；不放业务 |
+| `src/main.rs` | 二进制 composition root | 连接 CLI 抽象交互入口与具体 Web 面板；不放业务 |
 | `src/cli/` | 核心交付接口 | 调用用例、组织输入输出；历史适配代码不成为继续堆积业务的理由 |
 | `src/application/` | 完整业务用例 | 接收具体依赖、返回领域结果；无终端打印或 UI 依赖 |
 | `src/server/` | 入站 HTTP/WS adapter | 认证、解析、请求/连接生命周期、响应封装；状态对象仅组合组件 |
@@ -38,7 +38,7 @@ Codex Mixin 的核心交付是可独立运行的 Rust CLI 与本地网关，连�
 | `src/platform/` | OS adapter | 路径、权限、进程、终端、系统服务、安装与签名的平台差异 |
 | `src/catalog/` | 模型目录 | 来源合并、生成、缓存；不参与请求发送或 UI |
 | `src/benchmark/`、`src/web_search/`、`src/images/`、`src/ech/` | 专用能力 | 按 `src/AGENTS.md` 处理探测、媒体或连接；不引用上层控制面 |
-| `macos/`、`windows/`、`tui/` | 表现与平台壳 | 通过真实 CLI 访问同一能力，不形成第二套业务状态 |
+| `macos/`、`windows/`、`panel/` | 表现与平台壳 | 通过真实 CLI 访问同一能力，不形成第二套业务状态 |
 
 `src/platform/` 以外的 Rust 生产代码不得出现 OS 条件编译、原生权限位、系统工具名或平台路径；意图通过 platform API 表达。测试 fixture 可以按 OS 准备环境。原生 GUI 的窗口/托盘行为留在自身平台壳。
 

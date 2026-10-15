@@ -615,7 +615,7 @@ pub(super) async fn bind_gateway_listener(
         Ok(listener) => Ok(listener),
         Err(err)
             if automatic_bind
-                && bind.ip().is_loopback()
+                && (bind.ip().is_loopback() || bind.ip().is_unspecified())
                 && err.kind() == io::ErrorKind::AddrInUse =>
         {
             Ok(tokio::net::TcpListener::bind(SocketAddr::new(bind.ip(), 0)).await?)

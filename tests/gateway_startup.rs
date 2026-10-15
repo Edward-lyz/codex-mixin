@@ -123,14 +123,18 @@ async fn startup_does_not_wait_for_official_catalog_network() {
         .expect("official catalog request did not reach the hanging proxy")
         .unwrap();
     let runtime_bind: std::net::SocketAddr = runtime.bind.parse().unwrap();
-    assert!(runtime_bind.ip().is_loopback());
+    // The automatic default listens on all interfaces; clients dial loopback.
+    assert!(runtime_bind.ip().is_unspecified());
     assert_ne!(runtime_bind.port(), 0);
     let stored = load_stored_config_from_path(&gateway_config_path)
         .unwrap()
         .unwrap();
     assert_eq!(stored.gateway_bind.as_deref(), Some(runtime.bind.as_str()));
     let response = reqwest::Client::new()
-        .get(format!("http://{}/healthz", runtime.bind))
+        .get(format!(
+            "http://{}/healthz",
+            codex_mixin::config::client_address(runtime_bind)
+        ))
         .send()
         .await
         .unwrap();

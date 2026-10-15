@@ -2,7 +2,7 @@
 
 继承根规范。本目录容纳库核心与 CLI 二进制，不能把目录相邻当作允许任意互调。
 
-- `lib.rs` 声明库模块和最小导出；`main.rs` 只组合 CLI 与 TUI。具体交互壳不能成为库依赖。
+- `lib.rs` 声明库模块和最小导出；`main.rs` 只组合 CLI 与 Web 面板。具体交互壳不能成为库依赖。
 - 根级 `anthropic.rs` 是协议 DTO，`error.rs` 是错误边界，`gateway_access.rs` 是客户端访问凭据语义，`ducx_auth_carrier.rs` 是内部认证载体；新增逻辑按领域归属，不继续堆根级杂项工具。
 - `config.rs`、`catalog.rs`、`ech.rs` 与同名目录共同组成一个模块；配置规则见 `config/AGENTS.md`，目录和 ECH 规则在本文件统一表达。
 - 请求处理使用已组合的组件，不创建全局可变服务定位器。能力模块不引用 server、CLI 或具体 UI；OS 差异收敛到 platform。
