@@ -78,6 +78,8 @@ printf 'import SwiftUI\nstruct Probe: View { @State private var on = false; var 
 if ! xcrun swiftc -typecheck "$SWIFTUI_PROBE_DIR/probe.swift" >"$SWIFTUI_PROBE_DIR/probe.log" 2>&1; then
   echo "SwiftUI macros are unavailable in the active developer directory: $(xcode-select -p)" >&2
   echo "Install Xcode and run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer" >&2
+  echo "Or build against an installed SDK older than 27, for example:" >&2
+  echo "  SDKROOT=\"\$(xcode-select -p)/SDKs/MacOSX26.sdk\" ./macos/build_app.sh" >&2
   cat "$SWIFTUI_PROBE_DIR/probe.log" >&2
   exit 1
 fi
