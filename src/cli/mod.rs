@@ -20,7 +20,6 @@ mod claude;
 mod claude_desktop;
 mod codex;
 mod config_apply;
-mod config_input;
 mod cors;
 mod doctor;
 mod dsh;

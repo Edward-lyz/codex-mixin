@@ -14,13 +14,13 @@ use super::managed_auth::*;
 use super::managed_config::*;
 use super::validate::validate_codex_install;
 use super::{reconcile_imagegen_skill, restore_imagegen_skill};
-use crate::cli::config_input::normalize_base_url;
 use crate::cli::metadata::load_model_metadata_resolver;
 use crate::cli::official_models::{
     filter_official_catalog, load_official_models, official_template_cache_path,
 };
 use crate::cli::providers::apply_official_model_refresh;
 use crate::cli::runtime::effective_gateway_bind;
+use codex_mixin::application::provider::normalize_base_url;
 use codex_mixin::catalog::apply_auto_review_override;
 use codex_mixin::platform::write_atomic_if_changed;
 use codex_mixin::provider::auxiliary_auto_review_slug;

@@ -355,7 +355,7 @@ fn parse_model_contexts(values: Vec<String>) -> anyhow::Result<BTreeMap<String, 
         let (model_id, context_window) = value
             .rsplit_once('=')
             .ok_or_else(|| anyhow::anyhow!("model context must use MODEL=TOKENS: {value}"))?;
-        let model_id = super::trim_required("model context model", model_id.to_owned())?;
+        let model_id = super::required("model context model", model_id.to_owned())?;
         let context_window = context_window.trim().parse::<u64>().with_context(|| {
             format!("invalid context window for model {model_id}: {context_window}")
         })?;

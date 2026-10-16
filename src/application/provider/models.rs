@@ -13,7 +13,10 @@ use crate::provider::{
 };
 
 use super::super::error::OperationError;
-use super::{commit_provider_change, provider_for_refresh, provider_mut, require_providers};
+use super::{
+    commit_provider_change, normalize_base_url, provider_for_refresh, provider_mut,
+    require_providers, required,
+};
 
 pub fn apply_model_selection(
     provider: &mut ProviderDefinition,
@@ -318,22 +321,4 @@ pub async fn test_provider(input: TestProviderInput) -> anyhow::Result<ProviderT
         }
     };
     Ok(ProviderTestResult { mode, model_count })
-}
-
-fn required(label: &str, value: String) -> anyhow::Result<String> {
-    let value = value.trim().to_owned();
-    anyhow::ensure!(!value.is_empty(), "{label} cannot be empty");
-    Ok(value)
-}
-
-fn normalize_base_url(value: String) -> anyhow::Result<String> {
-    let mut value = required("base URL", value)?;
-    while value.ends_with('/') {
-        value.pop();
-    }
-    anyhow::ensure!(
-        value.starts_with("http://") || value.starts_with("https://"),
-        "base URL must start with http:// or https://"
-    );
-    Ok(value)
 }

@@ -8,7 +8,7 @@ use crate::provider::{
 
 use super::super::error::OperationError;
 use super::discovery::{InferredCustomProviderEndpoint, infer_custom_provider_endpoint};
-use super::{provider_for_refresh, update_provider};
+use super::{normalize_base_url, provider_for_refresh, required, update_provider};
 
 #[derive(Clone, Debug, Default)]
 pub struct AddProviderInput {
@@ -428,24 +428,6 @@ fn apply_quota_update(
 
 fn before_commit(source: anyhow::Error) -> OperationError {
     OperationError::BeforeCommit { source }
-}
-
-fn required(label: &str, value: String) -> anyhow::Result<String> {
-    let trimmed = value.trim().to_owned();
-    anyhow::ensure!(!trimmed.is_empty(), "{label} cannot be empty");
-    Ok(trimmed)
-}
-
-fn normalize_base_url(value: String) -> anyhow::Result<String> {
-    let mut value = required("base URL", value)?;
-    while value.ends_with('/') {
-        value.pop();
-    }
-    anyhow::ensure!(
-        value.starts_with("http://") || value.starts_with("https://"),
-        "base URL must start with http:// or https://"
-    );
-    Ok(value)
 }
 
 fn normalize_path(label: &str, value: String) -> anyhow::Result<String> {

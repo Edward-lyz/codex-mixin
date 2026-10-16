@@ -13,24 +13,12 @@ use futures_util::{StreamExt, stream};
 use serde_json::{Value, json};
 
 use super::{
-    DiscoveredQuota, commit_discovered_models, provider_for_refresh, record_refresh_failure,
+    DiscoveredQuota, commit_discovered_models, normalize_base_url, provider_for_refresh,
+    record_refresh_failure,
 };
 use crate::provider::{QuotaUsageSummary, quota_usage};
 
 const CUSTOM_PROTOCOL_PROBE_TIMEOUT: Duration = Duration::from_secs(5);
-
-fn normalize_base_url(value: String) -> anyhow::Result<String> {
-    let mut value = value.trim().to_owned();
-    anyhow::ensure!(!value.is_empty(), "base URL cannot be empty");
-    while value.ends_with('/') {
-        value.pop();
-    }
-    anyhow::ensure!(
-        value.starts_with("http://") || value.starts_with("https://"),
-        "base URL must start with http:// or https://"
-    );
-    Ok(value)
-}
 
 #[derive(Clone, Debug, PartialEq)]
 pub struct DiscoveredQuotaEndpoint {

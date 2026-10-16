@@ -15,9 +15,9 @@ use super::codex::{
     codex_home_path, managed_codex_install_mode, reconcile_managed_skills,
     resolve_codex_config_path,
 };
-use super::config_input::trim_required;
 use super::official_models::{load_official_models, official_models_cache_path};
 use codex_mixin::application::provider::build::{AddProviderInput, UpdateProviderInput};
+use codex_mixin::application::provider::required;
 mod management;
 mod models;
 pub(super) use management::{
@@ -349,7 +349,7 @@ fn normalize_model_ids(models: Vec<String>) -> anyhow::Result<Vec<String>> {
     let mut normalized = Vec::with_capacity(models.len());
     let mut seen = HashSet::with_capacity(models.len());
     for model in models {
-        let model = trim_required("model", model)?;
+        let model = required("model", model)?;
         if seen.insert(model.clone()) {
             normalized.push(model);
         }

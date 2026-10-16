@@ -16,6 +16,24 @@ pub mod login;
 pub mod models;
 pub mod skill;
 
+pub fn required(label: &str, value: String) -> anyhow::Result<String> {
+    let value = value.trim().to_owned();
+    anyhow::ensure!(!value.is_empty(), "{label} cannot be empty");
+    Ok(value)
+}
+
+pub fn normalize_base_url(value: String) -> anyhow::Result<String> {
+    let mut value = required("base URL", value)?;
+    while value.ends_with('/') {
+        value.pop();
+    }
+    anyhow::ensure!(
+        value.starts_with("http://") || value.starts_with("https://"),
+        "base URL must start with http:// or https://"
+    );
+    Ok(value)
+}
+
 pub fn commit_provider_change<T>(
     mutation: impl FnOnce(&mut StoredGatewayConfig) -> anyhow::Result<T>,
 ) -> Result<T, OperationError> {
