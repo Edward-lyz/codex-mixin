@@ -68,7 +68,9 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         startGatewayAtLaunch()
         installRefreshLifecycleObservers()
         startRefreshTimer()
-        if CommandLine.arguments.contains("--show-settings") {
+        if CommandLine.arguments.contains("--show-settings")
+            || (!CommandLine.arguments.contains("--background")
+                && !CommandLine.arguments.contains("--check-updates")) {
             DispatchQueue.main.asyncAfter(deadline: .now() + 0.5) { [weak self] in
                 self?.configureLogin()
             }
@@ -78,6 +80,14 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
                 self?.updaterController?.checkForUpdates(nil)
             }
         }
+    }
+
+    func applicationShouldHandleReopen(
+        _ sender: NSApplication,
+        hasVisibleWindows flag: Bool
+    ) -> Bool {
+        configureLogin()
+        return false
     }
 
     @MainActor
