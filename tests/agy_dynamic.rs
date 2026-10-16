@@ -193,11 +193,17 @@ async fn quota_cli_returns_dynamic_rows() {
         std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
         let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_codex-mixin"));
         codex_mixin::platform::set_home_env(&mut command, directory.path());
+        // Windows needs its system ACL tool even when AGY CLI is absent.
+        #[cfg(windows)]
+        let quota_path = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
+            .join("System32");
+        #[cfg(not(windows))]
+        let quota_path = "";
         command
             .args(["--no-tui", "quota", "--provider", "agy", "--json"])
             .env("CODEX_GATEWAY_CONFIG", path)
             .env("CODEX_HOME", directory.path().join("codex-home"))
-            .env("PATH", "")
+            .env("PATH", quota_path)
             .output()
             .unwrap()
     })
