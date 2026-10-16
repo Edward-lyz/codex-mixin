@@ -26,6 +26,10 @@ fn malformed_models_fail_closed() {
         json!({"models":[{"label":"no id"}]}),
         json!({"models":[{"id":"same"},{"id":"same"}]}),
         json!({"models":[{"id":"","label":"empty"}]}),
+        json!({"models":{}, "agentModelSorts":{}}),
+        json!({"models":{}, "agentModelSorts":[{"groups":[{"modelIds":[1]}]}]}),
+        json!({"models":{}, "agentModelSorts":[{}]}),
+        json!({"models":{}, "defaultAgentModelId":123}),
     ] {
         assert!(parse_models(&value).is_err());
     }

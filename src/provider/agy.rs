@@ -162,7 +162,33 @@ struct ModelEntry {
     supports_function_tools: Option<bool>,
 }
 
+#[derive(Default, Deserialize)]
+#[serde(default, rename_all = "camelCase")]
+struct AgentModels {
+    agent_model_sorts: Vec<AgentModelSort>,
+    default_agent_model_id: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct AgentModelSort {
+    groups: Vec<AgentModelGroup>,
+}
+
+#[derive(Deserialize)]
+#[serde(rename_all = "camelCase")]
+struct AgentModelGroup {
+    model_ids: Vec<String>,
+}
+
 fn parse_models(value: &Value) -> anyhow::Result<Vec<ProviderModel>> {
+    let agent_models = AgentModels::deserialize(value).context("invalid AGY agent model groups")?;
+    let agent_model_ids = agent_models
+        .agent_model_sorts
+        .into_iter()
+        .flat_map(|sort| sort.groups)
+        .flat_map(|group| group.model_ids)
+        .chain(agent_models.default_agent_model_id)
+        .collect::<HashSet<_>>();
     let models = value
         .get("models")
         .context("AGY directory is missing models")?;
@@ -194,6 +220,11 @@ fn parse_models(value: &Value) -> anyhow::Result<Vec<ProviderModel>> {
             entry.context_window != Some(0) && entry.max_output_tokens != Some(0),
             "AGY model {id} has an invalid token limit"
         );
+        // Native agent models use function calls, but the directory omits a
+        // per-model tools flag. Keep unclassified models unknown.
+        let supports_function_tools = entry
+            .supports_function_tools
+            .or_else(|| agent_model_ids.contains(&id).then_some(true));
         discovered.push(ProviderModel {
             id,
             display_name: entry.label,
@@ -203,7 +234,7 @@ fn parse_models(value: &Value) -> anyhow::Result<Vec<ProviderModel>> {
             supports_image: entry.supports_image,
             supports_thinking: entry.supports_thinking,
             supports_web_search: entry.supports_web_search,
-            supports_function_tools: entry.supports_function_tools,
+            supports_function_tools,
             ..Default::default()
         });
     }

@@ -169,6 +169,67 @@ async fn explicit_keys_use_remote_models() {
 }
 
 #[tokio::test]
+async fn agent_model_groups_restore_tool_capabilities() {
+    use axum::{Json, Router, routing::post};
+    use serde_json::json;
+    // Sanitized fetchAvailableModels shape: agent membership is separate
+    // from model flags; image and completion models share the directory.
+    let report = json!({
+        "models": {
+            "gemini-3.8-flash-high": {"displayName":"Gemini", "supportsImages":true},
+            "claude-sonnet-4-6": {"displayName":"Claude"},
+            "default-agent": {},
+            "explicit-false": {"supports_function_tools":false},
+            "explicit-true": {"supports_function_tools":true},
+            "image-model": {},
+            "tab-model": {},
+            "unknown-model": {}
+        },
+        "agentModelSorts": [{"displayName":"Recommended", "groups":[
+            {"modelIds":["gemini-3.8-flash-high", "explicit-false"]},
+            {"modelIds":["claude-sonnet-4-6"]}
+        ]}],
+        "defaultAgentModelId":"default-agent",
+        "imageGenerationModelIds":["image-model"],
+        "tabModelIds":["tab-model"]
+    });
+    let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = listener.local_addr().unwrap();
+    let app = Router::new().route(
+        "/v1internal:fetchAvailableModels",
+        post(move || async move { Json(report) }),
+    );
+    let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+    let mut provider = agy_provider("agy", "fixture-key");
+    provider.base_url = format!("http://{address}");
+    let models =
+        codex_mixin::provider::discover_provider_models(&reqwest::Client::new(), &provider)
+            .await
+            .unwrap();
+    apply_discovered_models(&mut provider, models).unwrap();
+    let serialized = serde_json::to_value(&provider).unwrap();
+    for (id, expected) in [
+        ("gemini-3.8-flash-high", Some(true)),
+        ("claude-sonnet-4-6", Some(true)),
+        ("default-agent", Some(true)),
+        ("explicit-false", Some(false)),
+        ("explicit-true", Some(true)),
+        ("image-model", None),
+        ("tab-model", None),
+        ("unknown-model", None),
+    ] {
+        let model = serialized["cached_models"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|model| model["id"] == id)
+            .unwrap();
+        assert_eq!(model["supports_function_tools"].as_bool(), expected, "{id}");
+    }
+    server.abort();
+}
+
+#[tokio::test]
 async fn quota_cli_returns_dynamic_rows() {
     use axum::{Json, Router, http::HeaderMap, routing::post};
     use serde_json::{Value, json};
