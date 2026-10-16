@@ -152,9 +152,12 @@ if (args is ["--cli", var realCli])
         var directory = Path.Combine(Path.GetTempPath(), "mixin-contract-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
         var oldConfig = Environment.GetEnvironmentVariable("CODEX_GATEWAY_CONFIG");
+        var oldCodexHome = Environment.GetEnvironmentVariable("CODEX_HOME");
         try
         {
             Environment.SetEnvironmentVariable("CODEX_GATEWAY_CONFIG", Path.Combine(directory, "config.json"));
+            // No ChatGPT OAuth session may leak in from the runner's real Codex home.
+            Environment.SetEnvironmentVariable("CODEX_HOME", Path.Combine(directory, "codex"));
             var client = new CliClient(Path.GetFullPath(realCli));
             var metadata = await client.QueryAsync(["interface", "--json"], CancellationToken.None);
             Json.Interface(metadata);
@@ -167,8 +170,9 @@ if (args is ["--cli", var realCli])
                 "The CLI must expose the Gemini protocol to the Windows picker");
             var status = await client.QueryAsync(["service", "status", "--json"], CancellationToken.None);
             Assert(Json.Gateway(status) == "未配置", "Fresh CLI unexpectedly reported a configured gateway");
-            var providerError = await Failure(() => client.QueryAsync(["provider", "list", "--json"], CancellationToken.None));
-            Assert(providerError.Message.Contains("provider configuration is missing"), "Missing configuration was not reported explicitly");
+            // `provider list` is a read-only query: an unconfigured install lists no providers.
+            Assert(Json.Rows(Json.Field(await client.QueryAsync(["provider", "list", "--json"], CancellationToken.None), "providers")).Length == 0,
+                "A fresh install must list no providers");
             Json.Rows(Json.Field(await client.QueryAsync(["agent", "list", "--json"], CancellationToken.None), "agents"));
             Json.Flag(await client.QueryAsync(["service", "autostart", "status", "--json"], CancellationToken.None), "enabled");
             Json.Flag(await client.QueryAsync(["ech", "status", "--json"], CancellationToken.None), "enabled");
@@ -177,6 +181,7 @@ if (args is ["--cli", var realCli])
         finally
         {
             Environment.SetEnvironmentVariable("CODEX_GATEWAY_CONFIG", oldConfig);
+            Environment.SetEnvironmentVariable("CODEX_HOME", oldCodexHome);
             Directory.Delete(directory, true);
         }
     });
