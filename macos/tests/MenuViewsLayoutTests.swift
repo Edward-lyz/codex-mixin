@@ -9,7 +9,7 @@ struct MenuViewsLayoutTests {
     static func main() throws {
         _ = NSApplication.shared
         let percentage = try parseProviderQuotaUsage(#"[{"provider_id":"agy","unit":"percent","remaining":42,"used":58,"limit":100}]"#)[0]
-        precondition(providerQuotaText(percentage).contains("42%"), "Percentage quotas must show remaining allowance")
+        precondition(providerQuotaText(percentage) == "58 / 100", "Percentage quotas must show used allowance against the limit")
         guard let providerWebsiteURL = URL(string: "https://example.com/settings") else {
             preconditionFailure("test provider website URL is invalid")
         }
