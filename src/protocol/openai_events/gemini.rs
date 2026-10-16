@@ -7,25 +7,27 @@ struct GroundingState {
     sources: Vec<Value>,
 }
 
-pub fn map_gemini_sse<S>(
+pub fn map_gemini_sse<S, E>(
     upstream: S,
     original_request: Value,
     tool_names: ToolNameMap,
 ) -> impl Stream<Item = Result<Bytes, Infallible>>
 where
-    S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: std::fmt::Display,
 {
     map_gemini_sse_with_image_routes(upstream, original_request, tool_names, None)
 }
 
-pub(crate) fn map_gemini_sse_with_image_routes<S>(
+pub(crate) fn map_gemini_sse_with_image_routes<S, E>(
     upstream: S,
     original_request: Value,
     tool_names: ToolNameMap,
     image_routes: Option<ImageRouteRegistry>,
 ) -> impl Stream<Item = Result<Bytes, Infallible>>
 where
-    S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: std::fmt::Display,
 {
     let model_name = original_request
         .get("model")
@@ -440,10 +442,10 @@ mod tests {
             "input": "say hi"
         });
         let stream = futures_util::stream::iter(vec![
-            Ok::<_, reqwest::Error>(Bytes::from_static(
+            Ok::<_, std::io::Error>(Bytes::from_static(
                 b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello \"}]}}]}\n\n",
             )),
-            Ok::<_, reqwest::Error>(Bytes::from_static(
+            Ok::<_, std::io::Error>(Bytes::from_static(
                 b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"from Gemini!\"}],\"role\":\"model\"},\"finishReason\":\"STOP\"}],\"usageMetadata\":{\"promptTokenCount\":12,\"candidatesTokenCount\":5,\"totalTokenCount\":17}}\n\n",
             )),
         ]);
@@ -481,10 +483,10 @@ mod tests {
             "input": "think"
         });
         let stream = futures_util::stream::iter(vec![
-            Ok::<_, reqwest::Error>(Bytes::from_static(
+            Ok::<_, std::io::Error>(Bytes::from_static(
                 b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Analyzing question...\",\"thought\":true}]}}]}\n\n",
             )),
-            Ok::<_, reqwest::Error>(Bytes::from_static(
+            Ok::<_, std::io::Error>(Bytes::from_static(
                 b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"42\"}]}}]}\n\n",
             )),
         ]);
@@ -522,7 +524,7 @@ mod tests {
             "input": "get weather"
         });
         let stream = futures_util::stream::iter(vec![
-            Ok::<_, reqwest::Error>(Bytes::from_static(
+            Ok::<_, std::io::Error>(Bytes::from_static(
                 b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"functionCall\":{\"name\":\"get_weather\",\"args\":{\"city\":\"Berlin\"}}}]}}]}\n\n",
             )),
         ]);
@@ -567,7 +569,7 @@ mod tests {
             }]
         });
         let sse = format!("data: {sse_json}\n\n");
-        let stream = futures_util::stream::iter(vec![Ok::<_, reqwest::Error>(Bytes::from(sse))]);
+        let stream = futures_util::stream::iter(vec![Ok::<_, std::io::Error>(Bytes::from(sse))]);
         let mapped = map_gemini_sse(stream, request, ToolNameMap::default());
         tokio::pin!(mapped);
         let mut call_id = String::new();
@@ -621,8 +623,8 @@ mod tests {
             }]
         });
         let stream = futures_util::stream::iter(vec![
-            Ok::<_, reqwest::Error>(Bytes::from(format!("data: {sse_thought}\n\n"))),
-            Ok::<_, reqwest::Error>(Bytes::from(format!("data: {sse_func}\n\n"))),
+            Ok::<_, std::io::Error>(Bytes::from(format!("data: {sse_thought}\n\n"))),
+            Ok::<_, std::io::Error>(Bytes::from(format!("data: {sse_func}\n\n"))),
         ]);
         let mapped = map_gemini_sse(stream, request, ToolNameMap::default());
         tokio::pin!(mapped);
@@ -680,9 +682,9 @@ mod tests {
             }]
         });
         let stream = futures_util::stream::iter(vec![
-            Ok::<_, reqwest::Error>(Bytes::from(format!("data: {sse_chunk1}\n\n"))),
-            Ok::<_, reqwest::Error>(Bytes::from(format!("data: {sse_chunk2}\n\n"))),
-            Ok::<_, reqwest::Error>(Bytes::from_static(b"data: [DONE]\n\n")),
+            Ok::<_, std::io::Error>(Bytes::from(format!("data: {sse_chunk1}\n\n"))),
+            Ok::<_, std::io::Error>(Bytes::from(format!("data: {sse_chunk2}\n\n"))),
+            Ok::<_, std::io::Error>(Bytes::from_static(b"data: [DONE]\n\n")),
         ]);
         let mapped = map_gemini_sse(stream, request, ToolNameMap::default());
         tokio::pin!(mapped);
@@ -720,7 +722,7 @@ mod tests {
             "input": "say hi"
         });
         let stream = futures_util::stream::iter(vec![
-            Ok::<_, reqwest::Error>(Bytes::from_static(
+            Ok::<_, std::io::Error>(Bytes::from_static(
                 b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"Hello cut short\"}],\"role\":\"model\"},\"finishReason\":\"MAX_TOKENS\"}]}\n\n",
             )),
         ]);
@@ -751,7 +753,7 @@ mod tests {
             "input": "say hi"
         });
         let stream = futures_util::stream::iter(vec![
-            Ok::<_, reqwest::Error>(Bytes::from_static(
+            Ok::<_, std::io::Error>(Bytes::from_static(
                 b"data: {\"candidates\":[{\"content\":{\"parts\":[{\"text\":\"blocked\"}],\"role\":\"model\"},\"finishReason\":\"SAFETY\"}]}\n\n",
             )),
         ]);
@@ -807,8 +809,8 @@ mod tests {
             }]
         });
         let stream = futures_util::stream::iter(vec![
-            Ok::<_, reqwest::Error>(Bytes::from(format!("data: {sse_chunk1}\n\n"))),
-            Ok::<_, reqwest::Error>(Bytes::from(format!("data: {sse_chunk2}\n\n"))),
+            Ok::<_, std::io::Error>(Bytes::from(format!("data: {sse_chunk1}\n\n"))),
+            Ok::<_, std::io::Error>(Bytes::from(format!("data: {sse_chunk2}\n\n"))),
         ]);
         let mapped = map_gemini_sse(stream, request, ToolNameMap::default());
         tokio::pin!(mapped);

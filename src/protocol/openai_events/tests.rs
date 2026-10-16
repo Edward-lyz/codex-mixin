@@ -80,7 +80,7 @@ async fn map_openai_events(events: &[Value], done: bool) -> String {
     if done {
         stream.push_str("data: [DONE]\n\n");
     }
-    let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(stream))]);
+    let upstream = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::from(stream))]);
     collect_events(map_openai_chat_sse(
         upstream,
         json!({}),
@@ -96,7 +96,7 @@ async fn chat_tools_stream_before_finish() {
         receiver
             .recv()
             .await
-            .map(|chunk| (Ok::<_, reqwest::Error>(chunk), receiver))
+            .map(|chunk| (Ok::<_, std::io::Error>(chunk), receiver))
     });
     let mapped = map_openai_chat_sse(upstream, json!({}), ToolNameMap::default());
     tokio::pin!(mapped);
@@ -344,7 +344,7 @@ async fn chat_invalid_fragments_fail() {
     let first = json!({"choices":[{"delta":{"tool_calls":[{"index":0,"id":"call",
         "function":{"name":"exec_command","arguments":"{}"}}]},"finish_reason":null}]});
     let finish = json!({"choices":[{"delta":{},"finish_reason":"tool_calls"}]});
-    let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(format!(
+    let upstream = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::from(format!(
         "data: {first}\n\ndata: {{\n\ndata: {finish}\n\ndata: [DONE]\n\n"
     )))]);
     let body = collect_events(map_openai_chat_sse(
@@ -377,7 +377,7 @@ async fn map_anthropic_events(events: &[Value]) -> String {
         .iter()
         .map(|event| format!("data: {event}\n\n"))
         .collect::<String>();
-    let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(stream))]);
+    let upstream = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::from(stream))]);
     collect_events(map_anthropic_sse(
         upstream,
         json!({}),
@@ -460,7 +460,7 @@ async fn preserves_baidu_unsigned_thinking_only_for_the_same_model() {
         .iter()
         .map(|event| format!("data: {event}\n\n"))
         .collect::<String>();
-    let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(stream))]);
+    let upstream = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::from(stream))]);
     let body = collect_events(map_anthropic_sse_with_image_routes(
         upstream,
         json!({"model":"Claude Sonnet 4.6-baidu-oneapi"}),
@@ -687,7 +687,7 @@ async fn map_openai_tool_call(tool_call: Value, tool_names: ToolNameMap) -> Stri
             "finish_reason": "tool_calls"
         }]
     });
-    let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(format!(
+    let upstream = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::from(format!(
         "data: {chunk}\n\ndata: [DONE]\n\n"
     )))]);
     collect_events(map_openai_chat_sse(upstream, json!({}), tool_names)).await
@@ -1001,7 +1001,7 @@ async fn rejects_anthropic_tool_calls_missing_id_or_name() {
             "content_block": content_block
         });
         let stop = json!({"type":"content_block_stop","index":0});
-        let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(format!(
+        let upstream = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::from(format!(
             "data: {start}\n\ndata: {stop}\n\ndata: {{\"type\":\"message_stop\"}}\n\n"
         )))]);
         let body = collect_events(map_anthropic_sse(
@@ -1037,7 +1037,7 @@ async fn preserves_usage_from_anthropic_message_start() {
         .into_iter()
         .map(|event| format!("data: {event}\n\n"))
         .collect::<String>();
-    let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(stream))]);
+    let upstream = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::from(stream))]);
     let body = collect_events(map_anthropic_sse(
         upstream,
         json!({}),
@@ -1071,7 +1071,7 @@ async fn updates_usage_from_anthropic_message_delta() {
         .into_iter()
         .map(|event| format!("data: {event}\n\n"))
         .collect::<String>();
-    let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(stream))]);
+    let upstream = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::from(stream))]);
     let body = collect_events(map_anthropic_sse_with_image_routes(
         upstream,
         json!({"model":"gpt-5.6-sol"}),
@@ -1111,7 +1111,7 @@ async fn maps_anthropic_server_web_search_lifecycle() {
         .into_iter()
         .map(|event| format!("data: {event}\n\n"))
         .collect::<String>();
-    let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(stream))]);
+    let upstream = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::from(stream))]);
     let body = collect_events(map_anthropic_sse(
         upstream,
         json!({"model":"Claude Sonnet 5"}),
@@ -1254,7 +1254,7 @@ async fn rejects_reused_web_search_result_index_after_block_stop() {
         .into_iter()
         .map(|event| format!("data: {event}\n\n"))
         .collect::<String>();
-    let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(stream))]);
+    let upstream = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::from(stream))]);
 
     let body = collect_events(map_anthropic_sse(
         upstream,
@@ -1284,7 +1284,7 @@ async fn infers_omitted_web_search_tool_use_id_when_unambiguous() {
         .into_iter()
         .map(|event| format!("data: {event}\n\n"))
         .collect::<String>();
-    let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(stream))]);
+    let upstream = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::from(stream))]);
     let body = collect_events(map_anthropic_sse(
         upstream,
         json!({"model":"Claude Haiku 4.5"}),
@@ -1336,7 +1336,7 @@ async fn rejects_web_search_without_result_block() {
         .into_iter()
         .map(|event| format!("data: {event}\n\n"))
         .collect::<String>();
-    let upstream = futures_util::stream::iter([Ok::<_, reqwest::Error>(Bytes::from(stream))]);
+    let upstream = futures_util::stream::iter([Ok::<_, std::io::Error>(Bytes::from(stream))]);
     let body = collect_events(map_anthropic_sse(
         upstream,
         json!({}),

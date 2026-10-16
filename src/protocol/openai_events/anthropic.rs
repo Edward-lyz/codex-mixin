@@ -4,18 +4,19 @@ use crate::protocol::convert::{
     encode_anthropic_redacted_thinking, encode_anthropic_thinking, encode_baidu_unsigned_thinking,
 };
 
-pub fn map_anthropic_sse<S>(
+pub fn map_anthropic_sse<S, E>(
     upstream: S,
     original_request: Value,
     tool_names: ToolNameMap,
 ) -> impl Stream<Item = Result<Bytes, Infallible>>
 where
-    S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: std::fmt::Display,
 {
     map_anthropic_sse_with_image_routes(upstream, original_request, tool_names, None, false)
 }
 
-pub(crate) fn map_anthropic_sse_with_image_routes<S>(
+pub(crate) fn map_anthropic_sse_with_image_routes<S, E>(
     upstream: S,
     original_request: Value,
     tool_names: ToolNameMap,
@@ -23,7 +24,8 @@ pub(crate) fn map_anthropic_sse_with_image_routes<S>(
     baidu_oneapi_usage: bool,
 ) -> impl Stream<Item = Result<Bytes, Infallible>>
 where
-    S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: std::fmt::Display,
 {
     stream! {
         let replay_model = original_request

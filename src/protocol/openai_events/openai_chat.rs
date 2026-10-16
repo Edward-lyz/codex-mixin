@@ -1,25 +1,27 @@
 use super::state::{AssistantMessagePhase, MapperState};
 use super::*;
 
-pub fn map_openai_chat_sse<S>(
+pub fn map_openai_chat_sse<S, E>(
     upstream: S,
     original_request: Value,
     tool_names: ToolNameMap,
 ) -> impl Stream<Item = Result<Bytes, Infallible>>
 where
-    S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: std::fmt::Display,
 {
     map_openai_chat_sse_with_image_routes(upstream, original_request, tool_names, None)
 }
 
-pub(crate) fn map_openai_chat_sse_with_image_routes<S>(
+pub(crate) fn map_openai_chat_sse_with_image_routes<S, E>(
     upstream: S,
     original_request: Value,
     tool_names: ToolNameMap,
     image_routes: Option<ImageRouteRegistry>,
 ) -> impl Stream<Item = Result<Bytes, Infallible>>
 where
-    S: Stream<Item = Result<Bytes, reqwest::Error>> + Send + 'static,
+    S: Stream<Item = Result<Bytes, E>> + Send + 'static,
+    E: std::fmt::Display,
 {
     stream! {
         let mut state = MapperState::new(original_request, tool_names);
