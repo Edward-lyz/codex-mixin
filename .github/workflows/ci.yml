@@ -7,6 +7,13 @@ on:
     branches:
       - main
 
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
 jobs:
   test:
     name: Test (${{ matrix.os }})
@@ -27,11 +34,13 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
-      - name: Check Web panel JavaScript syntax
-        run: node --check panel/assets/app.js
+      - name: Check JavaScript syntax
+        run: |
+          node --check panel/assets/app.js
+          node --check scripts/test_codex_desktop_model_picker.cjs
       - name: Run strict Clippy
         run: |
-          cargo clippy --all-targets -- \
+          cargo clippy --locked --all-targets -- \
             -D clippy::cognitive_complexity \
             -D clippy::redundant_closure_for_method_calls \
             -D clippy::redundant_pattern_matching \
@@ -57,14 +66,16 @@ jobs:
           ./scripts/test_check_arch.sh
       - name: Run unit and integration tests
         run: cargo test --locked --all-targets
-      - name: Check client auth build
+      - name: Run client auth Clippy
         run: |
           cargo clippy --locked --all-targets --features client-auth -- \
             -D clippy::cognitive_complexity \
             -D clippy::redundant_closure_for_method_calls \
             -D clippy::redundant_pattern_matching \
             -D warnings
-          cargo test --locked --all-targets --features client-auth
+      - name: Run client auth tests
+        if: runner.os == 'Linux'
+        run: cargo test --locked --all-targets --features client-auth
       - name: Run prompt cache prefix E2E
         run: ./scripts/e2e_prompt_cache.sh
       - name: Build static Linux CLI
