@@ -4,17 +4,8 @@
 use std::path::Path;
 
 use anyhow::Context;
-use serde::Serialize;
 
-use crate::clients;
-
-#[derive(Clone, Debug, Serialize)]
-pub struct IntegrationStatus {
-    pub state: &'static str,
-    pub mode: Option<&'static str>,
-    pub detail: &'static str,
-    pub error: Option<String>,
-}
+use crate::clients::{self, IntegrationStatus};
 
 pub fn agent_name(id: &str) -> anyhow::Result<&'static str> {
     match id {

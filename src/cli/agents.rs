@@ -75,7 +75,7 @@ fn snapshot(id: &str) -> anyhow::Result<Value> {
     let integration = match integration_paths(id) {
         Ok((path, key)) if is_legacy(id) => integration_status(id, &path, key.as_deref())?,
         Ok((path, _)) => codex_mixin::clients::frameworks::status(id, &path)?,
-        Err(error) => codex_mixin::application::agents::IntegrationStatus {
+        Err(error) => codex_mixin::clients::IntegrationStatus {
             state: "error",
             mode: None,
             detail: "Cannot resolve agent configuration paths.",

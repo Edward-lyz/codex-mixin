@@ -2,7 +2,7 @@
 //! restrictions are explicit capabilities, never successful placeholder writes.
 use std::path::{Path, PathBuf};
 
-use crate::application::agents::IntegrationStatus;
+use crate::clients::IntegrationStatus;
 use serde_json::{Value, json};
 
 mod dotenv;
@@ -248,20 +248,4 @@ fn pi_models(models: &[FrameworkModel], base: &str) -> Value {
         })
         .collect();
     json!(entries)
-}
-
-#[cfg(test)]
-mod tests {
-    use super::*;
-    #[test]
-    fn registry_covers_all_new_fixed_magpie_agents() {
-        for id in crate::application::agent_versions::AGENT_VERSION_IDS {
-            if ["codex", "claude", "claude-desktop", "dsh", "opencode", "pi"].contains(&id) {
-                continue;
-            }
-            assert!(name(id).is_ok(), "{id}");
-        }
-        assert!(name("../../escape").is_err());
-        assert!(require_supported("gemini").is_err());
-    }
 }

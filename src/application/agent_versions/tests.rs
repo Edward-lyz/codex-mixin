@@ -371,6 +371,19 @@ fn every_listed_agent_has_a_spec() {
 }
 
 #[test]
+fn framework_registry_covers_listed_agents() {
+    use crate::clients::frameworks::{name, require_supported};
+    for id in AGENT_VERSION_IDS {
+        if ["codex", "claude", "claude-desktop", "dsh", "opencode", "pi"].contains(&id) {
+            continue;
+        }
+        assert!(name(id).is_ok(), "{id}");
+    }
+    assert!(name("../../escape").is_err());
+    assert!(require_supported("gemini").is_err());
+}
+
+#[test]
 fn discover_rejects_unknown_agent_ids() {
     let error = discover_agent("not-an-agent").unwrap_err();
     assert!(format!("{error:#}").contains("unknown agent id"));

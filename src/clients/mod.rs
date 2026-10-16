@@ -11,3 +11,12 @@ pub mod files;
 pub mod frameworks;
 pub mod opencode;
 pub mod pi;
+
+/// Connection state of one agent integration, shared by every adapter.
+#[derive(Clone, Debug, serde::Serialize)]
+pub struct IntegrationStatus {
+    pub state: &'static str,
+    pub mode: Option<&'static str>,
+    pub detail: &'static str,
+    pub error: Option<String>,
+}
