@@ -1,16 +1,14 @@
+mod common;
+
 use serde_json::{Value, json};
 
 #[test]
 fn oauth_is_an_add_preset_with_a_bounded_timeout() {
     let directory = tempfile::tempdir().unwrap();
     let invoke = |args: &[&str]| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_codex-mixin"));
-        codex_mixin::platform::set_home_env(&mut command, directory.path());
-        command
+        common::cli(directory.path())
             .arg("--no-tui")
             .args(args)
-            .env("CODEX_HOME", directory.path().join("codex"))
-            .env("CODEX_GATEWAY_CONFIG", directory.path().join("config.json"))
             .output()
             .unwrap()
     };
@@ -49,15 +47,10 @@ fn oauth_is_an_add_preset_with_a_bounded_timeout() {
     assert_eq!(official["auth_mode"], "local_oauth");
     assert_eq!(official["api_key_required"], false);
 }
-use std::process::Command;
-
 fn query(directory: &std::path::Path, args: &[&str]) -> Value {
-    let mut command = Command::new(env!("CARGO_BIN_EXE_codex-mixin"));
-    codex_mixin::platform::set_home_env(&mut command, directory);
-    let output = command
+    let output = common::cli(directory)
         .args(["--no-tui"])
         .args(args)
-        .env("CODEX_HOME", directory.join("codex"))
         .env("CODEX_GATEWAY_CONFIG", directory.join("mixin/config.json"))
         .env("PATH", "")
         .output()

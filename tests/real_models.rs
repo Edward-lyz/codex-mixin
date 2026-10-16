@@ -3,6 +3,8 @@ use std::fs;
 use std::path::PathBuf;
 use std::time::{Duration, Instant};
 
+mod common;
+
 use axum::Router;
 use codex_mixin::config::GatewayConfig;
 use codex_mixin::gateway_access::CODEX_CLIENT_KEY_HEADER;
@@ -429,7 +431,7 @@ async fn claude_desktop_can_stream_a_real_selected_model() {
     save_stored_config_to_path(&config_path, &stored).unwrap();
     // DUCX launches current_exe as its auth carrier, so exercise the real CLI
     // process with isolated client configs rather than the Rust test binary.
-    let mut command = tokio::process::Command::new(env!("CARGO_BIN_EXE_codex-mixin"));
+    let mut command = common::tokio_cli(directory.path());
     codex_mixin::platform::set_tokio_home_env(&mut command, &home);
     let mut child = command
         .args(["start", "--bind", "127.0.0.1:0"])

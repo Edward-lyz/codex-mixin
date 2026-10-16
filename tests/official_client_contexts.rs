@@ -10,6 +10,8 @@ use codex_mixin::config::{
 use codex_mixin::provider::custom_provider;
 use serde_json::{Value, json};
 
+mod common;
+
 #[tokio::test]
 async fn official_contexts_reach_clients() {
     let directory = tempfile::tempdir().unwrap();
@@ -47,24 +49,12 @@ async fn official_contexts_reach_clients() {
     // Claude Desktop connect restarts a real gateway, which refreshes the
     // official catalog. Block outbound HTTP so the fixture catalog survives.
     let mixin = |args: &[&str]| {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_codex-mixin"));
-        codex_mixin::platform::set_tokio_home_env(&mut command, &directory.path().join("home"));
+        let mut command = common::tokio_cli(directory.path());
         command
             .kill_on_drop(true)
             .args(args)
             .env("CODEX_GATEWAY_CONFIG", &config_path)
-            .env("CODEX_HOME", &codex_home)
-            .env(
-                "CODEX_GATEWAY_RUNTIME_FILE",
-                directory.path().join("runtime.json"),
-            )
-            .env(
-                "CODEX_GATEWAY_DAEMON_FILE",
-                directory.path().join("daemon.json"),
-            )
-            .env("HTTP_PROXY", "http://127.0.0.1:9")
-            .env("HTTPS_PROXY", "http://127.0.0.1:9")
-            .env("NO_PROXY", "127.0.0.1,localhost");
+            .env("CODEX_HOME", &codex_home);
         command
     };
     for context in [Some(1_000_000), Some(512_000), None] {

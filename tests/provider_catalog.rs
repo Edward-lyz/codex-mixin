@@ -1,11 +1,12 @@
-use std::process::Command;
+mod common;
 
 use codex_mixin::provider::ProviderPreset;
 use serde_json::Value;
 
 #[test]
 fn interface_exposes_provider_catalog() {
-    let output = Command::new(env!("CARGO_BIN_EXE_codex-mixin"))
+    let directory = tempfile::tempdir().unwrap();
+    let output = common::cli(directory.path())
         .args(["--no-tui", "interface", "--json"])
         .output()
         .unwrap();

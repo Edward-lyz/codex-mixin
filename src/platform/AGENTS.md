@@ -6,6 +6,7 @@
 - 使用现有具体 API；新增 API 说明调用方、资源所有者、支持平台与失败语义，不引入通用命令执行服务。
 - 子进程参数使用数组并检查退出码；限制等待时间，清理拥有的进程树，不杀无关进程。
 - 文件私有权限、锁和可执行位按各平台实现；路径含空格/非 ASCII 也能正确处理。
+- 系统服务身份对 OS 用户全局；隔离实例（测试、沙箱）设置 `CODEX_GATEWAY_SERVICE_ID` 派生独立的 launchd label、systemd unit 和 Windows 任务名，未设置时保持默认身份。
 - 不支持的平台明确返回 unavailable/error；未知系统状态不能用成功默认值替代。
 - 阻塞 API 明确说明，async 调用方移到 blocking worker；适配层不拥有 provider/GUI 业务。
 - 运行 `cargo test --locked --test platform_neutral_core`、平台单测和根级门禁；未实际验证的平台列为限制，交由对应 CI 验证。

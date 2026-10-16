@@ -1,3 +1,5 @@
+mod common;
+
 use codex_mixin::provider::{
     ProviderModel, ProviderModelSource, agy_provider, apply_discovered_models,
 };
@@ -191,7 +193,7 @@ async fn quota_cli_returns_dynamic_rows() {
         };
         let path = directory.path().join("config.json");
         std::fs::write(&path, serde_json::to_vec(&config).unwrap()).unwrap();
-        let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_codex-mixin"));
+        let mut command = common::cli(directory.path());
         codex_mixin::platform::set_home_env(&mut command, directory.path());
         // Windows needs its system ACL tool even when AGY CLI is absent.
         #[cfg(windows)]
@@ -242,7 +244,7 @@ fn failed_refresh_retains_catalog() {
     std::fs::write(&config_path, serde_json::to_vec(&config).unwrap()).unwrap();
     let mut paths = vec![directory.path().to_path_buf()];
     paths.extend(std::env::split_paths(&std::env::var_os("PATH").unwrap()));
-    let mut command = std::process::Command::new(env!("CARGO_BIN_EXE_codex-mixin"));
+    let mut command = common::cli(directory.path());
     codex_mixin::platform::set_home_env(&mut command, directory.path());
     let output = command
         .args(["--no-tui", "providers", "discover", "agy"])

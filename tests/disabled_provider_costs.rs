@@ -2,7 +2,6 @@
 //! discovering its models may not trigger automatic capability probes.
 
 use std::net::SocketAddr;
-use std::process::Command;
 use std::sync::Arc;
 use std::sync::atomic::{AtomicUsize, Ordering};
 
@@ -13,6 +12,8 @@ use codex_mixin::provider::{
     CONFIG_VERSION, ProviderDefinition, ProviderModel, custom_provider, openrouter_provider,
 };
 use serde_json::json;
+
+mod common;
 
 #[tokio::test(flavor = "multi_thread")]
 async fn selection_syncs_without_probes() {
@@ -64,7 +65,7 @@ async fn selection_syncs_without_probes() {
     )
     .unwrap();
     for selected in [Some("new-expensive-model"), Some("old-model"), None] {
-        let mut command = Command::new(env!("CARGO_BIN_EXE_codex-mixin"));
+        let mut command = common::cli(directory.path());
         command
             .args(["--no-tui", "providers", "select", "openrouter"])
             .env("CODEX_GATEWAY_CONFIG", &config_path)
@@ -150,26 +151,14 @@ async fn paid_requests_after(mut provider: ProviderDefinition, commands: &[&[&st
     )
     .unwrap();
     for args in commands {
-        let binary = env!("CARGO_BIN_EXE_codex-mixin");
-        let config = config_path.clone();
-        let codex_home = directory.path().join("codex");
-        let home = directory.path().join("home");
-        let args = args
-            .iter()
-            .map(|value| (*value).to_owned())
-            .collect::<Vec<_>>();
-        let output = tokio::task::spawn_blocking(move || {
-            Command::new(binary)
-                .arg("--no-tui")
-                .args(&args)
-                .env("CODEX_GATEWAY_CONFIG", config)
-                .env("CODEX_HOME", codex_home)
-                .env("HOME", home)
-                .output()
-                .unwrap()
-        })
-        .await
-        .unwrap();
+        let mut command = common::cli(directory.path());
+        command
+            .arg("--no-tui")
+            .args(args.iter())
+            .env("CODEX_GATEWAY_CONFIG", &config_path);
+        let output = tokio::task::spawn_blocking(move || command.output().unwrap())
+            .await
+            .unwrap();
         assert!(
             output.status.success(),
             "{}",
@@ -256,26 +245,14 @@ async fn disabled_provider_models_are_never_probed_automatically() {
             "new-expensive-model",
         ][..],
     ] {
-        let binary = env!("CARGO_BIN_EXE_codex-mixin");
-        let config = config_path.clone();
-        let codex_home = directory.path().join("codex");
-        let home = directory.path().join("home");
-        let args = args
-            .iter()
-            .map(|value| (*value).to_owned())
-            .collect::<Vec<_>>();
-        let output = tokio::task::spawn_blocking(move || {
-            Command::new(binary)
-                .arg("--no-tui")
-                .args(&args)
-                .env("CODEX_GATEWAY_CONFIG", config)
-                .env("CODEX_HOME", codex_home)
-                .env("HOME", home)
-                .output()
-                .unwrap()
-        })
-        .await
-        .unwrap();
+        let mut command = common::cli(directory.path());
+        command
+            .arg("--no-tui")
+            .args(args.iter())
+            .env("CODEX_GATEWAY_CONFIG", &config_path);
+        let output = tokio::task::spawn_blocking(move || command.output().unwrap())
+            .await
+            .unwrap();
         assert!(
             output.status.success(),
             "{}",

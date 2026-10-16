@@ -1,8 +1,9 @@
 use std::fs;
-use std::process::Command;
 
 use codex_mixin::config::{StoredGatewayConfig, save_stored_config_to_path};
 use codex_mixin::provider::{CONFIG_VERSION, ProviderModel, ProviderModelSource, custom_provider};
+
+mod common;
 
 #[test]
 fn info_and_provider_list_ignore_corrupted_managed_client_config() {
@@ -37,7 +38,7 @@ fn info_and_provider_list_ignore_corrupted_managed_client_config() {
         &["info", "--json"][..],
         &["providers", "list", "--json"][..],
     ] {
-        let output = Command::new(env!("CARGO_BIN_EXE_codex-mixin"))
+        let output = common::cli(directory.path())
             .args(args)
             .env("CODEX_GATEWAY_CONFIG", &config_path)
             .env("CODEX_HOME", &codex_home)

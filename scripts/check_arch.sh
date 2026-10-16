@@ -57,6 +57,7 @@ check_paths "core" "${CORE[@]}"
 check_paths "protocol" "${PROTO_CONVERT[@]}"
 check_paths "lower" "${LOWER[@]}"
 check_paths "shell" "${SHELLS[@]}"
+check_paths "test helper" tests/common/mod.rs
 check_no_match "core must not reference crate::server" 'crate::server' "${CORE[@]}"
 check_no_match "core must not reference crate::cli" 'crate::cli\b' "${CORE[@]}"
 check_no_match "core must not reference AppState" '\bAppState\b' "${CORE[@]}"
@@ -82,6 +83,14 @@ check_no_match "core must not reference concrete shells" 'crate::(tui|panel)\b|p
     src/fusion src/catalog.rs src/catalog src/config.rs src/config src/benchmark \
     src/web_search src/images src/clients src/server src/cli
 check_no_match "panel shell must not reach CLI internals" 'crate::cli\b|super::super::cli' panel
+
+# Tests that run the real binary must use the hermetic launcher; a bare
+# spawn would stop the developer's real gateway through the shared service.
+check_no_match "tests must spawn codex-mixin through tests/common" 'CARGO_BIN_EXE' --glob '*.rs' --glob '!tests/common/**' tests
+if ! rg -q 'CODEX_GATEWAY_SERVICE_ID' tests/common/mod.rs; then
+    echo "ARCH FAIL: tests/common/mod.rs must set CODEX_GATEWAY_SERVICE_ID"
+    fail=1
+fi
 
 if [ "$fail" -ne 0 ]; then
     echo "architecture boundary check failed"

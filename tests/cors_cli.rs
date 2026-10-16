@@ -1,20 +1,19 @@
 use std::path::Path;
-use std::process::{Command, Output};
+use std::process::Output;
 
 use codex_mixin::config::{
     StoredGatewayConfig, load_stored_config_from_path, save_stored_config_to_path,
 };
 use serde_json::Value;
 
+mod common;
+
 const ORIGIN: &str = "http://10.252.145.171:8723";
 
 fn cli(directory: &Path, args: &[&str]) -> Output {
-    Command::new(env!("CARGO_BIN_EXE_codex-mixin"))
+    common::cli(directory)
         .args(["--no-tui", "--json-errors"])
         .args(args)
-        .env("HOME", directory.join("home"))
-        .env("CODEX_HOME", directory.join("codex"))
-        .env("CODEX_GATEWAY_CONFIG", directory.join("config.json"))
         .output()
         .unwrap()
 }

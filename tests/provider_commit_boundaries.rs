@@ -1,14 +1,15 @@
 use std::fs;
-use std::process::Command;
 
 use codex_mixin::config::load_stored_config_from_path;
+
+mod common;
 
 fn add_provider_with_blocked_cache(cache_name: &str) {
     let directory = tempfile::tempdir().unwrap();
     let config_path = directory.path().join("gateway.json");
     fs::create_dir(directory.path().join(cache_name)).unwrap();
 
-    let output = Command::new(env!("CARGO_BIN_EXE_codex-mixin"))
+    let output = common::cli(directory.path())
         .args([
             "providers",
             "add",

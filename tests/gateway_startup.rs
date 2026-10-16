@@ -10,6 +10,8 @@ use codex_mixin::provider::{
 };
 use serde::Deserialize;
 
+mod common;
+
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 
 #[derive(Deserialize)]
@@ -99,7 +101,7 @@ async fn startup_does_not_wait_for_official_catalog_network() {
     .unwrap();
 
     let proxy_url = format!("http://{proxy_address}");
-    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_codex-mixin"))
+    let mut child = common::tokio_cli(directory.path())
         .arg("start")
         .env("CODEX_GATEWAY_CONFIG", &gateway_config_path)
         .env("CODEX_GATEWAY_RUNTIME_FILE", &runtime_path)
@@ -194,7 +196,7 @@ async fn first_start_accepts_client_key_created_during_client_sync() {
     )
     .unwrap();
 
-    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_codex-mixin"))
+    let mut child = common::tokio_cli(directory.path())
         .args(["start", "--bind", "127.0.0.1:0"])
         .env("CODEX_GATEWAY_CONFIG", &gateway_config_path)
         .env("CODEX_GATEWAY_RUNTIME_FILE", &runtime_path)
@@ -267,7 +269,7 @@ async fn running_gateway_serves_a_rotated_client_key() {
     };
     save_stored_config_to_path(&gateway_config_path, &stored_config("rotation-before")).unwrap();
 
-    let mut child = tokio::process::Command::new(env!("CARGO_BIN_EXE_codex-mixin"))
+    let mut child = common::tokio_cli(directory.path())
         .args(["start", "--bind", "127.0.0.1:0"])
         .env("CODEX_GATEWAY_CONFIG", &gateway_config_path)
         .env("CODEX_GATEWAY_RUNTIME_FILE", &runtime_path)
