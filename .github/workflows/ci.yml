@@ -107,17 +107,3 @@ jobs:
       - name: Run macOS Swift tests
         if: runner.os == 'macOS'
         run: ./scripts/test_macos.sh
-      - name: Package macOS development app
-        if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch'
-        run: |
-          test "$(uname -m)" = "arm64"
-          ditto -c -k --sequesterRsrc --keepParent \
-            "dist/Codex Mixin.app" \
-            "dist/codex-mixin-main-macos-arm64.zip"
-      - name: Upload macOS development app
-        if: runner.os == 'macOS' && github.event_name == 'workflow_dispatch'
-        uses: actions/upload-artifact@v7
-        with:
-          name: codex-mixin-main-macos-arm64-${{ github.sha }}
-          path: dist/codex-mixin-main-macos-arm64.zip
-          if-no-files-found: error

@@ -15,231 +15,41 @@ permissions:
   contents: write
 
 jobs:
-  build:
-    name: Build ${{ matrix.name }}
-    runs-on: ${{ matrix.runner }}
-    strategy:
-      fail-fast: false
-      matrix:
-        include:
-          - name: linux-x86_64
-            os: linux
-            runner: ubuntu-latest
-            target: x86_64-unknown-linux-musl
-            deb_arch: amd64
-          - name: linux-aarch64
-            os: linux
-            runner: ubuntu-24.04-arm
-            target: aarch64-unknown-linux-musl
-            deb_arch: arm64
-          - name: macos-x86_64
-            os: macos
-            runner: macos-26-intel
-            target: x86_64-apple-darwin
-          - name: macos-aarch64
-            os: macos
-            runner: macos-26
-            target: aarch64-apple-darwin
-
+  version:
+    name: Resolve version
+    runs-on: ubuntu-latest
+    outputs:
+      tag: ${{ steps.version.outputs.tag }}
+      version: ${{ steps.version.outputs.version }}
     steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          targets: ${{ matrix.target }}
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: ${{ matrix.target }}
-      - name: Install musl linker
-        if: matrix.os == 'linux'
-        run: |
-          sudo apt-get update
-          sudo apt-get install --yes musl-tools
-      - name: Resolve version
-        id: version
+      - id: version
         shell: bash
+        env:
+          INPUT_TAG: ${{ inputs.tag }}
         run: |
           if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            tag="${{ inputs.tag }}"
+            tag="$INPUT_TAG"
           else
             tag="${GITHUB_REF_NAME}"
           fi
           echo "tag=$tag" >>"$GITHUB_OUTPUT"
           echo "version=${tag#v}" >>"$GITHUB_OUTPUT"
-      - name: Build CLI
-        run: |
-          if [[ "${{ matrix.os }}" == "linux" ]]; then
-            export CARGO_TARGET_X86_64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
-            export CARGO_TARGET_AARCH64_UNKNOWN_LINUX_MUSL_LINKER=musl-gcc
-            export CC_x86_64_unknown_linux_musl=musl-gcc
-            export CC_aarch64_unknown_linux_musl=musl-gcc
-          fi
-          cargo build --locked --release --target "${{ matrix.target }}"
-      - name: Verify static Linux CLI
-        if: matrix.os == 'linux'
-        run: ./scripts/verify-linux-static.sh "target/${{ matrix.target }}/release/codex-mixin"
-      - name: Select Xcode 26.6
-        if: matrix.os == 'macos'
-        shell: bash
-        run: |
-          xcode_path=/Applications/Xcode_26.6.app/Contents/Developer
-          if [[ ! -d "$xcode_path" ]]; then
-            echo "required Xcode is missing: $xcode_path" >&2
-            exit 1
-          fi
-          sudo xcode-select --switch "$xcode_path"
-          xcode_version="$(xcodebuild -version)"
-          if [[ "${xcode_version%%$'\n'*}" != "Xcode 26.6" ]]; then
-            echo "failed to select Xcode 26.6" >&2
-            echo "$xcode_version" >&2
-            exit 1
-          fi
-      - name: Build macOS app
-        if: matrix.os == 'macos'
-        env:
-          CARGO_BUILD_TARGET: ${{ matrix.target }}
-          MACOSX_DEPLOYMENT_TARGET: "13.1"
-          CODEX_MIXIN_REFRESH_NASA_WALLPAPERS: "1"
-          CODEX_MIXIN_REQUIRE_ADAPTIVE_ICON: "1"
-        run: ./macos/build_app.sh
-      - name: Verify macOS application icons
-        if: matrix.os == 'macos'
-        run: ./scripts/verify_macos_app_icon.sh --require-adaptive
-      - name: Verify macOS SDK and Liquid Glass
-        if: matrix.os == 'macos'
-        shell: bash
-        run: |
-          menu_binary="dist/Codex Mixin.app/Contents/MacOS/CodexMixinMenu"
-          sdk_version="$(xcrun vtool -show-build "$menu_binary" | awk '$1 == "sdk" { print $2; exit }')"
-          if [[ "${sdk_version%%.*}" != "26" ]]; then
-            echo "expected macOS SDK 26, got ${sdk_version:-missing}" >&2
-            exit 1
-          fi
-          symbols="$(nm -u "$menu_binary")"
-          if [[ "$symbols" != *"GlassProminentButtonStyle"* ]]; then
-            echo "Liquid Glass button style is missing from the macOS app" >&2
-            exit 1
-          fi
-      - name: Package CLI archive
-        run: ./scripts/package-cli.sh "${{ matrix.target }}" "${{ steps.version.outputs.version }}" dist/release
-      - name: Package Linux installer
-        if: matrix.os == 'linux'
-        run: ./scripts/package-linux-deb.sh "${{ matrix.target }}" "${{ matrix.deb_arch }}" "${{ steps.version.outputs.version }}" dist/release
-      - name: Package macOS installer
-        if: matrix.os == 'macos'
-        run: ./scripts/package-macos-dmg.sh "${{ matrix.target }}" "${{ steps.version.outputs.version }}" dist/release
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: codex-mixin-${{ matrix.name }}
-          path: dist/release/*
-          if-no-files-found: error
 
-  build-windows:
-    name: Build windows-x86_64
-    runs-on: windows-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@v2
-        with:
-          key: x86_64-pc-windows-msvc
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: '10.0.x'
-      - name: Install NSIS
-        shell: pwsh
-        run: choco install nsis -y --no-progress
-      - name: Resolve version
-        id: version
-        shell: pwsh
-        run: |
-          if ('${{ github.event_name }}' -eq 'workflow_dispatch') {
-            $tag = '${{ inputs.tag }}'
-          } else {
-            $tag = '${{ github.ref_name }}'
-          }
-          "version=$($tag.TrimStart('v'))" >> $env:GITHUB_OUTPUT
-      - name: Build, test, package, and optionally sign
-        shell: pwsh
-        env:
-          WINDOWS_CERT_PFX_BASE64: ${{ secrets.WINDOWS_CERT_PFX_BASE64 }}
-          WINDOWS_CERT_PASSWORD: ${{ secrets.WINDOWS_CERT_PASSWORD }}
-        run: |
-          $version = '${{ steps.version.outputs.version }}'
-          $output = "dist\release\codex-mixin-$version-windows-x86_64"
-          $installer = "dist\release\codex-mixin-$version-windows-x86_64-setup.exe"
-          $portable = "dist\release\codex-mixin-$version-windows-x86_64.zip"
-          $options = @{
-            Output = $output
-            Installer = $installer
-            PortableArchive = $portable
-            Version = $version
-          }
-          $pfx = $null
-          if ($env:WINDOWS_CERT_PFX_BASE64) {
-            $pfx = Join-Path $env:RUNNER_TEMP 'codex-mixin.pfx'
-            [System.IO.File]::WriteAllBytes($pfx, [Convert]::FromBase64String($env:WINDOWS_CERT_PFX_BASE64))
-            $options.Sign = $true
-            $options.CertificatePath = $pfx
-            $options.CertificatePassword = $env:WINDOWS_CERT_PASSWORD
-          }
-          try {
-            & windows/scripts/package-windows.ps1 @options
-          } finally {
-            if ($pfx) { Remove-Item $pfx -Force -ErrorAction SilentlyContinue }
-          }
-      - name: Package standalone Windows CLI
-        shell: pwsh
-        run: |
-          $version = '${{ steps.version.outputs.version }}'
-          $name = "codex-mixin-cli-$version-x86_64-pc-windows-msvc"
-          $stage = Join-Path $env:RUNNER_TEMP $name
-          New-Item -ItemType Directory -Force -Path $stage | Out-Null
-          Copy-Item "dist/release/codex-mixin-$version-windows-x86_64/codex-mixin.exe" $stage
-          Copy-Item README.md, LICENSE, NOTICE $stage
-          tar -czf "dist/release/$name.tar.gz" -C $env:RUNNER_TEMP $name
-          if ($LASTEXITCODE -ne 0) { throw 'Windows CLI packaging failed' }
-      - name: Verify release artifacts
-        shell: pwsh
-        run: |
-          $version = '${{ steps.version.outputs.version }}'
-          foreach ($path in @(
-            "dist\release\codex-mixin-$version-windows-x86_64-setup.exe",
-            "dist\release\codex-mixin-$version-windows-x86_64.zip"
-          )) {
-            if (-not (Test-Path -LiteralPath $path -PathType Leaf)) {
-              throw "Missing Windows release artifact: $path"
-            }
-          }
-      - name: Upload artifacts
-        uses: actions/upload-artifact@v7
-        with:
-          name: codex-mixin-windows-x86_64
-          path: |
-            dist/release/*.exe
-            dist/release/*.zip
-            dist/release/*.tar.gz
-          if-no-files-found: error
+  build:
+    name: Build
+    needs: version
+    uses: ./.github/workflows/build.yml
+    with:
+      ref: ${{ github.sha }}
+      version: ${{ needs.version.outputs.version }}
+    secrets: inherit
 
   publish:
     name: Publish release
-    needs: [build, build-windows]
+    needs: [version, build]
     runs-on: macos-15
     steps:
       - uses: actions/checkout@v5
-      - name: Resolve release tag
-        id: version
-        shell: bash
-        run: |
-          if [[ "${GITHUB_EVENT_NAME}" == "workflow_dispatch" ]]; then
-            tag="${{ inputs.tag }}"
-          else
-            tag="${GITHUB_REF_NAME}"
-          fi
-          echo "tag=$tag" >>"$GITHUB_OUTPUT"
       - name: Download artifacts
         uses: actions/download-artifact@v8
         with:
@@ -248,7 +58,7 @@ jobs:
       - name: Prepare current release notes
         shell: bash
         run: |
-          tag="${{ steps.version.outputs.tag }}"
+          tag="${{ needs.version.outputs.tag }}"
           # Publish only the current version. The zh-Hans block holds every
           # version, so select the section headed by the release tag and stop
           # at the next version heading.
@@ -307,10 +117,10 @@ jobs:
             cp .current-release-notes.md "$arch_dir/$(basename "${dmg%.dmg}.md")"
             printf '%s' "$SPARKLE_PRIVATE_KEY" | "$sparkle_dir/bin/generate_appcast" \
               --ed-key-file - \
-              --download-url-prefix "https://github.com/Edward-lyz/codex-mixin/releases/download/${{ steps.version.outputs.tag }}/" \
+              --download-url-prefix "https://github.com/Edward-lyz/codex-mixin/releases/download/${{ needs.version.outputs.tag }}/" \
               --embed-release-notes \
               --maximum-deltas 0 \
-              --link "https://github.com/Edward-lyz/codex-mixin/releases/tag/${{ steps.version.outputs.tag }}" \
+              --link "https://github.com/Edward-lyz/codex-mixin/releases/tag/${{ needs.version.outputs.tag }}" \
               -o "$appcast_root/appcast-$arch.xml" \
               "$arch_dir"
             xmllint --noout "$appcast_root/appcast-$arch.xml"
@@ -345,7 +155,7 @@ jobs:
       - name: Publish GitHub release
         uses: softprops/action-gh-release@v3
         with:
-          tag_name: ${{ steps.version.outputs.tag }}
-          name: Codex Mixin ${{ steps.version.outputs.tag }}
+          tag_name: ${{ needs.version.outputs.tag }}
+          name: Codex Mixin ${{ needs.version.outputs.tag }}
           body_path: .current-release-notes.md
           files: dist/release/*
