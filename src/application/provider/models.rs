@@ -8,15 +8,12 @@ use crate::config::{GatewayConfig, mutate_stored_config};
 use crate::provider::capabilities::{ProviderCapabilities, ProviderProbeSummary};
 use crate::provider::{
     AWS_BEDROCK_DEFAULT_REGION, AWS_BEDROCK_RUNTIME_SERVICE, AwsSigV4AuthConfig,
-    ModelDiscoveryChanges, ProviderDefinition, ProviderModel, ProviderModelSource,
-    apply_discovered_models, aws_bedrock_runtime_base_url, discover_provider_models,
+    ProviderDefinition, ProviderModel, ProviderModelSource, aws_bedrock_runtime_base_url,
+    discover_provider_models,
 };
 
 use super::super::error::OperationError;
-use super::{
-    commit_provider_change, provider_for_refresh, provider_mut, require_providers,
-    set_auxiliary_upstream,
-};
+use super::{commit_provider_change, provider_for_refresh, provider_mut, require_providers};
 
 pub fn apply_model_selection(
     provider: &mut ProviderDefinition,
@@ -339,19 +336,4 @@ fn normalize_base_url(value: String) -> anyhow::Result<String> {
         "base URL must start with http:// or https://"
     );
     Ok(value)
-}
-
-pub fn apply_discovered_provider_models(
-    provider: &mut ProviderDefinition,
-    models: Vec<ProviderModel>,
-) -> anyhow::Result<ModelDiscoveryChanges> {
-    apply_discovered_models(provider, models)
-}
-
-pub fn set_provider_auxiliary_model_upstream(
-    id: &str,
-    enabled: bool,
-) -> Result<(), OperationError> {
-    commit_provider_change(|config| set_auxiliary_upstream(config, id, enabled))?;
-    super::invalidate_provider_caches()
 }
