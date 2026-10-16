@@ -629,7 +629,7 @@ fn add_baidu_model(
     let description = capability.model_description;
     let converted = ProviderModel {
         id: id.clone(),
-        display_name: Some(description.clone()),
+        display_name: Some(id.clone()),
         description: Some(description),
         ratio: Some(capability.ratio),
         price_type: Some(model.price_type),
@@ -944,6 +944,24 @@ mod tests {
                 .collect(),
             price_type: "standard".to_owned(),
         }
+    }
+
+    #[test]
+    fn oneapi_names_keep_description_separate() {
+        let mut definition = crate::provider::custom_provider("baidu-oneapi", "secret");
+        definition.base_url = "http://127.0.0.1:1".to_owned();
+        let registry = ProviderRegistry::new(vec![definition]).unwrap();
+        let provider = registry.provider("baidu-oneapi").unwrap();
+        let description =
+            "A detailed marketing description that must not become a model picker label";
+        let mut entry = baidu_model("Opus 5", &[]);
+        entry.capability.as_mut().unwrap().model_description = description.to_owned();
+        let mut models = Vec::new();
+        let mut indices = HashMap::new();
+        add_baidu_model(provider, entry, &mut models, &mut indices);
+        assert_eq!(models[0].id, "Opus 5");
+        assert_eq!(models[0].display_name.as_deref(), Some("Opus 5"));
+        assert_eq!(models[0].description.as_deref(), Some(description));
     }
 
     #[test]

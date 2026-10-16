@@ -187,7 +187,7 @@ fn claude_picker_model(model: &str, context_window: Option<u64>) -> String {
 }
 
 fn claude_picker_label<'a>(provider: &ProviderDefinition, model: &'a ProviderModel) -> &'a str {
-    if provider.preset_id.as_deref() == Some("baidu-oneapi") {
+    if provider.model_source == codex_mixin::provider::ProviderModelSource::BaiduOneApi {
         return &model.id;
     }
     model.display_name.as_deref().unwrap_or(&model.id)
@@ -375,6 +375,14 @@ mod tests {
         };
 
         assert_eq!(claude_picker_label(&provider, &model), "GLM-5.3");
+        let mut custom_source = provider.clone();
+        custom_source.preset_id = None;
+        assert_eq!(claude_picker_label(&custom_source, &model), "GLM-5.3");
+        custom_source.model_source = codex_mixin::provider::ProviderModelSource::Static;
+        assert_eq!(
+            claude_picker_label(&custom_source, &model),
+            "GLM latest flagship model"
+        );
     }
 
     #[test]

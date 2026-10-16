@@ -263,6 +263,8 @@ async fn connect_framework(id: &str, mode: Option<AgentConnectMode>) -> anyhow::
                         model,
                         &config,
                         provider.protocol,
+                        provider.model_source
+                            == codex_mixin::provider::ProviderModelSource::BaiduOneApi,
                     ));
                 }
             }
@@ -272,6 +274,7 @@ async fn connect_framework(id: &str, mode: Option<AgentConnectMode>) -> anyhow::
                     &model,
                     &config,
                     codex_mixin::provider::ProviderProtocol::OpenAiResponses,
+                    false,
                 ));
             }
             frameworks::install(
@@ -294,16 +297,21 @@ fn framework_model(
     model: &codex_mixin::provider::ProviderModel,
     config: &codex_mixin::config::GatewayConfig,
     protocol: codex_mixin::provider::ProviderProtocol,
+    use_model_id: bool,
 ) -> codex_mixin::clients::frameworks::FrameworkModel {
     let context = model
         .context_window
         .unwrap_or(config.default_context_window);
     codex_mixin::clients::frameworks::FrameworkModel {
         id,
-        name: model
-            .display_name
-            .clone()
-            .unwrap_or_else(|| model.id.clone()),
+        name: if use_model_id {
+            model.id.clone()
+        } else {
+            model
+                .display_name
+                .clone()
+                .unwrap_or_else(|| model.id.clone())
+        },
         context_window: context,
         max_tokens: model
             .max_output_tokens
@@ -333,6 +341,58 @@ fn framework_model(
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn framework_name_ignores_oneapi_marketing_but_keeps_route() {
+        use codex_mixin::config::{GatewayConfig, ThinkingMode};
+        use codex_mixin::provider::{ProviderModel, ProviderProtocol};
+        let config = GatewayConfig {
+            bind: "127.0.0.1:8787".parse().unwrap(),
+            providers: Vec::new(),
+            official_responses_url: "https://example.test/responses".to_owned(),
+            official_ech_proxy: false,
+            official_ech_fallback_reason: None,
+            codex_auth_path: std::path::PathBuf::from("auth.json"),
+            gateway_api_key: None,
+            cors_allowed_origins: codex_mixin::config::StoredGatewayConfig::default()
+                .cors_allowed_origins,
+            gateway_client_keys: Default::default(),
+            accept_codex_oauth: false,
+            official_selected_models: None,
+            default_max_tokens: 8192,
+            default_context_window: 128_000,
+            request_timeout: std::time::Duration::from_secs(30),
+            thinking_mode: ThinkingMode::Auto,
+            enable_web_search_tool: false,
+            web_search_tool_type: "web_search".to_owned(),
+            web_search_max_uses: None,
+            fusion_profiles: Vec::new(),
+        };
+        let model = ProviderModel {
+            id: "Opus 5".to_owned(),
+            display_name: Some("A detailed marketing description".to_owned()),
+            description: Some("Full upstream description".to_owned()),
+            ..ProviderModel::default()
+        };
+        for (use_model_id, expected_name) in [
+            (true, "Opus 5"),
+            (false, "A detailed marketing description"),
+        ] {
+            let framework = framework_model(
+                "Opus 5-baidu".to_owned(),
+                &model,
+                &config,
+                ProviderProtocol::AnthropicMessages,
+                use_model_id,
+            );
+            assert_eq!(framework.id, "Opus 5-baidu");
+            assert_eq!(framework.name, expected_name);
+            assert_eq!(
+                model.description.as_deref(),
+                Some("Full upstream description")
+            );
+        }
+    }
 
     #[test]
     fn codex_requires_explicit_mode_before_any_mutation() {

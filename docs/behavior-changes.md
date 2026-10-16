@@ -90,3 +90,15 @@ provider 以 4xx 拒绝默认预算、并在错误信息中给出更小上限时
   包括手动执行 `provider probe` 与 `web-search probe --force`。以前的探测结果
   仍然生效；百度 OneAPI 的新模型只有在目录声明联网搜索时才启用托管搜索。
 - 其他服务商（自定义、DeepSeek、Bedrock）保持原有探测行为。
+
+## 行为修正：OneAPI 模型名称与说明分离
+
+OneAPI 的 `model_description` 是完整说明，不是模型选择器的短名称。模型发现
+现在把原始模型 ID 保存为 `display_name`，完整说明继续保存在 `description`。
+模型 ID、provider-qualified catalog slug、上下文窗口与能力信息不变。
+
+通用框架接入和 Claude Code 选择器还会按 `model_source` 识别 OneAPI，直接使用
+模型 ID，因此旧缓存里的长说明不会再写入它们的名称字段。其他来源的自定义
+名称不受影响。已安装的框架配置不会仅因更新二进制就被无条件重写；需要
+先执行 `agent disconnect <id>` 再执行 `agent connect <id>` 更新框架名称。
+发现缓存可通过 `provider discover <id>` 更新。
