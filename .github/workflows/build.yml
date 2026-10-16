@@ -1,7 +1,9 @@
 name: Build
 
-# Manual runs always build the latest main. Release calls the same jobs with
-# its tag commit, so packaging logic exists only here.
+# Manual runs build the latest main and publish the installers as a GitHub
+# prerelease tagged main-<sha>. Prereleases never become "Latest", so the
+# Sparkle feed and official releases are untouched. Release calls the same
+# jobs with its tag commit, so packaging logic exists only here.
 on:
   workflow_dispatch:
     inputs:
@@ -17,6 +19,10 @@ on:
           - macos-aarch64
           - macos-x86_64
           - windows-x86_64
+      publish:
+        description: "Publish installers as a prerelease"
+        type: boolean
+        default: true
   workflow_call:
     inputs:
       platform:
@@ -30,6 +36,9 @@ on:
         description: "Package version without the v prefix"
         type: string
         required: true
+      publish:
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -262,3 +271,50 @@ jobs:
             dist/release/*.zip
             dist/release/*.tar.gz
           if-no-files-found: error
+
+  publish:
+    name: Publish prerelease
+    needs: [plan, build, build-windows]
+    # Run when every selected platform succeeded; skipped jobs are the
+    # platforms the user did not select.
+    if: >-
+      always() && inputs.publish &&
+      needs.plan.result == 'success' &&
+      contains(fromJSON('["success","skipped"]'), needs.build.result) &&
+      contains(fromJSON('["success","skipped"]'), needs.build-windows.result)
+    runs-on: ubuntu-latest
+    permissions:
+      contents: write
+    env:
+      REF: ${{ needs.plan.outputs.ref }}
+      VERSION: ${{ needs.plan.outputs.version }}
+    steps:
+      - name: Download artifacts
+        uses: actions/download-artifact@v8
+        with:
+          path: dist/release
+          merge-multiple: true
+      - name: Describe prerelease
+        id: describe
+        shell: bash
+        run: |
+          short="${REF:0:7}"
+          echo "tag=main-$short" >>"$GITHUB_OUTPUT"
+          echo "name=Codex Mixin $VERSION (main $short)" >>"$GITHUB_OUTPUT"
+          {
+            echo "Manual build of \`main\` at $REF."
+            echo
+            echo "This prerelease is for testing. It is not offered through in-app"
+            echo "updates; the latest official release stays unchanged."
+          } > "$RUNNER_TEMP/notes.md"
+      - name: Publish prerelease
+        uses: softprops/action-gh-release@v3
+        with:
+          tag_name: ${{ steps.describe.outputs.tag }}
+          target_commitish: ${{ needs.plan.outputs.ref }}
+          name: ${{ steps.describe.outputs.name }}
+          body_path: ${{ runner.temp }}/notes.md
+          prerelease: true
+          make_latest: false
+          overwrite_files: true
+          files: dist/release/*
