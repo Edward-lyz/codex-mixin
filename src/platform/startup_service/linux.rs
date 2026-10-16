@@ -4,7 +4,7 @@ use std::process::{Command, Output};
 use anyhow::{Context, bail};
 
 use super::definition::{
-    SYSTEMD_UNIT_NAME, render_systemd_unit, systemd_active_state, systemd_enabled_state,
+    render_systemd_unit, systemd_active_state, systemd_enabled_state, systemd_unit_name,
 };
 use super::{StartupServiceSpec, StartupServiceStatus};
 
@@ -15,7 +15,7 @@ fn unit_path() -> anyhow::Result<PathBuf> {
         Some(value) => PathBuf::from(value),
         None => crate::platform::home_dir_required()?.join(".config"),
     };
-    Ok(config_dir.join("systemd/user").join(SYSTEMD_UNIT_NAME))
+    Ok(config_dir.join("systemd/user").join(systemd_unit_name()?))
 }
 
 fn systemctl(args: &[&str]) -> anyhow::Result<Output> {
@@ -40,7 +40,7 @@ fn checked(args: &[&str]) -> anyhow::Result<()> {
 }
 
 fn state(query: &str, classify: fn(&str) -> Option<bool>) -> anyhow::Result<bool> {
-    let output = systemctl(&[query, SYSTEMD_UNIT_NAME])?;
+    let output = systemctl(&[query, &systemd_unit_name()?])?;
     let stdout = String::from_utf8_lossy(&output.stdout);
     classify(&stdout).with_context(|| {
         format!(
@@ -79,11 +79,11 @@ pub(super) fn install(spec: &StartupServiceSpec<'_>) -> anyhow::Result<()> {
     std::fs::rename(&temporary, &path).context("replace gateway systemd unit")?;
     checked(&["daemon-reload"])?;
     // Register for login without starting; starting is a separate intent.
-    checked(&["enable", SYSTEMD_UNIT_NAME])
+    checked(&["enable", &systemd_unit_name()?])
 }
 
 pub(super) fn start() -> anyhow::Result<()> {
-    checked(&["start", SYSTEMD_UNIT_NAME])
+    checked(&["start", &systemd_unit_name()?])
 }
 
 pub(super) fn stop() -> anyhow::Result<()> {
@@ -91,7 +91,7 @@ pub(super) fn stop() -> anyhow::Result<()> {
     if !path.try_exists().context("inspect systemd user unit")? {
         return Ok(());
     }
-    checked(&["stop", SYSTEMD_UNIT_NAME])
+    checked(&["stop", &systemd_unit_name()?])
 }
 
 pub(super) fn remove() -> anyhow::Result<()> {
@@ -99,7 +99,7 @@ pub(super) fn remove() -> anyhow::Result<()> {
     if !path.try_exists().context("inspect systemd user unit")? {
         return Ok(());
     }
-    checked(&["disable", "--now", SYSTEMD_UNIT_NAME])?;
+    checked(&["disable", "--now", &systemd_unit_name()?])?;
     std::fs::remove_file(&path).with_context(|| format!("remove {}", path.display()))?;
     checked(&["daemon-reload"])
 }

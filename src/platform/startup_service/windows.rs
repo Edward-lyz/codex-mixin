@@ -4,8 +4,8 @@ use std::process::{Command, Output};
 use anyhow::{Context, bail};
 
 use super::definition::{
-    WINDOWS_TASK_NAME, WindowsTaskInfo, windows_task_arguments, windows_task_is_current,
-    windows_task_is_running,
+    WindowsTaskInfo, windows_task_arguments, windows_task_is_current, windows_task_is_running,
+    windows_task_name,
 };
 use super::{StartupServiceSpec, StartupServiceStatus};
 
@@ -67,7 +67,7 @@ fn powershell(script: &str, environment: &[(&str, &str)]) -> anyhow::Result<Outp
             "-Command",
             script,
         ])
-        .env("CODEX_MIXIN_TASK_NAME", WINDOWS_TASK_NAME);
+        .env("CODEX_MIXIN_TASK_NAME", windows_task_name()?);
     for (key, value) in environment {
         command.env(key, value);
     }

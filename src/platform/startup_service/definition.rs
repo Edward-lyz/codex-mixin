@@ -7,10 +7,73 @@ use std::path::Path;
 use anyhow::bail;
 use serde::Deserialize;
 
-pub(super) const LAUNCHD_LABEL: &str = "local.codex-mixin.service";
+const LAUNCHD_LABEL: &str = "local.codex-mixin.service";
 pub(super) const LAUNCHD_THROTTLE_SECONDS: i64 = 10;
-pub(super) const SYSTEMD_UNIT_NAME: &str = "codex-mixin.service";
-pub(super) const WINDOWS_TASK_NAME: &str = "Codex Mixin Gateway";
+const SYSTEMD_UNIT_NAME: &str = "codex-mixin.service";
+const WINDOWS_TASK_NAME: &str = "Codex Mixin Gateway";
+
+/// Names an isolated service identity. When set, the launchd label, systemd
+/// unit and Windows task are suffixed with it so an isolated instance (tests,
+/// sandboxes) can never address the user's real startup service. Unset keeps
+/// the default identity.
+pub const SERVICE_ID_ENV: &str = "CODEX_GATEWAY_SERVICE_ID";
+const MAX_SERVICE_ID_LEN: usize = 64;
+
+fn service_id() -> anyhow::Result<Option<String>> {
+    parse_service_id(std::env::var_os(SERVICE_ID_ENV))
+}
+
+fn parse_service_id(raw: Option<std::ffi::OsString>) -> anyhow::Result<Option<String>> {
+    let Some(raw) = raw else {
+        return Ok(None);
+    };
+    let id = raw
+        .into_string()
+        .map_err(|_| anyhow::anyhow!("{SERVICE_ID_ENV} is not valid UTF-8"))?;
+    let valid = !id.is_empty()
+        && id.len() <= MAX_SERVICE_ID_LEN
+        && id
+            .chars()
+            .all(|c| c.is_ascii_alphanumeric() || matches!(c, '-' | '_'));
+    anyhow::ensure!(
+        valid,
+        "{SERVICE_ID_ENV} must be 1-{MAX_SERVICE_ID_LEN} ASCII letters, digits, '-' or '_'"
+    );
+    Ok(Some(id))
+}
+
+fn scoped_launchd_label(id: Option<&str>) -> String {
+    id.map_or_else(
+        || LAUNCHD_LABEL.to_owned(),
+        |id| format!("local.codex-mixin.{id}.service"),
+    )
+}
+
+fn scoped_systemd_unit(id: Option<&str>) -> String {
+    id.map_or_else(
+        || SYSTEMD_UNIT_NAME.to_owned(),
+        |id| format!("codex-mixin-{id}.service"),
+    )
+}
+
+fn scoped_windows_task(id: Option<&str>) -> String {
+    id.map_or_else(
+        || WINDOWS_TASK_NAME.to_owned(),
+        |id| format!("{WINDOWS_TASK_NAME} {id}"),
+    )
+}
+
+pub(super) fn launchd_label() -> anyhow::Result<String> {
+    Ok(scoped_launchd_label(service_id()?.as_deref()))
+}
+
+pub(super) fn systemd_unit_name() -> anyhow::Result<String> {
+    Ok(scoped_systemd_unit(service_id()?.as_deref()))
+}
+
+pub(super) fn windows_task_name() -> anyhow::Result<String> {
+    Ok(scoped_windows_task(service_id()?.as_deref()))
+}
 
 /// Command line of the supervised gateway process.
 #[derive(Clone, Copy, Debug)]
@@ -75,6 +138,7 @@ pub(super) fn render_launchd_plist(
         .map(|argument| format!("    <string>{}</string>\n", xml_escape(argument)))
         .collect::<String>();
     let working_directory = xml_escape(utf8_path("working directory", working_directory)?);
+    let label = launchd_label()?;
     let environment = gateway_environment(spec)?
         .iter()
         .map(|(name, value)| {
@@ -88,7 +152,7 @@ pub(super) fn render_launchd_plist(
         "<?xml version=\"1.0\" encoding=\"UTF-8\"?>\n\
 <!DOCTYPE plist PUBLIC \"-//Apple//DTD PLIST 1.0//EN\" \"http://www.apple.com/DTDs/PropertyList-1.0.dtd\">\n\
 <plist version=\"1.0\">\n<dict>\n\
-  <key>Label</key>\n  <string>{LAUNCHD_LABEL}</string>\n\
+  <key>Label</key>\n  <string>{label}</string>\n\
   <key>ProgramArguments</key>\n  <array>\n{arguments}  </array>\n\
   <key>EnvironmentVariables</key>\n  <dict>\n{environment}  </dict>\n\
   <key>RunAtLoad</key>\n  <true/>\n\
@@ -126,7 +190,7 @@ pub(super) fn launchd_program(
         .all(|(name, value)| plist["EnvironmentVariables"][name].as_str() == Some(*value));
     let matches = arguments_match
         && environment_matches
-        && plist["Label"].as_str() == Some(LAUNCHD_LABEL)
+        && plist["Label"].as_str() == Some(launchd_label()?.as_str())
         && plist["RunAtLoad"].as_bool() == Some(true)
         && plist["KeepAlive"]["SuccessfulExit"].as_bool() == Some(false)
         && plist["ThrottleInterval"].as_i64() == Some(LAUNCHD_THROTTLE_SECONDS)
@@ -272,6 +336,30 @@ mod tests {
     use std::path::PathBuf;
 
     use super::*;
+
+    #[test]
+    fn service_id_scopes_every_platform_identity() {
+        assert_eq!(scoped_launchd_label(None), "local.codex-mixin.service");
+        assert_eq!(scoped_systemd_unit(None), "codex-mixin.service");
+        assert_eq!(scoped_windows_task(None), "Codex Mixin Gateway");
+        let id = Some("test-1_a");
+        assert_eq!(
+            scoped_launchd_label(id),
+            "local.codex-mixin.test-1_a.service"
+        );
+        assert_eq!(scoped_systemd_unit(id), "codex-mixin-test-1_a.service");
+        assert_eq!(scoped_windows_task(id), "Codex Mixin Gateway test-1_a");
+    }
+
+    #[test]
+    fn service_id_rejects_unsafe_values() {
+        let parse = |value: &str| parse_service_id(Some(value.into()));
+        assert_eq!(parse_service_id(None).unwrap(), None);
+        assert_eq!(parse("ok-1_B").unwrap().as_deref(), Some("ok-1_B"));
+        for bad in ["", "a b", "a/b", "a.b", "../x", &"x".repeat(65)] {
+            assert!(parse(bad).is_err(), "{bad:?}");
+        }
+    }
 
     #[test]
     fn startup_preserves_config_paths() {

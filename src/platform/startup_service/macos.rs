@@ -6,7 +6,7 @@ use std::time::Duration;
 use anyhow::{Context, bail};
 use wait_timeout::ChildExt;
 
-use super::definition::{LAUNCHD_LABEL, launchd_program, render_launchd_plist};
+use super::definition::{launchd_label, launchd_program, render_launchd_plist};
 use super::{StartupServiceSpec, StartupServiceStatus};
 
 pub(super) const SUPPORTED: bool = true;
@@ -18,7 +18,7 @@ const MAX_VERSION_OUTPUT_BYTES: u64 = 256;
 fn agent_path() -> anyhow::Result<PathBuf> {
     Ok(crate::platform::home_dir_required()?
         .join("Library/LaunchAgents")
-        .join(format!("{LAUNCHD_LABEL}.plist")))
+        .join(format!("{}.plist", launchd_label()?)))
 }
 
 fn domain() -> anyhow::Result<String> {
@@ -46,7 +46,7 @@ fn stderr(output: &Output) -> String {
 }
 
 fn is_loaded(domain: &str) -> anyhow::Result<bool> {
-    let output = launchctl(&["print", &format!("{domain}/{LAUNCHD_LABEL}")])?;
+    let output = launchctl(&["print", &format!("{domain}/{}", launchd_label()?)])?;
     if output.status.success() {
         return Ok(true);
     }
@@ -139,7 +139,7 @@ pub(super) fn install(spec: &StartupServiceSpec<'_>) -> anyhow::Result<()> {
 pub(super) fn start() -> anyhow::Result<()> {
     let domain = domain()?;
     if is_loaded(&domain)? {
-        let output = launchctl(&["kickstart", &format!("{domain}/{LAUNCHD_LABEL}")])?;
+        let output = launchctl(&["kickstart", &format!("{domain}/{}", launchd_label()?)])?;
         anyhow::ensure!(
             output.status.success(),
             "launchctl kickstart failed: {}",
@@ -175,7 +175,7 @@ pub(super) fn stop() -> anyhow::Result<()> {
     if !is_loaded(&domain)? {
         return Ok(());
     }
-    let output = launchctl(&["bootout", &format!("{domain}/{LAUNCHD_LABEL}")])?;
+    let output = launchctl(&["bootout", &format!("{domain}/{}", launchd_label()?)])?;
     if output.status.success() || !is_loaded(&domain)? {
         return Ok(());
     }

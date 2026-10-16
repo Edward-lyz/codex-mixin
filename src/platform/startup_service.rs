@@ -6,6 +6,11 @@
 //! gateway never adds or removes the definition, so the user's autostart
 //! choice survives restarts, upgrades, and definition migrations.
 //!
+//! Service identity is global to the OS user. An isolated instance (tests,
+//! sandboxes) sets `CODEX_GATEWAY_SERVICE_ID` so its launchd label, systemd
+//! unit and Windows task differ from the real ones and can never stop, start
+//! or remove the user's real gateway. Unset keeps the default identity.
+//!
 //! All functions block on OS tools; async callers must use `spawn_blocking`.
 
 // Each adapter uses its own subset; every renderer is tested on every host.
