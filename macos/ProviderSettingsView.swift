@@ -391,8 +391,6 @@ struct ProviderSettingsRootView: View {
                 .background(Color.clear)
 
             }
-            .background(Color(nsColor: .windowBackgroundColor))
-            .clipShape(Rectangle())
             .navigationSplitViewColumnWidth(
                 min: providerSidebarMinimumWidth,
                 ideal: providerSidebarIdealWidth,
