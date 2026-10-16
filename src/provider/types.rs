@@ -499,12 +499,6 @@ impl ProviderDefinition {
             issues,
         }
     }
-
-    pub fn selects_model(&self, model: &str) -> bool {
-        self.selected_models
-            .iter()
-            .any(|selected| selected == model)
-    }
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq, Serialize)]

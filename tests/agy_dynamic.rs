@@ -90,7 +90,7 @@ fn agy_preserves_selection_intent() {
     assert_eq!(changes.removed, ["gone"]);
     assert!(changes.auto_selected.is_empty());
     apply_discovered_models(&mut provider, vec![model("kept"), model("gone")]).unwrap();
-    assert!(provider.selects_model("gone"));
+    assert_eq!(provider.selected_models, ["kept", "gone"]);
 }
 
 #[test]
