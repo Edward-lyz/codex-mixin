@@ -1,3 +1,4 @@
+use crate::config::{FusionTimeRoute, PanelToolsConfig};
 use serde_json::json;
 
 use super::render::{panel_results_detail, render_fusion_details};

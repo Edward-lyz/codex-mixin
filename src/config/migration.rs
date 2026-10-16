@@ -34,7 +34,7 @@ struct LegacyStoredGatewayConfig {
     #[serde(default)]
     quota_username: Option<String>,
     #[serde(default)]
-    fusion_profiles: Vec<crate::fusion::FusionProfile>,
+    fusion_profiles: Vec<crate::config::FusionProfile>,
 }
 pub(super) fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConfig> {
     let mut document: serde_json::Value = serde_json::from_str(raw)?;

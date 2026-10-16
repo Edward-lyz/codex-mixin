@@ -293,7 +293,7 @@ mod tests {
             web_search_tool_type: "web_search".to_owned(),
             web_search_max_uses: None,
             fusion_profiles: if fusion {
-                vec![codex_mixin::fusion::FusionProfile {
+                vec![codex_mixin::config::FusionProfile {
                     id: "default".to_owned(),
                     mode: Default::default(),
                     time_routes: Vec::new(),
@@ -304,7 +304,7 @@ mod tests {
                     max_completion_tokens: 8192,
                     timeout_ms: 120_000,
                     show_intermediate_results: true,
-                    panel_tools: codex_mixin::fusion::PanelToolsConfig::default(),
+                    panel_tools: codex_mixin::config::PanelToolsConfig::default(),
                 }]
             } else {
                 Vec::new()

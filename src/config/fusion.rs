@@ -1,6 +1,9 @@
-use super::*;
-use crate::provider::ProviderRegistry;
+use std::collections::HashSet;
+
 use chrono::{Local, Timelike};
+use serde::{Deserialize, Serialize};
+
+use crate::provider::ProviderRegistry;
 
 pub const FUSION_MODEL_PREFIX: &str = "mixin/fusion/";
 pub const OFFICIAL_MODEL_PREFIX: &str = "official:";
@@ -228,26 +231,26 @@ pub fn validate_fusion_model_references(
     Ok(())
 }
 
-pub(super) const fn default_true() -> bool {
+const fn default_true() -> bool {
     true
 }
 
-pub(super) const fn default_min_successful() -> usize {
+const fn default_min_successful() -> usize {
     1
 }
 
-pub(super) const fn default_max_completion_tokens() -> u64 {
+const fn default_max_completion_tokens() -> u64 {
     2048
 }
 
-pub(super) const fn default_timeout_ms() -> u64 {
+const fn default_timeout_ms() -> u64 {
     300_000
 }
 
-pub(super) const fn default_max_rounds() -> usize {
+const fn default_max_rounds() -> usize {
     16
 }
 
-pub(super) const fn default_max_calls_per_model() -> usize {
+const fn default_max_calls_per_model() -> usize {
     64
 }

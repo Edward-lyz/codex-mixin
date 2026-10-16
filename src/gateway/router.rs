@@ -1,5 +1,5 @@
+use crate::config::{FUSION_MODEL_PREFIX, FusionProfile};
 use crate::error::GatewayError;
-use crate::fusion::{FUSION_MODEL_PREFIX, FusionProfile};
 use crate::provider::{AUTO_REVIEW_MODEL_ID, ProviderRegistry};
 
 pub(crate) const AUTO_REVIEW_MODEL_SLUG: &str = AUTO_REVIEW_MODEL_ID;
@@ -159,7 +159,7 @@ pub(crate) fn stable_oneapi_routing(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fusion::PanelToolsConfig;
+    use crate::config::PanelToolsConfig;
     use crate::provider::{ProviderModel, custom_provider};
 
     fn fusion_profile(id: &str) -> FusionProfile {

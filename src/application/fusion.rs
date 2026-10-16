@@ -1,5 +1,5 @@
+use crate::config::FusionProfile;
 use crate::config::{StoredGatewayConfig, load_stored_config, mutate_stored_config};
-use crate::fusion::FusionProfile;
 use crate::web_search::WebSearchCapabilities;
 
 use super::error::OperationError;
@@ -134,7 +134,7 @@ fn upsert_fusion_profile(
 #[cfg(test)]
 mod tests {
     use super::*;
-    use crate::fusion::PanelToolsConfig;
+    use crate::config::PanelToolsConfig;
 
     fn profile(id: &str) -> FusionProfile {
         FusionProfile {

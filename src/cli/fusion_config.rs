@@ -1,5 +1,5 @@
 use codex_mixin::application::fusion;
-use codex_mixin::fusion::FusionProfile;
+use codex_mixin::config::FusionProfile;
 use serde_json::json;
 
 pub(super) fn get_fusion_profile(id: Option<&str>, json_output: bool) -> anyhow::Result<()> {

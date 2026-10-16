@@ -20,8 +20,9 @@ use uuid::Uuid;
 
 use crate::benchmark::{BenchmarkSnapshotResponse, ModelBenchmarkManager, StartBenchmarkRequest};
 use crate::config::GatewayConfig;
+use crate::config::validate_fusion_profiles;
 use crate::error::GatewayError;
-use crate::fusion::{FusionEngine, should_fuse_turn, validate_fusion_profiles};
+use crate::fusion::{FusionEngine, should_fuse_turn};
 use crate::gateway::UpstreamRouting;
 use crate::gateway::{CacheShapeTracker, ProviderTokenUsage, RequestPlan, ResolvedModelRoute};
 use crate::images::ImageRouteRegistry;

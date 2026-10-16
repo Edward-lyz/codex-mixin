@@ -10,9 +10,9 @@ use serde_json::Value;
 
 use crate::anthropic::ModelInfo;
 use crate::benchmark::BenchmarkTarget;
+use crate::config::FusionMode;
 use crate::config::GatewayConfig;
 use crate::error::GatewayError;
-use crate::fusion::FusionMode;
 use crate::provider::{MetadataResolver, ProviderRegistry, catalog_model_slug};
 use crate::web_search::WebSearchCapabilities;
 

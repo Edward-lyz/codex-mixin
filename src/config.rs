@@ -6,11 +6,15 @@ use std::time::Duration;
 use anyhow::{Context, anyhow};
 use serde::{Deserialize, Serialize};
 
-use crate::fusion::{FusionProfile, validate_fusion_profiles};
 use crate::provider::{CONFIG_VERSION, ProviderDefinition, ProviderRegistry};
 
 mod cors;
+mod fusion;
 pub(crate) use cors::{valid_cors_origin, validate_cors_origins};
+pub use fusion::{
+    FUSION_MODEL_PREFIX, FusionMode, FusionProfile, FusionTimeRoute, OFFICIAL_MODEL_PREFIX,
+    PanelToolsConfig, validate_fusion_model_references, validate_fusion_profiles,
+};
 mod migration;
 mod storage;
 pub use storage::{
@@ -705,7 +709,7 @@ mod tests {
                 max_completion_tokens: 2048,
                 timeout_ms: 30_000,
                 show_intermediate_results: true,
-                panel_tools: crate::fusion::PanelToolsConfig::default(),
+                panel_tools: PanelToolsConfig::default(),
             }],
             ..StoredGatewayConfig::default()
         };
@@ -733,7 +737,7 @@ mod tests {
                 max_completion_tokens: 2048,
                 timeout_ms: 30_000,
                 show_intermediate_results: true,
-                panel_tools: crate::fusion::PanelToolsConfig {
+                panel_tools: PanelToolsConfig {
                     max_rounds: 4,
                     max_calls_per_model: 8,
                     ..Default::default()

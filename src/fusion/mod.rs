@@ -1,4 +1,3 @@
-use std::collections::HashSet;
 use std::convert::Infallible;
 use std::path::PathBuf;
 use std::time::Duration;
@@ -10,6 +9,7 @@ use futures_util::{StreamExt, TryFutureExt};
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
+use crate::config::{FusionMode, FusionProfile, OFFICIAL_MODEL_PREFIX};
 use crate::error::GatewayError;
 use crate::gateway::{GatewayExecutor, RequestPlan, UpstreamRouting, collect_response_stream};
 use crate::protocol::ResponseStream;
@@ -19,7 +19,6 @@ use self::tools::PanelToolExecutor;
 
 mod analysis;
 mod engine;
-mod profile;
 mod prompts;
 mod render;
 mod routing;
@@ -28,10 +27,6 @@ mod types;
 mod visualization;
 
 pub use engine::FusionEngine;
-pub use profile::{
-    FUSION_MODEL_PREFIX, FusionMode, FusionProfile, FusionTimeRoute, OFFICIAL_MODEL_PREFIX,
-    PanelToolsConfig, validate_fusion_model_references, validate_fusion_profiles,
-};
 pub use routing::should_fuse_turn;
 
 #[cfg(test)]

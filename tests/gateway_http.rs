@@ -11,8 +11,8 @@ use axum::routing::{get, post};
 use axum::{Json, Router};
 use base64::Engine;
 use codex_mixin::anthropic::ModelInfo;
+use codex_mixin::config::{FusionMode, FusionProfile, FusionTimeRoute, PanelToolsConfig};
 use codex_mixin::config::{GatewayConfig, ThinkingMode};
-use codex_mixin::fusion::{FusionMode, FusionProfile, FusionTimeRoute, PanelToolsConfig};
 use codex_mixin::protocol::sse::drain_events;
 use codex_mixin::provider::{
     ProviderModel, ProviderModelSource, ProviderProtocol, ProviderRegistry, ProviderRequestPolicy,

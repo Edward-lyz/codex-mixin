@@ -1,4 +1,3 @@
-use super::profile::FusionProfile;
 use super::*;
 
 pub(super) fn panel_request(

@@ -1,5 +1,4 @@
 use super::analysis::*;
-use super::profile::{FusionMode, FusionProfile};
 use super::prompts::*;
 use super::render::*;
 use super::routing::{FusionModelProvider, resolve_fusion_model};

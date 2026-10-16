@@ -97,7 +97,7 @@ impl AppState {
             config.providers.clone(),
             env_lookup,
         )?);
-        crate::fusion::validate_fusion_model_references(&config.fusion_profiles, &providers)?;
+        crate::config::validate_fusion_model_references(&config.fusion_profiles, &providers)?;
         let client = Client::builder()
             .timeout(config.request_timeout)
             .pool_max_idle_per_host(64)

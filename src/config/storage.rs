@@ -1,7 +1,7 @@
 use super::StoredGatewayConfig;
 use super::migration::parse_stored_config;
+use super::{validate_fusion_model_references, validate_fusion_profiles};
 use crate::config::ensure_config_version;
-use crate::fusion::{validate_fusion_model_references, validate_fusion_profiles};
 use crate::provider::ProviderRegistry;
 use anyhow::{Context, anyhow};
 use base64::Engine;

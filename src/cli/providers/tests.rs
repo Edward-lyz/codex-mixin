@@ -7,7 +7,7 @@ use std::sync::{
 use axum::Router;
 use axum::http::{HeaderMap, header};
 use axum::routing::get;
-use codex_mixin::fusion::{FusionProfile, PanelToolsConfig};
+use codex_mixin::config::{FusionProfile, PanelToolsConfig};
 
 use super::*;
 use codex_mixin::application::provider::discovery::{
