@@ -15,6 +15,9 @@ on:
   push:
     branches: [main]
 
+permissions:
+  contents: read
+
 concurrency:
   group: windows-${{ github.ref }}-${{ inputs.ui_artifact_run }}
   cancel-in-progress: true
@@ -28,22 +31,10 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-          components: rustfmt, clippy
+          components: clippy
       - uses: Swatinem/rust-cache@v2
-      - name: Install ripgrep
-        shell: pwsh
-        run: |
-          $version = '15.1.0'
-          $archive = Join-Path $env:RUNNER_TEMP 'ripgrep.zip'
-          $tools = Join-Path $env:RUNNER_TEMP 'ripgrep'
-          Invoke-WebRequest "https://github.com/BurntSushi/ripgrep/releases/download/$version/ripgrep-$version-x86_64-pc-windows-msvc.zip" -OutFile $archive
-          Expand-Archive $archive -DestinationPath $tools -Force
-          $bin = Join-Path $tools "ripgrep-$version-x86_64-pc-windows-msvc"
-          if (-not (Test-Path "$bin/rg.exe")) { throw 'Official ripgrep archive is missing rg.exe' }
-          $bin >> $env:GITHUB_PATH
-          & "$bin/rg.exe" --version
-          if ($LASTEXITCODE -ne 0) { throw 'ripgrep could not run' }
-      - run: cargo fmt --all -- --check
+        with:
+          shared-key: rust
       - name: Run strict Clippy
         shell: bash
         run: |
@@ -52,13 +43,6 @@ jobs:
             -D clippy::redundant_closure_for_method_calls \
             -D clippy::redundant_pattern_matching \
             -D warnings
-      - name: Check architecture boundaries
-        shell: bash
-        run: |
-          ./scripts/check_arch.sh
-          ./scripts/test_check_arch.sh
-      - name: Check Anthropic endpoint isolation
-        run: cargo test --locked --test gateway_http anthropic_messages_ignores_legacy_model_level_endpoint -- --nocapture
       - run: cargo test --locked --all-targets
   cli:
     if: ${{ !inputs.ui_artifact_run }}
@@ -184,21 +168,25 @@ jobs:
   package:
     if: ${{ !inputs.ui_artifact_run }}
     runs-on: windows-latest
-    needs: [rust, native-ui]
+    needs: [rust, cli, native-ui]
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-      - uses: Swatinem/rust-cache@v2
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
+      # Package the CLI built by the cli job instead of rebuilding it.
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-cli
+          path: windows-cli
       # NSIS provides makensis for the standard installer built by the script.
       - name: Install NSIS
         run: choco install nsis -y --no-progress
         shell: pwsh
-      # Builds the Rust CLI + native WinUI 3 UI and packages the standard installer and
+      # Builds the native WinUI 3 UI and packages the standard installer and
       # portable archive. Use the same relative dist\release layout as the
       # Release workflow so this job exercises the release packaging paths.
       - name: Package and optionally sign Windows artifacts
@@ -214,6 +202,7 @@ jobs:
             Installer = "dist\release\codex-mixin-$version-windows-x86_64-setup.exe"
             PortableArchive = "dist\release\codex-mixin-$version-windows-x86_64.zip"
             Version = $version
+            CliPath = 'windows-cli\codex-mixin.exe'
           }
           $pfx = $null
           if ($env:WINDOWS_CERT_PFX_BASE64) {

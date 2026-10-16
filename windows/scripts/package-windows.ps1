@@ -17,7 +17,10 @@ param(
   [string]$CertificatePath = '',
   [string]$CertificatePassword = '',
   # NSIS makensis.exe; auto-detected under Program Files when not provided.
-  [string]$NsisPath = ''
+  [string]$NsisPath = '',
+  # Prebuilt codex-mixin.exe (for example the CI windows-cli artifact). When
+  # set, the script skips cargo build and packages this binary instead.
+  [string]$CliPath = ''
 )
 
 $ErrorActionPreference = "Stop"
@@ -76,15 +79,25 @@ function Resolve-MakeNsis {
   throw "makensis.exe not found. Install NSIS (https://nsis.sourceforge.io/Download) or pass -NsisPath."
 }
 
+$buildCli = $false
+if ($CliPath) {
+  $CliPath = Resolve-AbsolutePath $CliPath
+  if (-not (Test-Path -LiteralPath $CliPath)) { throw "Prebuilt CLI not found: $CliPath" }
+} else {
+  $CliPath = Join-Path $repo "target\release\codex-mixin.exe"
+  $buildCli = $true
+}
 Write-Host "== Building Rust CLI and native WinUI 3 UI =="
 Push-Location $repo
 try {
   & (Join-Path $PSScriptRoot "generate-windows-assets.ps1")
-  cargo build --locked --release
-  if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+  if ($buildCli) {
+    cargo build --locked --release
+    if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
+  }
   $uiPublish = Join-Path $repo "windows\build\publish"
   if (Test-Path -LiteralPath $uiPublish) { Remove-Item -LiteralPath $uiPublish -Recurse -Force }
-  dotnet run --project windows/Tests/Tests.csproj --configuration Release -- --cli (Join-Path $repo "target\release\codex-mixin.exe")
+  dotnet run --project windows/Tests/Tests.csproj --configuration Release -- --cli $CliPath
   if ($LASTEXITCODE -ne 0) { throw "Windows CLI contract tests failed" }
   dotnet publish windows/CodexMixin/CodexMixin.csproj -c Release -p:Platform=x64 -p:Version=$numericVersion -o $uiPublish
   if ($LASTEXITCODE -ne 0) { throw "WinUI 3 publish failed" }
@@ -93,7 +106,7 @@ Write-Host "== Assembling app directory: $Output =="
 if (Test-Path -LiteralPath $Output) { Remove-Item -LiteralPath $Output -Recurse -Force }
 New-Item -ItemType Directory -Path $Output | Out-Null
 
-Copy-Item -LiteralPath (Join-Path $repo "target\release\codex-mixin.exe") -Destination $Output
+Copy-Item -LiteralPath $CliPath -Destination $Output
 Copy-Item -Path (Join-Path $uiPublish "*") -Destination $Output -Recurse -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install-windows.ps1") -Destination $Output
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "uninstall-windows.ps1") -Destination $Output
