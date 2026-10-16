@@ -60,10 +60,13 @@ struct SettingsPanelPresentationTests {
             model.validatedValues()?.apiKey == "",
             "Antigravity must allow the CLI to load local OAuth credentials without an API key"
         )
-        model.apiKey = " test-key "
+        // The OAuth form hides the key field. A key left over from another
+        // preset must not reach the CLI, because a non-empty key makes
+        // `providers add --preset agy` skip browser login.
+        model.apiKey = " stale-key "
         precondition(
-            model.validatedValues()?.apiKey == "test-key",
-            "Antigravity must preserve an explicitly supplied API key"
+            model.validatedValues()?.apiKey == "",
+            "Antigravity form must not submit a hidden API key"
         )
         var document = try! JSONSerialization.jsonObject(with: Data(interface.utf8)) as! [String: Any]
         var rawCatalog = document["provider_catalog"] as! [String: Any]
