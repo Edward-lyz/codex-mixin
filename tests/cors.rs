@@ -17,8 +17,7 @@ fn config() -> GatewayConfig {
         official_ech_fallback_reason: None,
         codex_auth_path: std::path::PathBuf::from("/nonexistent/cors-test-auth.json"),
         gateway_api_key: Some("gateway-key".to_owned()),
-        cors_allowed_origins: codex_mixin::config::StoredGatewayConfig::default()
-            .cors_allowed_origins,
+        cors_allowed_origins: vec![ORIGIN.to_owned()],
         gateway_client_keys: Default::default(),
         accept_codex_oauth: false,
         official_selected_models: None,
@@ -32,6 +31,47 @@ fn config() -> GatewayConfig {
         fusion_profiles: Vec::new(),
     }
 }
+#[tokio::test]
+async fn cors_defaults_allow_every_origin_without_credentials() {
+    let mut cfg = config();
+    cfg.cors_allowed_origins =
+        codex_mixin::config::StoredGatewayConfig::default().cors_allowed_origins;
+    let app = router(AppState::new(cfg).unwrap());
+    for origin in [
+        ORIGIN,
+        "https://any-app.example",
+        "http://localhost:1234",
+        "null",
+    ] {
+        for (method, path, status) in [
+            ("GET", "/healthz", StatusCode::OK),
+            ("OPTIONS", "/v1/messages", StatusCode::NO_CONTENT),
+            ("GET", "/missing", StatusCode::NOT_FOUND),
+        ] {
+            let response = app
+                .clone()
+                .oneshot(
+                    Request::builder()
+                        .method(method)
+                        .uri(path)
+                        .header("origin", origin)
+                        .header("access-control-request-method", "POST")
+                        .body(Body::empty())
+                        .unwrap(),
+                )
+                .await
+                .unwrap();
+            assert_eq!(response.status(), status, "{origin} {method} {path}");
+            assert_eq!(response.headers()["access-control-allow-origin"], origin);
+            assert!(
+                !response
+                    .headers()
+                    .contains_key("access-control-allow-credentials")
+            );
+        }
+    }
+}
+
 #[tokio::test]
 async fn cors_preflight_precedes_auth() {
     let app = router(AppState::new(config()).unwrap());

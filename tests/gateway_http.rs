@@ -8387,13 +8387,18 @@ async fn api_base_probe_returns_real_models() {
     let value: Value = response.json().await.unwrap();
     assert_eq!(value["object"], "list");
     assert!(!value["data"].as_array().unwrap().is_empty());
-    let denied = client
+    let cross_origin = client
         .get(format!("{gateway}/v1"))
-        .header("Origin", "https://untrusted.invalid")
+        .header("Origin", "https://any-app.example")
+        .bearer_auth("gateway-key")
         .send()
         .await
         .unwrap();
-    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+    assert_eq!(cross_origin.status(), StatusCode::OK);
+    assert_eq!(
+        cross_origin.headers()["access-control-allow-origin"],
+        "https://any-app.example"
+    );
 }
 
 #[tokio::test]

@@ -26,7 +26,7 @@ pub(super) async fn cors(
             config
                 .cors_allowed_origins
                 .iter()
-                .any(|allowed| allowed == origin)
+                .any(|allowed| allowed == "*" || allowed == origin)
         })
     });
     let same_origin = !allowed

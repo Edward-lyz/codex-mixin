@@ -33,7 +33,7 @@ fn cors_cli_default_replace_disable() {
     let directory = tempfile::tempdir().unwrap();
     let path = directory.path().join("config.json");
     let value = successful(cli(directory.path(), &["config", "cors", "get", "--json"]));
-    assert_eq!(value["cors_allowed_origins"], serde_json::json!([ORIGIN]));
+    assert_eq!(value["cors_allowed_origins"], serde_json::json!(["*"]));
     assert_eq!(value["restart_required"], false);
     assert!(
         !path.exists(),
@@ -95,7 +95,6 @@ fn cors_cli_invalid_origins_do_not_commit() {
     save_stored_config_to_path(&path, &StoredGatewayConfig::default()).unwrap();
     let original = std::fs::read(&path).unwrap();
     for origin in [
-        "*",
         "null",
         "http://*.example.com",
         "https://example.com/",
@@ -124,7 +123,7 @@ fn cors_cli_invalid_origins_do_not_commit() {
 }
 
 #[test]
-fn cors_cli_requires_explicit_allowlist() {
+fn cors_cli_set_requires_explicit_policy() {
     let directory = tempfile::tempdir().unwrap();
     for args in [
         vec!["config", "cors", "set", "--json"],

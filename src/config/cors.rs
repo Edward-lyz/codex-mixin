@@ -1,6 +1,6 @@
 use anyhow::ensure;
 
-const DEFAULT_CORS_ORIGIN: &str = "http://10.252.145.171:8723";
+const DEFAULT_CORS_ORIGIN: &str = "*";
 
 pub(super) fn default_cors_origins() -> Vec<String> {
     vec![DEFAULT_CORS_ORIGIN.to_owned()]
@@ -18,8 +18,8 @@ pub(crate) fn valid_cors_origin(origin: &str) -> bool {
 pub(crate) fn validate_cors_origins(origins: &[String]) -> anyhow::Result<()> {
     for (index, origin) in origins.iter().enumerate() {
         ensure!(
-            valid_cors_origin(origin),
-            "cors_allowed_origins[{index}] must be a serialized HTTP(S) origin (scheme://host[:port]), not a wildcard, null, credentials, path, query or fragment"
+            origin == "*" || valid_cors_origin(origin),
+            "cors_allowed_origins[{index}] must be '*' or a serialized HTTP(S) origin (scheme://host[:port]), not null, a partial wildcard, credentials, path, query or fragment"
         );
     }
     Ok(())
@@ -32,7 +32,7 @@ mod tests {
     #[test]
     fn cors_origins_require_canonical_http_origins() {
         for origin in [
-            DEFAULT_CORS_ORIGIN,
+            "http://10.252.145.171:8723",
             "https://example.com",
             "http://localhost:8723",
             "http://[::1]:8723",
@@ -61,7 +61,7 @@ mod tests {
     }
 
     #[test]
-    fn cors_defaults_migrate_without_wildcards() {
+    fn cors_defaults_migrate_to_all_origins() {
         use crate::config::{StoredGatewayConfig, migration::parse_stored_config};
         let version = crate::provider::CONFIG_VERSION;
         let parsed =
@@ -91,7 +91,7 @@ mod tests {
         use crate::config::{
             StoredGatewayConfig, load_stored_config_from_path, save_stored_config_to_path,
         };
-        for origin in ["*", "null", "https://example.com/path"] {
+        for origin in ["http://*.example.com", "null", "https://example.com/path"] {
             let directory = tempfile::tempdir().unwrap();
             let path = directory.path().join("config.json");
             let stored = StoredGatewayConfig {
