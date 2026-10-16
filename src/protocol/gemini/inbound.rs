@@ -544,7 +544,10 @@ mod tests {
             "string"
         );
         assert_eq!(converted["tool_choice"]["name"], "read");
-        let chat = crate::protocol::openai_chat::responses_to_openai_chat(&converted).unwrap();
+        let chat = crate::protocol::openai_chat::responses_to_openai_chat(&converted, &|| {
+            Err(crate::error::GatewayError::Other(anyhow::anyhow!("unused")))
+        })
+        .unwrap();
         assert_eq!(chat.request["messages"][3]["role"], "tool");
     }
 

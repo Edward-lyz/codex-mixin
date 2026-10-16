@@ -30,9 +30,46 @@ fn config() -> GatewayConfig {
     }
 }
 
+fn test_secret() -> Result<String, GatewayError> {
+    use base64::Engine;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([7_u8; 32]))
+}
+
+fn convert_request(body: &Value, config: &GatewayConfig) -> Result<ConvertedRequest, GatewayError> {
+    if body.get("stream").and_then(Value::as_bool) != Some(true) {
+        return Err(GatewayError::BadRequest(
+            "Codex gateway currently requires stream=true".to_owned(),
+        ));
+    }
+    convert_request_with_web_search(body, config, config.enable_web_search_tool, false)
+}
+
+fn convert_request_with_web_search(
+    body: &Value,
+    config: &GatewayConfig,
+    web_search_enabled: bool,
+    use_mcp_bridge_names: bool,
+) -> Result<ConvertedRequest, GatewayError> {
+    let model = body.get("model").and_then(Value::as_str);
+    responses_to_anthropic_with_model_reasoning_and_thinking_kind(
+        body,
+        None,
+        super::request::normalized_reasoning(body).as_ref(),
+        config.thinking_mode,
+        config.default_max_tokens,
+        web_search_enabled.then_some(WebSearchTool {
+            tool_type: &config.web_search_tool_type,
+            max_uses: config.web_search_max_uses,
+        }),
+        use_mcp_bridge_names,
+        model.and_then(crate::protocol::model_reasoning::anthropic_thinking_kind),
+        &test_secret,
+    )
+}
+
 #[test]
 fn defaults_unknown_anthropic_output_budget_to_sixteen_thousand_tokens() {
-    let converted = responses_to_anthropic(
+    let converted = convert_request(
         &json!({
             "model": "Claude Sonnet 5",
             "stream": true,
@@ -47,7 +84,7 @@ fn defaults_unknown_anthropic_output_budget_to_sixteen_thousand_tokens() {
 
 #[test]
 fn maps_responses_json_schema_to_anthropic_output_config() {
-    let converted = responses_to_anthropic(
+    let converted = convert_request(
         &json!({
             "model":"Claude Sonnet 5",
             "stream":true,
@@ -83,7 +120,7 @@ fn accepts_dsh_message_items_without_responses_type() {
         ]
     });
 
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
 
     assert_eq!(converted.request.messages.len(), 1);
     assert_eq!(converted.request.messages[0].role, "user");
@@ -106,10 +143,10 @@ fn compaction_metadata_does_not_change_anthropic_request() {
         tool_results: Vec::new(),
         pending_work: vec!["Reply with CONTINUED".to_owned()],
     };
-    let token = crate::protocol::compaction::encode_for_test(
+    let token = crate::protocol::compaction::encode(
         "gpt-5.6-sol-baidu-oneapi",
         summary,
-        &crate::config::ensure_compaction_secret().unwrap(),
+        &test_secret().unwrap(),
     )
     .unwrap();
     let basic = json!({
@@ -129,8 +166,8 @@ fn compaction_metadata_does_not_change_anthropic_request() {
         ]
     });
 
-    let basic = responses_to_anthropic(&basic, &config()).unwrap();
-    let metadata = responses_to_anthropic(&metadata, &config()).unwrap();
+    let basic = convert_request(&basic, &config()).unwrap();
+    let metadata = convert_request(&metadata, &config()).unwrap();
     assert_eq!(
         serde_json::to_value(basic.request).unwrap(),
         serde_json::to_value(metadata.request).unwrap()
@@ -157,7 +194,7 @@ fn keeps_later_developer_messages_in_the_transcript() {
         ]
     });
 
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
 
     // instructions plus the two leading developer messages, and nothing else.
     let system = converted.request.system.as_ref().unwrap();
@@ -202,7 +239,7 @@ fn converts_codex_tool_loop_input() {
         ],
         "tools": [{"type":"function","name":"exec_command","description":"run","parameters":{"type":"object","properties":{"cmd":{"type":"string"}}}}]
     });
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
     assert_eq!(converted.request.model, "DeepSeek-V4-Flash");
     assert_eq!(converted.request.system.as_ref().unwrap().len(), 2);
     assert_eq!(converted.request.messages.len(), 3);
@@ -227,7 +264,7 @@ fn converts_codex_tool_loop_input() {
 #[test]
 fn maps_codex_fast_service_tier_to_anthropic_speed() {
     for service_tier in ["priority", "fast"] {
-        let converted = responses_to_anthropic(
+        let converted = convert_request(
             &json!({
                 "model": "Claude Sonnet 5",
                 "stream": true,
@@ -266,7 +303,7 @@ fn uses_mcp_tool_names_for_baidu_fable_bridge_and_history() {
         ]
     });
 
-    let converted = responses_to_anthropic_with_web_search(&body, &config, false, true).unwrap();
+    let converted = convert_request_with_web_search(&body, &config, false, true).unwrap();
     assert_eq!(
         converted.request.messages[1].content[0],
         ContentBlock::ToolUse {
@@ -320,7 +357,7 @@ fn limits_mcp_bridge_names_to_baidu_fable_models() {
         (false, "Claude Sonnet 5", "exec_command"),
     ] {
         let config = config();
-        let converted = responses_to_anthropic_with_web_search(
+        let converted = convert_request_with_web_search(
             &json!({
                 "model": model,
                 "stream": true,
@@ -353,7 +390,7 @@ fn converts_plaintext_agent_message_for_subagents() {
             "content": [{"type":"input_text","text":"Run uname -a"}]
         }]
     });
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
     assert_eq!(converted.request.messages[0].role, "user");
     assert_eq!(
         converted.request.messages[0].content[0],
@@ -365,7 +402,7 @@ fn converts_plaintext_agent_message_for_subagents() {
 
 #[test]
 fn ignores_foreign_reasoning_state_for_anthropic_upstreams() {
-    let converted = responses_to_anthropic(
+    let converted = convert_request(
         &json!({
             "model":"Claude Sonnet 5",
             "stream":true,
@@ -383,7 +420,7 @@ fn ignores_foreign_reasoning_state_for_anthropic_upstreams() {
 
 #[test]
 fn rejects_corrupt_mixin_anthropic_thinking_state() {
-    let error = responses_to_anthropic(
+    let error = convert_request(
         &json!({
             "model":"Claude Sonnet 5",
             "stream":true,
@@ -417,7 +454,7 @@ fn materializes_v2_agent_message_payload_for_custom_upstream() {
             ]
         }]
     });
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
     assert_eq!(
         converted.request.messages[0].content[0],
         ContentBlock::Text {
@@ -434,7 +471,7 @@ fn flattens_namespace_tools_for_anthropic() {
         "input": "hi",
         "tools": [{"type":"namespace","name":"mcp__node_repl","tools":[{"type":"function","name":"js","strict":true,"parameters":{"type":"object"}}]}]
     });
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
     assert_eq!(converted.request.tools[0]["name"], "mcp__node_repl__js");
     assert!(converted.request.tools[0].get("strict").is_none());
     assert_eq!(
@@ -462,7 +499,7 @@ fn flattens_namespaced_function_call_history_for_upstream() {
             "arguments":"{\"task_name\":\"test\"}"
         }]
     });
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
     assert_eq!(
         converted.request.messages[0].content[0],
         ContentBlock::ToolUse {
@@ -494,7 +531,7 @@ fn converts_custom_and_tool_search_tools_for_anthropic() {
             }
         ]
     });
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
     assert_eq!(converted.request.tools[0]["name"], "apply_patch");
     assert_eq!(
         converted.request.tools[0]["input_schema"]["required"],
@@ -547,7 +584,7 @@ fn flattens_root_one_of_tool_schema_for_anthropic() {
         }]
     });
 
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
     let schema = &converted.request.tools[0]["input_schema"];
 
     assert_eq!(schema["type"], "object");
@@ -591,7 +628,7 @@ fn flattens_root_any_of_tool_schema_for_anthropic() {
         }]
     });
 
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
     let schema = &converted.request.tools[0]["input_schema"];
 
     assert!(schema.get("anyOf").is_none());
@@ -631,7 +668,7 @@ fn flattens_root_all_of_tool_schema_for_anthropic() {
         }]
     });
 
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
     let schema = &converted.request.tools[0]["input_schema"];
 
     assert!(schema.get("allOf").is_none());
@@ -654,7 +691,7 @@ fn converts_custom_and_tool_search_outputs_for_anthropic() {
             {"type":"tool_search_output","call_id":"search_1","status":"completed","execution":"client","tools":[{"type":"function","name":"create_event"}]}
         ]
     });
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
     assert_eq!(converted.request.messages.len(), 4);
     assert_eq!(
         converted.request.messages[0].content[0],
@@ -704,7 +741,7 @@ fn exposes_deferred_and_additional_tools_to_anthropic() {
             ]}
         ]
     });
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
     let tool_names = converted
         .request
         .tools
@@ -799,7 +836,7 @@ fn merges_overlapping_namespace_tools_across_search_history() {
         ]
     });
 
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
     assert_eq!(converted.request.tools.len(), 4);
     assert_eq!(converted.request.tools[0]["name"], "tool_search");
     assert_eq!(
@@ -815,7 +852,7 @@ fn merges_overlapping_namespace_tools_across_search_history() {
 
 #[test]
 fn rejects_messages_without_content() {
-    let error = responses_to_anthropic(
+    let error = convert_request(
         &json!({
             "model": "m",
             "stream": true,
@@ -927,7 +964,7 @@ fn ignores_provider_native_history_when_switching_to_custom_model() {
             {"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
         ]
     });
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
     assert_eq!(converted.request.messages.len(), 1);
     assert_eq!(
         converted.request.messages[0].content[0],
@@ -950,7 +987,7 @@ fn preserves_multimodal_tool_outputs_for_anthropic() {
             ]}
         ]
     });
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
     assert_eq!(
         converted.request.messages[1].content[0],
         ContentBlock::ToolResult {
@@ -971,7 +1008,7 @@ fn rejects_incomplete_client_tool_history() {
         json!({"type":"tool_search_call","execution":"client","call_id":"search_1"}),
         json!({"type":"tool_search_output","execution":"client","call_id":"search_1","status":"completed"}),
     ] {
-        let error = responses_to_anthropic(
+        let error = convert_request(
             &json!({"model":"m","stream":true,"input":[item]}),
             &config(),
         )
@@ -991,7 +1028,7 @@ fn auto_thinking_maps_xhigh_to_adaptive_max_for_new_claude() {
         "reasoning": {"effort": "xhigh"},
         "input": "hi"
     });
-    let converted = responses_to_anthropic(&body, &config).unwrap();
+    let converted = convert_request(&body, &config).unwrap();
     assert_eq!(converted.request.thinking.unwrap()["type"], "adaptive");
     assert_eq!(converted.request.output_config.unwrap()["effort"], "max");
 }
@@ -1014,7 +1051,7 @@ fn adaptive_thinking_maps_common_effort_levels() {
             "reasoning": {"effort": input},
             "input": "hi"
         });
-        let converted = responses_to_anthropic(&body, &config).unwrap();
+        let converted = convert_request(&body, &config).unwrap();
         assert_eq!(
             converted.request.output_config.unwrap()["effort"],
             expected,
@@ -1034,7 +1071,7 @@ fn explicit_none_disables_anthropic_thinking() {
             "reasoning": {"effort": "none"},
             "input": "hi"
         });
-        let converted = responses_to_anthropic(&body, &config).unwrap();
+        let converted = convert_request(&body, &config).unwrap();
         assert!(converted.request.thinking.is_none(), "{model}");
         assert!(converted.request.output_config.is_none(), "{model}");
     }
@@ -1050,7 +1087,7 @@ fn adaptive_thinking_rejects_misspelled_medium() {
         "reasoning": {"effort": "meddium"},
         "input": "hi"
     });
-    let err = responses_to_anthropic(&body, &config).unwrap_err();
+    let err = convert_request(&body, &config).unwrap_err();
     assert!(err.to_string().contains("unsupported reasoning effort"));
 }
 
@@ -1064,7 +1101,7 @@ fn adaptive_thinking_rejects_unknown_effort() {
         "reasoning": {"effort": "turbo"},
         "input": "hi"
     });
-    let err = responses_to_anthropic(&body, &config).unwrap_err();
+    let err = convert_request(&body, &config).unwrap_err();
     assert!(err.to_string().contains("unsupported reasoning effort"));
 }
 
@@ -1078,7 +1115,7 @@ fn auto_thinking_leaves_non_claude_models_untouched() {
         "reasoning": {"effort": "xhigh"},
         "input": "hi"
     });
-    let converted = responses_to_anthropic(&body, &config).unwrap();
+    let converted = convert_request(&body, &config).unwrap();
     assert!(converted.request.thinking.is_none());
     assert!(converted.request.output_config.is_none());
 }
@@ -1094,7 +1131,7 @@ fn manual_thinking_caps_budget_below_max_tokens() {
         "reasoning": {"effort": "high"},
         "input": "hi"
     });
-    let converted = responses_to_anthropic(&body, &config).unwrap();
+    let converted = convert_request(&body, &config).unwrap();
     let thinking = converted.request.thinking.unwrap();
     assert_eq!(thinking["type"], "enabled");
     assert_eq!(thinking["budget_tokens"], 2047);
@@ -1122,7 +1159,7 @@ fn web_search_becomes_anthropic_server_tool_when_enabled() {
             }
         }]
     });
-    let converted = responses_to_anthropic(&body, &config).unwrap();
+    let converted = convert_request(&body, &config).unwrap();
     assert_eq!(converted.request.tools[0]["type"], "web_search_20250305");
     assert_eq!(converted.request.tools[0]["name"], "web_search");
     assert_eq!(converted.request.tools[0]["max_uses"], 1);
@@ -1147,7 +1184,7 @@ fn omits_codex_cached_web_search_without_external_access() {
         "input": "hi",
         "tools": [{"type": "web_search", "external_web_access": false}],
     });
-    let converted = responses_to_anthropic(&body, &config).unwrap();
+    let converted = convert_request(&body, &config).unwrap();
     assert!(converted.request.tools.is_empty());
 }
 
@@ -1162,7 +1199,7 @@ fn rejects_codex_web_search_modes_without_anthropic_equivalents() {
     ] {
         let mut tool = unsupported;
         tool["type"] = json!("web_search");
-        let error = responses_to_anthropic(
+        let error = convert_request(
             &json!({
                 "model": "Claude Sonnet 5",
                 "stream": true,
@@ -1187,7 +1224,7 @@ fn rejects_unknown_tool_type() {
         "input": "hi",
         "tools": [{"type":"computer_use_preview"}]
     });
-    let error = responses_to_anthropic(&body, &config()).unwrap_err();
+    let error = convert_request(&body, &config()).unwrap_err();
     assert!(error.to_string().contains("unsupported tool type"));
 }
 
@@ -1201,7 +1238,7 @@ fn omits_legacy_openai_hosted_image_generation_tool() {
         "input": "hi",
         "tools": [{"type":"image_generation","output_format":"png"}]
     });
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
     assert!(converted.request.tools.is_empty());
     assert!(converted.request.tool_choice.is_none());
 }
@@ -1217,7 +1254,7 @@ fn rejects_tool_names_that_collide_after_flattening() {
             {"type":"namespace","name":"mcp","tools":[{"type":"function","name":"read","parameters":{"type":"object"}}]}
         ]
     });
-    let error = responses_to_anthropic(&body, &config()).unwrap_err();
+    let error = convert_request(&body, &config()).unwrap_err();
     assert!(error.to_string().contains("tool names collide"));
 }
 
@@ -1231,7 +1268,7 @@ fn disables_parallel_anthropic_tool_use_when_codex_requests_serial_calls() {
         "input": "hi",
         "tools": [{"type":"function","name":"exec_command","parameters":{"type":"object"}}]
     });
-    let converted = responses_to_anthropic(&body, &config()).unwrap();
+    let converted = convert_request(&body, &config()).unwrap();
     assert_eq!(
         converted.request.tool_choice.as_ref().unwrap()["type"],
         "auto"
@@ -1258,7 +1295,7 @@ fn codex_function_style_web_search_becomes_server_tool() {
             "parameters": {"type": "object", "properties": {"query": {"type": "string"}}}
         }]
     });
-    let converted = responses_to_anthropic(&body, &config).unwrap();
+    let converted = convert_request(&body, &config).unwrap();
     assert_eq!(converted.request.tools[0]["type"], "web_search_20250305");
     assert_eq!(converted.request.tools[0]["name"], "web_search");
     assert!(converted.request.tools[0].get("input_schema").is_none());

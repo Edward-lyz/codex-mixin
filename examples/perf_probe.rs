@@ -134,7 +134,13 @@ fn main() {
     let iterations = 2_000;
     for _ in 0..iterations {
         std::hint::black_box(
-            responses_to_anthropic(&request, &config).expect("valid perf request"),
+            responses_to_anthropic(
+                &request,
+                config.thinking_mode,
+                config.default_max_tokens,
+                &|| unreachable!("perf request has no compaction item"),
+            )
+            .expect("valid perf request"),
         );
     }
     let convert_elapsed = started.elapsed();

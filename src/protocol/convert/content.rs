@@ -1,6 +1,6 @@
 use super::tools::upstream_client_tool_name;
 use super::*;
-use crate::protocol::compaction;
+use crate::protocol::compaction::{self, SecretSource};
 
 const ANTHROPIC_THINKING_PREFIX: &str = "codex-mixin:anthropic-thinking:v1:";
 const BAIDU_UNSIGNED_THINKING_PREFIX: &str = "codex-mixin:baidu-unsigned-thinking:v1:";
@@ -16,6 +16,7 @@ pub(super) fn append_input_item(
     messages: &mut Vec<Message>,
     use_mcp_bridge_names: bool,
     replay_model: Option<&str>,
+    compaction_secret: SecretSource<'_>,
 ) -> Result<(), GatewayError> {
     // OpenCode and DSH send message items without the Responses envelope type.
     // Accept only that unambiguous shape; all other missing-type items still fail fast.
@@ -38,7 +39,7 @@ pub(super) fn append_input_item(
             let model = replay_model.ok_or_else(|| {
                 GatewayError::BadRequest("compaction item missing replay model".to_owned())
             })?;
-            let summary = compaction::decode(token, model)?;
+            let summary = compaction::decode(token, model, &compaction_secret()?)?;
             system.push(ContentBlock::Text {
                 text: compaction::summary_text(&summary),
             });

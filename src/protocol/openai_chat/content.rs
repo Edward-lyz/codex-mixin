@@ -1,5 +1,5 @@
 use super::*;
-use crate::protocol::compaction;
+use crate::protocol::compaction::{self, SecretSource};
 
 /// Pointer left in a `tool` message once its images are relocated. The text is
 /// part of the provider-visible prompt, so it has to stay byte-stable.
@@ -9,6 +9,7 @@ pub(super) fn append_input_item(
     item: &Value,
     messages: &mut Vec<Value>,
     replay_model: Option<&str>,
+    compaction_secret: SecretSource<'_>,
 ) -> Result<(), GatewayError> {
     // OpenCode and DSH send standard Responses message items without the
     // optional envelope type. Accept only that unambiguous message shape.
@@ -33,6 +34,7 @@ pub(super) fn append_input_item(
                 replay_model.ok_or_else(|| {
                     GatewayError::BadRequest("compaction item missing model".to_owned())
                 })?,
+                &compaction_secret()?,
             )?;
             messages.push(json!({
                 "role": "system",

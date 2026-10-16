@@ -1,31 +1,13 @@
 use super::state::MapperState;
 use super::*;
-use crate::config::{GatewayConfig, ThinkingMode};
+use crate::config::ThinkingMode;
+use crate::error::GatewayError;
 use crate::protocol::sse::drain_events;
 use std::time::Duration;
 
-fn anthropic_config() -> GatewayConfig {
-    GatewayConfig {
-        bind: "127.0.0.1:0".parse().unwrap(),
-        providers: vec![crate::provider::open_code_go_provider("test", "test")],
-        official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
-        codex_auth_path: std::path::PathBuf::from("/tmp/codex-auth.json"),
-        gateway_api_key: None,
-        cors_allowed_origins: crate::config::StoredGatewayConfig::default().cors_allowed_origins,
-        gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
-        accept_codex_oauth: true,
-        official_ech_fallback_reason: None,
-        official_ech_proxy: false,
-        official_selected_models: None,
-        default_max_tokens: 8192,
-        default_context_window: 1_000_000,
-        request_timeout: Duration::from_secs(30),
-        thinking_mode: ThinkingMode::Off,
-        enable_web_search_tool: false,
-        web_search_tool_type: "web_search_20250305".to_owned(),
-        web_search_max_uses: Some(3),
-        fusion_profiles: Vec::new(),
-    }
+fn test_secret() -> Result<String, GatewayError> {
+    use base64::Engine;
+    Ok(base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([7_u8; 32]))
 }
 
 async fn collect_events<S>(events: S) -> String
@@ -450,8 +432,13 @@ async fn preserves_anthropic_signed_thinking_as_replayable_reasoning() {
             {"type":"message","role":"user","content":"continue"}
         ]
     });
-    let converted =
-        crate::protocol::convert::responses_to_anthropic(&request, &anthropic_config()).unwrap();
+    let converted = crate::protocol::convert::responses_to_anthropic(
+        &request,
+        ThinkingMode::Off,
+        8192,
+        &test_secret,
+    )
+    .unwrap();
     assert_eq!(
         converted.request.messages[0].content[0],
         crate::anthropic::ContentBlock::Thinking {
@@ -504,8 +491,13 @@ async fn preserves_baidu_unsigned_thinking_only_for_the_same_model() {
         "model":"Claude Sonnet 4.6-baidu-oneapi",
         "input":[done["item"].clone(),{"type":"message","role":"user","content":"continue"}]
     });
-    let converted =
-        crate::protocol::convert::responses_to_anthropic(&same_model, &anthropic_config()).unwrap();
+    let converted = crate::protocol::convert::responses_to_anthropic(
+        &same_model,
+        ThinkingMode::Off,
+        8192,
+        &test_secret,
+    )
+    .unwrap();
     assert_eq!(
         converted.request.messages[0].content[0],
         crate::anthropic::ContentBlock::Thinking {
@@ -519,9 +511,13 @@ async fn preserves_baidu_unsigned_thinking_only_for_the_same_model() {
         "model":"Claude Haiku 4.5-baidu-oneapi",
         "input":[done["item"].clone(),{"type":"message","role":"user","content":"continue"}]
     });
-    let converted =
-        crate::protocol::convert::responses_to_anthropic(&switched_model, &anthropic_config())
-            .unwrap();
+    let converted = crate::protocol::convert::responses_to_anthropic(
+        &switched_model,
+        ThinkingMode::Off,
+        8192,
+        &test_secret,
+    )
+    .unwrap();
     assert_eq!(converted.request.messages.len(), 1);
     assert_eq!(converted.request.messages[0].role, "user");
 }
@@ -578,8 +574,13 @@ async fn preserves_anthropic_redacted_thinking_as_replayable_reasoning() {
             {"type":"message","role":"user","content":"continue"}
         ]
     });
-    let converted =
-        crate::protocol::convert::responses_to_anthropic(&request, &anthropic_config()).unwrap();
+    let converted = crate::protocol::convert::responses_to_anthropic(
+        &request,
+        ThinkingMode::Off,
+        8192,
+        &test_secret,
+    )
+    .unwrap();
     assert_eq!(
         converted.request.messages[0].content[0],
         crate::anthropic::ContentBlock::RedactedThinking {

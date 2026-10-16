@@ -8,6 +8,7 @@ use serde_json::{Value, json};
 use url::Url;
 use uuid::Uuid;
 
+use crate::config::ensure_compaction_secret;
 use crate::error::GatewayError;
 use crate::gateway::ResolvedModelRoute;
 use crate::protocol::compaction::{self, CompactionSummary};
@@ -124,8 +125,9 @@ pub(super) fn local_compaction_response(
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("compact request missing model".to_owned()))?;
-    let summary = local_compaction_summary(body, token_model)?;
-    let token = compaction::encode(token_model, summary)?;
+    let secret = ensure_compaction_secret().map_err(GatewayError::Other)?;
+    let summary = local_compaction_summary(body, token_model, &secret)?;
+    let token = compaction::encode(token_model, summary, &secret)?;
     let response_id = format!("resp_compact_{}", Uuid::new_v4().simple());
     let item_id = format!("cmp_{}", Uuid::new_v4().simple());
     Ok(json!({
@@ -207,7 +209,11 @@ pub(super) async fn prepare_v2_custom_compaction(
     }
 }
 
-fn local_compaction_summary(body: &Value, model: &str) -> Result<CompactionSummary, GatewayError> {
+fn local_compaction_summary(
+    body: &Value,
+    model: &str,
+    secret: &str,
+) -> Result<CompactionSummary, GatewayError> {
     let input = body
         .get("input")
         .ok_or_else(|| GatewayError::BadRequest("compact request missing input".to_owned()))?;
@@ -216,7 +222,7 @@ fn local_compaction_summary(body: &Value, model: &str) -> Result<CompactionSumma
         Value::String(text) => push_fragment(&mut fragments, "user", text),
         Value::Array(items) => {
             for item in items {
-                append_local_fragment(item, model, &mut fragments)?;
+                append_local_fragment(item, model, secret, &mut fragments)?;
             }
         }
         _ => {
@@ -241,6 +247,7 @@ fn local_compaction_summary(body: &Value, model: &str) -> Result<CompactionSumma
 fn append_local_fragment(
     item: &Value,
     model: &str,
+    secret: &str,
     fragments: &mut Vec<String>,
 ) -> Result<(), GatewayError> {
     let item_type = item.get("type").and_then(Value::as_str);
@@ -250,7 +257,7 @@ fn append_local_fragment(
             .and_then(Value::as_str)
             .filter(|token| token.starts_with(compaction::TOKEN_PREFIX))
         {
-            let previous = compaction::decode(token, model)?;
+            let previous = compaction::decode(token, model, secret)?;
             push_fragment(
                 fragments,
                 "previous compacted context",

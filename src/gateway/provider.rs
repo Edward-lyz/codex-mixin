@@ -1,11 +1,14 @@
 use futures_util::StreamExt;
 use serde_json::{Value, json};
 
+use crate::config::ensure_compaction_secret;
 use crate::error::GatewayError;
 use crate::gateway::{
     CacheShape, GatewayExecutor, observe_upstream_cache_usage, record_provider_prefix,
 };
-use crate::protocol::convert::responses_to_anthropic_with_model_reasoning_and_thinking_kind;
+use crate::protocol::convert::{
+    WebSearchTool, responses_to_anthropic_with_model_reasoning_and_thinking_kind,
+};
 use crate::protocol::gemini::responses_to_gemini;
 use crate::protocol::model_reasoning::{
     anthropic_thinking_kind_with_advertised, prepare_upstream_reasoning,
@@ -19,6 +22,11 @@ use crate::provider::{ProviderProtocol, ProviderRuntime};
 
 use super::responses::map_openai_responses_sse;
 use super::{ResponseStream, UpstreamRouting};
+
+// Read lazily: only requests replaying a compaction item need the secret.
+fn compaction_secret() -> Result<String, GatewayError> {
+    ensure_compaction_secret().map_err(GatewayError::Other)
+}
 
 pub(crate) struct ProviderResponseRequest<'a> {
     pub(crate) body: &'a Value,
@@ -106,11 +114,15 @@ async fn stream_anthropic_messages(
             body,
             Some(upstream_model_id),
             reasoning.as_ref(),
-            &executor.config,
+            executor.config.thinking_mode,
             default_max_tokens,
-            web_search_enabled,
+            web_search_enabled.then_some(WebSearchTool {
+                tool_type: &executor.config.web_search_tool_type,
+                max_uses: executor.config.web_search_max_uses,
+            }),
             provider.uses_mcp_bridge_names(upstream_model_id),
             auto_thinking_kind,
+            &compaction_secret,
         )?;
         if provider.uses_session_affinity()
             && let Some(routing) = routing
@@ -209,8 +221,11 @@ async fn stream_openai_chat(
     let downstream_body = response_metadata_request(body, downstream_model);
     let mut upstream_body = body.clone();
     prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
-    let converted =
-        responses_to_openai_chat_streaming_with_model(&upstream_body, Some(upstream_model_id))?;
+    let converted = responses_to_openai_chat_streaming_with_model(
+        &upstream_body,
+        Some(upstream_model_id),
+        &compaction_secret,
+    )?;
     let observation = record_provider_prefix(
         &executor.cache_shapes,
         provider.id(),

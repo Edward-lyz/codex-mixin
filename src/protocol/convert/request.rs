@@ -3,6 +3,7 @@ use super::thinking::*;
 use super::tool_map::ToolNameMap;
 use super::tools::*;
 use super::*;
+use crate::protocol::compaction::SecretSource;
 use crate::protocol::model_reasoning::{AnthropicThinkingKind, anthropic_thinking_kind};
 
 #[derive(Clone, Debug)]
@@ -14,72 +15,32 @@ pub struct ConvertedRequest {
     pub max_tokens_defaulted: bool,
 }
 
+/// Converts a streaming Responses request with hosted web search disabled.
 pub fn responses_to_anthropic(
     body: &Value,
-    config: &GatewayConfig,
+    thinking_mode: ThinkingMode,
+    default_max_tokens: u64,
+    compaction_secret: SecretSource<'_>,
 ) -> Result<ConvertedRequest, GatewayError> {
     if body.get("stream").and_then(Value::as_bool) != Some(true) {
         return Err(GatewayError::BadRequest(
             "Codex gateway currently requires stream=true".to_owned(),
         ));
     }
-    responses_to_anthropic_with_web_search(body, config, config.enable_web_search_tool, false)
-}
-
-pub(crate) fn responses_to_anthropic_with_web_search(
-    body: &Value,
-    config: &GatewayConfig,
-    web_search_enabled: bool,
-    use_mcp_bridge_names: bool,
-) -> Result<ConvertedRequest, GatewayError> {
     let auto_thinking_kind = body
         .get("model")
         .and_then(Value::as_str)
         .and_then(anthropic_thinking_kind);
-    responses_to_anthropic_with_web_search_and_thinking_kind(
-        body,
-        config,
-        web_search_enabled,
-        use_mcp_bridge_names,
-        auto_thinking_kind,
-    )
-}
-
-pub(crate) fn responses_to_anthropic_with_web_search_and_thinking_kind(
-    body: &Value,
-    config: &GatewayConfig,
-    web_search_enabled: bool,
-    use_mcp_bridge_names: bool,
-    auto_thinking_kind: Option<AnthropicThinkingKind>,
-) -> Result<ConvertedRequest, GatewayError> {
-    responses_to_anthropic_with_model_and_thinking_kind(
-        body,
-        None,
-        config,
-        web_search_enabled,
-        use_mcp_bridge_names,
-        auto_thinking_kind,
-    )
-}
-
-fn responses_to_anthropic_with_model_and_thinking_kind(
-    body: &Value,
-    model_override: Option<&str>,
-    config: &GatewayConfig,
-    web_search_enabled: bool,
-    use_mcp_bridge_names: bool,
-    auto_thinking_kind: Option<AnthropicThinkingKind>,
-) -> Result<ConvertedRequest, GatewayError> {
-    let reasoning = normalized_reasoning(body);
     responses_to_anthropic_with_model_reasoning_and_thinking_kind(
         body,
-        model_override,
-        reasoning.as_ref(),
-        config,
-        config.default_max_tokens,
-        web_search_enabled,
-        use_mcp_bridge_names,
+        None,
+        normalized_reasoning(body).as_ref(),
+        thinking_mode,
+        default_max_tokens,
+        None,
+        false,
         auto_thinking_kind,
+        compaction_secret,
     )
 }
 
@@ -89,11 +50,12 @@ pub(crate) fn responses_to_anthropic_with_model_reasoning_and_thinking_kind(
     body: &Value,
     model_override: Option<&str>,
     reasoning: Option<&Value>,
-    config: &GatewayConfig,
+    thinking_mode: ThinkingMode,
     default_max_tokens: u64,
-    web_search_enabled: bool,
+    web_search: Option<WebSearchTool<'_>>,
     use_mcp_bridge_names: bool,
     auto_thinking_kind: Option<AnthropicThinkingKind>,
+    compaction_secret: SecretSource<'_>,
 ) -> Result<ConvertedRequest, GatewayError> {
     let model = match model_override {
         Some(model) => model.to_owned(),
@@ -131,6 +93,7 @@ pub(crate) fn responses_to_anthropic_with_model_reasoning_and_thinking_kind(
                     &mut messages,
                     use_mcp_bridge_names,
                     replay_model,
+                    compaction_secret,
                 )?;
             }
         }
@@ -149,13 +112,8 @@ pub(crate) fn responses_to_anthropic_with_model_reasoning_and_thinking_kind(
     merge_consecutive_messages(&mut messages);
 
     let active_tools = collect_active_tools(body)?;
-    let (tools, tool_names) = convert_tools(
-        Some(&active_tools),
-        config,
-        use_mcp_bridge_names,
-        web_search_enabled,
-    )?;
-    let thinking = convert_thinking(max_tokens, reasoning, config, auto_thinking_kind)?;
+    let (tools, tool_names) = convert_tools(Some(&active_tools), web_search, use_mcp_bridge_names)?;
+    let thinking = convert_thinking(max_tokens, reasoning, thinking_mode, auto_thinking_kind)?;
     let output_config = merge_anthropic_output_format(
         thinking.output_config,
         body.get("text").and_then(|text| text.get("format")),
@@ -196,7 +154,7 @@ pub(crate) fn responses_to_anthropic_with_model_reasoning_and_thinking_kind(
     })
 }
 
-fn normalized_reasoning(body: &Value) -> Option<Value> {
+pub(super) fn normalized_reasoning(body: &Value) -> Option<Value> {
     let mut reasoning = body.get("reasoning")?.clone();
     if reasoning.get("effort").and_then(Value::as_str) == Some("ultra") {
         reasoning["effort"] = Value::String("max".to_owned());

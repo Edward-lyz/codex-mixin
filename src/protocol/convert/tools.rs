@@ -116,11 +116,17 @@ pub(crate) fn collect_active_tools(body: &Value) -> Result<Value, GatewayError> 
     Ok(Value::Array(active_tools))
 }
 
+/// Anthropic hosted web search settings; `None` at call sites means disabled.
+#[derive(Clone, Copy)]
+pub(crate) struct WebSearchTool<'a> {
+    pub(crate) tool_type: &'a str,
+    pub(crate) max_uses: Option<u64>,
+}
+
 pub(super) fn convert_tools(
     tools: Option<&Value>,
-    config: &GatewayConfig,
+    web_search: Option<WebSearchTool<'_>>,
     use_mcp_bridge_names: bool,
-    web_search_enabled: bool,
 ) -> Result<(Vec<Tool>, ToolNameMap), GatewayError> {
     let mut result = Vec::new();
     let mut names = ToolNameMap::default();
@@ -130,13 +136,7 @@ pub(super) fn convert_tools(
     let mut web_search_added = false;
     for tool in tools {
         if is_codex_web_search_function(tool) {
-            add_web_search_tool(
-                tool,
-                config,
-                web_search_enabled,
-                &mut web_search_added,
-                &mut result,
-            )?;
+            add_web_search_tool(tool, web_search, &mut web_search_added, &mut result)?;
             continue;
         }
         match tool.get("type").and_then(Value::as_str) {
@@ -150,13 +150,9 @@ pub(super) fn convert_tools(
             Some("tool_search") => {
                 add_tool_search(tool, use_mcp_bridge_names, &mut result, &mut names)?
             }
-            Some("web_search" | "web_search_preview") => add_web_search_tool(
-                tool,
-                config,
-                web_search_enabled,
-                &mut web_search_added,
-                &mut result,
-            )?,
+            Some("web_search" | "web_search_preview") => {
+                add_web_search_tool(tool, web_search, &mut web_search_added, &mut result)?
+            }
             Some("image_generation") => {
                 tracing::debug!("omitting legacy OpenAI-hosted image_generation tool")
             }
@@ -177,14 +173,15 @@ pub(super) fn convert_tools(
 
 fn add_web_search_tool(
     tool: &Value,
-    config: &GatewayConfig,
-    enabled: bool,
+    web_search: Option<WebSearchTool<'_>>,
     added: &mut bool,
     result: &mut Vec<Tool>,
 ) -> Result<(), GatewayError> {
-    if !enabled {
+    let Some(web_search) = web_search else {
         tracing::debug!("omitting unavailable hosted web_search tool");
-    } else if !*added && let Some(server_tool) = web_search_server_tool(config, tool)? {
+        return Ok(());
+    };
+    if !*added && let Some(server_tool) = web_search_server_tool(web_search, tool)? {
         result.push(server_tool);
         *added = true;
     }
@@ -291,7 +288,7 @@ pub(super) fn is_codex_web_search_function(tool: &Value) -> bool {
 }
 
 pub(super) fn web_search_server_tool(
-    config: &GatewayConfig,
+    web_search: WebSearchTool<'_>,
     codex_tool: &Value,
 ) -> Result<Option<Tool>, GatewayError> {
     if codex_tool
@@ -330,8 +327,8 @@ pub(super) fn web_search_server_tool(
         }
     }
 
-    let mut web_search_tool = json!({"type": &config.web_search_tool_type, "name": "web_search"});
-    if let Some(max_uses) = config.web_search_max_uses {
+    let mut web_search_tool = json!({"type": web_search.tool_type, "name": "web_search"});
+    if let Some(max_uses) = web_search.max_uses {
         web_search_tool["max_uses"] = json!(max_uses);
     }
     if let Some(filters) = codex_tool.get("filters") {

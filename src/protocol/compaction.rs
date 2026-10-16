@@ -6,7 +6,6 @@ use ring::aead::{AES_256_GCM, Aad, LessSafeKey, Nonce, UnboundKey};
 use ring::rand::{SecureRandom, SystemRandom};
 use serde::{Deserialize, Serialize};
 
-use crate::config::ensure_compaction_secret;
 use crate::error::GatewayError;
 
 pub(crate) const TOKEN_PREFIX: &str = "codex-mixin:compaction:v1:";
@@ -34,12 +33,11 @@ struct CompactionPayload {
     summary: CompactionSummary,
 }
 
-pub(crate) fn encode(model: &str, summary: CompactionSummary) -> Result<String, GatewayError> {
-    let secret = ensure_compaction_secret().map_err(GatewayError::Other)?;
-    encode_with_secret(model, summary, &secret)
-}
+/// Lazily supplies the compaction secret, so requests without compaction
+/// items never touch stored configuration.
+pub(crate) type SecretSource<'a> = &'a dyn Fn() -> Result<String, GatewayError>;
 
-fn encode_with_secret(
+pub(crate) fn encode(
     model: &str,
     summary: CompactionSummary,
     secret: &str,
@@ -70,21 +68,7 @@ fn encode_with_secret(
     Ok(format!("{TOKEN_PREFIX}{}", URL_SAFE_NO_PAD.encode(token)))
 }
 
-#[cfg(test)]
-pub(crate) fn encode_for_test(
-    model: &str,
-    summary: CompactionSummary,
-    secret: &str,
-) -> Result<String, GatewayError> {
-    encode_with_secret(model, summary, secret)
-}
-
-pub(crate) fn decode(token: &str, expected_model: &str) -> Result<CompactionSummary, GatewayError> {
-    let secret = ensure_compaction_secret().map_err(GatewayError::Other)?;
-    decode_with_secret(token, expected_model, &secret)
-}
-
-fn decode_with_secret(
+pub(crate) fn decode(
     token: &str,
     expected_model: &str,
     secret: &str,
@@ -180,23 +164,20 @@ mod tests {
     #[test]
     fn round_trips_and_binds_model() {
         let secret = URL_SAFE_NO_PAD.encode([7_u8; 32]);
-        let token = encode_with_secret("model-a", summary(), &secret).unwrap();
-        let decoded = decode_with_secret(&token, "model-a", &secret).unwrap();
+        let token = encode("model-a", summary(), &secret).unwrap();
+        let decoded = decode(&token, "model-a", &secret).unwrap();
         assert_eq!(decoded.goal, "ship compact");
-        assert!(decode_with_secret(&token, "model-b", &secret).is_err());
+        assert!(decode(&token, "model-b", &secret).is_err());
     }
 
     #[test]
     fn rejects_tampered_tokens_and_unknown_summary_fields() {
         let secret = URL_SAFE_NO_PAD.encode([9_u8; 32]);
-        let token = encode_with_secret("model-a", summary(), &secret).unwrap();
+        let token = encode("model-a", summary(), &secret).unwrap();
         let mut tampered = token.into_bytes();
         let last = tampered.len() - 1;
         tampered[last] = if tampered[last] == b'A' { b'B' } else { b'A' };
-        assert!(
-            decode_with_secret(std::str::from_utf8(&tampered).unwrap(), "model-a", &secret)
-                .is_err()
-        );
+        assert!(decode(std::str::from_utf8(&tampered).unwrap(), "model-a", &secret).is_err());
         assert!(
             serde_json::from_value::<CompactionSummary>(serde_json::json!({
                 "goal": "x",

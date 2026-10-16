@@ -10,7 +10,7 @@ pub(super) struct ThinkingSettings {
 pub(super) fn convert_thinking(
     max_tokens: u64,
     reasoning: Option<&Value>,
-    config: &GatewayConfig,
+    thinking_mode: ThinkingMode,
     auto_thinking_kind: Option<AnthropicThinkingKind>,
 ) -> Result<ThinkingSettings, GatewayError> {
     let effort = reasoning
@@ -19,7 +19,7 @@ pub(super) fn convert_thinking(
     if matches!(effort, Some("off" | "none" | "disabled")) {
         return Ok(ThinkingSettings::default());
     }
-    match config.thinking_mode {
+    match thinking_mode {
         ThinkingMode::Off => Ok(ThinkingSettings::default()),
         ThinkingMode::Manual => manual_thinking(max_tokens, effort),
         ThinkingMode::Adaptive => adaptive_thinking(effort),

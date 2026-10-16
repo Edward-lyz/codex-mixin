@@ -3,7 +3,7 @@ use std::collections::{HashMap, HashSet};
 use serde_json::{Value, json};
 
 use crate::anthropic::{ContentBlock, Message, MessageRequest, Tool};
-use crate::config::{GatewayConfig, ThinkingMode};
+use crate::config::ThinkingMode;
 use crate::error::GatewayError;
 
 mod content;
@@ -17,12 +17,10 @@ pub(crate) use content::{
     encode_baidu_unsigned_thinking, is_gateway_thinking,
 };
 pub(crate) use request::responses_to_anthropic_with_model_reasoning_and_thinking_kind;
-#[cfg(test)]
-pub(crate) use request::responses_to_anthropic_with_web_search;
 pub use request::{ConvertedRequest, responses_to_anthropic};
 pub use tool_map::ToolNameMap;
 pub use tools::sanitize_tool_name;
-pub(crate) use tools::{collect_active_tools, custom_tool_description};
+pub(crate) use tools::{WebSearchTool, collect_active_tools, custom_tool_description};
 
 #[cfg(test)]
 mod tests;

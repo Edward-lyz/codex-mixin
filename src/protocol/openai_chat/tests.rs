@@ -1,5 +1,12 @@
 use super::*;
 
+// None of these requests replay a compaction item.
+fn responses_to_openai_chat(body: &Value) -> Result<ConvertedChatRequest, GatewayError> {
+    request::responses_to_openai_chat(body, &|| {
+        Err(GatewayError::Other(anyhow::anyhow!("unused")))
+    })
+}
+
 #[test]
 fn accepts_standard_message_items_without_an_explicit_type() {
     let converted = responses_to_openai_chat(&json!({

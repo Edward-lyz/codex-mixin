@@ -1,6 +1,7 @@
 use super::content::{append_input_item, relocate_tool_message_images};
 use super::tools::convert_tools;
 use super::*;
+use crate::protocol::compaction::SecretSource;
 
 #[derive(Clone, Debug)]
 pub struct ConvertedChatRequest {
@@ -8,24 +9,29 @@ pub struct ConvertedChatRequest {
     pub tool_names: ToolNameMap,
 }
 
-pub fn responses_to_openai_chat(body: &Value) -> Result<ConvertedChatRequest, GatewayError> {
+pub fn responses_to_openai_chat(
+    body: &Value,
+    compaction_secret: SecretSource<'_>,
+) -> Result<ConvertedChatRequest, GatewayError> {
     if body.get("stream").and_then(Value::as_bool) != Some(true) {
         return Err(GatewayError::BadRequest(
             "Codex gateway currently requires stream=true".to_owned(),
         ));
     }
-    responses_to_openai_chat_streaming(body)
+    responses_to_openai_chat_streaming(body, compaction_secret)
 }
 
 pub(crate) fn responses_to_openai_chat_streaming(
     body: &Value,
+    compaction_secret: SecretSource<'_>,
 ) -> Result<ConvertedChatRequest, GatewayError> {
-    responses_to_openai_chat_streaming_with_model(body, None)
+    responses_to_openai_chat_streaming_with_model(body, None, compaction_secret)
 }
 
 pub(crate) fn responses_to_openai_chat_streaming_with_model(
     body: &Value,
     model_override: Option<&str>,
+    compaction_secret: SecretSource<'_>,
 ) -> Result<ConvertedChatRequest, GatewayError> {
     let model = match model_override {
         Some(model) => model.to_owned(),
@@ -48,7 +54,7 @@ pub(crate) fn responses_to_openai_chat_streaming_with_model(
         Some(Value::Array(items)) => {
             let replay_model = body.get("model").and_then(Value::as_str);
             for item in items {
-                append_input_item(item, &mut messages, replay_model)?;
+                append_input_item(item, &mut messages, replay_model, compaction_secret)?;
             }
         }
         Some(_) => {

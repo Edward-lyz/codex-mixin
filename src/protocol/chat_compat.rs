@@ -368,7 +368,10 @@ mod tests {
         assert_eq!(mapped["input"][3]["type"], "function_call_output");
         assert_eq!(mapped["max_output_tokens"], 12);
         assert_eq!(mapped["tools"][0]["name"], "read");
-        let roundtrip = crate::protocol::openai_chat::responses_to_openai_chat(&mapped).unwrap();
+        let roundtrip = crate::protocol::openai_chat::responses_to_openai_chat(&mapped, &|| {
+            Err(crate::error::GatewayError::Other(anyhow::anyhow!("unused")))
+        })
+        .unwrap();
         assert_eq!(roundtrip.request["messages"][3]["tool_call_id"], "c1");
     }
 
