@@ -15,7 +15,6 @@ use indicatif::{ProgressBar, ProgressStyle};
 use crate::ducx_auth_carrier::{DucxAuthCarrier, PREFIX, VERSION};
 
 mod agents;
-mod atomic_file;
 mod benchmark_proxy;
 mod claude;
 mod claude_desktop;

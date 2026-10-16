@@ -13,8 +13,8 @@ use serde::Serialize;
 use serde_json::{Value, json};
 use uuid::Uuid;
 
-use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::runtime::state_dir;
+use codex_mixin::platform::write_atomic_if_changed;
 use codex_mixin::provider::ProviderDefinition;
 
 mod installation;

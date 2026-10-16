@@ -258,7 +258,7 @@ fn managed_mode(raw: &str) -> Option<ManagedCodexMode> {
 fn save_restore_mode(mode: ManagedCodexMode) -> anyhow::Result<()> {
     let path = switch_state_path();
     let serialized = serde_json::to_vec_pretty(&CodexSwitchState { restore_mode: mode })?;
-    codex_mixin::clients::files::write_owner_only(&path, &serialized)
+    codex_mixin::platform::write_owner_only(&path, &serialized)
 }
 
 fn load_restore_mode_at(path: &Path) -> anyhow::Result<Option<ManagedCodexMode>> {

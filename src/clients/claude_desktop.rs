@@ -6,7 +6,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use super::files::write_owner_only;
+use crate::platform::write_owner_only;
 
 pub const PROFILE_ID: &str = "be16e7b5-9352-4cca-a197-32a6e608d930";
 const PROFILE_NAME: &str = "Codex Mixin";
@@ -154,7 +154,7 @@ fn lock_config(backup: &Path) -> anyhow::Result<fs::File> {
         .read(true)
         .write(true)
         .open(&path)?;
-    super::files::set_owner_only(&path)?;
+    crate::platform::restrict_owner_only_file(&path)?;
     fs2::FileExt::lock_exclusive(&lock).context("lock Claude Desktop configuration")?;
     Ok(lock)
 }

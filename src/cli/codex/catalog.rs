@@ -16,7 +16,6 @@ use codex_mixin::server::AppState;
 use codex_mixin::web_search::WebSearchCapabilities;
 
 use super::managed_config::*;
-use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::metadata::load_model_metadata_resolver;
 use crate::cli::official_models::{
     filter_official_catalog, official_template_cache_path, write_official_models_cache,
@@ -24,6 +23,7 @@ use crate::cli::official_models::{
 use codex_mixin::catalog::official::{
     OFFICIAL_CATALOG_TIMEOUT, OFFICIAL_CATALOG_URL, fetch_catalog,
 };
+use codex_mixin::platform::write_atomic_if_changed;
 
 pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::Result<()> {
     let config_path = resolve_codex_config_path(None)?;

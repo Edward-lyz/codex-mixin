@@ -420,7 +420,7 @@ async fn claude_desktop_can_stream_a_real_selected_model() {
     let home = directory.path().join("home");
     fs::create_dir_all(&home).unwrap();
     if official {
-        codex_mixin::clients::files::write_owner_only(
+        codex_mixin::platform::write_owner_only(
             &directory.path().join("codex/auth.json"),
             &fs::read(auth_path).unwrap(),
         )

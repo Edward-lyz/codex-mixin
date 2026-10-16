@@ -4,11 +4,11 @@ use std::path::PathBuf;
 
 use serde_json::{Value, json};
 
-use crate::cli::atomic_file::write_atomic_if_changed;
 use crate::cli::report_hook::reporting_enabled;
 use crate::cli::runtime::effective_gateway_bind;
 use codex_mixin::config::GatewayConfig;
 use codex_mixin::gateway_access::GatewayClient;
+use codex_mixin::platform::write_atomic_if_changed;
 use codex_mixin::provider::{ProviderDefinition, ProviderModel, catalog_model_slug};
 
 use super::official_models::selected_official_models;

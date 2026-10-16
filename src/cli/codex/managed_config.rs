@@ -5,7 +5,7 @@ use std::path::{Path, PathBuf};
 
 use toml_edit::{DocumentMut, Item, value};
 
-use crate::cli::atomic_file::write_atomic_if_changed;
+use codex_mixin::platform::write_atomic_if_changed;
 
 #[derive(Debug, Eq, PartialEq)]
 pub(in crate::cli) struct CodexInstallPaths {

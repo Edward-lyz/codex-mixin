@@ -8,7 +8,7 @@ use serde::{Deserialize, Serialize};
 use serde_json::Value;
 use uuid::Uuid;
 
-use crate::cli::atomic_file::write_atomic_if_changed;
+use codex_mixin::platform::write_atomic_if_changed;
 
 const QUEUE_DIRECTORY: &str = "ducx-report-queue";
 const DELIVERED_DIRECTORY: &str = "ducx-report-delivered";

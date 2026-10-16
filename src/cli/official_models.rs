@@ -7,10 +7,10 @@ use codex_mixin::config::{GatewayConfig, load_stored_config, stored_config_path}
 use codex_mixin::provider::{ProviderModel, ProviderProtocol};
 use serde_json::Value;
 
-use super::atomic_file::write_atomic_if_changed;
 use codex_mixin::catalog::official::{
     OFFICIAL_CATALOG_TIMEOUT, OFFICIAL_CATALOG_URL, fetch_catalog, validate_catalog,
 };
+use codex_mixin::platform::write_atomic_if_changed;
 
 pub(super) const OFFICIAL_PROVIDER_ID: &str = "official";
 const OFFICIAL_MODELS_CACHE_FILE: &str = "official-models.json";

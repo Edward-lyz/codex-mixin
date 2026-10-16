@@ -325,7 +325,7 @@ pub fn reconcile_managed_skills(
         .join("codex-mixin-skill-guardian")
         .join("SKILL.md");
     let guard_changed =
-        crate::clients::files::write_atomic_if_changed(&guard_path, GUARD_SKILL.as_bytes())
+        crate::platform::write_atomic_if_changed(&guard_path, GUARD_SKILL.as_bytes())
             .with_context(|| {
                 format!(
                     "failed to install skill guardian at {}",

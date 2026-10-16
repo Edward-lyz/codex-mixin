@@ -1,10 +1,10 @@
 use std::fs;
 use std::path::{Path, PathBuf};
 
-#[cfg(unix)]
-use crate::cli::atomic_file::*;
 use crate::cli::update::{cli_release_target, release_version_from_redirect, replace_executable};
 use crate::cli::{runtime::*, service::*};
+#[cfg(unix)]
+use codex_mixin::platform::write_atomic_if_changed;
 
 #[test]
 fn outdated_gateway_runtime_is_replaced_on_its_existing_bind() {

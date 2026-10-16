@@ -18,7 +18,6 @@ use super::codex::{
 use super::config_input::trim_required;
 use super::official_models::{load_official_models, official_models_cache_path};
 use codex_mixin::application::provider::build::{AddProviderInput, UpdateProviderInput};
-mod discovery;
 mod management;
 mod models;
 pub(super) use management::{

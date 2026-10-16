@@ -880,7 +880,7 @@ async fn persist_models_dev_http_cache(cache_path: &Path, metadata: &ModelsDevHt
 async fn write_models_dev_cache(cache_path: &Path, body: Vec<u8>) -> anyhow::Result<()> {
     let cache_path = cache_path.to_path_buf();
     tokio::task::spawn_blocking(move || {
-        crate::clients::files::write_atomic_if_changed(&cache_path, &body)
+        crate::platform::write_atomic_if_changed(&cache_path, &body)
     })
     .await
     .context("models.dev cache writer task failed")??;

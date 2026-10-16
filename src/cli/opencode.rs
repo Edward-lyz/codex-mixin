@@ -9,10 +9,10 @@ use codex_mixin::config::{GatewayConfig, stored_config_path};
 use codex_mixin::gateway_access::GatewayClient;
 use codex_mixin::provider::{ProviderModel, catalog_model_slug};
 
-use super::atomic_file::write_atomic_if_changed;
 use super::official_models::selected_official_models;
 use super::report_hook::reporting_enabled;
 use super::runtime::effective_gateway_bind;
+use codex_mixin::platform::write_atomic_if_changed;
 
 const OPENCODE_PROVIDER_ID: &str = "codex-mixin";
 const OPENCODE_API_KEY_FILE: &str = "opencode-api-key";

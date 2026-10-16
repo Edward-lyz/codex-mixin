@@ -272,7 +272,7 @@ fn remove_restore_points(paths: &ManagedAuthPaths) -> anyhow::Result<()> {
 }
 
 fn write_private_atomic(path: &Path, contents: &[u8]) -> anyhow::Result<()> {
-    codex_mixin::clients::files::write_owner_only(path, contents)
+    codex_mixin::platform::write_owner_only(path, contents)
 }
 
 fn sibling_path(path: &Path, suffix: &str) -> PathBuf {

@@ -7,7 +7,7 @@ use serde::{Deserialize, Serialize};
 
 use codex_mixin::config::stored_config_path;
 
-use super::atomic_file::write_atomic_if_changed;
+use codex_mixin::platform::write_atomic_if_changed;
 
 #[derive(Clone, Debug, Deserialize, Serialize)]
 pub(super) struct DaemonMetadata {

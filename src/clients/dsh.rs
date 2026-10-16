@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::Context;
 use serde_yaml::{Mapping, Value};
 
-use super::files::{ensure_owner_only_dir, set_owner_only, write_atomic_if_changed};
+use crate::platform::{ensure_owner_only_dir, restrict_owner_only_file, write_atomic_if_changed};
 
 const PROVIDER_ID: &str = "codex-mixin";
 const API_KEY_ENV: &str = "CODEX_MIXIN_GATEWAY_API_KEY";
@@ -242,7 +242,7 @@ pub fn sync_client_key(dsh_home: &Path, client_key: &str) -> anyhow::Result<()> 
     let contents = serde_yaml::to_string(&credentials)
         .with_context(|| format!("serialize DSH YAML {}", credentials_path.display()))?;
     write_atomic_if_changed(&credentials_path, contents.as_bytes())?;
-    set_owner_only(&credentials_path)
+    restrict_owner_only_file(&credentials_path)
 }
 
 fn read_yaml(path: &Path, label: &str) -> anyhow::Result<Value> {
@@ -261,7 +261,7 @@ fn write_yaml(path: &Path, value: &Value) -> anyhow::Result<bool> {
     let contents = serde_yaml::to_string(value)
         .with_context(|| format!("serialize DSH YAML {}", path.display()))?;
     let changed = write_atomic_if_changed(path, contents.as_bytes())?;
-    set_owner_only(path)?;
+    restrict_owner_only_file(path)?;
     Ok(changed)
 }
 

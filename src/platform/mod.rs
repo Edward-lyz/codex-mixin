@@ -26,10 +26,10 @@ pub use desktop::{
     show_notification,
 };
 pub use files::{
-    EXECUTABLE_SUFFIX, OwnerOnlyStatus, executable_file_name, is_owner_only, lock_exclusive,
-    make_executable, make_private_executable, make_private_executable_on, owner_only_status,
-    persist_temp_path, set_owner_only_dir_mode, set_owner_only_mode, set_owner_only_mode_on,
-    symlink_file,
+    EXECUTABLE_SUFFIX, OwnerOnlyStatus, ensure_owner_only_dir, executable_file_name, is_owner_only,
+    lock_exclusive, make_executable, make_private_executable, make_private_executable_on,
+    owner_only_status, persist_temp_path, set_owner_only_dir_mode, set_owner_only_mode,
+    set_owner_only_mode_on, symlink_file, write_atomic_if_changed, write_owner_only,
 };
 pub use package::{PackageTarget, package_target};
 pub use paths::{

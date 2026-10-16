@@ -3,7 +3,7 @@ use std::path::Path;
 
 use serde_json::{Map, Value};
 
-use super::files::write_atomic_if_changed;
+use crate::platform::write_atomic_if_changed;
 
 pub const MANAGED_MARKER: &str = "codex-mixin managed Claude Code";
 const AUTH_TOKEN: &str = "ANTHROPIC_AUTH_TOKEN";

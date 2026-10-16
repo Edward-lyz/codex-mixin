@@ -149,7 +149,7 @@ fn rewrite_jsonl_session_meta(
         return Ok(0);
     }
     backup_file(path, codex_home, backup_root)?;
-    atomic_write(path, rewritten.as_bytes())?;
+    codex_mixin::platform::write_atomic_if_changed(path, rewritten.as_bytes())?;
     Ok(changed)
 }
 
@@ -233,11 +233,6 @@ fn backup_file(path: &Path, codex_home: &Path, backup_root: &Path) -> anyhow::Re
         fs::create_dir_all(parent)?;
     }
     fs::copy(path, backup_path)?;
-    Ok(())
-}
-
-fn atomic_write(path: &Path, bytes: &[u8]) -> anyhow::Result<()> {
-    codex_mixin::clients::files::write_atomic_if_changed(path, bytes)?;
     Ok(())
 }
 

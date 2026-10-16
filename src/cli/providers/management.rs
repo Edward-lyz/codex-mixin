@@ -1,12 +1,13 @@
 use codex_mixin::application::provider::after_provider_commit;
+use codex_mixin::application::provider::discovery::{
+    apply_inferred_custom_endpoint, detect_custom_provider_protocol,
+};
 use codex_mixin::provider::ProviderModelSource;
 
 use codex_mixin::application::error::OperationError;
 
 use super::{
-    AddProviderOptions, UpdateProviderOptions, discover_models_with_output,
-    discovery::{apply_inferred_custom_endpoint, detect_custom_provider_protocol},
-    sync_imagegen_skill,
+    AddProviderOptions, UpdateProviderOptions, discover_models_with_output, sync_imagegen_skill,
 };
 
 pub(crate) async fn add_provider(options: AddProviderOptions) -> anyhow::Result<()> {

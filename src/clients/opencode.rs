@@ -4,7 +4,7 @@ use std::path::Path;
 use anyhow::Context;
 use serde_json::{Map, Value, json};
 
-use super::files::{set_owner_only, write_atomic_if_changed, write_owner_only};
+use crate::platform::{restrict_owner_only_file, write_atomic_if_changed, write_owner_only};
 
 const PROVIDER_ID: &str = "codex-mixin";
 const PROVIDER_NAME: &str = "Codex Mixin";
@@ -150,7 +150,7 @@ fn write_json(path: &Path, document: &Value) -> anyhow::Result<bool> {
     let existed = path.exists();
     let changed = write_atomic_if_changed(path, &serde_json::to_vec_pretty(document)?)?;
     if !existed {
-        set_owner_only(path)?;
+        restrict_owner_only_file(path)?;
     }
     Ok(changed)
 }

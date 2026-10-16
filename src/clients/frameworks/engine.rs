@@ -7,7 +7,7 @@ use anyhow::Context;
 use serde::{Deserialize, Serialize};
 use serde_json::{Value, json};
 
-use crate::clients::files;
+use crate::platform::{ensure_owner_only_dir, write_owner_only};
 
 #[derive(Clone, Copy, Debug, Serialize, Deserialize)]
 pub(super) enum Format {
@@ -339,12 +339,12 @@ pub(super) fn apply(manifest: &Path, patches: Vec<Patch>) -> anyhow::Result<()> 
             fields,
         });
     }
-    files::ensure_owner_only_dir(manifest.parent().context("undo journal has no parent")?)?;
-    files::write_owner_only(manifest, &serde_json::to_vec(&Journal { entries })?)?;
+    ensure_owner_only_dir(manifest.parent().context("undo journal has no parent")?)?;
+    write_owner_only(manifest, &serde_json::to_vec(&Journal { entries })?)?;
     let journal: Journal = serde_json::from_str(&read(manifest)?.context("undo journal missing")?)?;
     for entry in &journal.entries {
         // Leave the journal on error so Disconnect can recover completed writes.
-        files::write_owner_only(&entry.path, entry.applied.as_bytes())?;
+        write_owner_only(&entry.path, entry.applied.as_bytes())?;
     }
     Ok(())
 }
@@ -399,7 +399,7 @@ pub(super) fn remove(manifest: &Path) -> anyhow::Result<()> {
     }
     for (path, contents) in restores {
         match contents {
-            Some(text) => files::write_owner_only(path, text.as_bytes())?,
+            Some(text) => write_owner_only(path, text.as_bytes())?,
             None if path.exists() => fs::remove_file(path)?,
             None => {}
         }
