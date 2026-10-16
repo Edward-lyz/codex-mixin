@@ -10,6 +10,7 @@ struct ProviderSettingsNavigationTests {
     static func main() {
         _ = NSApplication.shared
 
+        testHeaderAvoidsToolbarBlur()
         testReloadPreservesSelectionAndDisablesEmptyDetails()
         testBackgroundRefreshStopsWithWindow()
         testMutationIsBusyAndRestartsInOrder()
@@ -21,6 +22,53 @@ struct ProviderSettingsNavigationTests {
         testReadinessPresentationUsesConcreteReasons()
 
         print("Provider settings behavior: passed")
+    }
+
+    @MainActor
+    private static func testHeaderAvoidsToolbarBlur() {
+        let controller = ProviderSettingsWindowController(
+            loadHandler: { try providerList(ids: ["custom"], autoReviewModel: "model-1") },
+            runHandler: { _ in "" }, applyHandler: { _ in }
+        )
+        NSApp.finishLaunching()
+        controller.present()
+        controller.window?.setContentSize(NSSize(width: 1180, height: 720))
+        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
+            Task { @MainActor in
+                guard let frame = controller.window?.contentView?.superview,
+                      let root = frame.layer,
+                      let picker = descendantViews(of: NSSegmentedControl.self, in: frame).first,
+                      let pickerLayer = picker.layer else {
+                    preconditionFailure("Provider header must render before checking blur")
+                }
+                let headerRect = root.convert(pickerLayer.bounds, from: pickerLayer)
+                var obscuringRects: [CGRect] = []
+                // Inspect the real compositor layers after NSApp.run() installs the
+                // titlebar. Layout-only tests miss the blur added by AppKit.
+                func check(_ layer: CALayer) {
+                    guard !layer.isHidden, layer.opacity > 0 else { return }
+                    let rect = root.convert(layer.bounds, from: layer)
+                    if String(describing: layer.filters).contains("gaussianBlur"),
+                       rect.intersects(headerRect) {
+                        obscuringRects.append(rect)
+                    }
+                    layer.sublayers?.forEach(check)
+                }
+                check(root)
+                print("Provider header \(headerRect); overlapping blur layers: \(obscuringRects)")
+                fflush(stdout)
+                if ProcessInfo.processInfo.environment["CODEX_MIXIN_HEADER_PREVIEW"] != "1" {
+                    precondition(obscuringRects.isEmpty, "Toolbar blur must not cover the provider section picker")
+                    NSApp.stop(nil)
+                    let event = NSEvent.otherEvent(with: .applicationDefined, location: .zero,
+                        modifierFlags: [], timestamp: 0, windowNumber: 0, context: nil,
+                        subtype: 0, data1: 0, data2: 0)!
+                    NSApp.postEvent(event, atStart: true)
+                }
+            }
+        }
+        NSApp.run()
+        controller.window?.close()
     }
 
     @MainActor

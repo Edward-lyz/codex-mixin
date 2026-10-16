@@ -81,9 +81,11 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
         let visibleFrame = NSScreen.main?.visibleFrame
             ?? NSRect(x: 0, y: 0, width: 1_280, height: 800)
         let contentSize = providerSettingsContentSize(for: visibleFrame)
+        // NavigationSplitView needs the titlebar in its safe area; otherwise macOS 27
+        // draws the titlebar blur over the fixed provider header.
         let window = NSWindow(
             contentRect: NSRect(origin: .zero, size: contentSize),
-            styleMask: [.titled, .closable, .miniaturizable, .resizable],
+            styleMask: [.titled, .closable, .miniaturizable, .resizable, .fullSizeContentView],
             backing: .buffered,
             defer: false
         )
