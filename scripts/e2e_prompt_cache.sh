@@ -14,6 +14,18 @@ if [[ ! -x "$binary" ]]; then
 fi
 
 e2e_dir="$(mktemp -d "${TMPDIR:-/tmp}/codex-mixin-prompt-cache.XXXXXX")"
+# Isolate every state location and the OS startup-service identity so the
+# CLI can never reach the developer's real gateway or service.
+export HOME="$e2e_dir/home"
+export CODEX_HOME="$e2e_dir/codex-home"
+export CODEX_GATEWAY_CONFIG="$e2e_dir/config.json"
+export CODEX_GATEWAY_RUNTIME_FILE="$e2e_dir/runtime.json"
+export CODEX_GATEWAY_DAEMON_FILE="$e2e_dir/daemon.json"
+export CODEX_GATEWAY_SERVICE_ID="e2e-$$"
+export XDG_CONFIG_HOME="$e2e_dir/xdg-config"
+export XDG_DATA_HOME="$e2e_dir/xdg-data"
+export XDG_STATE_HOME="$e2e_dir/xdg-state"
+mkdir -p "$HOME" "$CODEX_HOME"
 anthropic_ready="$e2e_dir/anthropic.port"
 chat_ready="$e2e_dir/chat.port"
 gateway_log="$e2e_dir/gateway.log"
@@ -22,6 +34,8 @@ anthropic_pid=""
 chat_pid=""
 
 cleanup() {
+  # Stops only the isolated service/daemon named by the exports above.
+  "$binary" service stop --force >/dev/null 2>&1 || true
   for pid in "$gateway_pid" "$anthropic_pid" "$chat_pid"; do
     if [[ -n "$pid" ]]; then
       kill "$pid" 2>/dev/null || true
@@ -59,10 +73,6 @@ chat_port="$(<"$chat_ready")"
 
 node "$repo_root/scripts/e2e_prompt_cache.mjs" build "$e2e_dir"
 
-export HOME="$e2e_dir/home"
-export CODEX_HOME="$e2e_dir/codex-home"
-export CODEX_GATEWAY_CONFIG="$e2e_dir/config.json"
-mkdir -p "$HOME" "$CODEX_HOME"
 
 "$binary" providers add \
   --preset custom --id alpha --key alpha-secret \

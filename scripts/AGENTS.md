@@ -4,6 +4,7 @@
 
 - Bash 沿用 `set -euo pipefail`、ROOT 定位、引用路径和 trap 清理；外部命令检查退出码，保留失败阶段。
 - 临时目录与端口隔离，清理仅限脚本拥有的已确认路径；不要用通配符删除用户数据。
+- 运行 `codex-mixin` 的脚本必须在临时目录内设置 HOME、CODEX_HOME、配置/runtime/daemon 文件和 `CODEX_GATEWAY_SERVICE_ID`，并在 trap 中只清理这些隔离实例，不触碰真实网关与系统服务。
 - test 脚本运行实际测试入口；源码匹配只能检查结构约束，不能冒充运行时/UI 验证。
 - 架构扫描是粗粒度门禁，变更规则补负例；不通过重命名/别名/放宽断言绕过边界。
 - macOS Swift 测试统一登记在 `test_macos.sh` 的表格中（名称、localization、flags、frameworks、sources），新增测试加一行，不再新增单独脚本。
