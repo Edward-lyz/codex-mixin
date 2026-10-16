@@ -339,10 +339,29 @@ fn is_thought_signature_error(error_text: &str) -> bool {
 fn build_gemini_payload(
     provider: &ProviderRuntime,
     upstream_model_id: &str,
-    request: Value,
+    mut request: Value,
 ) -> Value {
     let api_url = provider.api_url_for_model(upstream_model_id);
     if api_url.path().contains("/v1internal:") {
+        // AGY's private endpoint rejects mixed tools even with the public API flag.
+        // Preserve client functions; native Google Search requires a separate request.
+        if provider.definition().preset_id.as_deref() == Some("agy")
+            && let Some(tools) = request.get_mut("tools").and_then(Value::as_array_mut)
+            && tools
+                .iter()
+                .any(|tool| tool.get("functionDeclarations").is_some())
+            && tools.iter().any(|tool| tool.get("googleSearch").is_some())
+        {
+            tools.retain(|tool| tool.get("googleSearch").is_none());
+            if let Some(request) = request.as_object_mut() {
+                request.remove("toolConfig");
+            }
+            tracing::warn!(
+                provider_id = provider.id(),
+                model = upstream_model_id,
+                "AGY native Google Search omitted from mixed-tool request; function tools preserved"
+            );
+        }
         json!({
             "project": "aicode-consumers",
             "model": upstream_model_id,
@@ -422,15 +441,15 @@ async fn stream_gemini(ctx: ProviderRequestContext<'_>) -> Result<ResponseStream
     }
     prepare_upstream_reasoning(&mut upstream_body, advertised_thinking);
     let converted = responses_to_gemini(&upstream_body, Some(upstream_model_id))?;
+    let mut payload = build_gemini_payload(provider, upstream_model_id, converted.request);
     let observation = record_provider_prefix(
         &executor.cache_shapes,
         provider.id(),
         catalog_slug,
         upstream_model_id,
         routing,
-        CacheShape::from_gemini(&converted.request),
+        CacheShape::from_gemini(payload.get("request").unwrap_or(&payload)),
     );
-    let mut payload = build_gemini_payload(provider, upstream_model_id, converted.request);
     if let Some(headers) = agy_native.as_ref() {
         payload["project"] = json!(
             executor
@@ -585,5 +604,51 @@ mod tests {
 
         let unsupported = json!({"reasoning":{"effort":"ultra"}});
         assert!(upstream_reasoning(&unsupported, Some(false)).is_none());
+    }
+    #[test]
+    fn agy_tool_policy_is_scoped() {
+        for (preset, path, native_agy) in [
+            ("agy", "/v1internal:streamGenerateContent", true),
+            ("custom", "/v1internal:streamGenerateContent", false),
+            ("agy", "/v1beta/models/{model}:streamGenerateContent", false),
+        ] {
+            let mut definition = crate::provider::agy_provider("fixture", "key");
+            definition.preset_id = Some(preset.to_owned());
+            definition.api_path = path.to_owned();
+            let registry = crate::provider::ProviderRegistry::new(vec![definition]).unwrap();
+            let provider = registry.provider("fixture").unwrap();
+            for (functions, search) in [(true, true), (true, false), (false, true)] {
+                let mut tools = Vec::new();
+                if functions {
+                    tools.push(json!({"type":"function", "name":"read_file", "parameters":{"type":"object"}}));
+                }
+                if search {
+                    tools.push(json!({"type":"web_search"}));
+                }
+                let converted = responses_to_gemini(
+                    &json!({"model":"gemini-3.8-flash-high", "input":"hello", "tools":tools}),
+                    None,
+                )
+                .unwrap();
+                let payload =
+                    build_gemini_payload(provider, "gemini-3.8-flash-high", converted.request);
+                let request = payload.get("request").unwrap_or(&payload);
+                let tools = request["tools"].as_array().unwrap();
+                assert_eq!(
+                    tools
+                        .iter()
+                        .any(|tool| tool.get("functionDeclarations").is_some()),
+                    functions
+                );
+                assert_eq!(
+                    tools.iter().any(|tool| tool.get("googleSearch").is_some()),
+                    search && !(native_agy && functions)
+                );
+                assert_eq!(
+                    request.get("toolConfig").is_some(),
+                    functions && search && !native_agy
+                );
+            }
+        }
     }
 }

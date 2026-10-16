@@ -167,6 +167,7 @@ struct ModelEntry {
 struct AgentModels {
     agent_model_sorts: Vec<AgentModelSort>,
     default_agent_model_id: Option<String>,
+    web_search_model_ids: Option<HashSet<String>>,
 }
 
 #[derive(Deserialize)]
@@ -225,6 +226,12 @@ fn parse_models(value: &Value) -> anyhow::Result<Vec<ProviderModel>> {
         let supports_function_tools = entry
             .supports_function_tools
             .or_else(|| agent_model_ids.contains(&id).then_some(true));
+        let supports_web_search = entry.supports_web_search.or_else(|| {
+            agent_models
+                .web_search_model_ids
+                .as_ref()
+                .map(|ids| ids.contains(&id))
+        });
         discovered.push(ProviderModel {
             id,
             display_name: entry.label,
@@ -233,7 +240,7 @@ fn parse_models(value: &Value) -> anyhow::Result<Vec<ProviderModel>> {
             max_output_tokens: entry.max_output_tokens,
             supports_image: entry.supports_image,
             supports_thinking: entry.supports_thinking,
-            supports_web_search: entry.supports_web_search,
+            supports_web_search,
             supports_function_tools,
             ..Default::default()
         });

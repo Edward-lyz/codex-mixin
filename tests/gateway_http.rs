@@ -8878,3 +8878,49 @@ async fn gemini_recovers_from_corrupted_thought_signature() {
     let reqs = requests.lock().unwrap();
     assert_eq!(reqs.len(), 2, "must have retried once after 400");
 }
+
+#[tokio::test]
+async fn agy_mixed_tools_complete() {
+    let app = Router::new().route("/v1internal:streamGenerateContent", post(
+        |axum::Json(body): axum::Json<Value>| async move {
+            let request = &body["request"];
+            let tools = request["tools"].as_array().unwrap();
+            assert!(tools.iter().any(|tool| tool.get("functionDeclarations").is_some()));
+            // The native endpoint rejects the combination even with the flag.
+            if tools.iter().any(|tool| tool.get("googleSearch").is_some()) {
+                return (StatusCode::BAD_REQUEST, axum::Json(json!({"error":{
+                    "code":400,
+                    "message":"Please enable tool_config.include_server_side_tool_invocations to use Built-in tools with Function calling.",
+                    "status":"INVALID_ARGUMENT"
+                }}))).into_response();
+            }
+            assert!(request.get("toolConfig").is_none());
+            Response::builder().header(header::CONTENT_TYPE, "text/event-stream")
+                .body(Body::from("data: {\"response\":{\"candidates\":[{\"content\":{\"role\":\"model\",\"parts\":[{\"text\":\"OK\"}]},\"finishReason\":\"STOP\"}]}}\n\n"))
+                .unwrap()
+        }
+    ));
+    let mut provider = codex_mixin::provider::agy_provider("agy", "fixture-key");
+    provider.base_url = spawn_router(app).await;
+    provider.cached_models = vec![codex_mixin::provider::ProviderModel {
+        id: "gemini-3.8-flash-high".to_owned(),
+        supports_web_search: Some(true),
+        supports_function_tools: Some(true),
+        ..Default::default()
+    }];
+    provider.selected_models = vec!["gemini-3.8-flash-high".to_owned()];
+    let gateway = spawn_gateway_with_config(GatewayConfig {
+        providers: vec![provider],
+        ..test_config("http://127.0.0.1:1".to_owned())
+    })
+    .await;
+    let response = reqwest::Client::new().post(format!("{gateway}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&json!({"model":"gemini-3.8-flash-high-agy", "stream":true,
+            "input":"hello", "tools":[{"type":"web_search"},
+                {"type":"function", "name":"read_file", "parameters":{"type":"object","properties":{}}}]}))
+        .send().await.unwrap();
+    let output = response.text().await.unwrap();
+    assert!(output.contains("response.completed"), "{output}");
+    assert!(!output.contains("response.failed"), "{output}");
+}

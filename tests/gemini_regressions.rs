@@ -228,6 +228,39 @@ fn converts_google_search_tools() {
     );
 }
 
+#[test]
+fn mixed_tools_config_is_scoped() {
+    for search_type in ["web_search", "web_search_preview"] {
+        let search = json!({"type":search_type});
+        let function = json!({"type":"function", "name":"lookup", "parameters":{"type":"object"}});
+        for (tools, choice, enabled) in [
+            (json!([search, function]), "auto", true),
+            (json!([search]), "auto", false),
+            (json!([function]), "auto", false),
+            (json!([search, function]), "none", false),
+            (json!([]), "auto", false),
+        ] {
+            let converted = responses_to_gemini(
+                &json!({
+                    "model":"gemini-3.8-flash-high", "input":"hello",
+                    "tools":tools, "tool_choice":choice
+                }),
+                None,
+            )
+            .unwrap();
+            let config = converted.request.get("toolConfig");
+            assert_eq!(config.is_some(), enabled, "tools={tools} choice={choice}");
+            if enabled {
+                assert_eq!(config.unwrap()["includeServerSideToolInvocations"], true);
+                assert_eq!(converted.request["tools"].as_array().unwrap().len(), 2);
+            }
+            if choice == "none" {
+                assert!(converted.request.get("tools").is_none());
+            }
+        }
+    }
+}
+
 #[tokio::test]
 async fn preserves_search_citations() {
     let output = events(vec![sse(json!({"candidates":[{

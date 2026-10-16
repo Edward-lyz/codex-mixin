@@ -118,3 +118,36 @@ async fn projects_are_bound_to_the_credential() {
     assert_eq!(requests.load(Ordering::SeqCst), 2);
     server.abort();
 }
+
+#[test]
+fn native_search_membership() {
+    for (ids, expected) in [
+        (json!(["search-only"]), Some(false)),
+        (json!(["agent"]), Some(true)),
+        (json!([]), Some(false)),
+        (Value::Null, None),
+    ] {
+        let models = parse_models(&json!({
+            "models":{"agent":{}, "explicit":{"supports_web_search":true}},
+            "webSearchModelIds":ids
+        }))
+        .unwrap();
+        assert_eq!(
+            models
+                .iter()
+                .find(|model| model.id == "agent")
+                .unwrap()
+                .supports_web_search,
+            expected
+        );
+        assert_eq!(
+            models
+                .iter()
+                .find(|model| model.id == "explicit")
+                .unwrap()
+                .supports_web_search,
+            Some(true)
+        );
+    }
+    assert!(parse_models(&json!({"models":{}, "webSearchModelIds":[123]})).is_err());
+}

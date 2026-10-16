@@ -326,7 +326,8 @@ pub fn responses_to_gemini(
     if hosted_search {
         tools.push(json!({"googleSearch":{}}));
     }
-    if !function_declarations.is_empty() {
+    let has_function_tools = !function_declarations.is_empty();
+    if has_function_tools {
         tools.push(json!({"functionDeclarations":function_declarations}));
     }
     if !tools.is_empty()
@@ -335,6 +336,10 @@ pub fn responses_to_gemini(
             .is_none_or(|choice| choice != "none")
     {
         request["tools"] = json!(tools);
+        if hosted_search && has_function_tools {
+            // Gemini requires tool context circulation when server and client tools mix.
+            request["toolConfig"] = json!({"includeServerSideToolInvocations":true});
+        }
     }
 
     Ok(ConvertedGeminiRequest {

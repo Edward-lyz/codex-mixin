@@ -506,3 +506,42 @@ async fn claude_desktop_can_stream_a_real_selected_model() {
         text.chars().count()
     );
 }
+
+#[tokio::test]
+#[ignore = "requires saved AGY OAuth and sends one real mixed-tool request"]
+async fn live_agy_mixed_tools() {
+    let mut provider = codex_mixin::provider::agy_provider("agy", "");
+    provider.cached_models = vec![codex_mixin::provider::ProviderModel {
+        id: "gemini-3.8-flash-high".to_owned(),
+        supports_function_tools: Some(true),
+        supports_web_search: Some(true),
+        ..Default::default()
+    }];
+    provider.selected_models = vec!["gemini-3.8-flash-high".to_owned()];
+    let mut config = GatewayConfig::from_stored_config().unwrap();
+    config.gateway_api_key = Some("local-live-check".to_owned());
+    config.providers = vec![provider];
+    let state = AppState::new(config).unwrap();
+    let gateway = spawn_gateway(router(state)).await;
+    let response = reqwest::Client::builder()
+        .timeout(Duration::from_secs(60))
+        .build()
+        .unwrap()
+        .post(format!("{gateway}/v1/responses"))
+        .bearer_auth("local-live-check")
+        .json(&json!({"model":"gemini-3.8-flash-high-agy", "stream":true,
+            "input":"Reply with OK only. Do not search or call tools.",
+            "max_output_tokens":512, "reasoning":{"effort":"none"},
+            "tools":[{"type":"web_search"}, {"type":"function", "name":"noop",
+                "description":"Validation only; do not call this function.",
+                "parameters":{"type":"object", "properties":{}}}]}))
+        .send()
+        .await
+        .unwrap();
+    let status = response.status();
+    let output = response.text().await.unwrap();
+    assert!(status.is_success(), "{status}: {output}");
+    assert!(output.contains("response.completed"), "{output}");
+    assert!(!output.contains("response.failed"), "{output}");
+    println!("Live AGY Gemini mixed-tool request completed");
+}
