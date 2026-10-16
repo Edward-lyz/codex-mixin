@@ -155,7 +155,7 @@ func localizedPrompt(_ text: String) -> String {
     ]
     guard let translation = translations[text] else { return text }
     switch UpdateLanguage.current {
-    case .simplifiedChinese, .traditionalChinese: return text
+    case .simplifiedChinese: return text
     case .english: return translation.english
     }
 }

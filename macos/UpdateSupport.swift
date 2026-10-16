@@ -2,7 +2,6 @@ import Foundation
 
 enum UpdateLanguage: Equatable {
     case simplifiedChinese
-    case traditionalChinese
     case english
 
     static var current: UpdateLanguage {
