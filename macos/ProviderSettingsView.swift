@@ -444,6 +444,8 @@ struct ProviderSettingsRootView: View {
                 }
             }
             .background(Color(nsColor: .windowBackgroundColor))
+            // The header and picker are fixed content, not scrolled content.
+            .fixedHeaderScrollEdge()
         }
         .navigationTitle("模型与服务")
     }

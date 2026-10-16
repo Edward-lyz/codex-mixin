@@ -99,6 +99,9 @@ prep_liquid_glass_style() {
   require_text "$support" "content.buttonStyle(.glassProminent)"
   require_text "$support" "func configureOpaqueWindow(_ window: NSWindow)"
   require_text "$support" "window.isOpaque = true"
+  # macOS 26+ soft top blur would cover the provider detail header.
+  require_text "$support" "scrollEdgeEffectStyle(.hard, for: .top)"
+  require_text "$ROOT_DIR/macos/ProviderSettingsView.swift" ".fixedHeaderScrollEdge()"
   for file in ProviderSettingsWindow FusionSettingsWindow SettingsPanel CodexConnectPanel \
     AgentManagementWindow AboutWindow InstallProgressWindow InstallCard AppSupport; do
     require_text "$ROOT_DIR/macos/$file.swift" "configureOpaqueWindow("
