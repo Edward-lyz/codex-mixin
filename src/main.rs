@@ -1,7 +1,6 @@
 #![forbid(unsafe_code)]
 
 mod cli;
-mod ducx_auth_carrier;
 #[path = "../panel/mod.rs"]
 mod panel;
 

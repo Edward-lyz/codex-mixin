@@ -12,7 +12,7 @@ use codex_mixin::server::AppState;
 use console::style;
 use indicatif::{ProgressBar, ProgressStyle};
 
-use crate::ducx_auth_carrier::{DucxAuthCarrier, PREFIX, VERSION};
+use codex_mixin::ducx_auth_carrier::{DucxAuthCarrier, PREFIX, VERSION};
 
 mod agents;
 mod benchmark_proxy;
