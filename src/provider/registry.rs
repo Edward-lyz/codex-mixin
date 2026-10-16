@@ -533,7 +533,13 @@ impl ProviderRegistry {
         routes: &'a BTreeMap<String, ProviderRouteTarget>,
         catalog_slug: &str,
     ) -> Option<ResolvedProviderModel<'a>> {
-        let (catalog_slug, target) = routes.get_key_value(catalog_slug)?;
+        let (catalog_slug, target) = match routes.get_key_value(catalog_slug) {
+            Some(route) => route,
+            None => {
+                let decoded = super::model_alias::unflatten_model_id(catalog_slug)?;
+                routes.get_key_value(&decoded)?
+            }
+        };
         let provider = self.providers.get(target.provider_index)?;
         let model = target
             .model_index
@@ -566,7 +572,9 @@ impl ResolvedProviderModel<'_> {
 
 fn validate_catalog_slug(slug: &str) -> anyhow::Result<()> {
     ensure!(
-        !slug.starts_with(FUSION_MODEL_PREFIX) && !slug.starts_with(OFFICIAL_MODEL_PREFIX),
+        !slug.starts_with(FUSION_MODEL_PREFIX)
+            && !slug.starts_with(OFFICIAL_MODEL_PREFIX)
+            && !slug.starts_with(super::model_alias::FLAT_MODEL_PREFIX),
         "provider model slug uses a reserved namespace: {slug}"
     );
     Ok(())
@@ -862,6 +870,67 @@ mod tests {
 
         let error = ProviderRegistry::new(vec![first, second]).unwrap_err();
         assert!(error.to_string().contains("slug collision for a-b-c"));
+    }
+
+    #[test]
+    fn flat_aliases_route_only_available_catalog_models() {
+        let mut provider = test_provider("custom");
+        provider.selected_models = vec!["org/model".to_owned()];
+        provider.cached_models = vec![
+            ProviderModel {
+                id: "org/model".to_owned(),
+                ..Default::default()
+            },
+            ProviderModel {
+                id: "org/hidden".to_owned(),
+                ..Default::default()
+            },
+        ];
+        let mut disabled_provider = provider.clone();
+        disabled_provider.enabled = false;
+        let disabled = ProviderRegistry::new(vec![disabled_provider]).unwrap();
+        let registry = ProviderRegistry::new(vec![provider]).unwrap();
+        let alias = crate::provider::flat_model_id("org/model-custom");
+        assert!(disabled.resolve(&alias).is_none());
+        assert!(disabled.resolve_known(&alias).is_some());
+        let resolved = registry.resolve(&alias).expect("flat alias should resolve");
+        assert_eq!(resolved.catalog_slug, "org/model-custom");
+        assert_eq!(resolved.upstream_model_id, "org/model");
+        assert_eq!(resolved.provider.id(), "custom");
+        assert_eq!(
+            registry.resolve_native_model(&alias).unwrap().catalog_slug,
+            "org/model-custom"
+        );
+        assert!(
+            registry
+                .resolve(&crate::provider::flat_model_id("org/hidden-custom"))
+                .is_none()
+        );
+        assert!(
+            registry
+                .resolve_known(&crate::provider::flat_model_id("org/hidden-custom"))
+                .is_some()
+        );
+        assert!(
+            registry
+                .resolve(&crate::provider::flat_model_id("org/unknown-custom"))
+                .is_none()
+        );
+        assert_eq!(
+            registry.catalog_slugs().collect::<Vec<_>>(),
+            vec!["org/model-custom"]
+        );
+    }
+
+    #[test]
+    fn flat_alias_namespace_cannot_shadow_catalog_models() {
+        let mut provider = test_provider("custom");
+        provider.cached_models = vec![ProviderModel {
+            id: "mixin-flat-v1-collision".to_owned(),
+            ..Default::default()
+        }];
+        let error = ProviderRegistry::new(vec![provider]).unwrap_err();
+        assert!(error.to_string().contains("reserved namespace"));
     }
 
     #[test]

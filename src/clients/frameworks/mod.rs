@@ -5,6 +5,7 @@ use std::path::{Path, PathBuf};
 use crate::application::agents::IntegrationStatus;
 use serde_json::{Value, json};
 
+mod dotenv;
 mod engine;
 mod schemas;
 
@@ -76,8 +77,11 @@ pub fn limitation(id: &str) -> Option<&'static str> {
         "cursor" | "copilot" | "devin" => Some(
             "The vendor CLI exposes native model selection only; magpie does not connect it to a third-party gateway.",
         ),
-        "gemini" | "agy" => Some(
-            "Requires Gemini generateContent/streamGenerateContent wire protocol, which this gateway does not yet implement.",
+        "gemini" => Some(
+            "Gemini Developer API ingress is available, but the CLI's topK/thinkingConfig and countTokens paths are not yet supported end to end.",
+        ),
+        "agy" => Some(
+            "Requires the Antigravity CloudCode transport and authentication; Gemini Developer API ingress alone does not provide it.",
         ),
         "zed" => Some(
             "Requires an OS credential-store adapter; writing settings alone does not install its API key.",
@@ -93,23 +97,11 @@ pub fn limitation(id: &str) -> Option<&'static str> {
         "cursor-local" => {
             Some("Requires process-level environment injection and a managed Cursor launcher.")
         }
-        "vscodium" => Some(
-            "Requires installed Copilot Chat extension discovery to choose customendpoint or customoai correctly.",
-        ),
         "muse" => Some(
             "Requires the Muse discovery endpoint /muse-code/models and an authenticated transport adapter.",
         ),
-        "empryo" | "ante" | "commandcode" | "fx" => Some(
-            "Requires a managed process launcher to authenticate without putting a gateway key in unsupported config fields.",
-        ),
-        "reasonix" => Some(
-            "Requires an environment-file credential and coordinated planner/provider configuration adapter.",
-        ),
-        "minimax-code" => {
-            Some("Requires MiniMax flattened model IDs and reversible gateway alias mapping.")
-        }
-        "cline" => Some(
-            "Requires coordinated takeover of Cline's built-in OpenAI-compatible provider and credential store.",
+        "commandcode" | "fx" | "empryo" | "ante" if cfg!(feature = "client-auth") => Some(
+            "This agent requires process environment authentication; a managed launcher is not implemented. Keyless integration is available only in builds without client-auth.",
         ),
         _ => None,
     }
@@ -132,7 +124,7 @@ pub fn manifest_path(id: &str, state: &Path) -> anyhow::Result<PathBuf> {
 
 pub fn status(id: &str, manifest: &Path) -> anyhow::Result<IntegrationStatus> {
     name(id)?;
-    if let Some(detail) = limitation(id) {
+    if let Some(detail) = limitation(id).filter(|_| !manifest.exists()) {
         return Ok(IntegrationStatus {
             state: "unsupported",
             mode: None,
@@ -164,6 +156,10 @@ pub fn install(
     models: &[FrameworkModel],
 ) -> anyhow::Result<()> {
     require_supported(id)?;
+    if manifest.exists() {
+        anyhow::ensure!(engine::is_managed(manifest)?, "integration is not managed");
+        return Ok(());
+    }
     anyhow::ensure!(
         !models.is_empty(),
         "no selected models are available for {id}"
@@ -173,7 +169,7 @@ pub fn install(
 }
 
 pub fn remove(id: &str, manifest: &Path) -> anyhow::Result<()> {
-    require_supported(id)?;
+    name(id)?;
     engine::remove(manifest)
 }
 

@@ -8,6 +8,8 @@ pub use agy::{AgyQuotaWindow, fetch_agy_quota};
 pub use auth::oauth::OAUTH_LOGIN_TIMEOUT_SECONDS;
 pub mod capabilities;
 mod discovery;
+mod model_alias;
+pub(crate) use model_alias::flat_model_id;
 mod quota;
 mod registry;
 mod resolver;

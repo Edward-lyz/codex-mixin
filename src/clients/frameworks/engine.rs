@@ -14,6 +14,7 @@ pub(super) enum Format {
     Json,
     Yaml,
     Toml,
+    Env,
 }
 
 pub(super) struct Patch {
@@ -146,6 +147,7 @@ fn parse(text: Option<&str>, format: Format) -> anyhow::Result<Value> {
         return Ok(json!({}));
     };
     match format {
+        Format::Env => super::dotenv::parse(text),
         Format::Json => parse_jsonc(text),
         Format::Yaml => serde_yaml::from_str(text).context("parse YAML configuration"),
         Format::Toml => {
@@ -159,6 +161,7 @@ fn parse(text: Option<&str>, format: Format) -> anyhow::Result<Value> {
 
 fn encode(value: &Value, format: Format) -> anyhow::Result<String> {
     Ok(match format {
+        Format::Env => super::dotenv::encode(value)?,
         Format::Json => serde_json::to_string_pretty(value)? + "\n",
         Format::Yaml => serde_yaml::to_string(value)?,
         Format::Toml => {

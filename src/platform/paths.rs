@@ -77,6 +77,21 @@ pub(crate) fn framework_app_root() -> anyhow::Result<PathBuf> {
     }
 }
 
+pub(crate) fn reasonix_home() -> anyhow::Result<PathBuf> {
+    if std::env::var_os("REASONIX_HOME").is_some() {
+        return framework_home_path("REASONIX_HOME", ".reasonix");
+    }
+    if cfg!(windows) {
+        Ok(framework_home_path("APPDATA", "AppData/Roaming")?.join("reasonix"))
+    } else {
+        framework_home_path("", ".reasonix")
+    }
+}
+
+pub(crate) fn vscodium_extensions_root() -> anyhow::Result<PathBuf> {
+    framework_home_path("VSCODE_EXTENSIONS", ".vscode-oss/extensions")
+}
+
 pub(crate) fn copilot_config_root() -> anyhow::Result<PathBuf> {
     if cfg!(windows) && std::env::var_os("XDG_CONFIG_HOME").is_none() {
         framework_home_path("", "AppData/Local")

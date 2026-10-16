@@ -242,6 +242,8 @@ async fn connect_framework(id: &str, mode: Option<AgentConnectMode>) -> anyhow::
     if frameworks::status(id, &manifest)?.state == "managed" {
         return Ok(());
     }
+    // Resolve an automatic listener port before persisting a client endpoint.
+    super::service::ensure_ready().await?;
     let client = framework_client(id)?;
     let id_owned = id.to_owned();
     tokio::task::spawn_blocking(move || {

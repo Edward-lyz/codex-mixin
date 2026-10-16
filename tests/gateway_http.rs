@@ -8374,6 +8374,74 @@ async fn claude_desktop_converts_openai_chat_stream_and_response() {
 }
 
 #[tokio::test]
+async fn api_base_probe_returns_real_models() {
+    let gateway = spawn_gateway("http://127.0.0.1:1".to_owned()).await;
+    let client = reqwest::Client::new();
+    let response = client
+        .get(format!("{gateway}/v1"))
+        .bearer_auth("gateway-key")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let value: Value = response.json().await.unwrap();
+    assert_eq!(value["object"], "list");
+    assert!(!value["data"].as_array().unwrap().is_empty());
+    let denied = client
+        .get(format!("{gateway}/v1"))
+        .header("Origin", "https://untrusted.invalid")
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(denied.status(), StatusCode::FORBIDDEN);
+}
+
+#[tokio::test]
+async fn flat_model_aliases_preserve_upstream_ids_across_http_apis() {
+    let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream);
+    config.providers[0].cached_models = vec![ProviderModel {
+        id: "org/model".to_owned(),
+        ..Default::default()
+    }];
+    config.providers[0].selected_models = vec!["org/model".to_owned()];
+    let gateway = spawn_gateway_with_config(config).await;
+    let alias = format!(
+        "mixin-flat-v1-{}",
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode("org/model-custom")
+    );
+    let client = reqwest::Client::new();
+    for (path, body) in [
+        (
+            "chat/completions",
+            json!({"model":alias,"messages":[{"role":"user","content":"hello"}],"stream":false}),
+        ),
+        (
+            "responses",
+            json!({"model":alias,"input":"hello","stream":true}),
+        ),
+        (
+            "messages",
+            json!({"model":alias,"messages":[{"role":"user","content":"hello"}],"max_tokens":32,"stream":true}),
+        ),
+    ] {
+        let response = client
+            .post(format!("{gateway}/v1/{path}"))
+            .bearer_auth("gateway-key")
+            .json(&body)
+            .send()
+            .await
+            .unwrap();
+        let status = response.status();
+        let text = response.text().await.unwrap();
+        assert_eq!(status, StatusCode::OK, "{path}: {text}");
+    }
+    let sent = requests.lock().unwrap();
+    assert_eq!(sent.len(), 3);
+    assert!(sent.iter().all(|body| body["model"] == "org/model"));
+}
+
+#[tokio::test]
 async fn chat_endpoint_returns_json_or_sse_and_real_usage() {
     let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
     let gateway = spawn_gateway(upstream).await;

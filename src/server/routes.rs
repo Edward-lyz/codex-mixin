@@ -21,6 +21,8 @@ pub enum ServeExit {
 pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
+        // Empryo probes its configured base URL before fetching /models.
+        .route("/v1", get(models))
         .route("/v1/models", get(models))
         .route("/v1beta/models", get(super::gemini::models))
         .route(

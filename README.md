@@ -74,15 +74,15 @@ Codex Mixin 是一个跨平台的 Rust 本地网关，提供 Windows 桌面 App�
 - 自动完成供应商管理、模型发现、能力探测、上下文配置、测速、额度和 Token 监测。
 - 模型融合支持多模型编排，提升整体表现；以及按时间轮转，一个模型名称下，按时间路由至不同模型（适用于波峰-波谷计价用户）
 - 配置加密，可导出为 Base64 备份并在另一台机器一键导入，无需繁琐重新配置
-- 统一管理 50 个 Agent，其中 30 个支持网关配置接入与恢复；[查看框架图标与接入情况](#agent-integrations)。
+- 统一管理 50 个 Agent，其中默认构建 38 个支持网关配置接入与恢复（`client-auth` 构建为 34 个）；[查看框架图标与接入情况](#agent-integrations)。
 
 ### Agent integrations
 
-目前管理目录覆盖 **50 个 Agent**，其中 **30 个支持网关配置接入与恢复**。下方按接入能力分组；版本检测和升级取决于实际安装来源，不代表支持网关接入。
+目前管理目录覆盖 **50 个 Agent**，其中默认构建 **38 个支持网关配置接入与恢复**（`client-auth` 构建为 **34 个**）。下方按接入能力分组；版本检测和升级取决于实际安装来源，不代表支持网关接入。
 
-The catalog contains **50 Agents**, with **30 gateway configuration integrations**. The groups below show integration support. Version detection and upgrades depend on the installation channel and do not imply gateway integration.
+The catalog contains **50 Agents**, with **38 gateway configuration integrations in the default build** (**34 with `client-auth`**). The groups below show integration support. Version detection and upgrades depend on the installation channel and do not imply gateway integration.
 
-#### 已支持接入 · Supported integrations (30)
+#### 已支持接入 · Supported integrations (38 default / 34 client-auth)
 
 <table>
   <tr>
@@ -268,7 +268,62 @@ The catalog contains **50 Agents**, with **30 gateway configuration integrations
 
 Install the Agent and select models, then connect or restore it through **Agent management** on macOS / Windows, or use the CLI commands above. Codex also requires `--mode official-account` or `--mode custom-only`. Air requires OpenCode.
 
-#### 暂未支持接入 · Integration unavailable (20)
+<table>
+  <tr>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/vscodium-dark.svg">
+        <img src="docs/assets/agents/vscodium-light.svg" width="36" height="36" alt="VSCodium logo">
+      </picture><br>
+      <sub>VSCodium</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/reasonix.svg" width="36" height="36" alt="Reasonix logo"><br>
+      <sub>Reasonix</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/commandcode-dark.svg">
+        <img src="docs/assets/agents/commandcode-light.svg" width="36" height="36" alt="Command Code logo">
+      </picture><br>
+      <sub>Command Code</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/fx-dark.svg">
+        <img src="docs/assets/agents/fx-light.svg" width="36" height="36" alt="fx logo">
+      </picture><br>
+      <sub>fx</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/empryo.svg" width="36" height="36" alt="Empryo logo"><br>
+      <sub>Empryo</sub>
+    </td>
+  </tr>
+  <tr>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/ante.svg" width="36" height="36" alt="Ante logo"><br>
+      <sub>Ante</sub>
+    </td>
+    <td width="20%" align="center">
+      <img src="macos/assets/agents/minimax-code.svg" width="36" height="36" alt="MiniMax Code logo"><br>
+      <sub>MiniMax Code</sub>
+    </td>
+    <td width="20%" align="center">
+      <picture>
+        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/cline-dark.svg">
+        <img src="docs/assets/agents/cline-light.svg" width="36" height="36" alt="Cline logo">
+      </picture><br>
+      <sub>Cline</sub>
+    </td>
+  </tr>
+</table>
+
+新增接入的真实配置路径、官方来源和限制见 [Agent integration contracts](docs/agent-integration-contracts.md)。CommandCode、fx、Empryo、Ante 仅支持默认无入站认证构建；`client-auth` 构建拒绝连接，直到具备受管认证 launcher。VSCodium 要求已安装声明兼容 provider 的 GitHub Copilot Chat extension；Cline 接入针对 CLI/SDK，不是 VS Code 加密凭证。
+
+The eight new configuration adapters and their upstream evidence are documented in [Agent integration contracts](docs/agent-integration-contracts.md). Four keyless-only adapters are disabled in `client-auth` builds; this is not an authenticated-launcher implementation.
+
+#### 暂未支持接入 · Integration unavailable (12)
 
 <table>
   <tr>
@@ -309,37 +364,10 @@ Install the Agent and select models, then connect or restore it through **Agent 
     </td>
     <td width="20%" align="center">
       <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/vscodium-dark.svg">
-        <img src="docs/assets/agents/vscodium-light.svg" width="36" height="36" alt="VSCodium logo">
-      </picture><br>
-      <sub>VSCodium</sub>
-    </td>
-    <td width="20%" align="center">
-      <picture>
         <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/copilot-dark.svg">
         <img src="docs/assets/agents/copilot-light.svg" width="36" height="36" alt="Copilot CLI logo">
       </picture><br>
       <sub>Copilot CLI</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="macos/assets/agents/reasonix.svg" width="36" height="36" alt="Reasonix logo"><br>
-      <sub>Reasonix</sub>
-    </td>
-    <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/commandcode-dark.svg">
-        <img src="docs/assets/agents/commandcode-light.svg" width="36" height="36" alt="Command Code logo">
-      </picture><br>
-      <sub>Command Code</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/fx-dark.svg">
-        <img src="docs/assets/agents/fx-light.svg" width="36" height="36" alt="fx logo">
-      </picture><br>
-      <sub>fx</sub>
     </td>
     <td width="20%" align="center">
       <picture>
@@ -353,30 +381,11 @@ Install the Agent and select models, then connect or restore it through **Agent 
       <sub>Muse</sub>
     </td>
     <td width="20%" align="center">
-      <img src="macos/assets/agents/empryo.svg" width="36" height="36" alt="Empryo logo"><br>
-      <sub>Empryo</sub>
-    </td>
-    <td width="20%" align="center">
-      <img src="macos/assets/agents/ante.svg" width="36" height="36" alt="Ante logo"><br>
-      <sub>Ante</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="20%" align="center">
-      <img src="macos/assets/agents/minimax-code.svg" width="36" height="36" alt="MiniMax Code logo"><br>
-      <sub>MiniMax Code</sub>
-    </td>
-    <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/cline-dark.svg">
-        <img src="docs/assets/agents/cline-light.svg" width="36" height="36" alt="Cline logo">
-      </picture><br>
-      <sub>Cline</sub>
-    </td>
-    <td width="20%" align="center">
       <img src="docs/assets/agents/hanako.svg" width="36" height="36" alt="Hanako logo"><br>
       <sub>Hanako</sub>
     </td>
+  </tr>
+  <tr>
     <td width="20%" align="center">
       <img src="docs/assets/agents/alma.svg" width="36" height="36" alt="Alma logo"><br>
       <sub>Alma</sub>
@@ -388,9 +397,9 @@ Install the Agent and select models, then connect or restore it through **Agent 
   </tr>
 </table>
 
-这些框架已列入管理目录，但当前不能连接到 Mixin。后续会逐步补齐能力范围。
+这些框架保留真实限制，不能仅通过写配置宣称支持。Gemini Developer API 入站协议不等于完整 Gemini CLI；AGY 另需 CloudCode。其他条目需要专用认证、credential store、运行中 App API 或 managed launcher，详见 [接入边界](docs/agent-integration-contracts.md#remaining-explicit-limitations-12)。
 
-These Agents are listed in the catalog but cannot connect to the Mixin gateway yet. They need dedicated protocols, credential stores, app runtime APIs, managed launchers, or extension discovery. Agent management shows the reason and disables the connection switch.
+These Agents remain unavailable for gateway connection. Agent management reports the actual limitation and disables connection rather than writing ineffective configuration. Installation/version management remains separate.
 
 图标来源与品牌归属见 [Agent Logos](macos/assets/agents/ATTRIBUTION.md)。
 
