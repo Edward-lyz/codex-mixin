@@ -37,6 +37,7 @@ mod claude_desktop;
 mod compact;
 mod cors;
 mod error_response;
+mod gemini;
 mod images;
 mod messages_http;
 mod realtime;

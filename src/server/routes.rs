@@ -22,6 +22,11 @@ pub fn router(state: AppState) -> Router {
     Router::new()
         .route("/healthz", get(healthz))
         .route("/v1/models", get(models))
+        .route("/v1beta/models", get(super::gemini::models))
+        .route(
+            "/v1beta/models/{*model_action}",
+            post(super::gemini::generate),
+        )
         .route("/v1/codex-model-catalog", get(codex_model_catalog))
         .route(
             "/v1/model-benchmarks",
