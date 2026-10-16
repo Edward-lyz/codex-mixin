@@ -68,6 +68,20 @@ case "$SWIFT_ARCH" in
 esac
 SPARKLE_FEED_URL="https://github.com/Edward-lyz/codex-mixin/releases/latest/download/appcast-$SPARKLE_FEED_ARCH.xml"
 
+# Newer SDKs implement SwiftUI property wrappers such as @State as macros whose
+# plugin ships only with Xcode, so Command Line Tools alone fail deep in the
+# Swift build. Probe once and fail before the long Rust build.
+SWIFTUI_PROBE_DIR="$(mktemp -d)"
+trap 'rm -rf "$SWIFTUI_PROBE_DIR"' EXIT
+printf 'import SwiftUI\nstruct Probe: View { @State private var on = false; var body: some View { EmptyView() } }\n' \
+  > "$SWIFTUI_PROBE_DIR/probe.swift"
+if ! xcrun swiftc -typecheck "$SWIFTUI_PROBE_DIR/probe.swift" >"$SWIFTUI_PROBE_DIR/probe.log" 2>&1; then
+  echo "SwiftUI macros are unavailable in the active developer directory: $(xcode-select -p)" >&2
+  echo "Install Xcode and run: sudo xcode-select -s /Applications/Xcode.app/Contents/Developer" >&2
+  cat "$SWIFTUI_PROBE_DIR/probe.log" >&2
+  exit 1
+fi
+
 cd "$ROOT_DIR"
 cargo build "${CARGO_BUILD_ARGS[@]}"
 mkdir -p "$ROOT_DIR/macos/Generated"
