@@ -16,7 +16,8 @@ use super::validate::validate_codex_install;
 use super::{reconcile_imagegen_skill, restore_imagegen_skill};
 use crate::cli::metadata::load_model_metadata_resolver;
 use crate::cli::official_models::{
-    filter_official_catalog, load_official_models, official_template_cache_path,
+    filter_official_catalog, load_official_catalog, load_official_models,
+    official_template_cache_path,
 };
 use crate::cli::providers::apply_official_model_refresh;
 use crate::cli::runtime::effective_gateway_bind;
@@ -132,6 +133,7 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
         codex_oauth_proxy,
         &official_template_cache_path(),
         codex_mixin::catalog::official::OFFICIAL_CATALOG_URL,
+        load_official_catalog,
     )
     .await?;
     if let Some(previous_official_models) = previous_official_models {

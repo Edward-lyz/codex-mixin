@@ -260,6 +260,7 @@ async fn oauth_install_missing_repository_and_cache_creates_no_restore_marker_or
         true,
         &dir.path().join("official-models.json"),
         "http://127.0.0.1:1/models.json",
+        || Ok(None),
     )
     .await
     .unwrap_err();
@@ -282,7 +283,8 @@ async fn custom_only_install_ignores_models_cache() {
         load_codex_install_template_online(
             false,
             &dir.path().join("official-models.json"),
-            "http://127.0.0.1:1/models.json"
+            "http://127.0.0.1:1/models.json",
+            || Ok(None),
         )
         .await
         .unwrap(),
@@ -320,6 +322,7 @@ async fn oauth_install_falls_back_to_local_cache_when_official_fetch_fails() {
         true,
         &official_models_cache,
         &format!("http://{address}/backend-api/codex/models"),
+        || Ok(None),
     )
     .await
     .unwrap()
@@ -369,6 +372,7 @@ async fn oauth_install_refreshes_its_public_template_from_live_catalog() {
         true,
         &official_models_cache,
         &format!("http://{address}/backend-api/codex/models"),
+        || Ok(None),
     )
     .await
     .unwrap()

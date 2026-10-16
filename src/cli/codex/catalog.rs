@@ -18,7 +18,8 @@ use codex_mixin::web_search::WebSearchCapabilities;
 use super::managed_config::*;
 use crate::cli::metadata::load_model_metadata_resolver;
 use crate::cli::official_models::{
-    filter_official_catalog, official_template_cache_path, write_official_models_cache,
+    filter_official_catalog, load_official_catalog, official_template_cache_path,
+    write_official_models_cache,
 };
 use codex_mixin::catalog::official::{
     OFFICIAL_CATALOG_TIMEOUT, OFFICIAL_CATALOG_URL, fetch_catalog,
@@ -36,8 +37,12 @@ pub(in crate::cli) async fn refresh_default_managed_codex_catalog() -> anyhow::R
     // An explicit empty selection must clear the managed catalog too.
     let models = state.fetch_models().await?;
     let mut template = if oauth_proxy {
-        load_preferred_official_catalog(OFFICIAL_CATALOG_URL, &official_template_cache_path())
-            .await?
+        load_preferred_official_catalog(
+            OFFICIAL_CATALOG_URL,
+            &official_template_cache_path(),
+            load_official_catalog,
+        )
+        .await?
     } else {
         None
     };
@@ -335,11 +340,12 @@ pub(in crate::cli) async fn load_codex_install_template_online(
     codex_oauth_proxy: bool,
     official_models_cache: &Path,
     source_url: &str,
+    local_catalog: impl FnOnce() -> anyhow::Result<Option<serde_json::Value>>,
 ) -> anyhow::Result<Option<serde_json::Value>> {
     if !codex_oauth_proxy {
         return Ok(None);
     }
-    load_preferred_official_catalog(source_url, official_models_cache).await
+    load_preferred_official_catalog(source_url, official_models_cache, local_catalog).await
 }
 
 pub(in crate::cli) async fn refresh_managed_official_codex_catalog(
@@ -378,6 +384,8 @@ pub(in crate::cli) async fn refresh_managed_official_codex_catalog(
 async fn load_preferred_official_catalog(
     source_url: &str,
     official_cache: &Path,
+    // Injected so tests never read the user's real Codex OAuth model cache.
+    local_catalog: impl FnOnce() -> anyhow::Result<Option<serde_json::Value>>,
 ) -> anyhow::Result<Option<serde_json::Value>> {
     let cached = load_template_catalog(Some(official_cache))?;
     match fetch_catalog(source_url, OFFICIAL_CATALOG_TIMEOUT, cached.as_ref()).await {
@@ -388,7 +396,7 @@ async fn load_preferred_official_catalog(
         Err(error) => {
             let fallback = match load_template_catalog(Some(official_cache))? {
                 Some(cached) => Some(cached),
-                None => crate::cli::official_models::load_official_catalog()?,
+                None => local_catalog()?,
             };
             let Some(cached) = fallback else {
                 return Err(error
@@ -539,9 +547,13 @@ mod account_cache_regressions {
         );
         let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
         for _ in 0..2 {
-            load_preferred_official_catalog(&format!("http://{address}/models"), &template_cache)
-                .await
-                .unwrap();
+            load_preferred_official_catalog(
+                &format!("http://{address}/models"),
+                &template_cache,
+                || Ok(None),
+            )
+            .await
+            .unwrap();
             assert_eq!(std::fs::read(&account_cache).unwrap(), original);
         }
         server.abort();
