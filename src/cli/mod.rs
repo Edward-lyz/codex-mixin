@@ -22,6 +22,7 @@ mod claude_desktop;
 mod codex;
 mod config_apply;
 mod config_input;
+mod cors;
 mod doctor;
 mod dsh;
 mod ducx_session;
@@ -848,6 +849,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             export,
         } => match (command, export) {
             (Some(ConfigCommand::Apply), None) => config_apply::run().await,
+            (Some(ConfigCommand::Cors { command }), None) => cors::run(command),
             (Some(ConfigCommand::Export { path }), None) => export_config(&path),
             (Some(ConfigCommand::Import { path }), None) => import_config(&path),
             (None, Some(path)) => export_config(&path),

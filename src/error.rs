@@ -7,6 +7,8 @@ pub enum GatewayError {
     BadRequest(String),
     #[error("unauthorized")]
     Unauthorized,
+    #[error("forbidden: {0}")]
+    Forbidden(String),
     #[error("request body is too large")]
     PayloadTooLarge,
     #[error("upstream error: {0}")]

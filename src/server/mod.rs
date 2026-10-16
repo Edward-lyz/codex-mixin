@@ -35,6 +35,7 @@ pub(crate) mod auth;
 mod chat_http;
 mod claude_desktop;
 mod compact;
+mod cors;
 mod error_response;
 mod images;
 mod messages_http;

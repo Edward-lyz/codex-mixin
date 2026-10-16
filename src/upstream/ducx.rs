@@ -211,6 +211,8 @@ printf '%s\n' 'CODEX_MIXIN_DUCX_AUTH_V1={{"version":1,"model_token":"model-token
             official_responses_url: "https://example.invalid/responses".to_owned(),
             codex_auth_path: directory.path().join("auth.json"),
             gateway_api_key: None,
+            cors_allowed_origins: crate::config::StoredGatewayConfig::default()
+                .cors_allowed_origins,
             gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
             accept_codex_oauth: false,
             official_ech_fallback_reason: None,

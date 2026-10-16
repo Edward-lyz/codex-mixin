@@ -427,6 +427,8 @@ mod tests {
             official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
             codex_auth_path: PathBuf::from("/tmp/auth.json"),
             gateway_api_key: None,
+            cors_allowed_origins: codex_mixin::config::StoredGatewayConfig::default()
+                .cors_allowed_origins,
             gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
                 pi: Some("pi-client-key".to_owned()),
                 ..Default::default()

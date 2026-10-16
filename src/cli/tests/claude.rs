@@ -35,6 +35,8 @@ fn claude_install_writes_base_url_and_uninstall_restores_settings() {
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
         codex_auth_path: directory.path().join("auth.json"),
         gateway_api_key: None,
+        cors_allowed_origins: codex_mixin::config::StoredGatewayConfig::default()
+            .cors_allowed_origins,
         gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
             claude: Some("claude-client-key".to_owned()),
             ..Default::default()
@@ -238,6 +240,8 @@ fn claude_install_uses_dedicated_client_key_as_auth_token() {
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
         codex_auth_path: directory.path().join("auth.json"),
         gateway_api_key: Some("gateway-secret".to_owned()),
+        cors_allowed_origins: codex_mixin::config::StoredGatewayConfig::default()
+            .cors_allowed_origins,
         gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
             claude: Some("claude-client-key".to_owned()),
             ..Default::default()
@@ -311,6 +315,8 @@ fn sync_claude_models_refreshes_only_managed_settings() {
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
         codex_auth_path: directory.path().join("auth.json"),
         gateway_api_key: Some("gateway-secret".to_owned()),
+        cors_allowed_origins: codex_mixin::config::StoredGatewayConfig::default()
+            .cors_allowed_origins,
         gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
             claude: Some("claude-client-key".to_owned()),
             ..Default::default()
@@ -403,6 +409,8 @@ fn claude_install_migrates_legacy_managed_env_backup() {
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
         codex_auth_path: directory.path().join("auth.json"),
         gateway_api_key: Some("gateway-secret".to_owned()),
+        cors_allowed_origins: codex_mixin::config::StoredGatewayConfig::default()
+            .cors_allowed_origins,
         gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
             claude: Some("claude-client-key".to_owned()),
             ..Default::default()
@@ -495,6 +503,8 @@ fn claude_install_accepts_any_routable_model_protocol() {
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
         codex_auth_path: directory.path().join("auth.json"),
         gateway_api_key: None,
+        cors_allowed_origins: codex_mixin::config::StoredGatewayConfig::default()
+            .cors_allowed_origins,
         gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
             claude: Some("claude-client-key".to_owned()),
             ..Default::default()
@@ -563,6 +573,8 @@ fn claude_install_marks_extended_context_models_without_family_mappings() {
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
         codex_auth_path: directory.path().join("auth.json"),
         gateway_api_key: None,
+        cors_allowed_origins: codex_mixin::config::StoredGatewayConfig::default()
+            .cors_allowed_origins,
         gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys {
             claude: Some("claude-client-key".to_owned()),
             ..Default::default()

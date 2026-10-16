@@ -30,6 +30,7 @@ impl IntoResponse for GatewayError {
         let (status, message) = match error {
             GatewayError::BadRequest(message) => (StatusCode::BAD_REQUEST, message),
             GatewayError::Unauthorized => (StatusCode::UNAUTHORIZED, "unauthorized".to_owned()),
+            GatewayError::Forbidden(message) => (StatusCode::FORBIDDEN, message),
             GatewayError::PayloadTooLarge => (
                 StatusCode::PAYLOAD_TOO_LARGE,
                 "request body is too large".to_owned(),
@@ -51,7 +52,10 @@ fn log_gateway_error(error: &GatewayError) {
     let error_chain = format_error_chain(error);
     match error {
         GatewayError::Unauthorized => {}
-        GatewayError::BadRequest(_) | GatewayError::PayloadTooLarge | GatewayError::Json(_) => {
+        GatewayError::BadRequest(_)
+        | GatewayError::Forbidden(_)
+        | GatewayError::PayloadTooLarge
+        | GatewayError::Json(_) => {
             tracing::warn!(error = %error_chain, "gateway request rejected");
         }
         GatewayError::Upstream(_) | GatewayError::UpstreamStatus { .. } | GatewayError::Http(_) => {

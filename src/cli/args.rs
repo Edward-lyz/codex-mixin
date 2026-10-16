@@ -414,6 +414,33 @@ pub(super) enum ConfigCommand {
     Export { path: PathBuf },
     /// Replace the current configuration from a Base64 backup.
     Import { path: PathBuf },
+    /// Read or replace the browser origin allowlist (restart gateway to apply).
+    Cors {
+        #[command(subcommand)]
+        command: CorsCommand,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(super) enum CorsCommand {
+    /// Show the effective saved origin allowlist.
+    Get {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Replace the allowlist; use --disable to reject all cross-origin callers.
+    Set {
+        #[arg(
+            long = "origin",
+            required_unless_present = "disable",
+            conflicts_with = "disable"
+        )]
+        origins: Vec<String>,
+        #[arg(long)]
+        disable: bool,
+        #[arg(long)]
+        json: bool,
+    },
 }
 
 #[derive(Debug, Subcommand)]

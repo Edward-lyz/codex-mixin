@@ -179,6 +179,7 @@ fn save_stored_config_to_path_unlocked(
     config: &StoredGatewayConfig,
 ) -> anyhow::Result<()> {
     ensure_config_version(config.config_version)?;
+    super::validate_cors_origins(&config.cors_allowed_origins)?;
     let providers = ProviderRegistry::new(config.providers.clone())?;
     validate_fusion_profiles(&config.fusion_profiles)?;
     validate_fusion_model_references(&config.fusion_profiles, &providers)?;

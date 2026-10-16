@@ -9,6 +9,8 @@ use serde::{Deserialize, Serialize};
 use crate::fusion::{FusionProfile, validate_fusion_profiles};
 use crate::provider::{CONFIG_VERSION, ProviderDefinition, ProviderRegistry};
 
+mod cors;
+pub(crate) use cors::{valid_cors_origin, validate_cors_origins};
 mod migration;
 mod storage;
 pub use storage::{
@@ -60,6 +62,7 @@ pub struct GatewayConfig {
     pub official_ech_fallback_reason: Option<String>,
     pub codex_auth_path: PathBuf,
     pub gateway_api_key: Option<String>,
+    pub cors_allowed_origins: Vec<String>,
     pub gateway_client_keys: crate::gateway_access::GatewayClientKeys,
     pub accept_codex_oauth: bool,
     pub official_selected_models: Option<Vec<String>>,
@@ -108,6 +111,7 @@ impl GatewayConfig {
 
     fn from_stored_config_value(stored_config: StoredGatewayConfig) -> anyhow::Result<Self> {
         ensure_config_version(stored_config.config_version)?;
+        validate_cors_origins(&stored_config.cors_allowed_origins)?;
         if stored_config.providers.is_empty()
             && !crate::provider::official_auth_available(&default_codex_auth_path())?
         {
@@ -130,6 +134,7 @@ impl GatewayConfig {
             official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
             codex_auth_path: default_codex_auth_path(),
             gateway_api_key: stored_config.gateway_api_key,
+            cors_allowed_origins: stored_config.cors_allowed_origins,
             gateway_client_keys: stored_config.gateway_client_keys,
             accept_codex_oauth: true,
             official_ech_fallback_reason: stored_config.official_ech_fallback_reason,
@@ -194,6 +199,8 @@ pub struct StoredGatewayConfig {
     pub gateway_bind: Option<String>,
     #[serde(skip_serializing_if = "Option::is_none")]
     pub gateway_api_key: Option<String>,
+    #[serde(default = "cors::default_cors_origins")]
+    pub cors_allowed_origins: Vec<String>,
     #[serde(default, skip_serializing_if = "gateway_client_keys_are_empty")]
     pub gateway_client_keys: crate::gateway_access::GatewayClientKeys,
     #[serde(default, skip_serializing_if = "Option::is_none")]
@@ -213,6 +220,7 @@ impl Default for StoredGatewayConfig {
             config_version: CONFIG_VERSION,
             gateway_bind: None,
             gateway_api_key: None,
+            cors_allowed_origins: cors::default_cors_origins(),
             gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
             compaction_secret: None,
             official_ech_fallback_reason: None,
@@ -260,6 +268,7 @@ mod tests {
             config_version: CONFIG_VERSION,
             gateway_bind: Some("127.0.0.1:18787".to_owned()),
             gateway_api_key: Some("local-key".to_owned()),
+            cors_allowed_origins: cors::default_cors_origins(),
             gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
             compaction_secret: None,
             official_ech_fallback_reason: None,
@@ -751,6 +760,7 @@ mod tests {
                 .to_owned(),
             codex_auth_path: PathBuf::from("/tmp/auth.json"),
             gateway_api_key: None,
+            cors_allowed_origins: cors::default_cors_origins(),
             gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
             accept_codex_oauth: true,
             official_ech_fallback_reason: None,

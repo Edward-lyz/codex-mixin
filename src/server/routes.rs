@@ -53,6 +53,10 @@ pub fn router(state: AppState) -> Router {
         .layer(RequestDecompressionLayer::new())
         .layer(CompressionLayer::new().quality(tower_http::CompressionLevel::Fastest))
         .layer(axum::middleware::from_fn(super::auth::mark_loopback_peer))
+        .layer(axum::middleware::from_fn_with_state(
+            Arc::clone(&state.config),
+            super::cors::cors,
+        ))
         .with_state(state)
 }
 

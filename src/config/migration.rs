@@ -55,6 +55,7 @@ pub(super) fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConf
         upgrade_aws_bedrock_sigv4_endpoint(&mut parsed);
         bootstrap_unrefreshed_selected_models(&mut parsed);
         backfill_data_report_executable(&mut parsed);
+        super::validate_cors_origins(&parsed.cors_allowed_origins)?;
         return Ok(parsed);
     } else if document.get("config_version").is_some() {
         anyhow::bail!("config_version must be an unsigned integer");
@@ -322,6 +323,7 @@ fn migrate_legacy_config(legacy: LegacyStoredGatewayConfig) -> anyhow::Result<St
         config_version: CONFIG_VERSION,
         gateway_bind: legacy.gateway_bind,
         gateway_api_key: legacy.gateway_api_key,
+        cors_allowed_origins: super::cors::default_cors_origins(),
         gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
         compaction_secret: None,
         official_ech_fallback_reason: None,

@@ -19,6 +19,7 @@ fn transport(client: Client, path: &std::path::Path) -> UpstreamAccess {
         official_ech_fallback_reason: None,
         codex_auth_path: path.with_extension("auth.json"),
         gateway_api_key: None,
+        cors_allowed_origins: crate::config::StoredGatewayConfig::default().cors_allowed_origins,
         gateway_client_keys: crate::gateway_access::GatewayClientKeys::default(),
         accept_codex_oauth: true,
         official_selected_models: None,

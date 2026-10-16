@@ -66,6 +66,7 @@ async fn startup_does_not_wait_for_official_catalog_network() {
             config_version: CONFIG_VERSION,
             gateway_bind: None,
             gateway_api_key: Some("gateway-key".to_owned()),
+            cors_allowed_origins: StoredGatewayConfig::default().cors_allowed_origins,
             gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys::default(),
             compaction_secret: None,
             official_ech_fallback_reason: None,
@@ -175,6 +176,7 @@ async fn first_start_accepts_client_key_created_during_client_sync() {
             config_version: CONFIG_VERSION,
             gateway_bind: None,
             gateway_api_key: Some("gateway-key".to_owned()),
+            cors_allowed_origins: StoredGatewayConfig::default().cors_allowed_origins,
             gateway_client_keys: codex_mixin::gateway_access::GatewayClientKeys::default(),
             compaction_secret: None,
             official_ech_fallback_reason: None,
@@ -247,6 +249,7 @@ async fn running_gateway_serves_a_rotated_client_key() {
         ..ProviderModel::default()
     }];
     let stored_config = |key: &str| StoredGatewayConfig {
+        cors_allowed_origins: StoredGatewayConfig::default().cors_allowed_origins,
         config_version: CONFIG_VERSION,
         gateway_bind: None,
         gateway_api_key: Some("gateway-key".to_owned()),

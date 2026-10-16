@@ -90,6 +90,7 @@ impl AppState {
         env_lookup: impl Fn(&str) -> Option<String>,
         usage: crate::gateway::TokenUsageAggregator,
     ) -> anyhow::Result<Self> {
+        crate::config::validate_cors_origins(&config.cors_allowed_origins)?;
         validate_fusion_profiles(&config.fusion_profiles)?;
         let websocket_proxy_env = ProxyEnv::from_lookup(&env_lookup);
         let providers = Arc::new(ProviderRegistry::new_with_env(
