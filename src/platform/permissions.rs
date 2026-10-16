@@ -59,7 +59,7 @@ if ($directory) {
     ([System.IO.FileInfo]::new($env:CODEX_MIXIN_ACL_PATH)).SetAccessControl($acl)
 }
 "#;
-    let mut command = Command::new("powershell.exe");
+    let mut command = Command::new(super::system_powershell()?);
     command
         .args([
             "-NoLogo",

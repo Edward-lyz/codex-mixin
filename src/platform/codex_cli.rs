@@ -84,7 +84,7 @@ pub fn codex_cli_installer() -> anyhow::Result<CodexCliInstaller> {
     #[cfg(windows)]
     {
         const URL: &str = "https://chatgpt.com/codex/install.ps1";
-        let mut command = Command::new("powershell.exe");
+        let mut command = Command::new(super::system_powershell()?);
         command
             .args([
                 "-NoProfile",

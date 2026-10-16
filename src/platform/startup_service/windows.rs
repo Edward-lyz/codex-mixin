@@ -56,7 +56,7 @@ switch ($env:CODEX_MIXIN_TASK_OPERATION) {
 "#;
 
 fn powershell(script: &str, environment: &[(&str, &str)]) -> anyhow::Result<Output> {
-    let mut command = Command::new("powershell.exe");
+    let mut command = Command::new(crate::platform::system_powershell()?);
     command
         .args([
             "-NoLogo",

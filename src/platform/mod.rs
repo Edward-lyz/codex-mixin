@@ -64,3 +64,5 @@ pub(crate) use paths::{
     copilot_config_root, crush_config_paths, framework_app_root, reasonix_home,
     vscodium_extensions_root,
 };
+#[cfg(windows)]
+pub(crate) use process::system_powershell;

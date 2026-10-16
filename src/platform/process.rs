@@ -304,3 +304,17 @@ mod tests {
         assert!(send_process_signal(pid, "INVALID").is_err());
     }
 }
+
+/// Windows PowerShell 5.1 by absolute path, so spawning never depends on the
+/// child's `PATH` (tests and service hosts may clear it).
+#[cfg(windows)]
+pub(crate) fn system_powershell() -> anyhow::Result<std::path::PathBuf> {
+    use anyhow::Context;
+    let root = std::env::var_os("SystemRoot")
+        .or_else(|| std::env::var_os("windir"))
+        .context("SystemRoot and windir are not set")?;
+    let path =
+        std::path::PathBuf::from(root).join(r"System32\WindowsPowerShell\v1.0\powershell.exe");
+    anyhow::ensure!(path.is_file(), "PowerShell not found at {}", path.display());
+    Ok(path)
+}
