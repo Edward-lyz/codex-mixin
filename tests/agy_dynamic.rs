@@ -195,8 +195,8 @@ async fn quota_cli_returns_dynamic_rows() {
         codex_mixin::platform::set_home_env(&mut command, directory.path());
         // Windows needs its system ACL tool even when AGY CLI is absent.
         #[cfg(windows)]
-        let quota_path = std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap())
-            .join("System32");
+        let quota_path =
+            std::path::PathBuf::from(std::env::var_os("SystemRoot").unwrap()).join("System32");
         #[cfg(not(windows))]
         let quota_path = "";
         command
