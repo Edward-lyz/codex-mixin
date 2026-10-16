@@ -10,4 +10,4 @@
 - 密钥以既有环境引用机制传给子进程，动作日志脱敏；壳自己的日志/展示缓存保存在原生目录。
 - 新文案同步 en/zh-Hans；保持原生焦点、键盘导航、VoiceOver、浅深色和最低 macOS 13.1 兼容。不要为普通窗口新增独立 UI 框架。
 - 资源 manifest 与固定 Agent/provider ID 一致，保留来源/许可证；派生资源通过既有脚本更新。语言包 key、占位符和转义保持一致，测试 fixture 不触碰真实配置。
-- 执行对应 `./scripts/test_*.sh`、`./scripts/check_localizations.sh` 与 `./macos/build_app.sh`；图标变更补 `./scripts/verify_macos_app_icon.sh`。界面行为还需实际操作验证，静态源码测试不能替代。
+- 执行 `./scripts/test_macos.sh [name]`（无参数运行全部，`--list` 列出名称；`agent_logos` 需先有 `dist/Codex Mixin.app`）、`./scripts/check_localizations.sh` 与 `./macos/build_app.sh`；图标变更补 `./scripts/verify_macos_app_icon.sh`。界面行为还需实际操作验证，静态源码测试不能替代。
