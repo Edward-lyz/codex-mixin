@@ -70,6 +70,12 @@ check_no_match "clients must not print" '\b(print|println|eprint|eprintln)!' src
 check_no_match "lower layers must not reference FusionEngine" '\bFusionEngine\b' "${LOWER[@]}"
 check_no_match "provider rules must not reference gateway" 'crate::gateway::' src/provider
 check_no_match "protocol rules must not reference gateway or provider runtime" 'crate::gateway::|crate::provider::(ProviderRuntime|ProviderRegistry)' src/protocol
+check_no_match "protocol must not read or write stored config" 'crate::config::(ensure_|load_stored|mutate_stored|save_stored)|\b(ensure_compaction_secret|ensure_gateway_client_key|(load|mutate|save|delete|import|export)_stored_config\w*|stored_config_path)\b' src/protocol
+check_no_match "protocol must not depend on the HTTP transport" '\breqwest\b' src/protocol
+check_no_match "gateway must not reference fusion" 'crate::fusion\b|crate::\{[^}]*\bfusion\b' src/gateway
+check_no_match "catalog must not reference fusion" 'crate::fusion\b|crate::\{[^}]*\bfusion\b' src/catalog.rs src/catalog
+check_no_match "clients must not reference application" 'crate::application\b|crate::\{[^}]*\bapplication\b' src/clients
+check_no_match "provider must not reference clients" 'crate::clients\b|crate::\{[^}]*\bclients\b' src/provider
 check_no_match "server must not reference crate::cli" 'crate::cli\b' src/server
 check_no_match "core must not reference concrete shells" 'crate::(tui|panel)\b|path\s*=\s*"\.\./(tui|panel)/' \
     src/lib.rs src/application src/gateway src/upstream src/ech.rs src/ech src/provider src/protocol \
