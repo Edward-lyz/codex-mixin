@@ -236,13 +236,26 @@ impl ProviderRuntime {
         request: RequestBuilder,
         hash_key: Option<&str>,
     ) -> RequestBuilder {
-        match (
-            self.definition
-                .request_policy
-                .session_affinity_header
-                .as_deref(),
-            hash_key,
-        ) {
+        let header = self
+            .definition
+            .request_policy
+            .session_affinity_header
+            .as_deref();
+        if header.is_some_and(|header| header.eq_ignore_ascii_case(super::OPENCODE_SESSION_HEADER))
+        {
+            // Go requires a session even for standalone calls without client
+            // identity. Never combine those calls under a provider-wide ID.
+            let session = hash_key
+                .map(str::to_owned)
+                .unwrap_or_else(|| uuid::Uuid::new_v4().to_string());
+            return request
+                .header(super::OPENCODE_SESSION_HEADER, session)
+                .header(
+                    reqwest::header::USER_AGENT,
+                    concat!("codex-mixin/", env!("CARGO_PKG_VERSION")),
+                );
+        }
+        match (header, hash_key) {
             (Some(header), Some(hash_key)) => request.header(header, hash_key),
             _ => request,
         }
@@ -669,6 +682,28 @@ mod tests {
         custom_provider, open_code_go_provider,
     };
     use crate::provider::{ProviderQuotaParser, ProviderRequestPolicy};
+
+    #[test]
+    fn opencode_standalone_calls_have_distinct_sessions() {
+        let provider = ProviderRuntime::new(open_code_go_provider("go", "key"), &|_| None).unwrap();
+        let client = reqwest::Client::new();
+        let first = provider
+            .apply_session_affinity(client.post("https://example.com"), None)
+            .build()
+            .unwrap();
+        let second = provider
+            .apply_session_affinity(client.post("https://example.com"), None)
+            .build()
+            .unwrap();
+        let first_id = first.headers()[super::super::OPENCODE_SESSION_HEADER]
+            .to_str()
+            .unwrap();
+        assert!(uuid::Uuid::parse_str(first_id).is_ok());
+        assert_ne!(
+            first.headers()[super::super::OPENCODE_SESSION_HEADER],
+            second.headers()[super::super::OPENCODE_SESSION_HEADER]
+        );
+    }
 
     #[test]
     fn non_baidu_models_ignore_legacy_per_model_protocol_and_path() {

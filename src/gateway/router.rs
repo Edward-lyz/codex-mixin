@@ -117,6 +117,7 @@ pub(crate) fn stable_oneapi_routing(
     let thread_id = read_header("thread-id")?;
     let x_session_id = read_header("x-session-id")?;
     let session_id = read_header("session-id")?;
+    let opencode_session = read_header(crate::provider::OPENCODE_SESSION_HEADER)?;
     let subagent = read_header("x-openai-subagent")?;
     let prompt_cache_key = match body.get("prompt_cache_key") {
         None | Some(serde_json::Value::Null) => None,
@@ -134,6 +135,7 @@ pub(crate) fn stable_oneapi_routing(
         if let Some(prompt_cache_key) = prompt_cache_key
             && Some(prompt_cache_key) != session_id
             && Some(prompt_cache_key) != x_session_id
+            && Some(prompt_cache_key) != opencode_session
         {
             cache_namespace.push_str("\0prompt-cache-key\0");
             cache_namespace.push_str(prompt_cache_key);
@@ -149,7 +151,10 @@ pub(crate) fn stable_oneapi_routing(
         }));
     }
 
-    let session_id = prompt_cache_key.or(x_session_id).or(session_id);
+    let session_id = opencode_session
+        .or(prompt_cache_key)
+        .or(x_session_id)
+        .or(session_id);
     Ok(session_id.map(|session_id| super::UpstreamRouting {
         session_id: session_id.to_owned(),
         hash_key: uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, session_id.as_bytes()).to_string(),
