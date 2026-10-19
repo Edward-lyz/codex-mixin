@@ -146,7 +146,7 @@ run_table_test() {
 
   for word in $flags; do
     case "$word" in
-      @SDK@) args+=("$(xcrun --show-sdk-path --sdk macosx)") ;;
+      @SDK@) args+=("${SDKROOT:-$(xcrun --show-sdk-path --sdk macosx)}") ;;
       @ARCH@*) args+=("${ARCH}${word#@ARCH@}") ;;
       *) args+=("$word") ;;
     esac
