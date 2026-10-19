@@ -213,11 +213,11 @@ pub(super) enum Command {
         #[arg(long)]
         bind: Option<SocketAddr>,
     },
-    /// Open the web control panel (default bind 0.0.0.0:18790).
+    /// Open the web control panel (random port in 8000-9000 on all interfaces).
     Panel {
         #[arg(
             long,
-            help = "Listen address; defaults to all interfaces on port 18790"
+            help = "Listen address; defaults to all interfaces on a random port in 8000-9000"
         )]
         bind: Option<SocketAddr>,
     },

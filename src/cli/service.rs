@@ -1,4 +1,3 @@
-use std::io;
 use std::net::SocketAddr;
 use std::path::{Path, PathBuf};
 use std::sync::{
@@ -683,17 +682,7 @@ pub(super) async fn bind_gateway_listener(
     bind: SocketAddr,
     automatic_bind: bool,
 ) -> anyhow::Result<tokio::net::TcpListener> {
-    match tokio::net::TcpListener::bind(bind).await {
-        Ok(listener) => Ok(listener),
-        Err(err)
-            if automatic_bind
-                && (bind.ip().is_loopback() || bind.ip().is_unspecified())
-                && err.kind() == io::ErrorKind::AddrInUse =>
-        {
-            Ok(tokio::net::TcpListener::bind(SocketAddr::new(bind.ip(), 0)).await?)
-        }
-        Err(err) => Err(err.into()),
-    }
+    crate::listener::bind(bind, automatic_bind).await
 }
 
 #[allow(clippy::cognitive_complexity)]

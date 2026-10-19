@@ -6,6 +6,25 @@ use tower::ServiceExt;
 use super::actions::PanelAction;
 use super::api::{PanelState, router, token_matches};
 
+#[tokio::test]
+async fn default_panel_port_stays_in_range() {
+    let listener = super::bind_listener(None).await.unwrap();
+    let address = listener.local_addr().unwrap();
+    assert!(address.ip().is_unspecified());
+    assert!((8000..=9000).contains(&address.port()));
+}
+
+#[tokio::test]
+async fn explicit_panel_bind_fails_when_occupied() {
+    let occupied = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let address = occupied.local_addr().unwrap();
+    let error = super::bind_listener(Some(address)).await.unwrap_err();
+    assert_eq!(
+        error.downcast_ref::<std::io::Error>().unwrap().kind(),
+        std::io::ErrorKind::AddrInUse
+    );
+}
+
 fn action(value: serde_json::Value) -> PanelAction {
     serde_json::from_value(value).unwrap()
 }
