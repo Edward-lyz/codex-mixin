@@ -2373,9 +2373,12 @@ async fn isolates_http_and_websocket_routes_across_two_providers() {
 async fn opencode_go_sends_stable_session_headers() {
     let captured = Arc::new(Mutex::new(Vec::<HeaderMap>::new()));
     let requests = captured.clone();
-    let upstream = spawn_router(Router::new().fallback(post(move |headers: HeaderMap| {
+    let upstream = spawn_router(Router::new().fallback(post(move |headers: HeaderMap, Json(body): Json<Value>| {
         let requests = requests.clone();
         async move {
+            // Drain the streamed request before responding so Windows cannot
+            // close the connection while the gateway is still writing it.
+            assert_eq!(body["model"], "glm-5.2");
             requests.lock().unwrap().push(headers);
             (
                 [(header::CONTENT_TYPE, "text/event-stream")],
