@@ -911,26 +911,29 @@ public sealed partial class MainWindow : Window
         range.SelectionChanged += async (_, _) => await ExecuteUiAsync("读取用量", ReadUsage);
         PageBody.Children.Add(range); PageBody.Children.Add(usageBody);
         await ReadUsage(token);
-        var quotaBody = new StackPanel { Spacing = 12 };
-        try
+        var quotaBody = new StackPanel { Spacing = 16 };
+        JsonElement[] quotaRows = [];
+        void RenderQuota(QuotaStyle style)
         {
-            var rows = Json.Rows(await Client.QueryAsync(["quota", "--json"], token));
-            if (rows.Length == 0) quotaBody.Children.Add(Text("暂无可查询的供应商额度。"));
-            foreach (var row in rows)
+            quotaBody.Children.Clear();
+            if (quotaRows.Length == 0) { quotaBody.Children.Add(Text("暂无可查询的供应商额度。")); return; }
+            quotaBody.Children.Add(QuotaView.StyleSwitch(style, RenderQuota));
+            foreach (var group in quotaRows.GroupBy(row => Json.Text(row, "provider_id")))
             {
-                var label = Json.OptionalText(row, "display_name") ?? Json.OptionalText(row, "provider_id") ?? "额度";
-                var error = Json.OptionalText(row, "error");
-                var percentage = Json.OptionalText(row, "unit") == "percent";
-                var unit = percentage ? "%" : Json.OptionalText(row, "currency") ?? "";
-                var amount = percentage ? $"已用 {Json.Field(row, "used")}" : $"剩余 {Json.Field(row, "remaining")}";
-                quotaBody.Children.Add(Text(error != null ? $"{label} · 查询失败：{error}" :
-                    $"{label} · {amount} {unit}"));
-                if (error == null && Json.OptionalText(row, "reset_at") is { } reset && DateTimeOffset.TryParse(reset, out var resetAt))
-                    quotaBody.Children.Add(new TextBlock { Text = $"{resetAt.ToLocalTime():yyyy-MM-dd HH:mm} 重置", Style = Themed("Caption") });
+                var section = new StackPanel { Spacing = 8 };
+                var first = group.First();
+                section.Children.Add(new TextBlock { Text = Json.OptionalText(first, "provider_display_name") ?? Json.OptionalText(first, "display_name") ?? group.Key, FontSize = 14, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold });
+                section.Children.Add(QuotaView.Render(group.ToArray(), style));
+                quotaBody.Children.Add(section);
             }
         }
+        try
+        {
+            quotaRows = Json.Rows(await Client.QueryAsync(["quota", "--json"], token));
+            RenderQuota(QuotaView.Stored());
+        }
         catch (CliFailure error) { quotaBody.Children.Add(Text($"额度不可用：{error.Message}")); }
-        PageBody.Children.Add(Card("供应商额度", "查询失败时展示原因，未知额度不会显示为零。", quotaBody));
+        PageBody.Children.Add(Card("供应商额度", "圆环按已用比例绘制，接近上限时转为红色；查询失败时展示原因，未知额度不会显示为零。", quotaBody));
     }
 
     private static string Metric(JsonElement row, string key, string unit)

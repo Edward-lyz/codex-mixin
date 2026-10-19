@@ -15,6 +15,8 @@ public sealed partial class TrayWindow : Window
     private JsonElement[] providers = [];
     private string? providerId;
     private string days = "1";
+    private JsonElement[] quotaRows = [];
+    private QuotaStyle quotaStyle = QuotaView.Stored();
     private bool busy;
     private bool settingState;
     private bool pinned;
@@ -87,13 +89,11 @@ public sealed partial class TrayWindow : Window
             ProviderTitle.Text = hasProvider ? Json.Text(selected, "display_name") : "尚未配置服务商";
             ProviderIcon.Visibility = hasProvider ? Visibility.Visible : Visibility.Collapsed;
             if (hasProvider) ProviderIcon.Source = Marks.Provider(selected, 22).Source;
-            UsageBody.Children.Clear(); QuotaBody.Children.Clear();
-            if (Json.Flag(status, "configured"))
-            {
-                var quotas = Json.Rows(await client.QueryAsync(["quota", "--json"], lifetime.Token));
-                foreach (var row in quotas.Where(row => Json.Text(row, "provider_id") == providerId)) RenderQuota(row);
-            }
-            if (QuotaBody.Children.Count == 0) QuotaBody.Children.Add(new TextBlock { Text = "额度未知", Style = Themed("Caption") });
+            UsageBody.Children.Clear();
+            quotaRows = Json.Flag(status, "configured")
+                ? Json.Rows(await client.QueryAsync(["quota", "--json"], lifetime.Token)).Where(row => Json.Text(row, "provider_id") == providerId).ToArray()
+                : [];
+            RenderQuota();
             if (!running) UsageBody.Children.Add(Placeholder("本地网关未运行，暂无可读取的用量。"));
             else
             {
@@ -142,39 +142,18 @@ public sealed partial class TrayWindow : Window
         return number;
     }
 
-    private void RenderQuota(JsonElement row)
+    private void RenderQuota()
     {
-        var used = Amount(row, "used") ?? Amount(row, "value");
-        var limit = Amount(row, "limit");
-        var remaining = Amount(row, "remaining");
-        var currency = Json.OptionalText(row, "currency") ?? "";
-        var label = Json.OptionalText(row, "label") ?? Json.OptionalText(row, "quota_id") ?? "额度";
-        var value = used is { } consumed && limit is { } maximum ? $"{consumed:0.##} / {maximum:0.##} {currency}"
-            : remaining is { } balance ? $"余额 {balance:0.##} {currency}" : Json.OptionalText(row, "error") ?? "额度未知";
-        var heading = new Grid { ColumnSpacing = 8 };
-        heading.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
-        heading.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
-        heading.Children.Add(new TextBlock { Text = label, FontSize = 13, FontWeight = Microsoft.UI.Text.FontWeights.SemiBold, TextTrimming = TextTrimming.CharacterEllipsis });
-        var text = new TextBlock { Text = value, Style = Themed("MonoPrimary"), MaxWidth = 200 };
-        ToolTipService.SetToolTip(text, value);
-        Grid.SetColumn(text, 1); heading.Children.Add(text);
-        var body = new StackPanel { Spacing = 6 }; body.Children.Add(heading);
-        if (used is { } amount && limit is > 0)
-            body.Children.Add(Bar(Math.Clamp(amount / limit.Value, 0, 1)));
-        QuotaBody.Children.Add(body);
-    }
-
-    // Star columns size the fill without waiting for a layout pass.
-    private static Grid Bar(double fraction)
-    {
-        var bar = new Grid { Height = 8 };
-        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(fraction, 0.0001), GridUnitType.Star) });
-        bar.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(Math.Max(1 - fraction, 0.0001), GridUnitType.Star) });
-        var track = new Border { Style = Themed("BarTrack") };
-        Grid.SetColumnSpan(track, 2);
-        bar.Children.Add(track);
-        if (fraction > 0) bar.Children.Add(new Border { Style = Themed("BarFill") });
-        return bar;
+        QuotaBody.Children.Clear();
+        QuotaStyleHost.Child = quotaRows.Length == 0 ? null : QuotaView.StyleSwitch(quotaStyle, style =>
+        {
+            quotaStyle = style;
+            RenderQuota();
+            FitToContent();
+        });
+        QuotaBody.Children.Add(quotaRows.Length == 0
+            ? new TextBlock { Text = "额度未知", Style = Themed("Caption") }
+            : QuotaView.Render(quotaRows, quotaStyle));
     }
 
     private static double TokenTotal(JsonElement row) => new[] { "input_tokens", "cache_read_tokens", "cache_creation_tokens", "output_tokens" }
