@@ -118,7 +118,7 @@ jobs:
           github-token: ${{ github.token }}
       - name: Test real Rust CLI contracts
         shell: pwsh
-        run: dotnet run --project windows/Tests/Tests.csproj -c Release -- --cli target/release/codex-mixin.exe
+        run: dotnet run --project windows/Tests/Tests.csproj -c Release -- --cli-only target/release/codex-mixin.exe
       - name: Stage real CLI alongside UI
         shell: pwsh
         run: Copy-Item target/release/codex-mixin.exe windows/build/publish/

@@ -15,16 +15,11 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  test:
-    name: Test (${{ matrix.os }})
-    runs-on: ${{ matrix.os }}
-    strategy:
-      fail-fast: false
-      matrix:
-        os:
-          - ubuntu-latest
-          - macos-latest
-
+  # Formatting, script parsing, and architecture checks are platform-neutral.
+  # Keep them on one runner and use the saved macOS minutes for platform tests.
+  linux:
+    name: Linux checks and tests
+    runs-on: ubuntu-latest
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -34,10 +29,22 @@ jobs:
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
         run: cargo fmt --all -- --check
-      - name: Check JavaScript syntax
+      - name: Check script syntax
+        shell: bash
         run: |
-          node --check panel/assets/app.js
-          node --check scripts/test_codex_desktop_model_picker.cjs
+          while IFS= read -r script; do
+            bash -n "$script"
+          done < <(find scripts macos -type f -name '*.sh' -print)
+          while IFS= read -r script; do
+            node --check "$script"
+          done < <(find scripts panel/assets -type f \
+            \( -name '*.js' -o -name '*.cjs' -o -name '*.mjs' \) -print)
+          python3 - <<'PY'
+          from pathlib import Path
+
+          for path in sorted(Path("scripts").rglob("*.py")):
+              compile(path.read_text(encoding="utf-8"), str(path), "exec")
+          PY
       - name: Run strict Clippy
         run: |
           cargo clippy --locked --all-targets -- \
@@ -74,12 +81,10 @@ jobs:
             -D clippy::redundant_pattern_matching \
             -D warnings
       - name: Run client auth tests
-        if: runner.os == 'Linux'
         run: cargo test --locked --all-targets --features client-auth
       - name: Run prompt cache prefix E2E
         run: ./scripts/e2e_prompt_cache.sh
       - name: Build static Linux CLI
-        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install --yes musl-tools
@@ -89,21 +94,49 @@ jobs:
             cargo build --locked --release --target x86_64-unknown-linux-musl
           ./scripts/verify-linux-static.sh target/x86_64-unknown-linux-musl/release/codex-mixin
       - name: Upload Linux CLI artifact
-        if: runner.os == 'Linux'
         uses: actions/upload-artifact@v7
         with:
           name: codex-mixin-linux-cli-${{ github.sha }}
           path: target/x86_64-unknown-linux-musl/release/codex-mixin
           if-no-files-found: error
+
+  macos-rust:
+    name: Rust checks and tests (macOS)
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+          components: clippy
+      - uses: Swatinem/rust-cache@v2
+      - name: Run strict Clippy
+        run: |
+          cargo clippy --locked --all-targets -- \
+            -D clippy::cognitive_complexity \
+            -D clippy::redundant_closure_for_method_calls \
+            -D clippy::redundant_pattern_matching \
+            -D warnings
+      - name: Run unit and integration tests
+        run: cargo test --locked --all-targets
+
+  # The release build and Swift suite take several minutes. Run them beside
+  # the macOS Rust checks so neither job waits for the other.
+  macos-app:
+    name: macOS app and Swift tests
+    runs-on: macos-latest
+    steps:
+      - uses: actions/checkout@v5
+      - uses: dtolnay/rust-toolchain@stable
+        with:
+          toolchain: stable
+      - uses: Swatinem/rust-cache@v2
       - name: Build macOS app
-        if: runner.os == 'macOS'
         env:
           MACOSX_DEPLOYMENT_TARGET: "13.1"
           CODEX_MIXIN_REQUIRE_ADAPTIVE_ICON: "1"
         run: ./macos/build_app.sh
       - name: Verify macOS application icons
-        if: runner.os == 'macOS'
         run: ./scripts/verify_macos_app_icon.sh
       - name: Run macOS Swift tests
-        if: runner.os == 'macOS'
         run: ./scripts/test_macos.sh

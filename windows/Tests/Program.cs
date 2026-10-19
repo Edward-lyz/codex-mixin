@@ -47,8 +47,17 @@ if (args.Contains("--fixture"))
 var dotnet = Environment.GetEnvironmentVariable("DOTNET_HOST_PATH") ?? "dotnet";
 var assembly = typeof(CliClient).Assembly.Location;
 var fixture = new CliClient(dotnet, [assembly, "--fixture"]);
+var cliOnly = args.Contains("--cli-only");
+if (cliOnly && args is not ["--cli-only", _])
+    throw new ArgumentException("--cli-only requires a CLI path");
 var checks = new List<(string Name, Func<Task> Check)>();
-void Check(string name, Func<Task> check) => checks.Add((name, check));
+void AddCheck(string name, Func<Task> check)
+{
+    if (checks.Any(existing => existing.Name == name))
+        throw new InvalidOperationException($"Duplicate check: {name}");
+    checks.Add((name, check));
+}
+void Check(string name, Func<Task> check) { if (!cliOnly) AddCheck(name, check); }
 void Assert(bool condition, string message) { if (!condition) throw new InvalidOperationException(message); }
 JsonElement Parse(string value) { using var document = JsonDocument.Parse(value); return document.RootElement.Clone(); }
 async Task<CliFailure> Failure(Func<Task> call)
@@ -145,9 +154,13 @@ Check("contract arrays reject incomplete data", async () =>
     await Failure(() => { Json.Strings(Parse("[\"model\",123]")); return Task.CompletedTask; });
 });
 
-if (args is ["--cli", var realCli])
+string? realCli = null;
+if (args is ["--cli", var cliArgument]) realCli = cliArgument;
+else if (args is ["--cli-only", var cliOnlyArgument]) realCli = cliOnlyArgument;
+if (realCli is not null)
 {
-    Check("real Rust CLI interface and read-only contracts", async () =>
+    var cliPath = Path.GetFullPath(realCli);
+    AddCheck("real Rust CLI interface and read-only contracts", async () =>
     {
         var directory = Path.Combine(Path.GetTempPath(), "mixin-contract-" + Guid.NewGuid().ToString("N"));
         Directory.CreateDirectory(directory);
@@ -158,7 +171,7 @@ if (args is ["--cli", var realCli])
             Environment.SetEnvironmentVariable("CODEX_GATEWAY_CONFIG", Path.Combine(directory, "config.json"));
             // No ChatGPT OAuth session may leak in from the runner's real Codex home.
             Environment.SetEnvironmentVariable("CODEX_HOME", Path.Combine(directory, "codex"));
-            var client = new CliClient(Path.GetFullPath(realCli));
+            var client = new CliClient(cliPath);
             var metadata = await client.QueryAsync(["interface", "--json"], CancellationToken.None);
             Json.Interface(metadata);
             var catalog = Json.Field(metadata, "provider_catalog");
