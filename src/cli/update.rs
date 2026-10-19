@@ -86,13 +86,22 @@ mod tests {
         std::fs::remove_file(&invoked).unwrap();
         assert!(restart_updated_cli(&executable, "9.0.1").await.is_err());
         assert!(!invoked.exists());
-        std::fs::write(&executable, "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-mixin 9.0.0'; exit 0; fi\nexit 7\n").unwrap();
+        // Use a separate file so the test never rewrites an executable that a
+        // previous child may still be releasing.
+        let failing = directory.path().join("codex-mixin-failing");
+        std::fs::write(
+            &failing,
+            "#!/bin/sh\nif [ \"$1\" = --version ]; then echo 'codex-mixin 9.0.0'; exit 0; fi\nexit 7\n",
+        )
+        .unwrap();
+        codex_mixin::platform::make_executable(&failing).unwrap();
+        let error = restart_updated_cli(&failing, "9.0.0")
+            .await
+            .unwrap_err()
+            .to_string();
         assert!(
-            restart_updated_cli(&executable, "9.0.0")
-                .await
-                .unwrap_err()
-                .to_string()
-                .contains("restart failed")
+            error.contains("restart failed"),
+            "unexpected restart error: {error}"
         );
     }
 }

@@ -33,11 +33,25 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
+        if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
-      - name: Check JavaScript syntax
+      - name: Check script syntax
+        if: runner.os == 'Linux'
+        shell: bash
         run: |
-          node --check panel/assets/app.js
-          node --check scripts/test_codex_desktop_model_picker.cjs
+          while IFS= read -r script; do
+            bash -n "$script"
+          done < <(find scripts macos -type f -name '*.sh' -print)
+          while IFS= read -r script; do
+            node --check "$script"
+          done < <(find scripts panel/assets -type f \
+            \( -name '*.js' -o -name '*.cjs' -o -name '*.mjs' \) -print)
+          python3 - <<'PY'
+          from pathlib import Path
+
+          for path in sorted(Path("scripts").rglob("*.py")):
+              compile(path.read_text(encoding="utf-8"), str(path), "exec")
+          PY
       - name: Run strict Clippy
         run: |
           cargo clippy --locked --all-targets -- \
@@ -61,12 +75,14 @@ jobs:
             exit 1
           fi
       - name: Check architecture boundaries
+        if: runner.os == 'Linux'
         run: |
           ./scripts/check_arch.sh
           ./scripts/test_check_arch.sh
       - name: Run unit and integration tests
         run: cargo test --locked --all-targets
       - name: Run client auth Clippy
+        if: runner.os == 'Linux'
         run: |
           cargo clippy --locked --all-targets --features client-auth -- \
             -D clippy::cognitive_complexity \
@@ -77,6 +93,7 @@ jobs:
         if: runner.os == 'Linux'
         run: cargo test --locked --all-targets --features client-auth
       - name: Run prompt cache prefix E2E
+        if: runner.os == 'Linux'
         run: ./scripts/e2e_prompt_cache.sh
       - name: Build static Linux CLI
         if: runner.os == 'Linux'
