@@ -184,7 +184,7 @@ jobs:
           path: windows-cli
       # NSIS provides makensis for the standard installer built by the script.
       - name: Install NSIS
-        run: choco install nsis -y --no-progress
+        run: ./windows/scripts/install-nsis.ps1
         shell: pwsh
       # Builds the native WinUI 3 UI and packages the standard installer and
       # portable archive. Use the same relative dist\release layout as the
