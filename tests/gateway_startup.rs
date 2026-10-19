@@ -14,6 +14,26 @@ mod common;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
 
+struct DaemonGuard<'a>(&'a std::path::Path);
+
+impl Drop for DaemonGuard<'_> {
+    fn drop(&mut self) {
+        let output = common::cli(self.0).arg("stop").output();
+        match output {
+            Ok(output) if output.status.success() => {}
+            Ok(output) => eprintln!(
+                "failed to stop test daemon in {}: {}",
+                self.0.display(),
+                String::from_utf8_lossy(&output.stderr)
+            ),
+            Err(error) => eprintln!(
+                "failed to stop test daemon in {}: {error}",
+                self.0.display()
+            ),
+        }
+    }
+}
+
 #[derive(Deserialize)]
 struct RuntimeMetadata {
     bind: String,
@@ -40,6 +60,107 @@ async fn wait_for_runtime(
             let status = child.try_wait().expect("inspect gateway process status");
             panic!("gateway did not publish runtime metadata: {error}; child status: {status:?}")
         }
+    }
+}
+
+#[tokio::test]
+async fn daemon_upgrade_keeps_bind_mode() {
+    enum Replacement {
+        Outdated,
+        ConfigChanged,
+        MissingRuntime,
+        ForegroundChanged,
+    }
+    for (reason, explicit) in [
+        (Replacement::Outdated, false),
+        (Replacement::Outdated, true),
+        (Replacement::ConfigChanged, false),
+        (Replacement::MissingRuntime, false),
+        (Replacement::ForegroundChanged, false),
+    ] {
+        let directory = tempfile::tempdir().unwrap();
+        let root = directory.path();
+        let config_path = root.join("config.json");
+        let runtime_path = root.join("runtime.json");
+        let codex_home = root.join("codex");
+        fs::create_dir_all(&codex_home).unwrap();
+        let mut provider = custom_provider("static", "upstream-key");
+        provider.base_url = "http://127.0.0.1:9".to_owned();
+        provider.model_source = ProviderModelSource::Static;
+        provider.selected_models = vec!["test-model".to_owned()];
+        provider.cached_models = vec![ProviderModel {
+            id: "test-model".to_owned(),
+            ..Default::default()
+        }];
+        save_stored_config_to_path(
+            &config_path,
+            &StoredGatewayConfig {
+                providers: vec![provider],
+                official_selected_models: Some(Vec::new()),
+                ..Default::default()
+            },
+        )
+        .unwrap();
+        let _cleanup = DaemonGuard(root);
+        let started = common::tokio_cli(root)
+            .args(["start", "--daemon", "--bind", "127.0.0.1:0"])
+            .output()
+            .await
+            .unwrap();
+        assert!(
+            started.status.success(),
+            "{}",
+            String::from_utf8_lossy(&started.stderr)
+        );
+        let mut runtime: serde_json::Value =
+            serde_json::from_slice(&fs::read(&runtime_path).unwrap()).unwrap();
+        let old_bind = runtime["bind"].as_str().unwrap().to_owned();
+        let old_address: std::net::SocketAddr = old_bind.parse().unwrap();
+        assert!(!(8000..=9000).contains(&old_address.port()));
+        let mut stored = load_stored_config_from_path(&config_path).unwrap().unwrap();
+        stored.gateway_bind = Some(old_bind.clone());
+        save_stored_config_to_path(&config_path, &stored).unwrap();
+        match reason {
+            Replacement::Outdated => {
+                runtime["version"] = serde_json::json!("0.0.0");
+                fs::write(&runtime_path, serde_json::to_vec(&runtime).unwrap()).unwrap();
+            }
+            Replacement::ConfigChanged => {}
+            Replacement::MissingRuntime => fs::remove_file(&runtime_path).unwrap(),
+            Replacement::ForegroundChanged => fs::remove_file(root.join("daemon.json")).unwrap(),
+        }
+        let codex_config = codex_home.join("config.toml");
+        fs::write(&codex_config, format!(
+            "# codex-mixin managed config\nmodel_provider = 'codex-mixin-custom'\n[model_providers.codex-mixin-custom]\nbase_url = 'http://{old_bind}/v1'\nwire_api = 'responses'\n"
+        )).unwrap();
+        let mut command = common::tokio_cli(root);
+        command.args(["start", "--daemon"]);
+        if explicit {
+            command.args(["--bind", &old_bind]);
+        }
+        let replaced = command.output().await.unwrap();
+        assert!(
+            replaced.status.success(),
+            "{}",
+            String::from_utf8_lossy(&replaced.stderr)
+        );
+        let new_runtime: serde_json::Value =
+            serde_json::from_slice(&fs::read(&runtime_path).unwrap()).unwrap();
+        assert_ne!(new_runtime["pid"], runtime["pid"]);
+        let new_bind = new_runtime["bind"].as_str().unwrap();
+        let new_address: std::net::SocketAddr = new_bind.parse().unwrap();
+        if explicit {
+            assert_eq!(new_bind, old_bind);
+        } else {
+            assert!((8000..=9000).contains(&new_address.port()), "{new_address}");
+        }
+        let stored = load_stored_config_from_path(&config_path).unwrap().unwrap();
+        assert_eq!(stored.gateway_bind.as_deref(), Some(new_bind));
+        let client_config = fs::read_to_string(&codex_config).unwrap();
+        assert!(
+            client_config.contains(&format!("http://{new_bind}/v1")),
+            "{client_config}"
+        );
     }
 }
 

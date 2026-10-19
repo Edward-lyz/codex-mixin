@@ -21,7 +21,7 @@ const GRACEFUL_STOP_ATTEMPTS: usize = 50;
 const FORCED_STOP_ATTEMPTS: usize = 10;
 
 pub(crate) fn start_daemon(
-    mut bind: Option<SocketAddr>,
+    bind: Option<SocketAddr>,
     log_file: Option<PathBuf>,
     config: &GatewayConfig,
     quiet: bool,
@@ -65,9 +65,6 @@ pub(crate) fn start_daemon(
                 );
             }
             stop_with_output(false, quiet)?;
-            if bind.is_none() {
-                bind = Some(existing_bind);
-            }
         } else if let Some(daemon) = &daemon {
             let requested_bind = bind.unwrap_or(config.bind);
             if running_daemon_needs_replacement(
@@ -82,9 +79,6 @@ pub(crate) fn start_daemon(
                         "restarting gateway to apply current configuration on {}",
                         runtime.bind
                     );
-                }
-                if bind.is_none() {
-                    bind = Some(requested_bind);
                 }
                 stop_with_output(false, quiet)?;
             } else {
@@ -110,9 +104,6 @@ pub(crate) fn start_daemon(
                         runtime.bind
                     );
                 }
-                if bind.is_none() {
-                    bind = Some(requested_bind);
-                }
                 stop_with_output(false, quiet)?;
             } else {
                 if !quiet {
@@ -132,11 +123,7 @@ pub(crate) fn start_daemon(
                 daemon.bind
             );
         }
-        let existing_bind = daemon.bind;
         stop_with_output(false, quiet)?;
-        if bind.is_none() {
-            bind = Some(existing_bind);
-        }
     }
     delete_daemon_metadata()?;
     delete_runtime_metadata()?;
@@ -150,6 +137,8 @@ pub(crate) fn start_daemon(
         .open(&log_file)?;
     let mut command = ProcessCommand::new(std::env::current_exe()?);
     command.arg("start").arg("--log-file").arg(&log_file);
+    // A saved/runtime endpoint is not an explicit CLI override. Let the child
+    // retain automatic allocation, persistence, and managed-client updates.
     if let Some(bind) = bind {
         command.arg("--bind").arg(bind.to_string());
     }
