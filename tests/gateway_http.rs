@@ -2428,8 +2428,9 @@ async fn opencode_go_sends_stable_session_headers() {
                 .send()
                 .await
                 .unwrap();
-            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            let status = response.status();
             let text = response.text().await.unwrap();
+            assert_eq!(status, StatusCode::OK, "{path}: {text}");
             assert!(!text.contains("response.failed"), "{text}");
         }
     }
