@@ -27,19 +27,27 @@ struct ProviderSettingsNavigationTests {
     @MainActor
     private static func testHeaderAvoidsToolbarBlur() {
         let controller = ProviderSettingsWindowController(
-            loadHandler: { try providerList(ids: ["custom"], autoReviewModel: "model-1") },
+            loadHandler: {
+                // A slow CLI response must not race the compositor assertions.
+                try await Task.sleep(nanoseconds: 750_000_000)
+                return try providerList(ids: ["custom"], autoReviewModel: "model-1")
+            },
             runHandler: { _ in "" }, applyHandler: { _ in }
         )
         NSApp.finishLaunching()
         controller.present()
         controller.window?.setContentSize(NSSize(width: 1180, height: 720))
-        Timer.scheduledTimer(withTimeInterval: 0.5, repeats: false) { _ in
-            Task { @MainActor in
+        let deadline = Date().addingTimeInterval(5)
+        Task { @MainActor in
+            while true {
                 guard let frame = controller.window?.contentView?.superview,
                       let root = frame.layer,
                       let picker = descendantViews(of: NSSegmentedControl.self, in: frame).first,
-                      let pickerLayer = picker.layer else {
-                    preconditionFailure("Provider header must render before checking blur")
+                      let pickerLayer = picker.layer,
+                      !pickerLayer.bounds.isEmpty else {
+                    precondition(Date() < deadline, "Timed out waiting for provider header compositor layers")
+                    try! await Task.sleep(nanoseconds: 20_000_000)
+                    continue
                 }
                 let headerRect = root.convert(pickerLayer.bounds, from: pickerLayer)
                 var obscuringRects: [CGRect] = []
@@ -65,6 +73,7 @@ struct ProviderSettingsNavigationTests {
                         subtype: 0, data1: 0, data2: 0)!
                     NSApp.postEvent(event, atStart: true)
                 }
+                return
             }
         }
         NSApp.run()
