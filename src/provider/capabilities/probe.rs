@@ -467,11 +467,7 @@ async fn validate_probe_stream(
                     "provider capability probe returned invalid SSE JSON".to_owned(),
                 );
             };
-            if payload.get("type").and_then(Value::as_str) == Some("error")
-                || payload.get("object").and_then(Value::as_str) == Some("error")
-                || payload.get("error").is_some()
-                || payload.pointer("/response/error").is_some()
-            {
+            if probe_payload_is_error(&payload) {
                 saw_error = true;
             }
             let candidates = payload
@@ -495,10 +491,9 @@ async fn validate_probe_stream(
     }
     if !decoder.remaining().is_empty() {
         saw_event = true;
-        if serde_json::from_slice::<Value>(decoder.remaining()).is_ok_and(|payload| {
-            payload.get("type").and_then(Value::as_str) == Some("error")
-                || payload.get("object").and_then(Value::as_str) == Some("error")
-        }) {
+        if serde_json::from_slice::<Value>(decoder.remaining())
+            .is_ok_and(|payload| probe_payload_is_error(&payload))
+        {
             saw_error = true;
         }
     }
@@ -516,6 +511,15 @@ async fn validate_probe_stream(
     } else {
         ProbeOutcome::indeterminate("provider capability probe returned no SSE events".to_owned())
     }
+}
+
+fn probe_payload_is_error(payload: &Value) -> bool {
+    payload.get("type").and_then(Value::as_str) == Some("error")
+        || payload.get("object").and_then(Value::as_str) == Some("error")
+        || payload.get("error").is_some_and(|error| !error.is_null())
+        || payload
+            .pointer("/response/error")
+            .is_some_and(|error| !error.is_null())
 }
 
 fn classify_status(status: StatusCode) -> CapabilityStatus {
@@ -584,6 +588,52 @@ mod tests {
             [(header::CONTENT_TYPE, "text/event-stream")],
             "data: {\"type\":\"response.completed\"}\n\n",
         )
+    }
+
+    #[tokio::test]
+    async fn null_error_is_not_probe_error() {
+        let app = Router::new().route(
+            "/{case}",
+            any(
+                |axum::extract::Path(case): axum::extract::Path<String>| async move {
+                    let payload = match case.as_str() {
+                        "flat-null" => json!({"type":"response.completed", "error":null}),
+                        "nested-null" => {
+                            json!({"type":"response.completed", "response":{"error":null}})
+                        }
+                        "flat-error" => json!({"error":{"message":"rate limited"}}),
+                        "nested-error" => json!({"response":{"error":{"message":"rate limited"}}}),
+                        _ => json!({"type":"error", "error":null}),
+                    };
+                    (
+                        [(header::CONTENT_TYPE, "text/event-stream")],
+                        format!("data: {payload}\n\n"),
+                    )
+                },
+            ),
+        );
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let address = listener.local_addr().unwrap();
+        let server = tokio::spawn(async move { axum::serve(listener, app).await.unwrap() });
+        for (case, expected) in [
+            ("flat-null", CapabilityStatus::Supported),
+            ("nested-null", CapabilityStatus::Supported),
+            ("flat-error", CapabilityStatus::Indeterminate),
+            ("nested-error", CapabilityStatus::Indeterminate),
+            ("error-event", CapabilityStatus::Indeterminate),
+        ] {
+            let response = Client::new()
+                .get(format!("http://{address}/{case}"))
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(
+                validate_probe_stream(response, false).await.status,
+                expected,
+                "{case}"
+            );
+        }
+        server.abort();
     }
 
     #[tokio::test]
