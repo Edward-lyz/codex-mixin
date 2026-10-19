@@ -268,6 +268,14 @@ The catalog contains **50 Agents**, with **38 gateway configuration integrations
 
 Install the Agent and select models, then connect or restore it through **Agent management** on macOS / Windows, or use the CLI commands above. Codex also requires `--mode official-account` or `--mode custom-only`. Air requires OpenCode.
 
+Codex custom 安装会将 `config.toml` 中的 `[desktop].conversationDetailMode` 设置为 `STEPS_COMMANDS`，使新版 App 使用 coding 界面；重新安装 custom 模式可修复旧配置。官方账号模式保留原设置，卸载时沿用安装前的配置备份恢复。
+
+Codex custom installation sets `[desktop].conversationDetailMode` to
+`STEPS_COMMANDS` in `config.toml`, selecting the coding surface in current
+desktop builds. Reinstall custom mode to update an existing configuration.
+Official-account mode preserves the setting; uninstall restores the saved
+configuration from before installation.
+
 <table>
   <tr>
     <td width="20%" align="center">

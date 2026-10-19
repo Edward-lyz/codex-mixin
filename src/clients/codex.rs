@@ -7,6 +7,7 @@ use crate::platform::write_atomic_if_changed;
 pub const MANAGED_MARKER: &str = "codex-mixin managed config";
 pub const MANAGED_HEADER: &str = "# codex-mixin managed config. Run `codex-mixin uninstall-codex` to restore the previous config.";
 pub const CUSTOM_ONLY_PROVIDER: &str = "codex-mixin-custom";
+const CODING_DETAIL_MODE: &str = "STEPS_COMMANDS";
 /// Older custom-only installs reused the reserved `amazon-bedrock` provider id.
 /// Codex >= 0.135 locks that id to `aws.profile`/`aws.region` only and rejects a
 /// custom `base_url`, so new installs use `CUSTOM_ONLY_PROVIDER`; this legacy id
@@ -72,6 +73,15 @@ pub fn upsert(
 ) -> anyhow::Result<()> {
     let provider_id = provider_id(codex_oauth_proxy);
     if !codex_oauth_proxy {
+        if document
+            .get("desktop")
+            .is_some_and(|desktop| !desktop.is_table_like())
+        {
+            anyhow::bail!("desktop settings must be a TOML table");
+        }
+        // Prose selects ChatGPT Work in current desktop builds; custom auth
+        // needs the coding surface. Keep this in the managed config restore point.
+        document["desktop"]["conversationDetailMode"] = value(CODING_DETAIL_MODE);
         // Custom-only mode authenticates through the managed Bedrock placeholder.
         // A retained ChatGPT/API policy makes Codex ignore that auth document.
         document.remove("forced_login_method");
@@ -196,6 +206,76 @@ fn set_client_key_header(provider: &mut Table, client_key: &str) -> anyhow::Resu
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[test]
+    fn custom_install_sets_coding_detail_mode() {
+        for mode in [None, Some("STEPS_PROSE"), Some("STEPS_EXECUTION")] {
+            let mut document = "[desktop]\nother = true\n".parse::<DocumentMut>().unwrap();
+            if let Some(mode) = mode {
+                document["desktop"]["conversationDetailMode"] = value(mode);
+            }
+            for _ in 0..2 {
+                upsert(
+                    &mut document,
+                    None,
+                    Path::new("models.json"),
+                    "http://127.0.0.1:8000/v1",
+                    "live",
+                    None,
+                    false,
+                )
+                .unwrap();
+                assert_eq!(
+                    document["desktop"]["conversationDetailMode"].as_str(),
+                    Some("STEPS_COMMANDS")
+                );
+                assert_eq!(document["desktop"]["other"].as_bool(), Some(true));
+            }
+        }
+    }
+
+    #[test]
+    fn official_install_preserves_detail_mode() {
+        let mut document = "[desktop]\nconversationDetailMode = 'STEPS_PROSE'\n"
+            .parse::<DocumentMut>()
+            .unwrap();
+        upsert(
+            &mut document,
+            None,
+            Path::new("models.json"),
+            "http://127.0.0.1:8000/v1",
+            "live",
+            None,
+            true,
+        )
+        .unwrap();
+        assert_eq!(
+            document["desktop"]["conversationDetailMode"].as_str(),
+            Some("STEPS_PROSE")
+        );
+    }
+
+    #[test]
+    fn custom_install_rejects_invalid_desktop_settings() {
+        let mut document = "desktop = 'invalid'".parse::<DocumentMut>().unwrap();
+        let before = document.to_string();
+        let error = upsert(
+            &mut document,
+            None,
+            Path::new("models.json"),
+            "http://127.0.0.1:8000/v1",
+            "live",
+            None,
+            false,
+        )
+        .unwrap_err();
+        assert!(
+            error
+                .to_string()
+                .contains("desktop settings must be a TOML table")
+        );
+        assert_eq!(document.to_string(), before);
+    }
 
     #[test]
     fn detects_marker_managed_config() {
