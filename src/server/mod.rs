@@ -16,14 +16,12 @@ use tokio_tungstenite_proxy::tungstenite::Message as TungsteniteMessage;
 use tokio_tungstenite_proxy::{MaybeTlsStream, WebSocketStream};
 use tower_http::compression::CompressionLayer;
 use tower_http::decompression::RequestDecompressionLayer;
-use uuid::Uuid;
 
 use crate::benchmark::{BenchmarkSnapshotResponse, ModelBenchmarkManager, StartBenchmarkRequest};
 use crate::config::GatewayConfig;
 use crate::config::validate_fusion_profiles;
 use crate::error::GatewayError;
 use crate::fusion::{FusionEngine, should_fuse_turn};
-use crate::gateway::UpstreamRouting;
 use crate::gateway::{CacheShapeTracker, ProviderTokenUsage, RequestPlan, ResolvedModelRoute};
 use crate::images::ImageRouteRegistry;
 use crate::protocol::ResponseStream;

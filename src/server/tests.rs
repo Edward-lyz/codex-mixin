@@ -407,6 +407,35 @@ async fn usage_auth_obeys_build_feature() {
 }
 
 #[test]
+fn opencode_session_routing_is_stable_and_validated() {
+    let mut headers = HeaderMap::new();
+    headers.insert("x-opencode-session", "opencode-session".parse().unwrap());
+    let body = json!({"prompt_cache_key":"shared-cache"});
+    let routing = stable_oneapi_routing(&headers, &body).unwrap().unwrap();
+    assert_eq!(routing.session_id, "opencode-session");
+    assert_eq!(
+        routing.hash_key,
+        stable_oneapi_routing(&headers, &json!({}))
+            .unwrap()
+            .unwrap()
+            .hash_key
+    );
+    headers.insert("thread-id", "codex-thread".parse().unwrap());
+    let body = json!({"prompt_cache_key":"opencode-session"});
+    let routing = stable_oneapi_routing(&headers, &body).unwrap().unwrap();
+    assert_eq!(routing.session_id, "codex-thread");
+    assert_eq!(
+        routing.hash_key,
+        Uuid::new_v5(&Uuid::NAMESPACE_URL, b"thread-id\0codex-thread").to_string()
+    );
+    headers.insert(
+        "x-opencode-session",
+        axum::http::HeaderValue::from_bytes(b"\xff").unwrap(),
+    );
+    assert!(stable_oneapi_routing(&headers, &body).is_err());
+}
+
+#[test]
 fn oneapi_routing_uses_stable_identifier_priority() {
     let mut headers = HeaderMap::new();
     headers.insert("session-id", "session-value".parse().unwrap());
@@ -750,3 +779,4 @@ async fn benchmark_api_runs_after_the_start_request_returns_and_persists_results
     }
     panic!("benchmark API did not finish");
 }
+use uuid::Uuid;

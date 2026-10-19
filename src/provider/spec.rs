@@ -369,7 +369,10 @@ static SPECS: [ProviderSpec; 8] = [
         quota_parser: ProviderQuotaParser::OpenCodeGo,
         declares_model_capabilities: true,
         seed_models: open_code_go_seed_models,
-        request_policy: ProviderRequestPolicy::default,
+        request_policy: || ProviderRequestPolicy {
+            session_affinity_header: Some(super::OPENCODE_SESSION_HEADER.to_owned()),
+            ..ProviderRequestPolicy::default()
+        },
     },
     ProviderSpec {
         preset: ProviderPreset::AwsBedrock,
@@ -538,6 +541,10 @@ mod tests {
         assert_eq!(provider.base_url, "https://opencode.ai/zen/go");
         assert_eq!(provider.api_path, "/v1/responses");
         assert_eq!(provider.quota_parser, ProviderQuotaParser::OpenCodeGo);
+        assert_eq!(
+            provider.request_policy.session_affinity_header.as_deref(),
+            Some("x-opencode-session")
+        );
         assert_eq!(provider.quota_currency.as_deref(), Some("USD"));
         assert_eq!(provider.quota_workspace_id, None);
         assert_eq!(provider.quota_auth_cookie, None);

@@ -2370,6 +2370,98 @@ async fn isolates_http_and_websocket_routes_across_two_providers() {
 }
 
 #[tokio::test]
+async fn opencode_go_sends_stable_session_headers() {
+    let captured = Arc::new(Mutex::new(Vec::<HeaderMap>::new()));
+    let requests = captured.clone();
+    let upstream = spawn_router(Router::new().fallback(post(move |headers: HeaderMap| {
+        let requests = requests.clone();
+        async move {
+            requests.lock().unwrap().push(headers);
+            (
+                [(header::CONTENT_TYPE, "text/event-stream")],
+                "data: {\"type\":\"response.completed\",\"response\":{\"id\":\"resp_test\",\"model\":\"glm-5.2\",\"output\":[],\"usage\":{\"input_tokens\":1,\"output_tokens\":0,\"total_tokens\":1}}}\n\n",
+            )
+        }
+    }))).await;
+    let mut config = test_config(upstream.clone());
+    let mut provider = codex_mixin::provider::open_code_go_provider("opencode-go", "upstream-key");
+    provider.base_url = upstream;
+    provider.cached_models = vec![ProviderModel {
+        id: "glm-5.2".to_owned(),
+        ..Default::default()
+    }];
+    provider.selected_models = vec!["glm-5.2".to_owned()];
+    config.providers = vec![provider];
+    let gateway = spawn_gateway_with_config(config).await;
+    let client = reqwest::Client::new();
+    for (path, body) in [
+        (
+            "/v1/responses",
+            json!({"model":"glm-5.2","input":"hello","stream":true}),
+        ),
+        (
+            "/v1/chat/completions",
+            json!({"model":"glm-5.2","messages":[{"role":"user","content":"hello"}],"stream":true}),
+        ),
+        (
+            "/v1/messages",
+            json!({"model":"glm-5.2","messages":[{"role":"user","content":"hello"}],"max_tokens":16,"stream":true}),
+        ),
+    ] {
+        let mut body = body;
+        body["model"] = json!(codex_mixin::provider::catalog_model_slug(
+            "glm-5.2",
+            "opencode-go"
+        ));
+        for (name, session) in [
+            ("x-opencode-session", "session-a"),
+            ("x-opencode-session", "session-a"),
+            ("x-opencode-session", "session-b"),
+            ("thread-id", "thread-c"),
+            ("session-id", "session-d"),
+        ] {
+            let response = client
+                .post(format!("{gateway}{path}"))
+                .bearer_auth("gateway-key")
+                .header(name, session)
+                .json(&body)
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK, "{path}");
+            let text = response.text().await.unwrap();
+            assert!(!text.contains("response.failed"), "{text}");
+        }
+    }
+    let requests = captured.lock().unwrap();
+    assert_eq!(requests.len(), 15);
+    for (index, headers) in requests.iter().enumerate() {
+        let session = [
+            "session-a",
+            "session-a",
+            "session-b",
+            "thread-id\0thread-c",
+            "session-d",
+        ][index % 5];
+        let expected =
+            uuid::Uuid::new_v5(&uuid::Uuid::NAMESPACE_URL, session.as_bytes()).to_string();
+        assert_eq!(
+            headers
+                .get("x-opencode-session")
+                .and_then(|value| value.to_str().ok()),
+            Some(expected.as_str())
+        );
+        assert!(
+            headers[header::USER_AGENT]
+                .to_str()
+                .unwrap()
+                .starts_with("codex-mixin/")
+        );
+        assert!(!headers.contains_key("x-hash-key"));
+    }
+}
+
+#[tokio::test]
 async fn model_request_smoke_succeeds_end_to_end() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
     let gateway_url = spawn_gateway(upstream_url).await;

@@ -276,6 +276,14 @@ desktop builds. Reinstall custom mode to update an existing configuration.
 Official-account mode preserves the setting; uninstall restores the saved
 configuration from before installation.
 
+OpenCode Go provider 会自动发送 `x-opencode-session` 和 `codex-mixin/<version>` User-Agent，已有配置会补齐缺失的 header 策略。网关从 `thread-id`、`x-opencode-session` 或现有 session/cache 标识派生稳定 UUID；同一会话复用同一标识。完全没有会话标识的独立请求会分配新 UUID，多轮客户端应始终传入稳定的会话标识，详见 [OpenCode Go 官方要求](https://opencode.ai/v2/docs/console/go/#where-can-i-use-it)。
+
+The OpenCode Go provider sends `x-opencode-session` and a
+`codex-mixin/<version>` User-Agent. Existing presets receive the missing
+header policy on load. Known client session IDs map to stable UUIDs;
+standalone requests without any session identity receive separate UUIDs.
+Multi-turn clients must send a stable session identity on every request.
+
 <table>
   <tr>
     <td width="20%" align="center">

@@ -49,7 +49,7 @@ pub(super) fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConf
         upgrade_deepseek_responses_endpoint(&mut parsed);
         upgrade_agy_endpoint(&mut parsed);
         upgrade_opencode_go_quota_defaults(&mut parsed);
-        upgrade_opencode_go_responses_endpoint(&mut parsed);
+        upgrade_opencode_go_transport(&mut parsed);
         upgrade_baidu_image_generation_defaults(&mut parsed);
         upgrade_aws_bedrock_model_source(&mut parsed);
         upgrade_aws_bedrock_sigv4_endpoint(&mut parsed);
@@ -85,7 +85,7 @@ pub(super) fn parse_stored_config(raw: &str) -> anyhow::Result<StoredGatewayConf
     upgrade_deepseek_responses_endpoint(&mut migrated);
     upgrade_agy_endpoint(&mut migrated);
     upgrade_opencode_go_quota_defaults(&mut migrated);
-    upgrade_opencode_go_responses_endpoint(&mut migrated);
+    upgrade_opencode_go_transport(&mut migrated);
     bootstrap_unrefreshed_selected_models(&mut migrated);
     backfill_data_report_executable(&mut migrated);
     Ok(migrated)
@@ -227,10 +227,16 @@ fn upgrade_deepseek_responses_endpoint(config: &mut StoredGatewayConfig) {
         }
     }
 }
-fn upgrade_opencode_go_responses_endpoint(config: &mut StoredGatewayConfig) {
+fn upgrade_opencode_go_transport(config: &mut StoredGatewayConfig) {
     for provider in &mut config.providers {
-        if provider.preset_id.as_deref() == Some("opencode-go")
-            && provider.base_url == "https://opencode.ai/zen/go"
+        if provider.preset_id.as_deref() != Some(crate::provider::OPEN_CODE_GO_PRESET_ID) {
+            continue;
+        }
+        provider
+            .request_policy
+            .session_affinity_header
+            .get_or_insert_with(|| crate::provider::OPENCODE_SESSION_HEADER.to_owned());
+        if provider.base_url == "https://opencode.ai/zen/go"
             && provider.protocol == ProviderProtocol::OpenAiChat
             && provider.api_path == "/v1/chat/completions"
         {
@@ -347,6 +353,27 @@ fn normalize_legacy_path(path: String) -> String {
 mod tests {
     use super::*;
     use crate::provider::baidu_oneapi_provider;
+
+    #[test]
+    fn backfills_opencode_session_header() {
+        for configured in [None, Some("custom-session")] {
+            let mut provider = crate::provider::open_code_go_provider("go", "key");
+            provider.request_policy.session_affinity_header = configured.map(str::to_owned);
+            let config = StoredGatewayConfig {
+                providers: vec![provider],
+                ..Default::default()
+            };
+            let raw = serde_json::to_string(&config).unwrap();
+            let parsed = parse_stored_config(&raw).unwrap();
+            assert_eq!(
+                parsed.providers[0]
+                    .request_policy
+                    .session_affinity_header
+                    .as_deref(),
+                Some(configured.unwrap_or("x-opencode-session"))
+            );
+        }
+    }
 
     #[test]
     fn backfills_baidu_image_generation_path() {

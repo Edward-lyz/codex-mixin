@@ -52,6 +52,8 @@ pub use types::{
 pub(crate) use auth::aws_sigv4::sign_request as sign_aws_request;
 pub(crate) use types::AUTO_REVIEW_MODEL_ID;
 
+pub(crate) const OPENCODE_SESSION_HEADER: &str = "x-opencode-session";
+
 /// Mint the native auth headers for the selected Baidu auth core.
 ///
 /// Mint the DUCX native auth headers without keeping a carrier process alive.
