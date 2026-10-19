@@ -439,13 +439,13 @@ CARGO_BUILD_FEATURES=client-auth ./macos/build_app.sh
 
 ### 网络监听与 Web 控制面板
 
-网关默认监听 `0.0.0.0` 并自动选择端口，同一网络中的设备可以访问。写入客户端配置的地址仍是 `127.0.0.1`；已保存的监听地址保持不变。默认构建不校验入站密钥，网关开放时局域网设备可以直接使用你的 Provider 额度。需要限制时，用 `--features client-auth` 构建并设置网关密钥，或用 `codex-mixin start --bind 127.0.0.1:PORT` 只监听本机。Codex OAuth 透传只接受来自本机回环地址的连接。
+网关默认监听 `0.0.0.0`，在 **8000–9000** 内随机选择可用端口，同一网络中的设备可以访问。写入客户端配置的地址仍是 `127.0.0.1`；自动启动会复用范围内可用的已保存端口，范围外的自动监听地址会重新分配并同步客户端。显式 `--bind` 使用指定地址，冲突时直接报错。默认构建不校验入站密钥，网关开放时局域网设备可以直接使用你的 Provider 额度。需要限制时，用 `--features client-auth` 构建并设置网关密钥，或用 `codex-mixin start --bind 127.0.0.1:PORT` 只监听本机。Codex OAuth 透传只接受来自本机回环地址的连接。
 
-`codex-mixin panel` 启动 Web 控制面板，默认监听 `0.0.0.0:18790`（端口被占用时自动换端口），终端会打印带访问令牌的地址：
+`codex-mixin panel` 启动 Web 控制面板，默认监听 `0.0.0.0`，同样在 **8000–9000** 内随机选择可用端口。范围内全部端口被占用时，网关与面板均明确报错。终端会打印带访问令牌的地址：
 
 ```bash
 codex-mixin panel                       # 所有网卡
-codex-mixin panel --bind 127.0.0.1:18790 # 只允许本机
+codex-mixin panel --bind 127.0.0.1:8500  # 只允许本机
 ```
 
 令牌在每次启动时随机生成，所有 `/api` 请求都必须携带；密钥只经子进程环境变量传给 CLI。在终端中直接运行 `codex-mixin` 也会打开面板，原来的全屏 TUI 已移除，`--no-tui` 保持纯 CLI 输出。
@@ -521,20 +521,24 @@ default build.
 
 ### Network binding and the web control panel
 
-The gateway now listens on `0.0.0.0` with an automatic port, so other machines
+The gateway listens on `0.0.0.0` with a random available port in **8000–9000**, so other machines
 on the network can reach it. Client configuration still points at `127.0.0.1`,
-and an already stored bind is kept. The default build does not check inbound
+and an available stored port within the range is kept. Automatic addresses
+outside the range are reassigned and client configuration is updated.
+The default build does not check inbound
 keys, so an exposed gateway lets LAN devices spend your provider quota. To
 restrict it, build with `--features client-auth` and set a gateway key, or run
 `codex-mixin start --bind 127.0.0.1:PORT`. Codex OAuth passthrough only accepts
 loopback peers.
 
-`codex-mixin panel` starts the web control panel on `0.0.0.0:18790` (another
-port if that one is busy) and prints an access URL with a token:
+`codex-mixin panel` starts the web control panel on `0.0.0.0` with a random
+available port in **8000–9000** and prints an access URL with a token.
+Both listeners fail if every port in the range is busy. An explicit `--bind`
+keeps the requested address and fails on a conflict:
 
 ```bash
 codex-mixin panel                        # all interfaces
-codex-mixin panel --bind 127.0.0.1:18790 # this host only
+codex-mixin panel --bind 127.0.0.1:8500  # this host only
 ```
 
 The token is random per start and required on every `/api` request; secrets

@@ -1189,11 +1189,14 @@ fn uninstall_rejects_catalog_that_differs_from_managed_config() {
 
 #[tokio::test]
 async fn automatic_bind_uses_an_available_loopback_port() {
-    let occupied = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+    let occupied = bind_gateway_listener("127.0.0.1:0".parse().unwrap(), true)
+        .await
+        .unwrap();
     let occupied_bind = occupied.local_addr().unwrap();
 
     let automatic = bind_gateway_listener(occupied_bind, true).await.unwrap();
     assert_ne!(automatic.local_addr().unwrap(), occupied_bind);
+    assert!((8000..=9000).contains(&automatic.local_addr().unwrap().port()));
 
     let explicit = bind_gateway_listener(occupied_bind, false)
         .await
@@ -1202,6 +1205,14 @@ async fn automatic_bind_uses_an_available_loopback_port() {
         explicit.downcast_ref::<io::Error>().unwrap().kind(),
         io::ErrorKind::AddrInUse
     );
+}
+
+#[tokio::test]
+async fn automatic_gateway_port_stays_in_range() {
+    let listener = bind_gateway_listener("127.0.0.1:0".parse().unwrap(), true)
+        .await
+        .unwrap();
+    assert!((8000..=9000).contains(&listener.local_addr().unwrap().port()));
 }
 
 #[test]

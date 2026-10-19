@@ -8,7 +8,6 @@ mod cli;
 #[cfg(test)]
 mod tests;
 
-use std::io;
 use std::net::{IpAddr, Ipv4Addr, SocketAddr, UdpSocket};
 use std::path::PathBuf;
 use std::sync::Arc;
@@ -17,7 +16,7 @@ use anyhow::Context;
 
 /// Default panel listener: all interfaces so remote machines can manage
 /// a headless host. Every API call still needs the per-start token.
-const DEFAULT_PANEL_BIND: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 18_790);
+const DEFAULT_PANEL_BIND: SocketAddr = SocketAddr::new(IpAddr::V4(Ipv4Addr::UNSPECIFIED), 0);
 /// Only used to learn the primary LAN address; no packet is sent.
 const ROUTE_PROBE_TARGET: (Ipv4Addr, u16) = (Ipv4Addr::new(192, 0, 2, 1), 9);
 
@@ -72,17 +71,7 @@ pub(crate) async fn run(
 }
 
 async fn bind_listener(bind: Option<SocketAddr>) -> anyhow::Result<tokio::net::TcpListener> {
-    let address = bind.unwrap_or(DEFAULT_PANEL_BIND);
-    match tokio::net::TcpListener::bind(address).await {
-        Ok(listener) => Ok(listener),
-        // Only the implicit default may move; an explicit --bind fails fast.
-        Err(error) if bind.is_none() && error.kind() == io::ErrorKind::AddrInUse => {
-            tokio::net::TcpListener::bind(SocketAddr::new(address.ip(), 0))
-                .await
-                .with_context(|| format!("bind control panel on {}", address.ip()))
-        }
-        Err(error) => Err(error).with_context(|| format!("bind control panel on {address}")),
-    }
+    crate::listener::bind(bind.unwrap_or(DEFAULT_PANEL_BIND), bind.is_none()).await
 }
 
 /// 256 random bits from two v4 UUIDs (OS randomness via `getrandom`).

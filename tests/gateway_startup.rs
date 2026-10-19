@@ -128,7 +128,7 @@ async fn startup_does_not_wait_for_official_catalog_network() {
     let runtime_bind: std::net::SocketAddr = runtime.bind.parse().unwrap();
     // The automatic default listens on all interfaces; clients dial loopback.
     assert!(runtime_bind.ip().is_unspecified());
-    assert_ne!(runtime_bind.port(), 0);
+    assert!((8000..=9000).contains(&runtime_bind.port()));
     let stored = load_stored_config_from_path(&gateway_config_path)
         .unwrap()
         .unwrap();
