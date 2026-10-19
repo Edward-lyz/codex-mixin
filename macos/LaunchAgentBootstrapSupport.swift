@@ -15,6 +15,7 @@ func menuLaunchAgentPlist(
       <key>ProgramArguments</key>
       <array>
         <string>\(launchAgentXMLescape(executablePath))</string>
+        <string>--background</string>
       </array>
       <key>RunAtLoad</key>
       <true/>

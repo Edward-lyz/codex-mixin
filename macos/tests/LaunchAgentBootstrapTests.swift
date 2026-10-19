@@ -13,6 +13,16 @@ struct LaunchAgentBootstrapTests {
         precondition(menuPlist.contains("<key>KeepAlive</key>"))
         precondition(menuPlist.contains("<key>SuccessfulExit</key>"))
         precondition(menuPlist.contains("macos-app.log"))
+        let plist = try! PropertyListSerialization.propertyList(
+            from: Data(menuPlist.utf8), options: [], format: nil
+        ) as! [String: Any]
+        precondition(
+            plist["ProgramArguments"] as? [String] == [
+                "/Applications/Codex Mixin & Tools.app/Contents/MacOS/CodexMixinMenu",
+                "--background",
+            ],
+            "login launches must stay in the background when manual launches show settings"
+        )
 
         testDefaultAppliesOnce()
         testSystemDisableWins()
