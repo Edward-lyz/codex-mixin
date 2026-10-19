@@ -56,6 +56,34 @@ struct RuntimeMetadata {
     bind: String,
 }
 
+async fn daemon_control(root: &std::path::Path, arguments: &[&str]) -> std::process::Output {
+    let stdout = root.join("daemon-control.stdout");
+    let stderr = root.join("daemon-control.stderr");
+    // A detached Windows child can retain inherited pipe handles. Wait for
+    // the control process itself, with logs in files instead of waiting for EOF.
+    let mut child = common::tokio_cli(root)
+        .args(arguments)
+        .stdout(fs::File::create(&stdout).unwrap())
+        .stderr(fs::File::create(&stderr).unwrap())
+        .kill_on_drop(true)
+        .spawn()
+        .unwrap();
+    let status = tokio::time::timeout(DAEMON_COMMAND_TIMEOUT, child.wait())
+        .await
+        .unwrap_or_else(|_| {
+            panic!(
+                "daemon control timed out: {arguments:?}; {}",
+                fs::read_to_string(&stderr).unwrap()
+            )
+        })
+        .unwrap();
+    std::process::Output {
+        status,
+        stdout: fs::read(stdout).unwrap(),
+        stderr: fs::read(stderr).unwrap(),
+    }
+}
+
 async fn wait_for_runtime(
     path: &std::path::Path,
     child: &mut tokio::process::Child,
@@ -119,16 +147,7 @@ async fn daemon_upgrade_keeps_bind_mode() {
         )
         .unwrap();
         let _cleanup = DaemonGuard(root);
-        let started = tokio::time::timeout(
-            DAEMON_COMMAND_TIMEOUT,
-            common::tokio_cli(root)
-                .args(["start", "--daemon", "--bind", "127.0.0.1:0"])
-                .kill_on_drop(true)
-                .output(),
-        )
-        .await
-        .expect("initial daemon control command timed out")
-        .unwrap();
+        let started = daemon_control(root, &["start", "--daemon", "--bind", "127.0.0.1:0"]).await;
         assert!(
             started.status.success(),
             "{}",
@@ -155,16 +174,11 @@ async fn daemon_upgrade_keeps_bind_mode() {
         fs::write(&codex_config, format!(
             "# codex-mixin managed config\nmodel_provider = 'codex-mixin-custom'\n[model_providers.codex-mixin-custom]\nbase_url = 'http://{old_bind}/v1'\nwire_api = 'responses'\n"
         )).unwrap();
-        let mut command = common::tokio_cli(root);
-        command.args(["start", "--daemon"]);
+        let mut arguments = vec!["start", "--daemon"];
         if explicit {
-            command.args(["--bind", &old_bind]);
+            arguments.extend(["--bind", &old_bind]);
         }
-        let replaced =
-            tokio::time::timeout(DAEMON_COMMAND_TIMEOUT, command.kill_on_drop(true).output())
-                .await
-                .expect("daemon replacement control command timed out")
-                .unwrap();
+        let replaced = daemon_control(root, &arguments).await;
         assert!(
             replaced.status.success(),
             "{}",
