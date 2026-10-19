@@ -9,27 +9,44 @@ use codex_mixin::provider::{
     CONFIG_VERSION, ProviderModel, ProviderModelSource, custom_provider, open_code_go_provider,
 };
 use serde::Deserialize;
+use wait_timeout::ChildExt;
 
 mod common;
 
 const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
+const DAEMON_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct DaemonGuard<'a>(&'a std::path::Path);
 
 impl Drop for DaemonGuard<'_> {
     fn drop(&mut self) {
-        let output = common::cli(self.0).arg("stop").output();
-        match output {
-            Ok(output) if output.status.success() => {}
-            Ok(output) => eprintln!(
-                "failed to stop test daemon in {}: {}",
-                self.0.display(),
-                String::from_utf8_lossy(&output.stderr)
-            ),
-            Err(error) => eprintln!(
-                "failed to stop test daemon in {}: {error}",
+        let stopped = common::cli(self.0)
+            .args(["stop", "--allow-codex-disconnect"])
+            .stdout(Stdio::null())
+            .stderr(Stdio::inherit())
+            .spawn()
+            .and_then(
+                |mut child| match child.wait_timeout(Duration::from_secs(15))? {
+                    Some(status) => Ok(status),
+                    None => {
+                        child.kill()?;
+                        child.wait()?;
+                        Err(std::io::Error::new(
+                            std::io::ErrorKind::TimedOut,
+                            "test daemon cleanup timed out",
+                        ))
+                    }
+                },
+            );
+        if !stopped
+            .as_ref()
+            .is_ok_and(std::process::ExitStatus::success)
+        {
+            eprintln!(
+                "failed to stop test daemon in {}: {stopped:?}",
                 self.0.display()
-            ),
+            );
+            assert!(std::thread::panicking(), "test daemon cleanup failed");
         }
     }
 }
@@ -102,11 +119,16 @@ async fn daemon_upgrade_keeps_bind_mode() {
         )
         .unwrap();
         let _cleanup = DaemonGuard(root);
-        let started = common::tokio_cli(root)
-            .args(["start", "--daemon", "--bind", "127.0.0.1:0"])
-            .output()
-            .await
-            .unwrap();
+        let started = tokio::time::timeout(
+            DAEMON_COMMAND_TIMEOUT,
+            common::tokio_cli(root)
+                .args(["start", "--daemon", "--bind", "127.0.0.1:0"])
+                .kill_on_drop(true)
+                .output(),
+        )
+        .await
+        .expect("initial daemon control command timed out")
+        .unwrap();
         assert!(
             started.status.success(),
             "{}",
@@ -138,7 +160,11 @@ async fn daemon_upgrade_keeps_bind_mode() {
         if explicit {
             command.args(["--bind", &old_bind]);
         }
-        let replaced = command.output().await.unwrap();
+        let replaced =
+            tokio::time::timeout(DAEMON_COMMAND_TIMEOUT, command.kill_on_drop(true).output())
+                .await
+                .expect("daemon replacement control command timed out")
+                .unwrap();
         assert!(
             replaced.status.success(),
             "{}",
