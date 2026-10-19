@@ -203,7 +203,7 @@ jobs:
           dotnet-version: '10.0.x'
       - name: Install NSIS
         shell: pwsh
-        run: choco install nsis -y --no-progress
+        run: ./windows/scripts/install-nsis.ps1
       - name: Build, test, package, and optionally sign
         shell: pwsh
         env:
