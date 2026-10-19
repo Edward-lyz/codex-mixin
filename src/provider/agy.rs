@@ -291,6 +291,35 @@ struct QuotaBucket {
     enabled: Option<bool>,
 }
 
+// AGY names windows like "Claude and GPT models" / "Weekly Limit Remaining".
+// Menus and rings only have room for "Claude 7d"; unknown names pass through
+// with the redundant suffixes removed, so new upstream windows stay readable.
+fn compact_quota_label(group: &str, bucket: &str) -> String {
+    let family = strip_suffix_ignore_case(group.trim(), "models");
+    let family = family.split(" and ").next().unwrap_or(family).trim();
+    let mut window = bucket.trim();
+    for suffix in ["remaining", "limit"] {
+        window = strip_suffix_ignore_case(window, suffix);
+    }
+    let window = match window.to_ascii_lowercase().as_str() {
+        "five hour" | "5 hour" | "5h" => "5h",
+        "weekly" | "week" | "7 day" => "7d",
+        _ => window,
+    };
+    if window.is_empty() {
+        return family.to_owned();
+    }
+    format!("{family} {window}")
+}
+
+fn strip_suffix_ignore_case<'a>(text: &'a str, suffix: &str) -> &'a str {
+    let split = text.len().saturating_sub(suffix.len());
+    match (text.get(..split), text.get(split..)) {
+        (Some(head), Some(tail)) if tail.eq_ignore_ascii_case(suffix) => head.trim_end(),
+        _ => text,
+    }
+}
+
 fn parse_quota(value: &Value) -> anyhow::Result<Vec<AgyQuotaWindow>> {
     let groups: Vec<QuotaGroup> = serde_json::from_value(
         value
@@ -328,7 +357,7 @@ fn parse_quota(value: &Value) -> anyhow::Result<Vec<AgyQuotaWindow>> {
                 .unwrap_or_else(|| format!("{}/{}", group.name, bucket.name));
             let window = AgyQuotaWindow {
                 id: id.clone(),
-                label: format!("{} - {}", group.name, bucket.name),
+                label: compact_quota_label(&group.name, &bucket.name),
                 remaining_percent: fraction * 100.0,
                 reset_at: bucket.reset_time,
             };

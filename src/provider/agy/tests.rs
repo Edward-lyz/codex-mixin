@@ -151,3 +151,34 @@ fn native_search_membership() {
     }
     assert!(parse_models(&json!({"models":{}, "webSearchModelIds":[123]})).is_err());
 }
+
+#[test]
+fn quota_labels_are_compact() {
+    let windows = parse_quota(&json!({"groups":[
+        {"name":"Claude and GPT models","buckets":[
+            {"name":"Five Hour Limit Remaining","remaining_fraction":1.0},
+            {"name":"Weekly Limit Remaining","remaining_fraction":0.97}
+        ]},
+        {"name":"Gemini Models","buckets":[
+            {"name":"Five Hour Limit Remaining","remaining_fraction":0.83},
+            {"name":"Weekly Limit Remaining","remaining_fraction":0.94}
+        ]},
+        {"name":"Future family","buckets":[{"name":"Daily Limit Remaining","remaining_fraction":0.5}]}
+    ]}))
+    .unwrap();
+    let mut labels = windows
+        .iter()
+        .map(|window| window.label.as_str())
+        .collect::<Vec<_>>();
+    labels.sort_unstable();
+    assert_eq!(
+        labels,
+        [
+            "Claude 5h",
+            "Claude 7d",
+            "Future family Daily",
+            "Gemini 5h",
+            "Gemini 7d"
+        ]
+    );
+}
