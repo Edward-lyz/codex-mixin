@@ -17,6 +17,12 @@
   --c-ink: #37352f;    /* Notion text; surfaces and hairlines via opacity */
   --c-accent: #2383e2; /* Notion blue: primary action, connected state */
   --c-alert: #e03e3e;  /* Notion red: errors and destructive actions */
+  /* Data-visualisation hues, used only by quota rings so concentric windows
+     stay distinguishable. Red is excluded: it is reserved for warnings. */
+  --ring-1: #2383e2;
+  --ring-2: #2f9e72;
+  --ring-3: #d9730d;
+  --ring-4: #9065b0;
   --on-accent: var(--c-base);
   --knob: var(--c-base);
 
@@ -76,6 +82,10 @@
     --c-ink: #e6e5e3;
     --c-accent: #2383e2;
     --c-alert: #ff7369;
+    --ring-1: #529cca;
+    --ring-2: #4dab9a;
+    --ring-3: #ffa344;
+    --ring-4: #a782e0;
     /* Notion keeps white labels on blue buttons in dark mode. */
     --on-accent: var(--c-ink);
     --knob: var(--c-ink);
@@ -786,6 +796,69 @@ details[open] > .agent-list { animation: rise var(--dur-spring) var(--spring) bo
   transform-origin: left;
   transition: transform 900ms var(--spring);
 }
+/* ---------- Quota ---------- */
+
+.quota-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); }
+.quota-tile {
+  display: flex;
+  align-items: center;
+  gap: 20px;
+  min-width: 0;
+  padding: 16px 18px;
+  border-radius: var(--radius);
+  background: var(--ink-03);
+  box-shadow: inset 0 0 0 1px var(--ink-05);
+}
+.quota-tile-bar { align-items: stretch; }
+.quota-visual { position: relative; flex: none; width: 120px; height: 120px; }
+.quota-rings { display: block; width: 100%; height: 100%; overflow: visible; }
+.ring-1 { --ring-color: var(--ring-1); }
+.ring-2 { --ring-color: var(--ring-2); }
+.ring-3 { --ring-color: var(--ring-3); }
+.ring-4 { --ring-color: var(--ring-4); }
+.quota-ring-track,
+.quota-ring-fill { fill: none; stroke-width: var(--ring-stroke, 11); }
+.quota-ring-track { stroke: color-mix(in oklab, var(--ring-color) 18%, transparent); }
+.quota-ring.is-idle .quota-ring-track { stroke: var(--ink-08); stroke-dasharray: 2 4; }
+.quota-ring-fill {
+  stroke: var(--ring-color);
+  stroke-linecap: round;
+  transition: stroke-dashoffset 1100ms var(--spring);
+}
+.quota-center {
+  position: absolute;
+  inset: 0;
+  display: grid;
+  place-content: center;
+  justify-items: center;
+  gap: 1px;
+  pointer-events: none;
+}
+.quota-center strong { font-size: 26px; font-weight: 600; line-height: 1.1; letter-spacing: -0.02em; }
+.quota-center strong.is-warn { color: var(--c-alert); }
+.quota-body { display: grid; flex: 1; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; }
+.quota-name { overflow: hidden; font-size: var(--fs-sm); font-weight: 600; text-overflow: ellipsis; white-space: nowrap; }
+.quota-legend { display: grid; grid-template-columns: minmax(0, 1fr); gap: 10px; min-width: 0; margin: 0; padding: 0; list-style: none; }
+.quota-entry { display: grid; grid-template-columns: minmax(0, 1fr); gap: 3px; min-width: 0; }
+.quota-entry-head { display: flex; align-items: center; gap: 7px; color: var(--ink-64); font-size: var(--fs-xs); }
+.quota-entry-label { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
+.quota-entry-pct { flex: none; color: var(--ink-90); font-weight: 600; }
+.quota-entry.is-warn .quota-entry-pct { color: var(--c-alert); }
+.quota-swatch {
+  flex: none;
+  width: 8px;
+  height: 8px;
+  border-radius: 50%;
+  background: var(--ring-color);
+}
+.quota-swatch.is-extra { background: var(--ink-16); }
+.quota-entry-value { overflow: hidden; font-family: var(--font-mono); font-size: var(--fs-sm); text-overflow: ellipsis; white-space: nowrap; }
+.quota-entry.is-bad .quota-entry-value { color: var(--c-alert); }
+.quota-entry-note { color: var(--ink-54); font-size: 11px; overflow-wrap: anywhere; }
+.quota-entry.is-bad .quota-entry-note { display: -webkit-box; overflow: hidden; -webkit-box-orient: vertical; -webkit-line-clamp: 2; }
+.quota-bar { height: 6px; margin-top: 3px; }
+.quota-bar .progress-bar.is-warn { background: var(--c-alert); }
+
 .bar { height: 6px; min-width: 2px; border-radius: 999px; background: var(--accent-24); }
 .bar.is-best { background: var(--c-accent); }
 
@@ -904,6 +977,9 @@ details[open] > .agent-list { animation: rise var(--dur-spring) var(--spring) bo
 }
 
 @media (max-width: 760px) {
+  .quota-grid { grid-template-columns: minmax(0, 1fr); }
+  .quota-tile { gap: 16px; }
+  .quota-visual { width: 96px; height: 96px; }
   .shell { grid-template-columns: minmax(0, 1fr); }
   .sidebar {
     position: sticky;

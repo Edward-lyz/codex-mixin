@@ -26,6 +26,9 @@ const state = {
   snapshotKey: "",
   loadError: null,
   quota: null,
+  quotaLoading: false,
+  quotaError: null,
+  quotaFresh: false,
   doctor: null,
   logs: null,
   logLines: 200,
@@ -733,32 +736,184 @@ function usageCard() {
   return card("用量", "按 Provider 与模型汇总", body, range, "card-flush");
 }
 
-function quotaCard() {
-  const load = h("button", { class: "btn btn-ghost btn-sm", type: "button", text: state.quota ? "重新查询" : "查询额度" });
-  load.addEventListener("click", async () => {
-    load.classList.add("is-busy");
-    try {
-      state.quota = await api("/api/quota");
-      render({ animate: false });
-    } catch (error) {
-      if (error.status !== 401) toast("bad", "额度查询失败", error.message);
-    } finally {
-      load.classList.remove("is-busy");
+// ---------- Quota ----------
+// Rings mirror Apple Activity: one concentric ring per quota window of a
+// provider. Bars keep the classic linear view. Both read the same CLI rows.
+
+const QUOTA_VIEW_KEY = "codex-mixin-quota-view";
+const QUOTA_VIEWS = [["ring", "圆环"], ["bar", "条形"]];
+const QUOTA_WARN_RATIO = 0.9;
+// Ring geometry in SVG user units; more than four rings stop being legible.
+const RING_SIZE = 120;
+// Rings share a fixed band so the hole keeps room for the percentage label;
+// more rings means thinner strokes rather than a smaller center.
+const RING_STROKE_MAX = 11;
+const RING_BAND = 30;
+const RING_GAP = 3;
+const RING_MAX = 4;
+const QUOTA_LABELS = { five_hour: "5 小时", weekly: "每周", monthly: "每月", balance: "余额", quota: "额度" };
+const SVG_NS = "http://www.w3.org/2000/svg";
+const amountFormat = new Intl.NumberFormat("zh-CN", { maximumFractionDigits: 2 });
+
+function quotaView() {
+  try {
+    return localStorage.getItem(QUOTA_VIEW_KEY) === "bar" ? "bar" : "ring";
+  } catch {
+    return "ring";
+  }
+}
+
+function finiteAmount(value) {
+  return typeof value === "number" && Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+// Normalise one CLI quota row; ratio is null when no limit is known.
+function quotaEntry(row) {
+  const used = finiteAmount(row.used ?? row.value);
+  const limit = finiteAmount(row.limit);
+  const remaining = finiteAmount(row.remaining);
+  const percent = row.unit === "percent";
+  let ratio = null;
+  if (limit && used !== null) ratio = used / limit;
+  else if (limit && remaining !== null) ratio = (limit - remaining) / limit;
+  const id = row.quota_id || "quota";
+  const label = QUOTA_LABELS[id] || row.label || row.display_name || id;
+  const currency = percent ? "" : str(row.currency, "");
+  let value = "额度未知";
+  if (row.error) value = "查询失败";
+  else if (percent && used !== null) value = `剩余 ${amountFormat.format(Math.max(100 - used, 0))}%`;
+  else if (used !== null && limit) value = `${amountFormat.format(used)} / ${amountFormat.format(limit)} ${currency}`.trim();
+  else if (remaining !== null) value = `余额 ${amountFormat.format(remaining)} ${currency}`.trim();
+  else if (used !== null) value = `已用 ${amountFormat.format(used)} ${currency}`.trim();
+  const detail = !row.error && !percent && remaining !== null && limit ? `剩余 ${amountFormat.format(remaining)} ${currency}`.trim() : "";
+  const reset = row.reset_at ? new Date(row.reset_at) : null;
+  return {
+    label,
+    value,
+    detail,
+    error: row.error ? String(row.error) : "",
+    ratio: ratio === null || !Number.isFinite(ratio) ? null : Math.max(ratio, 0),
+    reset: reset && !Number.isNaN(reset.getTime()) ? `${reset.toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit" })} 重置` : "",
+  };
+}
+
+function quotaGroups(rows) {
+  const groups = new Map();
+  for (const row of rows) {
+    const id = row.provider_id || "unknown";
+    if (!groups.has(id)) groups.set(id, { id, name: row.provider_display_name || row.display_name || id, entries: [] });
+    groups.get(id).entries.push(quotaEntry(row));
+  }
+  return [...groups.values()];
+}
+
+function svgNode(tag, attrs) {
+  const node = document.createElementNS(SVG_NS, tag);
+  for (const [key, value] of Object.entries(attrs)) node.setAttribute(key, String(value));
+  return node;
+}
+
+function percentText(ratio) {
+  return ratio === null ? "\u2014" : `${Math.round(ratio * 100)}%`;
+}
+
+function quotaRings(entries, animate) {
+  const center = RING_SIZE / 2;
+  const svg = svgNode("svg", { viewBox: `0 0 ${RING_SIZE} ${RING_SIZE}`, class: "quota-rings", "aria-hidden": "true" });
+  const turn = svgNode("g", { transform: `rotate(-90 ${center} ${center})` });
+  svg.append(turn);
+  const shown = entries.slice(0, RING_MAX);
+  const stroke = Math.min(RING_STROKE_MAX, (RING_BAND - RING_GAP * (shown.length - 1)) / shown.length);
+  shown.forEach((entry, index) => {
+    const radius = center - stroke / 2 - index * (stroke + RING_GAP);
+    const circumference = 2 * Math.PI * radius;
+    const idle = entry.error || entry.ratio === null ? "is-idle" : "";
+    const ring = svgNode("g", { class: `quota-ring ring-${index + 1} ${idle}`.trim() });
+    ring.style.setProperty("--ring-stroke", String(stroke));
+    ring.append(svgNode("circle", { class: "quota-ring-track", cx: center, cy: center, r: radius }));
+    const fill = Math.min(entry.ratio ?? 0, 1);
+    if (fill > 0) {
+      const target = circumference * (1 - fill);
+      const arc = svgNode("circle", { class: "quota-ring-fill", cx: center, cy: center, r: radius, "stroke-dasharray": circumference.toFixed(2), "stroke-dashoffset": (animate ? circumference : target).toFixed(2) });
+      if (animate) requestAnimationFrame(() => requestAnimationFrame(() => arc.setAttribute("stroke-dashoffset", target.toFixed(2))));
+      ring.append(arc);
     }
+    turn.append(ring);
   });
-  const body = state.quota ? h("div", { class: "card-body" }, state.quota.map((row) => {
-    if (row.error || row.unit !== "percent") return valueView(row);
-    const used = row.used;
-    if (typeof used !== "number" || !Number.isFinite(used) || used < 0) {
-      return h("p", { class: "card-note", text: "CLI 返回的额度比例无效。" });
-    }
-    return h("section", { class: "metric" },
-      h("strong", { text: row.display_name || row.label || row.provider_id }),
-      h("p", { text: `已用 ${used.toFixed(2)}%` }),
-      h("progress", { max: 100, value: Math.min(used, 100), "aria-label": "已用额度" }),
-      row.reset_at ? h("p", { class: "card-note", text: `${new Date(row.reset_at).toLocaleString()} 重置` }) : null);
-  })) : h("p", { class: "card-note", text: "向支持额度接口的 Provider 查询额度用量。" });
-  return card("额度", null, body, load);
+  return svg;
+}
+
+function quotaLegend(entries, view) {
+  return h("ul", { class: "quota-legend" }, entries.map((entry, index) => {
+    const tone = entry.error ? "is-bad" : entry.ratio !== null && entry.ratio >= QUOTA_WARN_RATIO ? "is-warn" : "";
+    const swatch = view === "ring" ? h("span", { class: `quota-swatch ${index < RING_MAX ? `ring-${index + 1}` : "is-extra"}`, "aria-hidden": "true" }) : null;
+    const bar = view === "bar" && entry.ratio !== null && !entry.error
+      ? h("div", { class: "progress quota-bar", role: "progressbar", "aria-label": `${entry.label}已用`, "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(Math.min(entry.ratio, 1) * 100)) },
+        h("div", { class: `progress-bar ${tone}`.trim(), style: { transform: `scaleX(${Math.min(entry.ratio, 1)})` } }))
+      : null;
+    return h("li", { class: `quota-entry ${tone}`.trim(), title: entry.error || null },
+      h("div", { class: "quota-entry-head" },
+        swatch,
+        h("span", { class: "quota-entry-label", text: entry.label }),
+        h("span", { class: "quota-entry-pct num", text: entry.error ? "" : percentText(entry.ratio) })),
+      h("div", { class: "quota-entry-value num", text: entry.value }),
+      bar,
+      entry.error ? h("p", { class: "quota-entry-note", text: entry.error }) : null,
+      !entry.error && (entry.detail || entry.reset) ? h("p", { class: "quota-entry-note", text: [entry.detail, entry.reset].filter(Boolean).join(" · ") }) : null);
+  }));
+}
+
+function quotaTile(group, view, animate) {
+  // The center shows the tightest window, the one that runs out first.
+  const ringed = group.entries.filter((entry) => !entry.error && entry.ratio !== null);
+  const primary = ringed.reduce((top, entry) => (!top || entry.ratio > top.ratio ? entry : top), null);
+  const label = group.entries.map((entry) => `${entry.label} ${entry.error ? "查询失败" : `${entry.value}${entry.ratio === null ? "" : `，已用 ${percentText(entry.ratio)}`}`}`).join("；");
+  const visual = view === "ring"
+    ? h("div", { class: "quota-visual" }, quotaRings(group.entries, animate),
+      h("div", { class: "quota-center" }, h("strong", { class: `num ${primary && primary.ratio >= QUOTA_WARN_RATIO ? "is-warn" : ""}`.trim(), text: primary ? percentText(primary.ratio) : "\u2014" })))
+    : null;
+  return h("article", { class: `quota-tile quota-tile-${view}`, "aria-label": `${group.name}：${label}` },
+    visual,
+    h("div", { class: "quota-body" }, h("h3", { class: "quota-name", text: group.name }), quotaLegend(group.entries, view)));
+}
+
+async function loadQuota() {
+  if (state.quotaLoading) return;
+  state.quotaLoading = true;
+  state.quotaError = null;
+  if (state.page === "home") render({ animate: false });
+  try {
+    state.quota = await api("/api/quota");
+    state.quotaFresh = true;
+  } catch (error) {
+    state.quotaError = error.message;
+    if (error.status !== 401) toast("bad", "额度查询失败", error.message);
+  } finally {
+    state.quotaLoading = false;
+    if (state.page === "home") render({ animate: false });
+  }
+}
+
+function quotaCard() {
+  // First visit queries once; later refreshes are explicit to spare remote quota APIs.
+  if (state.quota === null && !state.quotaLoading && state.quotaError === null) queueMicrotask(loadQuota);
+  const view = quotaView();
+  const toggle = segmented(QUOTA_VIEWS, view, (value) => {
+    try { localStorage.setItem(QUOTA_VIEW_KEY, value); } catch { /* private mode keeps the default */ }
+    state.quotaFresh = true;
+    render({ animate: false });
+  }, "额度展示方式");
+  const reload = h("button", { class: `btn btn-ghost btn-sm ${state.quotaLoading ? "is-busy" : ""}`.trim(), type: "button", text: state.quota ? "重新查询" : "查询额度", disabled: state.quotaLoading, onclick: loadQuota });
+  let body;
+  if (state.quotaLoading && !state.quota) body = h("p", { class: "card-note", text: "正在向 Provider 查询额度…" });
+  else if (!state.quota) body = h("p", { class: state.quotaError ? "issue" : "card-note", text: state.quotaError || "向支持额度接口的 Provider 查询额度用量。" });
+  else if (!state.quota.length) body = h("p", { class: "card-note", text: "没有已启用的 Provider 提供额度接口。" });
+  else {
+    const animate = state.quotaFresh && !reduceMotion.matches;
+    state.quotaFresh = false;
+    body = h("div", { class: `quota-grid quota-grid-${view}` }, quotaGroups(state.quota).map((group) => quotaTile(group, view, animate)));
+  }
+  return card("额度", "按 Provider 汇总，接近上限时以红色提示", body, [toggle, reload]);
 }
 
 // Generic, read-only rendering of CLI JSON whose shape varies by provider.
