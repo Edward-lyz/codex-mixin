@@ -18,10 +18,12 @@
       <StackPanel x:Name="ProviderStrip" Orientation="Horizontal" Spacing="6"/>
      </ScrollViewer>
      <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
-     <StackPanel Orientation="Horizontal" Spacing="10">
+     <Grid ColumnSpacing="10">
+      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
       <Image x:Name="ProviderIcon" Width="22" Height="22" Visibility="Collapsed" VerticalAlignment="Center"/>
-      <TextBlock x:Name="ProviderTitle" Text="尚未配置服务商" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center"/>
-     </StackPanel>
+      <TextBlock x:Name="ProviderTitle" Grid.Column="1" Text="尚未配置服务商" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
+      <Border x:Name="QuotaStyleHost" Grid.Column="2" VerticalAlignment="Center"/>
+     </Grid>
      <StackPanel x:Name="QuotaBody" Spacing="12"/>
      <Border Style="{StaticResource SegmentTrack}" HorizontalAlignment="Center">
       <StackPanel x:Name="UsageRanges" Orientation="Horizontal" Spacing="2">
