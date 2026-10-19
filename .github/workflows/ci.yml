@@ -131,6 +131,13 @@ jobs:
         with:
           toolchain: stable
       - uses: Swatinem/rust-cache@v2
+      - name: Install ripgrep
+        shell: bash
+        run: |
+          if command -v rg >/dev/null; then
+            exit 0
+          fi
+          brew install ripgrep
       - name: Build macOS app
         env:
           MACOSX_DEPLOYMENT_TARGET: "13.1"
