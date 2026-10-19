@@ -1,89 +1,153 @@
-# Codex Mixin
+<p align="center">
+  <img src="docs/assets/app-icon.png" width="96" alt="Codex Mixin Logo">
+</p>
+
+<h1 align="center">Codex Mixin</h1>
 
 <p align="center">
-  <img src="docs/assets/app-icon.png" width="120" alt="Codex Mixin icon">
+  <b>The Local AI Gateway and Desktop Control Plane for Official Codex and 50+ Coding Agents</b><br>
+  <sub>Route any LLM into official OpenAI Codex while preserving your ChatGPT accounts, GPT models, and native workflow.</sub>
 </p>
 
 <p align="center">
-  <a href="https://github.com/Edward-lyz/codex-mixin/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Edward-lyz/codex-mixin?sort=semver"></a>
-  <a href="https://github.com/Edward-lyz/codex-mixin/releases"><img alt="Windows, macOS, and Linux" src="https://img.shields.io/badge/platform-Windows%20%7C%20macOS%20%7C%20Linux-blue"></a>
-  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Source%20Code%20Viewing%201.0-lightgrey"></a>
+  <a href="README_zh.md">简体中文</a> | <b>English</b>
 </p>
 
 <p align="center">
-  <b>Custom providers and official Codex, managed from one local control plane.</b><br>
+  <a href="https://github.com/Edward-lyz/codex-mixin/releases/latest"><img alt="Latest release" src="https://img.shields.io/github/v/release/Edward-lyz/codex-mixin?color=blue&label=version"></a>
+  <a href="https://github.com/Edward-lyz/codex-mixin/releases"><img alt="Platforms" src="https://img.shields.io/badge/platform-macOS%20%7C%20Windows%20%7C%20Linux-lightgrey"></a>
+  <a href="https://www.rust-lang.org/"><img alt="Rust Edition" src="https://img.shields.io/badge/rust-2024%20edition-orange"></a>
+  <a href="LICENSE"><img alt="License" src="https://img.shields.io/badge/license-Source%20Code%20Viewing%201.0-green"></a>
+  <a href="https://github.com/Edward-lyz/codex-mixin/wiki"><img alt="Docs" src="https://img.shields.io/badge/docs-GitHub%20Wiki-blueviolet"></a>
 </p>
 
 <p align="center">
-  <a href="#中文">中文</a> ·
-  <a href="#english">English</a> ·
-  <a href="https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour">Product tour</a> ·
-  <a href="https://github.com/Edward-lyz/codex-mixin/wiki">Wiki</a> ·
-  <a href="https://github.com/Edward-lyz/codex-mixin/releases/latest">Download</a> ·
-  <a href="https://github.com/Edward-lyz/codex-mixin/issues">Issues</a>
+  <a href="#overview">Overview</a> ·
+  <a href="#core-values">Core Values</a> ·
+  <a href="#recent-updates">What's New</a> ·
+  <a href="#showcase">Showcase</a> ·
+  <a href="#product-surfaces">Product Surfaces</a> ·
+  <a href="#providers-and-protocols">Providers</a> ·
+  <a href="#agent-integrations">Agent Integrations</a> ·
+  <a href="#advanced-features">Advanced Features</a> ·
+  <a href="#quick-start">Quick Start</a> ·
+  <a href="https://github.com/Edward-lyz/codex-mixin/wiki">Wiki</a>
 </p>
+
+---
+
+## Overview
+
+Codex Mixin is a high-performance local AI gateway and cross-platform desktop control plane written in Rust.
+
+It bridges third-party language models—such as DeepSeek, Claude, Gemini, Baidu OneAPI, AWS Bedrock, Google Antigravity, and any OpenAI/Anthropic-compatible endpoint—directly into the official OpenAI Codex desktop app and CLI. Developers can use custom models at cost while keeping official ChatGPT/OpenAI account authentication, native GPT models, conversation history, and mobile remote control fully functional.
+
+Beyond Codex, Codex Mixin serves as a unified local routing hub and usage control center for 50 popular AI coding agents, supporting seamless gateway configuration injection and zero-trace restoration.
+
+---
+
+## Core Values
+
+<table>
+  <tr>
+    <td width="50%">
+      <b>Zero-Friction Codex Coexistence</b><br>
+      Custom models and official OpenAI models coexist side by side in the Codex picker. Official model definitions sync automatically from OpenAI's repository every 30 seconds. Connecting and disconnecting preserves your existing sessions, databases, and account state.
+    </td>
+    <td width="50%">
+      <b>Smart ECH Relay for Official GPT</b><br>
+      Resolves IP addresses and Encrypted Client Hello (ECH) parameters through relay DoH. Directly connects to OpenAI endpoints across network boundaries while minimizing account risk flags.
+    </td>
+  </tr>
+  <tr>
+    <td width="50%">
+      <b>Lossless Protocol Bridge</b><br>
+      Translates bi-directionally between OpenAI Responses, Chat Completions, and Anthropic Messages with zero semantic loss, preserving streaming thinking traces, multi-step tool calls, and structured outputs.
+    </td>
+    <td width="50%">
+      <b>Universal Hub for 50+ Agents</b><br>
+      Catalog covers 50 coding tools (Claude Code, OpenCode, Copilot, Cline, and more). The default build supports 38 one-click configuration adapters with clean rollback on exit.
+    </td>
+  </tr>
+</table>
+
+---
+
+## Recent Updates
+
+### What's New in v0.7.3 & Recent Releases
+
+- **Modern Web Control Panel (`codex-mixin panel`)**: Launch a responsive Notion-style browser console designed for Linux hosts, remote development servers, and headless SSH sessions. Manage models, inspect agent connection status, and monitor token/quota usage.
+- **Native Windows WinUI 3 Desktop App**: Rebuilt the Windows frontend from scratch with native WinUI 3 and Fluent Design, replacing the legacy wrapper with sub-second tray response and minimal memory overhead.
+- **Model Capability Probing**: Proactively test and verify live model capabilities (Reasoning thoughts, Function Calling, Tool Search, and Web Search) with badges displayed in the UI.
+- **Google Antigravity (AGY) & Native Gemini Support**: Direct Google OAuth 2.0 authentication, dynamic discovery of AGY-specific agent models and quotas, and wire protocol conversion for Gemini Developer API.
+- **Agent Catalog Expanded to 50**: Added 8 configuration adapters (VSCodium, Reasonix, Command Code, fx, Empryo, Ante, MiniMax Code, Cline) across IDE extensions, CLI agents, and developer runtimes.
+- **Standalone Codex Config Injection**: Codex integration writes necessary provider and model settings cleanly without requiring pre-installed CLI binaries, activating the modern `STEPS_COMMANDS` coding surface.
+- **Core Performance Optimizations**: Negotiated gzip streaming for large contexts, offloaded serialization from the primary async loop, and cached capability probe results to prevent redundant provider billing.
+
+---
+
+## Showcase
 
 <table>
   <tr>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-model-picker.png"><img src="docs/assets/APP-model-picker.png" alt="macOS model picker and benchmark window"></a><br>
-      <sub>macOS · model catalog, capability state, selection and benchmark</sub>
+      <a href="docs/assets/APP-model-picker.png"><img src="docs/assets/APP-model-picker.png" alt="macOS Menu Bar and Model Picker"></a><br>
+      <sub><b>macOS Experience</b> · Menu bar status, model catalog, and live benchmarks</sub>
     </td>
     <td width="50%" align="center">
-      <a href="docs/assets/CLI-Home.png"><img src="docs/assets/CLI-Home.png" alt="Codex Mixin full-screen terminal dashboard"></a><br>
-      <sub>Terminal · gateway, providers, quota, token usage, TTFT and throughput</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <a href="docs/assets/APP-MainMenu.png"><img src="docs/assets/APP-MainMenu.png" alt="Codex Mixin macOS menu bar"></a><br>
-      <sub>Menu bar · lifecycle, quota, token usage, updates and logs</sub>
-    </td>
-    <td width="50%" align="center">
-      <a href="docs/assets/APP-ProviderModelList.png"><img src="docs/assets/APP-ProviderModelList.png" alt="Codex Mixin provider model list"></a><br>
-      <sub>Models and Services · discovery, capability state and selection</sub>
+      <a href="docs/assets/APP-ProviderModelList.png"><img src="docs/assets/APP-ProviderModelList.png" alt="Provider Discovery and Model Capability"></a><br>
+      <sub><b>Model Management</b> · Automatic discovery, capability badges, and latency benchmarks</sub>
     </td>
   </tr>
   <tr>
     <td width="50%" align="center">
-      <a href="docs/assets/fusion-review.png"><img src="docs/assets/fusion-review.png" alt="Interactive Fusion Review inside Codex"></a><br>
-      <sub>Fusion · native Panel and Judge review rendered inside Codex</sub>
+      <a href="docs/assets/fusion-review.png"><img src="docs/assets/fusion-review.png" alt="Interactive Model Fusion inside Codex"></a><br>
+      <sub><b>Model Fusion</b> · Multi-model orchestration and Judge review inside Codex</sub>
     </td>
     <td width="50%" align="center">
-      <a href="docs/assets/Mobile_Choice.PNG"><img src="docs/assets/Mobile_Choice.PNG" width="260" alt="Select a Codex Mixin model from mobile"></a><br>
-      <sub>Mobile · choose official or Mixin-managed models for remote tasks</sub>
+      <a href="docs/assets/Mobile_Choice.PNG"><img src="docs/assets/Mobile_Choice.PNG" width="260" alt="Select Mixin Models from Mobile"></a><br>
+      <sub><b>Mobile & Remote Tasks</b> · Select custom gateway models from mobile Codex</sub>
     </td>
   </tr>
 </table>
 
 <p align="center">
-  <a href="https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour"><b>查看包含全部 macOS、TUI、Fusion 和移动端截图的 Product Tour</b></a>
+  <a href="https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour">View the complete Product Tour with macOS, WinUI 3, Web Panel, and Mobile Walkthroughs</a>
 </p>
 
-## 中文
+---
 
-Codex Mixin 是一个跨平台的 Rust 本地网关，提供 Windows 桌面 App、原生 macOS 菜单栏 App 与浏览器中的 Web 控制面板。它把 OpenRouter、DeepSeek、Baidu OneAPI、AWS Bedrock 或其他兼容 OpenAI / Anthropic 协议的模型接入官方 Codex，同时保留官方 ChatGPT/OpenAI 账号路径、GPT 模型、远程控制和 Codex 原生体验。
+## Product Surfaces
 
-### 核心能力
+| Component | Distribution | Core Capabilities |
+| --- | --- | --- |
+| **macOS App** | Native Menu Bar App | Live status in menu bar, model management, capability testing, benchmark suite, Base64 backup/restore, auto-repair. |
+| **Windows App** | Native WinUI 3 App | Fluent Design interface, system tray service, provider settings, agent connection management, and log viewer. |
+| **Web Control Panel** | `codex-mixin panel` | Modern Notion-style responsive web console, ideal for Linux servers, cloud VMs, SSH terminals, and remote setups. |
+| **CLI Core** | Single Rust Binary | Cross-platform core runtime with deterministic subcommands, JSON contracts, and background daemon lifecycle controls. |
 
-- 官方模型与自定义模型共存于 Codex 模型选择器，重名模型自动隔离，接入和断开均保留历史会话与数据库。
-- 官方模型清单直接同步 [OpenAI 官方模型列表](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)，每 30 秒检查一次官方模型清单和自定义模型清单，支持缓存复用，模型变更时会弹出系统提示，切换模型快人一步。
-- [官方 GPT ECH 访问（实验）](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access)：通过中继DoH 获取地址和 ECH 配置，选择最优 IP 节点，以及固定 Azure IP 访问 OpenAI 端点，避免风控并在网络受限的前提下直接访问 GPT。
-- 支持 OpenAI Responses、Chat Completions、Anthropic Messages 等协议互相无损转换。
-- 支持全平台使用，并根据平台不同提供不同的 UI 层级。
-- 自动完成供应商管理、模型发现、能力探测、上下文配置、测速、额度和 Token 监测。
-- 在模型页的“更多模型操作”中选择“重新探测已加入模型的能力”，可忽略旧探测结果并刷新能力列。CLI 等价命令为 `codex-mixin --no-tui provider probe <provider-id>`；仅探测已保存加入的模型，会发出真实请求并可能产生费用。
-- 模型融合支持多模型编排，提升整体表现；以及按时间轮转，一个模型名称下，按时间路由至不同模型（适用于波峰-波谷计价用户）
-- 配置加密，可导出为 Base64 备份并在另一台机器一键导入，无需繁琐重新配置
-- 统一管理 50 个 Agent，其中默认构建 38 个支持网关配置接入与恢复（`client-auth` 构建为 34 个）；[查看框架图标与接入情况](#agent-integrations)。
+---
 
-### Agent integrations
+## Providers and Protocols
 
-目前管理目录覆盖 **50 个 Agent**，其中默认构建 **38 个支持网关配置接入与恢复**（`client-auth` 构建为 **34 个**）。下方按接入能力分组；版本检测和升级取决于实际安装来源，不代表支持网关接入。
+| Provider / Channel | Primary Protocols | Authentication | Key Features |
+| --- | --- | --- | --- |
+| **Baidu OneAPI** | Anthropic Messages / OpenAI Responses | API Key / Tenant Token | Full support for GLM-5.3, Claude, DeepSeek; maintains session affinity automatically. |
+| **OpenRouter** | OpenAI Responses / Chat Completions | Bearer Token | Access global open/closed models with context compression and streaming pass-through. |
+| **DeepSeek** | OpenAI Responses / Chat Completions | API Key | Native DeepSeek-V3 and DeepSeek-R1 streaming reasoning traces and tool calls. |
+| **Google Antigravity (AGY)** | Gemini Developer API / Google Native | Google OAuth 2.0 | Dynamic AGY agent model discovery, real-time quota tracking, instruction stream verification. |
+| **OpenCode Go** | OpenAI Responses | Session Token | Auto-injects `x-opencode-session` header; stable UUID mapping for multi-turn sessions. |
+| **AWS Bedrock** | Anthropic Messages | AWS SigV4 Signer | Claude 3.5 / 3.7 families, cross-region endpoints, and model-level API path overrides. |
+| **Generic Endpoints** | OpenAI / Anthropic Compatible | Custom Header / Key | Add any compatible custom endpoint with capability probing and latency testing. |
 
-The catalog contains **50 Agents**, with **38 gateway configuration integrations in the default build** (**34 with `client-auth`**). The groups below show integration support. Version detection and upgrades depend on the installation channel and do not imply gateway integration.
+---
 
-#### 已支持接入 · Supported integrations (38 default / 34 client-auth)
+## Agent Integrations
+
+The catalog covers **50 AI Coding Agents**. The default build provides **38 one-click gateway configuration adapters**.
+
+### Supported Integrations (38)
 
 <table>
   <tr>
@@ -165,7 +229,7 @@ The catalog contains **50 Agents**, with **38 gateway configuration integrations
         <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/copilot-jetbrains-dark.svg">
         <img src="docs/assets/agents/copilot-jetbrains-light.svg" width="36" height="36" alt="Copilot for JetBrains logo">
       </picture><br>
-      <sub>Copilot for JetBrains</sub>
+      <sub>Copilot (JetBrains)</sub>
     </td>
     <td width="20%" align="center">
       <img src="macos/assets/agents/air.svg" width="36" height="36" alt="Air logo"><br>
@@ -263,37 +327,6 @@ The catalog contains **50 Agents**, with **38 gateway configuration integrations
       <sub>AtomCode</sub>
     </td>
   </tr>
-</table>
-
-安装对应框架并选择模型后，可通过 macOS / Windows 的 **Agent 管理**连接或恢复配置，或运行 `codex-mixin agent connect <id>` / `codex-mixin agent disconnect <id>`。Codex 连接时需要额外指定 `--mode official-account` 或 `--mode custom-only`。Air 接入需要已安装 OpenCode。
-
-Install the Agent and select models, then connect or restore it through **Agent management** on macOS / Windows, or use the CLI commands above. Codex also requires `--mode official-account` or `--mode custom-only`. Air requires OpenCode.
-
-Codex custom 安装会将 `config.toml` 中的 `[desktop].conversationDetailMode` 设置为 `STEPS_COMMANDS`，使新版 App 使用 coding 界面；重新安装 custom 模式可修复旧配置。官方账号模式保留原设置，卸载时沿用安装前的配置备份恢复。
-
-接入 Codex 只注入必要的 provider 和模型目录配置，无需预先安装 Codex CLI 或 App，也不会自动安装、启动或运行它们进行校验。无关配置保持原样，不迁移历史会话、SQLite 数据或旧 provider 字段。官方 `models.json` 下载失败时优先使用 Mixin 模板缓存；没有缓存则提示后继续生成已配置 provider 的模型目录，后续刷新再补充官方模型。
-
-Codex integration writes the required provider and model catalog settings
-without requiring a Codex CLI or desktop installation. It preserves unrelated
-settings, sessions, and databases. If the official model template cannot be
-downloaded, it uses the Mixin cache or continues with configured provider
-models and reports that the official template is unavailable.
-
-Codex custom installation sets `[desktop].conversationDetailMode` to
-`STEPS_COMMANDS` in `config.toml`, selecting the coding surface in current
-desktop builds. Reinstall custom mode to update an existing configuration.
-Official-account mode preserves the setting; uninstall restores the saved
-configuration from before installation.
-
-OpenCode Go provider 会自动发送 `x-opencode-session` 和 `codex-mixin/<version>` User-Agent，已有配置会补齐缺失的 header 策略。网关从 `thread-id`、`x-opencode-session` 或现有 session/cache 标识派生稳定 UUID；同一会话复用同一标识。完全没有会话标识的独立请求会分配新 UUID，多轮客户端应始终传入稳定的会话标识，详见 [OpenCode Go 官方要求](https://opencode.ai/v2/docs/console/go/#where-can-i-use-it)。
-
-The OpenCode Go provider sends `x-opencode-session` and a
-`codex-mixin/<version>` User-Agent. Existing presets receive the missing
-header policy on load. Known client session IDs map to stable UUIDs;
-standalone requests without any session identity receive separate UUIDs.
-Multi-turn clients must send a stable session identity on every request.
-
-<table>
   <tr>
     <td width="20%" align="center">
       <picture>
@@ -341,14 +374,14 @@ Multi-turn clients must send a stable session identity on every request.
       </picture><br>
       <sub>Cline</sub>
     </td>
+    <td width="20%" align="center"></td>
+    <td width="20%" align="center"></td>
   </tr>
 </table>
 
-新增接入的真实配置路径、官方来源和限制见 [Agent integration contracts](docs/agent-integration-contracts.md)。CommandCode、fx、Empryo、Ante 仅支持默认无入站认证构建；`client-auth` 构建拒绝连接，直到具备受管认证 launcher。VSCodium 要求已安装声明兼容 provider 的 GitHub Copilot Chat extension；Cline 接入针对 CLI/SDK，不是 VS Code 加密凭证。
+### Integration Unavailable (12)
 
-The eight new configuration adapters and their upstream evidence are documented in [Agent integration contracts](docs/agent-integration-contracts.md). Four keyless-only adapters are disabled in `client-auth` builds; this is not an authenticated-launcher implementation.
-
-#### 暂未支持接入 · Integration unavailable (12)
+The following 12 tools rely on OS keychains, vendor-proprietary launchers, encrypted credential stores, or running runtime APIs without supported configuration injection hooks:
 
 <table>
   <tr>
@@ -419,227 +452,98 @@ The eight new configuration adapters and their upstream evidence are documented 
       <img src="docs/assets/agents/cindy.svg" width="36" height="36" alt="Cindy logo"><br>
       <sub>Cindy</sub>
     </td>
+    <td width="20%" align="center"></td>
+    <td width="20%" align="center"></td>
+    <td width="20%" align="center"></td>
   </tr>
 </table>
 
-这些框架保留真实限制，不能仅通过写配置宣称支持。Gemini Developer API 入站协议不等于完整 Gemini CLI；AGY 另需 CloudCode。其他条目需要专用认证、credential store、运行中 App API 或 managed launcher，详见 [接入边界](docs/agent-integration-contracts.md#remaining-explicit-limitations-12)。
+> Connect or restore configurations via **Agent Management** in the desktop apps, or run CLI commands: `codex-mixin agent connect <id>` and `codex-mixin agent disconnect <id>`. For technical boundaries, schemas, and contract details, see [Agent integration contracts](docs/agent-integration-contracts.md); for logo attributions, see [Agent Logos Attribution](macos/assets/agents/ATTRIBUTION.md).
 
-These Agents remain unavailable for gateway connection. Agent management reports the actual limitation and disables connection rather than writing ineffective configuration. Installation/version management remains separate.
+---
 
-图标来源与品牌归属见 [Agent Logos](macos/assets/agents/ATTRIBUTION.md)。
+## Advanced Features
 
-### 产品形态
+### 1. Model Fusion & Time-Based Routing
 
-| 组件 | 作用 |
-| --- | --- |
-| macOS App | 菜单栏状态、Provider 与模型管理、测速、配置备份、更新和修复 |
-| Windows App | 系统托盘、Provider 与模型管理、测速、配置备份、客户端接入和修复 |
-| Web 控制面板 | `codex-mixin panel` 启动，面向 Linux、SSH 和远端主机的完整浏览器控制台 |
-| CLI | 跨平台 core：稳定子命令、JSON contract 和后台服务管理 |
+- **Multi-Model Orchestration**: Dispatch complex tasks to primary and auxiliary models simultaneously. A configured Judge model evaluates candidate outputs to ensure robust code generation.
+- **Time-Based Peak / Off-Peak Routing**: Automatically switch upstream routes under a single model identity based on time schedules (for example, routing to high-concurrency private endpoints during working hours and low-cost public endpoints off-peak).
 
-### 内置 Provider
+### 2. Native Claude Desktop Integration
 
-| Provider | 主要协议 |
-| --- | --- |
-| Baidu OneAPI | Anthropic Messages / OpenAI Responses |
-| OpenRouter | OpenAI Responses |
-| DeepSeek | OpenAI Responses |
-| OpenCode Go | OpenAI Responses |
-| AWS Bedrock | Anthropic Messages |
-
-### 编译时客户端认证
-
-默认构建关闭网关入站 auth key 校验，客户端无需携带网关 key 或专用客户端 key 即可发送请求.
+Route sessions from the Code tab in official [Claude Desktop](https://claude.com/download) through your local gateway:
 
 ```bash
-cargo build --locked --release
+# Connect Claude Desktop
+codex-mixin agent connect claude-desktop
+
+# Disconnect and restore original configuration
+codex-mixin agent disconnect claude-desktop
 ```
 
-启用 `client-auth` feature 可恢复现有网关 key、客户端专用 key 和 Codex OAuth 校验规则：
+Every selected catalog model receives a stable `claude-sonnet-mixin-*` routing alias with full 1M context indicator flags while preserving your official Claude.ai login state.
+
+### 3. Portability & Security
+
+- **Encrypted Base64 Profile Backup**: Export all provider configurations and keys into an encrypted Base64 string for instant atomic import on another workstation.
+- **Optional Client Authentication (`client-auth`)**: Default builds accept local requests without inbound gateway tokens. Compile with `--features client-auth` to enforce strict client keys and loopback-only Codex OAuth verification.
+- **Dynamic Port Binding**: Gateways and web panels automatically allocate random available ports within `8000–9000` to prevent collisions, generating per-start authorization tokens.
+
+---
+
+## Quick Start
+
+### 1. Installation
+
+- **macOS**: Download the `.dmg` installer from [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) and drag to Applications.
+- **Windows**: Download the WinUI 3 installer or portable `.zip` from [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest).
+- **Linux / Source**:
+  ```bash
+  git clone https://github.com/Edward-lyz/codex-mixin.git
+  cd codex-mixin
+  cargo build --locked --release
+  ```
+
+### 2. Common CLI Commands
 
 ```bash
-cargo build --locked --release --features client-auth
-CARGO_BUILD_FEATURES=client-auth ./macos/build_app.sh
+# Start background gateway daemon
+codex-mixin start
+
+# Open the modern web control panel in your browser
+codex-mixin panel
+
+# Connect official Codex while preserving official account & GPT models
+codex-mixin agent connect codex --mode official-account
+
+# Connect Claude Code CLI
+codex-mixin agent connect claude
+
+# Restore clients to default state
+codex-mixin agent disconnect codex
+codex-mixin agent disconnect claude
+
+# Probe capabilities of saved models for a provider
+codex-mixin --no-tui provider probe <provider-id>
 ```
 
-### 网络监听与 Web 控制面板
+---
 
-网关默认监听 `0.0.0.0`，在 **8000–9000** 内随机选择可用端口，同一网络中的设备可以访问。写入客户端配置的地址仍是 `127.0.0.1`；自动启动会复用范围内可用的已保存端口，范围外的自动监听地址会重新分配并同步客户端。显式 `--bind` 使用指定地址，冲突时直接报错。默认构建不校验入站密钥，网关开放时局域网设备可以直接使用你的 Provider 额度。需要限制时，用 `--features client-auth` 构建并设置网关密钥，或用 `codex-mixin start --bind 127.0.0.1:PORT` 只监听本机。Codex OAuth 透传只接受来自本机回环地址的连接。
+## Documentation
 
-`codex-mixin panel` 启动 Web 控制面板，默认监听 `0.0.0.0`，同样在 **8000–9000** 内随机选择可用端口。范围内全部端口被占用时，网关与面板均明确报错。终端会打印带访问令牌的地址：
-
-```bash
-codex-mixin panel                       # 所有网卡
-codex-mixin panel --bind 127.0.0.1:8500  # 只允许本机
-```
-
-令牌在每次启动时随机生成，所有 `/api` 请求都必须携带；密钥只经子进程环境变量传给 CLI。在终端中直接运行 `codex-mixin` 也会打开面板，原来的全屏 TUI 已移除，`--no-tui` 保持纯 CLI 输出。
-
-### 文档
-
-完整安装、配置和排障资料维护在 [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki)：
-
-- [产品展示](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour)
-- [安装](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) 与 [快速开始](https://github.com/Edward-lyz/codex-mixin/wiki/Quick-Start)
-- [配置备份与恢复](https://github.com/Edward-lyz/codex-mixin/wiki/Configuration-Backup-and-Restore)
-- [Provider 与模型](https://github.com/Edward-lyz/codex-mixin/wiki/Providers-and-Models)
-- [客户端集成](https://github.com/Edward-lyz/codex-mixin/wiki/Client-Integrations) 与 [Fusion](https://github.com/Edward-lyz/codex-mixin/wiki/Fusion)
-- [官方模型清单](https://github.com/Edward-lyz/codex-mixin/wiki/Official-Model-Catalog) 与 [ECH、日志和 TUN](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access)
-- [CLI 参考](https://github.com/Edward-lyz/codex-mixin/wiki/CLI-Reference)
-- [排障](https://github.com/Edward-lyz/codex-mixin/wiki/Troubleshooting) 与 [常见问题](https://github.com/Edward-lyz/codex-mixin/wiki/FAQ)
-
-## English
-
-Codex Mixin is a cross-platform local gateway built in Rust. It provides a Windows desktop app, a native macOS menu bar app, and a web control panel. It connects OpenRouter, DeepSeek, Baidu OneAPI, AWS Bedrock, and other OpenAI- or Anthropic-compatible providers to official Codex while preserving official ChatGPT/OpenAI account access, GPT models, remote control, and the native Codex experience.
-
-### Core features
-
-- Official and custom models share the Codex model picker. Models with the same name are kept separate; connecting and disconnecting preserve sessions and databases.
-- Model catalogs sync directly from the [official OpenAI model list](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json). Official and custom catalogs are checked every 30 seconds, with cache reuse when supported. System notifications alert you to model changes so you can switch sooner.
-- [Experimental ECH access for official GPT](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access): query the relay service's DoH endpoint for addresses and ECH configuration, then connect to official OpenAI endpoints with ECH. Availability depends on the service and network; a fixed Azure exit, avoidance of service risk controls, and access from restricted networks are not guaranteed.
-- Convert between OpenAI Responses, Chat Completions, and Anthropic Messages while preserving supported protocol semantics.
-- Cross-platform support, with interfaces suited to each platform.
-- Automatic provider management, model discovery, capability probing, context configuration, benchmarking, quota monitoring, and token usage tracking.
-- Fusion combines multiple models to improve overall results. Time-based rotation routes one model name to different upstream models at different times, which is useful for peak and off-peak pricing.
-- Encrypted configuration can be exported as a Base64 backup and imported on another machine without repeating setup.
-- Manage 50 Agents, with 30 gateway configuration integrations. See the [Agent logos and integration status](#agent-integrations).
-
-### Product interfaces
-
-| Component | Purpose |
-| --- | --- |
-| macOS App | Menu bar status, provider and model management, benchmarking, configuration backups, updates, and repair |
-| Windows App | System tray, provider and model management, benchmarking, configuration backups, client integration, and repair |
-| Web control panel | Started by `codex-mixin panel`; a complete browser console for Linux, SSH, and remote hosts |
-| CLI | Shared cross-platform core with stable subcommands, JSON contracts, and background service management |
-
-### Built-in providers
-
-| Provider | Main protocols |
-| --- | --- |
-| Baidu OneAPI | Anthropic Messages / OpenAI Responses |
-| OpenRouter | OpenAI Chat Completions |
-| DeepSeek | OpenAI Chat Completions |
-| OpenCode Go | OpenAI Responses |
-| AWS Bedrock | Anthropic Messages |
-
-### Client authentication at build time
-
-The default build accepts gateway requests without a gateway key or a client key,
-including Claude Desktop and DUCX routes. Existing client keys remain usable.
-Provider API keys and official account authentication are still required upstream.
-
-```bash
-cargo build --locked --release
-```
-
-Enable `client-auth` to restore the existing gateway key, client key, and Codex
-OAuth checks:
-
-```bash
-cargo build --locked --release --features client-auth
-CARGO_BUILD_FEATURES=client-auth ./macos/build_app.sh
-```
-
-This is a build option. Runtime configuration cannot enable these checks in the
-default build.
-
-### Network binding and the web control panel
-
-The gateway listens on `0.0.0.0` with a random available port in **8000–9000**, so other machines
-on the network can reach it. Client configuration still points at `127.0.0.1`,
-and an available stored port within the range is kept. Automatic addresses
-outside the range are reassigned and client configuration is updated.
-The default build does not check inbound
-keys, so an exposed gateway lets LAN devices spend your provider quota. To
-restrict it, build with `--features client-auth` and set a gateway key, or run
-`codex-mixin start --bind 127.0.0.1:PORT`. Codex OAuth passthrough only accepts
-loopback peers.
-
-`codex-mixin panel` starts the web control panel on `0.0.0.0` with a random
-available port in **8000–9000** and prints an access URL with a token.
-Both listeners fail if every port in the range is busy. An explicit `--bind`
-keeps the requested address and fails on a conflict:
-
-```bash
-codex-mixin panel                        # all interfaces
-codex-mixin panel --bind 127.0.0.1:8500  # this host only
-```
-
-The token is random per start and required on every `/api` request; secrets
-reach the CLI only through child environment variables. Running `codex-mixin`
-in a terminal also opens the panel. The full-screen TUI is removed; `--no-tui`
-keeps plain CLI output.
-
-### Documentation
-
-Installation, configuration, and troubleshooting guides are maintained in the [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki):
+Comprehensive guides and operational reference are maintained in the [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki):
 
 - [Product Tour](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour)
-- [Installation](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) and [Quick Start](https://github.com/Edward-lyz/codex-mixin/wiki/Quick-Start)
-- [Configuration Backup and Restore](https://github.com/Edward-lyz/codex-mixin/wiki/Configuration-Backup-and-Restore)
-- [Providers and Models](https://github.com/Edward-lyz/codex-mixin/wiki/Providers-and-Models)
-- [Client Integrations](https://github.com/Edward-lyz/codex-mixin/wiki/Client-Integrations) and [Fusion](https://github.com/Edward-lyz/codex-mixin/wiki/Fusion)
-- [Official Model Catalog](https://github.com/Edward-lyz/codex-mixin/wiki/Official-Model-Catalog) and [ECH, Logs, and TUN](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access)
-- [CLI Reference](https://github.com/Edward-lyz/codex-mixin/wiki/CLI-Reference)
-- [Troubleshooting](https://github.com/Edward-lyz/codex-mixin/wiki/Troubleshooting) and [FAQ](https://github.com/Edward-lyz/codex-mixin/wiki/FAQ)
+- [Installation](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) & [Quick Start](https://github.com/Edward-lyz/codex-mixin/wiki/Quick-Start)
+- [Configuration Backup & Restore](https://github.com/Edward-lyz/codex-mixin/wiki/Configuration-Backup-and-Restore)
+- [Providers & Models](https://github.com/Edward-lyz/codex-mixin/wiki/Providers-and-Models)
+- [Client & Agent Integrations](https://github.com/Edward-lyz/codex-mixin/wiki/Client-Integrations)
+- [Official Model Catalog & ECH Direct Access](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access)
+- [CLI Reference Manual](https://github.com/Edward-lyz/codex-mixin/wiki/CLI-Reference)
+- [Troubleshooting](https://github.com/Edward-lyz/codex-mixin/wiki/Troubleshooting) & [FAQ](https://github.com/Edward-lyz/codex-mixin/wiki/FAQ)
+
+---
 
 ## License
 
-See [LICENSE](LICENSE) and [NOTICE](NOTICE).
-
-### Claude Desktop
-
-Claude Code's desktop entry point is the Code tab in the official
-[Claude Desktop app](https://claude.com/download). To route its local sessions
-through Codex Mixin, select models in your providers, keep the gateway running,
-and run:
-
-```sh
-codex-mixin connect claude-desktop
-codex-mixin connect claude-desktop --status --json
-# Restore the deployment mode and profile that preceded integration:
-codex-mixin connect remove claude-desktop
-```
-
-The connect command starts or restarts the managed gateway after committing
-the profile, so the serving process includes the Desktop routes and client key.
-Fully quit and reopen Claude Desktop after connecting, restoring, or changing
-selected models. The macOS and Windows **Agent management** windows and the web panel
-**客户端** page expose the same operations. Desktop and
-the Claude Code CLI have separate integrations; `connect claude` still manages
-only Claude Code CLI settings.
-
-The Desktop profile is registered in `Claude-3p/configLibrary/_meta.json` and
-uses the gateway's `/claude-desktop` prefix with a separate client key. Every
-selected catalog model receives a stable `claude-sonnet-mixin-*` route and a
-label containing its real model and provider name. The Sonnet prefix is a
-Desktop-compatible route family, not a claim about the upstream model.
-Anthropic Messages, OpenAI Chat Completions, and OpenAI Responses use the
-existing protocol conversion. Models with at least one million context tokens
-receive `supports1m`; Desktop accepts at most 200 selected models.
-
-Default configuration roots are `~/Library/Application Support` on macOS,
-`%LOCALAPPDATA%` on Windows, and `$XDG_CONFIG_HOME` (or `~/.config`) on Linux.
-Use `--config-root <parent-of-Claude-and-Claude-3p>` on either connect or remove
-for a custom installation. Integration saves an owner-only backup before
-switching deployment modes; restore removes managed fields while retaining
-unrelated settings and user edits. Model/key synchronization refreshes the
-Mixin profile without changing the profile selected manually in Desktop.
-This integration targets local Desktop inference; cloud sessions and
-Anthropic account services are outside its routing scope.
-
-The Desktop profile format follows the
-[CC Switch implementation](https://github.com/farion1231/cc-switch/blob/main/src-tauri/src/claude_desktop_config.rs)
-and was checked against Claude Desktop 2.31226.1 on macOS.
-
-Desktop gateway profiles keep Claude.ai sign-in enabled. The local 3P UI and
-the standard Claude.ai UI are different deployment surfaces; this integration
-does not combine personal Claude subscription models and custom models in a
-single picker. Signing in to Claude.ai remains available, and restoring the
-integration returns the previous deployment mode. Enterprise deployments can
-manage 3P inference through the Claude.ai admin console; see the
-[official 3P architecture](https://claude.com/docs/third-party/claude-desktop/overview).
-The 3P UI uses the languages bundled by Anthropic. Mixin does not change the
-language setting or add translations; the currently documented language list
-does not include Simplified Chinese.
+This project is licensed under [LICENSE](LICENSE) and [NOTICE](NOTICE).
