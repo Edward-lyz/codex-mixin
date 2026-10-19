@@ -15,11 +15,16 @@ concurrency:
   cancel-in-progress: true
 
 jobs:
-  # Formatting, script parsing, and architecture checks are platform-neutral.
-  # Keep them on one runner and use the saved macOS minutes for platform tests.
-  linux:
-    name: Linux checks and tests
-    runs-on: ubuntu-latest
+  test:
+    name: Test (${{ matrix.os }})
+    runs-on: ${{ matrix.os }}
+    strategy:
+      fail-fast: false
+      matrix:
+        os:
+          - ubuntu-latest
+          - macos-latest
+
     steps:
       - uses: actions/checkout@v5
       - uses: dtolnay/rust-toolchain@stable
@@ -28,8 +33,10 @@ jobs:
           components: rustfmt, clippy
       - uses: Swatinem/rust-cache@v2
       - name: Check formatting
+        if: runner.os == 'Linux'
         run: cargo fmt --all -- --check
       - name: Check script syntax
+        if: runner.os == 'Linux'
         shell: bash
         run: |
           while IFS= read -r script; do
@@ -68,12 +75,14 @@ jobs:
             exit 1
           fi
       - name: Check architecture boundaries
+        if: runner.os == 'Linux'
         run: |
           ./scripts/check_arch.sh
           ./scripts/test_check_arch.sh
       - name: Run unit and integration tests
         run: cargo test --locked --all-targets
       - name: Run client auth Clippy
+        if: runner.os == 'Linux'
         run: |
           cargo clippy --locked --all-targets --features client-auth -- \
             -D clippy::cognitive_complexity \
@@ -81,10 +90,13 @@ jobs:
             -D clippy::redundant_pattern_matching \
             -D warnings
       - name: Run client auth tests
+        if: runner.os == 'Linux'
         run: cargo test --locked --all-targets --features client-auth
       - name: Run prompt cache prefix E2E
+        if: runner.os == 'Linux'
         run: ./scripts/e2e_prompt_cache.sh
       - name: Build static Linux CLI
+        if: runner.os == 'Linux'
         run: |
           sudo apt-get update
           sudo apt-get install --yes musl-tools
@@ -94,56 +106,21 @@ jobs:
             cargo build --locked --release --target x86_64-unknown-linux-musl
           ./scripts/verify-linux-static.sh target/x86_64-unknown-linux-musl/release/codex-mixin
       - name: Upload Linux CLI artifact
+        if: runner.os == 'Linux'
         uses: actions/upload-artifact@v7
         with:
           name: codex-mixin-linux-cli-${{ github.sha }}
           path: target/x86_64-unknown-linux-musl/release/codex-mixin
           if-no-files-found: error
-
-  macos-rust:
-    name: Rust checks and tests (macOS)
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-          components: clippy
-      - uses: Swatinem/rust-cache@v2
-      - name: Run strict Clippy
-        run: |
-          cargo clippy --locked --all-targets -- \
-            -D clippy::cognitive_complexity \
-            -D clippy::redundant_closure_for_method_calls \
-            -D clippy::redundant_pattern_matching \
-            -D warnings
-      - name: Run unit and integration tests
-        run: cargo test --locked --all-targets
-
-  # The release build and Swift suite take several minutes. Run them beside
-  # the macOS Rust checks so neither job waits for the other.
-  macos-app:
-    name: macOS app and Swift tests
-    runs-on: macos-latest
-    steps:
-      - uses: actions/checkout@v5
-      - uses: dtolnay/rust-toolchain@stable
-        with:
-          toolchain: stable
-      - uses: Swatinem/rust-cache@v2
-      - name: Install ripgrep
-        shell: bash
-        run: |
-          if command -v rg >/dev/null; then
-            exit 0
-          fi
-          brew install ripgrep
       - name: Build macOS app
+        if: runner.os == 'macOS'
         env:
           MACOSX_DEPLOYMENT_TARGET: "13.1"
           CODEX_MIXIN_REQUIRE_ADAPTIVE_ICON: "1"
         run: ./macos/build_app.sh
       - name: Verify macOS application icons
+        if: runner.os == 'macOS'
         run: ./scripts/verify_macos_app_icon.sh
       - name: Run macOS Swift tests
+        if: runner.os == 'macOS'
         run: ./scripts/test_macos.sh
