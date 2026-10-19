@@ -35,23 +35,6 @@ jobs:
       - uses: Swatinem/rust-cache@v2
         with:
           shared-key: rust
-      - name: Diagnose OpenCode session transport
-        shell: pwsh
-        run: |
-          cargo test --locked --test gateway_http --no-run --message-format=json > session-build.json
-          if ($LASTEXITCODE -ne 0) { exit $LASTEXITCODE }
-          $binary = Get-Content session-build.json | ForEach-Object { $_ | ConvertFrom-Json } |
-            Where-Object { $_.reason -eq 'compiler-artifact' -and $_.target.name -eq 'gateway_http' -and $_.executable } |
-            Select-Object -Last 1 -ExpandProperty executable
-          if (!$binary) { throw 'Missing gateway_http test binary' }
-          for ($iteration = 1; $iteration -le 200; $iteration++) {
-            & $binary opencode_go_sends_stable_session_headers --exact *> session-repro.log
-            if ($LASTEXITCODE -ne 0) {
-              Get-Content session-repro.log
-              throw "OpenCode session test failed on iteration $iteration"
-            }
-          }
-          Write-Host '200 repetitions passed (3000 requests)'
       - name: Run strict Clippy
         shell: bash
         run: |
