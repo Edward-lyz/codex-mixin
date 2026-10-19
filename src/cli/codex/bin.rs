@@ -1,56 +1,9 @@
-//! Locating the Codex CLI executable, installing it on demand.
+//! Optional Codex CLI discovery for explicit diagnostic commands.
 
 use std::path::{Path, PathBuf};
 use std::process::Command as ProcessCommand;
 
-use anyhow::Context;
-use codex_mixin::platform::{
-    codex_cli_candidates, codex_cli_installer, launcher_command, path_executable_candidates,
-};
-
-pub(super) fn ensure_codex_cli_for_install() -> anyhow::Result<PathBuf> {
-    match resolve_codex_cli() {
-        Ok(codex_cli) => Ok(codex_cli),
-        Err(missing_error) => match install_official_codex_cli() {
-            Ok(codex_cli) => {
-                println!("codex cli install: installed {}", codex_cli.display());
-                Ok(codex_cli)
-            }
-            Err(install_error) => {
-                anyhow::bail!("{missing_error}; automatic install also failed: {install_error:#}")
-            }
-        },
-    }
-}
-
-fn install_official_codex_cli() -> anyhow::Result<PathBuf> {
-    let mut installer = codex_cli_installer()?;
-    println!(
-        "codex cli install: not found; running the official installer from {} in non-interactive mode",
-        installer.script_url
-    );
-    let status = installer
-        .command
-        .status()
-        .context("failed to run the official Codex CLI installer")?;
-    anyhow::ensure!(
-        status.success(),
-        "official Codex CLI installer exited with {status}"
-    );
-    match installer.installed_path {
-        Some(path) => {
-            anyhow::ensure!(
-                path.is_file(),
-                "official Codex CLI installer completed without creating {}",
-                path.display()
-            );
-            Ok(path)
-        }
-        None => resolve_default_codex_cli().context(
-            "official Codex CLI installer completed without creating a discoverable codex executable",
-        ),
-    }
-}
+use codex_mixin::platform::{codex_cli_candidates, launcher_command, path_executable_candidates};
 
 pub(in crate::cli) fn resolve_codex_cli() -> anyhow::Result<PathBuf> {
     if let Some(path) = std::env::var_os("CODEX_CLI_PATH").map(PathBuf::from) {
@@ -66,7 +19,7 @@ pub(in crate::cli) fn resolve_codex_cli() -> anyhow::Result<PathBuf> {
         return Ok(path);
     }
     anyhow::bail!(
-        "Codex CLI was not found; set CODEX_CLI_PATH or install Codex before installing Codex Mixin"
+        "Codex CLI was not found for this optional diagnostic; set CODEX_CLI_PATH to run it"
     )
 }
 

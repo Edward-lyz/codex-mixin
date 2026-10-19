@@ -5,7 +5,7 @@ use codex_mixin::config::load_stored_config;
 use codex_mixin::provider::ProviderPreset;
 use console::style;
 
-use super::codex::{InstallCodexOptions, install_codex, resolve_codex_install_paths};
+use super::codex::{InstallCodexOptions, install_codex};
 use super::ducx_setup::ensure_managed_ducx;
 use super::providers::{
     AddProviderOptions, UpdateProviderOptions, add_provider, discover_models_with_output,
@@ -286,13 +286,6 @@ pub(super) async fn run(
     let codex_mode = choose_setup_codex_mode(codex_mode)?;
     match codex_mode {
         SetupCodexMode::Official => {
-            let paths = resolve_codex_install_paths(None, None)?;
-            if !paths.models_cache.exists() {
-                anyhow::bail!(
-                    "official Codex catalog is missing at {}; sign in and open Codex once, then run `{executable} connect codex --codex-oauth-proxy`",
-                    paths.models_cache.display()
-                )
-            }
             install_codex(InstallCodexOptions {
                 requested_model: None,
                 set_default: false,

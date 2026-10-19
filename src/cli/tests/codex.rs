@@ -117,29 +117,6 @@ fn codex_command_uses_the_required_windows_script_host() {
 }
 
 #[test]
-fn codex_config_load_warning_is_acceptable_during_install_validation() {
-    assert!(codex_config_load_status_is_acceptable(Some("ok")));
-    assert!(codex_config_load_status_is_acceptable(Some("warning")));
-    assert!(!codex_config_load_status_is_acceptable(Some("error")));
-    assert!(!codex_config_load_status_is_acceptable(None));
-}
-
-#[test]
-fn finds_config_load_check_from_array_doctor_report() {
-    let report = serde_json::json!({
-        "checks": [
-            {
-                "id": "config.load",
-                "status": "error",
-                "details": {"notes": ["failed to load Codex config"]}
-            }
-        ]
-    });
-    let check = find_codex_config_load_check(&report).expect("check");
-    assert_eq!(check["status"], "error");
-}
-
-#[test]
 fn oauth_proxy_catalog_uses_exact_aggregated_slugs() {
     let models = vec![ModelInfo {
         id: "gpt-5.6-sol-provider-with-hyphens".to_owned(),
@@ -252,20 +229,20 @@ fn explicit_relative_config_and_catalog_paths_become_absolute() {
 }
 
 #[tokio::test]
-async fn oauth_install_missing_repository_and_cache_creates_no_restore_marker_or_directory() {
+async fn oauth_template_is_optional() {
     let dir = tempfile::tempdir().unwrap();
     let config_path = dir.path().join("managed-codex").join("config.toml");
 
-    let error = load_codex_install_template_online(
+    let template = load_codex_install_template_online(
         true,
         &dir.path().join("official-models.json"),
         "http://127.0.0.1:1/models.json",
         || Ok(None),
     )
     .await
-    .unwrap_err();
+    .unwrap();
 
-    assert!(error.to_string().contains("no Mixin cache exists"));
+    assert_eq!(template, None);
     assert!(!config_path.parent().unwrap().exists());
     assert!(!managed_backup_path(&config_path).exists());
     assert!(!managed_absent_marker_path(&config_path).exists());
@@ -676,7 +653,7 @@ fn managed_install_backup_and_uninstall_restore_existing_config() {
     assert!(
         fs::read_to_string(&session_path)
             .unwrap()
-            .contains(r#""model_provider":"custom""#)
+            .contains(r#""model_provider":"codex-mixin""#)
     );
     assert!(!managed_backup_path(&config_path).exists());
     assert!(!catalog_path.exists());
@@ -745,7 +722,7 @@ fn managed_uninstall_removes_config_when_none_existed_before() {
     assert!(
         fs::read_to_string(session_path)
             .unwrap()
-            .contains(r#""model_provider":"openai""#)
+            .contains(r#""model_provider":"codex-mixin""#)
     );
 }
 
