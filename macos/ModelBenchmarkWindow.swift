@@ -79,6 +79,7 @@ struct ProviderModelSelectionUpdate {
 @MainActor
 final class ModelBenchmarkModel: ObservableObject {
     let startHandler: (Int, String, Int) async throws -> ModelBenchmarkSnapshot
+    private let probeHandler: (String) async throws -> Void
     let fetchHandler: () async throws -> ModelBenchmarkSnapshot?
     let loadProvidersHandler: () async throws -> ProviderListResponse
     let saveSelectionsHandler: (
@@ -101,6 +102,7 @@ final class ModelBenchmarkModel: ObservableObject {
     @Published var determinateProgress: Double?
     @Published var snapshot: ModelBenchmarkSnapshot?
     @Published var isSavingSelections = false
+    @Published private(set) var isProbingCapabilities = false
     @Published var isLaunchingBenchmark = false
     @Published var selectionConflictProviderIDs: Set<String> = []
 
@@ -116,10 +118,12 @@ final class ModelBenchmarkModel: ObservableObject {
         startHandler: @escaping (Int, String, Int) async throws -> ModelBenchmarkSnapshot,
         fetchHandler: @escaping () async throws -> ModelBenchmarkSnapshot?,
         loadProvidersHandler: @escaping () async throws -> ProviderListResponse,
+        probeHandler: @escaping (String) async throws -> Void,
         saveSelectionsHandler: @escaping (
             [String: [String]], [String: [String: UInt64]], [String: [String]], OperationProgress
         ) async throws -> Void
     ) {
+        self.probeHandler = probeHandler
         self.startHandler = startHandler
         self.fetchHandler = fetchHandler
         self.loadProvidersHandler = loadProvidersHandler
@@ -148,7 +152,7 @@ final class ModelBenchmarkModel: ObservableObject {
     }
 
     var isBusy: Bool {
-        isSavingSelections || isLaunchingBenchmark || snapshot?.status == "running"
+        isSavingSelections || isProbingCapabilities || isLaunchingBenchmark || snapshot?.status == "running"
     }
 
     var selectedVisibleCount: Int {
@@ -362,6 +366,31 @@ final class ModelBenchmarkModel: ObservableObject {
     func acknowledgeSelectedExternalChange() {
         guard let selectedProviderID else { return }
         selectionConflictProviderIDs.remove(selectedProviderID)
+    }
+
+    func probeCapabilities() async {
+        guard let provider = selectedProvider, provider.kind == .configured,
+              !isBusy, !selectedProviderDirty, appliedModelCount > 0 else { return }
+        isProbingCapabilities = true
+        defer { isProbingCapabilities = false }
+        setStatus("正在重新探测模型能力…", color: .secondary)
+        do {
+            try await runOperationProgress(
+                title: "正在重新探测模型能力…",
+                phases: ["探测已加入的模型", "刷新能力结果"],
+                successTitle: "能力探测已完成",
+                failureTitle: "未能完成能力探测",
+                showFailureAlert: false
+            ) { progress in
+                try await self.probeHandler(provider.id)
+                progress.advance(to: 1)
+                try await self.loadProviders(selecting: provider.id)
+            }
+            setStatus("能力探测完成，请查看能力列", color: .secondary)
+        } catch {
+            setStatus("能力探测失败", color: .red)
+            presentBenchmarkError(title: "能力探测失败", message: localizedErrorDescription(error))
+        }
     }
 
     func startBenchmark() {
@@ -908,6 +937,15 @@ struct ModelBenchmarkRootView: View {
                     Text("\(seconds) 秒").tag(seconds)
                 }
             }
+
+            Divider()
+
+            Button("重新探测已加入模型的能力") {
+                Task { await model.probeCapabilities() }
+            }
+            .disabled(model.isBusy || isExternallyBusy || model.selectedProviderDirty
+                || model.selectedProvider?.kind != .configured || model.appliedModelCount == 0)
+            .help("使用真实请求重新探测，可能产生费用；先应用模型选择更改")
 
             Divider()
 

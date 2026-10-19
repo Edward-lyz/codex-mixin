@@ -466,7 +466,7 @@ public sealed partial class MainWindow : Window
         AutomationProperties.SetName(filter, "模型筛选");
         var actions = new MenuFlyout { Placement = Microsoft.UI.Xaml.Controls.Primitives.FlyoutPlacementMode.BottomEdgeAlignedLeft };
         actions.Items.Add(MenuItem("刷新模型列表", "\uE72C", () => ChangeAsync("刷新模型", ["provider", "discover", id], apply: true)));
-        actions.Items.Add(MenuItem("探测已加入模型的能力", "\uE9D9", () => ChangeAsync("探测模型能力", ["provider", "probe", id], apply: true)));
+        actions.Items.Add(MenuItem("重新探测已加入模型的能力", "\uE9D9", () => ChangeAsync("探测模型能力", ["provider", "probe", id], apply: true)));
         var more = new DropDownButton { Content = new FontIcon { Glyph = "\uE712", FontSize = 14 }, Flyout = actions, VerticalAlignment = VerticalAlignment.Center };
         AutomationProperties.SetName(more, "更多模型操作");
         var test = Button($"测试已加入的 {selected.Count} 个模型", () => ChangeAsync("启动模型测速", ["benchmark", "start", "--provider", id, "--timeout-seconds", "60"]), true);

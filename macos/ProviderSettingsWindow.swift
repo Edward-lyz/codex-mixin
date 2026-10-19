@@ -65,6 +65,9 @@ final class ProviderSettingsWindowController: NSWindowController, NSWindowDelega
             startHandler: benchmarkStartHandler,
             fetchHandler: benchmarkFetchHandler,
             loadProvidersHandler: loadHandler,
+            probeHandler: { providerID in
+                _ = try await runHandler(["provider", "probe", providerID])
+            },
             saveSelectionsHandler: { selections, contexts, clearedContexts, progress in
                 progress.advance(to: 0)
                 for providerID in selections.keys.sorted() {
