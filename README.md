@@ -66,7 +66,7 @@ Codex Mixin 是一个跨平台的 Rust 本地网关，提供 Windows 桌面 App�
 
 ### 核心能力
 
-- 官方模型与自定义模型共存于 Codex 模型选择器，重名模型自动隔离，历史会话会自动迁移。
+- 官方模型与自定义模型共存于 Codex 模型选择器，重名模型自动隔离，接入和断开均保留历史会话与数据库。
 - 官方模型清单直接同步 [OpenAI 官方模型列表](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json)，每 30 秒检查一次官方模型清单和自定义模型清单，支持缓存复用，模型变更时会弹出系统提示，切换模型快人一步。
 - [官方 GPT ECH 访问（实验）](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access)：通过中继DoH 获取地址和 ECH 配置，选择最优 IP 节点，以及固定 Azure IP 访问 OpenAI 端点，避免风控并在网络受限的前提下直接访问 GPT。
 - 支持 OpenAI Responses、Chat Completions、Anthropic Messages 等协议互相无损转换。
@@ -269,6 +269,14 @@ The catalog contains **50 Agents**, with **38 gateway configuration integrations
 Install the Agent and select models, then connect or restore it through **Agent management** on macOS / Windows, or use the CLI commands above. Codex also requires `--mode official-account` or `--mode custom-only`. Air requires OpenCode.
 
 Codex custom 安装会将 `config.toml` 中的 `[desktop].conversationDetailMode` 设置为 `STEPS_COMMANDS`，使新版 App 使用 coding 界面；重新安装 custom 模式可修复旧配置。官方账号模式保留原设置，卸载时沿用安装前的配置备份恢复。
+
+接入 Codex 只注入必要的 provider 和模型目录配置，无需预先安装 Codex CLI 或 App，也不会自动安装、启动或运行它们进行校验。无关配置保持原样，不迁移历史会话、SQLite 数据或旧 provider 字段。官方 `models.json` 下载失败时优先使用 Mixin 模板缓存；没有缓存则提示后继续生成已配置 provider 的模型目录，后续刷新再补充官方模型。
+
+Codex integration writes the required provider and model catalog settings
+without requiring a Codex CLI or desktop installation. It preserves unrelated
+settings, sessions, and databases. If the official model template cannot be
+downloaded, it uses the Mixin cache or continues with configured provider
+models and reports that the official template is unavailable.
 
 Codex custom installation sets `[desktop].conversationDetailMode` to
 `STEPS_COMMANDS` in `config.toml`, selecting the coding surface in current
@@ -485,7 +493,7 @@ Codex Mixin is a cross-platform local gateway built in Rust. It provides a Windo
 
 ### Core features
 
-- Official and custom models share the Codex model picker. Models with the same name are kept separate, and existing conversations migrate automatically.
+- Official and custom models share the Codex model picker. Models with the same name are kept separate; connecting and disconnecting preserve sessions and databases.
 - Model catalogs sync directly from the [official OpenAI model list](https://github.com/openai/codex/blob/main/codex-rs/models-manager/models.json). Official and custom catalogs are checked every 30 seconds, with cache reuse when supported. System notifications alert you to model changes so you can switch sooner.
 - [Experimental ECH access for official GPT](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access): query the relay service's DoH endpoint for addresses and ECH configuration, then connect to official OpenAI endpoints with ECH. Availability depends on the service and network; a fixed Azure exit, avoidance of service risk controls, and access from restricted networks are not guaranteed.
 - Convert between OpenAI Responses, Chat Completions, and Anthropic Messages while preserving supported protocol semantics.

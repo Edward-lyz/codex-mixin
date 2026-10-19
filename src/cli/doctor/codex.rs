@@ -303,22 +303,6 @@ pub(super) fn check_codex_integration(
         }
     };
 
-    if oauth_proxy {
-        let models_cache = codex_home.join("models_cache.json");
-        if !models_cache.exists() {
-            checks.push(
-                DoctorCheck::new(
-                    "codex_models_cache",
-                    "Official model cache",
-                    DoctorStatus::Error,
-                    "codex_oauth_proxy mode requires models_cache.json, but the file is missing",
-                )
-                .detail(models_cache.display().to_string())
-                .hint("sign in with the official account, open Codex once to create the cache, then reinstall"),
-            );
-        }
-    }
-
     let catalog_path = match managed_catalog_path(&doc, &path) {
         Ok(catalog_path) => catalog_path,
         Err(error) => {

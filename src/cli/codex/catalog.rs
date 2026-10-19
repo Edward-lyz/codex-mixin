@@ -399,8 +399,10 @@ async fn load_preferred_official_catalog(
                 None => local_catalog()?,
             };
             let Some(cached) = fallback else {
-                return Err(error
-                    .context("official repository catalog unavailable and no Mixin cache exists"));
+                eprintln!(
+                    "warning: official model template unavailable; continuing with configured provider models: {error:#}"
+                );
+                return Ok(None);
             };
             codex_mixin::catalog::official::validate_catalog(&cached)?;
             tracing::warn!(event = "official_catalog_stale", source_url, error = %error,

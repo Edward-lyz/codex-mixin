@@ -27,19 +27,6 @@ pub fn migrate_history_to_provider(
     migrate_history_provider(codex_home, None, target_provider, "unify-codex-mixin")
 }
 
-pub fn migrate_history_from_provider(
-    codex_home: &Path,
-    source_provider: &str,
-    target_provider: &str,
-) -> anyhow::Result<HistoryMigrationOutcome> {
-    migrate_history_provider(
-        codex_home,
-        Some(source_provider),
-        target_provider,
-        "restore-from-codex-mixin",
-    )
-}
-
 fn migrate_history_provider(
     codex_home: &Path,
     source_provider: Option<&str>,

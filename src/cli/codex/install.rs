@@ -2,24 +2,17 @@ use std::fs;
 use std::path::PathBuf;
 
 use clap::Args;
-use toml_edit::{DocumentMut, Item};
+use toml_edit::DocumentMut;
 
-use super::history::{migrate_history_from_provider, migrate_history_to_provider};
 use codex_mixin::config::GatewayConfig;
 use codex_mixin::server::AppState;
 
-use super::bin::ensure_codex_cli_for_install;
 use super::catalog::*;
 use super::managed_auth::*;
 use super::managed_config::*;
-use super::validate::validate_codex_install;
-use super::{reconcile_imagegen_skill, restore_imagegen_skill};
+use super::restore_imagegen_skill;
 use crate::cli::metadata::load_model_metadata_resolver;
-use crate::cli::official_models::{
-    filter_official_catalog, load_official_catalog, load_official_models,
-    official_template_cache_path,
-};
-use crate::cli::providers::apply_official_model_refresh;
+use crate::cli::official_models::{filter_official_catalog, official_template_cache_path};
 use crate::cli::runtime::effective_gateway_bind;
 use codex_mixin::application::provider::normalize_base_url;
 use codex_mixin::catalog::apply_auto_review_override;
@@ -121,28 +114,18 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
     let client_key = codex_mixin::config::ensure_gateway_client_key(
         codex_mixin::gateway_access::GatewayClient::Codex,
     )?;
-    let mut gateway_config = GatewayConfig::from_stored_config()?;
-    let previous_official_models = if codex_oauth_proxy {
-        Some(load_official_models()?)
-    } else {
-        None
-    };
+    let gateway_config = GatewayConfig::from_stored_config()?;
     let state = AppState::new(gateway_config.clone())?;
     super::super::progress_step("Loading Codex config template");
     let mut template = load_codex_install_template_online(
         codex_oauth_proxy,
         &official_template_cache_path(),
         codex_mixin::catalog::official::OFFICIAL_CATALOG_URL,
-        load_official_catalog,
+        || Ok(None),
     )
     .await?;
-    if let Some(previous_official_models) = previous_official_models {
-        let current_official_models = load_official_models()?;
-        apply_official_model_refresh(&previous_official_models, &current_official_models)?;
-        gateway_config = GatewayConfig::from_stored_config()?;
-        if let Some(template) = &mut template {
-            filter_official_catalog(template, gateway_config.official_selected_models.as_deref())?;
-        }
+    if let Some(template) = &mut template {
+        filter_official_catalog(template, gateway_config.official_selected_models.as_deref())?;
     }
     super::super::progress_step("Fetching available models");
     let models = state.fetch_models().await?;
@@ -202,58 +185,18 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
     )?;
     let serialized_config = codex_mixin::clients::codex::serialize(&doc);
     serialized_config.parse::<DocumentMut>()?;
-    let expected_model_slugs = catalog
-        .get("models")
-        .and_then(serde_json::Value::as_array)
-        .ok_or_else(|| anyhow::anyhow!("generated Codex catalog has no models array"))?
-        .iter()
-        .map(|model| {
-            model
-                .get("slug")
-                .and_then(serde_json::Value::as_str)
-                .map(str::to_owned)
-                .ok_or_else(|| anyhow::anyhow!("generated Codex model is missing slug"))
-        })
-        .collect::<anyhow::Result<Vec<_>>>()?;
-
-    let codex_home = paths
-        .config
-        .parent()
-        .ok_or_else(|| anyhow::anyhow!("Codex config path has no parent"))?;
-    super::super::progress_step("Preparing or installing Codex CLI");
-    let codex_cli = ensure_codex_cli_for_install()?;
     super::super::progress_step("Writing Codex config and model catalog");
     write_managed_codex_files(
         &paths,
         &raw_config,
         &serialized_catalog,
         serialized_config.as_bytes(),
-        || validate_codex_install(&codex_cli, codex_home, provider_id, &expected_model_slugs),
+        || {
+            fs::read_to_string(&paths.config)?.parse::<DocumentMut>()?;
+            let written_catalog = serde_json::from_slice(&fs::read(&paths.catalog)?)?;
+            codex_mixin::catalog::official::validate_catalog(&written_catalog)
+        },
     )?;
-    let auxiliary_provider_enabled = gateway_config
-        .providers
-        .iter()
-        .any(|provider| provider.enabled && provider.auxiliary_model_upstream);
-    if reconcile_imagegen_skill(codex_home, auxiliary_provider_enabled)? {
-        println!(
-            "codex imagegen skill: {}",
-            if auxiliary_provider_enabled {
-                "installed"
-            } else {
-                "restored official skill"
-            }
-        );
-    }
-
-    super::super::progress_step("Syncing history sessions and SQLite state");
-    let history = match migrate_history_to_provider(codex_home, provider_id) {
-        Ok(history) => history,
-        Err(error) => {
-            eprintln!("warning: history migration skipped: {error:#}");
-            Default::default()
-        }
-    };
-    super::super::progress_step("Validating install result");
     println!("codex config updated: {}", paths.config.display());
     println!(
         "codex config backup: {}",
@@ -265,13 +208,6 @@ async fn install_codex_inner(options: InstallCodexOptions) -> anyhow::Result<()>
     println!("web search capabilities: cached/provider metadata applied");
     println!("web search discovery: continues in the gateway background");
     println!("provider: {provider_id}");
-    println!(
-        "history migrated: {} JSONL files, {} SQLite rows",
-        history.jsonl_files_changed, history.sqlite_rows_changed
-    );
-    if let Some(backup_root) = history.backup_root {
-        println!("history backup: {}", backup_root.display());
-    }
     if codex_oauth_proxy {
         println!("codex oauth proxy: enabled");
         println!("codex auth: official account preserved");
@@ -329,8 +265,6 @@ pub(in crate::cli) fn uninstall_codex_preserving_restore_mode(
         );
     }
     let managed_doc = raw_config.parse::<DocumentMut>()?;
-    let managed_provider =
-        codex_mixin::clients::codex::managed_provider_id(&managed_doc)?.to_owned();
     let managed_catalog_path = managed_catalog_path(&managed_doc, &config_path)?;
     if let Some(explicit_catalog_path) = catalog_path {
         let explicit_catalog_path = absolute_path(explicit_catalog_path)?;
@@ -344,22 +278,12 @@ pub(in crate::cli) fn uninstall_codex_preserving_restore_mode(
     }
     let backup_path = managed_backup_path(&config_path);
     let absent_marker_path = managed_absent_marker_path(&config_path);
-    let restored_provider = if backup_path.exists() {
-        let backup = fs::read_to_string(&backup_path)?;
-        let doc = backup.parse::<DocumentMut>()?;
-        doc.get("model_provider")
-            .and_then(Item::as_str)
-            .unwrap_or("openai")
-            .to_owned()
-    } else if absent_marker_path.exists() {
-        "openai".to_owned()
-    } else {
-        anyhow::bail!(
-            "missing managed backup for {}; expected {}",
-            config_path.display(),
-            backup_path.display()
-        );
-    };
+    anyhow::ensure!(
+        backup_path.exists() || absent_marker_path.exists(),
+        "missing managed backup for {}; expected {}",
+        config_path.display(),
+        backup_path.display()
+    );
     super::super::progress_step("Restoring pre-install config and auth state");
     if backup_path.exists() {
         fs::copy(&backup_path, &config_path)?;
@@ -386,17 +310,6 @@ pub(in crate::cli) fn uninstall_codex_preserving_restore_mode(
                 println!("previous auth backup retained: {}", backup.display());
             }
         }
-    }
-    super::super::progress_step("Restoring history sessions and SQLite state");
-    let history =
-        migrate_history_from_provider(&codex_home, &managed_provider, &restored_provider)?;
-    println!("history provider restored: {restored_provider}");
-    println!(
-        "history restored: {} JSONL files, {} SQLite rows",
-        history.jsonl_files_changed, history.sqlite_rows_changed
-    );
-    if let Some(backup_root) = history.backup_root {
-        println!("history backup: {}", backup_root.display());
     }
     if managed_catalog_path.exists() {
         fs::remove_file(&managed_catalog_path)?;
@@ -481,7 +394,7 @@ pub(in crate::cli) fn write_managed_codex_files(
     if rollback_errors.is_empty() {
         println!("codex install rollback: completed");
         anyhow::bail!(
-            "Codex rejected the managed configuration; installation rolled back: {install_error}"
+            "Codex config write or validation failed; installation rolled back: {install_error:#}"
         );
     }
     println!(
@@ -489,7 +402,7 @@ pub(in crate::cli) fn write_managed_codex_files(
         rollback_errors.len()
     );
     anyhow::bail!(
-        "Codex rejected the managed configuration: {install_error}; rollback also failed: {}",
+        "Codex config write or validation failed: {install_error:#}; rollback also failed: {}",
         rollback_errors.join("; ")
     )
 }
