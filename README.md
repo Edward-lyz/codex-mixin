@@ -5,12 +5,12 @@
 <h1 align="center">Codex Mixin</h1>
 
 <p align="center">
-  <b>The Local AI Gateway and Desktop Control Plane for Official Codex and 50+ Coding Agents</b><br>
-  <sub>Route any LLM into official OpenAI Codex while preserving your ChatGPT accounts, GPT models, and native workflow.</sub>
+  <b>官方 OpenAI Codex 与 50+ 编程智能体的跨平台本地网关与桌面控制中心</b><br>
+  <sub>在保留官方账号、GPT 原生模型与远程任务的前提下，无缝接入任意大模型与自定义供应商。</sub>
 </p>
 
 <p align="center">
-  <a href="README_zh.md">简体中文</a> | <b>English</b>
+  <b>简体中文</b> | <a href="README_en.md">English</a>
 </p>
 
 <p align="center">
@@ -22,132 +22,132 @@
 </p>
 
 <p align="center">
-  <a href="#overview">Overview</a> ·
-  <a href="#core-values">Core Values</a> ·
-  <a href="#recent-updates">What's New</a> ·
-  <a href="#showcase">Showcase</a> ·
-  <a href="#product-surfaces">Product Surfaces</a> ·
-  <a href="#providers-and-protocols">Providers</a> ·
-  <a href="#agent-integrations">Agent Integrations</a> ·
-  <a href="#advanced-features">Advanced Features</a> ·
-  <a href="#quick-start">Quick Start</a> ·
-  <a href="https://github.com/Edward-lyz/codex-mixin/wiki">Wiki</a>
+  <a href="#概览">概览</a> ·
+  <a href="#核心价值">核心价值</a> ·
+  <a href="#最近更新">最近更新</a> ·
+  <a href="#界面展示">界面展示</a> ·
+  <a href="#产品形态">产品形态</a> ·
+  <a href="#供应商与协议支持">供应商与协议</a> ·
+  <a href="#agent-接入生态">Agent 接入</a> ·
+  <a href="#进阶特性">进阶特性</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="https://github.com/Edward-lyz/codex-mixin/wiki">完整文档</a>
 </p>
 
 ---
 
-## Overview
+## 概览
 
-Codex Mixin is a high-performance local AI gateway and cross-platform desktop control plane written in Rust.
+Codex Mixin 是一个基于 Rust 构建的高性能跨平台本地网关与桌面控制中心。
 
-It bridges third-party language models—such as DeepSeek, Claude, Gemini, Baidu OneAPI, AWS Bedrock, Google Antigravity, and any OpenAI/Anthropic-compatible endpoint—directly into the official OpenAI Codex desktop app and CLI. Developers can use custom models at cost while keeping official ChatGPT/OpenAI account authentication, native GPT models, conversation history, and mobile remote control fully functional.
+它打破了官方 OpenAI Codex 对底层模型的局限，让开发者可以在官方 Codex 客户端与 CLI 中自由选用 DeepSeek、Claude、Gemini、Baidu OneAPI、AWS Bedrock、Google Antigravity 及任意兼容 OpenAI / Anthropic 协议的模型；同时完整保留官方 ChatGPT/OpenAI 账号认证、GPT 原生模型、历史会话与移动端远程任务管理。
 
-Beyond Codex, Codex Mixin serves as a unified local routing hub and usage control center for 50 popular AI coding agents, supporting seamless gateway configuration injection and zero-trace restoration.
+不仅面向 Codex，Codex Mixin 还是一体化的本地模型路由器与用量治理中枢，内置支持 50 款主流 AI Coding Agent 的配置接管与一键撤销恢复。
 
 ---
 
-## Core Values
+## 核心价值
 
 <table>
   <tr>
     <td width="50%">
-      <b>Zero-Friction Codex Coexistence</b><br>
-      Custom models and official OpenAI models coexist side by side in the Codex picker. Official model definitions sync automatically from OpenAI's repository every 30 seconds. Connecting and disconnecting preserves your existing sessions, databases, and account state.
+      <b>官方 Codex 无感共存</b><br>
+      自定义模型与 OpenAI 官方模型在 Codex 选择器中共存并重名隔离。官方模型目录每 30 秒自动同步 OpenAI 最新列表，接入与断开均不损坏原有会话、数据库与账号状态。
     </td>
     <td width="50%">
-      <b>Smart ECH Relay for Official GPT</b><br>
-      Resolves IP addresses and Encrypted Client Hello (ECH) parameters through relay DoH. Directly connects to OpenAI endpoints across network boundaries while minimizing account risk flags.
+      <b>官方 GPT ECH 智能直连</b><br>
+      基于中继 DoH 与 ECH (Encrypted Client Hello) 技术，在受限网络环境下自动优选 IP 节点直连 OpenAI 官方端点，避免风控封号与网络中断。
     </td>
   </tr>
   <tr>
     <td width="50%">
-      <b>Lossless Protocol Bridge</b><br>
-      Translates bi-directionally between OpenAI Responses, Chat Completions, and Anthropic Messages with zero semantic loss, preserving streaming thinking traces, multi-step tool calls, and structured outputs.
+      <b>全双工协议无损互转</b><br>
+      零损耗桥接 OpenAI Responses、Chat Completions 与 Anthropic Messages 协议，深度支持流式思考过程 (Thinking)、复杂工具调用 (Tool Calls) 与多轮上下文。
     </td>
     <td width="50%">
-      <b>Universal Hub for 50+ Agents</b><br>
-      Catalog covers 50 coding tools (Claude Code, OpenCode, Copilot, Cline, and more). The default build supports 38 one-click configuration adapters with clean rollback on exit.
+      <b>50+ 编程智能体统一纳管</b><br>
+      管理目录覆盖 50 款主流 Agent（如 Claude Code、OpenCode、Copilot、Cline 等），默认构建支持 38 款一键写入网关配置并在退出时无痕回退。
     </td>
   </tr>
 </table>
 
 ---
 
-## Recent Updates
+## 最近更新
 
-### What's New in v0.7.3 & Recent Releases
+### v0.7.3 & 近期版本演进
 
-- **Modern Web Control Panel (`codex-mixin panel`)**: Launch a responsive Notion-style browser console designed for Linux hosts, remote development servers, and headless SSH sessions. Manage models, inspect agent connection status, and monitor token/quota usage.
-- **Native Windows WinUI 3 Desktop App**: Rebuilt the Windows frontend from scratch with native WinUI 3 and Fluent Design, replacing the legacy wrapper with sub-second tray response and minimal memory overhead.
-- **Model Capability Probing**: Proactively test and verify live model capabilities (Reasoning thoughts, Function Calling, Tool Search, and Web Search) with badges displayed in the UI.
-- **Google Antigravity (AGY) & Native Gemini Support**: Direct Google OAuth 2.0 authentication, dynamic discovery of AGY-specific agent models and quotas, and wire protocol conversion for Gemini Developer API.
-- **Agent Catalog Expanded to 50**: Added 8 configuration adapters (VSCodium, Reasonix, Command Code, fx, Empryo, Ante, MiniMax Code, Cline) across IDE extensions, CLI agents, and developer runtimes.
-- **Standalone Codex Config Injection**: Codex integration writes necessary provider and model settings cleanly without requiring pre-installed CLI binaries, activating the modern `STEPS_COMMANDS` coding surface.
-- **Core Performance Optimizations**: Negotiated gzip streaming for large contexts, offloaded serialization from the primary async loop, and cached capability probe results to prevent redundant provider billing.
+- **全新 Notion 风格 Web 控制面板**：运行 `codex-mixin panel` 即可打开现代化响应式浏览器控制台，专为 Linux、远端开发机和 SSH 终端设计，完整管理模型目录、Agent 接入与用量监控。
+- **Windows 原生 WinUI 3 客户端重构**：全面重构 Windows 桌面壳，基于现代 WinUI 3 与 Fluent Design 开发，替代旧版方案，系统托盘毫秒级响应，体积更小、更省资源。
+- **模型真实能力主动探测 (Capability Probing)**：模型管理中支持一键对已添加模型执行真实探测，自动化识别并标注 Reasoning 思考能力、Function Calling 工具调用、Tool Search 检索与 Web Search 联网搜索标签。
+- **Google Antigravity (AGY) & Gemini 协议原生接入**：支持原生 Google OAuth 凭证，动态发现 AGY 专属模型与实时额度，底层适配 Gemini Developer API。
+- **Agent 生态扩展至 50 款**：新增接入 VSCodium、Reasonix、Command Code、fx、Empryo、Ante、MiniMax Code、Cline 等 8 个适配器，覆盖主流 IDE、插件与 CLI。
+- **Codex 独立配置注入架构**：优化配置注入逻辑，无需本地预装或启动 Codex CLI 即可完成原子化写入，桌面端自动切换至 `STEPS_COMMANDS` 现代编码视图。
+- **传输性能深度优化**：支持大文本协商 gzip 压缩，序列化与临时流控移出核心异步运行时，降低显存与内存开销；支持模型能力缓存复用，避免重复计费。
 
 ---
 
-## Showcase
+## 界面展示
 
 <table>
   <tr>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-model-picker.png"><img src="docs/assets/APP-model-picker.png" alt="macOS Menu Bar and Model Picker"></a><br>
-      <sub><b>macOS Experience</b> · Menu bar status, model catalog, and live benchmarks</sub>
+      <a href="docs/assets/APP-model-picker.png"><img src="docs/assets/APP-model-picker.png" alt="macOS 菜单栏与模型选择器"></a><br>
+      <sub><b>macOS 原生体验</b> · 菜单栏状态、模型目录与基准测速</sub>
     </td>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-ProviderModelList.png"><img src="docs/assets/APP-ProviderModelList.png" alt="Provider Discovery and Model Capability"></a><br>
-      <sub><b>Model Management</b> · Automatic discovery, capability badges, and latency benchmarks</sub>
+      <a href="docs/assets/APP-ProviderModelList.png"><img src="docs/assets/APP-ProviderModelList.png" alt="Provider 模型发现与能力管理"></a><br>
+      <sub><b>模型与能力管理</b> · 自动发现、能力状态识别与延迟测速</sub>
     </td>
   </tr>
   <tr>
     <td width="50%" align="center">
-      <a href="docs/assets/fusion-review.png"><img src="docs/assets/fusion-review.png" alt="Interactive Model Fusion inside Codex"></a><br>
-      <sub><b>Model Fusion</b> · Multi-model orchestration and Judge review inside Codex</sub>
+      <a href="docs/assets/fusion-review.png"><img src="docs/assets/fusion-review.png" alt="Codex 内嵌模型融合与 Judge 评审"></a><br>
+      <sub><b>模型融合 (Fusion)</b> · 嵌入官方 Codex 内部的多模型编排与 Judge 评审</sub>
     </td>
     <td width="50%" align="center">
-      <a href="docs/assets/Mobile_Choice.PNG"><img src="docs/assets/Mobile_Choice.PNG" width="260" alt="Select Mixin Models from Mobile"></a><br>
-      <sub><b>Mobile & Remote Tasks</b> · Select custom gateway models from mobile Codex</sub>
+      <a href="docs/assets/Mobile_Choice.PNG"><img src="docs/assets/Mobile_Choice.PNG" width="260" alt="移动端选择 Mixin 模型"></a><br>
+      <sub><b>移动端与远程控制</b> · 在移动端 Codex 中直接调用本地网关模型</sub>
     </td>
   </tr>
 </table>
 
 <p align="center">
-  <a href="https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour">View the complete Product Tour with macOS, WinUI 3, Web Panel, and Mobile Walkthroughs</a>
+  <a href="https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour">查看包含完整 macOS、Windows WinUI 3、Web Panel 和移动端全景的 Product Tour</a>
 </p>
 
 ---
 
-## Product Surfaces
+## 产品形态
 
-| Component | Distribution | Core Capabilities |
+| 端形态 | 交付方式 | 核心定位与能力 |
 | --- | --- | --- |
-| **macOS App** | Native Menu Bar App | Live status in menu bar, model management, capability testing, benchmark suite, Base64 backup/restore, auto-repair. |
-| **Windows App** | Native WinUI 3 App | Fluent Design interface, system tray service, provider settings, agent connection management, and log viewer. |
-| **Web Control Panel** | `codex-mixin panel` | Modern Notion-style responsive web console, ideal for Linux servers, cloud VMs, SSH terminals, and remote setups. |
-| **CLI Core** | Single Rust Binary | Cross-platform core runtime with deterministic subcommands, JSON contracts, and background daemon lifecycle controls. |
+| **macOS App** | 原生菜单栏 App | 菜单栏实时状态、Provider 与模型管理、能力探测、测速基准、Base64 配置备份导入导出与环境自愈。 |
+| **Windows App** | 原生 WinUI 3 托盘 App | Fluent Design 原生视觉、系统托盘常驻、供应商管理、模型路由选择、一键 Agent 接管与配置恢复。 |
+| **Web 控制面板** | `codex-mixin panel` 启动 | 现代 Notion 风格响应式界面，专为 Linux 主机、云端开发机、SSH 远程开发和无桌面环境设计。 |
+| **CLI Core** | 单一跨平台二进制 | 统一的底层运行时，提供确定性子命令、JSON 格式通信契约、后台守护进程生命周期管理。 |
 
 ---
 
-## Providers and Protocols
+## 供应商与协议支持
 
-| Provider / Channel | Primary Protocols | Authentication | Key Features |
+| 供应商 / 渠道 | 支持主协议 | 鉴权方式 | 特色能力 |
 | --- | --- | --- | --- |
-| **Baidu OneAPI** | Anthropic Messages / OpenAI Responses | API Key / Tenant Token | Full support for GLM-5.3, Claude, DeepSeek; maintains session affinity automatically. |
-| **OpenRouter** | OpenAI Responses / Chat Completions | Bearer Token | Access global open/closed models with context compression and streaming pass-through. |
-| **DeepSeek** | OpenAI Responses / Chat Completions | API Key | Native DeepSeek-V3 and DeepSeek-R1 streaming reasoning traces and tool calls. |
-| **Google Antigravity (AGY)** | Gemini Developer API / Google Native | Google OAuth 2.0 | Dynamic AGY agent model discovery, real-time quota tracking, instruction stream verification. |
-| **OpenCode Go** | OpenAI Responses | Session Token | Auto-injects `x-opencode-session` header; stable UUID mapping for multi-turn sessions. |
-| **AWS Bedrock** | Anthropic Messages | AWS SigV4 Signer | Claude 3.5 / 3.7 families, cross-region endpoints, and model-level API path overrides. |
-| **Generic Endpoints** | OpenAI / Anthropic Compatible | Custom Header / Key | Add any compatible custom endpoint with capability probing and latency testing. |
+| **Baidu OneAPI** | Anthropic Messages / OpenAI Responses | API Key / 租户令牌 | 完整支持 GLM-5.3、Claude、DeepSeek；自动保持 Session 亲和性。 |
+| **OpenRouter** | OpenAI Responses / Chat Completions | Bearer Token | 全球主流开源与闭源模型聚合，支持上下文压缩与流式直推。 |
+| **DeepSeek** | OpenAI Responses / Chat Completions | API Key | 深度支持 DeepSeek-V3 与 DeepSeek-R1 思考流式回传与工具调用。 |
+| **Google Antigravity (AGY)** | Gemini Developer API / Google 原生协议 | Google OAuth 2.0 | 动态发现 AGY 专属 Agent 模型及实时额度，内置指令流完整性校验。 |
+| **OpenCode Go** | OpenAI Responses | 专用会话令牌 | 自动注入 `x-opencode-session` 头部，多轮对话保持稳定 UUID 映射。 |
+| **AWS Bedrock** | Anthropic Messages | AWS SigV4 鉴权 | 支持 Claude 3.5 / 3.7 全系列，支持跨区域端点与模型级路径定制。 |
+| **通用兼容端点** | OpenAI / Anthropic 兼容协议 | 自定义 Header / Key | 任意兼容端点均可一键添加并执行能力探测与基准测试。 |
 
 ---
 
-## Agent Integrations
+## Agent 接入生态
 
-The catalog covers **50 AI Coding Agents**. The default build provides **38 one-click gateway configuration adapters**.
+Codex Mixin 管理目录已覆盖 **50 款主流 AI Coding Agent**。默认构建提供 **38 款一键网关配置接入与恢复**。
 
-### Supported Integrations (38)
+### 已支持接入 (38 款)
 
 <table>
   <tr>
@@ -168,19 +168,13 @@ The catalog covers **50 AI Coding Agents**. The default build provides **38 one-
       <sub>DSH</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/opencode-dark.svg">
-        <img src="docs/assets/agents/opencode-light.svg" width="36" height="36" alt="OpenCode logo">
-      </picture><br>
+      <img src="docs/assets/agents/opencode-light.svg#gh-light-mode-only" width="36" height="36" alt="OpenCode logo"><img src="docs/assets/agents/opencode-dark.svg#gh-dark-mode-only" width="36" height="36" alt="OpenCode logo"><br>
       <sub>OpenCode</sub>
     </td>
   </tr>
   <tr>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/pi-dark.svg">
-        <img src="docs/assets/agents/pi-light.svg" width="36" height="36" alt="Pi logo">
-      </picture><br>
+      <img src="docs/assets/agents/pi-light.svg#gh-light-mode-only" width="36" height="36" alt="Pi logo"><img src="docs/assets/agents/pi-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Pi logo"><br>
       <sub>Pi</sub>
     </td>
     <td width="20%" align="center">
@@ -188,47 +182,29 @@ The catalog covers **50 AI Coding Agents**. The default build provides **38 one-
       <sub>OpenChamber</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/mimocode-dark.svg">
-        <img src="docs/assets/agents/mimocode-light.svg" width="36" height="36" alt="MiMo Code logo">
-      </picture><br>
+      <img src="docs/assets/agents/mimocode-light.svg#gh-light-mode-only" width="36" height="36" alt="MiMo Code logo"><img src="docs/assets/agents/mimocode-dark.svg#gh-dark-mode-only" width="36" height="36" alt="MiMo Code logo"><br>
       <sub>MiMo Code</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/omo-dark.svg">
-        <img src="docs/assets/agents/omo-light.svg" width="36" height="36" alt="OmO logo">
-      </picture><br>
+      <img src="docs/assets/agents/omo-light.svg#gh-light-mode-only" width="36" height="36" alt="OmO logo"><img src="docs/assets/agents/omo-dark.svg#gh-dark-mode-only" width="36" height="36" alt="OmO logo"><br>
       <sub>OmO</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/goose-dark.svg">
-        <img src="docs/assets/agents/goose-light.svg" width="36" height="36" alt="Goose logo">
-      </picture><br>
+      <img src="docs/assets/agents/goose-light.svg#gh-light-mode-only" width="36" height="36" alt="Goose logo"><img src="docs/assets/agents/goose-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Goose logo"><br>
       <sub>Goose</sub>
     </td>
   </tr>
   <tr>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/vscode-dark.svg">
-        <img src="docs/assets/agents/vscode-light.svg" width="36" height="36" alt="VS Code logo">
-      </picture><br>
+      <img src="docs/assets/agents/vscode-light.svg#gh-light-mode-only" width="36" height="36" alt="VS Code logo"><img src="docs/assets/agents/vscode-dark.svg#gh-dark-mode-only" width="36" height="36" alt="VS Code logo"><br>
       <sub>VS Code</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/vscode-insiders-dark.svg">
-        <img src="docs/assets/agents/vscode-insiders-light.svg" width="36" height="36" alt="VS Code Insiders logo">
-      </picture><br>
+      <img src="docs/assets/agents/vscode-insiders-light.svg#gh-light-mode-only" width="36" height="36" alt="VS Code Insiders logo"><img src="docs/assets/agents/vscode-insiders-dark.svg#gh-dark-mode-only" width="36" height="36" alt="VS Code Insiders logo"><br>
       <sub>VS Code Insiders</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/copilot-jetbrains-dark.svg">
-        <img src="docs/assets/agents/copilot-jetbrains-light.svg" width="36" height="36" alt="Copilot for JetBrains logo">
-      </picture><br>
+      <img src="docs/assets/agents/copilot-jetbrains-light.svg#gh-light-mode-only" width="36" height="36" alt="Copilot for JetBrains logo"><img src="docs/assets/agents/copilot-jetbrains-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Copilot for JetBrains logo"><br>
       <sub>Copilot (JetBrains)</sub>
     </td>
     <td width="20%" align="center">
@@ -242,17 +218,11 @@ The catalog covers **50 AI Coding Agents**. The default build provides **38 one-
   </tr>
   <tr>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/omp-dark.svg">
-        <img src="docs/assets/agents/omp-light.svg" width="36" height="36" alt="Oh My Pi logo">
-      </picture><br>
+      <img src="docs/assets/agents/omp-light.svg#gh-light-mode-only" width="36" height="36" alt="Oh My Pi logo"><img src="docs/assets/agents/omp-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Oh My Pi logo"><br>
       <sub>Oh My Pi</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/hermes-dark.svg">
-        <img src="docs/assets/agents/hermes-light.svg" width="36" height="36" alt="Hermes Agent logo">
-      </picture><br>
+      <img src="docs/assets/agents/hermes-light.svg#gh-light-mode-only" width="36" height="36" alt="Hermes Agent logo"><img src="docs/assets/agents/hermes-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Hermes Agent logo"><br>
       <sub>Hermes Agent</sub>
     </td>
     <td width="20%" align="center">
@@ -260,10 +230,7 @@ The catalog covers **50 AI Coding Agents**. The default build provides **38 one-
       <sub>Mister Morph</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/kimi-dark.svg">
-        <img src="docs/assets/agents/kimi-light.svg" width="36" height="36" alt="Kimi Code logo">
-      </picture><br>
+      <img src="docs/assets/agents/kimi-light.svg#gh-light-mode-only" width="36" height="36" alt="Kimi Code logo"><img src="docs/assets/agents/kimi-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Kimi Code logo"><br>
       <sub>Kimi Code</sub>
     </td>
     <td width="20%" align="center">
@@ -273,31 +240,19 @@ The catalog covers **50 AI Coding Agents**. The default build provides **38 one-
   </tr>
   <tr>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/droid-dark.svg">
-        <img src="docs/assets/agents/droid-light.svg" width="36" height="36" alt="Droid logo">
-      </picture><br>
+      <img src="docs/assets/agents/droid-light.svg#gh-light-mode-only" width="36" height="36" alt="Droid logo"><img src="docs/assets/agents/droid-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Droid logo"><br>
       <sub>Droid</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/qoder-dark.svg">
-        <img src="docs/assets/agents/qoder-light.svg" width="36" height="36" alt="Qoder logo">
-      </picture><br>
+      <img src="docs/assets/agents/qoder-light.svg#gh-light-mode-only" width="36" height="36" alt="Qoder logo"><img src="docs/assets/agents/qoder-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Qoder logo"><br>
       <sub>Qoder</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/qoder-cn-dark.svg">
-        <img src="docs/assets/agents/qoder-cn-light.svg" width="36" height="36" alt="Qoder CN logo">
-      </picture><br>
+      <img src="docs/assets/agents/qoder-cn-light.svg#gh-light-mode-only" width="36" height="36" alt="Qoder CN logo"><img src="docs/assets/agents/qoder-cn-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Qoder CN logo"><br>
       <sub>Qoder CN</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/grok-dark.svg">
-        <img src="docs/assets/agents/grok-light.svg" width="36" height="36" alt="Grok Build logo">
-      </picture><br>
+      <img src="docs/assets/agents/grok-light.svg#gh-light-mode-only" width="36" height="36" alt="Grok Build logo"><img src="docs/assets/agents/grok-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Grok Build logo"><br>
       <sub>Grok Build</sub>
     </td>
     <td width="20%" align="center">
@@ -329,10 +284,7 @@ The catalog covers **50 AI Coding Agents**. The default build provides **38 one-
   </tr>
   <tr>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/vscodium-dark.svg">
-        <img src="docs/assets/agents/vscodium-light.svg" width="36" height="36" alt="VSCodium logo">
-      </picture><br>
+      <img src="docs/assets/agents/vscodium-light.svg#gh-light-mode-only" width="36" height="36" alt="VSCodium logo"><img src="docs/assets/agents/vscodium-dark.svg#gh-dark-mode-only" width="36" height="36" alt="VSCodium logo"><br>
       <sub>VSCodium</sub>
     </td>
     <td width="20%" align="center">
@@ -340,17 +292,11 @@ The catalog covers **50 AI Coding Agents**. The default build provides **38 one-
       <sub>Reasonix</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/commandcode-dark.svg">
-        <img src="docs/assets/agents/commandcode-light.svg" width="36" height="36" alt="Command Code logo">
-      </picture><br>
+      <img src="docs/assets/agents/commandcode-light.svg#gh-light-mode-only" width="36" height="36" alt="Command Code logo"><img src="docs/assets/agents/commandcode-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Command Code logo"><br>
       <sub>Command Code</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/fx-dark.svg">
-        <img src="docs/assets/agents/fx-light.svg" width="36" height="36" alt="fx logo">
-      </picture><br>
+      <img src="docs/assets/agents/fx-light.svg#gh-light-mode-only" width="36" height="36" alt="fx logo"><img src="docs/assets/agents/fx-dark.svg#gh-dark-mode-only" width="36" height="36" alt="fx logo"><br>
       <sub>fx</sub>
     </td>
     <td width="20%" align="center">
@@ -368,10 +314,7 @@ The catalog covers **50 AI Coding Agents**. The default build provides **38 one-
       <sub>MiniMax Code</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/cline-dark.svg">
-        <img src="docs/assets/agents/cline-light.svg" width="36" height="36" alt="Cline logo">
-      </picture><br>
+      <img src="docs/assets/agents/cline-light.svg#gh-light-mode-only" width="36" height="36" alt="Cline logo"><img src="docs/assets/agents/cline-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Cline logo"><br>
       <sub>Cline</sub>
     </td>
     <td width="20%" align="center"></td>
@@ -379,9 +322,9 @@ The catalog covers **50 AI Coding Agents**. The default build provides **38 one-
   </tr>
 </table>
 
-### Integration Unavailable (12)
+### 暂未支持接入 (12 款)
 
-The following 12 tools rely on OS keychains, vendor-proprietary launchers, encrypted credential stores, or running runtime APIs without supported configuration injection hooks:
+以下 12 款客户端因依赖操作系统钥匙串加密（Keychain）、进程级专有注入器、专属闭源认证协议或官方应用内专有运行时 API，暂未提供网关配置写入，其技术边界保持公开透明：
 
 <table>
   <tr>
@@ -398,40 +341,25 @@ The following 12 tools rely on OS keychains, vendor-proprietary launchers, encry
       <sub>Aside</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/cursor-dark.svg">
-        <img src="docs/assets/agents/cursor-light.svg" width="36" height="36" alt="Cursor CLI logo">
-      </picture><br>
+      <img src="docs/assets/agents/cursor-light.svg#gh-light-mode-only" width="36" height="36" alt="Cursor CLI logo"><img src="docs/assets/agents/cursor-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Cursor CLI logo"><br>
       <sub>Cursor CLI</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/cursor-local-dark.svg">
-        <img src="docs/assets/agents/cursor-local-light.svg" width="36" height="36" alt="Cursor logo">
-      </picture><br>
+      <img src="docs/assets/agents/cursor-local-light.svg#gh-light-mode-only" width="36" height="36" alt="Cursor logo"><img src="docs/assets/agents/cursor-local-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Cursor logo"><br>
       <sub>Cursor</sub>
     </td>
   </tr>
   <tr>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/zed-dark.svg">
-        <img src="docs/assets/agents/zed-light.svg" width="36" height="36" alt="Zed logo">
-      </picture><br>
+      <img src="docs/assets/agents/zed-light.svg#gh-light-mode-only" width="36" height="36" alt="Zed logo"><img src="docs/assets/agents/zed-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Zed logo"><br>
       <sub>Zed</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/copilot-dark.svg">
-        <img src="docs/assets/agents/copilot-light.svg" width="36" height="36" alt="Copilot CLI logo">
-      </picture><br>
+      <img src="docs/assets/agents/copilot-light.svg#gh-light-mode-only" width="36" height="36" alt="Copilot CLI logo"><img src="docs/assets/agents/copilot-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Copilot CLI logo"><br>
       <sub>Copilot CLI</sub>
     </td>
     <td width="20%" align="center">
-      <picture>
-        <source media="(prefers-color-scheme: dark)" srcset="docs/assets/agents/devin-dark.svg">
-        <img src="docs/assets/agents/devin-light.svg" width="36" height="36" alt="Devin logo">
-      </picture><br>
+      <img src="docs/assets/agents/devin-light.svg#gh-light-mode-only" width="36" height="36" alt="Devin logo"><img src="docs/assets/agents/devin-dark.svg#gh-dark-mode-only" width="36" height="36" alt="Devin logo"><br>
       <sub>Devin</sub>
     </td>
     <td width="20%" align="center">
@@ -458,92 +386,92 @@ The following 12 tools rely on OS keychains, vendor-proprietary launchers, encry
   </tr>
 </table>
 
-> Connect or restore configurations via **Agent Management** in the desktop apps, or run CLI commands: `codex-mixin agent connect <id>` and `codex-mixin agent disconnect <id>`. For technical boundaries, schemas, and contract details, see [Agent integration contracts](docs/agent-integration-contracts.md); for logo attributions, see [Agent Logos Attribution](macos/assets/agents/ATTRIBUTION.md).
+> 安装对应框架后，可通过桌面端的 **Agent 管理** 界面一键连接或恢复配置，亦可通过 CLI 命令操作：`codex-mixin agent connect <id>` 与 `codex-mixin agent disconnect <id>`。详细各适配器文件路径、契约规范与限制见 [Agent integration contracts](docs/agent-integration-contracts.md)；图标归属声明见 [Agent Logos Attribution](macos/assets/agents/ATTRIBUTION.md)。
 
 ---
 
-## Advanced Features
+## 进阶特性
 
-### 1. Model Fusion & Time-Based Routing
+### 1. 模型融合与智能路由 (Model Fusion)
 
-- **Multi-Model Orchestration**: Dispatch complex tasks to primary and auxiliary models simultaneously. A configured Judge model evaluates candidate outputs to ensure robust code generation.
-- **Time-Based Peak / Off-Peak Routing**: Automatically switch upstream routes under a single model identity based on time schedules (for example, routing to high-concurrency private endpoints during working hours and low-cost public endpoints off-peak).
+- **多模型协同编排**：支持在单次推理任务中调度主模型与辅助模型，由 Judge 模型在后台执行交叉评审，有效提升生成代码的严谨性与健壮度。
+- **按时轮转与成本优化**：一个模型标识可在不同时间段自动路由到不同上游供应商（例如工作日白天路由至企业私有高性能端点，夜间及周末切换至波谷优惠公有云），实现 Token 经济效益最大化。
 
-### 2. Native Claude Desktop Integration
+### 2. Claude Desktop 深度接入
 
-Route sessions from the Code tab in official [Claude Desktop](https://claude.com/download) through your local gateway:
+通过 Codex Mixin，可直接让官方 [Claude Desktop](https://claude.com/download) 的 Code 标签页通过本地网关调度任意第三方大模型或官方 GPT：
 
 ```bash
-# Connect Claude Desktop
+# 接入 Claude Desktop
 codex-mixin agent connect claude-desktop
 
-# Disconnect and restore original configuration
+# 恢复至接入前的原始状态
 codex-mixin agent disconnect claude-desktop
 ```
 
-Every selected catalog model receives a stable `claude-sonnet-mixin-*` routing alias with full 1M context indicator flags while preserving your official Claude.ai login state.
+每个加入的目录模型都会生成稳定的 `claude-sonnet-mixin-*` 路由别名，原生支持至少 100 万上下文窗口标识，且不干扰用户原有的 Claude.ai 账号登录。
 
-### 3. Portability & Security
+### 3. 配置漫游与端到端安全
 
-- **Encrypted Base64 Profile Backup**: Export all provider configurations and keys into an encrypted Base64 string for instant atomic import on another workstation.
-- **Optional Client Authentication (`client-auth`)**: Default builds accept local requests without inbound gateway tokens. Compile with `--features client-auth` to enforce strict client keys and loopback-only Codex OAuth verification.
-- **Dynamic Port Binding**: Gateways and web panels automatically allocate random available ports within `8000–9000` to prevent collisions, generating per-start authorization tokens.
+- **便携配置备份**：一键将所有 Provider 设置与凭据导出为经过加密的 Base64 字符串，可在多台设备间一秒导入，告别繁琐的手动配置。
+- **可选客户端鉴权 (`client-auth`)**：默认构建无需携带入站 Key，方便局域网内设备共享额度；通过 `--features client-auth` 构建可开启严格的客户端密钥校验与 Codex OAuth 规则。
+- **智能端口分配**：网关与 Web 面板默认在 `8000–9000` 端口段内自动随机分配可用端口，避免端口占用冲突，同时对外暴露前均打印独立一次性访问令牌。
 
 ---
 
-## Quick Start
+## 快速开始
 
-### 1. Installation
+### 1. 安装与下载
 
-- **macOS**: Download the `.dmg` installer from [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) and drag to Applications.
-- **Windows**: Download the WinUI 3 installer or portable `.zip` from [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest).
-- **Linux / Source**:
+- **macOS**：从 [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 下载最新 `.dmg` 文件，拖入 Applications 即可使用菜单栏 App。
+- **Windows**：从 [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 下载安装器或免安装便携版 Zip，启动享受原生 WinUI 3 体验。
+- **Linux / 源码安装**：
   ```bash
   git clone https://github.com/Edward-lyz/codex-mixin.git
   cd codex-mixin
   cargo build --locked --release
   ```
 
-### 2. Common CLI Commands
+### 2. 常用操作命令
 
 ```bash
-# Start background gateway daemon
+# 启动后台网关守护进程
 codex-mixin start
 
-# Open the modern web control panel in your browser
+# 启动并打开现代化 Web 控制面板
 codex-mixin panel
 
-# Connect official Codex while preserving official account & GPT models
+# 将官方 Codex 接入本地网关（保留官方账号与 GPT 模型）
 codex-mixin agent connect codex --mode official-account
 
-# Connect Claude Code CLI
+# 将 Claude Code CLI 接入本地网关
 codex-mixin agent connect claude
 
-# Restore clients to default state
+# 恢复指定客户端至官方默认配置
 codex-mixin agent disconnect codex
 codex-mixin agent disconnect claude
 
-# Probe capabilities of saved models for a provider
+# 探测指定 Provider 已保存模型的能力（Reasoning/Tools/Search）
 codex-mixin --no-tui provider probe <provider-id>
 ```
 
 ---
 
-## Documentation
+## 文档导航
 
-Comprehensive guides and operational reference are maintained in the [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki):
+完整安装教程、架构剖析与故障排除请参阅 [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki)：
 
-- [Product Tour](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour)
-- [Installation](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) & [Quick Start](https://github.com/Edward-lyz/codex-mixin/wiki/Quick-Start)
-- [Configuration Backup & Restore](https://github.com/Edward-lyz/codex-mixin/wiki/Configuration-Backup-and-Restore)
-- [Providers & Models](https://github.com/Edward-lyz/codex-mixin/wiki/Providers-and-Models)
-- [Client & Agent Integrations](https://github.com/Edward-lyz/codex-mixin/wiki/Client-Integrations)
-- [Official Model Catalog & ECH Direct Access](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access)
-- [CLI Reference Manual](https://github.com/Edward-lyz/codex-mixin/wiki/CLI-Reference)
-- [Troubleshooting](https://github.com/Edward-lyz/codex-mixin/wiki/Troubleshooting) & [FAQ](https://github.com/Edward-lyz/codex-mixin/wiki/FAQ)
+- [全景产品体验 (Product Tour)](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour)
+- [安装指南 (Installation)](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) 与 [快速上手 (Quick Start)](https://github.com/Edward-lyz/codex-mixin/wiki/Quick-Start)
+- [配置备份与跨机恢复](https://github.com/Edward-lyz/codex-mixin/wiki/Configuration-Backup-and-Restore)
+- [供应商与模型配置 (Providers & Models)](https://github.com/Edward-lyz/codex-mixin/wiki/Providers-and-Models)
+- [客户端与 Agent 接入指引](https://github.com/Edward-lyz/codex-mixin/wiki/Client-Integrations)
+- [官方 GPT ECH 网络直连与 TUN 模式](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access)
+- [CLI 命令全量参考手册](https://github.com/Edward-lyz/codex-mixin/wiki/CLI-Reference)
+- [故障排查 (Troubleshooting)](https://github.com/Edward-lyz/codex-mixin/wiki/Troubleshooting) 与 [常见问题 (FAQ)](https://github.com/Edward-lyz/codex-mixin/wiki/FAQ)
 
 ---
 
-## License
+## 许可证
 
-This project is licensed under [LICENSE](LICENSE) and [NOTICE](NOTICE).
+本项目遵循 [LICENSE](LICENSE) 与 [NOTICE](NOTICE) 协议。
