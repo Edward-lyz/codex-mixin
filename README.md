@@ -72,6 +72,7 @@ Codex Mixin 是一个跨平台的 Rust 本地网关，提供 Windows 桌面 App�
 - 支持 OpenAI Responses、Chat Completions、Anthropic Messages 等协议互相无损转换。
 - 支持全平台使用，并根据平台不同提供不同的 UI 层级。
 - 自动完成供应商管理、模型发现、能力探测、上下文配置、测速、额度和 Token 监测。
+- 在模型页的“更多模型操作”中选择“重新探测已加入模型的能力”，可忽略旧探测结果并刷新能力列。CLI 等价命令为 `codex-mixin --no-tui provider probe <provider-id>`；仅探测已保存加入的模型，会发出真实请求并可能产生费用。
 - 模型融合支持多模型编排，提升整体表现；以及按时间轮转，一个模型名称下，按时间路由至不同模型（适用于波峰-波谷计价用户）
 - 配置加密，可导出为 Base64 备份并在另一台机器一键导入，无需繁琐重新配置
 - 统一管理 50 个 Agent，其中默认构建 38 个支持网关配置接入与恢复（`client-auth` 构建为 34 个）；[查看框架图标与接入情况](#agent-integrations)。

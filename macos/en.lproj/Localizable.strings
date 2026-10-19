@@ -223,3 +223,22 @@
 "provider.oauthWaiting" = "Waiting for browser authorization. Closing the browser does not cancel this request; use Cancel or wait for the configured timeout.";
 "provider.oauthTimeout" = "OAuth authorization timeout (seconds)";
 "provider.oauthTimeoutInvalid" = "Enter a positive number of seconds.";
+
+"重新探测已加入模型的能力" = "Re-probe capabilities of added models";
+
+"使用真实请求重新探测，可能产生费用；先应用模型选择更改" = "Re-probing sends real requests and may incur charges. Apply model selection changes first.";
+
+"正在重新探测模型能力…" = "Re-probing model capabilities…";
+
+
+"探测已加入的模型" = "Probe added models";
+
+"刷新能力结果" = "Refresh capability results";
+
+"能力探测已完成" = "✓ Capability probing complete";
+
+"未能完成能力探测" = "✗ Capability probing failed";
+
+"能力探测完成，请查看能力列" = "Capability probing complete. See the capability columns.";
+
+"能力探测失败" = "Capability probing failed";

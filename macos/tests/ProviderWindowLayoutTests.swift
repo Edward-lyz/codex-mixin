@@ -62,6 +62,7 @@ struct ProviderWindowLayoutTests {
                     startHandler: { _, _, _ in preconditionFailure("Unexpected benchmark") },
                     fetchHandler: { nil },
                     loadProvidersHandler: { response },
+                    probeHandler: { _ in preconditionFailure("Unexpected capability probe") },
                     saveSelectionsHandler: { _, _, _, _ in }
                 )
                 model.applyProviderList(response, selecting: "provider")

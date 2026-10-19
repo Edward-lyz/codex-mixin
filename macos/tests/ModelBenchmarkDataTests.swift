@@ -1,8 +1,10 @@
-import Foundation
+import Cocoa
 
 @main
 struct ModelBenchmarkDataTests {
-    static func main() throws {
+    @MainActor
+    static func main() async throws {
+        _ = NSApplication.shared
         let envelope = try JSONDecoder().decode(
             ModelBenchmarkSnapshotEnvelope.self,
             from: Data(
@@ -141,9 +143,7 @@ struct ModelBenchmarkDataTests {
             additionalModelIDs: [provider.id: [manual.id]]
         )
         precondition(manualSelections[provider.id] == [manual.id])
-        try MainActor.assumeIsolated {
-            try testDelistedContextDraft()
-        }
+        try await testDelistedContextDraft()
 
         let cachedManualProvider = try decodeProviderList(
             """
@@ -254,7 +254,7 @@ struct ModelBenchmarkDataTests {
     }
 
     @MainActor
-    private static func testDelistedContextDraft() throws {
+    private static func testDelistedContextDraft() async throws {
         func providerList(models: String, contexts: String) throws -> ProviderListResponse {
             try decodeProviderList(
                 """
@@ -284,6 +284,7 @@ struct ModelBenchmarkDataTests {
             startHandler: { _, _, _ in throw NSError(domain: "unused", code: 1) },
             fetchHandler: { nil },
             loadProvidersHandler: { after },
+            probeHandler: { _ in preconditionFailure("Unexpected capability probe") },
             saveSelectionsHandler: { _, _, _, _ in }
         )
         model.applyProviderList(before, selecting: "custom")
@@ -293,5 +294,30 @@ struct ModelBenchmarkDataTests {
         model.setModelContextK(available, contextK: 256)
         model.applyProviderList(after, selecting: "custom")
         precondition(model.selectionUpdate(for: "custom")?.modelContexts == ["available": 256_000])
+        var probedIDs: [String] = []
+        var loads = 0
+        var probingModel: ModelBenchmarkModel?
+        let probeModel = ModelBenchmarkModel(
+            startHandler: { _, _, _ in preconditionFailure("Unexpected benchmark") },
+            fetchHandler: { nil },
+            loadProvidersHandler: { loads += 1; return after },
+            probeHandler: { providerID in
+                precondition(probingModel?.isBusy == true)
+                probedIDs.append(providerID)
+                // A second action during the awaited CLI call must not launch a second probe.
+                await probingModel?.probeCapabilities()
+            },
+            saveSelectionsHandler: { _, _, _, _ in }
+        )
+        probingModel = probeModel
+        probeModel.applyProviderList(after, selecting: "custom")
+        await probeModel.probeCapabilities()
+        precondition(probedIDs == ["custom"])
+        precondition(loads == 1)
+        precondition(!probeModel.isBusy)
+        probeModel.setSelected(probeModel.visibleRows[0], isSelected: false)
+        await probeModel.probeCapabilities()
+        precondition(probedIDs == ["custom"], "Unsaved selections must not be probed")
+
     }
 }

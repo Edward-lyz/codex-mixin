@@ -1005,7 +1005,6 @@ function serviceHeader(provider) {
     : [
         { label: "检查模型接口", run: () => testProvider(provider) },
         { label: "刷新模型列表", run: () => runAction(null, "provider_discover", { id: provider.id }, { ok: "模型列表已刷新" }) },
-        { label: "探测模型能力", run: () => runAction(null, "provider_probe", { id: provider.id }, { ok: "能力探测完成" }) },
         "-",
         { label: provider.enabled ? "停用服务商" : "启用服务商", run: () => runAction(null, provider.enabled ? "provider_disable" : "provider_enable", { id: provider.id }, { ok: provider.enabled ? "已停用" : "已启用" }) },
       ];
@@ -1187,6 +1186,7 @@ function modelsTab(provider) {
     { heading: "请求超时" },
     ...[15, 30, 60, 120].map((seconds) => ({ label: `${seconds} 秒`, checked: svc.benchTimeout === seconds, run: () => { svc.benchTimeout = seconds; render({ animate: false }); } })),
     "-",
+    ...(provider.kind === "official" ? [] : [{ label: "重新探测已加入模型的能力", disabled: state.busy || changes > 0 || appliedCount === 0, run: () => runAction(null, "provider_probe", { id: provider.id }, { ok: "能力探测完成，请查看能力列" }) }, "-"]),
     { label: "全选当前结果", run: () => { visibleIds.forEach((id) => draft.models.add(id)); render({ animate: false }); } },
     { label: "取消选择当前结果", run: () => { visibleIds.forEach((id) => draft.models.delete(id)); render({ animate: false }); } },
     { label: "手动添加模型…", run: () => { svc.manualOpen = true; render({ animate: false }); $("#svc-manual")?.focus(); } },
