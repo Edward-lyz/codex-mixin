@@ -205,8 +205,8 @@ async fn probe_models(
     ));
     if !quiet {
         println!(
-            "provider capabilities probed: {id} ({} models checked)",
-            summary.attempted
+            "provider capabilities probed: {id} ({} models checked, {} reachable, {} indeterminate)",
+            summary.attempted, summary.supported, summary.indeterminate
         );
     }
     Ok(())

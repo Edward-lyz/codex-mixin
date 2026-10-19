@@ -706,7 +706,7 @@ pub(super) enum ProviderCommand {
     },
     /// Refresh the provider model catalog.
     Discover { id: String },
-    /// Probe capabilities for models currently added to Codex.
+    /// Re-probe capabilities for models currently added to Codex, replacing cached results.
     Probe { id: String },
     /// Test provider authentication and model access.
     Test {
