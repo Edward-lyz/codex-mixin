@@ -10,11 +10,12 @@ private let providerDashboardChromeHeight: CGFloat = 110
 
 // Activity-style rings: one concentric ring per quota window. More than four
 // rings stop being legible at menu size, so extra windows stay legend-only.
-private let quotaRingDiameter: CGFloat = 84
+// 76pt keeps a one-window provider within the menu height budget.
+private let quotaRingDiameter: CGFloat = 76
 // Rings share a fixed band so the hole keeps room for the percentage label;
 // more rings means thinner strokes rather than a smaller center.
 private let quotaRingMaximumLineWidth: CGFloat = 9
-private let quotaRingBand: CGFloat = 20
+private let quotaRingBand: CGFloat = 18
 private let quotaRingGap: CGFloat = 2
 private let maximumQuotaRings = 4
 // One hue per ring so concentric windows stay distinguishable. Red is left
@@ -578,7 +579,7 @@ private struct ProviderQuotaRings: View {
         // The center shows the tightest window, the one that runs out first.
         if let ratio = usages.compactMap(providerQuotaRatio).max() {
             Text(quotaPercentText(ratio))
-                .font(.system(size: 17, weight: .bold).monospacedDigit())
+                .font(.system(size: 15, weight: .bold).monospacedDigit())
                 .minimumScaleFactor(0.7)
                 .foregroundStyle(ratio >= quotaWarningRatio ? Color.red : Color.primary)
         }
