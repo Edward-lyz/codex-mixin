@@ -401,6 +401,50 @@ mod tests {
     use super::*;
     use crate::provider::custom_provider;
 
+    #[test]
+    fn null_error_fix_invalidates_v4_attempts() {
+        let provider = custom_provider("custom", "secret");
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("provider-capabilities.json");
+        let file = CapabilityFile {
+            version: 4,
+            providers: BTreeMap::from([(
+                provider.id.clone(),
+                ProviderCapabilityRecord {
+                    identity: ProviderIdentity::from_provider(&provider),
+                    models: BTreeMap::from([(
+                        "model-a".to_owned(),
+                        ModelCapabilities {
+                            model: "model-a".to_owned(),
+                            selected_protocol: None,
+                            selected_api_path: None,
+                            protocols: Vec::new(),
+                            probed_at_ms: 1,
+                            last_probe_error: Some(
+                                "provider capability probe returned an error event".to_owned(),
+                            ),
+                        },
+                    )]),
+                },
+            )]),
+        };
+        std::fs::write(&path, serde_json::to_vec(&file).unwrap()).unwrap();
+        let capabilities = ProviderCapabilities {
+            path: path.clone(),
+            file: load_file(&path).unwrap(),
+        };
+        let models = [ProviderModel {
+            id: "model-a".to_owned(),
+            ..Default::default()
+        }];
+        assert_eq!(
+            capabilities
+                .models_needing_probe(&provider, &models)
+                .unwrap(),
+            ["model-a"]
+        );
+    }
+
     fn protocol_capabilities(tool_search: CapabilityStatus) -> ProtocolCapabilities {
         ProtocolCapabilities {
             protocol: crate::provider::ProviderProtocol::OpenAiResponses,

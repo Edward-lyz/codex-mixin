@@ -1,3 +1,5 @@
+mod common;
+
 use std::process::Command;
 use std::sync::{
     Arc,
@@ -120,13 +122,33 @@ async fn check_repeated_refresh(case: &str) {
         }
         cumulative_requests.push(completions.load(Ordering::SeqCst));
     }
-    server.abort();
     let expected_requests = PROVIDER_IDS.len() * if successful_baseline { 6 } else { 1 };
     assert_eq!(
         cumulative_requests,
         vec![expected_requests; REFRESH_ROUNDS],
         "unchanged providers must not repeat inference probes after the first refresh"
     );
+    // An explicit probe must bypass even an indeterminate cached attempt.
+    for id in PROVIDER_IDS {
+        let output = common::cli(config_path.parent().unwrap())
+            .args(["--no-tui", "provider", "probe", id])
+            .output()
+            .unwrap();
+        assert!(
+            output.status.success(),
+            "{}",
+            String::from_utf8_lossy(&output.stderr)
+        );
+        let stdout = String::from_utf8(output.stdout).unwrap();
+        let expected = if successful_baseline {
+            "1 models checked, 1 reachable, 0 indeterminate"
+        } else {
+            "1 models checked, 0 reachable, 1 indeterminate"
+        };
+        assert!(stdout.contains(expected), "{stdout}");
+    }
+    assert_eq!(completions.load(Ordering::SeqCst), expected_requests * 2);
+    server.abort();
     let cache: serde_json::Value = serde_json::from_slice(
         &std::fs::read(config_path.with_file_name("provider-capabilities.json")).unwrap(),
     )
