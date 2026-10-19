@@ -8,10 +8,58 @@ private let providerQuotaRowSpacing: CGFloat = 6
 private let visibleProviderQuotaRows = 3
 private let providerDashboardChromeHeight: CGFloat = 110
 
-private func providerQuotaSectionHeight(_ quotaCount: Int) -> CGFloat {
+// Activity-style rings: one concentric ring per quota window. More than four
+// rings stop being legible at menu size, so extra windows stay legend-only.
+private let quotaRingDiameter: CGFloat = 84
+// Rings share a fixed band so the hole keeps room for the percentage label;
+// more rings means thinner strokes rather than a smaller center.
+private let quotaRingMaximumLineWidth: CGFloat = 9
+private let quotaRingBand: CGFloat = 20
+private let quotaRingGap: CGFloat = 2
+private let maximumQuotaRings = 4
+// One hue per ring so concentric windows stay distinguishable. Red is left
+// out because it marks windows that are close to their limit.
+private let quotaRingColors: [Color] = [.blue, .green, .orange, .purple]
+private let quotaLegendRowHeight: CGFloat = 30
+private let quotaLegendRowSpacing: CGFloat = 4
+private let quotaWarningRatio = 0.9
+
+enum QuotaDisplayStyle: String, CaseIterable, Identifiable {
+    case ring
+    case bar
+
+    static let defaultsKey = "quotaDisplayStyle"
+
+    var id: String { rawValue }
+    var symbolName: String { self == .ring ? "circle.circle" : "line.3.horizontal" }
+    var title: String {
+        AppLocalization.string(self == .ring ? "quota.style.ring" : "quota.style.bar")
+    }
+
+    static func stored(_ defaults: UserDefaults = .standard) -> QuotaDisplayStyle {
+        defaults.string(forKey: defaultsKey).flatMap(QuotaDisplayStyle.init(rawValue:)) ?? .ring
+    }
+}
+
+private func providerQuotaSectionHeight(_ quotaCount: Int, style: QuotaDisplayStyle) -> CGFloat {
     let rowCount = max(1, min(quotaCount, visibleProviderQuotaRows))
-    return CGFloat(rowCount) * providerQuotaRowHeight
-        + CGFloat(rowCount - 1) * providerQuotaRowSpacing
+    switch style {
+    case .bar:
+        return CGFloat(rowCount) * providerQuotaRowHeight
+            + CGFloat(rowCount - 1) * providerQuotaRowSpacing
+    case .ring:
+        let legendHeight = CGFloat(rowCount) * quotaLegendRowHeight
+            + CGFloat(rowCount - 1) * quotaLegendRowSpacing
+        return max(quotaRingDiameter, legendHeight)
+    }
+}
+
+/// Used fraction of a quota window; nil when the CLI reports no usable limit.
+func providerQuotaRatio(_ usage: ProviderQuotaUsage) -> Double? {
+    guard usage.error == nil, let limit = usage.limit, limit > 0 else { return nil }
+    if let used = usage.used { return max(used / limit, 0) }
+    if let remaining = usage.remaining { return max((limit - remaining) / limit, 0) }
+    return nil
 }
 
 struct ProviderDashboardProvider: Equatable {
@@ -179,6 +227,7 @@ final class ProviderUsageDashboardModel: ObservableObject {
     @Published var selectedProviderID: String?
     @Published var selectedModelID: String?
     @Published var selectedRange = TokenUsageRange.all
+    @Published private(set) var quotaStyle = QuotaDisplayStyle.stored()
 
     var groups: [ProviderUsageGroup] {
         configuredProviders.filter(\.isEnabled).map { provider in
@@ -212,7 +261,9 @@ final class ProviderUsageDashboardModel: ObservableObject {
         let detailHeight: CGFloat = selectedModel == nil ? 0 : 104
         return max(
             providerDashboardMinimumHeight,
-            providerDashboardChromeHeight + providerQuotaSectionHeight(group.quotas.count) + tokenHeight + detailHeight
+            providerDashboardChromeHeight
+                + providerQuotaSectionHeight(group.quotas.count, style: quotaStyle)
+                + tokenHeight + detailHeight
         )
     }
 
@@ -236,6 +287,13 @@ final class ProviderUsageDashboardModel: ObservableObject {
 
     func selectModel(_ modelID: String) {
         selectedModelID = selectedModelID == modelID ? nil : modelID
+        onContentHeightChange?(contentHeight)
+    }
+
+    func selectQuotaStyle(_ style: QuotaDisplayStyle) {
+        guard style != quotaStyle else { return }
+        quotaStyle = style
+        UserDefaults.standard.set(style.rawValue, forKey: QuotaDisplayStyle.defaultsKey)
         onContentHeightChange?(contentHeight)
     }
 
@@ -314,6 +372,25 @@ private struct ProviderUsageDashboardContent: View {
                 .font(.callout.weight(.semibold))
                 .lineLimit(1)
                 .truncationMode(.middle)
+            Spacer(minLength: 4)
+            if !group.quotas.isEmpty {
+                Picker(AppLocalization.string("quota.style.help"), selection: Binding(
+                    get: { model.quotaStyle },
+                    set: model.selectQuotaStyle
+                )) {
+                    ForEach(QuotaDisplayStyle.allCases) { style in
+                        Image(systemName: style.symbolName)
+                            .accessibilityLabel(style.title)
+                            .tag(style)
+                    }
+                }
+                .labelsHidden()
+                .pickerStyle(.segmented)
+                .controlSize(.mini)
+                .fixedSize()
+                .help(AppLocalization.string("quota.style.help"))
+                .accessibilityIdentifier("quota-style-picker")
+            }
         }
     }
 
@@ -324,6 +401,9 @@ private struct ProviderUsageDashboardContent: View {
                 .font(.caption2)
                 .foregroundStyle(.secondary)
                 .help(model.quotaStatusDetail ?? "")
+        } else if model.quotaStyle == .ring {
+            ProviderQuotaRings(usages: group.quotas, multiple: group.quotas.count > 1)
+            .frame(height: providerQuotaSectionHeight(group.quotas.count, style: .ring))
         } else {
             let quotaRows = VStack(spacing: providerQuotaRowSpacing) {
                 ForEach(Array(group.quotas.enumerated()), id: \.offset) { _, usage in
@@ -341,7 +421,7 @@ private struct ProviderUsageDashboardContent: View {
                     quotaRows
                 }
             }
-            .frame(height: providerQuotaSectionHeight(group.quotas.count))
+            .frame(height: providerQuotaSectionHeight(group.quotas.count, style: .bar))
         }
     }
 
@@ -431,8 +511,9 @@ private struct ProviderQuotaRow: View {
                     .fixedSize(horizontal: true, vertical: false)
             }
             .font(.caption2)
-            if let used = usage.used, let limit = usage.limit, limit > 0 {
-                ProgressView(value: min(max(used / limit, 0), 1))
+            if let ratio = providerQuotaRatio(usage) {
+                ProgressView(value: min(ratio, 1))
+                    .tint(ratio >= quotaWarningRatio ? .red : nil)
             }
             if let resetAt = usage.resetAt, let date = ISO8601DateFormatter().date(from: resetAt) {
                 Text(AppLocalization.string("quota.resetsAt", date.formatted(date: .abbreviated, time: .shortened)))
@@ -442,6 +523,122 @@ private struct ProviderQuotaRow: View {
         }
         .help(usage.error ?? "")
     }
+}
+
+private struct ProviderQuotaRings: View {
+    let usages: [ProviderQuotaUsage]
+    let multiple: Bool
+    @Environment(\.accessibilityReduceMotion) private var reduceMotion
+    @State private var revealed = false
+
+    var body: some View {
+        HStack(alignment: .center, spacing: 12) {
+            ZStack {
+                ForEach(Array(usages.prefix(maximumQuotaRings).enumerated()), id: \.offset) { index, usage in
+                    ring(index: index, usage: usage)
+                }
+                centerLabel
+            }
+            .frame(width: quotaRingDiameter, height: quotaRingDiameter)
+            .accessibilityHidden(true)
+
+            legend
+        }
+        .onAppear {
+            guard !revealed else { return }
+            withAnimation(reduceMotion ? nil : .spring(response: 0.9, dampingFraction: 0.82)) {
+                revealed = true
+            }
+        }
+    }
+
+    private func ringColor(_ index: Int) -> Color {
+        index < quotaRingColors.count ? quotaRingColors[index] : Color.secondary.opacity(0.4)
+    }
+
+    private func ring(index: Int, usage: ProviderQuotaUsage) -> some View {
+        let count = CGFloat(min(usages.count, maximumQuotaRings))
+        let lineWidth = min(quotaRingMaximumLineWidth, (quotaRingBand - quotaRingGap * (count - 1)) / count)
+        let inset = CGFloat(index) * (lineWidth + quotaRingGap) + lineWidth / 2
+        let fill = min(providerQuotaRatio(usage) ?? 0, 1)
+        let color = ringColor(index)
+        return ZStack {
+            Circle()
+                .stroke(color.opacity(0.18), lineWidth: lineWidth)
+            Circle()
+                .trim(from: 0, to: revealed ? fill : 0)
+                .stroke(color, style: StrokeStyle(lineWidth: lineWidth, lineCap: .round))
+                .rotationEffect(.degrees(-90))
+        }
+        .padding(inset)
+    }
+
+    @ViewBuilder
+    private var centerLabel: some View {
+        // The center shows the tightest window, the one that runs out first.
+        if let ratio = usages.compactMap(providerQuotaRatio).max() {
+            Text(quotaPercentText(ratio))
+                .font(.system(size: 17, weight: .bold).monospacedDigit())
+                .minimumScaleFactor(0.7)
+                .foregroundStyle(ratio >= quotaWarningRatio ? Color.red : Color.primary)
+        }
+    }
+
+    private var legend: some View {
+        let rows = VStack(alignment: .leading, spacing: quotaLegendRowSpacing) {
+            ForEach(Array(usages.enumerated()), id: \.offset) { index, usage in
+                legendRow(index: index, usage: usage)
+                    .frame(height: quotaLegendRowHeight)
+            }
+        }
+        return Group {
+            if usages.count > visibleProviderQuotaRows {
+                ScrollView(.vertical) { rows }.scrollIndicators(.visible)
+            } else {
+                rows
+            }
+        }
+        .frame(maxWidth: .infinity, alignment: .leading)
+    }
+
+    private func legendRow(index: Int, usage: ProviderQuotaUsage) -> some View {
+        let ratio = providerQuotaRatio(usage)
+        let warning = (ratio ?? 0) >= quotaWarningRatio
+        let resetText = usage.resetAt
+            .flatMap { ISO8601DateFormatter().date(from: $0) }
+            .map { AppLocalization.string("quota.resetsAt", $0.formatted(date: .abbreviated, time: .shortened)) }
+        let detail = [providerQuotaText(usage), resetText].compactMap { $0 }.joined(separator: " · ")
+        return VStack(alignment: .leading, spacing: 1) {
+            HStack(spacing: 5) {
+                Circle()
+                    .fill(ringColor(index))
+                    .frame(width: 7, height: 7)
+                Text(providerQuotaLabel(usage, multiple: multiple))
+                    .fontWeight(.semibold)
+                    .lineLimit(1)
+                    .truncationMode(.tail)
+                Spacer(minLength: 4)
+                Text(ratio.map(quotaPercentText) ?? "—")
+                    .fontWeight(.semibold)
+                    .monospacedDigit()
+                    .foregroundStyle(warning ? Color.red : Color.primary)
+            }
+            Text(detail)
+                .fontDesign(.monospaced)
+                .foregroundStyle(usage.error == nil ? Color.secondary : Color.red)
+                .lineLimit(1)
+                .truncationMode(.middle)
+        }
+        .font(.caption2)
+        .help(usage.error ?? detail)
+        .accessibilityElement(children: .ignore)
+        .accessibilityLabel("\(providerQuotaLabel(usage, multiple: multiple)) \(detail)")
+        .accessibilityValue(ratio.map(quotaPercentText) ?? "")
+    }
+}
+
+private func quotaPercentText(_ ratio: Double) -> String {
+    "\(Int((ratio * 100).rounded()))%"
 }
 
 private struct TokenModelColumn: View {
