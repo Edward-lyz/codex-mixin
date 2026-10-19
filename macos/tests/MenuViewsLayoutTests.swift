@@ -7,6 +7,7 @@ enum GatewayError: Error {
 @main
 struct MenuViewsLayoutTests {
     static func main() throws {
+        UserDefaults.standard.removeObject(forKey: QuotaDisplayStyle.defaultsKey)
         _ = NSApplication.shared
         let percentage = try parseProviderQuotaUsage(#"[{"provider_id":"agy","unit":"percent","remaining":42,"used":58,"limit":100}]"#)[0]
         precondition(providerQuotaText(percentage) == "58 / 100", "Percentage quotas must show used allowance against the limit")
@@ -304,7 +305,17 @@ struct MenuViewsLayoutTests {
         }.joined(separator: ",")
         resetDashboard.updateQuotaUsages(try parseProviderQuotaUsage("[\(resetRows)]"))
         flushDeferredMenuLayout()
+        precondition(resetDashboard.model.quotaStyle == .ring, "Rings are the default quota style")
+        let ringHeight = resetDashboard.frame.height
+        resetDashboard.model.selectQuotaStyle(.bar)
+        flushDeferredMenuLayout()
+        precondition(UserDefaults.standard.string(forKey: QuotaDisplayStyle.defaultsKey) == "bar")
         precondition(resetDashboard.frame.height >= 310, "Quota labels, bars and reset times need separate vertical space before the range picker")
+        precondition(ringHeight < resetDashboard.frame.height, "Rings share one row for all windows and need less height than bars")
+        let ratioRows = try parseProviderQuotaUsage(#"[{"provider_id":"b","used":9,"limit":12},{"provider_id":"b","remaining":3,"limit":12},{"provider_id":"b","remaining":3}]"#)
+        precondition(providerQuotaRatio(ratioRows[0]) == 0.75, "used / limit drives the ring")
+        precondition(providerQuotaRatio(ratioRows[1]) == 0.75, "remaining derives usage when used is absent")
+        precondition(providerQuotaRatio(ratioRows[2]) == nil, "balances without a limit draw no ring")
 
         if let artifactDirectory = ProcessInfo.processInfo.environment["CODEX_MIXIN_LAYOUT_ARTIFACT_DIR"] {
             let window = NSWindow(contentRect: resetDashboard.frame, styleMask: .borderless, backing: .buffered, defer: false)

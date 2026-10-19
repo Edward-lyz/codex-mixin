@@ -242,3 +242,6 @@
 "能力探测完成，请查看能力列" = "Capability probing complete. See the capability columns.";
 
 "能力探测失败" = "Capability probing failed";
+"quota.style.ring" = "Rings";
+"quota.style.bar" = "Bars";
+"quota.style.help" = "Quota display style";
