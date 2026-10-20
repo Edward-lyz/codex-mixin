@@ -26,10 +26,6 @@ extension AppDelegate {
         showConsole(consoleContainer?.currentPage ?? .providers)
     }
 
-    @objc func showUsageDetails() {
-        showConsole(.usage)
-    }
-
     /// The console reuses the provider settings window: its controller keeps
     /// owning draft prompts and close confirmation, while the window content
     /// becomes a page container that adds the agent and usage pages.

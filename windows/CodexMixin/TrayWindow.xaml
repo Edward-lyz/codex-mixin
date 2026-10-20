@@ -30,14 +30,9 @@
    </ScrollViewer>
    <Border Grid.Row="1" Background="{ThemeResource LayerOnAcrylicFillColorDefaultBrush}" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Padding="6">
     <StackPanel Spacing="0">
-     <Button Style="{StaticResource MenuRow}" Tag="usage" Click="OnOpen" AutomationProperties.Name="用量明细…">
-      <StackPanel Orientation="Horizontal" Spacing="12"><FontIcon Glyph="&#xE9D2;" FontSize="16"/><TextBlock Text="用量明细…"/></StackPanel>
-     </Button>
-     <Button Style="{StaticResource MenuRow}" Tag="providers" Click="OnOpen" AutomationProperties.Name="模型与服务…">
-      <StackPanel Orientation="Horizontal" Spacing="12"><FontIcon Glyph="&#xE8A9;" FontSize="16"/><TextBlock Text="模型与服务…"/></StackPanel>
-     </Button>
-     <Button Style="{StaticResource MenuRow}" Tag="agents" Click="OnOpen" AutomationProperties.Name="Agent 接入管理…">
-      <StackPanel Orientation="Horizontal" Spacing="12"><FontIcon Glyph="&#xE716;" FontSize="16"/><TextBlock Text="Agent 接入管理…"/></StackPanel>
+     <!-- Models, agents, and usage are pages of the console window. -->
+     <Button Style="{StaticResource MenuRow}" Tag="console" Click="OnOpen" AutomationProperties.Name="打开控制台…">
+      <StackPanel Orientation="Horizontal" Spacing="12"><FontIcon Glyph="&#xE737;" FontSize="16"/><TextBlock Text="打开控制台…"/></StackPanel>
      </Button>
      <Border Height="1" Margin="10,4" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
      <Button Style="{StaticResource MenuRow}" AutomationProperties.Name="高级">

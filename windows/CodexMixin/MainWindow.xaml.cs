@@ -136,7 +136,9 @@ public sealed partial class MainWindow : Window
             "usage" => "用量明细", _ => "设置与诊断"
         };
         var console = IsConsolePage(page);
-        WindowCaption.Text = console ? "控制台" : Title;
+        // The console tabs already name the page, so the caption stays empty there.
+        WindowCaption.Text = console ? "" : Title;
+        WindowCaption.Visibility = console ? Visibility.Collapsed : Visibility.Visible;
         ConsoleTabs.Visibility = console ? Visibility.Visible : Visibility.Collapsed;
         foreach (var tab in ConsoleTabButtons.Children.Cast<Microsoft.UI.Xaml.Controls.Primitives.ToggleButton>())
             tab.IsChecked = (string)tab.Tag == page;
@@ -195,7 +197,7 @@ public sealed partial class MainWindow : Window
                 ["service", command, "--managed", "--json"]);
             return;
         }
-        ((App)Microsoft.UI.Xaml.Application.Current).OpenPage(command is "providers" or "agents" or "usage" or "fusion" or "settings" ? command : "overview");
+        ((App)Microsoft.UI.Xaml.Application.Current).OpenPage(command is "console" or "providers" or "agents" or "usage" or "fusion" or "settings" ? command : "overview");
     });
 
     private async Task ExitAsync()

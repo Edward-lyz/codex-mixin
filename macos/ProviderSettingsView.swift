@@ -552,11 +552,11 @@ private struct ProviderDetailForm: View {
 
     var body: some View {
         VStack(spacing: 0) {
-            HStack {
+            // The picker sits beside the header instead of over it, so a narrow
+            // window truncates the header text rather than covering it.
+            HStack(spacing: 12) {
                 ProviderDetailHeader(provider: provider)
-                Spacer()
-            }
-            .overlay {
+                Spacer(minLength: 12)
                 Picker("详情页面", selection: $selectedSection) {
                     ForEach(ProviderDetailSection.allCases) { section in
                         Text(detailSectionTitle(section)).tag(section)
@@ -564,7 +564,8 @@ private struct ProviderDetailForm: View {
                 }
                 .pickerStyle(.segmented)
                 .labelsHidden()
-                .frame(width: 360)
+                .fixedSize()
+                .layoutPriority(1)
             }
             .padding(.horizontal, 16)
             .padding(.vertical, 8)
