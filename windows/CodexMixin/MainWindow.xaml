@@ -6,8 +6,15 @@
     <Grid x:Name="TitleBar" Padding="16,0,160,0">
       <StackPanel Orientation="Horizontal" Spacing="12" VerticalAlignment="Center">
         <Image Source="ms-appx:///Assets/app_icon.png" Width="18" Height="18"/>
-        <TextBlock x:Name="WindowCaption" Text="模型与服务" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center"/>
+        <TextBlock x:Name="WindowCaption" Text="控制台" Style="{StaticResource CaptionTextBlockStyle}" VerticalAlignment="Center"/>
       </StackPanel>
+      <Border x:Name="ConsoleTabs" Style="{StaticResource SegmentTrack}" HorizontalAlignment="Center" VerticalAlignment="Center">
+        <StackPanel x:Name="ConsoleTabButtons" Orientation="Horizontal" Spacing="2" AutomationProperties.AutomationId="console-pages">
+          <ToggleButton Style="{StaticResource Segment}" Content="模型与服务" Tag="providers" Click="OnConsoleTab"/>
+          <ToggleButton Style="{StaticResource Segment}" Content="Agent 接入" Tag="agents" Click="OnConsoleTab"/>
+          <ToggleButton Style="{StaticResource Segment}" Content="用量明细" Tag="usage" Click="OnConsoleTab"/>
+        </StackPanel>
+      </Border>
     </Grid>
     <ContentControl x:Name="PageShell" Grid.Row="1" HorizontalContentAlignment="Stretch" VerticalContentAlignment="Stretch"><Grid>
       <Grid.ColumnDefinitions><ColumnDefinition x:Name="SidebarColumn" Width="248"/><ColumnDefinition Width="*"/></Grid.ColumnDefinitions>

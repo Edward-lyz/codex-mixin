@@ -7,6 +7,7 @@ namespace CodexMixin;
 public partial class App : Application
 {
     private MainWindow? window;
+    private const string ConsoleWindowKey = "console";
     private readonly Dictionary<string, MainWindow> windows = [];
     private CliClient? cli;
     private Operations? operations;
@@ -41,13 +42,18 @@ public partial class App : Application
         if (page is not ("providers" or "agents" or "fusion" or "settings" or "usage"))
             throw new ArgumentException($"Unknown Windows page: {page}");
         tray?.HidePanel();
-        if (!windows.TryGetValue(page, out var target))
+        // Models, agents, and usage share one console window; Fusion and
+        // settings keep their own windows.
+        var key = MainWindow.IsConsolePage(page) ? ConsoleWindowKey : page;
+        if (!windows.TryGetValue(key, out var target))
         {
             target = new MainWindow(page);
-            windows[page] = target;
-            target.Closed += (_, _) => windows.Remove(page);
+            windows[key] = target;
+            target.Closed += (_, _) => windows.Remove(key);
+            target.ShowMain();
+            return;
         }
-        target.ShowMain();
+        target.ShowPage(page);
     }
 
     public App()
@@ -72,7 +78,7 @@ public partial class App : Application
         }
         try { OpenPage("providers"); }
         catch (Exception error) { Console.Error.WriteLine($"Windows startup failed: {error}"); throw; }
-        window = windows["providers"];
+        window = windows[ConsoleWindowKey];
         instance.Activated += (_, activation) => window.DispatcherQueue.TryEnqueue(() =>
         {
             var arguments = activation.Data switch
