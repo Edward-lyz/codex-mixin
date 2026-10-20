@@ -43,16 +43,25 @@ final class ConsoleUsageModel: ObservableObject {
         }
     }
 
+    private var loadGeneration = 0
+
+    /// Starts a load for the current range. A newer load supersedes older
+    /// ones, so switching range mid-load never shows the old range's rows.
     func refresh() async {
-        guard !isLoading else { return }
+        loadGeneration += 1
+        let generation = loadGeneration
+        let days = range.rawValue
         isLoading = true
-        defer { isLoading = false }
         do {
-            (daily, turns) = try await loader(range.rawValue)
+            let result = try await loader(days)
+            guard generation == loadGeneration else { return }
+            (daily, turns) = result
             errorMessage = nil
         } catch {
+            guard generation == loadGeneration else { return }
             errorMessage = error.localizedDescription
         }
+        isLoading = false
     }
 
     func selectRange(_ range: ConsoleUsageRange) {
