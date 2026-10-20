@@ -48,6 +48,8 @@ public sealed partial class TrayWindow : Window
         var bounds = NativeShell.PanelBounds();
         maximumHeight = bounds.Height;
         AppWindow.MoveAndResize(bounds);
+        // The console may have changed the style since this cached panel last showed.
+        quotaStyle = QuotaView.Stored();
         AppWindow.Show(); Activate();
         await ReloadAsync();
     }
@@ -141,22 +143,14 @@ public sealed partial class TrayWindow : Window
     private async void OnQuit(object sender, RoutedEventArgs args)
     {
         if (busy) { PanelStatus.Text = "请等待当前操作完成后退出。"; return; }
-        var restore = (string)((Button)sender).Tag == "restore";
         var dialog = new ContentDialog
         {
-            Title = restore ? "退出并恢复原配置？" : "退出 Codex Mixin？",
-            Content = restore ? "由 CLI 恢复指向本地网关的客户端配置，并停止网关，然后退出界面。" : "退出界面后，本地网关会继续按 CLI 的服务设置运行。",
-            PrimaryButtonText = restore ? "恢复并退出" : "退出", CloseButtonText = "取消", XamlRoot = Panel.XamlRoot, RequestedTheme = Panel.ActualTheme
+            Title = "退出 Codex Mixin？",
+            Content = "退出界面后，本地网关会继续按 CLI 的服务设置运行。",
+            PrimaryButtonText = "退出", CloseButtonText = "取消", XamlRoot = Panel.XamlRoot, RequestedTheme = Panel.ActualTheme
         };
         if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        busy = true;
-        try
-        {
-            if (restore) await ((App)Microsoft.UI.Xaml.Application.Current).Operations.ChangeAsync(["service", "stop", "--managed", "--restore-clients", "--json"], lifetime.Token);
-            ((App)Microsoft.UI.Xaml.Application.Current).ExitAll();
-        }
-        catch (Exception error) { PanelStatus.Text = $"退出失败：{error.Message}"; }
-        finally { busy = false; }
+        ((App)Microsoft.UI.Xaml.Application.Current).ExitAll();
     }
     private async Task ChangeAsync(string[] args)
     {
