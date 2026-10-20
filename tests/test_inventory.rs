@@ -11,6 +11,28 @@ use std::path::{Path, PathBuf};
 const MACOS_TEST_DIR: &str = "macos/tests";
 const MACOS_RUNNER: &str = "scripts/test_macos.sh";
 const WINDOWS_RUNNER: &str = "windows/Tests/Program.cs";
+const IGNORED_TESTS: &[(&str, &str)] = &[
+    ("src/ech.rs", "live_ech_comparison"),
+    (
+        "src/provider/auth/ducx.rs",
+        "captures_real_data_report_token_without_uploading",
+    ),
+    ("tests/agy_dynamic.rs", "live_agy_account_reports"),
+    ("tests/real_models.rs", "all_registered_models_can_say_hi"),
+    (
+        "tests/real_models.rs",
+        "baidu_auxiliary_auto_review_alias_reaches_real_upstream",
+    ),
+    (
+        "tests/real_models.rs",
+        "baidu_reasoning_profiles_reach_real_upstream",
+    ),
+    (
+        "tests/real_models.rs",
+        "claude_desktop_can_stream_a_real_selected_model",
+    ),
+    ("tests/real_models.rs", "live_agy_mixed_tools"),
+];
 
 fn repository_root() -> PathBuf {
     PathBuf::from(env!("CARGO_MANIFEST_DIR"))
@@ -120,6 +142,43 @@ fn csharp_check_names(source: &str) -> Vec<String> {
     names
 }
 
+fn rust_files(directory: &Path, files: &mut Vec<PathBuf>) {
+    for entry in fs::read_dir(directory).unwrap() {
+        let path = entry.unwrap().path();
+        if path.is_dir() {
+            rust_files(&path, files);
+        } else if path.extension().is_some_and(|value| value == "rs") {
+            files.push(path);
+        }
+    }
+}
+
+fn ignored_test_names(source: &str) -> Vec<String> {
+    let mut names = Vec::new();
+    let mut ignoring = false;
+    for line in source.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with("#[ignore") {
+            ignoring = true;
+            continue;
+        }
+        if !ignoring || trimmed.starts_with("#[") || trimmed.is_empty() {
+            continue;
+        }
+        ignoring = false;
+        let declaration = trimmed.strip_prefix("pub ").unwrap_or(trimmed);
+        let declaration = declaration.strip_prefix("async ").unwrap_or(declaration);
+        let declaration = declaration.strip_prefix("fn ");
+        if let Some(declaration) = declaration {
+            let name = declaration
+                .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+                .map_or(declaration, |index| &declaration[..index]);
+            names.push(name.to_owned());
+        }
+    }
+    names
+}
+
 #[test]
 fn detects_missing_and_duplicate_swift_registrations() {
     let actual = BTreeSet::from(["A.swift".to_owned(), "B.swift".to_owned()]);
@@ -134,6 +193,36 @@ fn detects_missing_and_duplicate_swift_registrations() {
         errors
             .iter()
             .any(|error| error == "B.swift is not registered")
+    );
+}
+
+#[test]
+fn ignored_rust_tests_are_allowlisted() {
+    let root = repository_root();
+    let mut files = Vec::new();
+    rust_files(&root.join("src"), &mut files);
+    rust_files(&root.join("tests"), &mut files);
+    let actual = files
+        .into_iter()
+        .flat_map(|path| {
+            let source = fs::read_to_string(&path).unwrap();
+            let relative = path
+                .strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .into_owned();
+            ignored_test_names(&source)
+                .into_iter()
+                .map(move |name| format!("{relative}:{name}"))
+        })
+        .collect::<BTreeSet<_>>();
+    let expected = IGNORED_TESTS
+        .iter()
+        .map(|(path, name)| format!("{path}:{name}"))
+        .collect::<BTreeSet<_>>();
+    assert_eq!(
+        actual, expected,
+        "ignored tests changed; update the explicit external-test allowlist"
     );
 }
 

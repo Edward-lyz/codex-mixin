@@ -123,4 +123,4 @@ jobs:
         run: ./scripts/verify_macos_app_icon.sh
       - name: Run macOS Swift tests
         if: runner.os == 'macOS'
-        run: ./scripts/test_macos.sh
+        run: ./scripts/test_macos.sh --jobs 3

@@ -70,6 +70,20 @@ jobs:
       - uses: actions/setup-dotnet@v5
         with:
           dotnet-version: '10.0.x'
+      - name: Check PowerShell syntax
+        shell: pwsh
+        run: |
+          $scripts = Get-ChildItem -Path windows/scripts -Recurse -Filter *.ps1
+          foreach ($script in $scripts) {
+            $tokens = $null
+            $errors = $null
+            [System.Management.Automation.Language.Parser]::ParseFile(
+              $script.FullName, [ref]$tokens, [ref]$errors) | Out-Null
+            if ($errors.Count -ne 0) {
+              $errors | Format-List | Out-String | Write-Error
+              throw "PowerShell syntax check failed: $($script.FullName)"
+            }
+          }
       - name: Test CLI adapter
         shell: pwsh
         run: dotnet run --project windows/Tests/Tests.csproj -c Release
@@ -81,7 +95,15 @@ jobs:
         run: ./windows/scripts/generate-windows-assets.ps1
       - name: Compile and publish native UI
         shell: pwsh
-        run: dotnet publish windows/CodexMixin/CodexMixin.csproj -c Release -p:Platform=x64 -o windows/build/publish
+        run: |
+          $cargo = Get-Content Cargo.toml -Raw
+          $version = [regex]::Match(
+            $cargo, '(?ms)^\[package\].*?^version\s*=\s*"([^"]+)"'
+          ).Groups[1].Value
+          if (-not $version) { throw 'Cargo package version is missing' }
+          $numericVersion = ($version -split '-', 2)[0]
+          dotnet publish windows/CodexMixin/CodexMixin.csproj -c Release `
+            -p:Platform=x64 -p:Version=$numericVersion -o windows/build/publish
       - uses: actions/upload-artifact@v7
         if: always()
         with:
@@ -174,21 +196,21 @@ jobs:
       - uses: dtolnay/rust-toolchain@stable
         with:
           toolchain: stable
-      - uses: actions/setup-dotnet@v5
-        with:
-          dotnet-version: '10.0.x'
       # Package the CLI built by the cli job instead of rebuilding it.
       - uses: actions/download-artifact@v7
         with:
           name: windows-cli
           path: windows-cli
+      - uses: actions/download-artifact@v7
+        with:
+          name: windows-native-ui
+          path: windows-ui
       # NSIS provides makensis for the standard installer built by the script.
       - name: Install NSIS
         run: ./windows/scripts/install-nsis.ps1
         shell: pwsh
-      # Builds the native WinUI 3 UI and packages the standard installer and
-      # portable archive. Use the same relative dist\release layout as the
-      # Release workflow so this job exercises the release packaging paths.
+      # Reuses the tested CLI and native UI artifacts, then exercises the same
+      # installer and portable archive paths as the release workflow.
       - name: Package and optionally sign Windows artifacts
         shell: pwsh
         env:
@@ -203,6 +225,8 @@ jobs:
             PortableArchive = "dist\release\codex-mixin-$version-windows-x86_64.zip"
             Version = $version
             CliPath = 'windows-cli\codex-mixin.exe'
+            UiPath = 'windows-ui'
+            SkipCliTests = $true
           }
           $pfx = $null
           if ($env:WINDOWS_CERT_PFX_BASE64) {
