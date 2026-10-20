@@ -2,15 +2,10 @@ import Cocoa
 
 extension AppDelegate {
     @objc func showAgentManagement() {
-        if agentManagementWindowController == nil {
-            agentManagementWindowController = AgentManagementWindowController(
-                model: makeAgentManagementModel()
-            )
-        }
-        agentManagementWindowController?.present()
+        showConsole(.agents)
     }
 
-    private func makeAgentManagementModel() -> AgentManagementModel {
+    func makeAgentManagementModel() -> AgentManagementModel {
         AgentManagementModel(
             listHandler: { [weak self] in
                 guard let self else {

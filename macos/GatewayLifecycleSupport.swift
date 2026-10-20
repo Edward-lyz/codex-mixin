@@ -35,7 +35,6 @@ extension AppDelegate {
                     serviceStatus = "等待配置上游 API"
                     serviceEndpoint = nil
                     updateQuotaStatus(title: "额度：等待配置", detail: nil, progress: nil)
-                    updateTokenUsageStatus(title: "Token 使用：等待配置", detail: nil, progress: nil)
                     updateStatusTitle()
                     updateActionStates()
                     if !CommandLine.arguments.contains("--show-settings")

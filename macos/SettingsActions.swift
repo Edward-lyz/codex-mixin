@@ -1,4 +1,5 @@
 import Cocoa
+import SwiftUI
 
 extension AppDelegate {
     @objc func showAbout() {
@@ -18,6 +19,63 @@ extension AppDelegate {
     }
 
     @objc func configureLogin() {
+        showConsole(.providers)
+    }
+
+    @objc func openConsole() {
+        showConsole(consoleContainer?.currentPage ?? .providers)
+    }
+
+    @objc func showUsageDetails() {
+        showConsole(.usage)
+    }
+
+    /// The console reuses the provider settings window: its controller keeps
+    /// owning draft prompts and close confirmation, while the window content
+    /// becomes a page container that adds the agent and usage pages.
+    func showConsole(_ page: ConsolePage) {
+        ensureProviderSettingsController()
+        guard let controller = providerSettingsWindowController,
+              let window = controller.window
+        else { return }
+        if consoleContainer == nil, let providerPage = window.contentViewController {
+            let agentModel = makeAgentManagementModel()
+            let usageModel = ConsoleUsageModel { [weak self] days in
+                guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
+                async let daily = self.runGateway(["usage", "--daily", "--json", "--days", "\(days)"])
+                async let turns = self.runGateway([
+                    "usage", "--turns", "--json", "--days", "\(days)", "--limit", "500",
+                ])
+                return (try parseDailyUsage(try await daily), try parseTurnUsage(try await turns))
+            }
+            let container = ConsoleContainerController(
+                pages: [
+                    .providers: providerPage,
+                    .agents: makeAgentManagementPageController(model: agentModel),
+                    .usage: NSHostingController(rootView: ConsoleUsageView(model: usageModel)),
+                ],
+                onShow: { page in
+                    switch page {
+                    case .agents: Task { await agentModel.refresh() }
+                    case .usage: Task { await usageModel.refresh() }
+                    case .providers: break
+                    }
+                }
+            )
+            // Swapping the content controller resizes the window to the new
+            // view's empty frame, so keep the provider window's frame.
+            let frame = window.frame
+            window.contentViewController = container
+            window.setFrame(frame, display: false)
+            window.title = AppLocalization.string("console.windowTitle")
+            container.installToolbar(in: window)
+            consoleContainer = container
+        }
+        controller.present()
+        consoleContainer?.show(page)
+    }
+
+    private func ensureProviderSettingsController() {
         if providerSettingsWindowController == nil {
             providerSettingsWindowController = ProviderSettingsWindowController(
                 loadHandler: { [weak self] in
@@ -125,7 +183,6 @@ extension AppDelegate {
                 }
             )
         }
-        providerSettingsWindowController?.present()
     }
 
     @objc func showModelBenchmark() {

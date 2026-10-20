@@ -355,6 +355,9 @@ final class AgentManagementModel: ObservableObject {
 
 private struct AgentManagementView: View {
     @ObservedObject var model: AgentManagementModel
+    /// True inside the console: SwiftUI toolbars of a child controller are not
+    /// bridged into the window, so the controls sit above the list.
+    var embedded = false
 
     var body: some View {
         VStack(spacing: 0) {
@@ -377,7 +380,7 @@ private struct AgentManagementView: View {
     /// same controls sit above the list there.
     @ViewBuilder
     private var legacyToolbar: some View {
-        if #available(macOS 14.0, *) {
+        if #available(macOS 14.0, *), !embedded {
             EmptyView()
         } else {
             HStack(spacing: 10) {
@@ -788,6 +791,11 @@ private struct AgentDetailPanel: View {
             }
         }
     }
+}
+
+/// Agent management as a console page.
+func makeAgentManagementPageController(model: AgentManagementModel) -> NSViewController {
+    NSHostingController(rootView: AgentManagementView(model: model, embedded: true))
 }
 
 final class AgentManagementWindowController: NSWindowController, NSWindowDelegate {

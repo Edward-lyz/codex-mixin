@@ -78,43 +78,8 @@ func parseProviderQuotaUsage(_ rawJSON: String) throws -> [ProviderQuotaUsage] {
     }
 }
 
-struct ProviderTokenUsage: Decodable {
-    let providerID: String
-    let modelID: String
-    let requestCount: UInt64
-    let inputTokens: UInt64
-    let cacheReadTokens: UInt64
-    let cacheCreationTokens: UInt64
-    let outputTokens: UInt64
-    let cacheHitPercent: Double?
-    let averageTTFTMs: Double?
-    let outputTPS: Double?
-
-    enum CodingKeys: String, CodingKey {
-        case providerID = "provider_id"
-        case modelID = "model_id"
-        case requestCount = "request_count"
-        case inputTokens = "input_tokens"
-        case cacheReadTokens = "cache_read_tokens"
-        case cacheCreationTokens = "cache_creation_tokens"
-        case outputTokens = "output_tokens"
-        case cacheHitPercent = "cache_hit_percent"
-        case averageTTFTMs = "average_ttft_ms"
-        case outputTPS = "output_tps"
-    }
-
-    var totalTokens: UInt64 {
-        [inputTokens, cacheReadTokens, outputTokens, cacheCreationTokens].reduce(0) {
-            let (sum, overflow) = $0.addingReportingOverflow($1)
-            return overflow ? UInt64.max : sum
-        }
-    }
-}
-
-func parseProviderTokenUsage(_ rawJSON: String) throws -> [ProviderTokenUsage] {
-    do {
-        return try JSONDecoder().decode([ProviderTokenUsage].self, from: Data(rawJSON.utf8))
-    } catch {
-        throw GatewayError.command("Token 使用 JSON 无法解析：\(error)")
-    }
+func formatTokenCount(_ count: UInt64) -> String {
+    if count >= 1_000_000 { return String(format: "%.1fM", Double(count) / 1_000_000) }
+    if count >= 1_000 { return String(format: "%.1fk", Double(count) / 1_000) }
+    return "\(count)"
 }
