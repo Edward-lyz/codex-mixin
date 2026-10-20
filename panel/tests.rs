@@ -64,6 +64,22 @@ async fn api_rejects_requests_without_the_token_before_running_the_cli() {
 }
 
 #[tokio::test]
+async fn usage_details_rejects_unlisted_ranges_before_running_the_cli() {
+    for days in ["0", "365", "--help", "7%20--limit"] {
+        let response = test_router()
+            .oneshot(
+                Request::get(format!("/api/usage?days={days}"))
+                    .header(header::AUTHORIZATION, "Bearer expected-token")
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{days}");
+    }
+}
+
+#[tokio::test]
 async fn static_assets_are_public_and_carry_a_strict_policy() {
     let response = test_router()
         .oneshot(Request::get("/").body(Body::empty()).unwrap())

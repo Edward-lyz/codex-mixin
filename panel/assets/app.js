@@ -10,6 +10,7 @@ const reduceMotion = window.matchMedia("(prefers-reduced-motion: reduce)");
 const PAGES = [
   { id: "home", title: "概览", subtitle: "网关状态、用量与额度" },
   { id: "providers", title: "模型与服务", subtitle: "服务商、模型选择、能力与连接设置" },
+  { id: "usage", title: "用量", subtitle: "每日用量、按 Provider 拆分与每条回复的明细" },
   { id: "speed", title: "测速", subtitle: "首字延迟与输出速度基准" },
   { id: "fusion", title: "Fusion", subtitle: "多模型协同与分时路由" },
   { id: "apps", title: "Agent", subtitle: "把编码 Agent 接入本地网关，查看版本与接入状态" },
@@ -689,6 +690,9 @@ async function copyText(text) {
   }
 }
 
+// The overview keeps a short summary; the usage page has the full table.
+const HOME_USAGE_ROWS = 5;
+
 function usageCard() {
   const rows = [...(state.snapshot.usage || [])].sort((a, b) => (b.request_count || 0) - (a.request_count || 0));
   const range = segmented(
@@ -715,7 +719,7 @@ function usageCard() {
         h(
           "tbody",
           null,
-          ...rows.map((row) =>
+          ...rows.slice(0, HOME_USAGE_ROWS).map((row) =>
             h(
               "tr",
               null,
@@ -733,8 +737,191 @@ function usageCard() {
       ),
     );
   }
-  return card("用量", "按 Provider 与模型汇总", body, range, "card-flush");
+  const details = h("button", { class: "btn btn-ghost btn-sm", type: "button", text: "查看明细", onclick: () => navigate("usage") });
+  return card("用量", rows.length > HOME_USAGE_ROWS ? `用量最高的 ${HOME_USAGE_ROWS} 个模型` : "按 Provider 与模型汇总", body, [range, details], "card-flush");
 }
+
+// ---------- Usage ----------
+// DeepSeek-style usage console: range and provider filters, totals, daily
+// charts that aggregate or split by provider, and the per-turn ledger the CLI
+// records for each upstream reply.
+
+const usagePage = { days: "7", provider: "", split: false, session: "", data: null, loading: false, error: null };
+const USAGE_DAYS = [["1", "1 天"], ["7", "7 天"], ["30", "30 天"]];
+const DAY_MS = 86_400_000;
+// Prompts smaller than this are too short for provider caches to act on, so
+// a miss there is not worth flagging (matches the gateway's own threshold).
+const CACHE_VERDICT_MIN_PROMPT = 8_192;
+const CACHE_LOW_PERCENT = 50;
+const SERIES_COLORS = 4;
+
+async function loadUsageDetails() {
+  if (usagePage.loading) return;
+  usagePage.loading = true;
+  usagePage.error = null;
+  try {
+    usagePage.data = await api(`/api/usage?days=${usagePage.days}`);
+  } catch (error) {
+    usagePage.error = error.message;
+  } finally {
+    usagePage.loading = false;
+    if (state.page === "usage") render({ animate: false });
+  }
+}
+
+function tokenTotal(row) {
+  return (row.input_tokens || 0) + (row.cache_read_tokens || 0) + (row.cache_creation_tokens || 0) + (row.output_tokens || 0);
+}
+
+function dayLabel(day) {
+  const date = new Date(day * DAY_MS);
+  return `${date.getMonth() + 1}/${date.getDate()}`;
+}
+
+// Daily rows -> one bucket per day in range (missing days stay at zero),
+// each holding totals per series key (provider id, or "all" when aggregated).
+function dailyBuckets(rows) {
+  const today = Math.floor(Date.now() / DAY_MS);
+  const days = Number(usagePage.days);
+  const buckets = [];
+  for (let day = today - days + 1; day <= today; day += 1) buckets.push({ day, series: new Map() });
+  const index = new Map(buckets.map((bucket) => [bucket.day, bucket]));
+  for (const row of rows) {
+    const bucket = index.get(row.day);
+    if (!bucket) continue;
+    const key = usagePage.split ? row.provider_id : "all";
+    const total = bucket.series.get(key) || { tokens: 0, requests: 0 };
+    total.tokens += tokenTotal(row);
+    total.requests += row.request_count || 0;
+    bucket.series.set(key, total);
+  }
+  return buckets;
+}
+
+function seriesKeys(buckets) {
+  const sums = new Map();
+  for (const bucket of buckets) for (const [key, total] of bucket.series) sums.set(key, (sums.get(key) || 0) + total.tokens);
+  return [...sums.entries()].sort((a, b) => b[1] - a[1]).map(([key]) => key);
+}
+
+function seriesClass(keys, key) {
+  const index = keys.indexOf(key);
+  return index >= 0 && index < SERIES_COLORS ? `ring-${index + 1}` : "is-extra";
+}
+
+function barChart(title, buckets, keys, metric, format) {
+  const max = Math.max(1, ...buckets.map((bucket) => [...bucket.series.values()].reduce((sum, total) => sum + total[metric], 0)));
+  const sum = buckets.reduce((all, bucket) => all + [...bucket.series.values()].reduce((part, total) => part + total[metric], 0), 0);
+  const labelEvery = Math.ceil(buckets.length / 8);
+  const columns = buckets.map((bucket, index) => {
+    const total = [...bucket.series.values()].reduce((part, value) => part + value[metric], 0);
+    const stack = h("div", { class: "uchart-stack" }, keys.filter((key) => bucket.series.has(key)).map((key) =>
+      h("span", { class: `uchart-seg ${seriesClass(keys, key)}`, style: { height: `${(bucket.series.get(key)[metric] / max) * 100}%` } })));
+    return h("div", { class: "uchart-col", title: `${dayLabel(bucket.day)} · ${format(total)}` },
+      stack,
+      h("span", { class: "uchart-x", text: index % labelEvery === 0 || index === buckets.length - 1 ? dayLabel(bucket.day) : "" }));
+  });
+  return h("section", { class: "uchart", "aria-label": `${title}：合计 ${format(sum)}` },
+    h("div", { class: "uchart-head" }, h("span", { class: "metric-label", text: title }), h("strong", { class: "num", text: format(sum) })),
+    h("div", { class: "uchart-plot", "aria-hidden": "true" }, columns));
+}
+
+function usageLegend(keys) {
+  if (!usagePage.split || !keys.length) return null;
+  return h("ul", { class: "uchart-legend" }, keys.map((key) =>
+    h("li", null, h("span", { class: `quota-swatch ${seriesClass(keys, key)}`, "aria-hidden": "true" }), h("span", { text: key }))));
+}
+
+function reasoningText(turn) {
+  if (typeof turn.reasoning_tokens === "number") return compact(turn.reasoning_tokens);
+  // Anthropic-style upstreams stream thinking without a token counter.
+  return turn.reasoning_chars ? `${compact(turn.reasoning_chars)} 字` : "\u2014";
+}
+
+function cacheIsLow(turn) {
+  const prompt = (turn.input_tokens || 0) + (turn.cache_read_tokens || 0) + (turn.cache_creation_tokens || 0);
+  return typeof turn.cache_hit_percent === "number" && prompt >= CACHE_VERDICT_MIN_PROMPT && turn.cache_hit_percent < CACHE_LOW_PERCENT;
+}
+
+function turnTime(ms) {
+  return new Date(ms).toLocaleString("zh-CN", { month: "numeric", day: "numeric", hour: "2-digit", minute: "2-digit", second: "2-digit", hour12: false });
+}
+
+function turnsTable(turns) {
+  if (!turns.length) return emptyState("暂无回复记录", "所选范围内还没有经过网关的模型回复。");
+  const sessionButton = (turn) => h("button", {
+    class: "chip-btn mono",
+    type: "button",
+    text: turn.session,
+    title: usagePage.session ? "显示全部会话" : "只看这个会话",
+    onclick: () => { usagePage.session = usagePage.session ? "" : turn.session; render({ animate: false }); },
+  });
+  const modelCell = (turn) => {
+    const mismatch = turn.model_matches === false;
+    return h("td", null,
+      h("div", { text: turn.upstream_model_id }),
+      h("div", { class: "row-sub" }, turn.provider_id,
+        mismatch ? h("span", { class: "badge badge-bad", title: "上游返回的模型与请求的模型不一致", text: `返回 ${turn.returned_model}` }) : null));
+  };
+  return h("div", { class: "table-wrap" }, h("table", { class: "table turns" },
+    h("thead", null, h("tr", null, ...["时间", "会话", "模型", "未缓存输入", "命中缓存", "输出", "思考", "首字", "速度"].map((text, index) => h("th", { class: index > 2 ? "r" : null, scope: "col", text })))),
+    h("tbody", null, ...turns.map((turn) => h("tr", { class: turn.model_matches === false ? "is-flagged" : null },
+      h("td", { class: "mono nowrap", text: turnTime(turn.at_ms) }),
+      h("td", null, sessionButton(turn)),
+      modelCell(turn),
+      h("td", { class: "r", text: compact(turn.input_tokens) }),
+      h("td", { class: `r ${cacheIsLow(turn) ? "is-low" : ""}`.trim(), title: cacheIsLow(turn) ? "长提示的缓存命中低于 50%" : null },
+        h("div", { text: compact(turn.cache_read_tokens) }), h("div", { class: "row-sub", text: fixed(turn.cache_hit_percent, 1, "%") })),
+      h("td", { class: "r", text: compact(turn.output_tokens) }),
+      h("td", { class: "r", text: reasoningText(turn) }),
+      h("td", { class: "r", text: fixed(turn.ttft_ms, 0, " ms") }),
+      h("td", { class: "r", text: fixed(turn.output_tps, 1, " t/s") }),
+    )))));
+}
+
+RENDERERS.usage = () => {
+  if (!gatewayRunning()) return card(null, null, emptyState("网关未运行", "启动网关后即可查看用量明细。"));
+  if (!usagePage.data && !usagePage.loading && !usagePage.error) queueMicrotask(loadUsageDetails);
+  const reload = (patch) => { Object.assign(usagePage, patch); loadUsageDetails(); };
+  const daily = usagePage.data?.daily || [];
+  const allTurns = usagePage.data?.turns || [];
+  const providers = [...new Set([...daily.map((row) => row.provider_id), ...allTurns.map((turn) => turn.provider_id)])].sort();
+  const byProvider = (row) => !usagePage.provider || row.provider_id === usagePage.provider;
+  const rows = daily.filter(byProvider);
+  const turns = allTurns.filter(byProvider).filter((turn) => !usagePage.session || turn.session === usagePage.session);
+
+  const providerSelect = h("select", { class: "select select-sm", "aria-label": "Provider", onchange: (event) => { usagePage.provider = event.target.value; usagePage.session = ""; render({ animate: false }); } },
+    h("option", { value: "", text: "全部 Provider", selected: !usagePage.provider }),
+    providers.map((id) => h("option", { value: id, text: id, selected: usagePage.provider === id })));
+  const toolbar = h("div", { class: "usage-toolbar" },
+    segmented(USAGE_DAYS, usagePage.days, (days) => reload({ days, session: "" }), "时间范围"),
+    providerSelect,
+    segmented([["merge", "聚合"], ["split", "按 Provider 拆分"]], usagePage.split ? "split" : "merge", (value) => { usagePage.split = value === "split"; render({ animate: false }); }, "图表分组"),
+    h("button", { class: `btn btn-ghost btn-sm ${usagePage.loading ? "is-busy" : ""}`.trim(), type: "button", text: "刷新", disabled: usagePage.loading, onclick: () => loadUsageDetails() }));
+
+  if (usagePage.error) return [toolbar, card(null, null, h("p", { class: "issue", text: usagePage.error }))];
+  if (!usagePage.data) return [toolbar, h("div", { class: "skeleton" })];
+
+  const sum = (key) => rows.reduce((total, row) => total + (row[key] || 0), 0);
+  const cached = sum("cache_read_tokens");
+  const prompt = cached + sum("input_tokens") + sum("cache_creation_tokens");
+  const mismatches = turns.filter((turn) => turn.model_matches === false).length;
+  const buckets = dailyBuckets(rows);
+  const keys = seriesKeys(buckets);
+  return [
+    toolbar,
+    stagger(h("div", { class: "grid grid-4" },
+      metricCard("请求次数", sum("request_count"), `${providers.length} 个 Provider`),
+      metricCard("Tokens", rows.reduce((total, row) => total + tokenTotal(row), 0), `输出 ${compact(sum("output_tokens"))}`),
+      metricCard("缓存命中", prompt ? `${((cached / prompt) * 100).toFixed(1)}%` : "\u2014", `命中 ${compact(cached)} tokens`),
+      metricCard("模型不一致", mismatches, mismatches ? "上游返回了其他模型" : "所有回复与请求一致"))),
+    card("每日用量", usagePage.split ? "按 Provider 拆分" : "全部 Provider 聚合", h("div", { class: "uchart-grid" },
+      barChart("Tokens", buckets, keys, "tokens", compact),
+      barChart("请求次数", buckets, keys, "requests", compact),
+      usageLegend(keys))),
+    card("回复明细", usagePage.session ? `会话 ${usagePage.session} · ${turns.length} 条` : `最近 ${turns.length} 条回复；点击会话标签只看该会话`, turnsTable(turns), null, "card-flush"),
+  ];
+};
 
 // ---------- Quota ----------
 // Rings mirror Apple Activity: one concentric ring per quota window of a

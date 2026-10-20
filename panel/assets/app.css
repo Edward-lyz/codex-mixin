@@ -796,6 +796,48 @@ details[open] > .agent-list { animation: rise var(--dur-spring) var(--spring) bo
   transform-origin: left;
   transition: transform 900ms var(--spring);
 }
+/* ---------- Usage ---------- */
+
+.grid-4 { grid-template-columns: repeat(4, minmax(0, 1fr)); }
+.usage-toolbar { display: flex; flex-wrap: wrap; align-items: center; gap: 10px; }
+.select-sm { width: auto; min-width: 160px; height: 32px; font-size: var(--fs-xs); }
+.uchart-grid { display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 24px; }
+.uchart { display: grid; gap: 10px; min-width: 0; }
+.uchart-head { display: flex; align-items: baseline; justify-content: space-between; gap: 12px; }
+.uchart-head strong { font-size: var(--fs-lg); font-weight: 600; }
+.uchart-plot {
+  display: flex;
+  align-items: stretch;
+  gap: 3px;
+  height: 150px;
+  padding-bottom: 18px;
+  border-bottom: var(--hairline);
+}
+.uchart-col { position: relative; display: flex; flex: 1; min-width: 0; flex-direction: column; justify-content: flex-end; }
+.uchart-stack { display: flex; flex: 1; flex-direction: column-reverse; justify-content: flex-start; overflow: hidden; border-radius: 3px 3px 0 0; }
+.uchart-col:hover .uchart-stack { opacity: 0.8; }
+.uchart-seg { display: block; min-height: 0; background: var(--ring-color, var(--ink-16)); transition: height var(--dur-spring) var(--spring); }
+.uchart-seg.is-extra { background: var(--ink-16); }
+.uchart-x { position: absolute; bottom: -18px; left: 50%; color: var(--ink-54); font-size: 11px; transform: translateX(-50%); white-space: nowrap; }
+.uchart-legend { display: flex; flex-wrap: wrap; grid-column: 1 / -1; gap: 6px 16px; margin: 0; padding: 0; color: var(--ink-64); font-size: var(--fs-xs); list-style: none; }
+.uchart-legend li { display: flex; align-items: center; gap: 6px; }
+.chip-btn {
+  padding: 2px 8px;
+  border: 0;
+  border-radius: 999px;
+  background: var(--ink-05);
+  color: var(--ink-90);
+  font-size: 11px;
+  cursor: pointer;
+}
+.chip-btn:hover { background: var(--ink-08); }
+.chip-btn:focus-visible { outline: none; box-shadow: var(--focus-ring); }
+.nowrap { white-space: nowrap; }
+.table.turns td { vertical-align: top; }
+.table.turns .badge { margin-left: 6px; }
+.table.turns tr.is-flagged td:first-child { box-shadow: inset 2px 0 0 var(--c-alert); }
+.table.turns td.is-low .row-sub { color: var(--c-alert); }
+
 /* ---------- Quota ---------- */
 
 .quota-grid { display: grid; gap: 14px; grid-template-columns: repeat(auto-fill, minmax(min(360px, 100%), 1fr)); }
@@ -973,6 +1015,8 @@ details[open] > .agent-list { animation: rise var(--dur-spring) var(--spring) bo
 /* ---------- Narrow screens ---------- */
 
 @media (max-width: 960px) {
+  .grid-4 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
+  .uchart-grid { grid-template-columns: minmax(0, 1fr); }
   .grid-3 { grid-template-columns: repeat(2, minmax(0, 1fr)); }
 }
 
