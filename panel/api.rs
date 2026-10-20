@@ -6,6 +6,8 @@
 //!   benchmark, usage, models, panel, refreshed_at_ms}`; mirrors `info`,
 //!   `providers list`, `benchmark status`,
 //!   `usage` and `fusion models` JSON.
+//! - `GET /api/usage?days=1|7|30` -> `{daily, turns}` from
+//!   `usage --daily --json` and `usage --turns --json` (newest 500 turns).
 //! - `GET /api/quota` -> `quota --json`; `GET /api/doctor` ->
 //!   `doctor --quick --json`; `GET /api/logs?lines=N` -> `{text}`.
 //! - `GET /api/agents` -> `agent list --json` plus `template_icons`;
@@ -102,6 +104,7 @@ impl IntoResponse for ApiError {
 pub(super) fn router(state: Shared) -> Router {
     let api = Router::new()
         .route("/api/snapshot", get(snapshot))
+        .route("/api/usage", get(usage_details))
         .route("/api/quota", get(quota))
         .route("/api/doctor", get(doctor))
         .route("/api/logs", get(logs))
@@ -316,6 +319,54 @@ async fn snapshot(
         },
         "refreshed_at_ms": refreshed_at_ms,
     })))
+}
+
+/// Day ranges the usage page offers; the CLI accepts any 1..=3650.
+#[derive(Clone, Copy, Debug, Default, Deserialize)]
+enum UsageDays {
+    #[serde(rename = "1")]
+    Day,
+    #[serde(rename = "7")]
+    Week,
+    #[default]
+    #[serde(rename = "30")]
+    Month,
+}
+
+impl UsageDays {
+    fn arg(self) -> &'static str {
+        match self {
+            Self::Day => "1",
+            Self::Week => "7",
+            Self::Month => "30",
+        }
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct UsageDetailsQuery {
+    #[serde(default)]
+    days: UsageDays,
+}
+
+// The turn ledger keeps 5000 rows; the page lists the newest 500 so one
+// response stays small on slow links.
+const PANEL_TURN_LIMIT: &str = "500";
+
+async fn usage_details(Query(query): Query<UsageDetailsQuery>) -> Result<Json<Value>, ApiError> {
+    let days = query.days.arg();
+    let daily_args = ["usage", "--daily", "--json", "--days", days];
+    let turn_args = [
+        "usage",
+        "--turns",
+        "--json",
+        "--days",
+        days,
+        "--limit",
+        PANEL_TURN_LIMIT,
+    ];
+    let (daily, turns) = tokio::try_join!(run_json(&daily_args), run_json(&turn_args))?;
+    Ok(Json(json!({ "daily": daily, "turns": turns })))
 }
 
 async fn quota() -> Result<Json<Value>, ApiError> {
