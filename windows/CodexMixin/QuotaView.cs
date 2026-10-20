@@ -118,7 +118,8 @@ internal static class QuotaView
         return number;
     }
 
-    private static Brush RingBrush(int index) => index < RingColors.Length
+    // Also colors usage chart series, so a provider keeps one hue per position.
+    internal static Brush RingBrush(int index) => index < RingColors.Length
         ? new SolidColorBrush(RingColors[index])
         : (Brush)Microsoft.UI.Xaml.Application.Current.Resources["ControlStrongStrokeColorDisabledBrush"];
 

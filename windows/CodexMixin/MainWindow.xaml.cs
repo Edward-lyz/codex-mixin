@@ -24,7 +24,7 @@ public sealed partial class MainWindow : Window
     private NativeShell? shell;
     private CancellationTokenSource? activeCancellation;
     private JsonElement metadata;
-    private readonly string page;
+    private string page;
     private string? providerId;
     private JsonElement[] providers = [];
     private bool connectionSelected;
@@ -48,21 +48,11 @@ public sealed partial class MainWindow : Window
         this.page = page;
         // HWND creation precedes XAML loading. CI waits for real initialization
         // before asking WinUI to construct its automation peers.
-        if (page == "providers" && Environment.GetCommandLineArgs().Contains("--capture-ui"))
+        if (IsConsolePage(page) && Environment.GetCommandLineArgs().Contains("--capture-ui"))
             captureReady = new EventWaitHandle(false, EventResetMode.ManualReset, $"Local\\CodexMixin.UIReady.{Environment.ProcessId}");
         InitializeComponent();
         Root.RequestedTheme = ((App)Microsoft.UI.Xaml.Application.Current).Theme;
-        Title = WindowCaption.Text = page switch
-        {
-            "providers" => "模型与服务", "agents" => "Agent 接入管理", "fusion" => "Fusion 设置",
-            "usage" => "用量与额度", _ => "设置与诊断"
-        };
-        SidebarColumn.Width = new GridLength(page == "providers" ? 248 : 0);
-        ProviderSidebar.Visibility = page == "providers" ? Visibility.Visible : Visibility.Collapsed;
-        ProviderTabs.Visibility = ProviderSidebar.Visibility;
-        if (page != "providers") { ContentLayer.BorderThickness = new Thickness(0, 1, 0, 0); ContentLayer.CornerRadius = new CornerRadius(0); }
-        ApplyChanges.Visibility = page is "providers" or "fusion" ? Visibility.Visible : Visibility.Collapsed;
-        if (page == "agents") { PageTitle.Visibility = Visibility.Collapsed; PageDescription.Visibility = Visibility.Collapsed; ApplySummary.Visibility = Visibility.Collapsed; }
+        ApplyPageLayout();
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"));
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 800));
         if (AppWindowTitleBar.IsCustomizationSupported())
@@ -77,7 +67,8 @@ public sealed partial class MainWindow : Window
         else { TitleBar.Visibility = Visibility.Collapsed; }
         SystemBackdrop = new MicaBackdrop();
         var handle = WindowNative.GetWindowHandle(this);
-        try { if (page == "providers") shell = new NativeShell(handle, OnTrayCommand); }
+        // The console window owns the tray icon; Fusion and settings are side windows.
+        try { if (IsConsolePage(page)) shell = new NativeShell(handle, OnTrayCommand); }
         catch (Exception error) { ShowNotice("系统托盘不可用", error.Message, InfoBarSeverity.Warning); }
         AppWindow.Closing += (_, args) =>
         {
@@ -134,6 +125,53 @@ public sealed partial class MainWindow : Window
     internal void Shutdown() { exiting = true; Close(); }
     internal void SetTheme(ElementTheme theme) => Root.RequestedTheme = theme;
 
+    /// Pages hosted by the single console window, in tab order.
+    internal static bool IsConsolePage(string name) => name is "providers" or "agents" or "usage";
+
+    private void ApplyPageLayout()
+    {
+        Title = page switch
+        {
+            "providers" => "模型与服务", "agents" => "Agent 接入管理", "fusion" => "Fusion 设置",
+            "usage" => "用量明细", _ => "设置与诊断"
+        };
+        var console = IsConsolePage(page);
+        WindowCaption.Text = console ? "控制台" : Title;
+        ConsoleTabs.Visibility = console ? Visibility.Visible : Visibility.Collapsed;
+        foreach (var tab in ConsoleTabButtons.Children.Cast<Microsoft.UI.Xaml.Controls.Primitives.ToggleButton>())
+            tab.IsChecked = (string)tab.Tag == page;
+        var providers = page == "providers";
+        SidebarColumn.Width = new GridLength(providers ? 248 : 0);
+        ProviderSidebar.Visibility = providers ? Visibility.Visible : Visibility.Collapsed;
+        ProviderTabs.Visibility = ProviderSidebar.Visibility;
+        ContentLayer.BorderThickness = providers ? new Thickness(1, 1, 0, 0) : new Thickness(0, 1, 0, 0);
+        ContentLayer.CornerRadius = providers ? new CornerRadius(8, 0, 0, 0) : new CornerRadius(0);
+        ApplyChanges.Visibility = page is "providers" or "fusion" ? Visibility.Visible : Visibility.Collapsed;
+        var header = page == "agents" ? Visibility.Collapsed : Visibility.Visible;
+        PageTitle.Visibility = PageDescription.Visibility = ApplySummary.Visibility = header;
+    }
+
+    /// Switches the console window to another console page. Unapplied provider
+    /// edits are confirmed first because loading a page rebuilds the drafts.
+    internal async void ShowPage(string next)
+    {
+        ShowMain();
+        if (next == page || busy) return;
+        if (page == "providers" && (draftDirty || connectionDrafts.Count > 0 || modelDrafts.Count > 0)
+            && !await ConfirmAsync("放弃未应用的更改？", "切换页面会丢弃尚未应用的服务商与模型更改。", "放弃并切换"))
+        {
+            ApplyPageLayout();
+            return;
+        }
+        connectionDrafts.Clear(); modelDrafts.Clear();
+        page = next;
+        ApplyPageLayout();
+        if (ready) await ReloadAsync();
+    }
+
+    private void OnConsoleTab(object sender, RoutedEventArgs args) =>
+        ShowPage((string)((FrameworkElement)sender).Tag);
+
     internal void ShowMain()
     {
         shell?.Show();
@@ -157,7 +195,7 @@ public sealed partial class MainWindow : Window
                 ["service", command, "--managed", "--json"]);
             return;
         }
-        ((App)Microsoft.UI.Xaml.Application.Current).OpenPage(command is "providers" or "agents" or "fusion" or "settings" ? command : "overview");
+        ((App)Microsoft.UI.Xaml.Application.Current).OpenPage(command is "providers" or "agents" or "usage" or "fusion" or "settings" ? command : "overview");
     });
 
     private async Task ExitAsync()
@@ -289,7 +327,7 @@ public sealed partial class MainWindow : Window
         {
             "providers" => ("供应商与模型", "管理服务连接与向 Agent 提供的模型"),
             "agents" => ("Agent 接入", "检测、接入与升级由本地 CLI 执行"),
-            "usage" => ("用量与额度", "真实请求用量、缓存命中与供应商额度"),
+            "usage" => ("用量明细", "每日用量、按 Provider 拆分与每条回复的明细"),
             "fusion" => ("Fusion", "组合 Panel、Judge 与 Final 模型"),
             "settings" => ("设置", "外观、启动、备份与诊断"),
             _ => ("概览", "模型服务、连接状态与常用操作")
@@ -890,26 +928,46 @@ public sealed partial class MainWindow : Window
 
     private async Task UsageAsync(CancellationToken token)
     {
-        var range = Choice("统计范围", ["今天", "7 天", "30 天", "全部"], "今天");
+        var range = Choice("统计范围", ["今天", "7 天", "30 天"], "7 天");
+        var grouping = Choice("图表分组", ["聚合", "按 Provider 拆分"], "聚合");
+        var filters = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        filters.Children.Add(range); filters.Children.Add(grouping);
         var usageBody = new StackPanel { Spacing = 12 };
-        async Task ReadUsage(CancellationToken cancellation)
+        JsonElement[] daily = [], turns = [];
+        string? session = null;
+        int Days() => range.SelectedIndex switch { 0 => 1, 2 => 30, _ => 7 };
+        void Render()
         {
             usageBody.Children.Clear();
-            var args = new List<string> { "usage", "--json" };
-            if ((string)range.SelectedItem != "全部") args.AddRange(["--days", range.SelectedIndex switch { 1 => "7", 2 => "30", _ => "1" }]);
+            var split = grouping.SelectedIndex == 1;
+            var shown = session == null ? turns : turns.Where(turn => Json.Text(turn, "session") == session).ToArray();
+            usageBody.Children.Add(UsageView.Summary(daily, shown, Card));
+            var charts = new Grid { ColumnSpacing = 24 };
+            charts.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            charts.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
+            charts.Children.Add(UsageView.Chart(daily, Days(), split, UsageView.DailyTokens, "Tokens"));
+            var requests = UsageView.Chart(daily, Days(), split, UsageView.DailyRequests, "请求次数");
+            Grid.SetColumn((FrameworkElement)requests, 1); charts.Children.Add(requests);
+            usageBody.Children.Add(Card("每日用量", split ? "按 Provider 拆分" : "全部 Provider 聚合", charts));
+            var note = session == null ? $"最近 {shown.Length} 条回复；点击会话标签只看该会话" : $"会话 {session} · {shown.Length} 条";
+            usageBody.Children.Add(Card("回复明细", note, shown.Length == 0 ? Text("所选范围内还没有经过网关的模型回复。")
+                : new Border { Child = UsageView.Turns(shown, tag => { session = session == null ? tag : null; Render(); }), Style = Themed("ListCard") }));
+        }
+        async Task ReadUsage(CancellationToken cancellation)
+        {
+            var days = Days().ToString(System.Globalization.CultureInfo.InvariantCulture);
             try
             {
-                var rows = Json.Rows(await Client.QueryAsync(args.ToArray(), cancellation));
-                if (rows.Length == 0) usageBody.Children.Add(Text("此时间范围暂无请求记录。"));
-                foreach (var row in rows)
-                    usageBody.Children.Add(Card($"{Json.Text(row, "provider_id")} / {Json.Text(row, "model_id")}",
-                        $"请求 {Json.Field(row, "request_count")} · 输入 {Json.Field(row, "input_tokens")} · 缓存 {Json.Field(row, "cache_read_tokens")} · 输出 {Json.Field(row, "output_tokens")}",
-                        Text($"缓存命中 {Metric(row, "cache_hit_percent", "%")} · TTFT {Metric(row, "average_ttft_ms", " ms")} · 输出 {Metric(row, "output_tps", " tokens/s")}")));
+                daily = Json.Rows(await Client.QueryAsync(["usage", "--daily", "--json", "--days", days], cancellation));
+                turns = Json.Rows(await Client.QueryAsync(["usage", "--turns", "--json", "--days", days, "--limit", "500"], cancellation));
+                session = null;
+                Render();
             }
-            catch (CliFailure error) { usageBody.Children.Add(Card("用量不可用", error.Message)); }
+            catch (CliFailure error) { usageBody.Children.Clear(); usageBody.Children.Add(Card("用量不可用", error.Message)); }
         }
         range.SelectionChanged += async (_, _) => await ExecuteUiAsync("读取用量", ReadUsage);
-        PageBody.Children.Add(range); PageBody.Children.Add(usageBody);
+        grouping.SelectionChanged += (_, _) => Render();
+        PageBody.Children.Add(filters); PageBody.Children.Add(usageBody);
         await ReadUsage(token);
         var quotaBody = new StackPanel { Spacing = 16 };
         JsonElement[] quotaRows = [];
@@ -934,12 +992,6 @@ public sealed partial class MainWindow : Window
         }
         catch (CliFailure error) { quotaBody.Children.Add(Text($"额度不可用：{error.Message}")); }
         PageBody.Children.Add(Card("供应商额度", "圆环按已用比例绘制，接近上限时转为红色；查询失败时展示原因，未知额度不会显示为零。", quotaBody));
-    }
-
-    private static string Metric(JsonElement row, string key, string unit)
-    {
-        var value = Json.Field(row, key);
-        return value.ValueKind == JsonValueKind.Null ? "未知" : $"{value.GetDouble():0.##}{unit}";
     }
 
     private async Task FusionAsync(CancellationToken token)

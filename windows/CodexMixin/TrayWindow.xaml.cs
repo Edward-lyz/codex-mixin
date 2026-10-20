@@ -10,11 +10,9 @@ namespace CodexMixin;
 // XAML window roots are framework activation types.
 public sealed partial class TrayWindow : Window
 {
-    private const int VisibleUsageModels = 20;
     private readonly CancellationTokenSource lifetime = new();
     private JsonElement[] providers = [];
     private string? providerId;
-    private string days = "1";
     private JsonElement[] quotaRows = [];
     private QuotaStyle quotaStyle = QuotaView.Stored();
     private bool busy;
@@ -58,8 +56,6 @@ public sealed partial class TrayWindow : Window
     {
         if (busy) return;
         busy = true; GatewaySwitch.IsEnabled = false; PanelStatus.Text = "正在读取…";
-        foreach (var range in UsageRanges.Children.Cast<Microsoft.UI.Xaml.Controls.Primitives.ToggleButton>())
-            range.IsChecked = (string)range.Tag == days;
         try
         {
             var client = ((App)Microsoft.UI.Xaml.Application.Current).Client;
@@ -86,23 +82,11 @@ public sealed partial class TrayWindow : Window
             }
             var selected = providers.FirstOrDefault(row => Json.Text(row, "id") == providerId);
             var hasProvider = selected.ValueKind == JsonValueKind.Object;
-            ProviderTitle.Text = hasProvider ? Json.Text(selected, "display_name") : "尚未配置服务商";
-            ProviderIcon.Visibility = hasProvider ? Visibility.Visible : Visibility.Collapsed;
-            if (hasProvider) ProviderIcon.Source = Marks.Provider(selected, 22).Source;
-            UsageBody.Children.Clear();
+            ProviderTitle.Text = hasProvider ? "额度" : "尚未配置服务商";
             quotaRows = Json.Flag(status, "configured")
                 ? Json.Rows(await client.QueryAsync(["quota", "--json"], lifetime.Token)).Where(row => Json.Text(row, "provider_id") == providerId).ToArray()
                 : [];
             RenderQuota();
-            if (!running) UsageBody.Children.Add(Placeholder("本地网关未运行，暂无可读取的用量。"));
-            else
-            {
-                var arguments = new List<string> { "usage", "--json" };
-                if (days != "all") arguments.AddRange(["--days", days]);
-                var rows = Json.Rows(await client.QueryAsync(arguments.ToArray(), lifetime.Token)).Where(row => Json.Text(row, "provider_id") == providerId).ToArray();
-                if (rows.Length > 0) RenderUsage(rows);
-                if (rows.Length == 0) UsageBody.Children.Add(Placeholder("此时间范围暂无请求记录。"));
-            }
             PanelStatus.Text = $"{DateTime.Now:HH:mm:ss} · 配置已同步";
         }
         catch (Exception error)
@@ -128,20 +112,6 @@ public sealed partial class TrayWindow : Window
 
     private static Style Themed(string key) => (Style)Microsoft.UI.Xaml.Application.Current.Resources[key];
 
-    private static TextBlock Placeholder(string text) => new()
-    {
-        Text = text, Style = Themed("Caption"), TextWrapping = TextWrapping.Wrap,
-        HorizontalAlignment = HorizontalAlignment.Center, Margin = new Thickness(0, 24, 0, 24)
-    };
-
-    private static double? Amount(JsonElement row, string field)
-    {
-        if (!row.TryGetProperty(field, out var value) || value.ValueKind == JsonValueKind.Null) return null;
-        if (value.ValueKind != JsonValueKind.Number || !value.TryGetDouble(out var number) || !double.IsFinite(number) || number < 0)
-            throw new InvalidOperationException($"CLI 返回了无效的 {field} 数值。");
-        return number;
-    }
-
     private void RenderQuota()
     {
         QuotaBody.Children.Clear();
@@ -156,40 +126,11 @@ public sealed partial class TrayWindow : Window
             : QuotaView.Render(quotaRows, quotaStyle));
     }
 
-    private static double TokenTotal(JsonElement row) => new[] { "input_tokens", "cache_read_tokens", "cache_creation_tokens", "output_tokens" }
-        .Sum(field => Amount(row, field) ?? throw new InvalidOperationException($"CLI 缺少 {field}。"));
-
-    private static string TokenLabel(double value) => value >= 1_000_000 ? $"{value / 1_000_000:0.#}M" : value >= 1000 ? $"{value / 1000:0.#}K" : $"{value:0}";
-
-    private void RenderUsage(JsonElement[] rows)
-    {
-        var models = rows.Select(row => (Row: row, Total: TokenTotal(row))).OrderByDescending(row => row.Total).Take(VisibleUsageModels).ToArray();
-        var maximum = Math.Max(1, models.Max(row => row.Total));
-        const double plotHeight = 96;
-        var chart = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 4 };
-        foreach (var (row, total) in models)
-        {
-            var model = Json.Text(row, "model_id");
-            var column = new StackPanel { Spacing = 6, Width = 76 };
-            var plot = new Grid { Height = plotHeight + 18 };
-            var barHeight = Math.Max(4, total / maximum * plotHeight);
-            plot.Children.Add(new TextBlock { Text = TokenLabel(total), Style = Themed("Caption"), HorizontalAlignment = HorizontalAlignment.Center, VerticalAlignment = VerticalAlignment.Bottom, Margin = new Thickness(0, 0, 0, barHeight + 4) });
-            plot.Children.Add(new Border { Style = Themed("BarFill"), Width = 12, Height = barHeight, VerticalAlignment = VerticalAlignment.Bottom, Opacity = 0.85 });
-            column.Children.Add(plot);
-            column.Children.Add(new TextBlock { Text = model, Style = Themed("Caption"), FontSize = 11, HorizontalAlignment = HorizontalAlignment.Center });
-            ToolTipService.SetToolTip(column, $"{model}\n请求 {Json.Field(row, "request_count")} · 输入 {Json.Field(row, "input_tokens")} · 缓存输入 {Json.Field(row, "cache_read_tokens")} · 输出 {Json.Field(row, "output_tokens")}");
-            chart.Children.Add(column);
-        }
-        UsageBody.Children.Add(new ScrollViewer { Content = chart, HorizontalScrollBarVisibility = ScrollBarVisibility.Auto, VerticalScrollBarVisibility = ScrollBarVisibility.Disabled });
-        if (rows.Length > VisibleUsageModels) UsageBody.Children.Add(new TextBlock { Text = $"展示用量最高的 {VisibleUsageModels} 个模型", Style = Themed("Caption"), FontSize = 11 });
-    }
-
     private async void OnGatewayToggled(object sender, RoutedEventArgs args)
     {
         if (settingState || busy) return;
         await ChangeAsync(["service", GatewaySwitch.IsOn ? "start" : "stop", "--managed", "--json"]);
     }
-    private async void OnRange(object sender, RoutedEventArgs args) { days = (string)((FrameworkElement)sender).Tag; await ReloadAsync(); }
     private void OnOpen(object sender, RoutedEventArgs args)
     {
         var target = (string)((FrameworkElement)sender).Tag;

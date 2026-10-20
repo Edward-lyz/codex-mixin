@@ -18,27 +18,21 @@
       <StackPanel x:Name="ProviderStrip" Orientation="Horizontal" Spacing="6"/>
      </ScrollViewer>
      <Border Height="1" Background="{ThemeResource DividerStrokeColorDefaultBrush}"/>
+     <!-- The provider strip above names the selection, so no provider header repeats it. -->
      <Grid ColumnSpacing="10">
-      <Grid.ColumnDefinitions><ColumnDefinition Width="Auto"/><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
-      <Image x:Name="ProviderIcon" Width="22" Height="22" Visibility="Collapsed" VerticalAlignment="Center"/>
-      <TextBlock x:Name="ProviderTitle" Grid.Column="1" Text="尚未配置服务商" FontSize="15" FontWeight="SemiBold" VerticalAlignment="Center" TextTrimming="CharacterEllipsis"/>
-      <Border x:Name="QuotaStyleHost" Grid.Column="2" VerticalAlignment="Center"/>
+      <Grid.ColumnDefinitions><ColumnDefinition Width="*"/><ColumnDefinition Width="Auto"/></Grid.ColumnDefinitions>
+      <TextBlock x:Name="ProviderTitle" Text="尚未配置服务商" Style="{StaticResource Caption}" VerticalAlignment="Center"/>
+      <Border x:Name="QuotaStyleHost" Grid.Column="1" VerticalAlignment="Center"/>
      </Grid>
      <StackPanel x:Name="QuotaBody" Spacing="12"/>
-     <Border Style="{StaticResource SegmentTrack}" HorizontalAlignment="Center">
-      <StackPanel x:Name="UsageRanges" Orientation="Horizontal" Spacing="2">
-       <ToggleButton Style="{StaticResource Segment}" Content="1天" Tag="1" IsChecked="True" Click="OnRange"/>
-       <ToggleButton Style="{StaticResource Segment}" Content="7天" Tag="7" Click="OnRange"/>
-       <ToggleButton Style="{StaticResource Segment}" Content="1月" Tag="30" Click="OnRange"/>
-       <ToggleButton Style="{StaticResource Segment}" Content="全部" Tag="all" Click="OnRange"/>
-      </StackPanel>
-     </Border>
-     <StackPanel x:Name="UsageBody" Spacing="6"/>
      <TextBlock x:Name="PanelStatus" AutomationProperties.AutomationId="panel-status" Text="正在读取…" TextWrapping="Wrap" Style="{StaticResource Caption}" FontSize="11"/>
     </StackPanel>
    </ScrollViewer>
    <Border Grid.Row="1" Background="{ThemeResource LayerOnAcrylicFillColorDefaultBrush}" BorderBrush="{ThemeResource DividerStrokeColorDefaultBrush}" BorderThickness="0,1,0,0" Padding="6">
     <StackPanel Spacing="0">
+     <Button Style="{StaticResource MenuRow}" Tag="usage" Click="OnOpen" AutomationProperties.Name="用量明细…">
+      <StackPanel Orientation="Horizontal" Spacing="12"><FontIcon Glyph="&#xE9D2;" FontSize="16"/><TextBlock Text="用量明细…"/></StackPanel>
+     </Button>
      <Button Style="{StaticResource MenuRow}" Tag="providers" Click="OnOpen" AutomationProperties.Name="模型与服务…">
       <StackPanel Orientation="Horizontal" Spacing="12"><FontIcon Glyph="&#xE8A9;" FontSize="16"/><TextBlock Text="模型与服务…"/></StackPanel>
      </Button>

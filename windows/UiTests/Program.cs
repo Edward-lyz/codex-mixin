@@ -117,9 +117,10 @@ internal static class Program
                         Wait(() => Find(target, "panel-status").Current.Name.Contains("配置已同步", StringComparison.Ordinal), "tray CLI load", process);
                         Wait(() => target.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text)).Cast<AutomationElement>()
                             .Any(element => element.Current.Name.Contains("81 / 100", StringComparison.Ordinal)), "real CLI quota display", process);
-                        Wait(() => target.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text)).Cast<AutomationElement>()
-                            .Any(element => element.Current.Name.Contains("ci-coder", StringComparison.Ordinal)), "real gateway usage chart", process);
                     }
+                    if (role == "usage")
+                        Wait(() => target.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text)).Cast<AutomationElement>()
+                            .Any(element => element.Current.Name.Contains("ci-coder", StringComparison.Ordinal)), "real gateway per-turn usage", process);
                     Capture(target, Path.Combine(output, $"{filename}-{themeName}.png"));
                     if (role != "overview") CaptureLower(target, Path.Combine(output, $"{filename}-lower-{themeName}.png"));
                     if (role == "agents")
@@ -212,7 +213,7 @@ internal static class Program
         ("agents", "Agent 接入管理", "agents"),
         ("fusion", "Fusion 设置", "fusion"),
         ("settings", "设置与诊断", "settings"),
-        ("usage", "用量与额度", "usage"),
+        ("usage", "用量明细", "usage"),
         ("overview", "Codex Mixin · 主面板", "main-panel")
     ];
 
