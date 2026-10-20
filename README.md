@@ -5,8 +5,8 @@
 <h1 align="center">Codex Mixin</h1>
 
 <p align="center">
-  <b>官方 OpenAI Codex 与 50+ 编程智能体的跨平台本地网关与桌面控制中心</b><br>
-  <sub>在保留官方账号、GPT 原生模型与远程任务的前提下，无缝接入任意大模型与自定义供应商。</sub>
+  <b>面向官方 OpenAI Codex 与主流 AI Coding Agent 的本地模型网关</b><br>
+  <sub>在保留官方账号、GPT 模型和远程任务的同时，接入第三方模型供应商。</sub>
 </p>
 
 <p align="center">
@@ -23,129 +23,120 @@
 
 <p align="center">
   <a href="#概览">概览</a> ·
-  <a href="#核心价值">核心价值</a> ·
-  <a href="#最近更新">最近更新</a> ·
-  <a href="#界面展示">界面展示</a> ·
+  <a href="#界面">界面</a> ·
+  <a href="#功能">功能</a> ·
   <a href="#产品形态">产品形态</a> ·
-  <a href="#供应商与协议支持">供应商与协议</a> ·
-  <a href="#agent-接入生态">Agent 接入</a> ·
-  <a href="#进阶特性">进阶特性</a> ·
+  <a href="#供应商">供应商</a> ·
+  <a href="#agent-接入">Agent 接入</a> ·
   <a href="#快速开始">快速开始</a> ·
-  <a href="https://github.com/Edward-lyz/codex-mixin/wiki">完整文档</a>
+  <a href="#文档">文档</a>
 </p>
 
 ---
 
 ## 概览
 
-Codex Mixin 是一个基于 Rust 构建的高性能跨平台本地网关与桌面控制中心。
+Codex Mixin 是一个用 Rust 编写的本地网关。它在本机启动一个 OpenAI / Anthropic 兼容端点，把官方 Codex 和其他 Coding Agent 的请求路由到你配置的模型供应商，例如 DeepSeek、Claude、Gemini、Baidu OneAPI、AWS Bedrock、Google Antigravity，以及任意 OpenAI 或 Anthropic 兼容端点。
 
-它打破了官方 OpenAI Codex 对底层模型的局限，让开发者可以在官方 Codex 客户端与 CLI 中自由选用 DeepSeek、Claude、Gemini、Baidu OneAPI、AWS Bedrock、Google Antigravity 及任意兼容 OpenAI / Anthropic 协议的模型；同时完整保留官方 ChatGPT/OpenAI 账号认证、GPT 原生模型、历史会话与移动端远程任务管理。
+接入官方 Codex 时，自定义模型与官方 GPT 模型同时出现在模型选择器中；ChatGPT 账号登录、历史会话和移动端远程任务保持可用。断开接入后，网关恢复客户端原来的配置。
 
-不仅面向 Codex，Codex Mixin 还是一体化的本地模型路由器与用量治理中枢，内置支持 50 款主流 AI Coding Agent 的配置接管与一键撤销恢复。
-
----
-
-## 核心价值
-
-<table>
-  <tr>
-    <td width="50%">
-      <b>官方 Codex 无感共存</b><br>
-      自定义模型与 OpenAI 官方模型在 Codex 选择器中共存并重名隔离。官方模型目录每 30 秒自动同步 OpenAI 最新列表，接入与断开均不损坏原有会话、数据库与账号状态。
-    </td>
-    <td width="50%">
-      <b>官方 GPT ECH 智能直连</b><br>
-      基于中继 DoH 与 ECH (Encrypted Client Hello) 技术，在受限网络环境下自动优选 IP 节点直连 OpenAI 官方端点，避免风控封号与网络中断。
-    </td>
-  </tr>
-  <tr>
-    <td width="50%">
-      <b>全双工协议无损互转</b><br>
-      零损耗桥接 OpenAI Responses、Chat Completions 与 Anthropic Messages 协议，深度支持流式思考过程 (Thinking)、复杂工具调用 (Tool Calls) 与多轮上下文。
-    </td>
-    <td width="50%">
-      <b>50+ 编程智能体统一纳管</b><br>
-      管理目录覆盖 50 款主流 Agent（如 Claude Code、OpenCode、Copilot、Cline 等），默认构建支持 38 款一键写入网关配置并在退出时无痕回退。
-    </td>
-  </tr>
-</table>
+网关之外，Codex Mixin 还记录每次回复的 Token 用量，汇总各供应商的额度，并为 50 款 Coding Agent 提供配置写入与恢复。所有能力由同一个 CLI 提供，macOS App、Windows App 和 Web 控制面板都通过 CLI 的 JSON 接口读取数据。
 
 ---
 
-## 最近更新
+## 界面
 
-### v0.7.3 & 近期版本演进
+以下截图来自本地运行的 Web 控制面板（`codex-mixin panel`）。macOS 与 Windows 控制台展示同样的数据。
 
-- **全新 Notion 风格 Web 控制面板**：运行 `codex-mixin panel` 即可打开现代化响应式浏览器控制台，专为 Linux、远端开发机和 SSH 终端设计，完整管理模型目录、Agent 接入与用量监控。
-- **Windows 原生 WinUI 3 客户端重构**：全面重构 Windows 桌面壳，基于现代 WinUI 3 与 Fluent Design 开发，替代旧版方案，系统托盘毫秒级响应，体积更小、更省资源。
-- **模型真实能力主动探测 (Capability Probing)**：模型管理中支持一键对已添加模型执行真实探测，自动化识别并标注 Reasoning 思考能力、Function Calling 工具调用、Tool Search 检索与 Web Search 联网搜索标签。
-- **Google Antigravity (AGY) & Gemini 协议原生接入**：支持原生 Google OAuth 凭证，动态发现 AGY 专属模型与实时额度，底层适配 Gemini Developer API。
-- **Agent 生态扩展至 50 款**：新增接入 VSCodium、Reasonix、Command Code、fx、Empryo、Ante、MiniMax Code、Cline 等 8 个适配器，覆盖主流 IDE、插件与 CLI。
-- **Codex 独立配置注入架构**：优化配置注入逻辑，无需本地预装或启动 Codex CLI 即可完成原子化写入，桌面端自动切换至 `STEPS_COMMANDS` 现代编码视图。
-- **传输性能深度优化**：支持大文本协商 gzip 压缩，序列化与临时流控移出核心异步运行时，降低显存与内存开销；支持模型能力缓存复用，避免重复计费。
-
----
-
-## 界面展示
+<p align="center">
+  <a href="docs/assets/WEB-Overview.png"><img src="docs/assets/WEB-Overview.png" alt="Web 控制面板概览页"></a><br>
+  <sub><b>概览</b> · 网关状态、Provider 健康度、用量最高的模型与额度</sub>
+</p>
 
 <table>
   <tr>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-model-picker.png"><img src="docs/assets/APP-model-picker.png" alt="macOS 菜单栏与模型选择器"></a><br>
-      <sub><b>macOS 原生体验</b> · 菜单栏状态、模型目录与基准测速</sub>
+      <a href="docs/assets/WEB-Quota.png"><img src="docs/assets/WEB-Quota.png" alt="按 Provider 汇总的额度圆环"></a><br>
+      <sub><b>额度</b> · 每个额度窗口一圈，中心显示最紧张窗口的已用百分比，可切换为条形</sub>
     </td>
     <td width="50%" align="center">
-      <a href="docs/assets/APP-ProviderModelList.png"><img src="docs/assets/APP-ProviderModelList.png" alt="Provider 模型发现与能力管理"></a><br>
-      <sub><b>模型与能力管理</b> · 自动发现、能力状态识别与延迟测速</sub>
+      <a href="docs/assets/WEB-Usage.png"><img src="docs/assets/WEB-Usage.png" alt="按天与按回复的 Token 用量明细"></a><br>
+      <sub><b>用量明细</b> · 按天、按 Provider 聚合，并列出每次回复的缓存命中、思考长度与返回模型</sub>
     </td>
   </tr>
   <tr>
     <td width="50%" align="center">
-      <a href="docs/assets/fusion-review.png"><img src="docs/assets/fusion-review.png" alt="Codex 内嵌模型融合与 Judge 评审"></a><br>
-      <sub><b>模型融合 (Fusion)</b> · 嵌入官方 Codex 内部的多模型编排与 Judge 评审</sub>
+      <a href="docs/assets/APP-ProviderModelList.png"><img src="docs/assets/APP-ProviderModelList.png" alt="macOS Provider 模型列表"></a><br>
+      <sub><b>macOS 控制台</b> · 模型发现、能力探测与测速</sub>
     </td>
     <td width="50%" align="center">
-      <a href="docs/assets/Mobile_Choice.PNG"><img src="docs/assets/Mobile_Choice.PNG" width="260" alt="移动端选择 Mixin 模型"></a><br>
-      <sub><b>移动端与远程控制</b> · 在移动端 Codex 中直接调用本地网关模型</sub>
+      <a href="docs/assets/fusion-review.png"><img src="docs/assets/fusion-review.png" alt="Codex 内的模型融合评审"></a><br>
+      <sub><b>Fusion</b> · 在官方 Codex 内编排多个模型并由 Judge 评审</sub>
     </td>
   </tr>
 </table>
 
 <p align="center">
-  <a href="https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour">查看包含完整 macOS、Windows WinUI 3、Web Panel 和移动端全景的 Product Tour</a>
+  更多截图见 Wiki 的 <a href="https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour">Product Tour</a>。
 </p>
+
+---
+
+## 功能
+
+**与官方 Codex 共存。** 自定义模型以独立名称加入 Codex 模型目录，与官方模型并列显示。官方目录从 OpenAI 同步，接入和断开都不改动 Codex 的会话数据库与账号状态。
+
+**协议转换。** 网关在 OpenAI Responses、Chat Completions、Anthropic Messages 和 Gemini 之间转换请求与流式响应，保留思考内容、工具调用和多轮上下文。
+
+**模型能力探测。** 对已添加的模型发送真实请求，标注 Reasoning、Function Calling、Tool Search 与 Web Search 能力，结果缓存后供目录和 Fusion 使用。
+
+**用量与额度。** 每次上游回复都写入本地 `usage.sqlite3`（保留最近 5000 条），记录未缓存输入、命中缓存、缓存命中率、输出、思考 Token、返回模型是否与请求一致、首字延迟和输出速度。额度按 Provider 汇总，默认以同心圆环显示，已用超过 90% 时标红。
+
+**模型融合（Fusion）。** 一个模型标识可以调度主模型和辅助模型，由 Judge 模型评审结果；也可以按时间段把同一标识路由到不同供应商。
+
+**Claude Desktop 接入。** `codex-mixin agent connect claude-desktop` 让 [Claude Desktop](https://claude.com/download) 的 Code 标签页通过网关使用目录中的模型。每个模型生成稳定的 `claude-sonnet-mixin-*` 路由别名，Claude.ai 账号登录不受影响；`agent disconnect claude-desktop` 恢复原配置。
+
+**配置备份。** `codex-mixin config export` 把 Provider 设置与凭据导出为 Base64 字符串，`config import` 在另一台机器上恢复。备份包含 API Key，请按凭据妥善保管。
+
+**官方 GPT 的 ECH 直连（实验性）。** `codex-mixin ech enable` 先测试 DNS 与 TLS，再通过 DoH 与 ECH 访问 OpenAI 官方端点；测试失败时保持原有直连方式。详见 [ECH GPT](docs/ech-gpt.md)。
+
+**客户端鉴权（可选）。** 默认构建不校验入站 Key，便于本机客户端直接使用。以 `--features client-auth` 构建时，网关要求客户端携带密钥。
 
 ---
 
 ## 产品形态
 
-| 端形态 | 交付方式 | 核心定位与能力 |
+| 形态 | 获取方式 | 说明 |
 | --- | --- | --- |
-| **macOS App** | 原生菜单栏 App | 菜单栏实时状态、Provider 与模型管理、能力探测、测速基准、Base64 配置备份导入导出与环境自愈。 |
-| **Windows App** | 原生 WinUI 3 托盘 App | Fluent Design 原生视觉、系统托盘常驻、供应商管理、模型路由选择、一键 Agent 接管与配置恢复。 |
-| **Web 控制面板** | `codex-mixin panel` 启动 | 现代 Notion 风格响应式界面，专为 Linux 主机、云端开发机、SSH 远程开发和无桌面环境设计。 |
-| **CLI Core** | 单一跨平台二进制 | 统一的底层运行时，提供确定性子命令、JSON 格式通信契约、后台守护进程生命周期管理。 |
+| CLI | 单一跨平台二进制 | 网关进程、Provider 与 Agent 管理、用量查询；为图形端提供 JSON 接口 |
+| macOS App | 菜单栏 App | 菜单栏显示额度；控制台包含模型与服务、Agent 接入、用量明细三个页面 |
+| Windows App | WinUI 3 托盘 App | 托盘显示额度；控制台与 macOS 相同，另有 Fusion 与设置窗口 |
+| Web 控制面板 | `codex-mixin panel` | 浏览器控制台，适合 Linux、远程开发机和无桌面环境 |
 
 ---
 
-## 供应商与协议支持
+## 供应商
 
-| 供应商 / 渠道 | 支持主协议 | 鉴权方式 | 特色能力 |
+`codex-mixin setup --preset <id>` 支持以下预设，其余兼容端点使用 `custom`。
+
+| 预设 | 供应商 | 上游协议 | 鉴权 |
 | --- | --- | --- | --- |
-| **Baidu OneAPI** | Anthropic Messages / OpenAI Responses | API Key / 租户令牌 | 完整支持 GLM-5.3、Claude、DeepSeek；自动保持 Session 亲和性。 |
-| **OpenRouter** | OpenAI Responses / Chat Completions | Bearer Token | 全球主流开源与闭源模型聚合，支持上下文压缩与流式直推。 |
-| **DeepSeek** | OpenAI Responses / Chat Completions | API Key | 深度支持 DeepSeek-V3 与 DeepSeek-R1 思考流式回传与工具调用。 |
-| **Google Antigravity (AGY)** | Gemini Developer API / Google 原生协议 | Google OAuth 2.0 | 动态发现 AGY 专属 Agent 模型及实时额度，内置指令流完整性校验。 |
-| **OpenCode Go** | OpenAI Responses | 专用会话令牌 | 自动注入 `x-opencode-session` 头部，多轮对话保持稳定 UUID 映射。 |
-| **AWS Bedrock** | Anthropic Messages | AWS SigV4 鉴权 | 支持 Claude 3.5 / 3.7 全系列，支持跨区域端点与模型级路径定制。 |
-| **通用兼容端点** | OpenAI / Anthropic 兼容协议 | 自定义 Header / Key | 任意兼容端点均可一键添加并执行能力探测与基准测试。 |
+| `openai` | OpenAI 官方 | OpenAI Responses | ChatGPT OAuth |
+| `baidu-oneapi` | Baidu OneAPI | Anthropic Messages；GPT 系列走 OpenAI Responses | API Key |
+| `openrouter` | OpenRouter | OpenAI Chat Completions | API Key |
+| `deepseek` | DeepSeek | OpenAI Responses | API Key |
+| `agy` | Google Antigravity | Gemini | Google OAuth |
+| `opencode-go` | OpenCode Go | OpenAI Responses | API Key，自动附加会话亲和 Header |
+| `aws-bedrock` | Amazon Bedrock (Mantle) | Anthropic Messages | Bedrock API Key 或 AWS 访问密钥 |
+| `custom` | 任意兼容端点 | OpenAI Responses（默认） | 自定义 Header 与 Key |
+
+添加后可运行 `codex-mixin provider test <id>` 检查鉴权与模型访问，用 `provider probe <id>` 探测模型能力。
 
 ---
 
-## Agent 接入生态
+## Agent 接入
 
-Codex Mixin 管理目录已覆盖 **50 款主流 AI Coding Agent**。默认构建提供 **38 款一键网关配置接入与恢复**。
+管理目录收录 50 款 AI Coding Agent，其中 38 款在默认构建中支持一键写入网关配置，并能在断开时恢复原配置。
 
 ### 已支持接入 (38 款)
 
@@ -324,7 +315,7 @@ Codex Mixin 管理目录已覆盖 **50 款主流 AI Coding Agent**。默认构�
 
 ### 暂未支持接入 (12 款)
 
-以下 12 款客户端因依赖操作系统钥匙串加密（Keychain）、进程级专有注入器、专属闭源认证协议或官方应用内专有运行时 API，暂未提供网关配置写入，其技术边界保持公开透明：
+以下 12 款客户端的配置依赖系统钥匙串加密、进程级注入、闭源认证协议或应用内私有运行时 API，目前不写入网关配置：
 
 <table>
   <tr>
@@ -386,92 +377,77 @@ Codex Mixin 管理目录已覆盖 **50 款主流 AI Coding Agent**。默认构�
   </tr>
 </table>
 
-> 安装对应框架后，可通过桌面端的 **Agent 管理** 界面一键连接或恢复配置，亦可通过 CLI 命令操作：`codex-mixin agent connect <id>` 与 `codex-mixin agent disconnect <id>`。详细各适配器文件路径、契约规范与限制见 [Agent integration contracts](docs/agent-integration-contracts.md)；图标归属声明见 [Agent Logos Attribution](macos/assets/agents/ATTRIBUTION.md)。
-
----
-
-## 进阶特性
-
-### 1. 模型融合与智能路由 (Model Fusion)
-
-- **多模型协同编排**：支持在单次推理任务中调度主模型与辅助模型，由 Judge 模型在后台执行交叉评审，有效提升生成代码的严谨性与健壮度。
-- **按时轮转与成本优化**：一个模型标识可在不同时间段自动路由到不同上游供应商（例如工作日白天路由至企业私有高性能端点，夜间及周末切换至波谷优惠公有云），实现 Token 经济效益最大化。
-
-### 2. Claude Desktop 深度接入
-
-通过 Codex Mixin，可直接让官方 [Claude Desktop](https://claude.com/download) 的 Code 标签页通过本地网关调度任意第三方大模型或官方 GPT：
-
-```bash
-# 接入 Claude Desktop
-codex-mixin agent connect claude-desktop
-
-# 恢复至接入前的原始状态
-codex-mixin agent disconnect claude-desktop
-```
-
-每个加入的目录模型都会生成稳定的 `claude-sonnet-mixin-*` 路由别名，原生支持至少 100 万上下文窗口标识，且不干扰用户原有的 Claude.ai 账号登录。
-
-### 3. 配置漫游与端到端安全
-
-- **便携配置备份**：一键将所有 Provider 设置与凭据导出为经过加密的 Base64 字符串，可在多台设备间一秒导入，告别繁琐的手动配置。
-- **可选客户端鉴权 (`client-auth`)**：默认构建无需携带入站 Key，方便局域网内设备共享额度；通过 `--features client-auth` 构建可开启严格的客户端密钥校验与 Codex OAuth 规则。
-- **智能端口分配**：网关与 Web 面板默认在 `8000–9000` 端口段内自动随机分配可用端口，避免端口占用冲突，同时对外暴露前均打印独立一次性访问令牌。
+> 安装对应框架后，可在控制台的 Agent 页面一键连接或恢复配置，亦可通过 CLI 命令操作：`codex-mixin agent connect <id>` 与 `codex-mixin agent disconnect <id>`。各适配器的写入文件、契约与限制见 [Agent integration contracts](docs/agent-integration-contracts.md)；图标归属声明见 [Agent Logos Attribution](macos/assets/agents/ATTRIBUTION.md)。
 
 ---
 
 ## 快速开始
 
-### 1. 安装与下载
+### 安装
 
-- **macOS**：从 [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 下载最新 `.dmg` 文件，拖入 Applications 即可使用菜单栏 App。
-- **Windows**：从 [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 下载安装器或免安装便携版 Zip，启动享受原生 WinUI 3 体验。
-- **Linux / 源码安装**：
+- **macOS**：从 [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 下载 `.dmg`，将 App 拖入「应用程序」。
+- **Windows**：从 [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 下载安装器或便携版 Zip。
+- **Linux / 源码构建**：需要 Rust stable 工具链。
+
   ```bash
   git clone https://github.com/Edward-lyz/codex-mixin.git
   cd codex-mixin
   cargo build --locked --release
+  # 产物：target/release/codex-mixin
   ```
 
-### 2. 常用操作命令
+### 首次配置
 
 ```bash
-# 启动后台网关守护进程
-codex-mixin start
+# 选择预设并填写 Key，随后启动网关
+codex-mixin setup --preset deepseek
 
-# 启动并打开现代化 Web 控制面板
-codex-mixin panel
-
-# 将官方 Codex 接入本地网关（保留官方账号与 GPT 模型）
+# 把官方 Codex 接入网关，保留 ChatGPT 账号与官方 GPT 模型
 codex-mixin agent connect codex --mode official-account
-
-# 将 Claude Code CLI 接入本地网关
-codex-mixin agent connect claude
-
-# 恢复指定客户端至官方默认配置
-codex-mixin agent disconnect codex
-codex-mixin agent disconnect claude
-
-# 探测指定 Provider 已保存模型的能力（Reasoning/Tools/Search）
-codex-mixin --no-tui provider probe <provider-id>
 ```
+
+### 常用命令
+
+```bash
+codex-mixin service start          # 后台启动网关
+codex-mixin service status         # 查看网关与 Provider 状态
+codex-mixin service restart        # 升级后重启网关，使新接口生效
+codex-mixin panel                  # 打开 Web 控制面板
+codex-mixin provider list          # 列出已配置的 Provider
+codex-mixin provider probe <id>    # 重新探测模型能力
+codex-mixin agent list             # 查看各 Agent 的安装与接入状态
+codex-mixin agent disconnect codex # 恢复 Codex 的原配置
+codex-mixin config export          # 导出含凭据的 Base64 备份
+```
+
+`codex-mixin panel` 默认监听所有网卡上 8000–9000 之间的随机端口，并在终端打印带一次性 token 的访问地址。只在本机使用时，建议加上 `--bind 127.0.0.1:<port>`。
 
 ---
 
-## 文档导航
+## 文档
 
-完整安装教程、架构剖析与故障排除请参阅 [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki)：
+仓库内文档：
 
-- [全景产品体验 (Product Tour)](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour)
-- [安装指南 (Installation)](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) 与 [快速上手 (Quick Start)](https://github.com/Edward-lyz/codex-mixin/wiki/Quick-Start)
-- [配置备份与跨机恢复](https://github.com/Edward-lyz/codex-mixin/wiki/Configuration-Backup-and-Restore)
-- [供应商与模型配置 (Providers & Models)](https://github.com/Edward-lyz/codex-mixin/wiki/Providers-and-Models)
-- [客户端与 Agent 接入指引](https://github.com/Edward-lyz/codex-mixin/wiki/Client-Integrations)
-- [官方 GPT ECH 网络直连与 TUN 模式](https://github.com/Edward-lyz/codex-mixin/wiki/ECH-GPT-Access)
-- [CLI 命令全量参考手册](https://github.com/Edward-lyz/codex-mixin/wiki/CLI-Reference)
-- [故障排查 (Troubleshooting)](https://github.com/Edward-lyz/codex-mixin/wiki/Troubleshooting) 与 [常见问题 (FAQ)](https://github.com/Edward-lyz/codex-mixin/wiki/FAQ)
+- [架构与模块边界](docs/architecture.md)
+- [Agent 接入契约](docs/agent-integration-contracts.md)
+- [Google Antigravity](docs/antigravity.md)
+- [官方 GPT 的 ECH 直连](docs/ech-gpt.md)
+- [浏览器跨域白名单](docs/cors.md)
+
+使用教程见 [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki)：
+
+- [Product Tour](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour)
+- [安装](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) 与 [快速上手](https://github.com/Edward-lyz/codex-mixin/wiki/Quick-Start)
+- [配置备份与恢复](https://github.com/Edward-lyz/codex-mixin/wiki/Configuration-Backup-and-Restore)
+- [供应商与模型](https://github.com/Edward-lyz/codex-mixin/wiki/Providers-and-Models)
+- [客户端接入](https://github.com/Edward-lyz/codex-mixin/wiki/Client-Integrations)
+- [CLI 参考](https://github.com/Edward-lyz/codex-mixin/wiki/CLI-Reference)
+- [故障排查](https://github.com/Edward-lyz/codex-mixin/wiki/Troubleshooting) 与 [FAQ](https://github.com/Edward-lyz/codex-mixin/wiki/FAQ)
+
+版本变更见 [RELEASE_NOTES.md](RELEASE_NOTES.md)。
 
 ---
 
 ## 许可证
 
-本项目遵循 [LICENSE](LICENSE) 与 [NOTICE](NOTICE) 协议。
+本项目以 [LICENSE](LICENSE) 发布，第三方声明见 [NOTICE](NOTICE)。
