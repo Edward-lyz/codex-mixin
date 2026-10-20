@@ -20,7 +20,12 @@ param(
   [string]$NsisPath = '',
   # Prebuilt codex-mixin.exe (for example the CI windows-cli artifact). When
   # set, the script skips cargo build and packages this binary instead.
-  [string]$CliPath = ''
+  [string]$CliPath = '',
+  # Prebuilt self-contained WinUI publish directory (CI windows-native-ui
+  # artifact). When set, the script packages it instead of publishing again.
+  [string]$UiPath = '',
+  # Skip CLI contract tests only when the same prebuilt CLI was already tested.
+  [switch]$SkipCliTests
 )
 
 $ErrorActionPreference = "Stop"
@@ -79,15 +84,29 @@ function Resolve-MakeNsis {
   throw "makensis.exe not found. Install NSIS (https://nsis.sourceforge.io/Download) or pass -NsisPath."
 }
 
-$buildCli = $false
+$prebuiltCli = -not [string]::IsNullOrWhiteSpace($CliPath)
 if ($CliPath) {
   $CliPath = Resolve-AbsolutePath $CliPath
   if (-not (Test-Path -LiteralPath $CliPath)) { throw "Prebuilt CLI not found: $CliPath" }
 } else {
   $CliPath = Join-Path $repo "target\release\codex-mixin.exe"
-  $buildCli = $true
 }
-Write-Host "== Building Rust CLI and native WinUI 3 UI =="
+$buildCli = -not $prebuiltCli
+$uiPublish = $null
+if ($UiPath) {
+  $uiPublish = Resolve-AbsolutePath $UiPath
+  if (-not (Test-Path -LiteralPath $uiPublish -PathType Container)) {
+    throw "Prebuilt native UI directory not found: $uiPublish"
+  }
+  if (-not (Test-Path -LiteralPath (Join-Path $uiPublish "codex_mixin_ui.exe"))) {
+    throw "Prebuilt native UI is missing codex_mixin_ui.exe: $uiPublish"
+  }
+}
+if ($SkipCliTests -and -not $prebuiltCli) {
+  throw "SkipCliTests requires CliPath so the skipped tests cover the packaged binary"
+}
+
+Write-Host "== Preparing Rust CLI and native WinUI 3 UI =="
 Push-Location $repo
 try {
   & (Join-Path $PSScriptRoot "generate-windows-assets.ps1")
@@ -95,12 +114,16 @@ try {
     cargo build --locked --release
     if ($LASTEXITCODE -ne 0) { throw "cargo build failed" }
   }
-  $uiPublish = Join-Path $repo "windows\build\publish"
-  if (Test-Path -LiteralPath $uiPublish) { Remove-Item -LiteralPath $uiPublish -Recurse -Force }
-  dotnet run --project windows/Tests/Tests.csproj --configuration Release -- --cli $CliPath
-  if ($LASTEXITCODE -ne 0) { throw "Windows CLI contract tests failed" }
-  dotnet publish windows/CodexMixin/CodexMixin.csproj -c Release -p:Platform=x64 -p:Version=$numericVersion -o $uiPublish
-  if ($LASTEXITCODE -ne 0) { throw "WinUI 3 publish failed" }
+  if (-not $SkipCliTests) {
+    dotnet run --project windows/Tests/Tests.csproj --configuration Release -- --cli $CliPath
+    if ($LASTEXITCODE -ne 0) { throw "Windows CLI contract tests failed" }
+  }
+  if (-not $uiPublish) {
+    $uiPublish = Join-Path $repo "windows\build\publish"
+    if (Test-Path -LiteralPath $uiPublish) { Remove-Item -LiteralPath $uiPublish -Recurse -Force }
+    dotnet publish windows/CodexMixin/CodexMixin.csproj -c Release -p:Platform=x64 -p:Version=$numericVersion -o $uiPublish
+    if ($LASTEXITCODE -ne 0) { throw "WinUI 3 publish failed" }
+  }
 } finally { Pop-Location }
 Write-Host "== Assembling app directory: $Output =="
 if (Test-Path -LiteralPath $Output) { Remove-Item -LiteralPath $Output -Recurse -Force }

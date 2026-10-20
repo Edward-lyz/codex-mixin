@@ -1,6 +1,7 @@
 #!/bin/bash
 # Table-driven runner for every macOS Swift test.
-#   ./scripts/test_macos.sh              run all tests, stop at the first failure
+#   ./scripts/test_macos.sh              run all tests serially
+#   ./scripts/test_macos.sh --jobs 3     run independent tests with three workers
 #   ./scripts/test_macos.sh quota_support run one named test
 #   ./scripts/test_macos.sh --list       print test names
 # agent_logos validates dist/Codex Mixin.app, so run macos/build_app.sh first.
@@ -10,7 +11,7 @@ ROOT_DIR="$(cd "$(dirname "${BASH_SOURCE[0]}")/.." && pwd)"
 ARCH="$(uname -m)"
 WORK_DIR="$(mktemp -d)"
 CURRENT_TEST=""
-SWIFTGEN_DONE=0
+SWIFTGEN_DONE="${CODEX_MIXIN_SWIFTGEN_READY:-0}"
 on_exit() {
   local rc=$?
   rm -rf "$WORK_DIR"
@@ -264,16 +265,42 @@ run_one() {
   run_table_test "$name" "$loc" "$flags" "$frameworks" "$sources"
 }
 
+run_parallel() {
+  local jobs="$1"
+  "$ROOT_DIR/scripts/swiftgen.sh" config run --config "$ROOT_DIR/swiftgen.yml" >/dev/null
+  export CODEX_MIXIN_SWIFTGEN_READY=1
+  all_names | xargs -n 1 -P "$jobs" "$0" --run-one
+}
+
 main() {
-  local name
+  local jobs=1 name
   case "${1:-}" in
     --list) all_names; return ;;
-    "") for name in $(all_names); do run_one "$name"; done ;;
+    "") ;;
+    --jobs)
+      [ "$#" -eq 2 ] && [[ "$2" =~ ^[1-9][0-9]*$ ]] || {
+        echo "usage: $0 [--jobs N | --list | TEST_NAME]" >&2
+        exit 2
+      }
+      jobs="$2"
+      ;;
+    --run-one)
+      [ "$#" -eq 2 ] || { echo "usage: $0 --run-one TEST_NAME" >&2; exit 2; }
+      all_names | grep -qx "$2" || { echo "unknown test: $2 (see --list)" >&2; exit 2; }
+      run_one "$2"
+      return
+      ;;
     *)
       all_names | grep -qx "$1" || { echo "unknown test: $1 (see --list)" >&2; exit 2; }
       run_one "$1"
+      return
       ;;
   esac
+  if [ "$jobs" -gt 1 ]; then
+    run_parallel "$jobs"
+  else
+    for name in $(all_names); do run_one "$name"; done
+  fi
   CURRENT_TEST=""
   echo "macOS tests passed"
 }
