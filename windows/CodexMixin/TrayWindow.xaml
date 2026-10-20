@@ -56,9 +56,6 @@
      <Button Style="{StaticResource MenuRow}" Tag="quit" Click="OnQuit" AutomationProperties.Name="退出 Codex Mixin">
       <StackPanel Orientation="Horizontal" Spacing="12"><FontIcon Glyph="&#xE7E8;" FontSize="16"/><TextBlock Text="退出 Codex Mixin"/></StackPanel>
      </Button>
-     <Button Style="{StaticResource MenuRow}" Tag="restore" Click="OnQuit" AutomationProperties.Name="退出并恢复原配置…">
-      <StackPanel Orientation="Horizontal" Spacing="12"><FontIcon Glyph="&#xE7A7;" FontSize="16"/><TextBlock Text="退出并恢复原配置…"/></StackPanel>
-     </Button>
     </StackPanel>
    </Border>
   </Grid>
