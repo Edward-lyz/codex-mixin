@@ -84,27 +84,23 @@ struct QuotaSupportTests {
         precondition(official[0].resetAt == "2024-11-07T00:00:00Z")
         print("Provider quota labels: passed")
 
-        let tokenUsages = try parseProviderTokenUsage(
-            """
-            [
-              {
-                "provider_id": "baidu-oneapi",
-                "model_id": "gpt-5.6-sol",
-                "request_count": 2,
-                "input_tokens": 1500,
-                "cache_read_tokens": 4500,
-                "cache_creation_tokens": 500,
-                "output_tokens": 300,
-                "cache_hit_percent": 75.0
-              }
-            ]
-            """
+        let turns = try parseTurnUsage(
+            #"[{"at_ms":1760000000000,"session":"ab12cd34","provider_id":"baidu","catalog_slug":"glm-5.2","upstream_model_id":"glm-5.2","returned_model":"glm-4.6","model_matches":false,"protocol":"chat_completions","prefix_state":"append_only","input_tokens":2000,"cache_read_tokens":8000,"cache_creation_tokens":null,"output_tokens":300,"reasoning_tokens":null,"reasoning_chars":1500,"cache_hit_percent":40.0,"ttft_ms":812.5,"output_tps":null}]"#
         )
-        precondition(tokenUsages[0].providerID == "baidu-oneapi")
-        precondition(tokenUsages[0].modelID == "gpt-5.6-sol")
-        precondition(tokenUsages[0].requestCount == 2)
-        precondition(tokenUsages[0].totalTokens == 6800)
-        precondition(tokenUsages[0].cacheHitPercent == 75.0)
-        print("Provider token usage parsing: passed")
+        precondition(turns[0].modelMatches == false && turns[0].returnedModel == "glm-4.6")
+        precondition(turns[0].cacheIsLow, "a 10k-token prompt with 40% hits is flagged")
+        precondition(turns[0].outputTPS == nil, "unknown speed stays nil")
+        let daily = try parseDailyUsage(
+            #"[{"day":20381,"provider_id":"a","model_id":"m","request_count":2,"input_tokens":10,"cache_read_tokens":30,"cache_creation_tokens":0,"output_tokens":5},{"day":20381,"provider_id":"b","model_id":"m","request_count":1,"input_tokens":1,"cache_read_tokens":0,"cache_creation_tokens":0,"output_tokens":1}]"#
+        )
+        precondition(UsageTotals(daily).requests == 3)
+        precondition(UsageTotals(daily).cacheHitPercent == 30.0 / 41.0 * 100)
+        let merged = usageChartPoints(daily, split: false, aggregateLabel: "all", lastDay: 20382, days: 3)
+        precondition(merged.map(\.day) == [20380, 20381, 20382], "empty days stay on the axis")
+        precondition(merged[1].tokens == 47 && merged[1].requests == 3 && merged[0].tokens == 0)
+        let split = usageChartPoints(daily, split: true, aggregateLabel: "all", lastDay: 20381, days: 1)
+        precondition(split.map(\.series) == ["a", "b"])
+        precondition(split[0].dayLabel == "10/20")
+        print("Console usage parsing: passed")
     }
 }

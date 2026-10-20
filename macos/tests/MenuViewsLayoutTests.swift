@@ -162,44 +162,6 @@ struct MenuViewsLayoutTests {
             ]
             """
         )
-        let tokenUsages = try parseProviderTokenUsage(
-            """
-            [
-              {
-                "provider_id": "baidu-oneapi",
-                "model_id": "gpt-5.6-sol",
-                "request_count": 6,
-                "input_tokens": 1500,
-                "cache_read_tokens": 4500,
-                "cache_creation_tokens": 500,
-                "output_tokens": 300,
-                "cache_hit_percent": 75.0,
-                "average_ttft_ms": 428.0,
-                "output_tps": 52.4
-              },
-              {
-                "provider_id": "baidu-oneapi",
-                "model_id": "DeepSeek-V4-Flash",
-                "request_count": 3,
-                "input_tokens": 200,
-                "cache_read_tokens": 600,
-                "cache_creation_tokens": 100,
-                "output_tokens": 80,
-                "cache_hit_percent": 66.7
-              },
-              {
-                "provider_id": "custom-2",
-                "model_id": "other-model",
-                "request_count": 1,
-                "input_tokens": 10,
-                "cache_read_tokens": 0,
-                "cache_creation_tokens": 0,
-                "output_tokens": 5,
-                "cache_hit_percent": null
-              }
-            ]
-            """
-        )
         let disabledQuota = try parseProviderQuotaUsage(
             """
             [{
@@ -209,20 +171,6 @@ struct MenuViewsLayoutTests {
               "used": 90,
               "limit": 100,
               "remaining": 10
-            }]
-            """
-        )
-        let disabledTokenUsage = try parseProviderTokenUsage(
-            """
-            [{
-              "provider_id": "disabled-provider",
-              "model_id": "stale-model",
-              "request_count": 9,
-              "input_tokens": 900,
-              "cache_read_tokens": 0,
-              "cache_creation_tokens": 0,
-              "output_tokens": 90,
-              "cache_hit_percent": null
             }]
             """
         )
@@ -240,18 +188,8 @@ struct MenuViewsLayoutTests {
             ),
         ])
         dashboard.updateQuotaUsages(usages + disabledQuota)
-        dashboard.updateTokenUsages(tokenUsages + disabledTokenUsage)
         flushDeferredMenuLayout()
         dashboard.layoutSubtreeIfNeeded()
-        precondition(dashboard.model.selectedRange == .all)
-        precondition(TokenUsageRange.day.commandArguments == ["usage", "--json", "--days", "1"])
-        precondition(TokenUsageRange.week.commandArguments == ["usage", "--json", "--days", "7"])
-        precondition(TokenUsageRange.month.commandArguments == ["usage", "--json", "--days", "30"])
-        var requestedRange: TokenUsageRange?
-        dashboard.onRangeChange = { requestedRange = $0 }
-        dashboard.model.selectRange(.week)
-        precondition(requestedRange == .week)
-        precondition(dashboard.model.selectedModelID == nil)
         precondition(dashboard.frame.width == 336)
         let menuManagedWidth = dashboard.frame.width + 48
         dashboard.frame.size.width = menuManagedWidth
@@ -261,9 +199,10 @@ struct MenuViewsLayoutTests {
         precondition(
             !dashboard.model.groups.contains { $0.providerID == "disabled-provider" }
         )
-        precondition(dashboard.model.selectedGroup?.models.count == 2)
-        precondition(dashboard.model.selectedGroup?.models.first?.modelID == "gpt-5.6-sol")
-        dashboard.model.selectModel("gpt-5.6-sol")
+        // The tab strip names the provider, so the menu has no provider header
+        // and no token section: a one-window provider stays compact.
+        precondition(collapsedHeight <= 200, "quota-only dashboard should stay compact, got \(collapsedHeight)")
+        dashboard.model.selectProvider("opencode-go")
         precondition(
             dashboard.frame.height == collapsedHeight,
             "row resize must be deferred off the menu display cycle, not applied synchronously"
@@ -277,24 +216,6 @@ struct MenuViewsLayoutTests {
             dashboard.frame.width == menuManagedWidth,
             "row-height sync must preserve the width managed by the menu"
         )
-        precondition(dashboard.frame.height > collapsedHeight)
-        dashboard.model.selectModel("gpt-5.6-sol")
-        flushDeferredMenuLayout()
-        precondition(dashboard.frame.height == collapsedHeight)
-
-        let scrollingDashboard = ProviderUsageDashboardView()
-        scrollingDashboard.updateConfiguredProviders([
-            ProviderDashboardProvider(id: "baidu-oneapi", displayName: "Baidu OneAPI"),
-        ])
-        scrollingDashboard.updateTokenUsages([
-            ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-1", requestCount: 1, inputTokens: 400, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil, averageTTFTMs: nil, outputTPS: nil),
-            ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-2", requestCount: 1, inputTokens: 300, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil, averageTTFTMs: nil, outputTPS: nil),
-            ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-3", requestCount: 1, inputTokens: 200, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil, averageTTFTMs: nil, outputTPS: nil),
-            ProviderTokenUsage(providerID: "baidu-oneapi", modelID: "model-4", requestCount: 1, inputTokens: 100, cacheReadTokens: 0, cacheCreationTokens: 0, outputTokens: 0, cacheHitPercent: nil, averageTTFTMs: nil, outputTPS: nil),
-        ])
-        precondition(scrollingDashboard.model.selectedGroup?.models.count == 4)
-        scrollingDashboard.model.selectModel("model-4")
-        precondition(scrollingDashboard.model.selectedModel?.modelID == "model-4")
 
         let resetDashboard = ProviderUsageDashboardView()
         resetDashboard.updateConfiguredProviders([
@@ -310,7 +231,7 @@ struct MenuViewsLayoutTests {
         resetDashboard.model.selectQuotaStyle(.bar)
         flushDeferredMenuLayout()
         precondition(UserDefaults.standard.string(forKey: QuotaDisplayStyle.defaultsKey) == "bar")
-        precondition(resetDashboard.frame.height >= 310, "Quota labels, bars and reset times need separate vertical space before the range picker")
+        precondition(resetDashboard.frame.height >= 250, "Quota labels, bars and reset times need separate vertical space")
         precondition(ringHeight < resetDashboard.frame.height, "Rings share one row for all windows and need less height than bars")
         let ratioRows = try parseProviderQuotaUsage(#"[{"provider_id":"b","used":9,"limit":12},{"provider_id":"b","remaining":3,"limit":12},{"provider_id":"b","remaining":3}]"#)
         precondition(providerQuotaRatio(ratioRows[0]) == 0.75, "used / limit drives the ring")
@@ -349,17 +270,7 @@ struct MenuViewsLayoutTests {
             ]
             """
         ))
-        proDashboard.updateTokenUsages(try parseProviderTokenUsage(
-            """
-            [{"provider_id":"official","model_id":"gpt-5.6-sol","request_count":129,"input_tokens":2200000,"cache_read_tokens":55200000,"cache_creation_tokens":0,"output_tokens":58400,"cache_hit_percent":96.2,"average_ttft_ms":7486,"output_tps":39.3}]
-            """
-        ))
-        proDashboard.model.selectModel("gpt-5.6-sol")
         flushDeferredMenuLayout()
-        precondition(
-            proDashboard.frame.height >= 442,
-            "three quota rows must keep their row spacing instead of compressing into the token range picker"
-        )
         proDashboard.layoutSubtreeIfNeeded()
         let threeQuotaScrollCount = descendants(of: proDashboard, matching: NSScrollView.self).count
         let threeQuotaHeight = proDashboard.frame.height
@@ -380,19 +291,6 @@ struct MenuViewsLayoutTests {
             "quota overflow must add a vertical scroll view"
         )
 
-        guard let primaryUsage = dashboard.model.selectedGroup?.models.first else {
-            preconditionFailure("Baidu token usage must exist")
-        }
-        let usageDetail = tokenUsageDetail(primaryUsage)
-        precondition(usageDetail.contains("输入 1.5k"))
-        precondition(usageDetail.contains("缓存输入 4.5k"))
-        precondition(usageDetail.contains("输出 300"))
-        precondition(usageDetail.contains("整体缓存比例 75.0%"))
-        precondition(usageDetail.contains("首字响应 428 ms"))
-        precondition(usageDetail.contains("每秒吞吐 52.4 tok/s"))
-
-        dashboard.model.selectProvider("custom-2")
-        precondition(dashboard.model.selectedGroup?.models.first?.modelID == "other-model")
         dashboard.model.selectProvider("opencode-go")
         guard let openCodeGroup = dashboard.model.selectedGroup else {
             preconditionFailure("OpenCode Go group must exist")
@@ -458,16 +356,9 @@ private func writeDashboardSnapshots(_ dashboard: ProviderUsageDashboardView) {
 
     for (name, appearanceName) in [("light", NSAppearance.Name.aqua), ("dark", .darkAqua)] {
         window.appearance = NSAppearance(named: appearanceName)
-        dashboard.model.selectedModelID = nil
         flushDeferredMenuLayout()
         dashboard.layoutSubtreeIfNeeded()
-        writeViewSnapshot(dashboard, to: outputURL.appendingPathComponent("menu-\(name)-collapsed.png"))
-
-        dashboard.model.selectModel("gpt-5.6-sol")
-        flushDeferredMenuLayout()
-        dashboard.layoutSubtreeIfNeeded()
-        writeViewSnapshot(dashboard, to: outputURL.appendingPathComponent("menu-\(name)-detail.png"))
-        dashboard.model.selectedModelID = nil
+        writeViewSnapshot(dashboard, to: outputURL.appendingPathComponent("menu-\(name).png"))
     }
     window.orderOut(nil)
 }

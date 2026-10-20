@@ -2,11 +2,12 @@ import Cocoa
 import SwiftUI
 
 private let menuContentWidth: CGFloat = 336
-private let providerDashboardMinimumHeight: CGFloat = 168
+private let providerDashboardMinimumHeight: CGFloat = 120
 private let providerQuotaRowHeight: CGFloat = 60
 private let providerQuotaRowSpacing: CGFloat = 6
 private let visibleProviderQuotaRows = 3
-private let providerDashboardChromeHeight: CGFloat = 110
+// Padding, the tab row, and the divider above the quota section.
+private let providerDashboardChromeHeight: CGFloat = 72
 
 // Activity-style rings: one concentric ring per quota window. More than four
 // rings stop being legible at menu size, so extra windows stay legend-only.
@@ -82,36 +83,6 @@ struct ProviderUsageGroup {
     let displayName: String
     let websiteURL: String?
     let quotas: [ProviderQuotaUsage]
-    let models: [ProviderTokenUsage]
-}
-
-enum TokenUsageRange: String, CaseIterable, Identifiable {
-    case day
-    case week
-    case month
-    case all
-
-    var id: String { rawValue }
-    var title: String {
-        switch self {
-        case .day: return "1天"
-        case .week: return "7天"
-        case .month: return "1月"
-        case .all: return "全部"
-        }
-    }
-    var days: Int? {
-        switch self {
-        case .day: return 1
-        case .week: return 7
-        case .month: return 30
-        case .all: return nil
-        }
-    }
-    var commandArguments: [String] {
-        guard let days else { return ["usage", "--json"] }
-        return ["usage", "--json", "--days", "\(days)"]
-    }
 }
 
 private func providerLogoAssetName(_ providerID: String) -> String {
@@ -200,34 +171,14 @@ func providerQuotaLabel(_ usage: ProviderQuotaUsage, multiple: Bool) -> String {
     }
 }
 
-func tokenUsageDetail(_ usage: ProviderTokenUsage) -> String {
-    let cacheRatio = usage.cacheHitPercent.map { String(format: "%.1f%%", $0) } ?? "未上报"
-    let ttft = usage.averageTTFTMs.map { String(format: "%.0f ms", $0) } ?? "未上报"
-    let tps = usage.outputTPS.map { String(format: "%.1f tok/s", $0) } ?? "未上报"
-    return """
-    输入 \(formatTokenCount(usage.inputTokens))
-    缓存输入 \(formatTokenCount(usage.cacheReadTokens))
-    输出 \(formatTokenCount(usage.outputTokens))
-    整体缓存比例 \(cacheRatio)
-    首字响应 \(ttft)
-    每秒吞吐 \(tps)
-    """
-}
-
 @MainActor
 final class ProviderUsageDashboardModel: ObservableObject {
-    var onRangeChange: ((TokenUsageRange) -> Void)?
     var onContentHeightChange: ((CGFloat) -> Void)?
     @Published var configuredProviders: [ProviderDashboardProvider] = []
     @Published var quotaUsages: [ProviderQuotaUsage] = []
-    @Published var tokenUsages: [ProviderTokenUsage] = []
     @Published var quotaStatusTitle = "额度：检查中..."
     @Published var quotaStatusDetail: String?
-    @Published var tokenStatusTitle = "Token 使用：检查中..."
-    @Published var tokenStatusDetail: String?
     @Published var selectedProviderID: String?
-    @Published var selectedModelID: String?
-    @Published var selectedRange = TokenUsageRange.all
     @Published private(set) var quotaStyle = QuotaDisplayStyle.stored()
 
     var groups: [ProviderUsageGroup] {
@@ -236,14 +187,7 @@ final class ProviderUsageDashboardModel: ObservableObject {
                 providerID: provider.id,
                 displayName: provider.displayName,
                 websiteURL: provider.websiteURL,
-                quotas: quotaUsages.filter { $0.providerID == provider.id },
-                models: tokenUsages
-                    .filter { $0.providerID == provider.id }
-                    .sorted {
-                        $0.totalTokens == $1.totalTokens
-                            ? $0.modelID < $1.modelID
-                            : $0.totalTokens > $1.totalTokens
-                    }
+                quotas: quotaUsages.filter { $0.providerID == provider.id }
             )
         }
     }
@@ -252,42 +196,24 @@ final class ProviderUsageDashboardModel: ObservableObject {
         groups.first { $0.providerID == selectedProviderID }
     }
 
-    var selectedModel: ProviderTokenUsage? {
-        selectedGroup?.models.first { $0.modelID == selectedModelID }
-    }
-
     var contentHeight: CGFloat {
         guard let group = selectedGroup else { return providerDashboardMinimumHeight }
-        let tokenHeight: CGFloat = group.models.isEmpty ? 36 : 144
-        let detailHeight: CGFloat = selectedModel == nil ? 0 : 104
         return max(
             providerDashboardMinimumHeight,
             providerDashboardChromeHeight
                 + providerQuotaSectionHeight(group.quotas.count, style: quotaStyle)
-                + tokenHeight + detailHeight
         )
     }
 
     func normalizeSelection() {
         if !groups.contains(where: { $0.providerID == selectedProviderID }) {
             selectedProviderID = groups.first?.providerID
-            selectedModelID = nil
-        }
-        if let selectedModelID,
-           selectedGroup?.models.contains(where: { $0.modelID == selectedModelID }) != true {
-            self.selectedModelID = nil
         }
         onContentHeightChange?(contentHeight)
     }
 
     func selectProvider(_ providerID: String) {
         selectedProviderID = providerID
-        selectedModelID = nil
-        onContentHeightChange?(contentHeight)
-    }
-
-    func selectModel(_ modelID: String) {
-        selectedModelID = selectedModelID == modelID ? nil : modelID
         onContentHeightChange?(contentHeight)
     }
 
@@ -295,14 +221,6 @@ final class ProviderUsageDashboardModel: ObservableObject {
         guard style != quotaStyle else { return }
         quotaStyle = style
         UserDefaults.standard.set(style.rawValue, forKey: QuotaDisplayStyle.defaultsKey)
-        onContentHeightChange?(contentHeight)
-    }
-
-    func selectRange(_ range: TokenUsageRange) {
-        guard range != selectedRange else { return }
-        selectedRange = range
-        selectedModelID = nil
-        onRangeChange?(range)
         onContentHeightChange?(contentHeight)
     }
 }
@@ -316,20 +234,18 @@ private struct ProviderUsageDashboardContent: View {
             Divider()
 
             if let group = model.selectedGroup {
-                providerSummary(group)
                 quotaContent(group)
-                tokenContent(group)
             } else {
                 VStack(spacing: 8) {
-                    Image(systemName: "chart.bar.xaxis")
+                    Image(systemName: "chart.pie")
                         .font(.title2)
                         .foregroundStyle(.secondary)
-                    Text(model.tokenStatusTitle)
+                    Text(model.quotaStatusTitle)
                         .font(.headline)
                         .multilineTextAlignment(.center)
                 }
                 .frame(maxWidth: .infinity, maxHeight: .infinity)
-                .help(model.tokenStatusDetail ?? model.quotaStatusDetail ?? "")
+                .help(model.quotaStatusDetail ?? "")
             }
         }
         .padding(10)
@@ -337,44 +253,36 @@ private struct ProviderUsageDashboardContent: View {
         .background(Color(nsColor: .windowBackgroundColor))
     }
 
+    // The tab strip already names the provider, so the quota style toggle
+    // shares its row instead of a separate provider header.
     private var providerTabs: some View {
-        ScrollView(.horizontal) {
-            HStack(spacing: 6) {
-                ForEach(model.groups, id: \.providerID) { group in
-                    let selected = group.providerID == model.selectedProviderID
-                    Button {
-                        model.selectProvider(group.providerID)
-                    } label: {
-                        ProviderLogoView(group: group)
-                            .padding(4)
-                            .background(
-                                providerBrandColor(group.providerID).opacity(selected ? 0.14 : 0),
-                                in: RoundedRectangle(cornerRadius: 8)
-                            )
-                            .overlay {
-                                RoundedRectangle(cornerRadius: 8)
-                                    .stroke(providerBrandColor(group.providerID).opacity(selected ? 0.35 : 0))
-                            }
+        HStack(spacing: 6) {
+            ScrollView(.horizontal) {
+                HStack(spacing: 6) {
+                    ForEach(model.groups, id: \.providerID) { group in
+                        let selected = group.providerID == model.selectedProviderID
+                        Button {
+                            model.selectProvider(group.providerID)
+                        } label: {
+                            ProviderLogoView(group: group)
+                                .padding(4)
+                                .background(
+                                    providerBrandColor(group.providerID).opacity(selected ? 0.14 : 0),
+                                    in: RoundedRectangle(cornerRadius: 8)
+                                )
+                                .overlay {
+                                    RoundedRectangle(cornerRadius: 8)
+                                        .stroke(providerBrandColor(group.providerID).opacity(selected ? 0.35 : 0))
+                                }
+                        }
+                        .buttonStyle(.plain)
+                        .help(group.displayName)
+                        .accessibilityIdentifier("provider-tab-\(group.providerID)")
                     }
-                    .buttonStyle(.plain)
-                    .help(group.displayName)
-                    .accessibilityIdentifier("provider-tab-\(group.providerID)")
                 }
             }
-        }
-        .scrollIndicators(.hidden)
-        .frame(height: 34)
-    }
-
-    private func providerSummary(_ group: ProviderUsageGroup) -> some View {
-        HStack(spacing: 8) {
-            ProviderLogoView(group: group)
-            Text(group.displayName)
-                .font(.callout.weight(.semibold))
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Spacer(minLength: 4)
-            if !group.quotas.isEmpty {
+            .scrollIndicators(.hidden)
+            if let group = model.selectedGroup, !group.quotas.isEmpty {
                 Picker(AppLocalization.string("quota.style.help"), selection: Binding(
                     get: { model.quotaStyle },
                     set: model.selectQuotaStyle
@@ -393,6 +301,7 @@ private struct ProviderUsageDashboardContent: View {
                 .accessibilityIdentifier("quota-style-picker")
             }
         }
+        .frame(height: 34)
     }
 
     @ViewBuilder
@@ -426,57 +335,6 @@ private struct ProviderUsageDashboardContent: View {
         }
     }
 
-    @ViewBuilder
-    private func tokenContent(_ group: ProviderUsageGroup) -> some View {
-        VStack(spacing: 7) {
-            Picker("统计口径", selection: Binding(
-                get: { model.selectedRange },
-                set: model.selectRange
-            )) {
-                ForEach(TokenUsageRange.allCases) { range in
-                    Text(range.title).tag(range)
-                }
-            }
-            .labelsHidden()
-            .pickerStyle(.segmented)
-            .controlSize(.mini)
-
-            if group.models.isEmpty {
-            Text(model.tokenStatusTitle)
-                .font(.caption2)
-                .foregroundStyle(.secondary)
-                .frame(maxWidth: .infinity, alignment: .center)
-                .help(model.tokenStatusDetail ?? "")
-            } else {
-                let maximumTokens = group.models.map(\.totalTokens).max() ?? 0
-                ScrollView(.horizontal) {
-                    HStack(alignment: .bottom, spacing: 3) {
-                        ForEach(group.models, id: \.modelID) { usage in
-                            Button {
-                                model.selectModel(usage.modelID)
-                            } label: {
-                                TokenModelColumn(
-                                    usage: usage,
-                                    maximumTokens: maximumTokens,
-                                    selected: usage.modelID == model.selectedModelID
-                                )
-                            }
-                            .buttonStyle(.plain)
-                            .help(usage.modelID)
-                            .accessibilityIdentifier("token-model-\(usage.modelID)")
-                        }
-                    }
-                    .padding(.horizontal, 4)
-                }
-                .scrollIndicators(.hidden)
-                .frame(height: 104)
-
-                if let selectedModel = model.selectedModel {
-                    TokenModelDetail(usage: selectedModel)
-                }
-            }
-        }
-    }
 }
 
 private struct ProviderLogoView: View {
@@ -642,99 +500,6 @@ private func quotaPercentText(_ ratio: Double) -> String {
     "\(Int((ratio * 100).rounded()))%"
 }
 
-private struct TokenModelColumn: View {
-    let usage: ProviderTokenUsage
-    let maximumTokens: UInt64
-    let selected: Bool
-
-    var body: some View {
-        VStack(spacing: 4) {
-            Text(formatTokenCount(usage.totalTokens))
-                .font(.system(size: 9, weight: selected ? .semibold : .medium).monospacedDigit())
-                .foregroundStyle(selected ? Color.primary : Color.secondary)
-                .lineLimit(1)
-                .minimumScaleFactor(0.8)
-                .frame(width: 47)
-            TokenVerticalBar(usage: usage, maximumTokens: maximumTokens, selected: selected)
-            Text(usage.modelID)
-                .font(.system(size: 9, weight: selected ? .semibold : .regular))
-                .foregroundStyle(selected ? Color.accentColor : Color.secondary)
-                .lineLimit(1)
-                .truncationMode(.middle)
-                .frame(width: 47)
-        }
-        .contentShape(Rectangle())
-    }
-}
-
-private struct TokenVerticalBar: View {
-    let usage: ProviderTokenUsage
-    let maximumTokens: UInt64
-    let selected: Bool
-
-    var body: some View {
-        VStack {
-            Spacer(minLength: 0)
-            Capsule()
-                .fill(Color.accentColor.opacity(selected ? 1 : 0.78))
-                .frame(width: selected ? 9 : 7, height: barHeight)
-        }
-        .frame(width: 11, height: 66)
-    }
-
-    private var barHeight: CGFloat {
-        maximumTokens == 0
-            ? 0
-            : max(3, 66 * CGFloat(Double(usage.totalTokens) / Double(maximumTokens)))
-    }
-}
-
-private struct TokenModelDetail: View {
-    let usage: ProviderTokenUsage
-
-    var body: some View {
-        VStack(alignment: .leading, spacing: 7) {
-            Text(usage.modelID)
-                .font(.caption2.weight(.semibold))
-                .lineLimit(1)
-                .truncationMode(.middle)
-            Grid(horizontalSpacing: 6, verticalSpacing: 6) {
-                GridRow {
-                    metric("请求", "\(usage.requestCount)")
-                    metric("输入", formatTokenCount(usage.inputTokens))
-                    metric("缓存输入", formatTokenCount(usage.cacheReadTokens))
-                    metric("输出", formatTokenCount(usage.outputTokens))
-                }
-                GridRow {
-                    metric("缓存比例", usage.cacheHitPercent.map { String(format: "%.1f%%", $0) } ?? "未上报")
-                    metric("缓存输出", formatTokenCount(usage.cacheCreationTokens))
-                    metric("首字响应", usage.averageTTFTMs.map { String(format: "%.0f ms", $0) } ?? "未上报")
-                    metric("每秒吞吐", usage.outputTPS.map { String(format: "%.1f tok/s", $0) } ?? "未上报")
-                }
-            }
-        }
-        .padding(.horizontal, 10)
-        .padding(.vertical, 8)
-        .background(
-            Color(nsColor: .controlBackgroundColor),
-            in: RoundedRectangle(cornerRadius: 8, style: .continuous)
-        )
-        .overlay {
-            RoundedRectangle(cornerRadius: 8, style: .continuous)
-                .stroke(.separator)
-        }
-    }
-
-    private func metric(_ title: String, _ value: String) -> some View {
-        VStack(alignment: .leading, spacing: 2) {
-            Text(title).font(.system(size: 8)).foregroundStyle(.secondary)
-            Text(value).font(.system(size: 10, weight: .semibold).monospacedDigit())
-                .lineLimit(1)
-                .frame(minWidth: 58, alignment: .leading)
-        }
-    }
-}
-
 final class ProviderUsageDashboardView: FlippedMenuView {
     let model = ProviderUsageDashboardModel()
     private let hostingView: NSHostingView<ProviderUsageDashboardContent>
@@ -779,25 +544,6 @@ final class ProviderUsageDashboardView: FlippedMenuView {
         scheduleContentHeightUpdate()
     }
 
-    func updateTokenStatus(title: String, detail: String?) {
-        model.tokenStatusTitle = title
-        model.tokenStatusDetail = detail
-        scheduleContentHeightUpdate()
-    }
-
-    func updateTokenUsages(_ usages: [ProviderTokenUsage]) {
-        model.tokenUsages = usages
-        model.tokenStatusTitle = "Token 使用：暂无数据"
-        model.tokenStatusDetail = nil
-        model.normalizeSelection()
-        scheduleContentHeightUpdate()
-    }
-
-    var onRangeChange: ((TokenUsageRange) -> Void)? {
-        get { model.onRangeChange }
-        set { model.onRangeChange = newValue }
-    }
-
     private func installHostingView() {
         hostingView.frame = bounds
         hostingView.autoresizingMask = [.width, .height]
@@ -829,11 +575,6 @@ final class ProviderUsageDashboardView: FlippedMenuView {
     }
 }
 
-func formatTokenCount(_ count: UInt64) -> String {
-    if count >= 1_000_000 { return String(format: "%.1fM", Double(count) / 1_000_000) }
-    if count >= 1_000 { return String(format: "%.1fk", Double(count) / 1_000) }
-    return "\(count)"
-}
 
 func formatQuotaAmount(_ value: Double) -> String {
     let formatter = NumberFormatter()

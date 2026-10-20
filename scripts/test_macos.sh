@@ -41,7 +41,7 @@ process_output_collector|0|||ProcessOutputCollector.swift tests/ProcessOutputCol
 provider_settings_navigation|1|-sdk @SDK@ -target @ARCH@-apple-macos26.0|Cocoa SwiftUI|ApplicationMenuSupport.swift UpdateSupport.swift AppSupport.swift InstallProgressWindow.swift SettingsPanel.swift ProviderSupport.swift ProviderIconCache.swift AppDataDirectory.swift ProviderWindowLayoutSupport.swift LiquidGlassSupport.swift ModelBenchmarkDataSupport.swift ModelBenchmarkWindow.swift ProviderSettingsView.swift AppOperationLogging.swift ProviderSettingsWindow.swift BaiduAuthBridgeSupport.swift ProviderSettingsPresentationSupport.swift tests/ProviderSettingsNavigationTests.swift
 provider_support|1|||ProviderSupport.swift tests/ProviderSupportTests.swift
 provider_window_layout|1||Cocoa|ApplicationMenuSupport.swift UpdateSupport.swift LiquidGlassSupport.swift AppSupport.swift InstallProgressWindow.swift ProviderSupport.swift ProviderWindowLayoutSupport.swift ModelBenchmarkDataSupport.swift ModelBenchmarkWindow.swift tests/ProviderWindowLayoutTests.swift
-quota_support|1|||QuotaSupport.swift tests/QuotaSupportTests.swift
+quota_support|1|||QuotaSupport.swift ConsoleUsageSupport.swift tests/QuotaSupportTests.swift
 settings_panel_presentation|1||Cocoa|ApplicationMenuSupport.swift LiquidGlassSupport.swift SettingsPanel.swift tests/SettingsPanelPresentationTests.swift
 status_refresh_coordinator|0|||RefreshTimerSupport.swift StatusRefreshCoordinator.swift tests/StatusRefreshCoordinatorTests.swift
 update_watchdog|0||Cocoa CryptoKit|UpdateWatchdog.swift AppDataDirectory.swift tests/UpdateWatchdogTests.swift

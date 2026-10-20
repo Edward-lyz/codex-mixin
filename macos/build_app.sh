@@ -221,6 +221,9 @@ xcrun swiftc \
   "$ROOT_DIR/macos/CodexConnectPanel.swift" \
   "$ROOT_DIR/macos/InstallProgressWindow.swift" \
   "$ROOT_DIR/macos/QuotaSupport.swift" \
+  "$ROOT_DIR/macos/ConsoleUsageSupport.swift" \
+  "$ROOT_DIR/macos/ConsoleUsageView.swift" \
+  "$ROOT_DIR/macos/ConsoleWindow.swift" \
   "$ROOT_DIR/macos/Localization.swift" \
   "$ROOT_DIR/macos/Generated/L10n.swift" \
   "$ROOT_DIR/macos/AppSupport.swift" \
@@ -232,6 +235,7 @@ xcrun swiftc \
   -framework CryptoKit \
   -framework Sparkle \
   -framework SwiftUI \
+  -framework Charts \
   -framework UserNotifications \
   -o "$MACOS_DIR/CodexMixinMenu"
 chmod +x "$MACOS_DIR/CodexMixinMenu"

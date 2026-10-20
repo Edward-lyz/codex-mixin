@@ -14,7 +14,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
     var fusionSettingsWindowController: FusionSettingsWindowController?
     var aboutWindowController: AboutWindowController?
     var installCardWindowController: InstallCardWindowController?
-    var agentManagementWindowController: AgentManagementWindowController?
+    var consoleContainer: ConsoleContainerController?
     let menuItemViewUpdater = MenuItemViewUpdater()
     var refreshTimer: RefreshTimerController?
     var refreshLifecycleObservers: [NSObjectProtocol] = []
@@ -190,11 +190,6 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         let serviceItem = NSMenuItem(title: serviceStatus, action: nil, keyEquivalent: "")
         let providerUsageItem = NSMenuItem(title: "", action: nil, keyEquivalent: "")
         let providerUsageView = ProviderUsageDashboardView()
-        providerUsageView.onRangeChange = { [weak self] range in
-            Task { @MainActor in
-                await self?.refreshTokenUsage(for: range)
-            }
-        }
         providerUsageItem.view = providerUsageView
         serviceStatusItem = serviceItem
         providerUsageDashboardView = providerUsageView
@@ -202,13 +197,22 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
         updateServiceStatusView()
         menu.addItem(providerUsageItem)
         updateQuotaStatus(title: "额度：检查中...", detail: nil, progress: nil)
-        updateTokenUsageStatus(title: "Token 使用：检查中...", detail: nil, progress: nil)
         menu.addItem(.separator())
+        menu.addItem(actionItem(
+            AppLocalization.string("console.menuTitle"),
+            #selector(openConsole),
+            "macwindow"
+        ))
         menu.addItem(actionItem("模型与服务…", #selector(configureLogin), "square.grid.2x2"))
         menu.addItem(actionItem(
             AppLocalization.string("agentManagement.menuTitle"),
             #selector(showAgentManagement),
             "person.2"
+        ))
+        menu.addItem(actionItem(
+            AppLocalization.string("console.usage.openDetails"),
+            #selector(showUsageDetails),
+            "chart.bar.xaxis"
         ))
         menu.addItem(.separator())
         echMenuItem = actionItem("启用 ECH 代理访问 GPT", #selector(configureEchAccess), "network")
