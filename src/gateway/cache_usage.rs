@@ -9,6 +9,8 @@ use rusqlite::{Connection, params};
 use serde::Serialize;
 use serde_json::Value;
 
+use super::turn_usage::{TurnLedger, TurnQuery, TurnUsage, USAGE_DB_WRITE};
+
 const MAX_RECORDED_TTFT_MICROS: u64 = 50_000_000;
 const MIN_RECORDED_OUTPUT_TOKENS: u64 = 100;
 
@@ -207,6 +209,9 @@ fn persist_usage_delta(
     model_id: &str,
     usage: &UpstreamCacheUsage,
 ) -> anyhow::Result<()> {
+    let _write = USAGE_DB_WRITE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
     if let Some(parent) = path.parent() {
         std::fs::create_dir_all(parent)?;
     }
@@ -356,6 +361,7 @@ fn persist_usage_delta(
 pub(crate) struct TokenUsageAggregator {
     state: Mutex<TokenUsageState>,
     persist_path: Option<PathBuf>,
+    turns: TurnLedger,
 }
 
 impl TokenUsageAggregator {
@@ -369,8 +375,17 @@ impl TokenUsageAggregator {
         };
         Ok(Self {
             state: Mutex::new(state),
+            turns: TurnLedger::load(path.clone())?,
             persist_path: path,
         })
+    }
+
+    pub(crate) fn record_turn(&self, turn: TurnUsage) {
+        self.turns.record(turn);
+    }
+
+    pub(crate) fn turns(&self, query: &TurnQuery) -> Vec<TurnUsage> {
+        self.turns.query(query)
     }
 
     pub(crate) fn record(&self, provider_id: &str, model_id: &str, usage: &UpstreamCacheUsage) {
@@ -431,6 +446,44 @@ impl TokenUsageAggregator {
             add_aggregated_usage(entry, usage);
         }
         Ok(finalize_usage(aggregated.into_values().collect()))
+    }
+}
+
+/// One provider/model total for a single UTC day, for usage-over-time charts.
+#[derive(Clone, Debug, Serialize)]
+pub(crate) struct DailyTokenUsage {
+    /// Days since the Unix epoch (UTC).
+    pub(crate) day: u64,
+    #[serde(flatten)]
+    pub(crate) usage: ProviderTokenUsage,
+}
+
+impl TokenUsageAggregator {
+    /// Per-day rows for the last `days` days, oldest first.
+    pub(crate) fn daily_series(&self, days: u64) -> anyhow::Result<Vec<DailyTokenUsage>> {
+        anyhow::ensure!(days > 0, "usage range must contain at least one day");
+        let first_day = current_unix_day()?.saturating_sub(days - 1);
+        let state = self.state.lock().unwrap_or_else(PoisonError::into_inner);
+        let mut rows = state
+            .daily_entries
+            .iter()
+            .filter(|((day, _, _), _)| *day >= first_day)
+            .map(|((day, _, _), usage)| (*day, usage.clone()))
+            .collect::<Vec<_>>();
+        drop(state);
+        rows.sort_by(|left, right| {
+            left.0
+                .cmp(&right.0)
+                .then_with(|| left.1.provider_id.cmp(&right.1.provider_id))
+                .then_with(|| left.1.model_id.cmp(&right.1.model_id))
+        });
+        Ok(rows
+            .into_iter()
+            .map(|(day, usage)| DailyTokenUsage {
+                day,
+                usage: finalize_usage(vec![usage]).remove(0),
+            })
+            .collect())
     }
 }
 

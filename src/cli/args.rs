@@ -166,6 +166,18 @@ pub(super) enum Command {
         json: bool,
         #[arg(long)]
         days: Option<u64>,
+        /// List individual upstream replies instead of per-model totals.
+        #[arg(long, conflicts_with = "daily")]
+        turns: bool,
+        /// List per-day provider/model totals for charts.
+        #[arg(long)]
+        daily: bool,
+        /// Only include turns served by this provider (requires --turns).
+        #[arg(long, requires = "turns")]
+        provider: Option<String>,
+        /// Maximum turns to return, newest first (requires --turns).
+        #[arg(long, requires = "turns")]
+        limit: Option<usize>,
     },
     /// Back up, restore, or inspect the Codex Mixin configuration.
     Config {

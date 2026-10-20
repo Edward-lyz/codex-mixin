@@ -1,0 +1,363 @@
+//! Per-turn usage ledger: one row per upstream model reply.
+//!
+//! The provider/model aggregates answer "how much"; this ledger answers "which
+//! reply": cache hits per turn, reasoning length, and whether the upstream
+//! answered with the model that was requested. It keeps counters and model
+//! names only, never prompt or completion text.
+
+use std::collections::VecDeque;
+use std::hash::{Hash, Hasher};
+use std::path::{Path, PathBuf};
+use std::sync::{Mutex, PoisonError};
+use std::time::{Duration, SystemTime, UNIX_EPOCH};
+
+use rusqlite::{Connection, params};
+use serde::Serialize;
+
+/// Rows kept in memory and on disk. At a few hundred bytes per row this bounds
+/// the ledger to about 2 MB; older turns stay in the daily aggregates.
+pub(crate) const MAX_TRACKED_TURNS: usize = 5_000;
+
+const PERSIST_BUSY_TIMEOUT: Duration = Duration::from_secs(5);
+
+/// Serialises writers to `usage.sqlite3` inside this process. Each reply
+/// persists from its own blocking task, and SQLite reports "database is
+/// locked" instead of waiting while a fresh file switches to WAL.
+pub(super) static USAGE_DB_WRITE: Mutex<()> = Mutex::new(());
+
+const TURNS_SCHEMA: &str = "CREATE TABLE IF NOT EXISTS token_usage_turns (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    at_ms INTEGER NOT NULL,
+    session TEXT NOT NULL,
+    provider_id TEXT NOT NULL,
+    catalog_slug TEXT NOT NULL,
+    upstream_model_id TEXT NOT NULL,
+    returned_model TEXT,
+    protocol TEXT NOT NULL,
+    prefix_state TEXT NOT NULL,
+    input_tokens INTEGER,
+    cache_read_tokens INTEGER,
+    cache_creation_tokens INTEGER,
+    output_tokens INTEGER,
+    reasoning_tokens INTEGER,
+    reasoning_chars INTEGER NOT NULL,
+    ttft_ms REAL,
+    output_tps REAL
+)";
+
+/// One upstream reply. Optional counters stay `None` when the provider did not
+/// report them, so unknown values are never shown as zero.
+#[derive(Clone, Debug, PartialEq, Serialize)]
+pub(crate) struct TurnUsage {
+    pub(crate) at_ms: u64,
+    /// Short hash of the client session, so turns of one conversation group
+    /// together without exposing the session identifier.
+    pub(crate) session: String,
+    pub(crate) provider_id: String,
+    pub(crate) catalog_slug: String,
+    pub(crate) upstream_model_id: String,
+    pub(crate) returned_model: Option<String>,
+    pub(crate) model_matches: Option<bool>,
+    pub(crate) protocol: String,
+    pub(crate) prefix_state: String,
+    pub(crate) input_tokens: Option<u64>,
+    pub(crate) cache_read_tokens: Option<u64>,
+    pub(crate) cache_creation_tokens: Option<u64>,
+    pub(crate) output_tokens: Option<u64>,
+    pub(crate) reasoning_tokens: Option<u64>,
+    /// Characters of streamed reasoning text; Anthropic-style upstreams stream
+    /// thinking without a separate token counter.
+    pub(crate) reasoning_chars: u64,
+    pub(crate) cache_hit_percent: Option<f64>,
+    pub(crate) ttft_ms: Option<f64>,
+    pub(crate) output_tps: Option<f64>,
+}
+
+impl TurnUsage {
+    pub(crate) fn finalize(mut self) -> Self {
+        self.model_matches = self
+            .returned_model
+            .as_deref()
+            .map(|returned| model_matches(&self.upstream_model_id, returned));
+        self.cache_hit_percent = match (self.cache_read_tokens, self.input_tokens) {
+            (Some(read), Some(uncached)) => {
+                let prompt = read
+                    .saturating_add(uncached)
+                    .saturating_add(self.cache_creation_tokens.unwrap_or(0));
+                (prompt > 0).then(|| read as f64 / prompt as f64 * 100.0)
+            }
+            _ => None,
+        };
+        self
+    }
+}
+
+pub(crate) fn unix_millis() -> u64 {
+    SystemTime::now()
+        .duration_since(UNIX_EPOCH)
+        .map(|elapsed| elapsed.as_millis() as u64)
+        .unwrap_or(0)
+}
+
+pub(crate) fn session_tag(session_id: &str) -> String {
+    let mut hasher = std::collections::hash_map::DefaultHasher::new();
+    session_id.hash(&mut hasher);
+    format!("{:08x}", hasher.finish() as u32)
+}
+
+/// Providers answer with dated or namespaced variants ("gpt-5-2025-08-07",
+/// "openai/gpt-5"), so a match accepts either name extending the other.
+pub(crate) fn model_matches(requested: &str, returned: &str) -> bool {
+    let normalize = |name: &str| {
+        let name = name.rsplit('/').next().unwrap_or(name);
+        name.to_ascii_lowercase().replace(['_', '.', ' '], "-")
+    };
+    let (requested, returned) = (normalize(requested), normalize(returned));
+    !returned.is_empty() && (returned.starts_with(&requested) || requested.starts_with(&returned))
+}
+
+/// Filters for a ledger query; `limit` is applied after filtering.
+#[derive(Debug, Default)]
+pub(crate) struct TurnQuery {
+    pub(crate) since_ms: Option<u64>,
+    pub(crate) provider_id: Option<String>,
+    pub(crate) limit: usize,
+}
+
+#[derive(Debug, Default)]
+pub(crate) struct TurnLedger {
+    turns: Mutex<VecDeque<TurnUsage>>,
+    persist_path: Option<PathBuf>,
+}
+
+impl TurnLedger {
+    pub(crate) fn load(path: Option<PathBuf>) -> anyhow::Result<Self> {
+        let turns = match path.as_deref() {
+            Some(path) if path.exists() => load_turns(path)?,
+            _ => VecDeque::new(),
+        };
+        Ok(Self {
+            turns: Mutex::new(turns),
+            persist_path: path,
+        })
+    }
+
+    pub(crate) fn record(&self, turn: TurnUsage) {
+        {
+            let mut turns = self.turns.lock().unwrap_or_else(PoisonError::into_inner);
+            if turns.len() == MAX_TRACKED_TURNS {
+                turns.pop_front();
+            }
+            turns.push_back(turn.clone());
+        }
+        let Some(path) = self.persist_path.clone() else {
+            return;
+        };
+        tokio::task::spawn_blocking(move || {
+            if let Err(error) = persist_turn(&path, &turn) {
+                tracing::warn!(error = %error, "failed to persist turn usage");
+            }
+        });
+    }
+
+    /// Newest turns first.
+    pub(crate) fn query(&self, query: &TurnQuery) -> Vec<TurnUsage> {
+        let turns = self.turns.lock().unwrap_or_else(PoisonError::into_inner);
+        turns
+            .iter()
+            .rev()
+            .filter(|turn| query.since_ms.is_none_or(|since| turn.at_ms >= since))
+            .filter(|turn| {
+                query
+                    .provider_id
+                    .as_deref()
+                    .is_none_or(|provider| provider == turn.provider_id)
+            })
+            .take(query.limit)
+            .cloned()
+            .collect()
+    }
+}
+
+fn load_turns(path: &Path) -> anyhow::Result<VecDeque<TurnUsage>> {
+    let connection = Connection::open(path)?;
+    connection.execute_batch(TURNS_SCHEMA)?;
+    let mut statement = connection.prepare(
+        "SELECT at_ms, session, provider_id, catalog_slug, upstream_model_id, returned_model,
+                protocol, prefix_state, input_tokens, cache_read_tokens, cache_creation_tokens,
+                output_tokens, reasoning_tokens, reasoning_chars, ttft_ms, output_tps
+         FROM (SELECT * FROM token_usage_turns ORDER BY id DESC LIMIT ?1)
+         ORDER BY at_ms, id",
+    )?;
+    // Inserts run on the blocking pool and may land out of order, so restore
+    // reply order from the timestamp rather than the row id.
+    let rows = statement.query_map([MAX_TRACKED_TURNS as i64], |row| {
+        Ok(TurnUsage {
+            at_ms: row.get(0)?,
+            session: row.get(1)?,
+            provider_id: row.get(2)?,
+            catalog_slug: row.get(3)?,
+            upstream_model_id: row.get(4)?,
+            returned_model: row.get(5)?,
+            model_matches: None,
+            protocol: row.get(6)?,
+            prefix_state: row.get(7)?,
+            input_tokens: row.get(8)?,
+            cache_read_tokens: row.get(9)?,
+            cache_creation_tokens: row.get(10)?,
+            output_tokens: row.get(11)?,
+            reasoning_tokens: row.get(12)?,
+            reasoning_chars: row.get(13)?,
+            cache_hit_percent: None,
+            ttft_ms: row.get(14)?,
+            output_tps: row.get(15)?,
+        }
+        .finalize())
+    })?;
+    Ok(rows.collect::<Result<VecDeque<_>, _>>()?)
+}
+
+fn persist_turn(path: &Path, turn: &TurnUsage) -> anyhow::Result<()> {
+    let _write = USAGE_DB_WRITE
+        .lock()
+        .unwrap_or_else(PoisonError::into_inner);
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let connection = Connection::open(path)?;
+    // Turn rows and the aggregate counters are written from concurrent
+    // blocking tasks; wait for the writer lock instead of dropping the row.
+    connection.busy_timeout(PERSIST_BUSY_TIMEOUT)?;
+    connection.execute_batch("PRAGMA journal_mode = WAL; PRAGMA synchronous = NORMAL;")?;
+    connection.execute_batch(TURNS_SCHEMA)?;
+    connection.execute(
+        "INSERT INTO token_usage_turns (
+            at_ms, session, provider_id, catalog_slug, upstream_model_id, returned_model,
+            protocol, prefix_state, input_tokens, cache_read_tokens, cache_creation_tokens,
+            output_tokens, reasoning_tokens, reasoning_chars, ttft_ms, output_tps
+         ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11, ?12, ?13, ?14, ?15, ?16)",
+        params![
+            turn.at_ms,
+            turn.session,
+            turn.provider_id,
+            turn.catalog_slug,
+            turn.upstream_model_id,
+            turn.returned_model,
+            turn.protocol,
+            turn.prefix_state,
+            turn.input_tokens,
+            turn.cache_read_tokens,
+            turn.cache_creation_tokens,
+            turn.output_tokens,
+            turn.reasoning_tokens,
+            turn.reasoning_chars,
+            turn.ttft_ms,
+            turn.output_tps,
+        ],
+    )?;
+    connection.execute(
+        "DELETE FROM token_usage_turns WHERE id <= last_insert_rowid() - ?1",
+        [MAX_TRACKED_TURNS as i64],
+    )?;
+    Ok(())
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn turn(provider_id: &str, at_ms: u64) -> TurnUsage {
+        TurnUsage {
+            at_ms,
+            session: session_tag("session-a"),
+            provider_id: provider_id.to_owned(),
+            catalog_slug: "glm-5.2".to_owned(),
+            upstream_model_id: "glm-5.2".to_owned(),
+            returned_model: Some("GLM-5.2".to_owned()),
+            model_matches: None,
+            protocol: "chat_completions".to_owned(),
+            prefix_state: "append_only".to_owned(),
+            input_tokens: Some(1_000),
+            cache_read_tokens: Some(3_000),
+            cache_creation_tokens: None,
+            output_tokens: Some(200),
+            reasoning_tokens: Some(120),
+            reasoning_chars: 0,
+            cache_hit_percent: None,
+            ttft_ms: Some(800.0),
+            output_tps: Some(40.0),
+        }
+        .finalize()
+    }
+
+    #[test]
+    fn model_match_accepts_dated_and_namespaced_variants() {
+        assert!(model_matches("gpt-5", "gpt-5-2025-08-07"));
+        assert!(model_matches("glm-5.2", "openai/GLM-5.2"));
+        assert!(model_matches("claude-sonnet-4-6", "claude-sonnet-4.6"));
+        assert!(!model_matches("claude-opus-4-7", "claude-sonnet-4-6"));
+        assert!(!model_matches("gpt-5", ""));
+    }
+
+    #[test]
+    fn finalize_derives_match_and_cache_ratio() {
+        let row = turn("baidu", 1);
+        assert_eq!(row.model_matches, Some(true));
+        assert_eq!(row.cache_hit_percent, Some(75.0));
+        let unknown = TurnUsage {
+            cache_read_tokens: None,
+            returned_model: None,
+            ..row
+        }
+        .finalize();
+        assert_eq!(unknown.model_matches, None);
+        assert_eq!(
+            unknown.cache_hit_percent, None,
+            "missing counters are not 0%"
+        );
+    }
+
+    #[tokio::test]
+    async fn ledger_filters_newest_first_and_survives_reload() {
+        let directory = tempfile::tempdir().unwrap();
+        let path = directory.path().join("usage.sqlite3");
+        let ledger = TurnLedger::load(Some(path.clone())).unwrap();
+        for (index, provider) in ["a", "b", "a"].into_iter().enumerate() {
+            ledger.record(turn(provider, index as u64 + 10));
+        }
+        let query = TurnQuery {
+            provider_id: Some("a".to_owned()),
+            limit: 10,
+            ..Default::default()
+        };
+        let rows = ledger.query(&query);
+        assert_eq!(
+            rows.iter().map(|row| row.at_ms).collect::<Vec<_>>(),
+            [12, 10]
+        );
+        let all = TurnQuery {
+            limit: 10,
+            ..Default::default()
+        };
+        // Persistence runs on the blocking pool; wait until every row lands.
+        for _ in 0..100 {
+            if TurnLedger::load(Some(path.clone()))
+                .unwrap()
+                .query(&all)
+                .len()
+                == 3
+            {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        let reloaded = TurnLedger::load(Some(path)).unwrap();
+        assert_eq!(reloaded.query(&query), rows);
+        let since = TurnQuery {
+            since_ms: Some(11),
+            limit: 10,
+            ..Default::default()
+        };
+        assert_eq!(reloaded.query(&since).len(), 2);
+    }
+}

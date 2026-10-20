@@ -24,7 +24,7 @@ pub(crate) use opencode_go::{
 pub(crate) use quota::quota;
 #[cfg(test)]
 pub(crate) use quota::summarize_quota_json;
-pub(crate) use usage::usage;
+pub(crate) use usage::{usage, usage_daily, usage_turns};
 
 pub(super) async fn status(json_output: bool) -> anyhow::Result<()> {
     if load_stored_config()?.is_none_or(|config| config.providers.is_empty())

@@ -572,6 +572,7 @@ mod tests {
         total_bytes: usize,
     ) -> PrefixObservation {
         PrefixObservation {
+            session: "test".to_owned(),
             provider_id: "baidu-oneapi".to_owned(),
             catalog_slug: "gpt-5.6-sol-baidu-oneapi".to_owned(),
             upstream_model_id: "gpt-5.6-sol".to_owned(),
@@ -932,16 +933,44 @@ mod tests {
         .unwrap();
         let mut observer = UpstreamCacheObserver::new(observation);
         observer.observe_value(&json!({
+            "type": "response.reasoning_summary_text.delta",
+            "delta": "plan the fix"
+        }));
+        observer.observe_value(&json!({
             "type": "response.completed",
             "response": {
+                "model": "gpt-5.6-sol-2026-09-01",
                 "usage": {
                     "input_tokens": 120,
                     "input_tokens_details": {"cached_tokens": 80},
-                    "output_tokens": 30
+                    "output_tokens": 30,
+                    "output_tokens_details": {"reasoning_tokens": 12}
                 }
             }
         }));
         drop(observer);
+
+        let turns = tracker.usage_turns(&crate::gateway::TurnQuery {
+            limit: 10,
+            ..Default::default()
+        });
+        assert_eq!(
+            turns.len(),
+            1,
+            "every observed reply lands in the turn ledger"
+        );
+        assert_eq!(
+            turns[0].returned_model.as_deref(),
+            Some("gpt-5.6-sol-2026-09-01")
+        );
+        assert_eq!(turns[0].model_matches, Some(true));
+        assert_eq!(turns[0].reasoning_tokens, Some(12));
+        assert_eq!(turns[0].reasoning_chars, 12);
+        assert_eq!(turns[0].cache_hit_percent, Some(80.0 / 120.0 * 100.0));
+        let daily = tracker.usage_daily(7).unwrap();
+        assert_eq!(daily.len(), 1, "today's reply appears in the daily series");
+        assert_eq!(daily[0].usage.cache_read_tokens, 80);
+        assert_eq!(daily[0].usage.cache_hit_percent, Some(80.0 / 120.0 * 100.0));
 
         let usage = tracker.usage_snapshot();
         assert_eq!(usage.len(), 1);
