@@ -5,15 +5,15 @@ use std::time::Duration;
 use codex_mixin::config::{
     StoredGatewayConfig, load_stored_config_from_path, save_stored_config_to_path,
 };
-use codex_mixin::provider::{
-    CONFIG_VERSION, ProviderModel, ProviderModelSource, custom_provider, open_code_go_provider,
-};
+use codex_mixin::provider::{CONFIG_VERSION, ProviderModel, ProviderModelSource, custom_provider};
 use serde::Deserialize;
 use wait_timeout::ChildExt;
 
 mod common;
 
-const STARTUP_TIMEOUT: Duration = Duration::from_secs(10);
+// Windows startup also runs ACL subprocesses; network independence is checked
+// by keeping the catalog connection open until the gateway serves healthz.
+const STARTUP_TIMEOUT: Duration = Duration::from_secs(30);
 const DAEMON_COMMAND_TIMEOUT: Duration = Duration::from_secs(30);
 
 struct DaemonGuard<'a>(&'a std::path::Path);
@@ -209,10 +209,12 @@ async fn startup_does_not_wait_for_official_catalog_network() {
     let proxy_listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let proxy_address = proxy_listener.local_addr().unwrap();
     let (proxy_connected, proxy_connection) = tokio::sync::oneshot::channel();
+    let (proxy_closed, mut proxy_close) = tokio::sync::oneshot::channel();
     let proxy_task = tokio::spawn(async move {
-        let (_connection, _) = proxy_listener.accept().await.unwrap();
+        let (mut connection, _) = proxy_listener.accept().await.unwrap();
         let _ = proxy_connected.send(());
-        std::future::pending::<()>().await;
+        let closed = tokio::io::copy(&mut connection, &mut tokio::io::sink()).await;
+        let _ = proxy_closed.send(closed);
     });
 
     let directory = tempfile::tempdir().unwrap();
@@ -223,6 +225,14 @@ async fn startup_does_not_wait_for_official_catalog_network() {
     let codex_home = directory.path().join("codex");
     let catalog_path = codex_home.join("model-catalogs").join("mixin-models.json");
     fs::create_dir_all(catalog_path.parent().unwrap()).unwrap();
+    let mut provider = custom_provider("static", "upstream-key");
+    provider.base_url = "http://127.0.0.1:9".to_owned();
+    provider.model_source = ProviderModelSource::Static;
+    provider.selected_models = vec!["test-model".to_owned()];
+    provider.cached_models = vec![ProviderModel {
+        id: "test-model".to_owned(),
+        ..Default::default()
+    }];
     save_stored_config_to_path(
         &gateway_config_path,
         &StoredGatewayConfig {
@@ -237,7 +247,7 @@ async fn startup_does_not_wait_for_official_catalog_network() {
             official_selected_models: None,
             official_model_contexts: Default::default(),
             fusion_profiles: Vec::new(),
-            providers: vec![open_code_go_provider("test-provider", "upstream-key")],
+            providers: vec![provider],
         },
     )
     .unwrap();
@@ -307,6 +317,13 @@ async fn startup_does_not_wait_for_official_catalog_network() {
     let health: serde_json::Value = response.json().await.unwrap();
     assert_eq!(health["ok"], true);
     assert_eq!(health["provider_readiness"], "healthy");
+    assert!(
+        matches!(
+            proxy_close.try_recv(),
+            Err(tokio::sync::oneshot::error::TryRecvError::Empty)
+        ),
+        "official catalog request finished before gateway readiness"
+    );
     assert!(child.try_wait().unwrap().is_none());
     child.kill().await.unwrap();
     child.wait().await.unwrap();
