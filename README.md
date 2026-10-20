@@ -23,12 +23,12 @@
 
 <p align="center">
   <a href="#概览">概览</a> ·
+  <a href="#快速开始">快速开始</a> ·
+  <a href="#使用入口">使用入口</a> ·
   <a href="#界面">界面</a> ·
   <a href="#功能">功能</a> ·
-  <a href="#产品形态">产品形态</a> ·
   <a href="#供应商">供应商</a> ·
   <a href="#agent-接入">Agent 接入</a> ·
-  <a href="#快速开始">快速开始</a> ·
   <a href="#文档">文档</a>
 </p>
 
@@ -36,49 +36,77 @@
 
 ## 概览
 
-Codex Mixin 是一个用 Rust 编写的本地网关。它在本机启动一个 OpenAI / Anthropic 兼容端点，把官方 Codex 和其他 Coding Agent 的请求路由到你配置的模型供应商，例如 DeepSeek、Claude、Gemini、Baidu OneAPI、AWS Bedrock、Google Antigravity，以及任意 OpenAI 或 Anthropic 兼容端点。
+Codex Mixin 是一个用 Rust 编写的本地网关。它在本机提供 OpenAI、Anthropic 和 Gemini 兼容接口，把官方 Codex 和其他 Coding Agent 的请求路由到你配置的模型供应商，例如 DeepSeek、Claude、Gemini、Baidu OneAPI、AWS Bedrock、Google Antigravity，以及任意 OpenAI 或 Anthropic 兼容端点。
 
 接入官方 Codex 时，自定义模型与官方 GPT 模型同时出现在模型选择器中；ChatGPT 账号登录、历史会话和移动端远程任务保持可用。断开接入后，网关恢复客户端原来的配置。
 
-网关之外，Codex Mixin 还记录每次回复的 Token 用量，汇总各供应商的额度，并为 50 款 Coding Agent 提供配置写入与恢复。所有能力由同一个 CLI 提供，macOS App、Windows App 和 Web 控制面板都通过 CLI 的 JSON 接口读取数据。
+日常使用从图形界面开始：macOS 菜单栏、Windows 系统托盘，或 Linux / 远程机器的 Web 控制面板。添加供应商、选择模型、接入 Agent 和查看用量，都可以在界面中完成。管理目录收录 50 款 Agent，默认发布包支持其中 38 款的配置接入与恢复。
+
+---
+
+## 快速开始
+
+### 1. 下载并打开
+
+从 [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 选择对应平台和架构的发布包，无需安装 Rust 或从源码编译。
+
+| 平台 | 下载与运行 | 图形入口 |
+| --- | --- | --- |
+| macOS | 下载 Apple Silicon 或 Intel 的 `.dmg`，将 App 拖入「应用程序」后启动 | 点击菜单栏图标 →「打开控制台…」 |
+| Windows | 运行 `windows-x86_64-setup.exe`，或解压便携版 Zip 后启动 | 点击系统托盘图标 →「打开控制台…」 |
+| Linux | 下载 x86_64 或 ARM64 的 `unknown-linux-musl.tar.gz`，解压后运行 `./codex-mixin panel`；也可安装对应 `.deb` | 在浏览器打开终端打印的访问地址 |
+
+Linux 压缩包内含可直接运行的二进制；进入解压后的目录执行即可。Web 面板运行期间请保持进程开启。系统要求、文件名和 SSH 访问方法见 [安装指南](https://github.com/Edward-lyz/codex-mixin/wiki/Installation)。
+
+### 2. 配置模型并接入 Agent
+
+1. 在「模型与服务」添加供应商，填写 API Key 或完成 OAuth 登录。
+2. 刷新模型列表，选择要使用的模型并保存，确认网关已启动。
+3. 打开 Agent 页面，找到已安装的客户端并接入；Codex 通常选择「官方账号模式」，保留官方 GPT 与 ChatGPT 登录。
+4. 重启对应客户端或打开新会话，在模型选择器中选择自定义模型。
+
+### 3. 查看状态与用量
+
+菜单栏或托盘可快速查看网关状态和供应商额度；控制台的「用量明细」展示每天与每次回复的 Token、缓存和速度。需要恢复客户端原配置时，在 Agent 页面断开接入。
+
+Web 面板默认监听所有网卡的 8000–9000 随机端口，访问需要本次启动生成的 Token。仅在本机使用可运行 `./codex-mixin panel --bind 127.0.0.1:8800`；网关与面板的访问边界见 [数据与安全](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security)。
+
+---
+
+## 使用入口
+
+| 入口 | 主要用途 |
+| --- | --- |
+| macOS 菜单栏 / Windows 托盘 | 网关启停、额度速览、打开控制台；高级菜单中管理 Fusion、备份等功能 |
+| 桌面控制台 | 模型与服务、Agent 接入、用量明细 |
+| Web 控制面板 | 浏览器中管理模型与服务、Agent、用量、Fusion 及高级设置，适合 Linux 和远程机器 |
+| CLI | 脚本、自动化与诊断，命令见 [CLI 参考](https://github.com/Edward-lyz/codex-mixin/wiki/CLI-Reference) |
 
 ---
 
 ## 界面
 
-以下截图来自本地运行的 Web 控制面板（`codex-mixin panel`）。macOS 与 Windows 控制台展示同样的数据。
+以下为 v0.7.4 发版期间的 macOS App 实际界面。
 
 <p align="center">
-  <a href="docs/assets/WEB-Overview.png"><img src="docs/assets/WEB-Overview.png" alt="Web 控制面板概览页"></a><br>
-  <sub><b>概览</b> · 网关状态、Provider 健康度、用量最高的模型与额度</sub>
+  <a href="docs/assets/APP-Console-Models-v074.png"><img src="docs/assets/APP-Console-Models-v074.png" alt="macOS 控制台的模型与服务页面"></a><br>
+  <sub><b>模型与服务</b> · 供应商、模型选择、能力与上下文设置</sub>
 </p>
 
 <table>
   <tr>
     <td width="50%" align="center">
-      <a href="docs/assets/WEB-Quota.png"><img src="docs/assets/WEB-Quota.png" alt="按 Provider 汇总的额度圆环"></a><br>
-      <sub><b>额度</b> · 每个额度窗口一圈，中心显示最紧张窗口的已用百分比，可切换为条形</sub>
+      <a href="docs/assets/APP-Console-Agents-v074.png"><img src="docs/assets/APP-Console-Agents-v074.png" alt="macOS 控制台的 Agent 接入页面"></a><br>
+      <sub><b>Agent 接入</b> · 安装版本、接入状态与恢复入口</sub>
     </td>
     <td width="50%" align="center">
-      <a href="docs/assets/WEB-Usage.png"><img src="docs/assets/WEB-Usage.png" alt="按天与按回复的 Token 用量明细"></a><br>
-      <sub><b>用量明细</b> · 按天、按 Provider 聚合，并列出每次回复的缓存命中、思考长度与返回模型</sub>
-    </td>
-  </tr>
-  <tr>
-    <td width="50%" align="center">
-      <a href="docs/assets/APP-ProviderModelList.png"><img src="docs/assets/APP-ProviderModelList.png" alt="macOS Provider 模型列表"></a><br>
-      <sub><b>macOS 控制台</b> · 模型发现、能力探测与测速</sub>
-    </td>
-    <td width="50%" align="center">
-      <a href="docs/assets/fusion-review.png"><img src="docs/assets/fusion-review.png" alt="Codex 内的模型融合评审"></a><br>
-      <sub><b>Fusion</b> · 在官方 Codex 内编排多个模型并由 Judge 评审</sub>
+      <a href="docs/assets/APP-Console-Usage-v074.png"><img src="docs/assets/APP-Console-Usage-v074.png" alt="macOS 控制台的用量明细页面"></a><br>
+      <sub><b>用量明细</b> · 每日统计、逐次回复、缓存与速度</sub>
     </td>
   </tr>
 </table>
 
-<p align="center">
-  更多截图见 Wiki 的 <a href="https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour">Product Tour</a>。
-</p>
+界面说明见 Wiki 的 [产品展示](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour)。截图中的模型和统计值仅反映采集时状态。
 
 ---
 
@@ -90,34 +118,23 @@ Codex Mixin 是一个用 Rust 编写的本地网关。它在本机启动一个 O
 
 **模型能力探测。** 对已添加的模型发送真实请求，标注 Reasoning、Function Calling、Tool Search 与 Web Search 能力，结果缓存后供目录和 Fusion 使用。
 
-**用量与额度。** 每次上游回复都写入本地 `usage.sqlite3`（保留最近 5000 条），记录未缓存输入、命中缓存、缓存命中率、输出、思考 Token、返回模型是否与请求一致、首字延迟和输出速度。额度按 Provider 汇总，默认以同心圆环显示，已用超过 90% 时标红。
+**用量与额度。** 查看每天和每次回复的 Token、缓存命中率、思考消耗、返回模型、首字延迟与输出速度，本地保留最近 5000 条回复。供应商额度支持圆环或条形显示，已用超过 90% 时标红。
 
 **模型融合（Fusion）。** 一个模型标识可以调度主模型和辅助模型，由 Judge 模型评审结果；也可以按时间段把同一标识路由到不同供应商。
 
-**Claude Desktop 接入。** `codex-mixin agent connect claude-desktop` 让 [Claude Desktop](https://claude.com/download) 的 Code 标签页通过网关使用目录中的模型。每个模型生成稳定的 `claude-sonnet-mixin-*` 路由别名，Claude.ai 账号登录不受影响；`agent disconnect claude-desktop` 恢复原配置。
+**Claude Desktop 接入。** 在 Agent 页面连接 [Claude Desktop](https://claude.com/download)，让 Code 标签页通过网关使用所选模型，保留 Claude.ai 登录；断开接入即可恢复原配置。
 
-**配置备份。** `codex-mixin config export` 把 Provider 设置与凭据导出为 Base64 字符串，`config import` 在另一台机器上恢复。备份包含 API Key，请按凭据妥善保管。
+**配置备份。** 在高级菜单导出或导入供应商、模型与 Fusion 配置，用于恢复或跨机器迁移。备份包含 API Key，Base64 只是编码，请按凭据妥善保管。
 
-**官方 GPT 的 ECH 直连（实验性）。** `codex-mixin ech enable` 先测试 DNS 与 TLS，再通过 DoH 与 ECH 访问 OpenAI 官方端点；测试失败时保持原有直连方式。详见 [ECH GPT](docs/ech-gpt.md)。
+**官方 GPT 的 ECH 连接（实验性）。** 在高级菜单启用前会先测试 DNS 与 TLS，再通过 DoH 与 ECH 访问 OpenAI 官方端点。详见 [ECH GPT](docs/ech-gpt.md)。
 
 **客户端鉴权（可选）。** 默认构建不校验入站 Key，便于本机客户端直接使用。以 `--features client-auth` 构建时，网关要求客户端携带密钥。
 
 ---
 
-## 产品形态
-
-| 形态 | 获取方式 | 说明 |
-| --- | --- | --- |
-| CLI | 单一跨平台二进制 | 网关进程、Provider 与 Agent 管理、用量查询；为图形端提供 JSON 接口 |
-| macOS App | 菜单栏 App | 菜单栏显示额度；控制台包含模型与服务、Agent 接入、用量明细三个页面 |
-| Windows App | WinUI 3 托盘 App | 托盘显示额度；控制台与 macOS 相同，另有 Fusion 与设置窗口 |
-| Web 控制面板 | `codex-mixin panel` | 浏览器控制台，适合 Linux、远程开发机和无桌面环境 |
-
----
-
 ## 供应商
 
-`codex-mixin setup --preset <id>` 支持以下预设，其余兼容端点使用 `custom`。
+在界面中添加供应商时可选择以下预设，其余兼容端点选择「自定义」。
 
 | 预设 | 供应商 | 上游协议 | 鉴权 |
 | --- | --- | --- | --- |
@@ -130,7 +147,7 @@ Codex Mixin 是一个用 Rust 编写的本地网关。它在本机启动一个 O
 | `aws-bedrock` | Amazon Bedrock (Mantle) | Anthropic Messages | Bedrock API Key 或 AWS 访问密钥 |
 | `custom` | 任意兼容端点 | OpenAI Responses（默认） | 自定义 Header 与 Key |
 
-添加后可运行 `codex-mixin provider test <id>` 检查鉴权与模型访问，用 `provider probe <id>` 探测模型能力。
+添加后可在界面中测试连接、刷新模型列表，并从模型操作菜单重新探测能力；探测会发送真实请求，可能消耗额度。
 
 ---
 
@@ -381,49 +398,6 @@ Codex Mixin 是一个用 Rust 编写的本地网关。它在本机启动一个 O
 
 ---
 
-## 快速开始
-
-### 安装
-
-- **macOS**：从 [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 下载 `.dmg`，将 App 拖入「应用程序」。
-- **Windows**：从 [Releases](https://github.com/Edward-lyz/codex-mixin/releases/latest) 下载安装器或便携版 Zip。
-- **Linux / 源码构建**：需要 Rust stable 工具链。
-
-  ```bash
-  git clone https://github.com/Edward-lyz/codex-mixin.git
-  cd codex-mixin
-  cargo build --locked --release
-  # 产物：target/release/codex-mixin
-  ```
-
-### 首次配置
-
-```bash
-# 选择预设并填写 Key，随后启动网关
-codex-mixin setup --preset deepseek
-
-# 把官方 Codex 接入网关，保留 ChatGPT 账号与官方 GPT 模型
-codex-mixin agent connect codex --mode official-account
-```
-
-### 常用命令
-
-```bash
-codex-mixin service start          # 后台启动网关
-codex-mixin service status         # 查看网关与 Provider 状态
-codex-mixin service restart        # 升级后重启网关，使新接口生效
-codex-mixin panel                  # 打开 Web 控制面板
-codex-mixin provider list          # 列出已配置的 Provider
-codex-mixin provider probe <id>    # 重新探测模型能力
-codex-mixin agent list             # 查看各 Agent 的安装与接入状态
-codex-mixin agent disconnect codex # 恢复 Codex 的原配置
-codex-mixin config export          # 导出含凭据的 Base64 备份
-```
-
-`codex-mixin panel` 默认监听所有网卡上 8000–9000 之间的随机端口，并在终端打印带一次性 token 的访问地址。只在本机使用时，建议加上 `--bind 127.0.0.1:<port>`。
-
----
-
 ## 文档
 
 仓库内文档：
@@ -438,6 +412,7 @@ codex-mixin config export          # 导出含凭据的 Base64 备份
 
 - [Product Tour](https://github.com/Edward-lyz/codex-mixin/wiki/Product-Tour)
 - [安装](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) 与 [快速上手](https://github.com/Edward-lyz/codex-mixin/wiki/Quick-Start)
+- [用量与额度](https://github.com/Edward-lyz/codex-mixin/wiki/Usage-and-Quota)
 - [配置备份与恢复](https://github.com/Edward-lyz/codex-mixin/wiki/Configuration-Backup-and-Restore)
 - [供应商与模型](https://github.com/Edward-lyz/codex-mixin/wiki/Providers-and-Models)
 - [客户端接入](https://github.com/Edward-lyz/codex-mixin/wiki/Client-Integrations)
