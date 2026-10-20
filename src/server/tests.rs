@@ -404,6 +404,41 @@ async fn usage_auth_obeys_build_feature() {
         .await
         .unwrap();
     assert_eq!(invalid_range.status(), StatusCode::BAD_REQUEST);
+    let turns: Value = client
+        .get(format!(
+            "http://{address}/v1/usage/turns?days=1&provider=baidu&limit=5"
+        ))
+        .bearer_auth("gateway-key")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(turns, json!([]));
+    let daily: Value = client
+        .get(format!("http://{address}/v1/usage/daily?days=30"))
+        .bearer_auth("gateway-key")
+        .send()
+        .await
+        .unwrap()
+        .error_for_status()
+        .unwrap()
+        .json()
+        .await
+        .unwrap();
+    assert_eq!(daily, json!([]));
+    for invalid in ["limit=0", "limit=5001", "days=0"] {
+        let response = client
+            .get(format!("http://{address}/v1/usage/turns?{invalid}"))
+            .bearer_auth("gateway-key")
+            .send()
+            .await
+            .unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST, "{invalid}");
+    }
 }
 
 #[test]

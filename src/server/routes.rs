@@ -35,6 +35,8 @@ pub fn router(state: AppState) -> Router {
             get(model_benchmarks).post(start_model_benchmarks),
         )
         .route("/v1/usage", get(token_usage))
+        .route("/v1/usage/turns", get(token_usage_turns))
+        .route("/v1/usage/daily", get(token_usage_daily))
         .route("/v1/responses", get(responses_ws).post(responses))
         .route("/v1/responses/compact", post(compact))
         .route("/v1/messages", post(super::messages_http::messages))
@@ -263,4 +265,65 @@ async fn token_usage(
 #[derive(Deserialize)]
 struct TokenUsageQuery {
     days: Option<u64>,
+}
+
+/// Days charted when the caller does not pick a range.
+const DEFAULT_DAILY_DAYS: u64 = 30;
+
+async fn token_usage_daily(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<TokenUsageQuery>,
+) -> Result<Json<Vec<crate::gateway::DailyTokenUsage>>, GatewayError> {
+    check_gateway_auth(&state, &headers).await?;
+    let days = query.days.unwrap_or(DEFAULT_DAILY_DAYS);
+    if !(1..=3_650).contains(&days) {
+        return Err(GatewayError::BadRequest(
+            "usage days must be between 1 and 3650".to_owned(),
+        ));
+    }
+    Ok(Json(state.cache_shapes.usage_daily(days)?))
+}
+
+/// Default and maximum page size for the per-turn ledger.
+const DEFAULT_TURN_LIMIT: usize = 200;
+
+#[derive(Deserialize)]
+struct TurnUsageQuery {
+    days: Option<u64>,
+    provider: Option<String>,
+    limit: Option<usize>,
+}
+
+async fn token_usage_turns(
+    State(state): State<AppState>,
+    headers: HeaderMap,
+    Query(query): Query<TurnUsageQuery>,
+) -> Result<Json<Vec<crate::gateway::TurnUsage>>, GatewayError> {
+    check_gateway_auth(&state, &headers).await?;
+    let limit = query.limit.unwrap_or(DEFAULT_TURN_LIMIT);
+    if limit == 0 || limit > crate::gateway::MAX_TRACKED_TURNS {
+        return Err(GatewayError::BadRequest(format!(
+            "usage turn limit must be between 1 and {}",
+            crate::gateway::MAX_TRACKED_TURNS
+        )));
+    }
+    let since_ms = match query.days {
+        Some(days) if (1..=3_650).contains(&days) => {
+            Some(crate::gateway::unix_millis().saturating_sub(days.saturating_mul(86_400_000)))
+        }
+        Some(_) => {
+            return Err(GatewayError::BadRequest(
+                "usage days must be between 1 and 3650".to_owned(),
+            ));
+        }
+        None => None,
+    };
+    Ok(Json(state.cache_shapes.usage_turns(
+        &crate::gateway::TurnQuery {
+            since_ms,
+            provider_id: query.provider,
+            limit,
+        },
+    )))
 }

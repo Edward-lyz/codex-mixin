@@ -10,6 +10,7 @@ use crate::gateway::UpstreamRouting;
 use crate::protocol::sse::SseDecoder;
 
 use super::super::cache_usage::{ProviderTokenUsage, TokenUsageAggregator, UpstreamCacheUsage};
+use super::super::turn_usage::{TurnQuery, TurnUsage, session_tag, unix_millis};
 use super::shape::{CacheShape, PrefixChanges, PrefixReport, PrefixState};
 
 /// Sessions retained for prefix diagnostics. Codex drives one session per
@@ -51,6 +52,17 @@ impl CacheShapeTracker {
 
     pub(crate) fn usage(&self) -> Arc<TokenUsageAggregator> {
         self.usage.clone()
+    }
+
+    pub(crate) fn usage_daily(
+        &self,
+        days: u64,
+    ) -> anyhow::Result<Vec<super::super::cache_usage::DailyTokenUsage>> {
+        self.usage.daily_series(days)
+    }
+
+    pub(crate) fn usage_turns(&self, query: &TurnQuery) -> Vec<TurnUsage> {
+        self.usage.turns(query)
     }
 
     pub(crate) fn usage_snapshot(&self) -> Vec<ProviderTokenUsage> {
@@ -207,6 +219,7 @@ pub(crate) fn record_provider_prefix(
         );
     }
     Some(PrefixObservation {
+        session: session_tag(&routing.session_id),
         provider_id: provider_id.to_owned(),
         catalog_slug: catalog_slug.to_owned(),
         upstream_model_id: upstream_model_id.to_owned(),
@@ -235,6 +248,7 @@ pub(super) const MIN_SERVED_FRACTION_OF_REUSABLE: f64 = 0.5;
 /// that arrive later can be judged against the prefix we know we preserved.
 #[derive(Clone, Debug)]
 pub(crate) struct PrefixObservation {
+    pub(super) session: String,
     pub(super) provider_id: String,
     pub(super) catalog_slug: String,
     pub(super) upstream_model_id: String,
@@ -355,6 +369,9 @@ pub(crate) struct UpstreamCacheObserver {
     observation: PrefixObservation,
     usage: UpstreamCacheUsage,
     first_token_at: Option<Instant>,
+    returned_model: Option<String>,
+    reasoning_tokens: Option<u64>,
+    reasoning_chars: u64,
 }
 
 impl UpstreamCacheObserver {
@@ -363,6 +380,9 @@ impl UpstreamCacheObserver {
             observation,
             usage: UpstreamCacheUsage::default(),
             first_token_at: None,
+            returned_model: None,
+            reasoning_tokens: None,
+            reasoning_chars: 0,
         }
     }
 
@@ -370,16 +390,100 @@ impl UpstreamCacheObserver {
         if self.first_token_at.is_none() && contains_output_delta(value) {
             self.first_token_at = Some(Instant::now());
         }
+        self.reasoning_chars = self
+            .reasoning_chars
+            .saturating_add(reasoning_delta_chars(value));
         for path in [
             value,
             value.get("message").unwrap_or(&Value::Null),
             value.get("response").unwrap_or(&Value::Null),
         ] {
+            if let Some(model) = path
+                .get("model")
+                .and_then(Value::as_str)
+                .filter(|model| !model.is_empty())
+            {
+                self.returned_model = Some(model.to_owned());
+            }
             if let Some(usage) = path.get("usage") {
                 self.usage.absorb(usage);
+                if let Some(reasoning) = ["output_tokens_details", "completion_tokens_details"]
+                    .into_iter()
+                    .find_map(|details| usage.get(details)?.get("reasoning_tokens")?.as_u64())
+                {
+                    self.reasoning_tokens = Some(reasoning);
+                }
             }
         }
     }
+
+    fn turn_usage(&self) -> TurnUsage {
+        let usage = &self.usage;
+        let observation = &self.observation;
+        let output_tps = match (usage.output_tokens, usage.generation_micros) {
+            (Some(tokens), Some(micros)) if micros > 0 && tokens > 0 => {
+                Some(tokens as f64 * 1_000_000.0 / micros as f64)
+            }
+            _ => None,
+        };
+        TurnUsage {
+            at_ms: unix_millis(),
+            session: observation.session.clone(),
+            provider_id: observation.provider_id.clone(),
+            catalog_slug: observation.catalog_slug.clone(),
+            upstream_model_id: observation.upstream_model_id.clone(),
+            returned_model: self.returned_model.clone(),
+            model_matches: None,
+            protocol: observation.protocol.to_owned(),
+            prefix_state: observation.state.as_str().to_owned(),
+            input_tokens: usage.input_tokens,
+            cache_read_tokens: usage.cache_read_tokens,
+            cache_creation_tokens: usage.cache_creation_tokens,
+            output_tokens: usage.output_tokens,
+            reasoning_tokens: self.reasoning_tokens,
+            reasoning_chars: self.reasoning_chars,
+            cache_hit_percent: None,
+            ttft_ms: usage.ttft_micros.map(|micros| micros as f64 / 1_000.0),
+            output_tps,
+        }
+        .finalize()
+    }
+}
+
+/// Characters of reasoning text in one streamed event, across the Chat
+/// Completions, Anthropic Messages, and Responses delta shapes.
+fn reasoning_delta_chars(value: &Value) -> u64 {
+    let text_chars = |text: Option<&Value>| {
+        text.and_then(Value::as_str)
+            .map_or(0, |text| text.chars().count() as u64)
+    };
+    if let Some(kind) = value.get("type").and_then(Value::as_str)
+        && kind.starts_with("response.reasoning")
+        && kind.ends_with(".delta")
+    {
+        return text_chars(value.get("delta"));
+    }
+    if let Some(delta) = value.get("delta")
+        && delta.get("type").and_then(Value::as_str) == Some("thinking_delta")
+    {
+        return text_chars(delta.get("thinking"));
+    }
+    value
+        .get("choices")
+        .and_then(Value::as_array)
+        .map_or(0, |choices| {
+            choices
+                .iter()
+                .filter_map(|choice| choice.get("delta"))
+                .map(|delta| {
+                    text_chars(
+                        delta
+                            .get("reasoning_content")
+                            .or_else(|| delta.get("reasoning")),
+                    )
+                })
+                .sum()
+        })
 }
 
 impl Drop for UpstreamCacheObserver {
@@ -395,6 +499,7 @@ impl Drop for UpstreamCacheObserver {
                     Some(first_token_at.elapsed().as_micros().max(1) as u64);
             }
             self.observation.report_upstream_cache(&self.usage);
+            self.observation.usage.record_turn(self.turn_usage());
         }
     }
 }
