@@ -755,17 +755,25 @@ const CACHE_VERDICT_MIN_PROMPT = 8_192;
 const CACHE_LOW_PERCENT = 50;
 const SERIES_COLORS = 4;
 
+// Each load gets a sequence number; a response for a superseded range is
+// dropped, so a fast range switch never renders old data on the new axis.
+let usageRequest = 0;
+
 async function loadUsageDetails() {
-  if (usagePage.loading) return;
+  const request = ++usageRequest;
+  const days = usagePage.days;
   usagePage.loading = true;
   usagePage.error = null;
   try {
-    usagePage.data = await api(`/api/usage?days=${usagePage.days}`);
+    const data = await api(`/api/usage?days=${days}`);
+    if (request === usageRequest) usagePage.data = data;
   } catch (error) {
-    usagePage.error = error.message;
+    if (request === usageRequest) usagePage.error = error.message;
   } finally {
-    usagePage.loading = false;
-    if (state.page === "usage") render({ animate: false });
+    if (request === usageRequest) {
+      usagePage.loading = false;
+      if (state.page === "usage") render({ animate: false });
+    }
   }
 }
 

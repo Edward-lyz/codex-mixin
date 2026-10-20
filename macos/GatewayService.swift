@@ -214,43 +214,18 @@ extension AppDelegate {
     }
 
     @objc func quit() {
-        quitApplication(restoreClients: false)
-    }
-
-    @objc func quitAndRestore() {
-        guard confirm(
-            title: "退出并恢复原配置？",
-            message: "会先把 Codex、Claude Code、Claude Desktop、DSH、OpenCode、Pi 中由 Codex Mixin 接管的配置恢复为安装前的状态，再停止本地网关并退出。正在运行的 Codex App 会自动重启；其他客户端需要重启或开新会话。"
-        ) else { return }
-        quitApplication(restoreClients: true)
+        quitApplication()
     }
 
     /// Quit is a real quit: the gateway stops even when a client still routes
-    /// through it. `restoreClients` first restores every managed client config.
-    private func quitApplication(restoreClients: Bool) {
+    /// through it.
+    private func quitApplication() {
         serviceBusy = true
-        serviceStatus = restoreClients ? "正在恢复原配置并退出..." : "正在停止本地网关并退出..."
+        serviceStatus = "正在停止本地网关并退出..."
         serviceEndpoint = nil
         Task { @MainActor in
             do {
-                var codexWasManaged = false
-                if restoreClients {
-                    codexWasManaged = try await readCodexIntegrationStatus().integration == .managed
-                }
-                let arguments = restoreClients
-                    ? ["service", "stop", "--managed", "--restore-clients", "--json"]
-                    : ["service", "stop", "--managed", "--allow-codex-disconnect", "--json"]
-                _ = try await runGateway(arguments)
-                if codexWasManaged {
-                    do {
-                        _ = try await restartRunningCodexDesktopApp()
-                    } catch {
-                        showAlert(
-                            title: "Codex App 未能自动重启",
-                            message: "原配置已恢复，本地网关已停止。请手动重启 Codex App：\(error)"
-                        )
-                    }
-                }
+                _ = try await runGateway(["service", "stop", "--managed", "--allow-codex-disconnect", "--json"])
                 NSApp.terminate(nil)
             } catch {
                 serviceBusy = false
@@ -259,5 +234,4 @@ extension AppDelegate {
             }
         }
     }
-
 }
