@@ -25,6 +25,7 @@ public sealed partial class MainWindow : Window
     private CancellationTokenSource? activeCancellation;
     private JsonElement metadata;
     private string page;
+    private string? queuedPage;
     private string? providerId;
     private JsonElement[] providers = [];
     private bool connectionSelected;
@@ -158,8 +159,13 @@ public sealed partial class MainWindow : Window
     internal async void ShowPage(string next)
     {
         ShowMain();
-        if (next == page || busy) return;
-        if (page == "providers" && (draftDirty || connectionDrafts.Count > 0 || modelDrafts.Count > 0)
+        if (next == page) return;
+        // A page load or CLI action is running; switch once it finishes so
+        // tray and activation requests are not dropped.
+        if (busy) { queuedPage = next; return; }
+        // The draft dictionaries cache every provider's editor; only MarkDirty
+        // means the user changed something that is not applied yet.
+        if (page == "providers" && draftDirty
             && !await ConfirmAsync("放弃未应用的更改？", "切换页面会丢弃尚未应用的服务商与模型更改。", "放弃并切换"))
         {
             ApplyPageLayout();
@@ -299,6 +305,11 @@ public sealed partial class MainWindow : Window
             PageShell.IsHitTestVisible = true;
             Activity.IsActive = false;
             Activity.Visibility = Visibility.Collapsed;
+        }
+        if (queuedPage is { } next && !exiting)
+        {
+            queuedPage = null;
+            ShowPage(next);
         }
     }
 
