@@ -1,4 +1,31 @@
 <!-- codex-mixin:zh-Hans:start -->
+## v0.7.4
+
+### 功能
+
+- 新增 Web 控制面板，替代 TUI，支持通过浏览器管理远程及无桌面环境。
+- Windows 桌面端改用原生 WinUI 3；macOS、Windows 新增控制台，集中管理模型、Agent 和用量。
+- 新增逐次回复与按天汇总的 Token 用量统计，展示缓存命中率、思考 Token、返回模型、首字延迟及输出速度；额度支持圆环和条形显示。
+- 新增 Gemini 协议与 Antigravity 支持，覆盖原生 OAuth、模型发现、额度查询及 Gemini Google Search（PR #48）。
+- 默认构建支持接入的 Agent 从 30 个增至 38 个；新增手动模型能力探测，Codex 接入不再依赖安装官方 CLI。
+
+### BUG 修复
+
+- 修复 Gemini 指令、工具调用及流式响应兼容问题，以及模型能力探测误判和缓存更新问题。
+- 修复 OpenCode Go 会话 Header、OneAPI 模型名称及网关更新后自动端口绑定问题。
+- 修复 macOS 再次打开应用不显示窗口、标题模糊及额度裁切问题，以及 Windows 控制台页面切换问题。
+- 修复用量时间范围切换后显示旧结果，以及返回模型匹配不准确的问题。
+
+### 使用变化
+
+- 网关与 Web 面板默认监听所有网卡，自动端口范围为 8000–9000；仅本机使用时可绑定 `127.0.0.1`。
+- 默认允许浏览器跨域访问，可配置 CORS 白名单；入站鉴权仍需 `client-auth` 构建。
+- 移除「退出并恢复原配置」，恢复配置请在 Agent 页面断开接入。
+
+### 致谢
+
+感谢 @clingfei 提交 Gemini 与 Antigravity 支持（PR #48）；感谢 @cuicheng01 修复 macOS 窗口显示问题（PR #50）；感谢所有参与验证和反馈的用户。
+
 ## v0.7.3
 
 ### 功能
@@ -162,6 +189,33 @@ Windows 桌面端从社区 PR 起步，v0.7.0 有 3 位开发者贡献了代码�
 <!-- codex-mixin:zh-Hans:end -->
 
 <!-- codex-mixin:zh-Hant:start -->
+## v0.7.4
+
+### 功能
+
+- 新增 Web 控制面板，取代 TUI，支援透過瀏覽器管理遠端及無桌面環境。
+- Windows 桌面端改用原生 WinUI 3；macOS、Windows 新增控制台，集中管理模型、Agent 和用量。
+- 新增逐次回覆與按天彙總的 Token 用量統計，顯示快取命中率、思考 Token、回傳模型、首字延遲及輸出速度；額度支援圓環和條形顯示。
+- 新增 Gemini 協定與 Antigravity 支援，涵蓋原生 OAuth、模型探索、額度查詢及 Gemini Google Search（PR #48）。
+- 預設建置支援接入的 Agent 從 30 個增至 38 個；新增手動模型能力探測，Codex 接入不再依賴安裝官方 CLI。
+
+### BUG 修復
+
+- 修復 Gemini 指令、工具呼叫及串流回應相容問題，以及模型能力探測誤判和快取更新問題。
+- 修復 OpenCode Go 工作階段 Header、OneAPI 模型名稱及閘道更新後自動連接埠綁定問題。
+- 修復 macOS 再次開啟應用程式不顯示視窗、標題模糊及額度裁切問題，以及 Windows 控制台頁面切換問題。
+- 修復用量時間範圍切換後顯示舊結果，以及回傳模型比對不準確的問題。
+
+### 使用變化
+
+- 閘道與 Web 面板預設監聽所有網路介面，自動連接埠範圍為 8000–9000；僅本機使用時可綁定 `127.0.0.1`。
+- 預設允許瀏覽器跨來源存取，可設定 CORS 白名單；入站驗證仍需 `client-auth` 建置。
+- 移除「退出並還原原設定」，還原設定請在 Agent 頁面中斷接入。
+
+### 致謝
+
+感謝 @clingfei 提交 Gemini 與 Antigravity 支援（PR #48）；感謝 @cuicheng01 修復 macOS 視窗顯示問題（PR #50）；感謝所有參與驗證和回饋的使用者。
+
 ## v0.7.3
 
 ### 功能
@@ -325,6 +379,33 @@ Windows 桌面端從社群 PR 起步，v0.7.0 有 3 位開發者貢獻了程式�
 <!-- codex-mixin:zh-Hant:end -->
 
 <!-- codex-mixin:en:start -->
+## v0.7.4
+
+### Features
+
+- Add a Web control panel to replace the TUI, with browser access for remote and headless environments.
+- Replace the Windows frontend with native WinUI 3; add macOS and Windows consoles for models, Agents, and usage.
+- Add per-reply and daily Token usage reports with cache hit ratio, reasoning Tokens, returned model, time to first token, and output speed; support quota rings and bars.
+- Add Gemini protocol and Antigravity support, including native OAuth, model discovery, quota queries, and Gemini Google Search (PR #48).
+- Increase supported Agent integrations from 30 to 38 in the default build; add manual model capability probes and remove the official CLI installation requirement for Codex integration.
+
+### Bug fixes
+
+- Fix Gemini instruction, tool call, and streaming compatibility, along with incorrect capability probe results and cache updates.
+- Fix OpenCode Go session headers, OneAPI model names, and automatic port binding after gateway updates.
+- Fix missing windows when reopening the macOS app, blurred headers, clipped quota displays, and Windows console page switching.
+- Fix stale results after changing the usage date range and incorrect returned-model matching.
+
+### Behavior changes
+
+- The gateway and Web panel listen on all network interfaces by default, with automatic ports in the 8000–9000 range; bind to `127.0.0.1` for local-only access.
+- Browser cross-origin access is allowed by default, with configurable CORS allowlists; inbound authentication still requires a `client-auth` build.
+- Remove Quit and Restore Original Config; disconnect the integration on the Agent page to restore configuration.
+
+### Acknowledgements
+
+Thanks to @clingfei for Gemini and Antigravity support (PR #48), @cuicheng01 for the macOS window fix (PR #50), and everyone who tested and reported issues.
+
 ## v0.7.3
 
 ### Features
