@@ -967,13 +967,63 @@ mod tests {
         assert_eq!(turns[0].reasoning_tokens, Some(12));
         assert_eq!(turns[0].reasoning_chars, 12);
         assert_eq!(turns[0].cache_hit_percent, Some(80.0 / 120.0 * 100.0));
+        // Native Gemini streams report usageMetadata and modelVersion instead
+        // of usage/model, and thought parts instead of reasoning deltas.
+        let gemini = record_provider_prefix(
+            &tracker,
+            "google",
+            "gemini-3-pro",
+            "gemini-3-pro",
+            Some(&UpstreamRouting {
+                session_id: "thread-2".to_owned(),
+                hash_key: "hash-2".to_owned(),
+            }),
+            CacheShape::from_openai_responses(&request),
+        )
+        .unwrap();
+        let mut observer = UpstreamCacheObserver::new(gemini);
+        observer.observe_value(&json!({
+            "candidates": [{"content": {"parts": [{"text": "think", "thought": true}, {"text": "hi"}]}}],
+            "modelVersion": "gemini-3-pro",
+            "usageMetadata": {
+                "promptTokenCount": 100,
+                "cachedContentTokenCount": 60,
+                "candidatesTokenCount": 5,
+                "thoughtsTokenCount": 7
+            }
+        }));
+        drop(observer);
+        let turns = tracker.usage_turns(&crate::gateway::TurnQuery {
+            provider_id: Some("google".to_owned()),
+            limit: 10,
+            ..Default::default()
+        });
+        assert_eq!(turns.len(), 1, "Gemini replies land in the turn ledger");
+        assert_eq!(turns[0].input_tokens, Some(40));
+        assert_eq!(turns[0].cache_read_tokens, Some(60));
+        assert_eq!(turns[0].output_tokens, Some(12));
+        assert_eq!(turns[0].reasoning_tokens, Some(7));
+        assert_eq!(turns[0].reasoning_chars, 5);
+        assert_eq!(turns[0].model_matches, Some(true));
+        assert!(turns[0].ttft_ms.is_some());
+
         let daily = tracker.usage_daily(7).unwrap();
-        assert_eq!(daily.len(), 1, "today's reply appears in the daily series");
-        assert_eq!(daily[0].usage.cache_read_tokens, 80);
-        assert_eq!(daily[0].usage.cache_hit_percent, Some(80.0 / 120.0 * 100.0));
+        assert_eq!(
+            daily.len(),
+            2,
+            "both replies appear in today's daily series"
+        );
+        let official = daily
+            .iter()
+            .find(|row| row.usage.provider_id == "official")
+            .unwrap();
+        assert_eq!(official.usage.cache_read_tokens, 80);
+        assert_eq!(official.usage.cache_hit_percent, Some(80.0 / 120.0 * 100.0));
 
         let usage = tracker.usage_snapshot();
-        assert_eq!(usage.len(), 1);
+        assert_eq!(usage.len(), 2);
+        // Snapshot rows sort by provider id: "google" comes before "official".
+        let usage = &usage[1..];
         assert_eq!(usage[0].provider_id, "official");
         assert_eq!(usage[0].model_id, "gpt-5.6-sol");
         assert_eq!(usage[0].input_tokens, 40);

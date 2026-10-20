@@ -23,7 +23,7 @@ pub(crate) use router::{
     AUTO_REVIEW_MODEL_SLUG, ModelRouter, ResolvedModelRoute, is_official_model_slug,
     stable_oneapi_routing,
 };
-pub(crate) use turn_usage::{MAX_TRACKED_TURNS, TurnQuery, TurnUsage, unix_millis};
+pub(crate) use turn_usage::{MAX_TRACKED_TURNS, TurnQuery, TurnUsage, first_day_start_ms};
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub(crate) struct UpstreamRouting {

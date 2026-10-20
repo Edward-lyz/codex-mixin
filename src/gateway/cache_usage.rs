@@ -660,6 +660,21 @@ impl UpstreamCacheUsage {
         }
     }
 
+    /// Gemini reports `usageMetadata`, where `promptTokenCount` includes the
+    /// cached part and thinking tokens are counted apart from candidates.
+    pub(crate) fn absorb_gemini(&mut self, metadata: &Value) {
+        let field = |name: &str| metadata.get(name).and_then(Value::as_u64);
+        let cached = field("cachedContentTokenCount");
+        if let Some(prompt) = field("promptTokenCount") {
+            self.cache_read_tokens = Some(cached.unwrap_or(0));
+            self.input_tokens = Some(prompt.saturating_sub(cached.unwrap_or(0)));
+        }
+        if let Some(candidates) = field("candidatesTokenCount") {
+            self.output_tokens =
+                Some(candidates.saturating_add(field("thoughtsTokenCount").unwrap_or(0)));
+        }
+    }
+
     /// True once the prompt accounting is actually populated. Anthropic sends a
     /// zeroed `usage` on `message_start` and the real counts on `message_delta`,
     /// so reporting on the first `usage` seen would score every turn as a miss.

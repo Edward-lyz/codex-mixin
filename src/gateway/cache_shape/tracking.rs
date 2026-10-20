@@ -405,6 +405,19 @@ impl UpstreamCacheObserver {
             {
                 self.returned_model = Some(model.to_owned());
             }
+            if let Some(metadata) = path.get("usageMetadata") {
+                self.usage.absorb_gemini(metadata);
+                if let Some(thoughts) = metadata.get("thoughtsTokenCount").and_then(Value::as_u64) {
+                    self.reasoning_tokens = Some(thoughts);
+                }
+            }
+            if let Some(model) = path
+                .get("modelVersion")
+                .and_then(Value::as_str)
+                .filter(|model| !model.is_empty())
+            {
+                self.returned_model = Some(model.to_owned());
+            }
             if let Some(usage) = path.get("usage") {
                 self.usage.absorb(usage);
                 if let Some(reasoning) = ["output_tokens_details", "completion_tokens_details"]
@@ -468,6 +481,15 @@ fn reasoning_delta_chars(value: &Value) -> u64 {
     {
         return text_chars(delta.get("thinking"));
     }
+    if let Some(candidates) = value.get("candidates").and_then(Value::as_array) {
+        return candidates
+            .iter()
+            .filter_map(|candidate| candidate.pointer("/content/parts")?.as_array())
+            .flatten()
+            .filter(|part| part.get("thought").and_then(Value::as_bool) == Some(true))
+            .map(|part| text_chars(part.get("text")))
+            .sum();
+    }
     value
         .get("choices")
         .and_then(Value::as_array)
@@ -517,6 +539,24 @@ fn contains_output_delta(value: &Value) -> bool {
         .and_then(|delta| delta.get("text").or_else(|| delta.get("thinking")))
         .and_then(Value::as_str)
         .is_some_and(|delta| !delta.is_empty())
+    {
+        return true;
+    }
+    // Gemini streams text, including thought parts, inside candidates.
+    if value
+        .get("candidates")
+        .and_then(Value::as_array)
+        .is_some_and(|candidates| {
+            candidates
+                .iter()
+                .filter_map(|candidate| candidate.pointer("/content/parts")?.as_array())
+                .flatten()
+                .any(|part| {
+                    part.get("text")
+                        .and_then(Value::as_str)
+                        .is_some_and(|text| !text.is_empty())
+                })
+        })
     {
         return true;
     }
