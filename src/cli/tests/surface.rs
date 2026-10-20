@@ -79,10 +79,20 @@ fn secret_environment_references_fail_closed() {
         expand_secret_arg("literal-secret".into()).unwrap(),
         "literal-secret"
     );
-    let error = expand_secret_arg("@env:CODEX_MIXIN_TEST_MISSING_SECRET_9F93".into())
-        .unwrap_err()
-        .to_string();
-    assert!(error.contains("CODEX_MIXIN_TEST_MISSING_SECRET_9F93"));
+    for arg in [
+        "@env:CODEX_MIXIN_TEST_MISSING_SECRET_9F93",
+        "--key=@env:CODEX_MIXIN_TEST_MISSING_SECRET_9F93",
+    ] {
+        let error = expand_secret_arg(arg.into()).unwrap_err().to_string();
+        assert!(error.contains("CODEX_MIXIN_TEST_MISSING_SECRET_9F93"));
+    }
+    for arg in ["@env:", "--key=@env:"] {
+        let error = expand_secret_arg(arg.into()).unwrap_err().to_string();
+        assert_eq!(error, "secret environment variable name is empty");
+    }
+    for arg in ["--key=literal=secret", "name=@env:literal"] {
+        assert_eq!(expand_secret_arg(arg.into()).unwrap(), arg);
+    }
 }
 
 #[test]

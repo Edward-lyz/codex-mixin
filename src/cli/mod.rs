@@ -292,6 +292,10 @@ fn expand_secret_arg(arg: std::ffi::OsString) -> anyhow::Result<std::ffi::OsStri
     let Some(value) = arg.to_str() else {
         return Ok(arg);
     };
+    let (option, value) = match value.split_once('=') {
+        Some((option, value)) if option.starts_with("--") => (Some(option), value),
+        _ => (None, value),
+    };
     let Some(name) = value.strip_prefix(SECRET_ENV_PREFIX) else {
         return Ok(arg);
     };
@@ -299,8 +303,15 @@ fn expand_secret_arg(arg: std::ffi::OsString) -> anyhow::Result<std::ffi::OsStri
         !name.is_empty(),
         "secret environment variable name is empty"
     );
-    std::env::var_os(name)
-        .ok_or_else(|| anyhow::anyhow!("secret environment variable is not set: {name}"))
+    let secret = std::env::var_os(name)
+        .ok_or_else(|| anyhow::anyhow!("secret environment variable is not set: {name}"))?;
+    let Some(option) = option else {
+        return Ok(secret);
+    };
+    let mut expanded = std::ffi::OsString::from(option);
+    expanded.push("=");
+    expanded.push(secret);
+    Ok(expanded)
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
