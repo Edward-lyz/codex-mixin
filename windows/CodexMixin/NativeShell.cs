@@ -100,13 +100,12 @@ internal sealed class NativeShell : IDisposable
         if (menu == 0) { command("tray-error"); return; }
         try
         {
-            AppendMenu(menu, 0, 1, "模型与服务…");
+            AppendMenu(menu, 0, 1, "打开控制台…");
             AppendMenu(menu, 0, 2, "启动网关");
             AppendMenu(menu, 0, 3, "停止网关");
             AppendMenu(menu, 0x800, 0, "");
             AppendMenu(menu, 0, 4, "设置");
             AppendMenu(menu, 0, 5, "退出应用");
-            AppendMenu(menu, 0, 6, "Agent 接入管理…");
             AppendMenu(menu, 0, 7, "Fusion 设置…");
             GetCursorPos(out var position);
             SetForegroundWindow(window);
@@ -114,7 +113,7 @@ internal sealed class NativeShell : IDisposable
             PostMessage(window, 0, 0, 0);
             if (selected != 0) command(selected switch
             {
-                1 => "providers", 2 => "start", 3 => "stop", 4 => "settings", 6 => "agents", 7 => "fusion", _ => "exit"
+                1 => "console", 2 => "start", 3 => "stop", 4 => "settings", 7 => "fusion", _ => "exit"
             });
         }
         finally { DestroyMenu(menu); }

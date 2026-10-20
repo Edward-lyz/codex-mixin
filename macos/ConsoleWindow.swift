@@ -58,6 +58,9 @@ final class ConsoleContainerController: NSViewController, NSToolbarDelegate {
         toolbar.displayMode = .iconOnly
         toolbar.centeredItemIdentifiers = [consolePagesItem]
         window.toolbar = toolbar
+        // The page tabs already say where the user is; a title and subtitle
+        // beside them only repeat it.
+        window.titleVisibility = .hidden
     }
 
     func show(_ page: ConsolePage) {
@@ -77,7 +80,8 @@ final class ConsoleContainerController: NSViewController, NSToolbarDelegate {
             ])
             currentPage = page
         }
-        view.window?.subtitle = page.title
+        // The hidden title still names the window for VoiceOver and Mission Control.
+        view.window?.title = "\(AppLocalization.string("console.windowTitle")) · \(page.title)"
         onShow(page)
     }
 

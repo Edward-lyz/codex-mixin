@@ -203,17 +203,7 @@ final class AppDelegate: NSObject, NSApplicationDelegate {
             #selector(openConsole),
             "macwindow"
         ))
-        menu.addItem(actionItem("模型与服务…", #selector(configureLogin), "square.grid.2x2"))
-        menu.addItem(actionItem(
-            AppLocalization.string("agentManagement.menuTitle"),
-            #selector(showAgentManagement),
-            "person.2"
-        ))
-        menu.addItem(actionItem(
-            AppLocalization.string("console.usage.openDetails"),
-            #selector(showUsageDetails),
-            "chart.bar.xaxis"
-        ))
+
         menu.addItem(.separator())
         echMenuItem = actionItem("启用 ECH 代理访问 GPT", #selector(configureEchAccess), "network")
         menu.addItem(submenuItem("高级", symbolName: "gearshape.2", items: [

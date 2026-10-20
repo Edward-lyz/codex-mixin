@@ -39,6 +39,13 @@ public partial class App : Application
             tray.ShowPanel();
             return;
         }
+        // "console" reopens the console on the page it last showed.
+        if (page == ConsoleWindowKey)
+        {
+            tray?.HidePanel();
+            if (windows.TryGetValue(ConsoleWindowKey, out var console)) { console.ShowMain(); return; }
+            page = "providers";
+        }
         if (page is not ("providers" or "agents" or "fusion" or "settings" or "usage"))
             throw new ArgumentException($"Unknown Windows page: {page}");
         tray?.HidePanel();
