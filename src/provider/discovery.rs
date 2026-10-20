@@ -322,6 +322,7 @@ async fn discover_openai_models(
             )
         })
         .collect::<Vec<_>>();
+    normalize_models(&mut models);
     enrich_from_models_dev(
         client,
         definition,
@@ -782,6 +783,18 @@ pub fn redact_provider_error(definition: &ProviderDefinition, error: &str) -> St
 
 fn normalize_models(models: &mut Vec<ProviderModel>) {
     models.retain(|model| !model.id.trim().is_empty());
+    for model in models.iter_mut() {
+        // External catalogs use zero for unknown or inapplicable token limits.
+        for limit in [
+            &mut model.context_window,
+            &mut model.source_context_window,
+            &mut model.max_output_tokens,
+        ] {
+            if *limit == Some(0) {
+                *limit = None;
+            }
+        }
+    }
     models.sort_by(|left, right| {
         left.id
             .to_ascii_lowercase()
@@ -795,6 +808,66 @@ fn normalize_models(models: &mut Vec<ProviderModel>) {
 mod tests {
     use super::*;
     use crate::provider::ProviderRegistry;
+
+    #[test]
+    fn discovery_accepts_zero_token_limits() {
+        // Both upstream catalogs and models.dev use zero for non-text limits.
+        for from_metadata in [false, true] {
+            let response: ModelsResponse = serde_json::from_str(if from_metadata {
+                r#"{"data":[{"id":"whisper-large-v3"}]}"#
+            } else {
+                r#"{"data":[{"id":"whisper-large-v3","context_window":0,"max_tokens":0}]}"#
+            })
+            .unwrap();
+            let mut models = response
+                .data
+                .into_iter()
+                .map(|model| openai_model_to_provider_model(model, false))
+                .collect::<Vec<_>>();
+            if from_metadata {
+                let resolver = MetadataResolver::from_json(&json!({
+                    "groq": {"models": {"whisper-large-v3": {
+                        "limit": {"context": 0, "output": 0}
+                    }}}
+                }))
+                .unwrap();
+                fill_model_gaps_with_resolver(&resolver, &mut models);
+            }
+            let mut provider = crate::provider::custom_provider("custom-2", "test-key");
+            provider.base_url = "https://example.com/v1".to_owned();
+            apply_discovered_models(&mut provider, models).unwrap();
+            let model = &provider.cached_models[0];
+            assert_eq!(model.id, "whisper-large-v3");
+            assert_eq!(model.context_window, None);
+            assert_eq!(model.source_context_window, None);
+            assert_eq!(model.max_output_tokens, None);
+        }
+    }
+
+    #[test]
+    fn zero_limits_allow_positive_metadata_enrichment() {
+        let mut models = vec![ProviderModel {
+            id: "beam".to_owned(),
+            context_window: Some(0),
+            source_context_window: Some(0),
+            max_output_tokens: Some(0),
+            ..ProviderModel::default()
+        }];
+        normalize_models(&mut models);
+        let resolver = MetadataResolver::from_json(&json!({
+            "example": {"models": {"beam": {
+                "limit": {"context": 64000, "output": 4096}
+            }}}
+        }))
+        .unwrap();
+        fill_model_gaps_with_resolver(&resolver, &mut models);
+        let mut provider = crate::provider::custom_provider("custom-2", "test-key");
+        provider.base_url = "https://example.com/v1".to_owned();
+        apply_discovered_models(&mut provider, models).unwrap();
+        assert_eq!(provider.cached_models[0].context_window, Some(64000));
+        assert_eq!(provider.cached_models[0].source_context_window, Some(64000));
+        assert_eq!(provider.cached_models[0].max_output_tokens, Some(4096));
+    }
 
     #[tokio::test]
     async fn conditional_models_reuses_body_and_invalidates_auth_and_url() {
