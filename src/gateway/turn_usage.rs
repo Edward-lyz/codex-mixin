@@ -99,21 +99,49 @@ pub(crate) fn unix_millis() -> u64 {
         .unwrap_or(0)
 }
 
+const DAY_MS: u64 = 86_400_000;
+
+/// Start of the earliest UTC day in a `days`-long range ending today; the
+/// daily aggregates bucket by the same UTC days.
+pub(crate) fn first_day_start_ms(days: u64) -> u64 {
+    let today = unix_millis() / DAY_MS;
+    today.saturating_sub(days.saturating_sub(1)) * DAY_MS
+}
+
 pub(crate) fn session_tag(session_id: &str) -> String {
     let mut hasher = std::collections::hash_map::DefaultHasher::new();
     session_id.hash(&mut hasher);
     format!("{:08x}", hasher.finish() as u32)
 }
 
-/// Providers answer with dated or namespaced variants ("gpt-5-2025-08-07",
-/// "openai/gpt-5"), so a match accepts either name extending the other.
+/// Providers answer with namespaced or dated snapshots of the requested model
+/// ("openai/gpt-5", "gpt-5-2025-08-07", "claude-sonnet-4-6-20260101"). Only
+/// those variants match: a sibling such as "gpt-5.4-mini" for "gpt-5.4" does
+/// not, because it is a different model.
 pub(crate) fn model_matches(requested: &str, returned: &str) -> bool {
     let normalize = |name: &str| {
         let name = name.rsplit('/').next().unwrap_or(name);
-        name.to_ascii_lowercase().replace(['_', '.', ' '], "-")
+        let name = name.to_ascii_lowercase().replace(['_', '.', ' '], "-");
+        strip_date_suffix(&name).to_owned()
     };
     let (requested, returned) = (normalize(requested), normalize(returned));
-    !returned.is_empty() && (returned.starts_with(&requested) || requested.starts_with(&returned))
+    !returned.is_empty() && requested == returned
+}
+
+/// Removes a trailing snapshot date: `-YYYYMMDD`, `-YYYY-MM-DD`, or `-MMDD`.
+fn strip_date_suffix(name: &str) -> &str {
+    let digits = |part: &str, len: usize| {
+        part.len() == len && part.bytes().all(|byte| byte.is_ascii_digit())
+    };
+    let parts: Vec<&str> = name.rsplitn(4, '-').collect();
+    // rsplitn yields the tail first: ["DD", "MM", "YYYY", rest].
+    if parts.len() == 4 && digits(parts[0], 2) && digits(parts[1], 2) && digits(parts[2], 4) {
+        return parts[3];
+    }
+    match name.rsplit_once('-') {
+        Some((rest, tail)) if digits(tail, 8) || digits(tail, 4) => rest,
+        _ => name,
+    }
 }
 
 /// Filters for a ledger query; `limit` is applied after filtering.
@@ -297,6 +325,23 @@ mod tests {
         assert!(model_matches("claude-sonnet-4-6", "claude-sonnet-4.6"));
         assert!(!model_matches("claude-opus-4-7", "claude-sonnet-4-6"));
         assert!(!model_matches("gpt-5", ""));
+        assert!(model_matches(
+            "claude-sonnet-4-6",
+            "claude-sonnet-4-6-20260101"
+        ));
+        assert!(model_matches("deepseek-v4-flash", "DeepSeek-V4-Flash-1017"));
+        assert!(
+            !model_matches("gpt-5.4", "gpt-5.4-mini"),
+            "siblings are different models"
+        );
+        assert!(!model_matches("gpt-5.4-mini", "gpt-5.4"));
+    }
+
+    #[test]
+    fn day_range_starts_at_utc_midnight() {
+        let today_start = unix_millis() / DAY_MS * DAY_MS;
+        assert_eq!(first_day_start_ms(1), today_start);
+        assert_eq!(first_day_start_ms(7), today_start - 6 * DAY_MS);
     }
 
     #[test]

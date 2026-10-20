@@ -309,9 +309,9 @@ async fn token_usage_turns(
         )));
     }
     let since_ms = match query.days {
-        Some(days) if (1..=3_650).contains(&days) => {
-            Some(crate::gateway::unix_millis().saturating_sub(days.saturating_mul(86_400_000)))
-        }
+        // Start at the first UTC day the daily series includes, so the reply
+        // table and the daily totals on one page cover the same interval.
+        Some(days) if (1..=3_650).contains(&days) => Some(crate::gateway::first_day_start_ms(days)),
         Some(_) => {
             return Err(GatewayError::BadRequest(
                 "usage days must be between 1 and 3650".to_owned(),
