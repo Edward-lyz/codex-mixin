@@ -56,7 +56,7 @@ Choose your platform and architecture from [Releases](https://github.com/Edward-
 | Windows | Run `windows-x86_64-setup.exe`, or extract and launch the portable Zip | System tray icon → Open Console |
 | Linux | Download the x86_64 or ARM64 `unknown-linux-musl.tar.gz`, extract it, and run `./codex-mixin panel`; a `.deb` is also available | Open the address printed in the terminal in your browser |
 
-The Linux archive contains a ready-to-run binary. Run it from the extracted directory and keep the panel process running while you use it. See [Installation](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) for system requirements, file names, and SSH access.
+The Linux archive contains a ready-to-run binary. Run it from the extracted directory and keep the panel process running while you use it. See [Installation](https://github.com/Edward-lyz/codex-mixin/wiki/Installation) for system requirements, file names, and remote access.
 
 ### 2. Configure models and connect an Agent
 
@@ -69,7 +69,7 @@ The Linux archive contains a ready-to-run binary. Run it from the extracted dire
 
 Use the menu bar or tray for gateway status and provider quota. Open Usage in the console for daily and per-reply Tokens, cache results, and speed. Disconnect an Agent to restore its original configuration.
 
-The Web panel listens on all interfaces on a random port from 8000 to 9000 and requires a token generated for each panel start. For local-only access, run `./codex-mixin panel --bind 127.0.0.1:8800`. See [Data and Security](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security) for gateway and panel access boundaries.
+The Web panel listens on all interfaces on a random port from 8000 to 9000 and requires a token generated for each panel start. For remote access, use the reachable host address and the actual panel port. See [Data and Security](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security) for gateway and panel access boundaries.
 
 ---
 

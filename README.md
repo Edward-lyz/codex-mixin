@@ -56,7 +56,7 @@ Codex Mixin 是一个用 Rust 编写的本地网关。它在本机提供 OpenAI�
 | Windows | 运行 `windows-x86_64-setup.exe`，或解压便携版 Zip 后启动 | 点击系统托盘图标 →「打开控制台…」 |
 | Linux | 下载 x86_64 或 ARM64 的 `unknown-linux-musl.tar.gz`，解压后运行 `./codex-mixin panel`；也可安装对应 `.deb` | 在浏览器打开终端打印的访问地址 |
 
-Linux 压缩包内含可直接运行的二进制；进入解压后的目录执行即可。Web 面板运行期间请保持进程开启。系统要求、文件名和 SSH 访问方法见 [安装指南](https://github.com/Edward-lyz/codex-mixin/wiki/Installation)。
+Linux 压缩包内含可直接运行的二进制；进入解压后的目录执行即可。Web 面板运行期间请保持进程开启。系统要求、文件名和远程访问方法见 [安装指南](https://github.com/Edward-lyz/codex-mixin/wiki/Installation)。
 
 ### 2. 配置模型并接入 Agent
 
@@ -69,7 +69,7 @@ Linux 压缩包内含可直接运行的二进制；进入解压后的目录执�
 
 菜单栏或托盘可快速查看网关状态和供应商额度；控制台的「用量明细」展示每天与每次回复的 Token、缓存和速度。需要恢复客户端原配置时，在 Agent 页面断开接入。
 
-Web 面板默认监听所有网卡的 8000–9000 随机端口，访问需要本次启动生成的 Token。仅在本机使用可运行 `./codex-mixin panel --bind 127.0.0.1:8800`；网关与面板的访问边界见 [数据与安全](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security)。
+Web 面板默认监听所有网卡的 8000–9000 随机端口，访问需要本次启动生成的 Token。远程访问时，使用开发机可访问的地址和面板实际端口；网关与面板的访问边界见 [数据与安全](https://github.com/Edward-lyz/codex-mixin/wiki/Data-and-Security)。
 
 ---
 
