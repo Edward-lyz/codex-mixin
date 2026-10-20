@@ -210,7 +210,7 @@ fn ignored_rust_tests_are_allowlisted() {
                 .strip_prefix(&root)
                 .unwrap()
                 .to_string_lossy()
-                .into_owned();
+                .replace('\\', "/");
             ignored_test_names(&source)
                 .into_iter()
                 .map(move |name| format!("{relative}:{name}"))
