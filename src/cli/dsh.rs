@@ -431,6 +431,13 @@ mod tests {
         install_dsh_with_models(Some(home.clone()), &config, &[], config.bind, true).unwrap();
         assert!(!sync_dsh_models(Some(home.clone()), &config, &[], config.bind).unwrap());
 
+        // DSH 0.2.x consumes settings.yaml at startup; syncing must continue
+        // through the active profile instead of treating this as disconnected.
+        fs::rename(
+            home.join("settings.yaml"),
+            home.join("settings.yaml.imported"),
+        )
+        .unwrap();
         let mut updated = gateway_config(Some("gateway-secret"), false, false);
         updated.providers[0]
             .selected_models
@@ -441,6 +448,8 @@ mod tests {
         });
         assert!(sync_dsh_models(Some(home.clone()), &updated, &[], updated.bind).unwrap());
         let raw = fs::read_to_string(home.join("settings.yaml")).unwrap();
+        assert!(raw.contains("second-model-custom"));
+        let raw = fs::read_to_string(home.join("profiles/desktop/cordis.patch.yml")).unwrap();
         assert!(raw.contains("second-model-custom"));
     }
 

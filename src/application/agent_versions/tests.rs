@@ -1,6 +1,11 @@
 use super::*;
 
 #[test]
+fn dsh_registers_desktop_detection_without_requiring_a_cli() {
+    assert_eq!(spec_for("dsh").unwrap().desktop_app, Some(DesktopApp::Dsh));
+}
+
+#[test]
 fn parses_versions_from_cli_output() {
     assert_eq!(parse_version("codex-cli 0.42.0"), Some("0.42.0".to_owned()));
     assert_eq!(

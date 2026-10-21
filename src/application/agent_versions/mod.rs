@@ -211,7 +211,7 @@ const SPECS: [AgentSpec; 50] = [
         npm: &["@deepseek-ai/dsh"],
         brew: &[],
         self_update: None,
-        desktop_app: None,
+        desktop_app: Some(DesktopApp::Dsh),
     },
     AgentSpec {
         id: "opencode",
