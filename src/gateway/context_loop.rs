@@ -765,7 +765,7 @@ mod tests {
             !body["instructions"]
                 .as_str()
                 .unwrap_or_default()
-                .contains("<context_state>"),
+                .contains("view at 10%"),
             "the instructions stay stable so the prefix cache survives each round"
         );
     }
