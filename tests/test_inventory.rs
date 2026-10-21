@@ -11,6 +11,7 @@ use std::path::{Path, PathBuf};
 const MACOS_TEST_DIR: &str = "macos/tests";
 const MACOS_RUNNER: &str = "scripts/test_macos.sh";
 const WINDOWS_RUNNER: &str = "windows/Tests/Program.cs";
+const CLIENT_AUTH_TESTS: &str = "tests/client_auth_tests.txt";
 const IGNORED_TESTS: &[(&str, &str)] = &[
     ("src/ech.rs", "live_ech_comparison"),
     (
@@ -179,6 +180,101 @@ fn ignored_test_names(source: &str) -> Vec<String> {
     names
 }
 
+fn client_auth_tests(source: &str) -> Vec<String> {
+    let lines = source.lines().collect::<Vec<_>>();
+    let mut names = Vec::new();
+    for (test_index, line) in lines.iter().enumerate() {
+        let marker = line.trim();
+        if marker != "#[test]" && marker != "#[tokio::test]" {
+            continue;
+        }
+
+        let mut start = test_index;
+        while start > 0 && lines[start - 1].trim().starts_with("#[") {
+            start -= 1;
+        }
+        let Some(declaration_index) = lines[test_index + 1..]
+            .iter()
+            .position(|line| {
+                let line = line.trim();
+                let line = line.strip_prefix("pub ").unwrap_or(line);
+                let line = line.strip_prefix("async ").unwrap_or(line);
+                line.starts_with("fn ")
+            })
+            .map(|index| test_index + 1 + index)
+        else {
+            continue;
+        };
+        let declaration = lines[declaration_index].trim();
+        let declaration = declaration.strip_prefix("pub ").unwrap_or(declaration);
+        let declaration = declaration.strip_prefix("async ").unwrap_or(declaration);
+        let Some(declaration) = declaration.strip_prefix("fn ") else {
+            continue;
+        };
+        let name = declaration
+            .find(|character: char| !(character.is_ascii_alphanumeric() || character == '_'))
+            .map_or(declaration, |index| &declaration[..index]);
+
+        let end = lines
+            .iter()
+            .enumerate()
+            .skip(test_index + 1)
+            .find_map(|(index, line)| {
+                let line = line.trim();
+                if line != "#[test]" && line != "#[tokio::test]" {
+                    return None;
+                }
+                let mut start = index;
+                while start > test_index + 1 && lines[start - 1].trim().starts_with("#[") {
+                    start -= 1;
+                }
+                Some(start)
+            })
+            .unwrap_or(lines.len());
+        let test_source = lines[start..end].to_vec().join("\n");
+        if test_source.contains("client-auth") {
+            names.push(name.to_owned());
+        }
+    }
+    names
+}
+
+fn client_auth_manifest() -> BTreeSet<(String, String)> {
+    let source = fs::read_to_string(repository_root().join(CLIENT_AUTH_TESTS)).unwrap();
+    let mut expected = BTreeSet::new();
+    for line in source.lines().filter(|line| {
+        let line = line.trim();
+        !line.is_empty() && !line.starts_with('#')
+    }) {
+        let fields = line.split('|').collect::<Vec<_>>();
+        assert_eq!(
+            fields.len(),
+            3,
+            "invalid client-auth test manifest row: {line}"
+        );
+        assert!(
+            matches!(
+                fields[0],
+                "lib" | "cors" | "gateway_http" | "gateway_startup"
+            ),
+            "unknown client-auth test scope: {}",
+            fields[0]
+        );
+        let test_name = fields[2].rsplit("::").next().unwrap();
+        assert!(
+            !test_name.is_empty()
+                && (fields[2] == test_name || fields[2].ends_with(&format!("::{test_name}"))),
+            "invalid client-auth test name: {}",
+            fields[2]
+        );
+        assert!(
+            expected.insert((fields[1].to_owned(), test_name.to_owned())),
+            "duplicate client-auth test manifest row: {line}"
+        );
+    }
+    expected
+}
+
 #[test]
 fn detects_missing_and_duplicate_swift_registrations() {
     let actual = BTreeSet::from(["A.swift".to_owned(), "B.swift".to_owned()]);
@@ -223,6 +319,39 @@ fn ignored_rust_tests_are_allowlisted() {
     assert_eq!(
         actual, expected,
         "ignored tests changed; update the explicit external-test allowlist"
+    );
+}
+
+#[test]
+fn client_auth_tests_are_explicitly_inventoried() {
+    let root = repository_root();
+    let mut test_files = Vec::new();
+    rust_files(&root.join("src"), &mut test_files);
+    rust_files(&root.join("tests"), &mut test_files);
+    rust_files(&root.join("panel"), &mut test_files);
+
+    let actual = test_files
+        .into_iter()
+        .flat_map(|path| {
+            let source = fs::read_to_string(&path).unwrap();
+            let relative = path
+                .strip_prefix(&root)
+                .unwrap()
+                .to_string_lossy()
+                .replace('\\', "/");
+            if relative == "tests/test_inventory.rs" {
+                return Vec::new();
+            }
+            client_auth_tests(&source)
+                .into_iter()
+                .map(move |name| (relative.clone(), name))
+                .collect::<Vec<_>>()
+        })
+        .collect::<BTreeSet<_>>();
+    let expected = client_auth_manifest();
+    assert_eq!(
+        actual, expected,
+        "client-auth test coverage changed; update tests/client_auth_tests.txt"
     );
 }
 
