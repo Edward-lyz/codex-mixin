@@ -152,14 +152,23 @@ internal static class Program
                     }
                 }
             }
-            var popup = OpenWindow(start, process, "overview", "Codex Mixin · 主面板");
-            var popupHandle = (nint)popup.Current.NativeWindowHandle;
-            // A real external foreground window must dismiss the popup, including during refresh.
-            using (var outside = new System.Windows.Forms.Form { Text = "Outside Mixin", Width = 240, Height = 120 })
+            var releaseQuota = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
+            upstream.QuotaRelease = releaseQuota;
+            try
             {
+                var popup = OpenWindow(start, process, "overview", "Codex Mixin · 主面板");
+                var popupHandle = (nint)popup.Current.NativeWindowHandle;
+                Wait(() => upstream.QuotaRequested.Task.IsCompleted, "quota request held in flight", process);
+                // Keep the real quota request pending until external focus dismisses the panel.
+                using var outside = new System.Windows.Forms.Form { Text = "Outside Mixin", Width = 240, Height = 120 };
                 outside.Show();
                 SetForegroundWindow(outside.Handle);
                 Wait(() => !IsWindowVisible(popupHandle), "tray dismisses on external focus during reload", process);
+            }
+            finally
+            {
+                releaseQuota.TrySetResult();
+                upstream.QuotaRelease = null;
             }
             Console.WriteLine("PASS tray dismisses while loading");
             window = OpenWindow(start, process, "providers", "模型与服务");
