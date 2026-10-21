@@ -224,6 +224,8 @@ xcrun swiftc \
   "$ROOT_DIR/macos/ConsoleUsageSupport.swift" \
   "$ROOT_DIR/macos/ConsoleUsageView.swift" \
   "$ROOT_DIR/macos/ConsoleWindow.swift" \
+  "$ROOT_DIR/macos/ContextSettingsSupport.swift" \
+  "$ROOT_DIR/macos/ContextSettingsView.swift" \
   "$ROOT_DIR/macos/Localization.swift" \
   "$ROOT_DIR/macos/Generated/L10n.swift" \
   "$ROOT_DIR/macos/AppSupport.swift" \
