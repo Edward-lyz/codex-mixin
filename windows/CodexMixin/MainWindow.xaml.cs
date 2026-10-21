@@ -96,30 +96,12 @@ public sealed partial class MainWindow : Window
             shell?.Dispose();
             captureReady?.Dispose();
         };
-        Root.Loaded += (_, _) =>
-        {
-            if (initialized) return;
-            initialized = true;
-            Root.XamlRoot.Changed += (_, _) => UpdateTitleInput();
-            UpdateTitleInput();
-            // Loaded can run inside a synchronous native layout callback.
-            // Start CLI work after that callback returns to the message loop.
-            if (!DispatcherQueue.TryEnqueue(async () =>
-            {
-                ready = true;
-                await ExecuteUiAsync("连接 CLI", async token =>
-                {
-                    await ConnectCliAsync(token);
-                    await LoadPageAsync(token);
-                }, readOnly: true);
-                UpdateRefreshTimer();
-                captureReady?.Set();
-            })) throw new InvalidOperationException("无法调度 Windows 界面初始化。");
-        };
+        Root.Loaded += (_, _) => InitializeView();
         AppWindow.Changed += (_, args) =>
         {
             if (args.DidVisibilityChange || args.DidSizeChange || args.DidPresenterChange)
             {
+                InitializeView();
                 UpdateRefreshTimer();
                 Activity.IsActive = busy && IsViewVisible;
             }
@@ -140,6 +122,27 @@ public sealed partial class MainWindow : Window
             foreach (var table in PageBody.Children.OfType<StackPanel>().SelectMany(panel => panel.Children.OfType<ListView>()))
                 table.Height = ModelTableHeight();
         };
+    }
+
+    private void InitializeView()
+    {
+        if (initialized || !Root.IsLoaded || !IsViewVisible) return;
+        initialized = true;
+        Root.XamlRoot.Changed += (_, _) => UpdateTitleInput();
+        UpdateTitleInput();
+        // Loaded can run inside a synchronous native layout callback.
+        // Start CLI work after that callback returns to the message loop.
+        if (!DispatcherQueue.TryEnqueue(async () =>
+        {
+            ready = true;
+            await ExecuteUiAsync("连接 CLI", async token =>
+            {
+                await ConnectCliAsync(token);
+                await LoadPageAsync(token);
+            }, readOnly: true);
+            UpdateRefreshTimer();
+            captureReady?.Set();
+        })) throw new InvalidOperationException("无法调度 Windows 界面初始化。");
     }
 
     private bool IsViewVisible => AppWindow.IsVisible && AppWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Minimized };

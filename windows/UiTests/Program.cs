@@ -24,6 +24,7 @@ internal static class Program
         var start = new ProcessStartInfo(Path.GetFullPath(args[0])) { UseShellExecute = false, RedirectStandardError = true };
         start.Environment["CODEX_GATEWAY_CONFIG"] = config;
         start.ArgumentList.Add("--capture-ui");
+        start.ArgumentList.Add("--background");
         var previousConfig = Environment.GetEnvironmentVariable("CODEX_GATEWAY_CONFIG");
         Environment.SetEnvironmentVariable("CODEX_GATEWAY_CONFIG", config);
         Process? debugger = null;
@@ -35,7 +36,7 @@ internal static class Program
             File.WriteAllText(commands, "sxe -c \".exr -1; !analyze -v; q\" 0xc000027b\ng\n");
             var debugStart = new ProcessStartInfo(args[2]) { UseShellExecute = false };
             debugStart.Environment["CODEX_GATEWAY_CONFIG"] = config;
-            foreach (var argument in new[] { "-G", "-cf", commands, "-logo", Path.Combine(output, "native-debugger.txt"), start.FileName, "--capture-ui" })
+            foreach (var argument in new[] { "-G", "-cf", commands, "-logo", Path.Combine(output, "native-debugger.txt"), start.FileName, "--capture-ui", "--background" })
                 debugStart.ArgumentList.Add(argument);
             debugger = Process.Start(debugStart) ?? throw new InvalidOperationException("Cannot launch native debugger");
             Process? target = null;
@@ -62,7 +63,24 @@ internal static class Program
         try
         {
             using var ready = new EventWaitHandle(false, EventResetMode.ManualReset, $"Local\\CodexMixin.UIReady.{process.Id}");
+            if (!process.WaitForInputIdle(15000)) throw new InvalidOperationException("Background app did not initialize its message loop");
+            var visibleAtStartup = false;
+            if (!EnumWindows((candidate, _) =>
+            {
+                GetWindowThreadProcessId(candidate, out var owner);
+                if (owner == process.Id && IsWindowVisible(candidate)) visibleAtStartup = true;
+                return true;
+            }, 0)) throw new System.ComponentModel.Win32Exception(Marshal.GetLastWin32Error());
+            if (visibleAtStartup || ready.WaitOne(0)) throw new InvalidOperationException("Background startup displayed or loaded the console");
+            process.Refresh();
+            var backgroundPrivateBytes = process.PrivateMemorySize64;
+            var revealStart = new ProcessStartInfo(start.FileName) { UseShellExecute = false };
+            foreach (var variable in start.Environment) revealStart.Environment[variable.Key] = variable.Value;
+            revealStart.ArgumentList.Add("--page=providers");
+            using var reveal = Process.Start(revealStart) ?? throw new InvalidOperationException("Cannot reveal background console");
             Wait(() => ready.WaitOne(0), "completed native initialization", process);
+            if (!reveal.WaitForExit(15000) || reveal.ExitCode != 0) throw new InvalidOperationException("Background activation failed");
+            Console.WriteLine("PASS tray-only startup defers console data and rendering");
             Wait(() => { process.Refresh(); handle = process.MainWindowHandle; return handle != 0; }, "native main window", process);
             var desktop = System.Windows.Forms.Screen.FromHandle(handle).WorkingArea;
             if (desktop.Width < 800 || desktop.Height < 600)
@@ -255,6 +273,7 @@ internal static class Program
             process.Refresh();
             File.WriteAllText(Path.Combine(output, "resources.json"), JsonSerializer.Serialize(new
             {
+                background_private_bytes = backgroundPrivateBytes,
                 navigation_ms = navigationMs,
                 usage_turns = recentTurns.Length,
                 usage_text_controls = usageTextNodes,
@@ -496,6 +515,11 @@ internal static class Program
 
     [DllImport("user32.dll", EntryPoint = "PostMessageW")]
     [return: MarshalAs(UnmanagedType.Bool)] private static extern bool PostMessage(nint window, uint message, nuint wParam, nint lParam);
+    private delegate bool EnumWindowProc(nint window, nint parameter);
+    [DllImport("user32.dll", SetLastError = true)]
+    [return: MarshalAs(UnmanagedType.Bool)] private static extern bool EnumWindows(EnumWindowProc callback, nint parameter);
+    [DllImport("user32.dll")]
+    private static extern uint GetWindowThreadProcessId(nint window, out uint process);
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsZoomed(nint window);
     [DllImport("user32.dll")]
