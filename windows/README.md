@@ -6,7 +6,7 @@ Windows 前端使用 **C# + XAML + WinUI 3 + Windows App SDK**。Flutter 工程�
 
 ## 原生界面
 
-- 与 macOS 对齐的信息架构：紧凑托盘主面板、模型与服务设置、Agent 接入管理、Fusion 与按时间轮转独立窗口。
+- 与 macOS 对齐的信息架构：紧凑托盘主面板、模型与服务设置、Agent 接入管理、上下文、Fusion 与按时间轮转独立窗口。
 - 模型与服务使用服务商侧栏、模型/连接设置页、Codex 模型选择表和底部统一「应用更改」。供应商图标与 macOS 共用来源。
 - Fluent 原生控件、Mica 背景、系统明暗主题、高对比度、键盘导航与 UI Automation。
 - 供应商新增、编辑、启停、删除、连接测试；模型搜索、选择、上下文覆盖、发现、能力探测和测速。
@@ -14,6 +14,7 @@ Windows 前端使用 **C# + XAML + WinUI 3 + Windows App SDK**。Flutter 工程�
 - Agent 列表由 CLI 动态提供；支持版本检查、接入、断开和升级，Codex 接入必须明确选择模式。
 - 用量时间范围、缓存命中、TTFT 与输出速率；失败展示原因，未知值不会显示为零。
 - Fusion 编辑保留页面未编辑的已有字段，保存后由 CLI 应用配置。
+- 上下文页把引擎开关、阈值与按会话统计放在一起；保存只提交改动过的字段，开关与阈值在网关重启后生效，没有缓存记录或更新时间时显示未知而不是零。
 - 原生托盘与菜单、关闭收起、单实例激活、每显示器 DPI；Explorer 重启后重新注册托盘。
 - Windows 原生文件选择器；导入导出前说明 Base64 备份含凭据且不是加密。
 
@@ -55,7 +56,7 @@ dotnet build windows/CodexMixin/CodexMixin.csproj -c Debug -p:Platform=x64
 
 `.github/workflows/windows.yml` 在 GitHub Windows runner 运行 Rust 检查与测试、C# 适配层及真实 CLI 契约测试、自包含 WinUI 发布、Windows UI Automation 测试，最后生成安装器和便携包。本次迁移按用户要求不在本机运行测试。
 
-每次成功的 UI 测试都截图托盘主面板、模型与服务、连接设置、Agent、Fusion 两种模式与设置的浅色和深色版本，并保存首次启动、空状态、停止状态与窄窗口截图。供应商与 Fusion 的已配置画面使用经真实 CLI 导入的隔离 CI fixture，凭据为虚构值，不连接外部模型服务。失败时也尝试保存现场截图与错误文本。
+每次成功的 UI 测试都截图托盘主面板、模型与服务、连接设置、Agent、上下文、Fusion 两种模式与设置的浅色和深色版本，并保存首次启动、空状态、停止状态与窄窗口截图。供应商与 Fusion 的已配置画面使用经真实 CLI 导入的隔离 CI fixture，凭据为虚构值，不连接外部模型服务。失败时也尝试保存现场截图与错误文本。
 
 在 GitHub Actions 的 Windows run 页面下载 `windows-native-ui-evidence` artifact，解压后在 macOS 浏览器打开 `index.html`，即可查看全部页面；点击缩略图可查看原始 PNG。artifact 保留 14 天，包含截图、图集、错误文本和 `resources.json`，不上传配置目录。规模回归使用真实网关记录 500 条回复，并由 CLI 导入 600 个模型，检查用量、Fusion 和滚动模型表的控件数随可见行而非总数据增长。资源记录包含显示/隐藏时私有内存、隐藏时 working set，以及超过刷新周期的 35 秒空闲 CPU 采样；导航耗时包含 UI Automation 调用与 200 ms 轮询开销，用于同类 runner 比较，不等同于输入到呈现帧的延迟。它是单次 runner 数据，不代表用户硬件上的能耗或与 macOS 的对比结论。
 

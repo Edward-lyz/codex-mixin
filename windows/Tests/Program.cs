@@ -226,6 +226,34 @@ Check("contract arrays reject incomplete data", async () =>
     await Failure(() => { Json.Strings(Parse("[\"model\",123]")); return Task.CompletedTask; });
 });
 
+Check("context contract rejects unknown values", async () =>
+{
+    var missing = Parse("""
+        {"context":{},"config_path":"/tmp/config.json","database_path":"/tmp/context.db"}
+        """);
+    await Failure(() => { ContextContract.ParseConfig(missing); return Task.CompletedTask; });
+    var outOfRange = Parse("""
+        {"enabled":true,"database_path":"/tmp/context.db","totals":{"sessions":0,"messages":0,"compressions":0,"saved_tokens":0,"view_tokens":0,"cache":{"turns":0,"input_tokens":0,"cached_tokens":0,"output_tokens":0,"hit_percent":101}},"sessions":[]}
+        """);
+    await Failure(() => { ContextContract.ParseStats(outOfRange); return Task.CompletedTask; });
+    var valid = Parse("""
+        {"context":{"enabled":true,"growth_threshold_tokens":80000,"pressure_ratio":0.6,"urgent_ratio":0.8,"protected_messages":8,"protected_tokens":24000,"max_internal_rounds":2,"max_tier":2,"guidance_only":false,"context_window_tokens":128000},"config_path":"/tmp/config.json","database_path":"/tmp/context.db"}
+        """);
+    var config = ContextContract.ParseConfig(valid);
+    Assert(config.Settings.GrowthThresholdTokens == 80000 && config.Settings.ContextWindowTokens == 128000,
+        "Valid context settings were not parsed");
+});
+Check("context save sends only changed fields", () =>
+{
+    var stored = new ContextSettings(true, 80000, 0.6, 0.8, 8, 24000, 2, 2, false, 128000);
+    Assert(ContextContract.SaveArguments(stored, stored) is null, "Unchanged settings must not call the CLI");
+    var edited = stored with { Enabled = false, ContextWindowTokens = null };
+    var arguments = ContextContract.SaveArguments(stored, edited);
+    Assert(arguments is not null && arguments.SequenceEqual(["context", "config", "set", "--enabled", "false", "--context-window-tokens", "none"]),
+        "A save must send exactly the changed flags");
+    return Task.CompletedTask;
+});
+
 string? realCli = null;
 if (args is ["--cli", var cliArgument]) realCli = cliArgument;
 else if (args is ["--cli-only", var cliOnlyArgument]) realCli = cliOnlyArgument;
@@ -262,6 +290,11 @@ if (realCli is not null)
             Json.Flag(await client.QueryAsync(["service", "autostart", "status", "--json"], CancellationToken.None), "enabled");
             Json.Flag(await client.QueryAsync(["ech", "status", "--json"], CancellationToken.None), "enabled");
             Json.Field(await client.QueryAsync(["fusion", "get", "--json"], CancellationToken.None), "profile");
+            var contextConfig = ContextContract.ParseConfig(await client.QueryAsync(["context", "config", "get", "--json"], CancellationToken.None));
+            Assert(!contextConfig.Settings.Enabled, "A fresh install must keep the context engine disabled");
+            var contextStats = ContextContract.ParseStats(await client.QueryAsync(["context", "stats", "--json"], CancellationToken.None));
+            Assert(contextStats.Totals.Sessions == 0 && contextStats.Sessions.Length == 0,
+                "A fresh install must report no archived context sessions");
         }
         finally
         {

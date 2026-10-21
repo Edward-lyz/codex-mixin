@@ -108,13 +108,14 @@ internal sealed class NativeShell : IDisposable
             AppendMenu(menu, 0, 4, "设置");
             AppendMenu(menu, 0, 5, "退出应用");
             AppendMenu(menu, 0, 7, "Fusion 设置…");
+            AppendMenu(menu, 0, 8, "上下文设置…");
             GetCursorPos(out var position);
             SetForegroundWindow(window);
             var selected = TrackPopupMenu(menu, 0x100 | 0x2, position.X, position.Y, 0, window, 0);
             PostMessage(window, 0, 0, 0);
             if (selected != 0) command(selected switch
             {
-                1 => "console", 2 => "start", 3 => "stop", 4 => "settings", 7 => "fusion", _ => "exit"
+                1 => "console", 2 => "start", 3 => "stop", 4 => "settings", 7 => "fusion", 8 => "context", _ => "exit"
             });
         }
         finally { DestroyMenu(menu); }

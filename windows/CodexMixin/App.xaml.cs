@@ -52,7 +52,7 @@ public partial class App : Application
             if (windows.TryGetValue(ConsoleWindowKey, out var console)) { console.ShowMain(); return; }
             page = "providers";
         }
-        if (page is not ("providers" or "agents" or "fusion" or "settings" or "usage"))
+        if (page is not ("providers" or "agents" or "fusion" or "settings" or "usage" or "context"))
             throw new ArgumentException($"Unknown Windows page: {page}");
         tray?.HidePanel();
         // Models, agents, and usage share one console window; Fusion and
@@ -98,7 +98,7 @@ public partial class App : Application
                 Windows.ApplicationModel.Activation.ILaunchActivatedEventArgs launch => launch.Arguments,
                 _ => ""
             };
-            var match = System.Text.RegularExpressions.Regex.Match(arguments, @"--page=(providers|agents|fusion|settings|overview|usage)\b");
+            var match = System.Text.RegularExpressions.Regex.Match(arguments, @"--page=(providers|agents|fusion|settings|overview|usage|context)\b");
             OpenPage(match.Success ? match.Groups[1].Value : "providers");
         });
         try { OpenPage("providers", show: !Environment.GetCommandLineArgs().Contains("--background")); }
