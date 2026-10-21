@@ -134,6 +134,65 @@ impl ContextEngine {
         })
     }
 
+    /// Rebuilds the full input for a chained request that carries only a delta.
+    ///
+    /// The archived originals plus the recorded output of the previous
+    /// response are the client-visible conversation, so an upstream call
+    /// always restarts from the full view instead of a stale response id. A
+    /// client that resends its own history is left untouched.
+    pub fn expand_chained_input(
+        &self,
+        session: &str,
+        response_id: &str,
+        incoming: &[Value],
+    ) -> Result<Vec<Value>> {
+        let store = self.lock()?;
+        let Some(recorded) = store.response_output(session, response_id)? else {
+            if let Some(owner) = store.response_owner(response_id)? {
+                bail!(
+                    "response id {response_id} belongs to context session {}",
+                    crate::context::types::session_display_name(&owner)
+                );
+            }
+            if incoming.is_empty() {
+                bail!("unknown response id {response_id}");
+            }
+            tracing::warn!(
+                response_id,
+                "context engine rebuilds an unknown response id from the client history"
+            );
+            return Ok(incoming.to_vec());
+        };
+        let mut full = store.history_items(session)?;
+        full.extend(recorded);
+        let overlap = common_prefix_length(&full, incoming);
+        if overlap == full.len() && incoming.len() >= full.len() {
+            return Ok(incoming.to_vec());
+        }
+        if incoming.is_empty() || overlap == 0 || overlap == incoming.len() {
+            full.extend_from_slice(incoming);
+            return Ok(full);
+        }
+        tracing::warn!(
+            response_id,
+            overlap,
+            "context engine trusts a divergent client history"
+        );
+        Ok(incoming.to_vec())
+    }
+
+    /// Commits the response mapping a later chained request relies on.
+    pub fn record_response(
+        &self,
+        session: &str,
+        response_id: &str,
+        revision: i64,
+        output: &[Value],
+    ) -> Result<()> {
+        let mut store = self.lock()?;
+        store.record_response(session, response_id, revision, output)
+    }
+
     pub fn execute_tool(
         &self,
         session: &str,
@@ -272,6 +331,13 @@ impl ContextEngine {
         let store = self.lock()?;
         store.export(session)
     }
+}
+
+fn common_prefix_length(left: &[Value], right: &[Value]) -> usize {
+    left.iter()
+        .zip(right)
+        .take_while(|(left, right)| fingerprint(left) == fingerprint(right))
+        .count()
 }
 
 fn fingerprint(item: &Value) -> String {
@@ -1200,6 +1266,81 @@ mod tests {
             .as_str()
             .expect("summary text");
         assert!(summary.contains("<context_summary"), "{summary}");
+    }
+
+    #[test]
+    fn expands_a_chained_request_from_the_archive() {
+        let engine = engine();
+        let session = session();
+        let items = four_messages();
+        let view = engine.begin_turn(&session, &items, 10_000).expect("view");
+        let answer = message("assistant", "done with alpha and beta");
+        engine
+            .record_response(
+                &session,
+                "resp_1",
+                view.revision,
+                std::slice::from_ref(&answer),
+            )
+            .expect("record response");
+
+        let next = message("user", "next question");
+        let expanded = engine
+            .expand_chained_input(&session, "resp_1", std::slice::from_ref(&next))
+            .expect("expand");
+        assert_eq!(expanded.len(), items.len() + 2);
+        assert_eq!(fingerprint(&expanded[0]), fingerprint(&items[0]));
+        assert_eq!(fingerprint(&expanded[items.len()]), fingerprint(&answer));
+        assert_eq!(
+            expanded[items.len() + 1]["content"][0]["text"],
+            "next question"
+        );
+
+        // A client that resends the whole history must not get it duplicated.
+        let mut resent = expanded.clone();
+        resent.push(message("user", "another question"));
+        let unchanged = engine
+            .expand_chained_input(&session, "resp_1", &resent)
+            .expect("expand resent history");
+        assert_eq!(unchanged.len(), resent.len());
+        assert_eq!(fingerprint(&unchanged[0]), fingerprint(&resent[0]));
+    }
+
+    #[test]
+    fn rejects_an_unknown_response_id_without_history() {
+        let engine = engine();
+        let session = session();
+        let error = engine
+            .expand_chained_input(&session, "resp_missing", &[])
+            .expect_err("unknown response id");
+        assert!(error.to_string().contains("unknown response id"), "{error}");
+
+        let incoming = vec![message("user", "hello")];
+        let items = engine
+            .expand_chained_input(&session, "resp_missing", &incoming)
+            .expect("history without a mapping");
+        assert_eq!(items.len(), 1);
+    }
+
+    #[test]
+    fn rejects_a_response_id_from_another_session() {
+        let engine = engine();
+        let session = session();
+        let other = format!("codex{SESSION_SEPARATOR}thread-2");
+        let view = engine
+            .begin_turn(&other, &four_messages(), 10_000)
+            .expect("view");
+        engine
+            .record_response(&other, "resp_other", view.revision, &[])
+            .expect("record response");
+
+        let error = engine
+            .expand_chained_input(&session, "resp_other", &[])
+            .expect_err("cross session response id");
+        assert!(
+            error.to_string().contains("belongs to context session"),
+            "{error}"
+        );
     }
 
     #[test]

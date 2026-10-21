@@ -57,6 +57,7 @@ CREATE TABLE IF NOT EXISTS responses (
     session_key TEXT NOT NULL,
     response_id TEXT NOT NULL,
     revision INTEGER NOT NULL,
+    output_json TEXT NOT NULL DEFAULT '[]',
     created_at INTEGER NOT NULL,
     PRIMARY KEY (session_key, response_id)
 );
@@ -154,11 +155,42 @@ impl Store {
         self.connection
             .execute_batch(SCHEMA)
             .context("create context schema")?;
+        self.upgrade_response_output()
+            .context("upgrade context schema")?;
         // No lease survives a process restart, so stale rows must not block a
         // new turn after a crash.
         self.connection
             .execute("DELETE FROM leases", [])
             .context("clear stale context leases")?;
+        Ok(())
+    }
+
+    /// Context databases written before response mapping existed lack the
+    /// recorded output column, so an in-place upgrade has to add it.
+    fn upgrade_response_output(&self) -> Result<()> {
+        let mut statement = self
+            .connection
+            .prepare("PRAGMA table_info(responses)")
+            .context("inspect context responses table")?;
+        let columns = statement
+            .query_map([], |row| row.get::<_, String>(1))
+            .context("read context responses columns")?;
+        let mut present = false;
+        for column in columns {
+            if column.context("read context responses column")? == "output_json" {
+                present = true;
+            }
+        }
+        drop(statement);
+        if present {
+            return Ok(());
+        }
+        self.connection
+            .execute(
+                "ALTER TABLE responses ADD COLUMN output_json TEXT NOT NULL DEFAULT '[]'",
+                [],
+            )
+            .context("add context responses output column")?;
         Ok(())
     }
 
@@ -236,6 +268,68 @@ impl Store {
             )
             .context("release context lease")?;
         Ok(())
+    }
+
+    /// Records the client-visible output of a completed response so a later
+    /// chained request can rebuild its full input from the archive.
+    pub fn record_response(
+        &mut self,
+        key: &str,
+        response_id: &str,
+        revision: i64,
+        output: &[Value],
+    ) -> Result<()> {
+        let output_json =
+            serde_json::to_string(output).context("encode recorded response output")?;
+        self.connection
+            .execute(
+                "INSERT INTO responses (session_key, response_id, revision, output_json, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5)
+                 ON CONFLICT(session_key, response_id) DO UPDATE SET
+                   revision = excluded.revision,
+                   output_json = excluded.output_json",
+                params![key, response_id, revision, output_json, unix_now()],
+            )
+            .context("record context response")?;
+        Ok(())
+    }
+
+    pub fn response_output(&self, key: &str, response_id: &str) -> Result<Option<Vec<Value>>> {
+        let recorded: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT output_json FROM responses WHERE session_key = ?1 AND response_id = ?2",
+                params![key, response_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .context("read recorded response output")?;
+        recorded
+            .map(|json| serde_json::from_str(&json).context("parse recorded response output"))
+            .transpose()
+    }
+
+    pub fn response_owner(&self, response_id: &str) -> Result<Option<String>> {
+        self.connection
+            .query_row(
+                "SELECT session_key FROM responses WHERE response_id = ?1",
+                params![response_id],
+                |row| row.get(0),
+            )
+            .optional()
+            .context("read context response owner")
+    }
+
+    /// Returns the archived originals in conversation order.
+    pub fn history_items(&self, key: &str) -> Result<Vec<Value>> {
+        let mut items = Vec::new();
+        for entry in self.history(key)? {
+            let encoded = self
+                .message_json(key, &entry.reference)?
+                .with_context(|| format!("context history is missing {}", entry.reference))?;
+            items.push(serde_json::from_str(&encoded).context("parse archived history item")?);
+        }
+        Ok(items)
     }
 
     pub fn history(&self, key: &str) -> Result<Vec<HistoryEntry>> {
