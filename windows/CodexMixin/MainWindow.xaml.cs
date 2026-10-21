@@ -185,7 +185,11 @@ public sealed partial class MainWindow : Window
         ProviderList.Items.Clear(); providers = [];
         page = next;
         ApplyPageLayout();
-        if (ready) await ExecuteUiAsync("切换页面", LoadPageAsync);
+        if (ready) await ExecuteUiAsync("切换页面", async token =>
+        {
+            await LoadPageAsync(token);
+            if (page == "providers") await RefreshTimingsAsync(token);
+        });
     }
 
     private void OnConsoleTab(object sender, RoutedEventArgs args) =>
