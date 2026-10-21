@@ -109,11 +109,7 @@ public sealed partial class MainWindow : Window
                 ready = true;
                 await ExecuteUiAsync("连接 CLI", async token =>
                 {
-                    cli = ((App)Microsoft.UI.Xaml.Application.Current).Client;
-                    operations = ((App)Microsoft.UI.Xaml.Application.Current).Operations;
-                    metadata = await cli.QueryAsync(["interface", "--json"], token);
-                    Json.Interface(metadata);
-                    interfaceReady = true;
+                    await ConnectCliAsync(token);
                     await LoadPageAsync(token);
                 }, readOnly: true);
                 UpdateRefreshTimer();
@@ -169,6 +165,7 @@ public sealed partial class MainWindow : Window
         InputNonClientPointerSource.GetForWindowId(AppWindow.Id).SetRegionRects(NonClientRegionKind.Passthrough, rectangles);
     }
 
+    internal bool IsChanging => busy && !loadingPage;
     internal void Shutdown() { exiting = true; Close(); }
     internal void SetTheme(ElementTheme theme) => Root.RequestedTheme = theme;
 
@@ -269,12 +266,14 @@ public sealed partial class MainWindow : Window
 
     private async Task ExitAsync()
     {
-        if (busy)
+        if (((App)Microsoft.UI.Xaml.Application.Current).HasPendingChanges)
         {
             ShowMain();
             ShowNotice("操作仍在进行", "请等待当前操作完成后退出。关闭窗口可以收起到托盘。", InfoBarSeverity.Warning);
             return;
         }
+        // A never-shown tray-only window has no XamlRoot for a ContentDialog.
+        if (!initialized) { ((App)Microsoft.UI.Xaml.Application.Current).ExitAll(); return; }
         if (await ConfirmAsync("退出 Codex Mixin？", "退出界面后，本地网关会继续按 CLI 的服务设置运行。", "退出"))
         {
             exiting = true;
@@ -308,14 +307,21 @@ public sealed partial class MainWindow : Window
     private async void OnRefresh(object sender, RoutedEventArgs args) => await ReloadAsync();
     private void OnCancel(object sender, RoutedEventArgs args) => activeCancellation?.Cancel();
 
-    private Task ReloadAsync() => ExecuteUiAsync("刷新", async token =>
+    private async Task ConnectCliAsync(CancellationToken token, bool refresh = false)
     {
         cli ??= ((App)Microsoft.UI.Xaml.Application.Current).Client;
         operations ??= ((App)Microsoft.UI.Xaml.Application.Current).Operations;
+        if (interfaceReady && !refresh) return;
         interfaceReady = false;
-        metadata = await cli.QueryAsync(["interface", "--json"], token);
-        Json.Interface(metadata);
+        var contract = await cli.QueryAsync(["interface", "--json"], token);
+        Json.Interface(contract);
+        metadata = contract;
         interfaceReady = true;
+    }
+
+    private Task ReloadAsync() => ExecuteUiAsync("刷新", async token =>
+    {
+        await ConnectCliAsync(token, refresh: true);
         await LoadPageAsync(token);
         if (page == "providers") await RefreshTimingsAsync(token);
     }, readOnly: true);
@@ -386,10 +392,13 @@ public sealed partial class MainWindow : Window
     private Task ChangeAsync(string label, string[] args, bool apply = false,
         IReadOnlyDictionary<string, string>? secrets = null) => ExecuteUiAsync(label, async token =>
     {
+        await ConnectCliAsync(token);
         var service = operations ?? throw new InvalidOperationException("CLI 尚未连接，请先刷新。");
         var progress = new Progress<string>(message => StatusText.Text = message);
         var output = await service.ChangeAsync(args, token, secrets, progress, apply);
         ShowNotice(label, string.IsNullOrWhiteSpace(output) ? "操作完成。" : output.Trim(), InfoBarSeverity.Success);
+        // A tray-only startup has not loaded the console; do not build a hidden model page.
+        if (!initialized) return;
         try { await LoadPageAsync(token); }
         catch (Exception error)
         {
