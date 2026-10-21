@@ -141,6 +141,9 @@ internal static class Program
                     if (role == "usage")
                         Wait(() => target.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text)).Cast<AutomationElement>()
                             .Any(element => element.Current.Name.Contains("ci-coder", StringComparison.Ordinal)), "real gateway per-turn usage", process);
+                    if (role == "context")
+                        Wait(() => Find(target, "context-enabled") != null && Find(target, "context-save") != null
+                            && Find(target, "context-restart") != null, "context settings controls", process);
                     Capture(target, Path.Combine(output, $"{filename}-{themeName}.png"));
                     if (role != "overview") CaptureLower(target, Path.Combine(output, $"{filename}-lower-{themeName}.png"));
                     if (role == "agents")
@@ -351,6 +354,7 @@ internal static class Program
     [
         ("providers", "模型与服务", "models"),
         ("agents", "Agent 接入管理", "agents"),
+        ("context", "上下文", "context"),
         ("fusion", "Fusion 设置", "fusion"),
         ("settings", "设置与诊断", "settings"),
         ("usage", "用量明细", "usage"),

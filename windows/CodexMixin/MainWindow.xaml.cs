@@ -194,7 +194,7 @@ public sealed partial class MainWindow : Window
         Title = page switch
         {
             "providers" => "模型与服务", "agents" => "Agent 接入管理", "fusion" => "Fusion 设置",
-            "usage" => "用量明细", _ => "设置与诊断"
+            "usage" => "用量明细", "context" => "上下文", _ => "设置与诊断"
         };
         var console = IsConsolePage(page);
         // The console tabs already name the page, so the caption stays empty there.
@@ -279,7 +279,7 @@ public sealed partial class MainWindow : Window
                 ["service", command, "--managed", "--json"]);
             return;
         }
-        ((App)Microsoft.UI.Xaml.Application.Current).OpenPage(command is "console" or "providers" or "agents" or "usage" or "fusion" or "settings" ? command : "overview");
+        ((App)Microsoft.UI.Xaml.Application.Current).OpenPage(command is "console" or "providers" or "agents" or "usage" or "fusion" or "context" or "settings" ? command : "overview");
     });
 
     private async Task ExitAsync()
@@ -442,6 +442,7 @@ public sealed partial class MainWindow : Window
             "providers" => ("供应商与模型", "管理服务连接与向 Agent 提供的模型"),
             "agents" => ("Agent 接入", "检测、接入与升级由本地 CLI 执行"),
             "usage" => ("用量明细", "每日用量、按 Provider 拆分与每条回复的明细"),
+            "context" => ("上下文", "上下文引擎的开关、阈值与统计"),
             "fusion" => ("Fusion", "组合 Panel、Judge 与 Final 模型"),
             "settings" => ("设置", "外观、启动、备份与诊断"),
             _ => ("概览", "模型服务、连接状态与常用操作")
@@ -451,6 +452,7 @@ public sealed partial class MainWindow : Window
             case "providers": await ProvidersAsync(token); break;
             case "agents": await AgentsAsync(token); break;
             case "usage": await UsageAsync(token); break;
+            case "context": await ContextAsync(token); break;
             case "fusion": await FusionAsync(token); break;
             case "settings": await SettingsAsync(token); break;
             default: await OverviewAsync(token); break;
@@ -1363,6 +1365,13 @@ public sealed partial class MainWindow : Window
                 await ChangeAsync("导入配置", ["config", "import", file.Path], apply: true);
         }));
         PageBody.Children.Add(Card("配置备份", "由 Rust CLI 导入导出，界面不会读写业务配置文件。", backup));
+        var context = Row();
+        context.Children.Add(Button("打开上下文设置", () =>
+        {
+            ((App)Microsoft.UI.Xaml.Application.Current).OpenPage("context");
+            return Task.CompletedTask;
+        }));
+        PageBody.Children.Add(Card("上下文引擎", "长上下文压缩的开关、阈值、按会话统计与网关重启在独立窗口管理。", context));
         var diagnostics = Row();
         diagnostics.Children.Add(Button("打开日志目录", () => OpenPathAsync(Path.GetDirectoryName(Json.Text(Json.Field(metadata, "paths"), "gateway_log"))!)));
         diagnostics.Children.Add(Button("打开配置目录", () => OpenPathAsync(Json.Text(Json.Field(metadata, "paths"), "state"))));

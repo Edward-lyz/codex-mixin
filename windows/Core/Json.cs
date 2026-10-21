@@ -33,6 +33,28 @@ internal static class Json
             : throw new CliFailure($"CLI contract 字段 {key} 必须是 bool。");
     }
 
+    internal static long Integer(JsonElement row, string key)
+    {
+        var value = Field(row, key);
+        return value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number) ? number
+            : throw new CliFailure($"CLI contract 字段 {key} 必须是整数。");
+    }
+
+    internal static long? OptionalInteger(JsonElement row, string key)
+    {
+        if (row.ValueKind != JsonValueKind.Object || !row.TryGetProperty(key, out var value) ||
+            value.ValueKind == JsonValueKind.Null) return null;
+        return value.ValueKind == JsonValueKind.Number && value.TryGetInt64(out var number) ? number
+            : throw new CliFailure($"CLI contract 字段 {key} 必须是整数或 null。");
+    }
+
+    internal static double Real(JsonElement row, string key)
+    {
+        var value = Field(row, key);
+        return value.ValueKind == JsonValueKind.Number && value.TryGetDouble(out var number) ? number
+            : throw new CliFailure($"CLI contract 字段 {key} 必须是数字。");
+    }
+
     internal static JsonElement[] Rows(JsonElement value)
     {
         if (value.ValueKind != JsonValueKind.Array) throw new CliFailure("CLI contract 必须返回 array。");
