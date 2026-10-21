@@ -407,6 +407,7 @@ Web 面板默认监听所有网卡的 8000–9000 随机端口，访问需要本
 - [Google Antigravity](docs/antigravity.md)
 - [官方 GPT 的 ECH 直连](docs/ech-gpt.md)
 - [浏览器跨域白名单](docs/cors.md)
+- [长上下文引擎](docs/context-engine.md)
 
 使用教程见 [GitHub Wiki](https://github.com/Edward-lyz/codex-mixin/wiki)：
 
