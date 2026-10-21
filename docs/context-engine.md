@@ -101,7 +101,53 @@ checkpoint 绑定会话与 revision：
 存在的会话仍能展开并读取 checkpoint：此时不注入内部工具与指引、只跑一轮，历史照常
 保留。
 
+## 控制台与统计
+
+Web 控制面板的「上下文」页把开关与统计放在一起：顶部开关直接调用
+`context config set`，其余卡片展示会话数、压缩次数、节省 token 与缓存命中，
+下方表格按会话列出消息数、压缩次数、节省量、当前视图 token 与缓存命中率。
+开关与其他设置只在网关重启后生效，页面提供「重启网关」。
+
+数据来自 `context stats --json`（同一份数据也可在终端查看）：
+
+```bash
+codex-mixin context stats --json
+```
+
+```json
+{
+  "enabled": true,
+  "database_path": ".../context.db",
+  "totals": {
+    "sessions": 1,
+    "messages": 132,
+    "compressions": 4,
+    "saved_tokens": 81234,
+    "view_tokens": 24000,
+    "cache": {
+      "turns": 18,
+      "input_tokens": 420000,
+      "cached_tokens": 310000,
+      "output_tokens": 21000,
+      "hit_percent": 73.8
+    }
+  },
+  "sessions": [
+    { "session": "codex\u001fthread-1", "display": "codex / thread-1", "revision": 9,
+      "updated_at": 1790000000, "messages": 132, "compressions": 4,
+      "saved_tokens": 81234, "view_tokens": 24000, "tiers": {}, "cache": {} }
+  ]
+}
+```
+
+- `compressions` 含已被更高层合并的压缩；`saved_tokens` 只统计当前视图里仍然
+  生效的压缩块（原始片段 token 减去摘要 token）。
+- `cache` 是网关按上下文会话记录的真实上游用量：每个上游轮次（含内部续轮）
+  记一条 `input_tokens`、`input_tokens_details.cached_tokens` 与
+  `output_tokens`，命中率是缓存读取除以计费输入。关闭开关后只读路径不记账。
+- 归档库尚未创建时 `stats` 返回空会话与全零 totals，且不会新建数据库。
+
 ## 范围
 
-本版本提供内核、存储、网关回路、链式请求、压缩接管与 CLI；三个 GUI 的设置区与
-评估基线尚未包含。
+本版本提供内核、存储、网关回路、链式请求、压缩接管、CLI 统计与 Web 控制面板的
+「上下文」页；macOS 与 Windows 壳的设置区、以及评估基线尚未包含。

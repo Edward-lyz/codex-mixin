@@ -917,6 +917,11 @@ pub(super) enum ContextCommand {
         #[arg(long)]
         json: bool,
     },
+    /// Show compression and cache statistics for the console page.
+    Stats {
+        #[arg(long)]
+        json: bool,
+    },
     /// List and inspect archived context sessions.
     Sessions {
         #[command(subcommand)]

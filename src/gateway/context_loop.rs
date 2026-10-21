@@ -9,7 +9,9 @@ use serde_json::{Value, json};
 
 use super::GatewayExecutor;
 use super::plan::RequestPlan;
+use super::turn_usage::unix_millis;
 use crate::context::ContextEngine;
+use crate::context::TurnSample;
 use crate::context::checkpoint;
 use crate::context::guidance::with_guidance;
 use crate::context::types::{SESSION_SEPARATOR, is_context_tool};
@@ -212,6 +214,7 @@ impl ContextRun {
                     .and_then(Value::as_array)
                     .cloned()
                     .unwrap_or_default();
+                self.record_usage(&completed);
                 let internal: Vec<Value> = output
                     .iter()
                     .filter(|item| internal_tool_name(item).is_some())
@@ -327,6 +330,32 @@ impl ContextRun {
         read_plan.body = compose_read_only_body(&template, &view.items);
         let outcome = run_round(&executor, read_plan, &headers).await?;
         Ok(futures_util::stream::iter(outcome.chunks.into_iter().map(Ok)).boxed())
+    }
+
+    /// Records the billed usage of one upstream round. A round without usage is
+    /// skipped instead of being counted as a free round.
+    fn record_usage(&self, completed: &Value) {
+        let Some(usage) = completed.get("usage") else {
+            return;
+        };
+        let Some(input_tokens) = usage.get("input_tokens").and_then(Value::as_u64) else {
+            return;
+        };
+        let sample = TurnSample {
+            at_ms: unix_millis() as i64,
+            input_tokens,
+            cached_tokens: usage
+                .pointer("/input_tokens_details/cached_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+            output_tokens: usage
+                .get("output_tokens")
+                .and_then(Value::as_u64)
+                .unwrap_or(0),
+        };
+        if let Err(error) = self.engine.record_turn(&self.session, sample) {
+            tracing::warn!(error = %error, "failed to record context turn usage");
+        }
     }
 
     /// Stores the mapping a chained follow-up request depends on. The client

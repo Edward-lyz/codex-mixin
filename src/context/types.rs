@@ -158,6 +158,66 @@ pub struct SessionSummary {
     pub blocks: u64,
 }
 
+/// Billed upstream rounds of one context session.
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct CacheStats {
+    pub turns: u64,
+    pub input_tokens: u64,
+    pub cached_tokens: u64,
+    pub output_tokens: u64,
+    /// Share of the billed input tokens that the upstream served from cache.
+    pub hit_percent: f64,
+}
+
+impl CacheStats {
+    pub fn merge(&mut self, other: &Self) {
+        self.turns = self.turns.saturating_add(other.turns);
+        self.input_tokens = self.input_tokens.saturating_add(other.input_tokens);
+        self.cached_tokens = self.cached_tokens.saturating_add(other.cached_tokens);
+        self.output_tokens = self.output_tokens.saturating_add(other.output_tokens);
+        self.hit_percent = if self.input_tokens == 0 {
+            0.0
+        } else {
+            self.cached_tokens as f64 / self.input_tokens as f64 * 100.0
+        };
+    }
+}
+
+#[derive(Clone, Debug, Serialize, Deserialize)]
+pub struct SessionStats {
+    /// Raw session key, used by the CLI and the API.
+    pub session: String,
+    pub display: String,
+    pub revision: i64,
+    pub updated_at: i64,
+    /// Archived original messages.
+    pub messages: u64,
+    /// Compression operations, including blocks a higher tier superseded.
+    pub compressions: u64,
+    /// Tokens the live blocks removed from the view.
+    pub saved_tokens: u64,
+    pub view_tokens: u64,
+    pub tiers: TierCounts,
+    pub cache: CacheStats,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct StatsTotals {
+    pub sessions: u64,
+    pub messages: u64,
+    pub compressions: u64,
+    pub saved_tokens: u64,
+    pub view_tokens: u64,
+    pub cache: CacheStats,
+}
+
+#[derive(Clone, Debug, Default, Serialize, Deserialize)]
+pub struct ContextStats {
+    pub enabled: bool,
+    pub sessions: Vec<SessionStats>,
+    pub totals: StatsTotals,
+}
+
 #[derive(Clone, Debug)]
 pub struct TurnView {
     pub revision: i64,

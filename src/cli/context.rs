@@ -51,6 +51,7 @@ pub(super) fn run(command: ContextCommand) -> Result<()> {
             session,
             json: json_output,
         } => status(session.as_deref(), json_output),
+        ContextCommand::Stats { json: json_output } => stats(json_output),
         ContextCommand::Sessions { command } => match command {
             ContextSessionsCommand::List { json: json_output } => sessions_list(json_output),
             ContextSessionsCommand::Show {
@@ -218,6 +219,59 @@ fn print_status_value(value: Value, json_output: bool) {
             session["revision"]
         );
     }
+}
+
+fn stats(json_output: bool) -> Result<()> {
+    let settings = stored_settings()?;
+    let path = codex_mixin::context::database_path()?;
+    let window_tokens = settings.context_window_tokens.unwrap_or(0);
+    let stats = if path.exists() {
+        open_engine(&settings)?.stats(window_tokens, settings.enabled)?
+    } else {
+        codex_mixin::context::ContextStats {
+            enabled: settings.enabled,
+            sessions: Vec::new(),
+            totals: codex_mixin::context::StatsTotals::default(),
+        }
+    };
+    let value = json!({
+        "enabled": stats.enabled,
+        "database_path": path,
+        "totals": stats.totals,
+        "sessions": stats.sessions,
+    });
+    if json_output {
+        println!("{}", serde_json::to_string_pretty(&value)?);
+        return Ok(());
+    }
+    println!("context enabled: {}", stats.enabled);
+    println!(
+        "sessions: {}  compressions: {}  saved tokens: {}  view tokens: {}",
+        stats.totals.sessions,
+        stats.totals.compressions,
+        stats.totals.saved_tokens,
+        stats.totals.view_tokens
+    );
+    println!(
+        "cache: turns {}  hit {:.1}%  input {}  cached {}  output {}",
+        stats.totals.cache.turns,
+        stats.totals.cache.hit_percent,
+        stats.totals.cache.input_tokens,
+        stats.totals.cache.cached_tokens,
+        stats.totals.cache.output_tokens
+    );
+    for session in stats.sessions {
+        println!(
+            "{}  messages={} compressions={} saved_tokens={} view_tokens={} cache_hit={:.1}%",
+            session.display,
+            session.messages,
+            session.compressions,
+            session.saved_tokens,
+            session.view_tokens,
+            session.cache.hit_percent
+        );
+    }
+    Ok(())
 }
 
 fn sessions_list(json_output: bool) -> Result<()> {

@@ -12,6 +12,8 @@
 //!   `doctor --quick --json`; `GET /api/logs?lines=N` -> `{text}`.
 //! - `GET /api/agents` -> `agent list --json` plus `template_icons`;
 //!   `GET /api/agents/versions` -> `agent versions --json` (network).
+//! - `GET /api/context` -> `{settings, database_path, totals, sessions}` from
+//!   `context stats --json` and `context config get --json`.
 //! - `GET /api/ech` -> `ech status --json`; `GET /api/report/estimate` ->
 //!   `report-replay --all-sessions --estimate --json`.
 //! - `GET /api/config/export` downloads a Base64 backup (not encrypted);
@@ -110,6 +112,7 @@ pub(super) fn router(state: Shared) -> Router {
         .route("/api/logs", get(logs))
         .route("/api/agents", get(agents))
         .route("/api/agents/versions", get(agent_versions))
+        .route("/api/context", get(context_stats))
         .route("/api/ech", get(ech_status))
         .route("/api/report/estimate", get(report_estimate))
         .route("/api/config/export", get(export_config))
@@ -352,6 +355,20 @@ struct UsageDetailsQuery {
 // The turn ledger keeps 5000 rows; the page lists the newest 500 so one
 // response stays small on slow links.
 const PANEL_TURN_LIMIT: &str = "500";
+
+async fn context_stats() -> Result<Json<Value>, ApiError> {
+    let (stats, config) = tokio::try_join!(
+        run_json(&["context", "stats", "--json"]),
+        run_json(&["context", "config", "get", "--json"])
+    )?;
+    Ok(Json(json!({
+        "settings": config.get("context").cloned().unwrap_or(Value::Null),
+        "config_path": config.get("config_path").cloned().unwrap_or(Value::Null),
+        "database_path": stats.get("database_path").cloned().unwrap_or(Value::Null),
+        "totals": stats.get("totals").cloned().unwrap_or(Value::Null),
+        "sessions": stats.get("sessions").cloned().unwrap_or(json!([])),
+    })))
+}
 
 async fn usage_details(Query(query): Query<UsageDetailsQuery>) -> Result<Json<Value>, ApiError> {
     let days = query.days.arg();

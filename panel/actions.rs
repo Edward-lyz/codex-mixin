@@ -84,6 +84,18 @@ pub(super) enum PanelAction {
         #[serde(default)]
         id: Option<String>,
     },
+    /// Global context engine settings; the gateway reads them at startup.
+    ContextConfigure {
+        enabled: bool,
+        #[serde(default)]
+        growth_threshold_tokens: Option<u64>,
+        #[serde(default)]
+        protected_messages: Option<usize>,
+        #[serde(default)]
+        max_internal_rounds: Option<usize>,
+        #[serde(default)]
+        context_window_tokens: Option<String>,
+    },
     AgentConnect {
         id: String,
         #[serde(default)]
@@ -454,6 +466,42 @@ impl PanelAction {
                     validate_positional("fusion profile id", id)?;
                     invocation.push_value("replace-id", id)?;
                 }
+                Ok(invocation)
+            }
+            Self::ContextConfigure {
+                enabled,
+                growth_threshold_tokens,
+                protected_messages,
+                max_internal_rounds,
+                context_window_tokens,
+            } => {
+                let mut invocation = CliInvocation::fixed(&["context", "config", "set"]);
+                invocation.push(format!("--enabled={enabled}"));
+                if let Some(tokens) = growth_threshold_tokens {
+                    if *tokens == 0 {
+                        return Err("growth threshold tokens must be positive".to_owned());
+                    }
+                    invocation.push(format!("--growth-threshold-tokens={tokens}"));
+                }
+                if let Some(messages) = protected_messages {
+                    if *messages == 0 {
+                        return Err("protected messages must be positive".to_owned());
+                    }
+                    invocation.push(format!("--protected-messages={messages}"));
+                }
+                if let Some(rounds) = max_internal_rounds {
+                    if !(1..=8).contains(rounds) {
+                        return Err("max internal rounds must be between 1 and 8".to_owned());
+                    }
+                    invocation.push(format!("--max-internal-rounds={rounds}"));
+                }
+                if let Some(window) = context_window_tokens {
+                    let window = window.trim();
+                    if !window.is_empty() {
+                        invocation.push_value("context-window-tokens", window)?;
+                    }
+                }
+                invocation.push("--json");
                 Ok(invocation)
             }
             Self::FusionDelete { id } => {

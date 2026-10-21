@@ -184,6 +184,57 @@ fn fixed_actions_map_to_their_cli_commands() {
 }
 
 #[test]
+fn context_settings_map_to_the_context_cli() {
+    let invocation = action(json!({
+        "action": "context_configure",
+        "params": {
+            "enabled": true,
+            "growth_threshold_tokens": 60000,
+            "protected_messages": 3,
+            "max_internal_rounds": 2,
+            "context_window_tokens": "200000"
+        }
+    }))
+    .invocation()
+    .unwrap();
+    assert_eq!(
+        invocation.args,
+        [
+            "context",
+            "config",
+            "set",
+            "--enabled=true",
+            "--growth-threshold-tokens=60000",
+            "--protected-messages=3",
+            "--max-internal-rounds=2",
+            "--context-window-tokens=200000",
+            "--json",
+        ]
+    );
+}
+
+#[test]
+fn context_settings_reject_invalid_values() {
+    for value in [
+        json!({"action": "context_configure", "params": {"enabled": true, "growth_threshold_tokens": 0}}),
+        json!({"action": "context_configure", "params": {"enabled": true, "protected_messages": 0}}),
+        json!({"action": "context_configure", "params": {"enabled": true, "max_internal_rounds": 9}}),
+        json!({"action": "context_configure", "params": {"enabled": true, "context_window_tokens": "1000\n2000"}}),
+    ] {
+        assert!(action(value).invocation().is_err());
+    }
+}
+
+#[tokio::test]
+async fn context_stats_requires_the_panel_token() {
+    let response = test_router()
+        .oneshot(Request::get("/api/context").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[test]
 fn agent_icons_match_the_shared_manifest() {
     let manifest: serde_json::Map<String, serde_json::Value> =
         serde_json::from_str(include_str!("../macos/assets/agents/manifest.json")).unwrap();

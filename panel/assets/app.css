@@ -636,6 +636,10 @@ h1, h2, h3, p { margin: 0; }
 .table .muted { color: var(--ink-54); }
 .table tfoot td { color: var(--ink-64); font-weight: 550; border-top: var(--hairline); }
 
+/* The context session table scrolls inside its card instead of widening the page. */
+.ctx-sessions { min-width: 0; }
+.row-sub.is-wrap { white-space: normal; overflow: visible; text-overflow: clip; }
+
 .rows { display: grid; }
 .row {
   display: flex;

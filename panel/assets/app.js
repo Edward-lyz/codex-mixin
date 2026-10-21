@@ -11,6 +11,7 @@ const PAGES = [
   { id: "home", title: "概览", subtitle: "网关状态、用量与额度" },
   { id: "providers", title: "模型与服务", subtitle: "服务商、模型选择、能力与连接设置" },
   { id: "usage", title: "用量", subtitle: "每日用量、按 Provider 拆分与每条回复的明细" },
+  { id: "context", title: "上下文", subtitle: "上下文引擎开关、压缩节省量与每会话缓存命中" },
   { id: "speed", title: "测速", subtitle: "首字延迟与输出速度基准" },
   { id: "fusion", title: "Fusion", subtitle: "多模型协同与分时路由" },
   { id: "apps", title: "Agent", subtitle: "把编码 Agent 接入本地网关，查看版本与接入状态" },
@@ -32,6 +33,9 @@ const state = {
   quotaFresh: false,
   doctor: null,
   logs: null,
+  context: null,
+  contextError: null,
+  contextLoading: false,
   logLines: 200,
   busy: false,
   timer: 0,
@@ -427,6 +431,7 @@ function navigate(pageId, options = {}) {
   render({ animate: true });
   if (changed && options.focus !== false) $("#main").focus({ preventScroll: true });
   if (page.id === "logs" && !state.logs) loadLogs();
+  if (page.id === "context" && !state.context && !state.contextLoading) loadContext();
 }
 
 // ---------- Data refresh ----------
@@ -2332,6 +2337,147 @@ function doctorCard() {
       );
   return card("诊断报告", "doctor --quick", body, [rerun, actionButton("自动修复", "doctor_fix", null, { ok: "修复完成" }, "btn-primary")], "card-flush");
 }
+
+// ---------- Context ----------
+
+async function loadContext() {
+  state.contextLoading = true;
+  try {
+    state.context = await api("/api/context");
+    state.contextError = null;
+  } catch (error) {
+    if (error.status === 401) return;
+    state.contextError = error;
+  } finally {
+    state.contextLoading = false;
+  }
+  if (state.page === "context") render({ animate: false });
+}
+
+function contextSettingsCard(context) {
+  const settings = context.settings || {};
+  const toggle = h("input", { class: "switch", type: "checkbox", role: "switch", checked: Boolean(settings.enabled), disabled: state.busy, "aria-label": "启用上下文引擎", "data-action": "" });
+  toggle.addEventListener("change", async () => {
+    const enabled = toggle.checked;
+    toggle.disabled = true;
+    await runAction(null, "context_configure", { enabled }, { ok: enabled ? "已开启上下文引擎" : "已关闭上下文引擎" });
+    await loadContext();
+  });
+  const restart = actionButton("重启网关", "service_restart", null, { ok: "网关已重启" }, "btn-ghost");
+  const rows = [
+    ["增长阈值", settings.growth_threshold_tokens ? compact(settings.growth_threshold_tokens) + " tokens" : "\u2014"],
+    ["压力 / 紧急阈值", fixed((settings.pressure_ratio ?? 0) * 100, 0, "%") + " / " + fixed((settings.urgent_ratio ?? 0) * 100, 0, "%")],
+    ["保护最近消息", str(settings.protected_messages) + " 条 · " + compact(settings.protected_tokens ?? 0) + " tokens"],
+    ["内部轮上限", str(settings.max_internal_rounds)],
+    ["上下文窗口", settings.context_window_tokens ? compact(settings.context_window_tokens) + " tokens" : "跟随模型"],
+  ];
+  const body = h(
+    "div",
+    { class: "rows" },
+    h(
+      "div",
+      { class: "row" },
+      h(
+        "div",
+        { class: "row-main" },
+        h("div", { class: "row-title", text: "启用上下文引擎" }),
+        h("div", { class: "row-sub is-wrap", text: "长会话归档为原文与摘要视图，模型通过内部工具按需压缩和检索。开关在网关重启后生效。" }),
+      ),
+      toggle,
+    ),
+    ...rows.map(([label, value]) =>
+      h(
+        "div",
+        { class: "row" },
+        h("div", { class: "row-main" }, h("div", { class: "row-title", text: label })),
+        h("span", { class: "row-sub", text: value }),
+      ),
+    ),
+  );
+  return card("上下文引擎", context.database_path ? context.database_path : null, body, [restart]);
+}
+
+function contextMetrics(totals) {
+  const cache = totals.cache || {};
+  return h(
+    "div",
+    { class: "grid grid-4" },
+    metricCard("会话", totals.sessions || 0, "已有归档的会话数"),
+    metricCard("压缩次数", totals.compressions || 0, "含已升级到更高层的压缩"),
+    metricCard("节省 token", totals.saved_tokens || 0, "原始 token 减去摘要 token"),
+    metricCard("缓存命中", fixed(cache.hit_percent || 0, 1, "%"), compact(cache.cached_tokens || 0) + " / " + compact(cache.input_tokens || 0) + " 输入 token"),
+  );
+}
+
+function contextSessionsCard(sessions, totals) {
+  const note = "「节省」是原始片段 token 减去摘要 token；「视图」是当前发给上游的压缩视图估算。";
+  if (!sessions.length) {
+    return card("会话", note, emptyState("还没有压缩记录", "开启上下文引擎后，长会话出现压缩时这里会显示每个会话的次数、节省量与缓存命中。"));
+  }
+  const maxSaved = Math.max(1, ...sessions.map((row) => row.saved_tokens || 0));
+  const head = ["会话", "消息", "压缩次数", "节省 token", "视图 token", "缓存命中", "最近活动"].map((label, index) =>
+    h("th", { class: index > 0 && index < 6 ? "r" : null, text: label }),
+  );
+  const body = sessions.map((row) => {
+    const cache = row.cache || {};
+    const saved = Math.min(1, (row.saved_tokens || 0) / maxSaved);
+    const hit = Math.min(1, (cache.hit_percent || 0) / 100);
+    return h(
+      "tr",
+      null,
+      h("td", null, h("div", { class: "row-title", text: row.display }), h("div", { class: "row-sub", text: "修订 " + str(row.revision) })),
+      h("td", { class: "r", text: compact(row.messages || 0) }),
+      h("td", { class: "r", text: compact(row.compressions || 0) }),
+      h(
+        "td",
+        { class: "r" },
+        h("div", { text: compact(row.saved_tokens || 0) }),
+        h("div", { class: "progress", style: { marginTop: "4px" }, role: "progressbar", "aria-label": "节省 token 占比", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(saved * 100)) },
+          h("div", { class: "progress-bar", style: { transform: "scaleX(" + fixed(saved, 3, "") + ")" } })),
+      ),
+      h("td", { class: "r", text: compact(row.view_tokens || 0) }),
+      h(
+        "td",
+        { class: "r" },
+        h("div", { text: fixed(cache.hit_percent || 0, 1, "%") }),
+        h("div", { class: "progress", style: { marginTop: "4px" }, role: "progressbar", "aria-label": "缓存命中率", "aria-valuemin": "0", "aria-valuemax": "100", "aria-valuenow": String(Math.round(hit * 100)) },
+          h("div", { class: "progress-bar", style: { transform: "scaleX(" + fixed(hit, 3, "") + ")" } })),
+      ),
+      h("td", { class: "r", text: timeAgo((row.updated_at || 0) * 1000) }),
+    );
+  });
+  const cache = totals.cache || {};
+  const foot = h(
+    "tfoot",
+    null,
+    h(
+      "tr",
+      null,
+      h("td", { text: "合计" }),
+      h("td", { class: "r", text: compact(totals.messages || 0) }),
+      h("td", { class: "r", text: compact(totals.compressions || 0) }),
+      h("td", { class: "r", text: compact(totals.saved_tokens || 0) }),
+      h("td", { class: "r", text: compact(totals.view_tokens || 0) }),
+      h("td", { class: "r", text: fixed(cache.hit_percent || 0, 1, "%") }),
+      h("td", { class: "r", text: compact(cache.turns || 0) + " 轮" }),
+    ),
+  );
+  return card("会话", note, h("div", { class: "table-wrap" }, h("table", { class: "table" }, h("thead", null, h("tr", null, head)), h("tbody", null, body), foot)), null, "card-flush ctx-sessions");
+}
+
+RENDERERS.context = () => {
+  const reload = h("button", { class: "btn btn-ghost", type: "button", text: "刷新", onclick: loadContext });
+  if (!state.context) {
+    const body = state.contextError
+      ? h("div", { class: "notice", role: "alert" }, h("span", { class: "dot is-bad notice-mark", "aria-hidden": "true" }), h("div", null, h("strong", { text: "无法读取上下文统计" }), h("div", { class: "card-note", text: state.contextError.message })))
+      : h("div", { class: "skeleton", style: { margin: "16px 20px" } });
+    return [card("上下文引擎", null, body, [reload], "card-flush")];
+  }
+  const context = state.context;
+  const sessions = context.sessions || [];
+  const totals = context.totals || { cache: {}, sessions: sessions.length };
+  return [contextSettingsCard(context), contextMetrics(totals), contextSessionsCard(sessions, totals)];
+};
 
 // ---------- Boot ----------
 
