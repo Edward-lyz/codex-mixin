@@ -12,6 +12,8 @@ internal sealed class FixtureHost : IDisposable
     private readonly CancellationTokenSource lifetime = new();
     private readonly Task server;
     internal string Url { get; }
+    internal TaskCompletionSource QuotaRequested { get; } = new(TaskCreationOptions.RunContinuationsAsynchronously);
+    internal TaskCompletionSource? QuotaRelease { get; set; }
 
     internal FixtureHost()
     {
@@ -42,7 +44,14 @@ internal sealed class FixtureHost : IDisposable
                 string response;
                 var contentType = "application/json";
                 if (context.Request.HttpMethod == "GET" && context.Request.Url?.AbsolutePath == "/quota")
+                {
+                    if (QuotaRelease is { } release)
+                    {
+                        QuotaRequested.TrySetResult();
+                        await release.Task.WaitAsync(lifetime.Token);
+                    }
                     response = JsonSerializer.Serialize(new { used = 81, limit = 100, remaining = 19 });
+                }
                 else if (context.Request.HttpMethod == "POST" && context.Request.Url?.AbsolutePath == "/v1/chat/completions")
                 {
                     using var request = await JsonDocument.ParseAsync(context.Request.InputStream, cancellationToken: lifetime.Token);
