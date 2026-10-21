@@ -86,6 +86,7 @@ enum MockMode {
     ContextStatusThenText,
     ContextStatusOnly,
     ContextCompressThenText,
+    ContextMixedToolsThenText,
 }
 
 #[derive(Clone)]
@@ -787,6 +788,11 @@ async fn mock_messages(
         MockMode::ContextStatusThenText | MockMode::ContextStatusOnly => {
             tool_sse("mixin_context_status", json!({}))
         }
+        MockMode::ContextMixedToolsThenText if has_tool_result => text_sse(),
+        MockMode::ContextMixedToolsThenText => double_tool_sse(
+            ("mixin_context_status", json!({})),
+            ("exec_command", json!({"cmd":"pwd"})),
+        ),
         MockMode::ContextCompressThenText if has_tool_result => text_sse(),
         MockMode::ContextCompressThenText => tool_sse(
             "mixin_context_compress",
@@ -1571,6 +1577,29 @@ fn tool_sse(name: &str, arguments: Value) -> String {
     .into_iter()
     .map(|event| format!("event: {}\ndata: {event}\n\n", event["type"].as_str().unwrap()))
     .collect()
+}
+
+fn double_tool_sse(first: (&str, Value), second: (&str, Value)) -> String {
+    let blocks = [first, second];
+    let mut events = vec![
+        json!({"type":"message_start","message":{"id":"msg_1","type":"message","role":"assistant","content":[],"model":"DeepSeek-V4-Flash","stop_reason":null,"usage":{"input_tokens":10,"output_tokens":1}}}),
+    ];
+    for (index, (name, arguments)) in blocks.iter().enumerate() {
+        events.push(json!({"type":"content_block_start","index":index,"content_block":{"type":"tool_use","id":format!("toolu_{index}"),"name":name,"input":{}}}));
+        events.push(json!({"type":"content_block_delta","index":index,"delta":{"type":"input_json_delta","partial_json":arguments.to_string()}}));
+        events.push(json!({"type":"content_block_stop","index":index}));
+    }
+    events.push(json!({"type":"message_delta","delta":{"stop_reason":"tool_use"},"usage":{"output_tokens":5}}));
+    events.push(json!({"type":"message_stop"}));
+    events
+        .into_iter()
+        .map(|event| {
+            format!(
+                "event: {}\ndata: {event}\n\n",
+                event["type"].as_str().unwrap()
+            )
+        })
+        .collect()
 }
 
 fn text_then_tool_sse(name: &str, arguments: Value) -> String {
@@ -3485,6 +3514,87 @@ async fn context_internal_rounds_are_bounded() {
         "context internal rounds exhausted before the model answered"
     );
     assert_eq!(requests.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn context_mixed_tools_hand_back_client_calls_only() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::ContextMixedToolsThenText).await;
+    let mut config = test_config(upstream_url);
+    config.context.enabled = true;
+    let database = tempfile::tempdir().unwrap();
+    let database_path = database.path().join("context.db");
+    let gateway_url = spawn_gateway_with_context(config, &database_path).await;
+    let client = reqwest::Client::new();
+    let user = json!({"type":"message","role":"user","content":[{"type":"input_text","text":"check the status and list files"}]});
+    let mut request = responses_request();
+    request["input"] = json!([user.clone()]);
+
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-context-mixed")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut encoded = response.bytes().await.unwrap().to_vec();
+    let first = String::from_utf8_lossy(&encoded).to_string();
+    let events = drain_events(&mut encoded);
+    let call = events
+        .iter()
+        .find_map(|event| {
+            let payload: Value = serde_json::from_str(&event.data).ok()?;
+            payload
+                .get("item")
+                .filter(|item| item["name"] == "exec_command")
+                .cloned()
+        })
+        .expect("client call item");
+    assert_eq!(call["type"], "function_call");
+    assert!(
+        !first.contains("mixin_context"),
+        "internal tool leaked: {first}"
+    );
+    assert!(
+        first.contains("exec_command"),
+        "client call missing: {first}"
+    );
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        1,
+        "model must stop at the hand-back"
+    );
+
+    let mut follow_up = request.clone();
+    follow_up["input"] = json!([
+        user,
+        call.clone(),
+        {"type":"function_call_output","call_id": call["call_id"], "output": "/tmp/workspace"},
+    ]);
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-context-mixed")
+        .json(&follow_up)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let stream = String::from_utf8(response.bytes().await.unwrap().to_vec()).unwrap();
+    assert!(stream.contains("hello codex"), "missing answer: {stream}");
+    assert!(
+        !stream.contains("mixin_context"),
+        "internal tool leaked: {stream}"
+    );
+
+    let recorded = requests.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 2, "round count: {recorded:?}");
+    let resumed = recorded[1]["messages"].to_string();
+    assert!(
+        resumed.contains("/tmp/workspace"),
+        "client result was lost: {resumed}"
+    );
 }
 
 #[tokio::test]
