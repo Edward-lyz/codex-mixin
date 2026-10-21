@@ -66,6 +66,19 @@ codex-mixin context export --session <id> --out context-export.json
 会话键由接入客户端与客户端提供的 thread/session id 组合而成，子 agent 使用
 独立键，互不影响。网关不会在模型请求期间锁库：读视图、提交压缩都是短事务。
 
+## 链式请求（previous_response_id）
+
+客户端只发增量、用 `previous_response_id` 续接时，网关不会把该 id 透传给上游：
+它用归档的原始消息加上已提交的上一轮可见输出重建完整入参，再按当前 revision 渲染
+压缩视图。因此压缩/恢复之后的续轮始终从完整视图重新开始，不会命中过期的
+response id。
+
+映射按会话隔离并只在轮次成功后提交：跨会话的 id 返回
+`response id ... belongs to context session ...`，未知 id 且没有任何历史时返回
+`unknown response id ...`（HTTP 400）；未知 id 但客户端已带完整历史时按客户端历史
+继续，避免丢掉客户端自己的对话。
+
 ## 范围
 
-本版本只提供内核、存储、网关回路与 CLI；三个 GUI 的设置区与评估基线尚未包含。
+本版本只提供内核、存储、网关回路、链式请求与 CLI；三个 GUI 的设置区、压缩接管
+（compaction）与评估基线尚未包含。

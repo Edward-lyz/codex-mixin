@@ -3657,6 +3657,89 @@ async fn context_mixed_tools_hand_back_client_calls_only() {
 }
 
 #[tokio::test]
+async fn context_expands_a_chained_request_from_the_archive() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::ContextStatusThenText).await;
+    let mut config = test_config(upstream_url);
+    config.context.enabled = true;
+    let database = tempfile::tempdir().unwrap();
+    let database_path = database.path().join("context.db");
+    let gateway_url = spawn_gateway_with_context(config, &database_path).await;
+    let client = reqwest::Client::new();
+
+    let mut first = responses_request();
+    first["input"] = json!([{
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "distinctive opening request"}]
+    }]);
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-context-chained")
+        .json(&first)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut encoded = response.bytes().await.unwrap().to_vec();
+    let events = drain_events(&mut encoded);
+    let response_id = events
+        .iter()
+        .find(|event| event.event.as_deref() == Some("response.completed"))
+        .and_then(|event| serde_json::from_str::<Value>(&event.data).ok())
+        .and_then(|payload| payload["response"]["id"].as_str().map(str::to_owned))
+        .expect("completed response id");
+    assert!(!response_id.is_empty());
+
+    // The follow-up carries only the delta and the response id, so the gateway
+    // has to rebuild the full input from its own archive.
+    let mut chained = responses_request();
+    chained["previous_response_id"] = json!(response_id);
+    chained["input"] = json!([{
+        "type": "message",
+        "role": "user",
+        "content": [{"type": "input_text", "text": "next question"}]
+    }]);
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-context-chained")
+        .json(&chained)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let stream = String::from_utf8(response.bytes().await.unwrap().to_vec()).unwrap();
+    assert!(stream.contains("hello codex"), "missing answer: {stream}");
+
+    let recorded = requests.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 4, "round count: {recorded:?}");
+    let expanded = recorded[2]["messages"].to_string();
+    assert!(
+        expanded.contains("distinctive opening request"),
+        "archived history was lost: {expanded}"
+    );
+    assert!(expanded.contains("next question"), "{expanded}");
+
+    // Without an archive the gateway must fail loudly instead of silently
+    // dropping the conversation.
+    let mut unknown = responses_request();
+    unknown["previous_response_id"] = json!("resp_unknown");
+    unknown["input"] = json!([]);
+    let response = client
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-context-chained")
+        .json(&unknown)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("unknown response id"), "{body}");
+}
+
+#[tokio::test]
 async fn context_official_route_keeps_the_upstream_status() {
     let database = tempfile::tempdir().unwrap();
     let database_path = database.path().join("context.db");

@@ -58,7 +58,13 @@ impl ContextRun {
         let Some(engine) = executor.context_engine() else {
             return Ok(None);
         };
-        if !matches!(body.get("input"), Some(Value::Array(_))) {
+        let has_items = matches!(body.get("input"), Some(Value::Array(_)));
+        // A chained request may carry only the delta, so it still belongs to
+        // the session even without an item array.
+        let chained = body
+            .get("previous_response_id")
+            .is_some_and(Value::is_string);
+        if !has_items && !chained {
             tracing::debug!("context engine skips a request whose input is not an item array");
             return Ok(None);
         }
@@ -83,12 +89,23 @@ impl ContextRun {
         plan: RequestPlan,
         headers: HeaderMap,
     ) -> Result<ResponseStream, GatewayError> {
-        let original = plan
+        let incoming = plan
             .body
             .get("input")
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        let original = match plan
+            .body
+            .get("previous_response_id")
+            .and_then(Value::as_str)
+        {
+            Some(previous) => self
+                .engine
+                .expand_chained_input(&self.session, previous, &incoming)
+                .map_err(|error| GatewayError::BadRequest(error.to_string()))?,
+            None => incoming,
+        };
         let lease = self
             .engine
             .clone()
@@ -161,6 +178,7 @@ impl ContextRun {
                     .cloned()
                     .collect();
                 if internal.is_empty() {
+                    self.record_completed(&completed, revision, &output);
                     for chunk in hidden_round(outcome.chunks, &template) {
                         yield Ok(chunk);
                     }
@@ -220,6 +238,7 @@ impl ContextRun {
                     // one response: commit the context results, then deliver
                     // only the client calls. The model resumes after the client
                     // returns its tool outputs.
+                    self.record_completed(&completed, revision, &output);
                     for chunk in hidden_round(outcome.chunks, &template) {
                         yield Ok(chunk);
                     }
@@ -242,6 +261,29 @@ impl ContextRun {
             }
         };
         Ok(stream.boxed())
+    }
+
+    /// Stores the mapping a chained follow-up request depends on. The client
+    /// only ever saw the visible items, so internal calls are left out.
+    fn record_completed(&self, completed: &Value, revision: i64, output: &[Value]) {
+        let Some(response_id) = completed.get("id").and_then(Value::as_str) else {
+            return;
+        };
+        let visible: Vec<Value> = output
+            .iter()
+            .filter(|item| internal_tool_name(item).is_none())
+            .cloned()
+            .collect();
+        if let Err(error) =
+            self.engine
+                .record_response(&self.session, response_id, revision, &visible)
+        {
+            tracing::warn!(
+                response_id,
+                error = %error,
+                "failed to record the context response mapping"
+            );
+        }
     }
 }
 
