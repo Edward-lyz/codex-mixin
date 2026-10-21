@@ -1,3 +1,4 @@
+pub mod checkpoint;
 pub mod engine;
 pub mod guidance;
 mod store;

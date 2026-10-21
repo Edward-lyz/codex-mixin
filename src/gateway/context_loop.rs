@@ -10,6 +10,7 @@ use serde_json::{Value, json};
 use super::GatewayExecutor;
 use super::plan::RequestPlan;
 use crate::context::ContextEngine;
+use crate::context::checkpoint;
 use crate::context::guidance::with_guidance;
 use crate::context::types::{SESSION_SEPARATOR, is_context_tool};
 use crate::error::GatewayError;
@@ -39,6 +40,7 @@ pub(crate) struct ContextRun {
     session: String,
     window_tokens: u64,
     max_internal_rounds: usize,
+    enabled: bool,
 }
 
 struct RoundOutcome {
@@ -68,6 +70,17 @@ impl ContextRun {
             tracing::debug!("context engine skips a request whose input is not an item array");
             return Ok(None);
         }
+        let enabled = engine.is_enabled();
+        let checkpoint = body
+            .get("input")
+            .and_then(Value::as_array)
+            .is_some_and(|items| items.iter().any(checkpoint::is_checkpoint_item));
+        if !enabled && !checkpoint {
+            // With the feature off the client keeps the existing request path,
+            // but a session that already holds checkpoints stays readable.
+            tracing::debug!("context engine skips a request while the feature is off");
+            return Ok(None);
+        }
         let Some(session) = context_session(executor, headers, body)? else {
             tracing::debug!("context engine skips a request without a session identity");
             return Ok(None);
@@ -80,7 +93,26 @@ impl ContextRun {
             session,
             window_tokens,
             max_internal_rounds,
+            enabled,
         }))
+    }
+
+    /// Expands a local checkpoint, if the client sent one. The secret is read
+    /// lazily, because only compacted sessions carry a checkpoint.
+    fn expand_checkpoint_if_present(
+        &self,
+        incoming: &[Value],
+    ) -> Result<Option<Vec<Value>>, GatewayError> {
+        if !incoming
+            .iter()
+            .any(crate::context::checkpoint::is_checkpoint_item)
+        {
+            return Ok(None);
+        }
+        let secret = crate::config::ensure_compaction_secret().map_err(GatewayError::Other)?;
+        self.engine
+            .expand_checkpoint(&self.session, incoming, &secret)
+            .map_err(|error| GatewayError::BadRequest(error.to_string()))
     }
 
     pub(crate) async fn stream(
@@ -95,17 +127,25 @@ impl ContextRun {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
-        let original = match plan
-            .body
-            .get("previous_response_id")
-            .and_then(Value::as_str)
-        {
-            Some(previous) => self
-                .engine
-                .expand_chained_input(&self.session, previous, &incoming)
-                .map_err(|error| GatewayError::BadRequest(error.to_string()))?,
-            None => incoming,
+        let original = match self.expand_checkpoint_if_present(&incoming)? {
+            Some(expanded) => expanded,
+            None => match plan
+                .body
+                .get("previous_response_id")
+                .and_then(Value::as_str)
+            {
+                Some(previous) => self
+                    .engine
+                    .expand_chained_input(&self.session, previous, &incoming)
+                    .map_err(|error| GatewayError::BadRequest(error.to_string()))?,
+                None => incoming,
+            },
         };
+        if !self.enabled {
+            return self
+                .stream_read_only(executor, plan, headers, original)
+                .await;
+        }
         let lease = self
             .engine
             .clone()
@@ -261,6 +301,32 @@ impl ContextRun {
             }
         };
         Ok(stream.boxed())
+    }
+
+    /// Serves a session whose checkpoints still have to be expanded while the
+    /// feature is off. The view is read from the archive, no internal tools are
+    /// injected, nothing is recorded and the model gets a single round.
+    async fn stream_read_only(
+        self,
+        executor: GatewayExecutor,
+        plan: RequestPlan,
+        headers: HeaderMap,
+        original: Vec<Value>,
+    ) -> Result<ResponseStream, GatewayError> {
+        let view = self
+            .engine
+            .begin_turn(&self.session, &original, self.window_tokens)
+            .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
+        tracing::info!(
+            session = %crate::context::types::session_display_name(&self.session),
+            revision = view.revision,
+            "expanded a context checkpoint with the feature off"
+        );
+        let template = plan.body.clone();
+        let mut read_plan = plan;
+        read_plan.body = compose_read_only_body(&template, &view.items);
+        let outcome = run_round(&executor, read_plan, &headers).await?;
+        Ok(futures_util::stream::iter(outcome.chunks.into_iter().map(Ok)).boxed())
     }
 
     /// Stores the mapping a chained follow-up request depends on. The client
@@ -439,6 +505,17 @@ fn compose_body(
     body
 }
 
+/// Replaces the input with a view read from the archive without injecting the
+/// internal tools, so a disabled session keeps its compressed history.
+fn compose_read_only_body(template: &Value, items: &[Value]) -> Value {
+    let mut body = template.clone();
+    body["input"] = Value::Array(items.to_vec());
+    if let Some(object) = body.as_object_mut() {
+        object.remove("previous_response_id");
+    }
+    body
+}
+
 fn tool_name(tool: &Value) -> Option<&str> {
     tool.get("name")
         .and_then(Value::as_str)
@@ -523,7 +600,7 @@ fn failure_event(body: &Value, message: String) -> Bytes {
 /// Session identity is the authenticated client plus the explicit thread or
 /// session the client sent. Subagent routing hashes are included so a subagent
 /// never shares the parent view.
-fn context_session(
+pub(crate) fn context_session(
     executor: &GatewayExecutor,
     headers: &HeaderMap,
     body: &Value,

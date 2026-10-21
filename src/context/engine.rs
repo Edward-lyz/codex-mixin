@@ -5,6 +5,7 @@ use std::sync::Mutex;
 use anyhow::{Context, Result, anyhow, bail};
 use serde_json::{Value, json};
 
+use super::checkpoint;
 use super::guidance::GUIDANCE;
 use super::store::{SegmentRow, Store};
 use super::tools;
@@ -132,6 +133,51 @@ impl ContextEngine {
             window_tokens,
             protection,
         })
+    }
+
+    /// Replaces a local compaction checkpoint with the archived history plus
+    /// whatever the client sent after it. Returns None when the input carries
+    /// no checkpoint, so callers keep the existing flow.
+    pub fn expand_checkpoint(
+        &self,
+        session: &str,
+        items: &[Value],
+        secret: &str,
+    ) -> Result<Option<Vec<Value>>> {
+        let Some(index) = items.iter().rposition(checkpoint::is_checkpoint_item) else {
+            return Ok(None);
+        };
+        let token = items[index]
+            .get("encrypted_content")
+            .and_then(Value::as_str)
+            .context("context checkpoint item has no token")?;
+        let decoded =
+            checkpoint::decode(token, secret).map_err(|error| anyhow!(error.to_string()))?;
+        if decoded.session != session {
+            bail!(
+                "compaction checkpoint belongs to context session {}",
+                crate::context::types::session_display_name(&decoded.session)
+            );
+        }
+        let mut store = self.lock()?;
+        let stored = store.ensure_session(session)?;
+        if decoded.revision > stored.revision {
+            bail!(
+                "compaction checkpoint revision {} is newer than the archived session revision {}",
+                decoded.revision,
+                stored.revision
+            );
+        }
+        let mut expanded = store.history_items(session)?;
+        drop(store);
+        if expanded.is_empty() {
+            bail!(
+                "context session {} has no archived history",
+                crate::context::types::session_display_name(session)
+            );
+        }
+        expanded.extend(items[index + 1..].iter().cloned());
+        Ok(Some(expanded))
     }
 
     /// Rebuilds the full input for a chained request that carries only a delta.
@@ -1339,6 +1385,110 @@ mod tests {
             .expect_err("cross session response id");
         assert!(
             error.to_string().contains("belongs to context session"),
+            "{error}"
+        );
+    }
+
+    fn checkpoint_secret() -> String {
+        use base64::Engine as _;
+        base64::engine::general_purpose::URL_SAFE_NO_PAD.encode([7_u8; 32])
+    }
+
+    fn compress_first_pair(engine: &ContextEngine, session: &str) -> i64 {
+        let items = four_messages();
+        let view = engine.begin_turn(session, &items, 10_000).expect("view");
+        let status = status_of(engine, session, view.revision);
+        let range = status
+            .compressible
+            .iter()
+            .find(|range| range.tier == "t1")
+            .expect("a tier 1 range");
+        compress_pair(engine, session, view.revision, range).revision
+    }
+
+    #[test]
+    fn expands_a_checkpoint_into_the_archived_view() {
+        let engine = engine();
+        let session = session();
+        let revision = compress_first_pair(&engine, &session);
+        let token = checkpoint::encode("model-a", &session, revision, &checkpoint_secret())
+            .expect("encode checkpoint");
+        let items = vec![
+            json!({"type": "compaction", "encrypted_content": token}),
+            message("user", "next question"),
+        ];
+        let expanded = engine
+            .expand_checkpoint(&session, &items, &checkpoint_secret())
+            .expect("expand")
+            .expect("a checkpoint");
+        // The archive keeps every original message, so a checkpoint expands to
+        // the full history; the next turn then renders the compressed view
+        // because the fingerprints still match.
+        assert_eq!(expanded.len(), 5);
+        assert_eq!(
+            expanded[0]["content"][0]["text"].as_str(),
+            Some("please start the task")
+        );
+        assert_eq!(expanded[3]["content"][0]["text"].as_str(), Some("continue"));
+        assert_eq!(
+            expanded[4]["content"][0]["text"].as_str(),
+            Some("next question")
+        );
+        let view = engine
+            .begin_turn(&session, &expanded, 10_000)
+            .expect("view after checkpoint");
+        assert_eq!(view.items.len(), 4);
+        assert!(
+            view.items[1]["content"][0]["text"]
+                .as_str()
+                .is_some_and(|text| text.contains("<context_summary"))
+        );
+
+        let plain = vec![message("user", "no checkpoint here")];
+        assert!(
+            engine
+                .expand_checkpoint(&session, &plain, &checkpoint_secret())
+                .expect("plain input")
+                .is_none()
+        );
+    }
+
+    #[test]
+    fn rejects_a_checkpoint_from_another_session() {
+        let engine = engine();
+        let session = session();
+        let other = format!("codex{SESSION_SEPARATOR}thread-2");
+        let view = engine
+            .begin_turn(&other, &four_messages(), 10_000)
+            .expect("view");
+        let token = checkpoint::encode("model-a", &other, view.revision, &checkpoint_secret())
+            .expect("encode checkpoint");
+        let items = vec![json!({"type": "compaction", "encrypted_content": token})];
+        let error = engine
+            .expand_checkpoint(&session, &items, &checkpoint_secret())
+            .expect_err("cross session checkpoint");
+        assert!(
+            error.to_string().contains("belongs to context session"),
+            "{error}"
+        );
+    }
+
+    #[test]
+    fn rejects_a_checkpoint_newer_than_the_archive() {
+        let engine = engine();
+        let session = session();
+        let view = engine
+            .begin_turn(&session, &four_messages(), 10_000)
+            .expect("view");
+        let token =
+            checkpoint::encode("model-a", &session, view.revision + 1, &checkpoint_secret())
+                .expect("encode checkpoint");
+        let items = vec![json!({"type": "compaction", "encrypted_content": token})];
+        let error = engine
+            .expand_checkpoint(&session, &items, &checkpoint_secret())
+            .expect_err("newer revision");
+        assert!(
+            error.to_string().contains("is newer than the archived"),
             "{error}"
         );
     }

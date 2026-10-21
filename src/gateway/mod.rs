@@ -16,6 +16,7 @@ pub(crate) use cache_shape::{
     observe_upstream_cache_usage, record_provider_prefix,
 };
 pub(crate) use cache_usage::{DailyTokenUsage, ProviderTokenUsage, TokenUsageAggregator};
+pub(crate) use context_loop::context_session;
 pub(crate) use executor::GatewayExecutor;
 pub(crate) use plan::{RequestPlan, UpstreamTarget};
 pub(crate) use provider::{ProviderResponseRequest, stream_provider_response};

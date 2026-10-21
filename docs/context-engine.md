@@ -78,7 +78,30 @@ response id。
 `unknown response id ...`（HTTP 400）；未知 id 但客户端已带完整历史时按客户端历史
 继续，避免丢掉客户端自己的对话。
 
+## 压缩接管（compaction）
+
+开启后，`/v1/responses/compact` 与带 `compaction_trigger` 的请求不再让模型写摘要：
+网关先把入参同步进归档，再返回本地 checkpoint（令牌前缀
+`codex-mixin:context:v2:`），内容只有会话、revision、模型与签发时间，并带 AEAD
+认证。整个请求不会调用任何上游模型。
+
+checkpoint 绑定会话与 revision：
+
+- 换一个会话重放返回 `compaction checkpoint belongs to context session ...`（HTTP 400）；
+- 令牌 revision 比归档更新（例如库被回滚）返回 `compaction checkpoint revision ...
+  is newer than the archived session revision ...`，不会静默丢消息；
+- 篡改或跨密钥的令牌无法解封，前缀不对返回 `unsupported context checkpoint`。
+
+客户端带着 checkpoint 续轮时，网关在调用上游前把它展开成归档原文（客户端可能
+已经丢弃的历史）再加上 checkpoint 之后的新消息；指纹仍与归档一致，所以压缩块继续
+生效。本地令牌绝不会出现在发往任何上游的报文里，官方服务也不需要解释它。v1
+`codex-mixin:compaction:v1:` 令牌保持可读。
+
+关闭开关后不再签发新 checkpoint，原流程（模型摘要或官方 compact）恢复；但归档已
+存在的会话仍能展开并读取 checkpoint：此时不注入内部工具与指引、只跑一轮，历史照常
+保留。
+
 ## 范围
 
-本版本只提供内核、存储、网关回路、链式请求与 CLI；三个 GUI 的设置区、压缩接管
-（compaction）与评估基线尚未包含。
+本版本提供内核、存储、网关回路、链式请求、压缩接管与 CLI；三个 GUI 的设置区与
+评估基线尚未包含。
