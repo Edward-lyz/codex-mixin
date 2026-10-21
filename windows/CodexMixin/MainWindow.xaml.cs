@@ -33,6 +33,7 @@ public sealed partial class MainWindow : Window
     private static readonly TimeSpan AgentSnapshotAge = TimeSpan.FromSeconds(30);
     private JsonElement[]? agentSnapshot;
     private DateTimeOffset agentSnapshotAt;
+    private long agentSnapshotStamp;
     private long agentRevision;
     private bool connectionSelected;
     private Func<Task>? pendingApply;
@@ -787,7 +788,7 @@ public sealed partial class MainWindow : Window
         };
         var speed = row.TryGetProperty("tps", out var rate) && rate.ValueKind == JsonValueKind.Number ? rate.GetDouble() : (double?)null;
         (tps.Text, tps.Style) = speed is { } tokens ? ($"{tokens:0.0} tok/s", Themed("MonoPrimary")) : ("-", Themed("Mono"));
-        if (Json.OptionalText(row, "error") is { } error) ToolTipService.SetToolTip(ttft, error);
+        ToolTipService.SetToolTip(ttft, Json.OptionalText(row, "error"));
     }
 
     private async Task RefreshTimingsAsync(CancellationToken token)
@@ -952,10 +953,11 @@ public sealed partial class MainWindow : Window
     private async Task AgentsAsync(CancellationToken token)
     {
         var revision = ((App)Microsoft.UI.Xaml.Application.Current).Operations.Revision;
-        if (agentSnapshot == null || agentRevision != revision || DateTimeOffset.UtcNow - agentSnapshotAt >= AgentSnapshotAge)
+        if (agentSnapshot == null || agentRevision != revision || Stopwatch.GetElapsedTime(agentSnapshotStamp) >= AgentSnapshotAge)
         {
             agentSnapshot = Json.Rows(Json.Field(await Client.QueryAsync(["agent", "list", "--json"], token), "agents"));
             agentSnapshotAt = DateTimeOffset.UtcNow;
+            agentSnapshotStamp = Stopwatch.GetTimestamp();
             agentRevision = revision;
         }
         var agents = agentSnapshot;
