@@ -31,7 +31,7 @@ public partial class App : Application
         Exit();
     }
 
-    internal void OpenPage(string page)
+    internal void OpenPage(string page, bool show = true)
     {
         if (page == "overview")
         {
@@ -57,7 +57,7 @@ public partial class App : Application
             target = new MainWindow(page);
             windows[key] = target;
             target.Closed += (_, _) => windows.Remove(key);
-            target.ShowMain();
+            if (show) target.ShowMain();
             return;
         }
         target.ShowPage(page);
@@ -83,7 +83,7 @@ public partial class App : Application
             Exit();
             return;
         }
-        try { OpenPage("providers"); }
+        try { OpenPage("providers", show: !Environment.GetCommandLineArgs().Contains("--background")); }
         catch (Exception error) { Console.Error.WriteLine($"Windows startup failed: {error}"); throw; }
         window = windows[ConsoleWindowKey];
         instance.Activated += (_, activation) => window.DispatcherQueue.TryEnqueue(() =>

@@ -192,6 +192,7 @@ internal static class Program
             foreach (var (role, title) in new[] { ("agents", "Agent 接入管理"), ("usage", "用量明细"), ("providers", "模型与服务") })
             {
                 var elapsed = Stopwatch.StartNew();
+                Wait(() => Find(window, $"console-{role}-tab").TryGetCurrentPattern(TogglePattern.Pattern, out _), $"ready console tab {role}", process);
                 ((TogglePattern)Find(window, $"console-{role}-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
                 Wait(() => window.Current.Name == title && Find(window, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), $"console tab {role}", process);
                 navigationMs[role] = elapsed.Elapsed.TotalMilliseconds;
@@ -203,6 +204,34 @@ internal static class Program
             if (!IsZoomed(consoleHandle)) throw new InvalidOperationException("Reactivation lost maximization");
             pattern.SetWindowVisualState(WindowVisualState.Normal);
             Console.WriteLine("PASS console navigation preserves maximization");
+            SeedTraffic(gateway, modelIds, repetitions: 249).GetAwaiter().GetResult();
+            var recentTurns = CodexMixin.Json.Rows(cli.QueryAsync(["usage", "--turns", "--json", "--days", "7", "--limit", "500"], CancellationToken.None).GetAwaiter().GetResult());
+            if (recentTurns.Length != 500) throw new InvalidOperationException($"Expected 500 real gateway turns, got {recentTurns.Length}");
+            var usageScale = OpenWindow(start, process, "usage", "用量明细");
+            var usageTextNodes = usageScale.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text)).Count;
+            if (usageTextNodes >= 1000) throw new InvalidOperationException($"Reply ledger eagerly created {usageTextNodes} text controls for 500 turns");
+            Capture(usageScale, Path.Combine(output, "usage-500-turns.png"));
+            SeedDemo(cli, output, upstream.Url, modelCount: 600);
+            var fusionScale = OpenWindow(start, process, "fusion", "Fusion 设置");
+            var refresh = fusionScale.FindFirst(TreeScope.Descendants, new AndCondition(
+                new PropertyCondition(AutomationElement.NameProperty, "刷新"), new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)))
+                ?? throw new InvalidOperationException("Fusion refresh button missing");
+            ((InvokePattern)refresh.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+            Wait(() => fusionScale.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "可选 600 个模型")) != null
+                && Find(fusionScale, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), "large Fusion catalog load", process);
+            var fusionChecks = fusionScale.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.CheckBox)).Count;
+            if (fusionChecks >= 100) throw new InvalidOperationException($"Fusion eagerly created {fusionChecks} checkbox controls for 600 models");
+            Capture(fusionScale, Path.Combine(output, "fusion-600-models.png"));
+            var modelsScale = OpenWindow(start, process, "providers", "模型与服务");
+            var table = Find(modelsScale, "model-table");
+            var scroll = (ScrollPattern)table.GetCurrentPattern(ScrollPattern.Pattern);
+            scroll.SetScrollPercent(ScrollPattern.NoScroll, 100);
+            Wait(() => ((ScrollPattern)Find(modelsScale, "model-table").GetCurrentPattern(ScrollPattern.Pattern)).Current.VerticalScrollPercent > 95,
+                "large model table scrolls to the end", process);
+            var modelChecks = table.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.CheckBox)).Count;
+            if (modelChecks >= 100) throw new InvalidOperationException($"Model table retained {modelChecks} realized checkboxes");
+            Capture(modelsScale, Path.Combine(output, "models-600-scrolled.png"));
+            Console.WriteLine($"PASS bounded controls: 500 turns / {usageTextNodes} text controls; 600 Fusion models / {fusionChecks} checkboxes; model table / {modelChecks} checkboxes");
             Console.WriteLine("PASS macOS-aligned tray, provider tabs, separate windows and Fusion modes");
             window = OpenWindow(start, process, "providers", "模型与服务");
             handle = (nint)window.Current.NativeWindowHandle;
@@ -227,6 +256,11 @@ internal static class Program
             File.WriteAllText(Path.Combine(output, "resources.json"), JsonSerializer.Serialize(new
             {
                 navigation_ms = navigationMs,
+                usage_turns = recentTurns.Length,
+                usage_text_controls = usageTextNodes,
+                fusion_models = 600,
+                fusion_checkbox_controls = fusionChecks,
+                model_checkbox_controls = modelChecks,
                 visible_private_bytes = visibleMemory,
                 hidden_private_bytes = process.PrivateMemorySize64,
                 hidden_working_set_bytes = process.WorkingSet64,
@@ -318,11 +352,12 @@ internal static class Program
         Thread.Sleep(400);
     }
 
-    private static string[] SeedDemo(CodexMixin.CliClient cli, string output, string upstream)
+    private static string[] SeedDemo(CodexMixin.CliClient cli, string output, string upstream, int modelCount = 3)
     {
         // This fixture is imported by the real CLI. No provider or gateway result is mocked.
         // Only loopback fixture endpoints are used; all credentials are fictional.
-        var models = new[] { "ci-coder", "ci-reasoner", "ci-vision" };
+        var models = new[] { "ci-coder", "ci-reasoner", "ci-vision" }
+            .Concat(Enumerable.Range(3, modelCount - 3).Select(index => $"ci-extra-{index:0000}")).ToArray();
         var document = new
         {
             config_version = 2,
@@ -357,10 +392,11 @@ internal static class Program
         return ids;
     }
 
-    private static async Task SeedTraffic(string gateway, string[] modelIds)
+    private static async Task SeedTraffic(string gateway, string[] modelIds, int repetitions = 1)
     {
         using var client = new HttpClient { Timeout = TimeSpan.FromSeconds(10) };
         client.DefaultRequestHeaders.Authorization = new AuthenticationHeaderValue("Bearer", "ci-gateway-fixture");
+        for (var repetition = 0; repetition < repetitions; repetition++)
         foreach (var model in modelIds.Take(2))
         {
             // Codex calls the Responses endpoint with a session header; the gateway
@@ -373,7 +409,7 @@ internal static class Program
                     input = new[] { new { type = "message", role = "user", content = new[] { new { type = "input_text", text = "say hi" } } } }
                 })
             };
-            request.Headers.Add("session-id", $"ui-fixture-{model}");
+            request.Headers.Add("session-id", $"ui-fixture-{model}-{Guid.NewGuid():N}");
             using var response = await client.SendAsync(request);
             // Reading the whole stream lets the gateway finish and record the request.
             var body = await response.Content.ReadAsStringAsync();

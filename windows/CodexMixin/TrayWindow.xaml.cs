@@ -18,6 +18,7 @@ public sealed partial class TrayWindow : Window
     private QuotaStyle quotaStyle = QuotaView.Stored();
     private bool busy;
     private bool settingState;
+    private bool serviceKnown;
     private bool dialogOpen;
     private bool exiting;
     private int maximumHeight;
@@ -25,6 +26,7 @@ public sealed partial class TrayWindow : Window
     public TrayWindow()
     {
         InitializeComponent();
+        GatewaySwitch.IsEnabled = false;
         Panel.RequestedTheme = ((App)Microsoft.UI.Xaml.Application.Current).Theme;
         Title = "Codex Mixin · 主面板";
         AppWindow.IsShownInSwitchers = false;
@@ -73,6 +75,7 @@ public sealed partial class TrayWindow : Window
             {
                 var status = await statusTask;
                 ServiceTitle.Text = $"本地服务{Json.Gateway(status)}";
+                serviceKnown = true;
                 var running = Json.OptionalText(status, "gateway") == "running";
                 Endpoint.Text = Json.OptionalText(status, "endpoint") ?? (Json.Flag(status, "configured") ? "网关未启动" : "请先配置服务商");
                 ServiceDot.Style = Themed(running ? "DotOn" : "DotOff");
@@ -121,11 +124,12 @@ public sealed partial class TrayWindow : Window
         {
             allQuotaRows = quotaRows = [];
             RenderQuota();
+            serviceKnown = false;
             ServiceTitle.Text = "本地服务 · 状态未知";
             ServiceDot.Style = Themed("DotWarn");
             PanelStatus.Text = error.Message;
         }
-        finally { busy = false; GatewaySwitch.IsEnabled = true; }
+        finally { busy = false; GatewaySwitch.IsEnabled = serviceKnown; }
         FitToContent();
     }
 

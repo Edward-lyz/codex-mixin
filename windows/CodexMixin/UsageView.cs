@@ -1,5 +1,6 @@
 using System.Text.Json;
 using Microsoft.UI.Xaml;
+using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
 using Microsoft.UI.Xaml.Media;
 
@@ -60,11 +61,7 @@ internal static class UsageView
     internal static UIElement Chart(JsonElement[] daily, int days, bool split, Func<JsonElement, long> metric, string title)
     {
         var today = DateTimeOffset.UtcNow.ToUnixTimeMilliseconds() / DayMs;
-        var series = daily.GroupBy(row => split ? Json.Text(row, "provider_id") : "全部")
-            .OrderByDescending(group => group.Sum(Tokens)).Select(group => group.Key).ToList();
-        var buckets = Enumerable.Range(0, days).Select(offset => today - days + 1 + offset).ToArray();
-        long Value(long day, string key) => daily.Where(row => Count(row, "day") == day && (split ? Json.Text(row, "provider_id") : "全部") == key).Sum(metric);
-        var max = Math.Max(1, buckets.Max(day => series.Sum(key => Value(day, key))));
+        var (series, buckets, values, totalValue, max) = UsageBuckets.Build(daily, days, split, today, metric, Tokens);
         var plot = new Grid { Height = PlotHeight + 18, ColumnSpacing = 3 };
         for (var index = 0; index < buckets.Length; index++)
         {
@@ -73,12 +70,12 @@ internal static class UsageView
             var column = new StackPanel { VerticalAlignment = VerticalAlignment.Bottom };
             var total = 0L;
             // Bottom-up stacking: the largest series sits at the base.
-            foreach (var key in Enumerable.Reverse(series))
+            for (var seriesIndex = series.Length - 1; seriesIndex >= 0; seriesIndex--)
             {
-                var value = Value(day, key);
+                var value = values[index][seriesIndex];
                 total += value;
                 if (value == 0) continue;
-                column.Children.Add(new Border { Height = value * PlotHeight / max, Background = SeriesBrush(series.IndexOf(key)) });
+                column.Children.Add(new Border { Height = value * PlotHeight / max, Background = SeriesBrush(seriesIndex) });
             }
             var date = DateTimeOffset.FromUnixTimeMilliseconds(day * DayMs);
             column.Children.Add(new TextBlock
@@ -91,12 +88,12 @@ internal static class UsageView
             plot.Children.Add(column);
         }
         var body = new StackPanel { Spacing = 8 };
-        body.Children.Add(new TextBlock { Text = $"{title} · 合计 {Compact(daily.Sum(metric))}", Style = Themed("Caption") });
+        body.Children.Add(new TextBlock { Text = $"{title} · 合计 {Compact(totalValue)}", Style = Themed("Caption") });
         body.Children.Add(plot);
-        if (split && series.Count > 0)
+        if (split && series.Length > 0)
         {
             var legend = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 14 };
-            for (var index = 0; index < series.Count; index++)
+            for (var index = 0; index < series.Length; index++)
             {
                 var item = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
                 item.Children.Add(new Border { Width = 8, Height = 8, CornerRadius = new CornerRadius(4), Background = SeriesBrush(index), VerticalAlignment = VerticalAlignment.Center });
@@ -116,46 +113,60 @@ internal static class UsageView
         : (Brush)Microsoft.UI.Xaml.Application.Current.Resources["ControlStrongStrokeColorDisabledBrush"];
 
     /// One row per reply, newest first; `onSession` filters to one session.
-    internal static StackPanel Turns(JsonElement[] turns, Action<string> onSession)
+    internal static ListView Turns(JsonElement[] turns, Action<string> onSession)
     {
-        var rows = new StackPanel();
         var headers = new[] { "时间", "会话", "模型", "未缓存", "命中缓存", "输出", "思考", "首字", "速度" };
-        rows.Children.Add(Row(headers.Select(text => (UIElement)new TextBlock { Text = text, Style = Themed("Caption") }).ToArray(), false));
-        foreach (var turn in turns)
+        var list = new ListView
         {
-            var session = Json.Text(turn, "session");
-            var sessionButton = new HyperlinkButton { Content = session, Padding = new Thickness(0), FontFamily = new FontFamily("Consolas") };
-            ToolTipService.SetToolTip(sessionButton, "只看这个会话，再次点击显示全部");
-            sessionButton.Click += (_, _) => onSession(session);
-            var model = new StackPanel();
-            model.Children.Add(new TextBlock { Text = Json.Text(turn, "upstream_model_id"), TextTrimming = TextTrimming.CharacterEllipsis });
-            var mismatch = turn.TryGetProperty("model_matches", out var match) && match.ValueKind == JsonValueKind.False;
-            model.Children.Add(new TextBlock
-            {
-                Text = mismatch ? $"{Json.Text(turn, "provider_id")} · 返回 {Json.OptionalText(turn, "returned_model")}" : Json.Text(turn, "provider_id"),
-                Style = Themed(mismatch ? "CautionCaption" : "Caption")
-            });
-            var promptTokens = Count(turn, "input_tokens") + Count(turn, "cache_read_tokens") + Count(turn, "cache_creation_tokens");
-            var hit = Number(turn, "cache_hit_percent");
-            var lowCache = hit is < CacheLowPercent && promptTokens >= CacheVerdictMinPrompt;
-            var reasoning = Number(turn, "reasoning_tokens") is { } reasoningTokens ? Compact(reasoningTokens)
-                : Count(turn, "reasoning_chars") is > 0 and var chars ? $"{Compact(chars)} 字" : "—";
-            string Optional(string key) => Number(turn, key) is { } value ? Compact(value) : "—";
-            var cells = new UIElement[]
-            {
-                new TextBlock { Text = DateTimeOffset.FromUnixTimeMilliseconds(Count(turn, "at_ms")).ToLocalTime().ToString("MM-dd HH:mm:ss"), Style = Themed("Mono") },
-                sessionButton,
-                model,
-                new TextBlock { Text = Optional("input_tokens") },
-                new TextBlock { Text = hit is { } percent ? $"{Optional("cache_read_tokens")} · {percent:0}%" : Optional("cache_read_tokens"), Style = lowCache ? Themed("CautionCaption") : null },
-                new TextBlock { Text = Optional("output_tokens") },
-                new TextBlock { Text = reasoning },
-                new TextBlock { Text = Number(turn, "ttft_ms") is { } ttft ? $"{ttft:0} ms" : "—" },
-                new TextBlock { Text = Number(turn, "output_tps") is { } tps ? $"{tps:0.0} t/s" : "—" },
-            };
-            rows.Children.Add(Row(cells, true));
-        }
-        return rows;
+            SelectionMode = ListViewSelectionMode.None, Height = Math.Min(360, 44 + turns.Length * 64),
+            Header = Row(headers.Select(text => (UIElement)new TextBlock { Text = text, Style = Themed("Caption") }).ToArray(), false),
+            ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Application.Current.Resources["VirtualRowTemplate"],
+            ItemContainerStyle = Themed("ModelRowContainer"),
+            ItemsSource = Enumerable.Range(0, turns.Length).ToArray()
+        };
+        AutomationProperties.SetAutomationId(list, "usage-turns");
+        list.ContainerContentChanging += (_, args) =>
+        {
+            if (args.ItemContainer.ContentTemplateRoot is not ContentControl content) return;
+            content.Content = args.InRecycleQueue ? null : Turn(turns[(int)args.Item], onSession);
+            args.Handled = true;
+        };
+        return list;
+    }
+
+    private static Border Turn(JsonElement turn, Action<string> onSession)
+    {
+        var session = Json.Text(turn, "session");
+        var sessionButton = new HyperlinkButton { Content = session, Padding = new Thickness(0), FontFamily = new FontFamily("Consolas") };
+        ToolTipService.SetToolTip(sessionButton, "只看这个会话，再次点击显示全部");
+        sessionButton.Click += (_, _) => onSession(session);
+        var model = new StackPanel();
+        model.Children.Add(new TextBlock { Text = Json.Text(turn, "upstream_model_id"), TextTrimming = TextTrimming.CharacterEllipsis });
+        var mismatch = turn.TryGetProperty("model_matches", out var match) && match.ValueKind == JsonValueKind.False;
+        model.Children.Add(new TextBlock
+        {
+            Text = mismatch ? $"{Json.Text(turn, "provider_id")} · 返回 {Json.OptionalText(turn, "returned_model")}" : Json.Text(turn, "provider_id"),
+            Style = Themed(mismatch ? "CautionCaption" : "Caption")
+        });
+        var promptTokens = Count(turn, "input_tokens") + Count(turn, "cache_read_tokens") + Count(turn, "cache_creation_tokens");
+        var hit = Number(turn, "cache_hit_percent");
+        var lowCache = hit is < CacheLowPercent && promptTokens >= CacheVerdictMinPrompt;
+        var reasoning = Number(turn, "reasoning_tokens") is { } reasoningTokens ? Compact(reasoningTokens)
+            : Count(turn, "reasoning_chars") is > 0 and var chars ? $"{Compact(chars)} 字" : "—";
+        string Optional(string key) => Number(turn, key) is { } value ? Compact(value) : "—";
+        var cells = new UIElement[]
+        {
+            new TextBlock { Text = DateTimeOffset.FromUnixTimeMilliseconds(Count(turn, "at_ms")).ToLocalTime().ToString("MM-dd HH:mm:ss"), Style = Themed("Mono") },
+            sessionButton,
+            model,
+            new TextBlock { Text = Optional("input_tokens") },
+            new TextBlock { Text = hit is { } percent ? $"{Optional("cache_read_tokens")} · {percent:0}%" : Optional("cache_read_tokens"), Style = lowCache ? Themed("CautionCaption") : null },
+            new TextBlock { Text = Optional("output_tokens") },
+            new TextBlock { Text = reasoning },
+            new TextBlock { Text = Number(turn, "ttft_ms") is { } ttft ? $"{ttft:0} ms" : "—" },
+            new TextBlock { Text = Number(turn, "output_tps") is { } tps ? $"{tps:0.0} t/s" : "—" },
+        };
+        return Row(cells, true);
     }
 
     private static readonly double[] ColumnWeights = [1.3, 0.8, 2.2, 0.9, 1.2, 0.8, 0.8, 0.8, 0.9];
