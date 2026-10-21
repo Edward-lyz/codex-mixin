@@ -248,6 +248,13 @@ internal static class Program
             if (fusionChecks >= 100) throw new InvalidOperationException($"Fusion eagerly created {fusionChecks} checkbox controls for 600 models");
             Capture(fusionScale, Path.Combine(output, "fusion-600-models.png"));
             var modelsScale = OpenWindow(start, process, "providers", "模型与服务");
+            // The fixture changed config outside the GUI; explicitly invalidate its recent snapshot.
+            var modelRefresh = modelsScale.FindFirst(TreeScope.Descendants, new AndCondition(
+                new PropertyCondition(AutomationElement.NameProperty, "刷新"), new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)))
+                ?? throw new InvalidOperationException("Model refresh button missing");
+            ((InvokePattern)modelRefresh.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+            Wait(() => Find(modelsScale, "page-description").Current.Name.Contains("可选 600", StringComparison.Ordinal)
+                && Find(modelsScale, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), "manual refresh observes external catalog changes", process);
             var table = Find(modelsScale, "model-table");
             var scroll = (ScrollPattern)table.GetCurrentPattern(ScrollPattern.Pattern);
             scroll.SetScrollPercent(ScrollPattern.NoScroll, 100);
