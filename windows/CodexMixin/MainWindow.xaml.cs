@@ -552,9 +552,11 @@ public sealed partial class MainWindow : Window
         state.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Style = Themed(ReadinessDot(provider)), VerticalAlignment = VerticalAlignment.Center });
         state.Children.Add(new TextBlock { Text = $"{Readiness(provider)} · {Json.Field(provider, "selected_models").GetArrayLength()}/{Json.Field(provider, "cached_models").GetArrayLength()} 个模型", Style = Themed("Caption") });
         row.Children.Add(state);
-        var tile = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        var tile = new Grid { ColumnSpacing = 12 };
+        tile.ColumnDefinitions.Add(new ColumnDefinition { Width = GridLength.Auto });
+        tile.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
         tile.Children.Add(new Border { Style = Themed("IconTile"), Width = 36, Height = 36, Child = Marks.Provider(provider, 22) });
-        tile.Children.Add(row);
+        Grid.SetColumn(row, 1); tile.Children.Add(row);
         content.Content = new Border { Child = tile, Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 1, 0, 1) };
         args.Handled = true;
     }
@@ -972,7 +974,7 @@ public sealed partial class MainWindow : Window
                 body.Children.Add(row);
             }
             PageBody.Children.Insert(1, Card("版本检查结果", "每个 Agent 的查询结果由 CLI 返回。", body));
-        }));
+        }, readOnly: true));
         checkVersions.Content = IconLabel("\uE895", "检查版本更新");
         checkVersions.Style = Themed("FlatButton");
         var detectedCount = agents.Count(agent => Json.Flag(agent, "detected"));

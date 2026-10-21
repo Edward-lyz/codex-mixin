@@ -113,6 +113,12 @@ Check("usage buckets preserve chart values with one scan", () =>
     }
     var empty = UsageBuckets.Build([], 7, true, 10, _ => 0, _ => 0);
     Assert(empty.Maximum == 1 && empty.Total == 0 && empty.Values.Length == 7, "Empty chart changed");
+    try
+    {
+        UsageBuckets.Build(rows.Take(2).ToArray(), 7, false, 10, _ => long.MaxValue, _ => 0);
+        throw new InvalidOperationException("Chart counter overflow was silently accepted");
+    }
+    catch (OverflowException) { }
     return Task.CompletedTask;
 });
 Check("mutation attempts invalidate presentation snapshots", async () =>

@@ -137,8 +137,14 @@ internal static class UsageView
     private static Border Turn(JsonElement turn, Action<string> onSession)
     {
         var session = Json.Text(turn, "session");
-        var sessionButton = new HyperlinkButton { Content = session, Padding = new Thickness(0), FontFamily = new FontFamily("Consolas") };
-        ToolTipService.SetToolTip(sessionButton, "只看这个会话，再次点击显示全部");
+        var sessionButton = new HyperlinkButton
+        {
+            Content = new TextBlock { Text = session, TextTrimming = TextTrimming.CharacterEllipsis },
+            Padding = new Thickness(0), FontFamily = new FontFamily("Consolas"),
+            HorizontalAlignment = HorizontalAlignment.Stretch, HorizontalContentAlignment = HorizontalAlignment.Stretch
+        };
+        AutomationProperties.SetName(sessionButton, session);
+        ToolTipService.SetToolTip(sessionButton, $"{session}\n只看这个会话，再次点击显示全部");
         sessionButton.Click += (_, _) => onSession(session);
         var model = new StackPanel();
         model.Children.Add(new TextBlock { Text = Json.Text(turn, "upstream_model_id"), TextTrimming = TextTrimming.CharacterEllipsis });
