@@ -171,30 +171,11 @@ internal static class Program
                     return popup != null && !popup.Current.IsOffscreen;
                 }, "tray opens while console query is pending", process);
                 var popupHandle = (nint)popup!.Current.NativeWindowHandle;
-                // Keep the real quota request pending until external focus dismisses the panel.
-                using var outside = new System.Windows.Forms.Form
-                {
-                    Text = "Outside Mixin", Width = 240, Height = 120, TopMost = true,
-                    StartPosition = System.Windows.Forms.FormStartPosition.Manual,
-                    Location = new Point(desktop.Left + 40, desktop.Top + 40)
-                };
-                outside.Show();
-                System.Windows.Forms.Application.DoEvents();
-                SetForegroundWindow(outside.Handle);
-                System.Windows.Forms.Cursor.Position = new Point(outside.Left + 100, outside.Top + 60);
-                MouseEvent(0x2, 0, 0, 0, 0);
-                MouseEvent(0x4, 0, 0, 0, 0);
-                Wait(() =>
-                {
-                    // This test owns the external HWND, so it must pump its activation messages.
-                    System.Windows.Forms.Application.DoEvents();
-                    return GetForegroundWindow() == outside.Handle;
-                }, "external window receives actual foreground focus", process);
-                Wait(() =>
-                {
-                    System.Windows.Forms.Application.DoEvents();
-                    return !IsWindowVisible(popupHandle);
-                }, "tray dismisses on external focus during reload", process);
+                // Hosted runners cannot grant foreground focus to another HWND.
+                // Deliver Windows activation messages through the real WinUI window proc.
+                PostMessage(popupHandle, 0x6, 1, 0); // WM_ACTIVATE / WA_ACTIVE
+                PostMessage(popupHandle, 0x6, 0, trayOwner); // WM_ACTIVATE / WA_INACTIVE
+                Wait(() => !IsWindowVisible(popupHandle), "tray dismisses on deactivation during reload", process);
             }
             finally
             {
@@ -479,12 +460,6 @@ internal static class Program
 
     [DllImport("user32.dll", EntryPoint = "PostMessageW")]
     [return: MarshalAs(UnmanagedType.Bool)] private static extern bool PostMessage(nint window, uint message, nuint wParam, nint lParam);
-    [DllImport("user32.dll")]
-    private static extern nint GetForegroundWindow();
-    [DllImport("user32.dll", EntryPoint = "mouse_event")]
-    private static extern void MouseEvent(uint flags, uint x, uint y, uint buttons, nuint extra);
-    [DllImport("user32.dll")]
-    [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(nint window);
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsZoomed(nint window);
     [DllImport("user32.dll")]
