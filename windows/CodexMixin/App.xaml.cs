@@ -6,12 +6,13 @@ namespace CodexMixin;
 // WinUI requires a public application entry type; all application logic stays internal.
 public partial class App : Application
 {
-    private MainWindow? window;
     private const string ConsoleWindowKey = "console";
     private readonly Dictionary<string, MainWindow> windows = [];
     private CliClient? cli;
     private Operations? operations;
     private TrayWindow? tray;
+    private EventWaitHandle? trayReady;
+    private bool exiting;
     private ElementTheme theme = ElementTheme.Default;
 
     internal CliClient Client => cli ??= CliClient.Locate();
@@ -27,6 +28,9 @@ public partial class App : Application
 
     internal void ExitAll()
     {
+        if (exiting) return;
+        exiting = true;
+        trayReady?.Dispose();
         tray?.Shutdown();
         foreach (var target in windows.Values.ToArray()) target.Shutdown();
         Exit();
@@ -34,6 +38,7 @@ public partial class App : Application
 
     internal void OpenPage(string page, bool show = true)
     {
+        if (exiting) return;
         if (page == "overview")
         {
             tray ??= new TrayWindow();
@@ -84,10 +89,8 @@ public partial class App : Application
             Exit();
             return;
         }
-        try { OpenPage("providers", show: !Environment.GetCommandLineArgs().Contains("--background")); }
-        catch (Exception error) { Console.Error.WriteLine($"Windows startup failed: {error}"); throw; }
-        window = windows[ConsoleWindowKey];
-        instance.Activated += (_, activation) => window.DispatcherQueue.TryEnqueue(() =>
+        var dispatcher = Microsoft.UI.Dispatching.DispatcherQueue.GetForCurrentThread();
+        instance.Activated += (_, activation) => dispatcher.TryEnqueue(() =>
         {
             var arguments = activation.Data switch
             {
@@ -98,5 +101,12 @@ public partial class App : Application
             var match = System.Text.RegularExpressions.Regex.Match(arguments, @"--page=(providers|agents|fusion|settings|overview|usage)\b");
             OpenPage(match.Success ? match.Groups[1].Value : "providers");
         });
+        try { OpenPage("providers", show: !Environment.GetCommandLineArgs().Contains("--background")); }
+        catch (Exception error) { Console.Error.WriteLine($"Windows startup failed: {error}"); throw; }
+        if (Environment.GetCommandLineArgs().Contains("--capture-ui"))
+        {
+            trayReady = new EventWaitHandle(false, EventResetMode.ManualReset, $"Local\\CodexMixin.TrayReady.{Environment.ProcessId}");
+            trayReady.Set();
+        }
     }
 }

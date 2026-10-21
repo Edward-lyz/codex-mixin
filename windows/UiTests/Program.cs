@@ -63,6 +63,8 @@ internal static class Program
         try
         {
             using var ready = new EventWaitHandle(false, EventResetMode.ManualReset, $"Local\\CodexMixin.UIReady.{process.Id}");
+            using var trayReady = new EventWaitHandle(false, EventResetMode.ManualReset, $"Local\\CodexMixin.TrayReady.{process.Id}");
+            Wait(() => trayReady.WaitOne(0), "tray instance ready to receive activation", process);
             if (!process.WaitForInputIdle(15000)) throw new InvalidOperationException("Background app did not initialize its message loop");
             var visibleAtStartup = false;
             if (!EnumWindows((candidate, _) =>
