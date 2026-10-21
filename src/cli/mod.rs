@@ -20,6 +20,7 @@ mod claude;
 mod claude_desktop;
 mod codex;
 mod config_apply;
+mod context;
 mod cors;
 mod doctor;
 mod dsh;
@@ -823,6 +824,7 @@ async fn run(cli: Cli) -> anyhow::Result<()> {
             ),
         },
         Command::Info { json } => status(json).await,
+        Command::Context { command } => context::run(command),
         Command::Ech { command } => ech::run(command).await,
         Command::Fusion { command } => match command {
             FusionCommand::Models { json } => fusion_config::model_options(json),
