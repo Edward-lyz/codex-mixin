@@ -17,6 +17,7 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
     private static readonly TimeSpan PipeTimeout = TimeSpan.FromSeconds(3);
     private readonly SemaphoreSlim gate = new(1, 1);
     private readonly SemaphoreSlim queries = new(2, 2);
+    private const string QueryWorkerThreads = "2";
 
     internal static CliClient Locate()
     {
@@ -46,7 +47,7 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
         {
             return await Task.Run(async () =>
             {
-                var output = await ExecuteAsync(args, cancellation, null, null, TimeSpan.FromSeconds(90));
+                var output = await ExecuteAsync(args, cancellation, null, null, TimeSpan.FromSeconds(90), readOnly: true);
                 try
                 {
                     using var document = JsonDocument.Parse(output);
@@ -66,12 +67,12 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
         TimeSpan? timeout = null)
     {
         await gate.WaitAsync(cancellation);
-        try { return await Task.Run(() => ExecuteAsync(args, cancellation, secrets, progress, timeout), cancellation).ConfigureAwait(false); }
+        try { return await Task.Run(() => ExecuteAsync(args, cancellation, secrets, progress, timeout, readOnly: false), cancellation).ConfigureAwait(false); }
         finally { gate.Release(); }
     }
 
     private async Task<string> ExecuteAsync(string[] args, CancellationToken cancellation,
-        IReadOnlyDictionary<string, string>? secrets, IProgress<string>? progress, TimeSpan? timeout)
+        IReadOnlyDictionary<string, string>? secrets, IProgress<string>? progress, TimeSpan? timeout, bool readOnly)
     {
         var start = new ProcessStartInfo(executable)
         {
@@ -80,6 +81,10 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
             StandardOutputEncoding = Encoding.UTF8, StandardErrorEncoding = Encoding.UTF8,
             WorkingDirectory = Path.GetDirectoryName(Path.GetFullPath(executable))!
         };
+        // Tokio otherwise starts one worker per logical CPU for every short-lived query.
+        // Mutation/service commands keep their normal environment and daemon capacity.
+        if (readOnly && !start.Environment.ContainsKey("TOKIO_WORKER_THREADS"))
+            start.Environment["TOKIO_WORKER_THREADS"] = QueryWorkerThreads;
         foreach (var argument in prefix ?? []) start.ArgumentList.Add(argument);
         start.ArgumentList.Add("--no-tui");
         start.ArgumentList.Add("--json-errors");

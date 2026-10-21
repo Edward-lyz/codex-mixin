@@ -8,7 +8,7 @@ if (args.Contains("--fixture"))
     switch (flags.FirstOrDefault())
     {
         case "echo":
-            Console.Write(JsonSerializer.Serialize(new { args = flags, secret = Environment.GetEnvironmentVariable("CM_TEST_SECRET") }));
+            Console.Write(JsonSerializer.Serialize(new { args = flags, secret = Environment.GetEnvironmentVariable("CM_TEST_SECRET"), worker_threads = Environment.GetEnvironmentVariable("TOKIO_WORKER_THREADS") }));
             break;
         case "bad-json": Console.Write("not JSON"); break;
         case "error":
@@ -129,6 +129,15 @@ Check("mutation attempts invalidate presentation snapshots", async () =>
     Assert(operations.Revision == revision + 1, "Successful mutation kept an old snapshot revision");
     await Failure(() => operations.ChangeAsync(["error"], CancellationToken.None));
     Assert(operations.Revision == revision + 2, "Failed/partially committed mutation kept an old snapshot revision");
+});
+Check("query worker budget does not alter mutation or parent environment", async () =>
+{
+    var inherited = Environment.GetEnvironmentVariable("TOKIO_WORKER_THREADS");
+    var query = await fixture.QueryAsync(["echo"], CancellationToken.None);
+    Assert(Json.OptionalText(query, "worker_threads") == (inherited ?? "2"), "Query worker budget is missing");
+    var mutation = Parse(await fixture.RunAsync(["echo"], CancellationToken.None));
+    Assert(Json.OptionalText(mutation, "worker_threads") == inherited, "Mutation/daemon worker capacity changed");
+    Assert(Environment.GetEnvironmentVariable("TOKIO_WORKER_THREADS") == inherited, "Worker budget leaked into the parent environment");
 });
 Check("argument boundaries and shell metacharacters", async () =>
 {
