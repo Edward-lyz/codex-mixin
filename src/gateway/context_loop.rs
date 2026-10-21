@@ -13,7 +13,7 @@ use super::turn_usage::unix_millis;
 use crate::context::ContextEngine;
 use crate::context::TurnSample;
 use crate::context::checkpoint;
-use crate::context::guidance::with_guidance;
+use crate::context::guidance::{GUIDANCE, GUIDANCE_WITHOUT_TOOLS, state_note, with_guidance};
 use crate::context::types::{SESSION_SEPARATOR, is_context_tool};
 use crate::error::GatewayError;
 use crate::protocol::ResponseStream;
@@ -167,6 +167,9 @@ impl ContextRun {
             "prepared context view"
         );
         let template = plan.body.clone();
+        // The model can only time its own compression when the request says how
+        // full the view is, so every round carries the current pressure.
+        let mut note = pressure_note(&self.engine, &self.session, &view, self.guidance_only);
         // The first round runs before the response starts, so an upstream status
         // or transport error keeps its own status instead of reaching the client
         // as a successful stream that only carries a failure event.
@@ -177,6 +180,7 @@ impl ContextRun {
             &[],
             &self.engine,
             !self.guidance_only,
+            &note,
         );
         let first = run_round(&executor, first_plan, &headers).await?;
         let stream = async_stream::stream! {
@@ -197,6 +201,7 @@ impl ContextRun {
                             &appended,
                             &self.engine,
                             !self.guidance_only,
+                            &note,
                         );
                         let mut round_plan = plan.clone();
                         round_plan.body = body;
@@ -312,6 +317,7 @@ impl ContextRun {
                         return;
                     }
                 };
+                note = pressure_note(&self.engine, &self.session, &view, self.guidance_only);
                 base = view.items;
                 revision = view.revision;
                 appended.extend(calls);
@@ -528,13 +534,30 @@ fn compose_body(
     appended: &[Value],
     engine: &ContextEngine,
     inject_tools: bool,
+    note: &str,
 ) -> Value {
     let mut body = template.clone();
     let mut input: Vec<Value> = base.to_vec();
     input.extend(appended.iter().cloned());
+    // The state rides at the end of the input instead of the instructions: an
+    // instruction that changes every round would invalidate the provider prefix
+    // cache, while an appended message only extends it.
+    if !note.is_empty() {
+        input.push(json!({
+            "type": "message",
+            "role": "developer",
+            "content": [{"type": "input_text", "text": format!("<context_state>\n{note}</context_state>")}],
+        }));
+    }
     body["input"] = Value::Array(input);
+    let guidance = if inject_tools {
+        GUIDANCE
+    } else {
+        GUIDANCE_WITHOUT_TOOLS
+    };
     body["instructions"] = Value::String(with_guidance(
         body.get("instructions").and_then(Value::as_str),
+        guidance,
     ));
     if let Some(object) = body.as_object_mut() {
         object.remove("previous_response_id");
@@ -550,6 +573,33 @@ fn compose_body(
     }
     body["tools"] = Value::Array(tools);
     body
+}
+
+/// Reports how full the view is and which range is safe to fold next.
+fn pressure_note(
+    engine: &ContextEngine,
+    session: &str,
+    view: &crate::context::TurnView,
+    guidance_only: bool,
+) -> String {
+    let ranges = engine
+        .status(session, view.window_tokens, true)
+        .map(|status| status.compressible)
+        .unwrap_or_default();
+    let oldest = ranges.first().map(|range| {
+        (
+            range.start.as_str(),
+            range.end.as_str(),
+            range.tier.as_str(),
+        )
+    });
+    state_note(
+        view.estimated_tokens,
+        view.window_tokens,
+        engine.settings().pressure_ratio,
+        oldest,
+        !guidance_only,
+    )
 }
 
 /// Replaces the input with a view read from the archive without injecting the
@@ -690,8 +740,14 @@ mod tests {
             "tools": [{"type": "function", "name": "shell", "parameters": {}}],
         });
         let base = vec![user("compressed view")];
-        let body = compose_body(&template, &base, &[], &engine, true);
-        assert_eq!(body["input"], json!([user("compressed view")]));
+        let body = compose_body(&template, &base, &[], &engine, true, "view at 10%");
+        let input = body["input"].as_array().expect("input array");
+        assert_eq!(input[0], user("compressed view"));
+        assert_eq!(input.len(), 2);
+        assert!(
+            input[1].to_string().contains("<context_state>"),
+            "the pressure note rides at the end of the input"
+        );
         assert!(body.get("previous_response_id").is_none());
         let tools = body["tools"].as_array().expect("tools array");
         assert_eq!(tools.len(), 5);
@@ -705,13 +761,20 @@ mod tests {
                 .unwrap_or_default()
                 .contains("<context_management>")
         );
+        assert!(
+            !body["instructions"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("<context_state>"),
+            "the instructions stay stable so the prefix cache survives each round"
+        );
     }
 
     #[test]
     fn replaces_client_tools_that_shadow_internal_names() {
         let engine = engine();
         let template = json!({"tools": [{"type": "function", "name": "mixin_context_status"}]});
-        let body = compose_body(&template, &[], &[], &engine, true);
+        let body = compose_body(&template, &[], &[], &engine, true, "view at 10%");
         let tools = body["tools"].as_array().expect("tools array");
         assert_eq!(tools.len(), 4);
     }
@@ -720,7 +783,7 @@ mod tests {
     fn guidance_only_keeps_the_guidance_without_internal_tools() {
         let engine = engine();
         let template = json!({"tools": [{"type": "function", "name": "shell"}]});
-        let body = compose_body(&template, &[], &[], &engine, false);
+        let body = compose_body(&template, &[], &[], &engine, false, "view at 10%");
         let tools = body["tools"].as_array().expect("tools array");
         assert_eq!(tools.len(), 1);
         assert_eq!(tools[0]["name"], "shell");

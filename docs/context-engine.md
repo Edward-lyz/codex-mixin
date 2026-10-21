@@ -41,6 +41,12 @@ CLI 只改配置，不启动网关：`codex-mixin context config set --growth-th
 - `mixin_context_search`：在原始消息与 block 中检索。
 - `mixin_context_status`：查看 revision、窗口占用、可压缩范围与保护原因。
 
+每轮请求在 input 末尾追加一条 `<context_state>` developer 消息，说明当前视图
+估算 token、窗口占用百分比、是否越过 `pressure_ratio` 阈值，以及最早可压缩范围
+（如 `m000002..m000013 (t1)`）。它放在 input 末尾而不是 instructions 里：instructions
+每轮变化会让上游前缀缓存整体失效，追加消息只延长前缀。模型据此自行决定何时调用
+压缩工具，网关不替它判断。
+
 压缩分三级：原始消息 → T1 摘要 → T2 摘要合并 → T3 再合并。范围必须连续、
 不重叠、至少两段，且不能触碰受保护内容。
 
@@ -152,7 +158,55 @@ codex-mixin context stats --json
   `output_tokens`，命中率是缓存读取除以计费输入。关闭开关后只读路径不记账。
 - 归档库尚未创建时 `stats` 返回空会话与全零 totals，且不会新建数据库。
 
+## 消融评估
+
+`scripts/evaluate_context.mjs` 用真实 Provider 跑四组对照，每组独立配置、独立归档库、
+独立网关进程，任务集相同：
+
+| 组 | 配置 | 作用 |
+| --- | --- | --- |
+| baseline | `context enabled=false` | 原有流程，不注入任何指导 |
+| guidance | `enabled=true, guidance_only=true` | 只有压缩指导，不注入内部工具（也不建议压缩） |
+| t1 | `enabled=true, guidance_only=false, max_tier=1` | 只允许一级压缩 |
+| full | `enabled=true, guidance_only=false, max_tier=3` | 完整 T1→T2→T3 |
+
+公共配置固定为 `--growth-threshold-tokens=8000 --protected-messages=2
+--protected-tokens=500 --max-internal-rounds=4 --context-window-tokens=<EVAL_WINDOW>`。
+
+```bash
+EVAL_TASKS=3 EVAL_ROUNDS=2 EVAL_CHUNKS=48 EVAL_WINDOW=16000 \
+  node scripts/evaluate_context.mjs
+```
+
+脚本自己挑空闲端口，从 `~/.codex-mixin/config.json` 复制一份配置到工作目录
+（可用 `EVAL_SOURCE_CONFIG`/`EVAL_SOURCE_KEY` 换源），用 `context config set` 写组配置，
+跑完 SIGTERM 停进程，最后打印 Markdown 表并把原始数据写到
+`<EVAL_WORKDIR>/results.json`（默认 `$TMPDIR/codex-mixin-context-eval`）。
+任务分三类轮换：长构建日志里埋精确错误码、多文件改动里埋文件路径、目标变更里埋最新目标；
+每类都要模型只回埋进去的那个事实，用于判断关键事实是否被压掉。
+
+本机一次真实运行（模型 `DeepSeek-V4.1-Flash-baidu-oneapi`，窗口 16000，三类任务各 48 段
+2000 字符日志 + 2 轮填充）：
+
+| 组 | 关键事实命中 | 输入 token | 缓存 token | 输出 token | 首 token (ms) | 压缩次数 | 节省 token |
+| --- | --- | --- | --- | --- | --- | --- | --- |
+| baseline | 3/3 | 219402 | 216960 | 754 | 1505 | 0 | 0 |
+| guidance | 3/3 | 220066 | 144384 | 545 | 1445 | 0 | 0 |
+| t1 | 3/3 | 30923 | 19968 | 717 | 1193 | 3 | 41502 |
+| full | 3/3 | 29829 | 17408 | 565 | 930 | 4 | 55915 |
+
+读法：四组关键事实都是 3/3，没有因为压缩丢事实；t1/full 的总输入约为 baseline 的
+1/7，full 的总输入、缓存读取和节省 token 都优于 t1（29829 < 30923，17408 < 19968）；
+但按计费输入（输入减缓存）看 t1 是 10955、full 是 12421，这一项 t1 更低。收益只来自
+被折叠掉的历史，压缩块本身和摘要写入仍然要付费，所以摘要越长、折叠越少时 t1 更划算。
+
+限制要说清楚：填充内容是合成日志，重复度高，压缩比因此偏乐观；只跑了一个模型、一台机器、
+每组一次；内存与真实用户任务未测；首 token 是三类任务里的最小值。这些数字不构成对
+其他模型或真实仓库的承诺。
+
+
 ## 范围
 
-本版本提供内核、存储、网关回路、链式请求、压缩接管、CLI 统计与 Web 控制面板的
-「上下文」页；macOS 与 Windows 壳的设置区、以及评估基线尚未包含。
+本版本提供内核、存储、网关回路、链式请求、压缩接管、CLI 统计、Web 控制面板的
+「上下文」页，以及 macOS 控制台与 Windows 独立窗口的「上下文」设置区；四组消融
+实验脚本见 `scripts/evaluate_context.mjs`，跑法与结果见上文「消融评估」。
