@@ -18,12 +18,12 @@ internal static class UsageBuckets
         {
             var key = split ? Json.Text(row, "provider_id") : "全部";
             if (!totals.ContainsKey(key)) { order.Add(key); totals[key] = 0; }
-            totals[key] += tokens(row);
+            totals[key] = checked(totals[key] + tokens(row));
             var value = metric(row);
-            total += value;
+            total = checked(total + value);
             var day = row.TryGetProperty("day", out var stamp) && stamp.ValueKind == JsonValueKind.Number ? stamp.GetInt64() : 0;
             var cell = (day, key);
-            cells[cell] = cells.GetValueOrDefault(cell) + value;
+            cells[cell] = checked(cells.GetValueOrDefault(cell) + value);
         }
         var series = order.OrderByDescending(key => totals[key]).ToArray();
         var buckets = Enumerable.Range(0, days).Select(offset => today - days + 1 + offset).ToArray();
