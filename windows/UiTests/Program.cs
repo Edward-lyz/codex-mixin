@@ -209,15 +209,18 @@ internal static class Program
             pattern.SetWindowVisualState(WindowVisualState.Maximized);
             Wait(() => IsZoomed(consoleHandle), "maximized console", process);
             var navigationMs = new Dictionary<string, double>();
-            foreach (var (role, title) in new[] { ("agents", "Agent 接入管理"), ("usage", "用量明细"), ("providers", "模型与服务") })
+            for (var navigationPass = 1; navigationPass <= 2; navigationPass++)
             {
-                var elapsed = Stopwatch.StartNew();
-                Wait(() => Find(window, $"console-{role}-tab").TryGetCurrentPattern(TogglePattern.Pattern, out _), $"ready console tab {role}", process);
-                ((TogglePattern)Find(window, $"console-{role}-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
-                Wait(() => window.Current.Name == title && Find(window, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), $"console tab {role}", process);
-                navigationMs[role] = elapsed.Elapsed.TotalMilliseconds;
-                if ((nint)window.Current.NativeWindowHandle != consoleHandle || !IsZoomed(consoleHandle))
-                    throw new InvalidOperationException($"Console lost maximization while opening {role}");
+                foreach (var (role, title) in new[] { ("agents", "Agent 接入管理"), ("usage", "用量明细"), ("providers", "模型与服务") })
+                {
+                    var elapsed = Stopwatch.StartNew();
+                    Wait(() => Find(window, $"console-{role}-tab").TryGetCurrentPattern(TogglePattern.Pattern, out _), $"ready console tab {role}", process);
+                    ((TogglePattern)Find(window, $"console-{role}-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
+                    Wait(() => window.Current.Name == title && Find(window, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), $"console tab {role}", process);
+                    navigationMs[$"{role}-{navigationPass}"] = elapsed.Elapsed.TotalMilliseconds;
+                    if ((nint)window.Current.NativeWindowHandle != consoleHandle || !IsZoomed(consoleHandle))
+                        throw new InvalidOperationException($"Console lost maximization while opening {role}");
+                }
             }
             // Reopening through the tray/second-instance route must also preserve maximization.
             window = OpenWindow(start, process, "providers", "模型与服务");

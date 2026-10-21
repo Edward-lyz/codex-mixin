@@ -30,7 +30,12 @@ public sealed partial class MainWindow : Window
     private string? providerId;
     private JsonElement[] providers = [];
     private readonly Dictionary<string, JsonElement> providerRows = [];
-    private static readonly TimeSpan AgentSnapshotAge = TimeSpan.FromSeconds(30);
+    private static readonly TimeSpan ReadSnapshotAge = TimeSpan.FromSeconds(30);
+    private JsonElement[]? providerSnapshot;
+    private DateTimeOffset providerSnapshotAt;
+    private long providerSnapshotStamp;
+    private long providerRevision;
+    private JsonElement? benchmarkSnapshot;
     private JsonElement[]? agentSnapshot;
     private DateTimeOffset agentSnapshotAt;
     private long agentSnapshotStamp;
@@ -235,7 +240,7 @@ public sealed partial class MainWindow : Window
         connectionDrafts.Clear(); modelDrafts.Clear();
         // Hidden provider views and save closures otherwise retain the full model editor.
         pendingApply = null;
-        timingCells.Clear(); timings.Clear();
+        timingCells.Clear();
         ProviderList.ItemsSource = null; providerRows.Clear(); providers = [];
         page = next;
         ApplyPageLayout();
@@ -243,7 +248,6 @@ public sealed partial class MainWindow : Window
         if (ready) await ExecuteUiAsync("切换页面", async token =>
         {
             await LoadPageAsync(token);
-            if (page == "providers") await RefreshTimingsAsync(token);
         }, readOnly: true);
     }
 
@@ -336,9 +340,8 @@ public sealed partial class MainWindow : Window
     private Task ReloadAsync() => ExecuteUiAsync("刷新", async token =>
     {
         await ConnectCliAsync(token, refresh: true);
-        agentSnapshot = null;
+        agentSnapshot = null; providerSnapshot = null; benchmarkSnapshot = null;
         await LoadPageAsync(token);
-        if (page == "providers") await RefreshTimingsAsync(token);
     }, readOnly: true);
 
     private async Task ExecuteUiAsync(string label, Func<CancellationToken, Task> work, bool readOnly = false)
@@ -521,14 +524,30 @@ public sealed partial class MainWindow : Window
 
     private async Task ProvidersAsync(CancellationToken token)
     {
-        providers = Json.Rows(Json.Field(await Client.QueryAsync(["provider", "list", "--json"], token), "providers"));
+        var revision = ((App)Microsoft.UI.Xaml.Application.Current).Operations.Revision;
+        if (providerSnapshot == null || providerRevision != revision || Stopwatch.GetElapsedTime(providerSnapshotStamp) >= ReadSnapshotAge)
+        {
+            providerSnapshot = Json.Rows(Json.Field(await Client.QueryAsync(["provider", "list", "--json"], token), "providers"));
+            providerSnapshotAt = DateTimeOffset.UtcNow;
+            providerSnapshotStamp = Stopwatch.GetTimestamp();
+            providerRevision = revision;
+        }
+        providers = providerSnapshot;
         selectingProvider = true;
         try
         {
             // A reload shows the saved state; drafts only survive provider and tab switches.
-            modelDrafts.Clear(); connectionDrafts.Clear(); timingCells.Clear(); timings.Clear();
+            modelDrafts.Clear(); connectionDrafts.Clear(); timingCells.Clear();
             providerRows.Clear();
-            foreach (var provider in providers) providerRows.Add(Json.Text(provider, "id"), provider);
+            foreach (var provider in providers)
+            {
+                var id = Json.Text(provider, "id");
+                foreach (var field in new[] { "display_name", "readiness", "icon" }) Json.Text(provider, field);
+                Json.Flag(provider, "enabled");
+                foreach (var field in new[] { "selected_models", "cached_models" })
+                    if (Json.Field(provider, field).ValueKind != JsonValueKind.Array) throw new CliFailure($"供应商 {id} 的 {field} 必须是 array。");
+                providerRows.Add(id, provider);
+            }
             ProviderList.ItemsSource = providers.Select(provider => Json.Text(provider, "id")).ToArray();
         }
         finally { selectingProvider = false; }
@@ -542,6 +561,8 @@ public sealed partial class MainWindow : Window
         }
         // SelectionChanged renders once after the list has its final selection.
         ProviderList.SelectedIndex = Math.Max(0, Array.FindIndex(providers, row => Json.Text(row, "id") == providerId));
+        // Render the local snapshot first; benchmark IPC is not on the navigation path.
+        _ = RefreshTimingsAsync(pageRefresh!.Token);
     }
 
     private void RenderProviderRow(ListViewBase sender, ContainerContentChangingEventArgs args)
@@ -582,7 +603,7 @@ public sealed partial class MainWindow : Window
         var refreshed = provider.TryGetProperty("models_refreshed_at_ms", out var stamp) && stamp.ValueKind == JsonValueKind.Number
             ? $" · 上次刷新 {DateTimeOffset.FromUnixTimeMilliseconds(stamp.GetInt64()).ToLocalTime():MM/dd HH:mm}" : "";
         PageDescription.Style = Themed("Mono");
-        PageDescription.Text = $"{providerId} · 已加入 {Json.Strings(Json.Field(provider, "selected_models")).Length} / 可选 {Json.Rows(Json.Field(provider, "cached_models")).Length}{refreshed}";
+        PageDescription.Text = $"{providerId} · 已加入 {Json.Field(provider, "selected_models").GetArrayLength()} / 可选 {Json.Field(provider, "cached_models").GetArrayLength()}{refreshed} · 配置 {providerSnapshotAt.ToLocalTime():HH:mm:ss}";
         ApplyChanges.IsEnabled = true;
         try
         {
@@ -604,6 +625,7 @@ public sealed partial class MainWindow : Window
                 PageBody.Children.Add(modelDraft.View); pendingApply = modelDraft.Save;
             }
             else RenderModels(provider);
+            if (!connectionSelected && benchmarkSnapshot is { } snapshot) ApplyTimings(snapshot);
         }
         catch (Exception error) { ShowNotice("读取服务商失败", error.Message, InfoBarSeverity.Error); }
     }
@@ -755,7 +777,7 @@ public sealed partial class MainWindow : Window
         }
         search.TextChanged += (_, _) => Filter(); filter.SelectionChanged += (_, _) => Filter();
         modelBody.Children.Add(list);
-        ShowSummary("当前服务商尚未测速", "Caption");
+        ShowSummary("正在读取测速结果…", "Caption");
         pendingApply = async () =>
         {
             var arguments = new List<string> { "provider", "select", id };
@@ -804,32 +826,55 @@ public sealed partial class MainWindow : Window
         {
             var selectedProvider = providerId;
             var response = await Client.QueryAsync(["benchmark", "status"], token);
+            token.ThrowIfCancellationRequested();
             if (page != "providers" || providerId != selectedProvider) return;
             var snapshot = Json.Field(response, "snapshot");
-            if (snapshot.ValueKind == JsonValueKind.Null) return;
-            var results = Json.Rows(Json.Field(snapshot, "results")).Where(row => Json.Text(row, "provider_id") == providerId).ToArray();
-            foreach (var row in results)
-            {
-                var key = $"{Json.Text(row, "provider_id")}/{Json.Text(row, "upstream_model")}";
-                timings[key] = row;
-                if (timingCells.TryGetValue(key, out var cells)) ShowTiming(row, cells.Ttft, cells.Tps);
-            }
-            if (draftDirty || results.Length == 0) return;
-            var started = DateTimeOffset.FromUnixTimeMilliseconds(Json.Field(snapshot, "started_at").GetInt64()).ToLocalTime();
-            var prefix = $"{started:yyyy年M月d日 HH:mm} · 超时 {Json.Field(snapshot, "timeout_seconds")} 秒 · ";
-            var completed = results.Count(row => Json.Text(row, "status") == "completed");
-            var timedOut = results.Count(row => Json.Text(row, "status") == "timed_out");
-            var failed = results.Length - completed - timedOut;
-            switch (Json.Text(snapshot, "status"))
-            {
-                case "running": ShowSummary($"{prefix}正在测速 {results.Length}/{Json.Field(snapshot, "total_models")}", "Caption"); break;
-                case "failed": ShowSummary($"{prefix}测速任务失败：{Json.OptionalText(snapshot, "error") ?? "未知错误"}", "CautionCaption"); break;
-                default: ShowSummary($"{prefix}测速完成：成功 {completed}，超时 {timedOut}，失败 {failed}", failed == 0 && timedOut == 0 ? "SuccessCaption" : "CautionCaption"); break;
-            }
+            benchmarkSnapshot = snapshot;
+            ApplyTimings(snapshot);
         }
-        catch (CliFailure error) { if (!busy && !draftDirty) ShowSummary($"测速不可用：{error.Message}", "CautionCaption"); }
-        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
+        catch (Exception error)
+        {
+            if (!token.IsCancellationRequested && !exiting && page == "providers" && !connectionSelected && !draftDirty)
+                ShowSummary($"无法刷新测速结果：{error.Message}", "CautionCaption");
+        }
         finally { refreshingTimings = false; }
+    }
+
+    private void ApplyTimings(JsonElement snapshot)
+    {
+        if (page != "providers" || connectionSelected) return;
+        timings.Clear();
+        foreach (var (ttft, tps) in timingCells.Values)
+        {
+            ttft.Text = tps.Text = "-";
+            ttft.Style = tps.Style = Themed("Mono");
+            ToolTipService.SetToolTip(ttft, null);
+        }
+        if (snapshot.ValueKind == JsonValueKind.Null)
+        {
+            if (!draftDirty) ShowSummary("当前服务商暂无测速结果", "Caption");
+            return;
+        }
+        var results = Json.Rows(Json.Field(snapshot, "results")).Where(row => Json.Text(row, "provider_id") == providerId).ToArray();
+        foreach (var row in results)
+        {
+            var key = $"{Json.Text(row, "provider_id")}/{Json.Text(row, "upstream_model")}";
+            timings[key] = row;
+            if (timingCells.TryGetValue(key, out var cells)) ShowTiming(row, cells.Ttft, cells.Tps);
+        }
+        if (draftDirty) return;
+        if (results.Length == 0) { ShowSummary("当前服务商暂无测速结果", "Caption"); return; }
+        var started = DateTimeOffset.FromUnixTimeMilliseconds(Json.Field(snapshot, "started_at").GetInt64()).ToLocalTime();
+        var prefix = $"{started:yyyy年M月d日 HH:mm} · 超时 {Json.Field(snapshot, "timeout_seconds")} 秒 · ";
+        var completed = results.Count(row => Json.Text(row, "status") == "completed");
+        var timedOut = results.Count(row => Json.Text(row, "status") == "timed_out");
+        var failed = results.Length - completed - timedOut;
+        switch (Json.Text(snapshot, "status"))
+        {
+            case "running": ShowSummary($"{prefix}正在测速 {results.Length}/{Json.Field(snapshot, "total_models")}", "Caption"); break;
+            case "failed": ShowSummary($"{prefix}测速任务失败：{Json.OptionalText(snapshot, "error") ?? "未知错误"}", "CautionCaption"); break;
+            default: ShowSummary($"{prefix}测速完成：成功 {completed}，超时 {timedOut}，失败 {failed}", failed == 0 && timedOut == 0 ? "SuccessCaption" : "CautionCaption"); break;
+        }
     }
 
     private Task AddProviderAsync() => ProviderDialogAsync(null);
@@ -958,7 +1003,7 @@ public sealed partial class MainWindow : Window
     private async Task AgentsAsync(CancellationToken token)
     {
         var revision = ((App)Microsoft.UI.Xaml.Application.Current).Operations.Revision;
-        if (agentSnapshot == null || agentRevision != revision || Stopwatch.GetElapsedTime(agentSnapshotStamp) >= AgentSnapshotAge)
+        if (agentSnapshot == null || agentRevision != revision || Stopwatch.GetElapsedTime(agentSnapshotStamp) >= ReadSnapshotAge)
         {
             agentSnapshot = Json.Rows(Json.Field(await Client.QueryAsync(["agent", "list", "--json"], token), "agents"));
             agentSnapshotAt = DateTimeOffset.UtcNow;
