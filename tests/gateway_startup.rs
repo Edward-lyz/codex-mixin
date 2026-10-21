@@ -445,6 +445,7 @@ async fn running_gateway_serves_a_rotated_client_key() {
         official_selected_models: Some(Vec::new()),
         official_model_contexts: Default::default(),
         fusion_profiles: Vec::new(),
+        context: Default::default(),
         providers: vec![provider.clone()],
     };
     save_stored_config_to_path(&gateway_config_path, &stored_config("rotation-before")).unwrap();
