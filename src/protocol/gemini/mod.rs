@@ -213,37 +213,7 @@ pub fn responses_to_gemini(
     }
 
     let active_tools = collect_active_tools(body)?;
-    let mut hosted_search = false;
-    for tool in active_tools.as_array().into_iter().flatten() {
-        if !matches!(
-            tool.get("type").and_then(Value::as_str),
-            Some("web_search" | "web_search_preview")
-        ) {
-            continue;
-        }
-        if !is_gemini {
-            return Err(GatewayError::BadRequest(
-                "Google Search requires a Gemini upstream model".to_owned(),
-            ));
-        }
-        for (key, value) in tool.as_object().into_iter().flatten() {
-            if key == "type" || (key == "external_web_access" && value == &Value::Bool(true)) {
-                continue;
-            }
-            return Err(GatewayError::BadRequest(format!(
-                "Google Search cannot preserve web_search option {key}"
-            )));
-        }
-        if let Some(choice) = body.get("tool_choice")
-            && choice != "auto"
-            && choice != "none"
-        {
-            return Err(GatewayError::BadRequest(
-                "Google Search cannot force a requested tool_choice".to_owned(),
-            ));
-        }
-        hosted_search = true;
-    }
+    let hosted_search = extract_hosted_search(&active_tools, body, &model, is_gemini)?;
     let (tools_chat, tool_names) = convert_tools(Some(&active_tools))?;
 
     let mut function_declarations = Vec::new();
@@ -264,54 +234,7 @@ pub fn responses_to_gemini(
         }
     }
 
-    let mut generation_config = serde_json::Map::new();
-    let max_tokens = body
-        .get("max_output_tokens")
-        .and_then(Value::as_u64)
-        .unwrap_or(65536);
-    generation_config.insert("maxOutputTokens".to_owned(), json!(max_tokens));
-
-    if let Some(temp) = body.get("temperature") {
-        generation_config.insert("temperature".to_owned(), temp.clone());
-    }
-    if let Some(top_p) = body.get("top_p") {
-        generation_config.insert("topP".to_owned(), top_p.clone());
-    }
-
-    let effort = body
-        .pointer("/reasoning/effort")
-        .and_then(Value::as_str)
-        .or_else(|| {
-            if model.contains("-high") {
-                Some("high")
-            } else if model.contains("-medium") {
-                Some("medium")
-            } else if model.contains("-low") {
-                Some("low")
-            } else {
-                None
-            }
-        });
-
-    if let Some(effort) = effort {
-        let budget = match effort {
-            "none" | "off" => 0,
-            "low" => 2048,
-            "medium" => 8192,
-            "high" => 16384,
-            "max" | "ultra" => 32768,
-            _ => 8192,
-        };
-        if budget > 0 {
-            generation_config.insert(
-                "thinkingConfig".to_owned(),
-                json!({
-                    "includeThoughts": true,
-                    "thinkingBudget": budget
-                }),
-            );
-        }
-    }
+    let generation_config = build_generation_config(body, &model);
 
     let mut request = json!({
         "contents": contents
@@ -319,8 +242,8 @@ pub fn responses_to_gemini(
     if !system_parts.is_empty() {
         request["systemInstruction"] = json!({ "parts": system_parts });
     }
-    if !generation_config.is_empty() {
-        request["generationConfig"] = Value::Object(generation_config);
+    if let Some(config) = generation_config {
+        request["generationConfig"] = config;
     }
     let mut tools = Vec::new();
     if hosted_search {
@@ -346,6 +269,134 @@ pub fn responses_to_gemini(
         request,
         tool_names,
     })
+}
+
+fn extract_hosted_search(
+    active_tools: &Value,
+    body: &Value,
+    model: &str,
+    is_gemini: bool,
+) -> Result<bool, GatewayError> {
+    let mut hosted_search = false;
+    for tool in active_tools.as_array().into_iter().flatten() {
+        if !matches!(
+            tool.get("type").and_then(Value::as_str),
+            Some("web_search" | "web_search_preview")
+        ) {
+            continue;
+        }
+        if !is_gemini {
+            tracing::debug!(
+                "omitting unavailable hosted web_search tool for non-gemini model: {model}"
+            );
+            continue;
+        }
+        for (key, value) in tool.as_object().into_iter().flatten() {
+            if key == "type" || (key == "external_web_access" && value == &Value::Bool(true)) {
+                continue;
+            }
+            return Err(GatewayError::BadRequest(format!(
+                "Google Search cannot preserve web_search option {key}"
+            )));
+        }
+        if let Some(choice) = body.get("tool_choice")
+            && choice != "auto"
+            && choice != "none"
+        {
+            return Err(GatewayError::BadRequest(
+                "Google Search cannot force a requested tool_choice".to_owned(),
+            ));
+        }
+        hosted_search = true;
+    }
+    Ok(hosted_search)
+}
+
+fn build_generation_config(body: &Value, model: &str) -> Option<Value> {
+    let mut generation_config = serde_json::Map::new();
+    let mut max_tokens = body
+        .get("max_output_tokens")
+        .and_then(Value::as_u64)
+        .unwrap_or(65536);
+
+    if let Some(temp) = body.get("temperature") {
+        generation_config.insert("temperature".to_owned(), temp.clone());
+    }
+    if let Some(top_p) = body.get("top_p") {
+        generation_config.insert("topP".to_owned(), top_p.clone());
+    }
+
+    let effort = body
+        .pointer("/reasoning/effort")
+        .and_then(Value::as_str)
+        .or_else(|| {
+            if model.contains("-high") {
+                Some("high")
+            } else if model.contains("-medium") {
+                Some("medium")
+            } else if model.contains("-low") {
+                Some("low")
+            } else if model.contains("thinking") {
+                Some("medium")
+            } else {
+                None
+            }
+        });
+
+    if let Some(effort) = effort {
+        let is_gemini = model.starts_with("gemini");
+        let budget = if is_gemini {
+            match effort {
+                "none" | "off" => 0,
+                "low" => 2048,
+                "medium" => 8192,
+                "high" => 16384,
+                "max" | "ultra" => 32768,
+                _ => 8192,
+            }
+        } else {
+            let claude_budget = match effort {
+                "none" | "off" => 0,
+                "minimal" | "low" => 1024,
+                "medium" => 4096,
+                "high" => 8192,
+                "xhigh" | "max" | "ultra" => 16384,
+                _ => 4096,
+            };
+            if claude_budget > 0 {
+                if max_tokens <= claude_budget {
+                    if max_tokens > 1024 {
+                        max_tokens = claude_budget + 4096;
+                        claude_budget
+                    } else {
+                        0
+                    }
+                } else {
+                    claude_budget
+                }
+            } else {
+                0
+            }
+        };
+        if budget > 0 {
+            let budget = if is_gemini {
+                budget
+            } else {
+                budget.min(max_tokens.saturating_sub(1))
+            };
+            generation_config.insert(
+                "thinkingConfig".to_owned(),
+                json!({
+                    "includeThoughts": true,
+                    "thinkingBudget": budget
+                }),
+            );
+        }
+    }
+
+    generation_config.insert("maxOutputTokens".to_owned(), json!(max_tokens));
+
+    (!generation_config.is_empty()).then_some(Value::Object(generation_config))
 }
 
 pub(crate) fn sanitize_gemini_schema(schema: &mut Value) {

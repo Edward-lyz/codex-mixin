@@ -444,3 +444,85 @@ fn responses_to_gemini_claude_model_includes_tool_id_without_gemini_sentinel() {
         "default_api__exec_command"
     );
 }
+
+#[test]
+fn responses_to_gemini_claude_model_omits_unsupported_web_search_tool() {
+    let body = json!({
+        "model": "claude-opus-4-6-thinking",
+        "input": "hello",
+        "tools": [
+            {"type": "web_search"},
+            {
+                "type": "function",
+                "name": "lookup",
+                "parameters": {"type": "object"}
+            }
+        ]
+    });
+    let converted = responses_to_gemini(&body, None).unwrap();
+    let req = &converted.request;
+    let tools = req["tools"].as_array().expect("tools array expected");
+    assert!(!tools.iter().any(|tool| tool.get("googleSearch").is_some()));
+    assert!(
+        tools
+            .iter()
+            .any(|tool| tool.get("functionDeclarations").is_some())
+    );
+
+    let search_only = json!({
+        "model": "claude-opus-4-6-thinking",
+        "input": "hello",
+        "tools": [{"type": "web_search"}]
+    });
+    let converted_search_only = responses_to_gemini(&search_only, None).unwrap();
+    assert!(converted_search_only.request.get("tools").is_none());
+}
+
+#[test]
+fn responses_to_gemini_claude_model_thinking_budget_less_than_max_tokens() {
+    let body = json!({
+        "model": "claude-opus-4-6-thinking",
+        "input": "think and answer",
+        "max_output_tokens": 8192,
+        "reasoning": {
+            "effort": "medium"
+        }
+    });
+    let converted = responses_to_gemini(&body, None).unwrap();
+    let max_output = converted.request["generationConfig"]["maxOutputTokens"]
+        .as_u64()
+        .unwrap();
+    let budget = converted.request["generationConfig"]["thinkingConfig"]["thinkingBudget"]
+        .as_u64()
+        .unwrap();
+    assert!(
+        max_output > budget,
+        "maxOutputTokens ({max_output}) must be strictly greater than thinkingBudget ({budget})"
+    );
+    assert_eq!(budget, 4096);
+    assert_eq!(max_output, 8192);
+
+    // High effort for Claude with max_tokens == budget
+    let body_high = json!({
+        "model": "claude-opus-4-6-thinking",
+        "input": "think hard",
+        "max_output_tokens": 8192,
+        "reasoning": {
+            "effort": "high"
+        }
+    });
+    let converted_high = responses_to_gemini(&body_high, None).unwrap();
+    let max_output_high = converted_high.request["generationConfig"]["maxOutputTokens"]
+        .as_u64()
+        .unwrap();
+    let budget_high =
+        converted_high.request["generationConfig"]["thinkingConfig"]["thinkingBudget"]
+            .as_u64()
+            .unwrap();
+    assert!(
+        max_output_high > budget_high,
+        "maxOutputTokens ({max_output_high}) must be strictly greater than thinkingBudget ({budget_high})"
+    );
+    assert_eq!(budget_high, 8192);
+    assert_eq!(max_output_high, 12288);
+}
