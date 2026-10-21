@@ -44,16 +44,36 @@ extension AppDelegate {
                 ])
                 return (try parseDailyUsage(try await daily), try parseTurnUsage(try await turns))
             }
+            let contextModel = ContextSettingsModel { [weak self] in
+                guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
+                async let settings = self.runGateway(["context", "config", "get", "--json"])
+                async let stats = self.runGateway(["context", "stats", "--json"])
+                return (
+                    try parseContextSettings(try await settings),
+                    try parseContextStats(try await stats)
+                )
+            } saver: { [weak self] arguments in
+                guard let self else { throw GatewayError.command("Codex Mixin 已退出") }
+                do {
+                    return try parseContextSettings(try await self.runGateway(arguments))
+                } catch {
+                    throw ContextSettingsError.from(error)
+                }
+            }
             let container = ConsoleContainerController(
                 pages: [
                     .providers: providerPage,
                     .agents: makeAgentManagementPageController(model: agentModel),
                     .usage: NSHostingController(rootView: ConsoleUsageView(model: usageModel)),
+                    .context: NSHostingController(
+                        rootView: ContextSettingsView(model: contextModel)
+                    ),
                 ],
                 onShow: { page in
                     switch page {
                     case .agents: Task { await agentModel.refresh() }
                     case .usage: Task { await usageModel.refresh() }
+                    case .context: Task { await contextModel.reloadOnShow() }
                     case .providers: break
                     }
                 }

@@ -5,12 +5,14 @@ enum ConsolePage: Int, CaseIterable {
     case providers
     case agents
     case usage
+    case context
 
     var title: String {
         switch self {
         case .providers: return AppLocalization.string("console.page.providers")
         case .agents: return AppLocalization.string("console.page.agents")
         case .usage: return AppLocalization.string("console.page.usage")
+        case .context: return AppLocalization.string("console.page.context")
         }
     }
 }
@@ -20,7 +22,8 @@ private let consolePagesItem = NSToolbarItem.Identifier("CodexMixinConsolePages"
 
 /// Hosts the console pages and switches them from a segmented control in the
 /// window toolbar. Each page keeps its own view controller and state, so
-/// switching pages does not discard provider drafts or reload agents.
+/// switching pages does not discard provider drafts or reload agents, and the
+/// context page reloads the CLI settings and statistics when shown.
 final class ConsoleContainerController: NSViewController, NSToolbarDelegate {
     private let pages: [ConsolePage: NSViewController]
     private let onShow: (ConsolePage) -> Void
