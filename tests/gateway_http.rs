@@ -83,6 +83,9 @@ enum MockMode {
     WebSearchRetry,
     ImageTool,
     ImageToolFailure,
+    ContextStatusThenText,
+    ContextStatusOnly,
+    ContextCompressThenText,
 }
 
 #[derive(Clone)]
@@ -178,6 +181,7 @@ fn test_config(upstream_base_url: String) -> GatewayConfig {
         .map(|model| model.id.clone())
         .collect();
     GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:0".parse().unwrap(),
         providers: vec![provider],
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
@@ -779,6 +783,19 @@ async fn mock_messages(
             web_search_sse()
         }
         MockMode::WebSearchRetry => tool_sse("web_search", json!({})),
+        MockMode::ContextStatusThenText if has_tool_result => text_sse(),
+        MockMode::ContextStatusThenText | MockMode::ContextStatusOnly => {
+            tool_sse("mixin_context_status", json!({}))
+        }
+        MockMode::ContextCompressThenText if has_tool_result => text_sse(),
+        MockMode::ContextCompressThenText => tool_sse(
+            "mixin_context_compress",
+            json!({
+                "ranges": [{"start": "m000003", "end": "m000004"}],
+                "topic": "exploration",
+                "summary": "alpha and beta explored two ideas"
+            }),
+        ),
         MockMode::ImageTool | MockMode::ImageToolFailure => tool_sse(
             "image_gen__imagegen",
             json!({
@@ -1596,6 +1613,20 @@ async fn spawn_gateway(upstream_base_url: String) -> String {
 async fn spawn_gateway_with_config(config: GatewayConfig) -> String {
     let state = AppState::with_env_lookup(config, |name| {
         (name == "TEST_EXAMPLE_AUTH").then(|| "signed-value".to_owned())
+    })
+    .unwrap();
+    spawn_router(router(state)).await
+}
+
+async fn spawn_gateway_with_context(
+    config: GatewayConfig,
+    database_path: &std::path::Path,
+) -> String {
+    let database = database_path.to_owned();
+    let state = AppState::with_env_lookup(config, move |name| match name {
+        codex_mixin::context::DATABASE_ENV => Some(database.display().to_string()),
+        "TEST_EXAMPLE_AUTH" => Some("signed-value".to_owned()),
+        _ => None,
     })
     .unwrap();
     spawn_router(router(state)).await
@@ -3298,6 +3329,161 @@ async fn custom_tool_loop_marks_commentary_and_final_answer() {
     )
     .unwrap();
     assert_eq!(final_answer["item"]["phase"], "final_answer");
+    assert_eq!(requests.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
+async fn context_status_round_is_hidden_from_the_client() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::ContextStatusThenText).await;
+    let mut config = test_config(upstream_url);
+    config.context.enabled = true;
+    let database = tempfile::tempdir().unwrap();
+    let database_path = database.path().join("context.db");
+    let gateway_url = spawn_gateway_with_context(config, &database_path).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-context-status")
+        .json(&responses_request())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let stream = String::from_utf8(response.bytes().await.unwrap().to_vec()).unwrap();
+    assert!(stream.contains("hello codex"), "missing answer: {stream}");
+    assert!(
+        !stream.contains("mixin_context"),
+        "internal tool leaked to the client: {stream}"
+    );
+
+    let recorded = requests.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 2, "context round count: {recorded:?}");
+    let tools = recorded[0]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 5);
+    assert!(tools.iter().any(|tool| tool["name"] == "exec_command"));
+    for name in [
+        "mixin_context_compress",
+        "mixin_context_decompress",
+        "mixin_context_search",
+        "mixin_context_status",
+    ] {
+        assert!(
+            tools.iter().any(|tool| tool["name"] == name),
+            "missing internal tool {name}"
+        );
+    }
+    assert!(recorded[0].to_string().contains("<context_management>"));
+    let follow_up = recorded[1]["messages"].to_string();
+    assert!(follow_up.contains("mixin_context_status"), "{follow_up}");
+    assert!(follow_up.contains("revision"), "{follow_up}");
+    assert!(database_path.exists(), "context database was not created");
+}
+
+#[tokio::test]
+async fn context_compression_round_rewrites_the_upstream_view() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::ContextCompressThenText).await;
+    let mut config = test_config(upstream_url);
+    config.context.enabled = true;
+    config.context.protected_messages = 1;
+    config.context.protected_tokens = 1;
+    let database = tempfile::tempdir().unwrap();
+    let database_path = database.path().join("context.db");
+    let gateway_url = spawn_gateway_with_context(config, &database_path).await;
+
+    let mut body = responses_request();
+    body["input"] = json!([
+        {"type":"message","role":"developer","content":[{"type":"input_text","text":"dev rules"}]},
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"explore two ideas"}]},
+        {
+            "type":"message",
+            "role":"assistant",
+            "content":[{"type":"output_text","text":format!("alpha {}", "word ".repeat(400))}]
+        },
+        {
+            "type":"message",
+            "role":"assistant",
+            "content":[{"type":"output_text","text":format!("beta {}", "word ".repeat(400))}]
+        },
+        {"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
+    ]);
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-context-compress")
+        .json(&body)
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let stream = String::from_utf8(response.bytes().await.unwrap().to_vec()).unwrap();
+    assert!(stream.contains("hello codex"), "missing answer: {stream}");
+    assert!(
+        !stream.contains("<context_summary"),
+        "summary leaked to the client: {stream}"
+    );
+
+    let recorded = requests.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 2, "context round count: {recorded:?}");
+    let compressed = recorded[1]["messages"].to_string();
+    assert!(compressed.contains("<context_summary"), "{compressed}");
+    assert!(
+        compressed.contains("alpha and beta explored two ideas"),
+        "{compressed}"
+    );
+    assert!(
+        !compressed.contains("alpha word"),
+        "original messages were not replaced: {compressed}"
+    );
+    let blocks = recorded[1]["messages"][0]["content"]
+        .as_array()
+        .expect("merged user turn");
+    assert_eq!(blocks.len(), 3);
+    assert!(blocks[1]["text"].as_str().unwrap().contains("tier=\"1\""));
+    let tool_result = recorded[1]["messages"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .flat_map(|message| message["content"].as_array().cloned().unwrap_or_default())
+        .find(|block| block["type"] == "tool_result")
+        .expect("hidden tool result");
+    let result: Value =
+        serde_json::from_str(tool_result["content"].as_str().unwrap()).expect("tool result json");
+    assert_eq!(result["ok"], true);
+    assert_eq!(result["block_id"], "b1");
+    assert_eq!(result["revision"], 1);
+}
+
+#[tokio::test]
+async fn context_internal_rounds_are_bounded() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::ContextStatusOnly).await;
+    let mut config = test_config(upstream_url);
+    config.context.enabled = true;
+    config.context.max_internal_rounds = 1;
+    let database = tempfile::tempdir().unwrap();
+    let database_path = database.path().join("context.db");
+    let gateway_url = spawn_gateway_with_context(config, &database_path).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-context-bounded")
+        .json(&responses_request())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let mut encoded = response.bytes().await.unwrap().to_vec();
+    let events = drain_events(&mut encoded);
+    let failure = events
+        .iter()
+        .find(|event| event.event.as_deref() == Some("response.failed"))
+        .expect("missing response.failed event");
+    let payload = serde_json::from_str::<Value>(&failure.data).unwrap();
+    assert_eq!(
+        payload["response"]["error"]["message"],
+        "context internal rounds exhausted before the model answered"
+    );
     assert_eq!(requests.lock().unwrap().len(), 2);
 }
 
