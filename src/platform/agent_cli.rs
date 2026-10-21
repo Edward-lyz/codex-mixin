@@ -23,6 +23,8 @@ pub enum DesktopApp {
     Codex,
     /// The Claude desktop app.
     ClaudeDesktop,
+    /// The DeepSeek Harness desktop app.
+    Dsh,
 }
 
 /// What a finished command printed.
@@ -292,6 +294,7 @@ fn macos_app_candidates(app: DesktopApp) -> Vec<PathBuf> {
     let bundles: &[&str] = match app {
         DesktopApp::Codex => &["/Applications/ChatGPT.app", "/Applications/Codex.app"],
         DesktopApp::ClaudeDesktop => &["/Applications/Claude.app"],
+        DesktopApp::Dsh => &["/Applications/DeepSeek Harness.app"],
     };
     let mut candidates: Vec<PathBuf> = bundles
         .iter()
@@ -319,6 +322,7 @@ fn windows_app_candidates(app: DesktopApp) -> Vec<PathBuf> {
             local.join("Programs").join("OpenAI").join("Codex"),
         ],
         DesktopApp::ClaudeDesktop => vec![local.join("AnthropicClaude")],
+        DesktopApp::Dsh => vec![local.join("Programs").join("DeepSeek Harness")],
     }
 }
 
@@ -332,7 +336,24 @@ pub fn desktop_app_versions(location: &Path) -> Vec<String> {
     }
     #[cfg(windows)]
     {
-        squirrel_app_versions(location)
+        let versions = squirrel_app_versions(location);
+        if !versions.is_empty() {
+            return versions;
+        }
+        let executable = location.join("DeepSeek Harness.exe");
+        if !executable.is_file() {
+            return Vec::new();
+        }
+        // DSH's Electron installer does not use Squirrel's app-version folders.
+        let mut command = Command::new("powershell.exe");
+        command.args(["-NoProfile", "-NonInteractive", "-Command", "(Get-Item -LiteralPath $env:CODEX_MIXIN_APP_EXE -ErrorAction Stop).VersionInfo.ProductVersion"])
+            .env("CODEX_MIXIN_APP_EXE", &executable);
+        run_command(command, Duration::from_secs(5), "read DSH app version")
+            .ok()
+            .map(|outcome| outcome.stdout.trim().to_owned())
+            .filter(|version| !version.is_empty())
+            .into_iter()
+            .collect()
     }
     #[cfg(not(any(target_os = "macos", windows)))]
     {
@@ -447,6 +468,18 @@ impl Drop for AgentUpdateLock {
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[cfg(target_os = "macos")]
+    #[test]
+    fn dsh_desktop_bundle_is_detected_without_a_cli() {
+        let candidates = desktop_app_candidates(DesktopApp::Dsh);
+        assert!(candidates.contains(&PathBuf::from("/Applications/DeepSeek Harness.app")));
+        let root = tempfile::tempdir().unwrap();
+        let bundle = root.path().join("DeepSeek Harness.app");
+        std::fs::create_dir_all(bundle.join("Contents")).unwrap();
+        std::fs::write(bundle.join("Contents/Info.plist"), "<plist><dict><key>CFBundleShortVersionString</key><string>0.2.1-rc.2</string></dict></plist>").unwrap();
+        assert_eq!(desktop_app_versions(&bundle), vec!["0.2.1-rc.2"]);
+    }
 
     #[test]
     fn last_lines_keeps_the_tail_without_colour() {
