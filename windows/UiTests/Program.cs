@@ -152,17 +152,34 @@ internal static class Program
                     }
                 }
             }
+            var popup = OpenWindow(start, process, "overview", "Codex Mixin · 主面板");
+            var popupHandle = (nint)popup.Current.NativeWindowHandle;
+            // A real external foreground window must dismiss the popup, including during refresh.
+            using (var outside = new System.Windows.Forms.Form { Text = "Outside Mixin", Width = 240, Height = 120 })
+            {
+                outside.Show();
+                SetForegroundWindow(outside.Handle);
+                Wait(() => !IsWindowVisible(popupHandle), "tray dismisses on external focus during reload", process);
+            }
+            Console.WriteLine("PASS tray dismisses while loading");
             window = OpenWindow(start, process, "providers", "模型与服务");
             var consoleHandle = (nint)window.Current.NativeWindowHandle;
             var pattern = (WindowPattern)window.GetCurrentPattern(WindowPattern.Pattern);
             pattern.SetWindowVisualState(WindowVisualState.Maximized);
             Wait(() => IsZoomed(consoleHandle), "maximized console", process);
+            var navigationMs = new Dictionary<string, double>();
             foreach (var (role, title) in new[] { ("agents", "Agent 接入管理"), ("usage", "用量明细"), ("providers", "模型与服务") })
             {
-                var target = OpenWindow(start, process, role, title);
-                if ((nint)target.Current.NativeWindowHandle != consoleHandle || !IsZoomed(consoleHandle))
+                var elapsed = Stopwatch.StartNew();
+                ((TogglePattern)Find(window, $"console-{role}-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
+                Wait(() => window.Current.Name == title && Find(window, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), $"console tab {role}", process);
+                navigationMs[role] = elapsed.Elapsed.TotalMilliseconds;
+                if ((nint)window.Current.NativeWindowHandle != consoleHandle || !IsZoomed(consoleHandle))
                     throw new InvalidOperationException($"Console lost maximization while opening {role}");
             }
+            // Reopening through the tray/second-instance route must also preserve maximization.
+            window = OpenWindow(start, process, "providers", "模型与服务");
+            if (!IsZoomed(consoleHandle)) throw new InvalidOperationException("Reactivation lost maximization");
             pattern.SetWindowVisualState(WindowVisualState.Normal);
             Console.WriteLine("PASS console navigation preserves maximization");
             Console.WriteLine("PASS macOS-aligned tray, provider tabs, separate windows and Fusion modes");
@@ -176,6 +193,25 @@ internal static class Program
             MoveWindow(handle, desktop.Left + 24, desktop.Top + 24, 960, 600, true);
             Capture(window, Path.Combine(output, "minimum-window.png"));
             Console.WriteLine("PASS close-to-tray, reactivation and provider minimum window");
+            process.Refresh();
+            var visibleMemory = process.PrivateMemorySize64;
+            PostMessage(handle, 0x112, 0xF060, 0);
+            Wait(() => !IsWindowVisible(handle), "idle resource sample hides console", process);
+            process.Refresh();
+            var cpu = process.TotalProcessorTime;
+            var idle = Stopwatch.StartNew();
+            // Longer than the 30-second refresh interval: catch hidden-window polling.
+            Thread.Sleep(TimeSpan.FromSeconds(35));
+            process.Refresh();
+            File.WriteAllText(Path.Combine(output, "resources.json"), JsonSerializer.Serialize(new
+            {
+                navigation_ms = navigationMs,
+                visible_private_bytes = visibleMemory,
+                hidden_private_bytes = process.PrivateMemorySize64,
+                hidden_working_set_bytes = process.WorkingSet64,
+                idle_sample_seconds = idle.Elapsed.TotalSeconds,
+                idle_cpu_seconds = (process.TotalProcessorTime - cpu).TotalSeconds
+            }, new JsonSerializerOptions { WriteIndented = true }));
             return 0;
         }
         catch (Exception error)
@@ -403,6 +439,8 @@ internal static class Program
 
     [DllImport("user32.dll", EntryPoint = "PostMessageW")]
     [return: MarshalAs(UnmanagedType.Bool)] private static extern bool PostMessage(nint window, uint message, nuint wParam, nint lParam);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)] private static extern bool SetForegroundWindow(nint window);
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsZoomed(nint window);
     [DllImport("user32.dll")]

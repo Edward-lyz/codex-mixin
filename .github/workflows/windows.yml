@@ -177,6 +177,7 @@ jobs:
           name: windows-native-ui-evidence
           path: |
             windows/build/ui-test-artifacts/*.png
+            windows/build/ui-test-artifacts/resources.json
             windows/build/ui-test-artifacts/index.html
             windows/build/ui-test-artifacts/failure.txt
             windows/build/ui-test-artifacts/native-errors.txt

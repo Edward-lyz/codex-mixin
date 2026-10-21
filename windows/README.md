@@ -17,7 +17,11 @@ Windows 前端使用 **C# + XAML + WinUI 3 + Windows App SDK**。Flutter 工程�
 - 原生托盘与菜单、关闭收起、单实例激活、每显示器 DPI；Explorer 重启后重新注册托盘。
 - Windows 原生文件选择器；导入导出前说明 Base64 备份含凭据且不是加密。
 
-托盘左键打开与 macOS 对齐的紧凑主面板，右键提供网关操作和窗口入口。所有窗口使用同一个 CLI adapter 和动作队列。外观选择作用于当前运行会话。GUI 登录启动保留已有 Run 项，新增安装默认由用户在设置中启用；不会覆盖系统禁用状态，也不在登录路径启动网关。
+托盘左键打开与 macOS 对齐的紧凑主面板，右键提供网关操作和窗口入口。所有窗口使用同一个 CLI adapter 和串行动作队列；只读查询独立限流，最多并发两个 CLI 子进程。外观选择作用于当前运行会话。GUI 登录启动保留已有 Run 项，新增安装默认由用户在设置中启用；不会覆盖系统禁用状态，也不在登录路径启动网关。
+
+托盘重开时先展示上次额度，状态行标记正在刷新；首次打开和刷新失败时额度显示未知。服务状态、供应商列表和额度独立查询，供应商切换使用同一次额度快照，不再重复发请求。点击其他窗口或桌面可收起正在查询的托盘面板。切换控制台页签和重新激活窗口保留最大化，仅最小化窗口需要还原。
+
+CLI 进程启动和 JSON 解析在后台线程执行。隐藏控制台暂停刷新定时器，离开模型页面释放编辑器引用，固定图标复用解码资源。安装器使用 LZMA solid 压缩，分发目录不含 PDB；保留完整自包含运行时，不启用会影响 XAML 反射的 trimming。
 
 ## 工程结构与环境
 
@@ -45,7 +49,7 @@ dotnet build windows/CodexMixin/CodexMixin.csproj -c Debug -p:Platform=x64
 
 每次成功的 UI 测试都截图托盘主面板、模型与服务、连接设置、Agent、Fusion 两种模式与设置的浅色和深色版本，并保存首次启动、空状态、停止状态与窄窗口截图。供应商与 Fusion 的已配置画面使用经真实 CLI 导入的隔离 CI fixture，凭据为虚构值，不连接外部模型服务。失败时也尝试保存现场截图与错误文本。
 
-在 GitHub Actions 的 Windows run 页面下载 `windows-native-ui-evidence` artifact，解压后在 macOS 浏览器打开 `index.html`，即可查看全部页面；点击缩略图可查看原始 PNG。artifact 保留 14 天，仅包含截图、图集与错误文本，不上传配置目录。
+在 GitHub Actions 的 Windows run 页面下载 `windows-native-ui-evidence` artifact，解压后在 macOS 浏览器打开 `index.html`，即可查看全部页面；点击缩略图可查看原始 PNG。artifact 保留 14 天，包含截图、图集、错误文本和 `resources.json`，不上传配置目录。资源记录包含显示/隐藏时私有内存、隐藏时 working set，以及超过刷新周期的 35 秒空闲 CPU 采样；它是单次 runner 数据，不代表用户硬件上的能耗或与 macOS 的对比结论。
 
 一键打包仍从仓库根执行：
 
@@ -53,6 +57,6 @@ dotnet build windows/CodexMixin/CodexMixin.csproj -c Debug -p:Platform=x64
 powershell -ExecutionPolicy Bypass -File windows/scripts/package-windows.ps1
 ```
 
-输出 `dist/codex-mixin-windows/`、`dist/CodexMixin-Setup.exe`、`dist/CodexMixin-Windows.zip`。保留 `codex_mixin_ui.exe` 与 `codex-mixin.exe` 的原文件名、NSIS 注册表身份和快捷方式路径；应用目录包含 .NET 与 Windows App SDK runtime，用户无需安装 Flutter 或 .NET。
+输出 `dist/codex-mixin-windows/`、`dist/CodexMixin-Setup.exe`、`dist/CodexMixin-Windows.zip`，并在安装器旁保存 `.metrics.json`，记录展开目录、安装器和便携包的字节数。保留 `codex_mixin_ui.exe` 与 `codex-mixin.exe` 的原文件名、NSIS 注册表身份和快捷方式路径；应用目录包含 .NET 与 Windows App SDK runtime，用户无需安装 Flutter 或 .NET。
 
 安装/卸载继续保留用户配置；未发布 UI 单独可执行文件，必须使用完整应用目录。签名时覆盖随包发送的 EXE / DLL 与安装器。发布工作流沿用相同打包脚本。

@@ -14,10 +14,11 @@ public sealed partial class TrayWindow : Window
     private JsonElement[] providers = [];
     private string? providerId;
     private JsonElement[] quotaRows = [];
+    private JsonElement[] allQuotaRows = [];
     private QuotaStyle quotaStyle = QuotaView.Stored();
     private bool busy;
     private bool settingState;
-    private bool pinned;
+    private bool dialogOpen;
     private bool exiting;
     private int maximumHeight;
 
@@ -33,7 +34,7 @@ public sealed partial class TrayWindow : Window
         presenter.IsMinimizable = false;
         presenter.IsMaximizable = false;
         presenter.IsAlwaysOnTop = true;
-        Activated += (_, args) => { if (!pinned && !busy && args.WindowActivationState == WindowActivationState.Deactivated) AppWindow.Hide(); };
+        Activated += (_, args) => { if (!dialogOpen && args.WindowActivationState == WindowActivationState.Deactivated) AppWindow.Hide(); };
         Closed += (_, _) => lifetime.Cancel();
         AppWindow.Closing += (_, args) => { if (!exiting) { args.Cancel = true; AppWindow.Hide(); } };
     }
@@ -44,12 +45,12 @@ public sealed partial class TrayWindow : Window
 
     internal async void ShowPanel()
     {
-        pinned = Environment.GetCommandLineArgs().Contains("--capture-ui");
         var bounds = NativeShell.PanelBounds();
         maximumHeight = bounds.Height;
         AppWindow.MoveAndResize(bounds);
         // The console may have changed the style since this cached panel last showed.
         quotaStyle = QuotaView.Stored();
+        RenderQuota();
         AppWindow.Show(); Activate();
         await ReloadAsync();
     }
@@ -61,38 +62,65 @@ public sealed partial class TrayWindow : Window
         try
         {
             var client = ((App)Microsoft.UI.Xaml.Application.Current).Client;
-            var status = await client.QueryAsync(["service", "status", "--json"], lifetime.Token);
-            ServiceTitle.Text = $"本地服务{Json.Gateway(status)}";
-            var running = Json.OptionalText(status, "gateway") == "running";
-            Endpoint.Text = Json.OptionalText(status, "endpoint") ?? (Json.Flag(status, "configured") ? "网关未启动" : "请先配置服务商");
-            ServiceDot.Style = Themed(running ? "DotOn" : "DotOff");
-            settingState = true; GatewaySwitch.IsOn = running; settingState = false;
-            providers = Json.Flag(status, "configured")
-                ? Json.Rows(Json.Field(await client.QueryAsync(["provider", "list", "--json"], lifetime.Token), "providers")) : [];
-            if (!providers.Any(row => Json.Text(row, "id") == providerId))
-                providerId = providers.Length == 0 ? null : Json.Text(providers[0], "id");
-            ProviderStrip.Children.Clear();
-            foreach (var provider in providers)
+            // Quota may use the network; render local status/providers independently.
+            using var refresh = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
+            var quotaTask = client.QueryAsync(["quota", "--json"], refresh.Token);
+            var statusTask = client.QueryAsync(["service", "status", "--json"], refresh.Token);
+            var providersTask = client.QueryAsync(["provider", "list", "--json"], refresh.Token);
+            // Observe every subprocess even when one fails.
+            var snapshot = Task.WhenAll(statusTask, providersTask, quotaTask);
+            try
             {
-                var id = Json.Text(provider, "id");
-                var tile = new Border { Style = Themed(id == providerId ? "IconTile" : "IconTileIdle"), Width = 40, Height = 40, Child = Marks.Provider(provider, 24) };
-                var button = new Button { Content = tile, Style = Themed("FlatButton"), Padding = new Thickness(0), CornerRadius = new CornerRadius(8) };
-                ToolTipService.SetToolTip(button, Json.Text(provider, "display_name"));
-                Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, Json.Text(provider, "display_name"));
-                button.Click += async (_, _) => { providerId = id; await ReloadAsync(); };
-                ProviderStrip.Children.Add(button);
+                var status = await statusTask;
+                ServiceTitle.Text = $"本地服务{Json.Gateway(status)}";
+                var running = Json.OptionalText(status, "gateway") == "running";
+                Endpoint.Text = Json.OptionalText(status, "endpoint") ?? (Json.Flag(status, "configured") ? "网关未启动" : "请先配置服务商");
+                ServiceDot.Style = Themed(running ? "DotOn" : "DotOff");
+                settingState = true; GatewaySwitch.IsOn = running; settingState = false;
+                providers = Json.Flag(status, "configured")
+                    ? Json.Rows(Json.Field(await providersTask, "providers")) : [];
+                if (!providers.Any(row => Json.Text(row, "id") == providerId))
+                    providerId = providers.Length == 0 ? null : Json.Text(providers[0], "id");
+                ProviderStrip.Children.Clear();
+                foreach (var provider in providers)
+                {
+                    var id = Json.Text(provider, "id");
+                    var tile = new Border { Style = Themed(id == providerId ? "IconTile" : "IconTileIdle"), Width = 40, Height = 40, Child = Marks.Provider(provider, 24) };
+                    var button = new Button { Content = tile, Style = Themed("FlatButton"), Padding = new Thickness(0), CornerRadius = new CornerRadius(8) };
+                    ToolTipService.SetToolTip(button, Json.Text(provider, "display_name"));
+                    Microsoft.UI.Xaml.Automation.AutomationProperties.SetName(button, Json.Text(provider, "display_name"));
+                    button.Click += (_, _) =>
+                    {
+                        providerId = id;
+                        foreach (var item in ProviderStrip.Children.OfType<Button>())
+                            ((Border)item.Content).Style = Themed(ReferenceEquals(item, button) ? "IconTile" : "IconTileIdle");
+                        quotaRows = allQuotaRows.Where(row => Json.Text(row, "provider_id") == providerId).ToArray();
+                        RenderQuota();
+                        FitToContent();
+                    };
+                    ProviderStrip.Children.Add(button);
+                }
+                var selected = providers.FirstOrDefault(row => Json.Text(row, "id") == providerId);
+                var hasProvider = selected.ValueKind == JsonValueKind.Object;
+                ProviderTitle.Text = hasProvider ? "额度" : "尚未配置服务商";
+                allQuotaRows = Json.Rows(await quotaTask);
+                quotaRows = allQuotaRows.Where(row => Json.Text(row, "provider_id") == providerId).ToArray();
+                RenderQuota();
+                await snapshot;
+                PanelStatus.Text = $"{DateTime.Now:HH:mm:ss} · 配置已同步";
             }
-            var selected = providers.FirstOrDefault(row => Json.Text(row, "id") == providerId);
-            var hasProvider = selected.ValueKind == JsonValueKind.Object;
-            ProviderTitle.Text = hasProvider ? "额度" : "尚未配置服务商";
-            quotaRows = Json.Flag(status, "configured")
-                ? Json.Rows(await client.QueryAsync(["quota", "--json"], lifetime.Token)).Where(row => Json.Text(row, "provider_id") == providerId).ToArray()
-                : [];
-            RenderQuota();
-            PanelStatus.Text = $"{DateTime.Now:HH:mm:ss} · 配置已同步";
+            catch
+            {
+                refresh.Cancel();
+                try { await snapshot; }
+                catch (Exception) { /* Observe sibling failures; propagate the original error below. */ }
+                throw;
+            }
         }
         catch (Exception error)
         {
+            allQuotaRows = quotaRows = [];
+            RenderQuota();
             ServiceTitle.Text = "本地服务 · 状态未知";
             ServiceDot.Style = Themed("DotWarn");
             PanelStatus.Text = error.Message;
@@ -149,8 +177,13 @@ public sealed partial class TrayWindow : Window
             Content = "退出界面后，本地网关会继续按 CLI 的服务设置运行。",
             PrimaryButtonText = "退出", CloseButtonText = "取消", XamlRoot = Panel.XamlRoot, RequestedTheme = Panel.ActualTheme
         };
-        if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
-        ((App)Microsoft.UI.Xaml.Application.Current).ExitAll();
+        dialogOpen = true;
+        try
+        {
+            if (await dialog.ShowAsync() != ContentDialogResult.Primary) return;
+            ((App)Microsoft.UI.Xaml.Application.Current).ExitAll();
+        }
+        finally { dialogOpen = false; }
     }
     private async Task ChangeAsync(string[] args)
     {

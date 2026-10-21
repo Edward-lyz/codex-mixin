@@ -3,6 +3,9 @@
 ; the location recorded in the uninstall registry key. Built by
 ; scripts/package-windows.ps1.
 Unicode true
+; Compress the self-contained runtimes together so shared data is encoded once.
+SetCompressor /SOLID lzma
+SetCompressorDictSize 32
 
 !include "MUI2.nsh"
 !include "LogicLib.nsh"
