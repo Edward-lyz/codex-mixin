@@ -17,6 +17,7 @@ public partial class App : Application
     internal CliClient Client => cli ??= CliClient.Locate();
     internal Operations Operations => operations ??= new Operations(Client);
     internal ElementTheme Theme => theme;
+    internal bool HasPendingChanges => windows.Values.Any(target => target.IsChanging) || tray?.IsChanging == true;
     internal void SetTheme(ElementTheme value)
     {
         theme = value;

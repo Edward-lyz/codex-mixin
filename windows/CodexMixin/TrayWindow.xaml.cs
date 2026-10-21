@@ -17,6 +17,7 @@ public sealed partial class TrayWindow : Window
     private JsonElement[] allQuotaRows = [];
     private QuotaStyle quotaStyle = QuotaView.Stored();
     private bool busy;
+    private bool changing;
     private bool settingState;
     private bool serviceKnown;
     private bool dialogOpen;
@@ -41,6 +42,7 @@ public sealed partial class TrayWindow : Window
         AppWindow.Closing += (_, args) => { if (!exiting) { args.Cancel = true; AppWindow.Hide(); } };
     }
 
+    internal bool IsChanging => changing;
     internal void Shutdown() { exiting = true; Close(); }
     internal void HidePanel() => AppWindow.Hide();
     internal void SetTheme(ElementTheme theme) => Panel.RequestedTheme = theme;
@@ -174,7 +176,7 @@ public sealed partial class TrayWindow : Window
     private async void OnDoctor(object sender, RoutedEventArgs args) => await ChangeAsync(["doctor", "--quick", "--json"]);
     private async void OnQuit(object sender, RoutedEventArgs args)
     {
-        if (busy) { PanelStatus.Text = "请等待当前操作完成后退出。"; return; }
+        if (((App)Microsoft.UI.Xaml.Application.Current).HasPendingChanges) { PanelStatus.Text = "请等待当前操作完成后退出。"; return; }
         var dialog = new ContentDialog
         {
             Title = "退出 Codex Mixin？",
@@ -193,9 +195,10 @@ public sealed partial class TrayWindow : Window
     {
         if (busy) return;
         busy = true;
+        changing = true;
         try { PanelStatus.Text = await ((App)Microsoft.UI.Xaml.Application.Current).Operations.ChangeAsync(args, lifetime.Token); }
         catch (Exception error) { PanelStatus.Text = error.Message; }
-        finally { busy = false; }
+        finally { busy = false; changing = false; }
         await ReloadAsync();
     }
 }
