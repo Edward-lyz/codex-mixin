@@ -387,12 +387,15 @@ impl UpstreamCacheObserver {
     }
 
     pub(crate) fn observe_value(&mut self, value: &Value) {
-        if self.first_token_at.is_none() && contains_output_delta(value) {
+        // AGY envelopes Gemini content in `response`; inspect the same payload
+        // for timing, reasoning and usage rather than only unwrapping counters.
+        let payload = value.get("response").unwrap_or(value);
+        if self.first_token_at.is_none() && contains_output_delta(payload) {
             self.first_token_at = Some(Instant::now());
         }
         self.reasoning_chars = self
             .reasoning_chars
-            .saturating_add(reasoning_delta_chars(value));
+            .saturating_add(reasoning_delta_chars(payload));
         for path in [
             value,
             value.get("message").unwrap_or(&Value::Null),

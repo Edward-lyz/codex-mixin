@@ -909,6 +909,49 @@ mod tests {
         assert_eq!(responses.input_tokens, Some(500));
     }
 
+    #[tokio::test]
+    async fn agy_wrapped_stream_records_timing_and_reasoning() {
+        let tracker = CacheShapeTracker::with_usage(TokenUsageAggregator::default());
+        let observation = record_provider_prefix(
+            &tracker,
+            "agy",
+            "claude-opus-agy",
+            "claude-opus",
+            Some(&UpstreamRouting {
+                session_id: "agy-test".to_owned(),
+                hash_key: "agy-test".to_owned(),
+            }),
+            CacheShape::from_gemini(&json!({"contents": []})),
+        )
+        .unwrap();
+        // AGY wraps GenerateContentResponse in `response`, unlike direct Gemini.
+        let frames = [
+            json!({"response": {"candidates": [{"content": {"parts": [{"text": "plan", "thought": true}]}}]}}),
+            json!({"response": {"candidates": [{"content": {"parts": [{"text": "answer"}]}}], "modelVersion": "claude-opus", "usageMetadata": {"promptTokenCount": 100, "cachedContentTokenCount": 60, "candidatesTokenCount": 5, "thoughtsTokenCount": 7}}}),
+        ];
+        let upstream = futures_util::stream::iter(
+            frames
+                .into_iter()
+                .map(|frame| Ok(Bytes::from(format!("data: {frame}\n\n")))),
+        );
+        let relayed: Vec<_> = observe_upstream_cache_usage(upstream, Some(observation))
+            .collect()
+            .await;
+        assert_eq!(relayed.len(), 2);
+        let turns = tracker.usage_turns(&crate::gateway::TurnQuery {
+            limit: 10,
+            ..Default::default()
+        });
+        assert_eq!(turns.len(), 1);
+        assert_eq!(turns[0].input_tokens, Some(40));
+        assert_eq!(turns[0].output_tokens, Some(12));
+        assert_eq!(turns[0].reasoning_tokens, Some(7));
+        assert_eq!(turns[0].reasoning_chars, 4);
+        assert_eq!(turns[0].returned_model.as_deref(), Some("claude-opus"));
+        assert!(turns[0].ttft_ms.is_some());
+        assert!(turns[0].output_tps.is_some());
+    }
+
     #[test]
     fn official_observer_records_responses_token_and_cache_usage() {
         let tracker = CacheShapeTracker::with_usage(TokenUsageAggregator::default());
