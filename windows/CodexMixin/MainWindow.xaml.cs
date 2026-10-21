@@ -29,6 +29,11 @@ public sealed partial class MainWindow : Window
     private string? queuedPage;
     private string? providerId;
     private JsonElement[] providers = [];
+    private readonly Dictionary<string, JsonElement> providerRows = [];
+    private static readonly TimeSpan AgentSnapshotAge = TimeSpan.FromSeconds(30);
+    private JsonElement[]? agentSnapshot;
+    private DateTimeOffset agentSnapshotAt;
+    private long agentRevision;
     private bool connectionSelected;
     private Func<Task>? pendingApply;
     private readonly Dictionary<string, (UIElement View, Func<Task> Save)> connectionDrafts = [];
@@ -61,6 +66,9 @@ public sealed partial class MainWindow : Window
             captureReady = new EventWaitHandle(false, EventResetMode.ManualReset, $"Local\\CodexMixin.UIReady.{Environment.ProcessId}");
         InitializeComponent();
         Root.RequestedTheme = ((App)Microsoft.UI.Xaml.Application.Current).Theme;
+        ProviderList.ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Application.Current.Resources["VirtualRowTemplate"];
+        ProviderList.ItemContainerStyle = Themed("ModelRowContainer");
+        ProviderList.ContainerContentChanging += RenderProviderRow;
         ApplyPageLayout();
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"));
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 800));
@@ -227,7 +235,7 @@ public sealed partial class MainWindow : Window
         // Hidden provider views and save closures otherwise retain the full model editor.
         pendingApply = null;
         timingCells.Clear(); timings.Clear();
-        ProviderList.Items.Clear(); providers = [];
+        ProviderList.ItemsSource = null; providerRows.Clear(); providers = [];
         page = next;
         ApplyPageLayout();
         if (ready && !interfaceReady) { await ReloadAsync(); return; }
@@ -286,8 +294,8 @@ public sealed partial class MainWindow : Window
 
     private void OnProviderSelected(object sender, SelectionChangedEventArgs args)
     {
-        if (!ready || selectingProvider || ProviderList.SelectedItem is not ListViewItem row) return;
-        providerId = row.Tag as string;
+        if (!ready || selectingProvider || ProviderList.SelectedItem is not string id) return;
+        providerId = id;
         RenderSelectedProvider();
     }
 
@@ -325,6 +333,7 @@ public sealed partial class MainWindow : Window
     private Task ReloadAsync() => ExecuteUiAsync("刷新", async token =>
     {
         await ConnectCliAsync(token, refresh: true);
+        agentSnapshot = null;
         await LoadPageAsync(token);
         if (page == "providers") await RefreshTimingsAsync(token);
     }, readOnly: true);
@@ -515,20 +524,9 @@ public sealed partial class MainWindow : Window
         {
             // A reload shows the saved state; drafts only survive provider and tab switches.
             modelDrafts.Clear(); connectionDrafts.Clear(); timingCells.Clear(); timings.Clear();
-            ProviderList.Items.Clear();
-            foreach (var provider in providers)
-            {
-                var row = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-                row.Children.Add(new TextBlock { Text = Json.Text(provider, "display_name"), TextTrimming = TextTrimming.CharacterEllipsis });
-                var state = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-                state.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Style = Themed(ReadinessDot(provider)), VerticalAlignment = VerticalAlignment.Center });
-                state.Children.Add(new TextBlock { Text = $"{Readiness(provider)} · {Json.Strings(Json.Field(provider, "selected_models")).Length}/{Json.Rows(Json.Field(provider, "cached_models")).Length} 个模型", Style = Themed("Caption") });
-                row.Children.Add(state);
-                var item = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-                item.Children.Add(new Border { Style = Themed("IconTile"), Width = 36, Height = 36, Child = Marks.Provider(provider, 22) });
-                item.Children.Add(row);
-                ProviderList.Items.Add(new ListViewItem { Content = item, Tag = Json.Text(provider, "id"), Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 1, 0, 1) });
-            }
+            providerRows.Clear();
+            foreach (var provider in providers) providerRows.Add(Json.Text(provider, "id"), provider);
+            ProviderList.ItemsSource = providers.Select(provider => Json.Text(provider, "id")).ToArray();
         }
         finally { selectingProvider = false; }
         if (providers.Length == 0)
@@ -543,10 +541,28 @@ public sealed partial class MainWindow : Window
         ProviderList.SelectedIndex = Math.Max(0, Array.FindIndex(providers, row => Json.Text(row, "id") == providerId));
     }
 
+    private void RenderProviderRow(ListViewBase sender, ContainerContentChangingEventArgs args)
+    {
+        if (args.ItemContainer.ContentTemplateRoot is not ContentControl content) return;
+        content.Content = null;
+        if (args.InRecycleQueue || args.Item is not string id || !providerRows.TryGetValue(id, out var provider)) return;
+        var row = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+        row.Children.Add(new TextBlock { Text = Json.Text(provider, "display_name"), TextTrimming = TextTrimming.CharacterEllipsis });
+        var state = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+        state.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Style = Themed(ReadinessDot(provider)), VerticalAlignment = VerticalAlignment.Center });
+        state.Children.Add(new TextBlock { Text = $"{Readiness(provider)} · {Json.Field(provider, "selected_models").GetArrayLength()}/{Json.Field(provider, "cached_models").GetArrayLength()} 个模型", Style = Themed("Caption") });
+        row.Children.Add(state);
+        var tile = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+        tile.Children.Add(new Border { Style = Themed("IconTile"), Width = 36, Height = 36, Child = Marks.Provider(provider, 22) });
+        tile.Children.Add(row);
+        content.Content = new Border { Child = tile, Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 1, 0, 1) };
+        args.Handled = true;
+    }
+
     private async void RenderSelectedProvider()
     {
         if (providerId == null) return;
-        var provider = providers.FirstOrDefault(row => Json.Text(row, "id") == providerId);
+        var provider = providerRows.GetValueOrDefault(providerId);
         if (provider.ValueKind != JsonValueKind.Object) return;
         PageBody.Children.Clear();
         ModelsTab.IsChecked = !connectionSelected; ConnectionTab.IsChecked = connectionSelected;
@@ -933,7 +949,14 @@ public sealed partial class MainWindow : Window
 
     private async Task AgentsAsync(CancellationToken token)
     {
-        var agents = Json.Rows(Json.Field(await Client.QueryAsync(["agent", "list", "--json"], token), "agents"));
+        var revision = ((App)Microsoft.UI.Xaml.Application.Current).Operations.Revision;
+        if (agentSnapshot == null || agentRevision != revision || DateTimeOffset.UtcNow - agentSnapshotAt >= AgentSnapshotAge)
+        {
+            agentSnapshot = Json.Rows(Json.Field(await Client.QueryAsync(["agent", "list", "--json"], token), "agents"));
+            agentSnapshotAt = DateTimeOffset.UtcNow;
+            agentRevision = revision;
+        }
+        var agents = agentSnapshot;
         var checkVersions = Button("检查版本更新", () => ExecuteUiAsync("检查 Agent 版本", async cancellation =>
         {
             var versions = Json.Rows(Json.Field(await Client.QueryAsync(["agent", "versions", "--json", "--refresh"], cancellation), "agents"));
@@ -954,7 +977,9 @@ public sealed partial class MainWindow : Window
         checkVersions.Style = Themed("FlatButton");
         var detectedCount = agents.Count(agent => Json.Flag(agent, "detected"));
         var agentToolbar = new Grid();
-        agentToolbar.Children.Add(new TextBlock { Text = $"已检测到 {detectedCount} 个 Agent · 未检测到 {agents.Length - detectedCount} 个", Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center });
+        var agentSummary = new TextBlock { Text = $"已检测到 {detectedCount} 个 Agent · 未检测到 {agents.Length - detectedCount} 个 · {agentSnapshotAt.ToLocalTime():HH:mm:ss}", Style = Themed("Caption"), VerticalAlignment = VerticalAlignment.Center };
+        AutomationProperties.SetAutomationId(agentSummary, "agent-summary");
+        agentToolbar.Children.Add(agentSummary);
         checkVersions.HorizontalAlignment = HorizontalAlignment.Right;
         agentToolbar.Children.Add(checkVersions);
         PageBody.Children.Add(agentToolbar);

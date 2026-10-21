@@ -3,6 +3,8 @@ namespace CodexMixin;
 internal sealed class Operations(CliClient cli)
 {
     private readonly SemaphoreSlim gate = new(1, 1);
+    private long revision;
+    internal long Revision => Interlocked.Read(ref revision);
     internal async Task<string> ChangeAsync(string[] args, CancellationToken cancellation,
         IReadOnlyDictionary<string, string>? secrets = null, IProgress<string>? progress = null,
         bool apply = false)
@@ -19,6 +21,6 @@ internal sealed class Operations(CliClient cli)
         }
         return output;
         }
-        finally { gate.Release(); }
+        finally { Interlocked.Increment(ref revision); gate.Release(); }
     }
 }

@@ -115,6 +115,15 @@ Check("usage buckets preserve chart values with one scan", () =>
     Assert(empty.Maximum == 1 && empty.Total == 0 && empty.Values.Length == 7, "Empty chart changed");
     return Task.CompletedTask;
 });
+Check("mutation attempts invalidate presentation snapshots", async () =>
+{
+    var operations = new Operations(fixture);
+    var revision = operations.Revision;
+    await operations.ChangeAsync(["save"], CancellationToken.None);
+    Assert(operations.Revision == revision + 1, "Successful mutation kept an old snapshot revision");
+    await Failure(() => operations.ChangeAsync(["error"], CancellationToken.None));
+    Assert(operations.Revision == revision + 2, "Failed/partially committed mutation kept an old snapshot revision");
+});
 Check("argument boundaries and shell metacharacters", async () =>
 {
     var values = new[] { "echo", "value with spaces", "quote\"value", "$(whoami)", "& exit 9", "中文参数" };
