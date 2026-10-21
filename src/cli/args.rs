@@ -111,6 +111,11 @@ pub(super) enum Command {
         #[arg(long)]
         json: bool,
     },
+    /// Inspect and configure the hidden long-context engine.
+    Context {
+        #[command(subcommand)]
+        command: ContextCommand,
+    },
     #[command(hide = true)]
     Fusion {
         #[command(subcommand)]
@@ -895,6 +900,80 @@ pub(super) enum AgentCommand {
     Disconnect {
         #[arg(value_parser = agent_id)]
         id: String,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(super) enum ContextCommand {
+    /// Read or update the global context settings.
+    Config {
+        #[command(subcommand)]
+        command: ContextConfigCommand,
+    },
+    /// Show context usage for one session, or list every session.
+    Status {
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+    /// List and inspect archived context sessions.
+    Sessions {
+        #[command(subcommand)]
+        command: ContextSessionsCommand,
+    },
+    /// Export original messages, segments and blocks as JSON.
+    Export {
+        #[arg(long)]
+        session: Option<String>,
+        #[arg(long)]
+        out: Option<PathBuf>,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(super) enum ContextConfigCommand {
+    /// Print the effective context settings.
+    Get {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Update one or more context settings.
+    Set {
+        #[arg(long)]
+        enabled: Option<bool>,
+        #[arg(long)]
+        growth_threshold_tokens: Option<u64>,
+        #[arg(long)]
+        pressure_ratio: Option<f64>,
+        #[arg(long)]
+        urgent_ratio: Option<f64>,
+        #[arg(long)]
+        protected_messages: Option<usize>,
+        #[arg(long)]
+        protected_tokens: Option<u64>,
+        #[arg(long)]
+        max_internal_rounds: Option<usize>,
+        /// Model context window; pass "none" to fall back to gateway defaults.
+        #[arg(long)]
+        context_window_tokens: Option<String>,
+        #[arg(long)]
+        json: bool,
+    },
+}
+
+#[derive(Debug, Subcommand)]
+pub(super) enum ContextSessionsCommand {
+    /// List sessions with message and block counts.
+    List {
+        #[arg(long)]
+        json: bool,
+    },
+    /// Show the status of one session.
+    Show {
+        session: String,
+        #[arg(long)]
+        json: bool,
     },
 }
 

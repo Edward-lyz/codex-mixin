@@ -16,6 +16,7 @@ pub(super) fn describe(json_output: bool) -> anyhow::Result<()> {
             "gateway_log": std::path::absolute(super::runtime::default_log_file_path())?,
             "report_log": std::path::absolute(super::runtime::default_report_hook_log_path())?,
             "codex_models_cache": std::path::absolute(paths.models_cache)?,
+            "context_db": std::path::absolute(codex_mixin::context::database_path()?)?,
         },
         "capabilities": {
             "structured_errors": true,
@@ -27,6 +28,7 @@ pub(super) fn describe(json_output: bool) -> anyhow::Result<()> {
             "codex_lifecycle": true,
             "gateway_autostart": codex_mixin::platform::startup_service_supported(),
             "config_apply": true,
+            "context_management": true,
             "cors_configuration": true,
             "claude_desktop_routing": true,
             "official_ech_proxy": true,
