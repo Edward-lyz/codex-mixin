@@ -12,6 +12,7 @@ fn transport(client: Client, path: &std::path::Path) -> UpstreamAccess {
     };
     save_stored_config_to_path(path, &stored).unwrap();
     let config = GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:0".parse().unwrap(),
         providers: Vec::new(),
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),

@@ -8,8 +8,10 @@ use serde::{Deserialize, Serialize};
 
 use crate::provider::{CONFIG_VERSION, ProviderDefinition, ProviderRegistry};
 
+mod context;
 mod cors;
 mod fusion;
+pub use context::ContextSettings;
 pub(crate) use cors::{valid_cors_origin, validate_cors_origins};
 pub use fusion::{
     FUSION_MODEL_PREFIX, FusionMode, FusionProfile, FusionTimeRoute, OFFICIAL_MODEL_PREFIX,
@@ -78,6 +80,7 @@ pub struct GatewayConfig {
     pub web_search_tool_type: String,
     pub web_search_max_uses: Option<u64>,
     pub fusion_profiles: Vec<FusionProfile>,
+    pub context: ContextSettings,
 }
 
 impl GatewayConfig {
@@ -152,6 +155,7 @@ impl GatewayConfig {
             web_search_tool_type: "web_search_20250305".to_owned(),
             web_search_max_uses: Some(3),
             fusion_profiles,
+            context: stored_config.context,
         };
         validate_fusion_profiles(&config.fusion_profiles)?;
         Ok(config)
@@ -215,6 +219,8 @@ pub struct StoredGatewayConfig {
     pub official_model_contexts: BTreeMap<String, u64>,
     #[serde(default, skip_serializing_if = "Vec::is_empty")]
     pub fusion_profiles: Vec<FusionProfile>,
+    #[serde(default, skip_serializing_if = "ContextSettings::is_default")]
+    pub context: ContextSettings,
     pub providers: Vec<ProviderDefinition>,
 }
 
@@ -232,6 +238,7 @@ impl Default for StoredGatewayConfig {
             official_selected_models: None,
             official_model_contexts: BTreeMap::new(),
             fusion_profiles: Vec::new(),
+            context: ContextSettings::default(),
             providers: Vec::new(),
         }
     }
@@ -280,6 +287,7 @@ mod tests {
             official_selected_models: Some(vec!["gpt-5.6-sol".to_owned()]),
             official_model_contexts: BTreeMap::from([("gpt-5.6-sol".to_owned(), 500_000)]),
             fusion_profiles: Vec::new(),
+            context: ContextSettings::default(),
             providers: vec![crate::provider::open_code_go_provider(
                 "opencode-go",
                 "opencode-key",
@@ -758,6 +766,7 @@ mod tests {
     #[test]
     fn resolves_official_image_generation_urls() {
         let config = GatewayConfig {
+            context: Default::default(),
             bind: "127.0.0.1:0".parse().unwrap(),
             providers: vec![crate::provider::open_code_go_provider("opencode-go", "key")],
             official_responses_url: "https://chatgpt.example/backend-api/codex/responses"

@@ -236,6 +236,7 @@ async fn startup_does_not_wait_for_official_catalog_network() {
     save_stored_config_to_path(
         &gateway_config_path,
         &StoredGatewayConfig {
+            context: Default::default(),
             config_version: CONFIG_VERSION,
             gateway_bind: None,
             gateway_api_key: Some("gateway-key".to_owned()),
@@ -353,6 +354,7 @@ async fn first_start_accepts_client_key_created_during_client_sync() {
     save_stored_config_to_path(
         &gateway_config_path,
         &StoredGatewayConfig {
+            context: Default::default(),
             config_version: CONFIG_VERSION,
             gateway_bind: None,
             gateway_api_key: Some("gateway-key".to_owned()),

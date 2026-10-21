@@ -36,6 +36,7 @@ async fn fixture() -> (Router, tokio::task::JoinHandle<()>) {
         ..ProviderModel::default()
     }];
     let config = GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:0".parse().unwrap(),
         providers: vec![provider],
         official_responses_url: "https://example.invalid/responses".to_owned(),

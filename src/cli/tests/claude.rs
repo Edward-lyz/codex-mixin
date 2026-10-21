@@ -30,6 +30,7 @@ fn claude_install_writes_base_url_and_uninstall_restores_settings() {
         })
         .collect();
     let gateway_config = GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:8787".parse().unwrap(),
         providers: vec![baidu],
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
@@ -235,6 +236,7 @@ fn claude_install_uses_dedicated_client_key_as_auth_token() {
         ..ProviderModel::default()
     }];
     let gateway_config = GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:8787".parse().unwrap(),
         providers: vec![provider],
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
@@ -310,6 +312,7 @@ fn sync_claude_models_refreshes_only_managed_settings() {
         ..ProviderModel::default()
     }];
     let gateway_config = GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:8787".parse().unwrap(),
         providers: vec![provider],
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
@@ -404,6 +407,7 @@ fn claude_install_migrates_legacy_managed_env_backup() {
         ..ProviderModel::default()
     }];
     let gateway_config = GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:8787".parse().unwrap(),
         providers: vec![provider],
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
@@ -498,6 +502,7 @@ fn claude_install_accepts_any_routable_model_protocol() {
         ..ProviderModel::default()
     }];
     let gateway_config = GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:8787".parse().unwrap(),
         providers: vec![provider],
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
@@ -568,6 +573,7 @@ fn claude_install_marks_extended_context_models_without_family_mappings() {
         },
     ];
     let gateway_config = GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:8787".parse().unwrap(),
         providers: vec![provider],
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),

@@ -8,6 +8,7 @@ use super::*;
 
 fn config() -> GatewayConfig {
     GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:0".parse().unwrap(),
         providers: vec![crate::provider::open_code_go_provider("test", "test")],
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),

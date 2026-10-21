@@ -34,6 +34,7 @@ async fn model_change_signal_reloads_gateway_state() {
     let directory = tempfile::tempdir().unwrap();
     let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
     let config = GatewayConfig {
+        context: Default::default(),
         bind: listener.local_addr().unwrap(),
         providers: Vec::new(),
         official_responses_url: "https://example.invalid/responses".to_owned(),
@@ -88,6 +89,7 @@ fn messages_endpoint_rejects_non_anthropic_provider_protocols() {
     let mut provider = test_provider("https://example.invalid".to_owned(), "gpt-test");
     provider.protocol = crate::provider::ProviderProtocol::OpenAiChat;
     let state = AppState::new(GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:0".parse().unwrap(),
         providers: vec![provider],
         official_responses_url: "https://example.invalid/responses".to_owned(),
@@ -127,6 +129,7 @@ async fn explicit_official_selection_rejects_unselected_models() {
     .await
     .unwrap();
     let state = AppState::new(GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:0".parse().unwrap(),
         providers: Vec::new(),
         official_responses_url: "https://example.invalid/responses".to_owned(),
@@ -206,6 +209,7 @@ async fn gateway_auth_obeys_build_feature() {
     ducx.quota_username = Some("test-user".to_owned());
     ducx.request_policy.baidu_auth_bridge = Some(crate::provider::BaiduAuthBridge::DucxLoopback);
     let state = AppState::new(GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:8787".parse().unwrap(),
         providers: vec![
             test_provider("https://example.invalid".to_owned(), "test-model"),
@@ -324,6 +328,7 @@ async fn usage_auth_obeys_build_feature() {
     let directory = tempfile::tempdir().unwrap();
     let state = AppState::with_usage_aggregator(
         GatewayConfig {
+            context: Default::default(),
             bind: "127.0.0.1:0".parse().unwrap(),
             providers: Vec::new(),
             official_responses_url: "https://example.invalid/responses".to_owned(),
@@ -627,6 +632,7 @@ async fn fetches_repository_models_without_codex_auth_or_client_version() {
     .await
     .unwrap();
     let state = AppState::new(GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:0".parse().unwrap(),
         providers: vec![test_provider(
             "https://example.invalid".to_owned(),
@@ -726,6 +732,7 @@ async fn benchmark_api_runs_after_the_start_request_returns_and_persists_results
     let results_directory = tempfile::tempdir().unwrap();
     let results_path = results_directory.path().join("model-benchmarks.json");
     let mut state = AppState::new(GatewayConfig {
+        context: Default::default(),
         bind: gateway_address,
         providers: vec![test_provider(
             format!("http://{upstream_address}"),

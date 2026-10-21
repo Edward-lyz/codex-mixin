@@ -17,6 +17,7 @@ fn config() -> GatewayConfig {
     }];
     provider.selected_models = vec!["DeepSeek-V4-Flash".to_owned()];
     GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:0".parse().unwrap(),
         providers: vec![provider],
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
