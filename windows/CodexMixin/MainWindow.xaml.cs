@@ -211,9 +211,9 @@ public sealed partial class MainWindow : Window
             return;
         }
         if (command == "exit") { await ExitAsync(); return; }
-        if (busy) { ShowMain(); return; }
         if (command is "start" or "stop")
         {
+            if (busy) { ShowMain(); return; }
             await ChangeAsync(command == "start" ? "启动网关" : "停止网关",
                 ["service", command, "--managed", "--json"]);
             return;
