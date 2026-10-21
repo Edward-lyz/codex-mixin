@@ -2,7 +2,7 @@
 
 Windows 前端使用 **C# + XAML + WinUI 3 + Windows App SDK**。Flutter 工程、Runner、插件与补丁已移除。Rust CLI / 本地网关继续负责供应商、模型、客户端接入、配置事务和服务生命周期。
 
-采用微软推荐的新建原生桌面应用路线（[开发路径](https://learn.microsoft.com/en-us/windows/apps/get-started/)、[WinUI 3](https://learn.microsoft.com/en-us/windows/apps/winui/)）。Windows App SDK Runtime 固定为 stable `1.8.260921001`，WinUI 模块固定为同一发行组的 `1.8.260803003`，避免引入 preview / experimental API。
+采用微软推荐的新建原生桌面应用路线（[开发路径](https://learn.microsoft.com/en-us/windows/apps/get-started/)、[WinUI 3](https://learn.microsoft.com/en-us/windows/apps/winui/)）。Windows App SDK WinUI 模块固定为 stable `1.8.260803003`，Foundation、InteractiveExperiences 和 Base 沿用 lock file 中同一发行组的版本，避免引入 preview / experimental API。
 
 ## 原生界面
 
@@ -21,7 +21,7 @@ Windows 前端使用 **C# + XAML + WinUI 3 + Windows App SDK**。Flutter 工程�
 
 托盘重开时先展示上次额度，状态行标记正在刷新；首次打开和刷新失败时额度显示未知。服务状态、供应商列表和额度独立查询，供应商切换使用同一次额度快照，不再重复发请求。供应商侧栏也按可见行创建控件。点击其他窗口或桌面可收起正在查询的托盘面板。切换控制台页签和重新激活窗口保留最大化，仅最小化窗口需要还原。
 
-CLI 进程启动和 JSON 解析在后台线程执行。隐藏或最小化控制台暂停刷新定时器和加载动画；设置、Fusion、Agent 和用量页面不启动无用的轮询，离开模型页面释放编辑器引用，固定图标复用解码资源。模型行离开虚拟化回收池时移除测速控件引用，避免滚动一次就永久持有整行。安装器使用 LZMA solid 压缩，分发目录不含 PDB；只引用 WinUI 与 Runtime 模块，移除未使用的 AI、ML、Widgets、DWrite 和 Tensors 依赖；保留自包含运行时，不启用会影响 XAML 反射的 trimming。
+CLI 进程启动和 JSON 解析在后台线程执行。隐藏或最小化控制台暂停刷新定时器和加载动画；设置、Fusion、Agent 和用量页面不启动无用的轮询，离开模型页面释放编辑器引用，固定图标复用解码资源。模型行离开虚拟化回收池时移除测速控件引用，避免滚动一次就永久持有整行。安装器使用 LZMA solid 压缩，分发目录不含 PDB；只引用 WinUI 模块及其依赖，使用 SDK 官方的组件自包含载荷，避免 Runtime 总包的完整 MSIX 把未使用的 AI、ML、Widgets、DWrite 和 Tensors 再次打入分发目录；保留自包含运行时，不启用会影响 XAML 反射的 trimming。
 
 用量明细使用固定视口的虚拟列表，只为可见行创建控件；Fusion 模型选择同样使用原生虚拟列表，筛选不会丢失隐藏项的选择。会话筛选只更新摘要和明细，图表分组只更新图表。图表先按日期、供应商聚合，再绘制柱形，复杂度从每个日期/系列反复扫描记录，降为 `O(N + P log P + D×P)`；差分用例核对聚合/拆分、相同排序权重、窗口外数据和空数据的结果。
 

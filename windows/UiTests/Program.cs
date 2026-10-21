@@ -226,6 +226,8 @@ internal static class Program
             var recentTurns = CodexMixin.Json.Rows(cli.QueryAsync(["usage", "--turns", "--json", "--days", "7", "--limit", "500"], CancellationToken.None).GetAwaiter().GetResult());
             if (recentTurns.Length != 500) throw new InvalidOperationException($"Expected 500 real gateway turns, got {recentTurns.Length}");
             var usageScale = OpenWindow(start, process, "usage", "用量明细");
+            Wait(() => usageScale.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text))
+                .Cast<AutomationElement>().Any(element => element.Current.Name.Contains("ci-coder", StringComparison.Ordinal)), "large reply ledger has painted rows", process);
             var usageTextNodes = usageScale.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Text)).Count;
             if (usageTextNodes >= 1000) throw new InvalidOperationException($"Reply ledger eagerly created {usageTextNodes} text controls for 500 turns");
             Capture(usageScale, Path.Combine(output, "usage-500-turns.png"));
@@ -246,7 +248,9 @@ internal static class Program
             scroll.SetScrollPercent(ScrollPattern.NoScroll, 100);
             Wait(() => ((ScrollPattern)Find(modelsScale, "model-table").GetCurrentPattern(ScrollPattern.Pattern)).Current.VerticalScrollPercent > 95,
                 "large model table scrolls to the end", process);
-            var modelChecks = table.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.CheckBox)).Count;
+            var modelChecks = 0;
+            Wait(() => (modelChecks = table.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.CheckBox)).Count) > 0,
+                "large model table has painted rows", process);
             if (modelChecks >= 100) throw new InvalidOperationException($"Model table retained {modelChecks} realized checkboxes");
             Capture(modelsScale, Path.Combine(output, "models-600-scrolled.png"));
             Console.WriteLine($"PASS bounded controls: 500 turns / {usageTextNodes} text controls; 600 Fusion models / {fusionChecks} checkboxes; model table / {modelChecks} checkboxes");
@@ -273,6 +277,7 @@ internal static class Program
             process.Refresh();
             File.WriteAllText(Path.Combine(output, "resources.json"), JsonSerializer.Serialize(new
             {
+                loaded_modules = process.Modules.Cast<ProcessModule>().Select(module => module.ModuleName).Order().ToArray(),
                 background_private_bytes = backgroundPrivateBytes,
                 navigation_ms = navigationMs,
                 usage_turns = recentTurns.Length,
