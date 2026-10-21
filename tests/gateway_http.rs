@@ -130,6 +130,7 @@ enum OfficialWebSocketBehavior {
     ConnectionLimitThenComplete,
     Silent,
     SlowHandshake,
+    RateLimitedHttp,
 }
 
 fn has_native_agent_envelope(body: &Value) -> bool {
@@ -1067,6 +1068,24 @@ async fn mock_official_responses(
             .and_then(|value| value.to_str().ok())
             .map(str::to_owned),
     );
+    if matches!(
+        state.websocket_behavior,
+        OfficialWebSocketBehavior::RateLimitedHttp
+    ) {
+        return Response::builder()
+            .status(StatusCode::TOO_MANY_REQUESTS)
+            .header(header::CONTENT_TYPE, "application/json")
+            .body(Body::from(
+                json!({
+                    "error": {
+                        "message": "slow down",
+                        "type": "rate_limit_error"
+                    }
+                })
+                .to_string(),
+            ))
+            .unwrap();
+    }
     if uri.path().ends_with("/responses/compact") {
         return Json(json!({
             "id": "resp_official_compact",
@@ -1661,11 +1680,11 @@ async fn spawn_gateway_with_context(
     spawn_router(router(state)).await
 }
 
-async fn spawn_gateway_with_mock_official(
+async fn mock_official_gateway_config(
     behavior: OfficialWebSocketBehavior,
     request_timeout: Duration,
 ) -> (
-    String,
+    GatewayConfig,
     Arc<Mutex<Vec<Value>>>,
     Arc<AtomicUsize>,
     tempfile::TempDir,
@@ -1684,7 +1703,47 @@ async fn spawn_gateway_with_mock_official(
     )
     .unwrap();
     (
+        config,
+        official_requests,
+        official_websocket_connections,
+        codex_home,
+    )
+}
+
+async fn spawn_gateway_with_mock_official(
+    behavior: OfficialWebSocketBehavior,
+    request_timeout: Duration,
+) -> (
+    String,
+    Arc<Mutex<Vec<Value>>>,
+    Arc<AtomicUsize>,
+    tempfile::TempDir,
+) {
+    let (config, official_requests, official_websocket_connections, codex_home) =
+        mock_official_gateway_config(behavior, request_timeout).await;
+    (
         spawn_gateway_with_config(config).await,
+        official_requests,
+        official_websocket_connections,
+        codex_home,
+    )
+}
+
+async fn spawn_gateway_with_mock_official_context(
+    behavior: OfficialWebSocketBehavior,
+    request_timeout: Duration,
+    database_path: &std::path::Path,
+) -> (
+    String,
+    Arc<Mutex<Vec<Value>>>,
+    Arc<AtomicUsize>,
+    tempfile::TempDir,
+) {
+    let (mut config, official_requests, official_websocket_connections, codex_home) =
+        mock_official_gateway_config(behavior, request_timeout).await;
+    config.context.enabled = true;
+    (
+        spawn_gateway_with_context(config, database_path).await,
         official_requests,
         official_websocket_connections,
         codex_home,
@@ -3595,6 +3654,34 @@ async fn context_mixed_tools_hand_back_client_calls_only() {
         resumed.contains("/tmp/workspace"),
         "client result was lost: {resumed}"
     );
+}
+
+#[tokio::test]
+async fn context_official_route_keeps_the_upstream_status() {
+    let database = tempfile::tempdir().unwrap();
+    let database_path = database.path().join("context.db");
+    let (gateway_url, requests, _, _codex_home) = spawn_gateway_with_mock_official_context(
+        OfficialWebSocketBehavior::RateLimitedHttp,
+        Duration::from_secs(30),
+        &database_path,
+    )
+    .await;
+    let mut request = responses_request();
+    request["model"] = json!("gpt-5.5-codex");
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .json(&request)
+        .send()
+        .await
+        .unwrap();
+
+    let status = response.status();
+    let body = response.text().await.unwrap();
+    assert_eq!(status, StatusCode::TOO_MANY_REQUESTS, "body: {body}");
+    assert!(body.contains("slow down"), "upstream body lost: {body}");
+    assert_eq!(requests.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]

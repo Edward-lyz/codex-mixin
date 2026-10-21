@@ -105,6 +105,12 @@ impl ContextRun {
             "prepared context view"
         );
         let template = plan.body.clone();
+        // The first round runs before the response starts, so an upstream status
+        // or transport error keeps its own status instead of reaching the client
+        // as a successful stream that only carries a failure event.
+        let mut first_plan = plan.clone();
+        first_plan.body = compose_body(&template, &view.items, &[], &self.engine);
+        let first = run_round(&executor, first_plan, &headers).await?;
         let stream = async_stream::stream! {
             // The lease lives exactly as long as the client consumes this turn.
             let _lease = lease;
@@ -112,15 +118,24 @@ impl ContextRun {
             let mut appended: Vec<Value> = Vec::new();
             let mut revision = view.revision;
             let mut internal_rounds = 0usize;
+            let mut pending = Some(first);
             loop {
-                let body = compose_body(&template, &base, &appended, &self.engine);
-                let mut round_plan = plan.clone();
-                round_plan.body = body;
-                let outcome = match run_round(&executor, round_plan, &headers).await {
-                    Ok(outcome) => outcome,
-                    Err(error) => {
-                        yield Ok::<Bytes, Infallible>(failure_event(&template, error.to_string()));
-                        return;
+                let outcome = match pending.take() {
+                    Some(outcome) => outcome,
+                    None => {
+                        let body = compose_body(&template, &base, &appended, &self.engine);
+                        let mut round_plan = plan.clone();
+                        round_plan.body = body;
+                        match run_round(&executor, round_plan, &headers).await {
+                            Ok(outcome) => outcome,
+                            Err(error) => {
+                                yield Ok::<Bytes, Infallible>(failure_event(
+                                    &template,
+                                    error.to_string(),
+                                ));
+                                return;
+                            }
+                        }
                     }
                 };
                 if outcome.failed {
