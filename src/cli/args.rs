@@ -959,6 +959,12 @@ pub(super) enum ContextConfigCommand {
         protected_tokens: Option<u64>,
         #[arg(long)]
         max_internal_rounds: Option<usize>,
+        /// Highest compression tier the engine may produce (1-3).
+        #[arg(long)]
+        max_tier: Option<u8>,
+        /// Inject the compression guidance without the compression tools.
+        #[arg(long)]
+        guidance_only: Option<bool>,
         /// Model context window; pass "none" to fall back to gateway defaults.
         #[arg(long)]
         context_window_tokens: Option<String>,

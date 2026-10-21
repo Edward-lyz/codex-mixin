@@ -643,6 +643,13 @@ fn compress(
         }
     }
     let tier = compression_tier(store, session, &covered)?;
+    if tier.as_u8() > settings.max_tier {
+        bail!(
+            "compression tier {} exceeds the configured max_tier {}",
+            tier.as_u8(),
+            settings.max_tier
+        );
+    }
     let mut direct_refs = Vec::new();
     let mut full_refs: Vec<String> = Vec::new();
     let mut covered_tokens = 0u64;
@@ -1084,6 +1091,49 @@ mod tests {
         assert_eq!(view.items.len(), 3);
         assert_eq!(view.revision, execution.revision);
         assert_eq!(first.revision + 1, second.revision);
+    }
+
+    #[test]
+    fn refuses_a_tier_above_the_configured_max_tier() {
+        let engine = ContextEngine::open_in_memory(ContextSettings {
+            max_tier: 1,
+            ..settings()
+        })
+        .expect("in-memory context engine");
+        let session = session();
+        let mut items = four_messages();
+        items.insert(1, message("assistant", &long_body("gamma", 900)));
+        items.insert(2, message("assistant", &long_body("delta", 900)));
+        let view = engine.begin_turn(&session, &items, 10_000).expect("view");
+        let refs = segment_refs(&engine, &session);
+        let first = compress_refs(&engine, &session, view.revision, &refs[1], &refs[2]);
+
+        let view = engine.begin_turn(&session, &items, 10_000).expect("view");
+        let refs = segment_refs(&engine, &session);
+        let second = compress_refs(&engine, &session, view.revision, &refs[2], &refs[3]);
+        let view = engine.begin_turn(&session, &items, 10_000).expect("view");
+        assert_eq!(view.revision, second.revision);
+        let refs = segment_refs(&engine, &session);
+        let error = engine
+            .execute_tool(
+                &session,
+                second.revision,
+                TOOL_COMPRESS,
+                &json!({
+                    "block_ids": [refs[1], refs[2]],
+                    "topic": "work",
+                    "summary": "Both answers covered the same task.",
+                }),
+                10_000,
+            )
+            .expect_err("tier 2 must be refused");
+        assert!(
+            format!("{error}").contains("exceeds the configured max_tier 1"),
+            "unexpected error: {error}"
+        );
+        assert_eq!(first.revision + 1, second.revision);
+        let view = engine.begin_turn(&session, &items, 10_000).expect("view");
+        assert_eq!(view.revision, second.revision);
     }
 
     #[test]

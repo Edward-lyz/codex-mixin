@@ -16,6 +16,8 @@ struct ContextUpdate {
     protected_messages: Option<usize>,
     protected_tokens: Option<u64>,
     max_internal_rounds: Option<usize>,
+    max_tier: Option<u8>,
+    guidance_only: Option<bool>,
     context_window_tokens: Option<String>,
 }
 
@@ -31,6 +33,8 @@ pub(super) fn run(command: ContextCommand) -> Result<()> {
                 protected_messages,
                 protected_tokens,
                 max_internal_rounds,
+                max_tier,
+                guidance_only,
                 context_window_tokens,
                 json: json_output,
             } => config_set(
@@ -42,6 +46,8 @@ pub(super) fn run(command: ContextCommand) -> Result<()> {
                     protected_messages,
                     protected_tokens,
                     max_internal_rounds,
+                    max_tier,
+                    guidance_only,
                     context_window_tokens,
                 },
                 json_output,
@@ -84,6 +90,8 @@ fn config_get(json_output: bool) -> Result<()> {
         println!("protected messages: {}", settings["protected_messages"]);
         println!("protected tokens: {}", settings["protected_tokens"]);
         println!("max internal rounds: {}", settings["max_internal_rounds"]);
+        println!("max tier: {}", settings["max_tier"]);
+        println!("guidance only: {}", settings["guidance_only"]);
         println!(
             "context window tokens: {}",
             settings["context_window_tokens"]
@@ -135,6 +143,12 @@ fn apply_update(settings: &mut ContextSettings, update: ContextUpdate) -> Result
     }
     if let Some(value) = update.max_internal_rounds {
         settings.max_internal_rounds = value;
+    }
+    if let Some(value) = update.max_tier {
+        settings.max_tier = value;
+    }
+    if let Some(value) = update.guidance_only {
+        settings.guidance_only = value;
     }
     if let Some(value) = update.context_window_tokens {
         settings.context_window_tokens = parse_window(&value)?;
@@ -418,6 +432,8 @@ mod tests {
             protected_messages: None,
             protected_tokens: None,
             max_internal_rounds: None,
+            max_tier: None,
+            guidance_only: None,
             context_window_tokens: None,
         };
         assert!(apply_update(&mut settings, update).is_err());

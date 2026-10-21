@@ -2,8 +2,9 @@ use anyhow::{Result, bail};
 use serde::{Deserialize, Serialize};
 
 use crate::context::types::{
-    DEFAULT_GROWTH_THRESHOLD_TOKENS, DEFAULT_MAX_INTERNAL_ROUNDS, DEFAULT_PRESSURE_RATIO,
-    DEFAULT_PROTECTED_MESSAGES, DEFAULT_PROTECTED_TOKENS, DEFAULT_URGENT_RATIO,
+    DEFAULT_GROWTH_THRESHOLD_TOKENS, DEFAULT_MAX_INTERNAL_ROUNDS, DEFAULT_MAX_TIER,
+    DEFAULT_PRESSURE_RATIO, DEFAULT_PROTECTED_MESSAGES, DEFAULT_PROTECTED_TOKENS,
+    DEFAULT_URGENT_RATIO,
 };
 
 #[derive(Clone, Debug, PartialEq, Serialize, Deserialize)]
@@ -18,6 +19,12 @@ pub struct ContextSettings {
     pub protected_messages: usize,
     pub protected_tokens: u64,
     pub max_internal_rounds: usize,
+    /// Highest compression tier the engine may produce. Lowering it keeps the
+    /// ablation arm that only allows tier 1 summaries reproducible.
+    pub max_tier: u8,
+    /// Injects the compression guidance without exposing the compression
+    /// tools, which is the guidance-only ablation arm.
+    pub guidance_only: bool,
     /// Explicit model context window override. Real model metadata wins when
     /// the gateway knows it.
     pub context_window_tokens: Option<u64>,
@@ -33,6 +40,8 @@ impl Default for ContextSettings {
             protected_messages: DEFAULT_PROTECTED_MESSAGES,
             protected_tokens: DEFAULT_PROTECTED_TOKENS,
             max_internal_rounds: DEFAULT_MAX_INTERNAL_ROUNDS,
+            max_tier: DEFAULT_MAX_TIER,
+            guidance_only: false,
             context_window_tokens: None,
         }
     }
@@ -60,6 +69,9 @@ impl ContextSettings {
         }
         if self.max_internal_rounds == 0 || self.max_internal_rounds > 8 {
             bail!("context max_internal_rounds must be between 1 and 8");
+        }
+        if self.max_tier == 0 || self.max_tier > 3 {
+            bail!("context max_tier must be between 1 and 3");
         }
         if self.context_window_tokens == Some(0) {
             bail!("context context_window_tokens must be positive when set");

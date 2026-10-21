@@ -22,9 +22,14 @@ codex-mixin context config get --json
 | `protected_messages` | 最近保留的消息条数 | 5 |
 | `protected_tokens` | 最近保留的 token 数 | 5000 |
 | `max_internal_rounds` | 单次用户请求内的内部续轮上限 | 4 |
+| `max_tier` | 允许产生的最高压缩层级（1-3），用于消融实验 | 3 |
+| `guidance_only` | 只注入压缩指引、不注入压缩工具（仅消融实验） | `false` |
 
 CLI 只改配置，不启动网关：`codex-mixin context config set --growth-threshold-tokens 40000`。
-窗口参数接受 `none`（清除）与正整数（0 报错）。
+窗口参数接受 `none`（清除）与正整数（0 报错）。消融实验用
+`--enabled false`、`--guidance-only true`、`--max-tier 1` 和默认配置四组区分
+原有流程、仅指引、仅 T1 与完整三级压缩；`max_tier` 超限时压缩失败并返回
+`compression tier N exceeds the configured max_tier M`。
 
 ## 模型侧接口
 

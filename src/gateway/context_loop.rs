@@ -43,6 +43,7 @@ pub(crate) struct ContextRun {
     window_tokens: u64,
     max_internal_rounds: usize,
     enabled: bool,
+    guidance_only: bool,
 }
 
 struct RoundOutcome {
@@ -90,12 +91,14 @@ impl ContextRun {
         let settings = engine.settings();
         let window_tokens = settings.context_window_tokens.unwrap_or(0);
         let max_internal_rounds = settings.max_internal_rounds;
+        let guidance_only = settings.guidance_only;
         Ok(Some(Self {
             engine,
             session,
             window_tokens,
             max_internal_rounds,
             enabled,
+            guidance_only,
         }))
     }
 
@@ -168,7 +171,13 @@ impl ContextRun {
         // or transport error keeps its own status instead of reaching the client
         // as a successful stream that only carries a failure event.
         let mut first_plan = plan.clone();
-        first_plan.body = compose_body(&template, &view.items, &[], &self.engine);
+        first_plan.body = compose_body(
+            &template,
+            &view.items,
+            &[],
+            &self.engine,
+            !self.guidance_only,
+        );
         let first = run_round(&executor, first_plan, &headers).await?;
         let stream = async_stream::stream! {
             // The lease lives exactly as long as the client consumes this turn.
@@ -182,7 +191,13 @@ impl ContextRun {
                 let outcome = match pending.take() {
                     Some(outcome) => outcome,
                     None => {
-                        let body = compose_body(&template, &base, &appended, &self.engine);
+                        let body = compose_body(
+                            &template,
+                            &base,
+                            &appended,
+                            &self.engine,
+                            !self.guidance_only,
+                        );
                         let mut round_plan = plan.clone();
                         round_plan.body = body;
                         match run_round(&executor, round_plan, &headers).await {
@@ -512,6 +527,7 @@ fn compose_body(
     base: &[Value],
     appended: &[Value],
     engine: &ContextEngine,
+    inject_tools: bool,
 ) -> Value {
     let mut body = template.clone();
     let mut input: Vec<Value> = base.to_vec();
@@ -529,7 +545,9 @@ fn compose_body(
         .cloned()
         .unwrap_or_default();
     tools.retain(|tool| !tool_name(tool).is_some_and(is_context_tool));
-    tools.extend(engine.tool_definitions());
+    if inject_tools {
+        tools.extend(engine.tool_definitions());
+    }
     body["tools"] = Value::Array(tools);
     body
 }
@@ -672,7 +690,7 @@ mod tests {
             "tools": [{"type": "function", "name": "shell", "parameters": {}}],
         });
         let base = vec![user("compressed view")];
-        let body = compose_body(&template, &base, &[], &engine);
+        let body = compose_body(&template, &base, &[], &engine, true);
         assert_eq!(body["input"], json!([user("compressed view")]));
         assert!(body.get("previous_response_id").is_none());
         let tools = body["tools"].as_array().expect("tools array");
@@ -693,9 +711,25 @@ mod tests {
     fn replaces_client_tools_that_shadow_internal_names() {
         let engine = engine();
         let template = json!({"tools": [{"type": "function", "name": "mixin_context_status"}]});
-        let body = compose_body(&template, &[], &[], &engine);
+        let body = compose_body(&template, &[], &[], &engine, true);
         let tools = body["tools"].as_array().expect("tools array");
         assert_eq!(tools.len(), 4);
+    }
+
+    #[test]
+    fn guidance_only_keeps_the_guidance_without_internal_tools() {
+        let engine = engine();
+        let template = json!({"tools": [{"type": "function", "name": "shell"}]});
+        let body = compose_body(&template, &[], &[], &engine, false);
+        let tools = body["tools"].as_array().expect("tools array");
+        assert_eq!(tools.len(), 1);
+        assert_eq!(tools[0]["name"], "shell");
+        assert!(
+            body["instructions"]
+                .as_str()
+                .unwrap_or_default()
+                .contains("<context_management>")
+        );
     }
 
     fn raw(event: &str, payload: &Value) -> Bytes {
