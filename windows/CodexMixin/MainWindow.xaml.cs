@@ -135,7 +135,7 @@ public sealed partial class MainWindow : Window
 
     private void InitializeView()
     {
-        if (initialized || !Root.IsLoaded || !IsViewVisible) return;
+        if (exiting || initialized || !Root.IsLoaded || !IsViewVisible) return;
         initialized = true;
         Root.XamlRoot.Changed += (_, _) => UpdateTitleInput();
         UpdateTitleInput();
@@ -150,7 +150,7 @@ public sealed partial class MainWindow : Window
                 await LoadPageAsync(token);
             }, readOnly: true);
             UpdateRefreshTimer();
-            captureReady?.Set();
+            if (!exiting) captureReady?.Set();
         })) throw new InvalidOperationException("无法调度 Windows 界面初始化。");
     }
 
@@ -255,6 +255,8 @@ public sealed partial class MainWindow : Window
         shell?.Show();
         AppWindow.Show();
         Activate();
+        // Native ShowWindow can deliver Loaded before AppWindow reports visibility.
+        DispatcherQueue.TryEnqueue(InitializeView);
     }
 
     private void OnTrayCommand(string command) => DispatcherQueue.TryEnqueue(async () =>
