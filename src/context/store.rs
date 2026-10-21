@@ -5,7 +5,7 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
-use super::types::{DirectRef, SegmentKind, SessionSummary, Tier};
+use super::types::{CacheStats, DirectRef, SegmentKind, SessionSummary, Tier};
 
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS sessions (
@@ -41,6 +41,8 @@ CREATE TABLE IF NOT EXISTS blocks (
     start_position INTEGER NOT NULL,
     end_position INTEGER NOT NULL,
     superseded_by TEXT,
+    covered_tokens INTEGER NOT NULL DEFAULT 0,
+    replacement_tokens INTEGER NOT NULL DEFAULT 0,
     created_at INTEGER NOT NULL,
     PRIMARY KEY (session_key, block_id)
 );
@@ -67,7 +69,23 @@ CREATE TABLE IF NOT EXISTS leases (
     acquired_at INTEGER NOT NULL,
     expires_at INTEGER NOT NULL
 );
+CREATE TABLE IF NOT EXISTS turns (
+    session_key TEXT NOT NULL,
+    at_ms INTEGER NOT NULL,
+    input_tokens INTEGER NOT NULL,
+    cached_tokens INTEGER NOT NULL,
+    output_tokens INTEGER NOT NULL
+);
+CREATE INDEX IF NOT EXISTS turns_session ON turns (session_key, at_ms);
 ";
+
+/// Cached prompt tokens are a subset of the billed input tokens.
+pub(crate) fn cache_hit_percent(cached_tokens: u64, input_tokens: u64) -> f64 {
+    if input_tokens == 0 {
+        return 0.0;
+    }
+    cached_tokens as f64 / input_tokens as f64 * 100.0
+}
 
 pub(crate) fn unix_now() -> i64 {
     SystemTime::now()
@@ -106,6 +124,29 @@ pub(crate) struct BlockRow {
     pub summary: String,
     pub direct_refs: Vec<DirectRef>,
     pub full_refs: Vec<String>,
+}
+
+/// Billed usage of one upstream round; unknown counters are not recorded so
+/// cached-token totals stay honest.
+#[derive(Clone, Copy, Debug)]
+pub(crate) struct TurnSample {
+    pub at_ms: i64,
+    pub input_tokens: u64,
+    pub cached_tokens: u64,
+    pub output_tokens: u64,
+}
+
+#[derive(Clone, Debug)]
+pub(crate) struct SessionUsage {
+    pub session: String,
+    pub revision: i64,
+    pub updated_at: i64,
+    pub messages: u64,
+    /// Blocks created, including the ones a higher tier superseded.
+    pub compressions: u64,
+    /// Tokens the live blocks removed from the view.
+    pub saved_tokens: u64,
+    pub cache: CacheStats,
 }
 
 #[derive(Clone, Debug)]
@@ -157,6 +198,8 @@ impl Store {
             .context("create context schema")?;
         self.upgrade_response_output()
             .context("upgrade context schema")?;
+        self.upgrade_block_tokens()
+            .context("upgrade context schema")?;
         // No lease survives a process restart, so stale rows must not block a
         // new turn after a crash.
         self.connection
@@ -192,6 +235,46 @@ impl Store {
             )
             .context("add context responses output column")?;
         Ok(())
+    }
+
+    /// Blocks written before compression sizes were tracked report zero, which
+    /// the statistics show as "no saving recorded" rather than a wrong number.
+    fn upgrade_block_tokens(&self) -> Result<()> {
+        for (column, definition) in [
+            (
+                "covered_tokens",
+                "covered_tokens INTEGER NOT NULL DEFAULT 0",
+            ),
+            (
+                "replacement_tokens",
+                "replacement_tokens INTEGER NOT NULL DEFAULT 0",
+            ),
+        ] {
+            if self.has_column("blocks", column)? {
+                continue;
+            }
+            self.connection
+                .execute(&format!("ALTER TABLE blocks ADD COLUMN {definition}"), [])
+                .with_context(|| format!("add context block {column} column"))?;
+        }
+        Ok(())
+    }
+
+    fn has_column(&self, table: &str, column: &str) -> Result<bool> {
+        let mut statement = self
+            .connection
+            .prepare(&format!("PRAGMA table_info({table})"))
+            .with_context(|| format!("inspect context {table} table"))?;
+        let mut rows = statement
+            .query([])
+            .with_context(|| format!("read context {table} columns"))?;
+        while let Some(row) = rows.next().context("read context column")? {
+            let name: String = row.get(1).context("read context column name")?;
+            if name == column {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     pub fn ensure_session(&mut self, key: &str) -> Result<SessionRow> {
@@ -555,6 +638,8 @@ impl Store {
         summary: &str,
         direct_refs: &[DirectRef],
         full_refs: &[String],
+        covered_tokens: u64,
+        replacement_tokens: u64,
     ) -> Result<(String, i64)> {
         if covered.is_empty() {
             bail!("compression cover is empty");
@@ -590,8 +675,9 @@ impl Store {
         transaction
             .execute(
                 "INSERT INTO blocks (session_key, block_id, tier, topic, summary, direct_refs,
-                                     full_refs, start_position, end_position, superseded_by, created_at)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10)",
+                                     full_refs, start_position, end_position, superseded_by,
+                                     covered_tokens, replacement_tokens, created_at)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, NULL, ?10, ?11, ?12)",
                 params![
                     key,
                     block_id,
@@ -602,6 +688,8 @@ impl Store {
                     serde_json::to_string(full_refs).context("encode block full references")?,
                     start,
                     end,
+                    covered_tokens as i64,
+                    replacement_tokens as i64,
                     unix_now()
                 ],
             )
@@ -788,6 +876,75 @@ impl Store {
             )
             .context("count archived messages")?;
         Ok((counts, archive_messages, archive_bytes))
+    }
+
+    pub fn record_turn(&mut self, key: &str, sample: TurnSample) -> Result<()> {
+        self.ensure_session(key)?;
+        self.connection
+            .execute(
+                "INSERT INTO turns (session_key, at_ms, input_tokens, cached_tokens, output_tokens)
+                 VALUES (?1, ?2, ?3, ?4, ?5)",
+                params![
+                    key,
+                    sample.at_ms,
+                    sample.input_tokens as i64,
+                    sample.cached_tokens as i64,
+                    sample.output_tokens as i64
+                ],
+            )
+            .context("record context turn usage")?;
+        Ok(())
+    }
+
+    /// Per-session compression and cache aggregates for the console page. View
+    /// sizes stay out of this query because only the engine can render a view.
+    pub fn session_usage(&self) -> Result<Vec<SessionUsage>> {
+        let mut statement = self
+            .connection
+            .prepare(
+                "SELECT s.session_key, s.revision, s.updated_at,
+                        (SELECT COUNT(*) FROM history h WHERE h.session_key = s.session_key),
+                        (SELECT COUNT(*) FROM blocks b WHERE b.session_key = s.session_key),
+                        (SELECT COALESCE(SUM(b.covered_tokens - b.replacement_tokens), 0)
+                         FROM blocks b
+                         WHERE b.session_key = s.session_key AND b.superseded_by IS NULL),
+                        (SELECT COUNT(*) FROM turns t WHERE t.session_key = s.session_key),
+                        (SELECT COALESCE(SUM(t.input_tokens), 0) FROM turns t
+                         WHERE t.session_key = s.session_key),
+                        (SELECT COALESCE(SUM(t.cached_tokens), 0) FROM turns t
+                         WHERE t.session_key = s.session_key),
+                        (SELECT COALESCE(SUM(t.output_tokens), 0) FROM turns t
+                         WHERE t.session_key = s.session_key)
+                 FROM sessions s ORDER BY s.updated_at DESC",
+            )
+            .context("prepare session usage")?;
+        let rows = statement
+            .query_map([], |row| {
+                Ok(SessionUsage {
+                    session: row.get(0)?,
+                    revision: row.get(1)?,
+                    updated_at: row.get(2)?,
+                    messages: row.get::<_, i64>(3)?.max(0) as u64,
+                    compressions: row.get::<_, i64>(4)?.max(0) as u64,
+                    saved_tokens: row.get::<_, i64>(5)?.max(0) as u64,
+                    cache: CacheStats {
+                        turns: row.get::<_, i64>(6)?.max(0) as u64,
+                        input_tokens: row.get::<_, i64>(7)?.max(0) as u64,
+                        cached_tokens: row.get::<_, i64>(8)?.max(0) as u64,
+                        output_tokens: row.get::<_, i64>(9)?.max(0) as u64,
+                        hit_percent: 0.0,
+                    },
+                })
+            })
+            .context("read session usage")?;
+        let mut usage = Vec::new();
+        for row in rows {
+            let mut row = row.context("read session usage row")?;
+            row.cache.hit_percent =
+                cache_hit_percent(row.cache.cached_tokens, row.cache.input_tokens);
+            usage.push(row);
+        }
+        Ok(usage)
     }
 
     pub fn session_summaries(&self) -> Result<Vec<SessionSummary>> {

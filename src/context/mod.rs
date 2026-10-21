@@ -10,7 +10,11 @@ use std::path::PathBuf;
 use anyhow::{Context, Result};
 
 pub use engine::{ContextEngine, ToolExecution};
-pub use types::{ContextStatus, SessionSummary, Tier, TierCounts, TurnView};
+pub(crate) use store::TurnSample;
+pub use types::{
+    CacheStats, ContextStats, ContextStatus, SessionStats, SessionSummary, StatsTotals, Tier,
+    TierCounts, TurnView,
+};
 
 pub const DATABASE_ENV: &str = "CODEX_MIXIN_CONTEXT_DB";
 

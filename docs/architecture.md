@@ -44,6 +44,8 @@ codesign、osascript）、Linux（systemd --user、notify-send）与 Windows
 
 三个 UI 壳均位于仓库顶层。`src/main.rs` 是唯一的 composition root：它把
 CLI 解析出的抽象交互入口连接到 `panel`（axum Web 壳，静态资源内嵌），core 和 CLI 模块不引用任何具体壳。
+`panel` 的「上下文」页读取 `/api/context`（`context stats --json` 与 `context config get --json`），
+并通过白名单动作 `context_configure` 映射为 `context config set`。
 macOS、Windows 与 Web 面板壳通过带 `--no-tui` 的 CLI 子进程访问同一组用例与 JSON
 contract，平台 UI 不复制 provider、gateway 或 client integration 业务规则，
 也不读写 CLI 状态目录中的任何文件。壳自己的数据（诊断日志、额度展示缓存、
@@ -61,6 +63,7 @@ Windows 为 `%LOCALAPPDATA%\CodexMixin`）。
 | `fusion models --json` | Fusion 可选模型（含 `official:<slug>`） |
 | `context config get\|set --json` | 长上下文引擎开关与阈值；只写配置，不启动网关 |
 | `context status\|sessions\|export --json` | 会话 revision、分层计数、可压缩范围与原始归档导出 |
+| `context stats --json` | 每会话与总计的压缩节省量、视图 token、上游缓存命中 |
 | `connect ducx --json` | 安装并登录托管 DUCX；无终端时由 CLI 打开终端窗口扫码，返回可执行文件路径 |
 
 启停规则由 Rust 负责：自启定义存在即表示自启开启；启动、停止、重启、升级与
@@ -74,7 +77,7 @@ Windows 为 `%LOCALAPPDATA%\CodexMixin`）。
   是 fusion 与 server 唯一的网关执行入口。
 - `catalog::CatalogService`：模型枚举、benchmark 目标、目录响应缓存。
 - `context::ContextEngine`：按会话同步原始消息、渲染压缩视图、校验并提交压缩、
-  提供检索与导出；网关内部回路通过它执行四个 context 工具。
+  提供检索、导出与压缩/缓存统计；网关内部回路通过它执行四个 context 工具。
 - `server::AppState`：纯组合对象，持有上述组件与 benchmark/图片路由等
   handler 所需状态，不再实现发送、认证或目录业务。
 

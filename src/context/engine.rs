@@ -7,11 +7,12 @@ use serde_json::{Value, json};
 
 use super::checkpoint;
 use super::guidance::GUIDANCE;
-use super::store::{SegmentRow, Store};
+use super::store::{SegmentRow, Store, TurnSample};
 use super::tools;
 use super::types::{
-    CompressibleRange, ContextStatus, DirectRef, Protection, SegmentKind, SessionSummary, Tier,
-    TurnView, estimate_item_tokens, estimate_text_tokens, is_context_tool,
+    CompressibleRange, ContextStats, ContextStatus, DirectRef, Protection, SegmentKind,
+    SessionStats, SessionSummary, StatsTotals, Tier, TurnView, estimate_item_tokens,
+    estimate_text_tokens, is_context_tool, session_display_name,
 };
 
 /// A turn is serialized against other turns of the same session, so a lease
@@ -373,6 +374,51 @@ impl ContextEngine {
         store.session_summaries()
     }
 
+    /// Records the billed usage of one upstream round so the console can show
+    /// the cache hit rate of a context session.
+    pub(crate) fn record_turn(&self, session: &str, sample: TurnSample) -> Result<()> {
+        self.lock()?
+            .record_turn(session, sample)
+            .with_context(|| format!("record turn usage for {}", session_display_name(session)))
+    }
+
+    /// Compression and cache totals per session for the console page.
+    pub fn stats(&self, window_tokens: u64, enabled: bool) -> Result<ContextStats> {
+        let usage = self.lock()?.session_usage()?;
+        let mut sessions = Vec::with_capacity(usage.len());
+        for row in usage {
+            let status = self.status(&row.session, window_tokens, enabled)?;
+            sessions.push(SessionStats {
+                display: session_display_name(&row.session),
+                session: row.session,
+                revision: row.revision,
+                updated_at: row.updated_at,
+                messages: row.messages,
+                compressions: row.compressions,
+                saved_tokens: row.saved_tokens,
+                view_tokens: status.estimated_view_tokens,
+                tiers: status.tiers,
+                cache: row.cache,
+            });
+        }
+        let mut totals = StatsTotals {
+            sessions: sessions.len() as u64,
+            ..StatsTotals::default()
+        };
+        for session in &sessions {
+            totals.messages = totals.messages.saturating_add(session.messages);
+            totals.compressions = totals.compressions.saturating_add(session.compressions);
+            totals.saved_tokens = totals.saved_tokens.saturating_add(session.saved_tokens);
+            totals.view_tokens = totals.view_tokens.saturating_add(session.view_tokens);
+            totals.cache.merge(&session.cache);
+        }
+        Ok(ContextStats {
+            enabled,
+            sessions,
+            totals,
+        })
+    }
+
     pub fn export(&self, session: &str) -> Result<Value> {
         let store = self.lock()?;
         store.export(session)
@@ -653,6 +699,8 @@ fn compress(
         summary,
         &direct_refs,
         &full_refs,
+        covered_tokens,
+        replacement_tokens,
     )
 }
 
@@ -1491,6 +1539,124 @@ mod tests {
             error.to_string().contains("is newer than the archived"),
             "{error}"
         );
+    }
+
+    #[test]
+    fn reports_compression_and_cache_stats() {
+        let engine = engine();
+        let session = session();
+        let items = four_messages();
+        let view = engine.begin_turn(&session, &items, 10_000).expect("view");
+        let status = status_of(&engine, &session, view.revision);
+        let range = status
+            .compressible
+            .iter()
+            .find(|range| range.tier == "t1")
+            .expect("a tier 1 range");
+        let execution = compress_pair(&engine, &session, view.revision, range);
+        engine
+            .record_turn(
+                &session,
+                TurnSample {
+                    at_ms: 1,
+                    input_tokens: 1_000,
+                    cached_tokens: 600,
+                    output_tokens: 50,
+                },
+            )
+            .expect("first turn");
+        engine
+            .record_turn(
+                &session,
+                TurnSample {
+                    at_ms: 2,
+                    input_tokens: 1_000,
+                    cached_tokens: 700,
+                    output_tokens: 80,
+                },
+            )
+            .expect("second turn");
+
+        let stats = engine.stats(10_000, true).expect("context stats");
+        assert!(stats.enabled);
+        assert_eq!(stats.totals.sessions, 1);
+        assert_eq!(stats.totals.messages, 4);
+        assert_eq!(stats.totals.compressions, 1);
+        assert!(stats.totals.saved_tokens > 0);
+        assert_eq!(stats.totals.cache.turns, 2);
+        assert_eq!(stats.totals.cache.input_tokens, 2_000);
+        assert_eq!(stats.totals.cache.cached_tokens, 1_300);
+        assert_eq!(stats.totals.cache.output_tokens, 130);
+        assert!((stats.totals.cache.hit_percent - 65.0).abs() < 1e-9);
+
+        let row = stats.sessions.first().expect("one session");
+        assert_eq!(row.session, session);
+        assert_eq!(row.display, "codex / thread-1");
+        assert_eq!(row.revision, execution.revision);
+        assert_eq!(row.compressions, 1);
+        assert!(row.view_tokens > 0);
+        assert_eq!(row.tiers.t1_blocks, 1);
+        assert_eq!(row.cache.hit_percent, 65.0);
+    }
+
+    #[test]
+    fn upgrades_a_database_written_before_token_columns() {
+        let directory = tempfile::tempdir().expect("temp dir");
+        let path = directory.path().join("context.db");
+        drop(ContextEngine::open(settings(), &path).expect("first open"));
+        {
+            let connection = rusqlite::Connection::open(&path).expect("open database");
+            connection
+                .execute_batch(
+                    "DROP TABLE blocks;
+                     CREATE TABLE blocks (
+                        session_key TEXT NOT NULL,
+                        block_id TEXT NOT NULL,
+                        tier INTEGER NOT NULL,
+                        topic TEXT NOT NULL,
+                        summary TEXT NOT NULL,
+                        direct_refs TEXT NOT NULL,
+                        full_refs TEXT NOT NULL,
+                        start_position INTEGER NOT NULL,
+                        end_position INTEGER NOT NULL,
+                        superseded_by TEXT,
+                        created_at INTEGER NOT NULL,
+                        PRIMARY KEY (session_key, block_id)
+                     );",
+                )
+                .expect("recreate the old blocks table");
+        }
+
+        let engine = ContextEngine::open(settings(), &path).expect("upgrade open");
+        let session = session();
+        let view = engine
+            .begin_turn(&session, &four_messages(), 10_000)
+            .expect("view");
+        let status = status_of(&engine, &session, view.revision);
+        let range = status
+            .compressible
+            .iter()
+            .find(|range| range.tier == "t1")
+            .expect("a tier 1 range");
+        compress_pair(&engine, &session, view.revision, range);
+
+        let stats = engine.stats(10_000, true).expect("context stats");
+        assert_eq!(stats.totals.compressions, 1);
+        assert!(
+            stats.totals.saved_tokens > 0,
+            "token columns must be upgraded"
+        );
+    }
+
+    #[test]
+    fn reports_zero_stats_without_sessions() {
+        let engine = engine();
+        let stats = engine.stats(10_000, false).expect("context stats");
+        assert!(!stats.enabled);
+        assert!(stats.sessions.is_empty());
+        assert_eq!(stats.totals.sessions, 0);
+        assert_eq!(stats.totals.saved_tokens, 0);
+        assert_eq!(stats.totals.cache.hit_percent, 0.0);
     }
 
     #[test]
