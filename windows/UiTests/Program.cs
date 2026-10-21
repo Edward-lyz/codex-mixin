@@ -231,10 +231,10 @@ internal static class Program
             Capture(usageScale, Path.Combine(output, "usage-500-turns.png"));
             SeedDemo(cli, output, upstream.Url, modelCount: 600);
             var fusionScale = OpenWindow(start, process, "fusion", "Fusion 设置");
-            var refresh = fusionScale.FindFirst(TreeScope.Descendants, new AndCondition(
+            var fusionRefresh = fusionScale.FindFirst(TreeScope.Descendants, new AndCondition(
                 new PropertyCondition(AutomationElement.NameProperty, "刷新"), new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.Button)))
                 ?? throw new InvalidOperationException("Fusion refresh button missing");
-            ((InvokePattern)refresh.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
+            ((InvokePattern)fusionRefresh.GetCurrentPattern(InvokePattern.Pattern)).Invoke();
             Wait(() => fusionScale.FindFirst(TreeScope.Descendants, new PropertyCondition(AutomationElement.NameProperty, "可选 600 个模型")) != null
                 && Find(fusionScale, "operation-status").Current.Name.Contains("完成", StringComparison.Ordinal), "large Fusion catalog load", process);
             var fusionChecks = fusionScale.FindAll(TreeScope.Descendants, new PropertyCondition(AutomationElement.ControlTypeProperty, ControlType.CheckBox)).Count;
