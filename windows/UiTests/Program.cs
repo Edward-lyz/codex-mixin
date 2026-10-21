@@ -152,6 +152,19 @@ internal static class Program
                     }
                 }
             }
+            window = OpenWindow(start, process, "providers", "模型与服务");
+            var consoleHandle = (nint)window.Current.NativeWindowHandle;
+            var pattern = (WindowPattern)window.GetCurrentPattern(WindowPattern.Pattern);
+            pattern.SetWindowVisualState(WindowVisualState.Maximized);
+            Wait(() => IsZoomed(consoleHandle), "maximized console", process);
+            foreach (var (role, title) in new[] { ("agents", "Agent 接入管理"), ("usage", "用量明细"), ("providers", "模型与服务") })
+            {
+                var target = OpenWindow(start, process, role, title);
+                if ((nint)target.Current.NativeWindowHandle != consoleHandle || !IsZoomed(consoleHandle))
+                    throw new InvalidOperationException($"Console lost maximization while opening {role}");
+            }
+            pattern.SetWindowVisualState(WindowVisualState.Normal);
+            Console.WriteLine("PASS console navigation preserves maximization");
             Console.WriteLine("PASS macOS-aligned tray, provider tabs, separate windows and Fusion modes");
             window = OpenWindow(start, process, "providers", "模型与服务");
             handle = (nint)window.Current.NativeWindowHandle;
@@ -390,6 +403,8 @@ internal static class Program
 
     [DllImport("user32.dll", EntryPoint = "PostMessageW")]
     [return: MarshalAs(UnmanagedType.Bool)] private static extern bool PostMessage(nint window, uint message, nuint wParam, nint lParam);
+    [DllImport("user32.dll")]
+    [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsZoomed(nint window);
     [DllImport("user32.dll")]
     [return: MarshalAs(UnmanagedType.Bool)] private static extern bool IsWindowVisible(nint window);
     [DllImport("user32.dll")]
