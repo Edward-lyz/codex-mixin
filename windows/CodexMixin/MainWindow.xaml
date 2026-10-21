@@ -10,9 +10,9 @@
       </StackPanel>
       <Border x:Name="ConsoleTabs" Style="{StaticResource SegmentTrack}" HorizontalAlignment="Center" VerticalAlignment="Center">
         <StackPanel x:Name="ConsoleTabButtons" Orientation="Horizontal" Spacing="2" AutomationProperties.AutomationId="console-pages">
-          <ToggleButton Style="{StaticResource Segment}" Content="模型与服务" Tag="providers" Click="OnConsoleTab"/>
-          <ToggleButton Style="{StaticResource Segment}" Content="Agent 接入" Tag="agents" Click="OnConsoleTab"/>
-          <ToggleButton Style="{StaticResource Segment}" Content="用量明细" Tag="usage" Click="OnConsoleTab"/>
+          <ToggleButton Style="{StaticResource Segment}" Content="模型与服务" Tag="providers" Click="OnConsoleTab" AutomationProperties.AutomationId="console-providers-tab"/>
+          <ToggleButton Style="{StaticResource Segment}" Content="Agent 接入" Tag="agents" Click="OnConsoleTab" AutomationProperties.AutomationId="console-agents-tab"/>
+          <ToggleButton Style="{StaticResource Segment}" Content="用量明细" Tag="usage" Click="OnConsoleTab" AutomationProperties.AutomationId="console-usage-tab"/>
         </StackPanel>
       </Border>
     </Grid>

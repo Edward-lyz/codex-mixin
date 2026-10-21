@@ -131,6 +131,8 @@ New-Item -ItemType Directory -Path $Output | Out-Null
 
 Copy-Item -LiteralPath $CliPath -Destination $Output
 Copy-Item -Path (Join-Path $uiPublish "*") -Destination $Output -Recurse -Force
+# Debug symbols do not participate in runtime loading. Keep them in build artifacts.
+Get-ChildItem -LiteralPath $Output -Recurse -File -Filter '*.pdb' | Remove-Item -Force
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "install-windows.ps1") -Destination $Output
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "uninstall-windows.ps1") -Destination $Output
 Copy-Item -LiteralPath (Join-Path $PSScriptRoot "update-user-path.ps1") -Destination $Output
@@ -219,5 +221,12 @@ Write-Host "  App directory : $Output"
 Write-Host "  Installer     : $Installer"
 Write-Host "  Portable      : $PortableArchive"
 Write-Host ("  Signed        : {0}" -f ($Sign.IsPresent))
+$metrics = [ordered]@{
+  app_bytes = (Get-ChildItem -LiteralPath $Output -Recurse -File | Measure-Object -Property Length -Sum).Sum
+  installer_bytes = (Get-Item -LiteralPath $Installer).Length
+  portable_bytes = (Get-Item -LiteralPath $PortableArchive).Length
+}
+$metrics | ConvertTo-Json | Set-Content -LiteralPath "$Installer.metrics.json"
+Write-Host ($metrics | ConvertTo-Json -Compress)
 Write-Host "Users run the installer; it installs to %ProgramFiles%\Codex Mixin, adds a Start Menu shortcut and an Add/Remove Programs entry."
 

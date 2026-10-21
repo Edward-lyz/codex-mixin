@@ -16,6 +16,7 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
     private const int OutputLimit = 8 * 1024 * 1024;
     private static readonly TimeSpan PipeTimeout = TimeSpan.FromSeconds(3);
     private readonly SemaphoreSlim gate = new(1, 1);
+    private readonly SemaphoreSlim queries = new(2, 2);
 
     internal static CliClient Locate()
     {
@@ -38,16 +39,26 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
 
     internal async Task<JsonElement> QueryAsync(string[] args, CancellationToken cancellation)
     {
-        var output = await RunAsync(args, cancellation, timeout: TimeSpan.FromSeconds(90));
+        // Read-only CLI snapshots must not queue behind network-bound actions.
+        // Bound subprocesses, and keep process startup/JSON decoding off the UI thread.
+        await queries.WaitAsync(cancellation).ConfigureAwait(false);
         try
         {
-            using var document = JsonDocument.Parse(output);
-            return document.RootElement.Clone();
+            return await Task.Run(async () =>
+            {
+                var output = await ExecuteAsync(args, cancellation, null, null, TimeSpan.FromSeconds(90));
+                try
+                {
+                    using var document = JsonDocument.Parse(output);
+                    return document.RootElement.Clone();
+                }
+                catch (JsonException error)
+                {
+                    throw new CliFailure($"{args[0]} 返回了无效 JSON：{error.Message}");
+                }
+            }, cancellation).ConfigureAwait(false);
         }
-        catch (JsonException error)
-        {
-            throw new CliFailure($"{args[0]} 返回了无效 JSON：{error.Message}");
-        }
+        finally { queries.Release(); }
     }
 
     internal async Task<string> RunAsync(string[] args, CancellationToken cancellation,
@@ -55,7 +66,7 @@ internal sealed class CliClient(string executable, IReadOnlyList<string>? prefix
         TimeSpan? timeout = null)
     {
         await gate.WaitAsync(cancellation);
-        try { return await ExecuteAsync(args, cancellation, secrets, progress, timeout); }
+        try { return await Task.Run(() => ExecuteAsync(args, cancellation, secrets, progress, timeout), cancellation).ConfigureAwait(false); }
         finally { gate.Release(); }
     }
 

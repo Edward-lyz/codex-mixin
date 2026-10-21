@@ -40,6 +40,7 @@ public sealed partial class MainWindow : Window
     private bool exiting;
     private bool dialogOpen;
     private bool initialized;
+    private bool refreshingTimings;
     private readonly EventWaitHandle? captureReady;
 
     public MainWindow() : this("providers") { }
@@ -104,6 +105,12 @@ public sealed partial class MainWindow : Window
                 captureReady?.Set();
                 if (Environment.GetCommandLineArgs().Contains("--background") && shell != null) shell.Hide();
             })) throw new InvalidOperationException("无法调度 Windows 界面初始化。");
+        };
+        AppWindow.Changed += (_, args) =>
+        {
+            if (!args.DidVisibilityChange) return;
+            if (AppWindow.IsVisible) timer.Start();
+            else timer.Stop();
         };
         timer.Tick += async (_, _) =>
         {
@@ -172,9 +179,13 @@ public sealed partial class MainWindow : Window
             return;
         }
         connectionDrafts.Clear(); modelDrafts.Clear();
+        // Hidden provider views and save closures otherwise retain the full model editor.
+        pendingApply = null;
+        timingCells.Clear(); timings.Clear();
+        ProviderList.Items.Clear(); providers = [];
         page = next;
         ApplyPageLayout();
-        if (ready) await ReloadAsync();
+        if (ready) await ExecuteUiAsync("切换页面", LoadPageAsync);
     }
 
     private void OnConsoleTab(object sender, RoutedEventArgs args) =>
@@ -675,6 +686,8 @@ public sealed partial class MainWindow : Window
 
     private async Task RefreshTimingsAsync(CancellationToken token)
     {
+        if (refreshingTimings) return;
+        refreshingTimings = true;
         try
         {
             var response = await Client.QueryAsync(["benchmark", "status"], token);
@@ -701,6 +714,7 @@ public sealed partial class MainWindow : Window
             }
         }
         catch (CliFailure error) { if (!busy && !draftDirty) ShowSummary($"测速不可用：{error.Message}", "CautionCaption"); }
+        finally { refreshingTimings = false; }
     }
 
     private Task AddProviderAsync() => ProviderDialogAsync(null);
