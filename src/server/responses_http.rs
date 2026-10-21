@@ -15,10 +15,15 @@ pub(super) async fn responses(
         .to_owned();
     let route = state.gateway.resolve_model_route(&requested_model).await?;
     log_responses_route(&requested_model, &route);
-    if super::compact::is_v2_compaction_request(&body)
-        && super::compact::prepare_v2_custom_compaction(&state, &mut body, &route).await?
-    {
-        return super::compact::compact_custom_provider_for_model(body, &requested_model);
+    if super::compact::is_v2_compaction_request(&body) {
+        if let Some(response) =
+            super::compact::context_checkpoint_response(&state, &headers, &body)?
+        {
+            return Ok(response);
+        }
+        if super::compact::prepare_v2_custom_compaction(&state, &mut body, &route).await? {
+            return super::compact::compact_custom_provider_for_model(body, &requested_model);
+        }
     }
     if route == ResolvedModelRoute::Official {
         if state.gateway.context_enabled() {

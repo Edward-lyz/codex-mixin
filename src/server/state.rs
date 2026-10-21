@@ -93,11 +93,11 @@ impl AppState {
         crate::config::validate_cors_origins(&config.cors_allowed_origins)?;
         validate_fusion_profiles(&config.fusion_profiles)?;
         let websocket_proxy_env = ProxyEnv::from_lookup(&env_lookup);
-        let context_database = config
-            .context
-            .enabled
-            .then(|| crate::context::database_path_with(&env_lookup))
-            .transpose()?;
+        // An archived session stays readable after the feature is switched off,
+        // so the engine also opens when the database already exists.
+        let context_database = crate::context::database_path_with(&env_lookup)?;
+        let context_database =
+            (config.context.enabled || context_database.exists()).then_some(context_database);
         let providers = Arc::new(ProviderRegistry::new_with_env(
             config.providers.clone(),
             env_lookup,

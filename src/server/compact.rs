@@ -9,6 +9,7 @@ use url::Url;
 use uuid::Uuid;
 
 use crate::config::ensure_compaction_secret;
+use crate::context::checkpoint;
 use crate::error::GatewayError;
 use crate::gateway::ResolvedModelRoute;
 use crate::protocol::compaction::{self, CompactionSummary};
@@ -30,6 +31,9 @@ pub(super) async fn compact(
     check_gateway_auth(&state, &headers).await?;
     let body = super::request_body::parse_json(body).await?;
     validate_compact_request(&body)?;
+    if let Some(response) = context_checkpoint_response(&state, &headers, &body)? {
+        return Ok(response);
+    }
     let model = body
         .get("model")
         .and_then(Value::as_str)
@@ -102,6 +106,10 @@ pub(super) fn compact_custom_provider_for_model(
 ) -> Result<Response, GatewayError> {
     let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let response = local_compaction_response(&body, response_model)?;
+    compaction_http_response(response, stream)
+}
+
+fn compaction_http_response(response: Value, stream: bool) -> Result<Response, GatewayError> {
     if stream {
         let events = local_compaction_events(&response).into_iter().map(|event| {
             let event_name = event["type"].as_str().unwrap_or("response.completed");
@@ -115,6 +123,81 @@ pub(super) fn compact_custom_provider_for_model(
             .map_err(|error| GatewayError::Other(error.into()));
     }
     Ok(Json(response).into_response())
+}
+
+/// Takes over compaction for an enabled session: the model is never asked to
+/// summarize, because the archive already holds the conversation and the
+/// client only has to keep a checkpoint bound to this session and revision.
+///
+/// Returns None when the feature is off or the request has no session
+/// identity, so the existing summary flow stays in charge.
+pub(super) fn context_checkpoint_response(
+    state: &AppState,
+    headers: &HeaderMap,
+    body: &Value,
+) -> Result<Option<Response>, GatewayError> {
+    let Some(engine) = state.gateway.context_engine() else {
+        return Ok(None);
+    };
+    if !engine.is_enabled() {
+        return Ok(None);
+    }
+    let Some(session) = crate::gateway::context_session(state.gateway.as_ref(), headers, body)?
+    else {
+        return Ok(None);
+    };
+    let model = body
+        .get("model")
+        .and_then(Value::as_str)
+        .ok_or_else(|| GatewayError::BadRequest("compact request missing model".to_owned()))?;
+    let items = checkpoint_input_items(body)?;
+    let window_tokens = engine.settings().context_window_tokens.unwrap_or(0);
+    let view = engine
+        .begin_turn(&session, &items, window_tokens)
+        .map_err(GatewayError::Other)?;
+    let secret = ensure_compaction_secret().map_err(GatewayError::Other)?;
+    let token = checkpoint::encode(model, &session, view.revision, &secret)?;
+    let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
+    let response = json!({
+        "id": format!("resp_compact_{}", Uuid::new_v4().simple()),
+        "object": "response",
+        "created_at": unix_seconds()?,
+        "status": "completed",
+        "model": model,
+        "output": [{
+            "type": "compaction",
+            "id": format!("cmp_{}", Uuid::new_v4().simple()),
+            "created_by": "codex-mixin",
+            "encrypted_content": token
+        }]
+    });
+    compaction_http_response(response, stream).map(Some)
+}
+
+/// The history the client asked to compact, without the trigger or an older
+/// checkpoint: neither belongs to the archive.
+fn checkpoint_input_items(body: &Value) -> Result<Vec<Value>, GatewayError> {
+    match body.get("input") {
+        Some(Value::String(text)) => Ok(vec![json!({
+            "type": "message",
+            "role": "user",
+            "content": [{"type": "input_text", "text": text}]
+        })]),
+        Some(Value::Array(items)) => Ok(items
+            .iter()
+            .filter(|item| {
+                !checkpoint::is_checkpoint_item(item)
+                    && item.get("type").and_then(Value::as_str) != Some("compaction_trigger")
+            })
+            .cloned()
+            .collect()),
+        Some(_) => Err(GatewayError::BadRequest(
+            "compact input must be a string or array".to_owned(),
+        )),
+        None => Err(GatewayError::BadRequest(
+            "compact request missing input".to_owned(),
+        )),
+    }
 }
 
 pub(super) fn local_compaction_response(

@@ -3739,6 +3739,156 @@ async fn context_expands_a_chained_request_from_the_archive() {
     assert!(body.contains("unknown response id"), "{body}");
 }
 
+async fn request_context_checkpoint(gateway_url: &str, session: &str) -> String {
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses/compact"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", session)
+        .json(&json!({
+            "model": "DeepSeek-V4-Flash-custom",
+            "input": [
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"distinctive opening request"}]},
+                {"type":"message","role":"assistant","content":[{"type":"output_text","text":"the first answer"}]},
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"second question"}]}
+            ]
+        }))
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let body: Value = response.json().await.unwrap();
+    assert_eq!(body["output"][0]["type"], "compaction");
+    body["output"][0]["encrypted_content"]
+        .as_str()
+        .expect("checkpoint token")
+        .to_owned()
+}
+
+async fn replay_context_checkpoint(
+    gateway_url: &str,
+    session: &str,
+    token: &str,
+) -> reqwest::Response {
+    let mut follow_up = responses_request();
+    follow_up["input"] = json!([
+        {"type": "compaction", "encrypted_content": token},
+        {"type": "message", "role": "user", "content": [{"type": "input_text", "text": "next question"}]}
+    ]);
+    reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", session)
+        .json(&follow_up)
+        .send()
+        .await
+        .unwrap()
+}
+
+#[tokio::test]
+async fn context_checkpoint_replaces_local_compaction() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::ContextStatusThenText).await;
+    let mut config = test_config(upstream_url);
+    config.context.enabled = true;
+    let database = tempfile::tempdir().unwrap();
+    let database_path = database.path().join("context.db");
+    let gateway_url = spawn_gateway_with_context(config, &database_path).await;
+    let session = "thread-context-checkpoint";
+
+    let token = request_context_checkpoint(&gateway_url, session).await;
+    assert!(token.starts_with("codex-mixin:context:v2:"), "{token}");
+    assert!(
+        requests.lock().unwrap().is_empty(),
+        "a local checkpoint must not call a model"
+    );
+
+    let response = replay_context_checkpoint(&gateway_url, session, &token).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let stream = String::from_utf8(response.bytes().await.unwrap().to_vec()).unwrap();
+    assert!(stream.contains("hello codex"), "missing answer: {stream}");
+
+    let recorded = requests.lock().unwrap().clone();
+    assert!(
+        !recorded.is_empty(),
+        "the follow-up must reach the provider"
+    );
+    let replay = Value::Array(
+        recorded
+            .iter()
+            .map(|request| request["messages"].clone())
+            .collect(),
+    )
+    .to_string();
+    assert!(
+        replay.contains("distinctive opening request"),
+        "archived history was lost: {replay}"
+    );
+    assert!(replay.contains("second question"), "{replay}");
+    assert!(replay.contains("next question"), "{replay}");
+    assert!(
+        !replay.contains("codex-mixin:context:v2:"),
+        "a local checkpoint reached the provider: {replay}"
+    );
+}
+
+#[tokio::test]
+async fn context_rejects_a_checkpoint_from_another_session() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::ContextStatusThenText).await;
+    let mut config = test_config(upstream_url);
+    config.context.enabled = true;
+    let database = tempfile::tempdir().unwrap();
+    let database_path = database.path().join("context.db");
+    let gateway_url = spawn_gateway_with_context(config, &database_path).await;
+
+    let token = request_context_checkpoint(&gateway_url, "thread-context-owner").await;
+    let response = replay_context_checkpoint(&gateway_url, "thread-context-other", &token).await;
+    assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    let body = response.text().await.unwrap();
+    assert!(body.contains("belongs to context session"), "{body}");
+    assert!(requests.lock().unwrap().is_empty());
+}
+
+#[tokio::test]
+async fn context_expands_a_checkpoint_after_the_feature_is_disabled() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url.clone());
+    config.context.enabled = true;
+    let database = tempfile::tempdir().unwrap();
+    let database_path = database.path().join("context.db");
+    let gateway_url = spawn_gateway_with_context(config, &database_path).await;
+    let session = "thread-context-disabled";
+    let token = request_context_checkpoint(&gateway_url, session).await;
+
+    // An archived session stays readable after the feature is switched off.
+    let mut config = test_config(upstream_url);
+    config.context.enabled = false;
+    let gateway_url = spawn_gateway_with_context(config, &database_path).await;
+    let response = replay_context_checkpoint(&gateway_url, session, &token).await;
+    assert_eq!(response.status(), StatusCode::OK);
+    let stream = String::from_utf8(response.bytes().await.unwrap().to_vec()).unwrap();
+    assert!(stream.contains("hello codex"), "missing answer: {stream}");
+
+    let recorded = requests.lock().unwrap().clone();
+    assert_eq!(
+        recorded.len(),
+        1,
+        "the read-only path makes one round: {recorded:?}"
+    );
+    let replay = recorded[0].to_string();
+    assert!(
+        replay.contains("distinctive opening request"),
+        "archived history was lost: {replay}"
+    );
+    assert!(replay.contains("next question"), "{replay}");
+    assert!(
+        !replay.contains("context_management"),
+        "guidance leaked while the feature is off: {replay}"
+    );
+    assert!(
+        !replay.contains("mixin_context_status"),
+        "internal tools leaked while the feature is off: {replay}"
+    );
+}
+
 #[tokio::test]
 async fn context_official_route_keeps_the_upstream_status() {
     let database = tempfile::tempdir().unwrap();
