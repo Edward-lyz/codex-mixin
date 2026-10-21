@@ -2,6 +2,7 @@ using System.Diagnostics;
 using System.Text.Json;
 using Microsoft.UI;
 using Microsoft.UI.Windowing;
+using Microsoft.UI.Input;
 using Microsoft.UI.Xaml;
 using Microsoft.UI.Xaml.Automation;
 using Microsoft.UI.Xaml.Controls;
@@ -36,7 +37,13 @@ public sealed partial class MainWindow : Window
     private readonly Dictionary<string, JsonElement> timings = [];
     private bool draftDirty;
     private bool ready;
+    private bool selectingProvider;
+    private bool interfaceReady;
+    private readonly bool customTitleBar;
     private bool busy;
+    private bool loadingPage;
+    private bool pageLoaded;
+    private CancellationTokenSource? pageRefresh;
     private bool exiting;
     private bool dialogOpen;
     private bool initialized;
@@ -57,7 +64,8 @@ public sealed partial class MainWindow : Window
         ApplyPageLayout();
         AppWindow.SetIcon(Path.Combine(AppContext.BaseDirectory, "Assets", "app_icon.ico"));
         AppWindow.Resize(new Windows.Graphics.SizeInt32(1120, 800));
-        if (AppWindowTitleBar.IsCustomizationSupported())
+        customTitleBar = AppWindowTitleBar.IsCustomizationSupported();
+        if (customTitleBar)
         {
             ExtendsContentIntoTitleBar = true;
             SetTitleBar(TitleBar);
@@ -66,7 +74,9 @@ public sealed partial class MainWindow : Window
             Root.ActualThemeChanged += (_, _) =>
                 AppWindow.TitleBar.PreferredTheme = Root.ActualTheme == ElementTheme.Dark ? TitleBarTheme.Dark : TitleBarTheme.Light;
         }
-        else { TitleBar.Visibility = Visibility.Collapsed; }
+        // Without custom title-bar support, keep the tabs as a normal content header.
+        TitleBar.SizeChanged += (_, _) => UpdateTitleInput();
+        ConsoleTabs.SizeChanged += (_, _) => UpdateTitleInput();
         SystemBackdrop = new MicaBackdrop();
         var handle = WindowNative.GetWindowHandle(this);
         // The console window owns the tray icon; Fusion and settings are side windows.
@@ -81,6 +91,8 @@ public sealed partial class MainWindow : Window
             exiting = true;
             timer.Stop();
             lifetime.Cancel();
+            pageRefresh?.Cancel();
+            pageRefresh?.Dispose();
             shell?.Dispose();
             captureReady?.Dispose();
         };
@@ -88,6 +100,8 @@ public sealed partial class MainWindow : Window
         {
             if (initialized) return;
             initialized = true;
+            Root.XamlRoot.Changed += (_, _) => UpdateTitleInput();
+            UpdateTitleInput();
             // Loaded can run inside a synchronous native layout callback.
             // Start CLI work after that callback returns to the message loop.
             if (!DispatcherQueue.TryEnqueue(async () =>
@@ -99,24 +113,26 @@ public sealed partial class MainWindow : Window
                     operations = ((App)Microsoft.UI.Xaml.Application.Current).Operations;
                     metadata = await cli.QueryAsync(["interface", "--json"], token);
                     Json.Interface(metadata);
+                    interfaceReady = true;
                     await LoadPageAsync(token);
-                });
-                timer.Start();
+                }, readOnly: true);
+                UpdateRefreshTimer();
                 captureReady?.Set();
-                if (Environment.GetCommandLineArgs().Contains("--background") && shell != null) shell.Hide();
             })) throw new InvalidOperationException("无法调度 Windows 界面初始化。");
         };
         AppWindow.Changed += (_, args) =>
         {
-            if (!args.DidVisibilityChange) return;
-            if (AppWindow.IsVisible) timer.Start();
-            else timer.Stop();
+            if (args.DidVisibilityChange || args.DidSizeChange || args.DidPresenterChange)
+            {
+                UpdateRefreshTimer();
+                Activity.IsActive = busy && IsViewVisible;
+            }
         };
         timer.Tick += async (_, _) =>
         {
-            if (!busy && !dialogOpen && page == "overview" && AppWindow.IsVisible && cli != null)
+            if (!busy && !dialogOpen && page == "overview" && IsViewVisible && cli != null)
                 await ExecuteUiAsync("刷新状态", LoadPageAsync);
-            if (!busy && page == "providers" && !connectionSelected && AppWindow.IsVisible && cli != null)
+            if (!busy && page == "providers" && !connectionSelected && IsViewVisible && cli != null)
                 await RefreshTimingsAsync(lifetime.Token);
         };
         var refresh = new KeyboardAccelerator { Key = VirtualKey.R, Modifiers = VirtualKeyModifiers.Control };
@@ -128,6 +144,29 @@ public sealed partial class MainWindow : Window
             foreach (var table in PageBody.Children.OfType<StackPanel>().SelectMany(panel => panel.Children.OfType<ListView>()))
                 table.Height = ModelTableHeight();
         };
+    }
+
+    private bool IsViewVisible => AppWindow.IsVisible && AppWindow.Presenter is not OverlappedPresenter { State: OverlappedPresenterState.Minimized };
+
+    private void UpdateRefreshTimer()
+    {
+        if (initialized && !exiting && IsViewVisible && (page == "overview" || page == "providers" && !connectionSelected)) timer.Start();
+        else timer.Stop();
+    }
+
+    private void UpdateTitleInput()
+    {
+        if (exiting || !customTitleBar || Root.XamlRoot is not { } root) return;
+        var rectangles = Array.Empty<Windows.Graphics.RectInt32>();
+        if (ConsoleTabs.Visibility == Visibility.Visible && ConsoleTabs.ActualWidth > 0)
+        {
+            var origin = ConsoleTabs.TransformToVisual(Root).TransformPoint(new Windows.Foundation.Point(0, 0));
+            var scale = root.RasterizationScale;
+            rectangles = [new Windows.Graphics.RectInt32((int)Math.Round(origin.X * scale), (int)Math.Round(origin.Y * scale),
+                (int)Math.Ceiling(ConsoleTabs.ActualWidth * scale), (int)Math.Ceiling(ConsoleTabs.ActualHeight * scale))];
+        }
+        // Controls inside a custom drag region need an explicit pointer passthrough.
+        InputNonClientPointerSource.GetForWindowId(AppWindow.Id).SetRegionRects(NonClientRegionKind.Passthrough, rectangles);
     }
 
     internal void Shutdown() { exiting = true; Close(); }
@@ -159,6 +198,7 @@ public sealed partial class MainWindow : Window
         ApplyChanges.Visibility = page is "providers" or "fusion" ? Visibility.Visible : Visibility.Collapsed;
         var header = page == "agents" ? Visibility.Collapsed : Visibility.Visible;
         PageTitle.Visibility = PageDescription.Visibility = ApplySummary.Visibility = header;
+        UpdateRefreshTimer();
     }
 
     /// Switches the console window to another console page. Unapplied provider
@@ -166,10 +206,15 @@ public sealed partial class MainWindow : Window
     internal async void ShowPage(string next)
     {
         ShowMain();
-        if (next == page) return;
-        // A page load or CLI action is running; switch once it finishes so
-        // tray and activation requests are not dropped.
-        if (busy) { queuedPage = next; return; }
+        if (busy)
+        {
+            if (next == page && queuedPage == null) return;
+            queuedPage = next;
+            // Superseded reads can be cancelled; configuration writes must finish.
+            if (loadingPage && interfaceReady) activeCancellation?.Cancel();
+            return;
+        }
+        if (next == page && pageLoaded) return;
         // The draft dictionaries cache every provider's editor; only MarkDirty
         // means the user changed something that is not applied yet.
         if (page == "providers" && draftDirty
@@ -185,11 +230,12 @@ public sealed partial class MainWindow : Window
         ProviderList.Items.Clear(); providers = [];
         page = next;
         ApplyPageLayout();
+        if (ready && !interfaceReady) { await ReloadAsync(); return; }
         if (ready) await ExecuteUiAsync("切换页面", async token =>
         {
             await LoadPageAsync(token);
             if (page == "providers") await RefreshTimingsAsync(token);
-        });
+        }, readOnly: true);
     }
 
     private void OnConsoleTab(object sender, RoutedEventArgs args) =>
@@ -238,7 +284,7 @@ public sealed partial class MainWindow : Window
 
     private void OnProviderSelected(object sender, SelectionChangedEventArgs args)
     {
-        if (!ready || ProviderList.SelectedItem is not ListViewItem row) return;
+        if (!ready || selectingProvider || ProviderList.SelectedItem is not ListViewItem row) return;
         providerId = row.Tag as string;
         RenderSelectedProvider();
     }
@@ -249,8 +295,8 @@ public sealed partial class MainWindow : Window
         if (providerId != null && await ConfirmAsync("删除服务商？", "将移除当前服务商及其模型配置。", "删除"))
             await ChangeAsync("删除服务商", ["provider", "remove", providerId], apply: true);
     }
-    private void OnModelsTab(object sender, RoutedEventArgs args) { connectionSelected = false; RenderSelectedProvider(); }
-    private void OnConnectionTab(object sender, RoutedEventArgs args) { connectionSelected = true; RenderSelectedProvider(); }
+    private void OnModelsTab(object sender, RoutedEventArgs args) { connectionSelected = false; UpdateRefreshTimer(); RenderSelectedProvider(); }
+    private void OnConnectionTab(object sender, RoutedEventArgs args) { connectionSelected = true; UpdateRefreshTimer(); RenderSelectedProvider(); }
     private async void OnApplyChanges(object sender, RoutedEventArgs args)
     {
         try { if (pendingApply != null) await pendingApply(); }
@@ -266,19 +312,22 @@ public sealed partial class MainWindow : Window
     {
         cli ??= ((App)Microsoft.UI.Xaml.Application.Current).Client;
         operations ??= ((App)Microsoft.UI.Xaml.Application.Current).Operations;
+        interfaceReady = false;
         metadata = await cli.QueryAsync(["interface", "--json"], token);
         Json.Interface(metadata);
+        interfaceReady = true;
         await LoadPageAsync(token);
         if (page == "providers") await RefreshTimingsAsync(token);
-    });
+    }, readOnly: true);
 
-    private async Task ExecuteUiAsync(string label, Func<CancellationToken, Task> work)
+    private async Task ExecuteUiAsync(string label, Func<CancellationToken, Task> work, bool readOnly = false)
     {
         if (busy || exiting) return;
         busy = true;
+        loadingPage = readOnly;
         // Block input without the disabled look; a refresh should not gray out the window.
         PageShell.IsHitTestVisible = false;
-        Activity.IsActive = true;
+        Activity.IsActive = IsViewVisible;
         Activity.Visibility = Visibility.Visible;
         StatusText.Text = $"{label}…";
         using var cancellation = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
@@ -288,6 +337,11 @@ public sealed partial class MainWindow : Window
         {
             await work(cancellation.Token);
             if (!exiting) StatusText.Text = $"{label}完成 · {DateTime.Now:HH:mm:ss}";
+        }
+        catch (Exception error) when (readOnly && queuedPage != null && cancellation.IsCancellationRequested
+            && error is CliFailure or OperationCanceledException)
+        {
+            // A newer navigation request will replace this cancelled snapshot.
         }
         catch (Exception error)
         {
@@ -317,6 +371,7 @@ public sealed partial class MainWindow : Window
             activeCancellation = null;
             CancelAction.Visibility = Visibility.Collapsed;
             busy = false;
+            loadingPage = false;
             PageShell.IsHitTestVisible = true;
             Activity.IsActive = false;
             Activity.Visibility = Visibility.Collapsed;
@@ -346,6 +401,10 @@ public sealed partial class MainWindow : Window
 
     private async Task LoadPageAsync(CancellationToken token)
     {
+        pageLoaded = false;
+        pageRefresh?.Cancel();
+        pageRefresh?.Dispose();
+        pageRefresh = CancellationTokenSource.CreateLinkedTokenSource(lifetime.Token);
         PageBody.Children.Clear();
         draftDirty = false;
         ProviderHeaderTile.Visibility = StatusBadge.Visibility = OfficialBadge.Visibility = Visibility.Collapsed;
@@ -369,6 +428,8 @@ public sealed partial class MainWindow : Window
             case "settings": await SettingsAsync(token); break;
             default: await OverviewAsync(token); break;
         }
+        token.ThrowIfCancellationRequested();
+        pageLoaded = true;
     }
 
     private CliClient Client => cli ?? throw new InvalidOperationException("CLI 尚未连接，请刷新。");
@@ -437,24 +498,27 @@ public sealed partial class MainWindow : Window
     private async Task ProvidersAsync(CancellationToken token)
     {
         providers = Json.Rows(Json.Field(await Client.QueryAsync(["provider", "list", "--json"], token), "providers"));
-        ready = false;
-        // A reload shows the saved state; drafts only survive provider and tab switches.
-        modelDrafts.Clear(); connectionDrafts.Clear(); timingCells.Clear(); timings.Clear();
-        ProviderList.Items.Clear();
-        foreach (var provider in providers)
+        selectingProvider = true;
+        try
         {
-            var row = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
-            row.Children.Add(new TextBlock { Text = Json.Text(provider, "display_name"), TextTrimming = TextTrimming.CharacterEllipsis });
-            var state = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
-            state.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Style = Themed(ReadinessDot(provider)), VerticalAlignment = VerticalAlignment.Center });
-            state.Children.Add(new TextBlock { Text = $"{Readiness(provider)} · {Json.Strings(Json.Field(provider, "selected_models")).Length}/{Json.Rows(Json.Field(provider, "cached_models")).Length} 个模型", Style = Themed("Caption") });
-            row.Children.Add(state);
-            var item = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
-            item.Children.Add(new Border { Style = Themed("IconTile"), Width = 36, Height = 36, Child = Marks.Provider(provider, 22) });
-            item.Children.Add(row);
-            ProviderList.Items.Add(new ListViewItem { Content = item, Tag = Json.Text(provider, "id"), Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 1, 0, 1) });
+            // A reload shows the saved state; drafts only survive provider and tab switches.
+            modelDrafts.Clear(); connectionDrafts.Clear(); timingCells.Clear(); timings.Clear();
+            ProviderList.Items.Clear();
+            foreach (var provider in providers)
+            {
+                var row = new StackPanel { Spacing = 2, VerticalAlignment = VerticalAlignment.Center };
+                row.Children.Add(new TextBlock { Text = Json.Text(provider, "display_name"), TextTrimming = TextTrimming.CharacterEllipsis });
+                var state = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 6 };
+                state.Children.Add(new Microsoft.UI.Xaml.Shapes.Ellipse { Style = Themed(ReadinessDot(provider)), VerticalAlignment = VerticalAlignment.Center });
+                state.Children.Add(new TextBlock { Text = $"{Readiness(provider)} · {Json.Strings(Json.Field(provider, "selected_models")).Length}/{Json.Rows(Json.Field(provider, "cached_models")).Length} 个模型", Style = Themed("Caption") });
+                row.Children.Add(state);
+                var item = new StackPanel { Orientation = Orientation.Horizontal, Spacing = 12 };
+                item.Children.Add(new Border { Style = Themed("IconTile"), Width = 36, Height = 36, Child = Marks.Provider(provider, 22) });
+                item.Children.Add(row);
+                ProviderList.Items.Add(new ListViewItem { Content = item, Tag = Json.Text(provider, "id"), Padding = new Thickness(8, 6, 8, 6), Margin = new Thickness(0, 1, 0, 1) });
+            }
         }
-        ready = true;
+        finally { selectingProvider = false; }
         if (providers.Length == 0)
         {
             pendingApply = null; ApplyChanges.IsEnabled = false;
@@ -463,8 +527,8 @@ public sealed partial class MainWindow : Window
             PageBody.Children.Add(Button("新增服务商", AddProviderAsync, true));
             return;
         }
+        // SelectionChanged renders once after the list has its final selection.
         ProviderList.SelectedIndex = Math.Max(0, Array.FindIndex(providers, row => Json.Text(row, "id") == providerId));
-        RenderSelectedProvider();
     }
 
     private async void RenderSelectedProvider()
@@ -560,13 +624,20 @@ public sealed partial class MainWindow : Window
         modelBody.Children.Add(new Border { Style = Themed("RowDivider"), Padding = new Thickness(12, 8, 12, 8), Child = header });
 
         var list = new ListView { SelectionMode = ListViewSelectionMode.None, Height = ModelTableHeight(), Padding = new Thickness(0) };
-        list.ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Markup.XamlReader.Load(
-            "<DataTemplate xmlns=\"http://schemas.microsoft.com/winfx/2006/xaml/presentation\"><ContentControl HorizontalContentAlignment=\"Stretch\"/></DataTemplate>");
+        list.ItemTemplate = (DataTemplate)Microsoft.UI.Xaml.Application.Current.Resources["VirtualRowTemplate"];
         list.ItemContainerStyle = Themed("ModelRowContainer");
         AutomationProperties.SetAutomationId(list, "model-table");
         list.ContainerContentChanging += (_, args) =>
         {
-            if (args.InRecycleQueue) return;
+            if (args.ItemContainer.Tag is ValueTuple<string, TextBlock> previous
+                && timingCells.TryGetValue(previous.Item1, out var retained)
+                && ReferenceEquals(retained.Ttft, previous.Item2)) timingCells.Remove(previous.Item1);
+            args.ItemContainer.Tag = null;
+            if (args.InRecycleQueue)
+            {
+                if (args.ItemContainer.ContentTemplateRoot is ContentControl recycled) recycled.Content = null;
+                return;
+            }
             if (args.Item is not string modelId) return;
             var (model, modelIndex) = modelsById[modelId];
             var row = Columns();
@@ -627,6 +698,7 @@ public sealed partial class MainWindow : Window
             var ttft = new TextBlock { Text = "-", Style = Themed("Mono"), HorizontalAlignment = HorizontalAlignment.Right };
             var tps = new TextBlock { Text = "-", Style = Themed("Mono"), HorizontalAlignment = HorizontalAlignment.Right };
             timingCells[$"{id}/{modelId}"] = (ttft, tps);
+            args.ItemContainer.Tag = ($"{id}/{modelId}", ttft);
             if (timings.TryGetValue($"{id}/{modelId}", out var timing)) ShowTiming(timing, ttft, tps);
             var ratio = new TextBlock { Text = Json.OptionalText(model, "ratio") ?? "-", Style = Themed("MonoPrimary"), HorizontalAlignment = HorizontalAlignment.Right };
             var cells = new FrameworkElement[] { check, title, ttft, tps, context, ratio, capabilities };
@@ -694,7 +766,9 @@ public sealed partial class MainWindow : Window
         refreshingTimings = true;
         try
         {
+            var selectedProvider = providerId;
             var response = await Client.QueryAsync(["benchmark", "status"], token);
+            if (page != "providers" || providerId != selectedProvider) return;
             var snapshot = Json.Field(response, "snapshot");
             if (snapshot.ValueKind == JsonValueKind.Null) return;
             var results = Json.Rows(Json.Field(snapshot, "results")).Where(row => Json.Text(row, "provider_id") == providerId).ToArray();
@@ -718,6 +792,7 @@ public sealed partial class MainWindow : Window
             }
         }
         catch (CliFailure error) { if (!busy && !draftDirty) ShowSummary($"测速不可用：{error.Message}", "CautionCaption"); }
+        catch (OperationCanceledException) when (token.IsCancellationRequested) { }
         finally { refreshingTimings = false; }
     }
 
@@ -967,37 +1042,52 @@ public sealed partial class MainWindow : Window
         JsonElement[] daily = [], turns = [];
         string? session = null;
         int Days() => range.SelectedIndex switch { 0 => 1, 2 => 30, _ => 7 };
-        void Render()
+        var summaryHost = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch };
+        var chartsHost = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch };
+        var turnsHost = new ContentControl { HorizontalContentAlignment = HorizontalAlignment.Stretch };
+        usageBody.Children.Add(summaryHost); usageBody.Children.Add(chartsHost); usageBody.Children.Add(turnsHost);
+        void RenderTurns()
         {
-            usageBody.Children.Clear();
-            var split = grouping.SelectedIndex == 1;
             var shown = session == null ? turns : turns.Where(turn => Json.Text(turn, "session") == session).ToArray();
-            usageBody.Children.Add(UsageView.Summary(daily, shown, Card));
+            summaryHost.Content = UsageView.Summary(daily, shown, Card);
+            var note = session == null ? $"最近 {shown.Length} 条回复；点击会话标签只看该会话" : $"会话 {session} · {shown.Length} 条";
+            turnsHost.Content = Card("回复明细", note, shown.Length == 0 ? Text("所选范围内还没有经过网关的模型回复。")
+                : new Border { Child = UsageView.Turns(shown, tag => { session = session == tag ? null : tag; RenderTurns(); }), Style = Themed("ListCard") });
+        }
+        void RenderCharts()
+        {
+            var split = grouping.SelectedIndex == 1;
             var charts = new Grid { ColumnSpacing = 24 };
             charts.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             charts.ColumnDefinitions.Add(new ColumnDefinition { Width = new GridLength(1, GridUnitType.Star) });
             charts.Children.Add(UsageView.Chart(daily, Days(), split, UsageView.DailyTokens, "Tokens"));
             var requests = UsageView.Chart(daily, Days(), split, UsageView.DailyRequests, "请求次数");
             Grid.SetColumn((FrameworkElement)requests, 1); charts.Children.Add(requests);
-            usageBody.Children.Add(Card("每日用量", split ? "按 Provider 拆分" : "全部 Provider 聚合", charts));
-            var note = session == null ? $"最近 {shown.Length} 条回复；点击会话标签只看该会话" : $"会话 {session} · {shown.Length} 条";
-            usageBody.Children.Add(Card("回复明细", note, shown.Length == 0 ? Text("所选范围内还没有经过网关的模型回复。")
-                : new Border { Child = UsageView.Turns(shown, tag => { session = session == null ? tag : null; Render(); }), Style = Themed("ListCard") }));
+            chartsHost.Content = Card("每日用量", split ? "按 Provider 拆分" : "全部 Provider 聚合", charts);
         }
         async Task ReadUsage(CancellationToken cancellation)
         {
+            pageLoaded = false;
             var days = Days().ToString(System.Globalization.CultureInfo.InvariantCulture);
             try
             {
-                daily = Json.Rows(await Client.QueryAsync(["usage", "--daily", "--json", "--days", days], cancellation));
-                turns = Json.Rows(await Client.QueryAsync(["usage", "--turns", "--json", "--days", days, "--limit", "500"], cancellation));
+                var snapshots = await Task.WhenAll(
+                    Client.QueryAsync(["usage", "--daily", "--json", "--days", days], cancellation),
+                    Client.QueryAsync(["usage", "--turns", "--json", "--days", days, "--limit", "500"], cancellation));
+                daily = Json.Rows(snapshots[0]); turns = Json.Rows(snapshots[1]);
                 session = null;
-                Render();
+                if (usageBody.Children.Count == 0)
+                {
+                    usageBody.Children.Add(summaryHost); usageBody.Children.Add(chartsHost); usageBody.Children.Add(turnsHost);
+                }
+                RenderCharts(); RenderTurns();
+                pageLoaded = true;
             }
+            catch (CliFailure) when (cancellation.IsCancellationRequested) { throw; }
             catch (CliFailure error) { usageBody.Children.Clear(); usageBody.Children.Add(Card("用量不可用", error.Message)); }
         }
-        range.SelectionChanged += async (_, _) => await ExecuteUiAsync("读取用量", ReadUsage);
-        grouping.SelectionChanged += (_, _) => Render();
+        range.SelectionChanged += async (_, _) => await ExecuteUiAsync("读取用量", ReadUsage, readOnly: true);
+        grouping.SelectionChanged += (_, _) => RenderCharts();
         PageBody.Children.Add(filters); PageBody.Children.Add(usageBody);
         await ReadUsage(token);
         var quotaBody = new StackPanel { Spacing = 16 };
@@ -1016,13 +1106,27 @@ public sealed partial class MainWindow : Window
                 quotaBody.Children.Add(section);
             }
         }
-        try
+        var quotaToken = pageRefresh!.Token;
+        async Task LoadQuota()
         {
-            quotaRows = Json.Rows(await Client.QueryAsync(["quota", "--json"], token));
-            RenderQuota(QuotaView.Stored());
+            try
+            {
+                quotaRows = Json.Rows(await Client.QueryAsync(["quota", "--json"], quotaToken));
+                quotaToken.ThrowIfCancellationRequested();
+                RenderQuota(QuotaView.Stored());
+            }
+            catch (OperationCanceledException) when (quotaToken.IsCancellationRequested) { }
+            catch (CliFailure) when (quotaToken.IsCancellationRequested) { }
+            catch (Exception error)
+            {
+                quotaBody.Children.Clear();
+                quotaBody.Children.Add(Text($"额度不可用：{error.Message}"));
+            }
         }
-        catch (CliFailure error) { quotaBody.Children.Add(Text($"额度不可用：{error.Message}")); }
-        PageBody.Children.Add(Card("供应商额度", "圆环按已用比例绘制，接近上限时转为红色；查询失败时展示原因，未知额度不会显示为零。", quotaBody));
+        quotaBody.Children.Add(Text("正在查询额度…"));
+        PageBody.Children.Add(Card("供应商额度", "圆环按已用比例绘制；查询失败时展示原因，未知额度不会显示为零。", quotaBody));
+        // Network quota loading must not disable local charts, filters or navigation.
+        _ = LoadQuota();
     }
 
     private async Task FusionAsync(CancellationToken token)
@@ -1040,16 +1144,32 @@ public sealed partial class MainWindow : Window
         var profileId = Input("Profile ID", saved ? Json.Text(profile, "id") : "default");
         var mode = Choice("运行模式", ["多模型编排", "按时间轮转"], saved && Json.Text(profile, "mode") == "time_rotation" ? "按时间轮转" : "多模型编排");
         Microsoft.UI.Xaml.Automation.AutomationProperties.SetAutomationId(mode, "fusion-mode");
-        var selected = saved ? Json.Strings(Json.Field(profile, "panel_models")) : ids.Take(3).ToArray();
-        var panels = new StackPanel { Spacing = 8 };
-        var choices = new List<CheckBox>();
-        var search = Input("搜索 Panel 模型", "");
-        foreach (var id in ids)
+        var selected = (saved ? Json.Strings(Json.Field(profile, "panel_models")) : ids.Take(3).ToArray()).ToHashSet();
+        var panels = new ListView { SelectionMode = ListViewSelectionMode.Multiple, Height = Math.Min(240, 36 + ids.Length * 36), ItemsSource = ids, Header = $"可选 {ids.Length} 个模型" };
+        AutomationProperties.SetAutomationId(panels, "fusion-panels");
+        var filtering = false;
+        void RestoreSelection()
         {
-            var check = new CheckBox { Content = id, IsChecked = selected.Contains(id) };
-            panels.Children.Add(check); choices.Add(check);
+            filtering = true;
+            foreach (var item in panels.Items) if (selected.Contains((string)item)) panels.SelectedItems.Add(item);
+            filtering = false;
         }
-        search.TextChanged += (_, _) => { foreach (var check in choices) check.Visibility = ((string)check.Content).Contains(search.Text, StringComparison.OrdinalIgnoreCase) ? Visibility.Visible : Visibility.Collapsed; };
+        panels.SelectionChanged += (_, args) =>
+        {
+            if (filtering) return;
+            foreach (string id in args.RemovedItems) selected.Remove(id);
+            foreach (string id in args.AddedItems) selected.Add(id);
+        };
+        RestoreSelection();
+        var search = Input("搜索 Panel 模型", "");
+        search.TextChanged += (_, _) =>
+        {
+            filtering = true;
+            var matches = ids.Where(id => id.Contains(search.Text, StringComparison.OrdinalIgnoreCase)).ToArray();
+            panels.ItemsSource = matches;
+            panels.Header = search.Text.Length == 0 ? $"可选 {ids.Length} 个模型" : $"匹配 {matches.Length}/{ids.Length} 个模型";
+            RestoreSelection();
+        };
         var judge = Choice("Judge 模型", ids, saved ? Json.Text(profile, "judge_model") : ids[0]);
         var final = Choice("Final / 未覆盖时段默认模型", ids, saved ? Json.Text(profile, "final_model") : ids[0]);
         var minimum = new NumberBox { Header = "最少成功 Panel", Minimum = 1, Maximum = 8, Value = saved ? Json.Field(profile, "min_successful").GetDouble() : 1 };
@@ -1085,7 +1205,7 @@ public sealed partial class MainWindow : Window
         foreach (var element in new FrameworkElement[] { profileId, mode, orchestration, scheduleBody, final }) form.Children.Add(element);
         pendingApply = async () =>
         {
-            var chosen = choices.Where(check => check.IsChecked == true).Select(check => (string)check.Content).ToArray();
+            var chosen = ids.Where(selected.Contains).ToArray();
             if (mode.SelectedIndex == 0 && (chosen.Length is < 1 or > 8 || !double.IsFinite(minimum.Value) || minimum.Value < 1 || minimum.Value > chosen.Length || minimum.Value != Math.Truncate(minimum.Value) || !double.IsFinite(timeout.Value) || timeout.Value <= 0))
                 throw new InvalidOperationException("请选择 1–8 个 Panel，并填写有效的最少成功数和超时。 ");
             var payload = saved ? JsonSerializer.Deserialize<Dictionary<string, object?>>(profile.GetRawText())! : new Dictionary<string, object?>();

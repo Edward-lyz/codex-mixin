@@ -93,6 +93,28 @@ Check("slow quota query does not block a local snapshot", async () =>
         File.Delete(marker);
     }
 });
+Check("usage buckets preserve chart values with one scan", () =>
+{
+    var rows = Json.Rows(Parse("[{\"provider_id\":\"a\",\"day\":9,\"value\":3,\"tokens\":4},{\"provider_id\":\"b\",\"day\":10,\"value\":5,\"tokens\":9},{\"provider_id\":\"a\",\"day\":10,\"value\":7,\"tokens\":6},{\"provider_id\":\"b\",\"day\":10,\"value\":2,\"tokens\":1},{\"provider_id\":\"c\",\"day\":1,\"value\":99,\"tokens\":100}]"));
+    foreach (var split in new[] { false, true })
+    {
+        var metricCalls = 0;
+        var buckets = UsageBuckets.Build(rows, 2, split, 10, row => { metricCalls++; return Json.Field(row, "value").GetInt64(); }, row => Json.Field(row, "tokens").GetInt64());
+        var series = rows.GroupBy(row => split ? Json.Text(row, "provider_id") : "全部")
+            .OrderByDescending(group => group.Sum(row => Json.Field(row, "tokens").GetInt64())).Select(group => group.Key).ToArray();
+        var expected = new long[] { 9, 10 }.Select(day => series.Select(key => rows
+            .Where(row => Json.Field(row, "day").GetInt64() == day && (split ? Json.Text(row, "provider_id") : "全部") == key)
+            .Sum(row => Json.Field(row, "value").GetInt64())).ToArray()).ToArray();
+        Assert(buckets.Series.SequenceEqual(series), "Chart series/tie order changed");
+        Assert(buckets.Days.SequenceEqual(new long[] { 9, 10 }), "Chart dates changed");
+        Assert(buckets.Values.Zip(expected).All(pair => pair.First.SequenceEqual(pair.Second)), "Chart cells changed");
+        Assert(buckets.Total == 116 && buckets.Maximum == 14, "Chart totals or scale changed");
+        Assert(metricCalls == rows.Length, "Chart repeatedly scanned the CLI rows");
+    }
+    var empty = UsageBuckets.Build([], 7, true, 10, _ => 0, _ => 0);
+    Assert(empty.Maximum == 1 && empty.Total == 0 && empty.Values.Length == 7, "Empty chart changed");
+    return Task.CompletedTask;
+});
 Check("argument boundaries and shell metacharacters", async () =>
 {
     var values = new[] { "echo", "value with spaces", "quote\"value", "$(whoami)", "& exit 9", "中文参数" };

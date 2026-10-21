@@ -4,6 +4,7 @@
   <Application.Resources>
     <ResourceDictionary>
       <ResourceDictionary.MergedDictionaries><XamlControlsResources xmlns="using:Microsoft.UI.Xaml.Controls" /></ResourceDictionary.MergedDictionaries>
+      <DataTemplate x:Key="VirtualRowTemplate"><ContentControl HorizontalContentAlignment="Stretch" /></DataTemplate>
       <Style x:Key="SecondaryText" TargetType="TextBlock">
         <Setter Property="Foreground" Value="{ThemeResource TextFillColorSecondaryBrush}" />
         <Setter Property="TextWrapping" Value="Wrap" />
