@@ -43,15 +43,6 @@
           "Microsoft.WindowsAppSDK.Base": "1.8.251216001"
         }
       },
-      "Microsoft.WindowsAppSDK.Runtime": {
-        "type": "Direct",
-        "requested": "[1.8.260921001, )",
-        "resolved": "1.8.260921001",
-        "contentHash": "UX0e2skKg08iM/rUqg9ax23cc0YqBT7OACm6POSqL0NCT6Y+wO43X3BHUdmJ/iEef/hTdJ/8YRizOX9IB+GREQ==",
-        "dependencies": {
-          "Microsoft.WindowsAppSDK.Base": "1.8.251216001"
-        }
-      },
       "Microsoft.WindowsAppSDK.WinUI": {
         "type": "Direct",
         "requested": "[1.8.260803003, )",
