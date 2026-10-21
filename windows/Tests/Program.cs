@@ -18,6 +18,11 @@ if (args.Contains("--fixture"))
         case "save": Console.WriteLine("saved"); break;
         case "config": Console.Error.WriteLine("apply failed"); return 8;
         case "sleep": await Task.Delay(TimeSpan.FromSeconds(120)); break;
+        case "slow-query":
+            File.WriteAllText(flags[1], "started");
+            await Task.Delay(TimeSpan.FromSeconds(30));
+            Console.Write("{}");
+            break;
         case "progress":
             Console.Error.WriteLine("MIXIN_PROGRESS step one");
             Console.Error.WriteLine("MIXIN_PROGRESS " + Environment.GetEnvironmentVariable("CM_TEST_SECRET"));
@@ -67,6 +72,27 @@ async Task<CliFailure> Failure(Func<Task> call)
     throw new InvalidOperationException("Expected an explicit failure");
 }
 
+Check("slow quota query does not block a local snapshot", async () =>
+{
+    var marker = Path.Combine(Path.GetTempPath(), $"mixin-query-{Guid.NewGuid():N}");
+    using var cancellation = new CancellationTokenSource();
+    var slow = fixture.QueryAsync(["slow-query", marker], cancellation.Token);
+    try
+    {
+        var started = Stopwatch.StartNew();
+        while (!File.Exists(marker) && started.Elapsed < TimeSpan.FromSeconds(10)) await Task.Delay(20);
+        Assert(File.Exists(marker), "Slow query did not start");
+        using var deadline = new CancellationTokenSource(TimeSpan.FromSeconds(10));
+        var local = await fixture.QueryAsync(["echo"], deadline.Token);
+        Assert(Json.Strings(Json.Field(local, "args")).SequenceEqual(new[] { "echo" }), "Local query was blocked by quota");
+    }
+    finally
+    {
+        cancellation.Cancel();
+        await Failure(() => slow);
+        File.Delete(marker);
+    }
+});
 Check("argument boundaries and shell metacharacters", async () =>
 {
     var values = new[] { "echo", "value with spaces", "quote\"value", "$(whoami)", "& exit 9", "中文参数" };
