@@ -93,6 +93,11 @@ impl AppState {
         crate::config::validate_cors_origins(&config.cors_allowed_origins)?;
         validate_fusion_profiles(&config.fusion_profiles)?;
         let websocket_proxy_env = ProxyEnv::from_lookup(&env_lookup);
+        let context_database = config
+            .context
+            .enabled
+            .then(|| crate::context::database_path_with(&env_lookup))
+            .transpose()?;
         let providers = Arc::new(ProviderRegistry::new_with_env(
             config.providers.clone(),
             env_lookup,
@@ -106,6 +111,20 @@ impl AppState {
         let upstream = Arc::new(UpstreamAccess::new(Arc::clone(&config), client));
         let image_routes = ImageRouteRegistry::default();
         let cache_shapes = Arc::new(CacheShapeTracker::with_usage(usage));
+        let context = match context_database {
+            Some(path) => {
+                let mut settings = config.context.clone();
+                settings.context_window_tokens = Some(
+                    settings
+                        .context_window_tokens
+                        .unwrap_or(config.default_context_window),
+                );
+                Some(Arc::new(crate::context::ContextEngine::open(
+                    settings, &path,
+                )?))
+            }
+            None => None,
+        };
         let gateway = Arc::new(GatewayExecutor::new(
             Arc::clone(&config),
             Arc::clone(&providers),
@@ -113,6 +132,7 @@ impl AppState {
             Arc::clone(&cache_shapes),
             web_search_capabilities.clone(),
             image_routes.clone(),
+            context,
         ));
         let catalog = Arc::new(CatalogService::new(
             Arc::clone(&config),

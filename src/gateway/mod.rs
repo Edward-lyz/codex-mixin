@@ -2,6 +2,7 @@ use crate::protocol::ResponseStream;
 
 mod cache_shape;
 mod cache_usage;
+mod context_loop;
 mod executor;
 mod output_limit;
 mod plan;

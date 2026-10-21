@@ -5,9 +5,11 @@ use axum::http::HeaderMap;
 use bytes::Bytes;
 use futures_util::StreamExt;
 
+use super::context_loop::ContextRun;
 use super::router::stable_oneapi_routing;
 use super::{RequestPlan, UpstreamTarget};
 use crate::config::GatewayConfig;
+use crate::context::ContextEngine;
 use crate::error::GatewayError;
 use crate::gateway::{
     CacheShape, CacheShapeTracker, PrefixObservation, ProviderResponseRequest,
@@ -45,6 +47,7 @@ pub(crate) struct GatewayExecutor {
     pub(crate) output_limits: Arc<super::output_limit::OutputLimitMemory>,
     web_search_capabilities: WebSearchCapabilities,
     image_routes: ImageRouteRegistry,
+    context: Option<Arc<ContextEngine>>,
 }
 
 /// A completed official upstream send with its prefix observation, ready for
@@ -62,6 +65,7 @@ impl GatewayExecutor {
         cache_shapes: Arc<CacheShapeTracker>,
         web_search_capabilities: WebSearchCapabilities,
         image_routes: ImageRouteRegistry,
+        context: Option<Arc<ContextEngine>>,
     ) -> Self {
         Self {
             config,
@@ -71,7 +75,26 @@ impl GatewayExecutor {
             output_limits: Arc::default(),
             web_search_capabilities,
             image_routes,
+            context,
         }
+    }
+
+    pub(crate) fn context_engine(&self) -> Option<Arc<ContextEngine>> {
+        self.context.clone()
+    }
+
+    pub(crate) fn context_enabled(&self) -> bool {
+        self.context.is_some()
+    }
+
+    /// Authenticated client display name, or a stable placeholder when the
+    /// build has no client keys. Context sessions never merge clients.
+    pub(crate) fn client_identity(&self, headers: &HeaderMap) -> String {
+        self.config
+            .gateway_client_keys
+            .authenticate(headers)
+            .map(|client| client.display_name().to_owned())
+            .unwrap_or_else(|| "gateway".to_owned())
     }
 
     pub(crate) async fn resolve_model_route(
@@ -190,23 +213,35 @@ impl GatewayExecutor {
 
     pub(crate) async fn stream_and_return_body(
         &self,
+        plan: RequestPlan,
+        headers: &HeaderMap,
+    ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
+        if let Some(run) = ContextRun::prepare(self, &plan.body, headers)? {
+            let body = plan.body.clone();
+            let stream = run.stream(self.clone(), plan, headers.clone()).await?;
+            return Ok((stream, body));
+        }
+        self.send_round(plan, headers).await
+    }
+
+    /// Prepare and dispatch exactly one model request. The context loop calls
+    /// this for every internal round; externally it covers the whole request.
+    pub(crate) async fn send_round(
+        &self,
         mut plan: RequestPlan,
         headers: &HeaderMap,
     ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
-        if matches!(&plan.target, UpstreamTarget::Provider { .. }) {
-            plan.body = prepare_provider_body(plan.body).await?;
-        } else {
-            let (body, image_stats) = normalize_provider_images_blocking(plan.body).await?;
-            if image_stats.normalized_images > 0 || image_stats.omitted_tool_images > 0 {
-                tracing::info!(
-                    normalized_images = image_stats.normalized_images,
-                    omitted_tool_images = image_stats.omitted_tool_images,
-                    saved_image_bytes = image_stats.saved_bytes,
-                    "normalized official image payloads for cache-stable replay"
-                );
-            }
-            plan.body = body;
-        }
+        plan.body = prepare_body(plan.body, &plan.target).await?;
+        let body = plan.body.clone();
+        let (stream, _) = self.dispatch_round(plan, headers).await?;
+        Ok((stream, body))
+    }
+
+    async fn dispatch_round(
+        &self,
+        plan: RequestPlan,
+        headers: &HeaderMap,
+    ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
         match plan.target {
             UpstreamTarget::Official => {
                 let stream = self.stream_official(headers, &plan.body).await?;
@@ -408,6 +443,27 @@ impl GatewayExecutor {
         .await
         .map(|stream| (stream, fallback_body))
     }
+}
+
+/// Protocol preparation that every outbound model request needs. Kept apart
+/// from dispatch so the context loop can rebuild the body on each round.
+async fn prepare_body(
+    body: serde_json::Value,
+    target: &UpstreamTarget,
+) -> Result<serde_json::Value, GatewayError> {
+    if matches!(target, UpstreamTarget::Provider { .. }) {
+        return prepare_provider_body(body).await;
+    }
+    let (body, image_stats) = normalize_provider_images_blocking(body).await?;
+    if image_stats.normalized_images > 0 || image_stats.omitted_tool_images > 0 {
+        tracing::info!(
+            normalized_images = image_stats.normalized_images,
+            omitted_tool_images = image_stats.omitted_tool_images,
+            saved_image_bytes = image_stats.saved_bytes,
+            "normalized official image payloads for cache-stable replay"
+        );
+    }
+    Ok(body)
 }
 
 async fn prepare_provider_body(

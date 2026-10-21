@@ -21,6 +21,10 @@ pub(super) async fn responses(
         return super::compact::compact_custom_provider_for_model(body, &requested_model);
     }
     if route == ResolvedModelRoute::Official {
+        if state.gateway.context_enabled() {
+            let plan = RequestPlan::official(body, None)?;
+            return sse_response(state.gateway.stream(plan, &headers).await?);
+        }
         let (body, _) = crate::images::normalize_provider_images_blocking(body).await?;
         return forward_official_responses(&state, &headers, body).await;
     }
