@@ -60,6 +60,12 @@ CREATE TABLE IF NOT EXISTS responses (
     created_at INTEGER NOT NULL,
     PRIMARY KEY (session_key, response_id)
 );
+CREATE TABLE IF NOT EXISTS leases (
+    session_key TEXT PRIMARY KEY,
+    owner TEXT NOT NULL,
+    acquired_at INTEGER NOT NULL,
+    expires_at INTEGER NOT NULL
+);
 ";
 
 pub(crate) fn unix_now() -> i64 {
@@ -148,6 +154,11 @@ impl Store {
         self.connection
             .execute_batch(SCHEMA)
             .context("create context schema")?;
+        // No lease survives a process restart, so stale rows must not block a
+        // new turn after a crash.
+        self.connection
+            .execute("DELETE FROM leases", [])
+            .context("clear stale context leases")?;
         Ok(())
     }
 
@@ -178,6 +189,53 @@ impl Store {
             .optional()
             .context("read context session")?
             .context("context session disappeared")
+    }
+
+    /// Takes the per-session execution lease for one turn.
+    ///
+    /// A different live holder makes the turn fail explicitly instead of
+    /// interleaving two views of the same session.
+    pub fn acquire_lease(&mut self, key: &str, owner: &str, ttl_seconds: i64) -> Result<()> {
+        let now = unix_now();
+        let expires_at = now.saturating_add(ttl_seconds);
+        let transaction = self
+            .connection
+            .transaction()
+            .context("begin context lease")?;
+        let holder: Option<String> = transaction
+            .query_row(
+                "SELECT owner FROM leases WHERE session_key = ?1 AND expires_at > ?2",
+                params![key, now],
+                |row| row.get(0),
+            )
+            .optional()
+            .context("read context lease")?;
+        if holder.is_some_and(|holder| holder != owner) {
+            bail!("context session is busy with another turn");
+        }
+        transaction
+            .execute(
+                "INSERT INTO leases (session_key, owner, acquired_at, expires_at)
+                 VALUES (?1, ?2, ?3, ?4)
+                 ON CONFLICT(session_key) DO UPDATE SET
+                   owner = excluded.owner,
+                   acquired_at = excluded.acquired_at,
+                   expires_at = excluded.expires_at",
+                params![key, owner, now, expires_at],
+            )
+            .context("write context lease")?;
+        transaction.commit().context("commit context lease")?;
+        Ok(())
+    }
+
+    pub fn release_lease(&mut self, key: &str, owner: &str) -> Result<()> {
+        self.connection
+            .execute(
+                "DELETE FROM leases WHERE session_key = ?1 AND owner = ?2",
+                params![key, owner],
+            )
+            .context("release context lease")?;
+        Ok(())
     }
 
     pub fn history(&self, key: &str) -> Result<Vec<HistoryEntry>> {

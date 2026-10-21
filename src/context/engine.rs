@@ -13,9 +13,36 @@ use super::types::{
     TurnView, estimate_item_tokens, estimate_text_tokens, is_context_tool,
 };
 
+/// A turn is serialized against other turns of the same session, so a lease
+/// must outlive one model exchange but not leak after a crash. The TTL only
+/// guards against a holder that died without releasing.
+pub(crate) const LEASE_TTL_SECONDS: i64 = 30 * 60;
+
 pub struct ContextEngine {
     store: Mutex<Store>,
     settings: crate::config::ContextSettings,
+}
+
+/// Held for the whole turn; the session becomes usable again on drop.
+pub struct Lease {
+    engine: std::sync::Arc<ContextEngine>,
+    session: String,
+    owner: String,
+}
+
+impl Drop for Lease {
+    fn drop(&mut self) {
+        match self.engine.lock() {
+            Ok(mut store) => {
+                if let Err(error) = store.release_lease(&self.session, &self.owner) {
+                    tracing::warn!(error = %error, "failed to release context lease");
+                }
+            }
+            Err(error) => {
+                tracing::warn!(error = %error, "failed to lock the context store to release a lease");
+            }
+        }
+    }
 }
 
 #[derive(Clone, Debug)]
@@ -58,6 +85,17 @@ impl ContextEngine {
 
     pub fn guidance(&self) -> &'static str {
         GUIDANCE
+    }
+
+    pub fn acquire_lease(self: &std::sync::Arc<Self>, session: &str) -> Result<Lease> {
+        let owner = uuid::Uuid::new_v4().to_string();
+        self.lock()?
+            .acquire_lease(session, &owner, LEASE_TTL_SECONDS)?;
+        Ok(Lease {
+            engine: std::sync::Arc::clone(self),
+            session: session.to_owned(),
+            owner,
+        })
     }
 
     fn lock(&self) -> Result<std::sync::MutexGuard<'_, Store>> {
@@ -992,6 +1030,25 @@ mod tests {
             .execute_tool(&session, view.revision - 1, TOOL_STATUS, &json!({}), 10_000)
             .expect_err("stale revision");
         assert!(format!("{error}").contains("context revision changed"));
+    }
+
+    #[test]
+    fn serializes_turns_of_one_session_with_a_lease() {
+        let engine = std::sync::Arc::new(engine());
+        let session = session();
+        let first = engine.acquire_lease(&session).expect("first lease");
+        let error = match engine.acquire_lease(&session) {
+            Ok(_) => panic!("a second turn must not take the same session"),
+            Err(error) => error,
+        };
+        assert!(format!("{error}").contains("busy"), "{error}");
+        let other = format!("codex{SESSION_SEPARATOR}thread-2");
+        let second = engine.acquire_lease(&other).expect("other session");
+        drop(second);
+        drop(first);
+        engine
+            .acquire_lease(&session)
+            .expect("the session is free after the turn ends");
     }
 
     #[test]

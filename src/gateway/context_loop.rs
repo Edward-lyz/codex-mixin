@@ -1,3 +1,4 @@
+use std::collections::HashSet;
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -88,6 +89,11 @@ impl ContextRun {
             .and_then(Value::as_array)
             .cloned()
             .unwrap_or_default();
+        let lease = self
+            .engine
+            .clone()
+            .acquire_lease(&self.session)
+            .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
         let view = self
             .engine
             .begin_turn(&self.session, &original, self.window_tokens)?;
@@ -100,6 +106,8 @@ impl ContextRun {
         );
         let template = plan.body.clone();
         let stream = async_stream::stream! {
+            // The lease lives exactly as long as the client consumes this turn.
+            let _lease = lease;
             let mut base = view.items;
             let mut appended: Vec<Value> = Vec::new();
             let mut revision = view.revision;
@@ -143,21 +151,17 @@ impl ContextRun {
                     }
                     return;
                 }
-                if output.iter().any(is_client_action) {
-                    yield Ok::<Bytes, Infallible>(failure_event(
-                        &template,
-                        "context tools cannot be mixed with client tool calls".to_owned(),
-                    ));
-                    return;
-                }
-                if internal_rounds >= self.max_internal_rounds {
+                let hand_back = output.iter().any(is_client_action);
+                if !hand_back && internal_rounds >= self.max_internal_rounds {
                     yield Ok::<Bytes, Infallible>(failure_event(
                         &template,
                         ROUNDS_EXHAUSTED.to_owned(),
                     ));
                     return;
                 }
-                internal_rounds += 1;
+                if !hand_back {
+                    internal_rounds += 1;
+                }
                 let mut calls: Vec<Value> = Vec::new();
                 let mut outputs: Vec<Value> = Vec::new();
                 let mut broken = None;
@@ -172,14 +176,20 @@ impl ContextRun {
                         .engine
                         .execute_tool(&self.session, revision, name, &arguments, self.window_tokens);
                     let (content, next_revision) = match execution {
-                        Ok(execution) => {
-                            revision = execution.revision;
-                            (execution.content, revision)
+                        Ok(execution) => (execution.content, execution.revision),
+                        Err(error) => {
+                            if hand_back {
+                                tracing::warn!(
+                                    tool = name,
+                                    error = %error,
+                                    "context tool failed while the model also asked for client work"
+                                );
+                            }
+                            (
+                                json!({"ok": false, "error": error.to_string()}).to_string(),
+                                revision,
+                            )
                         }
-                        Err(error) => (
-                            json!({"ok": false, "error": error.to_string()}).to_string(),
-                            revision,
-                        ),
                     };
                     let call = normalized_call(item, call_id);
                     outputs.push(tool_output_item(&call, content));
@@ -188,6 +198,16 @@ impl ContextRun {
                 }
                 if let Some(message) = broken {
                     yield Ok::<Bytes, Infallible>(failure_event(&template, message));
+                    return;
+                }
+                if hand_back {
+                    // The model asked for client work and for context work in
+                    // one response: commit the context results, then deliver
+                    // only the client calls. The model resumes after the client
+                    // returns its tool outputs.
+                    for chunk in hidden_round(outcome.chunks, &template) {
+                        yield Ok(chunk);
+                    }
                     return;
                 }
                 let view = match self
@@ -245,14 +265,20 @@ async fn run_round(
     })
 }
 
-/// Removes the injected tools and guidance from the response metadata the
-/// client receives, so an internal round leaves no trace in the answer.
+/// Removes the internal tool calls and their output from the round the client
+/// receives, so context work leaves no trace in the answer.
 fn hidden_round(chunks: Vec<Bytes>, template: &Value) -> Vec<Bytes> {
     let mut decoder = SseDecoder::default();
+    let mut hidden_items: HashSet<String> = HashSet::new();
+    let mut hidden_calls: HashSet<String> = HashSet::new();
     let mut out = Vec::new();
     for chunk in chunks {
         for event in decoder.push(&chunk) {
-            out.push(rewrite_metadata(&event, template));
+            if let Some(bytes) =
+                visible_event(&event, template, &mut hidden_items, &mut hidden_calls)
+            {
+                out.push(bytes);
+            }
         }
     }
     let rest = decoder.remaining();
@@ -262,21 +288,58 @@ fn hidden_round(chunks: Vec<Bytes>, template: &Value) -> Vec<Bytes> {
     out
 }
 
-fn rewrite_metadata(event: &crate::protocol::sse::SseEvent, template: &Value) -> Bytes {
+fn visible_event(
+    event: &crate::protocol::sse::SseEvent,
+    template: &Value,
+    hidden_items: &mut HashSet<String>,
+    hidden_calls: &mut HashSet<String>,
+) -> Option<Bytes> {
     let Ok(mut payload) = serde_json::from_str::<Value>(&event.data) else {
-        return encode_sse(event.event.as_deref(), &event.data);
+        return Some(encode_sse(event.event.as_deref(), &event.data));
     };
-    let Some(response) = payload.get_mut("response").and_then(Value::as_object_mut) else {
-        return encode_sse(event.event.as_deref(), &event.data);
-    };
-    if let Some(tools) = response.get_mut("tools").and_then(Value::as_array_mut) {
-        tools.retain(|tool| !tool_name(tool).is_some_and(is_context_tool));
+    if let Some(item) = payload.get("item")
+        && internal_tool_name(item).is_some()
+    {
+        remember_hidden_item(item, hidden_items, hidden_calls);
+        return None;
     }
-    if response.contains_key("instructions") {
-        let instructions = template.get("instructions").cloned().unwrap_or(Value::Null);
-        response.insert("instructions".to_owned(), instructions);
+    let hidden_item = payload
+        .get("item_id")
+        .and_then(Value::as_str)
+        .is_some_and(|id| hidden_items.contains(id));
+    let hidden_call = payload
+        .get("call_id")
+        .and_then(Value::as_str)
+        .is_some_and(|id| hidden_calls.contains(id));
+    if hidden_item || hidden_call {
+        return None;
     }
-    encode_sse(event.event.as_deref(), &payload.to_string())
+    if let Some(response) = payload.get_mut("response").and_then(Value::as_object_mut) {
+        if let Some(output) = response.get_mut("output").and_then(Value::as_array_mut) {
+            output.retain(|item| internal_tool_name(item).is_none());
+        }
+        if let Some(tools) = response.get_mut("tools").and_then(Value::as_array_mut) {
+            tools.retain(|tool| !tool_name(tool).is_some_and(is_context_tool));
+        }
+        if response.contains_key("instructions") {
+            let instructions = template.get("instructions").cloned().unwrap_or(Value::Null);
+            response.insert("instructions".to_owned(), instructions);
+        }
+    }
+    Some(encode_sse(event.event.as_deref(), &payload.to_string()))
+}
+
+fn remember_hidden_item(
+    item: &Value,
+    hidden_items: &mut HashSet<String>,
+    hidden_calls: &mut HashSet<String>,
+) {
+    if let Some(id) = item.get("id").and_then(Value::as_str) {
+        hidden_items.insert(id.to_owned());
+    }
+    if let Some(call_id) = item.get("call_id").and_then(Value::as_str) {
+        hidden_calls.insert(call_id.to_owned());
+    }
 }
 
 fn encode_sse(event: Option<&str>, data: &str) -> Bytes {
@@ -470,6 +533,62 @@ mod tests {
         let body = compose_body(&template, &[], &[], &engine);
         let tools = body["tools"].as_array().expect("tools array");
         assert_eq!(tools.len(), 4);
+    }
+
+    fn raw(event: &str, payload: &Value) -> Bytes {
+        encode_raw_event(event, &payload.to_string())
+    }
+
+    #[test]
+    fn hides_internal_calls_from_the_client_round() {
+        let template = json!({"instructions": "be helpful"});
+        let internal = json!({"type": "function_call", "id": "fc_internal", "call_id": "call_internal", "name": "mixin_context_status", "arguments": "{}"});
+        let client = json!({"type": "function_call", "id": "fc_client", "call_id": "call_client", "name": "exec_command", "arguments": "{}"});
+        let chunks = vec![
+            raw("response.output_item.added", &json!({"item": internal})),
+            raw(
+                "response.function_call_arguments.delta",
+                &json!({"item_id": "fc_internal", "delta": "{}"}),
+            ),
+            raw("response.output_item.added", &json!({"item": client})),
+            raw(
+                "response.completed",
+                &json!({"response": {
+                    "output": [internal, client],
+                    "tools": [{"type": "function", "name": "mixin_context_status"}],
+                    "instructions": "guided",
+                }}),
+            ),
+        ];
+        let visible = hidden_round(chunks, &template);
+        let text = String::from_utf8_lossy(&visible.concat()).to_string();
+        assert!(
+            !text.contains("call_internal"),
+            "internal call leaked: {text}"
+        );
+        assert!(
+            !text.contains("fc_internal"),
+            "internal deltas leaked: {text}"
+        );
+        assert!(
+            text.contains("call_client"),
+            "client call was hidden: {text}"
+        );
+        let completed = visible
+            .iter()
+            .find_map(|chunk| {
+                let chunk = String::from_utf8_lossy(chunk).to_string();
+                let data = chunk.lines().find(|line| line.starts_with("data: "))?;
+                let payload: Value =
+                    serde_json::from_str(data.trim_start_matches("data: ")).ok()?;
+                payload.get("response").cloned()
+            })
+            .expect("completed payload");
+        let output = completed["output"].as_array().expect("output");
+        assert_eq!(output.len(), 1);
+        assert_eq!(output[0]["name"], "exec_command");
+        assert!(completed["tools"].as_array().expect("tools").is_empty());
+        assert_eq!(completed["instructions"], "be helpful");
     }
 
     #[test]
