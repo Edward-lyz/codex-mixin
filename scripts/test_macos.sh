@@ -29,6 +29,7 @@ about_window|1|-target @ARCH@-apple-macosx13.1|Cocoa CryptoKit SwiftUI|Applicati
 agent_management|1|-sdk @SDK@ -target @ARCH@-apple-macos13.1|Cocoa SwiftUI|UpdateSupport.swift AppSupport.swift ApplicationMenuSupport.swift LiquidGlassSupport.swift AgentManagementSupport.swift AgentManagementWindow.swift tests/AgentManagementWindowTests.swift
 app_operation_logging|1|||AppOperationLogging.swift tests/AppOperationLoggingTests.swift
 application_menu|1||Cocoa|ApplicationMenuSupport.swift tests/ApplicationMenuSupportTests.swift
+context_settings|1|||ContextSettingsSupport.swift tests/ContextSettingsTests.swift
 fusion_settings|1|||FusionSettingsLogic.swift tests/FusionSettingsLogicTests.swift
 install_card|1|-target @ARCH@-apple-macosx13.1|Cocoa CryptoKit SwiftUI|ApplicationMenuSupport.swift LiquidGlassSupport.swift InstallCard.swift AppDataDirectory.swift tests/InstallCardTests.swift
 install_progress_window|1|-sdk @SDK@ -target @ARCH@-apple-macos13.1|Cocoa|ApplicationMenuSupport.swift UpdateSupport.swift LiquidGlassSupport.swift AppSupport.swift InstallProgressWindow.swift tests/InstallProgressWindowTests.swift
