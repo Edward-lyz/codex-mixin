@@ -15,6 +15,7 @@ fn test_config(upstream_base_url: &str) -> GatewayConfig {
         ..crate::provider::ProviderModel::default()
     }];
     GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:0".parse().unwrap(),
         providers: vec![provider],
         official_responses_url: "https://example.test/responses".to_owned(),

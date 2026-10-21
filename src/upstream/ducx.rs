@@ -206,6 +206,7 @@ printf '%s\n' 'CODEX_MIXIN_DUCX_AUTH_V1={{"version":1,"model_token":"model-token
         provider.request_policy.baidu_auth_bridge = Some(BaiduAuthBridge::DucxLoopback);
         provider.request_policy.ducx_executable = Some(executable.clone());
         let config = GatewayConfig {
+            context: Default::default(),
             bind: "127.0.0.1:0".parse().unwrap(),
             providers: vec![provider.clone()],
             official_responses_url: "https://example.invalid/responses".to_owned(),

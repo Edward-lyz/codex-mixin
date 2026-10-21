@@ -349,6 +349,7 @@ mod tests {
         use codex_mixin::config::{GatewayConfig, ThinkingMode};
         use codex_mixin::provider::{ProviderModel, ProviderProtocol};
         let config = GatewayConfig {
+            context: Default::default(),
             bind: "127.0.0.1:8787".parse().unwrap(),
             providers: Vec::new(),
             official_responses_url: "https://example.test/responses".to_owned(),

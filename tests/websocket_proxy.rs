@@ -207,6 +207,7 @@ fn test_config(official_responses_url: String, codex_auth_path: PathBuf) -> Gate
     }];
     provider.selected_models = vec!["custom-model".to_owned()];
     GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:0".parse().unwrap(),
         providers: vec![provider],
         official_responses_url,

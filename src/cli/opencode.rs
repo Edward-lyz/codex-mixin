@@ -408,6 +408,7 @@ mod tests {
             ..ProviderModel::default()
         }];
         GatewayConfig {
+            context: Default::default(),
             bind: "127.0.0.1:8787".parse().unwrap(),
             providers: vec![provider],
             official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),

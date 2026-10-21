@@ -10,6 +10,7 @@ fn config() -> GatewayConfig {
     let mut provider = custom_provider("custom", "upstream-key");
     provider.base_url = "http://127.0.0.1:9".to_owned();
     GatewayConfig {
+        context: Default::default(),
         bind: "127.0.0.1:0".parse().unwrap(),
         providers: vec![provider],
         official_responses_url: "https://chatgpt.com/backend-api/codex/responses".to_owned(),
