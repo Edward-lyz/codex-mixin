@@ -742,11 +742,14 @@ public sealed partial class MainWindow : Window
             args.Handled = true;
         };
         // WinRT collections can expose strings directly; JsonElement is a .NET struct.
-        list.ItemsSource = modelsById.Keys.ToList();
+        var modelIds = modelsById.Keys.ToArray();
+        list.ItemsSource = modelIds;
         void Filter()
         {
-            list.ItemsSource = models.Where(model => Json.Text(model, "id").Contains(search.Text, StringComparison.OrdinalIgnoreCase) &&
-                (filter.SelectedIndex == 0 || selected.Contains(Json.Text(model, "id")) == (filter.SelectedIndex == 1))).Select(model => Json.Text(model, "id")).ToList();
+            var text = search.Text;
+            var mode = filter.SelectedIndex;
+            list.ItemsSource = modelIds.Where(modelId => modelId.Contains(text, StringComparison.OrdinalIgnoreCase) &&
+                (mode == 0 || selected.Contains(modelId) == (mode == 1))).ToArray();
         }
         search.TextChanged += (_, _) => Filter(); filter.SelectionChanged += (_, _) => Filter();
         modelBody.Children.Add(list);

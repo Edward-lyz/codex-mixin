@@ -39,6 +39,8 @@ internal static class QuotaView
         Windows.UI.Color.FromArgb(255, 0x90, 0x65, 0xB0),
     ];
 
+    private static readonly Brush[] RingBrushes = RingColors.Select(color => (Brush)new SolidColorBrush(color)).ToArray();
+
     private sealed record Entry(string Label, string Value, string? Note, string? Error, double? Ratio);
 
     internal static QuotaStyle Stored()
@@ -119,8 +121,8 @@ internal static class QuotaView
     }
 
     // Also colors usage chart series, so a provider keeps one hue per position.
-    internal static Brush RingBrush(int index) => index < RingColors.Length
-        ? new SolidColorBrush(RingColors[index])
+    internal static Brush RingBrush(int index) => index < RingBrushes.Length
+        ? RingBrushes[index]
         : (Brush)Microsoft.UI.Xaml.Application.Current.Resources["ControlStrongStrokeColorDisabledBrush"];
 
     private static Brush Resource(string key) => (Brush)Microsoft.UI.Xaml.Application.Current.Resources[key];
