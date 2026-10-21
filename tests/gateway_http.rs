@@ -3468,6 +3468,39 @@ async fn context_status_round_is_hidden_from_the_client() {
     assert!(database_path.exists(), "context database was not created");
 }
 
+/// Guidance-only is the ablation arm that keeps the compression advice while
+/// leaving the model without the compression tools, so the archived history
+/// stays exactly as the client sent it.
+#[tokio::test]
+async fn context_guidance_only_round_leaves_the_archive_alone() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    config.context.enabled = true;
+    config.context.guidance_only = true;
+    let database = tempfile::tempdir().unwrap();
+    let database_path = database.path().join("context.db");
+    let gateway_url = spawn_gateway_with_context(config, &database_path).await;
+
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-context-guidance")
+        .json(&responses_request())
+        .send()
+        .await
+        .unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let stream = String::from_utf8(response.bytes().await.unwrap().to_vec()).unwrap();
+    assert!(stream.contains("hello codex"), "missing answer: {stream}");
+
+    let recorded = requests.lock().unwrap().clone();
+    assert_eq!(recorded.len(), 1, "guidance-only round count: {recorded:?}");
+    let tools = recorded[0]["tools"].as_array().unwrap();
+    assert_eq!(tools.len(), 1);
+    assert_eq!(tools[0]["name"], "exec_command");
+    assert!(recorded[0].to_string().contains("<context_management>"));
+}
+
 #[tokio::test]
 async fn context_compression_round_rewrites_the_upstream_view() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::ContextCompressThenText).await;
