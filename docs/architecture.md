@@ -17,6 +17,7 @@
 | `provider` | 定义、校验、preset、能力与路由元数据 | 纯规则，不依赖上层 |
 | `protocol` | 请求转换、SSE 编解码、事件映射、协议数据 | 纯数据，不发送网络 |
 | `config` | 配置模型、迁移、校验、持久化 | 锁与原子替换 |
+| `context` | 原始消息归档、压缩视图、会话 revision、检索与导出 | `config`（仅取配置路径），不依赖 `server`/`gateway`/`cli` |
 | `clients`（新增） | 各编码客户端配置渲染、安装、同步、卸载 | 不依赖 server |
 | `platform` | 全部操作系统差异：路径与 home 变量、进程组与进程树、文件权限与锁、开机自启服务、桌面通知与桌面 App、终端窗口、代码签名、Codex CLI 位置、包目标名 | 标准库与平台命令 |
 | `macos` / `panel` / `windows` | 平台壳层；渲染 UI 并调用稳定 CLI contract | CLI 子进程及公开 core 类型 |
@@ -58,6 +59,8 @@ Windows 为 `%LOCALAPPDATA%\CodexMixin`）。
 | `service autostart enable\|disable\|status --json` | 网关登录自启（launchd / systemd --user / 计划任务） |
 | `config apply` | 保存后的整体生效：无 provider 时停网关，否则重启并同步 Codex 与各客户端目录 |
 | `fusion models --json` | Fusion 可选模型（含 `official:<slug>`） |
+| `context config get\|set --json` | 长上下文引擎开关与阈值；只写配置，不启动网关 |
+| `context status\|sessions\|export --json` | 会话 revision、分层计数、可压缩范围与原始归档导出 |
 | `connect ducx --json` | 安装并登录托管 DUCX；无终端时由 CLI 打开终端窗口扫码，返回可执行文件路径 |
 
 启停规则由 Rust 负责：自启定义存在即表示自启开启；启动、停止、重启、升级与
@@ -70,6 +73,8 @@ Windows 为 `%LOCALAPPDATA%\CodexMixin`）。
 - `gateway::GatewayExecutor`：路由解析、请求计划、单请求流式执行、缓存观测；
   是 fusion 与 server 唯一的网关执行入口。
 - `catalog::CatalogService`：模型枚举、benchmark 目标、目录响应缓存。
+- `context::ContextEngine`：按会话同步原始消息、渲染压缩视图、校验并提交压缩、
+  提供检索与导出；网关内部回路通过它执行四个 context 工具。
 - `server::AppState`：纯组合对象，持有上述组件与 benchmark/图片路由等
   handler 所需状态，不再实现发送、认证或目录业务。
 
