@@ -152,13 +152,25 @@ internal static class Program
                     }
                 }
             }
+            window = OpenWindow(start, process, "providers", "模型与服务");
+            var trayOwner = (nint)window.Current.NativeWindowHandle;
             var releaseQuota = new TaskCompletionSource(TaskCreationOptions.RunContinuationsAsynchronously);
             upstream.QuotaRelease = releaseQuota;
             try
             {
-                var popup = OpenWindow(start, process, "overview", "Codex Mixin · 主面板");
-                var popupHandle = (nint)popup.Current.NativeWindowHandle;
-                Wait(() => upstream.QuotaRequested.Task.IsCompleted, "quota request held in flight", process);
+                ((TogglePattern)Find(window, "console-usage-tab").GetCurrentPattern(TogglePattern.Pattern)).Toggle();
+                Wait(() => upstream.QuotaRequested.Task.IsCompleted, "console quota request held in flight", process);
+                // Exercise the real tray notification path while the console is still loading.
+                PostMessage(trayOwner, 0x8001, 0, 0x202);
+                AutomationElement? popup = null;
+                Wait(() =>
+                {
+                    popup = AutomationElement.RootElement.FindFirst(TreeScope.Children, new AndCondition(
+                        new PropertyCondition(AutomationElement.ProcessIdProperty, process.Id),
+                        new PropertyCondition(AutomationElement.NameProperty, "Codex Mixin · 主面板")));
+                    return popup != null && !popup.Current.IsOffscreen;
+                }, "tray opens while console query is pending", process);
+                var popupHandle = (nint)popup!.Current.NativeWindowHandle;
                 // Keep the real quota request pending until external focus dismisses the panel.
                 using var outside = new System.Windows.Forms.Form
                 {
