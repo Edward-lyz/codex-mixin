@@ -743,6 +743,12 @@ fn fingerprint(item: &Value) -> String {
     if let Some(object) = value.as_object_mut() {
         object.remove("id");
         object.remove("status");
+        // Codex adds this optional field when replaying reasoning items.
+        if object.get("type").and_then(Value::as_str) == Some("reasoning")
+            && object.get("content").is_some_and(Value::is_null)
+        {
+            object.remove("content");
+        }
     }
     value.to_string()
 }
@@ -1912,6 +1918,143 @@ mod tests {
             .expect("search");
         assert!(execution.content.contains("zebracrossing"));
         assert!(!execution.changed);
+    }
+
+    #[test]
+    fn replay_keeps_null_reasoning() {
+        for originally_null in [false, true] {
+            let engine = engine();
+            let session = session();
+            let mut items = four_messages();
+            items.insert(2, json!({"type": "reasoning", "summary": []}));
+            if originally_null {
+                items[2]["content"] = Value::Null;
+            }
+            let view = engine.begin_turn(&session, &items, 10_000).expect("view");
+            let range = status_of(&engine, &session, view.revision).compressible[0].clone();
+            let compressed = compress_pair(&engine, &session, view.revision, &range);
+
+            if originally_null {
+                items[2]
+                    .as_object_mut()
+                    .expect("reasoning")
+                    .remove("content");
+            } else {
+                items[2]["content"] = Value::Null;
+            }
+            let replay = engine.begin_turn(&session, &items, 10_000).expect("replay");
+            assert_eq!(replay.revision, compressed.revision);
+            assert_eq!(replay.items.len(), 3);
+            assert!(replay.items[1].to_string().contains("<context_summary"));
+
+            // Actual content must still invalidate the summary.
+            items[2]["content"] = json!([{"type": "text", "text": "changed"}]);
+            let edited = engine.begin_turn(&session, &items, 10_000).expect("edit");
+            assert!(edited.revision > replay.revision);
+            assert_eq!(edited.items, items);
+        }
+    }
+
+    #[test]
+    fn replay_upgrades_fingerprints() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("context.db");
+        let session = session();
+        let engine = ContextEngine::open(settings(), &path).expect("engine");
+        let mut items = four_messages();
+        items.insert(
+            2,
+            json!({"type": "reasoning", "summary": [], "content": null}),
+        );
+        let view = engine.begin_turn(&session, &items, 10_000).expect("view");
+        let range = status_of(&engine, &session, view.revision).compressible[0].clone();
+        let compressed = compress_pair(&engine, &session, view.revision, &range);
+        drop(engine);
+        let connection = rusqlite::Connection::open(&path).expect("legacy database");
+        connection
+            .execute(
+                "UPDATE messages SET fingerprint = ?1 WHERE reference = 'm000003'",
+                [items[2].to_string()],
+            )
+            .expect("simulate the old fingerprint");
+        connection
+            .pragma_update(None, "user_version", 0)
+            .expect("simulate the old data version");
+        drop(connection);
+
+        let engine = ContextEngine::open(settings(), &path).expect("reopen");
+        items[2]
+            .as_object_mut()
+            .expect("reasoning")
+            .remove("content");
+        let replay = engine.begin_turn(&session, &items, 10_000).expect("replay");
+        assert_eq!(replay.revision, compressed.revision);
+        assert!(replay.items[1].to_string().contains("<context_summary"));
+        let shape = engine
+            .history_shape(&session, &items)
+            .expect("history shape");
+        assert_eq!(shape, (items.len(), items.len()));
+    }
+
+    #[test]
+    fn replay_restores_block_prefix() {
+        for truncate in [false, true] {
+            let engine = engine();
+            let session = session();
+            let mut items = four_messages();
+            items.insert(3, message("assistant", &long_body("gamma", 900)));
+            items.insert(4, message("assistant", &long_body("delta", 900)));
+            let view = engine.begin_turn(&session, &items, 10_000).expect("view");
+            let refs = segment_refs(&engine, &session);
+            let first = compress_refs(&engine, &session, view.revision, &refs[1], &refs[2]);
+            let second = compress_refs(&engine, &session, first.revision, &refs[3], &refs[4]);
+            if truncate {
+                items.truncate(4);
+            } else {
+                items[4] = message("assistant", "edited answer");
+            }
+            let replay = engine.begin_turn(&session, &items, 10_000).expect("replay");
+            assert!(replay.revision > second.revision);
+            assert!(replay.items[1].to_string().contains("<context_summary"));
+            assert_eq!(replay.items[2..], items[3..]);
+            assert_eq!(
+                engine
+                    .begin_turn(&session, &items, 10_000)
+                    .expect("again")
+                    .items,
+                replay.items
+            );
+        }
+    }
+
+    #[test]
+    fn replay_repairs_archived_gaps() {
+        let directory = tempfile::tempdir().expect("temporary directory");
+        let path = directory.path().join("context.db");
+        let session = session();
+        let engine = ContextEngine::open(settings(), &path).expect("engine");
+        let mut items = four_messages();
+        items.insert(3, message("assistant", &long_body("gamma", 900)));
+        let view = engine.begin_turn(&session, &items, 10_000).expect("view");
+        let refs = segment_refs(&engine, &session);
+        let compressed = compress_refs(&engine, &session, view.revision, &refs[1], &refs[2]);
+        drop(engine);
+        let connection = rusqlite::Connection::open(&path).expect("legacy database");
+        connection
+            .execute("DELETE FROM segments WHERE position = 3", [])
+            .expect("simulate a prior gap");
+        drop(connection);
+
+        let engine = ContextEngine::open(settings(), &path).expect("reopen");
+        let replay = engine.begin_turn(&session, &items, 10_000).expect("repair");
+        assert!(replay.revision > compressed.revision);
+        assert!(replay.items[1].to_string().contains("<context_summary"));
+        assert_eq!(replay.items[2..], items[3..]);
+        let export = engine.export(&session).expect("export");
+        assert_eq!(export["segments"][2]["reference"], refs[3]);
+        let again = engine.begin_turn(&session, &items, 10_000).expect("again");
+        assert_eq!(again.revision, replay.revision);
+        assert_eq!(again.items, replay.items);
     }
 
     #[test]

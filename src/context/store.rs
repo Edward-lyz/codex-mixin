@@ -8,6 +8,8 @@ use serde_json::{Value, json};
 use super::guidance::NudgeState;
 use super::types::{CacheStats, DirectRef, SegmentKind, SessionSummary, Tier};
 
+const REASONING_FINGERPRINT_VERSION: i64 = 1;
+
 const SCHEMA: &str = "
 CREATE TABLE IF NOT EXISTS sessions (
     session_key TEXT PRIMARY KEY,
@@ -233,6 +235,7 @@ impl Store {
                 .execute("ALTER TABLE turns ADD COLUMN codex_thread_id TEXT", [])
                 .context("upgrade context thread metadata")?;
         }
+        self.upgrade_reasoning_fingerprints()?;
         // CLI readers share this database with the gateway. Opening another
         // connection must never revoke a live turn's lease.
         self.connection
@@ -268,6 +271,35 @@ impl Store {
             )
             .context("add context responses output column")?;
         Ok(())
+    }
+
+    fn upgrade_reasoning_fingerprints(&self) -> Result<()> {
+        let version: i64 = self
+            .connection
+            .pragma_query_value(None, "user_version", |row| row.get(0))
+            .context("read context data version")?;
+        if version >= REASONING_FINGERPRINT_VERSION {
+            return Ok(());
+        }
+        let transaction = self
+            .connection
+            .unchecked_transaction()
+            .context("begin reasoning fingerprint upgrade")?;
+        // Old fingerprints treated omitted reasoning content and null as edits.
+        transaction
+            .execute(
+                "UPDATE messages SET fingerprint = json_remove(fingerprint, '$.content')
+                 WHERE json_type(fingerprint, '$.content') = 'null'
+                   AND json_extract(fingerprint, '$.type') = 'reasoning'",
+                [],
+            )
+            .context("normalize archived reasoning fingerprints")?;
+        transaction
+            .pragma_update(None, "user_version", REASONING_FINGERPRINT_VERSION)
+            .context("save context data version")?;
+        transaction
+            .commit()
+            .context("commit reasoning fingerprint upgrade")
     }
 
     /// Blocks written before compression sizes were tracked report zero, which
@@ -542,16 +574,32 @@ impl Store {
             .zip(fingerprints.iter())
             .position(|(entry, fingerprint)| entry.fingerprint != *fingerprint)
             .unwrap_or_else(|| history.len().min(fingerprints.len()));
-        let mut forked = false;
-        if divergence < history.len() || fingerprints.len() < history.len() {
-            forked = true;
+        let kept: Vec<SegmentRow> = self
+            .segments(key, session.revision)?
+            .into_iter()
+            .filter(|segment| segment.end_position < divergence as i64)
+            .collect();
+        let mut coverage = kept.iter().peekable();
+        // A fork inside a block invalidates its summary, not its unchanged
+        // prefix. This also recovers holes left by older gateway versions.
+        let uncovered: Vec<&HistoryEntry> = history
+            .iter()
+            .take(divergence)
+            .filter(|entry| {
+                while coverage
+                    .peek()
+                    .is_some_and(|segment| segment.end_position < entry.position)
+                {
+                    coverage.next();
+                }
+                !coverage
+                    .peek()
+                    .is_some_and(|segment| segment.position <= entry.position)
+            })
+            .collect();
+        let changed = divergence < history.len() || !uncovered.is_empty();
+        if changed {
             let next_revision = session.revision + 1;
-            let keep_until = divergence as i64;
-            let kept: Vec<SegmentRow> = self
-                .segments(key, session.revision)?
-                .into_iter()
-                .filter(|segment| segment.end_position < keep_until)
-                .collect();
             let transaction = self
                 .connection
                 .transaction()
@@ -561,6 +609,19 @@ impl Store {
                 .context("clear segments for fork")?;
             for segment in &kept {
                 insert_segment(&transaction, key, next_revision, segment)?;
+            }
+            for entry in &uncovered {
+                insert_segment(
+                    &transaction,
+                    key,
+                    next_revision,
+                    &SegmentRow {
+                        position: entry.position,
+                        end_position: entry.position,
+                        kind: SegmentKind::Message,
+                        reference: entry.reference.clone(),
+                    },
+                )?;
             }
             transaction
                 .execute(
@@ -579,6 +640,13 @@ impl Store {
                 .context("reset context nudge at history fork")?;
             transaction.commit().context("commit fork")?;
             session.revision = next_revision;
+            if !uncovered.is_empty() {
+                tracing::info!(
+                    session = key,
+                    restored_messages = uncovered.len(),
+                    "restored uncovered archived messages to the context view"
+                );
+            }
         }
         let mut next_ref = session.next_ref;
         let transaction = self
@@ -621,7 +689,7 @@ impl Store {
             .context("update session reference counter")?;
         transaction.commit().context("commit history append")?;
         session.next_ref = next_ref;
-        Ok((session, forked))
+        Ok((session, changed))
     }
 
     pub fn segments(&self, key: &str, revision: i64) -> Result<Vec<SegmentRow>> {
