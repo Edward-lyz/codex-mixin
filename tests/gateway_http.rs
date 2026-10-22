@@ -9669,3 +9669,289 @@ async fn agy_mixed_tools_complete() {
     assert!(output.contains("response.completed"), "{output}");
     assert!(!output.contains("response.failed"), "{output}");
 }
+
+// Regression coverage for context pressure, persistence and transport boundaries.
+#[tokio::test]
+async fn context_growth_threshold() {
+    let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream);
+    config.context.enabled = true;
+    config.context.growth_threshold_tokens = 500;
+    config.context.protected_messages = 1;
+    config.context.protected_tokens = 1;
+    let db = tempfile::tempdir().unwrap();
+    let gateway = spawn_gateway_with_context(config, &db.path().join("context.db")).await;
+    reqwest::Client::new().post(format!("{gateway}/v1/responses"))
+        .bearer_auth("gateway-key").header("x-session-id", "review-growth")
+        .json(&json!({"model":"DeepSeek-V4-Flash-custom", "stream":true,
+            "input":[
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"opening"}]},
+                {"type":"message","role":"assistant","content":[{"type":"output_text","text":"word ".repeat(500)}]},
+                {"type":"message","role":"assistant","content":[{"type":"output_text","text":"word ".repeat(500)}]},
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"continue"}]}
+            ]})).send().await.unwrap().bytes().await.unwrap();
+    let request = requests.lock().unwrap()[0].to_string();
+    assert!(
+        request.contains("oldest unprotected range"),
+        "probe must have a compressible range"
+    );
+    assert!(
+        !request.contains("keep working"),
+        "growth threshold reached but model told to keep working: {request}"
+    );
+}
+
+#[tokio::test]
+async fn context_model_window() {
+    let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream);
+    config.context.enabled = true;
+    config.providers[0].cached_models[0].context_window = Some(16_000);
+    let db = tempfile::tempdir().unwrap();
+    let gateway = spawn_gateway_with_context(config, &db.path().join("context.db")).await;
+    reqwest::Client::new()
+        .post(format!("{gateway}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "review-window")
+        .json(&responses_request())
+        .send()
+        .await
+        .unwrap()
+        .bytes()
+        .await
+        .unwrap();
+    let request = requests.lock().unwrap()[0].to_string();
+    assert!(
+        request.contains("of 16000"),
+        "model window ignored: {request}"
+    );
+}
+
+#[tokio::test]
+async fn context_official_ws() {
+    let db = tempfile::tempdir().unwrap();
+    let (gateway, requests, _, _auth) = spawn_gateway_with_mock_official_context(
+        OfficialWebSocketBehavior::Persistent,
+        Duration::from_secs(5),
+        &db.path().join("context.db"),
+    )
+    .await;
+    let ws = gateway.replacen("http://", "ws://", 1);
+    let mut request = format!("{ws}/v1/responses").into_client_request().unwrap();
+    request
+        .headers_mut()
+        .insert(header::AUTHORIZATION, "Bearer gateway-key".parse().unwrap());
+    request
+        .headers_mut()
+        .insert("x-session-id", "review-ws".parse().unwrap());
+    let (mut socket, _) = connect_async(request).await.unwrap();
+    let mut body = responses_request();
+    body["model"] = json!("gpt-5.5-codex");
+    body["type"] = json!("response.create");
+    socket
+        .send(WsMessage::Text(body.to_string().into()))
+        .await
+        .unwrap();
+    let frames = tokio::time::timeout(
+        Duration::from_secs(5),
+        websocket_response_frames(&mut socket),
+    )
+    .await
+    .unwrap();
+    let completed: Value = frames
+        .iter()
+        .map(|frame| serde_json::from_str::<Value>(frame).unwrap())
+        .find(|event| event["type"] == "response.completed")
+        .unwrap();
+    body["previous_response_id"] = completed["response"]["id"].clone();
+    body["input"] = json!([{"type":"message","role":"user","content":[{"type":"input_text","text":"distinct WS continuation"}]}]);
+    socket
+        .send(WsMessage::Text(body.to_string().into()))
+        .await
+        .unwrap();
+    let second_frames = tokio::time::timeout(
+        Duration::from_secs(5),
+        websocket_response_frames(&mut socket),
+    )
+    .await
+    .unwrap();
+    assert_eq!(
+        requests.lock().unwrap().len(),
+        2,
+        "second WS response: {second_frames:?}"
+    );
+    let request = requests.lock().unwrap()[0].to_string();
+    let continuation = requests.lock().unwrap()[1].to_string();
+    assert!(
+        continuation.contains("say hi"),
+        "WS history lost: {continuation}"
+    );
+    assert_eq!(continuation.matches("distinct WS continuation").count(), 1);
+    assert!(
+        request.contains("mixin_context_compress"),
+        "enabled engine bypassed by official WS: {request}"
+    );
+}
+
+#[test]
+fn context_reader_keeps_lease() {
+    use codex_mixin::config::ContextSettings;
+    use codex_mixin::context::ContextEngine;
+    let db = tempfile::tempdir().unwrap();
+    let path = db.path().join("context.db");
+    let settings = ContextSettings {
+        enabled: true,
+        ..Default::default()
+    };
+    let engine = Arc::new(ContextEngine::open(settings.clone(), &path).unwrap());
+    let _lease = engine.acquire_lease("review-lease").unwrap();
+    assert!(engine.acquire_lease("review-lease").is_err());
+    let reader = ContextEngine::open(settings, &path).unwrap();
+    reader.stats(1_000_000, true).unwrap();
+    assert!(
+        engine.acquire_lease("review-lease").is_err(),
+        "opening the stats reader deleted a live turn lease"
+    );
+}
+
+#[tokio::test]
+async fn context_second_checkpoint() {
+    let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream);
+    config.context.enabled = true;
+    let db = tempfile::tempdir().unwrap();
+    let gateway = spawn_gateway_with_context(config, &db.path().join("context.db")).await;
+    let session = "review-checkpoint";
+    let token = request_context_checkpoint(&gateway, session).await;
+    let response = reqwest::Client::new().post(format!("{gateway}/v1/responses/compact"))
+        .bearer_auth("gateway-key").header("x-session-id", session)
+        .json(&json!({"model":"DeepSeek-V4-Flash-custom", "input":[
+            {"type":"compaction","encrypted_content":token},
+            {"type":"message","role":"user","content":[{"type":"input_text","text":"after first checkpoint"}]}
+        ]})).send().await.unwrap();
+    assert_eq!(response.status(), StatusCode::OK);
+    let second: Value = response.json().await.unwrap();
+    let response = replay_context_checkpoint(
+        &gateway,
+        session,
+        second["output"][0]["encrypted_content"].as_str().unwrap(),
+    )
+    .await;
+    assert_eq!(response.status(), StatusCode::OK);
+    response.bytes().await.unwrap();
+    let recorded = requests.lock().unwrap()[0].to_string();
+    assert!(
+        recorded.contains("distinctive opening request"),
+        "second compact lost original history: {recorded}"
+    );
+}
+
+#[tokio::test]
+async fn context_stream_before_done() {
+    for enabled in [false, true] {
+        let gate = Arc::new(tokio::sync::Notify::new());
+        let sender_gate = gate.clone();
+        let app = Router::new().route("/v1/responses", post(move || {
+            let gate = sender_gate.clone();
+            async move {
+                let stream = async_stream::stream! {
+                    yield Ok::<_, std::io::Error>(bytes::Bytes::from_static(b"event: response.created\ndata: {\"type\":\"response.created\",\"response\":{\"id\":\"review-stream\"}}\n\n"));
+                    gate.notified().await;
+                    yield Ok::<_, std::io::Error>(bytes::Bytes::from_static(b"event: response.completed\ndata: {\"type\":\"response.completed\",\"response\":{\"id\":\"review-stream\",\"status\":\"completed\",\"output\":[]}}\n\n"));
+                };
+                Response::builder().header(header::CONTENT_TYPE, "text/event-stream")
+                    .body(Body::from_stream(stream)).unwrap()
+            }
+        }));
+        let upstream = spawn_router(app).await;
+        let mut config = test_config(upstream);
+        config.context.enabled = enabled;
+        config.providers[0].protocol = ProviderProtocol::OpenAiResponses;
+        config.providers[0].api_path = "/v1/responses".to_owned();
+        let db = tempfile::tempdir().unwrap();
+        let gateway = spawn_gateway_with_context(config, &db.path().join("context.db")).await;
+        let first_chunk = tokio::time::timeout(Duration::from_secs(10), async {
+            let response = reqwest::Client::new()
+                .post(format!("{gateway}/v1/responses"))
+                .bearer_auth("gateway-key")
+                .header("x-session-id", "review-stream")
+                .json(&responses_request())
+                .send()
+                .await
+                .unwrap();
+            assert_eq!(response.status(), StatusCode::OK);
+            response.bytes_stream().next().await.unwrap().unwrap()
+        })
+        .await;
+        assert!(
+            first_chunk.is_ok(),
+            "context enabled={enabled}: no SSE delivered before upstream completes"
+        );
+        if enabled {
+            let engine = Arc::new(
+                codex_mixin::context::ContextEngine::open(
+                    codex_mixin::config::ContextSettings {
+                        enabled: true,
+                        ..Default::default()
+                    },
+                    &db.path().join("context.db"),
+                )
+                .unwrap(),
+            );
+            let sessions = engine.sessions().unwrap();
+            assert_eq!(sessions.len(), 1);
+            let session = &sessions[0].session;
+            let released = tokio::time::timeout(Duration::from_secs(5), async {
+                loop {
+                    if let Ok(lease) = engine.acquire_lease(session) {
+                        drop(lease);
+                        break;
+                    }
+                    tokio::time::sleep(Duration::from_millis(10)).await;
+                }
+            })
+            .await;
+            gate.notify_one();
+            assert!(
+                released.is_ok(),
+                "client disconnect must release the context turn before upstream completes"
+            );
+        } else {
+            gate.notify_one();
+        }
+    }
+}
+
+#[tokio::test]
+async fn context_recompact_validates() {
+    let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream);
+    config.context.enabled = true;
+    let db = tempfile::tempdir().unwrap();
+    let path = db.path().join("context.db");
+    let gateway = spawn_gateway_with_context(config, &path).await;
+    let token = request_context_checkpoint(&gateway, "checkpoint-owner").await;
+    for (session, token) in [
+        ("another-session", token),
+        (
+            "checkpoint-owner",
+            "codex-mixin:context:v2:corrupted".to_owned(),
+        ),
+    ] {
+        let response = reqwest::Client::new().post(format!("{gateway}/v1/responses/compact"))
+            .bearer_auth("gateway-key").header("x-session-id", session)
+            .json(&json!({"model":"DeepSeek-V4-Flash-custom", "input":[
+                {"type":"compaction","encrypted_content":token},
+                {"type":"message","role":"user","content":[{"type":"input_text","text":"must not replace history"}]}
+            ]})).send().await.unwrap();
+        assert_eq!(response.status(), StatusCode::BAD_REQUEST);
+    }
+    assert!(requests.lock().unwrap().is_empty());
+    let connection = rusqlite::Connection::open(&path).unwrap();
+    let history: String = connection
+        .query_row("SELECT group_concat(item_json) FROM messages", [], |row| {
+            row.get(0)
+        })
+        .unwrap();
+    assert!(!history.contains("must not replace history"));
+}

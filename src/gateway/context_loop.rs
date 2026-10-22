@@ -1,4 +1,4 @@
-use std::collections::HashSet;
+use std::collections::{HashMap, HashSet};
 use std::convert::Infallible;
 use std::sync::Arc;
 
@@ -17,7 +17,7 @@ use crate::context::guidance::{GUIDANCE, GUIDANCE_WITHOUT_TOOLS, state_note, wit
 use crate::context::types::{SESSION_SEPARATOR, is_context_tool};
 use crate::error::GatewayError;
 use crate::protocol::ResponseStream;
-use crate::protocol::sse::{SseDecoder, encode_event, encode_raw_event, response_failed_payload};
+use crate::protocol::sse::{SseDecoder, encode_raw_event, response_failed_payload};
 
 const CLIENT_ACTION_TYPES: [&str; 7] = [
     "function_call",
@@ -46,16 +46,10 @@ pub(crate) struct ContextRun {
     guidance_only: bool,
 }
 
-struct RoundOutcome {
-    chunks: Vec<Bytes>,
-    completed: Option<Value>,
-    failed: bool,
-}
-
 impl ContextRun {
     /// Returns None when context management does not apply, so the caller keeps
     /// its existing request path.
-    pub(crate) fn prepare(
+    pub(crate) async fn prepare(
         executor: &GatewayExecutor,
         body: &Value,
         headers: &HeaderMap,
@@ -89,7 +83,16 @@ impl ContextRun {
             return Ok(None);
         };
         let settings = engine.settings();
-        let window_tokens = settings.context_window_tokens.unwrap_or(0);
+        let window_tokens = match settings.context_window_tokens {
+            Some(window) => window,
+            None => {
+                let model = body
+                    .get("model")
+                    .and_then(Value::as_str)
+                    .unwrap_or_default();
+                executor.catalog.context_window(model).await?
+            }
+        };
         let max_internal_rounds = settings.max_internal_rounds;
         let guidance_only = settings.guidance_only;
         Ok(Some(Self {
@@ -102,60 +105,23 @@ impl ContextRun {
         }))
     }
 
-    /// Expands a local checkpoint, if the client sent one. The secret is read
-    /// lazily, because only compacted sessions carry a checkpoint.
-    fn expand_checkpoint_if_present(
-        &self,
-        incoming: &[Value],
-    ) -> Result<Option<Vec<Value>>, GatewayError> {
-        if !incoming
-            .iter()
-            .any(crate::context::checkpoint::is_checkpoint_item)
-        {
-            return Ok(None);
-        }
-        let secret = crate::config::ensure_compaction_secret().map_err(GatewayError::Other)?;
-        self.engine
-            .expand_checkpoint(&self.session, incoming, &secret)
-            .map_err(|error| GatewayError::BadRequest(error.to_string()))
-    }
-
     pub(crate) async fn stream(
         self,
         executor: GatewayExecutor,
         plan: RequestPlan,
         headers: HeaderMap,
     ) -> Result<ResponseStream, GatewayError> {
-        let incoming = plan
-            .body
-            .get("input")
-            .and_then(Value::as_array)
-            .cloned()
-            .unwrap_or_default();
-        let original = match self.expand_checkpoint_if_present(&incoming)? {
-            Some(expanded) => expanded,
-            None => match plan
-                .body
-                .get("previous_response_id")
-                .and_then(Value::as_str)
-            {
-                Some(previous) => self
-                    .engine
-                    .expand_chained_input(&self.session, previous, &incoming)
-                    .map_err(|error| GatewayError::BadRequest(error.to_string()))?,
-                None => incoming,
-            },
-        };
-        if !self.enabled {
-            return self
-                .stream_read_only(executor, plan, headers, original)
-                .await;
-        }
         let lease = self
             .engine
             .clone()
             .acquire_lease(&self.session)
             .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
+        let original = context_input(&self.engine, &self.session, &plan.body)?;
+        if !self.enabled {
+            return self
+                .stream_read_only(executor, plan, headers, original, lease)
+                .await;
+        }
         let view = self
             .engine
             .begin_turn(&self.session, &original, self.window_tokens)?;
@@ -169,7 +135,7 @@ impl ContextRun {
         let template = plan.body.clone();
         // The model can only time its own compression when the request says how
         // full the view is, so every round carries the current pressure.
-        let mut note = pressure_note(&self.engine, &self.session, &view, self.guidance_only);
+        let mut note = pressure_note(&self.engine, &self.session, &view, self.guidance_only)?;
         // The first round runs before the response starts, so an upstream status
         // or transport error keeps its own status instead of reaching the client
         // as a successful stream that only carries a failure event.
@@ -182,7 +148,7 @@ impl ContextRun {
             !self.guidance_only,
             &note,
         );
-        let first = run_round(&executor, first_plan, &headers).await?;
+        let (first, _) = executor.send_round(first_plan, &headers).await?;
         let stream = async_stream::stream! {
             // The lease lives exactly as long as the client consumes this turn.
             let _lease = lease;
@@ -191,8 +157,9 @@ impl ContextRun {
             let mut revision = view.revision;
             let mut internal_rounds = 0usize;
             let mut pending = Some(first);
+            let mut client = ContextEvents::default();
             loop {
-                let outcome = match pending.take() {
+                let mut upstream = match pending.take() {
                     Some(outcome) => outcome,
                     None => {
                         let body = compose_body(
@@ -205,10 +172,10 @@ impl ContextRun {
                         );
                         let mut round_plan = plan.clone();
                         round_plan.body = body;
-                        match run_round(&executor, round_plan, &headers).await {
-                            Ok(outcome) => outcome,
+                        match executor.send_round(round_plan, &headers).await {
+                            Ok((stream, _)) => stream,
                             Err(error) => {
-                                yield Ok::<Bytes, Infallible>(failure_event(
+                                yield Ok::<Bytes, Infallible>(client.failure(
                                     &template,
                                     error.to_string(),
                                 ));
@@ -217,16 +184,40 @@ impl ContextRun {
                         }
                     }
                 };
-                if outcome.failed {
-                    for chunk in outcome.chunks {
-                        yield Ok(chunk);
+                client.begin_round();
+                let mut decoder = SseDecoder::default();
+                let mut completed = None;
+                while completed.is_none() {
+                    let Some(chunk) = upstream.next().await else { break };
+                    let bytes = match chunk { Ok(bytes) => bytes, Err(never) => match never {} };
+                    for mut event in decoder.push(&bytes) {
+                        // Responses providers may send data-only SSE carrying
+                        // the event type in JSON instead of an event line.
+                        if event.event.is_none() {
+                            event.event = serde_json::from_str::<Value>(&event.data).ok()
+                                .and_then(|payload| payload.get("type").and_then(Value::as_str).map(str::to_owned));
+                        }
+                        if event.event.as_deref() == Some("response.completed") {
+                            completed = serde_json::from_str::<Value>(&event.data).ok()
+                                .and_then(|payload| payload.get("response").cloned());
+                            break;
+                        }
+                        if event.data == "[DONE]" { continue; }
+                        match client.render(&event, &template) {
+                            Ok(Some(bytes)) => yield Ok::<Bytes, Infallible>(bytes),
+                            Ok(None) => {},
+                            Err(error) => {
+                                yield Ok(client.failure(&template, error.to_string()));
+                                return;
+                            }
+                        }
+                        if matches!(event.event.as_deref(), Some("response.failed" | "response.incomplete")) {
+                            return;
+                        }
                     }
-                    return;
                 }
-                let Some(completed) = outcome.completed else {
-                    for chunk in outcome.chunks {
-                        yield Ok(chunk);
-                    }
+                let Some(mut completed) = completed else {
+                    yield Ok(client.failure(&template, "context upstream ended without a completed response".to_owned()));
                     return;
                 };
                 let output = completed
@@ -235,30 +226,23 @@ impl ContextRun {
                     .cloned()
                     .unwrap_or_default();
                 self.record_usage(&completed);
+                client.output.extend(output.iter().filter(|item| internal_tool_name(item).is_none()).cloned());
                 let internal: Vec<Value> = output
                     .iter()
                     .filter(|item| internal_tool_name(item).is_some())
                     .cloned()
                     .collect();
-                if internal.is_empty() {
-                    self.record_completed(&completed, revision, &output);
-                    for chunk in hidden_round(outcome.chunks, &template) {
-                        yield Ok(chunk);
-                    }
-                    return;
-                }
-                let hand_back = output.iter().any(is_client_action);
-                if !hand_back && internal_rounds >= self.max_internal_rounds {
-                    yield Ok::<Bytes, Infallible>(failure_event(
+                let finish_turn = internal.is_empty() || output.iter().any(is_client_action);
+                if !finish_turn && internal_rounds >= self.max_internal_rounds {
+                    yield Ok::<Bytes, Infallible>(client.failure(
                         &template,
                         ROUNDS_EXHAUSTED.to_owned(),
                     ));
                     return;
                 }
-                if !hand_back {
+                if !finish_turn {
                     internal_rounds += 1;
                 }
-                let mut calls: Vec<Value> = Vec::new();
                 let mut outputs: Vec<Value> = Vec::new();
                 let mut broken = None;
                 for item in &internal {
@@ -274,7 +258,7 @@ impl ContextRun {
                     let (content, next_revision) = match execution {
                         Ok(execution) => (execution.content, execution.revision),
                         Err(error) => {
-                            if hand_back {
+                            if finish_turn {
                                 tracing::warn!(
                                     tool = name,
                                     error = %error,
@@ -289,22 +273,18 @@ impl ContextRun {
                     };
                     let call = normalized_call(item, call_id);
                     outputs.push(tool_output_item(&call, content));
-                    calls.push(call);
                     revision = next_revision;
                 }
                 if let Some(message) = broken {
-                    yield Ok::<Bytes, Infallible>(failure_event(&template, message));
+                    yield Ok::<Bytes, Infallible>(client.failure(&template, message));
                     return;
                 }
-                if hand_back {
-                    // The model asked for client work and for context work in
-                    // one response: commit the context results, then deliver
-                    // only the client calls. The model resumes after the client
-                    // returns its tool outputs.
-                    self.record_completed(&completed, revision, &output);
-                    for chunk in hidden_round(outcome.chunks, &template) {
-                        yield Ok(chunk);
-                    }
+                if finish_turn {
+                    // Client actions become visible only after internal commits.
+                    client.complete(&mut completed, &template);
+                    self.record_completed(&completed, revision, &client.output);
+                    for chunk in client.drain_actions() { yield Ok(chunk); }
+                    yield Ok(client.encode(Some("response.completed"), json!({"type":"response.completed", "response":completed})));
                     return;
                 }
                 let view = match self
@@ -313,14 +293,17 @@ impl ContextRun {
                 {
                     Ok(view) => view,
                     Err(error) => {
-                        yield Ok::<Bytes, Infallible>(failure_event(&template, error.to_string()));
+                        yield Ok::<Bytes, Infallible>(client.failure(&template, error.to_string()));
                         return;
                     }
                 };
-                note = pressure_note(&self.engine, &self.session, &view, self.guidance_only);
+                note = match pressure_note(&self.engine, &self.session, &view, self.guidance_only) {
+                    Ok(note) => note,
+                    Err(error) => { yield Ok(client.failure(&template, error.to_string())); return; }
+                };
                 base = view.items;
                 revision = view.revision;
-                appended.extend(calls);
+                appended.extend(output);
                 appended.extend(outputs);
             }
         };
@@ -336,6 +319,7 @@ impl ContextRun {
         plan: RequestPlan,
         headers: HeaderMap,
         original: Vec<Value>,
+        lease: crate::context::engine::Lease,
     ) -> Result<ResponseStream, GatewayError> {
         let view = self
             .engine
@@ -349,8 +333,14 @@ impl ContextRun {
         let template = plan.body.clone();
         let mut read_plan = plan;
         read_plan.body = compose_read_only_body(&template, &view.items);
-        let outcome = run_round(&executor, read_plan, &headers).await?;
-        Ok(futures_util::stream::iter(outcome.chunks.into_iter().map(Ok)).boxed())
+        let (mut upstream, _) = executor.send_round(read_plan, &headers).await?;
+        Ok(async_stream::stream! {
+            let _lease = lease;
+            while let Some(chunk) = upstream.next().await {
+                yield chunk;
+            }
+        }
+        .boxed())
     }
 
     /// Records the billed usage of one upstream round. A round without usage is
@@ -403,43 +393,143 @@ impl ContextRun {
     }
 }
 
-async fn run_round(
-    executor: &GatewayExecutor,
-    plan: RequestPlan,
-    headers: &HeaderMap,
-) -> Result<RoundOutcome, GatewayError> {
-    let (mut stream, _) = executor.send_round(plan, headers).await?;
-    let mut decoder = SseDecoder::default();
-    let mut chunks = Vec::new();
-    let mut completed = None;
-    let mut failed = false;
-    while let Some(chunk) = stream.next().await {
-        let bytes = match chunk {
-            Ok(bytes) => bytes,
-            Err(never) => match never {},
+// Only client tool events wait for internal commits. Text stays incremental,
+// and the held events have a fixed memory ceiling rather than buffering a turn.
+const MAX_PENDING_TOOL_BYTES: usize = 8 * 1024 * 1024;
+
+#[derive(Default)]
+struct ContextEvents {
+    response_id: Option<String>,
+    started: bool,
+    sequence: u64,
+    next_index: u64,
+    indices: HashMap<u64, u64>,
+    hidden_items: HashSet<String>,
+    hidden_calls: HashSet<String>,
+    action_items: HashSet<String>,
+    action_calls: HashSet<String>,
+    pending_actions: Vec<(Option<String>, Value)>,
+    pending_bytes: usize,
+    output: Vec<Value>,
+}
+
+impl ContextEvents {
+    fn begin_round(&mut self) {
+        self.indices.clear();
+        self.hidden_items.clear();
+        self.hidden_calls.clear();
+        self.action_items.clear();
+        self.action_calls.clear();
+        self.pending_bytes = 0;
+    }
+
+    fn complete(&mut self, response: &mut Value, template: &Value) {
+        if let Some(id) = &self.response_id {
+            response["id"] = json!(id);
+        }
+        response["output"] = json!(self.output);
+        if let Some(tools) = response.get_mut("tools").and_then(Value::as_array_mut) {
+            tools.retain(|tool| !tool_name(tool).is_some_and(is_context_tool));
+        }
+        if response.get("instructions").is_some() {
+            response["instructions"] = template.get("instructions").cloned().unwrap_or(Value::Null);
+        }
+    }
+
+    fn render(
+        &mut self,
+        event: &crate::protocol::sse::SseEvent,
+        template: &Value,
+    ) -> Result<Option<Bytes>, GatewayError> {
+        let Some(mut payload) = visible_payload(
+            event,
+            template,
+            &mut self.hidden_items,
+            &mut self.hidden_calls,
+        ) else {
+            return Ok(None);
         };
-        for event in decoder.push(&bytes) {
-            match event.event.as_deref() {
-                Some("response.completed") => {
-                    completed = serde_json::from_str::<Value>(&event.data)
-                        .ok()
-                        .and_then(|payload| payload.get("response").cloned());
-                }
-                Some("response.failed") => failed = true,
-                _ => {}
+        if event.event.as_deref() == Some("response.created") {
+            if self.started {
+                return Ok(None);
+            }
+            self.started = true;
+        }
+        if let Some(response) = payload.get_mut("response").and_then(Value::as_object_mut) {
+            if self.response_id.is_none() {
+                self.response_id = response
+                    .get("id")
+                    .and_then(Value::as_str)
+                    .map(str::to_owned);
+            }
+            if let Some(id) = &self.response_id {
+                response.insert("id".to_owned(), json!(id));
             }
         }
-        chunks.push(bytes);
+        if payload.get("response_id").is_some()
+            && let Some(id) = &self.response_id
+        {
+            payload["response_id"] = json!(id);
+        }
+        if let Some(index) = payload.get("output_index").and_then(Value::as_u64) {
+            let next = self.indices.entry(index).or_insert_with(|| {
+                let next = self.next_index;
+                self.next_index += 1;
+                next
+            });
+            payload["output_index"] = json!(next);
+        }
+        let action = payload.get("item").is_some_and(is_client_action);
+        if action && let Some(item) = payload.get("item") {
+            remember_hidden_item(item, &mut self.action_items, &mut self.action_calls);
+        }
+        let held = action
+            || payload
+                .get("item_id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| self.action_items.contains(id))
+            || payload
+                .get("call_id")
+                .and_then(Value::as_str)
+                .is_some_and(|id| self.action_calls.contains(id));
+        if held {
+            self.pending_bytes = self.pending_bytes.saturating_add(event.data.len());
+            if self.pending_bytes > MAX_PENDING_TOOL_BYTES {
+                return Err(GatewayError::Other(anyhow::anyhow!(
+                    "context client tool events exceed the buffer limit"
+                )));
+            }
+            self.pending_actions.push((event.event.clone(), payload));
+            return Ok(None);
+        }
+        Ok(Some(self.encode(event.event.as_deref(), payload)))
     }
-    Ok(RoundOutcome {
-        chunks,
-        completed,
-        failed,
-    })
+
+    fn failure(&mut self, body: &Value, message: String) -> Bytes {
+        let model = body.get("model").and_then(Value::as_str);
+        self.encode(
+            Some("response.failed"),
+            response_failed_payload(self.response_id.clone(), model, message, "server_error"),
+        )
+    }
+
+    fn encode(&mut self, event: Option<&str>, mut payload: Value) -> Bytes {
+        payload["sequence_number"] = json!(self.sequence);
+        self.sequence += 1;
+        encode_sse(event, &payload.to_string())
+    }
+
+    fn drain_actions(&mut self) -> Vec<Bytes> {
+        std::mem::take(&mut self.pending_actions)
+            .into_iter()
+            .map(|(event, payload)| self.encode(event.as_deref(), payload))
+            .collect()
+    }
 }
 
 /// Removes the internal tool calls and their output from the round the client
 /// receives, so context work leaves no trace in the answer.
+#[cfg(test)]
 fn hidden_round(chunks: Vec<Bytes>, template: &Value) -> Vec<Bytes> {
     let mut decoder = SseDecoder::default();
     let mut hidden_items: HashSet<String> = HashSet::new();
@@ -447,10 +537,10 @@ fn hidden_round(chunks: Vec<Bytes>, template: &Value) -> Vec<Bytes> {
     let mut out = Vec::new();
     for chunk in chunks {
         for event in decoder.push(&chunk) {
-            if let Some(bytes) =
-                visible_event(&event, template, &mut hidden_items, &mut hidden_calls)
+            if let Some(payload) =
+                visible_payload(&event, template, &mut hidden_items, &mut hidden_calls)
             {
-                out.push(bytes);
+                out.push(encode_sse(event.event.as_deref(), &payload.to_string()));
             }
         }
     }
@@ -461,15 +551,13 @@ fn hidden_round(chunks: Vec<Bytes>, template: &Value) -> Vec<Bytes> {
     out
 }
 
-fn visible_event(
+fn visible_payload(
     event: &crate::protocol::sse::SseEvent,
     template: &Value,
     hidden_items: &mut HashSet<String>,
     hidden_calls: &mut HashSet<String>,
-) -> Option<Bytes> {
-    let Ok(mut payload) = serde_json::from_str::<Value>(&event.data) else {
-        return Some(encode_sse(event.event.as_deref(), &event.data));
-    };
+) -> Option<Value> {
+    let mut payload = serde_json::from_str::<Value>(&event.data).ok()?;
     if let Some(item) = payload.get("item")
         && internal_tool_name(item).is_some()
     {
@@ -499,7 +587,7 @@ fn visible_event(
             response.insert("instructions".to_owned(), instructions);
         }
     }
-    Some(encode_sse(event.event.as_deref(), &payload.to_string()))
+    Some(payload)
 }
 
 fn remember_hidden_item(
@@ -581,11 +669,10 @@ fn pressure_note(
     session: &str,
     view: &crate::context::TurnView,
     guidance_only: bool,
-) -> String {
+) -> Result<String, GatewayError> {
     let ranges = engine
-        .status(session, view.window_tokens, true)
-        .map(|status| status.compressible)
-        .unwrap_or_default();
+        .status(session, view.window_tokens, true)?
+        .compressible;
     let oldest = ranges.first().map(|range| {
         (
             range.start.as_str(),
@@ -593,13 +680,13 @@ fn pressure_note(
             range.tier.as_str(),
         )
     });
-    state_note(
+    Ok(state_note(
         view.estimated_tokens,
         view.window_tokens,
-        engine.settings().pressure_ratio,
+        engine.settings(),
         oldest,
         !guidance_only,
-    )
+    ))
 }
 
 /// Replaces the input with a view read from the archive without injecting the
@@ -680,17 +767,49 @@ fn tool_output_item(call: &Value, content: String) -> Value {
     })
 }
 
-fn failure_event(body: &Value, message: String) -> Bytes {
-    let model = body.get("model").and_then(Value::as_str);
-    match encode_event(
-        "response.failed",
-        &response_failed_payload(None, model, message, "server_error"),
-    ) {
-        Ok(bytes) => bytes,
-        Err(error) => {
-            tracing::error!(error = %error, "failed to encode context failure event");
-            Bytes::new()
+/// Restores the same client-visible history for ordinary turns and compaction.
+/// A checkpoint must be authenticated and expanded before syncing the archive.
+pub(crate) fn context_input(
+    engine: &ContextEngine,
+    session: &str,
+    body: &Value,
+) -> Result<Vec<Value>, GatewayError> {
+    let incoming = match body.get("input") {
+        Some(Value::Array(items)) => items
+            .iter()
+            .filter(|item| item.get("type").and_then(Value::as_str) != Some("compaction_trigger"))
+            .cloned()
+            .collect(),
+        Some(Value::String(text)) => vec![json!({
+            "type": "message", "role": "user",
+            "content": [{"type": "input_text", "text": text}],
+        })],
+        None if body
+            .get("previous_response_id")
+            .is_some_and(Value::is_string) =>
+        {
+            Vec::new()
         }
+        _ => {
+            return Err(GatewayError::BadRequest(
+                "context input must be a string or array".to_owned(),
+            ));
+        }
+    };
+    if incoming.iter().any(checkpoint::is_checkpoint_item) {
+        let secret = crate::config::ensure_compaction_secret().map_err(GatewayError::Other)?;
+        if let Some(expanded) = engine
+            .expand_checkpoint(session, &incoming, &secret)
+            .map_err(|error| GatewayError::BadRequest(error.to_string()))?
+        {
+            return Ok(expanded);
+        }
+    }
+    match body.get("previous_response_id").and_then(Value::as_str) {
+        Some(previous) => engine
+            .expand_chained_input(session, previous, &incoming)
+            .map_err(|error| GatewayError::BadRequest(error.to_string())),
+        None => Ok(incoming),
     }
 }
 
@@ -799,6 +918,89 @@ mod tests {
         encode_raw_event(event, &payload.to_string())
     }
 
+    fn decoded(bytes: Bytes) -> Value {
+        let events = crate::protocol::sse::drain_events(&mut bytes.to_vec());
+        serde_json::from_str(&events[0].data).expect("event JSON")
+    }
+
+    #[test]
+    fn keeps_one_stream_across_rounds() {
+        let template = json!({});
+        let mut client = ContextEvents::default();
+        let mut seen = Vec::new();
+        for (round, expected_index) in [("first", 0), ("second", 1)] {
+            client.begin_round();
+            let created = crate::protocol::sse::SseEvent {
+                event: Some("response.created".to_owned()),
+                data: json!({"type":"response.created", "response":{"id":round}}).to_string(),
+            };
+            let event = client.render(&created, &template).expect("created event");
+            if round == "first" {
+                seen.push(decoded(event.expect("first created")));
+            } else {
+                assert!(event.is_none(), "only one created event is visible");
+            }
+            let added = crate::protocol::sse::SseEvent {
+                event: Some("response.output_item.added".to_owned()),
+                data: json!({"response_id":round, "output_index":0, "item":{"type":"message", "id":round}}).to_string(),
+            };
+            let event = decoded(
+                client
+                    .render(&added, &template)
+                    .expect("added event")
+                    .expect("visible message"),
+            );
+            assert_eq!(event["response_id"], "first");
+            assert_eq!(event["output_index"], expected_index);
+            seen.push(event);
+        }
+        for (sequence, event) in seen.iter().enumerate() {
+            assert_eq!(event["sequence_number"], sequence);
+        }
+    }
+
+    #[test]
+    fn holds_client_actions_until_commit() {
+        let mut client = ContextEvents::default();
+        let event = crate::protocol::sse::SseEvent {
+            event: Some("response.output_item.added".to_owned()),
+            data: json!({"item":{"type":"function_call", "id":"tool", "call_id":"call", "name":"shell"}}).to_string(),
+        };
+        assert!(
+            client
+                .render(&event, &json!({}))
+                .expect("tool event")
+                .is_none()
+        );
+        let delta = crate::protocol::sse::SseEvent {
+            event: Some("response.function_call_arguments.delta".to_owned()),
+            data: json!({"item_id":"tool", "delta":"{}"}).to_string(),
+        };
+        assert!(
+            client
+                .render(&delta, &json!({}))
+                .expect("arguments event")
+                .is_none()
+        );
+        let events = client.drain_actions();
+        assert_eq!(events.len(), 2);
+        assert_eq!(decoded(events[0].clone())["item"]["name"], "shell");
+    }
+
+    #[test]
+    fn bounds_held_client_tool_events() {
+        let mut client = ContextEvents::default();
+        let event = crate::protocol::sse::SseEvent {
+            event: Some("response.output_item.added".to_owned()),
+            data: json!({"item":{"type":"function_call", "name":"shell", "arguments":"x".repeat(MAX_PENDING_TOOL_BYTES)}}).to_string(),
+        };
+        let error = client
+            .render(&event, &json!({}))
+            .expect_err("bounded tool events");
+        assert!(error.to_string().contains("buffer limit"));
+        assert!(client.pending_actions.is_empty());
+    }
+
     #[test]
     fn hides_internal_calls_from_the_client_round() {
         let template = json!({"instructions": "be helpful"});
@@ -893,7 +1095,7 @@ mod tests {
 
     #[test]
     fn encodes_explicit_failure_events() {
-        let bytes = failure_event(&json!({"model": "test"}), "boom".to_owned());
+        let bytes = ContextEvents::default().failure(&json!({"model": "test"}), "boom".to_owned());
         let text = String::from_utf8(bytes.to_vec()).expect("utf8 event");
         assert!(text.contains("event: response.failed"));
         assert!(text.contains("\"message\":\"boom\""));

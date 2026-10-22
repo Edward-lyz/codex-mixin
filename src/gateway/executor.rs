@@ -48,6 +48,7 @@ pub(crate) struct GatewayExecutor {
     web_search_capabilities: WebSearchCapabilities,
     image_routes: ImageRouteRegistry,
     context: Option<Arc<ContextEngine>>,
+    pub(crate) catalog: Arc<crate::catalog::CatalogService>,
 }
 
 /// A completed official upstream send with its prefix observation, ready for
@@ -67,6 +68,11 @@ impl GatewayExecutor {
         image_routes: ImageRouteRegistry,
         context: Option<Arc<ContextEngine>>,
     ) -> Self {
+        let catalog = Arc::new(crate::catalog::CatalogService::new(
+            Arc::clone(&config),
+            Arc::clone(&providers),
+            web_search_capabilities.clone(),
+        ));
         Self {
             config,
             providers,
@@ -76,6 +82,7 @@ impl GatewayExecutor {
             web_search_capabilities,
             image_routes,
             context,
+            catalog,
         }
     }
 
@@ -84,7 +91,22 @@ impl GatewayExecutor {
     }
 
     pub(crate) fn context_enabled(&self) -> bool {
-        self.context.is_some()
+        self.context
+            .as_ref()
+            .is_some_and(|engine| engine.is_enabled())
+    }
+
+    pub(crate) fn context_required(&self, body: &serde_json::Value) -> bool {
+        self.context_enabled()
+            || self.context.is_some()
+                && body
+                    .get("input")
+                    .and_then(serde_json::Value::as_array)
+                    .is_some_and(|items| {
+                        items
+                            .iter()
+                            .any(crate::context::checkpoint::is_checkpoint_item)
+                    })
     }
 
     /// Authenticated client display name, or a stable placeholder when the
@@ -216,7 +238,7 @@ impl GatewayExecutor {
         plan: RequestPlan,
         headers: &HeaderMap,
     ) -> Result<(ResponseStream, serde_json::Value), GatewayError> {
-        if let Some(run) = ContextRun::prepare(self, &plan.body, headers)? {
+        if let Some(run) = ContextRun::prepare(self, &plan.body, headers).await? {
             let body = plan.body.clone();
             let stream = run.stream(self.clone(), plan, headers.clone()).await?;
             return Ok((stream, body));

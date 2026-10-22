@@ -112,17 +112,10 @@ impl AppState {
         let image_routes = ImageRouteRegistry::default();
         let cache_shapes = Arc::new(CacheShapeTracker::with_usage(usage));
         let context = match context_database {
-            Some(path) => {
-                let mut settings = config.context.clone();
-                settings.context_window_tokens = Some(
-                    settings
-                        .context_window_tokens
-                        .unwrap_or(config.default_context_window),
-                );
-                Some(Arc::new(crate::context::ContextEngine::open(
-                    settings, &path,
-                )?))
-            }
+            Some(path) => Some(Arc::new(crate::context::ContextEngine::open(
+                config.context.clone(),
+                &path,
+            )?)),
             None => None,
         };
         let gateway = Arc::new(GatewayExecutor::new(
@@ -134,11 +127,7 @@ impl AppState {
             image_routes.clone(),
             context,
         ));
-        let catalog = Arc::new(CatalogService::new(
-            Arc::clone(&config),
-            Arc::clone(&providers),
-            web_search_capabilities.clone(),
-        ));
+        let catalog = Arc::clone(&gateway.catalog);
         Ok(Self {
             config,
             providers,

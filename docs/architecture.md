@@ -75,7 +75,8 @@ Windows 为 `%LOCALAPPDATA%\CodexMixin`）。
   provider/官方发送与认证；`server` 与 `gateway` 都通过它发请求。
 - `gateway::GatewayExecutor`：路由解析、请求计划、单请求流式执行、缓存观测；
   是 fusion 与 server 唯一的网关执行入口。
-- `catalog::CatalogService`：模型枚举、benchmark 目标、目录响应缓存。
+- `catalog::CatalogService`：模型枚举、benchmark 目标、目录响应缓存与模型窗口解析；
+  server 和 gateway 共享同一实例及元数据缓存。
 - `context::ContextEngine`：按会话同步原始消息、渲染压缩视图、校验并提交压缩、
   提供检索、导出与压缩/缓存统计；网关内部回路通过它执行四个 context 工具。
 - `server::AppState`：纯组合对象，持有上述组件与 benchmark/图片路由等

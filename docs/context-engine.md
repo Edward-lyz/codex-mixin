@@ -6,17 +6,17 @@
 
 ## 开启与配置
 
-`bash
+```bash
 codex-mixin context config set --enabled true
 codex-mixin context config get --json
-`
+```
 
 可调项（默认值见 `src/config/context.rs`）：
 
 | 配置 | 含义 | 默认 |
 | --- | --- | --- |
 | `enabled` | 总开关 | `false` |
-| `context_window_tokens` | 视图窗口，未设置时取网关的上下文窗口 | 网关默认 |
+| `context_window_tokens` | 显式视图窗口；未设置时解析具体模型元数据，缺项时用网关默认值 | 自动 |
 | `growth_threshold_tokens` | 视图增长到该 token 数后提示模型压缩 | 50000 |
 | `pressure_ratio` / `urgent_ratio` | 提示与强提示的窗口占比 | 0.75 / 0.95 |
 | `protected_messages` | 最近保留的消息条数 | 5 |
@@ -42,10 +42,17 @@ CLI 只改配置，不启动网关：`codex-mixin context config set --growth-th
 - `mixin_context_status`：查看 revision、窗口占用、可压缩范围与保护原因。
 
 每轮请求在 input 末尾追加一条 `<context_state>` developer 消息，说明当前视图
-估算 token、窗口占用百分比、是否越过 `pressure_ratio` 阈值，以及最早可压缩范围
+估算 token、窗口占用百分比、增长/压力/紧急阈值的触发原因，以及最早可压缩范围
 （如 `m000002..m000013 (t1)`）。它放在 input 末尾而不是 instructions 里：instructions
 每轮变化会让上游前缀缓存整体失效，追加消息只延长前缀。模型据此自行决定何时调用
-压缩工具，网关不替它判断。
+压缩工具，网关不替它选择摘要或强制压缩。增长达到 `growth_threshold_tokens`、
+窗口占用达到 `pressure_ratio`，任一条件满足都会建议压缩；达到 `urgent_ratio` 时
+给出紧急指引。仅指引消融模式不建议调用压缩工具。没有可压缩范围时，提示保留受保护内容。
+
+HTTP 与 WebSocket（含官方模型）复用同一上下文回路。可见文本事件增量转发，内部工具
+事件被隐藏；同轮出现客户端工具时，先完成内部提交，再交回客户端调用。暂存的客户端
+工具事件上限为 8 MiB，超限返回 `response.failed`，不会无界缓冲整轮 SSE。内部续轮对
+客户端保持同一 response id、单一终止事件和递增事件编号；HTTP 断连会释放请求租约与上游流。
 
 压缩分三级：原始消息 → T1 摘要 → T2 摘要合并 → T3 再合并。范围必须连续、
 不重叠、至少两段，且不能触碰受保护内容。
@@ -67,15 +74,17 @@ CLI 只改配置，不启动网关：`codex-mixin context config set --growth-th
 数据存放在独立 SQLite（WAL），路径由 `context config get --json` 的
 `database_path` 给出，也可用 `CODEX_MIXIN_CONTEXT_DB` 覆盖：
 
-`bash
+```bash
 codex-mixin context status --session <id> --json
 codex-mixin context sessions list --json
 codex-mixin context sessions show <id> --json
 codex-mixin context export --session <id> --out context-export.json
-`
+```
 
 会话键由接入客户端与客户端提供的 thread/session id 组合而成，子 agent 使用
 独立键，互不影响。网关不会在模型请求期间锁库：读视图、提交压缩都是短事务。
+请求与 compact 共用会话租约；查询统计或另开数据库连接不会清理有效租约。
+正常结束、失败或取消会释放租约，进程崩溃后的遗留租约最迟在 30 分钟 TTL 后失效。
 
 ## 链式请求（previous_response_id）
 
@@ -94,7 +103,8 @@ response id。
 开启后，`/v1/responses/compact` 与带 `compaction_trigger` 的请求不再让模型写摘要：
 网关先把入参同步进归档，再返回本地 checkpoint（令牌前缀
 `codex-mixin:context:v2:`），内容只有会话、revision、模型与签发时间，并带 AEAD
-认证。整个请求不会调用任何上游模型。
+认证。整个请求不会调用任何上游模型。重复 compact 时先校验、展开已有 checkpoint，
+再同步完整历史；跨会话或损坏的 checkpoint 在改写历史前返回 HTTP 400。
 
 checkpoint 绑定会话与 revision：
 

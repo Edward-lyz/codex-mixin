@@ -25,8 +25,8 @@ pub struct ContextSettings {
     /// Injects the compression guidance without exposing the compression
     /// tools, which is the guidance-only ablation arm.
     pub guidance_only: bool,
-    /// Explicit model context window override. Real model metadata wins when
-    /// the gateway knows it.
+    /// Explicit view window override, including evaluation windows. When unset,
+    /// the gateway resolves the model's metadata before using its default.
     pub context_window_tokens: Option<u64>,
 }
 

@@ -48,6 +48,32 @@ pub(crate) struct CatalogService {
 }
 
 impl CatalogService {
+    pub(crate) async fn context_window(&self, model: &str) -> Result<u64, GatewayError> {
+        let resolved = self.providers.resolve_known(model);
+        if let Some(window) = resolved
+            .as_ref()
+            .and_then(|resolved| resolved.model)
+            .and_then(|model| model.context_window)
+        {
+            return Ok(window);
+        }
+        let sources = self.catalog_sources().await?;
+        let upstream_model = resolved
+            .as_ref()
+            .map_or(model, |resolved| resolved.upstream_model_id);
+        if resolved.is_none()
+            && let Some(window) = sources.template.as_ref().and_then(|template| {
+                super::template::template_model_context_window(Some(template), upstream_model)
+            })
+        {
+            return Ok(window);
+        }
+        Ok(sources
+            .metadata
+            .resolve(upstream_model, self.config.default_context_window)
+            .context_window)
+    }
+
     pub(crate) fn new(
         config: Arc<GatewayConfig>,
         providers: Arc<ProviderRegistry>,

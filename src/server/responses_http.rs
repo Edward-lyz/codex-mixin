@@ -26,7 +26,7 @@ pub(super) async fn responses(
         }
     }
     if route == ResolvedModelRoute::Official {
-        if state.gateway.context_enabled() {
+        if state.gateway.context_required(&body) {
             let plan = RequestPlan::official(body, None)?;
             return sse_response(state.gateway.stream(plan, &headers).await?);
         }

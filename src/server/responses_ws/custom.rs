@@ -37,10 +37,21 @@ pub(super) async fn run_custom_ws_request(
             .gateway
             .resolve_model_route(&requested_model)
             .await?;
-        if compact::prepare_v2_custom_compaction(context.state, body, &route).await? {
+        if let Some(response) = compact::context_checkpoint(context.state, context.headers, body)? {
             return complete_custom_compaction(
                 context.client_sender,
-                body.take(),
+                response,
+                requested_model,
+                route,
+            )
+            .await
+            .map(Some);
+        }
+        if compact::prepare_v2_custom_compaction(context.state, body, &route).await? {
+            let response = compact::local_compaction_response(body, &requested_model)?;
+            return complete_custom_compaction(
+                context.client_sender,
+                response,
                 requested_model,
                 route,
             )
@@ -65,11 +76,10 @@ pub(super) async fn run_custom_ws_request(
 
 async fn complete_custom_compaction(
     client_sender: &mut SplitSink<WebSocket, AxumWsMessage>,
-    body: Value,
+    response: Value,
     model: String,
     route: ResolvedModelRoute,
 ) -> anyhow::Result<CustomWebSocketState> {
-    let response = compact::local_compaction_response(&body, &model)?;
     for event in compact::local_compaction_events(&response) {
         client_sender
             .send(AxumWsMessage::Text(event.to_string().into()))
@@ -131,7 +141,9 @@ async fn proxy_custom_responses_ws(
     let mut preserved_history = None;
     let (stream, returned_body) = match &route {
         ResolvedModelRoute::Official => {
-            anyhow::bail!("official model reached custom websocket proxy")
+            let plan = RequestPlan::official(body, None)?;
+            let (stream, body) = state.gateway.stream_and_return_body(plan, headers).await?;
+            (stream, Some(body))
         }
         ResolvedModelRoute::Provider { .. } => {
             let plan =
@@ -277,9 +289,6 @@ async fn complete_custom_noop(
         .resolve_model_route(&model)
         .await
         .map_err(|error| anyhow::anyhow!(error.to_string()))?;
-    if route == ResolvedModelRoute::Official {
-        anyhow::bail!("official model reached custom websocket noop");
-    }
     let history = take_custom_request_input(&mut body)?;
     let response_id = format!("resp_{}", Uuid::new_v4().simple());
     for status in ["in_progress", "completed"] {

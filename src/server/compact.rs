@@ -136,6 +136,17 @@ pub(super) fn context_checkpoint_response(
     headers: &HeaderMap,
     body: &Value,
 ) -> Result<Option<Response>, GatewayError> {
+    let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
+    context_checkpoint(state, headers, body)?
+        .map(|response| compaction_http_response(response, stream))
+        .transpose()
+}
+
+pub(super) fn context_checkpoint(
+    state: &AppState,
+    headers: &HeaderMap,
+    body: &Value,
+) -> Result<Option<Value>, GatewayError> {
     let Some(engine) = state.gateway.context_engine() else {
         return Ok(None);
     };
@@ -150,14 +161,16 @@ pub(super) fn context_checkpoint_response(
         .get("model")
         .and_then(Value::as_str)
         .ok_or_else(|| GatewayError::BadRequest("compact request missing model".to_owned()))?;
-    let items = checkpoint_input_items(body)?;
+    let _lease = engine
+        .acquire_lease(&session)
+        .map_err(|error| GatewayError::BadRequest(error.to_string()))?;
+    let items = crate::gateway::context_input(&engine, &session, body)?;
     let window_tokens = engine.settings().context_window_tokens.unwrap_or(0);
     let view = engine
         .begin_turn(&session, &items, window_tokens)
         .map_err(GatewayError::Other)?;
     let secret = ensure_compaction_secret().map_err(GatewayError::Other)?;
     let token = checkpoint::encode(model, &session, view.revision, &secret)?;
-    let stream = body.get("stream").and_then(Value::as_bool).unwrap_or(false);
     let response = json!({
         "id": format!("resp_compact_{}", Uuid::new_v4().simple()),
         "object": "response",
@@ -171,33 +184,7 @@ pub(super) fn context_checkpoint_response(
             "encrypted_content": token
         }]
     });
-    compaction_http_response(response, stream).map(Some)
-}
-
-/// The history the client asked to compact, without the trigger or an older
-/// checkpoint: neither belongs to the archive.
-fn checkpoint_input_items(body: &Value) -> Result<Vec<Value>, GatewayError> {
-    match body.get("input") {
-        Some(Value::String(text)) => Ok(vec![json!({
-            "type": "message",
-            "role": "user",
-            "content": [{"type": "input_text", "text": text}]
-        })]),
-        Some(Value::Array(items)) => Ok(items
-            .iter()
-            .filter(|item| {
-                !checkpoint::is_checkpoint_item(item)
-                    && item.get("type").and_then(Value::as_str) != Some("compaction_trigger")
-            })
-            .cloned()
-            .collect()),
-        Some(_) => Err(GatewayError::BadRequest(
-            "compact input must be a string or array".to_owned(),
-        )),
-        None => Err(GatewayError::BadRequest(
-            "compact request missing input".to_owned(),
-        )),
-    }
+    Ok(Some(response))
 }
 
 pub(super) fn local_compaction_response(

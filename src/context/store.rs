@@ -200,11 +200,11 @@ impl Store {
             .context("upgrade context schema")?;
         self.upgrade_block_tokens()
             .context("upgrade context schema")?;
-        // No lease survives a process restart, so stale rows must not block a
-        // new turn after a crash.
+        // CLI readers share this database with the gateway. Opening another
+        // connection must never revoke a live turn's lease.
         self.connection
-            .execute("DELETE FROM leases", [])
-            .context("clear stale context leases")?;
+            .execute("DELETE FROM leases WHERE expires_at <= ?1", [unix_now()])
+            .context("clear expired context leases")?;
         Ok(())
     }
 
