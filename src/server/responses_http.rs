@@ -17,7 +17,7 @@ pub(super) async fn responses(
     log_responses_route(&requested_model, &route);
     if super::compact::is_v2_compaction_request(&body) {
         if let Some(response) =
-            super::compact::context_checkpoint_response(&state, &headers, &body)?
+            super::compact::context_checkpoint_response(&state, &headers, &body).await?
         {
             return Ok(response);
         }

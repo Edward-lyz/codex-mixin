@@ -9826,8 +9826,8 @@ async fn context_official_ws() {
     );
 }
 
-#[test]
-fn context_reader_keeps_lease() {
+#[tokio::test]
+async fn context_reader_keeps_lease() {
     use codex_mixin::config::ContextSettings;
     use codex_mixin::context::ContextEngine;
     let db = tempfile::tempdir().unwrap();
@@ -9837,12 +9837,25 @@ fn context_reader_keeps_lease() {
         ..Default::default()
     };
     let engine = Arc::new(ContextEngine::open(settings.clone(), &path).unwrap());
-    let _lease = engine.acquire_lease("review-lease").unwrap();
-    assert!(engine.acquire_lease("review-lease").is_err());
+    let _lease = engine.acquire_lease("review-lease").await.unwrap();
+    assert!(
+        tokio::time::timeout(
+            Duration::from_millis(300),
+            engine.acquire_lease("review-lease")
+        )
+        .await
+        .is_err(),
+        "a held session must not hand out a second lease"
+    );
     let reader = ContextEngine::open(settings, &path).unwrap();
     reader.stats(1_000_000, true).unwrap();
     assert!(
-        engine.acquire_lease("review-lease").is_err(),
+        tokio::time::timeout(
+            Duration::from_millis(300),
+            engine.acquire_lease("review-lease")
+        )
+        .await
+        .is_err(),
         "opening the stats reader deleted a live turn lease"
     );
 }
@@ -9935,13 +9948,8 @@ async fn context_stream_before_done() {
             assert_eq!(sessions.len(), 1);
             let session = &sessions[0].session;
             let released = tokio::time::timeout(Duration::from_secs(5), async {
-                loop {
-                    if let Ok(lease) = engine.acquire_lease(session) {
-                        drop(lease);
-                        break;
-                    }
-                    tokio::time::sleep(Duration::from_millis(10)).await;
-                }
+                let lease = engine.acquire_lease(session).await.unwrap();
+                drop(lease);
             })
             .await;
             gate.notify_one();
@@ -9987,4 +9995,44 @@ async fn context_recompact_validates() {
         })
         .unwrap();
     assert!(!history.contains("must not replace history"));
+}
+
+/// Two turns of one session used to refuse the second one with "context
+/// session is busy with another turn". The arriving turn waits for the live
+/// holder now, so both finish.
+#[tokio::test]
+async fn concurrent_turns_of_one_session_wait_instead_of_failing() {
+    let (upstream_url, _requests) = spawn_mock_upstream(MockMode::Text).await;
+    let mut config = test_config(upstream_url);
+    config.context.enabled = true;
+    let database = tempfile::tempdir().unwrap();
+    let database_path = database.path().join("context.db");
+    let gateway_url = spawn_gateway_with_context(config, &database_path).await;
+
+    let send = |index: usize| {
+        let gateway_url = gateway_url.clone();
+        async move {
+            let mut body = responses_request();
+            body["input"][1]["content"][0]["text"] = json!(format!("say hi {index}"));
+            reqwest::Client::new()
+                .post(format!("{gateway_url}/v1/responses"))
+                .bearer_auth("gateway-key")
+                .header("x-session-id", "thread-concurrent-turns")
+                .json(&body)
+                .send()
+                .await
+                .unwrap()
+        }
+    };
+    let (first, second) = tokio::join!(send(0), send(1));
+    assert_eq!(first.status(), StatusCode::OK, "first turn");
+    assert_eq!(
+        second.status(),
+        StatusCode::OK,
+        "the second turn waits for the lease instead of failing"
+    );
+    for response in [first, second] {
+        let stream = String::from_utf8(response.bytes().await.unwrap().to_vec()).unwrap();
+        assert!(stream.contains("hello codex"), "missing answer: {stream}");
+    }
 }

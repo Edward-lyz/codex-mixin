@@ -113,6 +113,13 @@ pub(crate) struct HistoryEntry {
     pub fingerprint: String,
 }
 
+/// Whether the lease query left the session free for this turn.
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub(crate) enum LeaseState {
+    Acquired,
+    Busy,
+}
+
 #[derive(Clone, Debug)]
 pub(crate) struct SegmentRow {
     pub position: i64,
@@ -341,9 +348,17 @@ impl Store {
 
     /// Takes the per-session execution lease for one turn.
     ///
-    /// A different live holder makes the turn fail explicitly instead of
-    /// interleaving two views of the same session.
-    pub fn acquire_lease(&mut self, key: &str, owner: &str, ttl_seconds: i64) -> Result<()> {
+    /// A different live holder reports `Busy` instead of interleaving two
+    /// views of the same session. Contention is a normal result here: the
+    /// caller waits for the holder and only refuses the turn when the wait
+    /// runs out, so one session's auxiliary request cannot fail the turn that
+    /// owns it.
+    pub fn acquire_lease(
+        &mut self,
+        key: &str,
+        owner: &str,
+        ttl_seconds: i64,
+    ) -> Result<LeaseState> {
         let now = unix_now();
         let expires_at = now.saturating_add(ttl_seconds);
         let transaction = self
@@ -359,7 +374,7 @@ impl Store {
             .optional()
             .context("read context lease")?;
         if holder.is_some_and(|holder| holder != owner) {
-            bail!("context session is busy with another turn");
+            return Ok(LeaseState::Busy);
         }
         transaction
             .execute(
@@ -373,7 +388,7 @@ impl Store {
             )
             .context("write context lease")?;
         transaction.commit().context("commit context lease")?;
-        Ok(())
+        Ok(LeaseState::Acquired)
     }
 
     pub fn release_lease(&mut self, key: &str, owner: &str) -> Result<()> {
