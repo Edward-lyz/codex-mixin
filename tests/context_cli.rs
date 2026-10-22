@@ -42,6 +42,32 @@ fn long_body(label: &str) -> String {
     format!("{label} {}", "word ".repeat(180))
 }
 
+/// Settings the macOS and Windows shells decode from `context config get
+/// --json`. Both shells read the object by literal key name, so a rename has
+/// to land in the CLI and in every shell together.
+const SHARED_SHELL_SETTING_KEYS: [&str; 8] = [
+    "enabled",
+    "growth_threshold_tokens",
+    "pressure_ratio",
+    "urgent_ratio",
+    "protected_messages",
+    "protected_tokens",
+    "max_internal_rounds",
+    "context_window_tokens",
+];
+
+/// Extra settings only the Windows settings page renders.
+const WINDOWS_ONLY_SETTING_KEYS: [&str; 2] = ["max_tier", "guidance_only"];
+
+fn assert_source_reads_keys(source: &str, keys: &[&str], shell: &str) {
+    for key in keys {
+        assert!(
+            source.contains(&format!("\"{key}\"")),
+            "{shell} no longer decodes {key}"
+        );
+    }
+}
+
 #[test]
 fn context_cli_reports_settings_and_empty_stats() {
     let directory = tempfile::tempdir().unwrap();
@@ -67,6 +93,45 @@ fn context_cli_reports_settings_and_empty_stats() {
     assert!(
         !database.exists(),
         "reading statistics must not create the archive"
+    );
+}
+
+#[test]
+fn context_settings_json_matches_shell_decoders() {
+    let directory = tempfile::tempdir().unwrap();
+    let database = directory.path().join("context.db");
+    let got = successful(cli(
+        directory.path(),
+        &database,
+        &["context", "config", "get", "--json"],
+    ));
+    let context = got["context"].as_object().expect("settings object");
+    for key in SHARED_SHELL_SETTING_KEYS
+        .iter()
+        .chain(WINDOWS_ONLY_SETTING_KEYS.iter())
+    {
+        assert!(context.contains_key(*key), "CLI dropped the {key} setting");
+    }
+    assert_eq!(
+        context.len(),
+        SHARED_SHELL_SETTING_KEYS.len() + WINDOWS_ONLY_SETTING_KEYS.len(),
+        "unexpected settings keys: {context:?}"
+    );
+
+    assert_source_reads_keys(
+        include_str!("../macos/ContextSettingsSupport.swift"),
+        &SHARED_SHELL_SETTING_KEYS,
+        "macos/ContextSettingsSupport.swift",
+    );
+    assert_source_reads_keys(
+        include_str!("../windows/Core/Context.cs"),
+        &SHARED_SHELL_SETTING_KEYS,
+        "windows/Core/Context.cs",
+    );
+    assert_source_reads_keys(
+        include_str!("../windows/Core/Context.cs"),
+        &WINDOWS_ONLY_SETTING_KEYS,
+        "windows/Core/Context.cs",
     );
 }
 
