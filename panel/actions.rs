@@ -490,8 +490,8 @@ impl PanelAction {
                     invocation.push(format!("--protected-messages={messages}"));
                 }
                 if let Some(rounds) = max_internal_rounds {
-                    if !(1..=8).contains(rounds) {
-                        return Err("max internal rounds must be between 1 and 8".to_owned());
+                    if !(1..=10).contains(rounds) {
+                        return Err("max internal rounds must be between 1 and 10".to_owned());
                     }
                     invocation.push(format!("--max-internal-rounds={rounds}"));
                 }

@@ -311,5 +311,5 @@
 "context.validation.ratioOrder" = "压缩压力比例必须小于紧急压缩比例。";
 "context.validation.protectedMessages" = "保护消息数必须是正整数。";
 "context.validation.protectedTokens" = "保护 token 数必须是正整数。";
-"context.validation.maxInternalRounds" = "内部轮次上限必须在 1 到 8 之间。";
+"context.validation.maxInternalRounds" = "内部轮次上限必须在 1 到 10 之间。";
 "context.validation.contextWindowTokens" = "上下文窗口必须是正整数。";

@@ -117,7 +117,7 @@ struct ContextSettingsTests {
         precondition(issue { $0.protectedMessages = "-1" } == .protectedMessages)
         precondition(issue { $0.protectedTokens = "0" } == .protectedTokens)
         precondition(issue { $0.maxInternalRounds = "0" } == .maxInternalRounds)
-        precondition(issue { $0.maxInternalRounds = "9" } == .maxInternalRounds)
+        precondition(issue { $0.maxInternalRounds = "11" } == .maxInternalRounds)
         precondition(issue {
             $0.followsModelWindow = false
             $0.contextWindowTokens = ""

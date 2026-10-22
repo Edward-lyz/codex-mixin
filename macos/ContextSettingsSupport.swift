@@ -125,7 +125,7 @@ struct ContextSettingsDraft: Equatable {
         guard let tokens = Int(value(protectedTokens)), tokens > 0 else {
             return .failure(.protectedTokens)
         }
-        guard let rounds = Int(value(maxInternalRounds)), (1...8).contains(rounds) else {
+        guard let rounds = Int(value(maxInternalRounds)), (1...10).contains(rounds) else {
             return .failure(.maxInternalRounds)
         }
         var window: Int?

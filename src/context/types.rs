@@ -4,9 +4,9 @@ use serde_json::Value;
 pub const DEFAULT_GROWTH_THRESHOLD_TOKENS: u64 = 50_000;
 pub const DEFAULT_PRESSURE_RATIO: f64 = 0.75;
 pub const DEFAULT_URGENT_RATIO: f64 = 0.95;
-pub const DEFAULT_PROTECTED_MESSAGES: usize = 5;
+pub const DEFAULT_PROTECTED_MESSAGES: usize = 3;
 pub const DEFAULT_PROTECTED_TOKENS: u64 = 5_000;
-pub const DEFAULT_MAX_INTERNAL_ROUNDS: usize = 4;
+pub const DEFAULT_MAX_INTERNAL_ROUNDS: usize = 10;
 pub const DEFAULT_MAX_TIER: u8 = 3;
 
 pub const TOOL_COMPRESS: &str = "mixin_context_compress";

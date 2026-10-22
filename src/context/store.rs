@@ -5,6 +5,7 @@ use anyhow::{Context, Result, bail};
 use rusqlite::{Connection, OptionalExtension, Transaction, params};
 use serde_json::{Value, json};
 
+use super::guidance::NudgeState;
 use super::types::{CacheStats, DirectRef, SegmentKind, SessionSummary, Tier};
 
 const SCHEMA: &str = "
@@ -15,6 +16,10 @@ CREATE TABLE IF NOT EXISTS sessions (
     next_block INTEGER NOT NULL DEFAULT 1,
     updated_at INTEGER NOT NULL,
     last_error TEXT
+);
+CREATE TABLE IF NOT EXISTS nudge_state (
+    session_key TEXT PRIMARY KEY,
+    state_json TEXT NOT NULL
 );
 CREATE TABLE IF NOT EXISTS messages (
     session_key TEXT NOT NULL,
@@ -277,6 +282,34 @@ impl Store {
         Ok(false)
     }
 
+    pub(super) fn nudge_state(&self, key: &str) -> Result<NudgeState> {
+        let encoded: Option<String> = self
+            .connection
+            .query_row(
+                "SELECT state_json FROM nudge_state WHERE session_key = ?1",
+                [key],
+                |row| row.get(0),
+            )
+            .optional()
+            .context("read context nudge state")?;
+        match encoded {
+            Some(encoded) => serde_json::from_str(&encoded).context("decode context nudge state"),
+            None => Ok(NudgeState::default()),
+        }
+    }
+
+    pub(super) fn save_nudge_state(&self, key: &str, state: &NudgeState) -> Result<()> {
+        let encoded = serde_json::to_string(state).context("encode context nudge state")?;
+        self.connection
+            .execute(
+                "INSERT INTO nudge_state (session_key, state_json) VALUES (?1, ?2)
+             ON CONFLICT(session_key) DO UPDATE SET state_json = excluded.state_json",
+                params![key, encoded],
+            )
+            .context("save context nudge state")?;
+        Ok(())
+    }
+
     pub fn ensure_session(&mut self, key: &str) -> Result<SessionRow> {
         self.connection
             .execute(
@@ -505,6 +538,9 @@ impl Store {
                     params![key, next_revision, unix_now()],
                 )
                 .context("bump session revision")?;
+            transaction
+                .execute("DELETE FROM nudge_state WHERE session_key = ?1", [key])
+                .context("reset context nudge at history fork")?;
             transaction.commit().context("commit fork")?;
             session.revision = next_revision;
         }
@@ -735,6 +771,9 @@ impl Store {
                 params![key, new_revision, unix_now()],
             )
             .context("advance session revision")?;
+        transaction
+            .execute("DELETE FROM nudge_state WHERE session_key = ?1", [key])
+            .context("reset context nudge after compression")?;
         transaction.commit().context("commit compression")?;
         Ok((block_id, new_revision))
     }

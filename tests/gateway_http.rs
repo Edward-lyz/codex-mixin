@@ -85,6 +85,7 @@ enum MockMode {
     ImageToolFailure,
     ContextStatusThenText,
     ContextStatusOnly,
+    ContextInvalidCompress,
     ContextCompressThenText,
     ContextMixedToolsThenText,
 }
@@ -786,6 +787,13 @@ async fn mock_messages(
         }
         MockMode::WebSearchRetry => tool_sse("web_search", json!({})),
         MockMode::ContextStatusThenText if has_tool_result => text_sse(),
+        MockMode::ContextInvalidCompress => tool_sse(
+            "mixin_context_compress",
+            json!({
+                "ranges": [{"start": "m000001", "end": "m000002"}],
+                "topic": "invalid range", "summary": "Cannot compress protected or missing history."
+            }),
+        ),
         MockMode::ContextStatusThenText | MockMode::ContextStatusOnly => {
             tool_sse("mixin_context_status", json!({}))
         }
@@ -3576,6 +3584,27 @@ async fn context_compression_round_rewrites_the_upstream_view() {
 }
 
 #[tokio::test]
+async fn context_repeated_compress_failure_stops_early() {
+    let (upstream_url, requests) = spawn_mock_upstream(MockMode::ContextInvalidCompress).await;
+    let mut config = test_config(upstream_url);
+    config.context.enabled = true;
+    let database = tempfile::tempdir().unwrap();
+    let gateway_url = spawn_gateway_with_context(config, &database.path().join("context.db")).await;
+    let response = reqwest::Client::new()
+        .post(format!("{gateway_url}/v1/responses"))
+        .bearer_auth("gateway-key")
+        .header("x-session-id", "thread-context-repeated-failure")
+        .json(&responses_request())
+        .send()
+        .await
+        .unwrap();
+    let stream = response.text().await.unwrap();
+    assert!(stream.contains("response.completed"), "{stream}");
+    assert!(!stream.contains("response.failed"), "{stream}");
+    assert_eq!(requests.lock().unwrap().len(), 2);
+}
+
+#[tokio::test]
 async fn context_internal_rounds_are_bounded() {
     let (upstream_url, requests) = spawn_mock_upstream(MockMode::ContextStatusOnly).await;
     let mut config = test_config(upstream_url);
@@ -3596,16 +3625,20 @@ async fn context_internal_rounds_are_bounded() {
     assert_eq!(response.status(), StatusCode::OK);
     let mut encoded = response.bytes().await.unwrap().to_vec();
     let events = drain_events(&mut encoded);
-    let failure = events
-        .iter()
-        .find(|event| event.event.as_deref() == Some("response.failed"))
-        .expect("missing response.failed event");
-    let payload = serde_json::from_str::<Value>(&failure.data).unwrap();
-    assert_eq!(
-        payload["response"]["error"]["message"],
-        "context internal rounds exhausted before the model answered"
+    assert!(
+        !events
+            .iter()
+            .any(|event| event.event.as_deref() == Some("response.failed"))
     );
-    assert_eq!(requests.lock().unwrap().len(), 2);
+    let completed: Vec<_> = events
+        .iter()
+        .filter(|event| event.event.as_deref() == Some("response.completed"))
+        .collect();
+    assert_eq!(completed.len(), 1, "{events:?}");
+    let payload: Value = serde_json::from_str(&completed[0].data).unwrap();
+    assert_eq!(payload["response"]["status"], "completed");
+    assert_eq!(payload["response"]["output"], json!([]));
+    assert_eq!(requests.lock().unwrap().len(), 1);
 }
 
 #[tokio::test]
@@ -9672,7 +9705,7 @@ async fn agy_mixed_tools_complete() {
 
 // Regression coverage for context pressure, persistence and transport boundaries.
 #[tokio::test]
-async fn context_growth_threshold() {
+async fn context_growth_uses_a_baseline() {
     let (upstream, requests) = spawn_mock_upstream(MockMode::Text).await;
     let mut config = test_config(upstream);
     config.context.enabled = true;
@@ -9692,12 +9725,12 @@ async fn context_growth_threshold() {
             ]})).send().await.unwrap().bytes().await.unwrap();
     let request = requests.lock().unwrap()[0].to_string();
     assert!(
-        request.contains("oldest unprotected range"),
-        "probe must have a compressible range"
+        request.contains("keep working"),
+        "fresh low-pressure history needs a growth baseline: {request}"
     );
     assert!(
-        !request.contains("keep working"),
-        "growth threshold reached but model told to keep working: {request}"
+        !request.contains("oldest unprotected range"),
+        "fresh low-pressure history must not demand compression: {request}"
     );
 }
 
